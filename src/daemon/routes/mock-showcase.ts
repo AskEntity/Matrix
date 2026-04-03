@@ -1,19 +1,38 @@
 import type { Hono } from "hono";
 import type { Event } from "../../events.ts";
 import {
+	mcpToolName,
+	TOOL_BACKGROUND,
 	TOOL_BASH,
+	TOOL_CLARIFY,
+	TOOL_CLOSE_TASK,
 	TOOL_CREATE_TASK,
+	TOOL_DELETE_TASK,
 	TOOL_DONE,
 	TOOL_EDIT_FILE,
+	TOOL_EVALUATE_SCRIPT,
+	TOOL_EXECUTE_TASKS,
+	TOOL_FORK_TASK_CONTEXT,
+	TOOL_GET_TASK,
 	TOOL_GET_TREE,
 	TOOL_LIST_FILES,
+	TOOL_LIST_PROJECTS,
 	TOOL_READ_FILE,
+	TOOL_REORDER_TASKS,
+	TOOL_RESET_TASK,
 	TOOL_SEARCH,
 	TOOL_SEND_MESSAGE,
+	TOOL_SEND_MESSAGE_TO_PROJECT,
+	TOOL_UPDATE_TASK,
+	TOOL_WRITE_FILE,
 	TOOL_YIELD,
 } from "../../tool-names.ts";
-import type { TaskNode, TaskStatus } from "../../types.ts";
+import type { FolderNode, TaskNode, TaskStatus } from "../../types.ts";
 import { ulid } from "../../ulid.ts";
+
+const TOOL_CREATE_FOLDER = mcpToolName("create_folder");
+const TOOL_DELETE_FOLDER = mcpToolName("delete_folder");
+const TOOL_RENAME_FOLDER = mcpToolName("rename_folder");
 
 /**
  * Mock showcase endpoint — returns a complete dataset for UI development.
@@ -31,7 +50,7 @@ export function registerMockShowcaseRoute(app: Hono) {
 const ROOT_ID = "mock-root-0000000000000000000";
 const FOLDER_ID = "mock-folder-000000000000000000";
 const NESTED_FOLDER_ID = "mock-nested-folder-0000000000";
-const SESSION_ID = ROOT_ID; // events are tagged with root session
+const SESSION_ID = ROOT_ID;
 
 function ts(minutesAgo: number): number {
 	return Date.now() - minutesAgo * 60_000;
@@ -56,9 +75,93 @@ function mockTaskNode(
 		costUsd: opts?.costUsd ?? 0,
 		editedBy: "agent",
 		color: opts?.color,
-		createdAt: new Date(ts(60)).toISOString(),
+		createdAt: new Date(ts(120)).toISOString(),
 		updatedAt: new Date(ts(1)).toISOString(),
 	};
+}
+
+/** Push a resolved tool pair (tool_call + tool_result). */
+function pushResolved(
+	events: Event[],
+	tool: string,
+	input: Record<string, unknown>,
+	content: string,
+	minute: number,
+	opts?: {
+		isError?: boolean;
+		images?: Array<{ base64: string; mediaType: string }>;
+		backgroundId?: string;
+		backgroundCommand?: string;
+	},
+): number {
+	const id = ulid();
+	events.push({
+		type: "tool_call",
+		tool,
+		toolCallId: id,
+		input,
+		taskId: SESSION_ID,
+		ts: ts(minute),
+	});
+	events.push({
+		type: "tool_result",
+		tool,
+		toolCallId: id,
+		content,
+		isError: opts?.isError ?? false,
+		...(opts?.images ? { images: opts.images } : {}),
+		...(opts?.backgroundId ? { backgroundId: opts.backgroundId } : {}),
+		...(opts?.backgroundCommand
+			? { backgroundCommand: opts.backgroundCommand }
+			: {}),
+		taskId: SESSION_ID,
+		ts: ts(minute),
+	});
+	return minute - 1;
+}
+
+/** Push a pending tool_call (no result — renders spinner). */
+function pushPending(
+	events: Event[],
+	tool: string,
+	input: Record<string, unknown>,
+	minute: number,
+): number {
+	events.push({
+		type: "tool_call",
+		tool,
+		toolCallId: ulid(),
+		input,
+		taskId: SESSION_ID,
+		ts: ts(minute),
+	});
+	return minute - 1;
+}
+
+/** Push a two-phase consumed message. */
+function pushConsumedMessage(
+	events: Event[],
+	body: Record<string, unknown>,
+	minute: number,
+): number {
+	const msgId = ulid();
+	const fullBody = { ...body, id: msgId, ts: ts(minute) };
+	events.push({
+		type: "message",
+		id: msgId,
+		taskId: SESSION_ID,
+		body: fullBody as Event extends { type: "message"; body: infer B }
+			? B
+			: never,
+		ts: ts(minute),
+	});
+	events.push({
+		type: "messages_consumed",
+		messageIds: [msgId],
+		taskId: SESSION_ID,
+		ts: ts(minute),
+	});
+	return minute - 1;
 }
 
 // ── Build mock data ──────────────────────────────────────────────────────────
@@ -92,7 +195,7 @@ function buildMockData() {
 		taskIds.inProgress,
 	];
 
-	const folder = {
+	const folder: FolderNode = {
 		id: FOLDER_ID,
 		title: "Completed Work",
 		parentId: ROOT_ID,
@@ -102,15 +205,15 @@ function buildMockData() {
 			taskIds.closed,
 			NESTED_FOLDER_ID,
 		],
-		type: "folder" as const,
+		type: "folder",
 	};
 
-	const nestedFolder = {
+	const nestedFolder: FolderNode = {
 		id: NESTED_FOLDER_ID,
 		title: "Archived Tasks",
 		parentId: FOLDER_ID,
 		children: [taskIds.nestedTask],
-		type: "folder" as const,
+		type: "folder",
 	};
 
 	const tasks: TaskNode[] = [
@@ -131,8 +234,7 @@ function buildMockData() {
 			"pending",
 			ROOT_ID,
 			{
-				description:
-					"Implement token bucket rate limiter for API endpoints.",
+				description: "Implement token bucket rate limiter for API endpoints.",
 				color: "blue",
 			},
 		),
@@ -154,8 +256,7 @@ function buildMockData() {
 			"verify",
 			FOLDER_ID,
 			{
-				description:
-					"JWT validation middleware with Bearer token support.",
+				description: "JWT validation middleware with Bearer token support.",
 				color: "blue",
 				costUsd: 1.12,
 			},
@@ -200,328 +301,230 @@ function buildMockData() {
 	const nodes = [...tasks, folder, nestedFolder];
 
 	// ── Activity events ───────────────────────────────────────────────────
-	//
-	// Design:
-	// - Each tool type has TWO entries: resolved (tool_call + tool_result)
-	//   and pending (tool_call only, renders with spinner).
-	// - yield tool_call without result → renders as "Waiting" card.
-	// - done tool_call without result → renders as pass/fail done card.
-	// - Two unconsumed message events → render as pending chips in footer.
-	// - Two-phase messages: some consumed (rendered), some not (pending).
-
 	const events: Event[] = [];
-	let minute = 50; // start 50 minutes ago, plenty of room
+	let m = 120; // start 120 minutes ago — plenty of room
+
+	// 1x1 red PNG for image tests
+	const tinyPng =
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
 
 	// ═══════════════════════════════════════════════════════════════════════
-	// SECTION 1: Lifecycle + basic content
+	// SECTION 1: Lifecycle + content events
 	// ═══════════════════════════════════════════════════════════════════════
 
-	// ── Lifecycle: Agent started ──
+	// orchestration_started (initial)
 	events.push({
 		type: "orchestration_started",
 		taskId: SESSION_ID,
 		resume: false,
 		model: "claude-sonnet-4-20250514",
 		provider: "anthropic",
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
-	// ── User message (direct, no two-phase) ──
+	// task_started
 	events.push({
-		type: "message",
-		id: "",
+		type: "task_started",
 		taskId: SESSION_ID,
-		body: {
+		title: "Refactor event system",
+		ts: ts(m--),
+	});
+
+	// User message — plain text (two-phase consumed)
+	m = pushConsumedMessage(
+		events,
+		{
 			source: "user",
-			id: ulid(),
-			ts: ts(minute),
 			content: "Build the mock showcase page with all card types.",
 		},
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── Thinking ──
+	// User message — with images (two-phase consumed)
+	m = pushConsumedMessage(
+		events,
+		{
+			source: "user",
+			content:
+				"Here's the screenshot of the current UI. Can you fix the alignment?",
+			images: [
+				{ base64: tinyPng, mediaType: "image/png" },
+				{ base64: tinyPng, mediaType: "image/png" },
+			],
+		},
+		m,
+	);
+
+	// thinking
 	events.push({
 		type: "thinking",
 		thinking:
 			"The user wants a mock showcase page. I need to understand the event types and how the UI renders them. Let me check the existing card components and event handler to ensure I cover all cases.\n\nI should create both a backend endpoint and frontend integration.",
 		signature: "mock-signature-thinking",
 		taskId: SESSION_ID,
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
-	// ── Assistant text ──
+	// assistant_text
 	events.push({
 		type: "assistant_text",
 		content:
 			"I'll start by exploring the project structure to understand the existing patterns, then build the mock showcase page.\n\nLet me check the current files and understand the architecture.",
 		taskId: SESSION_ID,
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
 	// ═══════════════════════════════════════════════════════════════════════
 	// SECTION 2: Resolved tool pairs (tool_call + tool_result)
 	// ═══════════════════════════════════════════════════════════════════════
 
-	// ── bash (success) ──
-	const bashOkId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_BASH,
-		toolCallId: bashOkId,
-		input: { command: "ls -la src/daemon/routes/" },
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: TOOL_BASH,
-		toolCallId: bashOkId,
-		content:
-			"total 48\ndrwxr-xr-x  8 user  staff   256 Apr  3 10:00 .\n-rw-r--r--  1 user  staff  3200 Apr  3 10:00 agent.ts\n-rw-r--r--  1 user  staff  1800 Apr  3 10:00 auth.ts\n-rw-r--r--  1 user  staff  5600 Apr  3 10:00 projects.ts\n-rw-r--r--  1 user  staff  8900 Apr  3 10:00 tasks.ts",
-		isError: false,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+	// ── File tools ───────────────────────────────────────────────────────
 
-	// ── bash (error) ──
-	const bashErrId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_BASH,
-		toolCallId: bashErrId,
-		input: { command: "cat /nonexistent/file.ts" },
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: TOOL_BASH,
-		toolCallId: bashErrId,
-		content:
-			"cat: /nonexistent/file.ts: No such file or directory\nexit code: 1",
-		isError: true,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+	// bash (success)
+	m = pushResolved(
+		events,
+		TOOL_BASH,
+		{ command: "ls -la src/daemon/routes/" },
+		"total 48\ndrwxr-xr-x  8 user  staff   256 Apr  3 10:00 .\n-rw-r--r--  1 user  staff  3200 Apr  3 10:00 agent.ts\n-rw-r--r--  1 user  staff  1800 Apr  3 10:00 auth.ts\n-rw-r--r--  1 user  staff  5600 Apr  3 10:00 projects.ts\n-rw-r--r--  1 user  staff  8900 Apr  3 10:00 tasks.ts",
+		m,
+	);
 
-	// ── bash (long output — collapsed) ──
-	const bashLongId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_BASH,
-		toolCallId: bashLongId,
-		input: { command: "bun test" },
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	const longTestOutput = Array.from({ length: 50 }, (_, i) => {
-		const suite = Math.floor(i / 5) + 1;
-		const names = [
-			"initialization",
-			"handles valid input",
-			"handles edge cases",
-			"cleanup works",
-			"integration test",
-		];
-		return `✓ test suite ${suite} > ${names[i % 5]} [${(Math.random() * 2 + 0.1).toFixed(1)}ms]`;
-	}).join("\n");
-	events.push({
-		type: "tool_result",
-		tool: TOOL_BASH,
-		toolCallId: bashLongId,
-		content: `${longTestOutput}\n\n 50 pass\n 0 fail\n 10 suites\n\nRan 50 tests across 10 suites. [4.32s]`,
-		isError: false,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+	// bash (error)
+	m = pushResolved(
+		events,
+		TOOL_BASH,
+		{ command: "cat /nonexistent/file.ts" },
+		"cat: /nonexistent/file.ts: No such file or directory\nexit code: 1",
+		m,
+		{ isError: true },
+	);
 
-	// ── bash (background — shows background process info) ──
-	const bashBgId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_BASH,
-		toolCallId: bashBgId,
-		input: {
-			command: "bun run typecheck",
-			run_in_background: true,
-		},
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: TOOL_BASH,
-		toolCallId: bashBgId,
-		content: "Command moved to background.",
-		isError: false,
-		backgroundId: "bg-MOCK001",
-		backgroundCommand: "bun run typecheck",
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+	// bash (long output — collapsed)
+	{
+		const longOutput = Array.from({ length: 50 }, (_, i) => {
+			const suite = Math.floor(i / 5) + 1;
+			const names = [
+				"initialization",
+				"handles valid input",
+				"handles edge cases",
+				"cleanup works",
+				"integration test",
+			];
+			return `✓ test suite ${suite} > ${names[i % 5]} [${(Math.random() * 2 + 0.1).toFixed(1)}ms]`;
+		}).join("\n");
+		m = pushResolved(
+			events,
+			TOOL_BASH,
+			{ command: "bun test" },
+			`${longOutput}\n\n 50 pass\n 0 fail\n 10 suites\n\nRan 50 tests across 10 suites. [4.32s]`,
+			m,
+		);
+	}
 
-	// ── read_file (success) ──
-	const readOkId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_READ_FILE,
-		toolCallId: readOkId,
-		input: { path: "src/daemon/routes/projects.ts", offset: 1, limit: 10 },
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: TOOL_READ_FILE,
-		toolCallId: readOkId,
-		content:
-			'1: import type { Hono } from "hono";\n2: import { stopAgent } from "../agent-lifecycle.ts";\n3: import type { DaemonContext } from "../context.ts";\n4: import { getPendingClarifications } from "../event-system.ts";\n5: import { getEventStore, stripEventForUI } from "../helpers.ts";\n6:\n7: export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {\n8:   // Projects CRUD\n9:   app.post("/projects", async (c) => {\n10:    const body = await c.req.json<{ path: string }>();',
-		isError: false,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+	// bash (background)
+	m = pushResolved(
+		events,
+		TOOL_BASH,
+		{ command: "bun run typecheck", run_in_background: true },
+		"Command moved to background.",
+		m,
+		{ backgroundId: "bg-MOCK001", backgroundCommand: "bun run typecheck" },
+	);
 
-	// ── read_file (with image) ──
-	const readImgId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_READ_FILE,
-		toolCallId: readImgId,
-		input: { path: "screenshot.png" },
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	// 1x1 red PNG
-	const tinyPng =
-		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
-	events.push({
-		type: "tool_result",
-		tool: TOOL_READ_FILE,
-		toolCallId: readImgId,
-		content: "Image file read successfully (1x1 pixels)",
-		isError: false,
-		images: [{ base64: tinyPng, mediaType: "image/png" }],
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+	// read_file (success)
+	m = pushResolved(
+		events,
+		TOOL_READ_FILE,
+		{ path: "src/daemon/routes/projects.ts", offset: 1, limit: 10 },
+		'1: import type { Hono } from "hono";\n2: import { stopAgent } from "../agent-lifecycle.ts";\n3: import type { DaemonContext } from "../context.ts";\n4: import { getPendingClarifications } from "../event-system.ts";\n5: import { getEventStore, stripEventForUI } from "../helpers.ts";\n6:\n7: export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {\n8:   // Projects CRUD\n9:   app.post("/projects", async (c) => {\n10:    const body = await c.req.json<{ path: string }>();',
+		m,
+	);
 
-	// ── search ──
-	const searchId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_SEARCH,
-		toolCallId: searchId,
-		input: {
+	// read_file (with image result)
+	m = pushResolved(
+		events,
+		TOOL_READ_FILE,
+		{ path: "screenshot.png" },
+		"Image file read successfully (1x1 pixels)",
+		m,
+		{ images: [{ base64: tinyPng, mediaType: "image/png" }] },
+	);
+
+	// search
+	m = pushResolved(
+		events,
+		TOOL_SEARCH,
+		{
 			pattern: "registerRoutes",
 			path: "src/daemon",
 			output_mode: "files_with_matches",
 		},
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: TOOL_SEARCH,
-		toolCallId: searchId,
-		content:
-			"src/daemon/routes/projects.ts\nsrc/daemon/routes/agent.ts\nsrc/daemon/routes/sse.ts\nsrc/daemon/routes/config.ts\nsrc/daemon/routes/tasks.ts",
-		isError: false,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		"src/daemon/routes/projects.ts\nsrc/daemon/routes/agent.ts\nsrc/daemon/routes/sse.ts\nsrc/daemon/routes/config.ts\nsrc/daemon/routes/tasks.ts",
+		m,
+	);
 
-	// ── list_files ──
-	const listFilesId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_LIST_FILES,
-		toolCallId: listFilesId,
-		input: { pattern: "web/components/**/*.tsx" },
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: TOOL_LIST_FILES,
-		toolCallId: listFilesId,
-		content:
-			"web/components/ActivityLog.tsx\nweb/components/Card.tsx\nweb/components/TaskTree.tsx\nweb/components/ToolCard.tsx\nweb/components/InputBar.tsx",
-		isError: false,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+	// list_files
+	m = pushResolved(
+		events,
+		TOOL_LIST_FILES,
+		{ pattern: "web/components/**/*.tsx" },
+		"web/components/ActivityLog.tsx\nweb/components/Card.tsx\nweb/components/TaskTree.tsx\nweb/components/ToolCard.tsx\nweb/components/InputBar.tsx",
+		m,
+	);
 
-	// ── edit_file (with diff) ──
-	const editId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_EDIT_FILE,
-		toolCallId: editId,
-		input: {
+	// edit_file (with diff view)
+	m = pushResolved(
+		events,
+		TOOL_EDIT_FILE,
+		{
 			path: "src/config.ts",
 			old_string:
 				'export const DEFAULT_MODEL = "claude-3-opus";\nexport const MAX_TOKENS = 4096;',
 			new_string:
 				'export const DEFAULT_MODEL = "claude-sonnet-4-20250514";\nexport const MAX_TOKENS = 8192;\nexport const DEFAULT_TIMEOUT = 30_000;',
 		},
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: TOOL_EDIT_FILE,
-		toolCallId: editId,
-		content: "Applied edit to src/config.ts",
-		isError: false,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		"Applied edit to src/config.ts",
+		m,
+	);
 
-	// ── MCP: create_task ──
-	const createTaskId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_CREATE_TASK,
-		toolCallId: createTaskId,
-		input: {
+	// write_file
+	m = pushResolved(
+		events,
+		TOOL_WRITE_FILE,
+		{
+			path: "src/utils/helpers.ts",
+			content:
+				"export function formatDuration(ms: number): string {\n  if (ms < 1000) return ms + 'ms';\n  return (ms / 1000).toFixed(1) + 's';\n}\n",
+		},
+		"Wrote 120 bytes to src/utils/helpers.ts",
+		m,
+	);
+
+	// ── Task tools ──────────────────────────────────────────────────────
+
+	// create_task
+	m = pushResolved(
+		events,
+		TOOL_CREATE_TASK,
+		{
 			title: "Add rate limiting middleware",
-			description:
-				"Implement token bucket rate limiter for API endpoints. Should support per-IP and per-user limits.",
+			description: "Implement token bucket rate limiter for API endpoints.",
 			color: "blue",
 		},
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: TOOL_CREATE_TASK,
-		toolCallId: createTaskId,
-		content: JSON.stringify({
+		JSON.stringify({
 			id: taskIds.pending,
 			title: "Add rate limiting middleware",
 			status: "pending",
 		}),
-		isError: false,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── MCP: get_tree ──
-	const getTreeId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_GET_TREE,
-		toolCallId: getTreeId,
-		input: { format: "tree" },
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: TOOL_GET_TREE,
-		toolCallId: getTreeId,
-		content: JSON.stringify({
+	// get_tree
+	m = pushResolved(
+		events,
+		TOOL_GET_TREE,
+		{ format: "tree" },
+		JSON.stringify({
 			nodes: [
 				{
 					id: ROOT_ID,
@@ -537,107 +540,287 @@ function buildMockData() {
 				},
 			],
 		}),
-		isError: false,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── MCP: send_message ──
-	const sendMsgId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_SEND_MESSAGE,
-		toolCallId: sendMsgId,
-		input: {
+	// get_task
+	m = pushResolved(
+		events,
+		TOOL_GET_TASK,
+		{ taskId: taskIds.inProgress },
+		JSON.stringify({
+			id: taskIds.inProgress,
+			title: "Refactor event system",
+			status: "in_progress",
+			description:
+				"Migrate from string-based event types to discriminated unions.",
+			color: "green",
+			costUsd: 0.73,
+		}),
+		m,
+	);
+
+	// update_task
+	m = pushResolved(
+		events,
+		TOOL_UPDATE_TASK,
+		{
+			taskId: taskIds.draft,
+			title: "Design new auth system (OAuth2 + PKCE)",
+			color: "blue",
+		},
+		JSON.stringify({
+			id: taskIds.draft,
+			title: "Design new auth system (OAuth2 + PKCE)",
+			status: "draft",
+		}),
+		m,
+	);
+
+	// delete_task
+	m = pushResolved(
+		events,
+		TOOL_DELETE_TASK,
+		{ taskId: taskIds.nestedTask },
+		JSON.stringify({ deleted: taskIds.nestedTask }),
+		m,
+	);
+
+	// close_task
+	m = pushResolved(
+		events,
+		TOOL_CLOSE_TASK,
+		{ taskId: taskIds.verify },
+		JSON.stringify({ closed: taskIds.verify }),
+		m,
+	);
+
+	// reset_task
+	m = pushResolved(
+		events,
+		TOOL_RESET_TASK,
+		{ taskId: taskIds.failed },
+		JSON.stringify({ reset: taskIds.failed, status: "pending" }),
+		m,
+	);
+
+	// reorder_tasks
+	m = pushResolved(
+		events,
+		TOOL_REORDER_TASKS,
+		{
+			nodeId: ROOT_ID,
+			children: [taskIds.inProgress, taskIds.pending, taskIds.draft, FOLDER_ID],
+		},
+		"Reordered 4 children.",
+		m,
+	);
+
+	// execute_tasks (legacy — start multiple)
+	m = pushResolved(
+		events,
+		TOOL_EXECUTE_TASKS,
+		{
+			tasks: [
+				{ taskId: taskIds.pending, message: "Start rate limiter" },
+				{ taskId: taskIds.draft, message: "Begin auth design" },
+			],
+		},
+		JSON.stringify({ launched: [taskIds.pending, taskIds.draft] }),
+		m,
+	);
+
+	// ── Communication tools ──────────────────────────────────────────────
+
+	// send_message
+	m = pushResolved(
+		events,
+		TOOL_SEND_MESSAGE,
+		{
 			taskId: taskIds.inProgress,
 			title: "Progress update",
 			message:
 				"Completed the type refactoring. All 47 compile errors resolved. Moving to tests.",
 		},
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: TOOL_SEND_MESSAGE,
-		toolCallId: sendMsgId,
-		content: "Message delivered.",
-		isError: false,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		"Message delivered.",
+		m,
+	);
 
-	// ── MCP: done (resolved pair — the merged card) ──
-	const doneResolvedId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: TOOL_DONE,
-		toolCallId: doneResolvedId,
-		input: {
+	// send_message_to_project
+	m = pushResolved(
+		events,
+		TOOL_SEND_MESSAGE_TO_PROJECT,
+		{
+			projectId: "other-project-id",
+			message:
+				"Auth middleware v2 is ready. Please test against your API gateway.",
+		},
+		"Message sent to project API Gateway.",
+		m,
+	);
+
+	// clarify
+	m = pushResolved(
+		events,
+		TOOL_CLARIFY,
+		{
+			question:
+				"Should we support both OAuth2 and API key auth, or OAuth2 only?",
+		},
+		"Clarification sent to user.",
+		m,
+	);
+
+	// ── Lifecycle tools ──────────────────────────────────────────────────
+
+	// done (resolved pair — tool_call + tool_result)
+	m = pushResolved(
+		events,
+		TOOL_DONE,
+		{
 			status: "passed",
 			summary:
 				"Built the mock showcase page with all card types. Backend endpoint returns mock task tree and events.",
 		},
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: TOOL_DONE,
-		toolCallId: doneResolvedId,
-		content: "",
-		isError: false,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		"",
+		m,
+	);
 
-	// ── External MCP tool (non-builtin) ──
-	const externalToolId = ulid();
-	events.push({
-		type: "tool_call",
-		tool: "mcp__brave-search__brave_web_search",
-		toolCallId: externalToolId,
-		input: { query: "hono framework middleware patterns", count: 5 },
-		taskId: SESSION_ID,
-		ts: ts(minute),
-	});
-	events.push({
-		type: "tool_result",
-		tool: "mcp__brave-search__brave_web_search",
-		toolCallId: externalToolId,
-		content: JSON.stringify([
+	// yield (resolved pair — tool_call + tool_result)
+	m = pushResolved(events, TOOL_YIELD, {}, "resumed.", m);
+
+	// ── Advanced tools ───────────────────────────────────────────────────
+
+	// fork_task_context
+	m = pushResolved(
+		events,
+		TOOL_FORK_TASK_CONTEXT,
+		{
+			sourceTaskId: taskIds.verify,
+			targetTaskId: taskIds.pending,
+		},
+		"Forked context from source task. You are the parent agent — continue your work.",
+		m,
+	);
+
+	// list_projects
+	m = pushResolved(
+		events,
+		TOOL_LIST_PROJECTS,
+		{},
+		JSON.stringify([
+			{ id: "proj-1", name: "Matrix", path: "/Users/dev/matrix" },
+			{
+				id: "proj-2",
+				name: "API Gateway",
+				path: "/Users/dev/api-gateway",
+			},
+		]),
+		m,
+	);
+
+	// background (list)
+	m = pushResolved(
+		events,
+		TOOL_BACKGROUND,
+		{ action: "list" },
+		JSON.stringify([
+			{
+				id: "bg-MOCK001",
+				command: "bun run typecheck",
+				status: "running",
+			},
+			{
+				id: "bg-MOCK002",
+				command: "bun test --watch",
+				status: "completed",
+				exitCode: 0,
+			},
+		]),
+		m,
+	);
+
+	// evaluate_script
+	m = pushResolved(
+		events,
+		TOOL_EVALUATE_SCRIPT,
+		{
+			function: "() => { return document.querySelectorAll('.card').length; }",
+		},
+		"42",
+		m,
+	);
+
+	// ── Folder tools ─────────────────────────────────────────────────────
+
+	// create_folder
+	m = pushResolved(
+		events,
+		TOOL_CREATE_FOLDER,
+		{ title: "Sprint 3 Tasks" },
+		JSON.stringify({ id: FOLDER_ID, title: "Sprint 3 Tasks" }),
+		m,
+	);
+
+	// rename_folder
+	m = pushResolved(
+		events,
+		TOOL_RENAME_FOLDER,
+		{ folderId: FOLDER_ID, title: "Completed Work" },
+		JSON.stringify({ id: FOLDER_ID, title: "Completed Work" }),
+		m,
+	);
+
+	// delete_folder
+	m = pushResolved(
+		events,
+		TOOL_DELETE_FOLDER,
+		{ folderId: NESTED_FOLDER_ID },
+		JSON.stringify({ deleted: NESTED_FOLDER_ID }),
+		m,
+	);
+
+	// ── External MCP tool (non-builtin) ──────────────────────────────────
+
+	// brave_web_search (resolved)
+	m = pushResolved(
+		events,
+		"mcp__brave-search__brave_web_search",
+		{ query: "hono framework middleware patterns", count: 5 },
+		JSON.stringify([
 			{
 				title: "Hono - Ultrafast web framework",
 				url: "https://hono.dev",
-				description:
-					"Hono is an ultrafast web framework for the Edge.",
+				description: "Hono is an ultrafast web framework for the Edge.",
 			},
 			{
 				title: "Middleware Guide - Hono",
 				url: "https://hono.dev/docs/guides/middleware",
-				description:
-					"Learn how to create and use middleware in Hono.",
+				description: "Learn how to create and use middleware in Hono.",
 			},
 		]),
-		isError: false,
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
+
+	// chrome-devtools take_screenshot (resolved with image)
+	m = pushResolved(
+		events,
+		"mcp__chrome-devtools__take_screenshot",
+		{ fullPage: true, format: "png" },
+		"Screenshot captured (1x1 pixels)",
+		m,
+		{ images: [{ base64: tinyPng, mediaType: "image/png" }] },
+	);
 
 	// ═══════════════════════════════════════════════════════════════════════
 	// SECTION 3: Two-phase messages — consumed (rendered as cards)
 	// ═══════════════════════════════════════════════════════════════════════
 
-	// ── Task message (upward — from child to parent) ──
-	const taskMsgUpId = ulid();
-	events.push({
-		type: "message",
-		id: taskMsgUpId,
-		taskId: SESSION_ID,
-		body: {
+	// Task message (upward — from child to parent)
+	m = pushConsumedMessage(
+		events,
+		{
 			source: "task_message",
-			id: taskMsgUpId,
-			ts: ts(minute),
 			fromTaskId: taskIds.inProgress,
 			fromTitle: "Refactor event system",
 			content:
@@ -645,25 +828,14 @@ function buildMockData() {
 			title: "Migration complete",
 			requestReply: false,
 		},
-		ts: ts(minute),
-	});
-	events.push({
-		type: "messages_consumed",
-		messageIds: [taskMsgUpId],
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── Task message (downward — requestReply) ──
-	const taskMsgDownId = ulid();
-	events.push({
-		type: "message",
-		id: taskMsgDownId,
-		taskId: SESSION_ID,
-		body: {
+	// Task message (downward — from parent to child, requestReply)
+	m = pushConsumedMessage(
+		events,
+		{
 			source: "task_message",
-			id: taskMsgDownId,
-			ts: ts(minute),
 			fromTaskId: ROOT_ID,
 			fromTitle: "Orchestrator",
 			content:
@@ -671,121 +843,66 @@ function buildMockData() {
 			title: "Review feedback",
 			requestReply: true,
 		},
-		ts: ts(minute),
-	});
-	events.push({
-		type: "messages_consumed",
-		messageIds: [taskMsgDownId],
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── User message forwarded ──
-	const fwdMsgId = ulid();
-	events.push({
-		type: "message",
-		id: fwdMsgId,
-		taskId: SESSION_ID,
-		body: {
+	// User message forwarded
+	m = pushConsumedMessage(
+		events,
+		{
 			source: "user_message_forwarded",
-			id: fwdMsgId,
-			ts: ts(minute),
 			fromTaskId: ROOT_ID,
 			fromTitle: "Orchestrator",
 			content: "Please prioritize the auth middleware task.",
 		},
-		ts: ts(minute),
-	});
-	events.push({
-		type: "messages_consumed",
-		messageIds: [fwdMsgId],
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── Task complete (passed) ──
-	const taskCompletePassedId = ulid();
-	events.push({
-		type: "message",
-		id: taskCompletePassedId,
-		taskId: SESSION_ID,
-		body: {
+	// Task complete (success)
+	m = pushConsumedMessage(
+		events,
+		{
 			source: "task_complete",
-			id: taskCompletePassedId,
-			ts: ts(minute),
 			taskId: taskIds.verify,
 			title: "Add JWT auth middleware",
 			success: true,
 			output:
 				"Implemented JWT validation middleware with Bearer token support. All 12 tests pass.",
 		},
-		ts: ts(minute),
-	});
-	events.push({
-		type: "messages_consumed",
-		messageIds: [taskCompletePassedId],
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── Task complete (failed) ──
-	const taskCompleteFailedId = ulid();
-	events.push({
-		type: "message",
-		id: taskCompleteFailedId,
-		taskId: SESSION_ID,
-		body: {
+	// Task complete (failed)
+	m = pushConsumedMessage(
+		events,
+		{
 			source: "task_complete",
-			id: taskCompleteFailedId,
-			ts: ts(minute),
 			taskId: taskIds.failed,
 			title: "Docker multi-stage build",
 			success: false,
 			output:
 				"Failed: Native dependency `better-sqlite3` requires build tools not available in alpine. Segfaults on ARM64.",
 		},
-		ts: ts(minute),
-	});
-	events.push({
-		type: "messages_consumed",
-		messageIds: [taskCompleteFailedId],
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── Tree change ──
-	const treeChangeId = ulid();
-	events.push({
-		type: "message",
-		id: treeChangeId,
-		taskId: SESSION_ID,
-		body: {
+	// Tree change
+	m = pushConsumedMessage(
+		events,
+		{
 			source: "tree_change",
-			id: treeChangeId,
-			ts: ts(minute),
 			action: "created",
 			nodeId: taskIds.draft,
 			title: "Design new auth system",
 		},
-		ts: ts(minute),
-	});
-	events.push({
-		type: "messages_consumed",
-		messageIds: [treeChangeId],
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── Background complete ──
-	const bgCompleteId = ulid();
-	events.push({
-		type: "message",
-		id: bgCompleteId,
-		taskId: SESSION_ID,
-		body: {
+	// Background complete
+	m = pushConsumedMessage(
+		events,
+		{
 			source: "background_complete",
-			id: bgCompleteId,
-			ts: ts(minute),
 			commandId: "bg-MOCK001",
 			command: "bun run typecheck",
 			exitCode: 0,
@@ -793,92 +910,55 @@ function buildMockData() {
 			stdout: "No errors found.\n\nChecked 142 files in 12.5s.",
 			stderr: "",
 		},
-		ts: ts(minute),
-	});
-	events.push({
-		type: "messages_consumed",
-		messageIds: [bgCompleteId],
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── Cross-project message ──
-	const crossProjectId = ulid();
-	events.push({
-		type: "message",
-		id: crossProjectId,
-		taskId: SESSION_ID,
-		body: {
+	// Cross-project message
+	m = pushConsumedMessage(
+		events,
+		{
 			source: "cross_project",
-			id: crossProjectId,
-			ts: ts(minute),
 			fromProjectId: "other-project-id",
 			fromProjectName: "API Gateway",
 			content:
 				"The auth middleware changes are ready for integration. Please update your import to `@company/auth-middleware`.",
 		},
-		ts: ts(minute),
-	});
-	events.push({
-		type: "messages_consumed",
-		messageIds: [crossProjectId],
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── Clarify response (from queue) ──
-	const clarifyRespId = ulid();
-	events.push({
-		type: "message",
-		id: clarifyRespId,
-		taskId: SESSION_ID,
-		body: {
+	// Clarify response
+	m = pushConsumedMessage(
+		events,
+		{
 			source: "clarify_response",
-			id: clarifyRespId,
-			ts: ts(minute),
-			answer:
-				"Yes, include both builtin and external MCP tool examples.",
+			answer: "Yes, include both builtin and external MCP tool examples.",
 		},
-		ts: ts(minute),
-	});
-	events.push({
-		type: "messages_consumed",
-		messageIds: [clarifyRespId],
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
 	// ═══════════════════════════════════════════════════════════════════════
 	// SECTION 4: Non-message event cards
 	// ═══════════════════════════════════════════════════════════════════════
 
-	// ── Task started ──
-	events.push({
-		type: "task_started",
-		taskId: SESSION_ID,
-		title: "Refactor event system",
-		ts: ts(minute--),
-	});
-
-	// ── Error ──
+	// error
 	events.push({
 		type: "error",
 		taskId: SESSION_ID,
 		message:
 			"API Error: 429 Too Many Requests — Rate limit exceeded. Retry after 30 seconds.\nRequest ID: req_abc123def456\nModel: claude-sonnet-4-20250514",
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
-	// ── Budget warning ──
+	// budget_warning
 	events.push({
 		type: "budget_warning",
 		warning:
 			"Task is at 80% of budget ($1.92 / $2.40). Consider calling done() soon.",
 		taskId: SESSION_ID,
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
-	// ── Clarification requested + answered ──
+	// clarification_requested
 	events.push({
 		type: "clarification_requested",
 		taskId: SESSION_ID,
@@ -886,219 +966,241 @@ function buildMockData() {
 			"Should the mock showcase include MCP external tool cards, or only builtin tools?",
 		title: "Mock showcase scope",
 		body: "I noticed there are external MCP tools (e.g., brave-search, chrome-devtools) in the system. Should I include sample cards for those too?",
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
+
+	// clarification_answered
 	events.push({
 		type: "clarification_answered",
 		taskId: SESSION_ID,
 		answer:
 			"Include both — builtin and at least one external MCP tool example.",
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
-	// ── Compact started + compact marker ──
+	// compact_started
 	events.push({
 		type: "compact_started",
 		taskId: SESSION_ID,
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
+
+	// compact_marker
 	events.push({
 		type: "compact_marker",
 		checkpoint:
 			"## Checkpoint Summary\n\n### Completed:\n- Created backend endpoint at `/mock-showcase`\n- Added task tree with all status variants\n- Generated sample events for all card types\n\n### In Progress:\n- Frontend integration with `?mock=true` parameter\n\n### Key Decisions:\n- Using processEventBatch for consistent rendering\n- Events use the two-phase message lifecycle",
 		savedTokens: 45000,
 		taskId: SESSION_ID,
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
-	// ── Fork marker ──
+	// fork_marker
 	events.push({
 		type: "fork_marker",
 		sourceTaskId: taskIds.verify,
 		targetTitle: "Continue auth work",
 		targetDescription: "Pick up where the auth task left off.",
 		taskId: SESSION_ID,
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
-	// ── Lifecycle: resumed + stopped ──
+	// orchestration_started (resume)
 	events.push({
 		type: "orchestration_started",
 		taskId: SESSION_ID,
 		resume: true,
 		model: "claude-sonnet-4-20250514",
 		provider: "anthropic",
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
+
+	// agent_stopped
 	events.push({
 		type: "agent_stopped",
 		taskId: SESSION_ID,
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
-	// ── More assistant text ──
+	// More assistant text
 	events.push({
 		type: "assistant_text",
 		content:
 			"All card types have been generated. Let me now verify everything renders correctly in the UI.",
 		taskId: SESSION_ID,
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
 	// ═══════════════════════════════════════════════════════════════════════
 	// SECTION 5: Pending tool_calls (no result — renders with spinner)
 	// ═══════════════════════════════════════════════════════════════════════
 
-	// ── Pending: bash ──
-	events.push({
-		type: "tool_call",
-		tool: TOOL_BASH,
-		toolCallId: ulid(),
-		input: { command: "bun test --watch" },
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
-
-	// ── Pending: read_file ──
-	events.push({
-		type: "tool_call",
-		tool: TOOL_READ_FILE,
-		toolCallId: ulid(),
-		input: { path: "src/daemon.ts" },
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
-
-	// ── Pending: search ──
-	events.push({
-		type: "tool_call",
-		tool: TOOL_SEARCH,
-		toolCallId: ulid(),
-		input: { pattern: "createApp", path: "src" },
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
-
-	// ── Pending: edit_file ──
-	events.push({
-		type: "tool_call",
-		tool: TOOL_EDIT_FILE,
-		toolCallId: ulid(),
-		input: {
+	// File tools
+	m = pushPending(events, TOOL_BASH, { command: "bun test --watch" }, m);
+	m = pushPending(events, TOOL_READ_FILE, { path: "src/daemon.ts" }, m);
+	m = pushPending(
+		events,
+		TOOL_SEARCH,
+		{ pattern: "createApp", path: "src" },
+		m,
+	);
+	m = pushPending(
+		events,
+		TOOL_EDIT_FILE,
+		{
 			path: "web/App.tsx",
 			old_string: "const [mock, setMock] = useState(false);",
 			new_string: 'const [mock, setMock] = useState(params.has("mock"));',
 		},
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
+	m = pushPending(
+		events,
+		TOOL_WRITE_FILE,
+		{ path: "src/new-module.ts", content: "export const VERSION = '1.0.0';\n" },
+		m,
+	);
+	m = pushPending(events, TOOL_LIST_FILES, { pattern: "src/**/*.test.ts" }, m);
 
-	// ── Pending: list_files ──
-	events.push({
-		type: "tool_call",
-		tool: TOOL_LIST_FILES,
-		toolCallId: ulid(),
-		input: { pattern: "src/**/*.test.ts" },
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
-
-	// ── Pending: create_task ──
-	events.push({
-		type: "tool_call",
-		tool: TOOL_CREATE_TASK,
-		toolCallId: ulid(),
-		input: {
+	// Task tools
+	m = pushPending(
+		events,
+		TOOL_CREATE_TASK,
+		{
 			title: "Add WebSocket support",
-			description: "Replace SSE with WebSocket for bidirectional communication.",
+			description:
+				"Replace SSE with WebSocket for bidirectional communication.",
 		},
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
+	m = pushPending(events, TOOL_GET_TREE, { include_details: true }, m);
+	m = pushPending(events, TOOL_GET_TASK, { taskId: taskIds.verify }, m);
+	m = pushPending(
+		events,
+		TOOL_UPDATE_TASK,
+		{ taskId: taskIds.pending, status: "in_progress" },
+		m,
+	);
+	m = pushPending(events, TOOL_DELETE_TASK, { taskId: taskIds.nestedTask }, m);
+	m = pushPending(events, TOOL_CLOSE_TASK, { taskId: taskIds.verify }, m);
+	m = pushPending(events, TOOL_RESET_TASK, { taskId: taskIds.failed }, m);
+	m = pushPending(
+		events,
+		TOOL_REORDER_TASKS,
+		{ nodeId: ROOT_ID, children: [taskIds.draft, taskIds.pending] },
+		m,
+	);
+	m = pushPending(
+		events,
+		TOOL_EXECUTE_TASKS,
+		{ tasks: [{ taskId: taskIds.draft, message: "Go" }] },
+		m,
+	);
 
-	// ── Pending: get_tree ──
-	events.push({
-		type: "tool_call",
-		tool: TOOL_GET_TREE,
-		toolCallId: ulid(),
-		input: { include_details: true },
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
-
-	// ── Pending: send_message ──
-	events.push({
-		type: "tool_call",
-		tool: TOOL_SEND_MESSAGE,
-		toolCallId: ulid(),
-		input: {
+	// Communication tools
+	m = pushPending(
+		events,
+		TOOL_SEND_MESSAGE,
+		{
 			taskId: taskIds.inProgress,
 			title: "Checking status",
 			message: "Are you still working on the event system refactor?",
 		},
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
+	m = pushPending(
+		events,
+		TOOL_SEND_MESSAGE_TO_PROJECT,
+		{ projectId: "proj-2", message: "Ready to integrate?" },
+		m,
+	);
+	m = pushPending(
+		events,
+		TOOL_CLARIFY,
+		{ question: "Which auth provider should we use?" },
+		m,
+	);
 
-	// ── Pending: external MCP tool ──
-	events.push({
-		type: "tool_call",
-		tool: "mcp__chrome-devtools__take_screenshot",
-		toolCallId: ulid(),
-		input: { fullPage: true },
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+	// Advanced tools
+	m = pushPending(
+		events,
+		TOOL_FORK_TASK_CONTEXT,
+		{ sourceTaskId: taskIds.verify, targetTaskId: taskIds.pending },
+		m,
+	);
+	m = pushPending(events, TOOL_LIST_PROJECTS, {}, m);
+	m = pushPending(
+		events,
+		TOOL_BACKGROUND,
+		{ action: "status", id: "bg-MOCK001" },
+		m,
+	);
+	m = pushPending(
+		events,
+		TOOL_EVALUATE_SCRIPT,
+		{ function: "() => document.title" },
+		m,
+	);
+
+	// Folder tools
+	m = pushPending(events, TOOL_CREATE_FOLDER, { title: "Sprint 4 Tasks" }, m);
+	m = pushPending(
+		events,
+		TOOL_RENAME_FOLDER,
+		{ folderId: FOLDER_ID, title: "Finished" },
+		m,
+	);
+	m = pushPending(
+		events,
+		TOOL_DELETE_FOLDER,
+		{ folderId: NESTED_FOLDER_ID },
+		m,
+	);
+
+	// External MCP tool (pending)
+	m = pushPending(
+		events,
+		"mcp__chrome-devtools__take_screenshot",
+		{ fullPage: true },
+		m,
+	);
 
 	// ═══════════════════════════════════════════════════════════════════════
-	// SECTION 6: Special tools — yield and done standalone
+	// SECTION 6: Special tools — yield and done standalone (no result)
 	// ═══════════════════════════════════════════════════════════════════════
 
-	// ── yield (standalone tool_call → "Waiting" card) ──
-	events.push({
-		type: "tool_call",
-		tool: TOOL_YIELD,
-		toolCallId: ulid(),
-		input: {},
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+	// yield (standalone → "Waiting" card)
+	m = pushPending(events, TOOL_YIELD, {}, m);
 
-	// ── done passed (standalone tool_call → pass card) ──
-	events.push({
-		type: "tool_call",
-		tool: TOOL_DONE,
-		toolCallId: ulid(),
-		input: {
+	// done passed (standalone → pass card)
+	m = pushPending(
+		events,
+		TOOL_DONE,
+		{
 			status: "passed",
 			summary:
 				"Successfully implemented the mock showcase with all card types and task states.",
 		},
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
-	// ── done failed (standalone tool_call → fail card) ──
-	events.push({
-		type: "tool_call",
-		tool: TOOL_DONE,
-		toolCallId: ulid(),
-		input: {
+	// done failed (standalone → fail card)
+	m = pushPending(
+		events,
+		TOOL_DONE,
+		{
 			status: "failed",
 			summary:
 				"Could not complete the Docker build — missing native dependencies for ARM64.",
 		},
-		taskId: SESSION_ID,
-		ts: ts(minute--),
-	});
+		m,
+	);
 
 	// ═══════════════════════════════════════════════════════════════════════
-	// SECTION 7: Unconsumed messages — show as pending chips in footer
+	// SECTION 7: Unconsumed messages — pending chips in footer
 	// ═══════════════════════════════════════════════════════════════════════
 
-	// These have `id` set but no `messages_consumed` follows →
-	// they stay in deferredMessages → appear as pending chips.
-
+	// These have id set but no messages_consumed follows → pending chips
 	const pendingUserMsgId = ulid();
 	events.push({
 		type: "message",
@@ -1107,10 +1209,10 @@ function buildMockData() {
 		body: {
 			source: "user",
 			id: pendingUserMsgId,
-			ts: ts(minute),
+			ts: ts(m),
 			content: "Can you also add dark mode support?",
 		},
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
 	const pendingTaskMsgId = ulid();
@@ -1121,14 +1223,15 @@ function buildMockData() {
 		body: {
 			source: "task_message",
 			id: pendingTaskMsgId,
-			ts: ts(minute),
+			ts: ts(m),
 			fromTaskId: taskIds.inProgress,
 			fromTitle: "Refactor event system",
-			content: "I found a circular dependency in the event module. Need guidance.",
+			content:
+				"I found a circular dependency in the event module. Need guidance.",
 			title: "Circular dependency issue",
 			requestReply: true,
 		},
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
 	// ═══════════════════════════════════════════════════════════════════════
@@ -1150,7 +1253,7 @@ function buildMockData() {
 			totalTurns: 42,
 			taskCount: 3,
 		},
-		ts: ts(minute--),
+		ts: ts(m--),
 	});
 
 	return {
