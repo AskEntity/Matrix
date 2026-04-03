@@ -429,4 +429,123 @@ describe("evaluate_script tool", () => {
 		expect(execResult.content).toContain("Return Value");
 		expect(execResult.content).toContain("42");
 	});
+
+	test("accesses ctx.sessionId (equals taskId)", async () => {
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"my-project",
+			"my-session-id",
+			undefined,
+			true,
+		);
+		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+
+		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
+		const handlers = new Map<string, ToolDefinition<any>>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+
+		const execResult = await executeTool(
+			TOOL_EVALUATE_SCRIPT,
+			{ script: "return ctx.sessionId" },
+			handlers,
+		);
+		expect(execResult.isError).toBeFalsy();
+		expect(execResult.content).toContain("my-session-id");
+	});
+
+	test("accesses ctx.daemonCtx when provided", async () => {
+		const fakeDaemonCtx = {
+			pm: { list: () => [{ id: "p1", name: "test-project" }] },
+			eventStores: new Map([["p1", "fake-store"]]),
+		};
+		const result = createOrchestratorTools(
+			makeDeps({ daemonCtx: fakeDaemonCtx }),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
+		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+
+		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
+		const handlers = new Map<string, ToolDefinition<any>>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+
+		const execResult = await executeTool(
+			TOOL_EVALUATE_SCRIPT,
+			{ script: "return ctx.daemonCtx.pm.list().length" },
+			handlers,
+		);
+		expect(execResult.isError).toBeFalsy();
+		expect(execResult.content).toContain("1");
+	});
+
+	test("ctx.daemonCtx is undefined when not provided", async () => {
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
+		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+
+		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
+		const handlers = new Map<string, ToolDefinition<any>>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+
+		const execResult = await executeTool(
+			TOOL_EVALUATE_SCRIPT,
+			{ script: "return ctx.daemonCtx === undefined" },
+			handlers,
+		);
+		expect(execResult.isError).toBeFalsy();
+		expect(execResult.content).toContain("true");
+	});
+
+	test("accesses ctx.allTools via setAllTools binding", async () => {
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
+		expect(result.setAllTools).toBeDefined();
+
+		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+
+		// Simulate provider loop binding the tools array
+		const tools = [
+			{ name: "tool1", description: "desc1", jsonSchema: {} },
+			{ name: "tool2", description: "desc2", jsonSchema: {} },
+		];
+		result.setAllTools?.(tools);
+
+		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
+		const handlers = new Map<string, ToolDefinition<any>>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+
+		const execResult = await executeTool(
+			TOOL_EVALUATE_SCRIPT,
+			{
+				script: "return ctx.allTools.map(t => t.name)",
+			},
+			handlers,
+		);
+		expect(execResult.isError).toBeFalsy();
+		expect(execResult.content).toContain("tool1");
+		expect(execResult.content).toContain("tool2");
+	});
+
+	test("setAllTools not created when selfBootstrap is false", () => {
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			false,
+		);
+		expect(result.setAllTools).toBeUndefined();
+	});
 });
