@@ -15,12 +15,16 @@ const STATUS_PRIORITY: Record<TaskStatus, number> = {
 	closed: 5,
 };
 
-/** Stable sort by status priority, preserving relative order within same status. */
+/** Sort by status priority; within each status group, newest (last in original order) first. */
 function sortByStatus(nodes: TaskNode[]): TaskNode[] {
-	return [...nodes].sort(
-		(a, b) =>
-			(STATUS_PRIORITY[a.status] ?? 9) - (STATUS_PRIORITY[b.status] ?? 9),
-	);
+	const indexMap = new Map(nodes.map((n, i) => [n.id, i]));
+	return [...nodes].sort((a, b) => {
+		const statusDiff =
+			(STATUS_PRIORITY[a.status] ?? 9) - (STATUS_PRIORITY[b.status] ?? 9);
+		if (statusDiff !== 0) return statusDiff;
+		// Reverse original order within same status: higher original index = shown first
+		return (indexMap.get(b.id) ?? 0) - (indexMap.get(a.id) ?? 0);
+	});
 }
 
 interface DragState {
@@ -156,10 +160,11 @@ export const TaskTree = memo(function TaskTree({
 		for (const node of nodes) {
 			// Skip completed nodes when hiding
 			if (completedIds?.has(node.id)) continue;
-			// Apply text filter if present (matches title or task ID prefix)
+			// Apply text filter if present (matches title, description, or task ID prefix)
 			if (
 				trimmed &&
 				!node.title.toLowerCase().includes(lower) &&
+				!node.description?.toLowerCase().includes(lower) &&
 				!node.id.toLowerCase().includes(lower)
 			)
 				continue;
