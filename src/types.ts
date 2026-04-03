@@ -33,11 +33,29 @@ export interface TaskSession {
 	allTools?: unknown[];
 }
 
-/** Shared fields for all task nodes. */
-interface BaseTaskNode {
+/**
+ * A folder node — pure visual grouping, zero behavior.
+ * No status, no branch, no session, no worktree, no cost.
+ * Transparent to ownership: getTaskAbove/getTasksBelow skip folders.
+ */
+export interface FolderNode {
+	id: string;
+	title: string;
+	parentId: string | null;
+	children: string[];
+	/** Discriminator: folder nodes are always "folder". */
+	type: "folder";
+}
+
+/**
+ * A task node — maps 1:1 to an agent and a git branch.
+ * Has full lifecycle: draft → pending → in_progress → verify | failed → closed.
+ */
+export interface TaskNode {
 	id: string;
 	title: string;
 	description: string;
+	status: TaskStatus;
 	branch: string | null;
 	parentId: string | null;
 	children: string[];
@@ -58,15 +76,27 @@ interface BaseTaskNode {
 	 * NOT persisted to disk — stripped during save(), undefined on load().
 	 */
 	session?: TaskSession;
+	/** Discriminator: task nodes are always "task" (or undefined for backward compat on load). */
+	type?: "task";
 }
 
-/** A node in the task tree. Each node maps 1:1 to an agent and a git branch. */
-export interface TaskNode extends BaseTaskNode {
-	status: TaskStatus;
+/** Any node in the task tree — either a task or a folder. */
+export type TreeNode = TaskNode | FolderNode;
+
+/** Type guard: is this a folder node? */
+export function isFolder(node: TreeNode): node is FolderNode {
+	return node.type === "folder";
 }
 
-/** Serialized form of a task node in tree.json (session stripped). */
-export type SerializedTaskNode = Omit<TaskNode, "session">;
+/** Type guard: is this a task node? */
+export function isTask(node: TreeNode): node is TaskNode {
+	return node.type !== "folder";
+}
+
+/** Serialized form of a tree node in tree.json (session stripped). */
+export type SerializedTreeNode =
+	| FolderNode
+	| Omit<TaskNode, "session">;
 
 /**
  * Why the provider loop exited.
