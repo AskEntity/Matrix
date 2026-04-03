@@ -71,7 +71,7 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 | src/events.ts | Event types, formatBodyForAI, buildSessionRepair |
 | src/event-store.ts | JSONL EventStore (with truncateAfterLine) |
 | src/event-converter.ts | walkEventsToMessages + EventConverterCallbacks |
-| src/task-tracker.ts | Task tree, persistent task loading from .mxd/tasks/ |
+| src/task-tracker.ts | Task tree, node CRUD, tree.json persistence |
 | src/image-dimensions.ts | PNG/JPEG pixel dimension parsing |
 
 ## Agent Lifecycle
@@ -98,23 +98,7 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 - `EventStore.truncateAfterLine(sessionId, lineIndex)`: rewrites file keeping lines 0..lineIndex
 - Repair runs in runAgentForNode before provider loop starts
 
-## Persistent Tasks
 
-`persistent: boolean` on TaskNode (discriminated union: `RegularTaskNode | PersistentTaskNode`).
-- `false`: regular task. Full lifecycle (pending → in_progress → verify/failed → closed).
-- `true`: persistent task. Status: `"in_progress" | "verify" | "pending"`.
-  - `done()` → verify/failed (same as regular). `close_task` → verify→pending. `reset_task` rejected.
-  - `done()` still fires `task_complete` to parent. Session preserved.
-  - `get_tree` shows status when "verify", hides for in_progress/pending.
-  - Changeable via `update_task(persistent: true/false)`.
-
-Definition in `.mxd/tasks/<id>.json` (git-tracked): title, description, color, persistent. tree.json stores runtime state only. `savePersistentDef` auto-commits via git. Called from createTaskOp (when persistent set) and updateTaskOp (when title/description/color changes).
-
-Four top-level persistent domains:
-- **Design Philosophy** 🟣 — ITA, anti-patterns, system prompt (sub-domain)
-- **Task System Design** 🟣 — depth, pinned tasks, meeting mode, partial completion, flow
-- **Agent Loop** 🟠 — launch, provider loop, yield/resume, stop/restart, JSONL repair, image validation, OpenAI provider
-- **User Interaction** 🔵 — Web UI + CLI
 
 ## Image Handling
 
@@ -143,7 +127,7 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_k
 - `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation.
 - Mock DSL: `{"blocks": [...]}` or `{"turns": [...]}` with assert/capture.
 - `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
-- ~1155 tests (unit + integration). 3 skipped (E2E).
+- ~1139 tests (unit + integration). 3 skipped (E2E).
 
 ## Known Pitfalls
 
@@ -156,7 +140,7 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_k
 - **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
 - **Async JSONL writes**: `emitEvent` fire-and-forgets `eventStore.append()`. Flush before reading in tests.
-- **delete_task cascades**: Deletes all descendants AND session JSONL. Enforced: returns 400 with children. Use `update_task` to change persistent mode, not delete+recreate.
+- **delete_task cascades**: Deletes all descendants AND session JSONL. Enforced: returns 400 with children.
 - **Abort signal leak**: After stop, old runAgentForNode settles async. catch/finally check `sessionWasReplaced` to suppress stale error events.
 
 ## Known Bugs (unfixed)
@@ -212,17 +196,9 @@ Tests are the single source of truth. Bottom-up: write tests → find simplest a
 4. **Won't question architecture** — "why does this exist" > "how to make it work".
 5. **"Unify" = add third path** — delete until ONE remains.
 
-## System Prompt v2 Rewrite (2026-04-02)
+## System Prompt v2 (2026-04-02)
 
-Major rewrite: 286 insertions, 442 deletions (net -156 lines). 10 chapters + closing.
-- Three roles: root orchestrator, persistent domain owner, worker. Managers never write code.
-- done() universal and non-terminal (persistent tasks: "round finished", not "gone forever").
-- "Keep tree shallow 2-3 levels" removed — replaced with "without depth limit".
-- Fork explained as "changing jobs" — identity continuity, not denial.
-- Memory callee-saved convention: inherited portion untouched, append freely.
-- Three Mutations chapter: test, architecture, intention.
-- "ASK — NEVER SILENTLY FALL BACK" elevated to boldest statement in prompt.
-- Adversarial testing with vivid example (PIN + top up scenario).
+10 chapters. Two roles: root orchestrator, worker. Fork = "changing jobs". Memory callee-saved convention. Three Mutations. "ASK — NEVER SILENTLY FALL BACK." Adversarial testing.
 
 
 ## Two-Phase done() Lifecycle (2026-04-02)
@@ -234,8 +210,7 @@ Major rewrite: 286 insertions, 442 deletions (net -156 lines). 10 chapters + clo
 
 ### Status Changes
 - "verify" added to TaskStatus: `done("passed")` → verify, `done("failed")` → failed.
-- closeTaskOp: verify→closed (regular), verify→pending (persistent). Rejects in_progress/pending/draft.
-- PersistentTaskNode status: `"in_progress" | "verify" | "pending"`.
+- closeTaskOp: verify→closed. Rejects in_progress/pending/draft.
 - buildSessionRepair: TOOL_DONE skipped alongside TOOL_YIELD (not treated as orphans).
 - AgentResult.doneSummary carries summary from done() handler through to Phase 2.
 
@@ -249,14 +224,14 @@ When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provide
 - closeTaskOp now rejects pending/draft/in_progress — tests must set verify or failed before close_task.
 - **Phase 2 ordering is critical**: session=null is the irreversibility boundary. Phase 2 (status update, parent notification) runs AFTER session cleanup, not before. Before session=null: late messages → relaunch (reversible). After session=null: commit verify + notify parent (irreversible). No race window.
 
-## Domain Owner Routing Rules
+## Change Ownership Principle
 
-Route by **domain**, not by **file**. Key principle: **whoever introduces a change owns ALL consequences** (prompt, UI, tests, docs). Domain owners NEVER write code — they manage and understand. Delegate everything.
+**Whoever introduces a change owns ALL consequences** (prompt, UI, tests, docs). Root never writes production code — delegates everything.
 
-## Cache TTL for Persistent Tasks (2026-04-02)
+## Cache TTL (2026-04-02)
 
 - `SessionConfigEvent.cacheTtl?: "1h"` — stored in session_config, inherited via fork.
-- Root + persistent = `"1h"`, regular children = `undefined` (5min default).
+- Root = `"1h"`, regular children = `undefined` (5min default).
 - On resume, `cacheTtl` from stored session_config (not recomputed) — preserves fork inheritance.
 - ALL breakpoints (system, tools, messages) use consistent TTL. Extended cache TTL (1h) is GA — no beta header needed.
 - **PITFALL**: Never add per-request `anthropic-beta` headers — they override client's `defaultHeaders` (including OAuth header `oauth-2025-04-20`), breaking OAuth mode.
@@ -279,9 +254,7 @@ API can return multiple yield (or done) tool_calls in the same assistant turn. P
 **Architectural lesson**: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call. Any other yield/done without a result is a bug.
 
 
-## Persistent Task Deletion (2026-04-03)
 
-Deleted entire persistent task feature: -1940 lines, 44 files. Was a failed abstraction — all use cases covered by regular tasks + fork + templates. Kept: two-phase done(), verify status, Zod validation.
 
 ## Cache Architecture (2026-04-03)
 
