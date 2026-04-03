@@ -329,9 +329,10 @@ project: "多人聊天应用"
 - **一个 agent 一个分支**：agent 和 branch 是 1:1 的。分支是 agent 的工作空间，agent 结束 = 分支合并或丢弃
 - **所有改动通过子 agent**：root agent 是纯 orchestrator，不直接修改代码。即使是小改动也 spawn 子 agent 在独立分支上完成
 
-**节点状态**：`draft → pending → in_progress → testing → passed | failed | closed`
+**节点状态**：`draft → pending → in_progress → verify | failed → closed`
 
 - `draft`：想法/计划阶段，不可执行。用 `update_task(draft: false)` 激活为 pending
+- `verify`：agent 调用 done("passed") 后进入此状态，等待父 agent review + merge
 - `closed`：已完成并清理（worktree + branch 已删），节点保留在树中供历史查看
 
 **Agent 退出模型（exitReason）**：
@@ -438,10 +439,12 @@ feat/realtime-msg 分支上 agent 的 memory.md：
 
 **Prompt Caching**：
 
-使用 Anthropic 的显式 cache breakpoints 降低 API 成本。每次 API 调用设置 cache 断点：
-1. System prompt（最后一个 block 加 `cache_control`，TTL 1h）
-2. Tools 数组最后一个 tool definition（TTL 1h）
+使用 Anthropic 的显式 cache breakpoints 降低 API 成本。Cache prefix 顺序为 tools → system → messages。每次 API 调用设置 cache 断点：
+1. Tools 数组最后一个 tool definition（TTL 1h）
+2. System prompt variable block（TTL 1h）
 3. 对话历史中的 user message（orchestrator 1h TTL，child agent 5m 默认）
+
+Tools 以 `JsonTool {name, description, jsonSchema}` 格式冻结在 session_config 中。Resume 时使用 frozen tools 而非重新生成，确保 byte-identical → cache hit。
 
 效果：system prompt + tools 在整个 session 中只计费一次（后续 turn 命中 cache，0.1x 价格）。对话历史随 turn 增长，但已有部分也命中 cache。
 
