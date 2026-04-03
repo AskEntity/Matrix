@@ -124,7 +124,9 @@ function AppInner() {
 				<div className="mxd-login-container">
 					<div className="mxd-login-brand">
 						<div className="mxd-login-brand-content">
-							<div className="mxd-login-logo">M</div>
+							<div className="mxd-login-logo">
+								<IconHexagon size={32} />
+							</div>
 							<h1 className="mxd-login-title">Matrix</h1>
 						</div>
 						<div className="mxd-login-brand-decoration" />
