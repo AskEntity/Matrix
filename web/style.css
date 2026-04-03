@@ -340,31 +340,15 @@ select {
 	transition: none;
 }
 
-/* Sidebar collapse button — desktop only */
-.mxd-sidebar-collapse-btn {
-	/* shown by default on desktop, hidden on mobile (mobile uses hamburger) */
-}
-
-/* Sidebar expand button — shown when sidebar is collapsed on desktop */
-.mxd-sidebar-expand-btn {
-	flex-shrink: 0;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 32px;
-	background: var(--bg-surface);
-	border: none;
-	border-right: 1px solid var(--border);
-	color: var(--text-muted);
+/* Sidebar resize handle when collapsed — wider, clickable to reopen */
+.mxd-sidebar-resize-handle-collapsed {
+	width: 6px;
 	cursor: pointer;
-	transition:
-		color var(--t-fast),
-		background var(--t-fast);
+	background: var(--border-subtle);
 }
 
-.mxd-sidebar-expand-btn:hover {
-	color: var(--text-primary);
-	background: var(--bg-raised);
+.mxd-sidebar-resize-handle-collapsed:hover {
+	background: var(--accent);
 }
 
 .mxd-panel-header {
@@ -3804,15 +3788,6 @@ button.mxd-tool-card-header:hover {
 		display: none;
 	}
 
-	/* Hide sidebar collapse/expand buttons on mobile (uses hamburger instead) */
-	.mxd-sidebar-collapse-btn {
-		display: none;
-	}
-
-	.mxd-sidebar-expand-btn {
-		display: none;
-	}
-
 	/* On mobile, sidebar collapsed state shouldn't apply — mobile has its own overlay mechanism */
 	.mxd-sidebar.mxd-sidebar-collapsed {
 		width: 85vw;
@@ -3852,8 +3827,7 @@ button.mxd-tool-card-header:hover {
 
 .mxd-fullscreen .mxd-sidebar,
 .mxd-fullscreen .mxd-sidebar-backdrop,
-.mxd-fullscreen .mxd-sidebar-resize-handle,
-.mxd-fullscreen .mxd-sidebar-expand-btn {
+.mxd-fullscreen .mxd-sidebar-resize-handle {
 	display: none;
 }
 
