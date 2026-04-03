@@ -739,9 +739,13 @@ export async function runAgentForNode(
 			ts: Date.now(),
 		});
 
-		// Cache TTL: root gets 1h, regular children get default 5min.
+		// Cache TTL: configurable per role via three-layer config.
+		// Defaults: root = "1h", child = "5m" (undefined = default ephemeral 5min).
 		// On resume, inherit from stored session_config (fork copies this automatically).
-		const cacheTtl: "1h" | undefined = isRoot ? "1h" : undefined;
+		const configuredTtl = isRoot
+			? (agentCtx.effectiveCfg.cacheTtl?.root ?? "1h")
+			: (agentCtx.effectiveCfg.cacheTtl?.child ?? "5m");
+		const cacheTtl: "1h" | undefined = configuredTtl === "1h" ? "1h" : undefined;
 
 		// Resolve system prompt: use stored session_config on resume, fresh on start.
 		const isResume = activeEvents.length > 0;
