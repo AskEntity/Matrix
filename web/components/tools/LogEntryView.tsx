@@ -101,6 +101,7 @@ export const LogEntryView = memo(function LogEntryView({
 	projectId,
 	rootNodeId,
 	onTaskNavigate,
+	onProjectNavigate,
 	showCacheBadges,
 }: {
 	entry: LogEntry;
@@ -108,6 +109,7 @@ export const LogEntryView = memo(function LogEntryView({
 	projectId?: string;
 	rootNodeId?: string | null;
 	onTaskNavigate?: (taskId: string, ts?: number) => void;
+	onProjectNavigate?: (projectId: string) => void;
 	showCacheBadges?: boolean;
 }) {
 	const [expanded, setExpanded] = useState(false);
@@ -575,13 +577,35 @@ export const LogEntryView = memo(function LogEntryView({
 	// cross_project
 	if (entry.type === "cross_project") {
 		const projectName = entry.fromProjectName ?? "";
-		const label = projectName ? `← from ${projectName}` : "← Cross-Project";
+		const fromProjectId = entry.fromProjectId;
 		const text = getEntryText(entry);
 		const isLong = text.length > 100 || text.includes("\n");
 		const headerText =
 			text.length > 100
 				? `${text.slice(0, 100)}…`
 				: (text.split("\n")[0] ?? text);
+
+		const titleNode =
+			fromProjectId && onProjectNavigate && projectName ? (
+				<>
+					{"← from "}
+					{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate */}
+					{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable project name */}
+					<span
+						className="mxd-clickable-task-name"
+						onClick={(e) => {
+							e.stopPropagation();
+							onProjectNavigate(fromProjectId);
+						}}
+					>
+						{projectName}
+					</span>
+				</>
+			) : projectName ? (
+				`← from ${projectName}`
+			) : (
+				"← Cross-Project"
+			);
 
 		return (
 			<LogEntryWrapper
@@ -590,7 +614,7 @@ export const LogEntryView = memo(function LogEntryView({
 				taskId={getLogTaskId(entry)}
 			>
 				<Card
-					title={label}
+					title={titleNode}
 					detail={isLong ? headerText : text}
 					className="mxd-tool-card-cross-project"
 				>

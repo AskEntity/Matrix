@@ -1430,6 +1430,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								loadingOlderEvents={loadingOlderEvents}
 								onLoadOlderEvents={handleLoadOlderEvents}
 								onTaskNavigate={handleTaskNavigate}
+								onProjectNavigate={handleProjectChange}
 								showCacheBadges={showCacheBadges}
 							/>
 						</div>
