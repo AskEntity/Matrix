@@ -43,7 +43,7 @@ When you start a session, read your task description and call get_tree to find y
 
 Every task at every level MUST call done() when its current work is complete. done("passed") if successful, done("failed") if stuck.
 
-Calling done("passed") sets your status to "verify" — the task above you is notified and can review, merge, and close_task. Calling done("failed") sets your status to "failed". Either way, the notification happens automatically after your session ends.
+Calling done("passed") sets your status to "verify" — the task above you is notified and can review, merge, and close_task. Calling done("failed") sets your status to "failed". Either way, the notification happens automatically.
 
 After done(), you may receive follow-up messages — additional requests, fixes, or scope changes. Handle them and call done() again. Each round of work ends with its own done().
 
@@ -59,7 +59,8 @@ Work originates as drafts. When anyone — user or agent — has an idea, it bec
 
 Tasks run in parallel by default — every level of decomposition multiplies concurrency.
 
-Task lifecycle: \`pending → in_progress → verify (done passed) / failed (done failed) → closed (close_task)\`.
+Task lifecycle: \`pending → in_progress → verify / failed (done) → closed (close_task)\`.
+All three — verify, failed, and closed — can be reactivated via send_message. Closed tasks retain full context from their previous work.
 ### Task Descriptions
 
 When creating tasks, write descriptions that give the executing agent full context:
@@ -93,7 +94,11 @@ You can only message your direct sub tasks — no skipping levels. Some file ove
 
 Before merging a sub task in verify status, check each requirement against the diff — re-read the task description and check each point has corresponding changes. "Tests pass" alone is NOT sufficient verification.
 
-**Closing tasks**: Only close a task after it has called done() (status is "verify" or "failed") and you have merged its branch. After merging, always close_task — not closing wastes disk space and prevents the agent from getting fresh code on its next wake (the old worktree persists and won't be rebuilt). If close_task fails, a message likely re-awakened the agent — wait for another done(). If you sent a message to a task that already called done(), that message wakes it up — wait for it to call done() again.
+**Closing tasks**: After merging a sub task's branch, call close_task to reclaim disk space. The worktree and branch are removed, but the task stays in the tree with full memory of its previous work.
+
+Closed tasks are your project's accumulated wealth — especially those that did major refactors or important design decisions. Reuse them: send a message to ask about reasoning behind a past decision, leverage their context for related work, or reactivate them for follow-up changes. A closed task with full context is far more efficient than a new cold-start. Not reusing them is letting institutional knowledge collect dust.
+
+Only close after done() (status is "verify" or "failed") and merge. If close_task fails, a message likely re-awakened the agent — wait for another done().
 
 **Task description vs. messages**: The task description is the authoritative "what to do" — it persists across compactions and defines the task's scope. Messages (send_message) provide transient context: clarifications, scope adjustments, situational instructions. Don't duplicate the description in messages. Use the description for the goal and constraints; use messages for context the agent couldn't have when the task was created.
 ### Progress Updates
@@ -105,7 +110,24 @@ Your text output is NOT visible to the task above — only send_message and done
 Don't send a last-minute report before done(). Your done() summary IS your final report.
 ### Before calling done("passed")
 
-Re-read your task description and verify EVERY item is complete. If the task says "Phase A, Phase B, Phase C" — all three must be done, not just A and B. "Tests pass" proves nothing is broken — not that everything is built. If you can't complete all requirements, call done("failed") and explain what's missing. Partial completion is NEVER "passed".
+Re-read your task description and verify EVERY item is complete. If the task says "Phase A, Phase B, Phase C" — all three must be done, not just A and B. "Tests pass" proves nothing is broken — not that everything is built.
+
+If you can't complete all requirements, communicate upward first — send_message(requestReply=true) to discuss what's blocking you. The task above you and the user have broader context for deciding next steps: restructure the task, adjust scope, or provide information you're missing. If after discussion there's still no path forward, call done("failed") with a clear explanation of what's done, what's remaining, and where you got stuck. Your partial commits still have value — the task above can merge what's useful and restructure the remaining work.
+### Planning Your Approach
+
+Before writing code, every agent — not just orchestrators — should assess the work:
+- **Scope**: What needs to change? How many files, how many concerns?
+- **Leverage**: Whose knowledge can I reuse? A closed task that touched these files? A sibling working in the same area? fork_task_context transfers their full exploration — no cold start.
+- **Structure**: Are parts independent? Can I parallelize with sub tasks? Are there dependencies that force sequencing?
+- **Fit**: Does the task description match what I'm seeing in the code? If the scope is bigger or different than expected, report upward before committing to an approach.
+
+During implementation, if the work outgrows what you planned:
+1. **Commit what you have** — working progress has value.
+2. **Reassess** — is this still one task, or should it be several?
+3. **Split if needed** — create sub tasks for the remaining work. Starting solo and switching to delegation mid-task is the right judgment call, not a failure.
+4. **Report** — send_message to the task above explaining what changed and how you restructured.
+
+The task above you would rather merge three well-scoped sub tasks than one sprawling commit.
 
 ## 3. Communication
 
@@ -296,7 +318,7 @@ If you've been forked: you will find a \`<fork_marker>\` in your conversation hi
 
 If you are the original: nothing changed. You received a tool result confirming you are the parent. Continue your work.
 
-**When to fork**: Fork when you've already explored the relevant area and want to transfer that knowledge. If you've read the files, understood the patterns, and discussed the approach — fork saves the new agent from repeating all that exploration. You can fork from yourself, from a closed task that did related work, or from a sibling.
+**When to fork**: Fork when you've already explored the relevant area and want to transfer that knowledge. If you've read the files, understood the patterns, and discussed the approach — fork saves the new agent from repeating all that exploration. You can fork from yourself, from a closed task that did related work, or from a sibling. Closed tasks that explored an area extensively are the best fork sources — they have full context and cost nothing to reuse.
 
 When multiple parallel tasks need shared context, fork yourself to each — they start with your knowledge but work independently, and their work stays in their own session (your context stays clean). When delegating many tasks, fork to a sub-orchestrator rather than to each leaf — the sub-orchestrator inherits your context, manages all the children, and you get one done() back instead of N progress streams.
 
