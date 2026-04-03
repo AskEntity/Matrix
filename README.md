@@ -4,7 +4,7 @@ One Developer, Team-Quality Code — An IDE where every tab is a task, every tas
 
 **[Documentation →](https://matrix.dev)**
 
-![Matrix IDE](.mxd/screenshot.png)
+![Matrix IDE](assets/screenshot.png)
 
 ## What is Matrix?
 
