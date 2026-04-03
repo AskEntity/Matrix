@@ -297,6 +297,9 @@ System prompt is for ALL Matrix users, not our project notebook. When editing it
 - Delegate to a child for full review if context is insufficient
 - Prompt contains only principles and behavioral rules. Flow details go to tool descriptions.
 
+## evaluate_script Discipline
+evaluate_script is for runtime debug introspection ONLY (inspecting messages, checking provider state, comparing JSONL vs live memory). Do NOT use it to: reparent tasks, modify tree structure, batch operations, or anything that has a proper MCP tool. Using eval to bypass tool limitations is a trap — fix the tool instead.
+
 ## Refactoring Philosophy
 
 Embrace large type refactors. Rename TaskNode → TreeNode = TaskNode | FolderNode. Let the compiler show you every place that assumes "all nodes are tasks." Each error is a location that needs to decide how to handle the new case. Hundreds of errors is not a problem — it is the audit.
