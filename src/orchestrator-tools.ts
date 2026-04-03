@@ -1086,6 +1086,78 @@ export function createOrchestratorTools(
 			},
 		),
 
+		// ── Folder tools (pure grouping, zero lifecycle) ──
+
+		tool(
+			"create_folder",
+			"Create a folder for visual grouping. Folders have no status, no lifecycle — pure organization. " +
+				"Tasks inside folders are logically owned by the nearest task ancestor above the folder.",
+			{
+				title: z.string().describe("Folder title"),
+				parentId: z.string().optional().describe("Parent node ID. Omit to create under your current task."),
+			},
+			async (args) => {
+				try {
+					const effectiveParentId = args.parentId ?? currentTaskId ?? tracker.rootNodeId;
+					const folder = tracker.addFolder(args.title, effectiveParentId);
+					await tracker.save();
+					broadcastTree();
+					return {
+						content: [{ type: "text" as const, text: JSON.stringify(folder, null, 2) }],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
+				}
+			},
+		),
+
+		tool(
+			"delete_folder",
+			"Delete an empty folder. Fails if the folder has children — move or delete them first.",
+			{
+				folderId: z.string().describe("ID of the folder to delete"),
+			},
+			async (args) => {
+				try {
+					const node = tracker.get(args.folderId);
+					if (!node) return { content: [{ type: "text" as const, text: "Folder not found" }], isError: true };
+					if (!isFolder(node)) return { content: [{ type: "text" as const, text: "Not a folder — use delete_task instead" }], isError: true };
+					if (node.children.length > 0) return { content: [{ type: "text" as const, text: "Cannot delete folder with children. Move or delete them first." }], isError: true };
+					tracker.remove(args.folderId);
+					await tracker.save();
+					broadcastTree();
+					return { content: [{ type: "text" as const, text: JSON.stringify({ deleted: true, folderId: args.folderId, title: node.title }) }] };
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
+				}
+			},
+		),
+
+		tool(
+			"rename_folder",
+			"Rename a folder.",
+			{
+				folderId: z.string().describe("ID of the folder to rename"),
+				title: z.string().describe("New title for the folder"),
+			},
+			async (args) => {
+				try {
+					const node = tracker.get(args.folderId);
+					if (!node) return { content: [{ type: "text" as const, text: "Folder not found" }], isError: true };
+					if (!isFolder(node)) return { content: [{ type: "text" as const, text: "Not a folder — use update_task instead" }], isError: true };
+					tracker.updateTitle(args.folderId, args.title);
+					await tracker.save();
+					broadcastTree();
+					return { content: [{ type: "text" as const, text: JSON.stringify({ renamed: true, folderId: args.folderId, title: args.title }) }] };
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
+				}
+			},
+		),
+
 		tool(
 			"list_projects",
 			"List all registered projects with their IDs, names, and paths. " +
