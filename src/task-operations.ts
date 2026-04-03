@@ -16,7 +16,7 @@
 
 import type { TaskTracker } from "./task-tracker.ts";
 import { cleanupTaskResources, resolveColor, slugify } from "./task-utils.ts";
-import { type TaskNode, type TaskStatus, isFolder } from "./types.ts";
+import { isFolder, type TaskNode, type TaskStatus } from "./types.ts";
 
 // ── Shared types ──
 
@@ -125,7 +125,8 @@ export async function updateTaskOp(
 ): Promise<TaskNode> {
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
-	if (isFolder(node)) throw new TaskOperationError(`Cannot update folder as task: ${nodeId}`);
+	if (isFolder(node))
+		throw new TaskOperationError(`Cannot update folder as task: ${nodeId}`);
 
 	if (updates.parentId !== undefined) {
 		tracker.reparent(nodeId, updates.parentId);
@@ -227,7 +228,8 @@ export async function closeTaskOp(
 ): Promise<CloseTaskResult> {
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
-	if (isFolder(node)) throw new TaskOperationError(`Cannot close a folder: ${nodeId}`);
+	if (isFolder(node))
+		throw new TaskOperationError(`Cannot close a folder: ${nodeId}`);
 
 	if (node.status === "in_progress") {
 		throw new TaskOperationError(
@@ -279,7 +281,8 @@ export async function resetTaskOp(
 ): Promise<{ taskId: string; title: string }> {
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
-	if (isFolder(node)) throw new TaskOperationError(`Cannot reset a folder: ${nodeId}`);
+	if (isFolder(node))
+		throw new TaskOperationError(`Cannot reset a folder: ${nodeId}`);
 
 	// Close running agent if active
 	if (node.session?.queue) {

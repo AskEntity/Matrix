@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.ts";
 import { authFetch, getToken } from "./auth.ts";
 
-export type { FolderNode, TaskNode, TaskStatus, TreeNode } from "../src/types.ts";
+export type {
+	FolderNode,
+	TaskNode,
+	TaskStatus,
+	TreeNode,
+} from "../src/types.ts";
 export { isFolder, isTask } from "../src/types.ts";
 
 import type { Event } from "../src/events.ts";

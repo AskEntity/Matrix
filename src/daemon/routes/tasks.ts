@@ -341,7 +341,9 @@ export function registerTaskRoutes(
 			const content = body.message
 				? body.message
 				: "Continue working. Pick up where you left off and complete the task.";
-			const parentNode = node.parentId ? tracker.getTask(node.parentId) : undefined;
+			const parentNode = node.parentId
+				? tracker.getTask(node.parentId)
+				: undefined;
 			const continueMsg = createTaskMessage(
 				parentNode?.id ?? "",
 				parentNode?.title ?? "User",
@@ -368,7 +370,9 @@ export function registerTaskRoutes(
 			!node.worktreePath
 		) {
 			try {
-				const parentNode = node.parentId ? tracker.getTask(node.parentId) : null;
+				const parentNode = node.parentId
+					? tracker.getTask(node.parentId)
+					: null;
 				const baseBranch = parentNode?.branch;
 				if (!baseBranch) {
 					return c.json(

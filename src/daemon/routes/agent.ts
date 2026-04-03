@@ -7,13 +7,13 @@ import {
 import type { SystemPrompt } from "../../system-prompts.ts";
 import { moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
+import { isTask } from "../../types.ts";
 import {
 	handleClarifyResponse,
 	runAgentForNode,
 	stopAgent,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
-import { isTask } from "../../types.ts";
 import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
 import {
 	getEventStore,

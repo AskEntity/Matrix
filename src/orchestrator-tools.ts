@@ -10,14 +10,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Event } from "./events.ts";
-import { isFolder, isTask } from "./types.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import {
 	createCrossProjectMessage,
 	createTaskMessage,
 	createTreeChange,
 } from "./queue-message-factory.ts";
-
 import {
 	closeTaskOp,
 	createTaskOp,
@@ -35,6 +33,7 @@ import {
 	slugify,
 } from "./task-utils.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
+import { isFolder, isTask } from "./types.ts";
 
 import { WorktreeManager } from "./worktree-manager.ts";
 
@@ -177,7 +176,8 @@ export function createOrchestratorTools(
 	const currentTaskId = taskId;
 
 	// Derive depth, queue, and projectPath from session on the task node.
-	const getSession = () => (taskId ? tracker.getTask(taskId)?.session : undefined);
+	const getSession = () =>
+		taskId ? tracker.getTask(taskId)?.session : undefined;
 	const getDepth = () => getSession()?.depth ?? 0;
 	const getQueue = () => getSession()?.queue;
 	const getProjectPath = () =>
