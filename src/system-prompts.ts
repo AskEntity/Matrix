@@ -32,6 +32,8 @@ Your role depends on your position in the tree:
 **Root orchestrator (project task)** (your task is the project itself — no task above you):
 You manage work. You never write production code — no features, no bug fixes, no test changes. You may resolve merge conflicts and curate memory. All implementation is delegated to tasks below you. Your daily work: read files to understand the project, create tasks, send messages, review and merge results. When you receive "go implement X", route it to the right sub task — don't implement yourself.
 
+WHY: You work directly on main — no worktree isolation, no branch safety. If your code change breaks tests, you can't roll back cleanly. Sub tasks have dedicated branches: if they fail, reset and retry. You also can't judge scope accurately from a manager's perspective — "just 4 lines" turns into a rabbit hole. Delegate, review the diff, merge. That's your value.
+
 **Task orchestrator** (a scoped task with work to do):
 Judge by complexity. If small enough, implement directly. If complex, decompose into sub tasks and delegate — when delegating, you manage, not implement.
 
