@@ -8,6 +8,7 @@ import {
 import { api } from "../../api.ts";
 import { authFetch } from "../../auth.ts";
 import {
+	type CacheInfo,
 	formatTime,
 	getLogTaskId,
 	type LogEntry,
@@ -50,6 +51,47 @@ function LogEntryWrapper({
 			)}
 			{children}
 		</div>
+	);
+}
+
+/** Subtle cache info badge — shows on hover with detailed token breakdown tooltip. */
+function CacheInfoBadge({ cacheInfo }: { cacheInfo: CacheInfo }) {
+	const creation = cacheInfo.cacheCreationTokens ?? 0;
+	const read = cacheInfo.cacheReadTokens ?? 0;
+	const input = cacheInfo.inputTokens;
+	const output = cacheInfo.outputTokens ?? 0;
+
+	// Cache hit ratio: read tokens / (read + creation + uncached input)
+	// A high ratio means most tokens were served from cache
+	const totalInput = input;
+	const hitRatio = totalInput > 0 ? read / totalInput : 0;
+
+	const lines = [
+		`Input: ${input.toLocaleString()}`,
+		output ? `Output: ${output.toLocaleString()}` : null,
+		`Cache read: ${read.toLocaleString()}`,
+		`Cache write: ${creation.toLocaleString()}`,
+		`Cache hit: ${(hitRatio * 100).toFixed(0)}%`,
+	]
+		.filter(Boolean)
+		.join("\n");
+
+	// Icon color reflects cache performance
+	const color =
+		hitRatio >= 0.8
+			? "var(--color-passed)"
+			: hitRatio >= 0.3
+				? "var(--color-pending)"
+				: "var(--text-faint)";
+
+	return (
+		<span
+			className="mxd-cache-badge"
+			title={lines}
+			style={{ color, cursor: "default" }}
+		>
+			⚡
+		</span>
 	);
 }
 
@@ -552,6 +594,34 @@ export const LogEntryView = memo(function LogEntryView({
 				</Card>
 			</LogEntryWrapper>
 		);
+	}
+
+	// assistant_text — render with optional cache info tooltip
+	if (entry.type === "assistant_text") {
+		const text = getEntryText(entry);
+		const ci = entry.cacheInfo;
+		return (
+			<div className="mxd-lmxd-entry mxd-event-assistant_text">
+				<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
+				{taskLabel && (
+					<span
+						className="mxd-lmxd-badge"
+						title={"taskId" in entry ? entry.taskId : undefined}
+					>
+						{taskLabel}
+					</span>
+				)}
+				<div className="mxd-lmxd-body">
+					<span className="mxd-lmxd-text">{text}</span>
+					{ci && <CacheInfoBadge cacheInfo={ci} />}
+				</div>
+			</div>
+		);
+	}
+
+	// usage events — not rendered as separate entries (data is attached to assistant_text via cacheInfo)
+	if (entry.type === "usage") {
+		return null;
 	}
 
 	// Fallback for lifecycle and any other event types

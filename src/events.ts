@@ -99,19 +99,21 @@ export type Event = (
 			taskId: string;
 			ts: number;
 	  }
-	// Ephemeral events — broadcast over WS but not persisted to JSONL
-	| { type: "thinking_delta"; thinking: string; taskId: string; ts: number }
-	| { type: "text_delta"; content: string; taskId: string; ts: number }
+	// Per-turn token usage — persisted to JSONL for historical cache diagnostics
 	| {
 			type: "usage";
 			taskId: string;
 			inputTokens: number;
+			outputTokens?: number;
 			contextWindow: number;
 			estimated?: boolean;
 			cacheCreationTokens?: number;
 			cacheReadTokens?: number;
 			ts: number;
 	  }
+	// Ephemeral events — broadcast over WS but not persisted to JSONL
+	| { type: "thinking_delta"; thinking: string; taskId: string; ts: number }
+	| { type: "text_delta"; content: string; taskId: string; ts: number }
 	| { type: "agent_idle"; taskId: string; ts: number }
 	| { type: "agent_active"; taskId: string; ts: number }
 	| { type: "status"; message: string; taskId: string; ts: number }
@@ -250,7 +252,6 @@ export function isPersistedByEmitEvent(event: Event): boolean {
 		// Ephemeral — broadcast only, never persisted
 		case "thinking_delta":
 		case "text_delta":
-		case "usage":
 		case "agent_idle":
 		case "agent_active":
 		case "status":
@@ -258,6 +259,7 @@ export function isPersistedByEmitEvent(event: Event): boolean {
 			return false;
 
 		// Persisted — written to JSONL by emitEvent
+		case "usage":
 		case "thinking":
 		case "session_config":
 		case "message":

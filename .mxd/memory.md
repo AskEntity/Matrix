@@ -314,3 +314,13 @@ Embrace large type refactors. Rename TaskNode → TreeNode = TaskNode | FolderNo
 - **Lifecycle rejection**: all lifecycle operations (launch, done, close, reset, send_message) reject folders at entry point.
 - **MUST resist feature creep**: persistent tasks started as "just a flag" and grew into a disaster. Folder stays at ZERO behavior forever.
 - **getTask() vs get() audit**: All production `getTask()` calls audited (2026-04-03). One bug fixed: REST reorder endpoint used `getTask()` → `get()` (folders have children too). All others correct — they access task-specific properties (session, worktree, branch, status).
+
+## Usage Event Persistence (2026-04-03)
+
+`usage` events moved from ephemeral to persisted. Now written to JSONL by emitEvent.
+- Added `outputTokens?: number` to usage event type.
+- `walkEventsToMessages` skips `usage` via default case (not conversation content).
+- UI: `attach_usage` UpdateOp finds most recent `assistant_text` for same taskId and attaches `CacheInfo` (inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens).
+- Displayed as subtle ⚡ hover badge on assistant messages (not separate log entries).
+- Color-coded: green (>80% hit), yellow (>30%), grey (<30%).
+- Compaction also emits usage (estimated=true, no cache fields) — persisted harmlessly.
