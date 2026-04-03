@@ -24,7 +24,7 @@ import {
 	runProviderLoop,
 	type ToolResult,
 } from "./provider-shared.ts";
-import type { ToolDefinition } from "./tool-definition.ts";
+import type { JsonTool } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
 
@@ -360,31 +360,15 @@ function createAnthropicAdapter(
 			return eventsToAnthropicMessages(events) as unknown[];
 		},
 
-		prepareTools(
-			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-			mcpToolDefs: Record<string, ToolDefinition<any>[]> | undefined,
-			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-			mcpHandlers: Map<string, ToolDefinition<any>>,
-		): unknown[] {
-			const allTools: Tool[] = [];
-			if (mcpToolDefs) {
-				for (const [serverName, defs] of Object.entries(mcpToolDefs)) {
-					for (const def of defs) {
-						const toolName = `mcp__${serverName}__${def.name}`;
-						mcpHandlers.set(toolName, def);
-						// Hidden tools are registered for execution but not sent to the API.
-						// The model learns about them from the system prompt.
-						if (!def.hidden) {
-							allTools.push({
-								name: toolName,
-								description: def.description,
-								input_schema: def.jsonSchema as Tool["input_schema"],
-							});
-						}
-					}
-				}
-			}
-			return allTools;
+		prepareTools(jsonTools: JsonTool[]): unknown[] {
+			return jsonTools.map(
+				(t) =>
+					({
+						name: t.name,
+						description: t.description,
+						input_schema: t.jsonSchema as Tool["input_schema"],
+					}) satisfies Tool,
+			);
 		},
 
 		async *callAPI(params) {

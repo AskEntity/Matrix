@@ -4,6 +4,7 @@ import {
 	createUserMessage,
 } from "./queue-message-factory.ts";
 import type { EventImageData, PendingState } from "./shared-types.ts";
+import type { JsonTool } from "./tool-definition.ts";
 import { TOOL_DONE, TOOL_YIELD } from "./tool-names.ts";
 
 export type { EventImageData, PendingState } from "./shared-types.ts";
@@ -40,8 +41,12 @@ interface MessageEvent {
  */
 export interface SessionConfigEvent {
 	type: "session_config";
-	/** MCP-spec tool definitions (full JSON schema) as passed to provider. */
-	tools: unknown[];
+	/**
+	 * Provider-agnostic tool definitions (JSON Schema).
+	 * The golden source: computed once at session start, frozen in JSONL.
+	 * On resume, providers map these to their own format — no Zod regeneration.
+	 */
+	tools: JsonTool[];
 	/** SYSTEM_PROMPT pure text — shared by ALL agents, never changes. */
 	systemStable: string;
 	/** Role + date + selfBootstrap — per-agent, per-day. */

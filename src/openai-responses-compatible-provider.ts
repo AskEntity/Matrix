@@ -17,7 +17,7 @@ import {
 	runProviderLoop,
 	type ToolResult,
 } from "./provider-shared.ts";
-import type { ToolDefinition } from "./tool-definition.ts";
+import type { JsonTool } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
 
@@ -741,32 +741,17 @@ function createOpenAIResponsesAdapter(
 			return eventsToOpenAIResponsesMessages(events);
 		},
 
-		prepareTools(
-			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-			mcpToolDefs: Record<string, ToolDefinition<any>[]> | undefined,
-			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-			mcpHandlers: Map<string, ToolDefinition<any>>,
-		): unknown[] {
-			const allTools: ResponsesTool[] = [];
-			if (mcpToolDefs) {
-				for (const [serverName, defs] of Object.entries(mcpToolDefs)) {
-					for (const def of defs) {
-						const toolName = `mcp__${serverName}__${def.name}`;
-						mcpHandlers.set(toolName, def);
-						// Hidden tools are registered for execution but not sent to the API.
-						if (!def.hidden) {
-							allTools.push({
-								type: "function",
-								name: toolName,
-								description: def.description,
-								strict: false,
-								parameters: def.jsonSchema,
-							});
-						}
-					}
-				}
-			}
-			return allTools;
+		prepareTools(jsonTools: JsonTool[]): unknown[] {
+			return jsonTools.map(
+				(t) =>
+					({
+						type: "function",
+						name: t.name,
+						description: t.description,
+						strict: false,
+						parameters: t.jsonSchema,
+					}) satisfies ResponsesTool,
+			);
 		},
 
 		async *callAPI(params) {
