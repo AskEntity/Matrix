@@ -48,7 +48,7 @@ export const ActivityLog = memo(function ActivityLog({
 	olderEventsAvailable?: Map<string, { hasOlder: boolean; oldestTs: number }>;
 	loadingOlderEvents?: boolean;
 	onLoadOlderEvents?: (sessionId: string) => void;
-	onTaskNavigate?: (taskId: string) => void;
+	onTaskNavigate?: (taskId: string, ts?: number) => void;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 
