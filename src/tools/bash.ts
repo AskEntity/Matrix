@@ -167,30 +167,39 @@ function formatBashResult(
 	}
 
 	// Build content string
+	// File paths go FIRST so the agent always sees them (even if output is long).
 	const parts: string[] = [];
+	if (stdoutTruncatedPath) {
+		const size = fileSize(stdoutTruncatedPath);
+		const sizeKb = Math.round(size / 1024);
+		parts.push(`Full stdout (${sizeKb}KB): ${stdoutTruncatedPath}`);
+	}
+	if (stderrTruncatedPath) {
+		const size = fileSize(stderrTruncatedPath);
+		const sizeKb = Math.round(size / 1024);
+		parts.push(`Full stderr (${sizeKb}KB): ${stderrTruncatedPath}`);
+	}
+	if (stdoutTruncatedPath || stderrTruncatedPath) {
+		parts.push("Use read_file with offset/limit to read the full output.");
+	}
+
+	parts.push(`exit code: ${exitCode}`);
+
+	// Then show preview of output
 	if (stdout) {
 		if (stdoutTruncatedPath) {
-			const size = fileSize(stdoutTruncatedPath);
-			const sizeKb = Math.round(size / 1024);
-			parts.push(
-				`stdout (truncated, ${sizeKb}KB total):\n${stdout}\n(Output too large. Full output: ${stdoutTruncatedPath} — use read_file with offset/limit.)`,
-			);
+			parts.push(`\nstdout preview:\n${stdout}`);
 		} else {
 			parts.push(`stdout:\n${stdout}`);
 		}
 	}
 	if (stderr) {
 		if (stderrTruncatedPath) {
-			const size = fileSize(stderrTruncatedPath);
-			const sizeKb = Math.round(size / 1024);
-			parts.push(
-				`stderr (truncated, ${sizeKb}KB total):\n${stderr}\n(Output too large. Full output: ${stderrTruncatedPath} — use read_file with offset/limit.)`,
-			);
+			parts.push(`\nstderr preview:\n${stderr}`);
 		} else {
 			parts.push(`stderr:\n${stderr}`);
 		}
 	}
-	parts.push(`exit code: ${exitCode}`);
 
 	return {
 		stdout,
