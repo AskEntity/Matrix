@@ -7,7 +7,8 @@ import {
 	getLogTaskId,
 	type IncomingEvent,
 	type LogEntry,
-	type TaskNode,
+	type TreeNode,
+	isTask,
 	type UIEvent,
 } from "./hooks.ts";
 
@@ -55,7 +56,7 @@ type UpdateOp =
 	  };
 
 export interface EventHandlerDeps {
-	updateFromWS: (nodes: TaskNode[]) => void;
+	updateFromWS: (nodes: TreeNode[]) => void;
 	setRootNodeId: React.Dispatch<React.SetStateAction<string | null>>;
 	setOlderEventsAvailable?: React.Dispatch<
 		React.SetStateAction<Map<string, { hasOlder: boolean; oldestTs: number }>>
@@ -406,7 +407,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 						const clearedSessionIds = new Set(
 							msg.nodes
-								.filter((node) => node.status === "pending" && !node.session)
+								.filter((node) => isTask(node) && node.status === "pending" && !node.session)
 								.map((node) => node.id),
 						);
 						clearSessionState(clearedSessionIds);

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.ts";
 import { authFetch, getToken } from "./auth.ts";
 
-export type { TaskNode, TaskStatus } from "../src/types.ts";
+export type { FolderNode, TaskNode, TaskStatus, TreeNode } from "../src/types.ts";
+export { isFolder, isTask } from "../src/types.ts";
 
 import type { Event } from "../src/events.ts";
-import type { TaskNode } from "../src/types.ts";
+import type { TreeNode } from "../src/types.ts";
 
 export type { Event } from "../src/events.ts";
 
@@ -115,7 +116,7 @@ export type UIEvent = Event | UIOnlyEvent;
 export type SSEOnlyEvent =
 	| {
 			type: "tree_updated";
-			nodes: TaskNode[];
+			nodes: TreeNode[];
 			rootNodeId?: string;
 	  }
 	| {
@@ -307,7 +308,7 @@ export function useTasks(
 	projectId: string,
 	setRootNodeId?: React.Dispatch<React.SetStateAction<string | null>>,
 ) {
-	const [nodes, setNodes] = useState<TaskNode[]>([]);
+	const [nodes, setNodes] = useState<TreeNode[]>([]);
 
 	const refresh = useCallback(async () => {
 		if (!projectId) {
@@ -330,7 +331,7 @@ export function useTasks(
 		refresh();
 	}, [refresh]);
 
-	const updateFromWS = useCallback((wsNodes: TaskNode[]) => {
+	const updateFromWS = useCallback((wsNodes: TreeNode[]) => {
 		setNodes(wsNodes);
 	}, []);
 

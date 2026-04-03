@@ -7,6 +7,7 @@ import { pinyin } from "pinyin-pro";
 import { formatEventForAI, queueMessageToEvent } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import type { TaskTracker } from "./task-tracker.ts";
+import { isTask } from "./types.ts";
 
 /** Named color → hex mapping for agent tools. Accepts common names and converts to hex. */
 const NAMED_COLORS: Record<string, string> = {
@@ -32,11 +33,11 @@ export function isDescendantOf(
 	nodeId: string,
 	ancestorId: string,
 ): boolean {
-	let current = tracker.get(nodeId);
+	let current = tracker.getTask(nodeId);
 	while (current) {
 		if (current.parentId === ancestorId) return true;
 		if (!current.parentId) return false;
-		current = tracker.get(current.parentId);
+		current = tracker.getTask(current.parentId);
 	}
 	return false;
 }
@@ -50,12 +51,12 @@ export function getDescendantIds(
 	ancestorId: string,
 ): string[] {
 	const result: string[] = [];
-	const queue = [...(tracker.get(ancestorId)?.children ?? [])];
+	const queue = [...(tracker.getTask(ancestorId)?.children ?? [])];
 	while (queue.length > 0) {
 		// biome-ignore lint/style/noNonNullAssertion: length > 0 guarantees shift returns a value
 		const id = queue.shift()!;
 		result.push(id);
-		const node = tracker.get(id);
+		const node = tracker.getTask(id);
 		if (node?.children?.length) {
 			queue.push(...node.children);
 		}
@@ -92,7 +93,7 @@ export function buildTaskPrompt(
 	parts.push(`Task ID: \`${node.id}\``);
 	// Add "Your task is part of" line for task navigation context
 	if (node.parentId) {
-		const parentNode = tracker.get(node.parentId);
+		const parentNode = tracker.getTask(node.parentId);
 		if (parentNode) {
 			parts.push(
 				`\nYour task is part of "${parentNode.title}" (\`${node.parentId}\`). Send messages to \`${node.parentId}\` to discuss questions or coordinate.`,
@@ -121,12 +122,12 @@ export function buildTaskPrompt(
 	if (node.parentId) {
 		const siblings = tracker.getChildren(node.parentId);
 		const done = siblings.filter(
-			(s) => s.status === "verify" || s.status === "closed",
+			(s) => isTask(s) && (s.status === "verify" || s.status === "closed"),
 		);
 		if (done.length > 0) {
 			parts.push(
 				"\n## Already completed siblings:",
-				...done.map((s) => `- ${s.title} (${s.status})`),
+				...done.map((s) => `- ${s.title} (${isTask(s) ? s.status : "folder"})`),
 			);
 		}
 	}
@@ -167,15 +168,15 @@ export function findParentQueue(
 	tracker: TaskTracker,
 	nodeId: string,
 ): { queue: MessageQueue; targetId: string } | undefined {
-	const node = tracker.get(nodeId);
+	const node = tracker.getTask(nodeId);
 	if (!node?.parentId) return undefined;
 
 	let targetId: string | null = node.parentId;
 	while (targetId) {
-		const queue = tracker.get(targetId)?.session?.queue;
+		const queue = tracker.getTask(targetId)?.session?.queue;
 		if (queue) return { queue, targetId };
 
-		const ancestor = tracker.get(targetId);
+		const ancestor = tracker.getTask(targetId);
 		if (!ancestor) break;
 
 		// Reached root without finding a queue — root isn't running
@@ -204,7 +205,7 @@ export async function cleanupTaskResources(
 	const allIds = [nodeId, ...descendantIds];
 
 	for (const id of allIds) {
-		const n = tracker.get(id);
+		const n = tracker.getTask(id);
 		if (!n) continue;
 
 		// Close running agent session + queue

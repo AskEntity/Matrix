@@ -33,10 +33,11 @@ import { ProjectManager } from "./project-manager.ts";
 import { createTaskComplete } from "./queue-message-factory.ts";
 import { buildSystemPrompt } from "./system-prompts.ts";
 import { TOOL_DONE } from "./tool-names.ts";
-import type {
-	HealthResponse,
-	StatsResponse,
-	VersionResponse,
+import {
+	isTask,
+	type HealthResponse,
+	type StatsResponse,
+	type VersionResponse,
 } from "./types.ts";
 
 // Re-export DaemonConfig so tests can import from daemon.ts
@@ -261,7 +262,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		for (const project of projects) {
 			const tracker = await getTracker(ctx, project.id);
 			for (const node of tracker.allNodes()) {
-				taskCounts[node.status]++;
+				if (isTask(node)) taskCounts[node.status]++;
 			}
 		}
 
@@ -320,6 +321,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			// - done_notified exists but status still in_progress → fix status
 			const allNodes = tracker.allNodes();
 			for (const node of allNodes) {
+				if (!isTask(node)) continue;
 				if (!eventStore.has(node.id)) continue;
 
 				await eventStore.flushSession(node.id);
@@ -384,10 +386,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				}
 			}
 
-			// Collect all in_progress nodes that have JSONL sessions
+			// Collect all in_progress task nodes that have JSONL sessions
 			const inProgressNodes = tracker
 				.allNodes()
-				.filter((n) => n.status === "in_progress" && eventStore.has(n.id));
+				.filter((n): n is import("./types.ts").TaskNode =>
+					isTask(n) && n.status === "in_progress" && eventStore.has(n.id),
+				);
 
 			if (inProgressNodes.length === 0) continue;
 
@@ -418,7 +422,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	async function shutdown(): Promise<void> {
 		// Stop all agents — their root nodes stay in_progress so they resume on next start
 		for (const [projectId, tracker] of ctx.trackers) {
-			const rootNode = tracker.get(tracker.rootNodeId);
+			const rootNode = tracker.getTask(tracker.rootNodeId);
 			if (rootNode?.session) {
 				await stopAgent(ctx, projectId);
 			}

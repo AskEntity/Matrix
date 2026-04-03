@@ -14,7 +14,7 @@ import {
 import { EventStore } from "../event-store.ts";
 import { OpenAIResponsesCompatibleProvider } from "../openai-responses-compatible-provider.ts";
 import { TaskTracker } from "../task-tracker.ts";
-import type { TaskNode } from "../types.ts";
+import type { TreeNode } from "../types.ts";
 import type { DaemonContext } from "./context.ts";
 
 /** Default budget for extended thinking (tokens). */
@@ -70,10 +70,10 @@ function createProviderFromConfig(
 export function collectDescendants(
 	tracker: TaskTracker,
 	nodeId: string,
-): TaskNode[] {
+): TreeNode[] {
 	const node = tracker.get(nodeId);
 	if (!node) return [];
-	const result: TaskNode[] = [node];
+	const result: TreeNode[] = [node];
 	for (const childId of node.children) {
 		result.push(...collectDescendants(tracker, childId));
 	}

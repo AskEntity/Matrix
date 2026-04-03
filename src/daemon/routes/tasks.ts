@@ -42,12 +42,12 @@ async function notifyParentChain(
 	statusBeforeDelivery?: string,
 ): Promise<void> {
 	const tracker = await getTracker(ctx, project.id);
-	const node = tracker.get(taskId);
+	const node = tracker.getTask(taskId);
 	if (!node?.parentId) return;
 
 	let currentId = node.parentId;
 	while (currentId) {
-		const ancestor = tracker.get(currentId);
+		const ancestor = tracker.getTask(currentId);
 		if (!ancestor) break;
 
 		const wasResumed =
@@ -98,10 +98,10 @@ function notifyTreeChange(
 	}
 
 	// Walk up from the changed node's parent to root.
-	const node = tracker.get(nodeId);
+	const node = tracker.getTask(nodeId);
 	let currentId = node?.parentId;
 	while (currentId) {
-		const ancestor = tracker.get(currentId);
+		const ancestor = tracker.getTask(currentId);
 		if (!ancestor) break;
 		const msg = createTreeChange(action, nodeId, title);
 		deliverMessage(ctx, project, currentId, msg, { quiet: true });
@@ -138,6 +138,7 @@ export function registerTaskRoutes(
 			description: string;
 			parentId?: string;
 			budgetUsd?: number;
+			folder?: boolean;
 		}>();
 		if (!body.title) {
 			return c.json({ error: "title is required" }, 400);
@@ -147,6 +148,15 @@ export function registerTaskRoutes(
 		}
 
 		const tracker = await getTracker(ctx, project.id);
+
+		// Folder creation — minimal node, zero lifecycle
+		if (body.folder) {
+			const folder = tracker.addFolder(body.title, body.parentId);
+			await tracker.save();
+			broadcastTreeUpdate(ctx, project.id, tracker);
+			return c.json(folder, 201);
+		}
+
 		try {
 			const node = await createTaskOp(
 				tracker,
@@ -188,7 +198,7 @@ export function registerTaskRoutes(
 			color?: string | null;
 		}>();
 
-		const node = tracker.get(nodeId);
+		const node = tracker.getTask(nodeId);
 		if (!node) {
 			return c.json({ error: "Task not found" }, 404);
 		}
@@ -247,7 +257,7 @@ export function registerTaskRoutes(
 		}
 		const tracker = await getTracker(ctx, project.id);
 		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
+		const node = tracker.getTask(nodeId);
 		if (!node) {
 			return c.json({ error: "Task not found" }, 404);
 		}
@@ -275,7 +285,7 @@ export function registerTaskRoutes(
 		}
 		const tracker = await getTracker(ctx, project.id);
 		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
+		const node = tracker.getTask(nodeId);
 		if (!node) {
 			return c.json({ error: "Task not found" }, 404);
 		}
@@ -331,7 +341,7 @@ export function registerTaskRoutes(
 			const content = body.message
 				? body.message
 				: "Continue working. Pick up where you left off and complete the task.";
-			const parentNode = node.parentId ? tracker.get(node.parentId) : undefined;
+			const parentNode = node.parentId ? tracker.getTask(node.parentId) : undefined;
 			const continueMsg = createTaskMessage(
 				parentNode?.id ?? "",
 				parentNode?.title ?? "User",
@@ -349,7 +359,7 @@ export function registerTaskRoutes(
 			// Run async — return immediately so UI updates
 			runAgentForNode(ctx, project, tracker, nodeId, { model: body.model });
 
-			return c.json(tracker.get(nodeId));
+			return c.json(tracker.getTask(nodeId));
 		}
 
 		// Verify/closed task with no worktree: re-create worktree and launch agent
@@ -358,7 +368,7 @@ export function registerTaskRoutes(
 			!node.worktreePath
 		) {
 			try {
-				const parentNode = node.parentId ? tracker.get(node.parentId) : null;
+				const parentNode = node.parentId ? tracker.getTask(node.parentId) : null;
 				const baseBranch = parentNode?.branch;
 				if (!baseBranch) {
 					return c.json(
@@ -383,11 +393,11 @@ export function registerTaskRoutes(
 				notifyParentOfContinue();
 
 				const memory = readProjectMemory(project.path);
-				const updatedNode = tracker.get(nodeId);
+				const updatedNode = tracker.getTask(nodeId);
 				const header = buildTaskPrompt(updatedNode ?? node, tracker, memory);
 				const content = body.message ?? "Start working on this task.";
 				const parentNode2 = node.parentId
-					? tracker.get(node.parentId)
+					? tracker.getTask(node.parentId)
 					: undefined;
 				const continueMsg2 = createTaskMessage(
 					parentNode2?.id ?? "",
@@ -405,7 +415,7 @@ export function registerTaskRoutes(
 
 				runAgentForNode(ctx, project, tracker, nodeId, { model: body.model });
 
-				return c.json(tracker.get(nodeId));
+				return c.json(tracker.getTask(nodeId));
 			} catch (e) {
 				const message = e instanceof Error ? e.message : String(e);
 				return c.json(
@@ -418,7 +428,7 @@ export function registerTaskRoutes(
 		// No worktree — just reset to pending
 		tracker.updateStatus(nodeId, "pending");
 		await tracker.save();
-		return c.json(tracker.get(nodeId));
+		return c.json(tracker.getTask(nodeId));
 	});
 
 	app.delete("/projects/:id/tasks/:nodeId", async (c) => {
@@ -459,7 +469,7 @@ export function registerTaskRoutes(
 		}
 		const tracker = await getTracker(ctx, project.id);
 		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
+		const node = tracker.getTask(nodeId);
 		if (!node) {
 			return c.json({ error: "Task not found" }, 404);
 		}
@@ -500,7 +510,7 @@ export function registerTaskRoutes(
 		}
 		const tracker = await getTracker(ctx, project.id);
 		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
+		const node = tracker.getTask(nodeId);
 		if (!node) {
 			return c.json({ error: "Task not found" }, 404);
 		}
@@ -560,7 +570,7 @@ export function registerTaskRoutes(
 		}
 
 		const tracker = await getTracker(ctx, project.id);
-		const node = tracker.get(nodeId);
+		const node = tracker.getTask(nodeId);
 		const statusBeforeDelivery = node?.status;
 		const eventStore = getEventStore(ctx, project.id);
 
@@ -629,7 +639,7 @@ export function registerTaskRoutes(
 		}
 		const nodeId = c.req.param("nodeId");
 		const tracker = await getTracker(ctx, project.id);
-		const node = tracker.get(nodeId);
+		const node = tracker.getTask(nodeId);
 		if (!node) {
 			return c.json({ error: "Task not found" }, 404);
 		}
@@ -648,7 +658,7 @@ export function registerTaskRoutes(
 		}
 		const tracker = await getTracker(ctx, project.id);
 		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
+		const node = tracker.getTask(nodeId);
 		if (!node) {
 			return c.json({ error: "Task not found" }, 404);
 		}
@@ -679,7 +689,7 @@ export function registerTaskRoutes(
 		}
 		const tracker = await getTracker(ctx, project.id);
 		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
+		const node = tracker.getTask(nodeId);
 		if (!node) {
 			return c.json({ error: "Task not found" }, 404);
 		}
@@ -720,7 +730,7 @@ export function registerTaskRoutes(
 					targetDescription: node.description,
 				},
 			);
-			const sourceNode = tracker.get(body.sourceTaskId);
+			const sourceNode = tracker.getTask(body.sourceTaskId);
 			return c.json({
 				ok: true,
 				taskId: nodeId,

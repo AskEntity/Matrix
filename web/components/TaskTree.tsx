@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import type { TaskStatus } from "../../src/types.ts";
-import type { TaskNode } from "../hooks.ts";
+import { type TreeNode, isTask } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron, IconEyeOff, IconHexagon, IconTrash } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
@@ -15,12 +15,13 @@ const STATUS_PRIORITY: Record<TaskStatus, number> = {
 	closed: 5,
 };
 
-/** Sort by status priority; within each status group, newest (last in original order) first. */
-function sortByStatus(nodes: TaskNode[]): TaskNode[] {
+/** Sort by status priority; within each status group, newest first. Folders sort after drafts. */
+function sortByStatus(nodes: TreeNode[]): TreeNode[] {
 	const indexMap = new Map(nodes.map((n, i) => [n.id, i]));
 	return [...nodes].sort((a, b) => {
-		const statusDiff =
-			(STATUS_PRIORITY[a.status] ?? 9) - (STATUS_PRIORITY[b.status] ?? 9);
+		const aPriority = isTask(a) ? (STATUS_PRIORITY[a.status] ?? 9) : 3.5;
+		const bPriority = isTask(b) ? (STATUS_PRIORITY[b.status] ?? 9) : 3.5;
+		const statusDiff = aPriority - bPriority;
 		if (statusDiff !== 0) return statusDiff;
 		// Reverse original order within same status: higher original index = shown first
 		return (indexMap.get(b.id) ?? 0) - (indexMap.get(a.id) ?? 0);
@@ -56,7 +57,7 @@ export const TaskTree = memo(function TaskTree({
 	onCancelCreate,
 	onDeleteTask,
 }: {
-	nodes: TaskNode[];
+	nodes: TreeNode[];
 	selectedTaskId: string | null;
 	rootNodeId: string | null;
 	activeAgents?: Set<string>;
@@ -80,7 +81,7 @@ export const TaskTree = memo(function TaskTree({
 			const nodeById = new Map(nodes.map((n) => [n.id, n]));
 			const ordered = childOrder
 				.map((id) => nodeById.get(id))
-				.filter((n): n is TaskNode => n !== undefined);
+				.filter((n): n is TreeNode => n !== undefined);
 			return sortByStatus(ordered);
 		}
 		// Fallback: filter out root nodes (nodes with no parent that are parents of others)
@@ -93,14 +94,14 @@ export const TaskTree = memo(function TaskTree({
 	}, [nodes, rootNode]);
 
 	const childMap = useMemo(() => {
-		const map = new Map<string, TaskNode[]>();
+		const map = new Map<string, TreeNode[]>();
 		const nodeById = new Map(nodes.map((n) => [n.id, n]));
 		// Build children lists sorted by status priority
 		for (const n of nodes) {
 			if (n.children.length > 0) {
 				const ordered = n.children
 					.map((id) => nodeById.get(id))
-					.filter((c): c is TaskNode => c !== undefined);
+					.filter((c): c is TreeNode => c !== undefined);
 				map.set(n.id, sortByStatus(ordered));
 			}
 		}
@@ -108,7 +109,7 @@ export const TaskTree = memo(function TaskTree({
 	}, [nodes]);
 
 	const nodeMap = useMemo(() => {
-		const map = new Map<string, TaskNode>();
+		const map = new Map<string, TreeNode>();
 		for (const n of nodes) map.set(n.id, n);
 		return map;
 	}, [nodes]);
@@ -134,7 +135,7 @@ export const TaskTree = memo(function TaskTree({
 		const hidden = new Set<string>();
 		// First pass: mark completed nodes
 		for (const node of nodes) {
-			if (node.status === "closed" || node.status === "failed") {
+			if (isTask(node) && (node.status === "closed" || node.status === "failed")) {
 				hidden.add(node.id);
 			}
 		}
@@ -164,12 +165,12 @@ export const TaskTree = memo(function TaskTree({
 			if (
 				trimmed &&
 				!node.title.toLowerCase().includes(lower) &&
-				!node.description?.toLowerCase().includes(lower) &&
+				!(isTask(node) && node.description?.toLowerCase().includes(lower)) &&
 				!node.id.toLowerCase().includes(lower)
 			)
 				continue;
 			// Include this node AND all its ancestors
-			let current: TaskNode | undefined = node;
+			let current: TreeNode | undefined = node;
 			while (current) {
 				if (!completedIds?.has(current.id)) {
 					matched.add(current.id);
@@ -410,7 +411,7 @@ export const TaskTree = memo(function TaskTree({
 			{/* Scrollable task list */}
 			<div className="mxd-task-list">
 				{filteredRoots.map((root, i) => (
-					<TaskNodeView
+					<TreeNodeView
 						key={root.id}
 						node={root}
 						childMap={childMap}
@@ -474,7 +475,7 @@ export const TaskTree = memo(function TaskTree({
 	);
 });
 
-function TaskNodeView({
+function TreeNodeView({
 	node,
 	childMap,
 	depth,
@@ -497,8 +498,8 @@ function TaskNodeView({
 	onDragEnd,
 	onDrop,
 }: {
-	node: TaskNode;
-	childMap: Map<string, TaskNode[]>;
+	node: TreeNode;
+	childMap: Map<string, TreeNode[]>;
 	depth: number;
 	selectedTaskId: string | null;
 	rootNodeId: string | null;
@@ -568,8 +569,8 @@ function TaskNodeView({
 			)}
 			<button
 				type="button"
-				className={`mxd-task-node${isSelected ? " selected" : ""}${node.status === "draft" ? " mxd-task-draft" : ""}${isDragging ? " mxd-task-dragging" : ""}${isReparentTarget ? " mxd-reparent-target" : ""}${node.status === "closed" ? " mxd-task-closed" : ""}`}
-				style={node.color ? { borderLeftColor: node.color } : undefined}
+				className={`mxd-task-node${isSelected ? " selected" : ""}${isTask(node) && node.status === "draft" ? " mxd-task-draft" : ""}${isDragging ? " mxd-task-dragging" : ""}${isReparentTarget ? " mxd-reparent-target" : ""}${isTask(node) && node.status === "closed" ? " mxd-task-closed" : ""}${!isTask(node) ? " mxd-folder-node" : ""}`}
+				style={isTask(node) && node.color ? { borderLeftColor: node.color } : undefined}
 				draggable
 				onDragStart={(e) => onDragStart(node.id, parentId, e)}
 				onDragOver={(e) => onDragOver(node.id, parentId, siblingIds, e)}
@@ -598,7 +599,9 @@ function TaskNodeView({
 					) : (
 						<span className="mxd-tree-toggle-placeholder" />
 					)}
-					{activeAgents?.has(node.id) ? (
+					{!isTask(node) ? (
+						<span className="mxd-folder-icon">📁</span>
+					) : activeAgents?.has(node.id) ? (
 						<span className="mxd-task-spinner" />
 					) : (
 						<span
@@ -607,7 +610,7 @@ function TaskNodeView({
 					)}
 
 					<span className="mxd-task-title">{node.title}</span>
-					{node.status === "draft" && (
+					{isTask(node) && node.status === "draft" && (
 						<span className="mxd-task-draft-badge">draft</span>
 					)}
 				</div>
@@ -620,7 +623,7 @@ function TaskNodeView({
 			)}
 			{!isCollapsed &&
 				children.map((child, i) => (
-					<TaskNodeView
+					<TreeNodeView
 						key={child.id}
 						node={child}
 						childMap={childMap}

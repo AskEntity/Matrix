@@ -1,7 +1,7 @@
 import type React from "react";
 import { api } from "./api.ts";
 import { authFetch } from "./auth.ts";
-import type { LogEntry, Project, TaskNode, UIEvent } from "./hooks.ts";
+import type { LogEntry, Project, TreeNode, UIEvent } from "./hooks.ts";
 
 type AddLogFn = (event: UIEvent) => void;
 
@@ -9,7 +9,7 @@ interface ActionHandlerDeps {
 	projectId: string;
 	selectedTaskId: string | null;
 	rootNodeId: string | null;
-	selectedNode: TaskNode | null;
+	selectedNode: TreeNode | null;
 	isOrchestratorNode: boolean;
 	targetNodeId: string | null;
 	clarifyAnswers: Record<string, string>;

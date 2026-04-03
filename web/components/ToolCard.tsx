@@ -8,7 +8,7 @@ import {
 	formatTime,
 	getLogTaskId,
 	type LogEntry,
-	type TaskNode,
+	type TreeNode,
 } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { Card } from "./Card.tsx";
@@ -30,7 +30,7 @@ export const ToolCard = memo(function ToolCard({
 	nodeMap,
 }: {
 	entry: Extract<LogEntry, { type: "tool_pair" }>;
-	nodeMap: Map<string, TaskNode>;
+	nodeMap: Map<string, TreeNode>;
 }) {
 	const { t } = useLocale();
 

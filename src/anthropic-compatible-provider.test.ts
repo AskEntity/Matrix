@@ -1829,7 +1829,7 @@ describe("done tool", () => {
 			summary: "All tests pass",
 		});
 		// Phase 1: done() no longer updates status (Phase 2 does that in runAgentForNode)
-		const updated = tracker.get(node.id);
+		const updated = tracker.getTask(node.id);
 		expect(updated?.status).toBe("in_progress");
 		expect(result.content[0].text).toContain("Done acknowledged (passed)");
 	});
@@ -1842,7 +1842,7 @@ describe("done tool", () => {
 			summary: "Cannot resolve type errors",
 		});
 		// Phase 1: done() no longer updates status (Phase 2 does that in runAgentForNode)
-		const updated = tracker.get(node.id);
+		const updated = tracker.getTask(node.id);
 		expect(updated?.status).toBe("in_progress");
 		expect(result.content[0].text).toContain("Done acknowledged (failed)");
 	});
@@ -1947,7 +1947,7 @@ describe("done tool", () => {
 		// Queue should be closed
 		expect(queue.isClosed).toBe(true);
 		// Status NOT updated by handler (Phase 2 does that)
-		expect(tracker.get(node.id)?.status).toBe("in_progress");
+		expect(tracker.getTask(node.id)?.status).toBe("in_progress");
 		// Simple acknowledgment text
 		expect(result.content[0].text).toContain("Done acknowledged (passed)");
 	});

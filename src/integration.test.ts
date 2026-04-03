@@ -126,7 +126,7 @@ async function waitForDone(
 
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
-		const rootNode = tracker.get(rootNodeId);
+		const rootNode = tracker.getTask(rootNodeId);
 		if (rootNode?.status === "verify" || rootNode?.status === "failed") {
 			return rootNode.status;
 		}
@@ -183,7 +183,7 @@ async function waitForIdle(ctx: TestContext, timeoutMs = 10000): Promise<void> {
 
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
-		const rootNode = tracker.get(rootNodeId);
+		const rootNode = tracker.getTask(rootNodeId);
 		const queue = rootNode?.session?.queue;
 		if (queue?.idle) {
 			return;
@@ -464,7 +464,7 @@ describe("Integration: full stack with mock API", () => {
 
 		// Agent should still be active (in yield)
 		const yieldTracker = await ctx.app.getTracker(ctx.projectId);
-		expect(yieldTracker.get(yieldTracker.rootNodeId)?.session).toBeTruthy();
+		expect(yieldTracker.getTask(yieldTracker.rootNodeId)?.session).toBeTruthy();
 
 		// Wake from yield with done instruction
 		const wakeInstruction = JSON.stringify({
@@ -506,7 +506,7 @@ describe("Integration: full stack with mock API", () => {
 		// Still active (in implicit yield)
 		const implicitTracker = await ctx.app.getTracker(ctx.projectId);
 		expect(
-			implicitTracker.get(implicitTracker.rootNodeId)?.session,
+			implicitTracker.getTask(implicitTracker.rootNodeId)?.session,
 		).toBeTruthy();
 
 		// Wake with done
@@ -760,7 +760,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		await waitForIdle(ctx);
 		{
 			const t = await ctx.app.getTracker(ctx.projectId);
-			expect(t.get(t.rootNodeId)?.session).toBeTruthy();
+			expect(t.getTask(t.rootNodeId)?.session).toBeTruthy();
 		}
 
 		const preRestartRequests = ctx.mockAPI.getRequestCount();
@@ -913,7 +913,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		await waitForIdle(ctx);
 		{
 			const t = await ctx.app.getTracker(ctx.projectId);
-			expect(t.get(t.rootNodeId)?.session).toBeTruthy();
+			expect(t.getTask(t.rootNodeId)?.session).toBeTruthy();
 		}
 
 		const preRestartRequests = ctx.mockAPI.getRequestCount();
@@ -1014,7 +1014,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		// Wait for status to become in_progress (agent started)
 		const start = Date.now();
 		while (Date.now() - start < 5000) {
-			const node = tracker.get(rootNodeId);
+			const node = tracker.getTask(rootNodeId);
 			if (node?.status === "in_progress") break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
@@ -1714,7 +1714,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const rootNodeId = tracker.rootNodeId;
 		const start = Date.now();
 		while (Date.now() - start < 5000) {
-			const node = tracker.get(rootNodeId);
+			const node = tracker.getTask(rootNodeId);
 			if (node?.status === "in_progress") break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
@@ -2140,7 +2140,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		await waitForIdle(ctx);
 		{
 			const t = await ctx.app.getTracker(ctx.projectId);
-			expect(t.get(t.rootNodeId)?.session).toBeTruthy();
+			expect(t.getTask(t.rootNodeId)?.session).toBeTruthy();
 		}
 
 		const preRestartRequests = ctx.mockAPI.getRequestCount();
@@ -2184,7 +2184,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const rootNodeId = tracker.rootNodeId;
 		const start2 = Date.now();
 		while (Date.now() - start2 < 5000) {
-			const node = tracker.get(rootNodeId);
+			const node = tracker.getTask(rootNodeId);
 			if (node?.status === "in_progress") break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
@@ -2495,7 +2495,7 @@ describe("Integration: auto-recovery from API 400", () => {
 		await new Promise((r) => setTimeout(r, 2000));
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId) as TaskNode;
+		const rootNode = tracker.getTask(tracker.rootNodeId) as TaskNode;
 		// Agent stays in_progress (it was interrupted, not done)
 		expect(rootNode.status).toBe("in_progress");
 		// Should NOT have reached done
@@ -3384,11 +3384,11 @@ describe("Integration: parent-child lifecycle", () => {
 
 		// Verify the child task was created and completed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode?.children?.length).toBeGreaterThanOrEqual(1);
 
 		const childId = rootNode?.children?.[0] as string;
-		const childNode = tracker.get(childId);
+		const childNode = tracker.getTask(childId);
 		expect(childNode?.status).toBe("verify");
 		expect(childNode?.title).toBe("Test Child Task");
 
@@ -3502,9 +3502,9 @@ describe("Integration: parent-child lifecycle", () => {
 
 		// Verify child is in failed state
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		const childId = rootNode?.children?.[0] as string;
-		const childNode = tracker.get(childId);
+		const childNode = tracker.getTask(childId);
 		expect(childNode?.status).toBe("failed");
 	}, 45000);
 });
@@ -3537,7 +3537,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 		expect(status).toBe("verify");
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("verify");
 	});
 
@@ -3598,7 +3598,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 		// Check status — should be in_progress (not passed, not failed)
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("in_progress");
 	});
 
@@ -3626,7 +3626,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 		// Status should still be in_progress
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("in_progress");
 	});
 
@@ -3703,12 +3703,12 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 		// Both root and child should be in_progress (not failed)
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("in_progress");
 
 		if (rootNode?.children && rootNode.children.length > 0) {
 			const childId = rootNode.children[0] as string;
-			const childNode = tracker.get(childId);
+			const childNode = tracker.getTask(childId);
 			expect(childNode?.status).toBe("in_progress");
 		}
 	}, 30000);
@@ -3860,7 +3860,7 @@ describe("Integration: yield bypass on restart", () => {
 
 		// Agent should still be in_progress (not passed — end_turn is no longer implicit done)
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("in_progress");
 
 		// Send message to wake from implicit yield
@@ -4540,7 +4540,7 @@ describe("Integration: background process lifecycle", () => {
 		// Find the foreground execution ID from the session
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-		const rootNode = tracker.get(rootNodeId);
+		const rootNode = tracker.getTask(rootNodeId);
 		const session = rootNode?.session;
 		expect(session).toBeDefined();
 
@@ -4690,10 +4690,10 @@ describe("Integration: tree operations", () => {
 
 		// Verify task was closed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		const childId = rootNode?.children?.[0];
 		expect(childId).toBeDefined();
-		const childNode = tracker.get(childId as string);
+		const childNode = tracker.getTask(childId as string);
 		expect(childNode?.title).toBe("Updated Tree Task");
 		expect(childNode?.status).toBe("closed");
 	}, 25000);
@@ -4809,12 +4809,12 @@ describe("Integration: tree operations", () => {
 
 		// Verify reorder: children should be [id3, id1, id2]
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		const children = rootNode?.children ?? [];
 		expect(children.length).toBe(3);
 
 		// Third task (Gamma) should now be first
-		const firstChild = tracker.get(children[0] as string);
+		const firstChild = tracker.getTask(children[0] as string);
 		expect(firstChild?.title).toBe("Task Gamma");
 	}, 25000);
 
@@ -5278,7 +5278,7 @@ describe("Integration: file operations", () => {
 		await new Promise((r) => setTimeout(r, 5000));
 		const rootNodeId = await getRootNodeId(ctx);
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(rootNodeId);
+		const rootNode = tracker.getTask(rootNodeId);
 		// Root stays in_progress (interrupted, resumable) — not failed
 		expect(rootNode?.status).toBe("in_progress");
 
@@ -5501,7 +5501,7 @@ describe("Integration: fork prefix consistency", () => {
 
 		// Verify JSONL has fork_marker
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const childNodeId = tracker.get(tracker.rootNodeId)
+		const childNodeId = tracker.getTask(tracker.rootNodeId)
 			?.children?.[0] as string;
 		expect(
 			(await readSessionEvents(ctx, childNodeId)).some(
@@ -5620,7 +5620,7 @@ describe("Integration: fork prefix consistency", () => {
 
 		// Get child's JSONL events
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		const childNodeId = rootNode?.children?.[0] as string;
 		const childEvents = await readSessionEvents(ctx, childNodeId);
 
@@ -5845,11 +5845,11 @@ describe("Integration: fork prefix consistency", () => {
 
 		// Find child B's node
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		// Children: A and B in order
 		expect(rootNode?.children?.length).toBe(2);
 		const childBId = rootNode?.children?.[1] as string;
-		const childBNode = tracker.get(childBId);
+		const childBNode = tracker.getTask(childBId);
 		expect(childBNode?.title).toBe("Child B");
 
 		// Read child B's JSONL
@@ -6059,7 +6059,7 @@ describe("Integration: fork prefix consistency", () => {
 		// Use validateForkPrefix to check cross-conversation prefix consistency
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-		const childId = tracker.get(rootNodeId)?.children?.[0] as string;
+		const childId = tracker.getTask(rootNodeId)?.children?.[0] as string;
 
 		const matchCount = ctx.mockAPI.validateForkPrefix(rootNodeId, childId);
 		// Pre-fork messages should all match (everything before the fork tool_result)
@@ -6171,10 +6171,10 @@ describe("Integration: message near done() race condition", () => {
 
 		// Verify child is passed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode?.children?.length).toBeGreaterThanOrEqual(1);
 		const childId = rootNode?.children?.[0] as string;
-		const childNode = tracker.get(childId);
+		const childNode = tracker.getTask(childId);
 		expect(childNode?.status).toBe("verify");
 
 		// The message sent to the passed child will contain a JSON instruction
@@ -6211,7 +6211,7 @@ describe("Integration: message near done() race condition", () => {
 		// Wait for the auto-launched child to complete (done again)
 		const startTime = Date.now();
 		while (Date.now() - startTime < 15000) {
-			const updated = tracker.get(childId);
+			const updated = tracker.getTask(childId);
 			// After message endpoint: status goes to in_progress, then to verify on done()
 			if (updated?.status === "verify" && updated.session == null) {
 				break;
@@ -6547,7 +6547,7 @@ describe("Integration: session_config in JSONL", () => {
 		// Get child node ID
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootId = tracker.rootNodeId;
-		const childNodeId = tracker.get(rootId)?.children?.[0] as string;
+		const childNodeId = tracker.getTask(rootId)?.children?.[0] as string;
 
 		// Parent JSONL should have session_config
 		const parentEvents = await readSessionEvents(ctx, rootId);
@@ -6673,7 +6673,7 @@ describe("Integration: session_config in JSONL", () => {
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootId = tracker.rootNodeId;
-		const childId = tracker.get(rootId)?.children?.[0] as string;
+		const childId = tracker.getTask(rootId)?.children?.[0] as string;
 		expect(childId).toBeDefined();
 
 		// Child session_config should NOT have cacheTtl (defaults to 5min)
@@ -6857,7 +6857,7 @@ describe("Integration: root done then resume", () => {
 		const start = Date.now();
 		let sawInProgress = false;
 		while (Date.now() - start < 10000) {
-			const node = tracker.get(rootNodeId);
+			const node = tracker.getTask(rootNodeId);
 			if (node?.status === "in_progress") {
 				sawInProgress = true;
 				break;
@@ -6931,7 +6931,7 @@ describe("Integration: root done then resume", () => {
 		// Wait for in_progress transition
 		const start = Date.now();
 		while (Date.now() - start < 5000) {
-			const node = tracker.get(rootNodeId);
+			const node = tracker.getTask(rootNodeId);
 			if (node?.status === "in_progress") break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
@@ -7004,7 +7004,7 @@ describe("Integration: root done then resume", () => {
 		// Wait for in_progress
 		const start = Date.now();
 		while (Date.now() - start < 5000) {
-			const node = tracker.get(rootNodeId);
+			const node = tracker.getTask(rootNodeId);
 			if (node?.status === "in_progress") break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
@@ -7097,7 +7097,7 @@ describe("Integration: root done then resume", () => {
 		// Wait for in_progress (agent started)
 		const startPoll = Date.now();
 		while (Date.now() - startPoll < 5000) {
-			if (tracker0.get(rootNodeId0)?.status === "in_progress") break;
+			if (tracker0.getTask(rootNodeId0)?.status === "in_progress") break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
 		// Wait for second done
@@ -7128,7 +7128,7 @@ describe("Integration: root done then resume", () => {
 		const rootNodeId = tracker.rootNodeId;
 		const start = Date.now();
 		while (Date.now() - start < 5000) {
-			if (tracker.get(rootNodeId)?.status === "in_progress") break;
+			if (tracker.getTask(rootNodeId)?.status === "in_progress") break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
 
@@ -7182,7 +7182,7 @@ describe("Integration: root done then resume", () => {
 		const rootNodeId = tracker.rootNodeId;
 		const start = Date.now();
 		while (Date.now() - start < 5000) {
-			if (tracker.get(rootNodeId)?.status === "in_progress") break;
+			if (tracker.getTask(rootNodeId)?.status === "in_progress") break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
 		await waitForDone(ctx, 15000);
@@ -7400,18 +7400,18 @@ describe("Integration: nested parent-child", () => {
 
 		// Verify tree structure: root → child → grandchild, all passed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("verify");
 		expect(rootNode?.children?.length).toBeGreaterThanOrEqual(1);
 
 		const childId = rootNode?.children?.[0] as string;
-		const childNode = tracker.get(childId);
+		const childNode = tracker.getTask(childId);
 		expect(childNode?.status).toBe("verify");
 		expect(childNode?.title).toBe("Child Task");
 		expect(childNode?.children?.length).toBeGreaterThanOrEqual(1);
 
 		const grandchildId = childNode?.children?.[0] as string;
-		const grandchildNode = tracker.get(grandchildId);
+		const grandchildNode = tracker.getTask(grandchildId);
 		expect(grandchildNode?.status).toBe("verify");
 		expect(grandchildNode?.title).toBe("Grandchild Task");
 
@@ -7580,15 +7580,15 @@ describe("Integration: nested parent-child", () => {
 
 		// Verify: grandchild=failed, child=passed, root=passed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("verify");
 
 		const childId = rootNode?.children?.[0] as string;
-		const childNode = tracker.get(childId);
+		const childNode = tracker.getTask(childId);
 		expect(childNode?.status).toBe("verify");
 
 		const grandchildId = childNode?.children?.[0] as string;
-		const grandchildNode = tracker.get(grandchildId);
+		const grandchildNode = tracker.getTask(grandchildId);
 		expect(grandchildNode?.status).toBe("failed");
 	}, 90000);
 });
@@ -7708,7 +7708,7 @@ describe("Integration: child restart scenarios", () => {
 
 		// Get child ID before crash
 		const tracker1 = await ctx.app.getTracker(ctx.projectId);
-		const rootNode1 = tracker1.get(tracker1.rootNodeId);
+		const rootNode1 = tracker1.getTask(tracker1.rootNodeId);
 		const childId = rootNode1?.children?.[0] as string;
 
 		const preRestartRequests = ctx.mockAPI.getRequestCount();
@@ -7731,7 +7731,7 @@ describe("Integration: child restart scenarios", () => {
 
 		// Verify child status
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
-		const childNode = tracker2.get(childId);
+		const childNode = tracker2.getTask(childId);
 		expect(childNode?.status).toBe("verify");
 
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
@@ -7840,7 +7840,7 @@ describe("Integration: child restart scenarios", () => {
 
 		// Get child ID before crash
 		const tracker1 = await ctx.app.getTracker(ctx.projectId);
-		const childId = tracker1.get(tracker1.rootNodeId)?.children?.[0] as string;
+		const childId = tracker1.getTask(tracker1.rootNodeId)?.children?.[0] as string;
 
 		await new Promise((r) => setTimeout(r, 300));
 
@@ -7858,7 +7858,7 @@ describe("Integration: child restart scenarios", () => {
 		expect(status).toBe("verify");
 
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
-		expect(tracker2.get(childId)?.status).toBe("verify");
+		expect(tracker2.getTask(childId)?.status).toBe("verify");
 	}, 60000);
 
 	test("CHILD_RESTART3: Parent yielding + daemon restart + child completes multi-step work + parent receives task_complete", async () => {
@@ -7993,9 +7993,9 @@ describe("Integration: child restart scenarios", () => {
 
 		// Capture child ID and pre-restart state
 		const tracker1 = await ctx.app.getTracker(ctx.projectId);
-		const rootNode1 = tracker1.get(tracker1.rootNodeId);
+		const rootNode1 = tracker1.getTask(tracker1.rootNodeId);
 		const childId = rootNode1?.children?.[0] as string;
-		expect(tracker1.get(childId)?.status).toBe("in_progress");
+		expect(tracker1.getTask(childId)?.status).toBe("in_progress");
 
 		const preRestartRequests = ctx.mockAPI.getRequestCount();
 
@@ -8019,7 +8019,7 @@ describe("Integration: child restart scenarios", () => {
 
 		// Verify child completed successfully
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
-		const childNode = tracker2.get(childId);
+		const childNode = tracker2.getTask(childId);
 		expect(childNode?.status).toBe("verify");
 
 		// Verify post-restart API calls happened (child 2 turns + parent 1 turn = at least 3 more)
@@ -8201,7 +8201,7 @@ describe("Default branch", () => {
 		ctx.mockAPI.enablePrefixValidation();
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode).toBeDefined();
 		// git init creates a default branch (main or master depending on config)
 		expect(rootNode?.branch).toBeTruthy();
@@ -8213,7 +8213,7 @@ describe("Default branch", () => {
 		ctx.mockAPI.enablePrefixValidation();
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		const branch = rootNode?.branch;
 		expect(branch).toBeTruthy();
 
@@ -8326,9 +8326,9 @@ describe("Default branch", () => {
 
 		// Verify child got a worktree with branch based off parent's branch
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId) as TaskNode;
+		const rootNode = tracker.getTask(tracker.rootNodeId) as TaskNode;
 		const childId = rootNode.children[0] as string;
-		const childNode = tracker.get(childId) as TaskNode;
+		const childNode = tracker.getTask(childId) as TaskNode;
 
 		// Child's branch should start with mxd/ prefix
 		expect(childNode.branch).toBeTruthy();
@@ -8408,7 +8408,7 @@ describe("Default branch", () => {
 
 		// Verify root node has "develop" as its branch
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode?.branch).toBe("develop");
 	});
 
@@ -8456,7 +8456,7 @@ describe("Default branch", () => {
 		};
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		expect(tracker.get(tracker.rootNodeId)?.branch).toBe("master");
+		expect(tracker.getTask(tracker.rootNodeId)?.branch).toBe("master");
 	});
 
 	test("child worktree on non-main branch contains correct content", async () => {
@@ -8476,7 +8476,7 @@ describe("Default branch", () => {
 
 		// Update root node branch to "develop" (simulating tracker reload)
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId) as TaskNode;
+		const rootNode = tracker.getTask(tracker.rootNodeId) as TaskNode;
 		rootNode.branch = "develop";
 		await tracker.save();
 
@@ -8563,7 +8563,7 @@ describe("Default branch", () => {
 		expect(status).toBe("verify");
 
 		// Verify the child's bash saw develop-only.txt content
-		const rootNode2 = tracker.get(tracker.rootNodeId) as TaskNode;
+		const rootNode2 = tracker.getTask(tracker.rootNodeId) as TaskNode;
 		const childId = rootNode2.children[0] as string;
 		const childEvents = await readSessionEvents(ctx, childId);
 		const bashResults = childEvents.filter(
@@ -8665,7 +8665,7 @@ describe("Integration: stopTask lifecycle", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 
 		// Verify agent is running
-		const nodeBefore = tracker.get(rootNodeId) as TaskNode;
+		const nodeBefore = tracker.getTask(rootNodeId) as TaskNode;
 		expect(nodeBefore.session).toBeTruthy();
 		expect(nodeBefore.status).toBe("in_progress");
 
@@ -8682,7 +8682,7 @@ describe("Integration: stopTask lifecycle", () => {
 		await new Promise((r) => setTimeout(r, 200));
 
 		// Verify: session cleared
-		const nodeAfterStop = tracker.get(rootNodeId) as TaskNode;
+		const nodeAfterStop = tracker.getTask(rootNodeId) as TaskNode;
 		expect(nodeAfterStop.session).toBeUndefined();
 
 		// Verify: status is still in_progress (NOT failed)
@@ -8749,8 +8749,8 @@ describe("Integration: stopTask lifecycle", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 
 		// Verify agent is running (in yield)
-		expect(tracker.get(rootNodeId)?.session).toBeTruthy();
-		expect(tracker.get(rootNodeId)?.status).toBe("in_progress");
+		expect(tracker.getTask(rootNodeId)?.session).toBeTruthy();
+		expect(tracker.getTask(rootNodeId)?.status).toBe("in_progress");
 
 		// === STOP ===
 		const stopResp = await ctx.app.app.request(
@@ -8762,8 +8762,8 @@ describe("Integration: stopTask lifecycle", () => {
 		await new Promise((r) => setTimeout(r, 200));
 
 		// Session cleared, status stays in_progress
-		expect(tracker.get(rootNodeId)?.session).toBeUndefined();
-		expect(tracker.get(rootNodeId)?.status).toBe("in_progress");
+		expect(tracker.getTask(rootNodeId)?.session).toBeUndefined();
+		expect(tracker.getTask(rootNodeId)?.status).toBe("in_progress");
 
 		// JSONL should have the yield tool_call (no orphan result for yield - it's excluded)
 		const events = await readSessionEvents(ctx, rootNodeId);
@@ -8946,7 +8946,7 @@ describe("Integration: stopTask lifecycle", () => {
 
 		// Get child ID before crash
 		const tracker1 = await ctx.app.getTracker(ctx.projectId);
-		const rootNode1 = tracker1.get(tracker1.rootNodeId);
+		const rootNode1 = tracker1.getTask(tracker1.rootNodeId);
 		const childId = rootNode1?.children?.[0] as string;
 
 		// Verify child JSONL has fork_marker (fork was successful)
@@ -8999,7 +8999,7 @@ describe("Integration: stopTask lifecycle", () => {
 
 		// Verify child completed successfully
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
-		expect(tracker2.get(childId)?.status).toBe("verify");
+		expect(tracker2.getTask(childId)?.status).toBe("verify");
 	}, 60000);
 
 	test("stop → immediate restart: old session settles quickly, no stale events leak", async () => {
@@ -9132,7 +9132,7 @@ describe("Integration: stopTask lifecycle", () => {
 		// We prove it settled by checking no stale events appeared after 1.5s wait.
 		// Without the fix, this would only fail after waiting 30s+ (bash sleep duration).
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker2.get(rootNodeId);
+		const rootNode = tracker2.getTask(rootNodeId);
 		// With two-phase done(), the loop exits on done() and session is cleared.
 		// Root agents no longer stay alive after done.
 		// Session may be undefined (done completed) or still running (timing).
@@ -9364,7 +9364,7 @@ describe("Integration: Phase 2 crash recovery", () => {
 
 		// Verify: status was updated to verify
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
-		expect(tracker2.get(rootNodeId)?.status).toBe("verify");
+		expect(tracker2.getTask(rootNodeId)?.status).toBe("verify");
 
 		// Verify: done_notified was written
 		const recoveredEvents = await readSessionEvents(ctx, rootNodeId);
@@ -9414,7 +9414,7 @@ describe("Integration: Phase 2 crash recovery", () => {
 
 		// Status should be corrected to verify
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
-		expect(tracker2.get(rootNodeId)?.status).toBe("verify");
+		expect(tracker2.getTask(rootNodeId)?.status).toBe("verify");
 	}, 30000);
 });
 

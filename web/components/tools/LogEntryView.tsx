@@ -11,7 +11,7 @@ import {
 	formatTime,
 	getLogTaskId,
 	type LogEntry,
-	type TaskNode,
+	type TreeNode,
 } from "../../hooks.ts";
 import { useLocale } from "../../i18n.ts";
 import { Card } from "../Card.tsx";
@@ -60,7 +60,7 @@ export const LogEntryView = memo(function LogEntryView({
 	rootNodeId,
 }: {
 	entry: LogEntry;
-	nodeMap: Map<string, TaskNode>;
+	nodeMap: Map<string, TreeNode>;
 	projectId?: string;
 	rootNodeId?: string | null;
 }) {
