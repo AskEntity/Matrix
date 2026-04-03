@@ -242,8 +242,8 @@ export class EventStore {
 		const childForkResult =
 			`fork_task_context completed. You are the CHILD (forked from ${sourceId}).` +
 			`${titleInfo}${descInfo}\n` +
-			`The conversation above is inherited context from the source agent. ` +
-			`You are a new agent — follow your own task description.`;
+			`The conversation above is background knowledge from your previous assignment. ` +
+			`Read your new task description and start working.`;
 
 		// Check if fork's own tool_call is among the orphans
 		let hasForkToolCall = false;
