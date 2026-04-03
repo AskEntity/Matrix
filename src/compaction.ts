@@ -55,16 +55,10 @@ The tree is on disk — don't snapshot it. Capture what the agent KNOWS about th
 ## 5. Rejected Approaches & Lessons
 Two categories:
 
-**Technical lessons** — debugging insights that prevent repeating mistakes:
-- "API 400 was NOT from malformed JSON (payload looked correct). Real cause: duplicate Content-Type header — middleware added application/json but fetch also set it, and the server rejected the duplicate."
-- "Rate limiter must check AFTER auth, not before — unauthenticated requests were consuming rate limit slots for legitimate users"
+**Technical lessons** — debugging insights that prevent repeating mistakes.
+**Architectural/philosophical lessons** — design principles discovered through experience.
 
-**Architectural/philosophical lessons** — design principles discovered through experience:
-- "The 'admin mode' feature was touching every route handler with if(isAdmin) checks. Deleted it entirely — RBAC middleware handles permissions in one place, no per-route conditionals."
-- "Never split tasks by layer (types → implementation → tests) — split by feature for parallelism"
-- "Two 'slightly different' validation paths = bugs hiding in the gap. Delete one, make the other handle both cases."
-
-For each: state the principle, briefly what triggered the discovery, and (if applicable) the user insight that crystallized it.
+For each: state the principle, what triggered the discovery, and what was wrong about the initial assumption.
 
 If nothing was learned, write "None so far."
 
