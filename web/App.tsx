@@ -357,11 +357,15 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		const SNAP_CLOSE_THRESHOLD = 100;
 		const MIN_OPEN_WIDTH = 180;
 		const MAX_WIDTH = 600;
+		let hasDragged = false;
 		const handleMouseMove = (e: MouseEvent) => {
+			hasDragged = true;
 			if (e.clientX < SNAP_CLOSE_THRESHOLD) {
 				// Snap closed — show at 0 width during drag
 				setSidebarWidth(0);
+				setSidebarCollapsed(true);
 			} else {
+				setSidebarCollapsed(false);
 				setSidebarWidth(
 					Math.min(MAX_WIDTH, Math.max(MIN_OPEN_WIDTH, e.clientX)),
 				);
@@ -369,6 +373,20 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		};
 		const handleMouseUp = (e: MouseEvent) => {
 			setIsSidebarDragging(false);
+			// If user just clicked (no drag), toggle collapsed
+			if (!hasDragged) {
+				setSidebarCollapsed((prev) => {
+					const next = !prev;
+					localStorage.setItem("mxd-sidebar-collapsed", String(next));
+					if (!next) {
+						// Restore previous width when expanding via click
+						const stored = localStorage.getItem("mxd-sidebar-width");
+						if (stored) setSidebarWidth(Number(stored));
+					}
+					return next;
+				});
+				return;
+			}
 			if (e.clientX < SNAP_CLOSE_THRESHOLD) {
 				// Snap to collapsed
 				setSidebarCollapsed(true);
@@ -1074,8 +1092,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				{/* biome-ignore lint/a11y/useKeyWithClickEvents: sidebar expand handled by Ctrl+B keyboard shortcut */}
 				<div
 					className={`mxd-sidebar-resize-handle${sidebarCollapsed ? " mxd-sidebar-resize-handle-collapsed" : ""}`}
-					onMouseDown={sidebarCollapsed ? undefined : handleSidebarResizeStart}
-					onClick={sidebarCollapsed ? handleToggleSidebarCollapse : undefined}
+					onMouseDown={handleSidebarResizeStart}
 				/>
 
 				<section className="mxd-content">
