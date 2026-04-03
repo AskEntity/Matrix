@@ -4,6 +4,8 @@ One Developer, Team-Quality Code — An IDE where every tab is a task, every tas
 
 **[Documentation →](https://matrix.dev)**
 
+![Matrix IDE](.mxd/screenshot.png)
+
 ## What is Matrix?
 
 Matrix is a multi-agent IDE for AI-assisted software development. It decomposes complex goals into a recursive task tree, spawns agents in parallel on isolated git worktrees, and merges results — letting one person build well-architected, well-tested projects at the speed of a team.
