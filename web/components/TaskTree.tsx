@@ -2,8 +2,56 @@ import { memo, useCallback, useMemo, useRef, useState } from "react";
 import type { TaskStatus } from "../../src/types.ts";
 import { isFolder, isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconChevron, IconEyeOff, IconHexagon } from "./icons.tsx";
+import { IconChevron, IconEyeOff, IconHexagon, IconStar } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
+
+/** Three sidebar filter modes */
+type FilterMode = "all" | "hide-closed" | "active-favorites";
+
+const FILTER_MODES: FilterMode[] = ["all", "hide-closed", "active-favorites"];
+
+/** Read favorites from localStorage */
+function readFavorites(): Set<string> {
+	try {
+		const raw = localStorage.getItem("mxd-favorites");
+		if (raw) {
+			const arr = JSON.parse(raw);
+			if (Array.isArray(arr))
+				return new Set(arr.filter((x): x is string => typeof x === "string"));
+		}
+	} catch {
+		/* ignore */
+	}
+	return new Set();
+}
+
+/** Write favorites to localStorage */
+function writeFavorites(favorites: Set<string>) {
+	try {
+		localStorage.setItem("mxd-favorites", JSON.stringify([...favorites]));
+	} catch {
+		/* ignore */
+	}
+}
+
+/** Read stored filter mode, migrating from old boolean format */
+function readFilterMode(): FilterMode {
+	try {
+		const stored = localStorage.getItem("mxd-filter-mode");
+		if (
+			stored === "all" ||
+			stored === "hide-closed" ||
+			stored === "active-favorites"
+		)
+			return stored;
+		// Migrate from old boolean hideCompleted
+		const old = localStorage.getItem("mxd-hide-closed");
+		if (old === "true") return "hide-closed";
+	} catch {
+		/* ignore */
+	}
+	return "all";
+}
 
 /** Sort priority: lower = shown first */
 const STATUS_PRIORITY: Record<TaskStatus, number> = {
@@ -146,46 +194,85 @@ export const TaskTree = memo(function TaskTree({
 	}, []);
 
 	const [taskFilter, setTaskFilter] = useState("");
-	const [hideCompleted, setHideCompleted] = useState(
-		() => localStorage.getItem("mxd-hide-closed") === "true",
-	);
+	const [filterMode, setFilterMode] = useState<FilterMode>(readFilterMode);
+	const [favorites, setFavorites] = useState<Set<string>>(readFavorites);
 
-	/** Set of node IDs that should be hidden because they (or an ancestor) are completed */
-	const completedIds = useMemo((): Set<string> | null => {
-		if (!hideCompleted) return null;
-		const hidden = new Set<string>();
-		// First pass: mark completed nodes
-		for (const node of nodes) {
-			if (
-				isTask(node) &&
-				(node.status === "closed" || node.status === "failed")
-			) {
-				hidden.add(node.id);
+	const toggleFavorite = useCallback((id: string) => {
+		setFavorites((prev) => {
+			const next = new Set(prev);
+			if (next.has(id)) next.delete(id);
+			else next.add(id);
+			writeFavorites(next);
+			return next;
+		});
+	}, []);
+
+	const cycleFilterMode = useCallback(() => {
+		setFilterMode((prev) => {
+			const idx = FILTER_MODES.indexOf(prev);
+			const next = FILTER_MODES[(idx + 1) % FILTER_MODES.length] as FilterMode;
+			try {
+				localStorage.setItem("mxd-filter-mode", next);
+			} catch {
+				/* ignore */
 			}
-		}
-		// Second pass: mark all descendants of completed nodes
-		const addDescendants = (id: string) => {
-			const children = nodes.filter((n) => n.parentId === id);
-			for (const child of children) {
-				hidden.add(child.id);
-				addDescendants(child.id);
-			}
-		};
-		for (const id of [...hidden]) {
-			addDescendants(id);
-		}
-		return hidden;
-	}, [nodes, hideCompleted]);
+			return next;
+		});
+	}, []);
 
 	const matchingIds = useMemo((): Set<string> | null => {
 		const trimmed = taskFilter.trim();
-		if (!trimmed && !completedIds) return null; // null = show all
+		// "all" mode with no text filter = show everything
+		if (!trimmed && filterMode === "all") return null;
+
 		const matched = new Set<string>();
 		const lower = trimmed.toLowerCase();
+
+		/** Add a node and its ancestors to the matched set */
+		const addWithAncestors = (node: TreeNode) => {
+			let current: TreeNode | undefined = node;
+			while (current) {
+				matched.add(current.id);
+				current = current.parentId ? nodeMap.get(current.parentId) : undefined;
+			}
+		};
+
+		// Build set of completed (closed/failed) node IDs + their descendants for hide-closed mode
+		let completedIds: Set<string> | null = null;
+		if (filterMode === "hide-closed") {
+			completedIds = new Set<string>();
+			for (const node of nodes) {
+				if (
+					isTask(node) &&
+					(node.status === "closed" || node.status === "failed")
+				) {
+					completedIds.add(node.id);
+				}
+			}
+			// Mark all descendants of completed nodes
+			const hidden = completedIds;
+			const addDescendants = (id: string) => {
+				for (const n of nodes) {
+					if (n.parentId === id) {
+						hidden.add(n.id);
+						addDescendants(n.id);
+					}
+				}
+			};
+			for (const id of [...completedIds]) {
+				addDescendants(id);
+			}
+		}
+
 		for (const node of nodes) {
-			// Skip completed nodes when hiding
-			if (completedIds?.has(node.id)) continue;
-			// Apply text filter if present (matches title, description, or task ID prefix)
+			// Filter mode logic
+			if (filterMode === "hide-closed" && completedIds?.has(node.id)) continue;
+			if (filterMode === "active-favorites") {
+				const isActive = isTask(node) && node.status === "in_progress";
+				const isFavorite = favorites.has(node.id);
+				if (!isActive && !isFavorite) continue;
+			}
+			// Apply text filter if present
 			if (
 				trimmed &&
 				!node.title.toLowerCase().includes(lower) &&
@@ -193,17 +280,10 @@ export const TaskTree = memo(function TaskTree({
 				!node.id.toLowerCase().includes(lower)
 			)
 				continue;
-			// Include this node AND all its ancestors
-			let current: TreeNode | undefined = node;
-			while (current) {
-				if (!completedIds?.has(current.id)) {
-					matched.add(current.id);
-				}
-				current = current.parentId ? nodeMap.get(current.parentId) : undefined;
-			}
+			addWithAncestors(node);
 		}
 		return matched;
-	}, [nodes, taskFilter, nodeMap, completedIds]);
+	}, [nodes, taskFilter, nodeMap, filterMode, favorites]);
 
 	// --- Drag-and-drop state ---
 	const [dragState, setDragState] = useState<DragState | null>(null);
@@ -366,9 +446,18 @@ export const TaskTree = memo(function TaskTree({
 	const isOrchestratorSelected =
 		!selectedTaskId || selectedTaskId === rootNodeId;
 	const hasTextFilter = taskFilter.trim().length > 0;
+	// Force-expand tree when view is selective (text search or active+favorites mode)
+	const forceExpand = hasTextFilter || filterMode === "active-favorites";
 	const filteredRoots = matchingIds
 		? roots.filter((r) => matchingIds.has(r.id))
 		: roots;
+
+	const filterModeTitle =
+		filterMode === "all"
+			? t("tasks.filterAll")
+			: filterMode === "hide-closed"
+				? t("tasks.filterHideClosed")
+				: t("tasks.filterActiveFavorites");
 
 	// Parent ID for top-level tasks (roots)
 	const topLevelParentId = rootNodeId ?? "";
@@ -389,17 +478,15 @@ export const TaskTree = memo(function TaskTree({
 					/>
 					<button
 						type="button"
-						className={`mxd-hide-completed-btn${hideCompleted ? " active" : ""}`}
-						onClick={() =>
-							setHideCompleted((v) => {
-								const next = !v;
-								localStorage.setItem("mxd-hide-closed", String(next));
-								return next;
-							})
-						}
-						title={t("tasks.hideCompleted")}
+						className={`mxd-filter-mode-btn${filterMode !== "all" ? " active" : ""}${filterMode === "active-favorites" ? " favorites" : ""}`}
+						onClick={cycleFilterMode}
+						title={filterModeTitle}
 					>
-						<IconEyeOff size={12} />
+						{filterMode === "active-favorites" ? (
+							<IconStar size={12} filled />
+						) : (
+							<IconEyeOff size={12} />
+						)}
 					</button>
 				</div>
 
@@ -448,7 +535,9 @@ export const TaskTree = memo(function TaskTree({
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}
 						matchingIds={matchingIds}
-						hasTextFilter={hasTextFilter}
+						forceExpand={forceExpand}
+						favorites={favorites}
+						toggleFavorite={toggleFavorite}
 						dragState={dragState}
 						dropIndicator={dropIndicator}
 						reparentTargetId={reparentTargetId}
@@ -506,7 +595,9 @@ function TreeNodeView({
 	collapsed,
 	toggleCollapse,
 	matchingIds,
-	hasTextFilter,
+	forceExpand,
+	favorites,
+	toggleFavorite,
 	dragState,
 	dropIndicator,
 	reparentTargetId,
@@ -529,7 +620,9 @@ function TreeNodeView({
 	collapsed: Set<string>;
 	toggleCollapse: (id: string) => void;
 	matchingIds: Set<string> | null;
-	hasTextFilter: boolean;
+	forceExpand: boolean;
+	favorites: Set<string>;
+	toggleFavorite: (id: string) => void;
 	dragState: DragState | null;
 	dropIndicator: DropIndicator | null;
 	reparentTargetId: string | null;
@@ -558,9 +651,7 @@ function TreeNodeView({
 		? allChildren.filter((c) => matchingIds.has(c.id))
 		: allChildren;
 	const hasChildren = children.length > 0;
-	// When text filter is active, force-expand all ancestor nodes so matches are visible.
-	// When only hiding completed (no text filter), allow normal collapse behavior.
-	const isCollapsed = hasTextFilter ? false : collapsed.has(node.id);
+	const isCollapsed = forceExpand ? false : collapsed.has(node.id);
 
 	const isDragging = dragState?.dragId === node.id;
 	const isReparentTarget = reparentTargetId === node.id;
@@ -648,6 +739,19 @@ function TreeNodeView({
 					{isTask(node) && node.status === "draft" && (
 						<span className="mxd-task-draft-badge">draft</span>
 					)}
+					{isTask(node) && (
+						<button
+							type="button"
+							className={`mxd-favorite-btn${favorites.has(node.id) ? " active" : ""}`}
+							onClick={(e) => {
+								e.stopPropagation();
+								toggleFavorite(node.id);
+							}}
+							tabIndex={-1}
+						>
+							<IconStar size={11} filled={favorites.has(node.id)} />
+						</button>
+					)}
 				</div>
 			</button>
 			{showIndicatorAfter && (
@@ -671,7 +775,9 @@ function TreeNodeView({
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}
 						matchingIds={matchingIds}
-						hasTextFilter={hasTextFilter}
+						forceExpand={forceExpand}
+						favorites={favorites}
+						toggleFavorite={toggleFavorite}
 						dragState={dragState}
 						dropIndicator={dropIndicator}
 						reparentTargetId={reparentTargetId}
