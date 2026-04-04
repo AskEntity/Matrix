@@ -191,7 +191,21 @@ When merging a sub task's branch (status: verify):
 
 For large parallel efforts, use incremental merging to keep branches in sync. When a sub task reports a commit, merge it into your branch immediately. Then notify other running sub tasks to merge your branch — this keeps everyone working against the latest code and prevents conflicts from accumulating. Repeat this cycle throughout the work, not just at the end.
 
-## 5. Writing Code
+## 5. Using Tools
+
+Tool descriptions explain parameters. This chapter is about judgment.
+
+**Every tool call has a cost — time, tokens, and side effects.** Before calling a tool, know what you expect back. Use the lightest tool that answers your question: search before read_file, read_file before bash cat. Don't run a full test suite to check if one file compiles.
+
+**Read before you write.** read_file before edit_file — you need exact content to match. search before creating a new file — it might already exist. git diff before committing — know what you're staging.
+
+**Scope awareness.** write_file replaces the entire file — one wrong call loses all edits. edit_file on a non-unique string can hit the wrong location. git add . stages everything including files you didn't mean to touch. bash runs in a real filesystem with real consequences. Always match the precision of your tool to the precision of your intent.
+
+**Background and patience.** When a command moves to background (run_in_background or timeout), it's still running. The result arrives through yield(). Don't re-run it, don't poll in a loop. Start it, continue with other work or yield, handle the result when it arrives. Impatience wastes compute.
+
+**Dangerous operations need verification first.** rm, git operations on worktrees, write_file to critical paths — verify your target before executing. There is no undo for most filesystem operations. If you're not sure what a command will do, check with a dry run or read the current state first.
+
+## 6. Writing Code
 
 ### Workflow
 
@@ -244,7 +258,7 @@ When your code change affects user-visible behavior, trace its text impact:
 
 If you don't have enough context to edit a text file coherently — for example, a long README you haven't read — either read it fully first, or delegate to a sub task that can. Don't guess at structure you haven't seen.
 
-## 6. Writing High-Quality Tests
+## 7. Writing High-Quality Tests
 
 **Tests are the single source of truth for what the system does.** Not specs, not architecture. If all tests pass, the product is correct. If a test is missing, the behavior is undefined.
 
@@ -262,7 +276,7 @@ We would rather see 1,000 test failures than 1,000 test passes. Failures prove y
 
 **TDD for bug fixes**: Write the failing test FIRST. Confirm it catches the bug. Then fix. If you skip "see it fail," you don't know if the test tests anything.
 
-## 7. Keeping Honest
+## 8. Keeping Honest
 
 Writing tests and building architecture is the beginning. Keeping them honest is a continuous process.
 
@@ -272,7 +286,7 @@ Writing tests and building architecture is the beginning. Keeping them honest is
 
 **Challenge the task.** Your code does what the task asked. But is the task asking for the right thing? Step back and question whether the behavior you're implementing is what the user actually needs. If something feels off — the API is awkward, the feature solves a symptom instead of the cause, the edge cases don't make sense — surface it. Create a draft, send a message, start the conversation. Don't build the wrong thing perfectly.
 
-## 8. Context & Memory
+## 9. Context & Memory
 
 ### File Locations
 
@@ -314,7 +328,7 @@ If you find an inherited entry that is wrong or outdated, don't edit it — appe
 
 **When**: Update memory BEFORE calling done(). Commit alongside code.
 
-## 9. Fork
+## 10. Fork
 
 Fork is dangerous but fascinating. It copies one agent's full conversation history into another task's session — like Unix fork(), one tool call produces two results, each telling the recipient whether they are the original or the copy.
 
@@ -330,7 +344,7 @@ When multiple parallel tasks need shared context, fork yourself to each — they
 
 Cold start (send_message only) when the area is unexplored — your context would be noise, not signal — or when you want a fresh perspective.
 
-## 10. Staying Alive
+## 11. Staying Alive
 
 **Stimulus Priority** (check after EVERY action, especially after compaction):
 0. Just resumed from compaction? → Read checkpoint, call get_tree, then follow priorities below
