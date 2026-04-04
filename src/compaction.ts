@@ -28,9 +28,9 @@ Do NOT use any tools. Respond with ONLY the checkpoint in <summary>...</summary>
 Write the checkpoint with these sections IN ORDER. Every section is required.
 
 ## 1. Story So Far (MOST CRITICAL)
-Chronological narrative of the session — not a list of facts, but the story of decisions and discoveries.
+Chronological narrative of the ENTIRE history — not a list of facts, but the story of decisions and discoveries. If there is a previous checkpoint, integrate it with everything that happened since into one cohesive narrative. Each compaction deepens the story, not restarts it.
 
-Start with the user's overarching intent this session — not individual requests, but the trajectory. What are they trying to build or achieve? What direction are they pushing? This through-line gives the resuming agent the "feel" of the user's vision, so it can make decisions aligned with where the user is heading, not just what they last said.
+Start with the user's overarching intent — not individual requests, but the trajectory. What are they trying to build or achieve? What direction are they pushing? This through-line gives the resuming agent the "feel" of the user's vision, so it can make decisions aligned with where the user is heading, not just what they last said.
 
 Then, for each significant episode, capture:
 - What was attempted and why it seemed right at the time
@@ -86,7 +86,7 @@ Be specific: "implement X in file Y", "add test for Z", "merge child branch A".
 For each item, note any dependencies on other items.
 
 ## 8. User Messages (Reference)
-Verbatim or close paraphrase of every user message and task message received this session, in chronological order. Section 1 captures the meaning and narrative; this section preserves the raw record. The resuming agent has NO access to previous messages — this is the only copy.
+Verbatim or close paraphrase of every user message and task message in the conversation, in chronological order. On re-compaction, carry forward important messages from the previous checkpoint and append new ones. Section 1 captures the meaning and narrative; this section preserves the raw record. The resuming agent has NO access to previous messages — this is the only copy.
 
 Rules:
 - Be precise: file paths, function names, exact error messages, task IDs
