@@ -39,7 +39,7 @@ export const ToolCard = memo(function ToolCard({
 }: {
 	entry: Extract<LogEntry, { type: "tool_pair" }>;
 	nodeMap: Map<string, TreeNode>;
-	onTaskNavigate?: (taskId: string, ts?: number) => void;
+	onTaskNavigate?: (taskId: string, entryId?: string) => void;
 	projectMap?: Map<string, string>;
 	onProjectNavigate?: (projectId: string) => void;
 }) {
@@ -77,7 +77,10 @@ export const ToolCard = memo(function ToolCard({
 			: undefined;
 		const doneTitle = `Task ${donePassed ? "Passed" : "Failed"}: ${doneTaskTitle || "Orchestrator"}`;
 		return (
-			<div className="mxd-lmxd-entry mxd-event-tool_card">
+			<div
+				className="mxd-lmxd-entry mxd-event-tool_card"
+				data-entry-id={String(entry.id)}
+			>
 				<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
 				<Card
 					title={`${donePassed ? "✓" : "✗"} ${doneTitle}`}
@@ -140,7 +143,7 @@ export const ToolCard = memo(function ToolCard({
 						className="mxd-clickable-task-name"
 						onClick={(e) => {
 							e.stopPropagation();
-							onTaskNavigate(targetTaskId, entry.ts);
+							onTaskNavigate(targetTaskId, String(entry.id));
 						}}
 					>
 						{targetTitle}
@@ -173,7 +176,10 @@ export const ToolCard = memo(function ToolCard({
 	}
 
 	return (
-		<div className="mxd-lmxd-entry mxd-event-tool_card">
+		<div
+			className="mxd-lmxd-entry mxd-event-tool_card"
+			data-entry-id={String(entry.id)}
+		>
 			<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
 			{taskLabel && (
 				<span className="mxd-lmxd-badge" title={getLogTaskId(entry)}>
