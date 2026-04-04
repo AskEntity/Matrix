@@ -445,6 +445,14 @@ export async function executeBashWithTimeout(
 			}
 		}
 
+		// Append execution duration
+		const durationMs = Date.now() - startTime;
+		const durationStr =
+			durationMs >= 1000
+				? `${(durationMs / 1000).toFixed(1)}s`
+				: `${durationMs}ms`;
+		content += `\nDuration: ${durationStr}`;
+
 		return {
 			content,
 			isError: result.isError,
