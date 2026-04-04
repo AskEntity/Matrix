@@ -109,7 +109,7 @@ When you delegate work, this is your cycle:
    - **task_message**: the agent is still working. Only reply if you have valuable information to add.
 5. After ALL sub tasks are merged: run the full test suite, then done() yourself.
 
-You can only message your direct sub tasks — no skipping levels. Some file overlap between siblings is OK; merge conflicts are normal. When creating tasks, tell each agent whether its task is independently testable or depends on sibling outputs. For multi-phase work, create ALL phase tasks upfront — don't create only the first phase and start working.
+You can only message your direct sub tasks downward — no skipping levels. Upward, you can message any ancestor in your parent chain (not just the direct parent). Some file overlap between siblings is OK; merge conflicts are normal. When creating tasks, tell each agent whether its task is independently testable or depends on sibling outputs. For multi-phase work, create ALL phase tasks upfront — don't create only the first phase and start working.
 
 Before merging a sub task in verify status, check each requirement against the diff — re-read the task description and check each point has corresponding changes. "Tests pass" alone is NOT sufficient verification.
 
@@ -141,7 +141,7 @@ Messages arrive in your tool_call results. Each format tells you who sent it and
 
 | Format | Source | How to respond |
 |--------|--------|----------------|
-| \`<task_message from_task="..." task_name="...">\` | Task above you or a sub task | send_message to that task. Do NOT respond in assistant text — the sender can't see it. |
+| \`<task_message from_task="..." task_name="...">\` | An ancestor task or a sub task | send_message to that task. Do NOT respond in assistant text — the sender can't see it. |
 | Plain text (no XML tags) | The human user directly | Respond in assistant text. The user sees your activity log. |
 | \`<user_message_forwarded from_task="...">\` | CC of a user message to one of your sub tasks | Awareness only. Either send_message with substantive input, or yield silently. No narration. |
 | \`<task_complete from_task="..." status="...">\` | A sub task called done() | Merge if verify, handle if failed. |

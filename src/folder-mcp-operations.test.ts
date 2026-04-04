@@ -682,7 +682,7 @@ describe("folder-aware: send_message direction validation", () => {
 		});
 
 		expect(result.isError).toBeUndefined();
-		expect(result.content[0].text).toContain("Message sent to parent task");
+		expect(result.content[0].text).toContain("Message sent to ancestor task");
 	});
 
 	test("downward message: owning task sends to task in folder (getTaskAbove check) → succeeds", async () => {
@@ -756,6 +756,130 @@ describe("folder-aware: send_message direction validation", () => {
 		});
 
 		expect(result.isError).toBeUndefined();
+	});
+
+	test("grandchild sends upward to grandparent (skip parent) → succeeds", async () => {
+		// root → parent → child (grandchild of root)
+		const root = tracker.addTask("root", "");
+		const parent = tracker.addChild(root.id, "parent", "");
+		const child = tracker.addChild(parent.id, "child", "");
+
+		const rootQueue = new MessageQueue();
+		attachMockSession(root, rootQueue);
+		const parentQueue = new MessageQueue();
+		attachMockSession(parent, parentQueue, { depth: 1 });
+		const childQueue = new MessageQueue();
+		attachMockSession(child, childQueue, { depth: 2 });
+
+		// Child sends directly to root (grandparent), skipping parent
+		const result = await invokeSendMessage(child.id, {
+			taskId: root.id,
+			title: "Escalation",
+			message: "Need root's help",
+		});
+
+		expect(result.isError).toBeUndefined();
+		expect(result.content[0].text).toContain("Message sent to ancestor task");
+	});
+
+	test("great-grandchild sends upward to root (3 levels up) → succeeds", async () => {
+		// root → A → B → C
+		const root = tracker.addTask("root", "");
+		const a = tracker.addChild(root.id, "A", "");
+		const b = tracker.addChild(a.id, "B", "");
+		const c = tracker.addChild(b.id, "C", "");
+
+		const rootQueue = new MessageQueue();
+		attachMockSession(root, rootQueue);
+		attachMockSession(a, new MessageQueue(), { depth: 1 });
+		attachMockSession(b, new MessageQueue(), { depth: 2 });
+		attachMockSession(c, new MessageQueue(), { depth: 3 });
+
+		// C sends directly to root (3 levels up)
+		const result = await invokeSendMessage(c.id, {
+			taskId: root.id,
+			title: "Deep escalation",
+			message: "3 levels up",
+		});
+
+		expect(result.isError).toBeUndefined();
+		expect(result.content[0].text).toContain("Message sent to ancestor task");
+	});
+
+	test("grandchild sends upward to grandparent through folder → succeeds", async () => {
+		// root → folder → parent → child
+		const root = tracker.addTask("root", "");
+		const folder = tracker.addFolder("Folder", root.id);
+		const parent = tracker.addChild(folder.id, "parent", "");
+		const child = tracker.addChild(parent.id, "child", "");
+
+		const rootQueue = new MessageQueue();
+		attachMockSession(root, rootQueue);
+		attachMockSession(parent, new MessageQueue(), { depth: 1 });
+		attachMockSession(child, new MessageQueue(), { depth: 2 });
+
+		// Child sends to root (ancestor through folder)
+		const result = await invokeSendMessage(child.id, {
+			taskId: root.id,
+			title: "Through folder",
+			message: "Skipping folder and parent",
+		});
+
+		expect(result.isError).toBeUndefined();
+		expect(result.content[0].text).toContain("Message sent to ancestor task");
+	});
+
+	test("sibling cannot message sibling (not ancestor, not child) → fails", async () => {
+		// root → [sibling1, sibling2]
+		const root = tracker.addTask("root", "");
+		const sibling1 = tracker.addChild(root.id, "sibling1", "");
+		const sibling2 = tracker.addChild(root.id, "sibling2", "");
+
+		attachMockSession(sibling1, new MessageQueue(), { depth: 1 });
+		attachMockSession(sibling2, new MessageQueue(), { depth: 1 });
+
+		const result = await invokeSendMessage(sibling1.id, {
+			taskId: sibling2.id,
+			title: "Test",
+			message: "Can I reach my sibling?",
+		});
+
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("is neither");
+	});
+
+	test("ancestor message delivers to correct queue", async () => {
+		// root → parent → child
+		const root = tracker.addTask("root", "");
+		const parent = tracker.addChild(root.id, "parent", "");
+		const child = tracker.addChild(parent.id, "child", "");
+
+		const rootQueue = new MessageQueue();
+		attachMockSession(root, rootQueue);
+		const parentQueue = new MessageQueue();
+		attachMockSession(parent, parentQueue, { depth: 1 });
+		attachMockSession(child, new MessageQueue(), { depth: 2 });
+
+		// Child sends to root (skipping parent) — message should go to root's queue
+		await invokeSendMessage(child.id, {
+			taskId: root.id,
+			title: "Direct to root",
+			message: "This should go to root, not parent",
+		});
+
+		// Root's queue should have the message
+		const rootMessages = rootQueue.drain();
+		expect(rootMessages.length).toBe(1);
+		expect(rootMessages[0]?.source).toBe("task_message");
+		if (rootMessages[0]?.source === "task_message") {
+			expect(rootMessages[0].content).toContain(
+				"This should go to root, not parent",
+			);
+		}
+
+		// Parent's queue should NOT have the message
+		const parentMessages = parentQueue.drain();
+		expect(parentMessages.length).toBe(0);
 	});
 });
 
