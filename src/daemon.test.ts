@@ -2801,29 +2801,31 @@ describe("create_task validation", () => {
 		expect(parsed.parentId).toBe(child.id);
 	});
 
-	test("agent cannot create a task under its parent", async () => {
+	test("agent can create a task under its parent (create anywhere)", async () => {
 		const parent = tracker.addTask("parent", "");
 		const agent = tracker.addChild(parent.id, "agent", "");
 		const result = await invokeCreateTask(agent.id, {
-			title: "bad",
+			title: "sibling task",
 			description: "desc",
 			parentId: parent.id,
 		});
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("not your task or descendant");
+		expect(result.isError).toBeUndefined();
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.parentId).toBe(parent.id);
 	});
 
-	test("agent cannot create a task under a sibling", async () => {
+	test("agent can create a task under a sibling (create anywhere)", async () => {
 		const parent = tracker.addTask("parent", "");
 		const agent = tracker.addChild(parent.id, "agent", "");
 		const sibling = tracker.addChild(parent.id, "sibling", "");
 		const result = await invokeCreateTask(agent.id, {
-			title: "bad",
+			title: "nephew task",
 			description: "desc",
 			parentId: sibling.id,
 		});
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("not your task or descendant");
+		expect(result.isError).toBeUndefined();
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.parentId).toBe(sibling.id);
 	});
 
 	test("top-level orchestrator (currentTaskId=null) can create anywhere", async () => {

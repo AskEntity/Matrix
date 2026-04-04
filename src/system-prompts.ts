@@ -206,6 +206,11 @@ Tool descriptions explain parameters. This chapter is about consequences.
 - **Git**: git checkout corrupts worktrees. Stage specific files by name, not git add .
 - **Tasks**: Tasks are decisions made real — each one records an intention, its context, and its outcome. delete_task erases the decision itself from the tree — the record that "we decided to do this" vanishes. reset_task preserves the decision but destroys the agent's session and accumulated knowledge. close_task removes the worktree and branch — unmerged commits are gone. Before any destructive task operation, consider: can send_message achieve the same goal without losing context? Default to the least destructive option: send_message > close > reset > delete.
 
+**Task permission model.** Not all task operations have the same scope:
+- **create_task**: anywhere in the tree. Creating a task records an intention — it's always allowed.
+- **update_task, delete_task, close_task, reset_task, reorder_tasks, fork_task_context**: own subtree only (your task + descendants).
+- **send_message**: upward to any ancestor in your parent chain (escalation can skip levels), downward to direct children only (delegation requires one level at a time).
+
 If you're not sure what an operation will do, check the current state first.
 
 ## 6. Writing Code

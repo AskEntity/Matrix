@@ -299,7 +299,7 @@ describe("folder-aware: create_task scope validation", () => {
 		expect(parsed.parentId).toBe(folder.id);
 	});
 
-	test("agent creates task inside a folder NOT in its subtree → fails", async () => {
+	test("agent creates task inside a folder NOT in its subtree → succeeds (create anywhere)", async () => {
 		// parent → folder → (task inside)
 		// agent (sibling of parent)
 		const parent = tracker.addTask("parent", "");
@@ -308,12 +308,13 @@ describe("folder-aware: create_task scope validation", () => {
 		const folder = tracker.addFolder("Sibling Folder", sibling.id);
 
 		const result = await invokeCreateTask(agent.id, {
-			title: "bad task",
+			title: "cross-tree task",
 			description: "desc",
 			parentId: folder.id,
 		});
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("not your task or descendant");
+		expect(result.isError).toBeUndefined();
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.parentId).toBe(folder.id);
 	});
 
 	test("root orchestrator creates task inside any folder → succeeds", async () => {
