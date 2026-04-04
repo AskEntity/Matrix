@@ -322,6 +322,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		for (const n of nodes) map.set(n.id, n);
 		return map;
 	}, [nodes]);
+	const projectMap = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const p of projects) map.set(p.id, p.name);
+		return map;
+	}, [projects]);
 	const totalCost = useMemo(() => {
 		const sum = nodes.reduce(
 			(acc, n) => (isTask(n) ? acc + n.costUsd : acc),
@@ -1430,6 +1435,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								loadingOlderEvents={loadingOlderEvents}
 								onLoadOlderEvents={handleLoadOlderEvents}
 								onTaskNavigate={handleTaskNavigate}
+								projectMap={projectMap}
 								onProjectNavigate={handleProjectChange}
 								showCacheBadges={showCacheBadges}
 							/>

@@ -134,6 +134,8 @@ export function formatToolArgs(
 export interface ToolTitleOptions {
 	/** When true, prepend emoji/symbol prefixes (e.g. "⌕ Read:" instead of "Read:"). */
 	emoji?: boolean;
+	/** Map of project IDs to names, for resolving cross-project references. */
+	projectMap?: Map<string, string>;
 }
 
 /**
@@ -365,9 +367,11 @@ export function getToolTitle(
 		case TOOL_SEND_MESSAGE_TO_PROJECT: {
 			const p = e ? "→ " : "";
 			const projectId = getArg(toolArgs, "projectId");
-			return projectId
-				? `${p}Cross-project: ${projectId}`
-				: `${p}Cross-project`;
+			if (projectId) {
+				const projectName = opts?.projectMap?.get(projectId) ?? projectId;
+				return `${p}Cross-project: ${projectName}`;
+			}
+			return `${p}Cross-project`;
 		}
 		case TOOL_REPORT_TO_PARENT: {
 			const p = e ? "← " : "";
