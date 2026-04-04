@@ -305,7 +305,9 @@ export function createOrchestratorTools(
 			"Create a new task. If parentId is provided, creates a sub task under that parent. " +
 				"If omitted, creates a sub task of YOUR current task (or top-level if you are the root orchestrator). " +
 				"IMPORTANT: Sibling tasks will run in PARALLEL on separate branches. " +
-				"Each sibling must work on DIFFERENT files/modules to avoid merge conflicts.",
+				"Each sibling must work on DIFFERENT files/modules to avoid merge conflicts. " +
+				"NOTE: You can create tasks anywhere in the tree, not just under your own subtree. " +
+				"Creating a task is recording an intention — it's always allowed.",
 			{
 				title: z.string().describe("Short title for the task"),
 				description: z
@@ -336,23 +338,10 @@ export function createOrchestratorTools(
 					// Auto-parent: if no parentId provided, default to current agent's task
 					const effectiveParentId = args.parentId ?? currentTaskId ?? undefined;
 
-					// Scope validation: agents can only create tasks under themselves or their descendants
-					if (
-						effectiveParentId &&
-						currentTaskId !== null &&
-						effectiveParentId !== currentTaskId &&
-						!isDescendantOf(tracker, effectiveParentId, currentTaskId)
-					) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `Cannot create task under ${effectiveParentId}: not your task or descendant`,
-								},
-							],
-							isError: true,
-						};
-					}
+					// No scope restriction: any agent can create tasks anywhere in the tree.
+					// Creating a task is recording an intention — it's harmless.
+					// Only operations that modify existing tasks (update, delete, close, reset)
+					// are restricted to the agent's own subtree.
 
 					// MCP convenience: apply default budget if not explicitly provided
 					const defaultBudgetUsd = deps.getDefaultBudgetUsd();
