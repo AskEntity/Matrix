@@ -51,7 +51,7 @@ export const ActivityLog = memo(function ActivityLog({
 	olderEventsAvailable?: Map<string, { hasOlder: boolean; oldestTs: number }>;
 	loadingOlderEvents?: boolean;
 	onLoadOlderEvents?: (sessionId: string) => void;
-	onTaskNavigate?: (taskId: string, ts?: number) => void;
+	onTaskNavigate?: (taskId: string, entryId?: string) => void;
 	projectMap?: Map<string, string>;
 	onProjectNavigate?: (projectId: string) => void;
 	showCacheBadges?: boolean;
