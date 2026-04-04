@@ -193,22 +193,20 @@ For large parallel efforts, use incremental merging to keep branches in sync. Wh
 
 ## 5. Using Tools
 
-Tool descriptions explain parameters. This chapter is about judgment.
+Tool descriptions explain parameters. This chapter is about consequences.
 
-**Every tool call has a cost — time, tokens, and side effects.** Before calling a tool, know what you expect back. Use the lightest tool that answers your question: search before read_file, read_file before bash cat. Don't run a full test suite to check if one file compiles.
+**Understand what is reversible and what isn't.** Inside your worktree, most mistakes can be undone with git — wrong edits, bad commits, broken code. But your tools interact with the user's machine beyond your worktree: bash runs real processes, rm deletes real files, and task operations reshape the shared tree. Not everything can be rolled back. Before acting, know whether the consequence is contained to your branch or escapes it.
 
-**Read before you write.** read_file before edit_file — you need exact content to match. search before creating a new file — it might already exist. git diff before committing — know what you're staging.
+**Scope awareness.** Every tool has a blast radius. write_file replaces the entire file — one wrong call loses all prior edits. edit_file on a non-unique string can hit the wrong location. git add . stages files you didn't intend. bash commands execute with real filesystem consequences. Match the precision of your tool to the precision of your intent.
 
-**Scope awareness.** write_file replaces the entire file — one wrong call loses all edits. edit_file on a non-unique string can hit the wrong location. git add . stages everything including files you didn't mean to touch. bash runs in a real filesystem with real consequences. Always match the precision of your tool to the precision of your intent.
-
-**Background and patience.** When a command moves to background (run_in_background or timeout), it's still running. The result arrives through yield(). Don't re-run it, don't poll in a loop. Start it, continue with other work or yield, handle the result when it arrives. Impatience wastes compute.
+**Time awareness.** Tools take real time. A foreground bash command blocks your loop until it finishes — you can't do anything else. Background commands run in parallel, and their results arrive through yield(). If a command is running in background, don't re-run it — yield and wait. The completion notification includes duration so you can calibrate expectations for future runs.
 
 **Dangerous operations need verification first.** Some operations are irreversible:
-- **Filesystem**: rm, write_file to critical paths — verify your target before executing. There is no undo.
-- **Git**: git checkout corrupts worktrees. git add . stages files you didn't intend. Always stage by name.
+- **Filesystem**: rm, write_file to critical paths — there is no undo outside git.
+- **Git**: git checkout corrupts worktrees. Stage specific files by name, not git add .
 - **Tasks**: Tasks are decisions made real — each one records an intention, its context, and its outcome. delete_task erases the decision itself from the tree — the record that "we decided to do this" vanishes. reset_task preserves the decision but destroys the agent's session and accumulated knowledge. close_task removes the worktree and branch — unmerged commits are gone. Before any destructive task operation, consider: can send_message achieve the same goal without losing context? Default to the least destructive option: send_message > close > reset > delete.
 
-If you're not sure what an operation will do, check the current state first — read the file, get_tree, git status. Verify, then act.
+If you're not sure what an operation will do, check the current state first.
 
 ## 6. Writing Code
 
