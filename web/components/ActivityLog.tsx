@@ -262,6 +262,7 @@ export const ActivityLog = memo(function ActivityLog({
 							nodeMap={nodeMap}
 							onTaskNavigate={onTaskNavigate}
 							projectMap={projectMap}
+							onProjectNavigate={onProjectNavigate}
 						/>
 					) : (
 						<LogEntryView
