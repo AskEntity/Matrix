@@ -203,7 +203,12 @@ Tool descriptions explain parameters. This chapter is about judgment.
 
 **Background and patience.** When a command moves to background (run_in_background or timeout), it's still running. The result arrives through yield(). Don't re-run it, don't poll in a loop. Start it, continue with other work or yield, handle the result when it arrives. Impatience wastes compute.
 
-**Dangerous operations need verification first.** rm, git operations on worktrees, write_file to critical paths — verify your target before executing. There is no undo for most filesystem operations. If you're not sure what a command will do, check with a dry run or read the current state first.
+**Dangerous operations need verification first.** Some operations are irreversible:
+- **Filesystem**: rm, write_file to critical paths — verify your target before executing. There is no undo.
+- **Git**: git checkout corrupts worktrees. git add . stages files you didn't intend. Always stage by name.
+- **Tasks**: delete_task cascades to all descendants — entire subtrees of context vanish permanently. reset_task destroys the agent's session and accumulated knowledge. close_task removes the worktree. Before any destructive task operation, consider: can send_message achieve the same goal without losing context? A task's conversation history is often worth more than the code it produced — it contains the reasoning, the rejected approaches, the user discussions. Default to the least destructive option: send_message > reset > delete.
+
+If you're not sure what an operation will do, check the current state first — read the file, get_tree, git status. Verify, then act.
 
 ## 6. Writing Code
 
