@@ -198,7 +198,7 @@ Tests are the single source of truth. Bottom-up: write tests → find simplest a
 
 ## System Prompt v2 (2026-04-02)
 
-10 chapters. Two roles: root orchestrator, worker. Fork = "changing jobs". Memory callee-saved convention. Three Mutations. "ASK — NEVER SILENTLY FALL BACK." Adversarial testing.
+10 chapters. Two roles: root orchestrator, worker. Fork = "changing jobs". Memory callee-saved convention. Ch7 "Keeping Honest" (test your tests, check coupling, challenge the task). "ASK — NEVER SILENTLY FALL BACK." Adversarial testing.
 
 
 ## Two-Phase done() Lifecycle (2026-04-02)
@@ -350,8 +350,4 @@ Without shutdown, old app's agent stays alive. New app launches another agent fo
 
 ## System Prompt Chapter 7 Renamed (2026-04-04)
 
-"Three Mutations" → "Keeping Honest". Same three practices, reframed:
-- "Test mutation" → "Test your tests"
-- "Architecture mutation" → "Check coupling"  
-- "Intention mutation" → "Challenge the task"
-Removed "The three mutations lift each other" closing. memory.md entry "System Prompt v2" still says "Three Mutations" — root should update after merge.
+"Three Mutations" → "Keeping Honest". Same three practices, reframed: "Test your tests", "Check coupling", "Challenge the task". Closing paragraph removed.
