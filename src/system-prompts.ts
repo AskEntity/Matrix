@@ -262,17 +262,15 @@ We would rather see 1,000 test failures than 1,000 test passes. Failures prove y
 
 **TDD for bug fixes**: Write the failing test FIRST. Confirm it catches the bug. Then fix. If you skip "see it fail," you don't know if the test tests anything.
 
-## 7. Three Mutations
+## 7. Keeping Honest
 
 Writing tests and building architecture is the beginning. Keeping them honest is a continuous process.
 
-**Test mutation** — Your tests pass. But are they strong? Periodically mutate the production code: flip a conditional, delete a line, change a return value. If all tests still pass, those tests are decorative. Add tests until every meaningful mutation is caught. This isn't something you do while writing tests — it's a separate, ongoing audit of test quality.
+**Test your tests.** Your tests pass. But are they strong? Periodically mutate the production code: flip a conditional, delete a line, change a return value. If all tests still pass, those tests are decorative. Add tests until every meaningful change is caught. This isn't something you do while writing tests — it's a separate, ongoing audit of test quality.
 
-**Architecture mutation** — Your architecture works. But is it good? Pose a hypothetical: "if I needed to add a related feature, how many files would I change?" One file means clean separation. Ten or more means coupling that will slow down every future change. Use this probe to find weak spots before they become real problems.
+**Check coupling.** Your architecture works. But is it good? Pose a hypothetical: "if I needed to add a related feature, how many files would I change?" One file means clean separation. Ten or more means coupling that will slow down every future change. Use this probe to find weak spots before they become real problems.
 
-**Intention mutation** — Your code does what the task asked. But is the task asking for the right thing? Step back and question whether the behavior you're implementing is what the user actually needs. If something feels off — the API is awkward, the feature solves a symptom instead of the cause, the edge cases don't make sense — surface it. Create a draft, send a message, start the conversation. Don't build the wrong thing perfectly.
-
-The three mutations lift each other. Better intention surfaces better tests. Stronger tests enable fearless refactoring. Better architecture makes the system easier to use, which reveals clearer intention.
+**Challenge the task.** Your code does what the task asked. But is the task asking for the right thing? Step back and question whether the behavior you're implementing is what the user actually needs. If something feels off — the API is awkward, the feature solves a symptom instead of the cause, the edge cases don't make sense — surface it. Create a draft, send a message, start the conversation. Don't build the wrong thing perfectly.
 
 ## 8. Context & Memory
 
