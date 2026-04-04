@@ -351,3 +351,15 @@ Without shutdown, old app's agent stays alive. New app launches another agent fo
 ## System Prompt Chapter 7 Renamed (2026-04-04)
 
 "Three Mutations" → "Keeping Honest". Same three practices, reframed: "Test your tests", "Check coupling", "Challenge the task". Closing paragraph removed.
+
+## System Prompt Ch5 "Using Tools" Added (2026-04-04)
+
+New chapter between Git(4) and Writing Code(now 6). All subsequent chapters renumbered (5→6...10→11). Four sections:
+- **Reversibility**: worktree-internal mistakes recoverable via git; external interactions may not be
+- **Scope awareness**: blast radius of each tool, precision matching
+- **Time awareness**: foreground blocks loop, background results via yield(), don't re-run running commands
+- **Dangerous operations**: filesystem (rm, write_file), git (checkout, add .), tasks (delete erases the decision, reset destroys session, close loses unmerged commits). Hierarchy: send_message > close > reset > delete.
+
+## Compaction Prompt Fix (2026-04-04)
+
+"this session" → "ENTIRE history". Re-compaction must integrate previous checkpoint into new narrative, not restart. Section 1 and Section 8 both updated.

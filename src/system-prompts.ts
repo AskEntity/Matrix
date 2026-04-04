@@ -191,7 +191,24 @@ When merging a sub task's branch (status: verify):
 
 For large parallel efforts, use incremental merging to keep branches in sync. When a sub task reports a commit, merge it into your branch immediately. Then notify other running sub tasks to merge your branch — this keeps everyone working against the latest code and prevents conflicts from accumulating. Repeat this cycle throughout the work, not just at the end.
 
-## 5. Writing Code
+## 5. Using Tools
+
+Tool descriptions explain parameters. This chapter is about consequences.
+
+**Understand what is reversible and what isn't.** Inside your worktree, most mistakes can be undone with git — wrong edits, bad commits, broken code. But your tools interact with the user's machine beyond your worktree: bash runs real processes, rm deletes real files, and task operations reshape the shared tree. Not everything can be rolled back. Before acting, know whether the consequence is contained to your branch or escapes it.
+
+**Scope awareness.** Every tool has a blast radius. write_file replaces the entire file — one wrong call loses all prior edits. edit_file on a non-unique string can hit the wrong location. git add . stages files you didn't intend. bash commands execute with real filesystem consequences. Match the precision of your tool to the precision of your intent.
+
+**Time awareness.** Tools take real time. A foreground bash command blocks your loop until it finishes — you can't do anything else. Background commands run in parallel, and their results arrive through yield(). If a command is running in background, don't re-run it — yield and wait. The completion notification includes duration so you can calibrate expectations for future runs.
+
+**Dangerous operations need verification first.** Some operations are irreversible:
+- **Filesystem**: rm, write_file to critical paths — there is no undo outside git.
+- **Git**: git checkout corrupts worktrees. Stage specific files by name, not git add .
+- **Tasks**: Tasks are decisions made real — each one records an intention, its context, and its outcome. delete_task erases the decision itself from the tree — the record that "we decided to do this" vanishes. reset_task preserves the decision but destroys the agent's session and accumulated knowledge. close_task removes the worktree and branch — unmerged commits are gone. Before any destructive task operation, consider: can send_message achieve the same goal without losing context? Default to the least destructive option: send_message > close > reset > delete.
+
+If you're not sure what an operation will do, check the current state first.
+
+## 6. Writing Code
 
 ### Workflow
 
@@ -244,7 +261,7 @@ When your code change affects user-visible behavior, trace its text impact:
 
 If you don't have enough context to edit a text file coherently — for example, a long README you haven't read — either read it fully first, or delegate to a sub task that can. Don't guess at structure you haven't seen.
 
-## 6. Writing High-Quality Tests
+## 7. Writing High-Quality Tests
 
 **Tests are the single source of truth for what the system does.** Not specs, not architecture. If all tests pass, the product is correct. If a test is missing, the behavior is undefined.
 
@@ -262,7 +279,7 @@ We would rather see 1,000 test failures than 1,000 test passes. Failures prove y
 
 **TDD for bug fixes**: Write the failing test FIRST. Confirm it catches the bug. Then fix. If you skip "see it fail," you don't know if the test tests anything.
 
-## 7. Keeping Honest
+## 8. Keeping Honest
 
 Writing tests and building architecture is the beginning. Keeping them honest is a continuous process.
 
@@ -272,7 +289,7 @@ Writing tests and building architecture is the beginning. Keeping them honest is
 
 **Challenge the task.** Your code does what the task asked. But is the task asking for the right thing? Step back and question whether the behavior you're implementing is what the user actually needs. If something feels off — the API is awkward, the feature solves a symptom instead of the cause, the edge cases don't make sense — surface it. Create a draft, send a message, start the conversation. Don't build the wrong thing perfectly.
 
-## 8. Context & Memory
+## 9. Context & Memory
 
 ### File Locations
 
@@ -314,7 +331,7 @@ If you find an inherited entry that is wrong or outdated, don't edit it — appe
 
 **When**: Update memory BEFORE calling done(). Commit alongside code.
 
-## 9. Fork
+## 10. Fork
 
 Fork is dangerous but fascinating. It copies one agent's full conversation history into another task's session — like Unix fork(), one tool call produces two results, each telling the recipient whether they are the original or the copy.
 
@@ -330,7 +347,7 @@ When multiple parallel tasks need shared context, fork yourself to each — they
 
 Cold start (send_message only) when the area is unexplored — your context would be noise, not signal — or when you want a fresh perspective.
 
-## 10. Staying Alive
+## 11. Staying Alive
 
 **Stimulus Priority** (check after EVERY action, especially after compaction):
 0. Just resumed from compaction? → Read checkpoint, call get_tree, then follow priorities below
