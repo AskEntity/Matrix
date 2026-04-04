@@ -6,6 +6,7 @@ import {
 	TOOL_DONE,
 	TOOL_SEND_MESSAGE,
 	TOOL_SEND_MESSAGE_TO_CHILD,
+	TOOL_SEND_MESSAGE_TO_PROJECT,
 } from "../../src/tool-names.ts";
 import {
 	formatTime,
@@ -34,11 +35,13 @@ export const ToolCard = memo(function ToolCard({
 	nodeMap,
 	onTaskNavigate,
 	projectMap,
+	onProjectNavigate,
 }: {
 	entry: Extract<LogEntry, { type: "tool_pair" }>;
 	nodeMap: Map<string, TreeNode>;
 	onTaskNavigate?: (taskId: string, ts?: number) => void;
 	projectMap?: Map<string, string>;
+	onProjectNavigate?: (projectId: string) => void;
 }) {
 	const { t } = useLocale();
 
@@ -141,6 +144,28 @@ export const ToolCard = memo(function ToolCard({
 						}}
 					>
 						{targetTitle}
+					</span>
+				</>
+			);
+		}
+	}
+	if (onProjectNavigate && toolName === TOOL_SEND_MESSAGE_TO_PROJECT) {
+		const targetProjectId = getArg(toolArgs, "projectId");
+		if (targetProjectId) {
+			const targetName = projectMap?.get(targetProjectId) ?? targetProjectId;
+			cardTitle = (
+				<>
+					{"→ Cross-project: "}
+					{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate */}
+					{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable project name */}
+					<span
+						className="mxd-clickable-task-name"
+						onClick={(e) => {
+							e.stopPropagation();
+							onProjectNavigate(targetProjectId);
+						}}
+					>
+						{targetName}
 					</span>
 				</>
 			);
