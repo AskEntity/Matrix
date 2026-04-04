@@ -18,7 +18,7 @@ Not a chat app with agents. Not a code editor with better autocomplete. An **IDE
 - **Tree-Parallel Execution** — Say "go." Five agents start working simultaneously, each on its own git branch. Your input time < their execution time.
 - **Living Memory** — Closed tasks aren't dead. Fork their context into new work. Every session builds on the last. Knowledge compounds, never resets.
 - **Cache Engineering** — 99.4% cache hit rate. Frozen tools, byte-identical JSONL reconstruction, fork prefix sharing. Three 800K sessions share one cache entry.
-- **ITA Methodology** — Intention → Test → Architecture. Tests are truth, not specs. Three mutations guard quality at every level.
+- **Two Layers of Reality** — Tests ground AI in physical reality (code works or doesn't). Tasks ground AI in human reality (decisions and their reasoning). Together, they close the two disconnections.
 - **Two-Phase Lifecycle** — `done()` uses a two-phase commit: agent decides → daemon commits. Crash-safe with JSONL recovery. Tasks flow through draft → pending → in_progress → verify → closed.
 - **Cross-Project Communication** — Agents in different projects talk to each other in real-time.
 - **Self-Bootstrapping** — Matrix develops itself using itself.
@@ -84,7 +84,7 @@ bun run check         # biome lint + format
 Full documentation at **[matrix.dev](https://matrix.dev)**:
 
 - [Getting Started](https://matrix.dev/getting-started) — Installation, configuration, CLI reference
-- [Why Matrix](https://matrix.dev/why) — ITA methodology, drive coding, cache moat, competitive positioning
+- [Why Matrix](https://matrix.dev/why) — Two disconnections, cache moat, self-bootstrapping, competitive positioning
 - [Core Concepts](https://matrix.dev/concepts) — Task tree, folders, worktrees, memory, discussion mode, cross-project messaging
 - [Architecture](https://matrix.dev/architecture) — Agent loop, event system, cache architecture, two-phase done, provider abstraction
 

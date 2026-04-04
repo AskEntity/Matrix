@@ -347,3 +347,11 @@ Without shutdown, old app's agent stays alive. New app launches another agent fo
 `JSON.stringify(TaskNode)` must NEVER include `session` (runtime-only: messages[], allTools, queue, abortController). Use `stripSession(node)` from `types.ts`. All four MCP tools that return TaskNode now use it: `get_tree`, `get_task`, `create_task`, `update_task`.
 
 **Bug found**: create_task and update_task were missing the strip. A forked task (700K+ tokens in messages[]) updating its own description produced a 2.95MB tool_result → context doubled from 735K to 1.75M → API rejected. get_tree and get_task already had manual `const { session, ...rest }` — unified to `stripSession()`.
+
+## System Prompt Chapter 7 Renamed (2026-04-04)
+
+"Three Mutations" → "Keeping Honest". Same three practices, reframed:
+- "Test mutation" → "Test your tests"
+- "Architecture mutation" → "Check coupling"  
+- "Intention mutation" → "Challenge the task"
+Removed "The three mutations lift each other" closing. memory.md entry "System Prompt v2" still says "Three Mutations" — root should update after merge.
