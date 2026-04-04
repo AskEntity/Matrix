@@ -30,19 +30,24 @@ import {
 /** Outer wrapper: timestamp + badge + card */
 function LogEntryWrapper({
 	ts,
+	entryId,
 	taskLabel,
 	taskId,
 	className,
 	children,
 }: {
 	ts: number;
+	entryId?: string;
 	taskLabel: string | null;
 	taskId?: string;
 	className?: string;
 	children: React.ReactNode;
 }) {
 	return (
-		<div className={`mxd-lmxd-entry ${className ?? "mxd-event-tool_card"}`}>
+		<div
+			className={`mxd-lmxd-entry ${className ?? "mxd-event-tool_card"}`}
+			data-entry-id={entryId}
+		>
 			<span className="mxd-lmxd-time">{formatTime(ts)}</span>
 			{taskLabel && (
 				<span className="mxd-lmxd-badge" title={taskId}>
@@ -108,7 +113,7 @@ export const LogEntryView = memo(function LogEntryView({
 	nodeMap: Map<string, TreeNode>;
 	projectId?: string;
 	rootNodeId?: string | null;
-	onTaskNavigate?: (taskId: string, ts?: number) => void;
+	onTaskNavigate?: (taskId: string, entryId?: string) => void;
 	onProjectNavigate?: (projectId: string) => void;
 	showCacheBadges?: boolean;
 }) {
@@ -213,6 +218,7 @@ export const LogEntryView = memo(function LogEntryView({
 			return (
 				<LogEntryWrapper
 					ts={entry.ts}
+					entryId={String(entry.id)}
 					taskLabel={taskLabel}
 					taskId={getLogTaskId(entry)}
 				>
@@ -235,6 +241,7 @@ export const LogEntryView = memo(function LogEntryView({
 			return (
 				<LogEntryWrapper
 					ts={entry.ts}
+					entryId={String(entry.id)}
 					taskLabel={taskLabel}
 					taskId={getLogTaskId(entry)}
 				>
@@ -251,6 +258,7 @@ export const LogEntryView = memo(function LogEntryView({
 		return (
 			<LogEntryWrapper
 				ts={entry.ts}
+				entryId={String(entry.id)}
 				taskLabel={taskLabel}
 				taskId={getLogTaskId(entry)}
 			>
@@ -310,6 +318,7 @@ export const LogEntryView = memo(function LogEntryView({
 		return (
 			<LogEntryWrapper
 				ts={entry.ts}
+				entryId={String(entry.id)}
 				taskLabel={taskLabel}
 				taskId={getLogTaskId(entry)}
 			>
@@ -361,6 +370,7 @@ export const LogEntryView = memo(function LogEntryView({
 		return (
 			<LogEntryWrapper
 				ts={entry.ts}
+				entryId={String(entry.id)}
 				taskLabel={taskLabel}
 				taskId={entry.taskId}
 			>
@@ -395,7 +405,7 @@ export const LogEntryView = memo(function LogEntryView({
 					className="mxd-clickable-task-name"
 					onClick={(e) => {
 						e.stopPropagation();
-						onTaskNavigate(fromTaskId, entry.ts);
+						onTaskNavigate(fromTaskId, String(entry.id));
 					}}
 				>
 					{title}
@@ -408,6 +418,7 @@ export const LogEntryView = memo(function LogEntryView({
 		return (
 			<LogEntryWrapper
 				ts={entry.ts}
+				entryId={String(entry.id)}
 				taskLabel={taskLabel}
 				taskId={entry.taskId}
 			>
@@ -426,7 +437,11 @@ export const LogEntryView = memo(function LogEntryView({
 	if (entry.type === "tree_change") {
 		const text = entry.title ? `${entry.action}: ${entry.title}` : entry.action;
 		return (
-			<LogEntryWrapper ts={entry.ts} taskLabel={taskLabel}>
+			<LogEntryWrapper
+				ts={entry.ts}
+				entryId={String(entry.id)}
+				taskLabel={taskLabel}
+			>
 				<Card
 					title={`🌿 ${t("log.treeUpdated")}`}
 					detail={text}
@@ -461,7 +476,7 @@ export const LogEntryView = memo(function LogEntryView({
 					className="mxd-clickable-task-name"
 					onClick={(e) => {
 						e.stopPropagation();
-						onTaskNavigate(fromTaskId, entry.ts);
+						onTaskNavigate(fromTaskId, String(entry.id));
 					}}
 				>
 					{displayTitle}
@@ -474,6 +489,7 @@ export const LogEntryView = memo(function LogEntryView({
 		return (
 			<LogEntryWrapper
 				ts={entry.ts}
+				entryId={String(entry.id)}
 				taskLabel={taskLabel}
 				taskId={getLogTaskId(entry)}
 			>
@@ -511,7 +527,7 @@ export const LogEntryView = memo(function LogEntryView({
 						className="mxd-clickable-task-name"
 						onClick={(e) => {
 							e.stopPropagation();
-							onTaskNavigate(fromTaskId, entry.ts);
+							onTaskNavigate(fromTaskId, String(entry.id));
 						}}
 					>
 						{childTitle}
@@ -524,6 +540,7 @@ export const LogEntryView = memo(function LogEntryView({
 		return (
 			<LogEntryWrapper
 				ts={entry.ts}
+				entryId={String(entry.id)}
 				taskLabel={taskLabel}
 				taskId={getLogTaskId(entry)}
 			>
@@ -558,7 +575,11 @@ export const LogEntryView = memo(function LogEntryView({
 		const outputContent = outputParts.join("\n");
 
 		return (
-			<LogEntryWrapper ts={entry.ts} taskLabel={taskLabel}>
+			<LogEntryWrapper
+				ts={entry.ts}
+				entryId={String(entry.id)}
+				taskLabel={taskLabel}
+			>
 				<Card
 					title={`⚙ Background Complete${cmdDisplay ? `: ${cmdDisplay}` : ""}`}
 					detail={detail || undefined}
@@ -610,6 +631,7 @@ export const LogEntryView = memo(function LogEntryView({
 		return (
 			<LogEntryWrapper
 				ts={entry.ts}
+				entryId={String(entry.id)}
 				taskLabel={taskLabel}
 				taskId={getLogTaskId(entry)}
 			>
@@ -672,6 +694,7 @@ export const LogEntryView = memo(function LogEntryView({
 		return (
 			<LogEntryWrapper
 				ts={entry.ts}
+				entryId={String(entry.id)}
 				taskLabel={taskLabel}
 				taskId={entry.taskId}
 				className="mxd-lmxd-entry mxd-event-tool_card"

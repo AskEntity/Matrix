@@ -55,16 +55,6 @@ function parseHash(): { projectId?: string; taskId?: string } {
 	return { projectId: raw.slice(0, slash), taskId: raw.slice(slash + 1) };
 }
 
-/** Parse "HH:MM:SS" to total seconds for timestamp comparison */
-function timeToSeconds(hms: string): number {
-	const parts = hms.split(":");
-	return (
-		(Number(parts[0]) || 0) * 3600 +
-		(Number(parts[1]) || 0) * 60 +
-		(Number(parts[2]) || 0)
-	);
-}
-
 function updateHash(
 	projectId: string,
 	taskId: string | null,
@@ -222,6 +212,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [viewMode, setViewMode] = useState<"activity" | "description">(
 		"activity",
 	);
+	// Per-tab scroll state: { scrollTop, follow }
+	const tabScrollStateRef = useRef<
+		Map<string, { scrollTop: number; follow: boolean }>
+	>(new Map());
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [fullscreen, setFullscreen] = useState(false);
 	const [theme, setThemeState] = useState<
@@ -711,58 +705,69 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	}, [openTabs, nodeMap]);
 
 	// When set, the next task switch should scroll to this timestamp instead of the bottom.
-	const scrollToTsRef = useRef<number | null>(null);
+	const scrollToEntryRef = useRef<string | null>(null);
+	const prevSelectedTaskRef = useRef<string | null>(selectedTaskId);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only trigger on task selection change
 	useEffect(() => {
 		setViewMode("activity");
-		const targetTs = scrollToTsRef.current;
-		scrollToTsRef.current = null;
+		const targetEntryId = scrollToEntryRef.current;
+		scrollToEntryRef.current = null;
 
-		if (targetTs) {
-			// Smart scroll: find message near timestamp → scroll to it.
-			// If not found (pending/unconsumed) → enable follow mode.
+		// Save scroll state of the previous tab
+		const prevTabId = prevSelectedTaskRef.current;
+		if (prevTabId) {
+			const logEl = document.querySelector(".mxd-activity-log");
+			tabScrollStateRef.current.set(prevTabId, {
+				scrollTop: logEl?.scrollTop ?? 0,
+				follow: autoScroll,
+			});
+		}
+		prevSelectedTaskRef.current = selectedTaskId;
+
+		if (targetEntryId) {
+			// Navigation: scroll to specific entry by ID
 			setAutoScroll(false);
 			// Delay to let event fetch + render complete after task switch
 			setTimeout(() => {
-				const logEl = document.querySelector(".mxd-activity-log");
-				if (!logEl) {
-					setAutoScroll(true);
-					return;
-				}
-				const entries = logEl.querySelectorAll(".mxd-lmxd-entry");
-				let best: Element | null = null;
-				let bestDiff = Number.POSITIVE_INFINITY;
-				const targetTime = new Date(targetTs);
-				const targetHMS = `${String(targetTime.getHours()).padStart(2, "0")}:${String(targetTime.getMinutes()).padStart(2, "0")}:${String(targetTime.getSeconds()).padStart(2, "0")}`;
-				const targetSec = timeToSeconds(targetHMS);
-				for (const el of entries) {
-					const timeEl = el.querySelector(".mxd-lmxd-time");
-					if (!timeEl) continue;
-					const timeText = timeEl.textContent?.trim() ?? "";
-					const diff = Math.abs(timeToSeconds(timeText) - targetSec);
-					if (diff < bestDiff) {
-						bestDiff = diff;
-						best = el;
-					}
-				}
-				// Within 30s = found the message → scroll to it with highlight.
-				// Beyond 30s = message is pending/not rendered → enable follow mode.
-				if (best && bestDiff <= 30) {
-					best.scrollIntoView({ block: "center", behavior: "smooth" });
-					best.classList.add("mxd-scroll-target");
-					setTimeout(() => best?.classList.remove("mxd-scroll-target"), 2000);
+				const el = document.querySelector(
+					`[data-entry-id="${CSS.escape(targetEntryId)}"]`,
+				);
+				if (el) {
+					el.scrollIntoView({ block: "center", behavior: "smooth" });
+					el.classList.add("mxd-scroll-target");
+					setTimeout(() => el.classList.remove("mxd-scroll-target"), 2000);
 				} else {
+					// Entry not found — likely pending. Enable follow mode.
 					setAutoScroll(true);
-					logEl.scrollTop = logEl.scrollHeight;
+					const logEl = document.querySelector(".mxd-activity-log");
+					if (logEl) logEl.scrollTop = logEl.scrollHeight;
 				}
 			}, 300);
 		} else {
-			setAutoScroll(true);
-			requestAnimationFrame(() => {
-				const logEl = document.querySelector(".mxd-activity-log");
-				if (logEl) logEl.scrollTop = logEl.scrollHeight;
-			});
+			// Normal tab switch: restore previous scroll state or follow
+			const tabId = selectedTaskId ?? "root";
+			const saved = tabScrollStateRef.current.get(tabId);
+			if (saved) {
+				setAutoScroll(saved.follow);
+				requestAnimationFrame(() => {
+					const logEl = document.querySelector(".mxd-activity-log");
+					if (logEl) {
+						if (saved.follow) {
+							logEl.scrollTop = logEl.scrollHeight;
+						} else {
+							logEl.scrollTop = saved.scrollTop;
+						}
+					}
+				});
+			} else {
+				// First visit to this tab — follow mode
+				setAutoScroll(true);
+				requestAnimationFrame(() => {
+					const logEl = document.querySelector(".mxd-activity-log");
+					if (logEl) logEl.scrollTop = logEl.scrollHeight;
+				});
+			}
 		}
 	}, [selectedTaskId]);
 
@@ -998,10 +1003,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 	/** Navigate to a task from an activity log card. Supports root. Scrolls to timestamp if provided. */
 	const handleTaskNavigate = useCallback(
-		(id: string, ts?: number) => {
+		(id: string, entryId?: string) => {
 			if (!id) return;
-			if (ts) {
-				scrollToTsRef.current = ts;
+			if (entryId) {
+				scrollToEntryRef.current = entryId;
 			}
 			if (id === rootNodeId) {
 				// Navigate to root — just select it
