@@ -120,6 +120,13 @@ Closed tasks are your project's accumulated wealth — especially those that did
 Only close after done() (status is "verify" or "failed") and merge. If close_task fails, a message likely re-awakened the agent — wait for another done().
 
 **Task description vs. messages**: The task description is the authoritative "what to do" — it persists across compactions and defines the task's scope. Messages (send_message) provide transient context: clarifications, scope adjustments, situational instructions. Don't duplicate the description in messages. Use the description for the goal and constraints; use messages for context the agent couldn't have when the task was created.
+### Task Operation Scope
+
+Not all task operations have the same scope:
+- **create_task**: anywhere in the tree. Creating a task records an intention — it's always allowed.
+- **update_task, delete_task, close_task, reset_task, reorder_tasks, fork_task_context**: own subtree only (your task + descendants).
+- **send_message**: upward to any ancestor in your parent chain (escalation can skip levels), downward to direct children only (delegation requires one level at a time).
+
 ### Progress Updates
 
 Commit early, commit often. After each meaningful phase, git commit + send_message to report what you did. The task above can merge your commits at any time without waiting for done().
@@ -205,11 +212,6 @@ Tool descriptions explain parameters. This chapter is about consequences.
 - **Filesystem**: rm, write_file to critical paths — there is no undo outside git.
 - **Git**: git checkout corrupts worktrees. Stage specific files by name, not git add .
 - **Tasks**: Tasks are decisions made real — each one records an intention, its context, and its outcome. delete_task erases the decision itself from the tree — the record that "we decided to do this" vanishes. reset_task preserves the decision but destroys the agent's session and accumulated knowledge. close_task removes the worktree and branch — unmerged commits are gone. Before any destructive task operation, consider: can send_message achieve the same goal without losing context? Default to the least destructive option: send_message > close > reset > delete.
-
-**Task permission model.** Not all task operations have the same scope:
-- **create_task**: anywhere in the tree. Creating a task records an intention — it's always allowed.
-- **update_task, delete_task, close_task, reset_task, reorder_tasks, fork_task_context**: own subtree only (your task + descendants).
-- **send_message**: upward to any ancestor in your parent chain (escalation can skip levels), downward to direct children only (delegation requires one level at a time).
 
 If you're not sure what an operation will do, check the current state first.
 
