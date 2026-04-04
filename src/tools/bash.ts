@@ -460,18 +460,19 @@ export async function executeBashWithTimeout(
 		};
 	}
 
-	// Immediate background: foregroundTimeout === 0
-	if (isImmediateBackground) {
+	// Shared helper: move a running process to background tracking.
+	// Both immediate-background and timeout-background paths call this.
+	function moveToBackground(opts: {
+		exitPromise: Promise<number>;
+		reason: string;
+		partialStdout?: string;
+	}): {
+		content: string;
+		isError: boolean;
+		backgroundId: string;
+		backgroundCommand: string;
+	} {
 		const bgId = `bg-${ulid()}`;
-		if (!bgMap) {
-			// No session background map — can't track background processes
-			proc.kill();
-			formatBashResult(stdoutPath, stderrPath, 1);
-			return {
-				content: "Command cannot be backgrounded (no session for tracking).",
-				isError: true,
-			};
-		}
 		const bgEntry: BackgroundProcess = {
 			id: bgId,
 			command,
@@ -487,21 +488,20 @@ export async function executeBashWithTimeout(
 		bgEntry.completionPromise = new Promise<void>((resolve) => {
 			bgEntry.resolveCompletion = resolve;
 		});
-		bgMap.set(bgId, bgEntry);
+		// biome-ignore lint/style/noNonNullAssertion: caller guarantees bgMap exists
+		bgMap!.set(bgId, bgEntry);
 
 		// Monitor in background
 		(async () => {
 			try {
-				const exitCode = await proc.exited;
+				const exitCode = await opts.exitPromise;
 				bgEntry.exitCode = exitCode;
 				bgEntry.status = exitCode === 0 ? "completed" : "failed";
 				bgEntry.endTime = Date.now();
 				bgEntry.kill = null;
 
-				// Format output using shared formatBashResult
 				const result = formatBashResult(stdoutPath, stderrPath, exitCode);
 
-				// Notify via queue with content when small
 				if (queue) {
 					try {
 						queue.enqueue(
@@ -526,12 +526,32 @@ export async function executeBashWithTimeout(
 			}
 		})();
 
+		const partialSuffix = opts.partialStdout
+			? `\n\nPartial stdout so far:\n${opts.partialStdout.slice(0, 5000)}`
+			: "";
+
 		return {
-			content: `Command backgrounded immediately.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes. Use yield() to wait.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}`,
+			content: `${opts.reason}\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes. Use yield() to wait.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialSuffix}`,
 			isError: false,
 			backgroundId: bgId,
 			backgroundCommand: command,
 		};
+	}
+
+	// Immediate background: foregroundTimeout === 0
+	if (isImmediateBackground) {
+		if (!bgMap) {
+			proc.kill();
+			formatBashResult(stdoutPath, stderrPath, 1);
+			return {
+				content: "Command cannot be backgrounded (no session for tracking).",
+				isError: true,
+			};
+		}
+		return moveToBackground({
+			exitPromise: proc.exited,
+			reason: "Command backgrounded immediately.",
+		});
 	}
 
 	// Foreground execution with timeout race
@@ -586,8 +606,7 @@ export async function executeBashWithTimeout(
 	}
 
 	// Foreground timeout hit — move to background
-	if (!sessionId) {
-		// No session to track background — just kill and return
+	if (!sessionId || !bgMap) {
 		proc.kill();
 		formatBashResult(stdoutPath, stderrPath, 1); // clean up temp files
 		return {
@@ -595,69 +614,6 @@ export async function executeBashWithTimeout(
 			isError: true,
 		};
 	}
-
-	const bgId = `bg-${ulid()}`;
-	if (!bgMap) {
-		// No session background map — kill and return
-		proc.kill();
-		formatBashResult(stdoutPath, stderrPath, 1);
-		return {
-			content: `Command timed out after ${foregroundTimeout}ms and was killed (no session for backgrounding).`,
-			isError: true,
-		};
-	}
-	const bgEntry: BackgroundProcess = {
-		id: bgId,
-		command,
-		startTime,
-		stdout: "",
-		stderr: "",
-		exitCode: null,
-		status: "running",
-		kill: () => proc.kill(),
-		stdoutPath,
-		stderrPath,
-	};
-	bgEntry.completionPromise = new Promise<void>((resolve) => {
-		bgEntry.resolveCompletion = resolve;
-	});
-	bgMap.set(bgId, bgEntry);
-
-	// Monitor in background
-	(async () => {
-		try {
-			const { exitCode } = await exitPromise;
-			bgEntry.exitCode = exitCode;
-			bgEntry.status = exitCode === 0 ? "completed" : "failed";
-			bgEntry.endTime = Date.now();
-			bgEntry.kill = null;
-
-			// Format output using shared formatBashResult
-			const result = formatBashResult(stdoutPath, stderrPath, exitCode);
-
-			if (queue) {
-				try {
-					queue.enqueue(
-						createBackgroundComplete({
-							commandId: bgId,
-							command,
-							exitCode,
-							durationMs: Date.now() - startTime,
-							stdout: result.stdout || undefined,
-							stderr: result.stderr || undefined,
-						}),
-					);
-				} catch {
-					// Queue may be closed
-				}
-			}
-		} catch (e) {
-			console.warn(`[bash] Background process ${bgId} failed:`, e);
-			bgEntry.status = "failed";
-		} finally {
-			bgEntry.resolveCompletion?.();
-		}
-	})();
 
 	// Read partial output accumulated so far
 	let partialStdout = "";
@@ -672,10 +628,9 @@ export async function executeBashWithTimeout(
 			? "Command moved to background."
 			: `Command moved to background after ${foregroundTimeout}ms.`;
 
-	return {
-		content: `${movedReason}\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes. Use yield() to wait.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialStdout ? `\n\nPartial stdout so far:\n${partialStdout.slice(0, 5000)}` : ""}`,
-		isError: false,
-		backgroundId: bgId,
-		backgroundCommand: command,
-	};
+	return moveToBackground({
+		exitPromise: exitPromise.then((r) => r.exitCode),
+		reason: movedReason,
+		partialStdout: partialStdout || undefined,
+	});
 }
