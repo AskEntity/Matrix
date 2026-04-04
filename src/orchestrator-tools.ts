@@ -27,7 +27,6 @@ import {
 import type { TaskTracker } from "./task-tracker.ts";
 import {
 	buildTaskPrompt,
-	findParentQueue,
 	getDescendantIds,
 	isDescendantOf,
 	slugify,
@@ -628,14 +627,14 @@ export function createOrchestratorTools(
 
 		tool(
 			"send_message",
-			"Send a message to another task. You can message the task yours is part of, " +
+			"Send a message to another task. You can message any ancestor in your parent chain (not just direct parent), " +
 				"or any of your direct sub tasks. When messaging a sub task that isn't running yet, " +
 				"a worktree is auto-created and an agent is launched.",
 			{
 				taskId: z
 					.string()
 					.describe(
-						"Target task — the task yours is part of, or any direct sub task",
+						"Target task — any ancestor in your parent chain, or any direct sub task",
 					),
 				title: z.string().describe("Short summary of the message"),
 				message: z.string().describe("Message content"),
@@ -662,11 +661,18 @@ export function createOrchestratorTools(
 				const currentNode = currentTaskId
 					? tracker.getTask(currentTaskId)
 					: undefined;
-				// Upward: target is the task above me (skipping folders)
-				const taskAboveMe = currentTaskId
-					? tracker.getTaskAbove(currentTaskId)
-					: undefined;
-				const isUpward = taskAboveMe != null && args.taskId === taskAboveMe.id;
+				// Upward: target is any ancestor in the parent chain (skipping folders)
+				let isUpward = false;
+				if (currentTaskId) {
+					let ancestor = tracker.getTaskAbove(currentTaskId);
+					while (ancestor) {
+						if (ancestor.id === args.taskId) {
+							isUpward = true;
+							break;
+						}
+						ancestor = tracker.getTaskAbove(ancestor.id);
+					}
+				}
 				let isDownward = false;
 				if (!isUpward) {
 					if (currentTaskId !== null) {
@@ -686,28 +692,17 @@ export function createOrchestratorTools(
 						content: [
 							{
 								type: "text" as const,
-								text: `Error: Can only message the task yours is part of, or your direct sub tasks. "${args.taskId}" is neither.`,
+								text: `Error: Can only message ancestors in your parent chain, or your direct sub tasks. "${args.taskId}" is neither.`,
 							},
 						],
 						isError: true,
 					};
 				}
 
-				// ── Upward message (like old report_to_parent) ──
+				// ── Upward message (to any ancestor in parent chain) ──
 				if (isUpward) {
-					if (!taskAboveMe) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: "No parent agent to report to (you are the top-level orchestrator). Message dropped.",
-								},
-							],
-						};
-					}
-
 					const taskTitle = currentNode?.title ?? "unknown";
-					const parentId = taskAboveMe.id;
+					const targetId = args.taskId;
 
 					try {
 						const queueMessage = createTaskMessage(
@@ -719,19 +714,17 @@ export function createOrchestratorTools(
 
 						if (lifecycleDeps?.deliverMessage) {
 							// deliverMessage handles JSONL persistence + queue delivery.
-							// quiet: true — don't auto-launch a stopped parent.
-							await lifecycleDeps.deliverMessage(parentId, queueMessage, {
+							// quiet: true — don't auto-launch a stopped ancestor.
+							await lifecycleDeps.deliverMessage(targetId, queueMessage, {
 								quiet: true,
 							});
 						} else {
 							// Fallback for non-daemon contexts (tests without full daemon):
-							// direct queue delivery only
-							const parentQueue = findParentQueue(
-								tracker,
-								currentTaskId ?? "",
-							)?.queue;
-							if (parentQueue) {
-								parentQueue.enqueue(queueMessage);
+							// direct queue delivery to the target ancestor
+							const targetNode = tracker.getTask(targetId);
+							const targetQueue = targetNode?.session?.queue;
+							if (targetQueue) {
+								targetQueue.enqueue(queueMessage);
 							}
 						}
 
@@ -739,7 +732,7 @@ export function createOrchestratorTools(
 							content: [
 								{
 									type: "text" as const,
-									text: "Message sent to parent task.",
+									text: `Message sent to ancestor task "${node.title}".`,
 								},
 							],
 						};
