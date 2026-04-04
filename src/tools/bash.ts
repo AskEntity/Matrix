@@ -519,7 +519,7 @@ export async function executeBashWithTimeout(
 		})();
 
 		return {
-			content: `Command backgrounded immediately.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}`,
+			content: `Command backgrounded immediately.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes. Use yield() to wait.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}`,
 			isError: false,
 			backgroundId: bgId,
 			backgroundCommand: command,
@@ -665,7 +665,7 @@ export async function executeBashWithTimeout(
 			: `Command moved to background after ${foregroundTimeout}ms.`;
 
 	return {
-		content: `${movedReason}\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialStdout ? `\n\nPartial stdout so far:\n${partialStdout.slice(0, 5000)}` : ""}`,
+		content: `${movedReason}\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes. Use yield() to wait.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialStdout ? `\n\nPartial stdout so far:\n${partialStdout.slice(0, 5000)}` : ""}`,
 		isError: false,
 		backgroundId: bgId,
 		backgroundCommand: command,
