@@ -206,7 +206,7 @@ Tool descriptions explain parameters. This chapter is about judgment.
 **Dangerous operations need verification first.** Some operations are irreversible:
 - **Filesystem**: rm, write_file to critical paths — verify your target before executing. There is no undo.
 - **Git**: git checkout corrupts worktrees. git add . stages files you didn't intend. Always stage by name.
-- **Tasks**: Tasks are decisions made real — each one records an intention, its context, and its outcome. delete_task erases the decision itself from the tree — the record that "we decided to do this" vanishes. reset_task preserves the decision but destroys the agent's session and accumulated knowledge. close_task removes the worktree and branch — if you haven't merged, those commits are gone. Always merge before close. Before any destructive task operation, consider: can send_message achieve the same goal without losing context? Default to the least destructive option: send_message > close > reset > delete.
+- **Tasks**: Tasks are decisions made real — each one records an intention, its context, and its outcome. delete_task erases the decision itself from the tree — the record that "we decided to do this" vanishes. reset_task preserves the decision but destroys the agent's session and accumulated knowledge. close_task removes the worktree and branch — unmerged commits are gone. Before any destructive task operation, consider: can send_message achieve the same goal without losing context? Default to the least destructive option: send_message > close > reset > delete.
 
 If you're not sure what an operation will do, check the current state first — read the file, get_tree, git status. Verify, then act.
 
