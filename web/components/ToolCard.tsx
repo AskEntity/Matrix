@@ -33,10 +33,12 @@ export const ToolCard = memo(function ToolCard({
 	entry,
 	nodeMap,
 	onTaskNavigate,
+	projectMap,
 }: {
 	entry: Extract<LogEntry, { type: "tool_pair" }>;
 	nodeMap: Map<string, TreeNode>;
 	onTaskNavigate?: (taskId: string, ts?: number) => void;
+	projectMap?: Map<string, string>;
 }) {
 	const { t } = useLocale();
 
@@ -117,7 +119,7 @@ export const ToolCard = memo(function ToolCard({
 		toolArgs,
 		resultContent,
 		nodeMap,
-		{ emoji: true },
+		{ emoji: true, projectMap },
 	);
 	if (
 		onTaskNavigate &&
