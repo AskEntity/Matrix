@@ -21,7 +21,7 @@ export interface EventImageData {
  * No index signature — all fields explicitly typed.
  *
  * Built-in tools use: cwd, backgroundId, backgroundCommand, isImage, imageData, mediaType
- * Orchestrator tools use: consumedMessageIds, consumedQueueMessages, formattedQueueMessages, pending
+ * Orchestrator tools use: pending
  */
 export interface ToolResult {
 	content: string;
@@ -40,12 +40,6 @@ export interface ToolResult {
 	mediaType?: string;
 	/** MCP images from tool results (e.g. screenshots from external MCP servers). */
 	mcpImages?: Array<EventImageData & { data?: string }>;
-	/** User message IDs consumed (already persisted at send time). */
-	consumedMessageIds?: string[];
-	/** Raw queue messages from yield/done that need to flow through emit for SSE broadcast + persistence. */
-	consumedQueueMessages?: import("./message-queue.ts").QueueMessage[];
-	/** Formatted text of all consumed queue messages for display. */
-	formattedQueueMessages?: string;
 	/** Structured pending state after yield/done. */
 	pending?: PendingState;
 }

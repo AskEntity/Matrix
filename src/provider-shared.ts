@@ -122,12 +122,11 @@ async function handleImplicitYield(
 
 /**
  * Collect images for the UI tool_result event from execution result.
- * When `_formattedQueueMessages` is set, mcpImages are user queue images
- * — they go alongside the queue text, not in the tool_result.
+ * Prefers mcpImages (from external MCP tools) over direct imageData (built-in read_file).
  */
 function collectToolResultImages(exec: ToolResult): EventImageData[] {
 	const images: EventImageData[] = [];
-	if (!exec.formattedQueueMessages && exec.mcpImages?.length) {
+	if (exec.mcpImages?.length) {
 		for (const img of exec.mcpImages) {
 			images.push({
 				base64: img.base64 ?? img.data ?? "",
@@ -326,7 +325,7 @@ export function buildToolResultEvents(
 		// Record pure tool output — queue text is NOT embedded.
 		// The converter reconstructs queue messages from messagesConsumed + message events.
 		const images: EventImageData[] = [];
-		if (!exec.formattedQueueMessages && exec.mcpImages?.length) {
+		if (exec.mcpImages?.length) {
 			for (const img of exec.mcpImages) {
 				images.push({
 					base64: img.base64 ?? img.data ?? "",
@@ -358,36 +357,16 @@ export function buildToolResultEvents(
 		});
 	}
 
-	// Process queue messages from yield/done tool results (same pattern as cancellation)
-	for (const exec of execResults) {
-		if (exec.consumedQueueMessages?.length) {
-			for (const qm of exec.consumedQueueMessages) {
-				if (qm.source === "user" && qm.id) {
-					consumedIds.push(qm.id);
-				} else {
-					const evt = queueMessageToEvent(qm, taskId);
-					const evtId = (evt as { id?: string }).id;
-					if (evtId) consumedIds.push(evtId);
-					nonUserQueueEvents.push(evt);
-				}
-			}
-		}
-	}
-
-	// Record non-user queue messages (cancellation + yield/done) as separate Events
+	// Record non-user queue messages (from cancellation drain) as separate Events
 	for (const evt of nonUserQueueEvents) {
 		toolEvents.push(evt);
 	}
 
 	// Record standalone messages_consumed event AFTER tool_results and queue events
-	const allConsumedIds = [
-		...consumedIds,
-		...execResults.flatMap((exec) => exec.consumedMessageIds ?? []),
-	];
-	if (allConsumedIds.length > 0) {
+	if (consumedIds.length > 0) {
 		toolEvents.push({
 			type: "messages_consumed",
-			messageIds: allConsumedIds,
+			messageIds: consumedIds,
 			taskId,
 			ts: Date.now(),
 		});

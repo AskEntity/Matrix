@@ -691,43 +691,18 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 					content: exec.content,
 				});
 
-				if (exec.formattedQueueMessages) {
-					for (const line of exec.formattedQueueMessages.split("\n")) {
-						if (line.trim()) {
-							allQueueTexts.push(line);
-						}
-					}
-					if (exec.mcpImages?.length) {
-						for (const img of exec.mcpImages) {
-							allQueueImageParts.push(
-								{
-									type: "text" as const,
-									text: "[User-attached image]",
-								},
-								{
-									type: "image_url" as const,
-									image_url: {
-										url: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
-										detail: "auto" as const,
-									},
-								},
-							);
-						}
-					}
-				} else {
-					if (exec.isImage && exec.imageData && exec.mediaType) {
+				if (exec.isImage && exec.imageData && exec.mediaType) {
+					imageResults.push({
+						text: exec.content,
+						dataUri: `data:${exec.mediaType};base64,${exec.imageData}`,
+					});
+				}
+				if (exec.mcpImages?.length) {
+					for (const img of exec.mcpImages) {
 						imageResults.push({
-							text: exec.content,
-							dataUri: `data:${exec.mediaType};base64,${exec.imageData}`,
+							text: "[User-attached image]",
+							dataUri: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
 						});
-					}
-					if (exec.mcpImages?.length) {
-						for (const img of exec.mcpImages) {
-							imageResults.push({
-								text: "[User-attached image]",
-								dataUri: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
-							});
-						}
 					}
 				}
 			}
