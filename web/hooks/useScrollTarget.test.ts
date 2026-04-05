@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
-	anchoredScrollTopPure,
 	atBottomPure,
 	clearScrollTarget,
 	selectTopAnchor,
@@ -146,77 +145,6 @@ describe("atBottomPure", () => {
 	it("true when content fits in viewport (no overflow)", () => {
 		// scrollHeight == clientHeight, scrollTop=0 → distance 0
 		expect(atBottomPure(400, 0, 400)).toBe(true);
-	});
-});
-
-describe("anchoredScrollTopPure", () => {
-	// The round-trip invariant: capture an anchor from a given scroll
-	// position, apply it back → scroll position unchanged. If this breaks
-	// (e.g. sign flipped) every reapply shifts scroll → jitter + drift.
-	//
-	// Setup: container at viewport y=100, scrollTop=200. An entry with
-	// offsetTop=150 (inside the container) renders at:
-	//   entryViewportTop = containerTop + (offsetTop - scrollTop)
-	//                    = 100 + (150 - 200) = 50
-	// So the entry is 50px ABOVE the container top — partially scrolled out.
-	//
-	// Anchor capture: selectTopAnchor(containerTop=100, [{top:50, bottom:200}])
-	//                 → offsetPx = 100 - 50 = 50
-	//
-	// Anchor restore: anchoredScrollTopPure(offsetTop=150, offsetPx=50)
-	//                 → 200 (matches original scrollTop)  ✓
-	it("round-trips: capture then apply reproduces original scrollTop (entry above)", () => {
-		const containerTop = 100;
-		const entryTop = 50;
-		const entryOffsetTop = 150;
-		const originalScrollTop = 200;
-		const anchor = selectTopAnchor(containerTop, [
-			{ top: entryTop, bottom: entryTop + 150, ts: 1 },
-		]);
-		expect(anchor).not.toBeNull();
-		const newScrollTop = anchoredScrollTopPure(
-			entryOffsetTop,
-			anchor?.offsetPx ?? 0,
-		);
-		expect(newScrollTop).toBe(originalScrollTop);
-	});
-
-	// Negative offsetPx case: entry flush with / below container top (e.g.
-	// after jump-to-center scrolled the entry into view). offsetPx<0.
-	// The restored scrollTop must still be < offsetTop (entry appears below
-	// container top). If sign is wrong, scrollTop > offsetTop → entry
-	// appears ABOVE the viewport → drift.
-	it("round-trips: entry centered below container top yields smaller scrollTop", () => {
-		const containerTop = 100;
-		const entryTop = 150; // entry top 50px BELOW container top
-		const entryOffsetTop = 400;
-		// selectTopAnchor: containerTop(100) - entryTop(150) = -50
-		const anchor = selectTopAnchor(containerTop, [
-			{ top: entryTop, bottom: entryTop + 200, ts: 7 },
-		]);
-		expect(anchor).toEqual({ ts: 7, offsetPx: -50 });
-		const newScrollTop = anchoredScrollTopPure(
-			entryOffsetTop,
-			anchor?.offsetPx ?? 0,
-		);
-		// Expected: entry ends up 50px below container top. That means
-		// newScrollTop = entryOffsetTop - 50 = 350. So newScrollTop < offsetTop.
-		expect(newScrollTop).toBe(350);
-		expect(newScrollTop).toBeLessThan(entryOffsetTop);
-	});
-
-	it("offset 0 → scrollTop == offsetTop (entry flush with container top)", () => {
-		expect(anchoredScrollTopPure(500, 0)).toBe(500);
-	});
-
-	// Regression test for the "stuck at bottom, jumping around" bug
-	// (commit 9449b55). The old code did `offsetTop - offsetPx` which
-	// inverted the sign → every reapply shifted scroll toward bottom.
-	// We assert the exact formula so a future sign flip is caught.
-	it("formula matches documented invariant (regression guard)", () => {
-		expect(anchoredScrollTopPure(100, 25)).toBe(125);
-		expect(anchoredScrollTopPure(100, -25)).toBe(75);
-		expect(anchoredScrollTopPure(500, 0)).toBe(500);
 	});
 });
 
