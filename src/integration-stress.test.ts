@@ -173,7 +173,9 @@ async function sendMessage(
 }
 
 function readSessionEvents(ctx: TestContext, sessionId: string) {
-	const store = new EventStore(join(ctx.dataDir, "sessions", ctx.projectId));
+	const store = new EventStore(
+		join(ctx.dataDir, "projects", ctx.projectId, "tasks"),
+	);
 	return store.read(sessionId);
 }
 
@@ -295,7 +297,7 @@ describe("Stress: compaction + restart", () => {
 			...postCompactEvents,
 		];
 		const content = `${allEvents.map((e) => JSON.stringify(e)).join("\n")}\n`;
-		writeFileSync(join(tmpDir, "compact-test.events.jsonl"), content);
+		writeFileSync(join(tmpDir, "compact-test.jsonl"), content);
 
 		// readActive should only return post-compact events
 		const active = store.readActive("compact-test");
@@ -1099,7 +1101,7 @@ describe("Stress: JSONL corruption recovery", () => {
 		const content = [validEvent1, malformedLine, blankLine, validEvent2].join(
 			"\n",
 		);
-		writeFileSync(join(tmpDir, "corrupt-session.events.jsonl"), content);
+		writeFileSync(join(tmpDir, "corrupt-session.jsonl"), content);
 
 		// Read should skip malformed lines and return valid events
 		const events = store.read("corrupt-session");
@@ -1128,7 +1130,7 @@ describe("Stress: JSONL corruption recovery", () => {
 			'{"type": "tool_result", "tool": "mcp__mxd__bash", "toolCa';
 
 		const content = `${validEvent}\n${truncatedEvent}\n`;
-		writeFileSync(join(tmpDir, "truncated.events.jsonl"), content);
+		writeFileSync(join(tmpDir, "truncated.jsonl"), content);
 
 		const events = store.read("truncated");
 		expect(events.length).toBe(1); // Only the valid event
@@ -1141,7 +1143,7 @@ describe("Stress: JSONL corruption recovery", () => {
 		const tmpDir = join(tmpdir(), `mxd-corrupt-test-${Date.now()}`);
 		const store = new EventStore(tmpDir);
 
-		writeFileSync(join(tmpDir, "empty.events.jsonl"), "");
+		writeFileSync(join(tmpDir, "empty.jsonl"), "");
 
 		const events = store.read("empty");
 		expect(events.length).toBe(0);
@@ -1153,7 +1155,7 @@ describe("Stress: JSONL corruption recovery", () => {
 		const tmpDir = join(tmpdir(), `mxd-corrupt-test-${Date.now()}`);
 		const store = new EventStore(tmpDir);
 
-		writeFileSync(join(tmpDir, "blanks.events.jsonl"), "\n\n\n");
+		writeFileSync(join(tmpDir, "blanks.jsonl"), "\n\n\n");
 
 		const events = store.read("blanks");
 		expect(events.length).toBe(0);
@@ -1192,7 +1194,7 @@ describe("Stress: JSONL corruption recovery", () => {
 			corruptLine,
 			postCompactEvent,
 		].join("\n");
-		writeFileSync(join(tmpDir, "active.events.jsonl"), `${content}\n`);
+		writeFileSync(join(tmpDir, "active.jsonl"), `${content}\n`);
 
 		// readActive should return events after compact_marker, skipping corrupt line
 		const active = store.readActive("active");

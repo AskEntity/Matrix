@@ -699,7 +699,9 @@ describe("Invariant: Task Events Endpoint Isolation", () => {
 		const rootId = tracker.rootNodeId;
 
 		// Write events to root session via EventStore directly
-		const eventStore = new EventStore(join(ctx.dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(ctx.dataDir, "projects", projectId, "tasks"),
+		);
 
 		const rootEvents: Event[] = [
 			{
@@ -824,7 +826,9 @@ describe("Invariant: Task Events Endpoint Isolation", () => {
 		const tracker = await app.getTracker(projectId);
 		const rootId = tracker.rootNodeId;
 
-		const eventStore = new EventStore(join(ctx.dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(ctx.dataDir, "projects", projectId, "tasks"),
+		);
 
 		// Write to root
 		await eventStore.append(rootId, {

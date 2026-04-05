@@ -506,3 +506,34 @@ Production root session, post-restart first API call: inputTokens=104,188, cache
 
 **Possible non-drift explanation**: Anthropic server-side cache eviction or routing (similar pattern to Opus token injection in blog-2026-04-04-2.md).
 
+
+## Unified Storage Layout (2026-04-05)
+
+Each project is now a self-contained folder:
+```
+~/.mxd/
+  projects/<projectId>/
+    config.json
+    tree.json
+    tasks/<taskId>.jsonl     (formerly sessions/<projectId>/<taskId>.events.jsonl)
+    debug/                    (empty; drift snapshots etc.)
+```
+
+### Migration
+- `src/storage-migration.ts` → `migrateStorageLayout(dataDir)` runs at daemon startup (inside `autoResumeProjects`).
+- Idempotent, crash-safe: move `.events.jsonl` → `.jsonl`, skip files already at destination, remove emptied old dirs.
+- No-op after first successful run (old `sessions/` directory is gone).
+
+### Path helper
+- `projectTasksDir(dataDir, projectId)` in `daemon/helpers.ts` = `{dataDir}/projects/{projectId}/tasks/`.
+- `getEventStore` uses this. Tests use `join(dataDir, "projects", projectId, "tasks")` directly.
+
+### File extension
+- `.jsonl` (was `.events.jsonl` — the `.events` prefix was redundant).
+- `EventStore.listSessions()` filters `.jsonl` and strips with `/\.jsonl$/`.
+- `pruneSessionFiles` filters `.jsonl`.
+
+### Why
+- "sessions" was the wrong word — Matrix's unit of work is a task; each JSONL file is one task's history.
+- Project = single folder: back up / move / delete = one operation, not two.
+- `debug/` directory created per-project for future drift snapshots and investigation artifacts.

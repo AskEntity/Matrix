@@ -222,9 +222,11 @@ describe("daemon stats", () => {
 		const res = await app.request("/stats");
 		const body = (await res.json()) as StatsResponse;
 
-		// uptime should be a small number (seconds since test start), not thousands (ms)
-		// A test run shouldn't take more than 60 seconds
-		expect(body.uptime).toBeLessThan(60);
+		// uptime should be a modest number (seconds since process start),
+		// not millions (ms). startTime is module-level and shared across the
+		// test file — a long test suite can push this up past a naive 60s
+		// threshold, so check it's plausibly seconds-scale (<1 hour).
+		expect(body.uptime).toBeLessThan(3600);
 
 		await rm(dataDir, { recursive: true });
 	});
@@ -1443,7 +1445,9 @@ describe("GET /projects/:id/events", () => {
 
 	test("returns hasOlderEvents: false when no compact_marker", async () => {
 		// Write some events to a session JSONL
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		await eventStore.append("session1", {
 			type: "message",
 			id: "",
@@ -1465,7 +1469,9 @@ describe("GET /projects/:id/events", () => {
 	});
 
 	test("?after=compact returns only post-compact events with hasOlderEvents", async () => {
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		const events: Event[] = [
 			{
 				type: "message",
@@ -1512,7 +1518,9 @@ describe("GET /projects/:id/events", () => {
 	});
 
 	test("without ?after=compact returns all events", async () => {
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		const events: Event[] = [
 			{
 				type: "message",
@@ -1576,7 +1584,9 @@ describe("GET /projects/:id/events/older", () => {
 	});
 
 	test("returns older events before timestamp", async () => {
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		const events: Event[] = [
 			{
 				type: "message",
@@ -1620,7 +1630,9 @@ describe("GET /projects/:id/events/older", () => {
 	});
 
 	test("respects limit parameter", async () => {
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		const events: Event[] = [];
 		for (let i = 0; i < 10; i++) {
 			events.push({
@@ -1664,7 +1676,9 @@ describe("GET /projects/:id/events/older", () => {
 	});
 
 	test("defaults limit to 200 when not specified", async () => {
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		await eventStore.append("session1", {
 			type: "assistant_text",
 			content: "msg",
@@ -1729,7 +1743,9 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 	});
 
 	test("?after=compact returns post-compact events with hasOlderEvents", async () => {
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		const events: Event[] = [
 			{
 				type: "message",
@@ -1768,7 +1784,9 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 	});
 
 	test("without ?after=compact returns all events", async () => {
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		const events: Event[] = [
 			{
 				type: "message",
@@ -1847,7 +1865,9 @@ describe("streaming text injection in batch events", () => {
 
 	test("streaming in progress → GET task events → partial text at end", async () => {
 		// Write some JSONL events first
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		const events: Event[] = [
 			{
 				type: "assistant_text",
@@ -1879,7 +1899,9 @@ describe("streaming text injection in batch events", () => {
 	});
 
 	test("streaming in progress → GET task events with ?after=compact → partial text at end", async () => {
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		const events: Event[] = [
 			{
 				type: "compact_marker",
@@ -1915,7 +1937,9 @@ describe("streaming text injection in batch events", () => {
 	});
 
 	test("streaming complete → GET task events → no synthetic text", async () => {
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		const events: Event[] = [
 			{
 				type: "assistant_text",
@@ -1956,7 +1980,9 @@ describe("streaming text injection in batch events", () => {
 	});
 
 	test("streaming text in project-level events endpoint", async () => {
-		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
 		const events: Event[] = [
 			{
 				type: "assistant_text",
@@ -3178,10 +3204,10 @@ describe("POST /projects/:id/sessions/prune", () => {
 
 	test("returns pruned=0 when file count is within keepCount", async () => {
 		// Create 3 event JSONL files
-		const sessionsDir = join(dataDir, "sessions", projectId);
+		const sessionsDir = join(dataDir, "projects", projectId, "tasks");
 		await mkdir(sessionsDir, { recursive: true });
 		for (let i = 0; i < 3; i++) {
-			await writeFile(join(sessionsDir, `session-${i}.events.jsonl`), "{}");
+			await writeFile(join(sessionsDir, `session-${i}.jsonl`), "{}");
 		}
 
 		const res = await app.request(`/projects/${projectId}/sessions/prune`, {
@@ -3197,10 +3223,10 @@ describe("POST /projects/:id/sessions/prune", () => {
 
 	test("prunes oldest event JSONL files keeping only keepCount", async () => {
 		// Create 5 event JSONL files
-		const sessionsDir = join(dataDir, "sessions", projectId);
+		const sessionsDir = join(dataDir, "projects", projectId, "tasks");
 		await mkdir(sessionsDir, { recursive: true });
 		for (let i = 0; i < 5; i++) {
-			await writeFile(join(sessionsDir, `session-${i}.events.jsonl`), "{}");
+			await writeFile(join(sessionsDir, `session-${i}.jsonl`), "{}");
 		}
 
 		const res = await app.request(`/projects/${projectId}/sessions/prune`, {
@@ -3216,10 +3242,10 @@ describe("POST /projects/:id/sessions/prune", () => {
 
 	test("defaults to keepCount=10 when not specified", async () => {
 		// Create 12 event JSONL files
-		const sessionsDir = join(dataDir, "sessions", projectId);
+		const sessionsDir = join(dataDir, "projects", projectId, "tasks");
 		await mkdir(sessionsDir, { recursive: true });
 		for (let i = 0; i < 12; i++) {
-			await writeFile(join(sessionsDir, `session-${i}.events.jsonl`), "{}");
+			await writeFile(join(sessionsDir, `session-${i}.jsonl`), "{}");
 		}
 
 		const res = await app.request(`/projects/${projectId}/sessions/prune`, {
@@ -4735,5 +4761,170 @@ describe("lifecycle edge cases", () => {
 		};
 		expect(after.nodes.length).toBe(nodeCountBefore);
 		expect(after.rootNodeId).toBe(before.rootNodeId);
+	});
+});
+
+describe("storage migration on startup", () => {
+	let tempDir: string;
+	let dataDir: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-mig-proj-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-mig-data-"));
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
+	});
+
+	test("autoResumeProjects migrates legacy sessions/ layout to projects/<id>/tasks/", async () => {
+		// Set up legacy layout: {dataDir}/sessions/<projectId>/<taskId>.events.jsonl
+		const fakeProjectId = "legacy-proj-id";
+		const legacySessionsDir = join(dataDir, "sessions", fakeProjectId);
+		await mkdir(legacySessionsDir, { recursive: true });
+		await writeFile(
+			join(legacySessionsDir, "task-alpha.events.jsonl"),
+			'{"type":"assistant_text","content":"hi","taskId":"task-alpha","ts":1}\n',
+		);
+		await writeFile(
+			join(legacySessionsDir, "task-beta.events.jsonl"),
+			'{"type":"assistant_text","content":"ho","taskId":"task-beta","ts":2}\n',
+		);
+
+		// Boot the daemon with no registered projects (no tree.json)
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		await result.pm.load();
+		await result.autoResumeProjects();
+
+		// Legacy layout should be gone
+		const { existsSync: exists } = await import("node:fs");
+		expect(exists(legacySessionsDir)).toBe(false);
+		expect(exists(join(dataDir, "sessions"))).toBe(false);
+
+		// New layout should contain the migrated files with .jsonl extension
+		const newTasksDir = join(dataDir, "projects", fakeProjectId, "tasks");
+		expect(exists(join(newTasksDir, "task-alpha.jsonl"))).toBe(true);
+		expect(exists(join(newTasksDir, "task-beta.jsonl"))).toBe(true);
+
+		// Data is intact
+		const store = new EventStore(newTasksDir);
+		expect(store.read("task-alpha")).toEqual([
+			{
+				type: "assistant_text",
+				content: "hi",
+				taskId: "task-alpha",
+				ts: 1,
+			},
+		]);
+		expect(store.read("task-beta")).toEqual([
+			{
+				type: "assistant_text",
+				content: "ho",
+				taskId: "task-beta",
+				ts: 2,
+			},
+		]);
+	});
+
+	test("autoResumeProjects is a no-op when no legacy sessions/ exists", async () => {
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		await result.pm.load();
+		// Should not throw
+		await result.autoResumeProjects();
+
+		const { existsSync: exists } = await import("node:fs");
+		expect(exists(join(dataDir, "sessions"))).toBe(false);
+	});
+
+	test("autoResumeProjects migration is idempotent across restarts", async () => {
+		const fakeProjectId = "idem-proj";
+		const legacyDir = join(dataDir, "sessions", fakeProjectId);
+		await mkdir(legacyDir, { recursive: true });
+		await writeFile(
+			join(legacyDir, "t.events.jsonl"),
+			'{"type":"assistant_text","content":"once","taskId":"t","ts":1}\n',
+		);
+
+		// First run migrates
+		const r1 = createApp({ dataDir, agentProvider: mockProvider });
+		await r1.pm.load();
+		await r1.autoResumeProjects();
+
+		const newPath = join(
+			dataDir,
+			"projects",
+			fakeProjectId,
+			"tasks",
+			"t.jsonl",
+		);
+		const { existsSync: exists } = await import("node:fs");
+		expect(exists(newPath)).toBe(true);
+
+		// Second run finds no legacy layout and proceeds without error
+		const r2 = createApp({ dataDir, agentProvider: mockProvider });
+		await r2.pm.load();
+		await r2.autoResumeProjects();
+
+		expect(exists(newPath)).toBe(true);
+	});
+
+	test("new project registration creates tasks/ and debug/ directories", async () => {
+		const { existsSync: exists } = await import("node:fs");
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		const app = result.app;
+		await result.pm.load();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		expect(res.ok).toBe(true);
+		const project = (await res.json()) as { id: string };
+
+		expect(exists(join(dataDir, "projects", project.id, "tasks"))).toBe(true);
+		expect(exists(join(dataDir, "projects", project.id, "debug"))).toBe(true);
+	});
+
+	test("EventStore created for a project writes under projects/<id>/tasks/", async () => {
+		const { existsSync: exists } = await import("node:fs");
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		const app = result.app;
+		await result.pm.load();
+
+		const createRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await createRes.json()) as { id: string };
+
+		// Directly touch the store through helpers
+		const { getEventStore } = await import("./daemon/helpers.ts");
+		const store = getEventStore(result.ctx, project.id);
+		await store.append("sid-1", {
+			type: "assistant_text",
+			content: "wrote via helper",
+			taskId: "sid-1",
+			ts: 100,
+		});
+		await store.flush();
+
+		const expected = join(
+			dataDir,
+			"projects",
+			project.id,
+			"tasks",
+			"sid-1.jsonl",
+		);
+		expect(exists(expected)).toBe(true);
+		// Old layout must NOT exist
+		expect(exists(join(dataDir, "sessions", project.id, "sid-1.jsonl"))).toBe(
+			false,
+		);
+		expect(
+			exists(join(dataDir, "sessions", project.id, "sid-1.events.jsonl")),
+		).toBe(false);
 	});
 });

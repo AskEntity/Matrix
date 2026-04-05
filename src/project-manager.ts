@@ -232,8 +232,13 @@ export class ProjectManager {
 		this.projects.set(id, project);
 		await this.save();
 
-		// Create daemon-side project data directory
-		await mkdir(join(this.dataDir, "projects", id), { recursive: true });
+		// Create daemon-side project data directory with unified layout:
+		//   projects/<id>/
+		//     tasks/    — per-task JSONL event files
+		//     debug/    — drift snapshots and future investigation artifacts
+		const projectDir = join(this.dataDir, "projects", id);
+		await mkdir(join(projectDir, "tasks"), { recursive: true });
+		await mkdir(join(projectDir, "debug"), { recursive: true });
 
 		return project;
 	}

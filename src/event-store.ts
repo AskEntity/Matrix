@@ -14,7 +14,7 @@ import { ulid } from "./ulid.ts";
 
 /**
  * JSONL-based event store for Event persistence.
- * Append-only: one JSON line per event. File path: `{dir}/{sessionId}.events.jsonl`
+ * Append-only: one JSON line per event. File path: `{dir}/{sessionId}.jsonl`
  *
  * Write operations (append/appendBatch) are async and non-blocking.
  * Read operations remain synchronous for simplicity (only called during resume).
@@ -35,7 +35,7 @@ export class EventStore {
 	}
 
 	private path(sessionId: string): string {
-		return join(this.dir, `${sessionId}.events.jsonl`);
+		return join(this.dir, `${sessionId}.jsonl`);
 	}
 
 	/** Get the current generation for a session. */
@@ -389,8 +389,8 @@ export class EventStore {
 	listSessions(): string[] {
 		try {
 			return readdirSync(this.dir)
-				.filter((f) => f.endsWith(".events.jsonl"))
-				.map((f) => f.replace(".events.jsonl", ""));
+				.filter((f) => f.endsWith(".jsonl"))
+				.map((f) => f.replace(/\.jsonl$/, ""));
 		} catch {
 			return [];
 		}
