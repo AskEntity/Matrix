@@ -71,6 +71,32 @@ export function clearScrollTarget(taskId: string): void {
 	}
 }
 
+/** Pure anchor-selection: given container top and a list of entry
+ * (top, bottom, ts) rects (in viewport coords), return the first entry whose
+ * bottom is at or below the container's top — that's the "topmost visible"
+ * entry. Extracted from DOM for testability. */
+export function selectTopAnchor(
+	containerTop: number,
+	entries: ReadonlyArray<{ top: number; bottom: number; ts: number }>,
+): { ts: number; offsetPx: number } | null {
+	for (const e of entries) {
+		if (!Number.isFinite(e.ts)) continue;
+		if (e.bottom >= containerTop) {
+			return { ts: e.ts, offsetPx: containerTop - e.top };
+		}
+	}
+	return null;
+}
+
+/** Pure at-bottom predicate. */
+export function atBottomPure(
+	scrollHeight: number,
+	scrollTop: number,
+	clientHeight: number,
+): boolean {
+	return scrollHeight - scrollTop - clientHeight < BOTTOM_THRESHOLD_PX;
+}
+
 /**
  * Find the log entry currently at the top of the viewport. Returns null if
  * no entry element is in view (empty log).
@@ -80,26 +106,24 @@ function findTopAnchor(
 ): { ts: number; offsetPx: number } | null {
 	const containerRect = container.getBoundingClientRect();
 	const entries = container.querySelectorAll<HTMLElement>("[data-entry-ts]");
+	const rects: Array<{ top: number; bottom: number; ts: number }> = [];
 	for (const el of entries) {
 		const rect = el.getBoundingClientRect();
-		// First entry whose bottom is below (or at) the container's top
-		if (rect.bottom >= containerRect.top) {
-			const ts = Number(el.dataset.entryTs);
-			if (!Number.isFinite(ts)) continue;
-			return {
-				ts,
-				offsetPx: containerRect.top - rect.top,
-			};
-		}
+		rects.push({
+			top: rect.top,
+			bottom: rect.bottom,
+			ts: Number(el.dataset.entryTs),
+		});
 	}
-	return null;
+	return selectTopAnchor(containerRect.top, rects);
 }
 
 /** True if the container is scrolled to (within threshold of) the bottom. */
 function isAtBottom(container: HTMLElement): boolean {
-	return (
-		container.scrollHeight - container.scrollTop - container.clientHeight <
-		BOTTOM_THRESHOLD_PX
+	return atBottomPure(
+		container.scrollHeight,
+		container.scrollTop,
+		container.clientHeight,
 	);
 }
 
