@@ -391,24 +391,47 @@ Test `test.todo("Initial message with images: live path matches reconstruction")
 `formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — no code sets these fields anymore (orchestrator-tools doesn't return them). Reading paths in anthropic/openai providers and tool-execution. Legacy from old `agent-tools.ts` that no longer exists. Safe to delete in a separate refactor.
 
 
-## Prefix Validation: Architectural Limitation After Unification (2026-04-05)
+## Two-Layer Drift Test Strategy (post-unification) (2026-04-05)
 
-### What prefix validation (enablePrefixValidation) catches
-Mutation-tested the validator (`src/drift-infra-audit.test.ts`, 39 tests). It catches:
+After `buildUserTurn` delegates to walker, prefix-validation tests have a **BLIND SPOT**: they compare live vs reconstruction, but since both run the SAME walker, a walker bug produces IDENTICAL wrong output in both paths → validation passes.
+
+**Experimentally confirmed**: removed caption from walker → all 27 integration prefix-validation tests still passed.
+
+### Two test layers required
+
+**Layer 1: Golden snapshot unit tests** — test walker CORRECTNESS.
+Construct Event[] manually, call `eventsToAnthropicMessages(events)`, assert EXACT byte-level output. Fast (~150ms).
+- `src/drift-infra-audit.test.ts` (23 tests) — core walker callbacks
+- `src/drift-tool-lifecycle.test.ts` (29 tests) — tool lifecycle scenarios
+
+**Layer 2: Integration prefix-validation tests** — test CONVERGENCE between paths.
+Real agent runs → restart → wake. Catches DRIFT between walker and non-walker codepaths (initial drain, buildSessionRepair, cache control construction).
+- `src/drift-tool-lifecycle.test.ts` (22 tests) — paired with golden tests
+- `src/integration.test.ts` Bug repro suite — original caption bug regressions
+
+### Mock validator capabilities (src/test-utils/mock-anthropic-api.ts)
+
+Mutation-tested (`src/drift-infra-audit.test.ts`, 39 tests). Catches:
 - All content mutations (text, images, tool_use, tool_result key changes)
-- System/tools changes (including **presence asymmetry** — dropping them mid-conversation now throws, previously silently passed, fixed)
+- System/tools changes (including presence asymmetry — dropping them mid-conversation now throws, previously silently passed, fixed)
 - cache_control TTL/type mutations; stale CC at non-breakpoint positions
-- Block ordering, key changes, count differences
-- Correctly allows: key insertion-order differences (deep-equal sorts keys), string↔array content normalization, legitimate breakpoint position moves
+- Block ordering, key changes, count differences, is_error asymmetries
 
-### What it CANNOT catch after unification
-Prefix validation catches DIVERGENCE BETWEEN API CALLS. After `buildUserTurn` was unified to delegate to the walker, live path and reconstruction share the SAME code. A walker bug breaks BOTH paths equally → no restart-time diff → validator silent.
+Correctly allows: key insertion-order differences (deep-equal sorts keys), string↔array content normalization, legitimate breakpoint position moves.
 
-Sibling task experimentally confirmed: removed caption from walker → all 27 prefix-validation tests still passed.
+### Principle
+- Prefix validation tests **convergence** between paths (drift detection)
+- Golden snapshots test **correctness** of the path itself
+- After unification, correctness can't be inferred from convergence — both needed.
 
-### Complementary defense: golden snapshot tests
-Added 23 golden snapshot tests in `src/drift-infra-audit.test.ts` asserting EXACT byte output of `eventsToAnthropicMessages` for known Event[] inputs. These catch walker bugs that prefix validation cannot.
-
-**Verified by mutation testing**: manually broke walker in 4 places (remove caption idle, remove caption working-context, drop is_error, drop caller field) — each mutation was caught by the corresponding golden test.
-
-**Principle**: prefix validation tests CONVERGENCE between paths. Golden snapshots test CORRECTNESS of the path itself. Both are needed.
+### Gotcha for golden snapshot authors
+User `message` events with `id` are DEFERRED by walker — only materialize via `messages_consumed`. Helper pattern:
+```ts
+function userPromptEvents(id, content, ts, images?): Event[] {
+  return [
+    { type: "message", id, taskId: "", body: {source:"user", id, ts, content, images}, ts },
+    { type: "messages_consumed", messageIds: [id], taskId: "", ts: ts+1 },
+  ];
+}
+```
+Without messages_consumed, message with id is never rendered.
