@@ -336,16 +336,11 @@ export async function stopAgent(
 
 	// Clear pending clarifications
 	ctx.pendingClarifications.delete(projectId);
-	broadcast(
-		ctx.sseClients,
+	broadcast(ctx, projectId, {
+		type: "pending_clarifications",
 		projectId,
-		{
-			type: "pending_clarifications",
-			projectId,
-			clarifications: [],
-		},
-		ctx.eventSubscribers,
-	);
+		clarifications: [],
+	});
 
 	// NOTE: Do NOT write orphaned tool_results here. The provider loop may still be
 	// settling (e.g. bg process killed → completionPromise resolves → provider loop

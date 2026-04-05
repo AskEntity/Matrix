@@ -5,7 +5,6 @@ import type {
 	DaemonContext,
 	EventSubscriber,
 	PendingClarification,
-	SSEClient,
 } from "./context.ts";
 import { getEventStore, stripEventForUI } from "./helpers.ts";
 
@@ -73,43 +72,84 @@ export function getEventsSince(
 	return buffer.slice(idx);
 }
 
-/** Broadcast an event to all SSE clients subscribed to a project (SSE transport only, no persistence). */
+/**
+ * Broadcast an event to all observers of a project:
+ *   1. SSE clients (browser UI via HTTP stream)
+ *   2. In-process event subscribers (registered via subscribeToEvents)
+ *
+ * The event is ephemeral here — no persistence. Callers that need both
+ * broadcast AND JSONL persistence should use emitEvent() instead.
+ *
+ * Subscribers receive the RAW event object (pre-strip). SSE clients receive
+ * the stripped/SSE-encoded form. A subscriber throwing is logged but does
+ * not interrupt the broadcast.
+ */
 export function broadcast(
-	clients: Set<SSEClient>,
+	ctx: DaemonContext,
 	projectId: string,
 	event: Record<string, unknown>,
-	subscribers?: Set<EventSubscriber>,
 ) {
 	const seqId = nextSeqId(projectId);
 	const data = JSON.stringify(stripEventForUI(event));
 	bufferEvent(projectId, seqId, data);
 
+	// 1. SSE clients — only the ones watching this project.
 	const sseMessage = sseEncoder.encode(`id: ${seqId}\ndata: ${data}\n\n`);
-	for (const client of clients) {
+	for (const client of ctx.sseClients) {
 		if (client.projectId === projectId) {
 			try {
 				client.controller.enqueue(sseMessage);
 			} catch {
-				clients.delete(client);
+				ctx.sseClients.delete(client);
 			}
 		}
 	}
 
-	// Fan out to in-process subscribers (HTTP MCP await tool, etc.).
-	// Subscribers receive the RAW event object (pre-strip) so they see taskId
-	// and all routing fields. Exceptions are swallowed — a throwing subscriber
-	// must not kill the broadcast.
-	if (subscribers) {
-		for (const sub of subscribers) {
-			if (sub.projectId === projectId) {
-				try {
-					sub.callback(event);
-				} catch (e) {
-					console.warn("[broadcast] event subscriber threw:", e);
-				}
+	// 2. In-process subscribers for this project (O(subs_for_this_project),
+	//    not O(all_subs_across_all_projects)).
+	const subs = ctx.eventSubscribers.get(projectId);
+	if (subs) {
+		for (const callback of subs) {
+			try {
+				callback(event);
+			} catch (e) {
+				console.warn("[broadcast] event subscriber threw:", e);
 			}
 		}
 	}
+}
+
+/**
+ * Register an in-process event subscriber for a project. Returns an
+ * unsubscribe function — callers MUST call it to prevent leaks (typically
+ * in a finally block).
+ *
+ * Subscribers see every event broadcast for the project, including ephemeral
+ * events (agent_idle, text_delta, etc.). They receive the raw event object.
+ *
+ * Symmetric lifecycle pattern:
+ *   const unsub = subscribeToEvents(ctx, projectId, (evt) => { ... });
+ *   try { await somethingLong(); } finally { unsub(); }
+ */
+export function subscribeToEvents(
+	ctx: DaemonContext,
+	projectId: string,
+	callback: EventSubscriber,
+): () => void {
+	let subs = ctx.eventSubscribers.get(projectId);
+	if (!subs) {
+		subs = new Set();
+		ctx.eventSubscribers.set(projectId, subs);
+	}
+	subs.add(callback);
+	return () => {
+		const s = ctx.eventSubscribers.get(projectId);
+		if (!s) return;
+		s.delete(callback);
+		// Clean up the empty bucket to prevent unbounded project-key growth
+		// across a long-running daemon's lifetime.
+		if (s.size === 0) ctx.eventSubscribers.delete(projectId);
+	};
 }
 
 // --- Unified event emission ---
@@ -123,13 +163,7 @@ export function broadcast(
  * All callers use this instead of separate broadcast + persist calls.
  */
 export function emitEvent(ctx: DaemonContext, projectId: string, event: Event) {
-	// Broadcast to all SSE clients AND in-process subscribers
-	broadcast(
-		ctx.sseClients,
-		projectId,
-		event as unknown as Record<string, unknown>,
-		ctx.eventSubscribers,
-	);
+	broadcast(ctx, projectId, event as unknown as Record<string, unknown>);
 
 	// Persist to JSONL (skips ephemeral events like text_delta, usage, etc.)
 	if (isPersistedByEmitEvent(event)) {
@@ -165,16 +199,11 @@ export function broadcastTreeUpdate(
 	projectId: string,
 	tracker: TaskTracker,
 ) {
-	broadcast(
-		ctx.sseClients,
-		projectId,
-		{
-			type: "tree_updated",
-			nodes: tracker.allNodes(),
-			rootNodeId: tracker.rootNodeId,
-		},
-		ctx.eventSubscribers,
-	);
+	broadcast(ctx, projectId, {
+		type: "tree_updated",
+		nodes: tracker.allNodes(),
+		rootNodeId: tracker.rootNodeId,
+	});
 }
 
 // --- Pending Clarifications ---
@@ -206,16 +235,11 @@ function addPendingClarification(
 		timestamp: Date.now(),
 	};
 	clarifications.push(entry);
-	broadcast(
-		ctx.sseClients,
+	broadcast(ctx, projectId, {
+		type: "pending_clarifications",
 		projectId,
-		{
-			type: "pending_clarifications",
-			projectId,
-			clarifications,
-		},
-		ctx.eventSubscribers,
-	);
+		clarifications,
+	});
 	return entry;
 }
 
@@ -231,15 +255,10 @@ export function removePendingClarification(
 		: clarifications.findIndex((c) => c.taskId === taskId);
 	if (idx !== -1) {
 		clarifications.splice(idx, 1);
-		broadcast(
-			ctx.sseClients,
+		broadcast(ctx, projectId, {
+			type: "pending_clarifications",
 			projectId,
-			{
-				type: "pending_clarifications",
-				projectId,
-				clarifications,
-			},
-			ctx.eventSubscribers,
-		);
+			clarifications,
+		});
 	}
 }

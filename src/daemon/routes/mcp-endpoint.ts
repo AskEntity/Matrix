@@ -25,6 +25,7 @@ import { getImageDimensions } from "../../image-dimensions.ts";
 import { jsSearch } from "../../tools/search.ts";
 import { isFolder, isTask, stripSession } from "../../types.ts";
 import type { DaemonContext } from "../context.ts";
+import { subscribeToEvents } from "../event-system.ts";
 import { getEventStore, getTracker, stripEventForUI } from "../helpers.ts";
 
 /** Check path is inside root after resolution. Returns resolved path. */
@@ -711,31 +712,28 @@ function wireTools(
 				const waitForPause = () =>
 					new Promise<WakeSignal>((resolve) => {
 						let settled = false;
-						const done = (r: WakeSignal) => {
+						let timer: ReturnType<typeof setTimeout>;
+						const settle = (r: WakeSignal) => {
 							if (settled) return;
 							settled = true;
 							clearTimeout(timer);
-							ctx.eventSubscribers.delete(subscriber);
+							unsubscribe();
 							resolve(r);
 						};
-						const subscriber = {
-							projectId,
-							callback: (evt: Record<string, unknown>) => {
-								if (settled) return;
-								if (evt.taskId !== taskId) return;
-								const t = evt.type;
-								if (t === "agent_idle") done("pause");
-								else if (
-									t === "done_notified" ||
-									t === "agent_stopped" ||
-									t === "orchestration_completed"
-								) {
-									done("terminated");
-								}
-							},
-						};
-						ctx.eventSubscribers.add(subscriber);
-						const timer = setTimeout(() => done("timeout"), timeoutMs);
+						const unsubscribe = subscribeToEvents(ctx, projectId, (evt) => {
+							if (settled) return;
+							if (evt.taskId !== taskId) return;
+							const t = evt.type;
+							if (t === "agent_idle") settle("pause");
+							else if (
+								t === "done_notified" ||
+								t === "agent_stopped" ||
+								t === "orchestration_completed"
+							) {
+								settle("terminated");
+							}
+						});
+						timer = setTimeout(() => settle("timeout"), timeoutMs);
 					});
 				const wakeSignal = await waitForPause();
 

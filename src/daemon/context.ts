@@ -12,15 +12,17 @@ export interface SSEClient {
 }
 
 /**
- * Generic event subscriber for in-process consumers (HTTP MCP await tool, etc.).
- * Called by broadcast() after SSE fanout. Callback receives the raw event object
- * (not SSE-encoded, not stripped). Subscribers MUST NOT throw — broadcast wraps
- * calls in try/catch but a throwing subscriber is a bug.
+ * Generic event subscriber for in-process consumers (HTTP MCP yield tool,
+ * task hooks, test utilities, etc.). Registered via subscribeToEvents() in
+ * event-system.ts, which keys subscribers by project and handles unsubscribe
+ * symmetrically.
+ *
+ * Called by broadcast() after SSE fanout, for the project the subscriber is
+ * registered under. Callback receives the RAW event object (not SSE-encoded,
+ * not stripped) so subscribers see taskId and all routing fields. Exceptions
+ * are swallowed — a throwing subscriber must not kill the broadcast.
  */
-export interface EventSubscriber {
-	projectId: string;
-	callback: (event: Record<string, unknown>) => void;
-}
+export type EventSubscriber = (event: Record<string, unknown>) => void;
 
 /** Pending clarification from a clarify() call waiting for user answer. */
 export interface PendingClarification {
@@ -58,10 +60,11 @@ export interface DaemonContext {
 	readonly launchingNodes: Set<string>;
 	readonly sseClients: Set<SSEClient>;
 	/**
-	 * Generic in-process event subscribers. Fanned out to by broadcast() after
-	 * SSE clients. Used by the HTTP MCP `await` tool to watch for pause events.
+	 * In-process event subscribers keyed by projectId. Fanned out to by
+	 * broadcast() after SSE clients. Use subscribeToEvents() to register
+	 * and get an unsubscribe function — do NOT mutate this map directly.
 	 */
-	readonly eventSubscribers: Set<EventSubscriber>;
+	readonly eventSubscribers: Map<string, Set<EventSubscriber>>;
 	readonly pendingClarifications: Map<string, PendingClarification[]>;
 	readonly eventStores: Map<string, EventStore>;
 
