@@ -1198,7 +1198,11 @@ export async function* runProviderLoop(
 					if (currentSession) {
 						currentSession.allTools = jsonTools;
 					}
+					// Update request.systemPrompt so subsequent API calls use the
+					// refreshed prompt. Without this, the next iteration's API call
+					// (line ~1370) uses request.systemPrompt which is still frozen.
 					if (freshPrompt) {
+						request.systemPrompt = freshPrompt;
 						const sessionConfigEvt: Event = {
 							type: "session_config",
 							tools: jsonTools,
