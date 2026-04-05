@@ -290,8 +290,13 @@ export function filterEventImages(
  * Build tool_result events for emission.
  * Returns the events array with tool_result events, cancellation queue events,
  * and a messages_consumed event combining all consumed IDs.
+ *
+ * Exported so providers can delegate buildUserTurn to walker-based reconstruction:
+ * construct the same events that will be emitted, then walk them to produce
+ * user message(s). This keeps live path and reconstruction path byte-identical
+ * by eliminating the duplicate "build user message from tools+queue" rule.
  */
-function buildToolResultEvents(
+export function buildToolResultEvents(
 	toolIds: Array<{ id: string; name: string }>,
 	execResults: ToolResult[],
 	cancellationQueueMsgs: QueueMessage[],

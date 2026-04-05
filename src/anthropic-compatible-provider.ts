@@ -3,7 +3,6 @@ import type {
 	MessageParam,
 	TextBlockParam,
 	Tool,
-	ToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { DEFAULT_MODEL } from "./config.ts";
@@ -17,14 +16,12 @@ import {
 import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import {
-	extractQueueImages,
+	buildToolResultEvents,
 	type ProviderAdapter,
 	type ProviderTokenUsage,
 	type ProviderToolUse,
 	runProviderLoop,
-	type ToolResult,
 } from "./provider-shared.ts";
-import { formatQueueMessage } from "./task-utils.ts";
 import type { JsonTool } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
@@ -290,11 +287,21 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 				}
 			}
 
-			// Idle context — create new user message
+			// Idle context — create new user message.
+			// Must match working-context block order: [texts..., images..., caption if images].
+			// The caption is what live path's buildUserTurn always added, and reconstruction
+			// previously dropped it here — one missing block = prefix mismatch = cache miss.
 			if (imageBlocks.length > 0) {
 				messages.push({
 					role: "user",
-					content: [...textBlocks, ...imageBlocks],
+					content: [
+						...textBlocks,
+						...imageBlocks,
+						{
+							type: "text",
+							text: `[${imageBlocks.length} image(s) attached by user]`,
+						},
+					],
 				});
 			} else if (textBlocks.length === 1) {
 				messages.push({
@@ -636,175 +643,45 @@ function createAnthropicAdapter(
 		},
 
 		buildUserTurn(params): unknown[] {
-			type ImageMediaType =
-				| "image/jpeg"
-				| "image/png"
-				| "image/gif"
-				| "image/webp";
+			// Delegate to the JSONL reconstruction path.
+			//
+			// Live path and reconstruction path used to be two independent codepaths
+			// that drifted: the caption "[N image(s) attached by user]" was added by
+			// live path but not by reconstruction's idle-context branch. One missing
+			// block → prefix mismatch on restart → full cache miss.
+			//
+			// The fix: construct the same events that will be emitted to JSONL, then
+			// walk them to produce the user message. The walker's callbacks are now
+			// the *single* rule for "how Anthropic user messages are built from
+			// tool_results + queue messages". No second codepath to drift with.
+			const syntheticEvents = buildToolResultEvents(
+				params.toolUses.map((tu) => ({ id: tu.id, name: tu.name })),
+				params.execResults,
+				params.queueMessages,
+			);
 
-			const toolResults: ToolResultBlockParam[] = [];
-			for (let i = 0; i < params.toolUses.length; i++) {
-				const toolUse = params.toolUses[i] as ProviderToolUse;
-				const exec = params.execResults[i] as ToolResult;
-
-				// Collect images from either direct imageData or MCP images.
-				// Both go into tool_result content blocks: images first, then text.
-				// This matches JSONL reconstruction order in onToolResults.
-				const hasDirectImage = exec.isImage && exec.imageData && exec.mediaType;
-				const hasMcpImages =
-					!exec.formattedQueueMessages && exec.mcpImages?.length;
-
-				if (hasDirectImage || hasMcpImages) {
-					const contentParts: Array<
-						| {
-								type: "image";
-								source: {
-									type: "base64";
-									media_type: ImageMediaType;
-									data: string;
-								};
-						  }
-						| { type: "text"; text: string }
-					> = [];
-
-					// Direct image (e.g. built-in read_file on an image)
-					if (hasDirectImage) {
-						contentParts.push({
-							type: "image",
-							source: {
-								type: "base64",
-								media_type: exec.mediaType as ImageMediaType,
-								data: exec.imageData as string,
-							},
-						});
-					}
-
-					// MCP images (e.g. Chrome DevTools take_screenshot)
-					if (hasMcpImages && exec.mcpImages) {
-						for (const img of exec.mcpImages) {
-							contentParts.push({
-								type: "image",
-								source: {
-									type: "base64",
-									media_type: img.mediaType as ImageMediaType,
-									data: img.base64 ?? img.data ?? "",
-								},
-							});
-						}
-					}
-
-					contentParts.push({ type: "text", text: exec.content });
-
-					toolResults.push({
-						type: "tool_result",
-						tool_use_id: toolUse.id,
-						content: contentParts,
-					});
-				} else {
-					toolResults.push({
-						type: "tool_result",
-						tool_use_id: toolUse.id,
-						content: exec.content,
-						is_error: exec.isError,
+			// Walker needs the message events in its index to resolve messages_consumed.
+			// buildToolResultEvents emits user message events into the events array only
+			// for non-user-source queue messages; user-source messages are already in
+			// JSONL (written at send time) and only their IDs appear in messages_consumed.
+			// So we append the user-source queue messages as synthetic message events too,
+			// for the walker to resolve them via eventIndex.
+			for (const qm of params.queueMessages) {
+				if (qm.source === "user" && qm.id) {
+					syntheticEvents.push({
+						type: "message",
+						id: qm.id,
+						taskId: "",
+						body: qm,
+						ts: qm.ts,
 					});
 				}
 			}
 
-			// Collect queue text blocks and images from two sources:
-			// 1. execResults[].formattedQueueMessages — from yield/done tool handlers
-			// 2. params.queueMessages — from cancellation point or implicit yield
-			const queueTextBlocks: Array<{ type: "text"; text: string }> = [];
-			const queueImageBlocks: Array<{
-				type: "image";
-				source: {
-					type: "base64";
-					media_type: ImageMediaType;
-					data: string;
-				};
-			}> = [];
-
-			// Source 1: Queue messages embedded in tool execution results (yield/done)
-			for (const exec of params.execResults) {
-				if (exec.formattedQueueMessages) {
-					// Keep as a single text block — must match JSONL reconstruction.
-					queueTextBlocks.push({
-						type: "text" as const,
-						text: exec.formattedQueueMessages,
-					});
-					if (exec.mcpImages?.length) {
-						for (const img of exec.mcpImages) {
-							queueImageBlocks.push({
-								type: "image" as const,
-								source: {
-									type: "base64" as const,
-									media_type: img.mediaType as ImageMediaType,
-									data: img.base64 ?? img.data ?? "",
-								},
-							});
-						}
-					}
-				}
-			}
-
-			// Source 2: Raw queue messages — format each as its own text block.
-			// Each message becomes a separate text block to match JSONL reconstruction,
-			// which produces one text block per consumed message via formatEventForAI.
-			if (params.queueMessages.length > 0) {
-				for (const msg of params.queueMessages) {
-					const text = formatQueueMessage(msg);
-					if (text) {
-						queueTextBlocks.push({
-							type: "text" as const,
-							text,
-						});
-					}
-				}
-				const imageBlocks = extractQueueImages(params.queueMessages);
-				for (const img of imageBlocks) {
-					queueImageBlocks.push(img);
-				}
-			}
-
-			// Anthropic: single user message — tool_results first, then text, then images
-			const userContentBlocks = [
-				...toolResults,
-				...queueTextBlocks,
-				...queueImageBlocks,
-				...(queueImageBlocks.length > 0
-					? [
-							{
-								type: "text" as const,
-								text: `[${queueImageBlocks.length} image(s) attached by user]`,
-							},
-						]
-					: []),
-			];
-
-			// No tool results + no images + single text → string content (matches JSONL reconstruction)
-			if (
-				toolResults.length === 0 &&
-				queueImageBlocks.length === 0 &&
-				queueTextBlocks.length === 1
-			) {
-				return [
-					{
-						role: "user" as const,
-						content: queueTextBlocks[0]?.text ?? "",
-					},
-				];
-			}
-
-			// No content at all → empty array (shouldn't happen in practice)
-			if (userContentBlocks.length === 0) {
-				return [];
-			}
-
-			return [
-				{
-					role: "user" as const,
-					content: userContentBlocks as MessageParam["content"],
-				},
-			];
+			// Walk synthetic events → Anthropic messages. The callbacks
+			// (onToolResults, onConsumedMessages, isAnthropicWorkingContext)
+			// contain the single source of truth for block ordering and caption.
+			return eventsToAnthropicMessages(syntheticEvents);
 		},
 
 		computeCost(

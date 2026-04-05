@@ -10619,7 +10619,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 		);
 	}
 
-	test.todo("Image in idle context: reconstruction missing caption text block", async () => {
+	test("Image in idle context: reconstruction missing caption text block", async () => {
 		// Reproduces: onConsumedMessages idle context path creates user message
 		// WITHOUT "[N image(s) attached by user]" caption, but live path's
 		// buildUserTurn ALWAYS adds the caption. One missing text block →
@@ -10641,7 +10641,9 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 			turns: [
 				{
 					// Pure text, no tool_use → triggers end_turn / implicit yield
-					blocks: [{ type: "text", text: "I understand, waiting for more info." }],
+					blocks: [
+						{ type: "text", text: "I understand, waiting for more info." },
+					],
 				},
 				{
 					blocks: [
@@ -10901,13 +10903,208 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "image tool_result restart survived" },
+					input: {
+						status: "passed",
+						summary: "image tool_result restart survived",
+					},
 				},
 			],
 		});
 		await sendMessage(ctx, wakeInstruction);
 
 		// Prefix validation passes — is_error consistently absent on both paths.
+		const status2 = await waitForDone(ctx);
+		expect(status2).toBe("verify");
+	}, 30000);
+
+	test("Multiple image messages accumulating in idle context", async () => {
+		// Covers: multiple separate idle-context user messages with images.
+		// Each one goes through onConsumedMessages idle branch. Drift would
+		// compound: N missing captions → N prefix mismatches on restart.
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const tinyPng =
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+		// Three turns, each ending in pure text (end_turn → implicit yield).
+		// Between turns, send an image message to wake the agent.
+		const instruction = JSON.stringify({
+			turns: [
+				{ blocks: [{ type: "text", text: "Waiting 1." }] },
+				{ blocks: [{ type: "text", text: "Waiting 2." }] },
+				{
+					blocks: [
+						{ type: "text", text: "Finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "multi-image ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		await sendMessageWithImages(ctx, "First screenshot", [
+			{ base64: tinyPng, mediaType: "image/png" },
+		]);
+		await waitForIdle(ctx);
+		await sendMessageWithImages(ctx, "Second screenshot", [
+			{ base64: tinyPng, mediaType: "image/png" },
+		]);
+		// Last image message triggers the 3rd turn which calls done().
+		await sendMessageWithImages(ctx, "Third screenshot", [
+			{ base64: tinyPng, mediaType: "image/png" },
+		]);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Restart: reconstruction must produce byte-identical prefix
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Survived restart." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "multi-image restart ok" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+		const status2 = await waitForDone(ctx);
+		expect(status2).toBe("verify");
+	}, 30000);
+
+	test("Image message followed by plain-text message in idle context", async () => {
+		// Covers: image message creates user turn with caption, then another
+		// plain-text message arrives. Both live and reconstruction must agree
+		// on how to interleave them.
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const tinyPng =
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+		const instruction = JSON.stringify({
+			turns: [
+				{ blocks: [{ type: "text", text: "Idle 1." }] },
+				{ blocks: [{ type: "text", text: "Idle 2." }] },
+				{
+					blocks: [
+						{ type: "text", text: "Done." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "interleave ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		await sendMessageWithImages(ctx, "Image first", [
+			{ base64: tinyPng, mediaType: "image/png" },
+		]);
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "Plain text after");
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "After restart." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "interleave restart ok" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+		const status2 = await waitForDone(ctx);
+		expect(status2).toBe("verify");
+	}, 30000);
+
+	test.todo("Initial message with images: live path matches reconstruction", async () => {
+		// AUDIT of the THIRD codepath: provider-shared.ts initial queue drain
+		// (line ~720). Fresh agent startup waits for first message via queue.wait(),
+		// then constructs a user message. This is a third independent codepath —
+		// separate from buildUserTurn (tool/yield cycle) and onConsumedMessages
+		// (post-end_turn wake).
+		//
+		// If the first message to wake/start the agent contains images, the initial
+		// drain path must produce byte-identical output to JSONL reconstruction.
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const tinyPng =
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+		// Pre-create the task then send the first message WITH images.
+		// This exercises the fresh-start initial drain path with image content.
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Got first message with image." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "initial image ok" },
+						},
+					],
+				},
+			],
+		});
+
+		// Send instruction first (primes mock), then first real user message with image
+		await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					content: instruction,
+					images: [{ base64: tinyPng, mediaType: "image/png" }],
+				}),
+			},
+		);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Restart: reconstruction must match what live path produced
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "After restart." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "initial image restart ok" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
 		const status2 = await waitForDone(ctx);
 		expect(status2).toBe("verify");
 	}, 30000);

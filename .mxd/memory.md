@@ -363,3 +363,29 @@ New chapter between Git(4) and Writing Code(now 6). All subsequent chapters renu
 ## Compaction Prompt Fix (2026-04-04)
 
 "this session" → "ENTIRE history". Re-compaction must integrate previous checkpoint into new narrative, not restart. Section 1 and Section 8 both updated.
+
+
+## Live/Reconstruction Drift Fix — Caption Bug (2026-04-05)
+
+### Bug
+User sends image message while agent in idle context (after end_turn implicit yield). Live path `buildUserTurn` adds `[N image(s) attached by user]` caption text block. Reconstruction path `onConsumedMessages` idle branch did NOT. One missing block → prefix mismatch → full cache miss on restart (580K creation observed in production).
+
+### Fix: delete buildUserTurn's duplicate implementation entirely
+NOT "extract shared helper both call" — that's hidden duplication. Instead: Anthropic's `buildUserTurn` **delegates** to the JSONL reconstruction path.
+
+`buildUserTurn(params)` now:
+1. Calls `buildToolResultEvents(...)` (exported from provider-shared.ts) to build synthetic events equivalent to what will be emitted to JSONL
+2. Appends synthetic `message` events for user-source queue messages (walker resolves them via eventIndex)
+3. Returns `eventsToAnthropicMessages(syntheticEvents)` — the same walker callbacks used by JSONL reconstruction
+
+Walker callbacks (`onToolResults`, `onConsumedMessages`, `isAnthropicWorkingContext`) are now the **SINGLE source of truth** for "how Anthropic user messages are built from tool_results + queue messages". Live path can no longer drift because it has no independent construction logic.
+
+Deleted ~160 lines from `buildUserTurn`. Also added caption to idle branch of `onConsumedMessages` (the actual bug fix — live path now routes through this).
+
+### Known Issue: Third codepath still exists (initial drain)
+`provider-shared.ts:~720` "Initial queue drain" for fresh-start waits for first message and constructs user message itself. Does NOT handle images — and does NOT add caption. If first message to wake/start agent has images, drift bug exists.
+
+Test `test.todo("Initial message with images: live path matches reconstruction")` repros this. Fix requires making initial drain also delegate to walker reconstruction, which means either (a) exposing an adapter hook "process events into messages appendage" or (b) moving initial drain into the adapter. Deferred — separate task.
+
+### Dead Code Found (not cleaned up yet)
+`formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — no code sets these fields anymore (orchestrator-tools doesn't return them). Reading paths in anthropic/openai providers and tool-execution. Legacy from old `agent-tools.ts` that no longer exists. Safe to delete in a separate refactor.
