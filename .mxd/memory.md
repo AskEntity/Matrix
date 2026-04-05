@@ -389,3 +389,36 @@ Test `test.todo("Initial message with images: live path matches reconstruction")
 
 ### Dead Code Found (not cleaned up yet)
 `formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — no code sets these fields anymore (orchestrator-tools doesn't return them). Reading paths in anthropic/openai providers and tool-execution. Legacy from old `agent-tools.ts` that no longer exists. Safe to delete in a separate refactor.
+
+
+## Test Architecture: Drift vs Correctness Invariants (2026-04-05)
+
+Two distinct test classes protect against different bug classes. Learned via mutation testing during the caption-bug drift audit.
+
+### Drift invariant: prefix-validation integration tests
+Tests that run full agent loop + restart + prefix validation via `ValidatingMockAPI.enablePrefixValidation()`. Catch when **live path diverges from reconstruction path** (two independent codepaths producing different bytes).
+
+After the caption-bug unification fix, live path delegates to walker → live and reconstruction SHARE the walker. So these tests CANNOT catch walker-internal bugs (mutating the walker makes both paths "consistently wrong" → validation passes).
+
+What drift tests DO catch:
+- Accidental creation of parallel user-message-construction paths
+- Bugs in non-walker paths: initial drain, buildSessionRepair, compaction rebuild
+- EventStore/JSONL corruption
+- Cache control placement (system/tools breakpoints NOT built by walker)
+
+File: `src/drift-message-sources.test.ts` (27 guardrails).
+
+### Correctness invariant: golden snapshot unit tests
+Tests that directly invoke `eventsToAnthropicMessages(events)` and assert exact output bytes. Catch when **walker callbacks produce wrong output** (even if consistently wrong).
+
+Example: if walker's `onConsumedMessages` lacked caption, both live and reconstruction would miss it. Drift tests pass. Golden test catches it by asserting `[{text}, {image}, {caption}]` is the expected output.
+
+Mutation-tested: removing caption, is_error, caller field, interleaved text, or swapping block order all fail distinct subsets of golden tests. Every mutation detected by at least one test.
+
+File: `src/walker-golden.test.ts` (47 unit tests, ~90ms total).
+
+### Third-codepath known bug
+`src/drift-initial-drain.test.ts` — documents & would-detect the third codepath bug in `provider-shared.ts:~720` (initial drain drops images from first-ever queue message). `.todo` until fix lands.
+
+### Takeaway: architectural unification reshapes test strategy
+When two paths are unified into one, drift tests lose power over that shared path. You need correctness tests (golden snapshots, mutation testing) to check the shared path is right. Don't silently lose coverage when removing duplication.
