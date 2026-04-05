@@ -336,7 +336,7 @@ export async function stopAgent(
 
 	// Clear pending clarifications
 	ctx.pendingClarifications.delete(projectId);
-	broadcast(ctx.sseClients, projectId, {
+	broadcast(ctx, projectId, {
 		type: "pending_clarifications",
 		projectId,
 		clarifications: [],

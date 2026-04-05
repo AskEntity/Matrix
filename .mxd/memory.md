@@ -537,3 +537,58 @@ Each project is now a self-contained folder:
 - "sessions" was the wrong word — Matrix's unit of work is a task; each JSONL file is one task's history.
 - Project = single folder: back up / move / delete = one operation, not two.
 - `debug/` directory created per-project for future drift snapshots and investigation artifacts.
+
+## HTTP MCP `yield` tool + in-process event subscribers (2026-04-05)
+
+### MCP `yield` tool (symmetric to Matrix agents' own yield)
+External CC attached via HTTP /mcp can call `yield(timeoutMs?)` to block
+until the attached Matrix task pauses. Same semantics as Matrix agent's
+yield(): "I give up control, wake me when there's something worth seeing".
+
+Returns `{ reason, taskStatus, events, cursorIndex, count }`. Reasons:
+- `idle`: task at yield / end_turn / explicit yield tool
+- `done`: task reached verify/failed/closed (done called or loop finished)
+- `stopped`: agent was stopped (status still in_progress, no session)
+- `not_running`: task never started (pending/draft)
+- `timeout`: wake signal did not arrive in timeoutMs (default 60s, max 300s)
+
+Wake signals (any one wakes): `agent_idle` (ephemeral), `done_notified` /
+`agent_stopped` / `orchestration_completed` (persisted). We derive the
+user-facing `reason` from (wake signal type + final task status), NOT
+from event payload fields. `orchestration_completed.success` is unreliable
+at emission time (status hasn't been updated yet), so we never read it.
+
+Cursor semantics: `McpSessionState.yieldCursors: Map<taskId, number>`,
+initialized to current JSONL event count on attach_to. First yield call
+watches from "now" — use get_logs for historical events.
+
+### In-process event subscription (new third channel)
+Daemon's event flow now has three consumers:
+1. JSONL (persistence, disk)
+2. SSE clients (browser UI, HTTP stream)
+3. **In-process subscribers** (any daemon code, callback-based)
+
+API in `src/daemon/event-system.ts`:
+```ts
+const unsubscribe = subscribeToEvents(ctx, projectId, (rawEvent) => { ... });
+try { ... } finally { unsubscribe(); }
+```
+
+- Keyed by `Map<projectId, Set<EventSubscriber>>` — fanout is O(subs for
+  this project), not O(all subs).
+- Callbacks receive RAW event objects (pre-strip) — see `taskId` and all
+  routing fields directly.
+- Throwing subscribers don't kill the broadcast (caught + logged).
+- Empty buckets auto-cleaned on last unsubscribe (no unbounded map growth).
+
+`broadcast(ctx, projectId, event)` signature is clean — reaches into ctx
+for both sseClients and eventSubscribers. No more 4-arg `broadcast(sseClients,
+projectId, event, subscribers?)` boilerplate.
+
+### Future uses of the subscription channel
+Task hooks, budget monitors, external webhooks, test `waitForEvent` helpers,
+and additional MCP watch tools (`watch_tree`, etc.) can all subscribe
+without adding parallel event plumbing. Condition-wait primitives should
+use the peek-or-subscribe-or-wait pattern: check current state synchronously,
+subscribe before releasing sync control, add timeout, unsubscribe in
+finally. See `yield` tool implementation in mcp-endpoint.ts for reference.

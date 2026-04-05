@@ -25,6 +25,7 @@ import { getImageDimensions } from "../../image-dimensions.ts";
 import { jsSearch } from "../../tools/search.ts";
 import { isFolder, isTask, stripSession } from "../../types.ts";
 import type { DaemonContext } from "../context.ts";
+import { subscribeToEvents } from "../event-system.ts";
 import { getEventStore, getTracker, stripEventForUI } from "../helpers.ts";
 
 /** Check path is inside root after resolution. Returns resolved path. */
@@ -160,6 +161,18 @@ function wireTools(
 				projectId: args.projectId,
 				taskId: args.taskId,
 			});
+			// Initialize await cursor for the attached task at CURRENT event count
+			// so the first await() call starts from "now" — waits for NEW activity
+			// rather than replaying history (use get_logs for history).
+			if (args.taskId) {
+				const state = ctx.mcpSessionStore.get(sid);
+				if (state && !state.yieldCursors.has(args.taskId)) {
+					const eventStore = getEventStore(ctx, args.projectId);
+					await eventStore.flushSession(args.taskId);
+					const { events } = eventStore.readFromLastCompactMarker(args.taskId);
+					state.yieldCursors.set(args.taskId, events.length);
+				}
+			}
 			const info = {
 				projectId: args.projectId,
 				projectName: project.name,
@@ -578,6 +591,215 @@ function wireTools(
 					cwd: root,
 				});
 				return { content: [{ type: "text", text: result || "(no matches)" }] };
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					isError: true,
+				};
+			}
+		},
+	);
+
+	server.registerTool(
+		"yield",
+		{
+			description:
+				"Yield control to the attached Matrix task. Blocks until the task pauses (done, " +
+				"explicit yield, implicit yield / end_turn, or stopped), then returns events that " +
+				"occurred since the last yield call on this session. " +
+				"Reasons: 'idle' (agent at its own yield / end_turn), 'done' (agent called done() " +
+				"or finished successfully), 'stopped' (agent stopped or failed), 'not_running' (task " +
+				"never started / not in_progress), 'timeout'. " +
+				"First call after attach starts watching from 'now' — use get_logs for historical " +
+				"events. If the task is already terminal (verify/failed/closed), returns immediately " +
+				"with reason=done. " +
+				"Symmetric to Matrix agents' own yield(): you give control back to Matrix until " +
+				"there's something worth waking you for.",
+			inputSchema: {
+				timeoutMs: z
+					.number()
+					.optional()
+					.describe(
+						"Maximum wait time in milliseconds (default 60000, max 300000).",
+					),
+			},
+		},
+		async (args) => {
+			try {
+				const sid = getSessionId();
+				if (!sid) throw new Error("MCP session not initialized.");
+				const state = ctx.mcpSessionStore.get(sid);
+				if (!state) throw new Error("MCP session state missing.");
+				const { projectId, taskId } = requireAttachedTask();
+				const timeoutMs = Math.min(
+					Math.max(args.timeoutMs ?? 60000, 0),
+					300000,
+				);
+
+				const tracker = await getTracker(ctx, projectId);
+				const node = tracker.getTask(taskId);
+				if (!node) throw new Error(`Task not found: ${taskId}`);
+				const eventStore = getEventStore(ctx, projectId);
+
+				// Read current events + cursor
+				const readCurrent = async () => {
+					await eventStore.flushSession(taskId);
+					const { events } = eventStore.readFromLastCompactMarker(taskId);
+					return events;
+				};
+				let events = await readCurrent();
+				const cursor = state.yieldCursors.get(taskId) ?? 0;
+
+				// Determine current task status + running state.
+				const task = tracker.getTask(taskId);
+				const status = task?.status ?? "pending";
+				const hasSession = !!task?.session;
+				// Agent is "running" if status is in_progress AND there's a session.
+				// When not running, await() returns immediately — no pause to wait for.
+				const isRunning = status === "in_progress" && hasSession;
+				// Whether the agent is currently at queue.wait() (idle).
+				const isIdleNow = task?.session?.queue?.idle === true;
+
+				// Fast path: not running → return immediately. Also: running+idle with
+				// new events → return immediately (already at pause point).
+				if (!isRunning || (isIdleNow && events.length > cursor)) {
+					const reason = !isRunning
+						? status === "verify" || status === "failed" || status === "closed"
+							? "done"
+							: "not_running"
+						: "idle";
+					const sliced = events.slice(cursor);
+					const stripped = sliced.map((e) =>
+						stripEventForUI(e as unknown as Record<string, unknown>),
+					);
+					state.yieldCursors.set(taskId, events.length);
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(
+									{
+										reason,
+										taskStatus: status,
+										events: stripped,
+										cursorIndex: events.length,
+										count: stripped.length,
+									},
+									null,
+									2,
+								),
+							},
+						],
+					};
+				}
+
+				// Subscribe to broadcast events — resolve when a pause signal for
+				// our taskId arrives. The wake SIGNAL tells us *when* to wake;
+				// the task's final status tells us *what* happened. We don't try
+				// to infer outcome from the event payload (agent lifecycle has
+				// multiple terminal signals with races between them).
+				//
+				// Signals (any one wakes us):
+				//   - agent_idle (ephemeral): queue.wait reached → task still in_progress
+				//   - done_notified / agent_stopped / orchestration_completed (persisted):
+				//     loop exited → read final status from tracker after wake
+				type WakeSignal = "pause" | "terminated" | "timeout";
+				const waitForPause = () =>
+					new Promise<WakeSignal>((resolve) => {
+						let settled = false;
+						let timer: ReturnType<typeof setTimeout>;
+						const settle = (r: WakeSignal) => {
+							if (settled) return;
+							settled = true;
+							clearTimeout(timer);
+							unsubscribe();
+							resolve(r);
+						};
+						const unsubscribe = subscribeToEvents(ctx, projectId, (evt) => {
+							if (settled) return;
+							if (evt.taskId !== taskId) return;
+							const t = evt.type;
+							if (t === "agent_idle") settle("pause");
+							else if (
+								t === "done_notified" ||
+								t === "agent_stopped" ||
+								t === "orchestration_completed"
+							) {
+								settle("terminated");
+							}
+						});
+						timer = setTimeout(() => settle("timeout"), timeoutMs);
+					});
+				const wakeSignal = await waitForPause();
+
+				// For "terminated" wake signals, give Phase 2 a moment to complete
+				// (agent_stopped fires in runAgentForNode's finally, BEFORE Phase 2
+				// updates status to verify/failed). Small poll loop — bounded by
+				// a few hundred ms.
+				if (wakeSignal === "terminated") {
+					const waitStart = Date.now();
+					while (Date.now() - waitStart < 500) {
+						const s = tracker.getTask(taskId)?.status;
+						if (s === "verify" || s === "failed") break;
+						await new Promise((r) => setTimeout(r, 10));
+					}
+				}
+
+				// Re-read events after wake (flush to ensure all persisted events
+				// are on disk). Determine final status from tracker.
+				events = await readCurrent();
+				// If MCP session was closed mid-await, state may be gone.
+				// Return what we have — caller's connection likely dead anyway.
+				if (!ctx.mcpSessionStore.get(sid)) {
+					return {
+						content: [
+							{ type: "text", text: "MCP session closed during await." },
+						],
+						isError: true,
+					};
+				}
+				const finalStatus = tracker.getTask(taskId)?.status ?? status;
+				// Derive user-facing reason from wake signal + final status.
+				let reason: "idle" | "done" | "stopped" | "timeout";
+				if (wakeSignal === "timeout") {
+					reason = "timeout";
+				} else if (wakeSignal === "pause") {
+					reason = "idle";
+				} else {
+					// terminated: verify/failed → done, anything else → stopped
+					reason =
+						finalStatus === "verify" || finalStatus === "failed"
+							? "done"
+							: "stopped";
+				}
+				const sliced = events.slice(cursor);
+				const stripped = sliced.map((e) =>
+					stripEventForUI(e as unknown as Record<string, unknown>),
+				);
+				state.yieldCursors.set(taskId, events.length);
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{
+									reason,
+									taskStatus: finalStatus,
+									events: stripped,
+									cursorIndex: events.length,
+									count: stripped.length,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
 			} catch (e) {
 				return {
 					content: [
