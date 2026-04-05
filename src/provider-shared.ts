@@ -33,7 +33,6 @@ import {
 	recordQueueEvents,
 } from "./queue-utils.ts";
 import type { EventImageData } from "./shared-types.ts";
-import { formatQueueMessage } from "./task-utils.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import { buildJsonTools, type JsonTool } from "./tool-definition.ts";
 import {
@@ -490,6 +489,21 @@ export interface ProviderAdapter {
 		queueMessages: QueueMessage[];
 	}): unknown[];
 
+	/**
+	 * Append queue messages to an existing messages array (initial drain path).
+	 * Called on fresh start / interrupted resume when the run loop has drained
+	 * queue messages that need to be injected as user content.
+	 *
+	 * Must produce byte-identical output to JSONL reconstruction of the same
+	 * queue messages — provider must route through its walker's callback logic.
+	 * Handles both idle context (push new user message) and working context
+	 * (append to existing tool_result user message).
+	 */
+	appendQueueMessagesToMessages(
+		messages: unknown[],
+		queueMsgs: QueueMessage[],
+	): void;
+
 	/** Compute cost from accumulated token counts. */
 	computeCost(
 		model: string,
@@ -714,57 +728,14 @@ export async function* runProviderLoop(
 		}
 
 		if (allMsgs.length > 0) {
-			// Format each queue message individually for consistent formatting
-			// (includes [HH:MM:SS] prefix) between live path and JSONL reconstruction.
-			const formattedTexts = allMsgs.map(formatQueueMessage);
+			// Filter oversized images before they reach the adapter.
+			filterQueueMessageImages(adapter, allMsgs);
 
-			// On resume from a crash during tool execution, the last reconstructed message
-			// may be a user message (tool_result). Appending another user message would
-			// violate the Anthropic API's strict role alternation. Instead, combine queue
-			// content into the existing last user message as additional text blocks.
-			const lastMsg = messages[messages.length - 1] as
-				| { role: string; content: unknown }
-				| undefined;
-			if (
-				lastMsg &&
-				lastMsg.role === "user" &&
-				Array.isArray(lastMsg.content)
-			) {
-				// Last message is a user message with content blocks (e.g., tool_results).
-				// Append queue text as additional text blocks — one per message.
-				for (const text of formattedTexts) {
-					(lastMsg.content as unknown[]).push({
-						type: "text",
-						text,
-					});
-				}
-			} else if (
-				lastMsg &&
-				lastMsg.role === "user" &&
-				typeof lastMsg.content === "string"
-			) {
-				// Last message is a plain string user message — convert to text blocks.
-				const blocks = [
-					{ type: "text", text: lastMsg.content },
-					...formattedTexts.map((t) => ({ type: "text", text: t })),
-				];
-				lastMsg.content = blocks;
-			} else {
-				// Normal case: no prior user message, push new one.
-				// Single message → string content (matches JSONL reconstruction for single message).
-				// Multiple messages → text blocks (matches JSONL reconstruction).
-				if (formattedTexts.length === 1) {
-					messages.push({
-						role: "user" as const,
-						content: formattedTexts[0] ?? "",
-					});
-				} else {
-					messages.push({
-						role: "user" as const,
-						content: formattedTexts.map((t) => ({ type: "text", text: t })),
-					});
-				}
-			}
+			// Delegate to adapter hook — each provider routes through its walker's
+			// onConsumedMessages logic to guarantee byte-identical output with
+			// JSONL reconstruction. This is the ONLY user-message construction path
+			// that runs here; no provider-shared ad-hoc logic.
+			adapter.appendQueueMessagesToMessages(messages, allMsgs);
 
 			// Record queue events for the consumed messages
 			if (emit) {

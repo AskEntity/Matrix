@@ -14,7 +14,7 @@ import {
 	walkEventsToMessages,
 } from "./event-converter.ts";
 import type { Event } from "./events.ts";
-import { MessageQueue } from "./message-queue.ts";
+import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
 	buildToolResultEvents,
 	type ProviderAdapter,
@@ -22,6 +22,7 @@ import {
 	type ProviderToolUse,
 	runProviderLoop,
 } from "./provider-shared.ts";
+import { formatQueueMessage } from "./task-utils.ts";
 import type { JsonTool } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
@@ -155,6 +156,76 @@ function isAnthropicWorkingContext(messages: unknown[]): boolean {
 }
 
 /**
+ * Apply queue-message content (texts + images) to an existing messages array.
+ * Either appends to the last user message (working context: has tool_results)
+ * or creates a new user message (idle context).
+ *
+ * Single source of truth for "how Anthropic user messages gain queue content".
+ * Used by:
+ * - Walker's `onConsumedMessages` callback (JSONL reconstruction path)
+ * - The adapter's `appendQueueMessagesToMessages` hook (live initial-drain path)
+ *
+ * Both paths must produce byte-identical output — that's enforced by having
+ * this one function be the only implementation.
+ */
+function applyAnthropicQueueContent(
+	messages: unknown[],
+	consumed: ConsumedMessages,
+): void {
+	const textBlocks = consumed.formattedTexts.map((t) => ({
+		type: "text" as const,
+		text: t,
+	}));
+	const imageBlocks = consumed.images.map(anthropicImageBlock);
+
+	// In working context (last message has tool_results), append to it
+	if (isAnthropicWorkingContext(messages)) {
+		const lastMsg = messages[messages.length - 1] as
+			| { role: string; content: unknown[] }
+			| undefined;
+		if (lastMsg && Array.isArray(lastMsg.content)) {
+			(lastMsg.content as unknown[]).push(...textBlocks);
+			if (imageBlocks.length > 0) {
+				(lastMsg.content as unknown[]).push(...imageBlocks);
+				(lastMsg.content as unknown[]).push({
+					type: "text",
+					text: `[${imageBlocks.length} image(s) attached by user]`,
+				});
+			}
+			return;
+		}
+	}
+
+	// Idle context — create new user message.
+	// Block order: [texts..., images..., caption if images].
+	// The caption is what live path's buildUserTurn always added — live and
+	// reconstruction now both route through this function, so they match.
+	if (imageBlocks.length > 0) {
+		messages.push({
+			role: "user",
+			content: [
+				...textBlocks,
+				...imageBlocks,
+				{
+					type: "text",
+					text: `[${imageBlocks.length} image(s) attached by user]`,
+				},
+			],
+		});
+	} else if (textBlocks.length === 1) {
+		messages.push({
+			role: "user",
+			content: textBlocks[0]?.text ?? "(empty)",
+		});
+	} else {
+		messages.push({
+			role: "user",
+			content: textBlocks,
+		});
+	}
+}
+
+/**
  * Reconstruct Anthropic-format messages from JSONL events.
  * Uses the shared event walker with Anthropic-specific callbacks.
  * @internal Exported for testing
@@ -263,57 +334,7 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 		},
 
 		onConsumedMessages(messages: unknown[], consumed: ConsumedMessages): void {
-			const textBlocks = consumed.formattedTexts.map((t) => ({
-				type: "text" as const,
-				text: t,
-			}));
-			const imageBlocks = consumed.images.map(anthropicImageBlock);
-
-			// In working context (last message has tool_results), append to it
-			if (isAnthropicWorkingContext(messages)) {
-				const lastMsg = messages[messages.length - 1] as
-					| { role: string; content: unknown[] }
-					| undefined;
-				if (lastMsg && Array.isArray(lastMsg.content)) {
-					(lastMsg.content as unknown[]).push(...textBlocks);
-					if (imageBlocks.length > 0) {
-						(lastMsg.content as unknown[]).push(...imageBlocks);
-						(lastMsg.content as unknown[]).push({
-							type: "text",
-							text: `[${imageBlocks.length} image(s) attached by user]`,
-						});
-					}
-					return;
-				}
-			}
-
-			// Idle context — create new user message.
-			// Must match working-context block order: [texts..., images..., caption if images].
-			// The caption is what live path's buildUserTurn always added, and reconstruction
-			// previously dropped it here — one missing block = prefix mismatch = cache miss.
-			if (imageBlocks.length > 0) {
-				messages.push({
-					role: "user",
-					content: [
-						...textBlocks,
-						...imageBlocks,
-						{
-							type: "text",
-							text: `[${imageBlocks.length} image(s) attached by user]`,
-						},
-					],
-				});
-			} else if (textBlocks.length === 1) {
-				messages.push({
-					role: "user",
-					content: textBlocks[0]?.text ?? "(empty)",
-				});
-			} else {
-				messages.push({
-					role: "user",
-					content: textBlocks,
-				});
-			}
+			applyAnthropicQueueContent(messages, consumed);
 		},
 
 		isWorkingContext: isAnthropicWorkingContext,
@@ -682,6 +703,34 @@ function createAnthropicAdapter(
 			// (onToolResults, onConsumedMessages, isAnthropicWorkingContext)
 			// contain the single source of truth for block ordering and caption.
 			return eventsToAnthropicMessages(syntheticEvents);
+		},
+
+		appendQueueMessagesToMessages(
+			messages: unknown[],
+			queueMsgs: QueueMessage[],
+		): void {
+			// Initial-drain path: provider-shared has drained queue messages at fresh
+			// start / interrupted resume, and needs them appended to messages[].
+			// This MUST produce byte-identical output to what JSONL reconstruction
+			// produces via onConsumedMessages — otherwise restart → prefix mismatch.
+			//
+			// Route through applyAnthropicQueueContent — the same function the walker's
+			// onConsumedMessages callback uses. Single source of truth.
+			const formattedTexts: string[] = [];
+			const images: EventImageData[] = [];
+			for (const msg of queueMsgs) {
+				const text = formatQueueMessage(msg);
+				if (text) formattedTexts.push(text);
+				if (msg.source === "user" && msg.images) {
+					for (const img of msg.images) {
+						images.push({
+							base64: img.base64,
+							mediaType: img.mediaType,
+						});
+					}
+				}
+			}
+			applyAnthropicQueueContent(messages, { formattedTexts, images });
 		},
 
 		computeCost(

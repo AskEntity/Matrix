@@ -8,7 +8,7 @@ import {
 	walkEventsToMessages,
 } from "./event-converter.ts";
 import type { Event } from "./events.ts";
-import { MessageQueue } from "./message-queue.ts";
+import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
 	extractQueueImageParts,
 	type ProviderAdapter,
@@ -784,6 +784,34 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 			}
 
 			return result;
+		},
+
+		appendQueueMessagesToMessages(
+			messages: unknown[],
+			queueMsgs: QueueMessage[],
+		): void {
+			// Dead code path: Chat Completions provider is not wired into production
+			// (createProviderFromAuth always creates OpenAIResponsesCompatibleProvider
+			// for OpenAI auth). This stub preserves the old text-only behavior to keep
+			// tests passing and satisfy the ProviderAdapter interface.
+			const formattedTexts: string[] = [];
+			for (const msg of queueMsgs) {
+				const text = formatQueueMessage(msg);
+				if (text) formattedTexts.push(text);
+			}
+			if (formattedTexts.length === 0) return;
+
+			const lastMsg = messages[messages.length - 1] as
+				| { role: string; content: unknown }
+				| undefined;
+			if (lastMsg?.role === "user" && typeof lastMsg.content === "string") {
+				lastMsg.content = [lastMsg.content, ...formattedTexts].join("\n");
+			} else {
+				messages.push({
+					role: "user",
+					content: formattedTexts.join("\n"),
+				});
+			}
 		},
 
 		validateImage(base64: string, _mediaType: string) {

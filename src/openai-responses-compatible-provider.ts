@@ -8,7 +8,7 @@ import {
 	walkEventsToMessages,
 } from "./event-converter.ts";
 import type { Event } from "./events.ts";
-import { MessageQueue } from "./message-queue.ts";
+import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
 	extractQueueImageParts,
 	type ProviderAdapter,
@@ -250,6 +250,59 @@ function isHistoryWorkingContext(messages: unknown[]): boolean {
 	return lastMsg?.role === "tool";
 }
 
+/**
+ * Apply queue-message content (texts + images) to an existing messages array.
+ * Single source of truth used by both the walker's `onConsumedMessages` callback
+ * and the adapter's `appendQueueMessagesToMessages` hook.
+ *
+ * Both live initial-drain and JSONL reconstruction MUST produce byte-identical
+ * output — that's enforced by having this one function be the only implementation.
+ */
+function applyOpenAIResponsesQueueContent(
+	messages: unknown[],
+	consumed: ConsumedMessages,
+): void {
+	if (isHistoryWorkingContext(messages)) {
+		const lastMsg = messages[messages.length - 1] as
+			| { role: string; content: string }
+			| undefined;
+		if (lastMsg?.role === "tool" && typeof lastMsg.content === "string") {
+			for (const text of consumed.formattedTexts) {
+				lastMsg.content += `\n\n---\n${text}`;
+			}
+			return;
+		}
+	}
+
+	if (consumed.images.length > 0) {
+		const textParts = consumed.formattedTexts.map((t) => ({
+			type: "text" as const,
+			text: t,
+		}));
+		const imageParts = consumed.images.flatMap((img) => [
+			{ type: "text" as const, text: "[User-attached image]" },
+			openaiImagePart(img),
+		]);
+		messages.push({
+			role: "user",
+			content: [...textParts, ...imageParts],
+		});
+	} else if (consumed.formattedTexts.length === 1) {
+		messages.push({
+			role: "user",
+			content: consumed.formattedTexts[0],
+		});
+	} else {
+		messages.push({
+			role: "user",
+			content: consumed.formattedTexts.map((t) => ({
+				type: "text" as const,
+				text: t,
+			})),
+		});
+	}
+}
+
 export function eventsToOpenAIResponsesMessages(events: Event[]): unknown[] {
 	const toolNames = new Map<string, string>();
 
@@ -363,45 +416,7 @@ export function eventsToOpenAIResponsesMessages(events: Event[]): unknown[] {
 		},
 
 		onConsumedMessages(messages: unknown[], consumed: ConsumedMessages): void {
-			if (isHistoryWorkingContext(messages)) {
-				const lastMsg = messages[messages.length - 1] as
-					| { role: string; content: string }
-					| undefined;
-				if (lastMsg?.role === "tool" && typeof lastMsg.content === "string") {
-					for (const text of consumed.formattedTexts) {
-						lastMsg.content += `\n\n---\n${text}`;
-					}
-					return;
-				}
-			}
-
-			if (consumed.images.length > 0) {
-				const textParts = consumed.formattedTexts.map((t) => ({
-					type: "text" as const,
-					text: t,
-				}));
-				const imageParts = consumed.images.flatMap((img) => [
-					{ type: "text" as const, text: "[User-attached image]" },
-					openaiImagePart(img),
-				]);
-				messages.push({
-					role: "user",
-					content: [...textParts, ...imageParts],
-				});
-			} else if (consumed.formattedTexts.length === 1) {
-				messages.push({
-					role: "user",
-					content: consumed.formattedTexts[0],
-				});
-			} else {
-				messages.push({
-					role: "user",
-					content: consumed.formattedTexts.map((t) => ({
-						type: "text" as const,
-						text: t,
-					})),
-				});
-			}
+			applyOpenAIResponsesQueueContent(messages, consumed);
 		},
 
 		isWorkingContext: isHistoryWorkingContext,
@@ -991,6 +1006,31 @@ function createOpenAIResponsesAdapter(
 			}
 
 			return result;
+		},
+
+		appendQueueMessagesToMessages(
+			messages: unknown[],
+			queueMsgs: QueueMessage[],
+		): void {
+			// Initial-drain path — provider-shared drained queue messages at fresh
+			// start / interrupted resume and needs them appended to messages[].
+			// Routes through applyOpenAIResponsesQueueContent (same function the
+			// walker uses) to guarantee byte-identical output with reconstruction.
+			const formattedTexts: string[] = [];
+			const images: EventImageData[] = [];
+			for (const msg of queueMsgs) {
+				const text = formatQueueMessage(msg);
+				if (text) formattedTexts.push(text);
+				if (msg.source === "user" && msg.images) {
+					for (const img of msg.images) {
+						images.push({
+							base64: img.base64,
+							mediaType: img.mediaType,
+						});
+					}
+				}
+			}
+			applyOpenAIResponsesQueueContent(messages, { formattedTexts, images });
 		},
 
 		validateImage(base64: string, _mediaType: string) {
