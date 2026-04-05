@@ -389,3 +389,26 @@ Test `test.todo("Initial message with images: live path matches reconstruction")
 
 ### Dead Code Found (not cleaned up yet)
 `formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — no code sets these fields anymore (orchestrator-tools doesn't return them). Reading paths in anthropic/openai providers and tool-execution. Legacy from old `agent-tools.ts` that no longer exists. Safe to delete in a separate refactor.
+
+
+## Prefix Validation: Architectural Limitation After Unification (2026-04-05)
+
+### What prefix validation (enablePrefixValidation) catches
+Mutation-tested the validator (`src/drift-infra-audit.test.ts`, 39 tests). It catches:
+- All content mutations (text, images, tool_use, tool_result key changes)
+- System/tools changes (including **presence asymmetry** — dropping them mid-conversation now throws, previously silently passed, fixed)
+- cache_control TTL/type mutations; stale CC at non-breakpoint positions
+- Block ordering, key changes, count differences
+- Correctly allows: key insertion-order differences (deep-equal sorts keys), string↔array content normalization, legitimate breakpoint position moves
+
+### What it CANNOT catch after unification
+Prefix validation catches DIVERGENCE BETWEEN API CALLS. After `buildUserTurn` was unified to delegate to the walker, live path and reconstruction share the SAME code. A walker bug breaks BOTH paths equally → no restart-time diff → validator silent.
+
+Sibling task experimentally confirmed: removed caption from walker → all 27 prefix-validation tests still passed.
+
+### Complementary defense: golden snapshot tests
+Added 23 golden snapshot tests in `src/drift-infra-audit.test.ts` asserting EXACT byte output of `eventsToAnthropicMessages` for known Event[] inputs. These catch walker bugs that prefix validation cannot.
+
+**Verified by mutation testing**: manually broke walker in 4 places (remove caption idle, remove caption working-context, drop is_error, drop caller field) — each mutation was caught by the corresponding golden test.
+
+**Principle**: prefix validation tests CONVERGENCE between paths. Golden snapshots test CORRECTNESS of the path itself. Both are needed.
