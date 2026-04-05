@@ -42,7 +42,8 @@ import { WorktreeManager } from "./worktree-manager.ts";
  */
 async function isGitClean(projectPath: string): Promise<{
 	clean: boolean;
-	message: string;
+	/** Raw `git status --porcelain` output. Empty when clean. Callers format their own messages. */
+	files: string;
 }> {
 	const proc = Bun.spawn(["git", "status", "--porcelain"], {
 		cwd: projectPath,
@@ -51,14 +52,7 @@ async function isGitClean(projectPath: string): Promise<{
 	});
 	await proc.exited;
 	const output = (await new Response(proc.stdout).text()).trim();
-	if (!output) {
-		return { clean: true, message: "" };
-	}
-	const lines = output.split("\n").filter((l) => l.trim());
-	return {
-		clean: false,
-		message: `Working tree has ${lines.length} uncommitted change(s):\n${output}\n\nCommit or stash changes before spawning tasks.`,
-	};
+	return { clean: output === "", files: output };
 }
 
 /**
@@ -758,11 +752,14 @@ export function createOrchestratorTools(
 						const projectPath = getProjectPath();
 						const gitCheck = await isGitClean(projectPath);
 						if (!gitCheck.clean) {
+							const lines = gitCheck.files
+								.split("\n")
+								.filter((l) => l.trim());
 							return {
 								content: [
 									{
 										type: "text" as const,
-										text: `Error: ${gitCheck.message}`,
+										text: `Error: Working tree has ${lines.length} uncommitted change(s):\n${gitCheck.files}\n\nCommit or stash changes before spawning tasks.`,
 									},
 								],
 								isError: true,
@@ -1531,6 +1528,27 @@ export function createOrchestratorTools(
 							isError: true,
 						};
 					}
+				}
+
+				// Guard: reject done() if worktree has uncommitted changes.
+				// done() means "my git state reflects completion". Uncommitted work
+				// means the agent isn't actually done — they need to decide what to
+				// do with those changes first.
+				const projectPath = getProjectPath();
+				const gitCheck = await isGitClean(projectPath);
+				if (!gitCheck.clean) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text:
+									`Cannot call done() — your worktree has uncommitted changes:\n${gitCheck.files}\n\n` +
+									`Resolve this yourself — protect your work, do the right thing. ` +
+									`If you're waiting for direction on what to do with these changes, call yield() instead of done().`,
+							},
+						],
+						isError: true,
+					};
 				}
 
 				// Phase 1 of two-phase done(): just close the queue and return.

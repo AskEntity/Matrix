@@ -53,6 +53,14 @@ async function setupTestContext(): Promise<TestContext> {
 	Bun.spawnSync(["git", "config", "user.name", "Test"], {
 		cwd: projectDir,
 	});
+	// Test-environment gitignore: mock-agent scenarios write scratch files into
+	// projectDir and call done() without committing. done() now rejects dirty
+	// worktrees. Ignore everything except the files we explicitly track so test
+	// scenarios don't need commit ceremony orthogonal to what they're testing.
+	await Bun.write(
+		join(projectDir, ".gitignore"),
+		"*\n!/.gitignore\n!/README.md\n!/.mxd/\n!/.mxd/**\n",
+	);
 	await Bun.write(join(projectDir, "README.md"), "# Test Project\n");
 	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
 	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
@@ -8620,12 +8628,16 @@ describe("Default branch", () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
 
-		// Add a develop-only file on a new branch
+		// Add a develop-only file on a new branch.
+		// Use `git add -f` because setupTestContext's permissive .gitignore
+		// would otherwise ignore this file.
 		Bun.spawnSync(["git", "checkout", "-b", "develop"], {
 			cwd: ctx.projectDir,
 		});
 		await Bun.write(join(ctx.projectDir, "develop-only.txt"), "on develop\n");
-		Bun.spawnSync(["git", "add", "."], { cwd: ctx.projectDir });
+		Bun.spawnSync(["git", "add", "-f", "develop-only.txt"], {
+			cwd: ctx.projectDir,
+		});
 		Bun.spawnSync(["git", "commit", "-m", "develop content"], {
 			cwd: ctx.projectDir,
 		});

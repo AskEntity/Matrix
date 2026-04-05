@@ -1776,6 +1776,19 @@ describe("done tool", () => {
 
 	beforeAll(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-done-tool-"));
+		// Initialize tempDir as a git repo so isGitClean check in done() works.
+		// done() now checks worktree status, which requires a git repository.
+		// gitignore tree.json so the tracker's writes don't make the tree dirty.
+		Bun.spawnSync(["git", "init"], { cwd: tempDir });
+		Bun.spawnSync(["git", "config", "user.email", "test@test.com"], {
+			cwd: tempDir,
+		});
+		Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: tempDir });
+		await Bun.write(join(tempDir, "README.md"), "# Test\n");
+		await Bun.write(join(tempDir, ".gitignore"), "tree.json\n");
+		Bun.spawnSync(["git", "add", "."], { cwd: tempDir });
+		Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: tempDir });
+
 		tracker = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker.load();
 	});
@@ -1783,6 +1796,12 @@ describe("done tool", () => {
 	afterAll(async () => {
 		if (tempDir) await rm(tempDir, { recursive: true });
 	});
+
+	// Ensure worktree is clean between tests — some tests create dirty state.
+	async function cleanWorktree() {
+		Bun.spawnSync(["git", "reset", "--hard"], { cwd: tempDir });
+		Bun.spawnSync(["git", "clean", "-fd"], { cwd: tempDir });
+	}
 
 	async function invokeDoneTool(
 		taskId: string | null,
@@ -2009,6 +2028,152 @@ describe("done tool", () => {
 		child2.session = undefined;
 		q1.close();
 		q2.close();
+	});
+
+	// ── Uncommitted worktree guard ──
+	// done() means "my git state reflects completion". If worktree is dirty,
+	// the agent should commit, discard, or yield — not done().
+
+	test("done() rejects when worktree has modified tracked files", async () => {
+		await cleanWorktree();
+		// Modify the tracked README.md
+		await Bun.write(join(tempDir, "README.md"), "# Modified\n");
+
+		const node = tracker.addTask("Dirty Test", "description");
+		tracker.updateStatus(node.id, "in_progress");
+
+		const result = await invokeDoneTool(node.id, {
+			status: "passed",
+			summary: "done",
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("uncommitted changes");
+		expect(result.content[0].text).toContain("README.md");
+		expect(result.content[0].text).toContain("yield()");
+		await cleanWorktree();
+	});
+
+	test("done() rejects when worktree has untracked files", async () => {
+		await cleanWorktree();
+		// Create an untracked file
+		await Bun.write(join(tempDir, "wip-draft.md"), "work in progress\n");
+
+		const node = tracker.addTask("Untracked Test", "description");
+		tracker.updateStatus(node.id, "in_progress");
+
+		const result = await invokeDoneTool(node.id, {
+			status: "passed",
+			summary: "done",
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("uncommitted changes");
+		expect(result.content[0].text).toContain("wip-draft.md");
+		expect(result.content[0].text).toContain("yield()");
+		await cleanWorktree();
+	});
+
+	test("done() rejects when worktree has both modified and untracked files", async () => {
+		await cleanWorktree();
+		await Bun.write(join(tempDir, "README.md"), "# Changed\n");
+		await Bun.write(join(tempDir, "new-file.txt"), "new\n");
+
+		const node = tracker.addTask("Both Dirty", "description");
+		tracker.updateStatus(node.id, "in_progress");
+
+		const result = await invokeDoneTool(node.id, {
+			status: "passed",
+			summary: "done",
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("README.md");
+		expect(result.content[0].text).toContain("new-file.txt");
+		await cleanWorktree();
+	});
+
+	test("done() rejects dirty worktree even for done('failed')", async () => {
+		await cleanWorktree();
+		await Bun.write(join(tempDir, "wip.md"), "wip\n");
+
+		const node = tracker.addTask("Fail With WIP", "description");
+		tracker.updateStatus(node.id, "in_progress");
+
+		const result = await invokeDoneTool(node.id, {
+			status: "failed",
+			summary: "failed with wip",
+		});
+		// failed with dirty worktree is STILL rejected — failed ≠ abandon state.
+		// agent must explicitly decide: commit, discard, or yield for direction.
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("uncommitted changes");
+		await cleanWorktree();
+	});
+
+	test("done() accepts gitignored files (not blocking)", async () => {
+		await cleanWorktree();
+		// tree.json is gitignored in beforeAll — tracker writes are invisible to git
+		// Verify done() works even though tracker writes to tree.json.
+		const node = tracker.addTask("Ignored Test", "description");
+		tracker.updateStatus(node.id, "in_progress");
+
+		const result = await invokeDoneTool(node.id, {
+			status: "passed",
+			summary: "ok",
+		});
+		expect(result.isError).toBeUndefined();
+		expect(result.content[0].text).toContain("Done acknowledged");
+	});
+
+	test("done() succeeds after committing dirty files", async () => {
+		await cleanWorktree();
+		// Create dirty state
+		await Bun.write(join(tempDir, "README.md"), "# Committed change\n");
+
+		const node = tracker.addTask("Commit Then Done", "description");
+		tracker.updateStatus(node.id, "in_progress");
+
+		// First call: should reject
+		const rejected = await invokeDoneTool(node.id, {
+			status: "passed",
+			summary: "ok",
+		});
+		expect(rejected.isError).toBe(true);
+
+		// Agent commits
+		Bun.spawnSync(["git", "add", "-A"], { cwd: tempDir });
+		Bun.spawnSync(["git", "commit", "-m", "wip"], { cwd: tempDir });
+
+		// Second call: should accept
+		const accepted = await invokeDoneTool(node.id, {
+			status: "passed",
+			summary: "ok",
+		});
+		expect(accepted.isError).toBeUndefined();
+		expect(accepted.content[0].text).toContain("Done acknowledged");
+		await cleanWorktree();
+	});
+
+	test("done() error message suggests yield() as alternative", async () => {
+		await cleanWorktree();
+		await Bun.write(join(tempDir, "scratch.txt"), "tmp\n");
+
+		const node = tracker.addTask("Suggest Yield", "description");
+		tracker.updateStatus(node.id, "in_progress");
+
+		const result = await invokeDoneTool(node.id, {
+			status: "passed",
+			summary: "x",
+		});
+		expect(result.isError).toBe(true);
+		const text = result.content[0].text as string;
+		// The error must explicitly redirect to yield() for unclear WIP
+		expect(text).toContain("yield() instead");
+		// The error must trust the agent to resolve, not prescribe destructive commands
+		expect(text).toContain("Resolve this yourself");
+		// Error should NOT prescribe destructive commands (agent might lose work)
+		expect(text).not.toContain("git clean");
+		expect(text).not.toContain("git checkout --");
+		expect(text).not.toContain("git reset --hard");
+		await cleanWorktree();
 	});
 });
 
