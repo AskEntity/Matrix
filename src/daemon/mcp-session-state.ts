@@ -40,6 +40,19 @@ export interface McpSessionState {
 	 * events, use get_logs instead.
 	 */
 	yieldCursors: Map<string, number>;
+	/**
+	 * Server-enforced peer identity, set via attach_to(peerKey) when the
+	 * peerKey matches a config.mcpClients entry. Used as fromProjectId /
+	 * fromProjectName on cross_project messages sent via send_message.
+	 *
+	 * Undefined when the session attached without a peerKey (anonymous mode)
+	 * or the peerKey was not found in config. send_message requires this
+	 * to be set — anonymous sessions cannot send messages.
+	 */
+	peerIdentity?: {
+		projectId: string;
+		projectName: string;
+	};
 }
 
 /**
