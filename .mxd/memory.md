@@ -18,7 +18,7 @@ Root orchestrator never commits to main directly — not because "root delegates
 
 Today's proof: cleanly reverted MCP send_message (wrong semantic) + scroll refactor v1 (wrong architecture), both in single commits each. Only possible because both were branch→merge, never direct-to-main.
 
-User's framing: "如果你自己修了 我们在master branch上怎么cleanly rollback？"
+User's framing: "if you fix it yourself, how do we cleanly rollback on master branch?"
 
 Two concrete gates root must pass before committing ANY code change:
 1. Could this fix be wrong? (answer: any code change could be wrong — always yes)
@@ -42,13 +42,10 @@ This is a product property of Matrix's commit model, not a policy preference. Br
 
 **Whoever introduces a change owns ALL consequences** (prompt, UI, tests, docs). Root never writes production code — delegates everything.
 
-## User Preferences
+## Language Policy
 
-- Close completed tasks, don't delete.
-- Don't change auth config without permission.
-- User communicates in Chinese.
-- Discuss architecture before executing.
-- "Delete until ONE remains" not "unify".
+Code, task tree, and memory.md: English (matches Matrix.md baseline).
+Agent reply language: follows the sender's language.
 
 ## How to Run Tests
 
