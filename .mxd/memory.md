@@ -389,3 +389,29 @@ Test `test.todo("Initial message with images: live path matches reconstruction")
 
 ### Dead Code Found (not cleaned up yet)
 `formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — no code sets these fields anymore (orchestrator-tools doesn't return them). Reading paths in anthropic/openai providers and tool-execution. Legacy from old `agent-tools.ts` that no longer exists. Safe to delete in a separate refactor.
+
+
+## Drift Test Strategy (post-unification) (2026-04-05)
+
+After buildUserTurn delegates to walker, prefix-validation integration tests have a BLIND SPOT: they compare live vs reconstruction, but since both run the SAME walker, a walker bug produces IDENTICAL wrong output in both paths → validation passes.
+
+**Two test layers required:**
+
+1. **Golden snapshot unit tests** (`src/drift-tool-lifecycle.test.ts`):
+   Construct Event[] manually, call `eventsToAnthropicMessages(events)`, assert EXACT byte-level output. Tests walker CORRECTNESS. Would have caught the caption bug directly. Fast (~150ms for 29 tests).
+
+2. **Integration prefix-validation tests** (same file):
+   Real agent runs → restart → wake. Prefix validation catches DRIFT between walker and any non-walker codepath (initial drain, buildSessionRepair, cache control). Slow but E2E.
+
+**Mutation-verified**: goldens catch caption removal, is_error→isError typo, image/text reorder, missing keys. Integration tests catch when live path stops delegating to walker.
+
+**Production gotcha for golden snapshots**: user message events with `id` are DEFERRED by walker — only materialize via `messages_consumed`. Helper pattern:
+```ts
+function userPromptEvents(id, content, ts, images?): Event[] {
+  return [
+    { type: "message", id, taskId: "", body: {source:"user", id, ts, content, images}, ts },
+    { type: "messages_consumed", messageIds: [id], taskId: "", ts: ts+1 },
+  ];
+}
+```
+Without messages_consumed, message with id is never rendered.
