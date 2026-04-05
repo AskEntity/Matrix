@@ -10589,3 +10589,326 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		expect(eventStore.has(child.id)).toBe(false);
 	}, 15000);
 });
+
+// ── Bug reproductions: image message cache mismatch on restart ──
+
+describe("Bug repro: image message reconstruction mismatch", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	/**
+	 * Send a message with images to the root agent.
+	 */
+	async function sendMessageWithImages(
+		testCtx: TestContext,
+		message: string,
+		images: Array<{ base64: string; mediaType: string }>,
+	): Promise<Response> {
+		const tracker = await testCtx.app.getTracker(testCtx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		return testCtx.app.app.request(
+			`/projects/${testCtx.projectId}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: message, images }),
+			},
+		);
+	}
+
+	test.todo("Image in idle context: reconstruction missing caption text block", async () => {
+		// Reproduces: onConsumedMessages idle context path creates user message
+		// WITHOUT "[N image(s) attached by user]" caption, but live path's
+		// buildUserTurn ALWAYS adds the caption. One missing text block →
+		// all subsequent messages shift → full cache miss on restart.
+		//
+		// The bug requires idle context (no pending tool_results). This happens
+		// when the agent produces pure text (no tool_use) → end_turn implicit
+		// yield → image message arrives. Explicit yield is working context
+		// (yield tool_result exists), so it doesn't trigger the bug.
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const tinyPng =
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+		// Turn 1: agent responds with pure text (no tool_use) → end_turn implicit yield.
+		// Turn 2: after image message wakes agent → done.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					// Pure text, no tool_use → triggers end_turn / implicit yield
+					blocks: [{ type: "text", text: "I understand, waiting for more info." }],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Got the image, finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "image idle restart ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+
+		// Wait for agent to enter implicit yield (end_turn with no tool_use)
+		await waitForIdle(ctx);
+
+		// === Send image message while agent is idle (no pending tool_results) ===
+		// This hits onConsumedMessages idle context path on reconstruction.
+		await sendMessageWithImages(ctx, "Here is a screenshot", [
+			{ base64: tinyPng, mediaType: "image/png" },
+		]);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// === RESTART: recreate app from disk ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "After restart." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "image idle restart survived" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+
+		// If prefix validation passes, reconstruction matches live path.
+		// Currently FAILS: reconstruction omits "[1 image(s) attached by user]"
+		// caption in idle context → prefix mismatch.
+		const status2 = await waitForDone(ctx);
+		expect(status2).toBe("verify");
+	}, 30000);
+
+	test("Image in working context (explicit yield): reconstruction caption matches", async () => {
+		// Control test: explicit yield + image message = working context.
+		// onConsumedMessages working context path DOES add the caption.
+		// This should pass — confirms the bug is isolated to idle context.
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const tinyPng =
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Working." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Got the image, finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "image yield restart ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		await sendMessageWithImages(ctx, "Here is a screenshot", [
+			{ base64: tinyPng, mediaType: "image/png" },
+		]);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "After restart." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "image yield restart survived" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+
+		const status2 = await waitForDone(ctx);
+		expect(status2).toBe("verify");
+	}, 30000);
+
+	test("Prefix validation catches is_error key presence difference", async () => {
+		// Prove that deepEqualContent detects {type, tool_use_id, content} (3 keys)
+		// vs {type, tool_use_id, content, is_error} (4 keys).
+		// If this test passes, prefix validation WOULD catch is_error mismatch.
+		const { MockValidationError } = await import(
+			"./test-utils/mock-anthropic-api.ts"
+		);
+
+		const mockAPI = new ValidatingMockAPI();
+		mockAPI.enablePrefixValidation();
+
+		// Call 1: tool_result WITHOUT is_error
+		mockAPI.createStream(
+			{
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "test_123",
+								content: [
+									{ type: "text", text: "[Image: test.png]" },
+									{
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: "image/png",
+											data: "abc",
+										},
+									},
+								],
+							},
+						],
+					},
+				],
+			},
+			"is-error-test",
+		);
+
+		// Call 2: same tool_result WITH is_error: false — extra key
+		expect(() =>
+			mockAPI.createStream(
+				{
+					messages: [
+						{
+							role: "user",
+							content: [
+								{
+									type: "tool_result",
+									tool_use_id: "test_123",
+									content: [
+										{ type: "text", text: "[Image: test.png]" },
+										{
+											type: "image",
+											source: {
+												type: "base64",
+												media_type: "image/png",
+												data: "abc",
+											},
+										},
+									],
+									is_error: false,
+								},
+							],
+						},
+						{
+							role: "assistant",
+							content: [{ type: "text", text: "ok" }],
+						},
+						{ role: "user", content: "next" },
+					],
+				},
+				"is-error-test",
+			),
+		).toThrow(MockValidationError);
+	}, 10000);
+
+	test("Image tool_result: is_error field consistent between live and reconstruction", async () => {
+		// Verified: both live path (buildUserTurn) and reconstruction (onToolResults)
+		// omit is_error for image tool_results. Keys match: [type, tool_use_id, content].
+		// This is NOT a bug — keeping as regression test.
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const pngBuffer = Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+			"base64",
+		);
+		const imgPath = join(ctx.projectDir, "test-image.png");
+		await Bun.write(imgPath, pngBuffer);
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__read_file",
+							input: { path: imgPath },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Got the image." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "image tool_result ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Verify read_file actually produced an image tool_result
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const events = await readSessionEvents(ctx, tracker.rootNodeId);
+		const imageToolResult = events.find(
+			(e: Event) =>
+				e.type === "tool_result" &&
+				"images" in e &&
+				(e as any).images?.length > 0,
+		);
+		expect(imageToolResult).toBeTruthy();
+
+		// === RESTART ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "After restart." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "image tool_result restart survived" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+
+		// Prefix validation passes — is_error consistently absent on both paths.
+		const status2 = await waitForDone(ctx);
+		expect(status2).toBe("verify");
+	}, 30000);
+});
