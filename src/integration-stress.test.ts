@@ -325,18 +325,25 @@ describe("Stress: compaction + restart", () => {
 		Bun.spawnSync(["rm", "-rf", tmpDir]);
 	});
 
-	test("COMPACT2: manual compact during yield creates consecutive user messages (known bug)", async () => {
+	test("COMPACT2: manual compact during yield completes without consecutive user messages", async () => {
 		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
+		// NOTE: enablePrefixValidation() NOT called — after compaction,
+		// messages[] resets to 1 message which breaks the mock's strict
+		// monotonic-increase prefix check. That's a mock infra limitation,
+		// not a production concern (Anthropic's actual cache validates at the
+		// breakpoint level, not whole-prefix identity across compactions).
 
-		// This test documents a known production bug:
-		// Manual compaction triggered during explicit yield creates consecutive
-		// user messages (tool_result + summarization instruction), which the
-		// Anthropic API would reject with "Messages must alternate roles."
+		// Regression test: previously, manual compaction triggered during a
+		// pending yield created two consecutive user messages (yield tool_result
+		// + summarization instruction) → API 400 "Messages must alternate roles".
+		//
+		// Fix (commit 304fccd): defer the yield tool_result via
+		// pendingCompactYieldToolCall. The compact path bundles tool_result +
+		// summarization text into ONE user message with two blocks.
 		//
 		// The agent does enough work to exceed messages.length > 4, yields,
-		// then receives a compact-only message. The bug manifests as an error
-		// in the JSONL ("Messages must alternate roles").
+		// then receives a compact-only message. After fix: no error, compact
+		// completes, agent continues to the next turn.
 		const instruction = JSON.stringify({
 			turns: [
 				{
@@ -376,6 +383,17 @@ describe("Stress: compaction + restart", () => {
 						},
 					],
 				},
+				// Turn 5 (post-compact): done
+				{
+					blocks: [
+						{ type: "text", text: "Done after compact." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
 			],
 		});
 
@@ -388,17 +406,17 @@ describe("Stress: compaction + restart", () => {
 			method: "POST",
 		});
 
-		// Wait for the error to appear in JSONL
+		// Wait for the agent to complete post-compact work
 		await new Promise((r) => setTimeout(r, 3000));
 
 		const rootNodeId = await getRootNodeId(ctx);
 		const events = readSessionEvents(ctx, rootNodeId);
 		const errors = events.filter((e) => e.type === "error");
+		const hasCompactMarker = events.some((e) => e.type === "compact_marker");
 
-		// Known bug: consecutive user messages error
-		expect(errors.length).toBeGreaterThanOrEqual(1);
-		const errorMsg = (errors[0] as { message: string }).message;
-		expect(errorMsg).toContain("consecutive");
+		// After fix: no errors, compaction completed
+		expect(errors.length).toBe(0);
+		expect(hasCompactMarker).toBe(true);
 	}, 30000);
 });
 

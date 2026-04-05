@@ -2528,14 +2528,11 @@ describe("Drift: compaction lifecycle", () => {
 	// The right fix is structural: summarization_request should NOT create a
 	// separate user message — it should append to the user turn being built.
 	// This requires walker changes too. Deferred to follow-up work.
-	test.todo(
-		"compact + regular message in same drain during pending yield → no API 400",
-		() => {
-			// See comment above: the walker has a matching latent bug. Fix requires
-			// restructuring summarization_request to append to the user turn being
-			// built instead of creating a separate user message.
-		},
-	);
+	test.todo("compact + regular message in same drain during pending yield → no API 400", () => {
+		// See comment above: the walker has a matching latent bug. Fix requires
+		// restructuring summarization_request to append to the user turn being
+		// built instead of creating a separate user message.
+	});
 
 	// Sibling bug (not yet fixed, hard to reach via integration):
 	// pendingDoneToolCall + compactOnly has the same asymmetry. The pending-done
@@ -2551,12 +2548,9 @@ describe("Drift: compaction lifecycle", () => {
 	// Deferred with the bug #2 walker-drift fix (requires the same structural
 	// change: summarization_request should append to the user turn being built,
 	// not produce a separate user message).
-	test.todo(
-		"compact triggered while agent in pending-done (done resume) completes without API 400",
-		() => {
-			// See comment above: very narrow window, hard to reach via integration.
-			// Fix bundled with the pending-yield+regular bug (both need structural
-			// change to summarization_request injection).
-		},
-	);
+	test.todo("compact triggered while agent in pending-done (done resume) completes without API 400", () => {
+		// See comment above: very narrow window, hard to reach via integration.
+		// Fix bundled with the pending-yield+regular bug (both need structural
+		// change to summarization_request injection).
+	});
 });
