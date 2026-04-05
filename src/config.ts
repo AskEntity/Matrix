@@ -57,33 +57,6 @@ export interface MatrixConfig {
 		/** TTL for child tasks. "5m" (default ephemeral) or "1h" (extended). Default: "5m" */
 		child?: "5m" | "1h";
 	};
-	/**
-	 * MCP client identity registry — maps peer keys to virtual project identities.
-	 * External MCP clients (e.g., Claude Code) present a `peerKey` on attach_to;
-	 * Matrix looks it up here and uses the mapped projectId/projectName as the
-	 * server-enforced identity for any messages the peer sends.
-	 *
-	 * The peer CANNOT forge these values — only the projectId/projectName from
-	 * this config are attached to delivered messages. This is the lightweight
-	 * identity layer: trust-by-setup, not trust-by-content.
-	 *
-	 * Example:
-	 * {
-	 *   "cc-test": { "projectId": "cc-test", "projectName": "CC (Test)" }
-	 * }
-	 *
-	 * When mcpClients is missing/empty, external peers operate anonymously
-	 * (read-only tools + yield still work, but send_message is rejected).
-	 */
-	mcpClients?: Record<
-		string,
-		{
-			/** Virtual project ID used as `fromProjectId` on cross_project messages. */
-			projectId: string;
-			/** Display name used as `fromProjectName` on cross_project messages. */
-			projectName: string;
-		}
-	>;
 }
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
