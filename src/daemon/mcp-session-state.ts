@@ -29,6 +29,17 @@ export interface McpSessionState {
 	attachment?: McpAttachment;
 	/** When this session was created (unix ms). */
 	createdAt: number;
+	/**
+	 * Per-taskId cursor into the JSONL event stream. Used by the `await` tool
+	 * to return only events that occurred since the last await call for each
+	 * task this session has watched. Keyed by taskId, value is the JSONL event
+	 * array length at last observation (so events[cursor:] is "new").
+	 *
+	 * Initialized to the current event count on attach_to(), so the first
+	 * await() starts from "now" and waits for NEW activity. For historical
+	 * events, use get_logs instead.
+	 */
+	awaitCursors: Map<string, number>;
 }
 
 /**
@@ -43,6 +54,7 @@ export class McpSessionStore {
 		const state: McpSessionState = {
 			mcpSessionId,
 			createdAt: Date.now(),
+			awaitCursors: new Map(),
 		};
 		this.sessions.set(mcpSessionId, state);
 		return state;

@@ -11,6 +11,17 @@ export interface SSEClient {
 	projectId: string;
 }
 
+/**
+ * Generic event subscriber for in-process consumers (HTTP MCP await tool, etc.).
+ * Called by broadcast() after SSE fanout. Callback receives the raw event object
+ * (not SSE-encoded, not stripped). Subscribers MUST NOT throw — broadcast wraps
+ * calls in try/catch but a throwing subscriber is a bug.
+ */
+export interface EventSubscriber {
+	projectId: string;
+	callback: (event: Record<string, unknown>) => void;
+}
+
 /** Pending clarification from a clarify() call waiting for user answer. */
 export interface PendingClarification {
 	id: string;
@@ -46,6 +57,11 @@ export interface DaemonContext {
 	 */
 	readonly launchingNodes: Set<string>;
 	readonly sseClients: Set<SSEClient>;
+	/**
+	 * Generic in-process event subscribers. Fanned out to by broadcast() after
+	 * SSE clients. Used by the HTTP MCP `await` tool to watch for pause events.
+	 */
+	readonly eventSubscribers: Set<EventSubscriber>;
 	readonly pendingClarifications: Map<string, PendingClarification[]>;
 	readonly eventStores: Map<string, EventStore>;
 

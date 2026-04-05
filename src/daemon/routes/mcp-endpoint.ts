@@ -160,6 +160,18 @@ function wireTools(
 				projectId: args.projectId,
 				taskId: args.taskId,
 			});
+			// Initialize await cursor for the attached task at CURRENT event count
+			// so the first await() call starts from "now" — waits for NEW activity
+			// rather than replaying history (use get_logs for history).
+			if (args.taskId) {
+				const state = ctx.mcpSessionStore.get(sid);
+				if (state && !state.awaitCursors.has(args.taskId)) {
+					const eventStore = getEventStore(ctx, args.projectId);
+					await eventStore.flushSession(args.taskId);
+					const { events } = eventStore.readFromLastCompactMarker(args.taskId);
+					state.awaitCursors.set(args.taskId, events.length);
+				}
+			}
 			const info = {
 				projectId: args.projectId,
 				projectName: project.name,
@@ -578,6 +590,178 @@ function wireTools(
 					cwd: root,
 				});
 				return { content: [{ type: "text", text: result || "(no matches)" }] };
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					isError: true,
+				};
+			}
+		},
+	);
+
+	server.registerTool(
+		"await",
+		{
+			description:
+				"Block until the attached task pauses (done, explicit yield, implicit yield / end_turn, or stopped), " +
+				"then return the events that occurred since the last await call on this session. " +
+				"On first call after attach, starts watching from 'now' — use get_logs to read historical events. " +
+				"If the task is already in a terminal state (verify/failed/closed), returns immediately.",
+			inputSchema: {
+				timeoutMs: z
+					.number()
+					.optional()
+					.describe(
+						"Maximum wait time in milliseconds (default 60000, max 300000).",
+					),
+			},
+		},
+		async (args) => {
+			try {
+				const sid = getSessionId();
+				if (!sid) throw new Error("MCP session not initialized.");
+				const state = ctx.mcpSessionStore.get(sid);
+				if (!state) throw new Error("MCP session state missing.");
+				const { projectId, taskId } = requireAttachedTask();
+				const timeoutMs = Math.min(
+					Math.max(args.timeoutMs ?? 60000, 0),
+					300000,
+				);
+
+				const tracker = await getTracker(ctx, projectId);
+				const node = tracker.getTask(taskId);
+				if (!node) throw new Error(`Task not found: ${taskId}`);
+				const eventStore = getEventStore(ctx, projectId);
+
+				// Read current events + cursor
+				const readCurrent = async () => {
+					await eventStore.flushSession(taskId);
+					const { events } = eventStore.readFromLastCompactMarker(taskId);
+					return events;
+				};
+				let events = await readCurrent();
+				const cursor = state.awaitCursors.get(taskId) ?? 0;
+
+				// Determine current task status + running state.
+				const task = tracker.getTask(taskId);
+				const status = task?.status ?? "pending";
+				const hasSession = !!task?.session;
+				// Agent is "running" if status is in_progress AND there's a session.
+				// When not running, await() returns immediately — no pause to wait for.
+				const isRunning = status === "in_progress" && hasSession;
+				// Whether the agent is currently at queue.wait() (idle).
+				const isIdleNow = task?.session?.queue?.idle === true;
+
+				// Fast path: not running → return immediately. Also: running+idle with
+				// new events → return immediately (already at pause point).
+				if (!isRunning || (isIdleNow && events.length > cursor)) {
+					const reason = !isRunning
+						? status === "verify" || status === "failed"
+							? "done"
+							: "not_running"
+						: "idle";
+					const sliced = events.slice(cursor);
+					const stripped = sliced.map((e) =>
+						stripEventForUI(e as unknown as Record<string, unknown>),
+					);
+					state.awaitCursors.set(taskId, events.length);
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(
+									{
+										reason,
+										taskStatus: status,
+										events: stripped,
+										cursorIndex: events.length,
+										count: stripped.length,
+									},
+									null,
+									2,
+								),
+							},
+						],
+					};
+				}
+
+				// Subscribe to broadcast events — resolve when a pause signal for
+				// our taskId arrives. Signals:
+				//   - agent_idle (ephemeral): implicit/explicit yield reached queue.wait
+				//   - done_notified (persisted): done() Phase 2 committed
+				//   - agent_stopped (persisted): stop_task called
+				//   - orchestration_completed (persisted): loop exited for any reason
+				type WakeReason =
+					| "idle"
+					| "done"
+					| "stopped"
+					| "orchestration_completed"
+					| "timeout";
+				const waitForPause = () =>
+					new Promise<WakeReason>((resolve) => {
+						let settled = false;
+						const done = (r: WakeReason) => {
+							if (settled) return;
+							settled = true;
+							clearTimeout(timer);
+							ctx.eventSubscribers.delete(subscriber);
+							resolve(r);
+						};
+						const subscriber = {
+							projectId,
+							callback: (evt: Record<string, unknown>) => {
+								if (settled) return;
+								if (evt.taskId !== taskId) return;
+								const t = evt.type;
+								if (t === "agent_idle") done("idle");
+								else if (t === "done_notified") done("done");
+								else if (t === "agent_stopped") done("stopped");
+								else if (t === "orchestration_completed")
+									done("orchestration_completed");
+							},
+						};
+						ctx.eventSubscribers.add(subscriber);
+						const timer = setTimeout(() => done("timeout"), timeoutMs);
+					});
+				const reason = await waitForPause();
+
+				// Re-read events after wake — the signal event AND any preceding
+				// events from this turn should now be on disk (agent_idle emits
+				// synchronously before queue.wait, done_notified after Phase 2
+				// writes). We flush to be safe.
+				events = await readCurrent();
+
+				// Determine status fresh (done_notified / agent_stopped may have
+				// changed it during Phase 2).
+				const finalStatus = tracker.getTask(taskId)?.status ?? status;
+				const sliced = events.slice(cursor);
+				const stripped = sliced.map((e) =>
+					stripEventForUI(e as unknown as Record<string, unknown>),
+				);
+				state.awaitCursors.set(taskId, events.length);
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{
+									reason,
+									taskStatus: finalStatus,
+									events: stripped,
+									cursorIndex: events.length,
+									count: stripped.length,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
 			} catch (e) {
 				return {
 					content: [

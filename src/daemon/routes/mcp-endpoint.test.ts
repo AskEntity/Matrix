@@ -287,7 +287,7 @@ describe("mcp-endpoint: unscoped tools", () => {
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	test("tools/list exposes all 9 tools", async () => {
+	test("tools/list exposes all 10 tools", async () => {
 		const { app, pm } = createApp({ dataDir });
 		await pm.load();
 		const request: RequestFn = async (u, i) => app.request(u, i);
@@ -299,6 +299,7 @@ describe("mcp-endpoint: unscoped tools", () => {
 		expect(names).toEqual(
 			[
 				"attach_to",
+				"await",
 				"get_attachment",
 				"get_logs",
 				"get_task",

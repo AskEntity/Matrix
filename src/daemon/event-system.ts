@@ -3,6 +3,7 @@ import type { TaskTracker } from "../task-tracker.ts";
 import { ulid } from "../ulid.ts";
 import type {
 	DaemonContext,
+	EventSubscriber,
 	PendingClarification,
 	SSEClient,
 } from "./context.ts";
@@ -77,6 +78,7 @@ export function broadcast(
 	clients: Set<SSEClient>,
 	projectId: string,
 	event: Record<string, unknown>,
+	subscribers?: Set<EventSubscriber>,
 ) {
 	const seqId = nextSeqId(projectId);
 	const data = JSON.stringify(stripEventForUI(event));
@@ -89,6 +91,22 @@ export function broadcast(
 				client.controller.enqueue(sseMessage);
 			} catch {
 				clients.delete(client);
+			}
+		}
+	}
+
+	// Fan out to in-process subscribers (HTTP MCP await tool, etc.).
+	// Subscribers receive the RAW event object (pre-strip) so they see taskId
+	// and all routing fields. Exceptions are swallowed — a throwing subscriber
+	// must not kill the broadcast.
+	if (subscribers) {
+		for (const sub of subscribers) {
+			if (sub.projectId === projectId) {
+				try {
+					sub.callback(event);
+				} catch (e) {
+					console.warn("[broadcast] event subscriber threw:", e);
+				}
 			}
 		}
 	}
@@ -105,11 +123,12 @@ export function broadcast(
  * All callers use this instead of separate broadcast + persist calls.
  */
 export function emitEvent(ctx: DaemonContext, projectId: string, event: Event) {
-	// Broadcast to all SSE clients
+	// Broadcast to all SSE clients AND in-process subscribers
 	broadcast(
 		ctx.sseClients,
 		projectId,
 		event as unknown as Record<string, unknown>,
+		ctx.eventSubscribers,
 	);
 
 	// Persist to JSONL (skips ephemeral events like text_delta, usage, etc.)
@@ -146,11 +165,16 @@ export function broadcastTreeUpdate(
 	projectId: string,
 	tracker: TaskTracker,
 ) {
-	broadcast(ctx.sseClients, projectId, {
-		type: "tree_updated",
-		nodes: tracker.allNodes(),
-		rootNodeId: tracker.rootNodeId,
-	});
+	broadcast(
+		ctx.sseClients,
+		projectId,
+		{
+			type: "tree_updated",
+			nodes: tracker.allNodes(),
+			rootNodeId: tracker.rootNodeId,
+		},
+		ctx.eventSubscribers,
+	);
 }
 
 // --- Pending Clarifications ---
@@ -182,11 +206,16 @@ function addPendingClarification(
 		timestamp: Date.now(),
 	};
 	clarifications.push(entry);
-	broadcast(ctx.sseClients, projectId, {
-		type: "pending_clarifications",
+	broadcast(
+		ctx.sseClients,
 		projectId,
-		clarifications,
-	});
+		{
+			type: "pending_clarifications",
+			projectId,
+			clarifications,
+		},
+		ctx.eventSubscribers,
+	);
 	return entry;
 }
 
@@ -202,10 +231,15 @@ export function removePendingClarification(
 		: clarifications.findIndex((c) => c.taskId === taskId);
 	if (idx !== -1) {
 		clarifications.splice(idx, 1);
-		broadcast(ctx.sseClients, projectId, {
-			type: "pending_clarifications",
+		broadcast(
+			ctx.sseClients,
 			projectId,
-			clarifications,
-		});
+			{
+				type: "pending_clarifications",
+				projectId,
+				clarifications,
+			},
+			ctx.eventSubscribers,
+		);
 	}
 }

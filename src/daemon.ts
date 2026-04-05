@@ -141,6 +141,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		restartingProjects: new Set(),
 		launchingNodes: new Set(),
 		sseClients: new Set<SSEClient>(),
+		eventSubscribers: new Set(),
 		pendingClarifications: new Map<string, PendingClarification[]>(),
 		eventStores: new Map(),
 		streamingText: new Map(),
