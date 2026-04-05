@@ -22,8 +22,10 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { Hono } from "hono";
 import { z } from "zod";
 import { getImageDimensions } from "../../image-dimensions.ts";
+import { createCrossProjectMessage } from "../../queue-message-factory.ts";
 import { jsSearch } from "../../tools/search.ts";
 import { isFolder, isTask, stripSession } from "../../types.ts";
+import { deliverMessage } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
 import { subscribeToEvents } from "../event-system.ts";
 import { getEventStore, getTracker, stripEventForUI } from "../helpers.ts";
@@ -107,7 +109,8 @@ function wireTools(
 			description:
 				"Attach this MCP session to a Matrix project and (optionally) a task within it. " +
 				"Scoped tools (get_tree, get_task, read_file, etc.) operate in the attached context. " +
-				"Calling attach_to again replaces the current attachment.",
+				"Calling attach_to again replaces the current attachment. " +
+				"Pass peerKey to claim a configured peer identity (required for send_message).",
 			inputSchema: {
 				projectId: z.string().describe("Project ID (from list_projects)"),
 				taskId: z
@@ -115,6 +118,15 @@ function wireTools(
 					.optional()
 					.describe(
 						"Task node ID within the project. Required by scoped file tools.",
+					),
+				peerKey: z
+					.string()
+					.optional()
+					.describe(
+						"Peer identity key. Must match a configured entry in config.mcpClients. " +
+							"Matrix looks up the mapped projectId/projectName and uses them as the " +
+							"server-enforced identity for any send_message calls from this session. " +
+							"Without peerKey, send_message is unavailable (anonymous mode).",
 					),
 			},
 		},
@@ -155,29 +167,54 @@ function wireTools(
 					};
 				}
 			}
+			// Resolve peer identity from config.mcpClients. If peerKey is provided,
+			// it MUST match a configured entry (fail-closed). If omitted, session
+			// operates anonymously (read tools + yield work, send_message does not).
+			let peerIdentity: { projectId: string; projectName: string } | undefined;
+			if (args.peerKey !== undefined) {
+				const entry = ctx.globalConfig.mcpClients?.[args.peerKey];
+				if (!entry) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Error: peerKey "${args.peerKey}" not found in config.mcpClients. Either add it to your Matrix config or omit peerKey for anonymous mode.`,
+							},
+						],
+						isError: true,
+					};
+				}
+				peerIdentity = {
+					projectId: entry.projectId,
+					projectName: entry.projectName,
+				};
+			}
 			// Ensure state exists (onsessioninitialized may not have fired yet on first call)
 			if (!ctx.mcpSessionStore.get(sid)) ctx.mcpSessionStore.create(sid);
 			ctx.mcpSessionStore.attach(sid, {
 				projectId: args.projectId,
 				taskId: args.taskId,
 			});
-			// Initialize await cursor for the attached task at CURRENT event count
-			// so the first await() call starts from "now" — waits for NEW activity
+			// Set peer identity on session state (server-enforced; peer cannot forge).
+			const state = ctx.mcpSessionStore.get(sid);
+			if (state) {
+				state.peerIdentity = peerIdentity;
+			}
+			// Initialize yield cursor for the attached task at CURRENT event count
+			// so the first yield() call starts from "now" — waits for NEW activity
 			// rather than replaying history (use get_logs for history).
-			if (args.taskId) {
-				const state = ctx.mcpSessionStore.get(sid);
-				if (state && !state.yieldCursors.has(args.taskId)) {
-					const eventStore = getEventStore(ctx, args.projectId);
-					await eventStore.flushSession(args.taskId);
-					const { events } = eventStore.readFromLastCompactMarker(args.taskId);
-					state.yieldCursors.set(args.taskId, events.length);
-				}
+			if (args.taskId && state && !state.yieldCursors.has(args.taskId)) {
+				const eventStore = getEventStore(ctx, args.projectId);
+				await eventStore.flushSession(args.taskId);
+				const { events } = eventStore.readFromLastCompactMarker(args.taskId);
+				state.yieldCursors.set(args.taskId, events.length);
 			}
 			const info = {
 				projectId: args.projectId,
 				projectName: project.name,
 				projectPath: project.path,
 				taskId: args.taskId ?? null,
+				peerIdentity: peerIdentity ?? null,
 			};
 			return {
 				content: [
@@ -210,15 +247,159 @@ function wireTools(
 				};
 			}
 			const project = ctx.pm.get(a.projectId);
+			const sid = getSessionId();
+			const state = sid ? ctx.mcpSessionStore.get(sid) : undefined;
 			const info = {
 				projectId: a.projectId,
 				projectName: project?.name ?? "(missing)",
 				projectPath: project?.path ?? null,
 				taskId: a.taskId ?? null,
+				peerIdentity: state?.peerIdentity ?? null,
 			};
 			return {
 				content: [{ type: "text", text: JSON.stringify(info, null, 2) }],
 			};
+		},
+	);
+
+	server.registerTool(
+		"send_message",
+		{
+			description:
+				"Send a message to a task in the attached project. Requires peer identity " +
+				"(peerKey passed to attach_to, matching a config.mcpClients entry). The message " +
+				"is delivered as a cross_project message with server-enforced fromProjectId / " +
+				"fromProjectName from the peer's config entry — the peer cannot forge these.\n\n" +
+				"Scope: taskId must be the attached task, any ancestor in its parent chain, or " +
+				"one of its direct children. Siblings and grandchildren are rejected.\n\n" +
+				"Does NOT auto-launch stopped agents (quiet delivery) — the message is queued / " +
+				"persisted, and the agent receives it on its next run.",
+			inputSchema: {
+				taskId: z
+					.string()
+					.describe(
+						"Target task node ID. Must be in scope: attached task, ancestor, or direct child.",
+					),
+				content: z.string().describe("Message content"),
+				title: z
+					.string()
+					.optional()
+					.describe("Optional short subject line for the message"),
+			},
+		},
+		async (args) => {
+			try {
+				const sid = getSessionId();
+				if (!sid) throw new Error("MCP session not initialized");
+				const state = ctx.mcpSessionStore.get(sid);
+				if (!state) throw new Error("MCP session state missing");
+				const attachment = state.attachment;
+				if (!attachment) {
+					throw new Error("Not attached. Call attach_to first.");
+				}
+				if (!state.peerIdentity) {
+					throw new Error(
+						"send_message requires peer identity. Call attach_to with a peerKey " +
+							"that matches a config.mcpClients entry. Anonymous sessions can read " +
+							"and yield but cannot send messages.",
+					);
+				}
+
+				const projectId = attachment.projectId;
+				const project = ctx.pm.get(projectId);
+				if (!project) {
+					throw new Error(`Project not found: ${projectId}`);
+				}
+				const tracker = await getTracker(ctx, projectId);
+
+				// Resolve target task
+				const targetNode = tracker.getTask(args.taskId);
+				if (!targetNode) {
+					throw new Error(`Task not found: ${args.taskId}`);
+				}
+
+				// Scope enforcement: attached task, its parent chain, or its direct children.
+				// BEFORE any side effect — fail-closed.
+				const attachedTaskId = attachment.taskId;
+				if (!attachedTaskId) {
+					throw new Error(
+						"Scope check failed: session is attached at project level only (no taskId). " +
+							"Call attach_to with a taskId to enable send_message.",
+					);
+				}
+				let inScope = false;
+				// Case A: target IS the attached task
+				if (args.taskId === attachedTaskId) {
+					inScope = true;
+				}
+				// Case B: target is an ancestor of attached task (parent chain)
+				if (!inScope) {
+					let ancestor = tracker.getTaskAbove(attachedTaskId);
+					while (ancestor) {
+						if (ancestor.id === args.taskId) {
+							inScope = true;
+							break;
+						}
+						ancestor = tracker.getTaskAbove(ancestor.id);
+					}
+				}
+				// Case C: target is a DIRECT child of attached task
+				// (target's task-above must be the attached task, folders transparent)
+				if (!inScope) {
+					const targetTaskAbove = tracker.getTaskAbove(args.taskId);
+					if (targetTaskAbove?.id === attachedTaskId) {
+						inScope = true;
+					}
+				}
+				if (!inScope) {
+					throw new Error(
+						`Scope check failed: "${args.taskId}" is not the attached task, ` +
+							"an ancestor, or a direct child. send_message can only target these.",
+					);
+				}
+
+				// Build cross_project message with SERVER-ENFORCED identity.
+				// Peer supplies only content + optional title.
+				// fromProjectId / fromProjectName come from config — peer cannot forge.
+				const content = args.title
+					? `[${args.title}] ${args.content}`
+					: args.content;
+				const queueMessage = createCrossProjectMessage(
+					state.peerIdentity.projectId,
+					state.peerIdentity.projectName,
+					content,
+				);
+
+				// Quiet delivery — do NOT auto-launch stopped agents.
+				// Safer default for external peers. Message is persisted to JSONL;
+				// agent picks it up on its next run.
+				await deliverMessage(
+					ctx,
+					{ id: projectId, path: project.path },
+					args.taskId,
+					queueMessage,
+					{ quiet: true },
+				);
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Message delivered to "${targetNode.title}" (${args.taskId}) as cross_project from ${state.peerIdentity.projectName}.`,
+						},
+					],
+				};
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					isError: true,
+				};
+			}
 		},
 	);
 
