@@ -17,7 +17,6 @@ import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { TaskTree } from "./components/TaskTree.tsx";
 import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
 import { createEventHandler, type EventHandlerDeps } from "./event-handler.ts";
-import type { ScrollTarget } from "./hooks/useScrollTarget.ts";
 import {
 	type IncomingEvent,
 	isTask,
@@ -69,9 +68,7 @@ function MockShowcaseInner() {
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [activeAgents, setActiveAgents] = useState<Set<string>>(new Set());
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-	const [scrollTarget, setScrollTarget] = useState<ScrollTarget>({
-		kind: "follow",
-	});
+	const [autoScroll, setAutoScroll] = useState(true);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [pendingMessages, setPendingMessages] = useState<
@@ -392,8 +389,8 @@ function MockShowcaseInner() {
 							filterTaskId={selectedTaskId}
 							rootNodeId={rootNodeId}
 							nodeMap={nodeMap}
-							target={scrollTarget}
-							onTargetChange={setScrollTarget}
+							autoScroll={autoScroll}
+							onAutoScrollChange={setAutoScroll}
 							isActive={false}
 							projectId=""
 						/>
