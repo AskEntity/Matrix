@@ -165,11 +165,11 @@ function wireTools(
 			// rather than replaying history (use get_logs for history).
 			if (args.taskId) {
 				const state = ctx.mcpSessionStore.get(sid);
-				if (state && !state.awaitCursors.has(args.taskId)) {
+				if (state && !state.yieldCursors.has(args.taskId)) {
 					const eventStore = getEventStore(ctx, args.projectId);
 					await eventStore.flushSession(args.taskId);
 					const { events } = eventStore.readFromLastCompactMarker(args.taskId);
-					state.awaitCursors.set(args.taskId, events.length);
+					state.yieldCursors.set(args.taskId, events.length);
 				}
 			}
 			const info = {
@@ -605,14 +605,20 @@ function wireTools(
 	);
 
 	server.registerTool(
-		"await",
+		"yield",
 		{
 			description:
-				"Block until the attached task pauses, then return events that occurred since the last await call on this session. " +
-				"Reasons: 'idle' (agent at yield / end_turn), 'done' (agent called done() or finished successfully), " +
-				"'stopped' (agent was stopped or failed), 'not_running' (task never started / not in_progress), 'timeout'. " +
-				"First call after attach starts watching from 'now' — use get_logs for historical events. " +
-				"If the task is already terminal (verify/failed/closed), returns immediately with reason=done.",
+				"Yield control to the attached Matrix task. Blocks until the task pauses (done, " +
+				"explicit yield, implicit yield / end_turn, or stopped), then returns events that " +
+				"occurred since the last yield call on this session. " +
+				"Reasons: 'idle' (agent at its own yield / end_turn), 'done' (agent called done() " +
+				"or finished successfully), 'stopped' (agent stopped or failed), 'not_running' (task " +
+				"never started / not in_progress), 'timeout'. " +
+				"First call after attach starts watching from 'now' — use get_logs for historical " +
+				"events. If the task is already terminal (verify/failed/closed), returns immediately " +
+				"with reason=done. " +
+				"Symmetric to Matrix agents' own yield(): you give control back to Matrix until " +
+				"there's something worth waking you for.",
 			inputSchema: {
 				timeoutMs: z
 					.number()
@@ -646,7 +652,7 @@ function wireTools(
 					return events;
 				};
 				let events = await readCurrent();
-				const cursor = state.awaitCursors.get(taskId) ?? 0;
+				const cursor = state.yieldCursors.get(taskId) ?? 0;
 
 				// Determine current task status + running state.
 				const task = tracker.getTask(taskId);
@@ -670,7 +676,7 @@ function wireTools(
 					const stripped = sliced.map((e) =>
 						stripEventForUI(e as unknown as Record<string, unknown>),
 					);
-					state.awaitCursors.set(taskId, events.length);
+					state.yieldCursors.set(taskId, events.length);
 					return {
 						content: [
 							{
@@ -749,6 +755,16 @@ function wireTools(
 				// Re-read events after wake (flush to ensure all persisted events
 				// are on disk). Determine final status from tracker.
 				events = await readCurrent();
+				// If MCP session was closed mid-await, state may be gone.
+				// Return what we have — caller's connection likely dead anyway.
+				if (!ctx.mcpSessionStore.get(sid)) {
+					return {
+						content: [
+							{ type: "text", text: "MCP session closed during await." },
+						],
+						isError: true,
+					};
+				}
 				const finalStatus = tracker.getTask(taskId)?.status ?? status;
 				// Derive user-facing reason from wake signal + final status.
 				let reason: "idle" | "done" | "stopped" | "timeout";
@@ -767,7 +783,7 @@ function wireTools(
 				const stripped = sliced.map((e) =>
 					stripEventForUI(e as unknown as Record<string, unknown>),
 				);
-				state.awaitCursors.set(taskId, events.length);
+				state.yieldCursors.set(taskId, events.length);
 				return {
 					content: [
 						{

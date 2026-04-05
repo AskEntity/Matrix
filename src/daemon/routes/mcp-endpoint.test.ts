@@ -299,7 +299,7 @@ describe("mcp-endpoint: unscoped tools", () => {
 		expect(names).toEqual(
 			[
 				"attach_to",
-				"await",
+				"yield",
 				"get_attachment",
 				"get_logs",
 				"get_task",

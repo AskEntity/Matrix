@@ -1,16 +1,17 @@
 /**
- * Integration tests for the MCP `await` tool.
+ * Integration tests for the MCP `yield` tool.
  *
+ * External CC yields control to Matrix — symmetric to Matrix agents' own yield().
  * These tests run real Matrix agents (via ValidatingMockAPI) against an HTTP
  * MCP client. They verify the blocking primitive external CC uses to watch
- * a Matrix task for activity: send work → await → get events.
+ * a Matrix task for activity: send work → yield → get events.
  *
  * Matrix on port NONE — we use Hono's app.request() directly, no TCP socket.
- * This exposes a subtle issue: Hono's app.request() runs handlers SYNCHRONOUSLY
- * on the same event loop, so when the `await` tool blocks waiting for a signal,
- * the agent (also on the same event loop) cannot make progress. Therefore we
- * fire the MCP await request WITHOUT awaiting it, then drive the agent by
- * sending a message, then await the response.
+ * Hono's app.request() runs handlers on the same event loop, so when the `yield`
+ * tool blocks waiting for a signal, the agent (also on the same event loop) cannot
+ * make progress while we await the MCP response synchronously. Therefore we fire
+ * the MCP yield request WITHOUT awaiting it (keep the promise), then drive the
+ * agent by sending a message, then await the response promise.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -36,8 +37,8 @@ interface TestContext {
 }
 
 async function setupContext(): Promise<TestContext> {
-	const dataDir = await mkdtemp(join(tmpdir(), "mxd-mcp-await-"));
-	const projectDir = await mkdtemp(join(tmpdir(), "mxd-mcp-await-proj-"));
+	const dataDir = await mkdtemp(join(tmpdir(), "mxd-mcp-yield-"));
+	const projectDir = await mkdtemp(join(tmpdir(), "mxd-mcp-yield-proj-"));
 
 	Bun.spawnSync(["git", "init"], { cwd: projectDir });
 	Bun.spawnSync(["git", "config", "user.email", "test@test.com"], {
@@ -170,7 +171,7 @@ async function mcpCallTool(
 /**
  * Parse the `await` tool JSON response from its MCP text content.
  */
-function parseAwaitResult(r: ToolCallResult): {
+function parseYieldResult(r: ToolCallResult): {
 	reason: string;
 	taskStatus: string;
 	events: Array<Record<string, unknown>>;
@@ -212,7 +213,7 @@ async function attachRoot(
 
 // ── Tests ──
 
-describe("mcp-endpoint: await tool", () => {
+describe("mcp-endpoint: yield tool", () => {
 	let ctx: TestContext;
 
 	afterEach(async () => {
@@ -225,7 +226,7 @@ describe("mcp-endpoint: await tool", () => {
 		const sid = await mcpInit(request);
 		await mcpInitialized(request, sid);
 
-		const res = await mcpCallTool(request, sid, 2, "await");
+		const res = await mcpCallTool(request, sid, 2, "yield");
 		expect(res.result?.isError).toBe(true);
 		expect(res.result?.content[0]?.text ?? "").toContain("Not attached");
 	});
@@ -239,7 +240,7 @@ describe("mcp-endpoint: await tool", () => {
 		await mcpCallTool(request, sid, 2, "attach_to", {
 			projectId: ctx.projectId,
 		});
-		const res = await mcpCallTool(request, sid, 3, "await");
+		const res = await mcpCallTool(request, sid, 3, "yield");
 		expect(res.result?.isError).toBe(true);
 		expect(res.result?.content[0]?.text ?? "").toContain(
 			"Not attached to a task",
@@ -253,11 +254,11 @@ describe("mcp-endpoint: await tool", () => {
 		await mcpInitialized(request, sid);
 		await attachRoot(ctx, request, sid, 2);
 
-		const res = await mcpCallTool(request, sid, 3, "await", {
+		const res = await mcpCallTool(request, sid, 3, "yield", {
 			timeoutMs: 5000,
 		});
 		expect(res.result?.isError).toBeFalsy();
-		const parsed = parseAwaitResult(res);
+		const parsed = parseYieldResult(res);
 		expect(parsed.reason).toBe("not_running");
 		expect(parsed.taskStatus).toBe("pending");
 		expect(parsed.events).toEqual([]);
@@ -284,13 +285,13 @@ describe("mcp-endpoint: await tool", () => {
 
 		// Fire await first (it will block), then kick off the agent.
 		// Using Promise.all to drive them concurrently on the same event loop.
-		const awaitP = mcpCallTool(request, sid, 3, "await", { timeoutMs: 15000 });
+		const awaitP = mcpCallTool(request, sid, 3, "yield", { timeoutMs: 15000 });
 		const sendP = sendTaskMessage(ctx, instruction);
 		const [awaitRes, sendRes] = await Promise.all([awaitP, sendP]);
 		expect(sendRes.status).toBe(200);
 		expect(awaitRes.result?.isError).toBeFalsy();
 
-		const parsed = parseAwaitResult(awaitRes);
+		const parsed = parseYieldResult(awaitRes);
 		expect(parsed.reason).toBe("done");
 		expect(parsed.taskStatus).toBe("verify");
 		// Should contain the assistant_text and tool_call events
@@ -313,12 +314,12 @@ describe("mcp-endpoint: await tool", () => {
 			blocks: [{ type: "text", text: "Thinking about it." }],
 		});
 
-		const awaitP = mcpCallTool(request, sid, 3, "await", { timeoutMs: 15000 });
+		const awaitP = mcpCallTool(request, sid, 3, "yield", { timeoutMs: 15000 });
 		const sendP = sendTaskMessage(ctx, instruction);
 		const [awaitRes] = await Promise.all([awaitP, sendP]);
 		expect(awaitRes.result?.isError).toBeFalsy();
 
-		const parsed = parseAwaitResult(awaitRes);
+		const parsed = parseYieldResult(awaitRes);
 		expect(parsed.reason).toBe("idle");
 		expect(parsed.taskStatus).toBe("in_progress");
 		const types = parsed.events.map((e) => e.type);
@@ -340,12 +341,12 @@ describe("mcp-endpoint: await tool", () => {
 			],
 		});
 
-		const awaitP = mcpCallTool(request, sid, 3, "await", { timeoutMs: 15000 });
+		const awaitP = mcpCallTool(request, sid, 3, "yield", { timeoutMs: 15000 });
 		const sendP = sendTaskMessage(ctx, instruction);
 		const [awaitRes] = await Promise.all([awaitP, sendP]);
 		expect(awaitRes.result?.isError).toBeFalsy();
 
-		const parsed = parseAwaitResult(awaitRes);
+		const parsed = parseYieldResult(awaitRes);
 		expect(parsed.reason).toBe("idle");
 		expect(parsed.taskStatus).toBe("in_progress");
 		const types = parsed.events.map((e) => e.type);
@@ -374,9 +375,9 @@ describe("mcp-endpoint: await tool", () => {
 		await attachRoot(ctx, request, sid, 2);
 
 		// await with short timeout — no new activity should arrive
-		const res = await mcpCallTool(request, sid, 3, "await", { timeoutMs: 500 });
+		const res = await mcpCallTool(request, sid, 3, "yield", { timeoutMs: 500 });
 		expect(res.result?.isError).toBeFalsy();
-		const parsed = parseAwaitResult(res);
+		const parsed = parseYieldResult(res);
 		// Could be "idle" (if agent is currently at queue.wait and events > cursor is false)
 		// OR "timeout" if we genuinely miss the signal. Both acceptable — check that
 		// NO new events came through: cursor stayed stable.
@@ -411,22 +412,22 @@ describe("mcp-endpoint: await tool", () => {
 		});
 
 		// Drive turn 1
-		const awaitP1 = mcpCallTool(request, sid, 3, "await", { timeoutMs: 15000 });
+		const yieldP1 = mcpCallTool(request, sid, 3, "yield", { timeoutMs: 15000 });
 		const sendP = sendTaskMessage(ctx, instruction);
-		const [awaitRes1] = await Promise.all([awaitP1, sendP]);
-		expect(awaitRes1.result?.isError).toBeFalsy();
-		const parsed1 = parseAwaitResult(awaitRes1);
+		const [yieldRes1] = await Promise.all([yieldP1, sendP]);
+		expect(yieldRes1.result?.isError).toBeFalsy();
+		const parsed1 = parseYieldResult(yieldRes1);
 		expect(parsed1.reason).toBe("idle");
 		const cursor1 = parsed1.cursorIndex;
 		expect(cursor1).toBeGreaterThan(0);
 
 		// Drive turn 2 by sending a new message. That message arrival wakes
 		// the agent from queue.wait() — it then processes turn 2 from the instruction.
-		const awaitP2 = mcpCallTool(request, sid, 4, "await", { timeoutMs: 15000 });
+		const yieldP2 = mcpCallTool(request, sid, 4, "yield", { timeoutMs: 15000 });
 		const sendP2 = sendTaskMessage(ctx, "go");
-		const [awaitRes2] = await Promise.all([awaitP2, sendP2]);
-		expect(awaitRes2.result?.isError).toBeFalsy();
-		const parsed2 = parseAwaitResult(awaitRes2);
+		const [yieldRes2] = await Promise.all([yieldP2, sendP2]);
+		expect(yieldRes2.result?.isError).toBeFalsy();
+		const parsed2 = parseYieldResult(yieldRes2);
 		expect(parsed2.reason).toBe("done");
 		expect(parsed2.cursorIndex).toBeGreaterThan(cursor1);
 
@@ -457,12 +458,12 @@ describe("mcp-endpoint: await tool", () => {
 		const instruction = JSON.stringify({
 			blocks: [{ type: "text", text: "hi from agent" }],
 		});
-		const awaitPA = mcpCallTool(request, sidA, 3, "await", {
+		const yieldPA = mcpCallTool(request, sidA, 3, "yield", {
 			timeoutMs: 15000,
 		});
 		const sendP = sendTaskMessage(ctx, instruction);
-		const [awaitResA] = await Promise.all([awaitPA, sendP]);
-		const parsedA = parseAwaitResult(awaitResA);
+		const [yieldResA] = await Promise.all([yieldPA, sendP]);
+		const parsedA = parseYieldResult(yieldResA);
 		expect(parsedA.reason).toBe("idle");
 		expect(parsedA.events.length).toBeGreaterThan(0);
 
@@ -473,10 +474,10 @@ describe("mcp-endpoint: await tool", () => {
 
 		// B calls await → should see NOTHING (agent is idle, no new events)
 		// AND cursor should be initialized to current count, not 0
-		const resB = await mcpCallTool(request, sidB, 3, "await", {
+		const resB = await mcpCallTool(request, sidB, 3, "yield", {
 			timeoutMs: 500,
 		});
-		const parsedB = parseAwaitResult(resB);
+		const parsedB = parseYieldResult(resB);
 		// Either timeout (no new events) or idle with 0 events (already caught up)
 		expect(parsedB.count).toBe(0);
 		// Cursor index should match session A's final cursor (both see same JSONL state)
@@ -515,13 +516,71 @@ describe("mcp-endpoint: await tool", () => {
 		// Now attach — cursor initialized at current count
 		await attachRoot(ctx, request, sid, 2);
 		// await returns immediately because task is terminal
-		const res = await mcpCallTool(request, sid, 3, "await", { timeoutMs: 500 });
-		const parsed = parseAwaitResult(res);
+		const res = await mcpCallTool(request, sid, 3, "yield", { timeoutMs: 500 });
+		const parsed = parseYieldResult(res);
 		expect(parsed.reason).toBe("done");
 		expect(parsed.taskStatus).toBe("verify");
 		// No new events since we attached AFTER done completed
 		expect(parsed.count).toBe(0);
 	}, 20000);
+
+	test("returns 'stopped' when agent is stopped mid-turn via stop_task REST", async () => {
+		ctx = await setupContext();
+		const request: RequestFn = async (u, i) => ctx.app.app.request(u, i);
+		const sid = await mcpInit(request);
+		await mcpInitialized(request, sid);
+		await attachRoot(ctx, request, sid, 2);
+
+		// Instruction: agent emits text then yields (stays running).
+		// We'll stop it externally while it's idle.
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Working..." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+
+		// Kick off agent — it'll reach idle (at yield)
+		const sendRes = await sendTaskMessage(ctx, instruction);
+		expect(sendRes.status).toBe(200);
+		// Wait for agent to reach idle state
+		await new Promise((r) => setTimeout(r, 300));
+
+		// Start await (blocks waiting for next pause) AND stop the task concurrently.
+		// BUT: the agent is already idle from the yield — so await's fast path
+		// will trigger ("isIdleNow && events.length > cursor"). So call await once
+		// to drain the idle state first, THEN call await again which will block,
+		// then stop.
+		const drainRes = await mcpCallTool(request, sid, 3, "yield", {
+			timeoutMs: 2000,
+		});
+		const drained = parseYieldResult(drainRes);
+		expect(drained.reason).toBe("idle");
+		expect(drained.taskStatus).toBe("in_progress");
+
+		// Second await blocks (no new events, agent still idle but cursor caught up).
+		// Delay stop so await has a chance to subscribe before agent_stopped fires.
+		const awaitP = mcpCallTool(request, sid, 4, "yield", { timeoutMs: 15000 });
+		const stopP = new Promise<Response>((resolve) => {
+			setTimeout(() => {
+				resolve(
+					ctx.app.app.request(
+						`/projects/${ctx.projectId}/tasks/${ctx.rootNodeId}/stop`,
+						{ method: "POST" },
+					),
+				);
+			}, 100);
+		});
+		const [awaitRes, stopRes] = await Promise.all([awaitP, stopP]);
+		expect(stopRes.status).toBe(200);
+		expect(awaitRes.result?.isError).toBeFalsy();
+
+		const parsed = parseYieldResult(awaitRes);
+		expect(parsed.reason).toBe("stopped");
+		// After stop, task returns to status "in_progress" (not a terminal state —
+		// agent is resumable). But with no session.
+		expect(parsed.taskStatus).toBe("in_progress");
+	}, 30000);
 
 	test("timeoutMs clamps to max 300000", async () => {
 		ctx = await setupContext();
@@ -532,11 +591,11 @@ describe("mcp-endpoint: await tool", () => {
 
 		// Passing 999999999 should clamp — but since pending tasks return
 		// immediately anyway, we just verify no crash.
-		const res = await mcpCallTool(request, sid, 3, "await", {
+		const res = await mcpCallTool(request, sid, 3, "yield", {
 			timeoutMs: 999999999,
 		});
 		expect(res.result?.isError).toBeFalsy();
-		const parsed = parseAwaitResult(res);
+		const parsed = parseYieldResult(res);
 		expect(parsed.reason).toBe("not_running");
 	});
 });
