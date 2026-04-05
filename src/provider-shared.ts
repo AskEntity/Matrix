@@ -782,13 +782,13 @@ export async function* runProviderLoop(
 			})()
 		: undefined;
 
-	const jsonTools: JsonTool[] =
+	let jsonTools: JsonTool[] =
 		storedConfig && storedConfig.tools.length > 0
 			? (storedConfig.tools as JsonTool[])
 			: buildJsonTools(request.mcpToolDefs);
 
 	// Map to provider-specific format (Anthropic Tool, OpenAI ResponsesTool)
-	const allTools = adapter.prepareTools(jsonTools);
+	let allTools = adapter.prepareTools(jsonTools);
 
 	// Bind frozen tools for hidden evaluate_script tool (selfBootstrap).
 	request.setAllTools?.(jsonTools);
@@ -1179,14 +1179,30 @@ export async function* runProviderLoop(
 				estimatedInputTokens = compactResult.estimatedInputTokens;
 				manualCompactRequested = false;
 
-				// Refresh session_config after compaction — updates date, keeps frozen tools.
+				// Refresh session_config after compaction — updates tools, system prompt, date.
+				// Compaction already wipes cache (messages[] replaced with compacted_resume),
+				// so this is the natural boundary for picking up codebase changes without
+				// any additional cache cost. Tools added to the codebase since the session
+				// started become available to the agent after compact.
 				// compact_marker was already emitted by processCompaction; session_config
 				// follows it so readActive() sees the fresh config for this segment.
 				if (emit) {
 					const freshPrompt = request.refreshSystemPrompt
 						? request.refreshSystemPrompt()
 						: request.systemPrompt;
+					// Rebuild tools from current code (not stored session_config).
+					jsonTools = buildJsonTools(request.mcpToolDefs);
+					allTools = adapter.prepareTools(jsonTools);
+					// Propagate refreshed tools to session + hidden evaluate_script binding.
+					request.setAllTools?.(jsonTools);
+					if (currentSession) {
+						currentSession.allTools = jsonTools;
+					}
+					// Update request.systemPrompt so subsequent API calls use the
+					// refreshed prompt. Without this, the next iteration's API call
+					// (line ~1370) uses request.systemPrompt which is still frozen.
 					if (freshPrompt) {
+						request.systemPrompt = freshPrompt;
 						const sessionConfigEvt: Event = {
 							type: "session_config",
 							tools: jsonTools,

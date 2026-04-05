@@ -27,7 +27,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
-import { mkdtemp, rename, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
@@ -2515,6 +2515,193 @@ describe("Drift: compaction lifecycle", () => {
 		expect(hasCompactMarker).toBe(true);
 		expect(hasError).toBe(false);
 	}, 15000);
+
+	// ── compact refreshes tools + system prompt (fix commit e828b9d) ──
+	//
+	// Pre-fix bug: jsonTools + systemPrompt were frozen from the stored
+	// session_config on resume and propagated through every subsequent
+	// session_config emission (including post-compact). Tools/system added
+	// to the codebase AFTER a session's first session_config were invisible
+	// to that session forever.
+	//
+	// Fix: compact is the natural refresh boundary. Compaction wipes cache
+	// (messages[] replaced with compacted_resume), so rebuilding tools +
+	// system from current code at that moment costs NO additional cache.
+	//
+	// Test strategy: pre-seed the session's JSONL with INTENTIONALLY-BOGUS
+	// session_config values (tools=[bogus_tool_*], system="BOGUS_*"). On
+	// resume, observe what the API request carries:
+	//   - No compact: request has BOGUS values (frozen resume — intact)
+	//   - After compact: request has REAL values (refresh path triggered)
+	//
+	// The mock's response script is irrelevant — we assert on what the
+	// PROVIDER sent to the API via mockAPI.getToolNames / getSystemText.
+	//
+	// Mutation test: if fix is reverted, post-compact request will carry
+	// BOGUS values (never rebuilt from current code) → Invariant A fails.
+
+	const BOGUS_STABLE = "BOGUS_STABLE_PROMPT_FOR_TEST_ONLY_DO_NOT_MATCH_REAL";
+	const BOGUS_VARIABLE = "BOGUS_VARIABLE_PROMPT_FOR_TEST_ONLY_DO_NOT_MATCH";
+	const BOGUS_TOOL_ONE = "bogus_tool_one_never_in_real_code";
+	const BOGUS_TOOL_TWO = "bogus_tool_two_never_in_real_code";
+
+	async function seedBogusSessionConfig(
+		ctx: TestContext,
+		taskId: string,
+	): Promise<void> {
+		const tasksDir = join(ctx.dataDir, "projects", ctx.projectId, "tasks");
+		await mkdir(tasksDir, { recursive: true });
+		const sessionConfigEvt = {
+			type: "session_config" as const,
+			tools: [
+				{
+					name: BOGUS_TOOL_ONE,
+					description: "fake tool for frozen-resume test",
+					jsonSchema: { type: "object", properties: {} },
+				},
+				{
+					name: BOGUS_TOOL_TWO,
+					description: "fake tool for frozen-resume test",
+					jsonSchema: { type: "object", properties: {} },
+				},
+			],
+			systemStable: BOGUS_STABLE,
+			systemVariable: BOGUS_VARIABLE,
+			cacheTtl: "1h" as const,
+			taskId: "",
+			ts: Date.now() - 1000,
+		};
+		const line = `${JSON.stringify(sessionConfigEvt)}\n`;
+		await writeFile(join(tasksDir, `${taskId}.jsonl`), line);
+	}
+
+	test("Invariant B: no-compact resume preserves frozen tools/system from stored session_config", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Pre-seed JSONL with bogus session_config BEFORE agent starts.
+		await seedBogusSessionConfig(ctx, rootNodeId);
+
+		// Start agent — resume path loads bogus storedConfig.
+		// Mock instruction just calls done() immediately to end the run cleanly.
+		const instruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "ok" },
+				},
+			],
+		});
+		await startAgent(ctx, instruction);
+		await waitForDone(ctx);
+
+		// Agent made at least one API call. Inspect what the provider SENT.
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(0);
+
+		// Tools sent to API must be ONLY the bogus ones (frozen from storedConfig).
+		const toolNames = ctx.mockAPI.getToolNames(0);
+		expect(toolNames).toContain(BOGUS_TOOL_ONE);
+		expect(toolNames).toContain(BOGUS_TOOL_TWO);
+		// Must NOT contain real mxd tools — freeze is intact.
+		expect(toolNames).not.toContain("mcp__mxd__bash");
+		expect(toolNames).not.toContain("mcp__mxd__yield");
+		expect(toolNames).not.toContain("mcp__mxd__done");
+
+		// System prompt sent to API must be the bogus frozen one.
+		const systemText = ctx.mockAPI.getSystemText(0);
+		expect(systemText).toContain(BOGUS_STABLE);
+		expect(systemText).toContain(BOGUS_VARIABLE);
+	}, 15000);
+
+	test("Invariant A: compact refreshes tools + system to current code (bogus values replaced)", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Pre-seed bogus session_config.
+		await seedBogusSessionConfig(ctx, rootNodeId);
+
+		// Drive 3 yield cycles to reach messages.length > 4, then compact, then done.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 2." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 3." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Done after compact." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 1");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 2");
+		await waitForIdle(ctx);
+
+		// Record BEFORE compact: first request should have bogus values (frozen).
+		const preCompactCount = ctx.mockAPI.getRequestCount();
+		expect(preCompactCount).toBeGreaterThan(0);
+		const firstToolNames = ctx.mockAPI.getToolNames(0);
+		expect(firstToolNames).toContain(BOGUS_TOOL_ONE); // proves bogus was sent initially
+
+		// Trigger compact.
+		const compactRes = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/compact`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ nodeId: rootNodeId }),
+			},
+		);
+		expect(compactRes.status).toBe(200);
+
+		await waitForDone(ctx);
+
+		// Agent made MORE API calls post-compact (compaction request +
+		// subsequent turn after rebuild). Latest request must carry REAL
+		// tools + system, not the frozen bogus ones.
+		const postCompactCount = ctx.mockAPI.getRequestCount();
+		expect(postCompactCount).toBeGreaterThan(preCompactCount);
+
+		// Final (post-compact) request's tools should be REAL, not BOGUS.
+		const lastToolNames = ctx.mockAPI.getToolNames(postCompactCount - 1);
+		// Must contain at least some real mxd tools (refresh happened).
+		expect(lastToolNames.some((n) => n.startsWith("mcp__mxd__"))).toBe(true);
+		// Must NOT contain the bogus ones anymore (refresh path overwrote).
+		expect(lastToolNames).not.toContain(BOGUS_TOOL_ONE);
+		expect(lastToolNames).not.toContain(BOGUS_TOOL_TWO);
+
+		// Final system prompt must not contain bogus markers (refreshed from code).
+		const lastSystemText = ctx.mockAPI.getSystemText(postCompactCount - 1);
+		expect(lastSystemText).not.toContain(BOGUS_STABLE);
+		expect(lastSystemText).not.toContain(BOGUS_VARIABLE);
+	}, 20000);
 
 	// Related class of bug (not yet fixed): compact arrives WITH regular messages
 	// in the same drain. When handleImplicitYield returns compactOnly=false BUT
