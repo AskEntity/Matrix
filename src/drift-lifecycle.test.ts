@@ -2507,4 +2507,56 @@ describe("Drift: compaction lifecycle", () => {
 		expect(hasCompactMarker).toBe(true);
 		expect(hasError).toBe(false);
 	}, 15000);
+
+	// Related class of bug (not yet fixed): compact arrives WITH regular messages
+	// in the same drain. When handleImplicitYield returns compactOnly=false BUT
+	// manualCompactRequested=true (queue had [regular_msg, compact_msg]), the yield
+	// path builds its normal user message (tool_result + queue content), then the
+	// compact path IMMEDIATELY pushes summarization as another user message →
+	// consecutive user → API 400.
+	//
+	// The same asymmetry fires for:
+	//   - pending-done + nonCompact + compact (all drained together)
+	//   - implicit-yield-resume + nonCompact + compact
+	//   - end_turn + nonCompact + compact
+	//
+	// AND the walker has a matching latent bug: reading events
+	//   [tool_result, messages_consumed, summarization_request]
+	// produces TWO consecutive user messages. If daemon crashes mid-compaction,
+	// walker reconstruction produces API-invalid output.
+	//
+	// The right fix is structural: summarization_request should NOT create a
+	// separate user message — it should append to the user turn being built.
+	// This requires walker changes too. Deferred to follow-up work.
+	test.todo(
+		"compact + regular message in same drain during pending yield → no API 400",
+		() => {
+			// See comment above: the walker has a matching latent bug. Fix requires
+			// restructuring summarization_request to append to the user turn being
+			// built instead of creating a separate user message.
+		},
+	);
+
+	// Sibling bug (not yet fixed, hard to reach via integration):
+	// pendingDoneToolCall + compactOnly has the same asymmetry. The pending-done
+	// path at provider-shared.ts line 842 does NOT check for compactOnly — it
+	// always pushes the done tool_result as a user message, then the compact path
+	// pushes summarization → consecutive user → API 400.
+	//
+	// Hard to reach because: compact messages don't persist to JSONL, so after
+	// daemon restart the queue is empty on resume. The only reachable path is
+	// a narrow window between done() Phase 1 and Phase 2 session cleanup,
+	// which rejects /compact via a 404.
+	//
+	// Deferred with the bug #2 walker-drift fix (requires the same structural
+	// change: summarization_request should append to the user turn being built,
+	// not produce a separate user message).
+	test.todo(
+		"compact triggered while agent in pending-done (done resume) completes without API 400",
+		() => {
+			// See comment above: very narrow window, hard to reach via integration.
+			// Fix bundled with the pending-yield+regular bug (both need structural
+			// change to summarization_request injection).
+		},
+	);
 });
