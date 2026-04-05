@@ -450,36 +450,6 @@ Without messages_consumed, message with id is never rendered.
 
 ### Third-codepath drift fixed (commit 39e420b)
 `src/drift-initial-drain.test.ts` image-drift tests now pass. Initial drain delegates to `adapter.appendQueueMessagesToMessages`, which routes through the same `applyXxxQueueContent` function the walker uses. One function, two call sites, zero drift possible.
-## HTTP MCP Endpoint (2026-04-05)
-
-External MCP clients (Claude Code) can connect to Matrix via `POST /mcp`. Matrix
-exposes 9 read-only tools: 3 unscoped (`list_projects`, `attach_to`,
-`get_attachment`) + 6 scoped (`get_tree`, `get_task`, `get_logs`, `read_file`,
-`list_files`, `search`). Scoped tools require prior `attach_to(projectId, taskId)`.
-
-### Architecture
-- `src/daemon/routes/mcp-endpoint.ts` — registers `ALL /mcp` on Hono app
-- `src/daemon/mcp-session-state.ts` — per-MCP-session attachment store
-- Uses `WebStandardStreamableHTTPServerTransport` with `enableJsonResponse: true`
-  (single POST returns JSON, no SSE streaming needed for request/response tools)
-- Each MCP session = own McpServer + transport + attachment state
-- Stateful: `mcp-session-id` header tracks sessions across requests
-- Tools bind to session via lazy `getSessionId()` closure (transport sessionId
-  isn't assigned until it handles the initialize request)
-
-### Path safety
-`assertPathInRoot()` resolves absolute paths and checks prefix-with-separator
-against attached worktree root. Rejects `../` escapes and cross-project paths.
-
-### Auth
-Reuses daemon's global JWT middleware. If `auth.json` has `jwtSecret`, `/mcp`
-requires `Authorization: Bearer <token>`. Dev mode (no jwtSecret) passes through.
-
-### Claude Code config
-```json
-{ "mcpServers": { "matrix": { "type": "http", "url": "http://localhost:7433/mcp" } } }
-```
-
 ## Compaction Asymmetry (2026-04-05)
 
 Manual `/compact` injects a summarization instruction as a user message. If the previous loop iteration also pushed a user message (yield tool_result + queue content, done tool_result + queue content), result is two consecutive user messages → API 400 "Messages must alternate roles".
@@ -538,32 +508,9 @@ Each project is now a self-contained folder:
 - Project = single folder: back up / move / delete = one operation, not two.
 - `debug/` directory created per-project for future drift snapshots and investigation artifacts.
 
-## HTTP MCP `yield` tool + in-process event subscribers (2026-04-05)
+## In-Process Event Subscribers (2026-04-05)
 
-### MCP `yield` tool (symmetric to Matrix agents' own yield)
-External CC attached via HTTP /mcp can call `yield(timeoutMs?)` to block
-until the attached Matrix task pauses. Same semantics as Matrix agent's
-yield(): "I give up control, wake me when there's something worth seeing".
-
-Returns `{ reason, taskStatus, events, cursorIndex, count }`. Reasons:
-- `idle`: task at yield / end_turn / explicit yield tool
-- `done`: task reached verify/failed/closed (done called or loop finished)
-- `stopped`: agent was stopped (status still in_progress, no session)
-- `not_running`: task never started (pending/draft)
-- `timeout`: wake signal did not arrive in timeoutMs (default 60s, max 300s)
-
-Wake signals (any one wakes): `agent_idle` (ephemeral), `done_notified` /
-`agent_stopped` / `orchestration_completed` (persisted). We derive the
-user-facing `reason` from (wake signal type + final task status), NOT
-from event payload fields. `orchestration_completed.success` is unreliable
-at emission time (status hasn't been updated yet), so we never read it.
-
-Cursor semantics: `McpSessionState.yieldCursors: Map<taskId, number>`,
-initialized to current JSONL event count on attach_to. First yield call
-watches from "now" — use get_logs for historical events.
-
-### In-process event subscription (new third channel)
-Daemon's event flow now has three consumers:
+Daemon's event flow has three consumers:
 1. JSONL (persistence, disk)
 2. SSE clients (browser UI, HTTP stream)
 3. **In-process subscribers** (any daemon code, callback-based)
@@ -582,16 +529,34 @@ try { ... } finally { unsubscribe(); }
 - Empty buckets auto-cleaned on last unsubscribe (no unbounded map growth).
 
 `broadcast(ctx, projectId, event)` signature is clean — reaches into ctx
-for both sseClients and eventSubscribers. No more 4-arg `broadcast(sseClients,
-projectId, event, subscribers?)` boilerplate.
+for both sseClients and eventSubscribers.
 
-### Future uses of the subscription channel
-Task hooks, budget monitors, external webhooks, test `waitForEvent` helpers,
-and additional MCP watch tools (`watch_tree`, etc.) can all subscribe
-without adding parallel event plumbing. Condition-wait primitives should
-use the peek-or-subscribe-or-wait pattern: check current state synchronously,
-subscribe before releasing sync control, add timeout, unsubscribe in
-finally. See `yield` tool implementation in mcp-endpoint.ts for reference.
+Use this for: task hooks, budget monitors, external webhooks, test
+`waitForEvent` helpers, condition-wait primitives (peek-or-subscribe-or-wait:
+check state synchronously → subscribe → add timeout → unsubscribe in finally).
+
+## HTTP MCP Endpoint — Removed Pending Rebuild (2026-04-05)
+
+Prior HTTP MCP endpoint (POST /mcp) was removed. It was built on an
+**attach-based session model** (attach_to → session state → scoped tools)
+which conflicts with Matrix's correct architecture: scope should be an
+explicit per-call parameter, not ambient session state.
+
+Removed in a single surgical commit:
+- `src/daemon/routes/mcp-endpoint.ts` (the endpoint + 10 tools)
+- `src/daemon/mcp-session-state.ts` (attach state container)
+- `src/daemon/routes/mcp-endpoint.test.ts`, `mcp-endpoint-yield.test.ts`
+- `DaemonContext.mcpSessionStore` field
+
+**Preserved**: in-process event-subscriber primitive (above) — it is
+general-purpose daemon infrastructure, not MCP-specific. Will be reused by
+the rebuilt stateless MCP endpoint.
+
+**Rebuild plan**: stateless ToolDef architecture where each tool declares
+its scope (daemon/project/task/special) and availability (internal/external/
+both). Same handler code for both internal agent calls and external MCP
+calls — scope resolved from agent context (internal) or tool-call params
+(external). See the ToolDef refactor task under Agent Loop folder.
 
 ## Pre-API-Call Debug Snapshot (2026-04-05)
 
