@@ -12,11 +12,11 @@ Every bug fix MUST ask: (1) What caused this specific bug? (2) Why does the arch
 
 Creating tasks is CHEAP. Executing must be DELIBERATE. When user discusses design → draft + discuss. Only execute when they say "go" or explicitly ask to start.
 
-## ⚠️ Clean Rollback = Branch Model Property (2026-04-05)
+## ⚠️ Clean Rollback = Branch Model Property
 
 Root orchestrator never commits to main directly — not because "root delegates" as abstract rule, but because **direct commits destroy clean-rollback**. If root fixes something on main and the fix is wrong, there is no clean revert: the commit is interleaved with main's history.
 
-Today's proof: cleanly reverted MCP send_message (wrong semantic) + scroll refactor v1 (wrong architecture), both in single commits each. Only possible because both were branch→merge, never direct-to-main.
+Proof: we have cleanly reverted wrong-semantic merges and wrong-architecture merges as single-commit operations. Only possible because both went through branch→merge, never direct-to-main.
 
 User's framing: "if you fix it yourself, how do we cleanly rollback on master branch?"
 
@@ -44,7 +44,8 @@ This is a product property of Matrix's commit model, not a policy preference. Br
 
 ## Language Policy
 
-Code, task tree, and memory.md: English (matches Matrix.md baseline).
+Code, task tree, and memory.md: English
+Matrix.md: Chinese
 Agent reply language: follows the sender's language.
 
 ## How to Run Tests
@@ -125,7 +126,7 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
   - **Interrupted** (orphaned tools repaired): non-blocking queue drain → API call
 - autoResumeProjects: finds in_progress nodes with JSONL + crash recovery for interrupted Phase 2 (done without done_notified).
 
-## Two-Phase done() Lifecycle (2026-04-02)
+## Two-Phase done() Lifecycle
 
 ### Design
 - **Phase 1** (agent-side): done() handler closes queue + returns. No status update, no parent notification. Intended orphan like yield — no tool_result written to JSONL. Provider loop detects done, sets doneExitReason + doneSummary, exits.
@@ -164,7 +165,7 @@ Root node stores branch at init. `baseBranch` required on worktree create (no fa
 
 `session_config` event at JSONL start: tools, systemStable, systemVariable. Frozen between compactions for cache stability. Anthropic cache: 3 breakpoints (tools, systemVariable, 2nd-to-last user message).
 
-## Session Config Refresh at Compact (2026-04-05)
+## Session Config Refresh at Compact
 
 **Compact is the refresh boundary** for session-scoped config. After compaction wipes messages[] (cache already lost), session_config is re-emitted with CURRENT values:
 - `tools`: rebuilt from `request.mcpToolDefs` (picks up tools added to orchestrator-tools.ts since session start)
@@ -185,7 +186,7 @@ Root node stores branch at init. `baseBranch` required on worktree create (no fa
 
 See: commit 0d8cda0, test file `src/drift-lifecycle.test.ts`, ValidatingMockAPI helpers `getToolNames()` + `getSystemText()`.
 
-## Cache TTL (2026-04-02)
+## Cache TTL
 
 - `SessionConfigEvent.cacheTtl?: "1h"` — stored in session_config, inherited via fork.
 - Root = `"1h"`, regular children = `undefined` (5min default).
@@ -196,7 +197,7 @@ See: commit 0d8cda0, test file `src/drift-lifecycle.test.ts`, ValidatingMockAPI 
 - `AgentRequest.isOrchestrator` replaced with `cacheTtl?: "1h"`. Same on ProviderAdapter.callAPI.
 - Prefix validation: system+tools strict JSON compare; message breakpoint position can move but value must match; all other messages compared with cache_control included.
 
-## Cache Architecture (2026-04-03)
+## Cache Architecture
 
 ### Anthropic Cache Prefix Order
 **tools → system → messages** (NOT system → tools → messages). Tools mismatch = entire prefix miss (including system and messages).
@@ -225,7 +226,7 @@ Breakpoint on **last** user message (not second-to-last). Last message sent to A
 ### await_background Deleted
 await blocked entire agent loop. yield is the one path — accepts all message types. -360 lines.
 
-## 70K Post-Restart Cache Miss (2026-04-05, unresolved)
+## 70K Post-Restart Cache Miss (unresolved)
 
 Production root session, post-restart first API call: inputTokens=104,188, cacheCreation=70,607, cacheRead=33,575 (32% hit). Pre-restart last call: 99.67% hit. ~70K drifted between pre-restart live messages[] and post-restart walker reconstruction.
 
@@ -237,9 +238,9 @@ Production root session, post-restart first API call: inputTokens=104,188, cache
 
 **Needs production instrumentation** to catch: persist each API request's exact byte representation + walker-would-produce delta at each tick. Not yet built.
 
-**Possible non-drift explanation**: Anthropic server-side cache eviction or routing (similar pattern to Opus token injection in blog-2026-04-04-2.md).
+**Possible non-drift explanation**: Anthropic server-side cache eviction or routing (similar pattern to Opus token injection in blog notes).
 
-## Pre-API-Call Debug Snapshot (2026-04-05)
+## Pre-API-Call Debug Snapshot
 
 Evidence-capture for post-mortem cache-drift debugging. Before each API call, providers write the fully-assembled request bytes to `projects/<id>/debug/<taskId>.last-messages.json`, overwriting. When a restart causes an unexpected cache miss, the file contains the EXACT pre-restart state the API saw — diff against walker(JSONL) to find the divergence.
 
@@ -262,7 +263,7 @@ Anthropic's cache only knows the LATEST request for that prefix. Rolling history
 
 Turns the 70K miss investigation from "exhausted code inspection" into "look at the file".
 
-## Live/Reconstruction Drift Fix — Caption Bug (2026-04-05)
+## Live/Reconstruction Drift Fix — Caption Bug
 
 ### Bug
 User sends image message while agent in idle context (after end_turn implicit yield). Live path `buildUserTurn` adds `[N image(s) attached by user]` caption text block. Reconstruction path `onConsumedMessages` idle branch did NOT. One missing block → prefix mismatch → full cache miss on restart (580K creation observed in production).
@@ -279,29 +280,29 @@ Walker callbacks (`onToolResults`, `onConsumedMessages`, `isAnthropicWorkingCont
 
 Deleted ~160 lines from `buildUserTurn`. Also added caption to idle branch of `onConsumedMessages` (the actual bug fix — live path now routes through this).
 
-### Third Codepath Unified (2026-04-05, commit 39e420b)
+### Third Codepath Unified (commit 39e420b)
 `provider-shared.ts` initial drain previously had its own ad-hoc construction logic that dropped images and missed caption. Now delegates to `adapter.appendQueueMessagesToMessages(messages, queueMsgs)`.
 
 Each provider extracts its walker's `onConsumedMessages` logic into a named function (`applyAnthropicQueueContent`, `applyOpenAIResponsesQueueContent`). Both the walker callback AND the adapter hook route through this one function. Single source of truth per provider — walker + initial drain can no longer drift.
 
 4 test.todo → 2 pass (image drift tests closed), 2 remain as skeleton tests blocked by mock-API infra for non-user queue sources (task_message, cross_project).
 
-### Dead Code Cleaned (2026-04-05, commit f75a512)
+### Dead Code Cleaned (commit f75a512)
 `formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — removed. No code was setting these (orchestrator-tools doesn't return them; they originated from the deleted `agent-tools.ts`). -81 lines across 5 files. Simplified `collectToolResultImages`, `buildToolResultEvents`, and both OpenAI providers' image routing.
 
-## Duplicate Yield Handling (updated 2026-04-05)
+## Duplicate Yield Handling
 
 API can return multiple yield tool_calls in the same assistant turn. Evolution:
 
-**Fix 1 (2026-04-02)**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done. Earlier yield/done orphans are genuine repair targets. Architectural lesson: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call.
+**Fix 1**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done. Earlier yield/done orphans are genuine repair targets. Architectural lesson: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call.
 
-**Fix 2 (2026-04-02, superseded)**: Provider loop wrote no-op tool_results for extras as a SEPARATE user message. This caused a new bug: extras user message + real yield's user message → 2 consecutive user messages → API 400 "Messages must alternate roles".
+**Fix 2 (superseded)**: Provider loop wrote no-op tool_results for extras as a SEPARATE user message. This caused a new bug: extras user message + real yield's user message → 2 consecutive user messages → API 400 "Messages must alternate roles".
 
-**Fix 3 (2026-04-05, current)**: Extras' tool_result events still emit to JSONL immediately (orphan prevention), but their live-path construction is DEFERRED via `pendingDuplicateYieldExtras`. On yield wake, extras bundle into the SAME `buildUserTurn` call as the real yield, producing ONE user message with `[...extras, real, ...queue]`. Order matches JSONL (extras emit at yield-detection, real emits at wake → walker reconstructs in that order → live must match).
+**Fix 3 (current)**: Extras' tool_result events still emit to JSONL immediately (orphan prevention), but their live-path construction is DEFERRED via `pendingDuplicateYieldExtras`. On yield wake, extras bundle into the SAME `buildUserTurn` call as the real yield, producing ONE user message with `[...extras, real, ...queue]`. Order matches JSONL (extras emit at yield-detection, real emits at wake → walker reconstructs in that order → live must match).
 
 Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn" regression-guard this.
 
-## Compaction Asymmetry (2026-04-05)
+## Compaction Asymmetry
 
 Manual `/compact` injects a summarization instruction as a user message. If the previous loop iteration also pushed a user message (yield tool_result + queue content, done tool_result + queue content), result is two consecutive user messages → API 400 "Messages must alternate roles".
 
@@ -325,7 +326,7 @@ Provider loop auto-recovers from 400 invalid_request_error. On 400, pops broken 
 - Function tool definitions include `strict: false` in outgoing payload.
 - **Tool input Zod validation**: `executeTool` validates all built-in tool inputs against Zod schema. Rejects invalid types at schema boundary. External MCP tools (empty `inputSchema {}`) skip validation.
 
-## Hidden Tools via Anthropic Free-Form Name Sampling (2026-04-05)
+## Hidden Tools via Anthropic Free-Form Name Sampling
 
 **Matrix's tools list frozen in session_config** defines what the LLM sees in its tool inventory. But the DAEMON's handler registry has every registered tool.
 
@@ -344,7 +345,7 @@ Provider loop auto-recovers from 400 invalid_request_error. On 400, pops broken 
 - **Provider-level byte size**: `validateImage?` on `ProviderAdapter`. Anthropic: 5MB decoded. OpenAI: 20MB decoded. Four filter points in `runProviderLoop`.
 - **Streaming text partial**: `ctx.streamingText: Map<string, string>` tracks text_delta. Batch events endpoint injects synthetic `assistant_text` with `partial: true`.
 
-## Folder Nodes (2026-04-03)
+## Folder Nodes
 
 `TreeNode = TaskNode | FolderNode` discriminated union. FolderNode: only id, title, parentId, children, type:"folder". No status, no session, no lifecycle. Zero behavior — pure grouping.
 
@@ -354,15 +355,15 @@ Provider loop auto-recovers from 400 invalid_request_error. On 400, pops broken 
 - **56 parentId references audited**: each categorized as tree-structure or task-ownership. Task ownership uses getTaskAbove.
 - **Lifecycle rejection**: all lifecycle operations (launch, done, close, reset, send_message) reject folders at entry point.
 - **MUST resist feature creep**: persistent tasks started as "just a flag" and grew into a disaster. Folder stays at ZERO behavior forever.
-- **getTask() vs get() audit**: All production `getTask()` calls audited (2026-04-03). One bug fixed: REST reorder endpoint used `getTask()` → `get()` (folders have children too). All others correct — they access task-specific properties (session, worktree, branch, status).
+- **getTask() vs get() audit**: All production `getTask()` calls audited. One bug fixed: REST reorder endpoint used `getTask()` → `get()` (folders have children too). All others correct — they access task-specific properties (session, worktree, branch, status).
 
-## TaskNode Serialization — stripSession() (2026-04-03)
+## TaskNode Serialization — stripSession()
 
 `JSON.stringify(TaskNode)` must NEVER include `session` (runtime-only: messages[], allTools, queue, abortController). Use `stripSession(node)` from `types.ts`. All four MCP tools that return TaskNode now use it: `get_tree`, `get_task`, `create_task`, `update_task`.
 
 **Bug found**: create_task and update_task were missing the strip. A forked task (700K+ tokens in messages[]) updating its own description produced a 2.95MB tool_result → context doubled from 735K to 1.75M → API rejected. get_tree and get_task already had manual `const { session, ...rest }` — unified to `stripSession()`.
 
-## Duplicate Launch Prevention in autoResumeProjects (2026-04-03)
+## Duplicate Launch Prevention in autoResumeProjects
 
 ### Bug: pre-register launchingNodes prevents runAgentForNode from starting
 `autoResumeProjects` tried to pre-register all nodes in `launchingNodes` before launching. But `runAgentForNode` checks `launchingNodes.has(nodeId)` → returns early. Agents never started. Never pre-register in `launchingNodes` from outside `runAgentForNode`.
@@ -376,7 +377,7 @@ After a crash, `orchestration_completed` never emits (the loop was interrupted).
 ### Test lesson: shutdown() required before recreateApp() in restart tests
 Without shutdown, old app's agent stays alive. New app launches another agent for same node → appears as duplicate but is a test setup bug (can't happen in production crash where process is dead).
 
-## Usage Event Persistence (2026-04-03)
+## Usage Event Persistence
 
 `usage` events moved from ephemeral to persisted. Now written to JSONL by emitEvent.
 - Added `outputTokens?: number` to usage event type.
@@ -386,7 +387,7 @@ Without shutdown, old app's agent stays alive. New app launches another agent fo
 - Color-coded: green (>80% hit), yellow (>30%), grey (<30%).
 - Compaction also emits usage (estimated=true, no cache fields) — persisted harmlessly.
 
-## Unified Storage Layout (2026-04-05)
+## Unified Storage Layout
 
 Each project is now a self-contained folder:
 ```
@@ -417,7 +418,7 @@ Each project is now a self-contained folder:
 - Project = single folder: back up / move / delete = one operation, not two.
 - `debug/` directory created per-project for future drift snapshots and investigation artifacts.
 
-## In-Process Event Subscribers (2026-04-05)
+## In-Process Event Subscribers
 
 Daemon's event flow has three consumers:
 1. JSONL (persistence, disk)
@@ -444,7 +445,7 @@ Use this for: task hooks, budget monitors, external webhooks, test
 `waitForEvent` helpers, condition-wait primitives (peek-or-subscribe-or-wait:
 check state synchronously → subscribe → add timeout → unsubscribe in finally).
 
-## HTTP MCP Endpoint — Removed Pending Rebuild (2026-04-05)
+## HTTP MCP Endpoint — Removed Pending Rebuild
 
 Prior HTTP MCP endpoint (POST /mcp) was removed. It was built on an
 **attach-based session model** (attach_to → session state → scoped tools)
@@ -467,7 +468,7 @@ both). Same handler code for both internal agent calls and external MCP
 calls — scope resolved from agent context (internal) or tool-call params
 (external). See the ToolDef refactor task under Agent Loop folder.
 
-## Anti-pattern: Conflating Attached-Observer with Peer-Project (2026-04-05, reverted)
+## Anti-pattern: Conflating Attached-Observer with Peer-Project (reverted)
 
 **What happened**: tried to add `send_message` to the HTTP MCP endpoint (commits 244665c + 1185983), wrapping peer messages as `cross_project` source. Merged, then realized the semantic was wrong. Reverted in 5efd5f9.
 
@@ -517,7 +518,7 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_k
 - `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
 - ~1139 tests (unit + integration). 3 skipped (E2E).
 
-## Test Architecture: Drift vs Correctness Invariants (2026-04-05)
+## Test Architecture: Drift vs Correctness Invariants
 
 Two distinct test classes protect against different bug classes. Learned via mutation testing during the caption-bug unification audit.
 
@@ -581,15 +582,15 @@ Three layers: Intention → Test → Architecture. Three mutations guard each la
 
 Tests are the single source of truth. Bottom-up: write tests → find simplest architecture that passes them. Architecture is replaceable long-term, improved short-term. Reject spec-driven development.
 
-## System Prompt v2 (2026-04-02)
+## System Prompt v2
 
 10 chapters. Two roles: root orchestrator, worker. Fork = "changing jobs". Memory callee-saved convention. Ch7 "Keeping Honest" (test your tests, check coupling, challenge the task). "ASK — NEVER SILENTLY FALL BACK." Adversarial testing.
 
-## System Prompt Chapter 7 Renamed (2026-04-04)
+## System Prompt Chapter 7 Renamed
 
 "Three Mutations" → "Keeping Honest". Same three practices, reframed: "Test your tests", "Check coupling", "Challenge the task". Closing paragraph removed.
 
-## System Prompt Ch5 "Using Tools" Added (2026-04-04)
+## System Prompt Ch5 "Using Tools" Added
 
 New chapter between Git(4) and Writing Code(now 6). All subsequent chapters renumbered (5→6...10→11). Four sections:
 - **Reversibility**: worktree-internal mistakes recoverable via git; external interactions may not be
@@ -597,7 +598,7 @@ New chapter between Git(4) and Writing Code(now 6). All subsequent chapters renu
 - **Time awareness**: foreground blocks loop, background results via yield(), don't re-run running commands
 - **Dangerous operations**: filesystem (rm, write_file), git (checkout, add .), tasks (delete erases the decision, reset destroys session, close loses unmerged commits). Hierarchy: send_message > close > reset > delete.
 
-## Compaction Prompt Fix (2026-04-04)
+## Compaction Prompt Fix
 
 "this session" → "ENTIRE history". Re-compaction must integrate previous checkpoint into new narrative, not restart. Section 1 and Section 8 both updated.
 
