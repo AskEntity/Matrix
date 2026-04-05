@@ -642,6 +642,13 @@ export async function* runProviderLoop(
 	// the REAL yield's user turn (not pushed as a separate user message) to avoid
 	// consecutive user messages violating the API's role-alternation rule.
 	let pendingDuplicateYieldExtras: Array<{ id: string; name: string }> = [];
+	// Yield tool_call that needs its tool_result bundled into the summarization user
+	// message (compactOnly path). Set when compact arrives during a pending yield.
+	// The yield tool_result is emitted to JSONL immediately (orphan prevention), but
+	// the messages[] push is DEFERRED until the compact path builds the summarization
+	// turn — otherwise we'd have two consecutive user messages (yield tool_result,
+	// then summarization instruction) violating API role alternation.
+	let pendingCompactYieldToolCall: { id: string; name: string } | null = null;
 	// Detect pending done from JSONL: if last tool_call is done with no matching result,
 	// the agent called done() and the loop exited (done is an intended orphan).
 	// On wake, write a synthetic tool_result so the message history is well-formed.
@@ -1020,27 +1027,18 @@ export async function* runProviderLoop(
 				};
 				emit?.(compactYieldEvt);
 				yield compactYieldEvt;
-				// Push tool_result into messages so compaction sees a paired tool_use/tool_result.
-				// Without this, messages has an unpaired tool_use → API 400.
-				const compactToolResultMsgs = adapter.buildUserTurn({
-					toolUses: [
-						{
-							id: pendingYieldToolCall.id,
-							name: pendingYieldToolCall.name,
-							input: {},
-						},
-					],
-					execResults: [
-						{
-							content: "Manual compaction requested",
-							isError: false,
-						},
-					],
-					queueMessages: [],
-				});
-				for (const msg of compactToolResultMsgs) {
-					messages.push(msg);
-				}
+				// DEFER the messages[] push: pushing a user message here would produce
+				// two consecutive user messages (this tool_result + summarization
+				// instruction) violating API role alternation. Instead, carry the
+				// yield tool_call forward via pendingCompactYieldToolCall; the compact
+				// path bundles it into the SAME user turn as the summarization text.
+				// Order must match JSONL: this tool_result event was emitted FIRST here,
+				// then summarization_request is emitted in the compact path → walker
+				// reconstructs [tool_result, text] in that order. Live path must match.
+				pendingCompactYieldToolCall = {
+					id: pendingYieldToolCall.id,
+					name: pendingYieldToolCall.name,
+				};
 				pendingYieldToolCall = null;
 				continue;
 			}
@@ -1275,12 +1273,52 @@ export async function* runProviderLoop(
 				};
 				emit?.(cs2);
 				yield cs2;
-				// Inject summarization instruction as a user message
+				// Inject summarization instruction as a user message.
+				// If a pending compactOnly-yield tool_call is carried forward, bundle
+				// its tool_result INTO THIS SAME user message — otherwise we'd emit
+				// two consecutive user messages (tool_result + this one) → API 400.
 				const summarizationInstruction = buildSummarizationInstruction(cwd);
-				(messages as Array<{ role: string; content: string }>).push({
-					role: "user",
-					content: summarizationInstruction,
-				});
+				if (pendingCompactYieldToolCall) {
+					// Build a structured user message: [tool_result, text] via the
+					// walker-delegating buildUserTurn. Walker is the single source of
+					// truth for tool_result user messages → live and reconstruction
+					// produce byte-identical output.
+					const bundledMsgs = adapter.buildUserTurn({
+						toolUses: [
+							{
+								id: pendingCompactYieldToolCall.id,
+								name: pendingCompactYieldToolCall.name,
+								input: {},
+							},
+						],
+						execResults: [
+							{
+								content: "Manual compaction requested",
+								isError: false,
+							},
+						],
+						queueMessages: [],
+					});
+					// The buildUserTurn output is a single user message with ONE
+					// tool_result block. Extend its content array with the
+					// summarization text so both blocks share the same user turn.
+					for (const msg of bundledMsgs) {
+						const m = msg as { role: string; content: unknown };
+						if (m.role === "user" && Array.isArray(m.content)) {
+							(m.content as Array<{ type: string; text: string }>).push({
+								type: "text",
+								text: summarizationInstruction,
+							});
+						}
+						messages.push(m);
+					}
+					pendingCompactYieldToolCall = null;
+				} else {
+					(messages as Array<{ role: string; content: string }>).push({
+						role: "user",
+						content: summarizationInstruction,
+					});
+				}
 				if (emit) {
 					emit({
 						type: "summarization_request",

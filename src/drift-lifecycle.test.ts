@@ -2418,20 +2418,21 @@ describe("Drift: compaction lifecycle", () => {
 		if (ctx) await teardownTestContext(ctx);
 	});
 
-	// REPRODUCTION: triggering /compact while agent is in yield causes API 400
-	// "consecutive user messages" when messages.length > 4.
+	// Regression test: /compact triggered while agent is at pending-yield must NOT
+	// produce consecutive user messages (API 400 "Messages must alternate roles").
 	//
-	// Root cause: two codepaths push user messages back-to-back:
-	//   1. handleImplicitYield returns {compactOnly:true}, provider-shared.ts:1025
-	//      pushes yield tool_result as user message.
-	//   2. Next loop iteration: provider-shared.ts:1280 pushes summarization
-	//      instruction as another user message.
-	// Result: consecutive user messages → API 400.
+	// Bug history: two codepaths pushed user messages back-to-back:
+	//   1. handleImplicitYield returns {compactOnly:true}, provider-shared.ts
+	//      (pending-yield branch) pushed yield tool_result as user message.
+	//   2. Next loop iteration: compact path pushed summarization instruction
+	//      as another user message → consecutive user → API 400.
 	//
-	// When messages.length <= 4 the compact path bails out early with "Context
-	// too short" and the bug is masked. Real production scenarios always have
-	// messages.length > 4.
-	test("REPRO: /compact while agent in yield → API 400 consecutive user messages", async () => {
+	// Fix: defer the yield tool_result push via pendingCompactYieldToolCall; the
+	// compact path bundles tool_result + summarization text into ONE user turn.
+	//
+	// This bug only manifested when messages.length > 4 (below that threshold,
+	// the compact path bails out with "Context too short" and masks the bug).
+	test("compact triggered while agent in pending yield completes without API 400", async () => {
 		ctx = await setupTestContext();
 
 		// Need messages.length > 4 at compact time. Use multi-cycle conversation.
@@ -2494,39 +2495,16 @@ describe("Drift: compaction lifecycle", () => {
 		);
 		expect(compactRes.status).toBe(200);
 
-		// Wait for done (or crash).
-		let caughtStatus: string | null = null;
-		let caughtError: Error | null = null;
-		try {
-			caughtStatus = await waitForDone(ctx);
-		} catch (e) {
-			caughtError = e instanceof Error ? e : new Error(String(e));
-		}
+		// Agent should complete Turn 4 cleanly (no API 400).
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
 
-		// Diagnostic dump: show what happened
+		// Verify the event sequence: compact_marker must be present (compaction
+		// actually completed, not crashed mid-flight).
 		const events = await readSessionEvents(ctx, rootNodeId);
-		console.log(`\n=== EVENT SEQUENCE (${events.length} events) ===`);
-		for (const e of events) {
-			const summary =
-				e.type === "tool_call"
-					? `tool_call ${(e as { tool: string }).tool}`
-					: e.type === "tool_result"
-						? `tool_result ${(e as { tool: string }).tool}: ${String((e as { content: string }).content).slice(0, 50)}`
-						: e.type === "assistant_text"
-							? `assistant_text: ${(e as { content: string }).content.slice(0, 40)}`
-							: e.type === "message"
-								? `message`
-								: e.type === "error"
-									? `ERROR: ${(e as { message: string }).message}`
-									: e.type;
-			console.log(`  ${summary}`);
-		}
-		console.log(`Request count: ${ctx.mockAPI.getRequestCount()}`);
-		console.log(`Status: ${caughtStatus ?? "(crashed)"}`);
-		console.log(`Error: ${caughtError?.message ?? "(none)"}`);
-
-		// The bug: agent crashes with API 400 "consecutive user messages".
-		// Mark this as the failing expectation.
-		expect(caughtStatus).toBe("verify");
+		const hasCompactMarker = events.some((e) => e.type === "compact_marker");
+		const hasError = events.some((e) => e.type === "error");
+		expect(hasCompactMarker).toBe(true);
+		expect(hasError).toBe(false);
 	}, 15000);
 });
