@@ -391,38 +391,45 @@ Test `test.todo("Initial message with images: live path matches reconstruction")
 `formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — no code sets these fields anymore (orchestrator-tools doesn't return them). Reading paths in anthropic/openai providers and tool-execution. Legacy from old `agent-tools.ts` that no longer exists. Safe to delete in a separate refactor.
 
 
-## Two-Layer Drift Test Strategy (post-unification) (2026-04-05)
+## Test Architecture: Drift vs Correctness Invariants (2026-04-05)
 
-After `buildUserTurn` delegates to walker, prefix-validation tests have a **BLIND SPOT**: they compare live vs reconstruction, but since both run the SAME walker, a walker bug produces IDENTICAL wrong output in both paths → validation passes.
+Two distinct test classes protect against different bug classes. Learned via mutation testing during the caption-bug unification audit.
 
-**Experimentally confirmed**: removed caption from walker → all 27 integration prefix-validation tests still passed.
+### Drift invariant (prefix-validation integration tests)
+Full agent loop + restart + `ValidatingMockAPI.enablePrefixValidation()`. Catch when **live path diverges from reconstruction path** — two independent codepaths producing different bytes.
 
-### Two test layers required
+**Blind spot after unification**: live path delegates to walker → live and reconstruction SHARE the walker. A walker bug makes both paths "consistently wrong" → validation passes. **Experimentally confirmed**: removing caption from walker → all 27 integration prefix-validation tests still pass.
 
-**Layer 1: Golden snapshot unit tests** — test walker CORRECTNESS.
-Construct Event[] manually, call `eventsToAnthropicMessages(events)`, assert EXACT byte-level output. Fast (~150ms).
-- `src/drift-infra-audit.test.ts` (23 tests) — core walker callbacks
-- `src/drift-tool-lifecycle.test.ts` (29 tests) — tool lifecycle scenarios
+What drift tests DO catch:
+- Accidental creation of parallel user-message-construction paths
+- Bugs in non-walker paths: initial drain, buildSessionRepair, compaction rebuild, cache control construction
+- EventStore/JSONL corruption
+- System/tools presence asymmetry (fixed a gap: previously silently passed when dropping system/tools mid-conversation)
 
-**Layer 2: Integration prefix-validation tests** — test CONVERGENCE between paths.
-Real agent runs → restart → wake. Catches DRIFT between walker and non-walker codepaths (initial drain, buildSessionRepair, cache control construction).
-- `src/drift-tool-lifecycle.test.ts` (22 tests) — paired with golden tests
+Files:
+- `src/drift-tool-lifecycle.test.ts` (22 integration tests — tool lifecycle)
+- `src/drift-message-sources.test.ts` (27 integration tests — every QueueMessage source type)
+- `src/drift-lifecycle.test.ts` (21 integration tests — yield/done/fork/compact transitions)
 - `src/integration.test.ts` Bug repro suite — original caption bug regressions
 
-### Mock validator capabilities (src/test-utils/mock-anthropic-api.ts)
+### Correctness invariant (golden snapshot unit tests)
+Direct invocation of `eventsToAnthropicMessages(events)`, assert exact output bytes. Catch when **walker callbacks produce wrong output** (even if consistently wrong across both paths). Fast (~90-150ms per file).
 
-Mutation-tested (`src/drift-infra-audit.test.ts`, 39 tests). Catches:
-- All content mutations (text, images, tool_use, tool_result key changes)
-- System/tools changes (including presence asymmetry — dropping them mid-conversation now throws, previously silently passed, fixed)
-- cache_control TTL/type mutations; stale CC at non-breakpoint positions
-- Block ordering, key changes, count differences, is_error asymmetries
+Example: if walker's `onConsumedMessages` lacked caption, both paths would miss it → drift tests pass, golden test catches it by asserting `[{text}, {image}, {caption}]` is the expected output.
 
-Correctly allows: key insertion-order differences (deep-equal sorts keys), string↔array content normalization, legitimate breakpoint position moves.
+Mutation-tested rigorously: every mutation (remove caption idle/working, drop is_error, add is_error to image tool_result, swap block order, break string↔array invariant, drop interleaved text, remove caller field) is caught by at least one test.
+
+Files:
+- `src/walker-golden.test.ts` (47 unit tests — core walker correctness)
+- `src/drift-infra-audit.test.ts` (23 golden + 39 mock-validator mutation tests)
+- `src/drift-tool-lifecycle.test.ts` (29 golden tests — tool lifecycle)
+- `src/drift-lifecycle.test.ts` (17 golden tests — yield/done/fork/compact)
 
 ### Principle
 - Prefix validation tests **convergence** between paths (drift detection)
 - Golden snapshots test **correctness** of the path itself
-- After unification, correctness can't be inferred from convergence — both needed.
+- After unification, correctness can't be inferred from convergence — both needed
+- **Don't silently lose coverage when removing duplication.** Unifying two paths into one shifts responsibility: correctness tests must re-establish coverage that drift tests provided.
 
 ### Gotcha for golden snapshot authors
 User `message` events with `id` are DEFERRED by walker — only materialize via `messages_consumed`. Helper pattern:
@@ -435,3 +442,6 @@ function userPromptEvents(id, content, ts, images?): Event[] {
 }
 ```
 Without messages_consumed, message with id is never rendered.
+
+### Third-codepath known bug
+`src/drift-initial-drain.test.ts` — documents & reproduces the third codepath bug in `provider-shared.ts:~720` (initial drain drops images from fresh-start queue). Kept as `.todo` until that path is unified with walker.
