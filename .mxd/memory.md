@@ -385,10 +385,12 @@ Walker callbacks (`onToolResults`, `onConsumedMessages`, `isAnthropicWorkingCont
 
 Deleted ~160 lines from `buildUserTurn`. Also added caption to idle branch of `onConsumedMessages` (the actual bug fix — live path now routes through this).
 
-### Known Issue: Third codepath still exists (initial drain)
-`provider-shared.ts:~720` "Initial queue drain" for fresh-start waits for first message and constructs user message itself. Does NOT handle images — and does NOT add caption. If first message to wake/start agent has images, drift bug exists.
+### Third Codepath Unified (2026-04-05, commit 39e420b)
+`provider-shared.ts` initial drain previously had its own ad-hoc construction logic that dropped images and missed caption. Now delegates to `adapter.appendQueueMessagesToMessages(messages, queueMsgs)`.
 
-Test `test.todo("Initial message with images: live path matches reconstruction")` repros this. Fix requires making initial drain also delegate to walker reconstruction, which means either (a) exposing an adapter hook "process events into messages appendage" or (b) moving initial drain into the adapter. Deferred — separate task.
+Each provider extracts its walker's `onConsumedMessages` logic into a named function (`applyAnthropicQueueContent`, `applyOpenAIResponsesQueueContent`). Both the walker callback AND the adapter hook route through this one function. Single source of truth per provider — walker + initial drain can no longer drift.
+
+4 test.todo → 2 pass (image drift tests closed), 2 remain as skeleton tests blocked by mock-API infra for non-user queue sources (task_message, cross_project).
 
 ### Dead Code Cleaned (2026-04-05, commit f75a512)
 `formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — removed. No code was setting these (orchestrator-tools doesn't return them; they originated from the deleted `agent-tools.ts`). -81 lines across 5 files. Simplified `collectToolResultImages`, `buildToolResultEvents`, and both OpenAI providers' image routing.
@@ -446,8 +448,8 @@ function userPromptEvents(id, content, ts, images?): Event[] {
 ```
 Without messages_consumed, message with id is never rendered.
 
-### Third-codepath known bug
-`src/drift-initial-drain.test.ts` — documents & reproduces the third codepath bug in `provider-shared.ts:~720` (initial drain drops images from fresh-start queue). Kept as `.todo` until that path is unified with walker.
+### Third-codepath drift fixed (commit 39e420b)
+`src/drift-initial-drain.test.ts` image-drift tests now pass. Initial drain delegates to `adapter.appendQueueMessagesToMessages`, which routes through the same `applyXxxQueueContent` function the walker uses. One function, two call sites, zero drift possible.
 ## HTTP MCP Endpoint (2026-04-05)
 
 External MCP clients (Claude Code) can connect to Matrix via `POST /mcp`. Matrix
