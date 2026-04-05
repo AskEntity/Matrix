@@ -482,68 +482,27 @@ requires `Authorization: Bearer <token>`. Dev mode (no jwtSecret) passes through
 
 ## Compaction Asymmetry (2026-04-05)
 
-Manual `/compact` injects a summarization instruction as a user message into
-messages[]. If the previous loop iteration ALSO pushed a user message (yield
-tool_result + queue content, done tool_result + queue content, etc.), the
-result is two consecutive user messages → API 400 "Messages must alternate
-roles". Four paths have this shape:
+Manual `/compact` injects a summarization instruction as a user message. If the previous loop iteration also pushed a user message (yield tool_result + queue content, done tool_result + queue content), result is two consecutive user messages → API 400 "Messages must alternate roles".
 
-| Path | Handler location | Fix status |
-|------|-----------------|-----------|
-| implicit yield resume + compactOnly | provider-shared.ts line 948 | ✓ Clean (continue; no push) |
-| pending yield + compactOnly (empty queue) | provider-shared.ts line 1008 | ✓ **Fixed** (commit 304fccd) |
-| end_turn implicit yield + compactOnly | provider-shared.ts line 1512 | ✓ Clean (continue; no push) |
-| pending yield + nonCompact + manualCompact | provider-shared.ts line 1054+ | ✗ Deferred (test.todo) |
-| pending done + nonCompact + manualCompact | provider-shared.ts line 842 | ✗ Deferred (test.todo) |
-| implicit yield resume + nonCompact + manualCompact | provider-shared.ts line 963 | ✗ Deferred (test.todo) |
-| end_turn + nonCompact + manualCompact | provider-shared.ts line 1558 | ✗ Deferred (test.todo) |
+Seven paths in `provider-shared.ts` have this shape. 3 are clean (`continue;` without pushing user msg). 1 is fixed. 3 are deferred via test.todo.
 
-### Fixed: compactOnly pending-yield (commit 304fccd)
-When compact arrives during a pending yield with EMPTY queue, defer the
-yield tool_result push via `pendingCompactYieldToolCall` flag. The compact
-path bundles the yield tool_result INTO THE SAME user turn as the
-summarization text. One user message with `[tool_result, text]` blocks →
-valid role alternation.
+**Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. One user message with `[tool_result, text]` blocks → valid alternation.
 
-Same pattern as the duplicate-yield fix: emit to JSONL for orphan prevention,
-defer the messages[] push to merge with the next user turn.
+**Pattern**: emit to JSONL for orphan prevention, defer messages[] push to merge with next user turn. Same as duplicate-yield fix (19995b9).
 
-### Deferred: walker has matching latent bug
-Walker reading `[tool_result, messages_consumed, summarization_request]`
-produces TWO consecutive user messages — verified via evaluate_script. The
-proper fix is structural: `summarization_request` should NOT create a
-separate user message in the walker — it should append to the user turn
-being built. Requires matching live-path changes for byte-identical output.
-Documented via test.todo in drift-lifecycle.test.ts.
+**Latent walker bug** (deferred): walker reading `[tool_result, messages_consumed, summarization_request]` produces two consecutive user messages. Proper structural fix: summarization_request should append to the current user turn, not create a separate one. Requires matching live + walker changes for byte-identical output. Documented as test.todo in drift-lifecycle.test.ts.
 
 ## 70K Post-Restart Cache Miss (2026-04-05, unresolved)
 
-Production root session ea053810 at 08:36:11: pre-restart 99.67% cache hit
-(102,769 cacheRead of 103,112). Post-restart: 32.2% cache hit (70,607
-cacheCreation, only 33,575 cacheRead). ~70K tokens of content drifted
-between pre-restart live messages[] and post-restart walker reconstruction.
+Production root session, post-restart first API call: inputTokens=104,188, cacheCreation=70,607, cacheRead=33,575 (32% hit). Pre-restart last call: 99.67% hit. ~70K drifted between pre-restart live messages[] and post-restart walker reconstruction.
 
-**Investigation exhausted inspection paths**:
-- `addAssistantMessage` and walker `onAssistantContent` produce matching
-  `{type, id, name, input, caller}` tool_use blocks
-- `addMessagesCacheControl` places breakpoint on LAST message both times
-- SDK input objects preserve key order through JSONL serialization
-- `findSessionConfig` reads the latest session_config in active range
-- Walker inner batching loop correctly separates assistant turns via
-  interleaved usage events
-- `filterEventImages` and `filterExecResultImages` produce identical
-  rejection text
-- `buildToolResultEvents` ts drift doesn't affect user-message bytes
-- Comparing this-session live messages[] to walker reconstruction NOW:
-  530 messages, 0 mismatches (byte-identical)
+**Cannot isolate by inspection**: pre-restart live state is lost; post-restart live == walker(JSONL) by construction. Comparing current live to current walker-recon shows 0 mismatches.
 
-**Can't inspect pre-restart state** — lost after restart. Post-restart
-live[] equals walker output by construction (both derived from JSONL).
+**Evidence drift was AFTER fork (same session)**: a forked child had 100% cache hit throughout its session, proving pre-fork prefix was walker-consistent. Comparing my live[0..57] to child's inherited reconstruction: byte-identical. Drift appeared between fork and restart — 26-minute window.
 
-**Hypothesis**: either Anthropic server-side behavior (similar to the
-Opus token injection documented in blog-2026-04-04-2.md) or unidentified
-mutation path in a sibling investigation not yet found.
+**Audited candidates**: addAssistantMessage vs walker onAssistantContent (match), addMessagesCacheControl (same breakpoint strategy), SDK input key ordering (preserved), session_config (latest read both times), walker batching (correct), image filtering (same rejection text), timestamp drift (not reflected in bytes). Nothing found.
 
-**Needs production instrumentation** to catch: log exact bytes sent to
-API AND walker-would-produce at each tick. Logging tool not yet built.
+**Needs production instrumentation** to catch: persist each API request's exact byte representation + walker-would-produce delta at each tick. Not yet built.
+
+**Possible non-drift explanation**: Anthropic server-side cache eviction or routing (similar pattern to Opus token injection in blog-2026-04-04-2.md).
 
