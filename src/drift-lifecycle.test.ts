@@ -2391,3 +2391,166 @@ describe("Drift: high-pressure lifecycle chains", () => {
 		expect(status2).toBe("verify");
 	}, 60000);
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// COMPACTION DRIFT TESTS
+// ══════════════════════════════════════════════════════════════════════
+//
+// WHY these tests: production cache miss observed on 2026-04-05 after a
+// daemon restart that followed a compaction ~32min earlier. 70K tokens
+// drifted between live messages[] (pre-restart) and walker reconstruction
+// (post-restart). This is the same bug class as the caption-bug — two
+// independent codepaths (live vs walker) producing different bytes.
+//
+// These tests compare:
+//   1. The messages[] that was SENT to the API in the post-compact call
+//      (captured via mockAPI.getRequestHistory())
+//   2. The messages[] produced by running the walker over the JSONL events
+//      after the last compact_marker (what a restart would produce)
+//
+// They MUST be byte-identical (modulo cache_control positions). If not,
+// restart after compact loses cache.
+// ══════════════════════════════════════════════════════════════════════
+
+describe("Drift: compaction lifecycle", () => {
+	let ctx: TestContext;
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	// Regression test: /compact triggered while agent is at pending-yield must NOT
+	// produce consecutive user messages (API 400 "Messages must alternate roles").
+	//
+	// Bug history: two codepaths pushed user messages back-to-back:
+	//   1. handleImplicitYield returns {compactOnly:true}, provider-shared.ts
+	//      (pending-yield branch) pushed yield tool_result as user message.
+	//   2. Next loop iteration: compact path pushed summarization instruction
+	//      as another user message → consecutive user → API 400.
+	//
+	// Fix: defer the yield tool_result push via pendingCompactYieldToolCall; the
+	// compact path bundles tool_result + summarization text into ONE user turn.
+	//
+	// This bug only manifested when messages.length > 4 (below that threshold,
+	// the compact path bails out with "Context too short" and masks the bug).
+	test("compact triggered while agent in pending yield completes without API 400", async () => {
+		ctx = await setupTestContext();
+
+		// Need messages.length > 4 at compact time. Use multi-cycle conversation.
+		// Each yield+wake cycle adds 2 messages (assistant+user). After 3 cycles:
+		// messages has system + user + assistant + user + assistant + user = 6.
+		const instruction = JSON.stringify({
+			turns: [
+				// Turn 1: yield
+				{
+					blocks: [
+						{ type: "text", text: "Turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// Turn 2: yield
+				{
+					blocks: [
+						{ type: "text", text: "Turn 2." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// Turn 3: yield (now messages will have >4 entries when compact arrives)
+				{
+					blocks: [
+						{ type: "text", text: "Turn 3." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// Turn 4 (post-compact): done
+				{
+					blocks: [
+						{ type: "text", text: "Done after compact." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 1");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 2");
+		await waitForIdle(ctx);
+		// Now messages.length > 4. Agent is idle at yield. Trigger compact.
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const compactRes = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/compact`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ nodeId: rootNodeId }),
+			},
+		);
+		expect(compactRes.status).toBe(200);
+
+		// Agent should complete Turn 4 cleanly (no API 400).
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Verify the event sequence: compact_marker must be present (compaction
+		// actually completed, not crashed mid-flight).
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const hasCompactMarker = events.some((e) => e.type === "compact_marker");
+		const hasError = events.some((e) => e.type === "error");
+		expect(hasCompactMarker).toBe(true);
+		expect(hasError).toBe(false);
+	}, 15000);
+
+	// Related class of bug (not yet fixed): compact arrives WITH regular messages
+	// in the same drain. When handleImplicitYield returns compactOnly=false BUT
+	// manualCompactRequested=true (queue had [regular_msg, compact_msg]), the yield
+	// path builds its normal user message (tool_result + queue content), then the
+	// compact path IMMEDIATELY pushes summarization as another user message →
+	// consecutive user → API 400.
+	//
+	// The same asymmetry fires for:
+	//   - pending-done + nonCompact + compact (all drained together)
+	//   - implicit-yield-resume + nonCompact + compact
+	//   - end_turn + nonCompact + compact
+	//
+	// AND the walker has a matching latent bug: reading events
+	//   [tool_result, messages_consumed, summarization_request]
+	// produces TWO consecutive user messages. If daemon crashes mid-compaction,
+	// walker reconstruction produces API-invalid output.
+	//
+	// The right fix is structural: summarization_request should NOT create a
+	// separate user message — it should append to the user turn being built.
+	// This requires walker changes too. Deferred to follow-up work.
+	test.todo("compact + regular message in same drain during pending yield → no API 400", () => {
+		// See comment above: the walker has a matching latent bug. Fix requires
+		// restructuring summarization_request to append to the user turn being
+		// built instead of creating a separate user message.
+	});
+
+	// Sibling bug (not yet fixed, hard to reach via integration):
+	// pendingDoneToolCall + compactOnly has the same asymmetry. The pending-done
+	// path at provider-shared.ts line 842 does NOT check for compactOnly — it
+	// always pushes the done tool_result as a user message, then the compact path
+	// pushes summarization → consecutive user → API 400.
+	//
+	// Hard to reach because: compact messages don't persist to JSONL, so after
+	// daemon restart the queue is empty on resume. The only reachable path is
+	// a narrow window between done() Phase 1 and Phase 2 session cleanup,
+	// which rejects /compact via a 404.
+	//
+	// Deferred with the bug #2 walker-drift fix (requires the same structural
+	// change: summarization_request should append to the user turn being built,
+	// not produce a separate user message).
+	test.todo("compact triggered while agent in pending-done (done resume) completes without API 400", () => {
+		// See comment above: very narrow window, hard to reach via integration.
+		// Fix bundled with the pending-yield+regular bug (both need structural
+		// change to summarization_request injection).
+	});
+});

@@ -479,3 +479,71 @@ requires `Authorization: Bearer <token>`. Dev mode (no jwtSecret) passes through
 ```json
 { "mcpServers": { "matrix": { "type": "http", "url": "http://localhost:7433/mcp" } } }
 ```
+
+## Compaction Asymmetry (2026-04-05)
+
+Manual `/compact` injects a summarization instruction as a user message into
+messages[]. If the previous loop iteration ALSO pushed a user message (yield
+tool_result + queue content, done tool_result + queue content, etc.), the
+result is two consecutive user messages → API 400 "Messages must alternate
+roles". Four paths have this shape:
+
+| Path | Handler location | Fix status |
+|------|-----------------|-----------|
+| implicit yield resume + compactOnly | provider-shared.ts line 948 | ✓ Clean (continue; no push) |
+| pending yield + compactOnly (empty queue) | provider-shared.ts line 1008 | ✓ **Fixed** (commit 304fccd) |
+| end_turn implicit yield + compactOnly | provider-shared.ts line 1512 | ✓ Clean (continue; no push) |
+| pending yield + nonCompact + manualCompact | provider-shared.ts line 1054+ | ✗ Deferred (test.todo) |
+| pending done + nonCompact + manualCompact | provider-shared.ts line 842 | ✗ Deferred (test.todo) |
+| implicit yield resume + nonCompact + manualCompact | provider-shared.ts line 963 | ✗ Deferred (test.todo) |
+| end_turn + nonCompact + manualCompact | provider-shared.ts line 1558 | ✗ Deferred (test.todo) |
+
+### Fixed: compactOnly pending-yield (commit 304fccd)
+When compact arrives during a pending yield with EMPTY queue, defer the
+yield tool_result push via `pendingCompactYieldToolCall` flag. The compact
+path bundles the yield tool_result INTO THE SAME user turn as the
+summarization text. One user message with `[tool_result, text]` blocks →
+valid role alternation.
+
+Same pattern as the duplicate-yield fix: emit to JSONL for orphan prevention,
+defer the messages[] push to merge with the next user turn.
+
+### Deferred: walker has matching latent bug
+Walker reading `[tool_result, messages_consumed, summarization_request]`
+produces TWO consecutive user messages — verified via evaluate_script. The
+proper fix is structural: `summarization_request` should NOT create a
+separate user message in the walker — it should append to the user turn
+being built. Requires matching live-path changes for byte-identical output.
+Documented via test.todo in drift-lifecycle.test.ts.
+
+## 70K Post-Restart Cache Miss (2026-04-05, unresolved)
+
+Production root session ea053810 at 08:36:11: pre-restart 99.67% cache hit
+(102,769 cacheRead of 103,112). Post-restart: 32.2% cache hit (70,607
+cacheCreation, only 33,575 cacheRead). ~70K tokens of content drifted
+between pre-restart live messages[] and post-restart walker reconstruction.
+
+**Investigation exhausted inspection paths**:
+- `addAssistantMessage` and walker `onAssistantContent` produce matching
+  `{type, id, name, input, caller}` tool_use blocks
+- `addMessagesCacheControl` places breakpoint on LAST message both times
+- SDK input objects preserve key order through JSONL serialization
+- `findSessionConfig` reads the latest session_config in active range
+- Walker inner batching loop correctly separates assistant turns via
+  interleaved usage events
+- `filterEventImages` and `filterExecResultImages` produce identical
+  rejection text
+- `buildToolResultEvents` ts drift doesn't affect user-message bytes
+- Comparing this-session live messages[] to walker reconstruction NOW:
+  530 messages, 0 mismatches (byte-identical)
+
+**Can't inspect pre-restart state** — lost after restart. Post-restart
+live[] equals walker output by construction (both derived from JSONL).
+
+**Hypothesis**: either Anthropic server-side behavior (similar to the
+Opus token injection documented in blog-2026-04-04-2.md) or unidentified
+mutation path in a sibling investigation not yet found.
+
+**Needs production instrumentation** to catch: log exact bytes sent to
+API AND walker-would-produce at each tick. Logging tool not yet built.
+
