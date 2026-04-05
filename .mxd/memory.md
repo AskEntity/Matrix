@@ -615,3 +615,26 @@ Anthropic's cache only knows the LATEST request for that prefix. Rolling history
 4. Byte-diff → find first mismatching message → inspect content → fix the drift at source.
 
 Turns the 70K miss investigation from "exhausted code inspection" into "look at the file".
+
+## Anti-pattern: Conflating Attached-Observer with Peer-Project (2026-04-05, reverted)
+
+**What happened**: tried to add `send_message` to the HTTP MCP endpoint (commits 244665c + 1185983), wrapping peer messages as `cross_project` source. Merged, then realized the semantic was wrong. Reverted in 5efd5f9.
+
+**The confusion**: two architectural layers got conflated into one tool:
+
+| Layer | Model | Relationship | Identity | Scope |
+|-------|-------|--------------|----------|-------|
+| **1. Attached external client** | Observer + injector | attach_to → operate ON target | "who is doing this" (header on injected user messages) | Scoped to attached task subtree |
+| **2. Peer project** | Symmetric project-to-project | No attachment | projectId in cross_project wrapper | Matrix project registry |
+
+Layer 1: client attaches to a project/task, reads state, injects **user_message-style** content with a header like `[from: CC]`. The client is an **external actor** acting ON the target tree — not a peer.
+
+Layer 2: client IS another Matrix project from Matrix's perspective. Registered in project registry. Sends/receives `cross_project` messages. Opaque (Matrix doesn't know its internals).
+
+**Why the wrong merge**: wrapping Layer 1 attach_to's send as `cross_project` implied "attached client IS a peer project" — breaking both semantics. An attached observer isn't a peer; a peer doesn't attach.
+
+**Correct design** (TBD, drafted as follow-up):
+- Layer 1: add `send_user_message` tool — injects as user_message with peer header. Remove `read_file`/`list_files`/`search` from MCP tools (client uses its own, just needs worktreePath from attach_to return).
+- Layer 2: separate tool set on separate config (possibly separate port). Reuses existing `list_projects` + `send_message_to_project` semantics. Needs new `yield_cross_project` to drain peer's own inbox.
+
+**Lesson**: when one tool looks right for two different use cases, check whether the relationships are symmetric (both parties peers) or asymmetric (one observes the other). Same-wire-format ≠ same-semantic.
