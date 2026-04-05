@@ -97,21 +97,6 @@ export function atBottomPure(
 	return scrollHeight - scrollTop - clientHeight < BOTTOM_THRESHOLD_PX;
 }
 
-/** Pure: given an entry's offsetTop (relative to the scroll container) and
- * a stored offsetPx (= containerTop - entryTop in viewport coords at the
- * time the anchor was captured), return the scrollTop that restores the
- * same on-screen position. Round-trip invariant with selectTopAnchor:
- *   anchor = selectTopAnchor(containerTop, [{top, bottom, ts}])
- *   newScrollTop = anchoredScrollTopPure(offsetTop, anchor.offsetPx)
- *   // new entry viewport top = containerTop - anchor.offsetPx ← identical
- */
-export function anchoredScrollTopPure(
-	entryOffsetTop: number,
-	offsetPx: number,
-): number {
-	return entryOffsetTop + offsetPx;
-}
-
 /**
  * Find the log entry currently at the top of the viewport. Returns null if
  * no entry element is in view (empty log).
@@ -160,13 +145,9 @@ export function applyScrollTarget(
 		`[data-entry-ts="${target.ts}"]`,
 	);
 	if (!el) return false;
-	// offsetPx is defined as `containerTop - entryTop` (viewport coords) —
-	// positive when the anchor entry is scrolled above the container top,
-	// zero when flush, negative when the entry is below. To restore that
-	// relationship we add offsetPx to the entry's offsetTop (relative to
-	// container). Subtracting would invert the sign and send scroll in
-	// the wrong direction → jitter + drift toward bottom on every reapply.
-	container.scrollTop = anchoredScrollTopPure(el.offsetTop, target.offsetPx);
+	// offsetTop is relative to offsetParent. Since the container has
+	// overflow-y:auto, offsetTop of children is relative to the container.
+	container.scrollTop = el.offsetTop - target.offsetPx;
 	return true;
 }
 

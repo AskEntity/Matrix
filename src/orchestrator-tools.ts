@@ -752,7 +752,9 @@ export function createOrchestratorTools(
 						const projectPath = getProjectPath();
 						const gitCheck = await isGitClean(projectPath);
 						if (!gitCheck.clean) {
-							const lines = gitCheck.files.split("\n").filter((l) => l.trim());
+							const lines = gitCheck.files
+								.split("\n")
+								.filter((l) => l.trim());
 							return {
 								content: [
 									{
