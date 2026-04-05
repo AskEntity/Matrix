@@ -6,6 +6,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { DEFAULT_MODEL } from "./config.ts";
+import { writeDebugSnapshot } from "./debug-snapshot.ts";
 import {
 	type AssistantContent,
 	type ConsumedMessages,
@@ -464,6 +465,20 @@ function createAnthropicAdapter(
 			// The mock wrapper reads this; the real SDK ignores it (never serialized).
 			// biome-ignore lint/suspicious/noExplicitAny: test-only side channel
 			(client as any)._currentSessionId = params.sessionId ?? undefined;
+
+			// Pre-API-call debug snapshot: evidence for drift debugging.
+			// Write the FULLY-ASSEMBLED request bytes (post-cache-control) to
+			// <project>/debug/<taskId>.last-messages.json. Overwrites on each call.
+			// Non-fatal; never blocks the API call.
+			writeDebugSnapshot(params.debugSnapshotPath, {
+				sessionId: params.sessionId ?? "",
+				model: params.model,
+				system: systemBlocks,
+				tools: toolsWithCache,
+				cacheTtl: params.cacheTtl,
+				messages: messagesWithCache,
+				provider: "anthropic",
+			});
 
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {

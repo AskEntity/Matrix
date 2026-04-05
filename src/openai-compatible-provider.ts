@@ -1,4 +1,5 @@
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
+import { writeDebugSnapshot } from "./debug-snapshot.ts";
 import {
 	type AssistantContent,
 	type AssistantToolCall,
@@ -539,6 +540,18 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 				},
 				...(params.messages as OpenAIMessage[]),
 			];
+
+			// Pre-API-call debug snapshot: evidence for drift debugging.
+			// Non-fatal; never blocks the API call.
+			writeDebugSnapshot(params.debugSnapshotPath, {
+				sessionId: params.sessionId ?? "",
+				model: params.model,
+				system: systemContent,
+				tools,
+				cacheTtl: params.cacheTtl,
+				messages: apiMessages,
+				provider: "openai",
+			});
 
 			const data = await callOpenAIAPI(
 				baseUrl,
