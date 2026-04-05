@@ -1388,12 +1388,10 @@ export function createOrchestratorTools(
 
 		tool(
 			"fork_task_context",
-			"Copy another agent's conversation context into a target task's session. " +
-				"Like unix fork(): the parent receives 'Forked context from...' while the child receives " +
-				"'This tool was executed by the parent agent...' — the tool_result content tells each agent who they are. " +
-				"The target task starts with the source's full conversation history but has its own identity. " +
-				"Use this to give a new task the knowledge of a previous agent (files read, patterns discovered, etc.) " +
-				"without cold-starting. After forking, use send_message to start the target agent. " +
+			"Copy a task's conversation context into a target task's session. " +
+				"When sourceTaskId == your own taskId, the system picks your next assignment afterward — follow the tool result. " +
+				"When sourceTaskId is another task, you remain unchanged — you're orchestrating a context transfer. " +
+				"The target task starts with the source's full conversation history so the new agent doesn't cold-start. After forking, use send_message to start the target agent. " +
 				"IMPORTANT: fork_task_context must be the ONLY tool call in the turn — it cannot be called alongside other tools.",
 			{
 				sourceTaskId: z
