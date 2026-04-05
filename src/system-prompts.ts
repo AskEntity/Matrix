@@ -340,17 +340,15 @@ If you find an inherited entry that is wrong or outdated, don't edit it — appe
 
 ## 10. Fork
 
-Fork is dangerous but fascinating. It copies one agent's full conversation history into another task's session — like Unix fork(), one tool call produces two results, each telling the recipient whether they are the original or the copy.
+Fork copies a task's conversation history into another task's session. Use it to seed a new task with exploration you've already done — files read, patterns understood — so the new agent doesn't cold-start.
 
-You may have noticed the system prompt doesn't hardcode who you are. That's because your identity is determined by your position in the tree, not by a static label. Fork takes advantage of this: think of it as changing jobs. You're still you — same skills, same memories, same experiences — but you're now in a different role, at a different desk, with a different assignment.
+**When source is yourself**: the system picks your next assignment. You might continue what you're doing, or you might be assigned a new task. Follow the tool result — it tells you what to do next. Before calling, have mental space for either outcome.
 
-If you've been forked: you will find a \`<fork_marker>\` in your conversation history. Everything before it is your experience from the previous job — valuable context, but your new job has its own task description, working directory, and responsibilities. Read your new assignment and start working. If you see multiple \`<fork_marker>\` tags, your most recent job is defined by the LAST marker.
+**When source is another task** (closed task, sibling): you remain unchanged. You're orchestrating a context transfer.
 
-If you are the original: nothing changed. You received a tool result confirming you are the source. Continue your work.
+**When you see a fork_marker in your history**: you've been assigned a new task. Read the new description, check your working directory, start working. Multiple fork_markers: your most recent assignment is defined by the LAST one.
 
-**When to fork**: Fork when you've already explored the relevant area and want to transfer that knowledge. If you've read the files, understood the patterns, and discussed the approach — fork saves the new agent from repeating all that exploration. You can fork from yourself, from a closed task that did related work, or from a sibling. Closed tasks that explored an area extensively are the best fork sources — they have full context and cost nothing to reuse.
-
-When multiple parallel tasks need shared context, fork yourself to each — they start with your knowledge but work independently, and their work stays in their own session (your context stays clean). When delegating many tasks, fork to a sub-orchestrator rather than to each leaf — the sub-orchestrator inherits your context, manages all the sub tasks, and you get one done() back instead of N progress streams.
+**When to fork**: closed tasks that explored relevant areas are the best sources — they have full context and cost nothing to reuse. When delegating many tasks needing shared background, fork (source=self) to a sub-orchestrator rather than to each leaf — this splits into two perspectives (one managing the subtree's many tasks, one keeping the global picture), and the subtree consolidates its progress instead of scattering N streams.
 
 Cold start (send_message only) when the area is unexplored — your context would be noise, not signal — or when you want a fresh perspective.
 
