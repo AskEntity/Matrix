@@ -28,6 +28,7 @@ import { TaskTree } from "./components/TaskTree.tsx";
 import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
 import { createEventHandler } from "./event-handler.ts";
 import { createActionHandlers } from "./handlers.ts";
+import { formatHashString, parseHashString } from "./hash-routing.ts";
 import {
 	clearScrollTarget,
 	type ScrollTarget,
@@ -51,28 +52,8 @@ import { applyTheme, themes } from "./themes.ts";
 
 // ── Hash routing helpers ───────────────────────────────────────────────────
 
-/** Parse `#projectId/taskId/entry=<ts>` (entry fragment is a one-shot
- * permalink target — consumed on first load, then dropped from the URL). */
-function parseHash(): {
-	projectId?: string;
-	taskId?: string;
-	entryTs?: number;
-} {
-	const raw = window.location.hash.replace(/^#/, "");
-	if (!raw) return {};
-	const parts = raw.split("/");
-	const projectId = parts[0] || undefined;
-	const taskId = parts[1] || undefined;
-	// Optional entry segment: "entry=<ts>" — prefix reserved for future
-	// address schemes (entry=id:<n>, entry=commit:<sha>, etc.).
-	let entryTs: number | undefined;
-	const entrySeg = parts[2];
-	if (entrySeg?.startsWith("entry=")) {
-		const val = entrySeg.slice("entry=".length);
-		const n = Number(val);
-		if (Number.isFinite(n)) entryTs = n;
-	}
-	return { projectId, taskId, entryTs };
+function parseHash() {
+	return parseHashString(window.location.hash);
 }
 
 function updateHash(
@@ -80,12 +61,7 @@ function updateHash(
 	taskId: string | null,
 	rootNodeId: string | null,
 ) {
-	const hash =
-		taskId && taskId !== rootNodeId
-			? `#${projectId}/${taskId}`
-			: projectId
-				? `#${projectId}`
-				: "";
+	const hash = formatHashString(projectId, taskId, rootNodeId);
 	if (window.location.hash !== hash) {
 		window.location.hash = hash;
 	}
