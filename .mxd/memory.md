@@ -615,38 +615,3 @@ Anthropic's cache only knows the LATEST request for that prefix. Rolling history
 4. Byte-diff → find first mismatching message → inspect content → fix the drift at source.
 
 Turns the 70K miss investigation from "exhausted code inspection" into "look at the file".
-
-## MCP send_message — first write tool + peer identity (2026-04-05)
-
-External MCP clients (Claude Code, etc.) can now send messages to Matrix tasks via `send_message` on the HTTP /mcp endpoint — no more shelling out to `mxd send` with escaping issues.
-
-### Peer identity (config-enforced)
-`MatrixConfig.mcpClients: Record<peerKey, { projectId, projectName }>` — maps peer keys to virtual project identities. Peer presents `peerKey` on `attach_to`, Matrix looks it up, stores on McpSessionState. Peer cannot forge identity — config is server-owned.
-
-```json
-{
-  "mcpClients": {
-    "cc-xingjian": { "projectId": "cc-xingjian", "projectName": "CC (Xingjian)" }
-  }
-}
-```
-
-- `attach_to(peerKey)` with unknown key → rejected (fail-closed)
-- `attach_to()` without peerKey → anonymous mode (read tools + yield work, send_message rejected)
-- Empty `mcpClients` config → all send_message attempts rejected
-
-### Message delivery
-Reuses existing `cross_project` QueueMessage source (no new types). Matrix's server-enforced `fromProjectId`/`fromProjectName` come from config. The peer IS a virtual project from Matrix's perspective — symmetric to Matrix-to-Matrix messaging.
-
-### Scope (mirrors internal send_message)
-- Attached task ← allowed
-- Any ancestor in the attached task's parent chain ← allowed
-- Direct children of attached task ← allowed
-- Siblings, grandchildren, other subtrees ← rejected
-- Cross-project ← blocked by attach_to
-
-### Quiet delivery
-`deliverMessage(ctx, project, taskId, msg, { quiet: true })` — does NOT auto-launch stopped agents. Message persisted to JSONL, agent picks it up on next run. Safer default for external peers.
-
-### Scope enforcement
-Fail-closed: scope check runs BEFORE `deliverMessage`. No partial writes on reject.
