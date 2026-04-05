@@ -31,13 +31,13 @@ if (useOAuth) {
 	process.exit(1);
 }
 
-const sessionDir = `${process.env.HOME}/.mxd/sessions/b3d7a1f3-6f5b-4dd7-a046-55591a8c7d02`;
+const sessionDir = `${process.env.HOME}/.mxd/projects/b3d7a1f3-6f5b-4dd7-a046-55591a8c7d02/tasks`;
 
 // Analyze ALL recent sessions
 const files = readdirSync(sessionDir)
-	.filter((f) => f.endsWith(".events.jsonl") && !f.includes(".debug"))
+	.filter((f) => f.endsWith(".jsonl") && !f.includes(".debug"))
 	.map((f) => ({
-		sid: f.replace(".events.jsonl", ""),
+		sid: f.replace(/\.jsonl$/, ""),
 		path: `${sessionDir}/${f}`,
 		mtime: statSync(`${sessionDir}/${f}`).mtimeMs,
 		size: statSync(`${sessionDir}/${f}`).size,

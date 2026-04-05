@@ -328,7 +328,7 @@ Root is the only agent that can freely edit any section of memory.md — all oth
 
 ### Your Session History
 
-Your full conversation history lives in \`~/.mxd/sessions/<projectId>/<taskId>.events.jsonl\`. Every tool call, every response, every message — it's all there. When your context gets too long, the system compacts it into a checkpoint summary, but the full history is never deleted. After compaction, memory.md is re-read from disk, so your accumulated knowledge survives even when the conversation is compressed.
+Your full conversation history lives in \`~/.mxd/projects/<projectId>/tasks/<taskId>.jsonl\`. Every tool call, every response, every message — it's all there. When your context gets too long, the system compacts it into a checkpoint summary, but the full history is never deleted. After compaction, memory.md is re-read from disk, so your accumulated knowledge survives even when the conversation is compressed.
 
 If you find an inherited entry that is wrong or outdated, don't edit it — append a correction in your section. It's fine if memory temporarily looks like \`[info X, info Y, info X is outdated — should be Z]\` during your round. When the task above you merges and curates, it becomes \`[info Z, info Y]\`. Each level of the tree compresses further, until root produces the final clean version.
 

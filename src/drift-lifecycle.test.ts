@@ -201,7 +201,9 @@ async function sendMessageWithImages(
 async function readSessionEvents(ctx: TestContext, sessionId: string) {
 	const daemonStore = ctx.app.ctx.eventStores.get(ctx.projectId);
 	if (daemonStore) await daemonStore.flushSession(sessionId);
-	const store = new EventStore(join(ctx.dataDir, "sessions", ctx.projectId));
+	const store = new EventStore(
+		join(ctx.dataDir, "projects", ctx.projectId, "tasks"),
+	);
 	return store.read(sessionId);
 }
 

@@ -123,6 +123,14 @@ export async function getTracker(
 	return tracker;
 }
 
+/**
+ * Compute the directory where a project's task JSONL files live.
+ * Unified layout: `{dataDir}/projects/{projectId}/tasks/`.
+ */
+export function projectTasksDir(dataDir: string, projectId: string): string {
+	return join(dataDir, "projects", projectId, "tasks");
+}
+
 /** Get or create an EventStore for a project. */
 export function getEventStore(
 	ctx: DaemonContext,
@@ -130,7 +138,7 @@ export function getEventStore(
 ): EventStore {
 	let store = ctx.eventStores.get(projectId);
 	if (!store) {
-		store = new EventStore(join(ctx.config.dataDir, "sessions", projectId));
+		store = new EventStore(projectTasksDir(ctx.config.dataDir, projectId));
 		ctx.eventStores.set(projectId, store);
 	}
 	return store;
@@ -182,13 +190,13 @@ export async function pruneSessionFiles(
 	projectId: string,
 	keepCount: number,
 ): Promise<{ pruned: number; remaining: number }> {
-	const sessionsDir = join(ctx.config.dataDir, "sessions", projectId);
+	const tasksDir = projectTasksDir(ctx.config.dataDir, projectId);
 	try {
-		const files = await readdir(sessionsDir).catch((e) => {
-			console.warn(`[helpers] Failed to read sessions dir ${sessionsDir}:`, e);
+		const files = await readdir(tasksDir).catch((e) => {
+			console.warn(`[helpers] Failed to read tasks dir ${tasksDir}:`, e);
 			return [] as string[];
 		});
-		const jsonlFiles = files.filter((f) => f.endsWith(".events.jsonl"));
+		const jsonlFiles = files.filter((f) => f.endsWith(".jsonl"));
 
 		if (jsonlFiles.length <= keepCount) {
 			return { pruned: 0, remaining: jsonlFiles.length };
@@ -197,13 +205,13 @@ export async function pruneSessionFiles(
 		const withMtime = await Promise.all(
 			jsonlFiles.map(async (f) => ({
 				name: f,
-				mtime: (await stat(join(sessionsDir, f))).mtimeMs,
+				mtime: (await stat(join(tasksDir, f))).mtimeMs,
 			})),
 		);
 		withMtime.sort((a, b) => b.mtime - a.mtime);
 
 		const toDelete = withMtime.slice(keepCount);
-		await Promise.all(toDelete.map((f) => unlink(join(sessionsDir, f.name))));
+		await Promise.all(toDelete.map((f) => unlink(join(tasksDir, f.name))));
 
 		return { pruned: toDelete.length, remaining: keepCount };
 	} catch (e) {

@@ -280,7 +280,9 @@ describe("lifecycle: task state vs message delivery", () => {
 
 		// Verify the message was written to JSONL
 		await delay(50); // flush
-		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", project.id, "tasks"),
+		);
 		const events = eventStore.read(task.id);
 		const userMsg = events.find(
 			(e: Event) =>
@@ -1067,7 +1069,9 @@ describe("lifecycle: parent chain notifications", () => {
 
 		// Parent notification should be written to JSONL
 		await delay(50); // flush
-		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", project.id, "tasks"),
+		);
 		const events = eventStore.read(parent.id);
 		const notification = events.find(
 			(e: Event) =>
@@ -1326,7 +1330,9 @@ describe("lifecycle: message persistence via JSONL", () => {
 		await delay(50);
 
 		// Verify message was written to JSONL
-		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", project.id, "tasks"),
+		);
 		const events = eventStore.read(task.id);
 		const msgEvents = events.filter(
 			(e: Event) =>
@@ -1355,7 +1361,9 @@ describe("lifecycle: message persistence via JSONL", () => {
 		await delay(50);
 
 		// Both should be in JSONL
-		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", project.id, "tasks"),
+		);
 		const events = eventStore.read(task.id);
 		const userMsgEvents = events.filter(
 			(e: Event) => e.type === "message" && e.body?.source === "user",
@@ -1523,7 +1531,9 @@ describe("lifecycle: clarify response routing", () => {
 		expect(res.status).toBe(200);
 
 		await delay(50); // flush
-		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", project.id, "tasks"),
+		);
 		const events = eventStore.read(task.id);
 		const clarifyEvt = events.find(
 			(e: Event) =>
@@ -2465,7 +2475,9 @@ describe("lifecycle edge cases — session continuity", () => {
 		// Verify the orchestration_started event has resume: false
 		// Note: clear sessions wipes the JSONL events too, so only the
 		// new session's events exist after clear.
-		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", project.id, "tasks"),
+		);
 		const allEvents = eventStore.readAllSorted();
 		const orchStartEvents = allEvents.filter(
 			(e) => e.type === "orchestration_started",
@@ -2512,7 +2524,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		await delay(100);
 
 		// Write some fake event data to simulate a real session having history
-		const sessionsDir = join(dataDir, "sessions", project.id);
+		const sessionsDir = join(dataDir, "projects", project.id, "tasks");
 		// biome-ignore lint/style/noNonNullAssertion: length checked above
 		const firstReq = sessionRequests[0]!;
 		const sessionId = firstReq.resumeSessionId ?? "unknown";
@@ -2596,7 +2608,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		// biome-ignore lint/style/noNonNullAssertion: length checked above
 		const firstReq = sessionRequests[0]!;
 		const sessionId = firstReq.resumeSessionId ?? "unknown";
-		const sessionsDir = join(dataDir, "sessions", project.id);
+		const sessionsDir = join(dataDir, "projects", project.id, "tasks");
 		const eventStore2 = new EventStore(sessionsDir);
 		await eventStore2.append(sessionId, {
 			type: "message",
@@ -2622,7 +2634,9 @@ describe("lifecycle edge cases — session continuity", () => {
 		expect(resumeReq.activeEvents?.length).toBeGreaterThan(0); // has session history
 
 		// Verify the orchestration_started event has resume: true
-		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", project.id, "tasks"),
+		);
 		const allEvents = eventStore.readAllSorted();
 		const orchStartEvents = allEvents.filter(
 			(e) => e.type === "orchestration_started",
@@ -2757,7 +2771,9 @@ describe("lifecycle edge cases — session continuity", () => {
 		expect(firstUserMsg).toBeDefined();
 
 		// Verify orchestration_started has resume: false
-		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", project.id, "tasks"),
+		);
 		const allEvents = eventStore.readAllSorted();
 		const orchStart = allEvents.find(
 			(e) => e.type === "orchestration_started",
@@ -2790,7 +2806,9 @@ describe("lifecycle edge cases — session continuity", () => {
 		await delay(200);
 
 		// Verify events exist
-		const eventStore1 = new EventStore(join(dataDir, "sessions", project.id));
+		const eventStore1 = new EventStore(
+			join(dataDir, "projects", project.id, "tasks"),
+		);
 		const beforeClear = eventStore1.readAllSorted();
 		expect(beforeClear.length).toBeGreaterThan(0);
 
@@ -2801,7 +2819,9 @@ describe("lifecycle edge cases — session continuity", () => {
 		await delay(100);
 
 		// After clear, event store should be empty
-		const eventStore2 = new EventStore(join(dataDir, "sessions", project.id));
+		const eventStore2 = new EventStore(
+			join(dataDir, "projects", project.id, "tasks"),
+		);
 		const afterClear = eventStore2.readAllSorted();
 		expect(afterClear.length).toBe(0);
 	});
@@ -2822,7 +2842,9 @@ describe("lifecycle edge cases — session continuity", () => {
 		await delay(100);
 
 		// Count events after first launch
-		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const eventStore = new EventStore(
+			join(dataDir, "projects", project.id, "tasks"),
+		);
 		const eventsAfterLaunch = eventStore.readAllSorted();
 		const launchEventCount = eventsAfterLaunch.length;
 		expect(launchEventCount).toBeGreaterThan(0);
@@ -2840,7 +2862,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		// biome-ignore lint/style/noNonNullAssertion: length checked above
 		const firstReq = sessionRequests[0]!;
 		const sessionId = firstReq.resumeSessionId ?? "unknown";
-		const sessionsDir = join(dataDir, "sessions", project.id);
+		const sessionsDir = join(dataDir, "projects", project.id, "tasks");
 		const eventStore2 = new EventStore(sessionsDir);
 		await eventStore2.append(sessionId, {
 			type: "message",

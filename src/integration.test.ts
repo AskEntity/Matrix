@@ -234,7 +234,7 @@ async function sendMessage(
  * Read JSONL events for a session from the event store.
  * Flushes pending writes from the daemon's EventStore first to avoid race conditions
  * where async JSONL writes haven't completed yet.
- * Path: {dataDir}/sessions/{projectId}/{sessionId}.events.jsonl
+ * Path: {dataDir}/projects/{projectId}/tasks/{sessionId}.jsonl
  */
 async function readSessionEvents(ctx: TestContext, sessionId: string) {
 	// Flush the daemon's EventStore to ensure all pending writes are on disk
@@ -242,7 +242,9 @@ async function readSessionEvents(ctx: TestContext, sessionId: string) {
 	if (daemonStore) {
 		await daemonStore.flushSession(sessionId);
 	}
-	const store = new EventStore(join(ctx.dataDir, "sessions", ctx.projectId));
+	const store = new EventStore(
+		join(ctx.dataDir, "projects", ctx.projectId, "tasks"),
+	);
 	return store.read(sessionId);
 }
 
@@ -2565,7 +2567,9 @@ describe("Integration: auto-recovery from API 400", () => {
 		expect(bashResults.length).toBe(1);
 
 		// Inject the poison
-		const store = new EventStore(join(ctx.dataDir, "sessions", ctx.projectId));
+		const store = new EventStore(
+			join(ctx.dataDir, "projects", ctx.projectId, "tasks"),
+		);
 		await store.append(rootNodeId, {
 			type: "tool_result" as const,
 			tool: "mcp__mxd__bash",

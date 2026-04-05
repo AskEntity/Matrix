@@ -35,10 +35,10 @@ if (useOAuth) {
 	process.exit(1);
 }
 
-const sessionDir = `${process.env.HOME}/.mxd/sessions/b3d7a1f3-6f5b-4dd7-a046-55591a8c7d02`;
+const sessionDir = `${process.env.HOME}/.mxd/projects/b3d7a1f3-6f5b-4dd7-a046-55591a8c7d02/tasks`;
 const sid = process.argv[2] || "01KMXGHDB3C4AYJ38FAKSG9ETX";
 
-const path = `${sessionDir}/${sid}.events.jsonl`;
+const path = `${sessionDir}/${sid}.jsonl`;
 const lines = readFileSync(path, "utf-8").trim().split("\n");
 const events: Event[] = lines.map((l) => JSON.parse(l));
 

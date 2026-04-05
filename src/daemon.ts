@@ -34,6 +34,10 @@ import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
 import type { Event } from "./events.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { createTaskComplete } from "./queue-message-factory.ts";
+import {
+	logMigrationResult,
+	migrateStorageLayout,
+} from "./storage-migration.ts";
 import { buildSystemPrompt } from "./system-prompts.ts";
 import { TOOL_DONE } from "./tool-names.ts";
 import {
@@ -317,6 +321,17 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	 *   tool_results → messages end with user content → skip initial drain → API call
 	 */
 	async function autoResumeProjects(): Promise<void> {
+		// One-shot storage layout migration: move legacy
+		// {dataDir}/sessions/{projectId}/*.events.jsonl →
+		// {dataDir}/projects/{projectId}/tasks/*.jsonl.
+		// Idempotent; no-op after first successful run.
+		try {
+			const migrationResult = await migrateStorageLayout(ctx.config.dataDir);
+			logMigrationResult(migrationResult);
+		} catch (e) {
+			console.warn("[autoResume] Storage migration failed:", e);
+		}
+
 		const projects = ctx.pm.list();
 		for (const project of projects) {
 			const tracker = await getTracker(ctx, project.id);
