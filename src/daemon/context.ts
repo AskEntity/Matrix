@@ -3,6 +3,7 @@ import type { MatrixConfig } from "../config.ts";
 import type { EventStore } from "../event-store.ts";
 import type { ProjectManager } from "../project-manager.ts";
 import type { TaskTracker } from "../task-tracker.ts";
+import type { McpSessionStore } from "./mcp-session-state.ts";
 
 /** SSE client connection subscribed to a project's event stream. */
 export interface SSEClient {
@@ -61,6 +62,12 @@ export interface DaemonContext {
 	 * Used by stopTask/resetTask to await loop exit before clearing JSONL.
 	 */
 	readonly agentLoopPromises: Map<string, Promise<void>>;
+
+	/**
+	 * Per-MCP-session attachment state for the HTTP MCP endpoint.
+	 * Each external MCP client gets its own attached project/task.
+	 */
+	readonly mcpSessionStore: McpSessionStore;
 
 	/** Mutable counters/flags */
 	requestCount: number;

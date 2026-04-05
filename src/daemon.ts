@@ -18,12 +18,14 @@ import type {
 } from "./daemon/context.ts";
 import { broadcastTreeUpdate, emitEvent } from "./daemon/event-system.ts";
 import { getEventStore, getTracker } from "./daemon/helpers.ts";
+import { McpSessionStore } from "./daemon/mcp-session-state.ts";
 import { registerAgentRoutes } from "./daemon/routes/agent.ts";
 import {
 	createAuthMiddleware,
 	registerAuthRoutes,
 } from "./daemon/routes/auth.ts";
 import { registerConfigRoutes } from "./daemon/routes/config.ts";
+import { registerMcpEndpoint } from "./daemon/routes/mcp-endpoint.ts";
 import { registerMockShowcaseRoute } from "./daemon/routes/mock-showcase.ts";
 import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerSSERoute } from "./daemon/routes/sse.ts";
@@ -143,6 +145,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		eventStores: new Map(),
 		streamingText: new Map(),
 		agentLoopPromises: new Map(),
+		mcpSessionStore: new McpSessionStore(),
 		requestCount: 0,
 		startupReady: false,
 		globalConfig: config.initialConfig ?? {},
@@ -294,6 +297,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	registerAgentRoutes(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
 	registerSSERoute(app, ctx);
 	registerMockShowcaseRoute(app);
+	registerMcpEndpoint(app, ctx);
 
 	// Static file serving for the web UI (fallback for non-Bun environments)
 	app.use("/web/*", serveStatic({ root: "./" }));
