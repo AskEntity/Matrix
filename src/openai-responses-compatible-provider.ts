@@ -1,4 +1,5 @@
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
+import { writeDebugSnapshot } from "./debug-snapshot.ts";
 import {
 	type AssistantContent,
 	type AssistantToolCall,
@@ -773,6 +774,20 @@ function createOpenAIResponsesAdapter(
 		async *callAPI(params) {
 			const instructions =
 				`${params.systemPrompt.stable}\n\n${params.systemPrompt.variable}`.trim();
+
+			// Pre-API-call debug snapshot: evidence for drift debugging.
+			// Write the fully-assembled request bytes to the debug path. Overwrites.
+			// Non-fatal; never blocks the API call.
+			writeDebugSnapshot(params.debugSnapshotPath, {
+				sessionId: params.sessionId ?? "",
+				model: params.model,
+				system: instructions,
+				tools: params.tools,
+				cacheTtl: params.cacheTtl,
+				messages: params.messages,
+				provider: "openai-responses",
+			});
+
 			return yield* streamResponsesAPI({
 				endpoint: baseUrl,
 				authToken,

@@ -131,6 +131,16 @@ export function projectTasksDir(dataDir: string, projectId: string): string {
 	return join(dataDir, "projects", projectId, "tasks");
 }
 
+/**
+ * Compute the directory where a project's debug snapshots live.
+ * Unified layout: `{dataDir}/projects/{projectId}/debug/`.
+ * Used for drift snapshots (pre-API-call messages[]) and other investigation
+ * artifacts.
+ */
+export function projectDebugDir(dataDir: string, projectId: string): string {
+	return join(dataDir, "projects", projectId, "debug");
+}
+
 /** Get or create an EventStore for a project. */
 export function getEventStore(
 	ctx: DaemonContext,

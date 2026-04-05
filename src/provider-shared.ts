@@ -436,6 +436,12 @@ export interface ProviderAdapter {
 		cacheTtl?: "1h";
 		/** Session ID for test mock conversation keying. */
 		sessionId?: string;
+		/**
+		 * Absolute file path for pre-API-call debug snapshot. Non-fatal on error.
+		 * When set, provider writes the fully-assembled request bytes (post-cache-
+		 * control) to this path before each API call, overwriting.
+		 */
+		debugSnapshotPath?: string;
 	}): AsyncGenerator<Event, unknown>;
 
 	/** Extract text content from a provider response. */
@@ -1357,6 +1363,7 @@ export async function* runProviderLoop(
 					isCompacting: compactionPending,
 					cacheTtl: request.cacheTtl,
 					sessionId,
+					debugSnapshotPath: request.debugSnapshotPath,
 				});
 
 				let apiStep = await apiGen.next();

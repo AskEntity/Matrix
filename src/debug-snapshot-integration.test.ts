@@ -1,0 +1,300 @@
+/**
+ * Integration test for debug snapshot: verify that the Anthropic provider
+ * writes the pre-API-call snapshot to disk during a real agent run.
+ *
+ * Uses the same ValidatingMockAPI pattern as drift-lifecycle.test.ts.
+ */
+
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdtemp, rename, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp } from "./daemon.ts";
+import type { DebugSnapshot } from "./debug-snapshot.ts";
+import {
+	createMockedProviderWithMock,
+	ValidatingMockAPI,
+} from "./test-utils/mock-anthropic-api.ts";
+
+interface TestContext {
+	dataDir: string;
+	projectDir: string;
+	app: ReturnType<typeof createApp>;
+	mockAPI: ValidatingMockAPI;
+	projectId: string;
+}
+
+async function setupTestContext(): Promise<TestContext> {
+	const dataDir = await mkdtemp(join(tmpdir(), "mxd-debug-snapshot-data-"));
+	const projectDir = await mkdtemp(
+		join(tmpdir(), "mxd-debug-snapshot-project-"),
+	);
+
+	Bun.spawnSync(["git", "init"], { cwd: projectDir });
+	Bun.spawnSync(["git", "config", "user.email", "test@test.com"], {
+		cwd: projectDir,
+	});
+	Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: projectDir });
+	await Bun.write(join(projectDir, "README.md"), "# Test Project\n");
+	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
+	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
+
+	const mockAPI = new ValidatingMockAPI();
+	const provider = createMockedProviderWithMock(mockAPI);
+	const appResult = createApp({ dataDir, agentProvider: provider });
+
+	await appResult.pm.load();
+	const project = await appResult.pm.init(projectDir);
+
+	const tasksDir = join(projectDir, ".mxd", "tasks");
+	if (existsSync(tasksDir)) rmSync(tasksDir, { recursive: true });
+
+	const hookExample = join(
+		projectDir,
+		".mxd",
+		"hooks",
+		"setup_worktree.sh.example",
+	);
+	const hookActive = join(projectDir, ".mxd", "hooks", "setup_worktree.sh");
+	if (existsSync(hookExample)) await rename(hookExample, hookActive);
+	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
+	Bun.spawnSync(["git", "commit", "-m", "activate hook"], { cwd: projectDir });
+
+	appResult.markReady();
+
+	return {
+		dataDir,
+		projectDir,
+		app: appResult,
+		mockAPI,
+		projectId: project.id,
+	};
+}
+
+async function teardownTestContext(ctx: TestContext): Promise<void> {
+	await ctx.app.shutdown();
+	await new Promise((r) => setTimeout(r, 50));
+	await rm(ctx.dataDir, { recursive: true, force: true });
+	await rm(ctx.projectDir, { recursive: true, force: true });
+}
+
+async function waitForDone(
+	ctx: TestContext,
+	timeoutMs = 15000,
+): Promise<string> {
+	const tracker = await ctx.app.getTracker(ctx.projectId);
+	const rootNodeId = tracker.rootNodeId;
+	const start = Date.now();
+	while (Date.now() - start < timeoutMs) {
+		const rootNode = tracker.getTask(rootNodeId);
+		if (rootNode?.status === "verify" || rootNode?.status === "failed") {
+			return rootNode.status;
+		}
+		await new Promise((r) => setTimeout(r, 50));
+	}
+	throw new Error(`Agent did not finish within ${timeoutMs}ms`);
+}
+
+async function startAgent(ctx: TestContext, prompt: string): Promise<void> {
+	const tasksRes = await ctx.app.app.request(
+		`/projects/${ctx.projectId}/tasks`,
+	);
+	const { rootNodeId } = (await tasksRes.json()) as { rootNodeId: string };
+	await ctx.app.app.request(
+		`/projects/${ctx.projectId}/tasks/${rootNodeId}/message`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ content: prompt }),
+		},
+	);
+}
+
+describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
+	let ctx: TestContext | undefined;
+
+	afterEach(async () => {
+		if (ctx) {
+			await teardownTestContext(ctx);
+			ctx = undefined;
+		}
+	});
+
+	test("snapshot written after each API call, located at debug/<taskId>.last-messages.json", async () => {
+		ctx = await setupTestContext();
+
+		// Single-turn agent: call done() immediately.
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Starting." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "ok" },
+				},
+			],
+			stop_reason: "tool_use",
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForDone(ctx);
+
+		// Snapshot should exist at projects/<id>/debug/<taskId>.last-messages.json
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const snapshotPath = join(
+			ctx.dataDir,
+			"projects",
+			ctx.projectId,
+			"debug",
+			`${rootNodeId}.last-messages.json`,
+		);
+
+		expect(existsSync(snapshotPath)).toBe(true);
+		const snapshot = JSON.parse(
+			readFileSync(snapshotPath, "utf-8"),
+		) as DebugSnapshot;
+		expect(snapshot.sessionId).toBe(rootNodeId);
+		expect(snapshot.provider).toBe("anthropic");
+		expect(typeof snapshot.model).toBe("string");
+		expect(Array.isArray(snapshot.messages)).toBe(true);
+		expect((snapshot.messages as unknown[]).length).toBeGreaterThan(0);
+		expect(typeof snapshot.ts).toBe("number");
+		expect(snapshot.ts).toBeGreaterThan(0);
+	}, 15000);
+
+	test("snapshot is overwritten on each API call (not appended)", async () => {
+		ctx = await setupTestContext();
+
+		// 3-turn conversation: agent yields twice then done.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 2." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Done." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+
+		// Wait until agent is idle (first yield)
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const snapshotPath = join(
+			ctx.dataDir,
+			"projects",
+			ctx.projectId,
+			"debug",
+			`${rootNodeId}.last-messages.json`,
+		);
+
+		// Wait for first snapshot
+		for (let i = 0; i < 60; i++) {
+			if (existsSync(snapshotPath)) break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(existsSync(snapshotPath)).toBe(true);
+
+		// Read first snapshot
+		const first = JSON.parse(
+			readFileSync(snapshotPath, "utf-8"),
+		) as DebugSnapshot;
+		const firstTs = first.ts;
+		const firstMsgCount = (first.messages as unknown[]).length;
+
+		// Send wake message to advance
+		await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: "wake" }),
+			},
+		);
+
+		// Wait until snapshot is updated (ts changes or msg count grows)
+		for (let i = 0; i < 120; i++) {
+			const s = JSON.parse(
+				readFileSync(snapshotPath, "utf-8"),
+			) as DebugSnapshot;
+			if (s.ts > firstTs || (s.messages as unknown[]).length > firstMsgCount) {
+				// Updated — only ONE file exists (not appended)
+				const after = JSON.parse(
+					readFileSync(snapshotPath, "utf-8"),
+				) as DebugSnapshot;
+				expect(after.ts).toBeGreaterThanOrEqual(firstTs);
+				// Messages grew (prior assistant/user turns added)
+				expect((after.messages as unknown[]).length).toBeGreaterThanOrEqual(
+					firstMsgCount,
+				);
+				return;
+			}
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		throw new Error("Snapshot was never updated after second API call");
+	}, 30000);
+
+	test("snapshot messages match the final API request (prefix from live[])", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Done." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "ok" },
+				},
+			],
+			stop_reason: "tool_use",
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForDone(ctx);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const snapshotPath = join(
+			ctx.dataDir,
+			"projects",
+			ctx.projectId,
+			"debug",
+			`${rootNodeId}.last-messages.json`,
+		);
+
+		const snapshot = JSON.parse(
+			readFileSync(snapshotPath, "utf-8"),
+		) as DebugSnapshot;
+
+		// The snapshot should have role="user" first message (the initial prompt)
+		const messages = snapshot.messages as Array<{
+			role: string;
+			content: unknown;
+		}>;
+		expect(messages[0]?.role).toBe("user");
+
+		// System prompt and tools are also captured
+		expect(snapshot.system).toBeDefined();
+		expect(snapshot.tools).toBeDefined();
+	}, 15000);
+});

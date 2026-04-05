@@ -70,6 +70,18 @@ export interface AgentRequest {
 	 * the session's tool definitions.
 	 */
 	setAllTools?: (tools: unknown[]) => void;
+	/**
+	 * Absolute file path where the provider should write a pre-API-call snapshot
+	 * of the exact bytes being sent to the API. Overwritten on every API call.
+	 *
+	 * Evidence for post-mortem cache-drift debugging: when a restart causes
+	 * unexpected cache miss, compare this snapshot (last pre-restart state) to
+	 * walker(JSONL). Enables diff at the exact granularity of what the API saw.
+	 *
+	 * Non-fatal on write failure — the snapshot is diagnostic, not load-bearing.
+	 * If undefined, no snapshot is written.
+	 */
+	debugSnapshotPath?: string;
 }
 
 /**

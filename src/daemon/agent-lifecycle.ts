@@ -42,6 +42,7 @@ import {
 	getEventStore,
 	getProjectProvider,
 	getTracker,
+	projectDebugDir,
 	readProjectMemory,
 	resolveProjectConfig,
 } from "./helpers.ts";
@@ -811,6 +812,11 @@ export async function runAgentForNode(
 				? buildSystemPrompt({ selfBootstrap: true })
 				: buildSystemPrompt();
 
+		const debugSnapshotPath = join(
+			projectDebugDir(ctx.config.dataDir, project.id),
+			`${nodeId}.last-messages.json`,
+		);
+
 		const sessionRequest: AgentRequest = {
 			cwd: agentCwd,
 			projectPath: isRoot ? project.path : undefined,
@@ -826,6 +832,7 @@ export async function runAgentForNode(
 			cacheTtl: effectiveCacheTtl,
 			setMessages: agentCtx.setMessages,
 			setAllTools: agentCtx.setAllTools,
+			debugSnapshotPath,
 
 			signal: abortController.signal,
 			queue: childQueue,
