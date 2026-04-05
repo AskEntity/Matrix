@@ -1,0 +1,664 @@
+/**
+ * HTTP MCP endpoint — exposes Matrix's read-only tools to external MCP clients
+ * (e.g., Claude Code) via the MCP Streamable HTTP transport.
+ *
+ * Each external MCP client connection gets a stateful session with its own
+ * attachment — which project (and optionally which task) the session is
+ * looking at. Tools execute in the attached context.
+ *
+ * Routes:
+ *   ALL /mcp        — MCP Streamable HTTP endpoint (POST/GET/DELETE)
+ *
+ * Auth: reuses the daemon's JWT auth middleware (applied globally in daemon.ts).
+ *
+ * WHY: External Claude Code can query Matrix state without context-switching
+ * to Matrix's web UI. Foundation for graceful degradation if OAuth tightens.
+ */
+
+import { readFileSync } from "node:fs";
+import { basename, isAbsolute, join, resolve } from "node:path";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import type { Hono } from "hono";
+import { z } from "zod";
+import { getImageDimensions } from "../../image-dimensions.ts";
+import { jsSearch } from "../../tools/search.ts";
+import { isFolder, isTask, stripSession } from "../../types.ts";
+import type { DaemonContext } from "../context.ts";
+import { getEventStore, getTracker, stripEventForUI } from "../helpers.ts";
+
+/** Check path is inside root after resolution. Returns resolved path. */
+function assertPathInRoot(absPath: string, rootDir: string): string {
+	const resolvedPath = resolve(absPath);
+	const resolvedRoot = resolve(rootDir);
+	const withSep = resolvedRoot.endsWith("/")
+		? resolvedRoot
+		: `${resolvedRoot}/`;
+	if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(withSep)) {
+		throw new Error(
+			`Path escapes attached root: ${absPath} is not inside ${rootDir}`,
+		);
+	}
+	return resolvedPath;
+}
+
+/**
+ * Wire Matrix's MCP tools into an McpServer instance. The session ID is
+ * resolved lazily via getSessionId() so we can bind tools before the
+ * transport has generated its session ID.
+ */
+function wireTools(
+	server: McpServer,
+	ctx: DaemonContext,
+	getSessionId: () => string | undefined,
+): void {
+	const getAttachment = () => {
+		const sid = getSessionId();
+		if (!sid) return undefined;
+		return ctx.mcpSessionStore.get(sid)?.attachment;
+	};
+
+	const requireAttachedTask = () => {
+		const a = getAttachment();
+		if (!a) throw new Error("Not attached. Call attach_to first.");
+		if (!a.taskId) {
+			throw new Error(
+				"Not attached to a task. Call attach_to(projectId, taskId) with a taskId.",
+			);
+		}
+		return { projectId: a.projectId, taskId: a.taskId };
+	};
+
+	const getAttachedWorktreeRoot = async (): Promise<string> => {
+		const { projectId, taskId } = requireAttachedTask();
+		const project = ctx.pm.get(projectId);
+		if (!project) throw new Error(`Project not found: ${projectId}`);
+		const tracker = await getTracker(ctx, projectId);
+		const node = tracker.getTask(taskId);
+		if (!node) throw new Error(`Task not found: ${taskId}`);
+		return node.worktreePath ?? project.path;
+	};
+
+	// ── Unscoped tools ─────────────────────────────────────────────────────
+
+	server.registerTool(
+		"list_projects",
+		{
+			description:
+				"List all registered Matrix projects. Call this first to discover project IDs for attach_to.",
+			inputSchema: {},
+		},
+		async () => {
+			const projects = ctx.pm.list().map((p) => ({
+				id: p.id,
+				name: p.name,
+				path: p.path,
+			}));
+			return {
+				content: [{ type: "text", text: JSON.stringify(projects, null, 2) }],
+			};
+		},
+	);
+
+	server.registerTool(
+		"attach_to",
+		{
+			description:
+				"Attach this MCP session to a Matrix project and (optionally) a task within it. " +
+				"Scoped tools (get_tree, get_task, read_file, etc.) operate in the attached context. " +
+				"Calling attach_to again replaces the current attachment.",
+			inputSchema: {
+				projectId: z.string().describe("Project ID (from list_projects)"),
+				taskId: z
+					.string()
+					.optional()
+					.describe(
+						"Task node ID within the project. Required by scoped file tools.",
+					),
+			},
+		},
+		async (args) => {
+			const sid = getSessionId();
+			if (!sid) {
+				return {
+					content: [
+						{ type: "text", text: "Error: MCP session not initialized." },
+					],
+					isError: true,
+				};
+			}
+			const project = ctx.pm.get(args.projectId);
+			if (!project) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: Project not found: ${args.projectId}`,
+						},
+					],
+					isError: true,
+				};
+			}
+			if (args.taskId) {
+				const tracker = await getTracker(ctx, args.projectId);
+				const node = tracker.getTask(args.taskId);
+				if (!node) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Error: Task not found in project ${project.name}: ${args.taskId}`,
+							},
+						],
+						isError: true,
+					};
+				}
+			}
+			// Ensure state exists (onsessioninitialized may not have fired yet on first call)
+			if (!ctx.mcpSessionStore.get(sid)) ctx.mcpSessionStore.create(sid);
+			ctx.mcpSessionStore.attach(sid, {
+				projectId: args.projectId,
+				taskId: args.taskId,
+			});
+			const info = {
+				projectId: args.projectId,
+				projectName: project.name,
+				projectPath: project.path,
+				taskId: args.taskId ?? null,
+			};
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Attached.\n${JSON.stringify(info, null, 2)}`,
+					},
+				],
+			};
+		},
+	);
+
+	server.registerTool(
+		"get_attachment",
+		{
+			description:
+				"Return the current attachment for this MCP session — which project and task (if any) scoped tools will operate against.",
+			inputSchema: {},
+		},
+		async () => {
+			const a = getAttachment();
+			if (!a) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Not attached. Call attach_to(projectId, taskId) to attach.",
+						},
+					],
+				};
+			}
+			const project = ctx.pm.get(a.projectId);
+			const info = {
+				projectId: a.projectId,
+				projectName: project?.name ?? "(missing)",
+				projectPath: project?.path ?? null,
+				taskId: a.taskId ?? null,
+			};
+			return {
+				content: [{ type: "text", text: JSON.stringify(info, null, 2) }],
+			};
+		},
+	);
+
+	// ── Scoped tools (require attached project+task) ───────────────────────
+
+	server.registerTool(
+		"get_tree",
+		{
+			description:
+				"Get the task tree of the attached project. Returns all nodes with status, hierarchy, and parent links.",
+			inputSchema: {
+				include_closed: z
+					.boolean()
+					.optional()
+					.describe(
+						"Include closed tasks (default false — hidden to reduce noise).",
+					),
+				include_details: z
+					.boolean()
+					.optional()
+					.describe(
+						"Include full details per node (default false — returns only id, title, status, children, parentId).",
+					),
+			},
+		},
+		async (args) => {
+			try {
+				const a = getAttachment();
+				if (!a) throw new Error("Not attached. Call attach_to first.");
+				const tracker = await getTracker(ctx, a.projectId);
+				let nodes = tracker.allNodes();
+				if (!args.include_closed) {
+					nodes = nodes.filter((n) => isFolder(n) || n.status !== "closed");
+				}
+				const visibleIds = new Set(nodes.map((n) => n.id));
+				const filterChildren = (children: string[]) =>
+					children.filter((id) => visibleIds.has(id));
+				const result = args.include_details
+					? nodes.map((n) => {
+							if (isFolder(n)) {
+								return { ...n, children: filterChildren(n.children) };
+							}
+							const rest = stripSession(n);
+							return { ...rest, children: filterChildren(rest.children) };
+						})
+					: nodes.map((n) => {
+							const out: Record<string, unknown> = {
+								id: n.id,
+								title: n.title,
+								children: filterChildren(n.children),
+								parentId: n.parentId,
+							};
+							if (isTask(n)) out.status = n.status;
+							if (isFolder(n)) out.type = "folder";
+							return out;
+						});
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{ rootNodeId: tracker.rootNodeId, nodes: result },
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					isError: true,
+				};
+			}
+		},
+	);
+
+	server.registerTool(
+		"get_task",
+		{
+			description:
+				"Get full details (description, status, branch, worktreePath, cost) of a task in the attached project.",
+			inputSchema: {
+				taskId: z
+					.string()
+					.describe("Task node ID (or unique prefix, min 8 chars)"),
+			},
+		},
+		async (args) => {
+			try {
+				const a = getAttachment();
+				if (!a) throw new Error("Not attached. Call attach_to first.");
+				const tracker = await getTracker(ctx, a.projectId);
+				const node = tracker.getTask(args.taskId);
+				if (!node) {
+					return {
+						content: [{ type: "text", text: `Task not found: ${args.taskId}` }],
+						isError: true,
+					};
+				}
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(stripSession(node), null, 2),
+						},
+					],
+				};
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					isError: true,
+				};
+			}
+		},
+	);
+
+	server.registerTool(
+		"get_logs",
+		{
+			description:
+				"Get recent JSONL events (activity log) for a task in the attached project. " +
+				"Returns events after the last compact_marker or fork_marker, with optional limit.",
+			inputSchema: {
+				taskId: z.string().describe("Task node ID to fetch logs for"),
+				limit: z
+					.number()
+					.optional()
+					.describe(
+						"Maximum number of most-recent events to return (default 50, max 500).",
+					),
+			},
+		},
+		async (args) => {
+			try {
+				const a = getAttachment();
+				if (!a) throw new Error("Not attached. Call attach_to first.");
+				const tracker = await getTracker(ctx, a.projectId);
+				const node = tracker.getTask(args.taskId);
+				if (!node) {
+					return {
+						content: [{ type: "text", text: `Task not found: ${args.taskId}` }],
+						isError: true,
+					};
+				}
+				const eventStore = getEventStore(ctx, a.projectId);
+				await eventStore.flushSession(args.taskId);
+				const { events, hasOlderEvents } = eventStore.readFromLastCompactMarker(
+					args.taskId,
+				);
+				const limit = Math.min(Math.max(args.limit ?? 50, 1), 500);
+				const sliced =
+					events.length > limit ? events.slice(events.length - limit) : events;
+				const stripped = sliced.map((e) =>
+					stripEventForUI(e as unknown as Record<string, unknown>),
+				);
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{
+									taskId: args.taskId,
+									count: stripped.length,
+									totalAfterMarker: events.length,
+									hasOlderEvents,
+									events: stripped,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					isError: true,
+				};
+			}
+		},
+	);
+
+	server.registerTool(
+		"read_file",
+		{
+			description:
+				"Read a file from the attached task's worktree. Paths can be relative (to worktree root) or absolute (must be inside the worktree).",
+			inputSchema: {
+				path: z.string().describe("File path (relative or absolute)"),
+				offset: z
+					.number()
+					.optional()
+					.describe("Start line (1-based, default 1)"),
+				limit: z
+					.number()
+					.optional()
+					.describe("Maximum number of lines to return"),
+			},
+		},
+		async (args) => {
+			try {
+				const root = await getAttachedWorktreeRoot();
+				const absPath = isAbsolute(args.path)
+					? args.path
+					: join(root, args.path);
+				const safePath = assertPathInRoot(absPath, root);
+
+				const ext = safePath.split(".").pop()?.toLowerCase();
+				const IMAGE_MEDIA_TYPES: Record<
+					string,
+					"image/jpeg" | "image/png" | "image/gif" | "image/webp"
+				> = {
+					png: "image/png",
+					jpg: "image/jpeg",
+					jpeg: "image/jpeg",
+					gif: "image/gif",
+					webp: "image/webp",
+				};
+				const imageMediaType = ext ? IMAGE_MEDIA_TYPES[ext] : undefined;
+
+				if (imageMediaType) {
+					const data = readFileSync(safePath);
+					const MAX_DIMENSION = 8000;
+					const dims = getImageDimensions(data);
+					if (
+						dims &&
+						(dims.width > MAX_DIMENSION || dims.height > MAX_DIMENSION)
+					) {
+						return {
+							content: [
+								{
+									type: "text",
+									text: `Image too large (${dims.width}x${dims.height} pixels, max ${MAX_DIMENSION}px per dimension).`,
+								},
+							],
+							isError: true,
+						};
+					}
+					const b64 = data.toString("base64");
+					return {
+						content: [
+							{ type: "text", text: `[Image: ${basename(safePath)}]` },
+							{ type: "image", data: b64, mimeType: imageMediaType },
+						],
+					};
+				}
+
+				const offset = Math.max(1, args.offset ?? 1);
+				const limit = args.limit;
+				const raw = readFileSync(safePath, "utf-8");
+				if (offset === 1 && !limit) {
+					return { content: [{ type: "text", text: raw }] };
+				}
+				const lines = raw.split("\n");
+				const start = offset - 1;
+				const sliced =
+					limit !== undefined
+						? lines.slice(start, start + limit)
+						: lines.slice(start);
+				const remaining = lines.length - (start + sliced.length);
+				let text = sliced.join("\n");
+				if (remaining > 0) {
+					text += `\n[... ${remaining} more lines, use offset=${offset + sliced.length} to continue]`;
+				}
+				return { content: [{ type: "text", text }] };
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					isError: true,
+				};
+			}
+		},
+	);
+
+	server.registerTool(
+		"list_files",
+		{
+			description:
+				'List files in the attached task\'s worktree matching a glob pattern (e.g. "src/**/*.ts").',
+			inputSchema: {
+				pattern: z.string().optional().describe('Glob pattern (default: "*")'),
+			},
+		},
+		async (args) => {
+			try {
+				const root = await getAttachedWorktreeRoot();
+				const pattern = args.pattern ?? "*";
+				const glob = new Bun.Glob(pattern);
+				const files: string[] = [];
+				for await (const file of glob.scan({ cwd: root, dot: false })) {
+					files.push(file);
+					if (files.length >= 500) break;
+				}
+				return {
+					content: [{ type: "text", text: files.join("\n") || "(no files)" }],
+				};
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					isError: true,
+				};
+			}
+		},
+	);
+
+	server.registerTool(
+		"search",
+		{
+			description:
+				"Regex search inside the attached task's worktree. Uses ripgrep-style syntax.",
+			inputSchema: {
+				pattern: z.string().describe("Regex pattern"),
+				path: z
+					.string()
+					.optional()
+					.describe("Subpath to search in (default: worktree root)"),
+				glob: z.string().optional().describe("File glob filter"),
+				context: z.number().optional().describe("Lines of context"),
+				output_mode: z
+					.enum(["content", "files_with_matches", "count"])
+					.optional(),
+				head_limit: z
+					.number()
+					.optional()
+					.describe("Max entries (default 50, max 200)"),
+				case_insensitive: z.boolean().optional(),
+				multiline: z.boolean().optional(),
+				excluded_dirs: z.array(z.string()).optional(),
+			},
+		},
+		async (args) => {
+			try {
+				const root = await getAttachedWorktreeRoot();
+				const result = await jsSearch({
+					pattern: args.pattern,
+					searchPath: args.path ?? ".",
+					glob: args.glob,
+					contextLines: args.context,
+					outputMode: args.output_mode ?? "content",
+					headLimit: Math.min(args.head_limit ?? 50, 200),
+					caseInsensitive: args.case_insensitive ?? false,
+					multiline: args.multiline ?? false,
+					excludedDirs: args.excluded_dirs,
+					cwd: root,
+				});
+				return { content: [{ type: "text", text: result || "(no matches)" }] };
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					isError: true,
+				};
+			}
+		},
+	);
+}
+
+/**
+ * Register the /mcp endpoint on the Hono app.
+ *
+ * Each new MCP session spawns its own McpServer + transport pair.
+ * Subsequent requests on the same session (by mcp-session-id header)
+ * reuse the existing transport.
+ */
+export function registerMcpEndpoint(app: Hono, ctx: DaemonContext): void {
+	// One transport per MCP session ID (stateful).
+	const transports = new Map<
+		string,
+		WebStandardStreamableHTTPServerTransport
+	>();
+
+	const handleMcp = async (c: {
+		req: { raw: Request; header: (name: string) => string | undefined };
+	}): Promise<Response> => {
+		const sessionIdHeader = c.req.header("mcp-session-id");
+
+		if (sessionIdHeader) {
+			const transport = transports.get(sessionIdHeader);
+			if (!transport) {
+				return new Response(
+					JSON.stringify({
+						jsonrpc: "2.0",
+						error: {
+							code: -32000,
+							message: "Session not found. Start a new initialize request.",
+						},
+						id: null,
+					}),
+					{ status: 404, headers: { "content-type": "application/json" } },
+				);
+			}
+			return transport.handleRequest(c.req.raw);
+		}
+
+		// New session → create transport + server.
+		// enableJsonResponse: single POST returns a JSON response (no SSE stream)
+		// for request/response calls. Easier for clients and tests; SSE is only needed
+		// for server-initiated notifications which we don't use for read-only tools.
+		const transport = new WebStandardStreamableHTTPServerTransport({
+			sessionIdGenerator: () => crypto.randomUUID(),
+			enableJsonResponse: true,
+			onsessioninitialized: (sid) => {
+				ctx.mcpSessionStore.create(sid);
+				transports.set(sid, transport);
+			},
+			onsessionclosed: (sid) => {
+				ctx.mcpSessionStore.delete(sid);
+				transports.delete(sid);
+			},
+		});
+
+		transport.onclose = () => {
+			if (transport.sessionId) {
+				ctx.mcpSessionStore.delete(transport.sessionId);
+				transports.delete(transport.sessionId);
+			}
+		};
+
+		const server = new McpServer({ name: "matrix", version: "1.0.0" });
+		wireTools(server, ctx, () => transport.sessionId);
+		await server.connect(transport);
+		return transport.handleRequest(c.req.raw);
+	};
+
+	app.all("/mcp", handleMcp);
+}

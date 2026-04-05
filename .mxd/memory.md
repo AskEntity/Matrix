@@ -368,7 +368,6 @@ New chapter between Git(4) and Writing Code(now 6). All subsequent chapters renu
 
 "this session" → "ENTIRE history". Re-compaction must integrate previous checkpoint into new narrative, not restart. Section 1 and Section 8 both updated.
 
-
 ## Live/Reconstruction Drift Fix — Caption Bug (2026-04-05)
 
 ### Bug
@@ -449,3 +448,32 @@ Without messages_consumed, message with id is never rendered.
 
 ### Third-codepath known bug
 `src/drift-initial-drain.test.ts` — documents & reproduces the third codepath bug in `provider-shared.ts:~720` (initial drain drops images from fresh-start queue). Kept as `.todo` until that path is unified with walker.
+## HTTP MCP Endpoint (2026-04-05)
+
+External MCP clients (Claude Code) can connect to Matrix via `POST /mcp`. Matrix
+exposes 9 read-only tools: 3 unscoped (`list_projects`, `attach_to`,
+`get_attachment`) + 6 scoped (`get_tree`, `get_task`, `get_logs`, `read_file`,
+`list_files`, `search`). Scoped tools require prior `attach_to(projectId, taskId)`.
+
+### Architecture
+- `src/daemon/routes/mcp-endpoint.ts` — registers `ALL /mcp` on Hono app
+- `src/daemon/mcp-session-state.ts` — per-MCP-session attachment store
+- Uses `WebStandardStreamableHTTPServerTransport` with `enableJsonResponse: true`
+  (single POST returns JSON, no SSE streaming needed for request/response tools)
+- Each MCP session = own McpServer + transport + attachment state
+- Stateful: `mcp-session-id` header tracks sessions across requests
+- Tools bind to session via lazy `getSessionId()` closure (transport sessionId
+  isn't assigned until it handles the initialize request)
+
+### Path safety
+`assertPathInRoot()` resolves absolute paths and checks prefix-with-separator
+against attached worktree root. Rejects `../` escapes and cross-project paths.
+
+### Auth
+Reuses daemon's global JWT middleware. If `auth.json` has `jwtSecret`, `/mcp`
+requires `Authorization: Bearer <token>`. Dev mode (no jwtSecret) passes through.
+
+### Claude Code config
+```json
+{ "mcpServers": { "matrix": { "type": "http", "url": "http://localhost:7433/mcp" } } }
+```
