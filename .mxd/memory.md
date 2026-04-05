@@ -640,3 +640,37 @@ URL hash `#projectId/taskId/entry=<ts>` seeds an anchored target on mount. One-s
 5. Permalink — `entry=<ts>` fragment parsed on mount, seeds anchored target
 
 Files: `web/hooks/useScrollTarget.ts`, `web/App.tsx`, `web/components/ActivityLog.tsx`, `web/components/ToolCard.tsx`, `web/components/tools/LogEntryView.tsx` (added `data-entry-ts` attribute).
+
+## Session Config Refresh at Compact (2026-04-05)
+
+**Compact is the refresh boundary** for session-scoped config. After compaction wipes messages[] (cache already lost), session_config is re-emitted with CURRENT values:
+- `tools`: rebuilt from `request.mcpToolDefs` (picks up tools added to orchestrator-tools.ts since session start)
+- `systemStable` / `systemVariable`: refreshed from `request.refreshSystemPrompt()`
+- `request.systemPrompt` also updated (next API call reads from here, not just the emitted event)
+- `cacheTtl`: **intentionally frozen** (fork inheritance semantic preserved, see draft 01KNFCWDEYR1114TZCNXNCMW4Z for opt-in refresh)
+
+**Without compact (normal resume)**: everything stays frozen from storedConfig → byte-identical prefix → cache hit.
+
+**Why this invariant matters**:
+- Anthropic: frozen tools are a DX issue (model can still invoke tools by name — agents CAN work around via knowledge)
+- OpenAI Responses: frozen tools are CORRECTNESS-critical (schema-constrained sampling — agents physically cannot call tools not in tools array)
+- System prompt: always should match current memory.md + principles after compact (prompt evolution becomes visible)
+
+**Bug found by mutation testing**: initial fix refreshed the emitted session_config event but forgot to update `request.systemPrompt`. Next API call read stale value. Strong test (Invariant A) caught it — "test your tests" principle applied.
+
+**Test approach**: pre-seed JSONL with BOGUS session_config (wrong prompt, wrong tools), run agent to compact, verify post-compact emitted session_config contains CURRENT values (not bogus). Provider-agnostic, no mock instruction dependencies.
+
+See: commit 0d8cda0, test file `src/drift-lifecycle.test.ts`, ValidatingMockAPI helpers `getToolNames()` + `getSystemText()`.
+
+## Hidden Tools via Anthropic Free-Form Name Sampling (2026-04-05)
+
+**Matrix's tools list frozen in session_config** defines what the LLM sees in its tool inventory. But the DAEMON's handler registry has every registered tool.
+
+**Anthropic API** uses free-form tool name generation — server dispatches any name to whatever handler exists. Agents can invoke tools NOT in their tools list (e.g., `evaluate_script` is intentionally hidden from session_config). If you know a tool's name, you can call it.
+
+**OpenAI Responses API** uses schema-constrained sampling — the model's probability distribution is masked to only tool names in the provided tools array. Agents CANNOT call tools not in session_config on OpenAI. `strict: false` on Responses only relaxes optional-field validation, not tool-name enforcement.
+
+**Operational consequences**:
+- Anthropic agents: can invoke create_folder, delete_folder, etc. by name even in sessions where those tools weren't frozen in
+- OpenAI agents: must see the tool in their list to call it
+- This is WHY compact-refresh-tools fix is OpenAI-critical, Anthropic-nice-to-have
