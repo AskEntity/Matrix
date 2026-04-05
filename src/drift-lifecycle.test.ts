@@ -2391,3 +2391,142 @@ describe("Drift: high-pressure lifecycle chains", () => {
 		expect(status2).toBe("verify");
 	}, 60000);
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// COMPACTION DRIFT TESTS
+// ══════════════════════════════════════════════════════════════════════
+//
+// WHY these tests: production cache miss observed on 2026-04-05 after a
+// daemon restart that followed a compaction ~32min earlier. 70K tokens
+// drifted between live messages[] (pre-restart) and walker reconstruction
+// (post-restart). This is the same bug class as the caption-bug — two
+// independent codepaths (live vs walker) producing different bytes.
+//
+// These tests compare:
+//   1. The messages[] that was SENT to the API in the post-compact call
+//      (captured via mockAPI.getRequestHistory())
+//   2. The messages[] produced by running the walker over the JSONL events
+//      after the last compact_marker (what a restart would produce)
+//
+// They MUST be byte-identical (modulo cache_control positions). If not,
+// restart after compact loses cache.
+// ══════════════════════════════════════════════════════════════════════
+
+describe("Drift: compaction lifecycle", () => {
+	let ctx: TestContext;
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	// REPRODUCTION: triggering /compact while agent is in yield causes API 400
+	// "consecutive user messages" when messages.length > 4.
+	//
+	// Root cause: two codepaths push user messages back-to-back:
+	//   1. handleImplicitYield returns {compactOnly:true}, provider-shared.ts:1025
+	//      pushes yield tool_result as user message.
+	//   2. Next loop iteration: provider-shared.ts:1280 pushes summarization
+	//      instruction as another user message.
+	// Result: consecutive user messages → API 400.
+	//
+	// When messages.length <= 4 the compact path bails out early with "Context
+	// too short" and the bug is masked. Real production scenarios always have
+	// messages.length > 4.
+	test("REPRO: /compact while agent in yield → API 400 consecutive user messages", async () => {
+		ctx = await setupTestContext();
+
+		// Need messages.length > 4 at compact time. Use multi-cycle conversation.
+		// Each yield+wake cycle adds 2 messages (assistant+user). After 3 cycles:
+		// messages has system + user + assistant + user + assistant + user = 6.
+		const instruction = JSON.stringify({
+			turns: [
+				// Turn 1: yield
+				{
+					blocks: [
+						{ type: "text", text: "Turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// Turn 2: yield
+				{
+					blocks: [
+						{ type: "text", text: "Turn 2." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// Turn 3: yield (now messages will have >4 entries when compact arrives)
+				{
+					blocks: [
+						{ type: "text", text: "Turn 3." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// Turn 4 (post-compact): done
+				{
+					blocks: [
+						{ type: "text", text: "Done after compact." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 1");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 2");
+		await waitForIdle(ctx);
+		// Now messages.length > 4. Agent is idle at yield. Trigger compact.
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const compactRes = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/compact`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ nodeId: rootNodeId }),
+			},
+		);
+		expect(compactRes.status).toBe(200);
+
+		// Wait for done (or crash).
+		let caughtStatus: string | null = null;
+		let caughtError: Error | null = null;
+		try {
+			caughtStatus = await waitForDone(ctx);
+		} catch (e) {
+			caughtError = e instanceof Error ? e : new Error(String(e));
+		}
+
+		// Diagnostic dump: show what happened
+		const events = await readSessionEvents(ctx, rootNodeId);
+		console.log(`\n=== EVENT SEQUENCE (${events.length} events) ===`);
+		for (const e of events) {
+			const summary =
+				e.type === "tool_call"
+					? `tool_call ${(e as { tool: string }).tool}`
+					: e.type === "tool_result"
+						? `tool_result ${(e as { tool: string }).tool}: ${String((e as { content: string }).content).slice(0, 50)}`
+						: e.type === "assistant_text"
+							? `assistant_text: ${(e as { content: string }).content.slice(0, 40)}`
+							: e.type === "message"
+								? `message`
+								: e.type === "error"
+									? `ERROR: ${(e as { message: string }).message}`
+									: e.type;
+			console.log(`  ${summary}`);
+		}
+		console.log(`Request count: ${ctx.mockAPI.getRequestCount()}`);
+		console.log(`Status: ${caughtStatus ?? "(crashed)"}`);
+		console.log(`Error: ${caughtError?.message ?? "(none)"}`);
+
+		// The bug: agent crashes with API 400 "consecutive user messages".
+		// Mark this as the failing expectation.
+		expect(caughtStatus).toBe("verify");
+	}, 15000);
+});
