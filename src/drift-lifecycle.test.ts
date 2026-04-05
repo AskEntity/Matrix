@@ -1263,15 +1263,18 @@ describe("Drift: duplicate yield in same turn", () => {
 		if (ctx) await teardownTestContext(ctx);
 	});
 
-	// EXPOSED BUG: duplicate-yield flow creates consecutive user messages.
-	// Current flow:
-	//   1. Extra yield → buildUserTurn pushes user message with extra tool_results
+	// Regression: duplicate-yield flow previously created consecutive user messages.
+	// Old flow:
+	//   1. Extra yield → buildUserTurn pushed user message with extra tool_results
 	//   2. pendingYieldToolCall set → continue → yield wait → wake
-	//   3. Real yield → buildUserTurn pushes ANOTHER user message with real tool_result
+	//   3. Real yield → buildUserTurn pushed ANOTHER user message with real tool_result
 	//   → 2 consecutive user messages → API 400 "Messages must alternate roles"
-	// The extras should be BUNDLED into the real-yield tool_result message,
-	// not pushed as a separate user message. Raised to parent.
-	test.todo("2 yield calls in same turn: first real, extras no-op — restart ok", async () => {
+	// Fix: extras are now BUNDLED into the real-yield tool_result user turn (built
+	// when yield wakes up). pendingDuplicateYieldExtras carries them across the
+	// continue/wait boundary. Extras' tool_result events still emit to JSONL
+	// immediately (orphan prevention) — walker processes all yield tool_results
+	// into the same user turn matching live.
+	test("2 yield calls in same turn: first real, extras no-op — restart ok", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
 
@@ -1327,8 +1330,8 @@ describe("Drift: duplicate yield in same turn", () => {
 		expect(status2).toBe("verify");
 	}, 30000);
 
-	// Same bug as "2 yield calls" above — raised to parent.
-	test.todo("3 yield calls in same turn: all extras get no-op tool_results", async () => {
+	// Same scenario, 3 yields — now fixed.
+	test("3 yield calls in same turn: all extras get no-op tool_results", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
 
