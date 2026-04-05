@@ -70,6 +70,12 @@ async function setupTestContext(): Promise<TestContext> {
 		cwd: projectDir,
 	});
 	Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: projectDir });
+	// Test gitignore: agent scenarios write scratch files but don't commit;
+	// done() now rejects dirty worktrees. Ignore all but explicitly tracked files.
+	await Bun.write(
+		join(projectDir, ".gitignore"),
+		"*\n!/.gitignore\n!/README.md\n!/.mxd/\n!/.mxd/**\n",
+	);
 	await Bun.write(join(projectDir, "README.md"), "# Test Project\n");
 	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
 	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
