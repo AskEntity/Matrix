@@ -245,13 +245,17 @@ When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provide
 2. Folder/grouping feature (UI-only visual grouping, not tree structure)
 3. Tool search — dynamic tool discovery (draft exists, Anthropic has server-side `defer_loading` but user prefers client-side)
 
-## Duplicate Yield Orphan Fix (2026-04-02)
+## Duplicate Yield Handling (updated 2026-04-05)
 
-API can return multiple yield (or done) tool_calls in the same assistant turn. Production bug: only the first yield got `pendingYieldToolCall`, extras became orphans. `buildSessionRepair` skipped ALL yield/done orphans → unrecoverable 400 loop.
+API can return multiple yield tool_calls in the same assistant turn. Evolution:
 
-**Fix 1**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done (the intended orphan for resume). Earlier yield/done orphans are genuine repair targets.
-**Fix 2**: Provider loop writes no-op tool_results for duplicate yield calls in the same turn (first one wins).
-**Architectural lesson**: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call. Any other yield/done without a result is a bug.
+**Fix 1 (2026-04-02)**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done. Earlier yield/done orphans are genuine repair targets. Architectural lesson: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call.
+
+**Fix 2 (2026-04-02, superseded)**: Provider loop wrote no-op tool_results for extras as a SEPARATE user message. This caused a new bug: extras user message + real yield's user message → 2 consecutive user messages → API 400 "Messages must alternate roles".
+
+**Fix 3 (2026-04-05, current)**: Extras' tool_result events still emit to JSONL immediately (orphan prevention), but their live-path construction is DEFERRED via `pendingDuplicateYieldExtras`. On yield wake, extras bundle into the SAME `buildUserTurn` call as the real yield, producing ONE user message with `[...extras, real, ...queue]`. Order matches JSONL (extras emit at yield-detection, real emits at wake → walker reconstructs in that order → live must match).
+
+Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn" regression-guard this.
 
 
 
