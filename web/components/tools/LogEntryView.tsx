@@ -27,13 +27,7 @@ import {
 	summarizeToolResult,
 } from "./utils.ts";
 
-/** Outer wrapper: timestamp + badge + card.
- *
- * Emits two scroll-anchor attributes:
- * - `data-entry-id` — session-local numeric id, used for in-session jump-to-message
- * - `data-entry-ts` — backend ms timestamp, used for persistent anchors
- *   (survives page refresh because the backend assigns it).
- */
+/** Outer wrapper: timestamp + badge + card */
 function LogEntryWrapper({
 	ts,
 	entryId,
@@ -53,7 +47,6 @@ function LogEntryWrapper({
 		<div
 			className={`mxd-lmxd-entry ${className ?? "mxd-event-tool_card"}`}
 			data-entry-id={entryId}
-			data-entry-ts={ts}
 		>
 			<span className="mxd-lmxd-time">{formatTime(ts)}</span>
 			{taskLabel && (
