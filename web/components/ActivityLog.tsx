@@ -201,8 +201,18 @@ export const ActivityLog = memo(function ActivityLog({
 
 	// Re-apply target when target itself changes (follow button click,
 	// tab switch, link jump). Schedule after render to pick up new DOM.
+	// If the anchored target references an entry outside the rendered
+	// window, bump renderCount so it gets rendered — otherwise the
+	// querySelector inside applyScrollTarget would fail silently.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: target is the trigger; reapplyTarget reads targetRef.current
 	useEffect(() => {
+		if (target.kind === "anchored") {
+			const idx = visible.findIndex((e) => e.ts === target.ts);
+			if (idx >= 0) {
+				const needed = visible.length - idx;
+				setRenderCount((rc) => (rc < needed ? needed : rc));
+			}
+		}
 		requestAnimationFrame(reapplyTarget);
 	}, [target]);
 
@@ -224,42 +234,59 @@ export const ActivityLog = memo(function ActivityLog({
 				setRenderCount((rc) => (rc < needed ? needed : rc));
 			}
 		}
-		// Scroll after the render pass has a chance to place the element.
-		const raf1 = requestAnimationFrame(() => {
+		// Retry the scroll for a few frames so we don't race the render
+		// commit — especially when setRenderCount was called above.
+		let cancelled = false;
+		let rafHandle = 0;
+		let attempts = 0;
+		const MAX_ATTEMPTS = 20;
+		const tryScroll = () => {
+			if (cancelled) return;
 			const container = logRef.current;
 			if (!container) return;
 			const el = container.querySelector<HTMLElement>(
 				`[data-entry-id="${CSS.escape(pendingJumpEntryId)}"]`,
 			);
-			if (el) {
-				programmaticScrollRef.current = true;
-				// Center the element in the container's viewport
-				const containerRect = container.getBoundingClientRect();
-				const rect = el.getBoundingClientRect();
-				const center = containerRect.height / 2 - rect.height / 2;
-				container.scrollTop = el.offsetTop - center;
-				el.classList.add("mxd-scroll-target");
-				setTimeout(() => el.classList.remove("mxd-scroll-target"), 2000);
-				requestAnimationFrame(() => {
-					programmaticScrollRef.current = false;
-				});
-				// Update target to anchor on the jumped entry so subsequent
-				// content additions don't drift the view.
-				const tsAttr = el.dataset.entryTs;
-				const ts = tsAttr ? Number(tsAttr) : NaN;
-				if (Number.isFinite(ts)) {
-					const newContainerRect = container.getBoundingClientRect();
-					const newRect = el.getBoundingClientRect();
-					onTargetChangeRef.current({
-						kind: "anchored",
-						ts,
-						offsetPx: newContainerRect.top - newRect.top,
-					});
+			if (!el) {
+				if (attempts++ < MAX_ATTEMPTS) {
+					rafHandle = requestAnimationFrame(tryScroll);
+					return;
 				}
+				// Give up quietly — entry not in DOM (likely not yet fetched)
+				onJumpConsumed?.();
+				return;
+			}
+			programmaticScrollRef.current = true;
+			// Center the element in the container's viewport
+			const containerRect = container.getBoundingClientRect();
+			const rect = el.getBoundingClientRect();
+			const center = containerRect.height / 2 - rect.height / 2;
+			container.scrollTop = el.offsetTop - center;
+			el.classList.add("mxd-scroll-target");
+			setTimeout(() => el.classList.remove("mxd-scroll-target"), 2000);
+			requestAnimationFrame(() => {
+				programmaticScrollRef.current = false;
+			});
+			// Update target to anchor on the jumped entry so subsequent
+			// content additions don't drift the view.
+			const tsAttr = el.dataset.entryTs;
+			const ts = tsAttr ? Number(tsAttr) : Number.NaN;
+			if (Number.isFinite(ts)) {
+				const newContainerRect = container.getBoundingClientRect();
+				const newRect = el.getBoundingClientRect();
+				onTargetChangeRef.current({
+					kind: "anchored",
+					ts,
+					offsetPx: newContainerRect.top - newRect.top,
+				});
 			}
 			onJumpConsumed?.();
-		});
-		return () => cancelAnimationFrame(raf1);
+		};
+		rafHandle = requestAnimationFrame(tryScroll);
+		return () => {
+			cancelled = true;
+			cancelAnimationFrame(rafHandle);
+		};
 	}, [pendingJumpEntryId]);
 
 	// Show "Thinking..." when agent is active but no events for 1.5s

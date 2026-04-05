@@ -213,12 +213,34 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	// handleTargetChange) and restored on tab switch. Persisted to
 	// localStorage so state survives refresh.
 	//
-	// Initial value honours a permalink `entry=<ts>` fragment if present
-	// in the URL: this seeds the anchored target before any user input so
-	// the loaded page scrolls straight to the linked message.
+	// Initial value precedence:
+	//   1. Permalink `entry=<ts>` fragment in URL (one-shot)
+	//   2. Persisted target for the initial taskId (restore on refresh)
+	//   3. {kind:"follow"}  (default for never-visited tabs)
 	const [scrollTarget, setScrollTarget] = useState<ScrollTarget>(() => {
 		if (initialHash.entryTs !== undefined) {
 			return { kind: "anchored", ts: initialHash.entryTs, offsetPx: 0 };
+		}
+		try {
+			const key = `mxd-scroll-state:${initialHash.taskId ?? "root"}`;
+			const raw = localStorage.getItem(key);
+			if (raw) {
+				const parsed = JSON.parse(raw);
+				if (parsed?.kind === "follow") return { kind: "follow" };
+				if (
+					parsed?.kind === "anchored" &&
+					typeof parsed.ts === "number" &&
+					typeof parsed.offsetPx === "number"
+				) {
+					return {
+						kind: "anchored",
+						ts: parsed.ts,
+						offsetPx: parsed.offsetPx,
+					};
+				}
+			}
+		} catch {
+			/* ignore */
 		}
 		return { kind: "follow" };
 	});
@@ -803,13 +825,17 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		const jumpId = pendingJumpOnSwitchRef.current;
 		pendingJumpOnSwitchRef.current = null;
 
+		// Always consume the skip flag on the first effect run — it only
+		// protects against overwriting the pre-seeded target on mount.
+		const hadSkip = skipNextRestoreRef.current;
+		skipNextRestoreRef.current = false;
+
 		if (jumpId) {
 			// A link/navigation supplied a specific entry to jump to. Set
 			// pendingJumpEntryId; ActivityLog will scroll once rendered.
 			setPendingJumpEntryId(jumpId);
-		} else if (skipNextRestoreRef.current) {
+		} else if (hadSkip) {
 			// Keep the pre-seeded target (from permalink).
-			skipNextRestoreRef.current = false;
 		} else if (changed) {
 			// Normal tab switch: restore saved target (or default to follow).
 			setScrollTarget(loadScrollTarget(selectedTaskId));
