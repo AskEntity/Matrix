@@ -603,3 +603,40 @@ Layer 2: client IS another Matrix project from Matrix's perspective. Registered 
 - Layer 2: separate tool set on separate config (possibly separate port). Reuses existing `list_projects` + `send_message_to_project` semantics. Needs new `yield_cross_project` to drain peer's own inbox.
 
 **Lesson**: when one tool looks right for two different use cases, check whether the relationships are symmetric (both parties peers) or asymmetric (one observes the other). Same-wire-format ≠ same-semantic.
+
+## ScrollTarget Model (2026-04-05)
+
+UI scroll state is represented as ONE `ScrollTarget` per task — not an `autoScroll` boolean + scrollTop number. Single source of truth prevents state desync.
+
+```ts
+type ScrollTarget =
+  | { kind: "follow" }                                     // pin to bottom
+  | { kind: "anchored"; ts: number; offsetPx: number };    // pin to entry
+```
+
+### Key rules
+- **Follow mode is deliberate**. Only the Follow button, permalink seeding, or initial tab-open sets `{kind:"follow"}`. Scrolling to bottom does NOT auto-enable follow (per 2026-04-02 fix a8db243).
+- **User scroll → anchored**. Any scroll event (when not programmatic) updates target to `{kind:"anchored", ts, offsetPx}` where `ts` = backend ts of the entry nearest top of viewport, `offsetPx` = pixels from entry's top to container's top.
+- **`entry.ts` is the stable anchor key** (not `entry.id` which is a session-local counter). ts is backend-assigned, stable across refresh. Collisions (same-ms events) resolved by "first match" — off-by-a-few-pixels acceptable.
+- **`entry.id` is for in-session jump-to-message** (clicking link in other task's log). Fast, unambiguous, doesn't need to survive refresh.
+
+### Single-source-of-truth wiring
+- App.tsx owns ONE `scrollTarget` state, persisted to `localStorage["mxd-scroll-state:<taskId>"]` on change.
+- Tab switch: save outgoing tab's target, load incoming tab's target.
+- ActivityLog receives `target` + `onTargetChange` props. Scroll handler updates target. `reapplyTarget()` re-positions container whenever `target`, `visible.length`, or `rendered.length` changes, or when MutationObserver sees DOM changes (streaming text_delta, etc.).
+- `programmaticScrollRef` flag suppresses the scroll handler during programmatic scrolls (prevents jitter between follow/anchored).
+
+### Lazy render window fix
+`rendered = visible.slice(visible.length - renderCount)` is a SLIDING window — when `visible.length` grows, oldest rendered entries drop out, evicting what the user was reading. Fix: grow `renderCount` by the delta when `visible.length` grows. Only the user's upward-scroll (sentinel IntersectionObserver) shifts the floor backwards.
+
+### Permalink
+URL hash `#projectId/taskId/entry=<ts>` seeds an anchored target on mount. One-shot — whatever position the user ends up at is the new persisted target.
+
+### Five bugs fixed
+1. Follow/non-follow jitter — `programmaticScrollRef` suppresses scroll events during auto-scroll
+2. Non-follow scroll drift — sliding window no longer evicts, anchor preserves viewport position
+3. Per-task persistence — `localStorage` per taskId survives refresh (was in-memory Map only)
+4. Message link jump — scrolls to entry by id, waits for DOM via rAF (not timer), bumps renderCount if outside window, sets anchor target so subsequent content doesn't drift
+5. Permalink — `entry=<ts>` fragment parsed on mount, seeds anchored target
+
+Files: `web/hooks/useScrollTarget.ts`, `web/App.tsx`, `web/components/ActivityLog.tsx`, `web/components/ToolCard.tsx`, `web/components/tools/LogEntryView.tsx` (added `data-entry-ts` attribute).

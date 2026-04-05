@@ -28,6 +28,11 @@ import { TaskTree } from "./components/TaskTree.tsx";
 import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
 import { createEventHandler } from "./event-handler.ts";
 import { createActionHandlers } from "./handlers.ts";
+import { formatHashString, parseHashString } from "./hash-routing.ts";
+import {
+	clearScrollTarget,
+	type ScrollTarget,
+} from "./hooks/useScrollTarget.ts";
 import {
 	createLogEntry,
 	type IncomingEvent,
@@ -47,12 +52,8 @@ import { applyTheme, themes } from "./themes.ts";
 
 // ── Hash routing helpers ───────────────────────────────────────────────────
 
-function parseHash(): { projectId?: string; taskId?: string } {
-	const raw = window.location.hash.replace(/^#/, "");
-	if (!raw) return {};
-	const slash = raw.indexOf("/");
-	if (slash === -1) return { projectId: raw };
-	return { projectId: raw.slice(0, slash), taskId: raw.slice(slash + 1) };
+function parseHash() {
+	return parseHashString(window.location.hash);
 }
 
 function updateHash(
@@ -60,12 +61,7 @@ function updateHash(
 	taskId: string | null,
 	rootNodeId: string | null,
 ) {
-	const hash =
-		taskId && taskId !== rootNodeId
-			? `#${projectId}/${taskId}`
-			: projectId
-				? `#${projectId}`
-				: "";
+	const hash = formatHashString(projectId, taskId, rootNodeId);
 	if (window.location.hash !== hash) {
 		window.location.hash = hash;
 	}
@@ -212,11 +208,47 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [viewMode, setViewMode] = useState<"activity" | "description">(
 		"activity",
 	);
-	// Per-tab scroll state: { scrollTop, follow }
-	const tabScrollStateRef = useRef<
-		Map<string, { scrollTop: number; follow: boolean }>
-	>(new Map());
-	const [autoScroll, setAutoScroll] = useState(true);
+	// Per-tab scroll state. ONE ScrollTarget per tab, keyed by taskId (or
+	// "root" for the orchestrator view). Saved on user scroll (via
+	// handleTargetChange) and restored on tab switch. Persisted to
+	// localStorage so state survives refresh.
+	//
+	// Initial value precedence:
+	//   1. Permalink `entry=<ts>` fragment in URL (one-shot)
+	//   2. Persisted target for the initial taskId (restore on refresh)
+	//   3. {kind:"follow"}  (default for never-visited tabs)
+	const [scrollTarget, setScrollTarget] = useState<ScrollTarget>(() => {
+		if (initialHash.entryTs !== undefined) {
+			return { kind: "anchored", ts: initialHash.entryTs, offsetPx: 0 };
+		}
+		try {
+			const key = `mxd-scroll-state:${initialHash.taskId ?? "root"}`;
+			const raw = localStorage.getItem(key);
+			if (raw) {
+				const parsed = JSON.parse(raw);
+				if (parsed?.kind === "follow") return { kind: "follow" };
+				if (
+					parsed?.kind === "anchored" &&
+					typeof parsed.ts === "number" &&
+					typeof parsed.offsetPx === "number"
+				) {
+					return {
+						kind: "anchored",
+						ts: parsed.ts,
+						offsetPx: parsed.offsetPx,
+					};
+				}
+			}
+		} catch {
+			/* ignore */
+		}
+		return { kind: "follow" };
+	});
+	/** Pending one-shot entry id to jump to on next render
+	 * (e.g. user clicked a message link in another tab's log). */
+	const [pendingJumpEntryId, setPendingJumpEntryId] = useState<string | null>(
+		null,
+	);
 	const [fullscreen, setFullscreen] = useState(false);
 	const [theme, setThemeState] = useState<
 		"dark" | "light" | "cute-light" | "cute-dark"
@@ -704,70 +736,109 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		}
 	}, [openTabs, nodeMap]);
 
-	// When set, the next task switch should scroll to this timestamp instead of the bottom.
-	const scrollToEntryRef = useRef<string | null>(null);
+	/** Storage key for a tab's ScrollTarget. "root" when showing the
+	 * orchestrator view (no selected task). */
+	const scrollKey = useCallback(
+		(id: string | null) => (id && id !== rootNodeId ? id : "root"),
+		[rootNodeId],
+	);
+
+	// Load ScrollTarget for a tab from localStorage.
+	const loadScrollTarget = useCallback(
+		(id: string | null): ScrollTarget => {
+			try {
+				const raw = localStorage.getItem(`mxd-scroll-state:${scrollKey(id)}`);
+				if (!raw) return { kind: "follow" };
+				const parsed = JSON.parse(raw);
+				if (parsed?.kind === "follow") return { kind: "follow" };
+				if (
+					parsed?.kind === "anchored" &&
+					typeof parsed.ts === "number" &&
+					typeof parsed.offsetPx === "number"
+				) {
+					return {
+						kind: "anchored",
+						ts: parsed.ts,
+						offsetPx: parsed.offsetPx,
+					};
+				}
+			} catch {
+				/* ignore */
+			}
+			return { kind: "follow" };
+		},
+		[scrollKey],
+	);
+
+	/** Persist the current tab's ScrollTarget. */
+	const persistScrollTarget = useCallback(
+		(id: string | null, target: ScrollTarget) => {
+			try {
+				localStorage.setItem(
+					`mxd-scroll-state:${scrollKey(id)}`,
+					JSON.stringify(target),
+				);
+			} catch {
+				/* ignore */
+			}
+		},
+		[scrollKey],
+	);
+
+	const scrollTargetRef = useRef(scrollTarget);
+	scrollTargetRef.current = scrollTarget;
+
+	/** Called by ActivityLog when the user scrolls — update + persist. */
+	const handleTargetChange = useCallback(
+		(next: ScrollTarget) => {
+			setScrollTarget(next);
+			persistScrollTarget(selectedTaskId, next);
+		},
+		[selectedTaskId, persistScrollTarget],
+	);
+
+	const handleJumpConsumed = useCallback(() => {
+		setPendingJumpEntryId(null);
+	}, []);
+
+	// When set, the next task switch should jump to this entry.
+	const pendingJumpOnSwitchRef = useRef<string | null>(null);
 	const prevSelectedTaskRef = useRef<string | null>(selectedTaskId);
+	/** Skip one restore cycle when the initial target came from a permalink
+	 * or the user explicitly set one (e.g. follow button). */
+	const skipNextRestoreRef = useRef<boolean>(initialHash.entryTs !== undefined);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only trigger on task selection change
 	useEffect(() => {
 		setViewMode("activity");
-		const targetEntryId = scrollToEntryRef.current;
-		scrollToEntryRef.current = null;
 
-		// Save scroll state of the previous tab
+		// Save outgoing tab's target (handleTargetChange already persists,
+		// but the effect runs AFTER the next target change so this is a
+		// belt-and-suspenders persist — ensures latest is flushed).
 		const prevTabId = prevSelectedTaskRef.current;
-		if (prevTabId) {
-			const logEl = document.querySelector(".mxd-activity-log");
-			tabScrollStateRef.current.set(prevTabId, {
-				scrollTop: logEl?.scrollTop ?? 0,
-				follow: autoScroll,
-			});
+		const changed = prevTabId !== selectedTaskId;
+		if (changed && prevTabId !== null) {
+			persistScrollTarget(prevTabId, scrollTargetRef.current);
 		}
 		prevSelectedTaskRef.current = selectedTaskId;
 
-		if (targetEntryId) {
-			// Navigation: scroll to specific entry by ID
-			setAutoScroll(false);
-			// Delay to let event fetch + render complete after task switch
-			setTimeout(() => {
-				const el = document.querySelector(
-					`[data-entry-id="${CSS.escape(targetEntryId)}"]`,
-				);
-				if (el) {
-					el.scrollIntoView({ block: "center", behavior: "smooth" });
-					el.classList.add("mxd-scroll-target");
-					setTimeout(() => el.classList.remove("mxd-scroll-target"), 2000);
-				} else {
-					// Entry not found — likely pending. Enable follow mode.
-					setAutoScroll(true);
-					const logEl = document.querySelector(".mxd-activity-log");
-					if (logEl) logEl.scrollTop = logEl.scrollHeight;
-				}
-			}, 300);
-		} else {
-			// Normal tab switch: restore previous scroll state or follow
-			const tabId = selectedTaskId ?? "root";
-			const saved = tabScrollStateRef.current.get(tabId);
-			if (saved) {
-				setAutoScroll(saved.follow);
-				requestAnimationFrame(() => {
-					const logEl = document.querySelector(".mxd-activity-log");
-					if (logEl) {
-						if (saved.follow) {
-							logEl.scrollTop = logEl.scrollHeight;
-						} else {
-							logEl.scrollTop = saved.scrollTop;
-						}
-					}
-				});
-			} else {
-				// First visit to this tab — follow mode
-				setAutoScroll(true);
-				requestAnimationFrame(() => {
-					const logEl = document.querySelector(".mxd-activity-log");
-					if (logEl) logEl.scrollTop = logEl.scrollHeight;
-				});
-			}
+		const jumpId = pendingJumpOnSwitchRef.current;
+		pendingJumpOnSwitchRef.current = null;
+
+		// Always consume the skip flag on the first effect run — it only
+		// protects against overwriting the pre-seeded target on mount.
+		const hadSkip = skipNextRestoreRef.current;
+		skipNextRestoreRef.current = false;
+
+		if (jumpId) {
+			// A link/navigation supplied a specific entry to jump to. Set
+			// pendingJumpEntryId; ActivityLog will scroll once rendered.
+			setPendingJumpEntryId(jumpId);
+		} else if (hadSkip) {
+			// Keep the pre-seeded target (from permalink).
+		} else if (changed) {
+			// Normal tab switch: restore saved target (or default to follow).
+			setScrollTarget(loadScrollTarget(selectedTaskId));
 		}
 	}, [selectedTaskId]);
 
@@ -1005,8 +1076,16 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const handleTaskNavigate = useCallback(
 		(id: string, entryId?: string) => {
 			if (!id) return;
+			const isSameTab =
+				id === selectedTaskId || (id === rootNodeId && selectedTaskId === null);
 			if (entryId) {
-				scrollToEntryRef.current = entryId;
+				if (isSameTab) {
+					// Same tab — fire jump immediately.
+					setPendingJumpEntryId(entryId);
+				} else {
+					// Tab will switch — jump after render.
+					pendingJumpOnSwitchRef.current = entryId;
+				}
 			}
 			if (id === rootNodeId) {
 				// Navigate to root — just select it
@@ -1023,13 +1102,15 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				return next;
 			});
 		},
-		[rootNodeId],
+		[rootNodeId, selectedTaskId],
 	);
 
 	const handleTabClose = useCallback(
 		(id: string, e?: React.MouseEvent) => {
 			e?.stopPropagation();
 			setPreviewTabId((prev) => (prev === id ? null : prev));
+			// Drop the tab's persisted scroll state — reopening gives a fresh view.
+			clearScrollTarget(id);
 			setOpenTabs((prev) => {
 				const next = prev.filter((t) => t !== id);
 				localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
@@ -1370,11 +1451,15 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									/>
 								) : null;
 							})()}
-							{viewMode === "activity" && !autoScroll && (
+							{viewMode === "activity" && scrollTarget.kind !== "follow" && (
 								<button
 									type="button"
 									className="mxd-scroll-follow-btn"
-									onClick={() => setAutoScroll(true)}
+									onClick={() => {
+										const next: ScrollTarget = { kind: "follow" };
+										setScrollTarget(next);
+										persistScrollTarget(selectedTaskId, next);
+									}}
 								>
 									<IconArrowDown size={10} />
 									{t("activity.follow")}
@@ -1432,8 +1517,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								filterTaskId={selectedTaskId}
 								rootNodeId={rootNodeId}
 								nodeMap={nodeMap}
-								autoScroll={autoScroll}
-								onAutoScrollChange={setAutoScroll}
+								target={scrollTarget}
+								onTargetChange={handleTargetChange}
+								pendingJumpEntryId={pendingJumpEntryId}
+								onJumpConsumed={handleJumpConsumed}
 								isActive={isSelectedTaskActive}
 								projectId={projectId}
 								olderEventsAvailable={olderEventsAvailable}

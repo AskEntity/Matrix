@@ -80,6 +80,7 @@ export const ToolCard = memo(function ToolCard({
 			<div
 				className="mxd-lmxd-entry mxd-event-tool_card"
 				data-entry-id={String(entry.id)}
+				data-entry-ts={entry.ts}
 			>
 				<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
 				<Card
@@ -179,6 +180,7 @@ export const ToolCard = memo(function ToolCard({
 		<div
 			className="mxd-lmxd-entry mxd-event-tool_card"
 			data-entry-id={String(entry.id)}
+			data-entry-ts={entry.ts}
 		>
 			<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
 			{taskLabel && (
