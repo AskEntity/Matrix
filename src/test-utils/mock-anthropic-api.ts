@@ -1328,10 +1328,13 @@ export class ValidatingMockAPI {
 		}
 		if (!prevRequest) return;
 
-		// System prompt must be identical across calls (cache-critical)
-		if (system !== undefined && prevRequest.system !== undefined) {
-			const prevSystem = JSON.stringify(prevRequest.system);
-			const currSystem = JSON.stringify(system);
+		// System prompt must be identical across calls (cache-critical).
+		// Presence asymmetry also throws: if one call has system, all subsequent
+		// calls in the same conversation must have system (dropping it would
+		// invalidate the cache prefix).
+		if (prevRequest.system !== undefined || system !== undefined) {
+			const prevSystem = JSON.stringify(prevRequest.system ?? null);
+			const currSystem = JSON.stringify(system ?? null);
 			if (prevSystem !== currSystem) {
 				throw new MockValidationError(
 					`System prompt changed between API calls for the same conversation.\n` +
@@ -1341,10 +1344,12 @@ export class ValidatingMockAPI {
 			}
 		}
 
-		// Tools must be identical across calls (cache-critical)
-		if (tools !== undefined && prevRequest.tools !== undefined) {
-			const prevTools = JSON.stringify(prevRequest.tools);
-			const currTools = JSON.stringify(tools);
+		// Tools must be identical across calls (cache-critical).
+		// Presence asymmetry also throws: dropping the tools array mid-conversation
+		// would invalidate the cache prefix.
+		if (prevRequest.tools !== undefined || tools !== undefined) {
+			const prevTools = JSON.stringify(prevRequest.tools ?? null);
+			const currTools = JSON.stringify(tools ?? null);
 			if (prevTools !== currTools) {
 				throw new MockValidationError(
 					`Tools changed between API calls for the same conversation.\n` +

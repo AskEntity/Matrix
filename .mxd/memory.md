@@ -245,13 +245,17 @@ When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provide
 2. Folder/grouping feature (UI-only visual grouping, not tree structure)
 3. Tool search — dynamic tool discovery (draft exists, Anthropic has server-side `defer_loading` but user prefers client-side)
 
-## Duplicate Yield Orphan Fix (2026-04-02)
+## Duplicate Yield Handling (updated 2026-04-05)
 
-API can return multiple yield (or done) tool_calls in the same assistant turn. Production bug: only the first yield got `pendingYieldToolCall`, extras became orphans. `buildSessionRepair` skipped ALL yield/done orphans → unrecoverable 400 loop.
+API can return multiple yield tool_calls in the same assistant turn. Evolution:
 
-**Fix 1**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done (the intended orphan for resume). Earlier yield/done orphans are genuine repair targets.
-**Fix 2**: Provider loop writes no-op tool_results for duplicate yield calls in the same turn (first one wins).
-**Architectural lesson**: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call. Any other yield/done without a result is a bug.
+**Fix 1 (2026-04-02)**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done. Earlier yield/done orphans are genuine repair targets. Architectural lesson: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call.
+
+**Fix 2 (2026-04-02, superseded)**: Provider loop wrote no-op tool_results for extras as a SEPARATE user message. This caused a new bug: extras user message + real yield's user message → 2 consecutive user messages → API 400 "Messages must alternate roles".
+
+**Fix 3 (2026-04-05, current)**: Extras' tool_result events still emit to JSONL immediately (orphan prevention), but their live-path construction is DEFERRED via `pendingDuplicateYieldExtras`. On yield wake, extras bundle into the SAME `buildUserTurn` call as the real yield, producing ONE user message with `[...extras, real, ...queue]`. Order matches JSONL (extras emit at yield-detection, real emits at wake → walker reconstructs in that order → live must match).
+
+Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn" regression-guard this.
 
 
 
@@ -363,3 +367,85 @@ New chapter between Git(4) and Writing Code(now 6). All subsequent chapters renu
 ## Compaction Prompt Fix (2026-04-04)
 
 "this session" → "ENTIRE history". Re-compaction must integrate previous checkpoint into new narrative, not restart. Section 1 and Section 8 both updated.
+
+
+## Live/Reconstruction Drift Fix — Caption Bug (2026-04-05)
+
+### Bug
+User sends image message while agent in idle context (after end_turn implicit yield). Live path `buildUserTurn` adds `[N image(s) attached by user]` caption text block. Reconstruction path `onConsumedMessages` idle branch did NOT. One missing block → prefix mismatch → full cache miss on restart (580K creation observed in production).
+
+### Fix: delete buildUserTurn's duplicate implementation entirely
+NOT "extract shared helper both call" — that's hidden duplication. Instead: Anthropic's `buildUserTurn` **delegates** to the JSONL reconstruction path.
+
+`buildUserTurn(params)` now:
+1. Calls `buildToolResultEvents(...)` (exported from provider-shared.ts) to build synthetic events equivalent to what will be emitted to JSONL
+2. Appends synthetic `message` events for user-source queue messages (walker resolves them via eventIndex)
+3. Returns `eventsToAnthropicMessages(syntheticEvents)` — the same walker callbacks used by JSONL reconstruction
+
+Walker callbacks (`onToolResults`, `onConsumedMessages`, `isAnthropicWorkingContext`) are now the **SINGLE source of truth** for "how Anthropic user messages are built from tool_results + queue messages". Live path can no longer drift because it has no independent construction logic.
+
+Deleted ~160 lines from `buildUserTurn`. Also added caption to idle branch of `onConsumedMessages` (the actual bug fix — live path now routes through this).
+
+### Known Issue: Third codepath still exists (initial drain)
+`provider-shared.ts:~720` "Initial queue drain" for fresh-start waits for first message and constructs user message itself. Does NOT handle images — and does NOT add caption. If first message to wake/start agent has images, drift bug exists.
+
+Test `test.todo("Initial message with images: live path matches reconstruction")` repros this. Fix requires making initial drain also delegate to walker reconstruction, which means either (a) exposing an adapter hook "process events into messages appendage" or (b) moving initial drain into the adapter. Deferred — separate task.
+
+### Dead Code Found (not cleaned up yet)
+`formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — no code sets these fields anymore (orchestrator-tools doesn't return them). Reading paths in anthropic/openai providers and tool-execution. Legacy from old `agent-tools.ts` that no longer exists. Safe to delete in a separate refactor.
+
+
+## Test Architecture: Drift vs Correctness Invariants (2026-04-05)
+
+Two distinct test classes protect against different bug classes. Learned via mutation testing during the caption-bug unification audit.
+
+### Drift invariant (prefix-validation integration tests)
+Full agent loop + restart + `ValidatingMockAPI.enablePrefixValidation()`. Catch when **live path diverges from reconstruction path** — two independent codepaths producing different bytes.
+
+**Blind spot after unification**: live path delegates to walker → live and reconstruction SHARE the walker. A walker bug makes both paths "consistently wrong" → validation passes. **Experimentally confirmed**: removing caption from walker → all 27 integration prefix-validation tests still pass.
+
+What drift tests DO catch:
+- Accidental creation of parallel user-message-construction paths
+- Bugs in non-walker paths: initial drain, buildSessionRepair, compaction rebuild, cache control construction
+- EventStore/JSONL corruption
+- System/tools presence asymmetry (fixed a gap: previously silently passed when dropping system/tools mid-conversation)
+
+Files:
+- `src/drift-tool-lifecycle.test.ts` (22 integration tests — tool lifecycle)
+- `src/drift-message-sources.test.ts` (27 integration tests — every QueueMessage source type)
+- `src/drift-lifecycle.test.ts` (21 integration tests — yield/done/fork/compact transitions)
+- `src/integration.test.ts` Bug repro suite — original caption bug regressions
+
+### Correctness invariant (golden snapshot unit tests)
+Direct invocation of `eventsToAnthropicMessages(events)`, assert exact output bytes. Catch when **walker callbacks produce wrong output** (even if consistently wrong across both paths). Fast (~90-150ms per file).
+
+Example: if walker's `onConsumedMessages` lacked caption, both paths would miss it → drift tests pass, golden test catches it by asserting `[{text}, {image}, {caption}]` is the expected output.
+
+Mutation-tested rigorously: every mutation (remove caption idle/working, drop is_error, add is_error to image tool_result, swap block order, break string↔array invariant, drop interleaved text, remove caller field) is caught by at least one test.
+
+Files:
+- `src/walker-golden.test.ts` (47 unit tests — core walker correctness)
+- `src/drift-infra-audit.test.ts` (23 golden + 39 mock-validator mutation tests)
+- `src/drift-tool-lifecycle.test.ts` (29 golden tests — tool lifecycle)
+- `src/drift-lifecycle.test.ts` (17 golden tests — yield/done/fork/compact)
+
+### Principle
+- Prefix validation tests **convergence** between paths (drift detection)
+- Golden snapshots test **correctness** of the path itself
+- After unification, correctness can't be inferred from convergence — both needed
+- **Don't silently lose coverage when removing duplication.** Unifying two paths into one shifts responsibility: correctness tests must re-establish coverage that drift tests provided.
+
+### Gotcha for golden snapshot authors
+User `message` events with `id` are DEFERRED by walker — only materialize via `messages_consumed`. Helper pattern:
+```ts
+function userPromptEvents(id, content, ts, images?): Event[] {
+  return [
+    { type: "message", id, taskId: "", body: {source:"user", id, ts, content, images}, ts },
+    { type: "messages_consumed", messageIds: [id], taskId: "", ts: ts+1 },
+  ];
+}
+```
+Without messages_consumed, message with id is never rendered.
+
+### Third-codepath known bug
+`src/drift-initial-drain.test.ts` — documents & reproduces the third codepath bug in `provider-shared.ts:~720` (initial drain drops images from fresh-start queue). Kept as `.todo` until that path is unified with walker.

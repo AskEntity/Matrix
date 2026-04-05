@@ -290,8 +290,13 @@ export function filterEventImages(
  * Build tool_result events for emission.
  * Returns the events array with tool_result events, cancellation queue events,
  * and a messages_consumed event combining all consumed IDs.
+ *
+ * Exported so providers can delegate buildUserTurn to walker-based reconstruction:
+ * construct the same events that will be emitted, then walk them to produce
+ * user message(s). This keeps live path and reconstruction path byte-identical
+ * by eliminating the duplicate "build user message from tools+queue" rule.
  */
-function buildToolResultEvents(
+export function buildToolResultEvents(
 	toolIds: Array<{ id: string; name: string }>,
 	execResults: ToolResult[],
 	cancellationQueueMsgs: QueueMessage[],
@@ -640,6 +645,10 @@ export async function* runProviderLoop(
 	// the agent was in yield state when the daemon restarted. We restore this at loop level
 	// instead of writing a synthetic orphan result — yield is a loop-level pause, not a JS await.
 	let pendingYieldToolCall: { id: string; name: string } | null = null;
+	// Extra yield tool_uses from the same turn — their tool_results must be bundled into
+	// the REAL yield's user turn (not pushed as a separate user message) to avoid
+	// consecutive user messages violating the API's role-alternation rule.
+	let pendingDuplicateYieldExtras: Array<{ id: string; name: string }> = [];
 	// Detect pending done from JSONL: if last tool_call is done with no matching result,
 	// the agent called done() and the loop exited (done is an intended orphan).
 	// On wake, write a synthetic tool_result so the message history is well-formed.
@@ -1091,26 +1100,47 @@ export async function* runProviderLoop(
 
 			// Build yield tool_result — just "resumed." Queue messages appear as
 			// additional text blocks in the same user message.
+			//
+			// If the API returned duplicate yield tool_uses in the same turn, bundle
+			// the extras' tool_results INTO THIS SAME user turn. Pushing them as a
+			// separate user message earlier would produce consecutive user roles → API 400.
 			const yieldContent = "resumed.";
+			const realYieldToolUse: ProviderToolUse = {
+				id: pendingYieldToolCall.id,
+				name: pendingYieldToolCall.name,
+				input: {},
+			};
+			const realYieldExec: ToolResult = {
+				content: yieldContent,
+				isError: false,
+			};
+			const extraYieldToolUses: ProviderToolUse[] =
+				pendingDuplicateYieldExtras.map((e) => ({
+					id: e.id,
+					name: e.name,
+					input: {},
+				}));
+			const extraYieldExecs: ToolResult[] = pendingDuplicateYieldExtras.map(
+				() => ({
+					content:
+						"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
+					isError: false,
+				}),
+			);
+			// Order must match JSONL: extras' tool_result events were emitted FIRST
+			// at the yield-detection point (orphan prevention), then the real yield's
+			// tool_result is emitted after wake. Walker reconstructs in JSONL order.
+			// So live path must build [extras..., real] to match.
 			const toolResultMsgs = adapter.buildUserTurn({
-				toolUses: [
-					{
-						id: pendingYieldToolCall.id,
-						name: pendingYieldToolCall.name,
-						input: {},
-					},
-				],
-				execResults: [
-					{
-						content: yieldContent,
-						isError: false,
-					},
-				],
+				toolUses: [...extraYieldToolUses, realYieldToolUse],
+				execResults: [...extraYieldExecs, realYieldExec],
 				queueMessages: yieldResult.nonCompact,
 			});
 			for (const msg of toolResultMsgs) {
 				messages.push(msg);
 			}
+			// Clear extras after bundling — they've been consumed into this user turn.
+			pendingDuplicateYieldExtras = [];
 
 			// Emit the yield tool_result event FIRST with FULL content (not truncated).
 			// On resume, event converter reads this from JSONL to rebuild the tool_result
@@ -1568,37 +1598,35 @@ export async function* runProviderLoop(
 
 		// Yield alone: loop-level pause (existing behavior)
 		// If API returned multiple yield calls in same turn, first one wins —
-		// extras get no-op tool_results to prevent orphans.
+		// extras get no-op tool_results bundled into the real yield's user turn.
 		if (yieldToolUse && !hasOtherTools && !doneToolUse) {
 			pendingYieldToolCall = { id: yieldToolUse.id, name: yieldToolUse.name };
 
-			// Handle duplicate yield calls in same turn
+			// Handle duplicate yield calls in same turn.
+			// Extras MUST be bundled into the real yield's user turn (built when the
+			// yield wakes up) — NOT pushed as a separate user message here. Otherwise
+			// messages[] ends up with two consecutive user messages: the extras user
+			// message pushed now, then the real yield's user message pushed on wake.
+			// That violates API role-alternation and fails with 400.
 			const extraYields = toolUses.filter(
 				(tu) => tu.name === TOOL_YIELD && tu.id !== yieldToolUse.id,
 			);
 			if (extraYields.length > 0) {
-				const extraResults = extraYields.map(() => ({
-					content:
-						"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
-					isError: false,
+				// Defer to yield wake — bundled into the same user turn as the real yield.
+				pendingDuplicateYieldExtras = extraYields.map((tu) => ({
+					id: tu.id,
+					name: tu.name,
 				}));
-				const extraToolResultMsgs = adapter.buildUserTurn({
-					toolUses: extraYields,
-					execResults: extraResults,
-					queueMessages: [],
-				});
-				for (const msg of extraToolResultMsgs) {
-					messages.push(msg);
-				}
-				// Emit tool_results to JSONL for the extra yields
-				for (let i = 0; i < extraYields.length; i++) {
-					const tu = extraYields[i];
-					if (!tu) continue;
+				// Emit tool_results to JSONL immediately (orphan prevention).
+				// JSONL reconstruction walks tool_results into the same user turn as
+				// the real yield's tool_result, matching the bundled live path output.
+				for (const tu of extraYields) {
 					const evt: Event = {
 						type: "tool_result" as const,
 						tool: tu.name,
 						toolCallId: tu.id,
-						content: extraResults[i]?.content ?? "",
+						content:
+							"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
 						isError: false,
 						taskId: "",
 						ts: Date.now(),
