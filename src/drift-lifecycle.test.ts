@@ -2516,6 +2516,116 @@ describe("Drift: compaction lifecycle", () => {
 		expect(hasError).toBe(false);
 	}, 15000);
 
+	// Regression: compact refreshes tools from current code, not frozen cache.
+	// Before the fix: jsonTools was computed ONCE at fresh-start and reused by
+	// every subsequent resume AND every post-compact session_config emission.
+	// Tools added to orchestrator-tools.ts AFTER a session started were invisible
+	// to that session forever. A long-lived session could miss tools added days
+	// after its creation — no refresh opportunity existed.
+	//
+	// Fix: compact is the natural refresh boundary. Compaction wipes messages[]
+	// to a single compacted_resume summary, which has no tool references, so
+	// changing the tools array costs NO additional cache (cache is already lost
+	// from the prefix replacement). Post-compact session_config now rebuilds
+	// tools from request.mcpToolDefs → fresh tools available to the agent.
+	//
+	// NOTE: this test verifies the EMISSION mechanism (post-compact session_config
+	// is re-emitted, has populated tools, ts ordering correct). It does NOT verify
+	// that tools ACTUALLY refresh when the codebase changes mid-session (would
+	// require hot-swapping mcpToolDefs which the test infra doesn't support).
+	// The fix is inspection-provable at provider-shared.ts: the post-compact
+	// block now calls buildJsonTools(request.mcpToolDefs) instead of reusing
+	// the stale `jsonTools` local. If that call is reverted, tools go stale
+	// again; this test still passes (weakly) but the behavior regresses.
+	test("compact refreshes tools — post-compact session_config emits fresh tools from current code", async () => {
+		ctx = await setupTestContext();
+
+		// Drive 3 yield cycles to get messages.length > 4, then trigger compact.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 2." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 3." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Done after compact." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 1");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 2");
+		await waitForIdle(ctx);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const compactRes = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/compact`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ nodeId: rootNodeId }),
+			},
+		);
+		expect(compactRes.status).toBe(200);
+
+		await waitForDone(ctx);
+
+		// Read all session_config events — we expect at least 2 (initial + post-compact).
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const configEvents = events.filter((e) => e.type === "session_config") as Array<{
+			type: "session_config";
+			tools: unknown[];
+			ts: number;
+		}>;
+
+		// There should be AT LEAST 2 session_config events: initial + post-compact
+		expect(configEvents.length).toBeGreaterThanOrEqual(2);
+
+		// The post-compact one should have tools populated (not [])
+		const postCompact = configEvents[configEvents.length - 1];
+		expect(postCompact).toBeDefined();
+		expect(postCompact?.tools).toBeDefined();
+		expect(postCompact?.tools.length).toBeGreaterThan(0);
+
+		// Post-compact ts must be AFTER the initial ts (proves it was re-emitted)
+		const firstConfig = configEvents[0];
+		expect(postCompact?.ts).toBeGreaterThan(firstConfig?.ts ?? 0);
+
+		// Verify the rebuild path was exercised: the ts on the post-compact
+		// session_config must be newer than the ts of the last compact_marker
+		// (compact_marker is emitted BEFORE post-compact session_config by design).
+		const compactMarker = events.find((e) => e.type === "compact_marker") as
+			| { ts: number }
+			| undefined;
+		expect(compactMarker).toBeDefined();
+		expect(postCompact?.ts ?? 0).toBeGreaterThanOrEqual(compactMarker?.ts ?? 0);
+	}, 15000);
+
 	// Related class of bug (not yet fixed): compact arrives WITH regular messages
 	// in the same drain. When handleImplicitYield returns compactOnly=false BUT
 	// manualCompactRequested=true (queue had [regular_msg, compact_msg]), the yield
