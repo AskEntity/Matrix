@@ -608,10 +608,11 @@ function wireTools(
 		"await",
 		{
 			description:
-				"Block until the attached task pauses (done, explicit yield, implicit yield / end_turn, or stopped), " +
-				"then return the events that occurred since the last await call on this session. " +
-				"On first call after attach, starts watching from 'now' — use get_logs to read historical events. " +
-				"If the task is already in a terminal state (verify/failed/closed), returns immediately.",
+				"Block until the attached task pauses, then return events that occurred since the last await call on this session. " +
+				"Reasons: 'idle' (agent at yield / end_turn), 'done' (agent called done() or finished successfully), " +
+				"'stopped' (agent was stopped or failed), 'not_running' (task never started / not in_progress), 'timeout'. " +
+				"First call after attach starts watching from 'now' — use get_logs for historical events. " +
+				"If the task is already terminal (verify/failed/closed), returns immediately with reason=done.",
 			inputSchema: {
 				timeoutMs: z
 					.number()
@@ -661,7 +662,7 @@ function wireTools(
 				// new events → return immediately (already at pause point).
 				if (!isRunning || (isIdleNow && events.length > cursor)) {
 					const reason = !isRunning
-						? status === "verify" || status === "failed"
+						? status === "verify" || status === "failed" || status === "closed"
 							? "done"
 							: "not_running"
 						: "idle";
@@ -691,21 +692,20 @@ function wireTools(
 				}
 
 				// Subscribe to broadcast events — resolve when a pause signal for
-				// our taskId arrives. Signals:
-				//   - agent_idle (ephemeral): implicit/explicit yield reached queue.wait
-				//   - done_notified (persisted): done() Phase 2 committed
-				//   - agent_stopped (persisted): stop_task called
-				//   - orchestration_completed (persisted): loop exited for any reason
-				type WakeReason =
-					| "idle"
-					| "done"
-					| "stopped"
-					| "orchestration_completed"
-					| "timeout";
+				// our taskId arrives. The wake SIGNAL tells us *when* to wake;
+				// the task's final status tells us *what* happened. We don't try
+				// to infer outcome from the event payload (agent lifecycle has
+				// multiple terminal signals with races between them).
+				//
+				// Signals (any one wakes us):
+				//   - agent_idle (ephemeral): queue.wait reached → task still in_progress
+				//   - done_notified / agent_stopped / orchestration_completed (persisted):
+				//     loop exited → read final status from tracker after wake
+				type WakeSignal = "pause" | "terminated" | "timeout";
 				const waitForPause = () =>
-					new Promise<WakeReason>((resolve) => {
+					new Promise<WakeSignal>((resolve) => {
 						let settled = false;
-						const done = (r: WakeReason) => {
+						const done = (r: WakeSignal) => {
 							if (settled) return;
 							settled = true;
 							clearTimeout(timer);
@@ -718,27 +718,51 @@ function wireTools(
 								if (settled) return;
 								if (evt.taskId !== taskId) return;
 								const t = evt.type;
-								if (t === "agent_idle") done("idle");
-								else if (t === "done_notified") done("done");
-								else if (t === "agent_stopped") done("stopped");
-								else if (t === "orchestration_completed")
-									done("orchestration_completed");
+								if (t === "agent_idle") done("pause");
+								else if (
+									t === "done_notified" ||
+									t === "agent_stopped" ||
+									t === "orchestration_completed"
+								) {
+									done("terminated");
+								}
 							},
 						};
 						ctx.eventSubscribers.add(subscriber);
 						const timer = setTimeout(() => done("timeout"), timeoutMs);
 					});
-				const reason = await waitForPause();
+				const wakeSignal = await waitForPause();
 
-				// Re-read events after wake — the signal event AND any preceding
-				// events from this turn should now be on disk (agent_idle emits
-				// synchronously before queue.wait, done_notified after Phase 2
-				// writes). We flush to be safe.
+				// For "terminated" wake signals, give Phase 2 a moment to complete
+				// (agent_stopped fires in runAgentForNode's finally, BEFORE Phase 2
+				// updates status to verify/failed). Small poll loop — bounded by
+				// a few hundred ms.
+				if (wakeSignal === "terminated") {
+					const waitStart = Date.now();
+					while (Date.now() - waitStart < 500) {
+						const s = tracker.getTask(taskId)?.status;
+						if (s === "verify" || s === "failed") break;
+						await new Promise((r) => setTimeout(r, 10));
+					}
+				}
+
+				// Re-read events after wake (flush to ensure all persisted events
+				// are on disk). Determine final status from tracker.
 				events = await readCurrent();
-
-				// Determine status fresh (done_notified / agent_stopped may have
-				// changed it during Phase 2).
 				const finalStatus = tracker.getTask(taskId)?.status ?? status;
+				// Derive user-facing reason from wake signal + final status.
+				let reason: "idle" | "done" | "stopped" | "timeout";
+				if (wakeSignal === "timeout") {
+					reason = "timeout";
+				} else if (wakeSignal === "pause") {
+					reason = "idle";
+				} else {
+					// terminated: verify/failed → done, anything else → stopped
+					reason =
+						finalStatus === "verify" || finalStatus === "failed"
+							? "done"
+							: "stopped";
+				}
 				const sliced = events.slice(cursor);
 				const stripped = sliced.map((e) =>
 					stripEventForUI(e as unknown as Record<string, unknown>),
