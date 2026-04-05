@@ -8,7 +8,7 @@ import {
 	walkEventsToMessages,
 } from "./event-converter.ts";
 import type { Event } from "./events.ts";
-import { MessageQueue } from "./message-queue.ts";
+import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
 	extractQueueImageParts,
 	type ProviderAdapter,
@@ -691,43 +691,18 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 					content: exec.content,
 				});
 
-				if (exec.formattedQueueMessages) {
-					for (const line of exec.formattedQueueMessages.split("\n")) {
-						if (line.trim()) {
-							allQueueTexts.push(line);
-						}
-					}
-					if (exec.mcpImages?.length) {
-						for (const img of exec.mcpImages) {
-							allQueueImageParts.push(
-								{
-									type: "text" as const,
-									text: "[User-attached image]",
-								},
-								{
-									type: "image_url" as const,
-									image_url: {
-										url: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
-										detail: "auto" as const,
-									},
-								},
-							);
-						}
-					}
-				} else {
-					if (exec.isImage && exec.imageData && exec.mediaType) {
+				if (exec.isImage && exec.imageData && exec.mediaType) {
+					imageResults.push({
+						text: exec.content,
+						dataUri: `data:${exec.mediaType};base64,${exec.imageData}`,
+					});
+				}
+				if (exec.mcpImages?.length) {
+					for (const img of exec.mcpImages) {
 						imageResults.push({
-							text: exec.content,
-							dataUri: `data:${exec.mediaType};base64,${exec.imageData}`,
+							text: "[User-attached image]",
+							dataUri: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
 						});
-					}
-					if (exec.mcpImages?.length) {
-						for (const img of exec.mcpImages) {
-							imageResults.push({
-								text: "[User-attached image]",
-								dataUri: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
-							});
-						}
 					}
 				}
 			}
@@ -809,6 +784,34 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 			}
 
 			return result;
+		},
+
+		appendQueueMessagesToMessages(
+			messages: unknown[],
+			queueMsgs: QueueMessage[],
+		): void {
+			// Dead code path: Chat Completions provider is not wired into production
+			// (createProviderFromAuth always creates OpenAIResponsesCompatibleProvider
+			// for OpenAI auth). This stub preserves the old text-only behavior to keep
+			// tests passing and satisfy the ProviderAdapter interface.
+			const formattedTexts: string[] = [];
+			for (const msg of queueMsgs) {
+				const text = formatQueueMessage(msg);
+				if (text) formattedTexts.push(text);
+			}
+			if (formattedTexts.length === 0) return;
+
+			const lastMsg = messages[messages.length - 1] as
+				| { role: string; content: unknown }
+				| undefined;
+			if (lastMsg?.role === "user" && typeof lastMsg.content === "string") {
+				lastMsg.content = [lastMsg.content, ...formattedTexts].join("\n");
+			} else {
+				messages.push({
+					role: "user",
+					content: formattedTexts.join("\n"),
+				});
+			}
 		},
 
 		validateImage(base64: string, _mediaType: string) {

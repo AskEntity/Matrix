@@ -252,7 +252,7 @@ describe("Drift exposure: initial queue drain (third codepath)", () => {
 
 	// VERIFIED: this test DOES fail when run (removed .todo locally). Keeps as
 	// .todo so CI stays green until initial drain is unified with walker.
-	test.todo("KNOWN BUG: fresh-start initial message with image drops image & caption", async () => {
+	test("KNOWN BUG: fresh-start initial message with image drops image & caption", async () => {
 		// Initial drain calls `allMsgs.map(formatQueueMessage)` — text only.
 		// Images from user QueueMessage.images are NOT extracted into content
 		// blocks. On restart, walker reconstructs the SAME message from JSONL

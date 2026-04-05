@@ -11038,7 +11038,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 		expect(status2).toBe("verify");
 	}, 30000);
 
-	test.todo("Initial message with images: live path matches reconstruction", async () => {
+	test("Initial message with images: live path matches reconstruction", async () => {
 		// AUDIT of the THIRD codepath: provider-shared.ts initial queue drain
 		// (line ~720). Fresh agent startup waits for first message via queue.wait(),
 		// then constructs a user message. This is a third independent codepath —

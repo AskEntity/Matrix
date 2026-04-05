@@ -4,7 +4,6 @@
  * isTransientAPIError() is provider-agnostic — used by the outer retry in the run loop.
  */
 import { z } from "zod";
-import type { QueueMessage } from "./message-queue.ts";
 import type { PendingState, ToolResult } from "./shared-types.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 
@@ -136,13 +135,7 @@ export async function executeTool(
 		if (r.imageData) result.imageData = r.imageData as string;
 		if (r.mediaType) result.mediaType = r.mediaType as string;
 		if (mcpImages.length > 0) result.mcpImages = mcpImages;
-		const consumedIds = r.consumedMessageIds as string[] | undefined;
-		if (consumedIds?.length) result.consumedMessageIds = consumedIds;
-		const consumedMsgs = r.consumedQueueMessages as QueueMessage[] | undefined;
-		if (consumedMsgs?.length) result.consumedQueueMessages = consumedMsgs;
 		if (r.pending) result.pending = r.pending as PendingState;
-		if (r.formattedQueueMessages)
-			result.formattedQueueMessages = r.formattedQueueMessages as string;
 		return result;
 	} catch (e) {
 		return {
