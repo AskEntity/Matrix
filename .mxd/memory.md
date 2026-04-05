@@ -390,8 +390,8 @@ Deleted ~160 lines from `buildUserTurn`. Also added caption to idle branch of `o
 
 Test `test.todo("Initial message with images: live path matches reconstruction")` repros this. Fix requires making initial drain also delegate to walker reconstruction, which means either (a) exposing an adapter hook "process events into messages appendage" or (b) moving initial drain into the adapter. Deferred — separate task.
 
-### Dead Code Found (not cleaned up yet)
-`formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — no code sets these fields anymore (orchestrator-tools doesn't return them). Reading paths in anthropic/openai providers and tool-execution. Legacy from old `agent-tools.ts` that no longer exists. Safe to delete in a separate refactor.
+### Dead Code Cleaned (2026-04-05, commit f75a512)
+`formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — removed. No code was setting these (orchestrator-tools doesn't return them; they originated from the deleted `agent-tools.ts`). -81 lines across 5 files. Simplified `collectToolResultImages`, `buildToolResultEvents`, and both OpenAI providers' image routing.
 
 
 ## Test Architecture: Drift vs Correctness Invariants (2026-04-05)
