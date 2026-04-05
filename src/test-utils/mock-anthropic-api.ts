@@ -1273,6 +1273,55 @@ export class ValidatingMockAPI {
 		return this.requestHistory.length;
 	}
 
+	/**
+	 * Extract tool names from a recorded request's `tools` array.
+	 * Anthropic tools shape: [{name, description, input_schema}, ...].
+	 * Returns [] if request or tools missing.
+	 *
+	 * @param requestIdx Index into requestHistory (default: last request)
+	 */
+	getToolNames(requestIdx?: number): string[] {
+		const record =
+			requestIdx === undefined
+				? this.getLastRequest()
+				: this.requestHistory[requestIdx];
+		if (!record?.tools || !Array.isArray(record.tools)) return [];
+		const names: string[] = [];
+		for (const t of record.tools as Array<{ name?: string }>) {
+			if (t?.name) names.push(t.name);
+		}
+		return names;
+	}
+
+	/**
+	 * Flatten a recorded request's `system` field to a single text string.
+	 * Handles both string and TextBlockParam[] forms.
+	 * Returns "" if request or system missing.
+	 *
+	 * @param requestIdx Index into requestHistory (default: last request)
+	 */
+	getSystemText(requestIdx?: number): string {
+		const record =
+			requestIdx === undefined
+				? this.getLastRequest()
+				: this.requestHistory[requestIdx];
+		if (!record?.system) return "";
+		if (typeof record.system === "string") return record.system;
+		if (Array.isArray(record.system)) {
+			const parts: string[] = [];
+			for (const block of record.system as Array<{
+				type?: string;
+				text?: string;
+			}>) {
+				if (block?.type === "text" && typeof block.text === "string") {
+					parts.push(block.text);
+				}
+			}
+			return parts.join("\n");
+		}
+		return "";
+	}
+
 	/** How many turns are still queued across all conversations. */
 	getPendingTurnCount(): number {
 		let total = 0;
