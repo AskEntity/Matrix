@@ -899,10 +899,10 @@ async function handleConfig(args: string[]): Promise<void> {
 		const isProject = args.includes("--project");
 
 		if (isGlobal) {
-			const cfg = await loadGlobalConfig();
-			delete (cfg as unknown as Record<string, unknown>)[key];
-			await saveGlobalConfig(cfg);
-			console.log(`Unset ${key} (global)`);
+			console.error(
+				`Cannot unset global config fields — all fields are required. Use "mxd config set ${key} <value>" to change it.`,
+			);
+			process.exit(1);
 		} else if (isProject) {
 			if ((GLOBAL_ONLY_FIELDS as readonly string[]).includes(key)) {
 				console.error(
