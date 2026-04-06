@@ -3259,6 +3259,8 @@ describe("Integration: parent-child lifecycle", () => {
 
 	test("Scenario: parent creates child → child does work → parent receives task_complete", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Child instruction: bash echo + done
@@ -3304,6 +3306,7 @@ describe("Integration: parent-child lifecycle", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Test Child Task",
 								description: "A child task for testing",
 							},
@@ -3412,6 +3415,8 @@ describe("Integration: parent-child lifecycle", () => {
 
 	test("Scenario: child fails → parent receives failed task_complete", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Child instruction: calls done("failed")
@@ -3434,6 +3439,7 @@ describe("Integration: parent-child lifecycle", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Failing Child",
 								description: "A child task that will fail",
 							},
@@ -3644,6 +3650,8 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 	test("LC5: stop root with children → all stay in_progress", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Parent creates a child and yields
@@ -3665,6 +3673,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Long Running Child",
 								description: "child that runs a long time",
 							},
@@ -4599,6 +4608,8 @@ describe("Integration: tree operations", () => {
 
 	test("TREE1: create_task → update_task → close_task chain", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
@@ -4609,6 +4620,7 @@ describe("Integration: tree operations", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Tree Test Task",
 								description: "A task for tree testing",
 							},
@@ -4712,6 +4724,8 @@ describe("Integration: tree operations", () => {
 
 	test("TREE2: create_task + reorder_tasks", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// First get the root node ID from get_tree, then create 3 tasks, then reorder
@@ -4742,17 +4756,29 @@ describe("Integration: tree operations", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Task Alpha", description: "First" },
+							input: {
+								parentId: "$rootId",
+								title: "Task Alpha",
+								description: "First",
+							},
 						},
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Task Beta", description: "Second" },
+							input: {
+								parentId: "$rootId",
+								title: "Task Beta",
+								description: "Second",
+							},
 						},
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Task Gamma", description: "Third" },
+							input: {
+								parentId: "$rootId",
+								title: "Task Gamma",
+								description: "Third",
+							},
 						},
 					],
 				},
@@ -4832,6 +4858,8 @@ describe("Integration: tree operations", () => {
 
 	test("TREE3: get_tree reflects changes", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
@@ -4842,6 +4870,7 @@ describe("Integration: tree operations", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Visible Task 42",
 								description: "Should appear in tree",
 							},
@@ -4981,6 +5010,8 @@ describe("Integration: tree operations", () => {
 
 	test("TREE5: create_task tool_result must not leak session data", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -4990,6 +5021,7 @@ describe("Integration: tree operations", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Session leak test child",
 								description: "Testing create_task serialization",
 							},
@@ -5497,6 +5529,8 @@ describe("Integration: fork prefix consistency", () => {
 
 	test("Forked child's messages have parent's complete turns as prefix", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Child instruction: simple done
@@ -5546,6 +5580,7 @@ describe("Integration: fork prefix consistency", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Forked Child",
 								description: "Testing fork prefix",
 							},
@@ -5675,6 +5710,8 @@ describe("Integration: fork prefix consistency", () => {
 
 	test("Fork writes synthetic tool_results before fork_marker for orphaned tool_calls", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Child: just done
@@ -5711,7 +5748,11 @@ describe("Integration: fork prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Fork Target", description: "test" },
+							input: {
+								parentId: "$rootId",
+								title: "Fork Target",
+								description: "test",
+							},
 						},
 					],
 				},
@@ -5843,6 +5884,8 @@ describe("Integration: fork prefix consistency", () => {
 
 	test("Fork from closed agent injects synthetic tool_call + tool_result", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Scenario: parent creates child A → A does work and completes →
@@ -5893,7 +5936,11 @@ describe("Integration: fork prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Child A", description: "source agent" },
+							input: {
+								parentId: "$rootId",
+								title: "Child A",
+								description: "source agent",
+							},
 						},
 					],
 				},
@@ -5937,7 +5984,11 @@ describe("Integration: fork prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Child B", description: "forked from A" },
+							input: {
+								parentId: "$rootId",
+								title: "Child B",
+								description: "forked from A",
+							},
 						},
 					],
 				},
@@ -6051,6 +6102,8 @@ describe("Integration: fork prefix consistency", () => {
 
 	test("Fork + other tools in same turn: fork returns error", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Parent: create_task → (bash + fork in SAME turn) → assert fork errored → done
@@ -6061,7 +6114,11 @@ describe("Integration: fork prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Target", description: "test" },
+							input: {
+								parentId: "$rootId",
+								title: "Target",
+								description: "test",
+							},
 						},
 					],
 				},
@@ -6121,6 +6178,8 @@ describe("Integration: fork prefix consistency", () => {
 
 	test("Cross-fork prefix: forked child's pre-fork messages exactly match source's", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Child: simple done
@@ -6157,6 +6216,7 @@ describe("Integration: fork prefix consistency", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Fork Target",
 								description: "Cross-fork prefix test",
 							},
@@ -6249,6 +6309,8 @@ describe("Integration: message near done() race condition", () => {
 	 */
 	test("Message to passed child → resume → no duplication", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Child instruction (first run): just call done immediately
@@ -6271,6 +6333,7 @@ describe("Integration: message near done() race condition", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Race Test Child",
 								description: "Child for message race test",
 							},
@@ -6621,6 +6684,8 @@ describe("Integration: session_config in JSONL", () => {
 
 	test("Forked child inherits session_config from parent", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		const childInstruction = JSON.stringify({
@@ -6641,6 +6706,7 @@ describe("Integration: session_config in JSONL", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Config Fork Child",
 								description: "Testing session_config fork",
 							},
@@ -6707,9 +6773,8 @@ describe("Integration: session_config in JSONL", () => {
 		expect(resp.status).toBe(200);
 		await waitForDone(ctx, 30000);
 
-		// Get child node ID
+		// Get child node ID — rootId already declared at test start
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootId = tracker.rootNodeId;
 		const childNodeId = tracker.getTask(rootId)?.children?.[0] as string;
 
 		// Parent JSONL should have session_config
@@ -6760,6 +6825,8 @@ describe("Integration: session_config in JSONL", () => {
 
 	test("Regular child session_config has no cacheTtl (default 5min)", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		const childInstruction = JSON.stringify({
@@ -6780,6 +6847,7 @@ describe("Integration: session_config in JSONL", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Regular Child",
 								description: "Regular child task",
 							},
@@ -6834,8 +6902,8 @@ describe("Integration: session_config in JSONL", () => {
 		expect(resp.status).toBe(200);
 		await waitForDone(ctx, 30000);
 
+		// rootId already declared at test start
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootId = tracker.rootNodeId;
 		const childId = tracker.getTask(rootId)?.children?.[0] as string;
 		expect(childId).toBeDefined();
 
@@ -7381,6 +7449,8 @@ describe("Integration: nested parent-child", () => {
 
 	test("NEST1: Parent → Child → Grandchild lifecycle", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Grandchild: bash echo + done(passed)
@@ -7426,6 +7496,7 @@ describe("Integration: nested parent-child", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$childId",
 								title: "Grandchild Task",
 								description: "A grandchild task",
 							},
@@ -7497,6 +7568,7 @@ describe("Integration: nested parent-child", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Child Task",
 								description: "A child task that creates a grandchild",
 							},
@@ -7588,6 +7660,8 @@ describe("Integration: nested parent-child", () => {
 
 	test("NEST2: Grandchild fails → propagates up", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Grandchild: done(failed)
@@ -7610,6 +7684,7 @@ describe("Integration: nested parent-child", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$childId",
 								title: "Failing Grandchild",
 								description: "Will fail",
 							},
@@ -7677,6 +7752,7 @@ describe("Integration: nested parent-child", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Child With Failing Grandchild",
 								description: "Handles grandchild failure",
 							},
@@ -7767,6 +7843,8 @@ describe("Integration: child restart scenarios", () => {
 
 	test("CHILD_RESTART1: Child crashes during bash → parent still gets task_complete", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Child turn 1: bash sleep (will be interrupted by crash)
@@ -7805,6 +7883,7 @@ describe("Integration: child restart scenarios", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Restartable Child",
 								description: "Child that survives restart",
 							},
@@ -7902,6 +7981,8 @@ describe("Integration: child restart scenarios", () => {
 
 	test("CHILD_RESTART2: Parent crashes while child running → both resume correctly", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Child: bash sleep (will be interrupted) → on resume, done(passed)
@@ -7939,6 +8020,7 @@ describe("Integration: child restart scenarios", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Child For Restart",
 								description: "Both crash and resume",
 							},
@@ -8027,6 +8109,8 @@ describe("Integration: child restart scenarios", () => {
 
 	test("CHILD_RESTART3: Parent yielding + daemon restart + child completes multi-step work + parent receives task_complete", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Child: 3-turn workflow
@@ -8088,6 +8172,7 @@ describe("Integration: child restart scenarios", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Multi-Step Child",
 								description: "Child doing multi-step work across restart",
 							},
@@ -8395,6 +8480,8 @@ describe("Default branch", () => {
 
 	test("child task worktree branches from parent's branch", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Child does bash to check its branch, then done()
@@ -8430,6 +8517,7 @@ describe("Default branch", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Branch Check Child",
 								description: "Verify child branches from parent",
 							},
@@ -8626,6 +8714,8 @@ describe("Default branch", () => {
 	test("child worktree on non-main branch contains correct content", async () => {
 		// Use standard setupTestContext, then add a file and switch to develop
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Add a develop-only file on a new branch.
@@ -8680,6 +8770,7 @@ describe("Default branch", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Develop Branch Child",
 								description: "Check develop content exists",
 							},
@@ -8978,6 +9069,8 @@ describe("Integration: stopTask lifecycle", () => {
 		// If orphan cleanup doesn't check for existing synthetic results from
 		// copySessionFrom, it may write DUPLICATE tool_results → API 400.
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		// Child: bash (will be interrupted) → on resume, done(passed)
@@ -9031,6 +9124,7 @@ describe("Integration: stopTask lifecycle", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Fork Crash Child",
 								description: "Test fork + crash recovery",
 							},
@@ -9786,6 +9880,8 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 
 	test("Scenario 3: root + child both in_progress → restart → no interleaved traceIds", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 
 		// Root creates child, sends message, yields
 		const rootInstruction = JSON.stringify({
@@ -9796,7 +9892,11 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Worker", description: "Do work" },
+							input: {
+								parentId: "$rootId",
+								title: "Worker",
+								description: "Do work",
+							},
 						},
 					],
 				},
@@ -10295,6 +10395,8 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 
 	test("parent creates child → child yields → parent resets child → child JSONL gone", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		const childInstruction = JSON.stringify({
@@ -10312,6 +10414,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Resettable Child",
 								description: "A child to be reset",
 							},
@@ -10398,6 +10501,8 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 
 	test("parent resets running child via REST, then child JSONL stays clean for fork", async () => {
 		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 		ctx.mockAPI.enablePrefixValidation();
 
 		const childInstruction = JSON.stringify({
@@ -10412,6 +10517,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Child To Reset",
 								description: "Will be externally reset",
 							},

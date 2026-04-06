@@ -743,3 +743,7 @@ Now ALL 32 tools (25 orchestrator + 7 builtin) use the same ToolDef + auth + glo
 
 ### System Prompt Cache TTL
 System blocks always use `{ type: "ephemeral", ttl: "1h" }` regardless of per-session `cacheTtl`. System prompt is shared across agents, changes rarely, benefits most from long cache. Tools and messages still use per-session TTL.
+
+## ParamDecl Bind: No Overridable
+
+`ParamDecl` bind variant has no `overridable` field. All bind params are always hidden from agent schema and auto-bound by the framework. create_task and create_folder's parentId changed to `kind: "explicit"` (agent must always specify).

@@ -1466,6 +1466,11 @@ export class ValidatingMockAPI {
 		return this.capturedVars;
 	}
 
+	/** Pre-set a captured variable for use in $varName substitution. */
+	setCapturedVar(name: string, value: string): void {
+		this.capturedVars.set(name, value);
+	}
+
 	/**
 	 * Validate that a forked child's pre-fork messages are an exact prefix
 	 * of the source agent's messages at fork time.

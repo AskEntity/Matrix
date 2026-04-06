@@ -100,7 +100,7 @@ Good: "Add JWT auth middleware in src/middleware/auth.ts that validates Bearer t
 
 When you delegate work, this is your cycle:
 
-1. Create tasks with detailed descriptions. Plan sibling scopes to minimize merge conflicts.
+1. Create tasks with detailed descriptions. Plan sibling scopes to minimize merge conflicts. Always specify parentId explicitly — check the tree with get_tree if unsure where a task belongs. Don't always create under yourself; consider which folder or parent is appropriate.
 2. Start each sub task via send_message. Worktree creation and agent launch happen automatically.
 3. Do productive work while sub tasks run — don't yield() immediately. Only yield when you have nothing left to do.
 4. When yield() returns, process the results:

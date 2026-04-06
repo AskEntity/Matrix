@@ -74,11 +74,11 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				taskId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "taskId", overridable: false },
+					decl: { kind: "bind", from: "taskId" },
 				},
 				format: {
 					schema: z.enum(["flat", "tree"]),
@@ -153,7 +153,7 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				taskId: {
 					schema: z
@@ -190,8 +190,7 @@ function buildAllToolDefs(): ToolDef[] {
 		{
 			name: "create_task",
 			description:
-				"Create a new task. If parentId is provided, creates a sub task under that parent. " +
-				"If omitted, creates a sub task of YOUR current task (or top-level if you are the root orchestrator). " +
+				"Create a new task. " +
 				"IMPORTANT: Sibling tasks will run in PARALLEL on separate branches. " +
 				"Each sibling must work on DIFFERENT files/modules to avoid merge conflicts. " +
 				"NOTE: You can create tasks anywhere in the tree, not just under your own subtree. " +
@@ -199,13 +198,12 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				parentId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "taskId", overridable: true },
-					description:
-						"Parent task ID. Omit to create a sub task of your current task.",
+					decl: { kind: "explicit" },
+					description: "Parent task ID.",
 				},
 				title: {
 					schema: z.string().describe("Short title for the task"),
@@ -247,7 +245,7 @@ function buildAllToolDefs(): ToolDef[] {
 						{
 							title: args.title as string,
 							description: args.description as string,
-							parentId: (args.parentId as string) ?? undefined,
+							parentId: args.parentId as string,
 							draft: args.draft as boolean | undefined,
 							color: args.color as string | undefined,
 							budgetUsd: defaultBudgetUsd || undefined,
@@ -289,7 +287,7 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				taskId: {
 					schema: z.string().describe("Task node ID"),
@@ -545,11 +543,11 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				senderTaskId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "taskId", overridable: false },
+					decl: { kind: "bind", from: "taskId" },
 				},
 				taskId: {
 					schema: z
@@ -784,7 +782,7 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				taskId: {
 					schema: z.string().describe("ID of the task to close"),
@@ -836,7 +834,7 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				taskId: {
 					schema: z.string().describe("ID of the task to delete"),
@@ -892,7 +890,7 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				taskId: {
 					schema: z.string().describe("ID of the task to reset"),
@@ -949,11 +947,11 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				taskId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "taskId", overridable: false },
+					decl: { kind: "bind", from: "taskId" },
 				},
 				question: {
 					schema: z
@@ -999,7 +997,7 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				nodeId: {
 					schema: z
@@ -1082,13 +1080,12 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				parentId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "taskId", overridable: true },
-					description:
-						"Parent node ID. Omit to create under your current task.",
+					decl: { kind: "explicit" },
+					description: "Parent node ID.",
 				},
 				title: {
 					schema: z.string().describe("Folder title"),
@@ -1103,8 +1100,10 @@ function buildAllToolDefs(): ToolDef[] {
 							content: [{ type: "text", text: "Project not found" }],
 							isError: true,
 						};
-					const parentId = (args.parentId as string) ?? tracker.rootNodeId;
-					const folder = tracker.addFolder(args.title as string, parentId);
+					const folder = tracker.addFolder(
+						args.title as string,
+						args.parentId as string,
+					);
 					await tracker.save();
 					R.broadcastTree(args.projectId as string);
 					return {
@@ -1132,7 +1131,7 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				folderId: {
 					schema: z.string().describe("ID of the folder to delete"),
@@ -1204,7 +1203,7 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				folderId: {
 					schema: z.string().describe("ID of the folder to rename"),
@@ -1305,7 +1304,7 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 					description: "Sender's project ID (auto-bound).",
 				},
 				targetProjectId: {
@@ -1437,7 +1436,7 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				sourceTaskId: {
 					schema: z
@@ -1558,11 +1557,11 @@ function buildAllToolDefs(): ToolDef[] {
 			params: {
 				projectId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "projectId", overridable: false },
+					decl: { kind: "bind", from: "projectId" },
 				},
 				taskId: {
 					schema: z.string(),
-					decl: { kind: "bind", from: "taskId", overridable: false },
+					decl: { kind: "bind", from: "taskId" },
 				},
 				status: {
 					schema: z
@@ -1657,11 +1656,11 @@ function buildEvaluateScriptTool(
 		params: {
 			projectId: {
 				schema: z.string(),
-				decl: { kind: "bind", from: "projectId", overridable: false },
+				decl: { kind: "bind", from: "projectId" },
 			},
 			taskId: {
 				schema: z.string(),
-				decl: { kind: "bind", from: "taskId", overridable: false },
+				decl: { kind: "bind", from: "taskId" },
 			},
 			script: {
 				schema: z.string().describe("JavaScript/TypeScript code to evaluate"),
