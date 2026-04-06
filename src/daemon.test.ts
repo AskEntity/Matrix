@@ -10,7 +10,8 @@ import { MessageQueue } from "./message-queue.ts";
 import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { isDescendantOf } from "./task-utils.ts";
-import { attachMockSession, mockOrchestratorDeps } from "./test-utils.ts";
+import { resetResourceRegistry } from "./resource-registry.ts";
+import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
 import type {
 	AgentResult,
 	HealthResponse,
@@ -2762,13 +2763,15 @@ describe("create_task validation", () => {
 		currentTaskId: string | null,
 		args: { title: string; description: string; parentId?: string },
 	) {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: currentTaskId,
 		});
 		const { toolDefs } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			currentTaskId,
 		);

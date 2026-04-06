@@ -27,7 +27,8 @@ import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { TaskTracker } from "./task-tracker.ts";
-import { attachMockSession, mockOrchestratorDeps } from "./test-utils.ts";
+import { resetResourceRegistry } from "./resource-registry.ts";
+import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
@@ -1807,12 +1808,14 @@ describe("done tool", () => {
 		taskId: string | null,
 		args: { status: "passed" | "failed"; summary: string },
 	) {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId,
 		});
-		const { toolDefs } = createOrchestratorTools(deps, "test-project", taskId);
+		const { toolDefs } = createOrchestratorTools(auth, "test-project", taskId);
 		const doneTool = toolDefs.find((t) => t.name === "done");
 		if (!doneTool) throw new Error("done tool not found");
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
@@ -1846,13 +1849,15 @@ describe("done tool", () => {
 	});
 
 	test("hasRunningChildren returns false when no children", async () => {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: "",
 		});
 		const { hasRunningChildren } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			"",
 		);
@@ -1860,20 +1865,22 @@ describe("done tool", () => {
 	});
 
 	test("hasRunningChildren returns true when child has session on tracker", async () => {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const parentId = tracker.rootNodeId;
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: parentId,
 		});
 
-		// Create a parent task and a child task
-		const parentId = tracker.rootNodeId;
+		// Create a child task
 		const child = tracker.addChild(parentId, "Child Task", "desc");
 		const childQueue = new MessageQueue();
 		attachMockSession(child, childQueue);
 
 		const { hasRunningChildren } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			parentId,
 		);
@@ -1885,20 +1892,22 @@ describe("done tool", () => {
 	});
 
 	test("hasRunningChildren detects running grandchildren (descendants)", async () => {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const parentId = tracker.rootNodeId;
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: parentId,
 		});
 
-		const parentId = tracker.rootNodeId;
 		const child = tracker.addChild(parentId, "Child Task", "desc");
 		const grandchild = tracker.addChild(child.id, "Grandchild Task", "desc");
 		const grandchildQueue = new MessageQueue();
 		attachMockSession(grandchild, grandchildQueue);
 
 		const { hasRunningChildren } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			parentId,
 		);
@@ -1926,12 +1935,14 @@ describe("done tool", () => {
 			foregroundExecutions: new Map(),
 		};
 
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth: authDoneQueue } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: node.id,
 		});
-		const { toolDefs } = createOrchestratorTools(deps, "test-project", node.id);
+		const { toolDefs } = createOrchestratorTools(authDoneQueue, "test-project", node.id);
 		const doneTool = toolDefs.find((t) => t.name === "done");
 		if (!doneTool) throw new Error("done tool not found");
 
