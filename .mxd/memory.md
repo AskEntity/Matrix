@@ -639,6 +639,36 @@ Embrace large type refactors. Rename TaskNode → TreeNode = TaskNode | FolderNo
 
 - Manual compaction during yield → consecutive user messages → API 400.
 
+## Vertical Boundary Audit (Daemon → Provider Loop → Tool Handler)
+
+Full audit: `VERTICAL-BOUNDARY-AUDIT.md` in repo root.
+
+### Three Layers
+- **Daemon**: DaemonContext, agent-lifecycle, event-system. Creates sessions, manages lifecycle.
+- **Provider Loop**: runProviderLoop in provider-shared.ts. Owns messages[], API calls, yield/done detection.
+- **Tool Handler**: executeTool dispatch, orchestrator-tools closures, built-in tool closures.
+
+### Clean Boundaries
+- **Daemon→Loop** (AgentRequest): 14/17 fields structural. Clean config+IO bundle.
+- **Loop→Handler** (executeTool): Pure dispatch — name lookup, Zod validation, call handler. No state leaks.
+- **Handler→Loop** (ToolResult): Value type with no back-references.
+
+### Accidental Crossings (block operator/resource split)
+1. **`getSession` on AgentRequest**: Loop writes cwd to daemon's TaskSession. Mixes daemon-owned state with loop-local state.
+2. **`setMessages`/`setAllTools`**: Reverse binding — loop pushes state UP into daemon for evaluate_script. Exists solely for the hidden debug tool.
+3. **`done()` closes queue**: Handler reaches into loop's queue via closure. Should be a return-value signal (loop already intercepts done by name).
+4. **TaskSession three-way mutation**: Daemon creates, loop writes (messages, allTools, cwd), handler writes (backgroundProcesses, foregroundExecutions). Worst cross-cutting state.
+
+### Key Finding: yield vs done asymmetry
+- **yield**: Clean boundary. Loop intercepts by name, `executeTool` never runs. Handler's `_isYield` return flag is dead code.
+- **done**: Boundary violation. `executeTool` runs the handler, which closes queue as side effect. Loop then checks result. Queue.close() couples handler to loop internals.
+
+### Recommendations for Operator/Resource Split
+1. Split TaskSession into SessionControl (daemon), LoopState (loop), ProcessState (handlers)
+2. Make done() a return-value signal (loop closes queue itself, like yield)
+3. Remove setMessages/setAllTools from AgentRequest (replace with callback read)
+4. Formalize OrchestratorToolsDeps into OperatorDeps + ResourceDeps
+
 ## Unresolved Design (prioritized)
 
 1. Message routing expansion (subtree + parent chain, not just direct parent/child)
