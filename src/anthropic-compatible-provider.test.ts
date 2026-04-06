@@ -26,14 +26,14 @@ import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import { createOrchestratorTools } from "./orchestrator-tools.ts";
-import { TaskTracker } from "./task-tracker.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
+import { TaskTracker } from "./task-tracker.ts";
 import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
+import { toToolDefinition } from "./tool-def.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
 import { buildBuiltinToolDefs } from "./tools/definitions.ts";
-import { toToolDefinition } from "./tool-def.ts";
 import {
 	cleanupSessionBackgroundProcesses,
 	executeBashWithTimeout,
@@ -78,7 +78,11 @@ async function executeTool(
 	const trackerDir = mkdtemp(pjoin(tmpdir(), "mxd-tool-test-"));
 	const testTracker = new TaskTracker(pjoin(trackerDir, "tree.json"));
 	await testTracker.load("main");
-	const testNode = testTracker.addChild(testTracker.rootNodeId, "test-task", "");
+	const testNode = testTracker.addChild(
+		testTracker.rootNodeId,
+		"test-task",
+		"",
+	);
 	const realTaskId = testNode.id;
 	// Build default session, then merge any caller-provided session data (maps, etc.)
 	const defaultSession = {
@@ -94,8 +98,10 @@ async function executeTool(
 	const callerSession = getSession?.(realTaskId);
 	if (callerSession) {
 		// Merge caller's maps into the default session (caller provides bgMap/fgMap, we provide cwd/queue)
-		defaultSession.backgroundProcesses = callerSession.backgroundProcesses ?? defaultSession.backgroundProcesses;
-		defaultSession.foregroundExecutions = callerSession.foregroundExecutions ?? defaultSession.foregroundExecutions;
+		defaultSession.backgroundProcesses =
+			callerSession.backgroundProcesses ?? defaultSession.backgroundProcesses;
+		defaultSession.foregroundExecutions =
+			callerSession.foregroundExecutions ?? defaultSession.foregroundExecutions;
 		if (callerSession.queue) defaultSession.queue = callerSession.queue;
 	}
 	testNode.session = defaultSession;
@@ -1976,7 +1982,11 @@ describe("done tool", () => {
 			projectPath: tempDir,
 			taskId: node.id,
 		});
-		const { toolDefs } = createOrchestratorTools(authDoneQueue, "test-project", node.id);
+		const { toolDefs } = createOrchestratorTools(
+			authDoneQueue,
+			"test-project",
+			node.id,
+		);
 		const doneTool = toolDefs.find((t) => t.name === "done");
 		if (!doneTool) throw new Error("done tool not found");
 

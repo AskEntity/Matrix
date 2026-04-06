@@ -14,15 +14,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import type { Auth } from "./tool-auth.ts";
-import { checkPermission } from "./tool-auth.ts";
-import { type ToolDef, toToolDefinition } from "./tool-def.ts";
-import * as R from "./resource-registry.ts";
 import {
 	createCrossProjectMessage,
 	createTaskMessage,
 	createTreeChange,
 } from "./queue-message-factory.ts";
+import * as R from "./resource-registry.ts";
 import {
 	closeTaskOp,
 	createTaskOp,
@@ -31,13 +28,12 @@ import {
 	resetTaskOp,
 	updateTaskOp,
 } from "./task-operations.ts";
-import {
-	buildTaskPrompt,
-	getDescendantIds,
-	slugify,
-} from "./task-utils.ts";
+import { buildTaskPrompt, getDescendantIds, slugify } from "./task-utils.ts";
+import type { Auth } from "./tool-auth.ts";
+import { checkPermission } from "./tool-auth.ts";
+import { type ToolDef, toToolDefinition } from "./tool-def.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
-import { type TaskStatus, isFolder, isTask, stripSession } from "./types.ts";
+import { isFolder, isTask, stripSession, type TaskStatus } from "./types.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 
 // ── Helper ──
@@ -111,9 +107,7 @@ function buildAllToolDefs(): ToolDef[] {
 				const currentTaskId = args.taskId as string | null;
 				let nodes = tracker.allNodes();
 				if (!args.include_closed) {
-					nodes = nodes.filter(
-						(n) => isFolder(n) || n.status !== "closed",
-					);
+					nodes = nodes.filter((n) => isFolder(n) || n.status !== "closed");
 				}
 				const visibleIds = new Set(nodes.map((n) => n.id));
 				const filterChildren = (children: string[]) =>
@@ -132,9 +126,7 @@ function buildAllToolDefs(): ToolDef[] {
 					: nodes.map((n) => {
 							const node: Record<string, unknown> = {
 								id: n.id,
-								title:
-									n.title +
-									(n.id === currentTaskId ? " (you)" : ""),
+								title: n.title + (n.id === currentTaskId ? " (you)" : ""),
 								children: filterChildren(n.children),
 								parentId: n.parentId,
 							};
@@ -180,9 +172,7 @@ function buildAllToolDefs(): ToolDef[] {
 				const node = tracker.getTask(args.taskId as string);
 				if (!node)
 					return {
-						content: [
-							{ type: "text", text: `Task not found: ${args.taskId}` },
-						],
+						content: [{ type: "text", text: `Task not found: ${args.taskId}` }],
 						isError: true,
 					};
 				return {
@@ -264,8 +254,7 @@ function buildAllToolDefs(): ToolDef[] {
 						},
 						"agent",
 						{
-							broadcastTree: () =>
-								R.broadcastTree(args.projectId as string),
+							broadcastTree: () => R.broadcastTree(args.projectId as string),
 							projectPath: getProjectPath(
 								args.projectId as string,
 								args.parentId as string | null,
@@ -281,8 +270,7 @@ function buildAllToolDefs(): ToolDef[] {
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
@@ -404,9 +392,7 @@ function buildAllToolDefs(): ToolDef[] {
 					}
 
 					// Surgical description edit
-					let finalDescription = args.description as
-						| string
-						| undefined;
+					let finalDescription = args.description as string | undefined;
 					if (
 						args.old_description !== undefined ||
 						args.new_description !== undefined
@@ -436,9 +422,7 @@ function buildAllToolDefs(): ToolDef[] {
 								isError: true,
 							};
 						}
-						const existingNode = tracker.getTask(
-							args.taskId as string,
-						);
+						const existingNode = tracker.getTask(args.taskId as string);
 						if (!existingNode?.description) {
 							return {
 								content: [
@@ -480,11 +464,10 @@ function buildAllToolDefs(): ToolDef[] {
 								isError: true,
 							};
 						}
-						finalDescription =
-							existingNode.description.replace(
-								args.old_description as string,
-								args.new_description as string,
-							);
+						finalDescription = existingNode.description.replace(
+							args.old_description as string,
+							args.new_description as string,
+						);
 					}
 
 					const node = await updateTaskOp(
@@ -500,18 +483,13 @@ function buildAllToolDefs(): ToolDef[] {
 						},
 						"agent",
 						{
-							broadcastTree: () =>
-								R.broadcastTree(args.projectId as string),
+							broadcastTree: () => R.broadcastTree(args.projectId as string),
 							notifyTargetNode: (action, nodeId, title) => {
 								const targetNode = tracker.getTask(nodeId);
 								if (targetNode?.session?.queue) {
 									try {
 										targetNode.session.queue.enqueue(
-											createTreeChange(
-												action,
-												nodeId,
-												title,
-											),
+											createTreeChange(action, nodeId, title),
 											{ quiet: true },
 										);
 									} catch {
@@ -519,27 +497,19 @@ function buildAllToolDefs(): ToolDef[] {
 									}
 								}
 							},
-							projectPath: getProjectPath(
-								args.projectId as string,
-								null,
-							),
+							projectPath: getProjectPath(args.projectId as string, null),
 						},
 					);
 					return {
 						content: [
 							{
 								type: "text",
-								text: JSON.stringify(
-									stripSession(node),
-									null,
-									2,
-								),
+								text: JSON.stringify(stripSession(node), null, 2),
 							},
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
@@ -600,8 +570,7 @@ function buildAllToolDefs(): ToolDef[] {
 				requestReply: {
 					schema: z.boolean(),
 					decl: { kind: "optional" },
-					description:
-						"If true, signals that a reply is expected.",
+					description: "If true, signals that a reply is expected.",
 				},
 			},
 			handler: async (args) => {
@@ -646,16 +615,12 @@ function buildAllToolDefs(): ToolDef[] {
 				let isDownward = false;
 				if (!isUpward) {
 					if (senderTaskId !== null) {
-						const targetTaskAbove =
-							tracker.getTaskAbove(targetTaskId);
-						isDownward =
-							targetTaskAbove?.id === senderTaskId;
+						const targetTaskAbove = tracker.getTaskAbove(targetTaskId);
+						isDownward = targetTaskAbove?.id === senderTaskId;
 					} else {
-						const targetTaskAbove =
-							tracker.getTaskAbove(targetTaskId);
+						const targetTaskAbove = tracker.getTaskAbove(targetTaskId);
 						isDownward =
-							targetTaskAbove?.id === tracker.rootNodeId ||
-							!targetTaskAbove;
+							targetTaskAbove?.id === tracker.rootNodeId || !targetTaskAbove;
 					}
 				}
 
@@ -679,17 +644,12 @@ function buildAllToolDefs(): ToolDef[] {
 							args.message as string,
 							{
 								title: args.title as string,
-								requestReply: args.requestReply as
-									| boolean
-									| undefined,
+								requestReply: args.requestReply as boolean | undefined,
 							},
 						);
-						await R.deliverMessage(
-							projectId,
-							targetTaskId,
-							queueMessage,
-							{ quiet: true },
-						);
+						await R.deliverMessage(projectId, targetTaskId, queueMessage, {
+							quiet: true,
+						});
 						return {
 							content: [
 								{
@@ -699,8 +659,7 @@ function buildAllToolDefs(): ToolDef[] {
 							],
 						};
 					} catch (e) {
-						const message =
-							e instanceof Error ? e.message : "Unknown error";
+						const message = e instanceof Error ? e.message : "Unknown error";
 						return {
 							content: [
 								{
@@ -728,10 +687,7 @@ function buildAllToolDefs(): ToolDef[] {
 				try {
 					// Create worktree if needed
 					if (!node.worktreePath) {
-						const projPath = getProjectPath(
-							projectId,
-							senderTaskId,
-						);
+						const projPath = getProjectPath(projectId, senderTaskId);
 						const gitCheck = await isGitClean(projPath);
 						if (!gitCheck.clean) {
 							const lines = gitCheck.files.split("\n").filter((l) => l.trim());
@@ -755,38 +711,23 @@ function buildAllToolDefs(): ToolDef[] {
 								],
 								isError: true,
 							};
-						const repoPath =
-							R.getProject(projectId)?.path ?? "";
+						const repoPath = R.getProject(projectId)?.path ?? "";
 						const slug = slugify(node.title);
 						const wtRoot = join(repoPath, ".worktrees");
 						const wm = new WorktreeManager(repoPath, wtRoot);
-						const wt = await wm.create(
-							node.id,
-							slug,
-							currentNode.branch,
-						);
-						tracker.assignWorktree(
-							node.id,
-							wt.branch,
-							wt.path,
-						);
+						const wt = await wm.create(node.id, slug, currentNode.branch);
+						tracker.assignWorktree(node.id, wt.branch, wt.path);
 					}
 
 					const hasPriorContext =
-						node.session != null ||
-						R.hasEventStore(projectId, node.id);
+						node.session != null || R.hasEventStore(projectId, node.id);
 					let header: string | undefined;
 					if (!hasPriorContext) {
-						const repoPath =
-							R.getProject(projectId)?.path ?? "";
+						const repoPath = R.getProject(projectId)?.path ?? "";
 						let memory = "";
 						try {
 							memory = readFileSync(
-								join(
-									node.worktreePath ?? repoPath,
-									".mxd",
-									"memory.md",
-								),
+								join(node.worktreePath ?? repoPath, ".mxd", "memory.md"),
 								"utf-8",
 							);
 						} catch {
@@ -800,18 +741,12 @@ function buildAllToolDefs(): ToolDef[] {
 						currentNode?.title ?? "unknown",
 						args.message as string,
 						{
-							requestReply: args.requestReply as
-								| boolean
-								| undefined,
+							requestReply: args.requestReply as boolean | undefined,
 							header: header ?? undefined,
 						},
 					);
 
-					await R.deliverMessage(
-						projectId,
-						targetTaskId,
-						queueMessage,
-					);
+					await R.deliverMessage(projectId, targetTaskId, queueMessage);
 
 					return {
 						content: [
@@ -824,8 +759,7 @@ function buildAllToolDefs(): ToolDef[] {
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [
 							{
@@ -869,31 +803,21 @@ function buildAllToolDefs(): ToolDef[] {
 					const repoPath = R.getProject(projectId)?.path ?? "";
 					const wtRoot = join(repoPath, ".worktrees");
 					const wm = new WorktreeManager(repoPath, wtRoot);
-					const result = await closeTaskOp(
-						tracker,
-						args.taskId as string,
-						{
-							broadcastTree: () => R.broadcastTree(projectId),
-							removeWorktree: (id, slug) => wm.remove(id, slug),
-							clearEventStore: (sid) =>
-								R.clearEventStore(projectId, sid),
-						},
-					);
+					const result = await closeTaskOp(tracker, args.taskId as string, {
+						broadcastTree: () => R.broadcastTree(projectId),
+						removeWorktree: (id, slug) => wm.remove(id, slug),
+						clearEventStore: (sid) => R.clearEventStore(projectId, sid),
+					});
 					return {
 						content: [
 							{
 								type: "text",
-								text: JSON.stringify(
-									{ closed: true, ...result },
-									null,
-									2,
-								),
+								text: JSON.stringify({ closed: true, ...result }, null, 2),
 							},
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
@@ -938,25 +862,19 @@ function buildAllToolDefs(): ToolDef[] {
 						{
 							broadcastTree: () => R.broadcastTree(projectId),
 							removeWorktree: (id, slug) => wm.remove(id, slug),
-							clearEventStore: (sid) =>
-								R.clearEventStore(projectId, sid),
+							clearEventStore: (sid) => R.clearEventStore(projectId, sid),
 						},
 					);
 					return {
 						content: [
 							{
 								type: "text",
-								text: JSON.stringify(
-									{ deleted: true, ...result },
-									null,
-									2,
-								),
+								text: JSON.stringify({ deleted: true, ...result }, null, 2),
 							},
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
@@ -993,36 +911,25 @@ function buildAllToolDefs(): ToolDef[] {
 					const repoPath = R.getProject(projectId)?.path ?? "";
 					const wtRoot = join(repoPath, ".worktrees");
 					const wm = new WorktreeManager(repoPath, wtRoot);
-					const result = await resetTaskOp(
-						tracker,
-						args.taskId as string,
-						{
-							broadcastTree: () => R.broadcastTree(projectId),
-							removeWorktree: (id, slug) => wm.remove(id, slug),
-							clearEventStore: (sid) =>
-								R.clearEventStore(projectId, sid),
-							stopTask: async (nodeId) => {
-								await R.stopTask(projectId, nodeId);
-							},
-							awaitLoopExit: (nodeId) =>
-								R.awaitLoopExit(nodeId),
+					const result = await resetTaskOp(tracker, args.taskId as string, {
+						broadcastTree: () => R.broadcastTree(projectId),
+						removeWorktree: (id, slug) => wm.remove(id, slug),
+						clearEventStore: (sid) => R.clearEventStore(projectId, sid),
+						stopTask: async (nodeId) => {
+							await R.stopTask(projectId, nodeId);
 						},
-					);
+						awaitLoopExit: (nodeId) => R.awaitLoopExit(nodeId),
+					});
 					return {
 						content: [
 							{
 								type: "text",
-								text: JSON.stringify(
-									{ reset: true, ...result },
-									null,
-									2,
-								),
+								text: JSON.stringify({ reset: true, ...result }, null, 2),
 							},
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
@@ -1051,9 +958,7 @@ function buildAllToolDefs(): ToolDef[] {
 				question: {
 					schema: z
 						.string()
-						.describe(
-							"The clarification question to ask the user",
-						),
+						.describe("The clarification question to ask the user"),
 					decl: { kind: "explicit" },
 				},
 			},
@@ -1099,9 +1004,7 @@ function buildAllToolDefs(): ToolDef[] {
 				nodeId: {
 					schema: z
 						.string()
-						.describe(
-							"Parent task ID whose children to reorder",
-						),
+						.describe("Parent task ID whose children to reorder"),
 					decl: { kind: "explicit" },
 				},
 				children: {
@@ -1141,8 +1044,7 @@ function buildAllToolDefs(): ToolDef[] {
 						args.children as string[],
 						"agent",
 						{
-							broadcastTree: () =>
-								R.broadcastTree(args.projectId as string),
+							broadcastTree: () => R.broadcastTree(args.projectId as string),
 						},
 					);
 					return {
@@ -1162,8 +1064,7 @@ function buildAllToolDefs(): ToolDef[] {
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
@@ -1202,12 +1103,8 @@ function buildAllToolDefs(): ToolDef[] {
 							content: [{ type: "text", text: "Project not found" }],
 							isError: true,
 						};
-					const parentId =
-						(args.parentId as string) ?? tracker.rootNodeId;
-					const folder = tracker.addFolder(
-						args.title as string,
-						parentId,
-					);
+					const parentId = (args.parentId as string) ?? tracker.rootNodeId;
+					const folder = tracker.addFolder(args.title as string, parentId);
 					await tracker.save();
 					R.broadcastTree(args.projectId as string);
 					return {
@@ -1219,8 +1116,7 @@ function buildAllToolDefs(): ToolDef[] {
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
@@ -1293,8 +1189,7 @@ function buildAllToolDefs(): ToolDef[] {
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
@@ -1344,10 +1239,7 @@ function buildAllToolDefs(): ToolDef[] {
 							],
 							isError: true,
 						};
-					tracker.updateTitle(
-						args.folderId as string,
-						args.title as string,
-					);
+					tracker.updateTitle(args.folderId as string, args.title as string);
 					await tracker.save();
 					R.broadcastTree(args.projectId as string);
 					return {
@@ -1363,8 +1255,7 @@ function buildAllToolDefs(): ToolDef[] {
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
@@ -1418,9 +1309,7 @@ function buildAllToolDefs(): ToolDef[] {
 					description: "Sender's project ID (auto-bound).",
 				},
 				targetProjectId: {
-					schema: z
-						.string()
-						.describe("ID of the target project"),
+					schema: z.string().describe("ID of the target project"),
 					decl: { kind: "explicit" },
 				},
 				message: {
@@ -1482,10 +1371,7 @@ function buildAllToolDefs(): ToolDef[] {
 							],
 						};
 					} catch (e) {
-						const message =
-							e instanceof Error
-								? e.message
-								: "Unknown error";
+						const message = e instanceof Error ? e.message : "Unknown error";
 						return {
 							content: [
 								{
@@ -1525,8 +1411,7 @@ function buildAllToolDefs(): ToolDef[] {
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [
 							{
@@ -1618,9 +1503,7 @@ function buildAllToolDefs(): ToolDef[] {
 					};
 
 				// Scope validation via auth
-				if (
-					!checkPermission(auth, "subtree", { taskId: targetId })
-				) {
+				if (!checkPermission(auth, "subtree", { taskId: targetId })) {
 					return {
 						content: [
 							{
@@ -1651,8 +1534,7 @@ function buildAllToolDefs(): ToolDef[] {
 						],
 					};
 				} catch (e) {
-					const message =
-						e instanceof Error ? e.message : "Unknown error";
+					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [
 							{
@@ -1685,9 +1567,7 @@ function buildAllToolDefs(): ToolDef[] {
 				status: {
 					schema: z
 						.enum(["passed", "failed"])
-						.describe(
-							"Whether the task passed or failed",
-						),
+						.describe("Whether the task passed or failed"),
 					decl: { kind: "explicit" },
 				},
 				summary: {
@@ -1706,13 +1586,8 @@ function buildAllToolDefs(): ToolDef[] {
 
 				// Guard: reject done() if any descendants have active sessions
 				if (taskId && tracker) {
-					const runningDescendants = getDescendantIds(
-						tracker,
-						taskId,
-					)
-						.filter(
-							(id) => tracker.getTask(id)?.session != null,
-						)
+					const runningDescendants = getDescendantIds(tracker, taskId)
+						.filter((id) => tracker.getTask(id)?.session != null)
 						.map((id) => {
 							const n = tracker.get(id);
 							return `${n?.title ?? id} (${id})`;
@@ -1789,9 +1664,7 @@ function buildEvaluateScriptTool(
 				decl: { kind: "bind", from: "taskId", overridable: false },
 			},
 			script: {
-				schema: z
-					.string()
-					.describe("JavaScript/TypeScript code to evaluate"),
+				schema: z.string().describe("JavaScript/TypeScript code to evaluate"),
 				decl: { kind: "explicit" },
 			},
 		},
@@ -1813,17 +1686,14 @@ function buildEvaluateScriptTool(
 					allTools: allToolsRef.current,
 				};
 
-				const AsyncFunction = Object.getPrototypeOf(
-					async () => {},
-				).constructor;
+				const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 				const fn = new AsyncFunction("ctx", args.script as string);
 
 				const logs: string[] = [];
 				const origLog = console.log;
 				const origError = console.error;
 				const origWarn = console.warn;
-				console.log = (...a: unknown[]) =>
-					logs.push(a.map(String).join(" "));
+				console.log = (...a: unknown[]) => logs.push(a.map(String).join(" "));
 				console.error = (...a: unknown[]) =>
 					logs.push(`[error] ${a.map(String).join(" ")}`);
 				console.warn = (...a: unknown[]) =>
@@ -1853,10 +1723,7 @@ function buildEvaluateScriptTool(
 					content: [
 						{
 							type: "text",
-							text:
-								parts.length > 0
-									? parts.join("\n\n")
-									: "(no output)",
+							text: parts.length > 0 ? parts.join("\n\n") : "(no output)",
 						},
 					],
 				};

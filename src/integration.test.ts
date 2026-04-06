@@ -10904,7 +10904,9 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 			(e: Event) =>
 				e.type === "tool_result" &&
 				"images" in e &&
-				(e as any).images?.length > 0,
+				(e as Record<string, unknown>).images != null &&
+				Array.isArray((e as Record<string, unknown>).images) &&
+				((e as Record<string, unknown>).images as unknown[]).length > 0,
 		);
 		expect(imageToolResult).toBeTruthy();
 

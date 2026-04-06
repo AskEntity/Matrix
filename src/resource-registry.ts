@@ -113,18 +113,12 @@ export function getEventStore(projectId: string): EventStore {
 	return store;
 }
 
-export function clearEventStore(
-	projectId: string,
-	sessionId: string,
-): void {
+export function clearEventStore(projectId: string, sessionId: string): void {
 	const store = ctx().eventStores.get(projectId);
 	if (store) store.clear(sessionId);
 }
 
-export function hasEventStore(
-	projectId: string,
-	sessionId: string,
-): boolean {
+export function hasEventStore(projectId: string, sessionId: string): boolean {
 	const store = ctx().eventStores.get(projectId);
 	if (!store) return false;
 	return store.has(sessionId);
@@ -164,10 +158,7 @@ type DeliverMessageFn = (
 	message: QueueMessage,
 	opts?: { quiet?: boolean },
 ) => Promise<void>;
-type StopTaskFn = (
-	projectId: string,
-	nodeId: string,
-) => Promise<boolean>;
+type StopTaskFn = (projectId: string, nodeId: string) => Promise<boolean>;
 type AwaitLoopExitFn = (nodeId: string) => Promise<void>;
 type InjectMessageToProjectFn = (
 	projectId: string,
@@ -221,10 +212,7 @@ export function deliverMessage(
 	return _deliverMessage(projectId, nodeId, message, opts);
 }
 
-export function stopTask(
-	projectId: string,
-	nodeId: string,
-): Promise<boolean> {
+export function stopTask(projectId: string, nodeId: string): Promise<boolean> {
 	if (!_stopTask) throw new Error("stopTask not registered");
 	return _stopTask(projectId, nodeId);
 }
