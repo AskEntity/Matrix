@@ -32,7 +32,8 @@ import {
 	getDescendantIds,
 	isDescendantOf,
 } from "./task-utils.ts";
-import { attachMockSession, mockOrchestratorDeps } from "./test-utils.ts";
+import { resetResourceRegistry } from "./resource-registry.ts";
+import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
 
 describe("folder-aware: isDescendantOf", () => {
 	let tempDir: string;
@@ -268,13 +269,15 @@ describe("folder-aware: create_task scope validation", () => {
 		currentTaskId: string | null,
 		args: { title: string; description: string; parentId?: string },
 	) {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: currentTaskId,
 		});
 		const { toolDefs } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			currentTaskId,
 		);
@@ -377,13 +380,15 @@ describe("folder-aware: update_task reparent", () => {
 		currentTaskId: string | null,
 		args: { taskId: string; parentId?: string },
 	) {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: currentTaskId,
 		});
 		const { toolDefs } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			currentTaskId,
 		);
@@ -473,13 +478,15 @@ describe("folder-aware: delete_task", () => {
 		currentTaskId: string | null,
 		args: { taskId: string },
 	) {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: currentTaskId,
 		});
 		const { toolDefs } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			currentTaskId,
 		);
@@ -538,13 +545,15 @@ describe("folder-aware: close_task", () => {
 		currentTaskId: string | null,
 		args: { taskId: string },
 	) {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: currentTaskId,
 		});
 		const { toolDefs } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			currentTaskId,
 		);
@@ -592,13 +601,15 @@ describe("folder-aware: reset_task", () => {
 		currentTaskId: string | null,
 		args: { taskId: string },
 	) {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: currentTaskId,
 		});
 		const { toolDefs } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			currentTaskId,
 		);
@@ -646,13 +657,15 @@ describe("folder-aware: send_message direction validation", () => {
 		currentTaskId: string | null,
 		args: { taskId: string; title: string; message: string },
 	) {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: currentTaskId,
 		});
 		const { toolDefs } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			currentTaskId,
 		);
@@ -900,13 +913,15 @@ describe("folder-aware: reorder_tasks", () => {
 		currentTaskId: string | null,
 		args: { nodeId: string; children: string[] },
 	) {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: currentTaskId,
 		});
 		const { toolDefs } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			currentTaskId,
 		);
@@ -990,13 +1005,15 @@ describe("folder-aware: done() descendant check", () => {
 		currentTaskId: string | null,
 		args: { status: string; summary: string },
 	) {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: currentTaskId,
 		});
 		const { toolDefs } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			currentTaskId,
 		);
@@ -1089,16 +1106,23 @@ describe("folder-aware: fork_task_context scope validation", () => {
 		currentTaskId: string | null,
 		args: { sourceTaskId: string; targetTaskId: string },
 	) {
-		const deps = mockOrchestratorDeps({
+		resetResourceRegistry();
+		const { auth, ctx } = initMockResourceRegistry({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
+			taskId: currentTaskId,
 		});
-		// hasEventStore needs to return true for source
-		deps.hasEventStore = (id: string) => id === args.sourceTaskId;
+		// hasEventStore needs to return true for source — mock the event store
+		const mockEventStore = {
+			has: (id: string) => id === args.sourceTaskId,
+			clear: () => {},
+			copySessionFrom: async () => ({ eventCount: 5 }),
+		};
+		ctx.eventStores.set("test-project", mockEventStore as never);
 
 		const { toolDefs } = createOrchestratorTools(
-			deps,
+			auth,
 			"test-project",
 			currentTaskId,
 		);

@@ -90,6 +90,25 @@ export function initMockResourceRegistry(opts: {
 }
 
 /**
+ * Backward-compat wrapper: creates auth + initializes registry.
+ * Returns an object that can be spread into createOrchestratorTools.
+ * Usage: const { auth } = mockOrchestratorDeps({...});
+ *        createOrchestratorTools(auth, projectId, taskId);
+ */
+export function mockOrchestratorDeps(opts: {
+	tracker: TaskTracker;
+	projectId: string;
+	projectPath: string;
+	dataDir?: string;
+}): { auth: Auth; tracker: TaskTracker } {
+	const { auth } = initMockResourceRegistry({
+		...opts,
+		taskId: null,
+	});
+	return { auth, tracker: opts.tracker };
+}
+
+/**
  * Attach a minimal mock session to a tracker node, primarily for setting up the queue.
  * Returns the session for further customization if needed.
  */
