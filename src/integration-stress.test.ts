@@ -440,6 +440,8 @@ describe("Stress: multi-child coordination", () => {
 	test("MULTI1: 3 children running → crash → restart → all 3 complete → parent done", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
 
 		// Child instruction: bash echo (unique per child via send_message content) → done
 		const makeChildInstruction = (label: string) =>
@@ -482,7 +484,11 @@ describe("Stress: multi-child coordination", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Child A", description: "Parallel child A" },
+							input: {
+								parentId: "$rootId",
+								title: "Child A",
+								description: "Parallel child A",
+							},
 						},
 					],
 				},
@@ -499,7 +505,11 @@ describe("Stress: multi-child coordination", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Child B", description: "Parallel child B" },
+							input: {
+								parentId: "$rootId",
+								title: "Child B",
+								description: "Parallel child B",
+							},
 						},
 					],
 				},
@@ -516,7 +526,11 @@ describe("Stress: multi-child coordination", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Child C", description: "Parallel child C" },
+							input: {
+								parentId: "$rootId",
+								title: "Child C",
+								description: "Parallel child C",
+							},
 						},
 					],
 				},
@@ -903,6 +917,8 @@ describe("Stress: fork + restart", () => {
 	test("FORK_RESTART1: fork child → crash → both parent and child resume correctly", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+		const rootId2 = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId2);
 
 		// Child instruction: bash sleep (will be interrupted) → done after restart
 		const childInstruction = JSON.stringify({
@@ -960,6 +976,7 @@ describe("Stress: fork + restart", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Fork Restart Child",
 								description: "Tests fork + restart",
 							},
@@ -1565,6 +1582,8 @@ describe("Stress: child restart edge cases", () => {
 	test("CHILD_EDGE1: child yields → crash → restart → child bypasses → message wakes child → done", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+		const rootId3 = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId3);
 
 		// Child instruction: yield → wake → done
 		const childInstruction = JSON.stringify({
@@ -1606,6 +1625,7 @@ describe("Stress: child restart edge cases", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Yielding Child",
 								description: "Tests child yield + restart",
 							},
