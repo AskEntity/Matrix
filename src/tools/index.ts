@@ -6,5 +6,5 @@ export {
 	getBackgroundStatus,
 	killBackgroundProcess,
 } from "./bash.ts";
-export { createBuiltinTools, resolvePath } from "./definitions.ts";
+export { buildBuiltinToolDefs, resolvePath } from "./definitions.ts";
 export { jsSearch, truncateSearchOutput } from "./search.ts";

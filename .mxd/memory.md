@@ -718,3 +718,14 @@ Three execution layers: daemon → provider loop → tool handler.
 - done() closes queue through closure (boundary violation, but structural — leave for now)
 - evaluate_script punctures all layers (intentional escape hatch)
 - TaskSession is worst cross-cutting state (three-way mutation across all layers)
+
+## Builtin Tools Migration
+
+All 7 builtin tools (bash, background, read_file, write_file, edit_file, list_files, search) migrated from closure-based `createBuiltinTools()` to ToolDef objects using global functions.
+
+- `buildBuiltinToolDefs()` replaces `createBuiltinTools()` — returns ToolDef[] instead of ToolDefinition[]
+- All tools use `R.getSession(projectId, taskId)` for session access (cwd, queue, backgroundProcesses)
+- `getSession` param removed from `createAgentContext` opts — no longer needed
+- Common `bindParams` pattern: all builtin tools bind projectId + taskId (non-overridable)
+
+Now ALL 32 tools (25 orchestrator + 7 builtin) use the same ToolDef + auth + global functions pattern. Zero closure-based tool handlers remain.

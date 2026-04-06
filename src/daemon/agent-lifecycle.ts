@@ -27,9 +27,10 @@ import { slugify } from "../task-utils.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
 import { MCP_SERVER_NAME } from "../tool-names.ts";
 import {
+	buildBuiltinToolDefs,
 	cleanupSessionBackgroundProcesses,
-	createBuiltinTools,
 } from "../tools/index.ts";
+import { toToolDefinition } from "../tool-def.ts";
 import { type AgentResult, isTask, type TaskSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
@@ -128,8 +129,7 @@ async function createAgentContext(
 		mcpManager?: McpClientManager;
 		/** System prompt for auto-launching target project agents (cross-project). Only needed at depth 0. */
 		orchestratorSystemPrompt?: SystemPrompt;
-		/** Callback to look up TaskSession by sessionId. Needed for built-in tool handlers. */
-		getSession: (sessionId: string) => TaskSession | undefined;
+
 	},
 ): Promise<AgentContextResult> {
 	const effectiveCfg = await resolveProjectConfig(
@@ -215,17 +215,12 @@ async function createAgentContext(
 			effectiveCfg.selfBootstrap,
 		);
 
-	// Create built-in tools with handler closures that read session state
-	const builtinTools = createBuiltinTools(
-		opts.getSession,
-		opts.currentTaskId,
-		() => opts.getSession(opts.currentTaskId)?.cwd ?? opts.projectPath,
-		() => opts.getSession(opts.currentTaskId)?.fallbackCwd,
-		() => opts.getSession(opts.currentTaskId)?.queue,
-	);
+	// Convert builtin ToolDefs to ToolDefinitions using the same auth
+	const builtinDefs = buildBuiltinToolDefs();
+	const builtinTools = builtinDefs.map((def) => toToolDefinition(def, auth));
 
 	const mcpToolDefs: Record<string, ToolDefinition[]> = {
-		[MCP_SERVER_NAME]: [...(builtinTools as ToolDefinition[]), ...toolDefs],
+		[MCP_SERVER_NAME]: [...builtinTools, ...toolDefs],
 		...mcpManager.getToolDefs(),
 	};
 
@@ -669,7 +664,6 @@ export async function runAgentForNode(
 			orchestratorSystemPrompt: isRoot
 				? opts?.orchestratorSystemPrompt
 				: undefined,
-			getSession,
 		});
 
 		// Priority: API param > resolved config
