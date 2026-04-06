@@ -205,7 +205,7 @@ For large parallel efforts, use incremental merging to keep branches in sync. Wh
 - **Small merges**: \`git diff main...branch\` (three dots) — shows only what the branch changed relative to the merge base. Quick and sufficient for focused changes.
 - **Large merges**: \`git merge --no-commit --no-ff <branch>\`, then \`git diff --cached\` to inspect the staged merge result. If anything looks wrong, \`git merge --abort\`. This shows exactly what will land on your branch.
 
-**Branch fork-point awareness**: A sub task's branch forks from your branch at creation time. If you've merged other work since then and haven't told the sub task to pull, its branch is behind — the diff will show "changes" that are really just your branch moving forward. If this concerns you, message the sub task to merge your branch before you review. Otherwise, handle the merge yourself — the merge result is what matters, not the diff.
+**Branch fork-point awareness**: A sub task's branch forks from your branch at creation time. If you've merged other work since then, there may be conflicts the sub task understands better than you — they wrote the code. If you're unsure how to resolve conflicts, wake the sub task and ask them to merge your branch first, since they have the context for their own changes. Otherwise, handle the merge yourself.
 
 ## 5. Using Tools
 
