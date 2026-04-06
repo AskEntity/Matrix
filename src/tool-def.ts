@@ -4,12 +4,12 @@
  * Each tool declares its parameters with ParamDecl metadata:
  * - "optional": parameter is optional for both agent and external callers
  * - "explicit": parameter is required for both agent and external callers
- * - "bind": auto-bound for agents from identity, required for external callers
- *   - overridable: agent CAN provide it (optional, defaults to bound value)
+ * - "bind": auto-bound for agents from identity, required for external callers.
+ *           Hidden from agent schema (agent cannot see or override).
  *
  * The framework generates TWO schemas from one ToolDef:
- * - Agent schema: bind params hidden (non-overridable) or optional (overridable)
- * - External schema: bind params required
+ * - Agent schema: bind params hidden, explicit required, optional optional
+ * - External schema: bind params required, explicit required, optional optional
  *
  * Handler signature: (args, auth) => result
  * No deps, no context objects, no closure-captured state.
@@ -25,7 +25,7 @@ import type { ToolDefinition } from "./tool-definition.ts";
 export type ParamDecl =
 	| { kind: "optional" }
 	| { kind: "explicit" }
-	| { kind: "bind"; from: "projectId" | "taskId"; overridable: boolean };
+	| { kind: "bind"; from: "projectId" | "taskId" };
 
 /** Map of parameter name → { zod schema, decl metadata, description } */
 export type ParamDefs = Record<
@@ -69,8 +69,7 @@ export interface ToolDef {
  * Build a Zod raw shape for AGENT callers.
  * - "explicit" → required
  * - "optional" → optional
- * - "bind" non-overridable → HIDDEN (not in schema)
- * - "bind" overridable → optional
+ * - "bind" → HIDDEN (not in schema, auto-bound by framework)
  */
 export function buildAgentShape(params: ParamDefs): ZodRawShape {
 	const shape: Record<string, ZodTypeAny> = {};
@@ -86,10 +85,7 @@ export function buildAgentShape(params: ParamDefs): ZodRawShape {
 				shape[name] = schema.optional();
 				break;
 			case "bind":
-				if (def.decl.overridable) {
-					shape[name] = schema.optional();
-				}
-				// non-overridable: omitted from agent schema
+				// Always hidden from agent schema
 				break;
 		}
 	}
@@ -163,7 +159,7 @@ export function buildExternalJsonSchema(
 // ── Validation ──
 
 /**
- * Validate agent input: reject if agent passes a non-overridable bind param.
+ * Validate agent input: reject if agent passes a bind param (always auto-bound).
  * Returns error message or null if valid.
  */
 export function validateAgentInput(
@@ -171,11 +167,7 @@ export function validateAgentInput(
 	input: Record<string, unknown>,
 ): string | null {
 	for (const [name, def] of Object.entries(params)) {
-		if (
-			def.decl.kind === "bind" &&
-			!def.decl.overridable &&
-			input[name] !== undefined
-		) {
+		if (def.decl.kind === "bind" && input[name] !== undefined) {
 			return `Agent cannot pass "${name}" — it is auto-bound by the framework.`;
 		}
 	}
@@ -199,15 +191,8 @@ export function resolveBindParams(
 				def.decl.from === "projectId"
 					? bindValues.projectId
 					: bindValues.taskId;
-			if (def.decl.overridable) {
-				// Use provided value or fall back to bound value
-				if (resolved[name] === undefined) {
-					resolved[name] = boundValue;
-				}
-			} else {
-				// Always use bound value
-				resolved[name] = boundValue;
-			}
+			// Always use bound value — agent cannot override
+			resolved[name] = boundValue;
 		}
 	}
 	return resolved;
@@ -231,7 +216,7 @@ export function toToolDefinition(def: ToolDef, auth: Auth): ToolDefinition {
 		args: Record<string, unknown>,
 		extra: unknown,
 	): Promise<ToolHandlerResult> => {
-		// Step 1: Validate agent didn't pass non-overridable bind params
+		// Step 1: Validate agent didn't pass bind params (they're auto-bound)
 		const validationError = validateAgentInput(def.params, args);
 		if (validationError) {
 			return {
