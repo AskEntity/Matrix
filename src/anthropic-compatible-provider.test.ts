@@ -3793,3 +3793,91 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 		expect(liveTextBlocks).toEqual(reconTextBlocks);
 	});
 });
+
+// ── systemPreamble tests ──
+
+describe("systemPreamble", () => {
+	let testDir: string;
+
+	beforeAll(async () => {
+		testDir = await mkdtemp(join(tmpdir(), "mxd-preamble-test-"));
+	});
+
+	afterAll(async () => {
+		await rm(testDir, { recursive: true, force: true });
+	});
+
+	const endTurnInstruction = JSON.stringify({
+		blocks: [{ type: "text", text: "ok" }],
+		stop_reason: "end_turn",
+	});
+
+	test("with systemPreamble: first system block is the preamble text", async () => {
+		const { ValidatingMockAPI, createMockedProviderWithMock } = await import(
+			"./test-utils/mock-anthropic-api.ts"
+		);
+		const mockAPI = new ValidatingMockAPI();
+
+		const preambleText = "You are a test agent for preamble verification.";
+		const provider = createMockedProviderWithMock(mockAPI, undefined, {
+			systemPreamble: preambleText,
+		});
+
+		await provider.execute({
+			cwd: testDir,
+			systemPrompt: { stable: "stable-prompt", variable: "variable-prompt" },
+			queue: queueWithPrompt(endTurnInstruction, testDir),
+		});
+
+		const request = mockAPI.getLastRequest();
+		expect(request).toBeDefined();
+		const system = request?.system as Array<{ type: string; text: string }>;
+		expect(Array.isArray(system)).toBe(true);
+		expect(system.length).toBe(3); // preamble + stable + variable
+		expect(system[0]?.text).toBe(preambleText);
+		expect(system[1]?.text).toBe("stable-prompt");
+		expect(system[2]?.text).toBe("variable-prompt");
+	});
+
+	test("without systemPreamble: no preamble block, just stable + variable", async () => {
+		const { ValidatingMockAPI, createMockedProviderWithMock } = await import(
+			"./test-utils/mock-anthropic-api.ts"
+		);
+		const mockAPI = new ValidatingMockAPI();
+		const provider = createMockedProviderWithMock(mockAPI);
+
+		await provider.execute({
+			cwd: testDir,
+			systemPrompt: { stable: "stable-prompt", variable: "variable-prompt" },
+			queue: queueWithPrompt(endTurnInstruction, testDir),
+		});
+
+		const request = mockAPI.getLastRequest();
+		const system = request?.system as Array<{ type: string; text: string }>;
+		expect(Array.isArray(system)).toBe(true);
+		expect(system.length).toBe(2); // stable + variable only
+		expect(system[0]?.text).toBe("stable-prompt");
+		expect(system[1]?.text).toBe("variable-prompt");
+	});
+
+	test("empty string systemPreamble: treated as no preamble", async () => {
+		const { ValidatingMockAPI, createMockedProviderWithMock } = await import(
+			"./test-utils/mock-anthropic-api.ts"
+		);
+		const mockAPI = new ValidatingMockAPI();
+		const provider = createMockedProviderWithMock(mockAPI, undefined, {
+			systemPreamble: "",
+		});
+
+		await provider.execute({
+			cwd: testDir,
+			systemPrompt: { stable: "stable-prompt", variable: "variable-prompt" },
+			queue: queueWithPrompt(endTurnInstruction, testDir),
+		});
+
+		const request = mockAPI.getLastRequest();
+		const system = request?.system as Array<{ type: string; text: string }>;
+		expect(system.length).toBe(2); // no preamble
+		expect(system[0]?.text).toBe("stable-prompt");
+	});
+});

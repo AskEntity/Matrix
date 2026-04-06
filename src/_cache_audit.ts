@@ -14,8 +14,10 @@ import { buildSystemPrompt } from "./system-prompts.ts";
 
 const globalConfig = await loadGlobalConfig();
 const authGroup = resolveAuthGroup(globalConfig);
-const oauthToken = authGroup?.claudeOauthToken;
-const apiKey = authGroup?.anthropicApiKey;
+const oauthToken =
+	authGroup?.provider === "anthropic" ? authGroup.oauthToken : undefined;
+const apiKey =
+	authGroup?.provider === "anthropic" ? authGroup.apiKey : undefined;
 const useOAuth = Boolean(oauthToken && !apiKey);
 
 let client: Anthropic;

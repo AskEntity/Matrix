@@ -789,13 +789,16 @@ function printResolvedConfig(cfg: MatrixConfig): void {
 			const isDefault = name === cfg.defaultAuth;
 			const marker = isDefault ? " (default)" : "";
 			const keys: string[] = [];
-			if (group.anthropicApiKey) keys.push("ANTHROPIC_API_KEY");
-			if (group.claudeOauthToken) keys.push("CLAUDE_CODE_OAUTH_TOKEN");
-			if (group.openaiApiKey) keys.push("OPENAI_API_KEY");
-			if (group.openaiAccessToken) keys.push("OPENAI_ACCESS_TOKEN");
-			if (group.openaiRefreshToken) keys.push("OPENAI_REFRESH_TOKEN");
-			if (group.openaiAccountId) keys.push("OPENAI_ACCOUNT_ID");
-			if (group.openaiBaseUrl) keys.push(`base=${group.openaiBaseUrl}`);
+			if (group.provider === "anthropic") {
+				if (group.apiKey) keys.push("apiKey");
+				if (group.oauthToken) keys.push("oauthToken");
+			} else {
+				if (group.apiKey) keys.push("apiKey");
+				if (group.accessToken) keys.push("accessToken");
+				if (group.refreshToken) keys.push("refreshToken");
+				if (group.accountId) keys.push("accountId");
+				if (group.baseUrl) keys.push(`base=${group.baseUrl}`);
+			}
 			console.log(
 				`    ${name}${marker}: provider=${group.provider} [${keys.join(", ")}]`,
 			);
@@ -993,28 +996,34 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 			}
 		}
 
-		const group: AuthGroup = { provider };
+		let group: AuthGroup;
 		if (provider === "anthropic") {
-			if (apiKey) group.anthropicApiKey = apiKey;
-			if (oauthToken) group.claudeOauthToken = oauthToken;
 			if (!apiKey && !oauthToken) {
 				console.error(
 					"Anthropic auth requires --key <api-key> or --oauth-token <token>",
 				);
 				process.exit(1);
 			}
+			group = {
+				provider: "anthropic",
+				...(apiKey ? { apiKey } : {}),
+				...(oauthToken ? { oauthToken } : {}),
+			};
 		} else {
-			if (apiKey) group.openaiApiKey = apiKey;
-			if (accessToken) group.openaiAccessToken = accessToken;
-			if (refreshToken) group.openaiRefreshToken = refreshToken;
-			if (accountId) group.openaiAccountId = accountId;
-			if (baseUrl) group.openaiBaseUrl = baseUrl;
 			if (!apiKey && !accessToken) {
 				console.error(
 					"OpenAI auth requires --key <api-key> or --access-token <token>",
 				);
 				process.exit(1);
 			}
+			group = {
+				provider: "openai",
+				...(apiKey ? { apiKey } : {}),
+				...(accessToken ? { accessToken } : {}),
+				...(refreshToken ? { refreshToken } : {}),
+				...(accountId ? { accountId } : {}),
+				...(baseUrl ? { baseUrl } : {}),
+			};
 		}
 
 		// Save to appropriate config layer
@@ -1054,26 +1063,29 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 			const isDefault = name === resolved.defaultAuth;
 			const marker = isDefault ? " (default)" : "";
 			const maskedKeys: string[] = [];
-			if (group.anthropicApiKey) {
-				maskedKeys.push(`key=${group.anthropicApiKey.slice(0, 10)}...`);
-			}
-			if (group.claudeOauthToken) {
-				maskedKeys.push("oauth=***");
-			}
-			if (group.openaiApiKey) {
-				maskedKeys.push(`key=${group.openaiApiKey.slice(0, 10)}...`);
-			}
-			if (group.openaiAccessToken) {
-				maskedKeys.push("access=***");
-			}
-			if (group.openaiRefreshToken) {
-				maskedKeys.push("refresh=***");
-			}
-			if (group.openaiAccountId) {
-				maskedKeys.push(`account=${group.openaiAccountId.slice(0, 6)}...`);
-			}
-			if (group.openaiBaseUrl) {
-				maskedKeys.push(`base=${group.openaiBaseUrl}`);
+			if (group.provider === "anthropic") {
+				if (group.apiKey) {
+					maskedKeys.push(`key=${group.apiKey.slice(0, 10)}...`);
+				}
+				if (group.oauthToken) {
+					maskedKeys.push("oauth=***");
+				}
+			} else {
+				if (group.apiKey) {
+					maskedKeys.push(`key=${group.apiKey.slice(0, 10)}...`);
+				}
+				if (group.accessToken) {
+					maskedKeys.push("access=***");
+				}
+				if (group.refreshToken) {
+					maskedKeys.push("refresh=***");
+				}
+				if (group.accountId) {
+					maskedKeys.push(`account=${group.accountId.slice(0, 6)}...`);
+				}
+				if (group.baseUrl) {
+					maskedKeys.push(`base=${group.baseUrl}`);
+				}
 			}
 			console.log(
 				`  ${name}${marker}: provider=${group.provider} [${maskedKeys.join(", ")}]`,

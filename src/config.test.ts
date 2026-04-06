@@ -80,21 +80,25 @@ describe("resolveConfig", () => {
 	test("authGroups are merged (union), local overrides same-named", () => {
 		const global: MatrixConfig = {
 			authGroups: {
-				work: { provider: "anthropic", anthropicApiKey: "sk-work" },
-				personal: { provider: "openai", openaiApiKey: "sk-personal" },
+				work: { provider: "anthropic", apiKey: "sk-work" },
+				personal: { provider: "openai", apiKey: "sk-personal" },
 			},
 		};
 		const local: MatrixConfig = {
 			authGroups: {
 				work: {
 					provider: "anthropic",
-					anthropicApiKey: "sk-work-updated",
+					apiKey: "sk-work-updated",
 				},
 			},
 		};
 
 		const result = resolveConfig(global, {}, local);
-		expect(result.authGroups?.work?.anthropicApiKey).toBe("sk-work-updated");
+		const work = result.authGroups?.work;
+		expect(work?.provider).toBe("anthropic");
+		if (work?.provider === "anthropic") {
+			expect(work.apiKey).toBe("sk-work-updated");
+		}
 		expect(result.authGroups?.personal?.provider).toBe("openai");
 	});
 
@@ -164,12 +168,12 @@ describe("resolveAuthGroup", () => {
 		authGroups: {
 			"default-group": {
 				provider: "anthropic",
-				anthropicApiKey: "sk-default",
+				apiKey: "sk-default",
 			},
 			"openai-group": {
 				provider: "openai",
-				openaiApiKey: "sk-openai",
-				openaiBaseUrl: "https://api.openai.com/v1",
+				apiKey: "sk-openai",
+				baseUrl: "https://api.openai.com/v1",
 			},
 		},
 	};
@@ -178,8 +182,8 @@ describe("resolveAuthGroup", () => {
 		const group = resolveAuthGroup(config, "openai-group");
 		expect(group).toEqual({
 			provider: "openai",
-			openaiApiKey: "sk-openai",
-			openaiBaseUrl: "https://api.openai.com/v1",
+			apiKey: "sk-openai",
+			baseUrl: "https://api.openai.com/v1",
 		});
 	});
 
@@ -188,24 +192,26 @@ describe("resolveAuthGroup", () => {
 			authGroups: {
 				openai: {
 					provider: "openai",
-					openaiAccessToken: "eyJhbGciOiJIUzI1NiJ9.payload.sig",
-					openaiRefreshToken: "refresh-token",
-					openaiAccountId: "account_123",
+					accessToken: "eyJhbGciOiJIUzI1NiJ9.payload.sig",
+					refreshToken: "refresh-token",
+					accountId: "account_123",
 				},
 			},
 		};
 		expect(resolveAuthGroup(cfg, "openai")).toEqual({
 			provider: "openai",
-			openaiAccessToken: "eyJhbGciOiJIUzI1NiJ9.payload.sig",
-			openaiRefreshToken: "refresh-token",
-			openaiAccountId: "account_123",
+			accessToken: "eyJhbGciOiJIUzI1NiJ9.payload.sig",
+			refreshToken: "refresh-token",
+			accountId: "account_123",
 		});
 	});
 
 	test("resolves default when no name given", () => {
 		const group = resolveAuthGroup(config);
 		expect(group?.provider).toBe("anthropic");
-		expect(group?.anthropicApiKey).toBe("sk-default");
+		if (group?.provider === "anthropic") {
+			expect(group.apiKey).toBe("sk-default");
+		}
 	});
 
 	test("returns null for nonexistent group", () => {
@@ -219,6 +225,47 @@ describe("resolveAuthGroup", () => {
 	test("returns null when no authGroups defined", () => {
 		const cfg: MatrixConfig = { defaultAuth: "missing" };
 		expect(resolveAuthGroup(cfg)).toBeNull();
+	});
+
+	test("anthropic auth group includes systemPreamble", () => {
+		const cfg: MatrixConfig = {
+			authGroups: {
+				claude: {
+					provider: "anthropic",
+					oauthToken: "tok",
+					systemPreamble: "You are a test agent.",
+				},
+			},
+		};
+		const group = resolveAuthGroup(cfg, "claude");
+		expect(group?.provider).toBe("anthropic");
+		if (group?.provider === "anthropic") {
+			expect(group.systemPreamble).toBe("You are a test agent.");
+		}
+	});
+
+	test("systemPreamble undefined when not set", () => {
+		const cfg: MatrixConfig = {
+			authGroups: {
+				claude: { provider: "anthropic", apiKey: "sk-test" },
+			},
+		};
+		const group = resolveAuthGroup(cfg, "claude");
+		if (group?.provider === "anthropic") {
+			expect(group.systemPreamble).toBeUndefined();
+		}
+	});
+
+	test("systemPreamble not available on openai auth group", () => {
+		const cfg: MatrixConfig = {
+			authGroups: {
+				openai: { provider: "openai", apiKey: "sk-test" },
+			},
+		};
+		const group = resolveAuthGroup(cfg, "openai");
+		expect(group?.provider).toBe("openai");
+		// TypeScript prevents: group.systemPreamble — only exists on AnthropicAuthGroup
+		expect("systemPreamble" in (group ?? {})).toBe(false);
 	});
 });
 

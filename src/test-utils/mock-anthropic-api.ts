@@ -1603,6 +1603,7 @@ export class ValidatingMockAPI {
 export function createMockedProviderWithMock(
 	mockAPI: ValidatingMockAPI,
 	model?: string,
+	opts?: { systemPreamble?: string },
 ) {
 	// Lazy import to avoid circular dependencies
 	const { AnthropicCompatibleProvider } =
@@ -1613,6 +1614,10 @@ export function createMockedProviderWithMock(
 	process.env.ANTHROPIC_API_KEY = "test-key";
 	const provider = new AnthropicCompatibleProvider(
 		model ?? "claude-sonnet-4-6",
+		{
+			apiKey: "test-key",
+			...(opts?.systemPreamble ? { systemPreamble: opts.systemPreamble } : {}),
+		},
 	);
 	process.env.ANTHROPIC_API_KEY = savedKey;
 

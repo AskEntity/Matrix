@@ -16,8 +16,10 @@ import { stripMcpPrefix } from "./tool-names.ts";
 // Read auth from config (supports OAuth)
 const globalConfig = await loadGlobalConfig();
 const authGroup = resolveAuthGroup(globalConfig);
-const apiKey = authGroup?.anthropicApiKey;
-const oauthToken = authGroup?.claudeOauthToken;
+const apiKey =
+	authGroup?.provider === "anthropic" ? authGroup.apiKey : undefined;
+const oauthToken =
+	authGroup?.provider === "anthropic" ? authGroup.oauthToken : undefined;
 const useOAuth = Boolean(oauthToken && !apiKey);
 
 let client: Anthropic;
