@@ -28,19 +28,13 @@ export interface McpServerConfig {
 	cwd?: string;
 }
 
-export interface WebAuthnConfig {
-	/** Whether passkey auth is required on the main port. */
-	enforced: boolean;
-	/** Relying Party display name. */
-	rpName: string;
-	/** Relying Party ID (domain). */
-	rpID: string;
-}
-
 export interface ThinkingConfig {
 	/** Token budget for extended thinking. Minimum 1024. Default 10000. */
 	budgetTokens: number;
 }
+
+/** Valid cache TTL values. */
+export type CacheTtl = "5m" | "1h";
 
 /**
  * Matrix global config — fully specified, no optional fields.
@@ -60,18 +54,17 @@ export interface MatrixConfig {
 	mcpServers: Record<string, McpServerConfig>;
 	port: number;
 	selfBootstrap: boolean;
-	auth: WebAuthnConfig;
 	/** Extended thinking. null = disabled. */
 	thinking: ThinkingConfig | null;
 	/** Cache TTL configuration. */
 	cacheTtl: {
-		root: "5m" | "1h";
-		child: "5m" | "1h";
+		root: CacheTtl;
+		child: CacheTtl;
 	};
 }
 
 /** Fields that can only be set in global config, not per-project. */
-export const GLOBAL_ONLY_FIELDS = ["authGroups", "auth", "port"] as const;
+export const GLOBAL_ONLY_FIELDS = ["authGroups", "port"] as const;
 
 /** Project-level config — partial overlay on global config. Excludes global-only fields. */
 export type ProjectConfig = Partial<
@@ -92,7 +85,7 @@ export const DEFAULT_CONFIG: MatrixConfig = {
 	mcpServers: {},
 	port: 7433,
 	selfBootstrap: false,
-	auth: { enforced: false, rpName: "Matrix", rpID: "" },
+
 	thinking: null,
 	cacheTtl: { root: "1h", child: "5m" },
 };
@@ -186,13 +179,6 @@ export function resolveConfig(
 	}
 
 	return result;
-}
-
-/**
- * Whether passkey auth is enforced on the main port.
- */
-export function isAuthEnforced(auth?: WebAuthnConfig): boolean {
-	return auth?.enforced ?? false;
 }
 
 /**
