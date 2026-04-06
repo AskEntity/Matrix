@@ -2,16 +2,24 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-export interface AuthGroup {
-	provider: "anthropic" | "openai";
-	anthropicApiKey?: string;
-	claudeOauthToken?: string;
-	openaiApiKey?: string;
-	openaiAccessToken?: string;
-	openaiRefreshToken?: string;
-	openaiAccountId?: string;
-	openaiBaseUrl?: string;
+export interface AnthropicAuthGroup {
+	provider: "anthropic";
+	apiKey?: string;
+	oauthToken?: string;
+	/** Prepended as the first system text block when non-empty. */
+	systemPreamble?: string;
 }
+
+export interface OpenAIAuthGroup {
+	provider: "openai";
+	apiKey?: string;
+	accessToken?: string;
+	refreshToken?: string;
+	accountId?: string;
+	baseUrl?: string;
+}
+
+export type AuthGroup = AnthropicAuthGroup | OpenAIAuthGroup;
 
 export interface McpServerConfig {
 	command: string;

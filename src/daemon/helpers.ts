@@ -28,8 +28,9 @@ function createProviderFromAuth(
 ): AgentProvider {
 	if (authGroup.provider === "anthropic") {
 		return new AnthropicCompatibleProvider(model, {
-			apiKey: authGroup.anthropicApiKey,
-			oauthToken: authGroup.claudeOauthToken,
+			apiKey: authGroup.apiKey,
+			oauthToken: authGroup.oauthToken,
+			systemPreamble: authGroup.systemPreamble,
 			...(thinkingConfig
 				? {
 						thinking: {
@@ -41,11 +42,11 @@ function createProviderFromAuth(
 		});
 	}
 	return new OpenAIResponsesCompatibleProvider(model, {
-		apiKey: authGroup.openaiApiKey,
-		accessToken: authGroup.openaiAccessToken,
-		refreshToken: authGroup.openaiRefreshToken,
-		accountId: authGroup.openaiAccountId,
-		baseUrl: authGroup.openaiBaseUrl,
+		apiKey: authGroup.apiKey,
+		accessToken: authGroup.accessToken,
+		refreshToken: authGroup.refreshToken,
+		accountId: authGroup.accountId,
+		baseUrl: authGroup.baseUrl,
 	});
 }
 

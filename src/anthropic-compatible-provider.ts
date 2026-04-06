@@ -354,6 +354,7 @@ function createAnthropicAdapter(
 	opts?: {
 		outerRetryDelayMs?: (attempt: number, error: unknown) => number;
 		thinking?: { budgetTokens: number };
+		systemPreamble?: string;
 	},
 ): ProviderAdapter {
 	return {
@@ -384,49 +385,59 @@ function createAnthropicAdapter(
 			const messages = params.messages as MessageParam[];
 			const tools = params.tools as Tool[];
 
-			// Cache control: all breakpoints use consistent TTL from session_config.
+			// Cache control: tools + messages use per-session TTL from session_config.
 			// Root: "1h" (long-lived). Regular children: undefined (default 5min).
-			// Anthropic requires longer TTLs before shorter TTLs in the same request.
-			// With consistent TTL, all breakpoints use the same value — no ordering issues.
 			const cacheControl = params.cacheTtl
 				? ({ type: "ephemeral" as const, ttl: params.cacheTtl } as const)
 				: ({ type: "ephemeral" as const } as const);
 
+			// System prompt always uses 1h TTL — shared across all agents, changes
+			// rarely, benefits most from long cache. Anthropic requires longer TTLs
+			// before shorter ones; system comes first so 1h ≥ anything after it.
+			const systemCacheControl = {
+				type: "ephemeral" as const,
+				ttl: "1h" as const,
+			};
+
 			// System prompt split into stable + variable for optimal caching.
 			// Stable part is shared by ALL agents — auto-hits via Anthropic's 20-block lookback.
 			// Variable part (role + date) gets its own cache breakpoint.
-			// OAuth mode adds Claude Code preamble as a separate block.
+			// systemPreamble (from auth group config) prepended as first block when present.
 			const { stable, variable } = params.systemPrompt;
-			const systemBlocks: TextBlockParam[] = useOAuth
-				? [
-						{
-							type: "text",
-							text: "You are Claude Code, Anthropic's official CLI for Claude.",
-							cache_control: cacheControl,
-						},
-						// Stable part — shared across all agents, auto-cached via lookback
-						...(stable ? [{ type: "text" as const, text: stable }] : []),
-						// Variable part — per-agent, gets its own cache breakpoint
-						...(variable
-							? [
-									{
-										type: "text" as const,
-										text: variable,
-										cache_control: cacheControl,
-									},
-								]
-							: []),
-					]
-				: [
-						// Stable part — shared across all agents, auto-cached via lookback
-						...(stable ? [{ type: "text" as const, text: stable }] : []),
-						// Variable part — per-agent, gets its own cache breakpoint
-						{
-							type: "text",
-							text: variable || "(no variable prompt)",
-							cache_control: cacheControl,
-						},
-					];
+			const preamble = opts?.systemPreamble;
+			const systemBlocks: TextBlockParam[] = [
+				// Preamble — auth group configured identity string (e.g. OAuth requirement)
+				...(preamble
+					? [
+							{
+								type: "text" as const,
+								text: preamble,
+								cache_control: systemCacheControl,
+							},
+						]
+					: []),
+				// Stable part — shared across all agents, auto-cached via lookback
+				...(stable ? [{ type: "text" as const, text: stable }] : []),
+				// Variable part — per-agent, gets its own cache breakpoint
+				...(variable
+					? [
+							{
+								type: "text" as const,
+								text: variable,
+								cache_control: systemCacheControl,
+							},
+						]
+					: // No preamble and no variable: need at least one block with cache_control
+						!preamble
+						? [
+								{
+									type: "text" as const,
+									text: "(no variable prompt)",
+									cache_control: systemCacheControl,
+								},
+							]
+						: []),
+			];
 
 			// Cache control: add cache breakpoint on the last tool definition
 			const toolsWithCache: Tool[] =
@@ -812,6 +823,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	private useOAuth: boolean;
 	/** Extended thinking configuration. */
 	private thinking?: { budgetTokens: number };
+	/** System preamble from auth group config — prepended as first system block. */
+	private systemPreamble?: string;
 	/** Override outer retry delay for testing. Production uses default (30s+ exponential). */
 	outerRetryDelayMs?: (attempt: number, error: unknown) => number;
 
@@ -821,11 +834,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			apiKey?: string;
 			oauthToken?: string;
 			thinking?: { budgetTokens: number };
+			systemPreamble?: string;
 		},
 	) {
 		const apiKey = opts?.apiKey ?? process.env.ANTHROPIC_API_KEY;
 		const oauthToken = opts?.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN;
 		this.useOAuth = Boolean(oauthToken && !apiKey);
+		this.systemPreamble = opts?.systemPreamble;
 		// 1 hour timeout — compaction with very large contexts under API load can be slow
 		const timeout = 60 * 60 * 1000;
 		if (this.useOAuth) {
@@ -895,6 +910,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		const adapter = createAnthropicAdapter(this.client, this.useOAuth, {
 			outerRetryDelayMs: this.outerRetryDelayMs,
 			thinking: this.thinking,
+			systemPreamble: this.systemPreamble,
 		});
 		// Override the default model in the request
 		const effectiveRequest = {
