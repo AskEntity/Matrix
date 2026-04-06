@@ -180,8 +180,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			const authGroup = resolveAuthGroup(ctx.globalConfig);
 			const modelName = ctx.globalConfig.model ?? DEFAULT_MODEL;
 
-			const apiKey = authGroup?.anthropicApiKey;
-			const oauthToken = authGroup?.claudeOauthToken;
+			const apiKey =
+				authGroup?.provider === "anthropic" ? authGroup.apiKey : undefined;
+			const oauthToken =
+				authGroup?.provider === "anthropic" ? authGroup.oauthToken : undefined;
 			const useOAuth = Boolean(oauthToken && !apiKey);
 
 			let client: Anthropic;

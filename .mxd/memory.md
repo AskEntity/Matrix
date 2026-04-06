@@ -729,3 +729,17 @@ All 7 builtin tools (bash, background, read_file, write_file, edit_file, list_fi
 - Common `bindParams` pattern: all builtin tools bind projectId + taskId (non-overridable)
 
 Now ALL 32 tools (25 orchestrator + 7 builtin) use the same ToolDef + auth + global functions pattern. Zero closure-based tool handlers remain.
+
+## AuthGroup Discriminated Union
+
+`AuthGroup = AnthropicAuthGroup | OpenAIAuthGroup` — discriminated on `provider` field. Each variant has only its own fields (no cross-provider optionals).
+
+### Field Renames (BREAKING config change)
+- `anthropicApiKey` → `apiKey`, `claudeOauthToken` → `oauthToken`
+- `openaiApiKey` → `apiKey`, `openaiAccessToken` → `accessToken`, `openaiRefreshToken` → `refreshToken`, `openaiAccountId` → `accountId`, `openaiBaseUrl` → `baseUrl`
+
+### systemPreamble (Anthropic only)
+`AnthropicAuthGroup.systemPreamble?: string` — prepended as the first system text block at API call time. Not stored in session_config. Takes effect immediately on next API call (no compact/restart needed). Empty string or undefined = no preamble.
+
+### System Prompt Cache TTL
+System blocks always use `{ type: "ephemeral", ttl: "1h" }` regardless of per-session `cacheTtl`. System prompt is shared across agents, changes rarely, benefits most from long cache. Tools and messages still use per-session TTL.
