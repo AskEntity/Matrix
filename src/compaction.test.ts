@@ -5,11 +5,11 @@ import {
 } from "./compaction.ts";
 
 describe("getCompactionThresholds", () => {
-	test("1M context window triggers compaction at 920K (8% buffer)", () => {
+	test("1M context window triggers compaction at 900K (10% buffer)", () => {
 		const { compressThreshold, lazyCountThreshold } =
 			getCompactionThresholds(1_000_000);
-		expect(compressThreshold).toBe(920_000);
-		expect(lazyCountThreshold).toBe(920_000 - 16_000);
+		expect(compressThreshold).toBe(900_000);
+		expect(lazyCountThreshold).toBe(900_000 - 16_000);
 	});
 
 	test("200K context window triggers compaction at 166K (17% buffer)", () => {
@@ -27,12 +27,12 @@ describe("getCompactionThresholds", () => {
 
 	test("context windows exactly at 1M use large-window ratio", () => {
 		const { compressThreshold } = getCompactionThresholds(1_000_000);
-		expect(compressThreshold).toBe(920_000);
+		expect(compressThreshold).toBe(900_000);
 	});
 
 	test("context windows larger than 1M use large-window ratio", () => {
 		const { compressThreshold } = getCompactionThresholds(2_000_000);
-		expect(compressThreshold).toBe(Math.floor(2_000_000 * 0.92));
+		expect(compressThreshold).toBe(Math.floor(2_000_000 * 0.90));
 	});
 
 	test("lazyCountThreshold is always 16K below compressThreshold", () => {
