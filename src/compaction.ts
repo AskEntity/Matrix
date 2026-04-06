@@ -11,10 +11,10 @@ import type { Event } from "./events.ts";
 /**
  * Compaction buffer ratios by context window size.
  * Smaller windows need more buffer (17%) because checkpoint + rebuilt context is a larger fraction.
- * 1M+ windows can use a smaller buffer (8%) — 920K trigger leaves room for 64K checkpoint + 16K rebuilt context.
+ * 1M+ windows can use a smaller buffer (10%) — 900K trigger leaves room for 64K checkpoint + 16K rebuilt context.
  */
 const COMPACT_BUFFER_RATIO_SMALL = 0.17;
-const COMPACT_BUFFER_RATIO_LARGE = 0.08;
+const COMPACT_BUFFER_RATIO_LARGE = 0.10;
 const LARGE_CONTEXT_THRESHOLD = 1_000_000;
 
 /** Max output tokens for compaction checkpoint generation (64K). */
