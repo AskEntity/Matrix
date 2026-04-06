@@ -9,10 +9,13 @@ import {
 	signCLIToken,
 	signSessionToken,
 } from "./auth.ts";
-import type { AuthGroup, MatrixConfig } from "./config.ts";
 import {
+	type AuthGroup,
+	GLOBAL_ONLY_FIELDS,
 	loadGlobalConfig,
 	loadProjectRepoConfig,
+	type MatrixConfig,
+	type ProjectConfig,
 	resolveConfig,
 	saveGlobalConfig,
 	saveProjectRepoConfig,
@@ -757,7 +760,6 @@ const KNOWN_CONFIG_KEYS = [
 	"childAuth",
 	"budgetUsd",
 	"clarifyTimeoutMs",
-	"maxDepth",
 ] as const;
 
 type KnownConfigKey = (typeof KNOWN_CONFIG_KEYS)[number];
@@ -773,7 +775,6 @@ function printResolvedConfig(cfg: MatrixConfig): void {
 			"clarifyTimeoutMs",
 			cfg.clarifyTimeoutMs != null ? `${cfg.clarifyTimeoutMs}ms` : "(not set)",
 		],
-		["maxDepth", cfg.maxDepth != null ? String(cfg.maxDepth) : "(not set)"],
 	];
 
 	const keyWidth = Math.max(...rows.map(([k]) => k.length));
@@ -858,17 +859,23 @@ async function handleConfig(args: string[]): Promise<void> {
 
 		if (isGlobal) {
 			const cfg = await loadGlobalConfig();
-			(cfg as Record<string, unknown>)[key] = value;
+			(cfg as unknown as Record<string, unknown>)[key] = value;
 			await saveGlobalConfig(cfg);
 			console.log(`Set ${key} = ${value} (global)`);
 		} else if (isProject) {
+			if ((GLOBAL_ONLY_FIELDS as readonly string[]).includes(key)) {
+				console.error(
+					`"${key}" is a global-only setting. Use --global instead.`,
+				);
+				process.exit(1);
+			}
 			const projectPath = findProjectPath();
 			if (!projectPath) {
 				console.error("Not in a git repository. Cannot set project config.");
 				process.exit(1);
 			}
 			const cfg = await loadProjectRepoConfig(projectPath);
-			(cfg as Record<string, unknown>)[key] = value;
+			(cfg as unknown as Record<string, unknown>)[key] = value;
 			await saveProjectRepoConfig(projectPath, cfg);
 			console.log(`Set ${key} = ${value} (project: ${projectPath})`);
 		} else {
@@ -893,17 +900,23 @@ async function handleConfig(args: string[]): Promise<void> {
 
 		if (isGlobal) {
 			const cfg = await loadGlobalConfig();
-			delete (cfg as Record<string, unknown>)[key];
+			delete (cfg as unknown as Record<string, unknown>)[key];
 			await saveGlobalConfig(cfg);
 			console.log(`Unset ${key} (global)`);
 		} else if (isProject) {
+			if ((GLOBAL_ONLY_FIELDS as readonly string[]).includes(key)) {
+				console.error(
+					`"${key}" is a global-only setting. Use --global instead.`,
+				);
+				process.exit(1);
+			}
 			const projectPath = findProjectPath();
 			if (!projectPath) {
 				console.error("Not in a git repository.");
 				process.exit(1);
 			}
 			const cfg = await loadProjectRepoConfig(projectPath);
-			delete (cfg as Record<string, unknown>)[key];
+			delete (cfg as unknown as Record<string, unknown>)[key];
 			await saveProjectRepoConfig(projectPath, cfg);
 			console.log(`Unset ${key} (project)`);
 		} else {
@@ -922,7 +935,7 @@ async function handleConfig(args: string[]): Promise<void> {
 		const repoCfg = projectPath ? await loadProjectRepoConfig(projectPath) : {};
 
 		// Try to get local config via daemon API
-		let localCfg: MatrixConfig = {};
+		let localCfg: ProjectConfig = {};
 		try {
 			const projectId = await resolveCurrentProject();
 			if (projectId) {
@@ -1028,15 +1041,8 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 
 		// Save to appropriate config layer
 		if (isProject) {
-			const projectPath = findProjectPath();
-			if (!projectPath) {
-				console.error("Not in a git repository.");
-				process.exit(1);
-			}
-			const cfg = await loadProjectRepoConfig(projectPath);
-			cfg.authGroups = { ...cfg.authGroups, [name]: group };
-			await saveProjectRepoConfig(projectPath, cfg);
-			console.log(`Added auth group "${name}" to project config.`);
+			console.error("Auth groups are global-only. Use without --project flag.");
+			process.exit(1);
 		} else {
 			// Default to global (auth groups are typically global)
 			const cfg = await loadGlobalConfig();
@@ -1045,10 +1051,7 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 			console.log(`Added auth group "${name}" to global config.`);
 		}
 	} else if (sub === "list") {
-		const globalCfg = await loadGlobalConfig();
-		const projectPath = findProjectPath();
-		const repoCfg = projectPath ? await loadProjectRepoConfig(projectPath) : {};
-		const resolved = resolveConfig(globalCfg, repoCfg, {});
+		const resolved = await loadGlobalConfig();
 
 		if (!resolved.authGroups || Object.keys(resolved.authGroups).length === 0) {
 			console.log("No auth groups configured.");
@@ -1096,27 +1099,13 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 		const isProject = args.includes("--project");
 
 		if (isProject) {
-			const projectPath = findProjectPath();
-			if (!projectPath) {
-				console.error("Not in a git repository.");
-				process.exit(1);
-			}
-			const cfg = await loadProjectRepoConfig(projectPath);
-			if (cfg.authGroups) {
-				delete cfg.authGroups[name];
-				if (Object.keys(cfg.authGroups).length === 0) delete cfg.authGroups;
-			}
-			await saveProjectRepoConfig(projectPath, cfg);
-			console.log(`Removed auth group "${name}" from project config.`);
-		} else {
-			const cfg = await loadGlobalConfig();
-			if (cfg.authGroups) {
-				delete cfg.authGroups[name];
-				if (Object.keys(cfg.authGroups).length === 0) delete cfg.authGroups;
-			}
-			await saveGlobalConfig(cfg);
-			console.log(`Removed auth group "${name}" from global config.`);
+			console.error("Auth groups are global-only. Use without --project flag.");
+			process.exit(1);
 		}
+		const cfg = await loadGlobalConfig();
+		delete cfg.authGroups[name];
+		await saveGlobalConfig(cfg);
+		console.log(`Removed auth group "${name}" from global config.`);
 	} else {
 		console.error("Usage:");
 		console.error(

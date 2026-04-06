@@ -4,7 +4,12 @@ import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
-import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
+import {
+	DEFAULT_CONFIG,
+	DEFAULT_MODEL,
+	loadGlobalConfig,
+	resolveAuthGroup,
+} from "./config.ts";
 import {
 	deliverMessage,
 	runAgentForNode,
@@ -32,10 +37,7 @@ import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
 import type { Event } from "./events.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { createTaskComplete } from "./queue-message-factory.ts";
-import {
-	logMigrationResult,
-	migrateStorageLayout,
-} from "./storage-migration.ts";
+
 import { buildSystemPrompt } from "./system-prompts.ts";
 import { TOOL_DONE } from "./tool-names.ts";
 import {
@@ -150,7 +152,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		agentLoopPromises: new Map(),
 		requestCount: 0,
 		startupReady: false,
-		globalConfig: config.initialConfig ?? {},
+		globalConfig: config.initialConfig ?? DEFAULT_CONFIG,
 	};
 
 	// Request counter middleware
@@ -200,18 +202,17 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				client = new Anthropic();
 			}
 
+			const preamble =
+				authGroup?.provider === "anthropic"
+					? authGroup.systemPreamble
+					: undefined;
 			const msgParams = {
 				model: modelName,
 				messages: [{ role: "user" as const, content: "ping" }],
 				max_tokens: 10,
-				...(useOAuth
+				...(preamble
 					? {
-							system: [
-								{
-									type: "text" as const,
-									text: "You are Claude Code, Anthropic's official CLI for Claude.",
-								},
-							],
+							system: [{ type: "text" as const, text: preamble }],
 						}
 					: {}),
 			};
@@ -320,17 +321,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	 *   tool_results → messages end with user content → skip initial drain → API call
 	 */
 	async function autoResumeProjects(): Promise<void> {
-		// One-shot storage layout migration: move legacy
-		// {dataDir}/sessions/{projectId}/*.events.jsonl →
-		// {dataDir}/projects/{projectId}/tasks/*.jsonl.
-		// Idempotent; no-op after first successful run.
-		try {
-			const migrationResult = await migrateStorageLayout(ctx.config.dataDir);
-			logMigrationResult(migrationResult);
-		} catch (e) {
-			console.warn("[autoResume] Storage migration failed:", e);
-		}
-
 		const projects = ctx.pm.list();
 		for (const project of projects) {
 			const tracker = await getTracker(ctx, project.id);

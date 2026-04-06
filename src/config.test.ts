@@ -3,59 +3,50 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	DEFAULT_CONFIG,
 	loadProjectLocalConfig,
 	loadProjectRepoConfig,
 	type MatrixConfig,
+	type ProjectConfig,
 	resolveAuthGroup,
 	resolveConfig,
 	saveProjectLocalConfig,
 } from "./config.ts";
 
 describe("resolveConfig", () => {
-	test("local > repo > global for scalar fields", () => {
-		const global: MatrixConfig = {
-			model: "global-model",
-			budgetUsd: 10,
-			maxDepth: 3,
-		};
-		const repo: MatrixConfig = {
-			model: "repo-model",
-			budgetUsd: 20,
-		};
-		const local: MatrixConfig = {
-			model: "local-model",
-		};
+	test("overlay overrides base for scalar fields", () => {
+		const base = { ...DEFAULT_CONFIG, model: "global-model", budgetUsd: 10 };
+		const repo: ProjectConfig = { model: "repo-model", budgetUsd: 20 };
+		const local: ProjectConfig = { model: "local-model" };
 
-		const result = resolveConfig(global, repo, local);
+		const result = resolveConfig(base, repo, local);
 		expect(result.model).toBe("local-model");
 		expect(result.budgetUsd).toBe(20);
-		expect(result.maxDepth).toBe(3);
 	});
 
-	test("empty layers are skipped", () => {
-		const global: MatrixConfig = { model: "global-model" };
-		const result = resolveConfig(global, {}, {});
+	test("empty overlays keep base values", () => {
+		const base = { ...DEFAULT_CONFIG, model: "global-model" };
+		const result = resolveConfig(base, {}, {});
 		expect(result.model).toBe("global-model");
 	});
 
-	test("all empty returns empty config", () => {
-		const result = resolveConfig({}, {}, {});
-		expect(result).toEqual({});
+	test("default config produces valid full config", () => {
+		const result = resolveConfig(DEFAULT_CONFIG);
+		expect(result).toEqual(DEFAULT_CONFIG);
 	});
 
-	test("mcpServers are merged (union), local overrides same-named", () => {
-		const global: MatrixConfig = {
+	test("mcpServers are merged (union), later overlays override same-named", () => {
+		const base: MatrixConfig = {
+			...DEFAULT_CONFIG,
 			mcpServers: {
 				filesystem: { command: "mcp-fs", args: ["--read-only"] },
 				search: { command: "mcp-search" },
 			},
 		};
-		const repo: MatrixConfig = {
-			mcpServers: {
-				database: { command: "mcp-db" },
-			},
+		const repo: ProjectConfig = {
+			mcpServers: { database: { command: "mcp-db" } },
 		};
-		const local: MatrixConfig = {
+		const local: ProjectConfig = {
 			mcpServers: {
 				filesystem: {
 					command: "mcp-fs-v2",
@@ -65,7 +56,7 @@ describe("resolveConfig", () => {
 			},
 		};
 
-		const result = resolveConfig(global, repo, local);
+		const result = resolveConfig(base, repo, local);
 		expect(result.mcpServers).toEqual({
 			filesystem: {
 				command: "mcp-fs-v2",
@@ -77,108 +68,118 @@ describe("resolveConfig", () => {
 		});
 	});
 
-	test("authGroups are merged (union), local overrides same-named", () => {
-		const global: MatrixConfig = {
+	test("authGroups are global-only (not overridable by project config)", () => {
+		const base: MatrixConfig = {
+			...DEFAULT_CONFIG,
 			authGroups: {
 				work: { provider: "anthropic", apiKey: "sk-work" },
 				personal: { provider: "openai", apiKey: "sk-personal" },
 			},
 		};
-		const local: MatrixConfig = {
-			authGroups: {
-				work: {
-					provider: "anthropic",
-					apiKey: "sk-work-updated",
-				},
-			},
-		};
 
-		const result = resolveConfig(global, {}, local);
-		const work = result.authGroups?.work;
-		expect(work?.provider).toBe("anthropic");
-		if (work?.provider === "anthropic") {
-			expect(work.apiKey).toBe("sk-work-updated");
-		}
-		expect(result.authGroups?.personal?.provider).toBe("openai");
+		// Project overlays can't have authGroups — they pass through from base
+		const result = resolveConfig(base, { model: "test" });
+		expect(result.authGroups.work?.provider).toBe("anthropic");
+		expect(result.authGroups.personal?.provider).toBe("openai");
 	});
 
-	test("partial configs merge correctly across all layers", () => {
-		const global: MatrixConfig = {
-			maxDepth: 5,
+	test("partial overlays merge correctly across all layers", () => {
+		const base: MatrixConfig = {
+			...DEFAULT_CONFIG,
 			clarifyTimeoutMs: 30000,
 		};
-		const repo: MatrixConfig = {
+		const repo: ProjectConfig = {
 			childModel: "sonnet",
 			mcpServers: { git: { command: "mcp-git" } },
 		};
-		const local: MatrixConfig = {
+		const local: ProjectConfig = {
 			defaultAuth: "team",
 			childAuth: "team",
 		};
 
-		const result = resolveConfig(global, repo, local);
-		expect(result).toEqual({
-			maxDepth: 5,
-			clarifyTimeoutMs: 30000,
-			childModel: "sonnet",
-			defaultAuth: "team",
-			childAuth: "team",
-			mcpServers: { git: { command: "mcp-git" } },
-		});
+		const result = resolveConfig(base, repo, local);
+		expect(result.clarifyTimeoutMs).toBe(30000);
+		expect(result.childModel).toBe("sonnet");
+		expect(result.defaultAuth).toBe("team");
+		expect(result.childAuth).toBe("team");
+		expect(result.mcpServers).toEqual({ git: { command: "mcp-git" } });
 	});
 
-	test("selfBootstrap boolean resolves with local > repo > global priority", () => {
-		const global: MatrixConfig = { selfBootstrap: false };
-		const repo: MatrixConfig = { selfBootstrap: true };
-		const local: MatrixConfig = {};
+	test("selfBootstrap boolean resolves with later overlay winning", () => {
+		const base = { ...DEFAULT_CONFIG, selfBootstrap: false };
+		const repo: ProjectConfig = { selfBootstrap: true };
 
-		// repo wins over global when local is empty
-		const result = resolveConfig(global, repo, local);
+		// repo wins over base
+		const result = resolveConfig(base, repo);
 		expect(result.selfBootstrap).toBe(true);
 
 		// local wins over repo
-		const result2 = resolveConfig(global, repo, { selfBootstrap: false });
+		const result2 = resolveConfig(base, repo, { selfBootstrap: false });
 		expect(result2.selfBootstrap).toBe(false);
 	});
 
-	test("thinking config resolves with local > repo > global priority", () => {
-		const global: MatrixConfig = { thinking: { budgetTokens: 5000 } };
-		const repo: MatrixConfig = { thinking: { budgetTokens: 20000 } };
-		const local: MatrixConfig = {};
+	test("thinking config resolves with later overlay winning", () => {
+		const base = { ...DEFAULT_CONFIG, thinking: { budgetTokens: 5000 } };
+		const repo: ProjectConfig = { thinking: { budgetTokens: 20000 } };
 
-		// repo wins over global when local is empty
-		const result = resolveConfig(global, repo, local);
+		const result = resolveConfig(base, repo);
 		expect(result.thinking).toEqual({ budgetTokens: 20000 });
 
-		// local wins over repo
-		const result2 = resolveConfig(global, repo, {
+		const result2 = resolveConfig(base, repo, {
 			thinking: { budgetTokens: 50000 },
 		});
 		expect(result2.thinking).toEqual({ budgetTokens: 50000 });
 
-		// undefined when no layer specifies it
-		const result3 = resolveConfig({}, {}, {});
-		expect(result3.thinking).toBeUndefined();
+		// null = disabled
+		const result3 = resolveConfig(base, { thinking: null });
+		expect(result3.thinking).toBeNull();
 	});
 
-	test("cacheTtl merges correctly", () => {
-		const global: MatrixConfig = { cacheTtl: { root: "1h", child: "1h" } };
-		const result = resolveConfig(global, {}, {});
+	test("cacheTtl shallow merges correctly", () => {
+		const base = {
+			...DEFAULT_CONFIG,
+			cacheTtl: { root: "1h" as const, child: "1h" as const },
+		};
+		const result = resolveConfig(base);
 		expect(result.cacheTtl).toEqual({ root: "1h", child: "1h" });
 
-		// local overrides global
-		const local: MatrixConfig = { cacheTtl: { root: "5m", child: "5m" } };
-		const result2 = resolveConfig(global, {}, local);
+		// local overrides
+		const local: ProjectConfig = {
+			cacheTtl: { root: "5m", child: "5m" },
+		};
+		const result2 = resolveConfig(base, {}, local);
 		expect(result2.cacheTtl).toEqual({ root: "5m", child: "5m" });
 
-		// undefined when no layer specifies it
-		const result3 = resolveConfig({}, {}, {});
-		expect(result3.cacheTtl).toBeUndefined();
+		// partial cacheTtl overlay merges with base
+		const partial: ProjectConfig = {
+			cacheTtl: { root: "1h", child: "5m" },
+		};
+		const result3 = resolveConfig(base, partial);
+		expect(result3.cacheTtl).toEqual({ root: "1h", child: "5m" });
+	});
+
+	test("childAuth 'parent' is a valid value", () => {
+		const base = { ...DEFAULT_CONFIG, childAuth: "parent" as const };
+		const result = resolveConfig(base);
+		expect(result.childAuth).toBe("parent");
+
+		// Override with specific auth group
+		const result2 = resolveConfig(base, { childAuth: "team-auth" });
+		expect(result2.childAuth).toBe("team-auth");
+	});
+
+	test("budgetUsd -1 means unlimited", () => {
+		const result = resolveConfig(DEFAULT_CONFIG);
+		expect(result.budgetUsd).toBe(-1);
+
+		const result2 = resolveConfig(DEFAULT_CONFIG, { budgetUsd: 50 });
+		expect(result2.budgetUsd).toBe(50);
 	});
 });
 
 describe("resolveAuthGroup", () => {
 	const config: MatrixConfig = {
+		...DEFAULT_CONFIG,
 		defaultAuth: "default-group",
 		authGroups: {
 			"default-group": {
@@ -204,6 +205,7 @@ describe("resolveAuthGroup", () => {
 
 	test("preserves OpenAI OAuth-style tokens", () => {
 		const cfg: MatrixConfig = {
+			...DEFAULT_CONFIG,
 			authGroups: {
 				openai: {
 					provider: "openai",
@@ -234,16 +236,22 @@ describe("resolveAuthGroup", () => {
 	});
 
 	test("returns null when no defaultAuth and no name", () => {
-		expect(resolveAuthGroup({}, undefined)).toBeNull();
+		expect(
+			resolveAuthGroup({ ...DEFAULT_CONFIG, defaultAuth: "" }, undefined),
+		).toBeNull();
 	});
 
-	test("returns null when no authGroups defined", () => {
-		const cfg: MatrixConfig = { defaultAuth: "missing" };
+	test("returns null when authGroup missing from groups", () => {
+		const cfg: MatrixConfig = {
+			...DEFAULT_CONFIG,
+			defaultAuth: "missing",
+		};
 		expect(resolveAuthGroup(cfg)).toBeNull();
 	});
 
 	test("anthropic auth group includes systemPreamble", () => {
 		const cfg: MatrixConfig = {
+			...DEFAULT_CONFIG,
 			authGroups: {
 				claude: {
 					provider: "anthropic",
@@ -261,6 +269,7 @@ describe("resolveAuthGroup", () => {
 
 	test("systemPreamble undefined when not set", () => {
 		const cfg: MatrixConfig = {
+			...DEFAULT_CONFIG,
 			authGroups: {
 				claude: { provider: "anthropic", apiKey: "sk-test" },
 			},
@@ -273,13 +282,13 @@ describe("resolveAuthGroup", () => {
 
 	test("systemPreamble not available on openai auth group", () => {
 		const cfg: MatrixConfig = {
+			...DEFAULT_CONFIG,
 			authGroups: {
 				openai: { provider: "openai", apiKey: "sk-test" },
 			},
 		};
 		const group = resolveAuthGroup(cfg, "openai");
 		expect(group?.provider).toBe("openai");
-		// TypeScript prevents: group.systemPreamble — only exists on AnthropicAuthGroup
 		expect("systemPreamble" in (group ?? {})).toBe(false);
 	});
 });
@@ -299,7 +308,7 @@ describe("file loading", () => {
 		const projectPath = join(tmpDir, "my-project");
 		const configDir = join(projectPath, ".mxd");
 		await mkdir(configDir, { recursive: true });
-		const config: MatrixConfig = { model: "test-model" };
+		const config: ProjectConfig = { model: "test-model" };
 		await writeFile(join(configDir, "config.json"), JSON.stringify(config));
 
 		const loaded = await loadProjectRepoConfig(projectPath);
@@ -315,7 +324,7 @@ describe("file loading", () => {
 		const projectId = "abc-123";
 		const configDir = join(tmpDir, "projects", projectId);
 		await mkdir(configDir, { recursive: true });
-		const config: MatrixConfig = { budgetUsd: 42 };
+		const config: ProjectConfig = { budgetUsd: 42 };
 		await writeFile(join(configDir, "config.json"), JSON.stringify(config));
 
 		const loaded = await loadProjectLocalConfig(tmpDir, projectId);
@@ -329,7 +338,7 @@ describe("file loading", () => {
 
 	test("saveProjectLocalConfig creates directories and writes config", async () => {
 		const projectId = "new-project";
-		const config: MatrixConfig = {
+		const config: ProjectConfig = {
 			model: "claude-4",
 			mcpServers: { test: { command: "test-cmd" } },
 		};
