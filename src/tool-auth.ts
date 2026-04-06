@@ -77,7 +77,8 @@ export type PermissionMode =
 	| "project" // auth belongs to this project?
 	| "exact" // auth IS this task?
 	| "subtree" // target in auth's subtree?
-	| "family"; // target in auth's subtree or parent chain?
+	| "family" // target in auth's subtree or parent chain?
+	| "root"; // auth is the root agent (depth 0)?
 
 export interface PermissionResource {
 	projectId?: string;
@@ -130,6 +131,10 @@ export function checkPermission(
 			if (isDescendantOf(tracker, taskId, resource.taskId)) return true;
 			return false;
 		}
+
+		case "root":
+			// Root agent has taskId === rootNodeId (or null for the root orchestrator)
+			return taskId === null || taskId === tracker.rootNodeId;
 
 		default:
 			return false;
