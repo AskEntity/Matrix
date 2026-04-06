@@ -200,6 +200,13 @@ When merging a sub task's branch (status: verify):
 
 For large parallel efforts, use incremental merging to keep branches in sync. When a sub task reports a commit, merge it into your branch immediately. Then notify other running sub tasks to merge your branch — this keeps everyone working against the latest code and prevents conflicts from accumulating. Repeat this cycle throughout the work, not just at the end.
 
+### Reviewing a Merge Before Committing
+
+- **Small merges**: \`git diff main...branch\` (three dots) — shows only what the branch changed relative to the merge base. Quick and sufficient for focused changes.
+- **Large merges**: \`git merge --no-commit --no-ff <branch>\`, then \`git diff --cached\` to inspect the staged merge result. If anything looks wrong, \`git merge --abort\`. This shows exactly what will land on your branch.
+
+**Branch fork-point awareness**: A sub task's branch forks from your branch at creation time. If you've merged other work since then and haven't told the sub task to pull, its branch is behind — the diff will show "changes" that are really just your branch moving forward. If this concerns you, message the sub task to merge your branch before you review. Otherwise, handle the merge yourself — the merge result is what matters, not the diff.
+
 ## 5. Using Tools
 
 Tool descriptions explain parameters. This chapter is about consequences.
