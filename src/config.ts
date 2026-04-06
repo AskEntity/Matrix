@@ -29,64 +29,93 @@ export interface McpServerConfig {
 }
 
 export interface WebAuthnConfig {
-	/** Whether passkey auth is required on the main port. Defaults to false. */
-	enforced?: boolean;
-	/** Relying Party display name. Defaults to "Matrix". */
-	rpName?: string;
-	/** Relying Party ID (domain). Defaults to request host. */
-	rpID?: string;
+	/** Whether passkey auth is required on the main port. */
+	enforced: boolean;
+	/** Relying Party display name. */
+	rpName: string;
+	/** Relying Party ID (domain). */
+	rpID: string;
 }
 
 export interface ThinkingConfig {
 	/** Token budget for extended thinking. Minimum 1024. Default 10000. */
-	budgetTokens?: number;
+	budgetTokens: number;
 }
 
+/**
+ * Matrix global config — fully specified, no optional fields.
+ * Project configs (repo/local) use `Partial<MatrixConfig>` as overlays.
+ */
 export interface MatrixConfig {
-	authGroups?: Record<string, AuthGroup>;
-	defaultAuth?: string;
-	model?: string;
-	childAuth?: string;
-	childModel?: string;
-	budgetUsd?: number;
-	maxDepth?: number;
-	clarifyTimeoutMs?: number;
-	mcpServers?: Record<string, McpServerConfig>;
-	port?: number;
-	sessionKeep?: number;
-	selfBootstrap?: boolean;
-	auth?: WebAuthnConfig;
-	/** Extended thinking configuration for Anthropic models. */
-	thinking?: ThinkingConfig;
-	/** Cache TTL configuration. Controls how long Anthropic caches prompts. */
-	cacheTtl?: {
-		/** TTL for root orchestrator. "5m" (default ephemeral) or "1h" (extended). Default: "1h" */
-		root?: "5m" | "1h";
-		/** TTL for child tasks. "5m" (default ephemeral) or "1h" (extended). Default: "5m" */
-		child?: "5m" | "1h";
+	authGroups: Record<string, AuthGroup>;
+	defaultAuth: string;
+	model: string;
+	/** Auth group for child agents. "parent" = use defaultAuth. */
+	childAuth: "parent" | string;
+	/** Model for child agents. "parent" = use model. */
+	childModel: "parent" | string;
+	/** Budget per agent in USD. -1 = unlimited. */
+	budgetUsd: number;
+	clarifyTimeoutMs: number;
+	mcpServers: Record<string, McpServerConfig>;
+	port: number;
+	selfBootstrap: boolean;
+	auth: WebAuthnConfig;
+	/** Extended thinking. null = disabled. */
+	thinking: ThinkingConfig | null;
+	/** Cache TTL configuration. */
+	cacheTtl: {
+		root: "5m" | "1h";
+		child: "5m" | "1h";
 	};
 }
 
+/** Fields that can only be set in global config, not per-project. */
+export const GLOBAL_ONLY_FIELDS = ["authGroups", "auth", "port"] as const;
+
+/** Project-level config — partial overlay on global config. Excludes global-only fields. */
+export type ProjectConfig = Partial<
+	Omit<MatrixConfig, (typeof GLOBAL_ONLY_FIELDS)[number]>
+>;
+
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
+
+/** Default values for all MatrixConfig fields. */
+export const DEFAULT_CONFIG: MatrixConfig = {
+	authGroups: {},
+	defaultAuth: "",
+	model: DEFAULT_MODEL,
+	childAuth: "parent",
+	childModel: "parent",
+	budgetUsd: -1,
+	clarifyTimeoutMs: 30000,
+	mcpServers: {},
+	port: 7433,
+	selfBootstrap: false,
+	auth: { enforced: false, rpName: "Matrix", rpID: "" },
+	thinking: null,
+	cacheTtl: { root: "1h", child: "1h" },
+};
 
 function globalConfigPath(): string {
 	return join(homedir(), ".mxd", "config.json");
 }
 
-async function readJsonConfig(path: string): Promise<MatrixConfig> {
+async function readJsonConfig(path: string): Promise<ProjectConfig> {
 	try {
-		return JSON.parse(await readFile(path, "utf-8")) as MatrixConfig;
+		return JSON.parse(await readFile(path, "utf-8")) as ProjectConfig;
 	} catch {
 		return {};
 	}
 }
 
 export async function loadGlobalConfig(path?: string): Promise<MatrixConfig> {
-	return readJsonConfig(path ?? globalConfigPath());
+	const raw = await readJsonConfig(path ?? globalConfigPath());
+	return resolveConfig(DEFAULT_CONFIG, raw);
 }
 
 export async function saveGlobalConfig(
-	config: MatrixConfig,
+	config: ProjectConfig,
 	path?: string,
 ): Promise<void> {
 	const resolvedPath = path ?? globalConfigPath();
@@ -96,13 +125,13 @@ export async function saveGlobalConfig(
 
 export async function loadProjectRepoConfig(
 	projectPath: string,
-): Promise<MatrixConfig> {
+): Promise<ProjectConfig> {
 	return readJsonConfig(join(projectPath, ".mxd", "config.json"));
 }
 
 export async function saveProjectRepoConfig(
 	projectPath: string,
-	config: MatrixConfig,
+	config: ProjectConfig,
 ): Promise<void> {
 	const path = join(projectPath, ".mxd", "config.json");
 	await mkdir(dirname(path), { recursive: true });
@@ -112,14 +141,14 @@ export async function saveProjectRepoConfig(
 export async function loadProjectLocalConfig(
 	dataDir: string,
 	projectId: string,
-): Promise<MatrixConfig> {
+): Promise<ProjectConfig> {
 	return readJsonConfig(join(dataDir, "projects", projectId, "config.json"));
 }
 
 export async function saveProjectLocalConfig(
 	dataDir: string,
 	projectId: string,
-	config: MatrixConfig,
+	config: ProjectConfig,
 ): Promise<void> {
 	const path = join(dataDir, "projects", projectId, "config.json");
 	await mkdir(dirname(path), { recursive: true });
@@ -127,70 +156,33 @@ export async function saveProjectLocalConfig(
 }
 
 /**
- * Merge three config layers: local > repo > global.
- * Scalar fields: higher priority wins (leftmost non-undefined).
- * mcpServers: union of all servers; local overrides same-named server from repo/global.
- * authGroups: union of all groups; local overrides same-named group from repo/global.
+ * Merge config layers. Each overlay spreads on top of the base.
+ * Nested objects (mcpServers, cacheTtl) do shallow merge.
+ * Scalar fields: overlay wins if defined.
  */
 export function resolveConfig(
-	global: MatrixConfig,
-	repo: MatrixConfig,
-	local: MatrixConfig,
+	base: MatrixConfig,
+	...overlays: ProjectConfig[]
 ): MatrixConfig {
-	const result: MatrixConfig = {};
+	let result = { ...base };
 
-	// Scalar fields — first defined value wins (local > repo > global)
-	// For objects like thinking/cacheTtl, `??` picks the first defined whole object.
-	const scalarKeys = [
-		"defaultAuth",
-		"model",
-		"childAuth",
-		"childModel",
-		"budgetUsd",
-		"maxDepth",
-		"clarifyTimeoutMs",
-		"port",
-		"sessionKeep",
-		"selfBootstrap",
-		"thinking",
-		"cacheTtl",
-	] as const;
-
-	for (const key of scalarKeys) {
-		const value = local[key] ?? repo[key] ?? global[key];
-		if (value !== undefined) {
-			(result as Record<string, unknown>)[key] = value;
+	for (const overlay of overlays) {
+		// Shallow-merge nested record fields
+		if (overlay.mcpServers) {
+			result.mcpServers = { ...result.mcpServers, ...overlay.mcpServers };
 		}
-	}
+		if (overlay.cacheTtl) {
+			result.cacheTtl = { ...result.cacheTtl, ...overlay.cacheTtl };
+		}
 
-	// mcpServers — merge (union), local > repo > global for same-named server
-	const allServers = {
-		...global.mcpServers,
-		...repo.mcpServers,
-		...local.mcpServers,
-	};
-	if (Object.keys(allServers).length > 0) {
-		result.mcpServers = allServers;
-	}
-
-	// authGroups — merge (union), local > repo > global for same-named group
-	const allGroups = {
-		...global.authGroups,
-		...repo.authGroups,
-		...local.authGroups,
-	};
-	if (Object.keys(allGroups).length > 0) {
-		result.authGroups = allGroups;
-	}
-
-	// auth (WebAuthn) — merge as object, local > repo > global
-	const mergedAuth = {
-		...global.auth,
-		...repo.auth,
-		...local.auth,
-	};
-	if (Object.keys(mergedAuth).length > 0) {
-		result.auth = mergedAuth;
+		// Scalar/whole-object fields — overlay wins
+		const scalarOverlay: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(overlay)) {
+			if (value !== undefined && key !== "mcpServers" && key !== "cacheTtl") {
+				scalarOverlay[key] = value;
+			}
+		}
+		result = { ...result, ...scalarOverlay };
 	}
 
 	return result;
@@ -198,7 +190,6 @@ export function resolveConfig(
 
 /**
  * Whether passkey auth is enforced on the main port.
- * `enforced` takes priority. Falls back to deprecated `enabled` for backward compat.
  */
 export function isAuthEnforced(auth?: WebAuthnConfig): boolean {
 	return auth?.enforced ?? false;
