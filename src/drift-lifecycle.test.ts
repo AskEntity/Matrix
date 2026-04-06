@@ -1617,6 +1617,8 @@ describe("Drift: child → parent task_complete lifecycle", () => {
 	test("parent yield → child done(passed) → parent wakes → done: prefix survives", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+		const tracker1 = await ctx.app.getTracker(ctx.projectId);
+		ctx.mockAPI.setCapturedVar("rootId", tracker1.rootNodeId);
 
 		const childInstruction = JSON.stringify({
 			blocks: [
@@ -1638,7 +1640,11 @@ describe("Drift: child → parent task_complete lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Child Task", description: "Child does work." },
+							input: {
+								parentId: "$rootId",
+								title: "Child Task",
+								description: "Child does work.",
+							},
 						},
 					],
 				},
@@ -1702,6 +1708,8 @@ describe("Drift: child → parent task_complete lifecycle", () => {
 	test("parent yield → child done(failed) → parent wakes → done: failed task_complete ok", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+		const tracker2 = await ctx.app.getTracker(ctx.projectId);
+		ctx.mockAPI.setCapturedVar("rootId", tracker2.rootNodeId);
 
 		const childInstruction = JSON.stringify({
 			blocks: [
@@ -1722,7 +1730,11 @@ describe("Drift: child → parent task_complete lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: { title: "Child", description: "Will fail." },
+							input: {
+								parentId: "$rootId",
+								title: "Child",
+								description: "Will fail.",
+							},
 						},
 					],
 				},
@@ -1856,6 +1868,8 @@ describe("Drift: fork lifecycle", () => {
 	test("fork → child with fork_marker: parent restart prefix survives", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+		const tracker3 = await ctx.app.getTracker(ctx.projectId);
+		ctx.mockAPI.setCapturedVar("rootId", tracker3.rootNodeId);
 
 		const childInstruction = JSON.stringify({
 			blocks: [
@@ -1878,6 +1892,7 @@ describe("Drift: fork lifecycle", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
+								parentId: "$rootId",
 								title: "Fork Target",
 								description: "For fork test",
 							},

@@ -12,6 +12,7 @@ import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { isDescendantOf } from "./task-utils.ts";
 import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
+import { executeTool } from "./tool-execution.ts";
 import type {
 	AgentResult,
 	HealthResponse,
@@ -2869,25 +2870,32 @@ describe("create_task validation", () => {
 		expect(parsed.parentId).toBe(existing.id);
 	});
 
-	test("agent auto-parents under itself when no parentId provided", async () => {
+	test("parentId is required in agent schema — Zod rejects missing parentId", async () => {
 		const agent = tracker.addTask("agent", "");
-		const result = await invokeCreateTask(agent.id, {
-			title: "child",
-			description: "desc",
+		resetResourceRegistry();
+		const { auth } = initMockResourceRegistry({
+			tracker,
+			projectId: "test-project",
+			projectPath: tempDir,
+			taskId: agent.id,
 		});
-		expect(result.isError).toBeUndefined();
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.parentId).toBe(agent.id);
-	});
-
-	test("root orchestrator creates top-level task when no parentId", async () => {
-		const result = await invokeCreateTask(null, {
-			title: "toplevel",
-			description: "desc",
-		});
-		expect(result.isError).toBeUndefined();
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.parentId).toBeNull();
+		const { toolDefs } = createOrchestratorTools(
+			auth,
+			"test-project",
+			agent.id,
+		);
+		const createTaskTool = toolDefs.find((t) => t.name === "create_task");
+		if (!createTaskTool) throw new Error("create_task tool not found");
+		// parentId is required in schema — executeTool should reject
+		const handlers = new Map();
+		handlers.set("create_task", createTaskTool);
+		const result = await executeTool(
+			"create_task",
+			{ title: "child", description: "desc" },
+			handlers,
+		);
+		expect(result.isError).toBe(true);
+		expect(result.content).toContain("parentId");
 	});
 });
 

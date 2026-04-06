@@ -40,7 +40,6 @@ const bindParams = {
 		decl: {
 			kind: "bind" as const,
 			from: "projectId" as const,
-			overridable: false,
 		},
 	},
 	taskId: {
@@ -48,7 +47,6 @@ const bindParams = {
 		decl: {
 			kind: "bind" as const,
 			from: "taskId" as const,
-			overridable: false,
 		},
 	},
 };
