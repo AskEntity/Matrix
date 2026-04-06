@@ -3,10 +3,15 @@ import { memo, useState } from "react";
 import {
 	isBuiltinTool,
 	stripMcpPrefix,
+	TOOL_CLOSE_TASK,
+	TOOL_CREATE_TASK,
 	TOOL_DONE,
+	TOOL_FORK_TASK_CONTEXT,
+	TOOL_RESET_TASK,
 	TOOL_SEND_MESSAGE,
 	TOOL_SEND_MESSAGE_TO_CHILD,
 	TOOL_SEND_MESSAGE_TO_PROJECT,
+	TOOL_UPDATE_TASK,
 } from "../../src/tool-names.ts";
 import {
 	formatTime,
@@ -28,6 +33,73 @@ import {
 } from "./tools/utils.ts";
 
 export { LogEntryView } from "./tools/LogEntryView.tsx";
+
+/**
+ * Extract target task ID and title prefix for task operation tools.
+ * Returns null for tools that shouldn't have clickable task links (e.g. delete_task).
+ */
+function getTaskLinkInfo(
+	toolName: string,
+	toolArgs: Record<string, unknown> | undefined,
+	resultContent: string,
+): { targetTaskId: string; prefix: string; suffix?: string } | null {
+	switch (toolName) {
+		case TOOL_SEND_MESSAGE:
+		case TOOL_SEND_MESSAGE_TO_CHILD: {
+			const taskId = getArg(toolArgs, "taskId");
+			return taskId ? { targetTaskId: taskId, prefix: "→ Message: " } : null;
+		}
+		case TOOL_CREATE_TASK: {
+			// Result is JSON with {id, title, ...}
+			const id = parseJsonField(resultContent, "id");
+			return id ? { targetTaskId: id, prefix: "+ Task Created: " } : null;
+		}
+		case TOOL_UPDATE_TASK: {
+			const taskId = getArg(toolArgs, "taskId");
+			if (!taskId) return null;
+			// Preserve changed-fields suffix from the original title
+			const fields: string[] = [];
+			if (toolArgs) {
+				if (toolArgs.status) fields.push(`status→${toolArgs.status}`);
+				if (toolArgs.title) fields.push("title");
+				if (toolArgs.description || toolArgs.old_description)
+					fields.push("description");
+				if (toolArgs.parentId) fields.push("parent");
+				if (toolArgs.color) fields.push("color");
+				if (toolArgs.draft !== undefined) fields.push("draft");
+			}
+			const suffix = fields.length > 0 ? ` (${fields.join(", ")})` : "";
+			return { targetTaskId: taskId, prefix: "Task Updated: ", suffix };
+		}
+		case TOOL_CLOSE_TASK: {
+			const taskId = getArg(toolArgs, "taskId");
+			return taskId
+				? { targetTaskId: taskId, prefix: "– Task Closed: " }
+				: null;
+		}
+		case TOOL_RESET_TASK: {
+			const taskId = getArg(toolArgs, "taskId");
+			return taskId ? { targetTaskId: taskId, prefix: "↺ Task Reset: " } : null;
+		}
+		case TOOL_FORK_TASK_CONTEXT: {
+			const targetId = getArg(toolArgs, "targetTaskId");
+			return targetId ? { targetTaskId: targetId, prefix: "⑂ Fork → " } : null;
+		}
+		default:
+			return null;
+	}
+}
+
+/** Safely parse a string field from JSON content. */
+function parseJsonField(content: string, field: string): string | undefined {
+	try {
+		const json = JSON.parse(content) as Record<string, unknown>;
+		const val = json[field];
+		return typeof val === "string" ? val : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 /** Resolved tool_pair card — tool_call + tool_result merged in event processing layer */
 export const ToolCard = memo(function ToolCard({
@@ -119,7 +191,7 @@ export const ToolCard = memo(function ToolCard({
 
 	const hasImages = entry.images && entry.images.length > 0;
 
-	// Build title — clickable for send_message tools
+	// Build title — clickable for task operation tools
 	let cardTitle: string | ReactNode = getToolTitle(
 		toolName,
 		toolArgs,
@@ -127,16 +199,14 @@ export const ToolCard = memo(function ToolCard({
 		nodeMap,
 		{ emoji: true, projectMap },
 	);
-	if (
-		onTaskNavigate &&
-		(toolName === TOOL_SEND_MESSAGE || toolName === TOOL_SEND_MESSAGE_TO_CHILD)
-	) {
-		const targetTaskId = getArg(toolArgs, "taskId");
-		if (targetTaskId) {
+	if (onTaskNavigate) {
+		const linkInfo = getTaskLinkInfo(toolName, toolArgs, resultContent);
+		if (linkInfo) {
+			const { targetTaskId, prefix, suffix } = linkInfo;
 			const targetTitle = nodeMap?.get(targetTaskId)?.title ?? targetTaskId;
 			cardTitle = (
 				<>
-					{"→ Message: "}
+					{prefix}
 					{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate */}
 					{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable task name */}
 					<span
@@ -148,6 +218,7 @@ export const ToolCard = memo(function ToolCard({
 					>
 						{targetTitle}
 					</span>
+					{suffix}
 				</>
 			);
 		}
