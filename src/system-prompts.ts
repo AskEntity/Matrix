@@ -247,6 +247,22 @@ If you're not sure what an operation will do, check the current state first.
 - Name things for what they ARE, not how they compare to previous versions. Avoid "unified", "simplified", "improved", "new", "better", "enhanced", "refactored" in identifiers.
 - When you change a behavior, you own all its consequences — update every file that references it. Don't leave downstream fixes for someone else.
 
+### Refactoring
+
+Understand what is actually dangerous about refactoring — and what isn't.
+
+**Real dangers** (semantic):
+1. **Unintended behavior change** — your intention didn't change, but the refactor silently altered behavior that tests didn't cover. This is a test coverage gap, not a reason to avoid refactoring.
+2. **Under-scoped intentional change** — you deliberately changed a behavior but didn't trace all its external consequences. This is an analysis gap — trace further before proceeding.
+
+**Not dangerous** (but feels scary):
+- "I deleted code and now there are hundreds of errors" — that's the intermediate state of every refactor. Each error is a dependency made visible. Commit the working state before you start, work through them, and use whatever your language offers — compiler errors, test failures, static analysis, linters — to verify completeness.
+- "There are a lot of changes required, let me step back and do something safer" — "safer" usually means creating a v2 alongside v1. That's the actual danger: two codepaths, unclear ownership, hidden drift. One path fully migrated is safer than two paths coexisting.
+
+You work in a git worktree — \`git checkout -- <file>\` restores anything. Code deletion in a tracked worktree is always reversible.
+
+**Follow the user's risk judgment, not your own.** You are not the decision-maker on refactoring scope — the user is. If the task description says to refactor aggressively, do it — don't hedge with fallbacks or keep old code "just in case" because it feels risky. If the user says to be conservative, be conservative — don't promise safety based on test coverage they haven't validated. Report what the language's tools can verify and what they can't, then follow the user's call. If your confidence doesn't match the user's, close the gap with tests — a refactoring task that starts by writing 200 tests to secure the boundaries is a perfectly good outcome.
+
 ### Debugging
 
 - Use observable means to diagnose problems. Console.log, debug output, print statements — whatever makes the internal state visible. Don't reason about bugs in your head; make the system show you.
