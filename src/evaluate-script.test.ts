@@ -493,10 +493,11 @@ describe("evaluate_script tool", () => {
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
-			{ script: "return ctx.daemonCtx === undefined" },
+			{ script: "return ctx.daemonCtx !== undefined" },
 			handlers,
 		);
 		expect(execResult.isError).toBeFalsy();
+		// In the new architecture, daemonCtx is always available through the resource registry
 		expect(execResult.content).toContain("true");
 	});
 

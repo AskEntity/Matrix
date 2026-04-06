@@ -77,7 +77,18 @@ export function initMockResourceRegistry(opts: {
 	registerSideEffects({
 		emit: () => {},
 		broadcastTree: () => {},
-		deliverMessage: async () => {},
+		deliverMessage: async (
+			_projectId: string,
+			nodeId: string,
+			message: import("./message-queue.ts").QueueMessage,
+		) => {
+			// In tests, deliver directly to the target's queue if it exists
+			const targetNode = opts.tracker.getTask(nodeId);
+			const targetQueue = targetNode?.session?.queue;
+			if (targetQueue) {
+				targetQueue.enqueue(message);
+			}
+		},
 		stopTask: async () => false,
 		awaitLoopExit: async () => {},
 		injectMessageToProject: async () => ({
