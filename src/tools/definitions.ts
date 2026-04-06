@@ -37,11 +37,19 @@ function getSessionCwd(projectId: string, taskId: string | null): string {
 const bindParams = {
 	projectId: {
 		schema: z.string(),
-		decl: { kind: "bind" as const, from: "projectId" as const, overridable: false },
+		decl: {
+			kind: "bind" as const,
+			from: "projectId" as const,
+			overridable: false,
+		},
 	},
 	taskId: {
 		schema: z.string(),
-		decl: { kind: "bind" as const, from: "taskId" as const, overridable: false },
+		decl: {
+			kind: "bind" as const,
+			from: "taskId" as const,
+			overridable: false,
+		},
 	},
 };
 
@@ -168,8 +176,7 @@ const readFileTool: ToolDef = {
 		offset: {
 			schema: z.number(),
 			decl: { kind: "optional" },
-			description:
-				"Start reading from this line number, 1-based (default: 1)",
+			description: "Start reading from this line number, 1-based (default: 1)",
 		},
 		limit: {
 			schema: z.number(),
@@ -179,10 +186,7 @@ const readFileTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getSessionCwd(
-			args.projectId as string,
-			args.taskId as string,
-		);
+		const cwd = getSessionCwd(args.projectId as string, args.taskId as string);
 		const path = resolvePath(args.path as string, cwd);
 		const ext = path.split(".").pop()?.toLowerCase();
 		const IMAGE_MEDIA_TYPES: Record<
@@ -277,10 +281,7 @@ const writeFileTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getSessionCwd(
-			args.projectId as string,
-			args.taskId as string,
-		);
+		const cwd = getSessionCwd(args.projectId as string, args.taskId as string);
 		const path = resolvePath(args.path as string, cwd);
 		try {
 			mkdirSync(dirname(path), { recursive: true });
@@ -327,10 +328,7 @@ const editFileTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getSessionCwd(
-			args.projectId as string,
-			args.taskId as string,
-		);
+		const cwd = getSessionCwd(args.projectId as string, args.taskId as string);
 		const path = resolvePath(args.path as string, cwd);
 		const oldStr = args.old_string as string;
 		const newStr = args.new_string as string;
@@ -379,15 +377,11 @@ const listFilesTool: ToolDef = {
 		pattern: {
 			schema: z.string(),
 			decl: { kind: "optional" },
-			description:
-				'Glob pattern (e.g. "src/**/*.ts", "*.json"). Default: "*"',
+			description: 'Glob pattern (e.g. "src/**/*.ts", "*.json"). Default: "*"',
 		},
 	},
 	handler: async (args) => {
-		const cwd = getSessionCwd(
-			args.projectId as string,
-			args.taskId as string,
-		);
+		const cwd = getSessionCwd(args.projectId as string, args.taskId as string);
 		const pattern = (args.pattern as string) ?? "*";
 		try {
 			const glob = new Bun.Glob(pattern);
@@ -417,9 +411,7 @@ const searchTool: ToolDef = {
 		pattern: {
 			schema: z
 				.string()
-				.describe(
-					"Regex pattern to search for (ripgrep syntax, not grep)",
-				),
+				.describe("Regex pattern to search for (ripgrep syntax, not grep)"),
 			decl: { kind: "explicit" },
 		},
 		path: {
@@ -430,8 +422,7 @@ const searchTool: ToolDef = {
 		glob: {
 			schema: z.string(),
 			decl: { kind: "optional" },
-			description:
-				'File glob filter (e.g. "*.ts", "*.{ts,tsx}")',
+			description: 'File glob filter (e.g. "*.ts", "*.{ts,tsx}")',
 		},
 		context: {
 			schema: z.number(),
@@ -448,8 +439,7 @@ const searchTool: ToolDef = {
 		head_limit: {
 			schema: z.number(),
 			decl: { kind: "optional" },
-			description:
-				"Max number of output entries (default: 50, max: 200)",
+			description: "Max number of output entries (default: 50, max: 200)",
 		},
 		case_insensitive: {
 			schema: z.boolean(),
@@ -470,10 +460,7 @@ const searchTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getSessionCwd(
-			args.projectId as string,
-			args.taskId as string,
-		);
+		const cwd = getSessionCwd(args.projectId as string, args.taskId as string);
 		try {
 			const result = await jsSearch({
 				pattern: args.pattern as string,
@@ -481,10 +468,7 @@ const searchTool: ToolDef = {
 				glob: args.glob as string | undefined,
 				contextLines: args.context as number | undefined,
 				outputMode: (args.output_mode as string) ?? "content",
-				headLimit: Math.min(
-					(args.head_limit as number) ?? 50,
-					200,
-				),
+				headLimit: Math.min((args.head_limit as number) ?? 50, 200),
 				caseInsensitive: (args.case_insensitive as boolean) ?? false,
 				multiline: (args.multiline as boolean) ?? false,
 				excludedDirs: args.excluded_dirs as string[] | undefined,

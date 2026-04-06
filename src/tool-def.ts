@@ -139,9 +139,7 @@ function stripZodMeta(obj: unknown): unknown {
 }
 
 /** Convert a Zod raw shape to JSON Schema. */
-function shapeToJsonSchema(
-	shape: ZodRawShape,
-): Record<string, unknown> {
+function shapeToJsonSchema(shape: ZodRawShape): Record<string, unknown> {
 	return stripZodMeta(z.toJSONSchema(z.object(shape))) as Record<
 		string,
 		unknown
@@ -225,10 +223,7 @@ export function resolveBindParams(
  * - Wraps the handler to validate, resolve bind params, and pass auth
  * - Plugs into the existing executeTool / buildJsonTools / provider loop
  */
-export function toToolDefinition(
-	def: ToolDef,
-	auth: Auth,
-): ToolDefinition {
+export function toToolDefinition(def: ToolDef, auth: Auth): ToolDefinition {
 	const agentShape = buildAgentShape(def.params);
 	const jsonSchema = buildAgentJsonSchema(def.params);
 
@@ -249,8 +244,7 @@ export function toToolDefinition(
 		const resolvedArgs = resolveBindParams(def.params, args, auth);
 
 		// Step 3: Extract toolCallId
-		const toolCallId =
-			(extra as { toolCallId?: string })?.toolCallId ?? "";
+		const toolCallId = (extra as { toolCallId?: string })?.toolCallId ?? "";
 
 		// Step 4: Call the real handler with (args, auth, toolCallId)
 		return def.handler(resolvedArgs, auth, toolCallId);

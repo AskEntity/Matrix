@@ -10,7 +10,7 @@ import {
 	resetResourceRegistry,
 } from "./resource-registry.ts";
 import type { TaskTracker } from "./task-tracker.ts";
-import { createAgentAuth, type Auth } from "./tool-auth.ts";
+import { type Auth, createAgentAuth } from "./tool-auth.ts";
 import type { Project, TaskNode, TaskSession } from "./types.ts";
 
 /**

@@ -14,23 +14,26 @@ import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { MessageQueue } from "../message-queue.ts";
 import { createOrchestratorTools } from "../orchestrator-tools.ts";
-import { initResourceRegistry, registerSideEffects } from "../resource-registry.ts";
-import { createAgentAuth } from "../tool-auth.ts";
 import {
 	createClarifyResponse,
 	createTaskComplete,
 	createUserMessage,
 } from "../queue-message-factory.ts";
+import {
+	initResourceRegistry,
+	registerSideEffects,
+} from "../resource-registry.ts";
 import { buildSystemPrompt, type SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
+import { createAgentAuth } from "../tool-auth.ts";
+import { toToolDefinition } from "../tool-def.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
 import { MCP_SERVER_NAME } from "../tool-names.ts";
 import {
 	buildBuiltinToolDefs,
 	cleanupSessionBackgroundProcesses,
 } from "../tools/index.ts";
-import { toToolDefinition } from "../tool-def.ts";
 import { type AgentResult, isTask, type TaskSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
@@ -129,7 +132,6 @@ async function createAgentContext(
 		mcpManager?: McpClientManager;
 		/** System prompt for auto-launching target project agents (cross-project). Only needed at depth 0. */
 		orchestratorSystemPrompt?: SystemPrompt;
-
 	},
 ): Promise<AgentContextResult> {
 	const effectiveCfg = await resolveProjectConfig(
@@ -201,11 +203,7 @@ async function createAgentContext(
 	});
 
 	// Create auth for this agent
-	const auth = createAgentAuth(
-		project.id,
-		opts.currentTaskId,
-		opts.tracker,
-	);
+	const auth = createAgentAuth(project.id, opts.currentTaskId, opts.tracker);
 
 	const { toolDefs, hasRunningChildren, setMessages, setAllTools } =
 		createOrchestratorTools(

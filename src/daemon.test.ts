@@ -8,9 +8,9 @@ import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import { createOrchestratorTools } from "./orchestrator-tools.ts";
+import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { isDescendantOf } from "./task-utils.ts";
-import { resetResourceRegistry } from "./resource-registry.ts";
 import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
 import type {
 	AgentResult,
