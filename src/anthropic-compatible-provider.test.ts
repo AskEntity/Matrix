@@ -32,7 +32,8 @@ import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
-import { createBuiltinTools } from "./tools/definitions.ts";
+import { buildBuiltinToolDefs } from "./tools/definitions.ts";
+import { toToolDefinition } from "./tool-def.ts";
 import {
 	cleanupSessionBackgroundProcesses,
 	executeBashWithTimeout,
@@ -54,7 +55,7 @@ async function executeTool(
 	input: Record<string, unknown>,
 	cwd: string,
 	fallbackCwd?: string,
-	sessionId?: string,
+	_sessionId?: string,
 	queue?: MessageQueue,
 	toolCallId?: string,
 	getSession?: (sid: string) => import("./types.ts").TaskSession | undefined,
@@ -68,17 +69,40 @@ async function executeTool(
 	imageData?: string;
 	mediaType?: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 }> {
-	const currentCwd = cwd;
-	const tools = createBuiltinTools(
-		(sid: string) => getSession?.(sid),
-		sessionId ?? "test",
-		() => currentCwd,
-		() => fallbackCwd,
-		() => queue,
-	);
+	// Set up mock resource registry with a session that has the test's cwd/queue
+	const testProjectId = "__builtin_test__";
+	resetResourceRegistry();
+	const { mkdtempSync: mkdtemp } = await import("node:fs");
+	const { tmpdir } = await import("node:os");
+	const { join: pjoin } = await import("node:path");
+	const trackerDir = mkdtemp(pjoin(tmpdir(), "mxd-tool-test-"));
+	const testTracker = new TaskTracker(pjoin(trackerDir, "tree.json"));
+	await testTracker.load("main");
+	const testNode = testTracker.addChild(testTracker.rootNodeId, "test-task", "");
+	const realTaskId = testNode.id;
+	const callerSession = getSession?.(realTaskId);
+	testNode.session = callerSession ?? {
+		queue: queue ?? new MessageQueue(),
+		abortController: new AbortController(),
+		cwd,
+		fallbackCwd: fallbackCwd ?? cwd,
+		depth: 0,
+		backgroundProcesses: new Map(),
+		foregroundExecutions: new Map(),
+	};
+
+	const { auth } = initMockResourceRegistry({
+		tracker: testTracker,
+		projectId: testProjectId,
+		projectPath: cwd,
+		taskId: realTaskId,
+	});
+
+	const tools = buildBuiltinToolDefs();
+	const toolDefs = tools.map((def) => toToolDefinition(def, auth));
 	// biome-ignore lint/suspicious/noExplicitAny: test helper
 	const toolMap = new Map<string, ToolDefinition<any>>();
-	for (const t of tools) {
+	for (const t of toolDefs) {
 		toolMap.set(t.name, t);
 	}
 	const handler = toolMap.get(name);
