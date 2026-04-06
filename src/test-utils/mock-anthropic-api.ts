@@ -210,11 +210,13 @@ function extractMaxTtl(items: unknown[] | undefined): CacheTtl | undefined {
  */
 function validateCacheTtlOrder(
 	tools: unknown[] | undefined,
-	system: unknown[] | undefined,
+	system: unknown[] | string | undefined,
 	messages: MessageParam[],
 ): void {
 	const toolsTtl = extractMaxTtl(tools);
-	const systemTtl = extractMaxTtl(system);
+	// system can be a string or an array of blocks
+	const systemBlocks = Array.isArray(system) ? system : undefined;
+	const systemTtl = extractMaxTtl(systemBlocks);
 	const allMsgBlocks: unknown[] = [];
 	for (const msg of messages) {
 		if (Array.isArray(msg.content)) {
@@ -223,9 +225,14 @@ function validateCacheTtlOrder(
 	}
 	const msgTtl = extractMaxTtl(allMsgBlocks);
 
-	const toolsRank = tools ? ttlRank(toolsTtl) : Number.POSITIVE_INFINITY;
-	const systemRank = system ? ttlRank(systemTtl) : Number.POSITIVE_INFINITY;
-	const msgRank = allMsgBlocks.length > 0 ? ttlRank(msgTtl) : 0;
+	// Only validate if at least one layer has cache_control
+	const hasAnyCacheControl = toolsTtl !== undefined || systemTtl !== undefined || msgTtl !== undefined;
+	if (!hasAnyCacheControl) return;
+
+	// Layers without cache_control impose no constraint (POSITIVE_INFINITY = "any TTL is fine")
+	const toolsRank = toolsTtl !== undefined ? ttlRank(toolsTtl) : Number.POSITIVE_INFINITY;
+	const systemRank = systemTtl !== undefined ? ttlRank(systemTtl) : Number.POSITIVE_INFINITY;
+	const msgRank = msgTtl !== undefined ? ttlRank(msgTtl) : 0;
 
 	if (toolsRank < systemRank) {
 		throw new MockValidationError(
