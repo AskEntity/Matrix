@@ -160,6 +160,21 @@ describe("resolveConfig", () => {
 		const result3 = resolveConfig({}, {}, {});
 		expect(result3.thinking).toBeUndefined();
 	});
+
+	test("cacheTtl merges correctly", () => {
+		const global: MatrixConfig = { cacheTtl: { root: "1h", child: "1h" } };
+		const result = resolveConfig(global, {}, {});
+		expect(result.cacheTtl).toEqual({ root: "1h", child: "1h" });
+
+		// local overrides global
+		const local: MatrixConfig = { cacheTtl: { root: "5m", child: "5m" } };
+		const result2 = resolveConfig(global, {}, local);
+		expect(result2.cacheTtl).toEqual({ root: "5m", child: "5m" });
+
+		// undefined when no layer specifies it
+		const result3 = resolveConfig({}, {}, {});
+		expect(result3.cacheTtl).toBeUndefined();
+	});
 });
 
 describe("resolveAuthGroup", () => {
