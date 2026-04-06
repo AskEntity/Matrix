@@ -1,16 +1,23 @@
 /**
  * MCP tool definitions and handlers for orchestration tools.
  *
- * Extracted for maintainability.
- * Contains createOrchestratorTools() and all tool definitions
- * (create_task, update_task, send_message, yield, done, etc.).
+ * All tools are ToolDef objects:
+ * - Handlers receive (args, auth, toolCallId)
+ * - Resource IDs come through args (via ParamDecl bind/explicit)
+ * - Auth checked via checkPermission (opaque, only auth module can inspect)
+ * - Dependencies accessed through global functions in resource-registry.ts
+ *
+ * createOrchestratorTools() converts ToolDefs to ToolDefinitions
+ * for backward compatibility with the existing provider loop.
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import type { Event } from "./events.ts";
-import type { QueueMessage } from "./message-queue.ts";
+import type { Auth } from "./tool-auth.ts";
+import { checkPermission } from "./tool-auth.ts";
+import { type ToolDef, toToolDefinition } from "./tool-def.ts";
+import * as R from "./resource-registry.ts";
 import {
 	createCrossProjectMessage,
 	createTaskMessage,
@@ -24,25 +31,19 @@ import {
 	resetTaskOp,
 	updateTaskOp,
 } from "./task-operations.ts";
-import type { TaskTracker } from "./task-tracker.ts";
 import {
 	buildTaskPrompt,
 	getDescendantIds,
-	isDescendantOf,
 	slugify,
 } from "./task-utils.ts";
-import { type ToolDefinition, tool } from "./tool-definition.ts";
-import { isFolder, isTask, stripSession } from "./types.ts";
-
+import type { ToolDefinition } from "./tool-definition.ts";
+import { type TaskStatus, isFolder, isTask, stripSession } from "./types.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 
-/**
- * Check if the git working tree is clean (no uncommitted changes).
- * Worktrees branch from the current HEAD, so dirty state would be lost.
- */
+// ── Helper ──
+
 async function isGitClean(projectPath: string): Promise<{
 	clean: boolean;
-	/** Raw `git status --porcelain` output. Empty when clean. Callers format their own messages. */
 	files: string;
 }> {
 	const proc = Bun.spawn(["git", "status", "--porcelain"], {
@@ -55,194 +56,85 @@ async function isGitClean(projectPath: string): Promise<{
 	return { clean: output === "", files: output };
 }
 
-/**
- * Narrow dependency interface for orchestrator tools.
- * The daemon layer constructs this from DaemonContext when calling createOrchestratorTools.
- * This keeps orchestrator-tools.ts free of daemon/ imports.
- */
-export interface OrchestratorToolsDeps {
-	/** TaskTracker for this project. */
-	tracker: TaskTracker;
-	/** Project path (repo root). */
-	repoPath: string;
-	/** Emit an event (broadcast + optionally persist). */
-	emit: (event: Event | Record<string, unknown>) => void;
-	/** Broadcast tree update to SSE clients. */
-	broadcastTree: () => void;
-	/** Clear event store JSONL for a session/task. */
-	clearEventStore: (sessionId: string) => void;
-	/** Check if a session has JSONL events. */
-	hasEventStore: (sessionId: string) => boolean;
-	/**
-	 * Stop a running agent and await its loop exit.
-	 * Returns true if an agent was stopped, false if no agent was running.
-	 * Must wait for the agent loop to fully settle before returning.
-	 */
-	stopTask?: (nodeId: string) => Promise<boolean>;
-	/** Await agent loop exit even when session is not yet set (launchingNodes state). */
-	awaitLoopExit?: (nodeId: string) => Promise<void>;
-	/** Copy session events from source to target, appending a fork_marker. Returns event count. */
-	copySessionFrom: (
-		sourceId: string,
-		targetId: string,
-		opts?: { targetTitle?: string; targetDescription?: string },
-	) => Promise<{ eventCount: number }>;
-	/** Data directory for persisted messages. Undefined if not configured. */
-	dataDir?: string;
-	/** Get clarify timeout from config. */
-	getClarifyTimeoutMs: () => number | undefined;
-	/** Get default budget from config. */
-	getDefaultBudgetUsd: () => number | undefined;
-	/** List all projects with their metadata. */
-	listProjects: () => Array<{
-		id: string;
-		name: string;
-		path: string;
-		hasActiveAgent: boolean;
-	}>;
-	/** Get a project by ID. */
-	getProject: (
-		id: string,
-	) => { id: string; name: string; path: string } | undefined;
-	/** Get a tracker for another project (cross-project messaging). */
-	getTracker: (projectId: string) => TaskTracker | undefined;
-	/**
-	 * Full DaemonContext for runtime introspection (evaluate_script).
-	 * Optional — only available when running under the daemon (not in tests).
-	 */
-	daemonCtx?: unknown;
+/** Get project path for a task (worktree path or repo root). */
+function getProjectPath(projectId: string, taskId: string | null): string {
+	const tracker = R.getTracker(projectId);
+	if (taskId && tracker) {
+		const wp = tracker.getTask(taskId)?.worktreePath;
+		if (wp) return wp;
+	}
+	return R.getProject(projectId)?.path ?? "";
 }
 
-/**
- * Functions that would cause circular imports if imported directly from agent-lifecycle.ts.
- * Passed as a parameter to avoid the cycle: orchestrator-tools.ts ↔ agent-lifecycle.ts.
- */
-export interface LifecycleDeps {
-	/** Deliver a message to a task: persist → enqueue (if running) → launch (if not).
-	 *  quiet: skip auto-launch when agent is not running (used for upward messages). */
-	deliverMessage: (
-		nodeId: string,
-		message: QueueMessage,
-		opts?: { quiet?: boolean },
-	) => Promise<void>;
-	/**
-	 * Inject a message into another project, auto-launching agent if needed.
-	 * Only needed at depth 0 for cross-project messaging.
-	 */
-	injectMessageToProject?: (
-		projectId: string,
-		message: string,
-	) => Promise<{ ok: boolean; error?: string }>;
-}
+// ── All tool definitions ──
 
-/** Result of createOrchestratorTools — raw tool definitions for provider forwarding. */
-export interface OrchestratorToolsResult {
-	/** Raw tool definitions for provider forwarding. */
-	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic is not narrowable here
-	toolDefs: ToolDefinition<any>[];
-	/** Returns true if this agent has running children (checked via session on tracker). */
-	hasRunningChildren?: () => boolean;
-
-	/**
-	 * Bind the live messages[] array from the provider loop into the eval tool handler.
-	 * Called by runProviderLoop right after creating the messages array.
-	 * Only present when selfBootstrap mode is active.
-	 */
-	setMessages?: (msgs: unknown[]) => void;
-
-	/**
-	 * Bind the frozen JsonTool[] from the provider loop into the eval tool handler.
-	 * Called by runProviderLoop after tools are resolved.
-	 * Only present when selfBootstrap mode is active.
-	 */
-	setAllTools?: (tools: unknown[]) => void;
-}
-
-/**
- * Create orchestrator tools for an agent.
- *
- * deps provides all external state/callbacks needed by tools.
- * lifecycleDeps provides functions that would cause circular imports if imported directly.
- * selfBootstrap enables the hidden evaluate_script tool for runtime introspection.
- */
-export function createOrchestratorTools(
-	deps: OrchestratorToolsDeps,
-	projectId: string,
-	taskId: string | null,
-	lifecycleDeps?: LifecycleDeps,
-	selfBootstrap?: boolean,
-): OrchestratorToolsResult {
-	const { tracker, repoPath } = deps;
-
-	const currentTaskId = taskId;
-
-	// Derive depth, queue, and projectPath from session on the task node.
-	const getSession = () =>
-		taskId ? tracker.getTask(taskId)?.session : undefined;
-	const getDepth = () => getSession()?.depth ?? 0;
-	const getQueue = () => getSession()?.queue;
-	const getProjectPath = () =>
-		(taskId
-			? (tracker.getTask(taskId)?.worktreePath as string | undefined)
-			: undefined) ?? repoPath;
-
-	/** Emit an event through the daemon's unified event system. */
-	const emit = (event: Record<string, unknown>) => {
-		deps.emit(event);
-		deps.broadcastTree();
-	};
-
-	const broadcastTree = () => {
-		deps.broadcastTree();
-	};
-	const toolDefs = [
-		tool(
-			"get_tree",
-			"Get the current task tree. Returns all nodes with their status, branch, and hierarchy.",
-			{
-				format: z.enum(["flat", "tree"]).optional(),
-				include_closed: z
-					.boolean()
-					.optional()
-					.describe(
+function buildAllToolDefs(): ToolDef[] {
+	return [
+		// ── get_tree ──
+		{
+			name: "get_tree",
+			description:
+				"Get the current task tree. Returns all nodes with their status, branch, and hierarchy.",
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				taskId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "taskId", overridable: false },
+				},
+				format: {
+					schema: z.enum(["flat", "tree"]),
+					decl: { kind: "optional" },
+				},
+				include_closed: {
+					schema: z.boolean(),
+					decl: { kind: "optional" },
+					description:
 						"Include closed tasks in the result. Default false — closed tasks are hidden to reduce noise.",
-					),
-				include_details: z
-					.boolean()
-					.optional()
-					.describe(
+				},
+				include_details: {
+					schema: z.boolean(),
+					decl: { kind: "optional" },
+					description:
 						"Include full details (description, branch, worktreePath, color, costUsd, etc.) for each node. Default false — returns only id, title, status, children, parentId.",
-					),
+				},
 			},
-			async ({ include_closed, include_details }) => {
+			handler: async (args) => {
+				const tracker = R.getTracker(args.projectId as string);
+				if (!tracker)
+					return {
+						content: [{ type: "text", text: "Project not found" }],
+						isError: true,
+					};
+				const currentTaskId = args.taskId as string | null;
 				let nodes = tracker.allNodes();
-				if (!include_closed) {
-					nodes = nodes.filter((n) => isFolder(n) || n.status !== "closed");
+				if (!args.include_closed) {
+					nodes = nodes.filter(
+						(n) => isFolder(n) || n.status !== "closed",
+					);
 				}
 				const visibleIds = new Set(nodes.map((n) => n.id));
 				const filterChildren = (children: string[]) =>
 					children.filter((id) => visibleIds.has(id));
-				const result = include_details
+				const result = args.include_details
 					? nodes.map((n) => {
-							if (isFolder(n)) {
-								return {
-									...n,
-									children: filterChildren(n.children),
-								};
-							}
+							if (isFolder(n))
+								return { ...n, children: filterChildren(n.children) };
 							const rest = stripSession(n);
-							const node: Record<string, unknown> = {
+							return {
 								...rest,
 								children: filterChildren(rest.children),
-								// Mark calling agent's node so it can discover its position
 								...(rest.id === currentTaskId ? { you: true } : {}),
 							};
-							return node;
 						})
 					: nodes.map((n) => {
 							const node: Record<string, unknown> = {
 								id: n.id,
-								title: n.title + (n.id === currentTaskId ? " (you)" : ""),
+								title:
+									n.title +
+									(n.id === currentTaskId ? " (you)" : ""),
 								children: filterChildren(n.children),
 								parentId: n.parentId,
 							};
@@ -253,190 +145,241 @@ export function createOrchestratorTools(
 				return {
 					content: [
 						{
-							type: "text" as const,
+							type: "text",
 							text: JSON.stringify({ nodes: result }, null, 2),
 						},
 					],
 				};
 			},
-		),
+		},
 
-		tool(
-			"get_task",
-			"Get a single task's full details including description. Use when you need to read a specific task's description or other detailed fields.",
-			{
-				taskId: z
-					.string()
-					.describe("Task node ID (or unique prefix, min 8 chars)"),
+		// ── get_task ──
+		{
+			name: "get_task",
+			description:
+				"Get a single task's full details including description. Use when you need to read a specific task's description or other detailed fields.",
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				taskId: {
+					schema: z
+						.string()
+						.describe("Task node ID (or unique prefix, min 8 chars)"),
+					decl: { kind: "explicit" },
+				},
 			},
-			async ({ taskId }) => {
-				const node = tracker.getTask(taskId);
-				if (!node) {
+			handler: async (args) => {
+				const tracker = R.getTracker(args.projectId as string);
+				if (!tracker)
+					return {
+						content: [{ type: "text", text: "Project not found" }],
+						isError: true,
+					};
+				const node = tracker.getTask(args.taskId as string);
+				if (!node)
 					return {
 						content: [
-							{
-								type: "text" as const,
-								text: `Task not found: ${taskId}`,
-							},
+							{ type: "text", text: `Task not found: ${args.taskId}` },
 						],
 						isError: true,
 					};
-				}
 				return {
 					content: [
 						{
-							type: "text" as const,
+							type: "text",
 							text: JSON.stringify(stripSession(node), null, 2),
 						},
 					],
 				};
 			},
-		),
+		},
 
-		tool(
-			"create_task",
-			"Create a new task. If parentId is provided, creates a sub task under that parent. " +
+		// ── create_task ──
+		{
+			name: "create_task",
+			description:
+				"Create a new task. If parentId is provided, creates a sub task under that parent. " +
 				"If omitted, creates a sub task of YOUR current task (or top-level if you are the root orchestrator). " +
 				"IMPORTANT: Sibling tasks will run in PARALLEL on separate branches. " +
 				"Each sibling must work on DIFFERENT files/modules to avoid merge conflicts. " +
 				"NOTE: You can create tasks anywhere in the tree, not just under your own subtree. " +
 				"Creating a task is recording an intention — it's always allowed.",
-			{
-				title: z.string().describe("Short title for the task"),
-				description: z
-					.string()
-					.describe("Detailed description of what the task should accomplish"),
-				parentId: z
-					.string()
-					.optional()
-					.describe(
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				parentId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "taskId", overridable: true },
+					description:
 						"Parent task ID. Omit to create a sub task of your current task.",
-					),
-				draft: z
-					.boolean()
-					.optional()
-					.describe(
+				},
+				title: {
+					schema: z.string().describe("Short title for the task"),
+					decl: { kind: "explicit" },
+				},
+				description: {
+					schema: z
+						.string()
+						.describe(
+							"Detailed description of what the task should accomplish",
+						),
+					decl: { kind: "explicit" },
+				},
+				draft: {
+					schema: z.boolean(),
+					decl: { kind: "optional" },
+					description:
 						"If true, creates the task as a draft. Draft tasks can be edited but not executed.",
-					),
-				color: z
-					.string()
-					.optional()
-					.describe(
+				},
+				color: {
+					schema: z.string(),
+					decl: { kind: "optional" },
+					description:
 						"Optional color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex like '#ff5733'). " +
-							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
-					),
+						"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
+				},
 			},
-			async (args) => {
+			handler: async (args) => {
 				try {
-					// Auto-parent: if no parentId provided, default to current agent's task
-					const effectiveParentId = args.parentId ?? currentTaskId ?? undefined;
-
-					// No scope restriction: any agent can create tasks anywhere in the tree.
-					// Creating a task is recording an intention — it's harmless.
-					// Only operations that modify existing tasks (update, delete, close, reset)
-					// are restricted to the agent's own subtree.
-
-					// MCP convenience: apply default budget if not explicitly provided
-					const defaultBudgetUsd = deps.getDefaultBudgetUsd();
-					const budgetUsd = defaultBudgetUsd || undefined;
-
+					const tracker = R.getTracker(args.projectId as string);
+					if (!tracker)
+						return {
+							content: [{ type: "text", text: "Project not found" }],
+							isError: true,
+						};
+					const defaultBudgetUsd = R.getDefaultBudgetUsd();
 					const node = await createTaskOp(
 						tracker,
 						{
-							title: args.title,
-							description: args.description,
-							parentId: effectiveParentId,
-							draft: args.draft,
-							color: args.color,
-							budgetUsd,
+							title: args.title as string,
+							description: args.description as string,
+							parentId: (args.parentId as string) ?? undefined,
+							draft: args.draft as boolean | undefined,
+							color: args.color as string | undefined,
+							budgetUsd: defaultBudgetUsd || undefined,
 						},
 						"agent",
 						{
-							broadcastTree,
-							projectPath: getProjectPath(),
+							broadcastTree: () =>
+								R.broadcastTree(args.projectId as string),
+							projectPath: getProjectPath(
+								args.projectId as string,
+								args.parentId as string | null,
+							),
 						},
 					);
-
 					return {
 						content: [
 							{
-								type: "text" as const,
+								type: "text",
 								text: JSON.stringify(stripSession(node), null, 2),
 							},
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
-						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
 					};
 				}
 			},
-		),
+		},
 
-		tool(
-			"update_task",
-			"Update a task node. All fields except taskId are optional — provide only the fields you want to change." +
+		// ── update_task ──
+		{
+			name: "update_task",
+			description:
+				"Update a task node. All fields except taskId are optional — provide only the fields you want to change." +
 				" For surgical description edits, use old_description + new_description (like edit_file's old_string/new_string)." +
 				" Cannot combine description with old_description/new_description.",
-			{
-				taskId: z.string().describe("Task node ID"),
-				status: z
-					.enum([
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				taskId: {
+					schema: z.string().describe("Task node ID"),
+					decl: { kind: "explicit" },
+				},
+				status: {
+					schema: z.enum([
 						"draft",
 						"pending",
 						"in_progress",
 						"verify",
 						"failed",
 						"closed",
-					])
-					.optional()
-					.describe("New status"),
-				title: z.string().optional().describe("New title"),
-				description: z.string().optional().describe("New description"),
-				old_description: z
-					.string()
-					.optional()
-					.describe(
+					]),
+					decl: { kind: "optional" },
+					description: "New status",
+				},
+				title: {
+					schema: z.string(),
+					decl: { kind: "optional" },
+					description: "New title",
+				},
+				description: {
+					schema: z.string(),
+					decl: { kind: "optional" },
+					description: "New description",
+				},
+				old_description: {
+					schema: z.string(),
+					decl: { kind: "optional" },
+					description:
 						"Exact substring to find in the current description for surgical edit. Must be unique. Use with new_description.",
-					),
-				new_description: z
-					.string()
-					.optional()
-					.describe("Replacement string for old_description match."),
-				draft: z
-					.boolean()
-					.optional()
-					.describe(
+				},
+				new_description: {
+					schema: z.string(),
+					decl: { kind: "optional" },
+					description: "Replacement string for old_description match.",
+				},
+				draft: {
+					schema: z.boolean(),
+					decl: { kind: "optional" },
+					description:
 						"Set draft flag. true = status becomes 'draft', false = status becomes 'pending'.",
-					),
-				parentId: z
-					.string()
-					.optional()
-					.describe(
+				},
+				parentId: {
+					schema: z.string(),
+					decl: { kind: "optional" },
+					description:
 						"New parent task ID. Moves the task under this parent (reparent).",
-					),
-				color: z
-					.string()
-					.optional()
-					.describe(
+				},
+				color: {
+					schema: z.string(),
+					decl: { kind: "optional" },
+					description:
 						"Color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex). " +
-							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
-					),
+						"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
+				},
 			},
-			async (args) => {
+			handler: async (args, auth) => {
 				try {
-					// Scope validation for reparent: agent can only reparent tasks under itself or its descendants
-					if (args.parentId !== undefined && currentTaskId !== null) {
+					const tracker = R.getTracker(args.projectId as string);
+					if (!tracker)
+						return {
+							content: [{ type: "text", text: "Project not found" }],
+							isError: true,
+						};
+
+					// Scope validation for reparent via auth
+					if (args.parentId !== undefined) {
 						if (
-							args.taskId !== currentTaskId &&
-							!isDescendantOf(tracker, args.taskId, currentTaskId)
+							!checkPermission(auth, "subtree", {
+								taskId: args.taskId as string,
+							})
 						) {
 							return {
 								content: [
 									{
-										type: "text" as const,
+										type: "text",
 										text: `Cannot reparent ${args.taskId}: not your task or descendant`,
 									},
 								],
@@ -444,13 +387,14 @@ export function createOrchestratorTools(
 							};
 						}
 						if (
-							args.parentId !== currentTaskId &&
-							!isDescendantOf(tracker, args.parentId, currentTaskId)
+							!checkPermission(auth, "subtree", {
+								taskId: args.parentId as string,
+							})
 						) {
 							return {
 								content: [
 									{
-										type: "text" as const,
+										type: "text",
 										text: `Cannot reparent under ${args.parentId}: not your task or descendant`,
 									},
 								],
@@ -459,9 +403,10 @@ export function createOrchestratorTools(
 						}
 					}
 
-					// MCP-only: surgical description edit (old_description/new_description)
-					// Pre-process into a final `description` before calling shared function.
-					let finalDescription = args.description;
+					// Surgical description edit
+					let finalDescription = args.description as
+						| string
+						| undefined;
 					if (
 						args.old_description !== undefined ||
 						args.new_description !== undefined
@@ -473,7 +418,7 @@ export function createOrchestratorTools(
 							return {
 								content: [
 									{
-										type: "text" as const,
+										type: "text",
 										text: "Error: old_description and new_description must both be provided",
 									},
 								],
@@ -484,31 +429,35 @@ export function createOrchestratorTools(
 							return {
 								content: [
 									{
-										type: "text" as const,
+										type: "text",
 										text: "Error: cannot use description with old_description/new_description — use one or the other",
 									},
 								],
 								isError: true,
 							};
 						}
-						const existingNode = tracker.getTask(args.taskId);
+						const existingNode = tracker.getTask(
+							args.taskId as string,
+						);
 						if (!existingNode?.description) {
 							return {
 								content: [
 									{
-										type: "text" as const,
+										type: "text",
 										text: "Error: task has no description to edit",
 									},
 								],
 								isError: true,
 							};
 						}
-						const idx = existingNode.description.indexOf(args.old_description);
+						const idx = existingNode.description.indexOf(
+							args.old_description as string,
+						);
 						if (idx === -1) {
 							return {
 								content: [
 									{
-										type: "text" as const,
+										type: "text",
 										text: "Error: old_description not found in task description",
 									},
 								],
@@ -517,139 +466,177 @@ export function createOrchestratorTools(
 						}
 						if (
 							existingNode.description.indexOf(
-								args.old_description,
+								args.old_description as string,
 								idx + 1,
 							) !== -1
 						) {
 							return {
 								content: [
 									{
-										type: "text" as const,
+										type: "text",
 										text: "Error: old_description is not unique in task description — provide more context to make it unique",
 									},
 								],
 								isError: true,
 							};
 						}
-						finalDescription = existingNode.description.replace(
-							args.old_description,
-							args.new_description,
-						);
+						finalDescription =
+							existingNode.description.replace(
+								args.old_description as string,
+								args.new_description as string,
+							);
 					}
 
 					const node = await updateTaskOp(
 						tracker,
-						args.taskId,
+						args.taskId as string,
 						{
-							status: args.status,
-							title: args.title,
+							status: args.status as TaskStatus | undefined,
+							title: args.title as string | undefined,
 							description: finalDescription,
-							draft: args.draft,
-							parentId: args.parentId,
-							color: args.color,
+							draft: args.draft as boolean | undefined,
+							parentId: args.parentId as string | undefined,
+							color: args.color as string | undefined,
 						},
 						"agent",
 						{
-							broadcastTree,
+							broadcastTree: () =>
+								R.broadcastTree(args.projectId as string),
 							notifyTargetNode: (action, nodeId, title) => {
-								// Notify the modified node directly via queue
-								if (nodeId !== currentTaskId) {
-									const targetNode = tracker.getTask(nodeId);
-									if (targetNode?.session?.queue) {
-										try {
-											targetNode.session.queue.enqueue(
-												createTreeChange(action, nodeId, title),
-												{ quiet: true },
-											);
-										} catch {
-											/* queue may be closed */
-										}
+								const targetNode = tracker.getTask(nodeId);
+								if (targetNode?.session?.queue) {
+									try {
+										targetNode.session.queue.enqueue(
+											createTreeChange(
+												action,
+												nodeId,
+												title,
+											),
+											{ quiet: true },
+										);
+									} catch {
+										/* queue may be closed */
 									}
 								}
 							},
-							projectPath: getProjectPath(),
+							projectPath: getProjectPath(
+								args.projectId as string,
+								null,
+							),
 						},
 					);
-
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: JSON.stringify(stripSession(node), null, 2),
+								type: "text",
+								text: JSON.stringify(
+									stripSession(node),
+									null,
+									2,
+								),
 							},
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
-						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
 					};
 				}
 			},
-		),
+		},
 
-		tool(
-			"yield",
-			"Suspend execution and wait for messages (child completions, user messages, etc.). " +
+		// ── yield ──
+		{
+			name: "yield",
+			description:
+				"Suspend execution and wait for messages (child completions, user messages, etc.). " +
 				"Call this when you have spawned tasks and are waiting for results. " +
-				"Returns all accumulated messages. " +
-				"Zero token burn while waiting.",
-			{},
-			async () => {
-				// Return immediately with _isYield signal. The provider loop intercepts this
-				// and enters a loop-level pause instead of sending this result to the API.
-				// When messages arrive, the loop constructs the tool_result with wake messages.
+				"Returns all accumulated messages. Zero token burn while waiting.",
+			params: {},
+			handler: async () => {
 				return {
-					content: [{ type: "text" as const, text: "" }],
+					content: [{ type: "text", text: "" }],
 					isError: false,
 					_isYield: true,
 				};
 			},
-		),
+		},
 
-		tool(
-			"send_message",
-			"Send a message to another task. You can message any ancestor in your parent chain (not just direct parent), " +
+		// ── send_message ──
+		{
+			name: "send_message",
+			description:
+				"Send a message to another task. You can message any ancestor in your parent chain (not just direct parent), " +
 				"or any of your direct sub tasks. When messaging a sub task that isn't running yet, " +
 				"a worktree is auto-created and an agent is launched.",
-			{
-				taskId: z
-					.string()
-					.describe(
-						"Target task — any ancestor in your parent chain, or any direct sub task",
-					),
-				title: z.string().describe("Short summary of the message"),
-				message: z.string().describe("Message content"),
-				requestReply: z
-					.boolean()
-					.optional()
-					.describe("If true, signals that a reply is expected."),
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				senderTaskId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "taskId", overridable: false },
+				},
+				taskId: {
+					schema: z
+						.string()
+						.describe(
+							"Target task — any ancestor in your parent chain, or any direct sub task",
+						),
+					decl: { kind: "explicit" },
+				},
+				title: {
+					schema: z.string().describe("Short summary of the message"),
+					decl: { kind: "explicit" },
+				},
+				message: {
+					schema: z.string().describe("Message content"),
+					decl: { kind: "explicit" },
+				},
+				requestReply: {
+					schema: z.boolean(),
+					decl: { kind: "optional" },
+					description:
+						"If true, signals that a reply is expected.",
+				},
 			},
-			async (args) => {
-				const node = tracker.getTask(args.taskId);
-				if (!node) {
+			handler: async (args) => {
+				const projectId = args.projectId as string;
+				const senderTaskId = args.senderTaskId as string | null;
+				const targetTaskId = args.taskId as string;
+				const tracker = R.getTracker(projectId);
+				if (!tracker)
+					return {
+						content: [{ type: "text", text: "Project not found" }],
+						isError: true,
+					};
+
+				const node = tracker.getTask(targetTaskId);
+				if (!node)
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: `Error: Task "${args.taskId}" not found.`,
+								type: "text",
+								text: `Error: Task "${targetTaskId}" not found.`,
 							},
 						],
 						isError: true,
 					};
-				}
 
-				// Determine direction based on taskId — folders are transparent
-				const currentNode = currentTaskId
-					? tracker.getTask(currentTaskId)
+				const currentNode = senderTaskId
+					? tracker.getTask(senderTaskId)
 					: undefined;
-				// Upward: target is any ancestor in the parent chain (skipping folders)
+
+				// Direction check: upward or downward
 				let isUpward = false;
-				if (currentTaskId) {
-					let ancestor = tracker.getTaskAbove(currentTaskId);
+				if (senderTaskId) {
+					let ancestor = tracker.getTaskAbove(senderTaskId);
 					while (ancestor) {
-						if (ancestor.id === args.taskId) {
+						if (ancestor.id === targetTaskId) {
 							isUpward = true;
 							break;
 						}
@@ -658,73 +645,66 @@ export function createOrchestratorTools(
 				}
 				let isDownward = false;
 				if (!isUpward) {
-					if (currentTaskId !== null) {
-						// Non-root agent: target's task above must be me (skipping folders)
-						const targetTaskAbove = tracker.getTaskAbove(args.taskId);
-						isDownward = targetTaskAbove?.id === currentTaskId;
-					} else {
-						// Root orchestrator: target's task above must be root (skipping folders)
-						const targetTaskAbove = tracker.getTaskAbove(args.taskId);
+					if (senderTaskId !== null) {
+						const targetTaskAbove =
+							tracker.getTaskAbove(targetTaskId);
 						isDownward =
-							targetTaskAbove?.id === tracker.rootNodeId || !targetTaskAbove;
+							targetTaskAbove?.id === senderTaskId;
+					} else {
+						const targetTaskAbove =
+							tracker.getTaskAbove(targetTaskId);
+						isDownward =
+							targetTaskAbove?.id === tracker.rootNodeId ||
+							!targetTaskAbove;
 					}
 				}
 
-				if (!isUpward && !isDownward) {
+				if (!isUpward && !isDownward)
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: `Error: Can only message ancestors in your parent chain, or your direct sub tasks. "${args.taskId}" is neither.`,
+								type: "text",
+								text: `Error: Can only message ancestors in your parent chain, or your direct sub tasks. "${targetTaskId}" is neither.`,
 							},
 						],
 						isError: true,
 					};
-				}
 
-				// ── Upward message (to any ancestor in parent chain) ──
+				// ── Upward ──
 				if (isUpward) {
-					const taskTitle = currentNode?.title ?? "unknown";
-					const targetId = args.taskId;
-
 					try {
 						const queueMessage = createTaskMessage(
-							currentTaskId ?? "unknown",
-							taskTitle,
-							args.message,
-							{ title: args.title, requestReply: args.requestReply },
+							senderTaskId ?? "unknown",
+							currentNode?.title ?? "unknown",
+							args.message as string,
+							{
+								title: args.title as string,
+								requestReply: args.requestReply as
+									| boolean
+									| undefined,
+							},
 						);
-
-						if (lifecycleDeps?.deliverMessage) {
-							// deliverMessage handles JSONL persistence + queue delivery.
-							// quiet: true — don't auto-launch a stopped ancestor.
-							await lifecycleDeps.deliverMessage(targetId, queueMessage, {
-								quiet: true,
-							});
-						} else {
-							// Fallback for non-daemon contexts (tests without full daemon):
-							// direct queue delivery to the target ancestor
-							const targetNode = tracker.getTask(targetId);
-							const targetQueue = targetNode?.session?.queue;
-							if (targetQueue) {
-								targetQueue.enqueue(queueMessage);
-							}
-						}
-
+						await R.deliverMessage(
+							projectId,
+							targetTaskId,
+							queueMessage,
+							{ quiet: true },
+						);
 						return {
 							content: [
 								{
-									type: "text" as const,
+									type: "text",
 									text: `Message sent to ancestor task "${node.title}".`,
 								},
 							],
 						};
 					} catch (e) {
-						const message = e instanceof Error ? e.message : "Unknown error";
+						const message =
+							e instanceof Error ? e.message : "Unknown error";
 						return {
 							content: [
 								{
-									type: "text" as const,
+									type: "text",
 									text: `Error sending message: ${message}`,
 								},
 							],
@@ -733,24 +713,26 @@ export function createOrchestratorTools(
 					}
 				}
 
-				// ── Downward message (like old send_message_to_child) ──
-				if (node.status === "draft") {
+				// ── Downward ──
+				if (node.status === "draft")
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: `Error: Task "${node.title}" (${args.taskId}) is a draft and cannot be started. Remove draft status first.`,
+								type: "text",
+								text: `Error: Task "${node.title}" (${targetTaskId}) is a draft and cannot be started. Remove draft status first.`,
 							},
 						],
 						isError: true,
 					};
-				}
 
 				try {
-					// Create worktree if needed (requires clean working tree)
+					// Create worktree if needed
 					if (!node.worktreePath) {
-						const projectPath = getProjectPath();
-						const gitCheck = await isGitClean(projectPath);
+						const projPath = getProjectPath(
+							projectId,
+							senderTaskId,
+						);
+						const gitCheck = await isGitClean(projPath);
 						if (!gitCheck.clean) {
 							const lines = gitCheck.files
 								.split("\n")
@@ -758,43 +740,55 @@ export function createOrchestratorTools(
 							return {
 								content: [
 									{
-										type: "text" as const,
+										type: "text",
 										text: `Error: Working tree has ${lines.length} uncommitted change(s):\n${gitCheck.files}\n\nCommit or stash changes before spawning tasks.`,
 									},
 								],
 								isError: true,
 							};
 						}
-						if (!currentNode?.branch) {
+						if (!currentNode?.branch)
 							return {
 								content: [
 									{
-										type: "text" as const,
+										type: "text",
 										text: "Error: Cannot create worktree — current task has no branch assigned.",
 									},
 								],
 								isError: true,
 							};
-						}
+						const repoPath =
+							R.getProject(projectId)?.path ?? "";
 						const slug = slugify(node.title);
 						const wtRoot = join(repoPath, ".worktrees");
 						const wm = new WorktreeManager(repoPath, wtRoot);
-						const wt = await wm.create(node.id, slug, currentNode.branch);
-						tracker.assignWorktree(node.id, wt.branch, wt.path);
+						const wt = await wm.create(
+							node.id,
+							slug,
+							currentNode.branch,
+						);
+						tracker.assignWorktree(
+							node.id,
+							wt.branch,
+							wt.path,
+						);
 					}
 
-					// Only include full header on cold start (no prior context).
-					// Running agents already have context from their session.
-					// Agents with JSONL (e.g. after fork) already have context from events.
 					const hasPriorContext =
-						node.session != null || deps.hasEventStore(node.id);
+						node.session != null ||
+						R.hasEventStore(projectId, node.id);
 					let header: string | undefined;
 					if (!hasPriorContext) {
-						// Read project memory from the node's worktree (or repo root)
+						const repoPath =
+							R.getProject(projectId)?.path ?? "";
 						let memory = "";
 						try {
 							memory = readFileSync(
-								join(node.worktreePath ?? repoPath, ".mxd", "memory.md"),
+								join(
+									node.worktreePath ?? repoPath,
+									".mxd",
+									"memory.md",
+								),
 								"utf-8",
 							);
 						} catch {
@@ -803,46 +797,41 @@ export function createOrchestratorTools(
 						header = buildTaskPrompt(node, tracker, memory);
 					}
 
-					// Deliver message via unified path: persist → enqueue/launch
-					// The message is NOT included in the launch prompt — it arrives
-					// via queue drain of persisted messages (exactly-once delivery).
 					const queueMessage = createTaskMessage(
-						currentTaskId ?? "unknown",
+						senderTaskId ?? "unknown",
 						currentNode?.title ?? "unknown",
-						args.message,
+						args.message as string,
 						{
-							requestReply: args.requestReply,
+							requestReply: args.requestReply as
+								| boolean
+								| undefined,
 							header: header ?? undefined,
 						},
 					);
 
-					if (lifecycleDeps?.deliverMessage) {
-						await lifecycleDeps.deliverMessage(args.taskId, queueMessage);
-					} else {
-						// Fallback for non-daemon contexts (tests without full daemon):
-						// direct queue delivery only
-						const existingQueue = tracker.getTask(args.taskId)?.session?.queue;
-						if (existingQueue) {
-							existingQueue.enqueue(queueMessage);
-						}
-					}
+					await R.deliverMessage(
+						projectId,
+						targetTaskId,
+						queueMessage,
+					);
 
 					return {
 						content: [
 							{
-								type: "text" as const,
+								type: "text",
 								text: hasPriorContext
-									? `Message sent to task "${node.title}" (${args.taskId})`
-									: `Started task "${node.title}" (${args.taskId}) on branch ${node.branch}`,
+									? `Message sent to task "${node.title}" (${targetTaskId})`
+									: `Started task "${node.title}" (${targetTaskId}) on branch ${node.branch}`,
 							},
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [
 							{
-								type: "text" as const,
+								type: "text",
 								text: `Error starting task: ${message}`,
 							},
 						],
@@ -850,211 +839,318 @@ export function createOrchestratorTools(
 					};
 				}
 			},
-		),
+		},
 
-		tool(
-			"close_task",
-			"Clean up a task's worktree and branch to reclaim disk space. " +
+		// ── close_task ──
+		{
+			name: "close_task",
+			description:
+				"Clean up a task's worktree and branch to reclaim disk space. " +
 				"Node and session are preserved — status set to 'closed'. " +
 				"Call this AFTER you have already merged the task's branch yourself. " +
 				"Use for merged tasks or deferred tasks where you want to free resources.",
-			{
-				taskId: z.string().describe("ID of the task to close"),
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				taskId: {
+					schema: z.string().describe("ID of the task to close"),
+					decl: { kind: "explicit" },
+				},
 			},
-			async (args) => {
+			handler: async (args) => {
 				try {
+					const projectId = args.projectId as string;
+					const tracker = R.getTracker(projectId);
+					if (!tracker)
+						return {
+							content: [{ type: "text", text: "Project not found" }],
+							isError: true,
+						};
+					const repoPath = R.getProject(projectId)?.path ?? "";
 					const wtRoot = join(repoPath, ".worktrees");
 					const wm = new WorktreeManager(repoPath, wtRoot);
-					const result = await closeTaskOp(tracker, args.taskId, {
-						broadcastTree,
-						removeWorktree: (id, slug) => wm.remove(id, slug),
-						clearEventStore: deps.clearEventStore,
-					});
-
+					const result = await closeTaskOp(
+						tracker,
+						args.taskId as string,
+						{
+							broadcastTree: () => R.broadcastTree(projectId),
+							removeWorktree: (id, slug) => wm.remove(id, slug),
+							clearEventStore: (sid) =>
+								R.clearEventStore(projectId, sid),
+						},
+					);
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: JSON.stringify({ closed: true, ...result }, null, 2),
+								type: "text",
+								text: JSON.stringify(
+									{ closed: true, ...result },
+									null,
+									2,
+								),
 							},
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Error: ${message}`,
-							},
-						],
+						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
 					};
 				}
 			},
-		),
+		},
 
-		tool(
-			"delete_task",
-			"Fully remove a task — deletes worktree, session file, and task node from the tree. " +
+		// ── delete_task ──
+		{
+			name: "delete_task",
+			description:
+				"Fully remove a task — deletes worktree, session file, and task node from the tree. " +
 				"WARNING: Also deletes ALL sub tasks recursively. Verify all sub tasks are completed and merged before deleting. " +
 				"Use for abandoned tasks you no longer need.",
-			{
-				taskId: z.string().describe("ID of the task to delete"),
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				taskId: {
+					schema: z.string().describe("ID of the task to delete"),
+					decl: { kind: "explicit" },
+				},
 			},
-			async (args) => {
+			handler: async (args) => {
 				try {
+					const projectId = args.projectId as string;
+					const tracker = R.getTracker(projectId);
+					if (!tracker)
+						return {
+							content: [{ type: "text", text: "Project not found" }],
+							isError: true,
+						};
+					const repoPath = R.getProject(projectId)?.path ?? "";
 					const wtRoot = join(repoPath, ".worktrees");
 					const wm = new WorktreeManager(repoPath, wtRoot);
-					const result = await deleteTaskOp(tracker, args.taskId, "agent", {
-						broadcastTree,
-						removeWorktree: (id, slug) => wm.remove(id, slug),
-						clearEventStore: deps.clearEventStore,
-					});
-
+					const result = await deleteTaskOp(
+						tracker,
+						args.taskId as string,
+						"agent",
+						{
+							broadcastTree: () => R.broadcastTree(projectId),
+							removeWorktree: (id, slug) => wm.remove(id, slug),
+							clearEventStore: (sid) =>
+								R.clearEventStore(projectId, sid),
+						},
+					);
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: JSON.stringify({ deleted: true, ...result }, null, 2),
+								type: "text",
+								text: JSON.stringify(
+									{ deleted: true, ...result },
+									null,
+									2,
+								),
 							},
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Error: ${message}`,
-							},
-						],
+						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
 					};
 				}
 			},
-		),
+		},
 
-		tool(
-			"reset_task",
-			"Reset a task for a fresh start — removes worktree and session file but keeps the node. " +
+		// ── reset_task ──
+		{
+			name: "reset_task",
+			description:
+				"Reset a task for a fresh start — removes worktree and session file but keeps the node. " +
 				"Sets status to pending. Use when you want to retry with a different approach.",
-			{
-				taskId: z.string().describe("ID of the task to reset"),
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				taskId: {
+					schema: z.string().describe("ID of the task to reset"),
+					decl: { kind: "explicit" },
+				},
 			},
-			async (args) => {
+			handler: async (args) => {
 				try {
+					const projectId = args.projectId as string;
+					const tracker = R.getTracker(projectId);
+					if (!tracker)
+						return {
+							content: [{ type: "text", text: "Project not found" }],
+							isError: true,
+						};
+					const repoPath = R.getProject(projectId)?.path ?? "";
 					const wtRoot = join(repoPath, ".worktrees");
 					const wm = new WorktreeManager(repoPath, wtRoot);
-					const result = await resetTaskOp(tracker, args.taskId, {
-						broadcastTree,
-						removeWorktree: (id, slug) => wm.remove(id, slug),
-						clearEventStore: deps.clearEventStore,
-						stopTask: deps.stopTask
-							? async (nodeId) => {
-									await deps.stopTask?.(nodeId);
-								}
-							: undefined,
-						awaitLoopExit: deps.awaitLoopExit,
-					});
-
+					const result = await resetTaskOp(
+						tracker,
+						args.taskId as string,
+						{
+							broadcastTree: () => R.broadcastTree(projectId),
+							removeWorktree: (id, slug) => wm.remove(id, slug),
+							clearEventStore: (sid) =>
+								R.clearEventStore(projectId, sid),
+							stopTask: async (nodeId) => {
+								await R.stopTask(projectId, nodeId);
+							},
+							awaitLoopExit: (nodeId) =>
+								R.awaitLoopExit(nodeId),
+						},
+					);
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: JSON.stringify({ reset: true, ...result }, null, 2),
+								type: "text",
+								text: JSON.stringify(
+									{ reset: true, ...result },
+									null,
+									2,
+								),
 							},
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Error: ${message}`,
-							},
-						],
+						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
 					};
 				}
 			},
-		),
+		},
 
-		tool(
-			"clarify",
-			"Ask a clarification question and send it to the user. " +
+		// ── clarify ──
+		{
+			name: "clarify",
+			description:
+				"Ask a clarification question and send it to the user. " +
 				"Returns immediately — you can continue doing other work that doesn't need the answer, " +
 				"then call yield() when ready to wait for the clarify_response. " +
 				"Only use this for genuine ambiguities that could lead to wasted work.",
-			{
-				question: z
-					.string()
-					.describe("The clarification question to ask the user"),
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				taskId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "taskId", overridable: false },
+				},
+				question: {
+					schema: z
+						.string()
+						.describe(
+							"The clarification question to ask the user",
+						),
+					decl: { kind: "explicit" },
+				},
 			},
-			async (args) => {
-				const taskId = currentTaskId ?? "orchestrator";
-
-				emit({
+			handler: async (args) => {
+				const taskId = (args.taskId as string) ?? "orchestrator";
+				R.emit(args.projectId as string, {
 					type: "clarification_requested",
 					taskId,
-					question: args.question,
-					// Title is the first line; body is the rest (if multi-line)
-					...(args.question.includes("\n")
+					question: args.question as string,
+					...((args.question as string).includes("\n")
 						? {
-								title: args.question.split("\n")[0],
-								body: args.question.split("\n").slice(1).join("\n").trim(),
+								title: (args.question as string).split("\n")[0],
+								body: (args.question as string)
+									.split("\n")
+									.slice(1)
+									.join("\n")
+									.trim(),
 							}
 						: { title: args.question }),
 				});
-
+				R.broadcastTree(args.projectId as string);
 				return {
 					content: [
 						{
-							type: "text" as const,
+							type: "text",
 							text: "Question sent. You can continue working on other things that don't need the answer, then call yield() when ready to receive the clarify_response.",
 						},
 					],
 				};
 			},
-		),
+		},
 
-		tool(
-			"reorder_tasks",
-			"Reorder children of a task node. The children array must contain exactly the same task IDs as the current children, just in a different order.",
-			{
-				nodeId: z.string().describe("Parent task ID whose children to reorder"),
-				children: z
-					.array(z.string())
-					.describe("Ordered list of child task IDs"),
+		// ── reorder_tasks ──
+		{
+			name: "reorder_tasks",
+			description:
+				"Reorder children of a task node. The children array must contain exactly the same task IDs as the current children, just in a different order.",
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				nodeId: {
+					schema: z
+						.string()
+						.describe(
+							"Parent task ID whose children to reorder",
+						),
+					decl: { kind: "explicit" },
+				},
+				children: {
+					schema: z
+						.array(z.string())
+						.describe("Ordered list of child task IDs"),
+					decl: { kind: "explicit" },
+				},
 			},
-			async (args) => {
+			handler: async (args, auth) => {
 				try {
-					// Scope validation: must be own task or descendant
+					// Scope validation via auth
 					if (
-						currentTaskId !== null &&
-						args.nodeId !== currentTaskId &&
-						!isDescendantOf(tracker, args.nodeId, currentTaskId)
+						!checkPermission(auth, "subtree", {
+							taskId: args.nodeId as string,
+						})
 					) {
 						return {
 							content: [
 								{
-									type: "text" as const,
+									type: "text",
 									text: `Cannot reorder children of ${args.nodeId}: not your task or descendant`,
 								},
 							],
 							isError: true,
 						};
 					}
-
-					await reorderTasksOp(tracker, args.nodeId, args.children, "agent", {
-						broadcastTree,
-					});
-
+					const tracker = R.getTracker(args.projectId as string);
+					if (!tracker)
+						return {
+							content: [{ type: "text", text: "Project not found" }],
+							isError: true,
+						};
+					await reorderTasksOp(
+						tracker,
+						args.nodeId as string,
+						args.children as string[],
+						"agent",
+						{
+							broadcastTree: () =>
+								R.broadcastTree(args.projectId as string),
+						},
+					);
 					return {
 						content: [
 							{
-								type: "text" as const,
+								type: "text",
 								text: JSON.stringify(
 									{
 										reordered: true,
@@ -1068,69 +1164,106 @@ export function createOrchestratorTools(
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
-						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
 					};
 				}
 			},
-		),
+		},
 
-		// ── Folder tools (pure grouping, zero lifecycle) ──
-
-		tool(
-			"create_folder",
-			"Create a folder for visual grouping. Folders have no status, no lifecycle — pure organization. " +
+		// ── Folder tools ──
+		{
+			name: "create_folder",
+			description:
+				"Create a folder for visual grouping. Folders have no status, no lifecycle — pure organization. " +
 				"Tasks inside folders are logically owned by the nearest task ancestor above the folder.",
-			{
-				title: z.string().describe("Folder title"),
-				parentId: z
-					.string()
-					.optional()
-					.describe("Parent node ID. Omit to create under your current task."),
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				parentId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "taskId", overridable: true },
+					description:
+						"Parent node ID. Omit to create under your current task.",
+				},
+				title: {
+					schema: z.string().describe("Folder title"),
+					decl: { kind: "explicit" },
+				},
 			},
-			async (args) => {
+			handler: async (args) => {
 				try {
-					const effectiveParentId =
-						args.parentId ?? currentTaskId ?? tracker.rootNodeId;
-					const folder = tracker.addFolder(args.title, effectiveParentId);
+					const tracker = R.getTracker(args.projectId as string);
+					if (!tracker)
+						return {
+							content: [{ type: "text", text: "Project not found" }],
+							isError: true,
+						};
+					const parentId =
+						(args.parentId as string) ?? tracker.rootNodeId;
+					const folder = tracker.addFolder(
+						args.title as string,
+						parentId,
+					);
 					await tracker.save();
-					broadcastTree();
+					R.broadcastTree(args.projectId as string);
 					return {
 						content: [
-							{ type: "text" as const, text: JSON.stringify(folder, null, 2) },
+							{
+								type: "text",
+								text: JSON.stringify(folder, null, 2),
+							},
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
-						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
 					};
 				}
 			},
-		),
+		},
 
-		tool(
-			"delete_folder",
-			"Delete an empty folder. Fails if the folder has children — move or delete them first.",
-			{
-				folderId: z.string().describe("ID of the folder to delete"),
+		{
+			name: "delete_folder",
+			description:
+				"Delete an empty folder. Fails if the folder has children — move or delete them first.",
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				folderId: {
+					schema: z.string().describe("ID of the folder to delete"),
+					decl: { kind: "explicit" },
+				},
 			},
-			async (args) => {
+			handler: async (args) => {
 				try {
-					const node = tracker.get(args.folderId);
+					const tracker = R.getTracker(args.projectId as string);
+					if (!tracker)
+						return {
+							content: [{ type: "text", text: "Project not found" }],
+							isError: true,
+						};
+					const node = tracker.get(args.folderId as string);
 					if (!node)
 						return {
-							content: [{ type: "text" as const, text: "Folder not found" }],
+							content: [{ type: "text", text: "Folder not found" }],
 							isError: true,
 						};
 					if (!isFolder(node))
 						return {
 							content: [
 								{
-									type: "text" as const,
+									type: "text",
 									text: "Not a folder — use delete_task instead",
 								},
 							],
@@ -1140,19 +1273,19 @@ export function createOrchestratorTools(
 						return {
 							content: [
 								{
-									type: "text" as const,
+									type: "text",
 									text: "Cannot delete folder with children. Move or delete them first.",
 								},
 							],
 							isError: true,
 						};
-					tracker.remove(args.folderId);
+					tracker.remove(args.folderId as string);
 					await tracker.save();
-					broadcastTree();
+					R.broadcastTree(args.projectId as string);
 					return {
 						content: [
 							{
-								type: "text" as const,
+								type: "text",
 								text: JSON.stringify({
 									deleted: true,
 									folderId: args.folderId,
@@ -1162,47 +1295,67 @@ export function createOrchestratorTools(
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
-						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
 					};
 				}
 			},
-		),
+		},
 
-		tool(
-			"rename_folder",
-			"Rename a folder.",
-			{
-				folderId: z.string().describe("ID of the folder to rename"),
-				title: z.string().describe("New title for the folder"),
+		{
+			name: "rename_folder",
+			description: "Rename a folder.",
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				folderId: {
+					schema: z.string().describe("ID of the folder to rename"),
+					decl: { kind: "explicit" },
+				},
+				title: {
+					schema: z.string().describe("New title for the folder"),
+					decl: { kind: "explicit" },
+				},
 			},
-			async (args) => {
+			handler: async (args) => {
 				try {
-					const node = tracker.get(args.folderId);
+					const tracker = R.getTracker(args.projectId as string);
+					if (!tracker)
+						return {
+							content: [{ type: "text", text: "Project not found" }],
+							isError: true,
+						};
+					const node = tracker.get(args.folderId as string);
 					if (!node)
 						return {
-							content: [{ type: "text" as const, text: "Folder not found" }],
+							content: [{ type: "text", text: "Folder not found" }],
 							isError: true,
 						};
 					if (!isFolder(node))
 						return {
 							content: [
 								{
-									type: "text" as const,
+									type: "text",
 									text: "Not a folder — use update_task instead",
 								},
 							],
 							isError: true,
 						};
-					tracker.updateTitle(args.folderId, args.title);
+					tracker.updateTitle(
+						args.folderId as string,
+						args.title as string,
+					);
 					await tracker.save();
-					broadcastTree();
+					R.broadcastTree(args.projectId as string);
 					return {
 						content: [
 							{
-								type: "text" as const,
+								type: "text",
 								text: JSON.stringify({
 									renamed: true,
 									folderId: args.folderId,
@@ -1212,88 +1365,103 @@ export function createOrchestratorTools(
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
-						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						content: [{ type: "text", text: `Error: ${message}` }],
 						isError: true,
 					};
 				}
 			},
-		),
+		},
 
-		tool(
-			"list_projects",
-			"List all registered projects with their IDs, names, and paths. " +
+		// ── list_projects ──
+		{
+			name: "list_projects",
+			description:
+				"List all registered projects with their IDs, names, and paths. " +
 				"Use this to discover other projects before sending cross-project messages.",
-			{},
-			async () => {
-				const depth = getDepth();
-				if (depth > 0) {
+			params: {},
+			handler: async (_args, auth) => {
+				if (!checkPermission(auth, "root", {})) {
 					return {
 						content: [
 							{
-								type: "text" as const,
+								type: "text",
 								text: "Cross-project tools are not available at this depth.",
 							},
 						],
 						isError: true,
 					};
 				}
-				const projects = deps.listProjects();
+				const projects = R.listProjects();
 				return {
 					content: [
 						{
-							type: "text" as const,
+							type: "text",
 							text: JSON.stringify(projects, null, 2),
 						},
 					],
 				};
 			},
-		),
+		},
 
-		tool(
-			"send_message_to_project",
-			"Send a message to the orchestrator of another project. " +
+		// ── send_message_to_project ──
+		{
+			name: "send_message_to_project",
+			description:
+				"Send a message to the orchestrator of another project. " +
 				"The message appears in the target project's orchestrator queue as a cross_project message. " +
 				"If the target project has no active agent, one is auto-launched with the message as the initial prompt.",
-			{
-				projectId: z.string().describe("ID of the target project"),
-				message: z.string().describe("Message content to send"),
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+					description: "Sender's project ID (auto-bound).",
+				},
+				targetProjectId: {
+					schema: z
+						.string()
+						.describe("ID of the target project"),
+					decl: { kind: "explicit" },
+				},
+				message: {
+					schema: z.string().describe("Message content to send"),
+					decl: { kind: "explicit" },
+				},
 			},
-			async (args) => {
-				const depth = getDepth();
-				if (depth > 0) {
+			handler: async (args, auth) => {
+				if (!checkPermission(auth, "root", {})) {
 					return {
 						content: [
 							{
-								type: "text" as const,
+								type: "text",
 								text: "Cross-project tools are not available at this depth.",
 							},
 						],
 						isError: true,
 					};
 				}
+				const senderProjectId = args.projectId as string;
+				const targetProjectId = args.targetProjectId as string;
 
-				const targetProject = deps.getProject(args.projectId);
-				if (!targetProject) {
+				const targetProject = R.getProject(targetProjectId);
+				if (!targetProject)
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: `Error: Project "${args.projectId}" not found.`,
+								type: "text",
+								text: `Error: Project "${targetProjectId}" not found.`,
 							},
 						],
 						isError: true,
 					};
-				}
 
-				// Determine sender identity
-				const senderProject = deps.getProject(projectId);
-				const fromProjectId = projectId;
+				const senderProject = R.getProject(senderProjectId);
 				const fromProjectName = senderProject?.name ?? "unknown";
 
-				// Try direct enqueue if target agent is already running
-				const targetTracker = deps.getTracker(args.projectId);
+				// Try direct enqueue if target agent is running
+				const targetTracker = R.getTracker(targetProjectId);
 				const targetRootId = targetTracker?.rootNodeId;
 				const targetQueue = targetRootId
 					? targetTracker?.getTask(targetRootId)?.session?.queue
@@ -1302,25 +1470,28 @@ export function createOrchestratorTools(
 					try {
 						targetQueue.enqueue(
 							createCrossProjectMessage(
-								fromProjectId,
+								senderProjectId,
 								fromProjectName,
-								args.message,
+								args.message as string,
 							),
 						);
 						return {
 							content: [
 								{
-									type: "text" as const,
-									text: `Message sent to project "${targetProject.name}" (${args.projectId}).`,
+									type: "text",
+									text: `Message sent to project "${targetProject.name}" (${targetProjectId}).`,
 								},
 							],
 						};
 					} catch (e) {
-						const message = e instanceof Error ? e.message : "Unknown error";
+						const message =
+							e instanceof Error
+								? e.message
+								: "Unknown error";
 						return {
 							content: [
 								{
-									type: "text" as const,
+									type: "text",
 									text: `Error sending message: ${message}`,
 								},
 							],
@@ -1329,31 +1500,18 @@ export function createOrchestratorTools(
 					}
 				}
 
-				// Agent not running — auto-launch via injectMessageToProject
-				if (!lifecycleDeps?.injectMessageToProject) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Error: No active agent running for project "${targetProject.name}" (${args.projectId}), and auto-launch is not available.`,
-							},
-						],
-						isError: true,
-					};
-				}
-
+				// Auto-launch via inject
 				try {
-					// Prepend sender identity so the target agent knows who sent the message
-					const prefixedMessage = `[Cross-project message from "${fromProjectName}" (${fromProjectId})]\n\n${args.message}`;
-					const result = await lifecycleDeps.injectMessageToProject(
-						args.projectId,
+					const prefixedMessage = `[Cross-project message from "${fromProjectName}" (${senderProjectId})]\n\n${args.message}`;
+					const result = await R.injectMessageToProject(
+						targetProjectId,
 						prefixedMessage,
 					);
 					if (!result.ok) {
 						return {
 							content: [
 								{
-									type: "text" as const,
+									type: "text",
 									text: `Error: ${result.error ?? "Failed to launch agent for target project."}`,
 								},
 							],
@@ -1363,17 +1521,18 @@ export function createOrchestratorTools(
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: `Message sent to project "${targetProject.name}" (${args.projectId}). Agent was not running and has been auto-launched.`,
+								type: "text",
+								text: `Message sent to project "${targetProject.name}" (${targetProjectId}). Agent was not running and has been auto-launched.`,
 							},
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [
 							{
-								type: "text" as const,
+								type: "text",
 								text: `Error sending message: ${message}`,
 							},
 						],
@@ -1381,79 +1540,94 @@ export function createOrchestratorTools(
 					};
 				}
 			},
-		),
+		},
 
-		tool(
-			"fork_task_context",
-			"Copy a task's conversation context into a target task's session. " +
+		// ── fork_task_context ──
+		{
+			name: "fork_task_context",
+			description:
+				"Copy a task's conversation context into a target task's session. " +
 				"When sourceTaskId == your own taskId, the system picks your next assignment afterward — follow the tool result. " +
 				"When sourceTaskId is another task, you remain unchanged — you're orchestrating a context transfer. " +
 				"The target task starts with the source's full conversation history so the new agent doesn't cold-start. After forking, use send_message to start the target agent. " +
 				"IMPORTANT: fork_task_context must be the ONLY tool call in the turn — it cannot be called alongside other tools.",
-			{
-				sourceTaskId: z
-					.string()
-					.describe(
-						"ID of the task whose session context to copy. Must have an existing JSONL session.",
-					),
-				targetTaskId: z
-					.string()
-					.describe(
-						"ID of the task to receive the forked context. Must NOT have an existing session.",
-					),
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				sourceTaskId: {
+					schema: z
+						.string()
+						.describe(
+							"ID of the task whose session context to copy. Must have an existing JSONL session.",
+						),
+					decl: { kind: "explicit" },
+				},
+				targetTaskId: {
+					schema: z
+						.string()
+						.describe(
+							"ID of the task to receive the forked context. Must NOT have an existing session.",
+						),
+					decl: { kind: "explicit" },
+				},
 			},
-			async (args) => {
-				// Validate source exists and has session data
-				if (!deps.hasEventStore(args.sourceTaskId)) {
+			handler: async (args, auth) => {
+				const projectId = args.projectId as string;
+				const sourceId = args.sourceTaskId as string;
+				const targetId = args.targetTaskId as string;
+
+				if (!R.hasEventStore(projectId, sourceId))
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: `Error: Source task "${args.sourceTaskId}" has no session data to fork from.`,
+								type: "text",
+								text: `Error: Source task "${sourceId}" has no session data to fork from.`,
 							},
 						],
 						isError: true,
 					};
-				}
 
-				// Validate target exists
-				const targetNode = tracker.getTask(args.targetTaskId);
-				if (!targetNode) {
+				const tracker = R.getTracker(projectId);
+				if (!tracker)
+					return {
+						content: [{ type: "text", text: "Project not found" }],
+						isError: true,
+					};
+
+				const targetNode = tracker.getTask(targetId);
+				if (!targetNode)
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: `Error: Target task "${args.targetTaskId}" not found.`,
+								type: "text",
+								text: `Error: Target task "${targetId}" not found.`,
 							},
 						],
 						isError: true,
 					};
-				}
 
-				// Validate target doesn't already have session data
-				if (deps.hasEventStore(args.targetTaskId)) {
+				if (R.hasEventStore(projectId, targetId))
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: `Error: Target task "${args.targetTaskId}" already has session data. Use reset_task first to clear it.`,
+								type: "text",
+								text: `Error: Target task "${targetId}" already has session data. Use reset_task first to clear it.`,
 							},
 						],
 						isError: true,
 					};
-				}
 
-				// Scope validation: agent can only fork into tasks it can manage
+				// Scope validation via auth
 				if (
-					currentTaskId !== null &&
-					args.targetTaskId !== currentTaskId &&
-					!isDescendantOf(tracker, args.targetTaskId, currentTaskId)
+					!checkPermission(auth, "subtree", { taskId: targetId })
 				) {
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: `Error: Target task "${args.targetTaskId}" is not your task or descendant.`,
+								type: "text",
+								text: `Error: Target task "${targetId}" is not your task or descendant.`,
 							},
 						],
 						isError: true,
@@ -1461,9 +1635,10 @@ export function createOrchestratorTools(
 				}
 
 				try {
-					const result = await deps.copySessionFrom(
-						args.sourceTaskId,
-						args.targetTaskId,
+					const result = await R.copySessionFrom(
+						projectId,
+						sourceId,
+						targetId,
 						{
 							targetTitle: targetNode.title,
 							targetDescription: targetNode.description,
@@ -1472,17 +1647,18 @@ export function createOrchestratorTools(
 					return {
 						content: [
 							{
-								type: "text" as const,
-								text: `fork_task_context completed. You are the PARENT. Forked ${args.sourceTaskId} → "${targetNode.title}" (${args.targetTaskId}). Copied ${result.eventCount} events. Use send_message to start the child agent.`,
+								type: "text",
+								text: `fork_task_context completed. You are the PARENT. Forked ${sourceId} → "${targetNode.title}" (${targetId}). Copied ${result.eventCount} events. Use send_message to start the child agent.`,
 							},
 						],
 					};
 				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
+					const message =
+						e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [
 							{
-								type: "text" as const,
+								type: "text",
 								text: `Error forking context: ${message}`,
 							},
 						],
@@ -1490,29 +1666,55 @@ export function createOrchestratorTools(
 					};
 				}
 			},
-		),
+		},
 
-		tool(
-			"done",
-			"Signal that you have finished working on your task. " +
+		// ── done ──
+		{
+			name: "done",
+			description:
+				"Signal that you have finished working on your task. " +
 				"Call this when you are done — either passed (task completed successfully) or failed (you cannot continue). " +
 				"This is the proper way to exit. Do NOT just stop responding — always call done().",
-			{
-				status: z
-					.enum(["passed", "failed"])
-					.describe("Whether the task passed or failed"),
-				summary: z
-					.string()
-					.describe(
-						"Brief summary of what was accomplished (if passed) or what went wrong (if failed)",
-					),
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId", overridable: false },
+				},
+				taskId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "taskId", overridable: false },
+				},
+				status: {
+					schema: z
+						.enum(["passed", "failed"])
+						.describe(
+							"Whether the task passed or failed",
+						),
+					decl: { kind: "explicit" },
+				},
+				summary: {
+					schema: z
+						.string()
+						.describe(
+							"Brief summary of what was accomplished (if passed) or what went wrong (if failed)",
+						),
+					decl: { kind: "explicit" },
+				},
 			},
-			async (_args) => {
-				// Guard: reject done() if any descendants have active sessions.
-				// Orphaned children have no one to merge their work or handle task_complete.
-				if (currentTaskId) {
-					const runningDescendants = getDescendantIds(tracker, currentTaskId)
-						.filter((id) => tracker.getTask(id)?.session != null)
+			handler: async (args) => {
+				const projectId = args.projectId as string;
+				const taskId = args.taskId as string;
+				const tracker = R.getTracker(projectId);
+
+				// Guard: reject done() if any descendants have active sessions
+				if (taskId && tracker) {
+					const runningDescendants = getDescendantIds(
+						tracker,
+						taskId,
+					)
+						.filter(
+							(id) => tracker.getTask(id)?.session != null,
+						)
 						.map((id) => {
 							const n = tracker.get(id);
 							return `${n?.title ?? id} (${id})`;
@@ -1521,7 +1723,7 @@ export function createOrchestratorTools(
 						return {
 							content: [
 								{
-									type: "text" as const,
+									type: "text",
 									text: `Cannot call done() while child tasks are still running:\n${runningDescendants.map((r) => `  - ${r}`).join("\n")}\nWait for them to complete or stop them first.`,
 								},
 							],
@@ -1530,17 +1732,14 @@ export function createOrchestratorTools(
 					}
 				}
 
-				// Guard: reject done() if worktree has uncommitted changes.
-				// done() means "my git state reflects completion". Uncommitted work
-				// means the agent isn't actually done — they need to decide what to
-				// do with those changes first.
-				const projectPath = getProjectPath();
-				const gitCheck = await isGitClean(projectPath);
+				// Guard: reject done() if worktree has uncommitted changes
+				const projPath = getProjectPath(projectId, taskId);
+				const gitCheck = await isGitClean(projPath);
 				if (!gitCheck.clean) {
 					return {
 						content: [
 							{
-								type: "text" as const,
+								type: "text",
 								text:
 									`Cannot call done() — your worktree has uncommitted changes:\n${gitCheck.files}\n\n` +
 									`Resolve this yourself — protect your work, do the right thing. ` +
@@ -1551,12 +1750,9 @@ export function createOrchestratorTools(
 					};
 				}
 
-				// Phase 1 of two-phase done(): just close the queue and return.
-				// Status update, parent notification, and done_notified happen in Phase 2
-				// (runAgentForNode, after the provider loop exits).
-				// done() tool_call stays as an orphan in JSONL (no tool_result emitted) —
-				// the provider loop detects done and skips tool_result emission, like yield().
-				const queue = getQueue();
+				// Phase 1 of two-phase done(): close queue and return.
+				const session = R.getSession(projectId, taskId);
+				const queue = session?.queue;
 				if (queue) {
 					queue.close();
 				}
@@ -1564,118 +1760,171 @@ export function createOrchestratorTools(
 				return {
 					content: [
 						{
-							type: "text" as const,
-							text: `Done acknowledged (${_args.status}).`,
+							type: "text",
+							text: `Done acknowledged (${args.status}).`,
 						},
 					],
 				};
 			},
-		),
+		},
 	];
+}
 
-	// ── Hidden evaluate_script tool (selfBootstrap only) ──
-	// Mutable refs bound later by runProviderLoop via setMessages()/setAllTools().
-	let messagesRef: unknown[] = [];
-	let allToolsRef: unknown[] = [];
+// ── evaluate_script (hidden, selfBootstrap only) ──
+
+function buildEvaluateScriptTool(
+	messagesRef: { current: unknown[] },
+	allToolsRef: { current: unknown[] },
+): ToolDef {
+	return {
+		name: "evaluate_script",
+		description:
+			"Execute arbitrary JavaScript/TypeScript code for runtime introspection. " +
+			"Only available in self-bootstrap mode.",
+		params: {
+			projectId: {
+				schema: z.string(),
+				decl: { kind: "bind", from: "projectId", overridable: false },
+			},
+			taskId: {
+				schema: z.string(),
+				decl: { kind: "bind", from: "taskId", overridable: false },
+			},
+			script: {
+				schema: z
+					.string()
+					.describe("JavaScript/TypeScript code to evaluate"),
+				decl: { kind: "explicit" },
+			},
+		},
+		hidden: true,
+		handler: async (args) => {
+			try {
+				const projectId = args.projectId as string;
+				const taskId = args.taskId as string;
+				const tracker = R.getTracker(projectId);
+				const session = R.getSession(projectId, taskId);
+				const evalContext = {
+					messages: messagesRef.current,
+					tracker,
+					queue: session?.queue,
+					projectId,
+					taskId,
+					sessionId: taskId,
+					daemonCtx: R.getDaemonContext(),
+					allTools: allToolsRef.current,
+				};
+
+				const AsyncFunction = Object.getPrototypeOf(
+					async () => {},
+				).constructor;
+				const fn = new AsyncFunction("ctx", args.script as string);
+
+				const logs: string[] = [];
+				const origLog = console.log;
+				const origError = console.error;
+				const origWarn = console.warn;
+				console.log = (...a: unknown[]) =>
+					logs.push(a.map(String).join(" "));
+				console.error = (...a: unknown[]) =>
+					logs.push(`[error] ${a.map(String).join(" ")}`);
+				console.warn = (...a: unknown[]) =>
+					logs.push(`[warn] ${a.map(String).join(" ")}`);
+
+				let result: unknown;
+				try {
+					result = await fn(evalContext);
+				} finally {
+					console.log = origLog;
+					console.error = origError;
+					console.warn = origWarn;
+				}
+
+				const parts: string[] = [];
+				if (logs.length > 0) {
+					parts.push(`## Console Output\n${logs.join("\n")}`);
+				}
+				if (result !== undefined) {
+					const resultStr =
+						typeof result === "string"
+							? result
+							: JSON.stringify(result, null, 2);
+					parts.push(`## Return Value\n${resultStr}`);
+				}
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								parts.length > 0
+									? parts.join("\n\n")
+									: "(no output)",
+						},
+					],
+				};
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Eval error: ${e instanceof Error ? e.message : String(e)}${e instanceof Error && e.stack ? `\n${e.stack}` : ""}`,
+						},
+					],
+					isError: true,
+				};
+			}
+		},
+	};
+}
+
+// ── Public API ──
+
+/** Result of createOrchestratorTools — raw tool definitions for provider forwarding. */
+export interface OrchestratorToolsResult {
+	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic is not narrowable here
+	toolDefs: ToolDefinition<any>[];
+	hasRunningChildren?: () => boolean;
+	setMessages?: (msgs: unknown[]) => void;
+	setAllTools?: (tools: unknown[]) => void;
+}
+
+/**
+ * Create orchestrator tools for an agent.
+ *
+ * @param auth - Opaque auth handle for permission checks
+ * @param projectId - Project this agent belongs to
+ * @param taskId - Task this agent is running as (null = root)
+ * @param selfBootstrap - Enable hidden evaluate_script tool
+ */
+export function createOrchestratorTools(
+	auth: Auth,
+	projectId: string,
+	taskId: string | null,
+	selfBootstrap?: boolean,
+): OrchestratorToolsResult {
+	const allDefs = buildAllToolDefs();
+
+	// Convert all ToolDefs to ToolDefinitions via the adapter
+	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+	const toolDefs: ToolDefinition<any>[] = allDefs.map((def) =>
+		toToolDefinition(def, auth),
+	);
+
+	// evaluate_script (hidden, selfBootstrap only)
+	const messagesRef = { current: [] as unknown[] };
+	const allToolsRef = { current: [] as unknown[] };
 	let setMessages: ((msgs: unknown[]) => void) | undefined;
 	let setAllTools: ((tools: unknown[]) => void) | undefined;
 
 	if (selfBootstrap) {
 		setMessages = (msgs: unknown[]) => {
-			messagesRef = msgs;
+			messagesRef.current = msgs;
 		};
 		setAllTools = (tools: unknown[]) => {
-			allToolsRef = tools;
+			allToolsRef.current = tools;
 		};
-
-		const evalTool = tool(
-			"evaluate_script",
-			"Execute arbitrary JavaScript/TypeScript code for runtime introspection. " +
-				"Only available in self-bootstrap mode.",
-			{
-				script: z.string().describe("JavaScript/TypeScript code to evaluate"),
-			},
-			async (args) => {
-				try {
-					// Build a context object with useful references for introspection.
-					// The eval'd code accesses these via the `ctx` variable.
-					const evalContext = {
-						messages: messagesRef,
-						tracker,
-						queue: getQueue(),
-						deps,
-						projectId,
-						taskId: currentTaskId,
-						sessionId: currentTaskId,
-						daemonCtx: deps.daemonCtx,
-						allTools: allToolsRef,
-					};
-
-					// Use AsyncFunction to support await in eval'd code.
-					// The function receives `ctx` as its argument.
-					const AsyncFunction = Object.getPrototypeOf(
-						async () => {},
-					).constructor;
-					const fn = new AsyncFunction("ctx", args.script);
-
-					// Capture console output
-					const logs: string[] = [];
-					const origLog = console.log;
-					const origError = console.error;
-					const origWarn = console.warn;
-					console.log = (...a: unknown[]) => logs.push(a.map(String).join(" "));
-					console.error = (...a: unknown[]) =>
-						logs.push(`[error] ${a.map(String).join(" ")}`);
-					console.warn = (...a: unknown[]) =>
-						logs.push(`[warn] ${a.map(String).join(" ")}`);
-
-					let result: unknown;
-					try {
-						result = await fn(evalContext);
-					} finally {
-						console.log = origLog;
-						console.error = origError;
-						console.warn = origWarn;
-					}
-
-					const parts: string[] = [];
-					if (logs.length > 0) {
-						parts.push(`## Console Output\n${logs.join("\n")}`);
-					}
-					if (result !== undefined) {
-						const resultStr =
-							typeof result === "string"
-								? result
-								: JSON.stringify(result, null, 2);
-						parts.push(`## Return Value\n${resultStr}`);
-					}
-
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: parts.length > 0 ? parts.join("\n\n") : "(no output)",
-							},
-						],
-					};
-				} catch (e) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Eval error: ${e instanceof Error ? e.message : String(e)}${e instanceof Error && e.stack ? `\n${e.stack}` : ""}`,
-							},
-						],
-						isError: true,
-					};
-				}
-			},
-		);
-		// Mark as hidden — prepareTools registers it in mcpHandlers but
-		// does NOT include it in the tool definitions sent to the API.
-		evalTool.hidden = true;
-		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies across tools in the array
-		toolDefs.push(evalTool as ToolDefinition<any>);
+		const evalDef = buildEvaluateScriptTool(messagesRef, allToolsRef);
+		toolDefs.push(toToolDefinition(evalDef, auth));
 	}
 
 	return {
@@ -1683,9 +1932,10 @@ export function createOrchestratorTools(
 		setMessages,
 		setAllTools,
 		hasRunningChildren: () => {
-			// Check if any descendants of this task have active sessions
-			if (!currentTaskId) return false;
-			return getDescendantIds(tracker, currentTaskId).some(
+			if (!taskId) return false;
+			const tracker = R.getTracker(projectId);
+			if (!tracker) return false;
+			return getDescendantIds(tracker, taskId).some(
 				(id) => tracker.getTask(id)?.session != null,
 			);
 		},

@@ -7,16 +7,19 @@
  *    handles errors, accesses context (messages, tracker, etc.).
  * 3. Only created in selfBootstrap mode.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { z } from "zod";
-import type { OrchestratorToolsDeps } from "./orchestrator-tools.ts";
 import { createOrchestratorTools } from "./orchestrator-tools.ts";
+import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
+import { initMockResourceRegistry } from "./test-utils.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import { executeTool } from "./tool-execution.ts";
 import { TOOL_EVALUATE_SCRIPT } from "./tool-names.ts";
 
 // ── Helpers ──
+
+afterEach(() => resetResourceRegistry());
 
 /** Find evaluate_script tool from result, throw if missing. */
 function findEvalTool(
@@ -27,26 +30,16 @@ function findEvalTool(
 	return evalTool;
 }
 
-/** Minimal deps for createOrchestratorTools. */
-function makeDeps(
-	overrides?: Partial<OrchestratorToolsDeps>,
-): OrchestratorToolsDeps {
+/** Initialize resource registry and create auth for tests. */
+function makeAuth(): ReturnType<typeof initMockResourceRegistry>["auth"] {
 	const tracker = new TaskTracker("root-node");
-	return {
+	const { auth } = initMockResourceRegistry({
 		tracker,
-		repoPath: "/tmp/test-repo",
-		emit: () => {},
-		broadcastTree: () => {},
-		clearEventStore: () => {},
-		hasEventStore: () => false,
-		copySessionFrom: async () => ({ eventCount: 0 }),
-		getClarifyTimeoutMs: () => undefined,
-		getDefaultBudgetUsd: () => undefined,
-		listProjects: () => [],
-		getProject: () => undefined,
-		getTracker: () => undefined,
-		...overrides,
-	};
+		projectId: "proj1",
+		projectPath: "/tmp/test-repo",
+		taskId: null,
+	});
+	return auth;
 }
 
 // ── Hidden tool mechanism ──
@@ -130,16 +123,15 @@ describe("hidden tool mechanism", () => {
 
 describe("evaluate_script tool", () => {
 	test("not created when selfBootstrap is false/undefined", () => {
-		const result1 = createOrchestratorTools(makeDeps(), "proj1", null);
+		const result1 = createOrchestratorTools(makeAuth(), "proj1", null);
 		expect(result1.setMessages).toBeUndefined();
 		const evalTool = result1.toolDefs.find((t) => t.name === "evaluate_script");
 		expect(evalTool).toBeUndefined();
 
 		const result2 = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			false,
 		);
 		expect(result2.setMessages).toBeUndefined();
@@ -151,10 +143,9 @@ describe("evaluate_script tool", () => {
 
 	test("created with hidden=true when selfBootstrap is true", () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		expect(result.setMessages).toBeDefined();
@@ -165,10 +156,9 @@ describe("evaluate_script tool", () => {
 
 	test("executes script and returns result", async () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -187,10 +177,9 @@ describe("evaluate_script tool", () => {
 
 	test("captures console.log output", async () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -211,10 +200,9 @@ describe("evaluate_script tool", () => {
 
 	test("captures console.error and console.warn", async () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -234,10 +222,9 @@ describe("evaluate_script tool", () => {
 
 	test("returns error on script failure", async () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -257,10 +244,9 @@ describe("evaluate_script tool", () => {
 
 	test("accesses ctx.messages via setMessages binding", async () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -286,10 +272,9 @@ describe("evaluate_script tool", () => {
 
 	test("accesses ctx.tracker", async () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -308,11 +293,17 @@ describe("evaluate_script tool", () => {
 	});
 
 	test("accesses ctx.projectId and ctx.taskId", async () => {
+		const tracker = new TaskTracker("root-node");
+		const { auth } = initMockResourceRegistry({
+			tracker,
+			projectId: "my-project",
+			projectPath: "/tmp/test-repo",
+			taskId: "my-task",
+		});
 		const result = createOrchestratorTools(
-			makeDeps(),
+			auth,
 			"my-project",
 			"my-task",
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -334,10 +325,9 @@ describe("evaluate_script tool", () => {
 
 	test("supports async/await in script", async () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -356,10 +346,9 @@ describe("evaluate_script tool", () => {
 
 	test("returns '(no output)' when script has no return or console", async () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -379,10 +368,9 @@ describe("evaluate_script tool", () => {
 	test("restores console methods after error", async () => {
 		const originalLog = console.log;
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -402,10 +390,9 @@ describe("evaluate_script tool", () => {
 
 	test("both console output and return value in same script", async () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -426,11 +413,17 @@ describe("evaluate_script tool", () => {
 	});
 
 	test("accesses ctx.sessionId (equals taskId)", async () => {
+		const tracker2 = new TaskTracker("root-node");
+		const { auth: auth2 } = initMockResourceRegistry({
+			tracker: tracker2,
+			projectId: "my-project",
+			projectPath: "/tmp/test-repo",
+			taskId: "my-session-id",
+		});
 		const result = createOrchestratorTools(
-			makeDeps(),
+			auth2,
 			"my-project",
 			"my-session-id",
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -448,15 +441,28 @@ describe("evaluate_script tool", () => {
 	});
 
 	test("accesses ctx.daemonCtx when provided", async () => {
-		const fakeDaemonCtx = {
-			pm: { list: () => [{ id: "p1", name: "test-project" }] },
-			eventStores: new Map([["p1", "fake-store"]]),
+		// The daemonCtx is the full context registered in the resource registry.
+		// initMockResourceRegistry sets up a DaemonContext with pm, eventStores, etc.
+		// We use that same context, then extend it for the test assertion.
+		const tracker3 = new TaskTracker("root-node");
+		const { auth: auth3, ctx: testCtx } = initMockResourceRegistry({
+			tracker: tracker3,
+			projectId: "proj1",
+			projectPath: "/tmp/test-repo",
+			taskId: null,
+		});
+		// Extend the mock ctx with extra fields the test expects to find
+		(testCtx as unknown as Record<string, unknown>).pm = {
+			list: () => [{ id: "p1", name: "test-project" }],
+			get: () => undefined,
 		};
+		(testCtx as unknown as Record<string, unknown>).eventStores = new Map([
+			["p1", "fake-store"],
+		]);
 		const result = createOrchestratorTools(
-			makeDeps({ daemonCtx: fakeDaemonCtx }),
+			auth3,
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -475,10 +481,9 @@ describe("evaluate_script tool", () => {
 
 	test("ctx.daemonCtx is undefined when not provided", async () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		const evalTool = findEvalTool(result);
@@ -497,10 +502,9 @@ describe("evaluate_script tool", () => {
 
 	test("accesses ctx.allTools via setAllTools binding", async () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			true,
 		);
 		expect(result.setAllTools).toBeDefined();
@@ -531,10 +535,9 @@ describe("evaluate_script tool", () => {
 
 	test("setAllTools not created when selfBootstrap is false", () => {
 		const result = createOrchestratorTools(
-			makeDeps(),
+			makeAuth(),
 			"proj1",
 			null,
-			undefined,
 			false,
 		);
 		expect(result.setAllTools).toBeUndefined();
