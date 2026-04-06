@@ -14,6 +14,8 @@ import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { MessageQueue } from "../message-queue.ts";
 import { createOrchestratorTools } from "../orchestrator-tools.ts";
+import { initResourceRegistry, registerSideEffects } from "../resource-registry.ts";
+import { createAgentAuth } from "../tool-auth.ts";
 import {
 	createClarifyResponse,
 	createTaskComplete,
@@ -145,84 +147,71 @@ async function createAgentContext(
 		await mcpManager.connectAll(effectiveCfg.mcpServers, opts.projectPath);
 	}
 
+	// Initialize resource registry with daemon context (idempotent)
+	initResourceRegistry(ctx);
+	registerSideEffects({
+		emit: (projectId: string, event: Record<string, unknown>) => {
+			const ts = (event.ts as number) || Date.now();
+			if (event.type === "agent_event") {
+				const evtTaskId = (event.taskId as string) || "";
+				const eventType = event.eventType as string;
+				const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
+				emitEvent(ctx, projectId, {
+					type: eventType,
+					taskId: evtTaskId,
+					ts,
+					...rest,
+				} as unknown as Event);
+			} else {
+				const withTs = event.ts ? event : { ...event, ts };
+				emitEvent(ctx, projectId, withTs as unknown as Event);
+			}
+		},
+		broadcastTree: (projectId: string) => {
+			const tracker = ctx.trackers.get(projectId);
+			if (tracker) broadcastTreeUpdate(ctx, projectId, tracker);
+		},
+		deliverMessage: async (
+			projectId: string,
+			nodeId: string,
+			message: QueueMessage,
+			deliverOpts?: { quiet?: boolean },
+		) => {
+			const proj = ctx.pm.get(projectId);
+			if (!proj) throw new Error(`Project ${projectId} not found`);
+			await deliverMessage(ctx, proj, nodeId, message, deliverOpts);
+		},
+		stopTask: (projectId: string, nodeId: string) =>
+			stopTask(ctx, projectId, nodeId),
+		awaitLoopExit: async (nodeId: string) => {
+			const promise = ctx.agentLoopPromises.get(nodeId);
+			if (promise) await promise;
+		},
+		injectMessageToProject: opts.orchestratorSystemPrompt
+			? async (projectId: string, message: string) => {
+					return handleInjectMessage(
+						ctx,
+						projectId,
+						message,
+						undefined,
+						opts.orchestratorSystemPrompt,
+					);
+				}
+			: async () => ({ ok: false, error: "Auto-launch not available" }),
+	});
+
+	// Create auth for this agent
+	const auth = createAgentAuth(
+		project.id,
+		opts.currentTaskId,
+		opts.tracker,
+	);
+
 	const { toolDefs, hasRunningChildren, setMessages, setAllTools } =
 		createOrchestratorTools(
-			{
-				tracker: opts.tracker,
-				repoPath: project.path,
-				daemonCtx: ctx,
-				emit: (event) => {
-					const ts = (event.ts as number) || Date.now();
-					if (event.type === "agent_event") {
-						const evtTaskId = (event.taskId as string) || "";
-						const eventType = event.eventType as string;
-						const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
-						emitEvent(ctx, project.id, {
-							type: eventType,
-							taskId: evtTaskId,
-							ts,
-							...rest,
-						} as unknown as Event);
-					} else {
-						const withTs = event.ts ? event : { ...event, ts };
-						emitEvent(ctx, project.id, withTs as unknown as Event);
-					}
-				},
-				broadcastTree: () => broadcastTreeUpdate(ctx, project.id, opts.tracker),
-				clearEventStore: (sessionId) =>
-					getEventStore(ctx, project.id).clear(sessionId),
-				hasEventStore: (sessionId) =>
-					getEventStore(ctx, project.id).has(sessionId),
-				copySessionFrom: (sourceId, targetId, opts) =>
-					getEventStore(ctx, project.id).copySessionFrom(
-						sourceId,
-						targetId,
-						opts,
-					),
-				dataDir: ctx.config.dataDir,
-				getClarifyTimeoutMs: () => ctx.globalConfig?.clarifyTimeoutMs,
-				getDefaultBudgetUsd: () => ctx.globalConfig?.budgetUsd,
-				listProjects: () =>
-					ctx.pm.list().map((p) => ({
-						id: p.id,
-						name: p.name,
-						path: p.path,
-						hasActiveAgent: (() => {
-							const t = ctx.trackers.get(p.id);
-							return t ? t.getTask(t.rootNodeId)?.session != null : false;
-						})(),
-					})),
-				getProject: (id) => ctx.pm.get(id),
-				getTracker: (projectId) => ctx.trackers.get(projectId),
-				stopTask: (nodeId) => stopTask(ctx, project.id, nodeId),
-				awaitLoopExit: async (nodeId) => {
-					const promise = ctx.agentLoopPromises.get(nodeId);
-					if (promise) await promise;
-				},
-			},
+			auth,
 			project.id,
 			opts.currentTaskId,
-			{
-				deliverMessage: async (
-					nodeId: string,
-					message: QueueMessage,
-					opts?: { quiet?: boolean },
-				) => {
-					await deliverMessage(ctx, project, nodeId, message, opts);
-				},
-				injectMessageToProject:
-					opts.depth === 0 && opts.orchestratorSystemPrompt
-						? async (projectId: string, message: string) => {
-								return handleInjectMessage(
-									ctx,
-									projectId,
-									message,
-									undefined,
-									opts.orchestratorSystemPrompt,
-								);
-							}
-						: undefined,
-			},
 			effectiveCfg.selfBootstrap,
 		);
 

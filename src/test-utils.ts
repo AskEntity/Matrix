@@ -3,9 +3,14 @@
  */
 import type { DaemonContext } from "./daemon/context.ts";
 import type { MessageQueue } from "./message-queue.ts";
-import type { OrchestratorToolsDeps } from "./orchestrator-tools.ts";
 import type { ProjectManager } from "./project-manager.ts";
+import {
+	initResourceRegistry,
+	registerSideEffects,
+	resetResourceRegistry,
+} from "./resource-registry.ts";
 import type { TaskTracker } from "./task-tracker.ts";
+import { createAgentAuth, type Auth } from "./tool-auth.ts";
 import type { Project, TaskNode, TaskSession } from "./types.ts";
 
 /**
@@ -55,45 +60,63 @@ export function mockDaemonContext(opts: {
 }
 
 /**
- * Build a minimal OrchestratorToolsDeps for tests that call createOrchestratorTools directly.
- * All callbacks are no-ops by default.
+ * Initialize the resource registry with a mock DaemonContext for tests.
+ * Returns an Auth object for the given task.
+ * Call resetResourceRegistry() in afterEach to clean up.
+ */
+export function initMockResourceRegistry(opts: {
+	tracker: TaskTracker;
+	projectId: string;
+	projectPath: string;
+	taskId: string | null;
+	dataDir?: string;
+}): { auth: Auth; ctx: DaemonContext } {
+	resetResourceRegistry();
+	const ctx = mockDaemonContext(opts);
+	initResourceRegistry(ctx);
+	registerSideEffects({
+		emit: () => {},
+		broadcastTree: () => {},
+		deliverMessage: async (
+			_projectId: string,
+			nodeId: string,
+			message: import("./message-queue.ts").QueueMessage,
+		) => {
+			// In tests, deliver directly to the target's queue if it exists
+			const targetNode = opts.tracker.getTask(nodeId);
+			const targetQueue = targetNode?.session?.queue;
+			if (targetQueue) {
+				targetQueue.enqueue(message);
+			}
+		},
+		stopTask: async () => false,
+		awaitLoopExit: async () => {},
+		injectMessageToProject: async () => ({
+			ok: false,
+			error: "not available in tests",
+		}),
+	});
+	const auth = createAgentAuth(opts.projectId, opts.taskId, opts.tracker);
+	return { auth, ctx };
+}
+
+/**
+ * Backward-compat wrapper: creates auth + initializes registry.
+ * Returns an object that can be spread into createOrchestratorTools.
+ * Usage: const { auth } = mockOrchestratorDeps({...});
+ *        createOrchestratorTools(auth, projectId, taskId);
  */
 export function mockOrchestratorDeps(opts: {
 	tracker: TaskTracker;
 	projectId: string;
 	projectPath: string;
 	dataDir?: string;
-}): OrchestratorToolsDeps {
-	const project: Project = {
-		id: opts.projectId,
-		name: "test-project",
-		path: opts.projectPath,
-		createdAt: new Date().toISOString(),
-	};
-
-	return {
-		tracker: opts.tracker,
-		repoPath: opts.projectPath,
-		emit: () => {},
-		broadcastTree: () => {},
-		clearEventStore: () => {},
-		hasEventStore: () => false,
-		copySessionFrom: async (_s, _t, _opts) => ({ eventCount: 0 }),
-		dataDir: opts.dataDir ?? "/tmp/mxd-test-mock",
-		getClarifyTimeoutMs: () => undefined,
-		getDefaultBudgetUsd: () => undefined,
-		listProjects: () => [
-			{
-				id: project.id,
-				name: project.name,
-				path: project.path,
-				hasActiveAgent: false,
-			},
-		],
-		getProject: (id) => (id === opts.projectId ? project : undefined),
-		getTracker: (projectId) =>
-			projectId === opts.projectId ? opts.tracker : undefined,
-	};
+}): { auth: Auth; tracker: TaskTracker } {
+	const { auth } = initMockResourceRegistry({
+		...opts,
+		taskId: null,
+	});
+	return { auth, tracker: opts.tracker };
 }
 
 /**
