@@ -729,3 +729,12 @@ All 7 builtin tools (bash, background, read_file, write_file, edit_file, list_fi
 - Common `bindParams` pattern: all builtin tools bind projectId + taskId (non-overridable)
 
 Now ALL 32 tools (25 orchestrator + 7 builtin) use the same ToolDef + auth + global functions pattern. Zero closure-based tool handlers remain.
+
+## ParamDecl Bind: No Overridable
+
+`ParamDecl` bind variant no longer has `overridable` field. All bind params are always hidden from agent schema and auto-bound by the framework. The `overridable: true` pattern was only used by create_task and create_folder's parentId — both changed to `kind: "explicit"` (agent must always specify).
+
+- `buildAgentShape`: bind = always hidden
+- `validateAgentInput`: rejects any agent-provided bind param
+- `resolveBindParams`: always uses bound value
+- Tool descriptions should not describe individual parameter behaviors — the JSON schema encodes required/optional. Param-level descriptions serve external callers.
