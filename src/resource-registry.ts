@@ -117,14 +117,17 @@ export function clearEventStore(
 	projectId: string,
 	sessionId: string,
 ): void {
-	getEventStore(projectId).clear(sessionId);
+	const store = ctx().eventStores.get(projectId);
+	if (store) store.clear(sessionId);
 }
 
 export function hasEventStore(
 	projectId: string,
 	sessionId: string,
 ): boolean {
-	return getEventStore(projectId).has(sessionId);
+	const store = ctx().eventStores.get(projectId);
+	if (!store) return false;
+	return store.has(sessionId);
 }
 
 export function copySessionFrom(
@@ -140,8 +143,9 @@ export function copySessionFrom(
 
 export function getSession(
 	projectId: string,
-	taskId: string,
+	taskId: string | null,
 ): TaskSession | undefined {
+	if (!taskId) return undefined;
 	const tracker = getTracker(projectId);
 	if (!tracker) return undefined;
 	return tracker.getTask(taskId)?.session ?? undefined;
