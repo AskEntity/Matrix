@@ -2,12 +2,16 @@
  * Tests for image dimension parsing and read_file pixel guard.
  */
 
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getImageDimensions } from "./image-dimensions.ts";
-import { createBuiltinTools } from "./tools/definitions.ts";
+import { resetResourceRegistry } from "./resource-registry.ts";
+import { TaskTracker } from "./task-tracker.ts";
+import { initMockResourceRegistry } from "./test-utils.ts";
+import { toToolDefinition } from "./tool-def.ts";
+import { buildBuiltinToolDefs } from "./tools/definitions.ts";
 
 // ── Helpers to construct minimal valid image headers ──
 
@@ -189,26 +193,49 @@ describe("read_file pixel dimension guard", () => {
 		return p;
 	}
 
-	// Create tools once — we only need the read_file handler
-	const tools = createBuiltinTools(
-		() => undefined,
-		"test-session",
-		() => tmpDir,
-		() => undefined,
-		() => undefined,
-	);
-	const readFileTool = tools.find((t) => t.name === "read_file");
-	if (!readFileTool) throw new Error("read_file tool not found");
-	const readFile = readFileTool.handler as (
-		args: { path: string },
-		extra: unknown,
-	) => Promise<{
-		content: Array<{ text: string }>;
-		isImage?: boolean;
-		imageData?: string;
-		mediaType?: string;
-		isError?: boolean;
-	}>;
+	// biome-ignore lint/suspicious/noExplicitAny: test setup
+	let readFile: any;
+
+	beforeAll(async () => {
+		resetResourceRegistry();
+		const testTracker = new TaskTracker(join(tmpDir, "tree.json"));
+		await testTracker.load("main");
+		const testNode = testTracker.addChild(
+			testTracker.rootNodeId,
+			"test-task",
+			"",
+		);
+		testNode.session = {
+			queue: {
+				enqueue: () => {},
+				close: () => {},
+				isClosed: false,
+				drain: () => [],
+				wait: async () => ({
+					messages: [],
+					reason: "closed" as const,
+				}),
+			} as never,
+			abortController: new AbortController(),
+			cwd: tmpDir,
+			fallbackCwd: tmpDir,
+			depth: 0,
+			backgroundProcesses: new Map(),
+			foregroundExecutions: new Map(),
+		};
+		const { auth } = initMockResourceRegistry({
+			tracker: testTracker,
+			projectId: "test-project",
+			projectPath: tmpDir,
+			taskId: testNode.id,
+		});
+		const tools = buildBuiltinToolDefs().map((def) =>
+			toToolDefinition(def, auth),
+		);
+		const tool = tools.find((t) => t.name === "read_file");
+		if (!tool) throw new Error("read_file tool not found");
+		readFile = tool.handler;
+	});
 
 	it("rejects PNG with width >8000px", async () => {
 		const p = writeTempImage("wide.png", makePngBuffer(10000, 1000));
