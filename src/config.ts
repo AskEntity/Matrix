@@ -140,6 +140,7 @@ export function resolveConfig(
 	const result: MatrixConfig = {};
 
 	// Scalar fields — first defined value wins (local > repo > global)
+	// For objects like thinking/cacheTtl, `??` picks the first defined whole object.
 	const scalarKeys = [
 		"defaultAuth",
 		"model",
@@ -152,6 +153,7 @@ export function resolveConfig(
 		"sessionKeep",
 		"selfBootstrap",
 		"thinking",
+		"cacheTtl",
 	] as const;
 
 	for (const key of scalarKeys) {
