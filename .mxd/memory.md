@@ -674,3 +674,47 @@ Full audit: `VERTICAL-BOUNDARY-AUDIT.md` in repo root.
 1. Message routing expansion (subtree + parent chain, not just direct parent/child)
 2. Folder/grouping feature (UI-only visual grouping, not tree structure)
 3. Tool search — dynamic tool discovery (draft exists, Anthropic has server-side `defer_loading` but user prefers client-side)
+
+## Auth/Resource Split (operator/resource refactor)
+
+### Architecture
+Three new modules replace the old closure-based OrchestratorToolsDeps:
+
+1. **`src/tool-auth.ts`** — Auth branded opaque type. Only `checkPermission(auth, mode, resource)` can look inside. Modes: project, exact, subtree, family, root. `getBindValues(auth)` is framework-only (for ToolDef adapter).
+
+2. **`src/resource-registry.ts`** — Global handle-based functions. Initialized once at daemon startup via `initResourceRegistry(ctx)` + `registerSideEffects(...)`. All resource access: `getTracker(projectId)`, `getSession(projectId, taskId)`, `emit(projectId, event)`, `deliverMessage(projectId, nodeId, msg)`, etc. No closures, no injection bags.
+
+3. **`src/tool-def.ts`** — ParamDecl with `bind` (not "infer"). Framework binds resource params from agent identity. Decision table: handler always gets T; agent sees bind params as invisible (non-overridable) or optional (overridable); external sees bind params as required.
+
+### Key Naming Decisions
+- **auth** not "operator" — writing `auth.taskId` feels wrong (that's the point)
+- **bind** not "infer" — framework **binds** a resource param from identity, not "infers" it
+- Resource params are just params (called `taskId`, `projectId`) not "callerTaskId" or "hidden params"
+
+### Handler Signature
+```ts
+handler(args, auth, toolCallId) {
+  checkPermission(auth, "subtree", { taskId: args.taskId });
+  const tracker = R.getTracker(args.projectId);
+  // do work with resources from args + global functions
+}
+```
+
+### Deleted
+- `OrchestratorToolsDeps` interface — replaced by resource-registry global functions
+- `LifecycleDeps` interface — deliverMessage/injectMessageToProject now in resource-registry
+- All closure-captured deps in createOrchestratorTools
+- `execute_tasks` tool (deprecated alias)
+
+### What's NOT Changed Yet
+- Built-in tools (bash, read_file, etc. in `src/tools/definitions.ts`) still use closure-based `createBuiltinTools`. They're next.
+- TaskSession internal structure unchanged (audit identified it as needing split, but separate refactor)
+- External MCP endpoint not yet updated (separate task)
+
+## Vertical Dependency Boundary Audit Findings
+
+Three execution layers: daemon → provider loop → tool handler.
+- executeTool boundary is clean (pure dispatch)
+- done() closes queue through closure (boundary violation, but structural — leave for now)
+- evaluate_script punctures all layers (intentional escape hatch)
+- TaskSession is worst cross-cutting state (three-way mutation across all layers)
