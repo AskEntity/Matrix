@@ -6823,7 +6823,7 @@ describe("Integration: session_config in JSONL", () => {
 		expect(config?.cacheTtl).toBe("1h");
 	}, 30000);
 
-	test("Regular child session_config has no cacheTtl (default 5min)", async () => {
+	test("Regular child session_config has cacheTtl 1h from default config", async () => {
 		ctx = await setupTestContext();
 		const rootId = await getRootNodeId(ctx);
 		ctx.mockAPI.setCapturedVar("rootId", rootId);
@@ -6907,13 +6907,13 @@ describe("Integration: session_config in JSONL", () => {
 		const childId = tracker.getTask(rootId)?.children?.[0] as string;
 		expect(childId).toBeDefined();
 
-		// Child session_config should NOT have cacheTtl (defaults to 5min)
+		// Child session_config should have cacheTtl "1h" (from DEFAULT_CONFIG)
 		const childEvents = await readSessionEvents(ctx, childId);
 		const childConfig = childEvents.find((e) => e.type === "session_config") as
 			| { type: "session_config"; cacheTtl?: string }
 			| undefined;
 		expect(childConfig).toBeDefined();
-		expect(childConfig?.cacheTtl).toBeUndefined();
+		expect(childConfig?.cacheTtl).toBe("1h");
 	}, 45000);
 
 	test("Root API requests use consistent 1h cache_control on system + tools", async () => {

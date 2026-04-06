@@ -972,17 +972,7 @@ function GlobalTab({
 					draft={draft}
 					onDraftChange={onDraftChange}
 				/>
-				<SettingNumberField
-					label={t("settings.sessionKeep")}
-					field="sessionKeep"
-					placeholder="5"
-					min={1}
-					step={1}
-					tab={tab}
-					layers={layers}
-					draft={draft}
-					onDraftChange={onDraftChange}
-				/>
+
 				<div className="mxd-settings-field">
 					<span className="mxd-settings-label">
 						{t("settings.restartDaemonHint")}
@@ -1048,17 +1038,7 @@ function ProjectTab({
 					draft={draft}
 					onDraftChange={onDraftChange}
 				/>
-				<SettingNumberField
-					label={t("settings.maxDepth")}
-					field="maxDepth"
-					placeholder={t("settings.maxDepthDefault")}
-					min={1}
-					step={1}
-					tab={tab}
-					layers={layers}
-					draft={draft}
-					onDraftChange={onDraftChange}
-				/>
+
 				<SettingNumberField
 					label={t("settings.clarifyTimeout")}
 					field="clarifyTimeoutMs"
