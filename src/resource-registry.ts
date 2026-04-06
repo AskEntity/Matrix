@@ -49,8 +49,8 @@ interface DaemonContextLike {
 	readonly eventStores: Map<string, EventStore>;
 	readonly config: { dataDir: string };
 	readonly globalConfig: {
-		clarifyTimeoutMs?: number;
-		budgetUsd?: number;
+		clarifyTimeoutMs: number;
+		budgetUsd: number;
 	};
 	readonly sseClients: Set<unknown>;
 	readonly eventSubscribers: Map<string, Set<unknown>>;
@@ -88,12 +88,12 @@ export function getProject(
 	return ctx().pm.get(projectId);
 }
 
-export function getClarifyTimeoutMs(): number | undefined {
-	return ctx().globalConfig?.clarifyTimeoutMs;
+export function getClarifyTimeoutMs(): number {
+	return ctx().globalConfig.clarifyTimeoutMs;
 }
 
-export function getDefaultBudgetUsd(): number | undefined {
-	return ctx().globalConfig?.budgetUsd;
+export function getDefaultBudgetUsd(): number {
+	return ctx().globalConfig.budgetUsd;
 }
 
 // ── Project-level functions (need projectId handle) ──

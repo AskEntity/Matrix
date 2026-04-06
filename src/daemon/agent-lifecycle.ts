@@ -756,8 +756,8 @@ export async function runAgentForNode(
 		// Defaults: root = "1h", child = "5m" (undefined = default ephemeral 5min).
 		// On resume, inherit from stored session_config (fork copies this automatically).
 		const configuredTtl = isRoot
-			? (agentCtx.effectiveCfg.cacheTtl?.root ?? "1h")
-			: (agentCtx.effectiveCfg.cacheTtl?.child ?? "5m");
+			? agentCtx.effectiveCfg.cacheTtl.root
+			: agentCtx.effectiveCfg.cacheTtl.child;
 		const cacheTtl: "1h" | undefined =
 			configuredTtl === "1h" ? "1h" : undefined;
 

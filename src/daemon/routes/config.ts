@@ -21,9 +21,9 @@ export function registerConfigRoutes(app: Hono, ctx: DaemonContext) {
 		// Merge scalar fields, union map fields
 		for (const [k, v] of Object.entries(partial)) {
 			if (v === null || v === undefined) {
-				delete (ctx.globalConfig as Record<string, unknown>)[k];
+				delete (ctx.globalConfig as unknown as Record<string, unknown>)[k];
 			} else {
-				(ctx.globalConfig as Record<string, unknown>)[k] = v;
+				(ctx.globalConfig as unknown as Record<string, unknown>)[k] = v;
 			}
 		}
 		await saveGlobalConfig(ctx.globalConfig, ctx.config.globalConfigPath);
@@ -46,9 +46,9 @@ export function registerConfigRoutes(app: Hono, ctx: DaemonContext) {
 		const merged = { ...existing };
 		for (const [k, v] of Object.entries(partial)) {
 			if (v === null || v === undefined) {
-				delete (merged as Record<string, unknown>)[k];
+				delete (merged as unknown as Record<string, unknown>)[k];
 			} else {
-				(merged as Record<string, unknown>)[k] = v;
+				(merged as unknown as Record<string, unknown>)[k] = v;
 			}
 		}
 		await saveProjectRepoConfig(project.path, merged);
@@ -91,9 +91,9 @@ export function registerConfigRoutes(app: Hono, ctx: DaemonContext) {
 		const merged = { ...existing };
 		for (const [k, v] of Object.entries(partial)) {
 			if (v === null || v === undefined) {
-				delete (merged as Record<string, unknown>)[k];
+				delete (merged as unknown as Record<string, unknown>)[k];
 			} else {
-				(merged as Record<string, unknown>)[k] = v;
+				(merged as unknown as Record<string, unknown>)[k] = v;
 			}
 		}
 		await saveProjectLocalConfig(ctx.config.dataDir, project.id, merged);

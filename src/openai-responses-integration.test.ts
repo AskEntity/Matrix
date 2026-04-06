@@ -3,6 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_CONFIG } from "./config.ts";
 import { createApp } from "./daemon.ts";
 import {
 	createMockedResponsesProviderWithMock,
@@ -41,7 +42,11 @@ async function setupTestContext(): Promise<TestContext> {
 
 	const mockAPI = new ValidatingMockResponsesAPI();
 	const provider = createMockedResponsesProviderWithMock(mockAPI);
-	const appResult = createApp({ dataDir, agentProvider: provider });
+	const appResult = createApp({
+		dataDir,
+		agentProvider: provider,
+		initialConfig: { ...DEFAULT_CONFIG, model: "gpt-4.1-mini" },
+	});
 	await appResult.pm.load();
 	const project = await appResult.pm.init(projectDir);
 
@@ -88,7 +93,11 @@ async function recreateApp(
 	ctx: TestContext,
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedResponsesProviderWithMock(ctx.mockAPI);
-	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider });
+	const newApp = createApp({
+		dataDir: ctx.dataDir,
+		agentProvider: provider,
+		initialConfig: { ...DEFAULT_CONFIG, model: "gpt-4.1-mini" },
+	});
 	await newApp.pm.load();
 	newApp.markReady();
 	return newApp;

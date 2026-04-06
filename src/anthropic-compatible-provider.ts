@@ -400,7 +400,7 @@ function createAnthropicAdapter(
 			const { stable, variable } = params.systemPrompt;
 			const preamble = opts?.systemPreamble;
 			const systemBlocks: TextBlockParam[] = [
-				// Preamble — auth group configured identity string (e.g. OAuth requirement)
+				// Preamble — customizable first system block from auth group config
 				...(preamble
 					? [
 							{

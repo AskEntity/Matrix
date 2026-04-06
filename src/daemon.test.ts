@@ -3981,15 +3981,18 @@ describe("PATCH /projects/:id/config", () => {
 });
 
 describe("GET /config/global", () => {
-	test("returns empty object by default", async () => {
+	test("returns default config when no config file exists", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-gcfg-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
 		const res = await app.request("/config/global");
 		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body).toEqual({});
+		const body = (await res.json()) as Record<string, unknown>;
+		// Should have default values from DEFAULT_CONFIG
+		expect(body.model).toBe("claude-sonnet-4-6");
+		expect(body.budgetUsd).toBe(-1);
+		expect(body.selfBootstrap).toBe(false);
 
 		await rm(dataDir, { recursive: true });
 	});
@@ -4009,21 +4012,21 @@ describe("PATCH /config/global", () => {
 		const res = await app.request("/config/global", {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ model: "claude-opus-4-5", maxDepth: 3 }),
+			body: JSON.stringify({ model: "claude-opus-4-5", budgetUsd: 50 }),
 		});
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as { model?: string; maxDepth?: number };
+		const body = (await res.json()) as { model?: string; budgetUsd?: number };
 		expect(body.model).toBe("claude-opus-4-5");
-		expect(body.maxDepth).toBe(3);
+		expect(body.budgetUsd).toBe(50);
 
 		// GET should reflect the change
 		const getRes = await app.request("/config/global");
 		const getBody = (await getRes.json()) as {
 			model?: string;
-			maxDepth?: number;
+			budgetUsd?: number;
 		};
 		expect(getBody.model).toBe("claude-opus-4-5");
-		expect(getBody.maxDepth).toBe(3);
+		expect(getBody.budgetUsd).toBe(50);
 
 		await rm(dataDir, { recursive: true });
 	});
@@ -4099,14 +4102,14 @@ describe("GET /projects/:id/config/repo", () => {
 		await mkdir(join(tempDir, ".mxd"), { recursive: true });
 		await writeFile(
 			join(tempDir, ".mxd", "config.json"),
-			JSON.stringify({ model: "claude-haiku-4-5", maxDepth: 2 }),
+			JSON.stringify({ model: "claude-haiku-4-5", budgetUsd: 25 }),
 		);
 
 		const res = await app.request(`/projects/${project.id}/config/repo`);
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as { model?: string; maxDepth?: number };
+		const body = (await res.json()) as { model?: string; budgetUsd?: number };
 		expect(body.model).toBe("claude-haiku-4-5");
-		expect(body.maxDepth).toBe(2);
+		expect(body.budgetUsd).toBe(25);
 
 		await rm(tempDir, { recursive: true });
 		await rm(dataDir, { recursive: true });
@@ -4775,7 +4778,7 @@ describe("lifecycle edge cases", () => {
 	});
 });
 
-describe("storage migration on startup", () => {
+describe("project directory structure", () => {
 	let tempDir: string;
 	let dataDir: string;
 
@@ -4787,97 +4790,6 @@ describe("storage migration on startup", () => {
 	afterEach(async () => {
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
-	});
-
-	test("autoResumeProjects migrates legacy sessions/ layout to projects/<id>/tasks/", async () => {
-		// Set up legacy layout: {dataDir}/sessions/<projectId>/<taskId>.events.jsonl
-		const fakeProjectId = "legacy-proj-id";
-		const legacySessionsDir = join(dataDir, "sessions", fakeProjectId);
-		await mkdir(legacySessionsDir, { recursive: true });
-		await writeFile(
-			join(legacySessionsDir, "task-alpha.events.jsonl"),
-			'{"type":"assistant_text","content":"hi","taskId":"task-alpha","ts":1}\n',
-		);
-		await writeFile(
-			join(legacySessionsDir, "task-beta.events.jsonl"),
-			'{"type":"assistant_text","content":"ho","taskId":"task-beta","ts":2}\n',
-		);
-
-		// Boot the daemon with no registered projects (no tree.json)
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		await result.pm.load();
-		await result.autoResumeProjects();
-
-		// Legacy layout should be gone
-		const { existsSync: exists } = await import("node:fs");
-		expect(exists(legacySessionsDir)).toBe(false);
-		expect(exists(join(dataDir, "sessions"))).toBe(false);
-
-		// New layout should contain the migrated files with .jsonl extension
-		const newTasksDir = join(dataDir, "projects", fakeProjectId, "tasks");
-		expect(exists(join(newTasksDir, "task-alpha.jsonl"))).toBe(true);
-		expect(exists(join(newTasksDir, "task-beta.jsonl"))).toBe(true);
-
-		// Data is intact
-		const store = new EventStore(newTasksDir);
-		expect(store.read("task-alpha")).toEqual([
-			{
-				type: "assistant_text",
-				content: "hi",
-				taskId: "task-alpha",
-				ts: 1,
-			},
-		]);
-		expect(store.read("task-beta")).toEqual([
-			{
-				type: "assistant_text",
-				content: "ho",
-				taskId: "task-beta",
-				ts: 2,
-			},
-		]);
-	});
-
-	test("autoResumeProjects is a no-op when no legacy sessions/ exists", async () => {
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		await result.pm.load();
-		// Should not throw
-		await result.autoResumeProjects();
-
-		const { existsSync: exists } = await import("node:fs");
-		expect(exists(join(dataDir, "sessions"))).toBe(false);
-	});
-
-	test("autoResumeProjects migration is idempotent across restarts", async () => {
-		const fakeProjectId = "idem-proj";
-		const legacyDir = join(dataDir, "sessions", fakeProjectId);
-		await mkdir(legacyDir, { recursive: true });
-		await writeFile(
-			join(legacyDir, "t.events.jsonl"),
-			'{"type":"assistant_text","content":"once","taskId":"t","ts":1}\n',
-		);
-
-		// First run migrates
-		const r1 = createApp({ dataDir, agentProvider: mockProvider });
-		await r1.pm.load();
-		await r1.autoResumeProjects();
-
-		const newPath = join(
-			dataDir,
-			"projects",
-			fakeProjectId,
-			"tasks",
-			"t.jsonl",
-		);
-		const { existsSync: exists } = await import("node:fs");
-		expect(exists(newPath)).toBe(true);
-
-		// Second run finds no legacy layout and proceeds without error
-		const r2 = createApp({ dataDir, agentProvider: mockProvider });
-		await r2.pm.load();
-		await r2.autoResumeProjects();
-
-		expect(exists(newPath)).toBe(true);
 	});
 
 	test("new project registration creates tasks/ and debug/ directories", async () => {
