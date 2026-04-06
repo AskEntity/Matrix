@@ -102,13 +102,41 @@ async function readJsonConfig(path: string): Promise<ProjectConfig> {
 	}
 }
 
+/**
+ * Load global config. Must be a complete MatrixConfig.
+ * If the file doesn't exist, returns DEFAULT_CONFIG (caller should write it).
+ * If the file exists but is missing required fields, throws.
+ */
 export async function loadGlobalConfig(path?: string): Promise<MatrixConfig> {
-	const raw = await readJsonConfig(path ?? globalConfigPath());
-	return resolveConfig(DEFAULT_CONFIG, raw);
+	const resolvedPath = path ?? globalConfigPath();
+	let raw: Record<string, unknown>;
+	try {
+		raw = JSON.parse(await readFile(resolvedPath, "utf-8")) as Record<
+			string,
+			unknown
+		>;
+	} catch {
+		// File doesn't exist — return defaults (caller creates the file)
+		return { ...DEFAULT_CONFIG };
+	}
+	// Validate required fields
+	const missing: string[] = [];
+	for (const key of Object.keys(DEFAULT_CONFIG) as (keyof MatrixConfig)[]) {
+		if (raw[key] === undefined) {
+			missing.push(key);
+		}
+	}
+	if (missing.length > 0) {
+		throw new Error(
+			`Global config is missing required fields: ${missing.join(", ")}. ` +
+				"Run `mxd config init` to create a complete config, or add the missing fields manually.",
+		);
+	}
+	return raw as unknown as MatrixConfig;
 }
 
 export async function saveGlobalConfig(
-	config: ProjectConfig,
+	config: MatrixConfig,
 	path?: string,
 ): Promise<void> {
 	const resolvedPath = path ?? globalConfigPath();

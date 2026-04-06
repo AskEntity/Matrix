@@ -226,12 +226,15 @@ function validateCacheTtlOrder(
 	const msgTtl = extractMaxTtl(allMsgBlocks);
 
 	// Only validate if at least one layer has cache_control
-	const hasAnyCacheControl = toolsTtl !== undefined || systemTtl !== undefined || msgTtl !== undefined;
+	const hasAnyCacheControl =
+		toolsTtl !== undefined || systemTtl !== undefined || msgTtl !== undefined;
 	if (!hasAnyCacheControl) return;
 
 	// Layers without cache_control impose no constraint (POSITIVE_INFINITY = "any TTL is fine")
-	const toolsRank = toolsTtl !== undefined ? ttlRank(toolsTtl) : Number.POSITIVE_INFINITY;
-	const systemRank = systemTtl !== undefined ? ttlRank(systemTtl) : Number.POSITIVE_INFINITY;
+	const toolsRank =
+		toolsTtl !== undefined ? ttlRank(toolsTtl) : Number.POSITIVE_INFINITY;
+	const systemRank =
+		systemTtl !== undefined ? ttlRank(systemTtl) : Number.POSITIVE_INFINITY;
 	const msgRank = msgTtl !== undefined ? ttlRank(msgTtl) : 0;
 
 	if (toolsRank < systemRank) {
