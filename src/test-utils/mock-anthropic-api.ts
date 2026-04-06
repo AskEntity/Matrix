@@ -1261,15 +1261,13 @@ export class ValidatingMockAPI {
 		// Validate prefix consistency across calls (messages + system + tools)
 		if (this.prefixValidationEnabled) {
 			this.validatePrefix(messages, system, tools, sessionId);
+			// Validate cache_control TTL non-increasing order: tools → system → messages
+			validateCacheTtlOrder(
+				tools as unknown[] | undefined,
+				system as unknown[] | undefined,
+				messages,
+			);
 		}
-
-		// Validate cache_control TTL non-increasing order: tools → system → messages
-		// Anthropic requires TTLs in non-increasing order across the prefix.
-		validateCacheTtlOrder(
-			tools as unknown[] | undefined,
-			system as unknown[] | undefined,
-			messages,
-		);
 
 		const modelName = (model as string) ?? "claude-sonnet-4-6";
 
