@@ -32,7 +32,7 @@ describe("getCompactionThresholds", () => {
 
 	test("context windows larger than 1M use large-window ratio", () => {
 		const { compressThreshold } = getCompactionThresholds(2_000_000);
-		expect(compressThreshold).toBe(Math.floor(2_000_000 * 0.90));
+		expect(compressThreshold).toBe(Math.floor(2_000_000 * 0.9));
 	});
 
 	test("lazyCountThreshold is always 16K below compressThreshold", () => {
