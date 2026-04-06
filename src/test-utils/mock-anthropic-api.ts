@@ -174,6 +174,73 @@ function validateAPIFields(params: Record<string, unknown>): void {
 	}
 }
 
+import type { CacheTtl } from "../config.ts";
+
+/** Numeric TTL rank for ordering: no ttl field (5m default) = 5, "5m" = 5, "1h" = 60. */
+function ttlRank(ttl: CacheTtl | undefined): number {
+	if (ttl === "1h") return 60;
+	return 5; // undefined or "5m" = 5 min
+}
+
+/**
+ * Extract the highest cache_control TTL from an array of blocks/objects.
+ */
+function extractMaxTtl(items: unknown[] | undefined): CacheTtl | undefined {
+	if (!items) return undefined;
+	let maxRank = 0;
+	let result: CacheTtl | undefined;
+	for (const item of items) {
+		const cc = (item as Record<string, unknown>)?.cache_control as
+			| { type?: string; ttl?: CacheTtl }
+			| undefined;
+		if (cc) {
+			const rank = ttlRank(cc.ttl);
+			if (rank > maxRank) {
+				maxRank = rank;
+				result = cc.ttl;
+			}
+		}
+	}
+	return maxRank > 0 ? result : undefined;
+}
+
+/**
+ * Validate cache_control TTL non-increasing order: tools → system → messages.
+ * Anthropic requires TTLs in non-increasing order across the prefix.
+ */
+function validateCacheTtlOrder(
+	tools: unknown[] | undefined,
+	system: unknown[] | undefined,
+	messages: MessageParam[],
+): void {
+	const toolsTtl = extractMaxTtl(tools);
+	const systemTtl = extractMaxTtl(system);
+	const allMsgBlocks: unknown[] = [];
+	for (const msg of messages) {
+		if (Array.isArray(msg.content)) {
+			allMsgBlocks.push(...msg.content);
+		}
+	}
+	const msgTtl = extractMaxTtl(allMsgBlocks);
+
+	const toolsRank = tools ? ttlRank(toolsTtl) : Number.POSITIVE_INFINITY;
+	const systemRank = system ? ttlRank(systemTtl) : Number.POSITIVE_INFINITY;
+	const msgRank = allMsgBlocks.length > 0 ? ttlRank(msgTtl) : 0;
+
+	if (toolsRank < systemRank) {
+		throw new MockValidationError(
+			`Cache TTL ordering violation: tools TTL (${toolsTtl ?? "5m"}) < system TTL (${systemTtl ?? "5m"}). ` +
+				"Anthropic requires non-increasing TTL order: tools ≥ system ≥ messages.",
+		);
+	}
+	if (systemRank < msgRank) {
+		throw new MockValidationError(
+			`Cache TTL ordering violation: system TTL (${systemTtl ?? "5m"}) < messages TTL (${msgTtl ?? "5m"}). ` +
+				"Anthropic requires non-increasing TTL order: tools ≥ system ≥ messages.",
+		);
+	}
+}
+
 function validateRequest(messages: MessageParam[]): void {
 	if (messages.length === 0) {
 		throw new MockValidationError("Messages array must not be empty");
@@ -1195,6 +1262,14 @@ export class ValidatingMockAPI {
 		if (this.prefixValidationEnabled) {
 			this.validatePrefix(messages, system, tools, sessionId);
 		}
+
+		// Validate cache_control TTL non-increasing order: tools → system → messages
+		// Anthropic requires TTLs in non-increasing order across the prefix.
+		validateCacheTtlOrder(
+			tools as unknown[] | undefined,
+			system as unknown[] | undefined,
+			messages,
+		);
 
 		const modelName = (model as string) ?? "claude-sonnet-4-6";
 
