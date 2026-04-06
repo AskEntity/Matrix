@@ -385,13 +385,19 @@ function createAnthropicAdapter(
 			const messages = params.messages as MessageParam[];
 			const tools = params.tools as Tool[];
 
-			// Cache control: all breakpoints use consistent TTL from session_config.
+			// Cache control: tools + messages use per-session TTL from session_config.
 			// Root: "1h" (long-lived). Regular children: undefined (default 5min).
-			// Anthropic requires longer TTLs before shorter TTLs in the same request.
-			// With consistent TTL, all breakpoints use the same value — no ordering issues.
 			const cacheControl = params.cacheTtl
 				? ({ type: "ephemeral" as const, ttl: params.cacheTtl } as const)
 				: ({ type: "ephemeral" as const } as const);
+
+			// System prompt always uses 1h TTL — shared across all agents, changes
+			// rarely, benefits most from long cache. Anthropic requires longer TTLs
+			// before shorter ones; system comes first so 1h ≥ anything after it.
+			const systemCacheControl = {
+				type: "ephemeral" as const,
+				ttl: "1h" as const,
+			};
 
 			// System prompt split into stable + variable for optimal caching.
 			// Stable part is shared by ALL agents — auto-hits via Anthropic's 20-block lookback.
@@ -406,7 +412,7 @@ function createAnthropicAdapter(
 							{
 								type: "text" as const,
 								text: preamble,
-								cache_control: cacheControl,
+								cache_control: systemCacheControl,
 							},
 						]
 					: []),
@@ -418,7 +424,7 @@ function createAnthropicAdapter(
 							{
 								type: "text" as const,
 								text: variable,
-								cache_control: cacheControl,
+								cache_control: systemCacheControl,
 							},
 						]
 					: // No preamble and no variable: need at least one block with cache_control
@@ -427,7 +433,7 @@ function createAnthropicAdapter(
 								{
 									type: "text" as const,
 									text: "(no variable prompt)",
-									cache_control: cacheControl,
+									cache_control: systemCacheControl,
 								},
 							]
 						: []),
