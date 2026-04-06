@@ -3981,15 +3981,18 @@ describe("PATCH /projects/:id/config", () => {
 });
 
 describe("GET /config/global", () => {
-	test("returns empty object by default", async () => {
+	test("returns default config when no config file exists", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-gcfg-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
 		const res = await app.request("/config/global");
 		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body).toEqual({});
+		const body = (await res.json()) as Record<string, unknown>;
+		// Should have default values from DEFAULT_CONFIG
+		expect(body.model).toBe("claude-sonnet-4-6");
+		expect(body.budgetUsd).toBe(-1);
+		expect(body.selfBootstrap).toBe(false);
 
 		await rm(dataDir, { recursive: true });
 	});
