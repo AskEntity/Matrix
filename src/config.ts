@@ -94,7 +94,7 @@ export const DEFAULT_CONFIG: MatrixConfig = {
 	selfBootstrap: false,
 	auth: { enforced: false, rpName: "Matrix", rpID: "" },
 	thinking: null,
-	cacheTtl: { root: "1h", child: "1h" },
+	cacheTtl: { root: "1h", child: "5m" },
 };
 
 function globalConfigPath(): string {
