@@ -16,6 +16,7 @@ const en: Translations = {
 	"header.connected": "Connected",
 	"header.disconnected": "Disconnected",
 	"header.logout": "Logout",
+	"header.preferences": "Preferences",
 
 	// Projects
 	"project.add": "Add",
@@ -324,6 +325,7 @@ const zh: Translations = {
 	"header.connected": "已连接",
 	"header.disconnected": "未连接",
 	"header.logout": "登出",
+	"header.preferences": "偏好设置",
 
 	// Projects
 	"project.add": "添加",

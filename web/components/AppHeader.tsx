@@ -1,15 +1,140 @@
 import type React from "react";
-import { memo, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "../auth.ts";
 import type { Project } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import {
 	IconClose,
+	IconEllipsisV,
 	IconGear,
 	IconHexagon,
 	IconLogout,
 	IconPlus,
 } from "./icons.tsx";
+
+/* ---- Preferences Dropdown ---- */
+
+function PreferencesDropdown({
+	theme,
+	onThemeChange,
+	onLogout,
+}: {
+	theme: string;
+	onThemeChange: (theme: string) => void;
+	onLogout?: () => void;
+}) {
+	const { locale, setLocale, t } = useLocale();
+	const [open, setOpen] = useState(false);
+	const dropdownRef = useRef<HTMLDivElement>(null);
+
+	const toggle = useCallback(() => setOpen((o) => !o), []);
+
+	// Close on outside click
+	useEffect(() => {
+		if (!open) return;
+		const handler = (e: MouseEvent) => {
+			if (
+				dropdownRef.current &&
+				!dropdownRef.current.contains(e.target as Node)
+			) {
+				setOpen(false);
+			}
+		};
+		document.addEventListener("mousedown", handler);
+		return () => document.removeEventListener("mousedown", handler);
+	}, [open]);
+
+	// Close on Escape
+	useEffect(() => {
+		if (!open) return;
+		const handler = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setOpen(false);
+		};
+		document.addEventListener("keydown", handler);
+		return () => document.removeEventListener("keydown", handler);
+	}, [open]);
+
+	return (
+		<div className="mxd-prefs-dropdown" ref={dropdownRef}>
+			<button
+				type="button"
+				className={`mxd-btn-icon mxd-prefs-trigger${open ? " active" : ""}`}
+				onClick={toggle}
+				title={t("header.preferences")}
+				aria-label={t("header.preferences")}
+				aria-expanded={open}
+			>
+				<IconEllipsisV size={14} />
+			</button>
+			{open && (
+				<div className="mxd-prefs-menu">
+					{/* Language */}
+					<div className="mxd-prefs-group">
+						<span className="mxd-prefs-label">{t("lang.selector")}</span>
+						<div className="mxd-prefs-options">
+							<button
+								type="button"
+								className={`mxd-prefs-option${locale === "en" ? " active" : ""}`}
+								onClick={() => setLocale("en")}
+							>
+								{t("lang.en")}
+							</button>
+							<button
+								type="button"
+								className={`mxd-prefs-option${locale === "zh" ? " active" : ""}`}
+								onClick={() => setLocale("zh")}
+							>
+								{t("lang.zh")}
+							</button>
+						</div>
+					</div>
+					{/* Theme */}
+					<div className="mxd-prefs-group">
+						<span className="mxd-prefs-label">{t("theme.selector")}</span>
+						<div className="mxd-prefs-options mxd-prefs-options-wrap">
+							{(
+								[
+									["dark", t("theme.dark")],
+									["light", t("theme.light")],
+									["cute-light", t("theme.cuteLight")],
+									["cute-dark", t("theme.cuteDark")],
+								] as const
+							).map(([val, label]) => (
+								<button
+									key={val}
+									type="button"
+									className={`mxd-prefs-option${theme === val ? " active" : ""}`}
+									onClick={() => onThemeChange(val)}
+								>
+									{label}
+								</button>
+							))}
+						</div>
+					</div>
+					{/* Logout */}
+					{onLogout && (
+						<>
+							<div className="mxd-prefs-divider" />
+							<button
+								type="button"
+								className="mxd-prefs-action mxd-prefs-logout"
+								onClick={() => {
+									setOpen(false);
+									onLogout();
+								}}
+							>
+								<IconLogout size={12} />
+								{t("header.logout")}
+							</button>
+						</>
+					)}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/* ---- AppHeader ---- */
 
 export const AppHeader = memo(function AppHeader({
 	connected,
@@ -48,7 +173,7 @@ export const AppHeader = memo(function AppHeader({
 	onLogout?: () => void;
 	onToggleSidebar?: () => void;
 }) {
-	const { locale, setLocale, t } = useLocale();
+	const { t } = useLocale();
 	const [versionInfo, setVersionInfo] = useState<string>("");
 
 	useEffect(() => {
@@ -210,39 +335,11 @@ export const AppHeader = memo(function AppHeader({
 						<IconGear size={14} />
 					</button>
 				)}
-				<select
-					className="mxd-select"
-					value={locale}
-					onChange={(e) => setLocale(e.target.value as "en" | "zh")}
-					title={t("lang.selector")}
-					aria-label={t("lang.selector")}
-				>
-					<option value="en">{t("lang.en")}</option>
-					<option value="zh">{t("lang.zh")}</option>
-				</select>
-				<select
-					className="mxd-select"
-					value={theme}
-					onChange={(e) => onThemeChange(e.target.value)}
-					title={t("theme.selector")}
-					aria-label={t("theme.selector")}
-				>
-					<option value="dark">{t("theme.dark")}</option>
-					<option value="light">{t("theme.light")}</option>
-					<option value="cute-light">{t("theme.cuteLight")}</option>
-					<option value="cute-dark">{t("theme.cuteDark")}</option>
-				</select>
-				{onLogout && (
-					<button
-						type="button"
-						className="mxd-btn-icon"
-						title={t("header.logout")}
-						aria-label={t("header.logout")}
-						onClick={onLogout}
-					>
-						<IconLogout size={13} />
-					</button>
-				)}
+				<PreferencesDropdown
+					theme={theme}
+					onThemeChange={onThemeChange}
+					onLogout={onLogout}
+				/>
 			</div>
 		</header>
 	);
