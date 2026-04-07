@@ -12,16 +12,20 @@ import {
 	IconPlus,
 } from "./icons.tsx";
 
-/* ---- Preferences Dropdown ---- */
+/* ---- Settings Dropdown ---- */
 
-function PreferencesDropdown({
+function SettingsDropdown({
 	theme,
 	onThemeChange,
-	onLogout,
+	projectId,
+	showSettings,
+	onToggleSettings,
 }: {
 	theme: string;
 	onThemeChange: (theme: string) => void;
-	onLogout?: () => void;
+	projectId: string;
+	showSettings: boolean;
+	onToggleSettings: () => void;
 }) {
 	const { locale, setLocale, t } = useLocale();
 	const [open, setOpen] = useState(false);
@@ -68,6 +72,23 @@ function PreferencesDropdown({
 			</button>
 			{open && (
 				<div className="mxd-prefs-menu">
+					{/* Project Settings */}
+					{projectId && (
+						<>
+							<button
+								type="button"
+								className={`mxd-prefs-action${showSettings ? " active" : ""}`}
+								onClick={() => {
+									setOpen(false);
+									onToggleSettings();
+								}}
+							>
+								<IconGear size={12} />
+								{t("project.settings")}
+							</button>
+							<div className="mxd-prefs-divider" />
+						</>
+					)}
 					{/* Language */}
 					<div className="mxd-prefs-group">
 						<span className="mxd-prefs-label">{t("lang.selector")}</span>
@@ -111,23 +132,6 @@ function PreferencesDropdown({
 							))}
 						</div>
 					</div>
-					{/* Logout */}
-					{onLogout && (
-						<>
-							<div className="mxd-prefs-divider" />
-							<button
-								type="button"
-								className="mxd-prefs-action mxd-prefs-logout"
-								onClick={() => {
-									setOpen(false);
-									onLogout();
-								}}
-							>
-								<IconLogout size={12} />
-								{t("header.logout")}
-							</button>
-						</>
-					)}
 				</div>
 			)}
 		</div>
@@ -324,22 +328,24 @@ export const AppHeader = memo(function AppHeader({
 						</button>
 					</>
 				)}
-				{projectId && (
-					<button
-						type="button"
-						className={`mxd-btn-icon mxd-settings-toggle-btn${showSettings ? " active" : ""}`}
-						title={t("project.settings")}
-						aria-label={t("project.settings")}
-						onClick={onToggleSettings}
-					>
-						<IconGear size={14} />
-					</button>
-				)}
-				<PreferencesDropdown
+				<SettingsDropdown
 					theme={theme}
 					onThemeChange={onThemeChange}
-					onLogout={onLogout}
+					projectId={projectId}
+					showSettings={showSettings}
+					onToggleSettings={onToggleSettings}
 				/>
+				{onLogout && (
+					<button
+						type="button"
+						className="mxd-btn-icon mxd-logout-btn"
+						title={t("header.logout")}
+						aria-label={t("header.logout")}
+						onClick={onLogout}
+					>
+						<IconLogout size={13} />
+					</button>
+				)}
 			</div>
 		</header>
 	);
