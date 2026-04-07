@@ -947,6 +947,13 @@ function GlobalTab({
 		}
 	}, [restarting, connected]);
 
+	// Timeout fallback — SSE reconnect can be too fast for React to see connected=false
+	useEffect(() => {
+		if (!restarting) return;
+		const timer = setTimeout(() => setRestarting(false), 5000);
+		return () => clearTimeout(timer);
+	}, [restarting]);
+
 	const tab: ActiveTab = "global";
 	const authGroupNames = Object.keys(
 		(layers.global.authGroups ?? {}) as Record<string, unknown>,
