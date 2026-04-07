@@ -16,7 +16,6 @@ const en: Translations = {
 	"header.connected": "Connected",
 	"header.disconnected": "Disconnected",
 	"header.logout": "Logout",
-	"header.preferences": "Preferences",
 
 	// Projects
 	"project.add": "Add",
@@ -165,6 +164,7 @@ const en: Translations = {
 	"settings.fromGlobal": "from: global",
 	"settings.fromRepo": "from: repo",
 	"settings.fromLocal": "from: local",
+	"settings.sectionAppearance": "Appearance",
 	"settings.sectionModels": "Models & Auth",
 	"settings.sectionLimits": "Limits",
 	"settings.sectionCache": "Cache",
@@ -326,7 +326,6 @@ const zh: Translations = {
 	"header.connected": "已连接",
 	"header.disconnected": "未连接",
 	"header.logout": "登出",
-	"header.preferences": "偏好设置",
 
 	// Projects
 	"project.add": "添加",
@@ -473,6 +472,7 @@ const zh: Translations = {
 	"settings.fromGlobal": "来源: 全局",
 	"settings.fromRepo": "来源: 仓库",
 	"settings.fromLocal": "来源: 本地",
+	"settings.sectionAppearance": "外观",
 	"settings.sectionModels": "模型与认证",
 	"settings.sectionLimits": "限制",
 	"settings.sectionCache": "缓存",
