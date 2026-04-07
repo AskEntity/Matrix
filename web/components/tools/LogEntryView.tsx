@@ -452,7 +452,7 @@ export const LogEntryView = memo(function LogEntryView({
 				taskLabel={taskLabel}
 			>
 				<Card
-					title={`🌿 ${t("log.treeUpdated")}`}
+					title={t("log.treeUpdated")}
 					detail={text}
 					className="mxd-tool-card-system"
 					collapsible={false}
@@ -548,7 +548,7 @@ export const LogEntryView = memo(function LogEntryView({
 		const fromTaskId =
 			"fromTaskId" in entry ? (entry.fromTaskId as string) : undefined;
 		const resumed = "resumed" in entry && entry.resumed;
-		const prefix = resumed ? "🔄 user resumed → " : "📨 user → ";
+		const prefix = resumed ? "User resumed → " : "User → ";
 		const text = getEntryText(entry);
 
 		const titleNode =
