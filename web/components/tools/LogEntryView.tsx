@@ -263,9 +263,7 @@ export const LogEntryView = memo(function LogEntryView({
 				taskId={getLogTaskId(entry)}
 			>
 				<Card
-					title={getToolTitle(toolName, toolArgs, null, nodeMap, {
-						emoji: true,
-					})}
+					title={getToolTitle(toolName, toolArgs, null, nodeMap)}
 					className={`mxd-tool-card-pending mxd-tool-card-loading ${isBuiltin ? "mxd-tool-card-mcp" : "mxd-tool-card-external"}`}
 					defaultExpanded={!!argsStr}
 					collapsible={!!argsStr}
@@ -323,9 +321,7 @@ export const LogEntryView = memo(function LogEntryView({
 				taskId={getLogTaskId(entry)}
 			>
 				<Card
-					title={getToolTitle(toolName, undefined, content, nodeMap, {
-						emoji: true,
-					})}
+					title={getToolTitle(toolName, undefined, content, nodeMap)}
 					className={`${statusClass} ${isBuiltin ? "mxd-tool-card-mcp" : "mxd-tool-card-external"}`}
 					collapsible={!!hasBody}
 					defaultExpanded={!!hasBody}
