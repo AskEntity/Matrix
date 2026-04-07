@@ -12,20 +12,14 @@ import {
 	IconPlus,
 } from "./icons.tsx";
 
-/* ---- Settings Dropdown ---- */
+/* ---- Preferences Dropdown (language + theme only) ---- */
 
-function SettingsDropdown({
+function PreferencesDropdown({
 	theme,
 	onThemeChange,
-	projectId,
-	showSettings,
-	onToggleSettings,
 }: {
 	theme: string;
 	onThemeChange: (theme: string) => void;
-	projectId: string;
-	showSettings: boolean;
-	onToggleSettings: () => void;
 }) {
 	const { locale, setLocale, t } = useLocale();
 	const [open, setOpen] = useState(false);
@@ -72,23 +66,6 @@ function SettingsDropdown({
 			</button>
 			{open && (
 				<div className="mxd-prefs-menu">
-					{/* Project Settings */}
-					{projectId && (
-						<>
-							<button
-								type="button"
-								className={`mxd-prefs-action${showSettings ? " active" : ""}`}
-								onClick={() => {
-									setOpen(false);
-									onToggleSettings();
-								}}
-							>
-								<IconGear size={12} />
-								{t("project.settings")}
-							</button>
-							<div className="mxd-prefs-divider" />
-						</>
-					)}
 					{/* Language */}
 					<div className="mxd-prefs-group">
 						<span className="mxd-prefs-label">{t("lang.selector")}</span>
@@ -328,13 +305,18 @@ export const AppHeader = memo(function AppHeader({
 						</button>
 					</>
 				)}
-				<SettingsDropdown
-					theme={theme}
-					onThemeChange={onThemeChange}
-					projectId={projectId}
-					showSettings={showSettings}
-					onToggleSettings={onToggleSettings}
-				/>
+				<PreferencesDropdown theme={theme} onThemeChange={onThemeChange} />
+				{projectId && (
+					<button
+						type="button"
+						className={`mxd-btn-icon mxd-settings-toggle-btn${showSettings ? " active" : ""}`}
+						title={t("project.settings")}
+						aria-label={t("project.settings")}
+						onClick={onToggleSettings}
+					>
+						<IconGear size={14} />
+					</button>
+				)}
 				{onLogout && (
 					<button
 						type="button"
