@@ -183,7 +183,7 @@ export function getToolTitle(
 			const command = getArg(toolArgs, "command");
 			if (command) {
 				const display =
-					command.length > 50 ? `${command.slice(0, 50)}…` : command;
+					command.length > 80 ? `${command.slice(0, 80)}…` : command;
 				return `Shell: ${display}`;
 			}
 			return "Shell";
