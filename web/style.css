@@ -317,36 +317,6 @@ select {
 	font-weight: 500;
 }
 
-.mxd-prefs-divider {
-	height: 1px;
-	background: var(--border);
-	margin: 4px 0;
-}
-
-.mxd-prefs-action {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	width: 100%;
-	padding: 7px 8px;
-	border-radius: var(--radius-md);
-	font-size: 12px;
-	color: var(--text-secondary);
-	background: none;
-	border: none;
-	cursor: pointer;
-	transition: all var(--t-fast);
-}
-
-.mxd-prefs-action:hover {
-	background: var(--bg-raised);
-	color: var(--text-primary);
-}
-
-.mxd-prefs-action.active {
-	color: var(--accent);
-}
-
 /* =========================================================
    Form Elements (Select, Input)
    ========================================================= */
@@ -4267,8 +4237,8 @@ button.mxd-tool-card-header:hover {
 	.mxd-header-right .mxd-select:not(.mxd-project-select),
 	.mxd-header-right
 		.mxd-btn-icon:not(.mxd-hamburger-btn):not(.mxd-prefs-trigger):not(
-			.mxd-logout-btn
-		) {
+			.mxd-settings-toggle-btn
+		):not(.mxd-logout-btn) {
 		display: none;
 	}
 
