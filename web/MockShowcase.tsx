@@ -119,14 +119,18 @@ function MockShowcaseInner() {
 		contextWindow: number;
 		estimated?: boolean;
 	} | null>(null);
-	const [theme, setThemeState] = useState<
-		"dark" | "light" | "cute-light" | "cute-dark"
-	>(() => {
-		const stored = localStorage.getItem("mxd-theme");
-		if (stored === "light" || stored === "cute-light" || stored === "cute-dark")
-			return stored;
-		return "dark";
-	});
+	const [theme] = useState<"dark" | "light" | "cute-light" | "cute-dark">(
+		() => {
+			const stored = localStorage.getItem("mxd-theme");
+			if (
+				stored === "light" ||
+				stored === "cute-light" ||
+				stored === "cute-dark"
+			)
+				return stored;
+			return "dark";
+		},
+	);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 	const [sidebarWidth, setSidebarWidth] = useState(288);
@@ -266,10 +270,6 @@ function MockShowcaseInner() {
 		(_id: string, _v: string) => {},
 		[],
 	);
-	const handleThemeChange = useCallback(
-		(t: string) => setThemeState(t as typeof theme),
-		[],
-	);
 	const handleToggleSidebar = useCallback(() => setSidebarOpen((s) => !s), []);
 
 	const openTabsRef = useRef(openTabs);
@@ -396,14 +396,12 @@ function MockShowcaseInner() {
 				newProjectPath=""
 				creatingProject={false}
 				showSettings={false}
-				theme={theme}
 				onProjectChange={noop}
 				onShowAddProject={noop}
 				onAddProject={noop}
 				onNewProjectPathChange={noop}
 				onCancelAddProject={noop}
 				onToggleSettings={noop}
-				onThemeChange={handleThemeChange}
 				onToggleSidebar={handleToggleSidebar}
 			/>
 
