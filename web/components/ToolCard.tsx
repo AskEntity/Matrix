@@ -52,7 +52,7 @@ function getTaskLinkInfo(
 		case TOOL_CREATE_TASK: {
 			// Result is JSON with {id, title, ...}
 			const id = parseJsonField(resultContent, "id");
-			return id ? { targetTaskId: id, prefix: "Task Created: " } : null;
+			return id ? { targetTaskId: id, prefix: "+ Task Created: " } : null;
 		}
 		case TOOL_UPDATE_TASK: {
 			const taskId = getArg(toolArgs, "taskId");
@@ -74,16 +74,16 @@ function getTaskLinkInfo(
 		case TOOL_CLOSE_TASK: {
 			const taskId = getArg(toolArgs, "taskId");
 			return taskId
-				? { targetTaskId: taskId, prefix: "Task Closed: " }
+				? { targetTaskId: taskId, prefix: "– Task Closed: " }
 				: null;
 		}
 		case TOOL_RESET_TASK: {
 			const taskId = getArg(toolArgs, "taskId");
-			return taskId ? { targetTaskId: taskId, prefix: "Task Reset: " } : null;
+			return taskId ? { targetTaskId: taskId, prefix: "↺ Task Reset: " } : null;
 		}
 		case TOOL_FORK_TASK_CONTEXT: {
 			const targetId = getArg(toolArgs, "targetTaskId");
-			return targetId ? { targetTaskId: targetId, prefix: "Fork: " } : null;
+			return targetId ? { targetTaskId: targetId, prefix: "⑂ Fork → " } : null;
 		}
 		default:
 			return null;
