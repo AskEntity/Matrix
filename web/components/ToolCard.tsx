@@ -187,7 +187,9 @@ export const ToolCard = memo(function ToolCard({
 		isOk && !mcpBody ? summarizeToolResult(toolName, resultContent) : null;
 
 	const statusClass = isErr ? "mxd-tool-card-err" : "mxd-tool-card-ok";
-	const accentClass = isBuiltin ? "mxd-tool-card-mcp" : "";
+	const accentClass = isBuiltin
+		? "mxd-tool-card-mcp"
+		: "mxd-tool-card-external";
 
 	const hasImages = entry.images && entry.images.length > 0;
 
