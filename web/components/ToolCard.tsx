@@ -199,7 +199,7 @@ export const ToolCard = memo(function ToolCard({
 		toolArgs,
 		resultContent,
 		nodeMap,
-		{ emoji: true, projectMap },
+		{ projectMap },
 	);
 	if (onTaskNavigate) {
 		const linkInfo = getTaskLinkInfo(toolName, toolArgs, resultContent);
