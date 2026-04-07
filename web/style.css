@@ -2145,12 +2145,12 @@ button.mxd-tool-card-header:hover {
 }
 
 .mxd-tool-card-task-message {
-	border-color: rgba(56, 139, 253, 0.3);
-	background: rgba(56, 139, 253, 0.05);
+	border-color: rgba(30, 80, 180, 0.35);
+	background: rgba(30, 80, 180, 0.05);
 }
 
 .mxd-tool-card-task-message .mxd-tool-card-name {
-	color: rgba(56, 139, 253, 0.9);
+	color: rgba(30, 80, 180, 0.9);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	max-width: 50%;
@@ -2158,7 +2158,7 @@ button.mxd-tool-card-header:hover {
 }
 
 .mxd-tool-card-task-message .mxd-tool-card-detail {
-	color: rgba(56, 139, 253, 0.6);
+	color: rgba(30, 80, 180, 0.6);
 	font-size: 0.85em;
 	margin-left: 0.5em;
 }
