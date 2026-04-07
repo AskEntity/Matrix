@@ -459,17 +459,45 @@ export const LogEntryView = memo(function LogEntryView({
 			"fromTaskId" in entry ? (entry.fromTaskId as string) : undefined;
 		const msgTitle = entry.title ?? "";
 		const text = getEntryText(entry);
-		const isLong = text.length > 100 || text.includes("\n");
-		const headerText =
-			text.length > 100
-				? `${text.slice(0, 100)}…`
-				: (text.split("\n")[0] ?? text);
 
-		const displayTitle = msgTitle || fromTitle || "Task Message";
+		// Determine direction: is the sender a child of the current task?
+		// Walk up from fromTaskId through folders to find the owning task.
+		// If that owner is the current task → child reporting up (↑)
+		// Otherwise → parent/sibling instructing down (↓)
+		const currentTaskId = getLogTaskId(entry) ?? rootNodeId;
+		let isFromChild = false;
+		if (fromTaskId && nodeMap) {
+			let walkId: string | null | undefined = fromTaskId;
+			while (walkId) {
+				const walkNode = nodeMap.get(walkId);
+				if (!walkNode) break;
+				if (walkNode.parentId === currentTaskId) {
+					isFromChild = true;
+					break;
+				}
+				// If parent is a folder, keep walking up
+				const parentNode = walkNode.parentId
+					? nodeMap.get(walkNode.parentId)
+					: undefined;
+				if (
+					parentNode &&
+					"type" in parentNode &&
+					parentNode.type === "folder"
+				) {
+					walkId = parentNode.parentId;
+				} else {
+					break;
+				}
+			}
+		}
+		const arrow = isFromChild ? "↑" : "↓";
+
+		const senderName = fromTitle || "Task";
+		const titleSuffix = msgTitle ? ` · ${msgTitle}` : "";
 		const canNavigate = fromTaskId && onTaskNavigate;
 		const labelNode = canNavigate ? (
 			<>
-				{"↑ "}
+				{`${arrow} `}
 				{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate affordance */}
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable task name */}
 				<span
@@ -479,11 +507,12 @@ export const LogEntryView = memo(function LogEntryView({
 						onTaskNavigate(fromTaskId, String(entry.id));
 					}}
 				>
-					{displayTitle}
+					{senderName}
 				</span>
+				{titleSuffix}
 			</>
 		) : (
-			`↑ ${displayTitle}`
+			`${arrow} ${senderName}${titleSuffix}`
 		);
 
 		return (
@@ -493,12 +522,8 @@ export const LogEntryView = memo(function LogEntryView({
 				taskLabel={taskLabel}
 				taskId={getLogTaskId(entry)}
 			>
-				<Card
-					title={labelNode}
-					detail={isLong ? headerText : text}
-					className="mxd-tool-card-task-message"
-				>
-					{isLong ? (
+				<Card title={labelNode} className="mxd-tool-card-task-message">
+					{text ? (
 						<div className="mxd-tool-card-body">
 							<div className="mxd-tool-card-result">{text.trim()}</div>
 						</div>
