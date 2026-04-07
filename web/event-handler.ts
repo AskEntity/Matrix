@@ -1160,11 +1160,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	// --- Main handler ---
 
 	function handleEvent(msg: IncomingEvent) {
-		// Any event after daemon_restarting means daemon is back
-		if (msg.type !== "daemon_restarting") {
-			setRestartingDaemon(false);
-		}
-
 		// pending_clarifications: pass-through (still ephemeral/in-memory)
 		if (msg.type === "pending_clarifications") {
 			setPendingClarifications(msg.clarifications);

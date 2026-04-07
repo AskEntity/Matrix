@@ -555,6 +555,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	// but for longer gaps we need to re-fetch everything.
 	// Pending messages are derived from JSONL events (no separate endpoint).
 	const handleReconnect = useCallback(() => {
+		setRestartingDaemon(false);
 		if (!projectId) return;
 		const sessionId = viewedSessionRef.current;
 		if (!sessionId) return;
