@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { ThreeLayerConfig } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconPlus, IconRefresh, IconTrash } from "./icons.tsx";
@@ -1301,8 +1301,22 @@ export const SettingsPanel = memo(function SettingsPanel({
 		local: "settings.titleLocal",
 	} as const;
 
+	// Click-outside-to-close (exclude the gear toggle button in the header)
+	const panelRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		const handler = (e: MouseEvent) => {
+			const target = e.target as Node;
+			if (panelRef.current?.contains(target)) return;
+			if ((target as Element).closest?.(".mxd-settings-toggle-btn")) return;
+			if ((target as Element).closest?.(".mxd-sidebar-settings-btn")) return;
+			onClose();
+		};
+		document.addEventListener("mousedown", handler);
+		return () => document.removeEventListener("mousedown", handler);
+	}, [onClose]);
+
 	return (
-		<div className="mxd-settings-panel mxd-settings-panel-wide">
+		<div ref={panelRef} className="mxd-settings-panel mxd-settings-panel-wide">
 			<div className="mxd-settings-header">
 				<span className="mxd-settings-title">{t(tabTitleKey[activeTab])}</span>
 				<button type="button" className="mxd-btn-icon" onClick={onClose}>
