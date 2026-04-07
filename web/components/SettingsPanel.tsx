@@ -927,6 +927,7 @@ function GlobalTab({
 	onRestart: () => void;
 }) {
 	const { t } = useLocale();
+	const [restarting, setRestarting] = useState(false);
 	const tab: ActiveTab = "global";
 	const authGroupNames = Object.keys(
 		(layers.global.authGroups ?? {}) as Record<string, unknown>,
@@ -980,9 +981,22 @@ function GlobalTab({
 					<button
 						type="button"
 						className="mxd-btn mxd-btn-warning mxd-btn-sm"
-						onClick={onRestart}
+						disabled={restarting}
+						onClick={() => {
+							setRestarting(true);
+							onRestart();
+						}}
 					>
-						<IconRefresh size={12} /> {t("settings.restartDaemon")}
+						{restarting ? (
+							<>
+								<span className="mxd-spinner" />{" "}
+								{t("settings.restartDaemonRestarting")}
+							</>
+						) : (
+							<>
+								<IconRefresh size={12} /> {t("settings.restartDaemon")}
+							</>
+						)}
 					</button>
 				</div>
 			</div>
