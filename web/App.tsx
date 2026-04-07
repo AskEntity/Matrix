@@ -180,6 +180,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [lastOutputTokens, setLastOutputTokens] = useState<number | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [showSettings, setShowSettings] = useState(false);
+	const [restartingDaemon, setRestartingDaemon] = useState(false);
+	const restartingDaemonRef = useRef(false);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(
 		() => localStorage.getItem("mxd-sidebar-collapsed") === "true",
@@ -586,9 +588,20 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			);
 	}, [projectId, processEventResponse]);
 
+	const handleEventWithRestartDetect = useCallback(
+		(msg: IncomingEvent) => {
+			if (restartingDaemonRef.current) {
+				restartingDaemonRef.current = false;
+				setRestartingDaemon(false);
+			}
+			handleEvent(msg);
+		},
+		[handleEvent],
+	);
+
 	const { connected } = useSSE(
 		projectId,
-		handleEvent,
+		handleEventWithRestartDetect,
 		checkStatus,
 		handleReconnect,
 	);
@@ -1155,7 +1168,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					projectId={projectId}
 					layers={layers}
 					loading={configLoading}
-					connected={connected}
+					restartingDaemon={restartingDaemon}
 					theme={theme}
 					onThemeChange={handleThemeChange}
 					updateGlobal={updateGlobal}
@@ -1165,20 +1178,18 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					onDeleteProject={handleDeleteProject}
 					onClearAllSessions={handleClearSessions}
 					onRestart={async () => {
+						restartingDaemonRef.current = true;
+						setRestartingDaemon(true);
 						try {
 							await authFetch("/restart-daemon", { method: "POST" });
-							addLog({
-								type: "lifecycle",
-								content: "Daemon restarting…",
-								ts: Date.now(),
-							});
 						} catch {
-							addLog({
-								type: "lifecycle",
-								content: "Daemon restarting…",
-								ts: Date.now(),
-							});
+							// Expected — daemon dies, fetch fails
 						}
+						addLog({
+							type: "lifecycle",
+							content: "Daemon restarting…",
+							ts: Date.now(),
+						});
 					}}
 				/>
 			)}
