@@ -206,7 +206,7 @@ export function getToolTitle(
 				try {
 					const json = JSON.parse(resultContent) as Record<string, unknown>;
 					if (typeof json.title === "string")
-						return `– Task Deleted: ${json.title}`;
+						return `Task Deleted: ${json.title}`;
 				} catch {
 					/* ignore */
 				}
@@ -214,9 +214,9 @@ export function getToolTitle(
 			const taskId = getArg(toolArgs, "taskId");
 			if (taskId) {
 				const title = nodeMap?.get(taskId)?.title;
-				return `– Task Deleted: ${title ?? taskId}`;
+				return `Task Deleted: ${title ?? taskId}`;
 			}
-			return "– Task Deleted";
+			return "Task Deleted";
 		}
 		case TOOL_EXECUTE_TASKS: {
 			let parsedTasks: Array<{ taskId?: string; title?: string }> = [];
@@ -398,7 +398,7 @@ export function getToolTitle(
 					return title ? `Folder Created: ${title}` : "Folder Created";
 				}
 				case "delete_folder":
-					return "– Folder Deleted";
+					return "Folder Deleted";
 				case "rename_folder": {
 					const title = getArg(toolArgs, "title");
 					return title ? `Folder Renamed: ${title}` : "Folder Renamed";
