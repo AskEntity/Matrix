@@ -266,7 +266,7 @@ export const LogEntryView = memo(function LogEntryView({
 					title={getToolTitle(toolName, toolArgs, null, nodeMap, {
 						emoji: true,
 					})}
-					className={`mxd-tool-card-pending mxd-tool-card-loading ${isBuiltin ? "mxd-tool-card-mcp" : ""}`}
+					className={`mxd-tool-card-pending mxd-tool-card-loading ${isBuiltin ? "mxd-tool-card-mcp" : "mxd-tool-card-external"}`}
 					defaultExpanded={!!argsStr}
 					collapsible={!!argsStr}
 					statusSlot={
@@ -326,7 +326,7 @@ export const LogEntryView = memo(function LogEntryView({
 					title={getToolTitle(toolName, undefined, content, nodeMap, {
 						emoji: true,
 					})}
-					className={`${statusClass} ${isBuiltin ? "mxd-tool-card-mcp" : ""}`}
+					className={`${statusClass} ${isBuiltin ? "mxd-tool-card-mcp" : "mxd-tool-card-external"}`}
 					collapsible={!!hasBody}
 					defaultExpanded={!!hasBody}
 					statusSlot={
@@ -365,8 +365,10 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
-	// task_started — lifecycle-style plain text row
+	// task_started — lifecycle-style plain text row, task name clickable
 	if (entry.type === "task_started") {
+		const startedTaskId = entry.taskId;
+		const canNavigate = startedTaskId && onTaskNavigate;
 		return (
 			<div
 				className="mxd-lmxd-entry mxd-event-lifecycle"
@@ -375,7 +377,19 @@ export const LogEntryView = memo(function LogEntryView({
 				<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
 				<div className="mxd-lmxd-body">
 					<span className="mxd-lmxd-text">
-						{`▶ ${t("lifecycle.taskStarted")} ${entry.title}`}
+						{`▶ ${t("lifecycle.taskStarted")} `}
+						{canNavigate ? (
+							// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate
+							// biome-ignore lint/a11y/noStaticElementInteractions: clickable task name
+							<span
+								className="mxd-clickable-task-name"
+								onClick={() => onTaskNavigate(startedTaskId, String(entry.id))}
+							>
+								{entry.title}
+							</span>
+						) : (
+							entry.title
+						)}
 					</span>
 				</div>
 			</div>
