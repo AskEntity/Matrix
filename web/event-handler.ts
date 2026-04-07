@@ -120,6 +120,7 @@ export interface EventHandlerDeps {
 			>
 		>
 	>;
+	setRestartingDaemon: React.Dispatch<React.SetStateAction<boolean>>;
 	t: (key: string, params?: Record<string, string>) => string;
 	/** Returns the currently viewed session ID (selectedTaskId ?? rootNodeId). Used to filter SSE events. */
 	getViewedSessionId?: () => string | null;
@@ -144,6 +145,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		setLastCacheReadTokens,
 		setLastOutputTokens,
 		setBackgroundProcesses,
+		setRestartingDaemon,
 	} = deps;
 
 	/** Fallback map: toolCallId → tool name, for old JSONL files missing tool field on tool_result. */
@@ -734,6 +736,21 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					},
 				};
 
+			case "daemon_restarting":
+				return {
+					entries: [
+						createLogEntry({
+							type: "lifecycle",
+							content: "🔄 Daemon restarting…",
+							ts: msg.ts,
+						}),
+					],
+					updates: [],
+					sideEffects: () => {
+						setRestartingDaemon(true);
+					},
+				};
+
 			case "task_started":
 				// Only show in the child task's own view — parent sees it via
 				// queue message two-phase lifecycle (pending → consumed)
@@ -1143,6 +1160,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	// --- Main handler ---
 
 	function handleEvent(msg: IncomingEvent) {
+		// Any event after daemon_restarting means daemon is back
+		if (msg.type !== "daemon_restarting") {
+			setRestartingDaemon(false);
+		}
+
 		// pending_clarifications: pass-through (still ephemeral/in-memory)
 		if (msg.type === "pending_clarifications") {
 			setPendingClarifications(msg.clarifications);

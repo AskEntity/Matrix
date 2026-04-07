@@ -181,7 +181,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [showSettings, setShowSettings] = useState(false);
 	const [restartingDaemon, setRestartingDaemon] = useState(false);
-	const restartingDaemonRef = useRef(false);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(
 		() => localStorage.getItem("mxd-sidebar-collapsed") === "true",
@@ -505,6 +504,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setLastCacheReadTokens,
 				setLastOutputTokens,
 				setBackgroundProcesses,
+				setRestartingDaemon,
 				t,
 				getViewedSessionId: () => viewedSessionRef.current,
 			}),
@@ -588,20 +588,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			);
 	}, [projectId, processEventResponse]);
 
-	const handleEventWithRestartDetect = useCallback(
-		(msg: IncomingEvent) => {
-			if (restartingDaemonRef.current) {
-				restartingDaemonRef.current = false;
-				setRestartingDaemon(false);
-			}
-			handleEvent(msg);
-		},
-		[handleEvent],
-	);
-
 	const { connected } = useSSE(
 		projectId,
-		handleEventWithRestartDetect,
+		handleEvent,
 		checkStatus,
 		handleReconnect,
 	);
@@ -1177,19 +1166,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					onClose={() => setShowSettings(false)}
 					onDeleteProject={handleDeleteProject}
 					onClearAllSessions={handleClearSessions}
-					onRestart={async () => {
-						restartingDaemonRef.current = true;
-						setRestartingDaemon(true);
-						try {
-							await authFetch("/restart-daemon", { method: "POST" });
-						} catch {
-							// Expected — daemon dies, fetch fails
-						}
-						addLog({
-							type: "lifecycle",
-							content: "Daemon restarting…",
-							ts: Date.now(),
-						});
+					onRestart={() => {
+						authFetch("/restart-daemon", { method: "POST" }).catch(() => {});
 					}}
 				/>
 			)}
