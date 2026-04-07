@@ -139,7 +139,8 @@ export type SSEOnlyEvent =
 				timestamp: number;
 			}>;
 	  }
-	| { type: "heartbeat" };
+	| { type: "heartbeat" }
+	| { type: "daemon_restarting"; taskId: string; ts: number };
 
 /**
  * Everything that can arrive over SSE or from REST event endpoints.
