@@ -132,8 +132,6 @@ export function formatToolArgs(
 // ── Title generation (extracted from web/components/tools/utils.ts) ──
 
 export interface ToolTitleOptions {
-	/** When true, prepend emoji/symbol prefixes (e.g. "⌕ Read:" instead of "Read:"). */
-	emoji?: boolean;
 	/** Map of project IDs to names, for resolving cross-project references. */
 	projectMap?: Map<string, string>;
 }
@@ -150,70 +148,64 @@ export function getToolTitle(
 	nodeMap?: Map<string, { title?: string }>,
 	opts?: ToolTitleOptions,
 ): string {
-	const e = opts?.emoji ?? false;
 	switch (toolName) {
 		case TOOL_READ_FILE: {
 			const path = getArg(toolArgs, "path");
-			const p = e ? "⌕ " : "";
-			return path ? `${p}Read: ${basename(path)}` : `${p}Read`;
+			return path ? `Read: ${basename(path)}` : "Read";
 		}
 		case TOOL_WRITE_FILE: {
 			const path = getArg(toolArgs, "path");
-			const p = e ? "← " : "";
-			return path ? `${p}Write: ${basename(path)}` : `${p}Write`;
+			return path ? `Write: ${basename(path)}` : "Write";
 		}
 		case TOOL_EDIT_FILE: {
 			const path = getArg(toolArgs, "path");
-			const p = e ? "✎ " : "";
-			return path ? `${p}Edit: ${basename(path)}` : `${p}Edit`;
+			return path ? `Edit: ${basename(path)}` : "Edit";
 		}
 		case TOOL_SEARCH: {
 			const pattern = getArg(toolArgs, "pattern");
-			const p = e ? "⌕ " : "";
 			if (pattern) {
 				const display =
 					pattern.length > 40 ? `${pattern.slice(0, 40)}…` : pattern;
-				return `${p}Search: ${display}`;
+				return `Search: ${display}`;
 			}
-			return `${p}Search`;
+			return "Search";
 		}
 		case TOOL_LIST_FILES: {
 			const pattern = getArg(toolArgs, "pattern");
-			return pattern ? `ls: ${pattern}` : "ls";
+			return pattern ? `List: ${pattern}` : "List";
 		}
 		case TOOL_BASH: {
 			const bgAction = getArg(toolArgs, "bg_action");
 			if (bgAction) {
 				const bgId = getArg(toolArgs, "background_id") ?? "?";
-				return `bg ${bgAction}: ${bgId}`;
+				return `Background: ${bgAction} ${bgId}`;
 			}
 			const command = getArg(toolArgs, "command");
 			if (command) {
 				const display =
 					command.length > 50 ? `${command.slice(0, 50)}…` : command;
-				return `$ ${display}`;
+				return `Shell: ${display}`;
 			}
-			return "$ bash";
+			return "Shell";
 		}
 		case TOOL_BACKGROUND: {
 			const action = getArg(toolArgs, "action");
 			const bgId = getArg(toolArgs, "id") ?? "";
 			if (action) {
-				return bgId ? `bg ${action}: ${bgId}` : `bg ${action}`;
+				return bgId ? `Background: ${action} ${bgId}` : `Background: ${action}`;
 			}
-			return "bg";
+			return "Background";
 		}
 		case TOOL_CREATE_TASK: {
 			const title = getArg(toolArgs, "title");
-			const label = e ? "+ Task Created" : "+ Task";
-			return title ? `${label}: ${title}` : label;
+			return title ? `Task Created: ${title}` : "Task Created";
 		}
 		case TOOL_DELETE_TASK: {
-			const label = e ? "– Task Deleted" : "- Task";
 			if (resultContent) {
 				try {
 					const json = JSON.parse(resultContent) as Record<string, unknown>;
-					if (typeof json.title === "string") return `${label}: ${json.title}`;
+					if (typeof json.title === "string")
+						return `Task Deleted: ${json.title}`;
 				} catch {
 					/* ignore */
 				}
@@ -221,13 +213,11 @@ export function getToolTitle(
 			const taskId = getArg(toolArgs, "taskId");
 			if (taskId) {
 				const title = nodeMap?.get(taskId)?.title;
-				return `${label}: ${title ?? taskId}`;
+				return `Task Deleted: ${title ?? taskId}`;
 			}
-			return label;
+			return "Task Deleted";
 		}
 		case TOOL_EXECUTE_TASKS: {
-			if (!e) return "Run tasks";
-			// Emoji mode: try to extract task count/names from result
 			let parsedTasks: Array<{ taskId?: string; title?: string }> = [];
 			const tasksVal = toolArgs?.tasks;
 			if (Array.isArray(tasksVal)) {
@@ -257,43 +247,42 @@ export function getToolTitle(
 					}
 				}
 				if (titles.length > 0) {
-					return `⚡ Run ${titles.length}: ${titles.join(", ")}`;
+					return `Run ${titles.length}: ${titles.join(", ")}`;
 				}
-				return `⚡ Run ${parsedTasks.length}`;
+				return `Run ${parsedTasks.length}`;
 			}
-			return "⚡ Run";
+			return "Run";
 		}
 		case TOOL_DONE: {
 			const status = getArg(toolArgs, "status");
 			const summary = getArg(toolArgs, "summary");
 			const isPassed = status === "passed";
-			const icon = e ? (isPassed ? "✓ " : "✗ ") : "";
 			const label = isPassed ? "Task Passed" : "Task Failed";
 			if (summary) {
 				const display =
 					summary.length > 60 ? `${summary.slice(0, 60)}…` : summary;
-				return `${icon}${label}: ${display}`;
+				return `${label}: ${display}`;
 			}
-			return `${icon}${label}`;
+			return label;
 		}
 		case TOOL_YIELD: {
-			if (resultContent) return e ? "▶ Resume from yield" : "Resume from yield";
-			return e ? "⏸ Yield" : "Yield";
+			if (resultContent) return "Resume from yield";
+			return "Yield";
 		}
 		case TOOL_GET_TREE: {
 			const parts: string[] = [];
 			if (toolArgs?.format === "tree") parts.push("tree");
 			if (toolArgs?.include_details) parts.push("detailed");
 			if (toolArgs?.include_closed) parts.push("with closed");
-			return parts.length > 0 ? `Tree (${parts.join(", ")})` : "Tree";
+			return parts.length > 0 ? `Task Tree (${parts.join(", ")})` : "Task Tree";
 		}
 		case TOOL_GET_TASK: {
 			const taskId = getArg(toolArgs, "taskId");
 			if (taskId) {
 				const title = nodeMap?.get(taskId)?.title;
-				return `Task: ${title ?? taskId}`;
+				return `Task Detail: ${title ?? taskId}`;
 			}
-			return "Get Task";
+			return "Task Detail";
 		}
 		case TOOL_UPDATE_TASK: {
 			const changedFields: string[] = [];
@@ -334,53 +323,48 @@ export function getToolTitle(
 		}
 		case TOOL_SEND_MESSAGE:
 		case TOOL_SEND_MESSAGE_TO_CHILD: {
-			const p = e ? "→ " : "";
 			const taskId = getArg(toolArgs, "taskId");
 			if (taskId) {
 				const title = nodeMap?.get(taskId)?.title;
-				return `${p}Message: ${title ?? taskId}`;
+				return `Message: ${title ?? taskId}`;
 			}
-			return `${p}Send Message`;
+			return "Message";
 		}
 		case TOOL_CLOSE_TASK: {
-			const p = e ? "– " : "";
 			const taskId = getArg(toolArgs, "taskId");
 			if (taskId) {
 				const title = nodeMap?.get(taskId)?.title;
-				return `${p}Task Closed: ${title ?? taskId}`;
+				return `Task Closed: ${title ?? taskId}`;
 			}
-			return `${p}Task Closed`;
+			return "Task Closed";
 		}
 		case TOOL_RESET_TASK: {
-			const p = e ? "↺ " : "";
 			const taskId = getArg(toolArgs, "taskId");
 			if (taskId) {
 				const title = nodeMap?.get(taskId)?.title;
-				return `${p}Task Reset: ${title ?? taskId}`;
+				return `Task Reset: ${title ?? taskId}`;
 			}
-			return `${p}Task Reset`;
+			return "Task Reset";
 		}
 		case TOOL_REORDER_TASKS:
-			return e ? "↕ Reorder tasks" : "Reorder tasks";
+			return "Task Reorder";
 		case TOOL_LIST_PROJECTS:
-			return e ? "⌕ List projects" : "List projects";
+			return "List Projects";
 		case TOOL_SEND_MESSAGE_TO_PROJECT: {
-			const p = e ? "→ " : "";
 			const projectId = getArg(toolArgs, "projectId");
 			if (projectId) {
 				const projectName = opts?.projectMap?.get(projectId) ?? projectId;
-				return `${p}Cross-project: ${projectName}`;
+				return `Cross-project: ${projectName}`;
 			}
-			return `${p}Cross-project`;
+			return "Cross-project";
 		}
 		case TOOL_REPORT_TO_PARENT: {
-			const p = e ? "← " : "";
 			const title = getArg(toolArgs, "title");
 			if (title) {
 				const display = title.length > 60 ? `${title.slice(0, 60)}…` : title;
-				return `${p}${display}`;
+				return display;
 			}
-			return `${p}Report`;
+			return "Report";
 		}
 		case TOOL_CLARIFY: {
 			const question = getArg(toolArgs, "question");
@@ -388,23 +372,38 @@ export function getToolTitle(
 				const firstLine = question.split("\n")[0] ?? question;
 				const display =
 					firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine;
-				return `? ${display}`;
+				return `Clarify: ${display}`;
 			}
-			return "? Clarify";
+			return "Clarify";
 		}
 		case TOOL_FORK_TASK_CONTEXT: {
-			const p = e ? "⑂ " : "";
 			const sourceId = getArg(toolArgs, "sourceTaskId");
 			const targetId = getArg(toolArgs, "targetTaskId");
 			if (sourceId && targetId) {
 				const sourceTitle = nodeMap?.get(sourceId)?.title ?? sourceId;
 				const targetTitle = nodeMap?.get(targetId)?.title ?? targetId;
-				return `${p}Fork: ${sourceTitle} → ${targetTitle}`;
+				return `Fork: ${sourceTitle} → ${targetTitle}`;
 			}
-			return `${p}Fork Context`;
+			return "Fork";
 		}
-		default:
-			return stripMcpPrefix(toolName);
+		default: {
+			// Handle folder tools and external MCP tools
+			const baseName = stripMcpPrefix(toolName);
+			switch (baseName) {
+				case "create_folder": {
+					const title = getArg(toolArgs, "title");
+					return title ? `Folder Created: ${title}` : "Folder Created";
+				}
+				case "delete_folder":
+					return "Folder Deleted";
+				case "rename_folder": {
+					const title = getArg(toolArgs, "title");
+					return title ? `Folder Renamed: ${title}` : "Folder Renamed";
+				}
+				default:
+					return baseName;
+			}
+		}
 	}
 }
 
