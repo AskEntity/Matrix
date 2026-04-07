@@ -343,8 +343,8 @@ select {
 	color: var(--text-primary);
 }
 
-.mxd-prefs-logout:hover {
-	color: var(--color-failed);
+.mxd-prefs-action.active {
+	color: var(--accent);
 }
 
 /* =========================================================
@@ -4262,8 +4262,8 @@ button.mxd-tool-card-header:hover {
 
 	.mxd-header-right .mxd-select:not(.mxd-project-select),
 	.mxd-header-right
-		.mxd-btn-icon:not(.mxd-hamburger-btn):not(.mxd-settings-toggle-btn):not(
-			.mxd-prefs-trigger
+		.mxd-btn-icon:not(.mxd-hamburger-btn):not(.mxd-prefs-trigger):not(
+			.mxd-logout-btn
 		) {
 		display: none;
 	}
