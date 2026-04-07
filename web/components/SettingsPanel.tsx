@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import type { ThreeLayerConfig } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconPlus, IconRefresh, IconTrash } from "./icons.tsx";
@@ -916,7 +916,7 @@ function GlobalTab({
 	onSave,
 	onRevert,
 	dirty,
-	connected,
+	restartingDaemon,
 	theme,
 	onThemeChange,
 	onRestart,
@@ -927,32 +927,12 @@ function GlobalTab({
 	onSave: () => void;
 	onRevert: () => void;
 	dirty: boolean;
-	connected: boolean;
+	restartingDaemon: boolean;
 	theme: string;
 	onThemeChange: (theme: string) => void;
 	onRestart: () => void;
 }) {
 	const { locale, setLocale, t } = useLocale();
-	const [restarting, setRestarting] = useState(false);
-	const wasDisconnected = useRef(false);
-
-	// Track disconnection during restart, reset when reconnected
-	useEffect(() => {
-		if (!restarting) return;
-		if (!connected) {
-			wasDisconnected.current = true;
-		} else if (wasDisconnected.current) {
-			wasDisconnected.current = false;
-			setRestarting(false);
-		}
-	}, [restarting, connected]);
-
-	// Timeout fallback — SSE reconnect can be too fast for React to see connected=false
-	useEffect(() => {
-		if (!restarting) return;
-		const timer = setTimeout(() => setRestarting(false), 5000);
-		return () => clearTimeout(timer);
-	}, [restarting]);
 
 	const tab: ActiveTab = "global";
 	const authGroupNames = Object.keys(
@@ -1055,13 +1035,10 @@ function GlobalTab({
 					<button
 						type="button"
 						className="mxd-btn mxd-btn-warning mxd-btn-sm"
-						disabled={restarting}
-						onClick={() => {
-							setRestarting(true);
-							onRestart();
-						}}
+						disabled={restartingDaemon}
+						onClick={onRestart}
 					>
-						{restarting ? (
+						{restartingDaemon ? (
 							<>
 								<span className="mxd-spinner" />{" "}
 								{t("settings.restartDaemonRestarting")}
@@ -1197,7 +1174,7 @@ function buildPatch(
 export const SettingsPanel = memo(function SettingsPanel({
 	layers,
 	loading,
-	connected,
+	restartingDaemon,
 	theme,
 	onThemeChange,
 	updateGlobal,
@@ -1211,7 +1188,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 	projectId: string;
 	layers: ThreeLayerConfig;
 	loading: boolean;
-	connected: boolean;
+	restartingDaemon: boolean;
 	theme: string;
 	onThemeChange: (theme: string) => void;
 	updateGlobal: (patch: Record<string, unknown>) => void;
@@ -1374,7 +1351,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 					onSave={saveGlobal}
 					onRevert={revertGlobal}
 					dirty={dirtyGlobal}
-					connected={connected}
+					restartingDaemon={restartingDaemon}
 					theme={theme}
 					onThemeChange={onThemeChange}
 					onRestart={onRestart}
