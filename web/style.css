@@ -232,6 +232,121 @@ select {
 	gap: 8px;
 }
 
+/* ---- Preferences Dropdown ---- */
+
+.mxd-prefs-dropdown {
+	position: relative;
+}
+
+.mxd-prefs-trigger.active {
+	color: var(--accent);
+	background: var(--accent-muted);
+}
+
+.mxd-prefs-menu {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	min-width: 200px;
+	background: var(--bg-surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	box-shadow:
+		0 8px 24px rgba(0, 0, 0, 0.25),
+		0 2px 8px rgba(0, 0, 0, 0.15);
+	padding: 8px;
+	z-index: 100;
+	animation: prefs-menu-in 0.12s ease-out;
+}
+
+@keyframes prefs-menu-in {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.mxd-prefs-group {
+	padding: 6px 8px;
+}
+
+.mxd-prefs-label {
+	display: block;
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--text-faint);
+	margin-bottom: 6px;
+}
+
+.mxd-prefs-options {
+	display: flex;
+	gap: 4px;
+}
+
+.mxd-prefs-options-wrap {
+	flex-wrap: wrap;
+}
+
+.mxd-prefs-option {
+	font-size: 12px;
+	padding: 4px 10px;
+	border-radius: var(--radius-md);
+	border: 1px solid var(--border);
+	background: var(--bg-raised);
+	color: var(--text-secondary);
+	cursor: pointer;
+	transition: all var(--t-fast);
+	white-space: nowrap;
+}
+
+.mxd-prefs-option:hover {
+	border-color: var(--accent);
+	color: var(--text-primary);
+}
+
+.mxd-prefs-option.active {
+	background: var(--accent-muted);
+	border-color: var(--accent);
+	color: var(--accent);
+	font-weight: 500;
+}
+
+.mxd-prefs-divider {
+	height: 1px;
+	background: var(--border);
+	margin: 4px 0;
+}
+
+.mxd-prefs-action {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 7px 8px;
+	border-radius: var(--radius-md);
+	font-size: 12px;
+	color: var(--text-secondary);
+	background: none;
+	border: none;
+	cursor: pointer;
+	transition: all var(--t-fast);
+}
+
+.mxd-prefs-action:hover {
+	background: var(--bg-raised);
+	color: var(--text-primary);
+}
+
+.mxd-prefs-logout:hover {
+	color: var(--color-failed);
+}
+
 /* =========================================================
    Form Elements (Select, Input)
    ========================================================= */
@@ -4147,7 +4262,9 @@ button.mxd-tool-card-header:hover {
 
 	.mxd-header-right .mxd-select:not(.mxd-project-select),
 	.mxd-header-right
-		.mxd-btn-icon:not(.mxd-hamburger-btn):not(.mxd-settings-toggle-btn) {
+		.mxd-btn-icon:not(.mxd-hamburger-btn):not(.mxd-settings-toggle-btn):not(
+			.mxd-prefs-trigger
+		) {
 		display: none;
 	}
 
