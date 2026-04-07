@@ -917,6 +917,8 @@ function GlobalTab({
 	onRevert,
 	dirty,
 	connected,
+	theme,
+	onThemeChange,
 	onRestart,
 }: {
 	layers: ThreeLayerConfig;
@@ -926,9 +928,11 @@ function GlobalTab({
 	onRevert: () => void;
 	dirty: boolean;
 	connected: boolean;
+	theme: string;
+	onThemeChange: (theme: string) => void;
 	onRestart: () => void;
 }) {
-	const { t } = useLocale();
+	const { locale, setLocale, t } = useLocale();
 	const [restarting, setRestarting] = useState(false);
 	const wasDisconnected = useRef(false);
 
@@ -950,6 +954,54 @@ function GlobalTab({
 
 	return (
 		<div className="mxd-tab-content">
+			{/* Language & Theme — client-side prefs, take effect immediately */}
+			<div className="mxd-settings-section">
+				<div className="mxd-settings-section-title">
+					{t("settings.sectionAppearance")}
+				</div>
+				<div className="mxd-settings-field">
+					<span className="mxd-settings-label">{t("lang.selector")}</span>
+					<div className="mxd-settings-toggle-group">
+						<button
+							type="button"
+							className={`mxd-settings-toggle-option${locale === "en" ? " active" : ""}`}
+							onClick={() => setLocale("en")}
+						>
+							{t("lang.en")}
+						</button>
+						<button
+							type="button"
+							className={`mxd-settings-toggle-option${locale === "zh" ? " active" : ""}`}
+							onClick={() => setLocale("zh")}
+						>
+							{t("lang.zh")}
+						</button>
+					</div>
+				</div>
+				<div className="mxd-settings-field">
+					<span className="mxd-settings-label">{t("theme.selector")}</span>
+					<div className="mxd-settings-toggle-group">
+						{(
+							[
+								["dark", t("theme.dark")],
+								["light", t("theme.light")],
+								["cute-light", t("theme.cuteLight")],
+								["cute-dark", t("theme.cuteDark")],
+							] as const
+						).map(([val, label]) => (
+							<button
+								key={val}
+								type="button"
+								className={`mxd-settings-toggle-option${theme === val ? " active" : ""}`}
+								onClick={() => onThemeChange(val)}
+							>
+								{label}
+							</button>
+						))}
+					</div>
+				</div>
+			</div>
+
 			<AuthGroupsSection draft={draft} onDraftChange={onDraftChange} />
 
 			<ModelsAuthSection
@@ -1139,6 +1191,8 @@ export const SettingsPanel = memo(function SettingsPanel({
 	layers,
 	loading,
 	connected,
+	theme,
+	onThemeChange,
 	updateGlobal,
 	updateRepo,
 	updateLocal,
@@ -1151,6 +1205,8 @@ export const SettingsPanel = memo(function SettingsPanel({
 	layers: ThreeLayerConfig;
 	loading: boolean;
 	connected: boolean;
+	theme: string;
+	onThemeChange: (theme: string) => void;
 	updateGlobal: (patch: Record<string, unknown>) => void;
 	updateRepo: (patch: Record<string, unknown>) => void;
 	updateLocal: (patch: Record<string, unknown>) => void;
@@ -1312,6 +1368,8 @@ export const SettingsPanel = memo(function SettingsPanel({
 					onRevert={revertGlobal}
 					dirty={dirtyGlobal}
 					connected={connected}
+					theme={theme}
+					onThemeChange={onThemeChange}
 					onRestart={onRestart}
 				/>
 			)}

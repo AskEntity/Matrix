@@ -1,121 +1,15 @@
 import type React from "react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { authFetch } from "../auth.ts";
 import type { Project } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import {
 	IconClose,
-	IconEllipsisV,
 	IconGear,
 	IconHexagon,
 	IconLogout,
 	IconPlus,
 } from "./icons.tsx";
-
-/* ---- Preferences Dropdown (language + theme only) ---- */
-
-function PreferencesDropdown({
-	theme,
-	onThemeChange,
-}: {
-	theme: string;
-	onThemeChange: (theme: string) => void;
-}) {
-	const { locale, setLocale, t } = useLocale();
-	const [open, setOpen] = useState(false);
-	const dropdownRef = useRef<HTMLDivElement>(null);
-
-	const toggle = useCallback(() => setOpen((o) => !o), []);
-
-	// Close on outside click
-	useEffect(() => {
-		if (!open) return;
-		const handler = (e: MouseEvent) => {
-			if (
-				dropdownRef.current &&
-				!dropdownRef.current.contains(e.target as Node)
-			) {
-				setOpen(false);
-			}
-		};
-		document.addEventListener("mousedown", handler);
-		return () => document.removeEventListener("mousedown", handler);
-	}, [open]);
-
-	// Close on Escape
-	useEffect(() => {
-		if (!open) return;
-		const handler = (e: KeyboardEvent) => {
-			if (e.key === "Escape") setOpen(false);
-		};
-		document.addEventListener("keydown", handler);
-		return () => document.removeEventListener("keydown", handler);
-	}, [open]);
-
-	return (
-		<div className="mxd-prefs-dropdown" ref={dropdownRef}>
-			<button
-				type="button"
-				className={`mxd-btn-icon mxd-prefs-trigger${open ? " active" : ""}`}
-				onClick={toggle}
-				title={t("header.preferences")}
-				aria-label={t("header.preferences")}
-				aria-expanded={open}
-			>
-				<IconEllipsisV size={14} />
-			</button>
-			{open && (
-				<div className="mxd-prefs-menu">
-					{/* Language */}
-					<div className="mxd-prefs-group">
-						<span className="mxd-prefs-label">{t("lang.selector")}</span>
-						<div className="mxd-prefs-options">
-							<button
-								type="button"
-								className={`mxd-prefs-option${locale === "en" ? " active" : ""}`}
-								onClick={() => setLocale("en")}
-							>
-								{t("lang.en")}
-							</button>
-							<button
-								type="button"
-								className={`mxd-prefs-option${locale === "zh" ? " active" : ""}`}
-								onClick={() => setLocale("zh")}
-							>
-								{t("lang.zh")}
-							</button>
-						</div>
-					</div>
-					{/* Theme */}
-					<div className="mxd-prefs-group">
-						<span className="mxd-prefs-label">{t("theme.selector")}</span>
-						<div className="mxd-prefs-options mxd-prefs-options-wrap">
-							{(
-								[
-									["dark", t("theme.dark")],
-									["light", t("theme.light")],
-									["cute-light", t("theme.cuteLight")],
-									["cute-dark", t("theme.cuteDark")],
-								] as const
-							).map(([val, label]) => (
-								<button
-									key={val}
-									type="button"
-									className={`mxd-prefs-option${theme === val ? " active" : ""}`}
-									onClick={() => onThemeChange(val)}
-								>
-									{label}
-								</button>
-							))}
-						</div>
-					</div>
-				</div>
-			)}
-		</div>
-	);
-}
-
-/* ---- AppHeader ---- */
 
 export const AppHeader = memo(function AppHeader({
 	connected,
@@ -125,14 +19,12 @@ export const AppHeader = memo(function AppHeader({
 	newProjectPath,
 	creatingProject,
 	showSettings,
-	theme,
 	onProjectChange,
 	onShowAddProject,
 	onAddProject,
 	onNewProjectPathChange,
 	onCancelAddProject,
 	onToggleSettings,
-	onThemeChange,
 	onLogout,
 	onToggleSidebar,
 }: {
@@ -143,14 +35,12 @@ export const AppHeader = memo(function AppHeader({
 	newProjectPath: string;
 	creatingProject: boolean;
 	showSettings: boolean;
-	theme: string;
 	onProjectChange: (id: string) => void;
 	onShowAddProject: () => void;
 	onAddProject: (e: React.FormEvent) => void;
 	onNewProjectPathChange: (path: string) => void;
 	onCancelAddProject: () => void;
 	onToggleSettings: () => void;
-	onThemeChange: (theme: string) => void;
 	onLogout?: () => void;
 	onToggleSidebar?: () => void;
 }) {
@@ -305,7 +195,6 @@ export const AppHeader = memo(function AppHeader({
 						</button>
 					</>
 				)}
-				<PreferencesDropdown theme={theme} onThemeChange={onThemeChange} />
 				{projectId && (
 					<button
 						type="button"

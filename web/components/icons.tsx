@@ -379,19 +379,3 @@ export function IconSidebarLeft({ size = 14 }: { size?: number }) {
 		</svg>
 	);
 }
-
-export function IconEllipsisV({ size = 14 }: { size?: number }) {
-	return (
-		<svg
-			aria-hidden="true"
-			width={size}
-			height={size}
-			viewBox="0 0 24 24"
-			fill="currentColor"
-		>
-			<circle cx="12" cy="5" r="2" />
-			<circle cx="12" cy="12" r="2" />
-			<circle cx="12" cy="19" r="2" />
-		</svg>
-	);
-}
