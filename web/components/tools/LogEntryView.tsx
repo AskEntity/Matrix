@@ -365,21 +365,20 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
-	// task_started
+	// task_started — lifecycle-style plain text row
 	if (entry.type === "task_started") {
 		return (
-			<LogEntryWrapper
-				ts={entry.ts}
-				entryId={String(entry.id)}
-				taskLabel={taskLabel}
-				taskId={entry.taskId}
+			<div
+				className="mxd-lmxd-entry mxd-event-lifecycle"
+				data-entry-id={String(entry.id)}
 			>
-				<Card
-					title={`▶ ${t("lifecycle.taskStarted")} ${entry.title}`}
-					className="mxd-tool-card-pending"
-					collapsible={false}
-				/>
-			</LogEntryWrapper>
+				<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
+				<div className="mxd-lmxd-body">
+					<span className="mxd-lmxd-text">
+						{`▶ ${t("lifecycle.taskStarted")} ${entry.title}`}
+					</span>
+				</div>
+			</div>
 		);
 	}
 
