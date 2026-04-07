@@ -741,7 +741,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					entries: [
 						createLogEntry({
 							type: "lifecycle",
-							content: "🔄 Daemon restarting…",
+							content: "Daemon restarting…",
 							ts: msg.ts,
 						}),
 					],
