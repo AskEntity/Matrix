@@ -2094,6 +2094,21 @@ button.mxd-tool-card-header:hover {
 	color: rgba(137, 87, 229, 0.9);
 }
 
+/* External MCP tools (non-builtin) — teal accent */
+.mxd-tool-card-external {
+	border-color: rgba(45, 212, 191, 0.3);
+	background: rgba(45, 212, 191, 0.05);
+}
+
+.mxd-tool-card-external.mxd-tool-card-err {
+	border-color: rgba(248, 81, 73, 0.25);
+	background: rgba(248, 81, 73, 0.04);
+}
+
+.mxd-tool-card-external .mxd-tool-card-name {
+	color: rgba(45, 212, 191, 0.9);
+}
+
 .mxd-tool-card-system {
 	border-color: rgba(63, 185, 80, 0.3);
 	background: rgba(63, 185, 80, 0.05);
