@@ -20,6 +20,7 @@ import {
 	TOOL_DELETE_TASK,
 	TOOL_DONE,
 	TOOL_EDIT_FILE,
+	TOOL_EVALUATE_SCRIPT,
 	TOOL_EXECUTE_TASKS,
 	TOOL_FORK_TASK_CONTEXT,
 	TOOL_GET_TASK,
@@ -386,6 +387,8 @@ export function getToolTitle(
 			}
 			return "Fork";
 		}
+		case TOOL_EVALUATE_SCRIPT:
+			return "Evaluate";
 		default: {
 			// Handle folder tools and external MCP tools
 			const baseName = stripMcpPrefix(toolName);
