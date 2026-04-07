@@ -1157,6 +1157,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					projectId={projectId}
 					layers={layers}
 					loading={configLoading}
+					connected={connected}
 					updateGlobal={updateGlobal}
 					updateRepo={updateRepo}
 					updateLocal={updateLocal}

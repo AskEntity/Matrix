@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { ThreeLayerConfig } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconPlus, IconRefresh, IconTrash } from "./icons.tsx";
@@ -916,6 +916,7 @@ function GlobalTab({
 	onSave,
 	onRevert,
 	dirty,
+	connected,
 	onRestart,
 }: {
 	layers: ThreeLayerConfig;
@@ -924,10 +925,24 @@ function GlobalTab({
 	onSave: () => void;
 	onRevert: () => void;
 	dirty: boolean;
+	connected: boolean;
 	onRestart: () => void;
 }) {
 	const { t } = useLocale();
 	const [restarting, setRestarting] = useState(false);
+	const wasDisconnected = useRef(false);
+
+	// Track disconnection during restart, reset when reconnected
+	useEffect(() => {
+		if (!restarting) return;
+		if (!connected) {
+			wasDisconnected.current = true;
+		} else if (wasDisconnected.current) {
+			wasDisconnected.current = false;
+			setRestarting(false);
+		}
+	}, [restarting, connected]);
+
 	const tab: ActiveTab = "global";
 	const authGroupNames = Object.keys(
 		(layers.global.authGroups ?? {}) as Record<string, unknown>,
@@ -1123,6 +1138,7 @@ function buildPatch(
 export const SettingsPanel = memo(function SettingsPanel({
 	layers,
 	loading,
+	connected,
 	updateGlobal,
 	updateRepo,
 	updateLocal,
@@ -1134,6 +1150,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 	projectId: string;
 	layers: ThreeLayerConfig;
 	loading: boolean;
+	connected: boolean;
 	updateGlobal: (patch: Record<string, unknown>) => void;
 	updateRepo: (patch: Record<string, unknown>) => void;
 	updateLocal: (patch: Record<string, unknown>) => void;
@@ -1294,6 +1311,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 					onSave={saveGlobal}
 					onRevert={revertGlobal}
 					dirty={dirtyGlobal}
+					connected={connected}
 					onRestart={onRestart}
 				/>
 			)}
