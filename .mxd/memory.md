@@ -77,7 +77,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 | src/task-operations.ts | Shared CRUD operations (MCP + REST call these) |
 | src/tool-names.ts | MCP tool name constants + helpers |
 | src/queue-message-factory.ts | QueueMessage factories (enforce id/ts invariant) |
-| src/event-display.ts | Platform-agnostic tool display (single source) |
+| web/event-display.ts | Tool display logic — title generation, summaries (frontend-only, no truncation) |
 | web/api.ts | Centralized API URL builder |
 | src/daemon/agent-lifecycle.ts | runAgentForNode, stop, deliverMessage, autoResume |
 | src/provider-shared.ts | Run loop, ProviderAdapter, yield/done handling |
