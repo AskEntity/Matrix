@@ -180,7 +180,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [lastOutputTokens, setLastOutputTokens] = useState<number | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [showSettings, setShowSettings] = useState(false);
-	const [restartingDaemon, setRestartingDaemon] = useState(false);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(
 		() => localStorage.getItem("mxd-sidebar-collapsed") === "true",
@@ -504,7 +503,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setLastCacheReadTokens,
 				setLastOutputTokens,
 				setBackgroundProcesses,
-				setRestartingDaemon,
 				t,
 				getViewedSessionId: () => viewedSessionRef.current,
 			}),
@@ -555,7 +553,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	// but for longer gaps we need to re-fetch everything.
 	// Pending messages are derived from JSONL events (no separate endpoint).
 	const handleReconnect = useCallback(() => {
-		setRestartingDaemon(false);
 		if (!projectId) return;
 		const sessionId = viewedSessionRef.current;
 		if (!sessionId) return;
@@ -1158,7 +1155,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					projectId={projectId}
 					layers={layers}
 					loading={configLoading}
-					restartingDaemon={restartingDaemon}
 					theme={theme}
 					onThemeChange={handleThemeChange}
 					updateGlobal={updateGlobal}
@@ -1167,9 +1163,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					onClose={() => setShowSettings(false)}
 					onDeleteProject={handleDeleteProject}
 					onClearAllSessions={handleClearSessions}
-					onRestart={() => {
-						authFetch("/restart-daemon", { method: "POST" }).catch(() => {});
-					}}
 				/>
 			)}
 

@@ -178,7 +178,6 @@ function MockShowcaseInner() {
 			setLastCacheReadTokens: () => {},
 			setLastOutputTokens: () => {},
 			setBackgroundProcesses: () => {},
-			setRestartingDaemon: () => {},
 			t,
 			getViewedSessionId: () => viewedSessionRef.current,
 		};
