@@ -1,8 +1,7 @@
-// Platform-agnostic display logic lives in src/event-display.ts.
+// Display logic lives in web/event-display.ts.
 // These React-specific wrappers add LogEntry handling on top.
-// New platforms (CLI, Telegram) should use src/event-display.ts directly.
 
-export type { ToolTitleOptions } from "../../../src/event-display.ts";
+export type { ToolTitleOptions } from "../../event-display.ts";
 export {
 	basename,
 	formatToolArgs,
@@ -10,7 +9,7 @@ export {
 	getToolTitle,
 	isTitleOnly,
 	summarizeToolResult,
-} from "../../../src/event-display.ts";
+} from "../../event-display.ts";
 
 import { TOOL_BASH } from "../../../src/tool-names.ts";
 

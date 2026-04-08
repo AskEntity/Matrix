@@ -2080,6 +2080,9 @@ button.mxd-tool-card-header:hover {
 	font-weight: 600;
 	color: var(--text-secondary);
 	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
 }
 
 .mxd-tool-card-detail {
