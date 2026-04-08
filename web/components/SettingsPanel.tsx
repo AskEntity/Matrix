@@ -930,9 +930,7 @@ function GlobalTab({
 	onThemeChange: (theme: string) => void;
 }) {
 	const { locale, setLocale, t } = useLocale();
-	const [restartState, setRestartState] = useState<
-		"idle" | "restarting" | "failed"
-	>("idle");
+	const [restarting, setRestarting] = useState(false);
 	const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
 	// Cleanup polling on unmount
@@ -943,39 +941,25 @@ function GlobalTab({
 	}, []);
 
 	const handleRestart = useCallback(() => {
-		setRestartState("restarting");
+		setRestarting(true);
 		authFetch("/restart-daemon", { method: "POST" }).catch(() => {});
 
-		// Start polling after a short delay (daemon needs time to shut down)
-		let elapsed = 0;
-		const POLL_INTERVAL = 1000;
-		const MAX_WAIT = 12000;
-
-		// Wait 1.5s before first poll to let daemon shut down
+		// Poll every 1s until daemon is back, then reload
 		const startDelay = setTimeout(() => {
 			pollingRef.current = setInterval(async () => {
-				elapsed += POLL_INTERVAL;
 				try {
 					const res = await authFetch("/health");
 					if (res.ok) {
-						// Daemon is back — reload page for clean state
 						if (pollingRef.current) clearInterval(pollingRef.current);
 						pollingRef.current = null;
 						window.location.reload();
-						return;
 					}
 				} catch {
 					// Expected while daemon is down
 				}
-				if (elapsed >= MAX_WAIT) {
-					if (pollingRef.current) clearInterval(pollingRef.current);
-					pollingRef.current = null;
-					setRestartState("failed");
-				}
-			}, POLL_INTERVAL);
+			}, 1000);
 		}, 1500);
 
-		// Track the timeout so we can clean it up
 		return () => clearTimeout(startDelay);
 	}, []);
 
@@ -1079,18 +1063,14 @@ function GlobalTab({
 					</span>
 					<button
 						type="button"
-						className={`mxd-btn mxd-btn-sm ${restartState === "failed" ? "mxd-btn-danger" : "mxd-btn-warning"}`}
-						disabled={restartState === "restarting"}
+						className="mxd-btn mxd-btn-warning mxd-btn-sm"
+						disabled={restarting}
 						onClick={handleRestart}
 					>
-						{restartState === "restarting" ? (
+						{restarting ? (
 							<>
 								<span className="mxd-spinner" />{" "}
 								{t("settings.restartDaemonRestarting")}
-							</>
-						) : restartState === "failed" ? (
-							<>
-								<IconRefresh size={12} /> {t("settings.restartDaemonFailed")}
 							</>
 						) : (
 							<>
