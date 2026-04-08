@@ -1,5 +1,5 @@
 /**
- * Platform-agnostic event display layer.
+ * Event display layer — pure UI formatting logic.
  *
  * Converts Event types to structured display data — plain objects with strings,
  * not HTML/React/Telegram-specific markup. Any UI can consume these structs
@@ -7,8 +7,8 @@
  *
  * Start with the most common event types: tool_call, tool_result, message, assistant_text.
  */
-import type { Event } from "./events.ts";
-import type { QueueMessage } from "./message-queue.ts";
+import type { Event } from "../src/events.ts";
+import type { QueueMessage } from "../src/message-queue.ts";
 import {
 	isBuiltinTool,
 	stripMcpPrefix,
@@ -38,7 +38,7 @@ import {
 	TOOL_UPDATE_TASK,
 	TOOL_WRITE_FILE,
 	TOOL_YIELD,
-} from "./tool-names.ts";
+} from "../src/tool-names.ts";
 
 // ── Display data types ──
 
@@ -140,7 +140,7 @@ export interface ToolTitleOptions {
 /**
  * Generate a human-readable title for a tool call.
  * Platform-agnostic — returns plain text, no markup.
- * Pass `{ emoji: true }` for UI contexts that want visual prefixes.
+ * No truncation — display overflow handled by CSS in the rendering layer.
  */
 export function getToolTitle(
 	toolName: string,
@@ -164,12 +164,7 @@ export function getToolTitle(
 		}
 		case TOOL_SEARCH: {
 			const pattern = getArg(toolArgs, "pattern");
-			if (pattern) {
-				const display =
-					pattern.length > 40 ? `${pattern.slice(0, 40)}…` : pattern;
-				return `Search: ${display}`;
-			}
-			return "Search";
+			return pattern ? `Search: ${pattern}` : "Search";
 		}
 		case TOOL_LIST_FILES: {
 			const pattern = getArg(toolArgs, "pattern");
@@ -182,12 +177,7 @@ export function getToolTitle(
 				return `Background: ${bgAction} ${bgId}`;
 			}
 			const command = getArg(toolArgs, "command");
-			if (command) {
-				const display =
-					command.length > 80 ? `${command.slice(0, 80)}…` : command;
-				return `Shell: ${display}`;
-			}
-			return "Shell";
+			return command ? `Shell: ${command}` : "Shell";
 		}
 		case TOOL_BACKGROUND: {
 			const action = getArg(toolArgs, "action");
@@ -259,12 +249,7 @@ export function getToolTitle(
 			const summary = getArg(toolArgs, "summary");
 			const isPassed = status === "passed";
 			const label = isPassed ? "Task Passed" : "Task Failed";
-			if (summary) {
-				const display =
-					summary.length > 60 ? `${summary.slice(0, 60)}…` : summary;
-				return `${label}: ${display}`;
-			}
-			return label;
+			return summary ? `${label}: ${summary}` : label;
 		}
 		case TOOL_YIELD: {
 			if (resultContent) return "Resume from yield";
@@ -301,10 +286,7 @@ export function getToolTitle(
 				try {
 					const json = JSON.parse(resultContent);
 					if (typeof json.title === "string") {
-						resolvedTitle =
-							json.title.length > 40
-								? `${json.title.slice(0, 40)}…`
-								: json.title;
+						resolvedTitle = json.title;
 					}
 				} catch {
 					/* ignore */
@@ -361,19 +343,13 @@ export function getToolTitle(
 		}
 		case TOOL_REPORT_TO_PARENT: {
 			const title = getArg(toolArgs, "title");
-			if (title) {
-				const display = title.length > 60 ? `${title.slice(0, 60)}…` : title;
-				return display;
-			}
-			return "Report";
+			return title ?? "Report";
 		}
 		case TOOL_CLARIFY: {
 			const question = getArg(toolArgs, "question");
 			if (question) {
 				const firstLine = question.split("\n")[0] ?? question;
-				const display =
-					firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine;
-				return `Clarify: ${display}`;
+				return `Clarify: ${firstLine}`;
 			}
 			return "Clarify";
 		}
