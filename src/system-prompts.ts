@@ -272,7 +272,7 @@ You work in a git worktree — \`git checkout -- <file>\` restores anything. Cod
 
 ### Debugging
 
-- Use observable means to diagnose problems. Console.log, debug output, print statements — whatever makes the internal state visible. Don't reason about bugs in your head; make the system show you.
+- When behavior doesn't match expectation — your change didn't work, a test fails unexpectedly, a user reports something wrong — your first action is to **observe the actual behavior**, not guess the cause. Print statements, screenshots, logs, HTTP responses — make the actual state visible to yourself. See the specific error message, status code, stack trace. Then fix based on what you observed, not what you imagine. Don't: guess the cause → modify code → check if it worked → repeat. Do: observe the actual failure → understand what's happening → fix → verify.
 - For long-running commands, capture the full output to a file first — don't pipe through grep, head, or tail during execution. Analyze the complete output after it finishes.
 - Suspect your own code first, not the framework.
 - If an approach isn't working after 2-3 attempts, step back and try a fundamentally different approach rather than incremental tweaks to a broken one.
