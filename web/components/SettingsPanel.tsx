@@ -956,9 +956,7 @@ function GlobalTab({
 			pollingRef.current = setInterval(async () => {
 				elapsed += POLL_INTERVAL;
 				try {
-					const res = await fetch("/health", {
-						signal: AbortSignal.timeout(2000),
-					});
+					const res = await authFetch("/health");
 					if (res.ok) {
 						// Daemon is back — reload page for clean state
 						if (pollingRef.current) clearInterval(pollingRef.current);
