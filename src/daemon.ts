@@ -21,11 +21,7 @@ import type {
 	PendingClarification,
 	SSEClient,
 } from "./daemon/context.ts";
-import {
-	broadcast,
-	broadcastTreeUpdate,
-	emitEvent,
-} from "./daemon/event-system.ts";
+import { broadcastTreeUpdate, emitEvent } from "./daemon/event-system.ts";
 import { getEventStore, getTracker } from "./daemon/helpers.ts";
 import { registerAgentRoutes } from "./daemon/routes/agent.ts";
 import {
@@ -291,17 +287,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Restart daemon
 	app.post("/restart-daemon", async (c) => {
-		// Broadcast daemon_restarting to all connected SSE clients
-		for (const projectId of new Set(
-			[...ctx.sseClients].map((cl) => cl.projectId),
-		)) {
-			broadcast(ctx, projectId, {
-				type: "daemon_restarting",
-				taskId: "",
-				ts: Date.now(),
-			});
-		}
-
 		// Respond first, then shutdown
 		setTimeout(async () => {
 			await shutdown();

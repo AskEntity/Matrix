@@ -120,7 +120,6 @@ export interface EventHandlerDeps {
 			>
 		>
 	>;
-	setRestartingDaemon: React.Dispatch<React.SetStateAction<boolean>>;
 	t: (key: string, params?: Record<string, string>) => string;
 	/** Returns the currently viewed session ID (selectedTaskId ?? rootNodeId). Used to filter SSE events. */
 	getViewedSessionId?: () => string | null;
@@ -145,7 +144,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		setLastCacheReadTokens,
 		setLastOutputTokens,
 		setBackgroundProcesses,
-		setRestartingDaemon,
 	} = deps;
 
 	/** Fallback map: toolCallId → tool name, for old JSONL files missing tool field on tool_result. */
@@ -733,21 +731,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 								return next;
 							});
 						}
-					},
-				};
-
-			case "daemon_restarting":
-				return {
-					entries: [
-						createLogEntry({
-							type: "lifecycle",
-							content: "Daemon restarting…",
-							ts: msg.ts,
-						}),
-					],
-					updates: [],
-					sideEffects: () => {
-						setRestartingDaemon(true);
 					},
 				};
 

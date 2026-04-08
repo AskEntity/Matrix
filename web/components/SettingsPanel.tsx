@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { authFetch } from "../auth.ts";
 import type { ThreeLayerConfig } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconPlus, IconRefresh, IconTrash } from "./icons.tsx";
@@ -916,10 +917,8 @@ function GlobalTab({
 	onSave,
 	onRevert,
 	dirty,
-	restartingDaemon,
 	theme,
 	onThemeChange,
-	onRestart,
 }: {
 	layers: ThreeLayerConfig;
 	draft: Record<string, unknown>;
@@ -927,12 +926,60 @@ function GlobalTab({
 	onSave: () => void;
 	onRevert: () => void;
 	dirty: boolean;
-	restartingDaemon: boolean;
 	theme: string;
 	onThemeChange: (theme: string) => void;
-	onRestart: () => void;
 }) {
 	const { locale, setLocale, t } = useLocale();
+	const [restartState, setRestartState] = useState<
+		"idle" | "restarting" | "failed"
+	>("idle");
+	const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+	// Cleanup polling on unmount
+	useEffect(() => {
+		return () => {
+			if (pollingRef.current) clearInterval(pollingRef.current);
+		};
+	}, []);
+
+	const handleRestart = useCallback(() => {
+		setRestartState("restarting");
+		authFetch("/restart-daemon", { method: "POST" }).catch(() => {});
+
+		// Start polling after a short delay (daemon needs time to shut down)
+		let elapsed = 0;
+		const POLL_INTERVAL = 1000;
+		const MAX_WAIT = 12000;
+
+		// Wait 1.5s before first poll to let daemon shut down
+		const startDelay = setTimeout(() => {
+			pollingRef.current = setInterval(async () => {
+				elapsed += POLL_INTERVAL;
+				try {
+					const res = await fetch("/health", {
+						signal: AbortSignal.timeout(2000),
+					});
+					if (res.ok) {
+						// Daemon is back — reload page for clean state
+						if (pollingRef.current) clearInterval(pollingRef.current);
+						pollingRef.current = null;
+						window.location.reload();
+						return;
+					}
+				} catch {
+					// Expected while daemon is down
+				}
+				if (elapsed >= MAX_WAIT) {
+					if (pollingRef.current) clearInterval(pollingRef.current);
+					pollingRef.current = null;
+					setRestartState("failed");
+				}
+			}, POLL_INTERVAL);
+		}, 1500);
+
+		// Track the timeout so we can clean it up
+		return () => clearTimeout(startDelay);
+	}, []);
 
 	const tab: ActiveTab = "global";
 	const authGroupNames = Object.keys(
@@ -1034,14 +1081,18 @@ function GlobalTab({
 					</span>
 					<button
 						type="button"
-						className="mxd-btn mxd-btn-warning mxd-btn-sm"
-						disabled={restartingDaemon}
-						onClick={onRestart}
+						className={`mxd-btn mxd-btn-sm ${restartState === "failed" ? "mxd-btn-danger" : "mxd-btn-warning"}`}
+						disabled={restartState === "restarting"}
+						onClick={handleRestart}
 					>
-						{restartingDaemon ? (
+						{restartState === "restarting" ? (
 							<>
 								<span className="mxd-spinner" />{" "}
 								{t("settings.restartDaemonRestarting")}
+							</>
+						) : restartState === "failed" ? (
+							<>
+								<IconRefresh size={12} /> {t("settings.restartDaemonFailed")}
 							</>
 						) : (
 							<>
@@ -1174,28 +1225,24 @@ function buildPatch(
 export const SettingsPanel = memo(function SettingsPanel({
 	layers,
 	loading,
-	restartingDaemon,
 	theme,
 	onThemeChange,
 	updateGlobal,
 	updateRepo,
 	updateLocal,
 	onClose,
-	onRestart,
 	onDeleteProject,
 	onClearAllSessions,
 }: {
 	projectId: string;
 	layers: ThreeLayerConfig;
 	loading: boolean;
-	restartingDaemon: boolean;
 	theme: string;
 	onThemeChange: (theme: string) => void;
 	updateGlobal: (patch: Record<string, unknown>) => void;
 	updateRepo: (patch: Record<string, unknown>) => void;
 	updateLocal: (patch: Record<string, unknown>) => void;
 	onClose: () => void;
-	onRestart: () => void;
 	onDeleteProject?: () => void;
 	onClearAllSessions?: () => void;
 }) {
@@ -1365,10 +1412,8 @@ export const SettingsPanel = memo(function SettingsPanel({
 					onSave={saveGlobal}
 					onRevert={revertGlobal}
 					dirty={dirtyGlobal}
-					restartingDaemon={restartingDaemon}
 					theme={theme}
 					onThemeChange={onThemeChange}
-					onRestart={onRestart}
 				/>
 			)}
 			{activeTab === "project" && (
