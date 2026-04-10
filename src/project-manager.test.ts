@@ -267,6 +267,31 @@ describe("ProjectManager", () => {
 		});
 	});
 
+	describe("absolute path enforcement", () => {
+		test("init rejects relative paths", async () => {
+			expect(pm.init("my-project")).rejects.toThrow(
+				/must be absolute.*my-project/,
+			);
+		});
+
+		test("init rejects paths starting with ./", async () => {
+			expect(pm.init("./relative")).rejects.toThrow(/must be absolute/);
+		});
+
+		test("init accepts absolute paths", async () => {
+			const projectPath = join(tempDir, "absolute-ok");
+			const project = await pm.init(projectPath);
+			expect(project.path).toBe(projectPath);
+		});
+
+		test("updateProject rejects relative paths", async () => {
+			const project = await pm.init(join(tempDir, "for-update"));
+			expect(
+				pm.updateProject(project.id, { path: "relative-new" }),
+			).rejects.toThrow(/must be absolute.*relative-new/);
+		});
+	});
+
 	test("rejects duplicate path registration", async () => {
 		const projectPath = join(tempDir, "dup");
 		await pm.init(projectPath);
