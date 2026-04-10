@@ -18,14 +18,19 @@ export function registerConfigRoutes(app: Hono, ctx: DaemonContext) {
 
 	app.patch("/config/global", async (c) => {
 		const partial = (await c.req.json()) as Partial<MatrixConfig>;
-		// Merge scalar fields, union map fields
+		// Build a NEW config object — never mutate ctx.globalConfig in place.
+		// ctx.globalConfig may share a reference with DEFAULT_CONFIG (see daemon.ts
+		// createApp). Mutating it would poison the module singleton. Object.freeze
+		// on DEFAULT_CONFIG would catch this, but we defend here too.
+		const next = { ...ctx.globalConfig } as MatrixConfig;
 		for (const [k, v] of Object.entries(partial)) {
 			if (v === null || v === undefined) {
-				delete (ctx.globalConfig as unknown as Record<string, unknown>)[k];
+				delete (next as unknown as Record<string, unknown>)[k];
 			} else {
-				(ctx.globalConfig as unknown as Record<string, unknown>)[k] = v;
+				(next as unknown as Record<string, unknown>)[k] = v;
 			}
 		}
+		ctx.globalConfig = next;
 		await saveGlobalConfig(ctx.globalConfig, ctx.config.globalConfigPath);
 		return c.json(ctx.globalConfig);
 	});
