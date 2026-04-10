@@ -152,7 +152,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		agentLoopPromises: new Map(),
 		requestCount: 0,
 		startupReady: false,
-		globalConfig: config.initialConfig ?? DEFAULT_CONFIG,
+		// Defensive clone: DEFAULT_CONFIG is frozen, and even if initialConfig is
+		// provided we don't want mutations leaking back to the caller's object.
+		globalConfig: { ...(config.initialConfig ?? DEFAULT_CONFIG) },
 	};
 
 	// Request counter middleware
