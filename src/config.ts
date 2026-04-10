@@ -73,22 +73,30 @@ export type ProjectConfig = Partial<
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
 
-/** Default values for all MatrixConfig fields. */
-export const DEFAULT_CONFIG: MatrixConfig = {
-	authGroups: {},
+/**
+ * Default values for all MatrixConfig fields.
+ *
+ * Frozen at module load (top level + nested objects) to make the shared
+ * singleton physically immutable. Any code that needs to mutate defaults must
+ * first clone (`{ ...DEFAULT_CONFIG }`). This prevents a whole class of
+ * subtle bugs where a handler mutates ctx.globalConfig in place and poisons
+ * DEFAULT_CONFIG for the rest of the process.
+ */
+export const DEFAULT_CONFIG: MatrixConfig = Object.freeze({
+	authGroups: Object.freeze({}),
 	defaultAuth: "",
 	model: DEFAULT_MODEL,
 	childAuth: "parent",
 	childModel: "parent",
 	budgetUsd: -1,
 	clarifyTimeoutMs: 30000,
-	mcpServers: {},
+	mcpServers: Object.freeze({}),
 	port: 7433,
 	selfBootstrap: false,
 
 	thinking: null,
-	cacheTtl: { root: "1h", child: "5m" },
-};
+	cacheTtl: Object.freeze({ root: "1h", child: "5m" }),
+}) as MatrixConfig;
 
 function globalConfigPath(): string {
 	return join(homedir(), ".mxd", "config.json");

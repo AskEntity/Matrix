@@ -747,3 +747,15 @@ System blocks always use `{ type: "ephemeral", ttl: "1h" }` regardless of per-se
 ## ParamDecl Bind: No Overridable
 
 `ParamDecl` bind variant has no `overridable` field. All bind params are always hidden from agent schema and auto-bound by the framework. create_task and create_folder's parentId changed to `kind: "explicit"` (agent must always specify).
+
+## DEFAULT_CONFIG Immutability (frozen + defensive clone)
+
+`DEFAULT_CONFIG` in `src/config.ts` is `Object.freeze`d at module load (top level + nested `mcpServers`, `cacheTtl`, `authGroups`). Any mutation attempt throws at the point of the bug, not three test files later.
+
+`createApp()` in `daemon.ts` defensive-clones: `globalConfig: { ...(config.initialConfig ?? DEFAULT_CONFIG) }`. PATCH `/config/global` in `daemon/routes/config.ts` builds a new object and replaces `ctx.globalConfig` — never mutates in place.
+
+**Bug fixed**: PATCH `/config/global` used to mutate `ctx.globalConfig` field-by-field. When `initialConfig` was not passed to `createApp`, `ctx.globalConfig` was the SAME reference as `DEFAULT_CONFIG`. A PATCH in one test (e.g. `daemon.test.ts` setting `budgetUsd: 50`) poisoned `DEFAULT_CONFIG` for the rest of the process → `config.test.ts` later failed `budgetUsd === -1` assertion. Production consequence: any long-lived daemon that accepts a PATCH `/config/global` has the module singleton mutated for subsequent `createApp()` calls in the same process.
+
+**Lesson**: module-level constants MUST be frozen. Mutation via `Object.entries` + index assignment bypasses TypeScript's readonly checks. Freeze makes the footgun physically impossible, not just discouraged.
+
+The other two PATCH handlers (`/projects/:id/config/repo`, `/projects/:id/config`) load fresh config from disk and build a new `merged` object — not affected by this bug.
