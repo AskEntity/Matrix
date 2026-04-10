@@ -7,7 +7,7 @@ import {
 	rm,
 	writeFile,
 } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import type { Project } from "./types.ts";
 import { ulid } from "./ulid.ts";
 
@@ -89,6 +89,12 @@ export class ProjectManager {
 	 */
 	async init(path: string): Promise<Project> {
 		this.ensureLoaded();
+		if (!isAbsolute(path)) {
+			throw new Error(
+				`Project path must be absolute. Got: ${path}. ` +
+					`Example: /Users/you/projects/my-app`,
+			);
+		}
 		const projectPath = resolve(path);
 
 		// Check if this path is already registered
@@ -265,6 +271,12 @@ export class ProjectManager {
 		}
 
 		if (updates.path !== undefined) {
+			if (!isAbsolute(updates.path)) {
+				throw new Error(
+					`Project path must be absolute. Got: ${updates.path}. ` +
+						`Example: /Users/you/projects/my-app`,
+				);
+			}
 			const newPath = resolve(updates.path);
 
 			if (!existsSync(newPath)) {
