@@ -2,7 +2,7 @@
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
 	encryptWithPublicKey,
 	hasJwtSecret,
@@ -60,7 +60,11 @@ async function api(path: string, options?: RequestInit): Promise<Response> {
 }
 
 async function handleInit(args: string[]): Promise<void> {
-	const path = args[0] ?? process.cwd();
+	// Resolve relative to CLI's cwd (user-predictable) before sending to the
+	// daemon. The daemon rejects non-absolute paths because its own cwd is
+	// wherever launchd started it — meaningless to users.
+	const raw = args[0] ?? process.cwd();
+	const path = resolve(process.cwd(), raw);
 	const res = await api("/projects", {
 		method: "POST",
 		body: JSON.stringify({ path }),

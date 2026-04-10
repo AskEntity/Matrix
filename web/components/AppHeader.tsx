@@ -138,13 +138,15 @@ export const AppHeader = memo(function AppHeader({
 							value={newProjectPath}
 							onChange={(e) => onNewProjectPathChange(e.target.value)}
 							disabled={creatingProject}
-							style={{ width: "220px" }}
+							style={{ width: "260px" }}
 						/>
 						<button
 							type="submit"
 							className="mxd-btn mxd-btn-primary"
 							style={{ fontSize: "12px", padding: "4px 10px" }}
-							disabled={creatingProject}
+							disabled={
+								creatingProject || !newProjectPath.trim().startsWith("/")
+							}
 						>
 							{creatingProject ? (
 								<>
