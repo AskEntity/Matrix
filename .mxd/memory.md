@@ -37,6 +37,7 @@ This is a product property of Matrix's commit model, not a policy preference. Br
 3. **Won't communicate** — text blocks invisible to parent. Use send_message.
 4. **Won't question architecture** — "why does this exist" > "how to make it work".
 5. **"Unify" = add third path** — delete until ONE remains.
+6. **Premature heuristic stacking** — when building a tool/analyzer, agents default to "handle every imagined case upfront": classifications, category labels, filter flags, pattern-match explanations. Each branch corresponds to an **imagined** use need, not an **observed** one. Half of them end up dead code, and the non-dead ones often hide data patterns the raw output would have revealed. **Correct default: start with the simplest raw dump. Add heuristics only after real use exposes a concrete need.** A 50-line dump is far more valuable than a 500-line "smart analyzer" whose categories were invented at design time. User framing: "先列出原始数据，实际使用的时候慢慢加 heuristic — 我们还不确定是不是真正需要某些条目".
 
 ## Change Ownership Principle
 
