@@ -7,7 +7,6 @@ import {
 	type Event,
 	findOrphanedBackgroundProcesses,
 	findUnconsumedMessages,
-	hasPendingYield,
 	type SessionConfigEvent,
 } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
@@ -464,8 +463,28 @@ export async function deliverMessage(
 	// to write shouldn't influence the fresh-vs-resume decision.
 	const shouldResume = eventStore.has(nodeId);
 
-	// Step 1: ALWAYS write to JSONL (SSE broadcast + persistence).
-	// This ensures findUnconsumedMessages can recover it on restart.
+	// Preferred path: hand to the running agent's queue. queue.enqueue()
+	// synchronously invokes the onPersist callback (bound in runAgentForNode
+	// to emitEvent), so JSONL write + delivery are a single atomic step.
+	// Skip when the launch lock is held — the agent is still reading JSONL,
+	// so we fall through to the direct-write path and let findUnconsumedMessages
+	// recover the message when the agent finishes booting.
+	if (!ctx.launchingNodes.has(nodeId)) {
+		const queue = tracker.getTask(nodeId)?.session?.queue;
+		if (queue) {
+			try {
+				queue.enqueue(message);
+				return "enqueued";
+			} catch {
+				// Queue was closed — fall through to direct persist/launch
+			}
+		}
+	}
+
+	// Agent is not running (or is mid-launch): no queue to persist through,
+	// so write the message directly. findUnconsumedMessages will recover it
+	// when the agent next starts, and auto-launch below picks up the slack
+	// for idle tasks.
 	emitEvent(ctx, project.id, {
 		type: "message",
 		id: message.id,
@@ -473,28 +492,6 @@ export async function deliverMessage(
 		body: message,
 		ts: message.ts,
 	});
-
-	// Step 2: Try direct queue delivery if agent is running AND fully initialized.
-	// Skip if launch lock is held — the agent is still reading JSONL events.
-	// Our message is already in JSONL (step 1) and will be recovered by findUnconsumedMessages.
-	if (!ctx.launchingNodes.has(nodeId)) {
-		const queue = tracker.getTask(nodeId)?.session?.queue;
-		if (queue) {
-			try {
-				// Mark the message id as already persisted BEFORE enqueueing so
-				// recordQueueEvents knows not to re-emit it. Prevents duplicate
-				// `message` events on adjacent JSONL lines (the two-phase message
-				// lifecycle invariant — each message persisted exactly once).
-				queue.markPersisted(message.id);
-				queue.enqueue(message);
-				return "enqueued";
-			} catch {
-				// Queue was closed — fall through to persist/launch
-			}
-		}
-	}
-
-	// Step 3: Agent not running — flush JSONL.
 	await eventStore.flushSession(nodeId);
 
 	// Step 4: Auto-launch (unless quiet).
@@ -664,8 +661,25 @@ export async function runAgentForNode(
 		// Compute depth from the tree
 		const depth = computeDepth(tracker, nodeId);
 
-		// Create the queue first — shared between MCP tools and runChildCore
-		const childQueue = new MessageQueue();
+		// Create the queue first — shared between MCP tools and runChildCore.
+		// onPersist binds every queue.enqueue to a single JSONL write via
+		// emitEvent. This is the ONE persistence path for queue messages:
+		// deliverMessage, bash background_complete, MCP tree_change
+		// notifyTargetNode, and REST compact all route through queue.enqueue
+		// and therefore land in JSONL exactly once. JSONL-recovery paths use
+		// `enqueue(msg, { replay: true })` to skip onPersist (the message is
+		// already on disk from the pre-crash session).
+		const childQueue = new MessageQueue({
+			onPersist: (msg) => {
+				emitEvent(ctx, project.id, {
+					type: "message",
+					id: msg.id,
+					taskId: nodeId,
+					body: msg,
+					ts: msg.ts,
+				});
+			},
+		});
 
 		// Create and attach TaskSession to the node
 		const abortController = new AbortController();
@@ -730,34 +744,26 @@ export async function runAgentForNode(
 				activeEvents = eventStore.readActive(nodeId);
 			}
 
-			// Write synthetic background_complete for bg processes killed by restart.
-			// For yielding agents: enqueue to queue instead of writing to JSONL
-			// (events between yield tool_call and its tool_result break the converter).
+			// Synthesize background_complete messages for bg processes that
+			// were killed by the restart. Append them to JSONL unconditionally
+			// — the walker skips standalone `message` events with ids (they
+			// materialize only when a messages_consumed event references them),
+			// so writing them between a pending yield tool_call and its
+			// eventual tool_result is safe. findUnconsumedMessages below will
+			// enqueue them via replay so onPersist does not re-write them.
 			const bgOrphans = findOrphanedBackgroundProcesses(activeEvents, nodeId);
-			const childIsYielding = hasPendingYield(activeEvents);
-			if (bgOrphans.length > 0 && !childIsYielding) {
+			if (bgOrphans.length > 0) {
 				await eventStore.appendBatch(nodeId, bgOrphans);
 				activeEvents = [...activeEvents, ...bgOrphans];
 			}
-			if (bgOrphans.length > 0 && childIsYielding) {
-				for (const orphan of bgOrphans) {
-					if (orphan.type === "message" && orphan.body) {
-						// Orphans were just appended to JSONL above — mark persisted
-						// so recordQueueEvents doesn't re-emit on drain.
-						childQueue.markPersisted(orphan.body.id);
-						childQueue.enqueue(orphan.body);
-					}
-				}
-			}
 
 			// Recover unconsumed messages. These were already persisted to JSONL
-			// by prior deliverMessage calls or direct-enqueue paths — their
-			// `message` events are still on disk (just unconsumed). Mark them
-			// persisted so the provider loop doesn't re-emit them on drain.
+			// by prior queue.enqueue calls (or just now by the bgOrphans append
+			// above) — their `message` events are on disk. replay: true skips
+			// onPersist so the recovery does not create byte-identical duplicates.
 			const unconsumed = findUnconsumedMessages(activeEvents);
 			for (const msg of unconsumed) {
-				childQueue.markPersisted(msg.id);
-				childQueue.enqueue(msg);
+				childQueue.enqueue(msg, { replay: true });
 			}
 		}
 
