@@ -14,6 +14,17 @@ export interface CacheMissRow {
 	outputTokens: number;
 	hitPct: number; // 0..100
 	gapMs: number | null; // null if first event in file
+	/**
+	 * Was there an `agent_stopped` event between the previous usage and this
+	 * one? This is the precise "crossed an agent lifecycle boundary" signal —
+	 * `orchestration_started` alone is ambiguous (fresh spawn, idle resume,
+	 * post-compact restart all emit it), but `agent_stopped` unambiguously
+	 * means the previous agent died.
+	 *
+	 * For the first usage (no prior usage), this is false — the flag describes
+	 * "what happened IN the gap", and there is no gap.
+	 */
+	stoppedInGap: boolean;
 }
 
 export interface AnalyzeResult {
@@ -27,7 +38,17 @@ const HIT_THRESHOLD = 0.93;
  * Parse a JSONL file line-by-line, returning cache miss rows for every usage
  * event where cacheReadTokens / inputTokens < HIT_THRESHOLD.
  *
- * `gapMs` is wall-clock delta to the previous event OF ANY TYPE — not just usage.
+ * `gapMs` is wall-clock delta to the previous VALID usage event (inputTokens>0).
+ * Measuring against "any event" is useless in practice because the line right
+ * before a usage is almost always that turn's own tool_result — gap is then
+ * 0-25s and tells you nothing. Gap-between-usages is the signal that matters:
+ *   gap > 1h  → TTL expiry suspect
+ *   gap < 60s → not TTL; drift / restart / anti-distillation injection
+ *
+ * Every valid usage updates prevUsageTs regardless of hit/miss status — a hit
+ * in the middle must still reset the clock, otherwise the next miss's gap
+ * would be inflated across the intervening hits and misread as TTL expiry.
+ *
  * Synchronous on purpose: this is a CLI one-shot; readFileSync is simpler than
  * a line-streaming abstraction and fast enough for realistic session sizes.
  */
@@ -35,7 +56,8 @@ export function analyzeCacheMisses(jsonlContent: string): AnalyzeResult {
 	const lines = jsonlContent.split("\n");
 	const misses: CacheMissRow[] = [];
 	let totalUsageEvents = 0;
-	let prevEventTs: number | null = null;
+	let prevUsageTs: number | null = null;
+	let stoppedSinceLastUsage = false;
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
@@ -47,9 +69,10 @@ export function analyzeCacheMisses(jsonlContent: string): AnalyzeResult {
 			continue;
 		}
 
-		const ts = typeof event.ts === "number" ? event.ts : null;
-		const gapMs = prevEventTs != null && ts != null ? ts - prevEventTs : null;
-		if (ts != null) prevEventTs = ts;
+		if (event.type === "agent_stopped") {
+			stoppedSinceLastUsage = true;
+			continue;
+		}
 
 		if (event.type !== "usage") continue;
 
@@ -58,6 +81,18 @@ export function analyzeCacheMisses(jsonlContent: string): AnalyzeResult {
 		if (inputTokens === 0) continue; // garbage row — skip
 
 		totalUsageEvents++;
+
+		const ts = typeof event.ts === "number" ? event.ts : null;
+		const gapMs = prevUsageTs != null && ts != null ? ts - prevUsageTs : null;
+		// Capture BEFORE reset — this row's hasStopped reflects the just-ended gap.
+		// First usage (prevUsageTs === null): no gap exists, so stoppedInGap is
+		// false regardless of any agent_stopped events before it.
+		const hasStopped = prevUsageTs != null && stoppedSinceLastUsage;
+
+		// Update prevUsageTs regardless of hit/miss: a hit still resets the clock
+		// so the next miss's gap reflects the real inter-usage interval.
+		if (ts != null) prevUsageTs = ts;
+		stoppedSinceLastUsage = false;
 
 		const cacheReadTokens =
 			typeof event.cacheReadTokens === "number" ? event.cacheReadTokens : 0;
@@ -80,6 +115,7 @@ export function analyzeCacheMisses(jsonlContent: string): AnalyzeResult {
 			outputTokens,
 			hitPct: ratio * 100,
 			gapMs,
+			stoppedInGap: hasStopped,
 		});
 	}
 
@@ -126,7 +162,8 @@ export function formatRow(row: CacheMissRow): string {
 		`cc=${formatNum(row.cacheCreationTokens)}  ` +
 		`out=${formatNum(row.outputTokens)}  ` +
 		`hit=${row.hitPct.toFixed(1)}%  ` +
-		`gap=${formatGap(row.gapMs)}`
+		`gap=${formatGap(row.gapMs)}  ` +
+		`stopped=${row.stoppedInGap ? "yes" : "no"}`
 	);
 }
 
