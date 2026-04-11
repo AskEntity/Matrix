@@ -299,15 +299,24 @@ export function buildToolResultEvents(
 	execResults: ToolResult[],
 	cancellationQueueMsgs: QueueMessage[],
 	taskId = "",
+	queue?: MessageQueue,
 ): Event[] {
 	const toolEvents: Event[] = [];
 
-	// Collect consumed message IDs from cancellation queue messages
+	// Collect consumed message IDs from cancellation queue messages.
+	// Two-phase lifecycle invariant (same as recordQueueEvents): messages
+	// marked `queue.isPersisted(id)` were already written to JSONL at send
+	// time via deliverMessage — we must NOT re-emit them. Direct-enqueue
+	// messages (background_complete from bash, tree_change notifyTargetNode,
+	// compact route) are NOT persisted — we emit them here for the first
+	// (and only) JSONL write.
 	const consumedIds: string[] = [];
 	const nonUserQueueEvents: Event[] = [];
 	for (const qm of cancellationQueueMsgs) {
-		if (qm.source === "user" && qm.id) {
-			// message already written to JSONL at send time — just track ID
+		const alreadyPersisted = queue
+			? queue.isPersisted(qm.id)
+			: qm.source === "user"; // legacy fallback when no queue provided
+		if (alreadyPersisted) {
 			consumedIds.push(qm.id);
 		} else {
 			const evt = queueMessageToEvent(qm, taskId);
@@ -315,6 +324,11 @@ export function buildToolResultEvents(
 			if (evtId) consumedIds.push(evtId);
 			nonUserQueueEvents.push(evt);
 		}
+	}
+
+	// Drop persisted-id bookkeeping for messages that have now been consumed.
+	if (queue && consumedIds.length > 0) {
+		queue.clearPersisted(consumedIds);
 	}
 
 	for (let idx = 0; idx < toolIds.length; idx++) {
@@ -752,7 +766,7 @@ export async function* runProviderLoop(
 
 			// Record queue events for the consumed messages
 			if (emit) {
-				recordQueueEvents(emit, allMsgs);
+				recordQueueEvents(emit, allMsgs, undefined, "", queue);
 			}
 		}
 	}
@@ -914,7 +928,7 @@ export async function* runProviderLoop(
 			// Emit queue events (messages_consumed, etc.) — the tool_result itself
 			// is already emitted via yield above, don't double-emit
 			if (emit) {
-				recordQueueEvents(emit, doneResult.nonCompact);
+				recordQueueEvents(emit, doneResult.nonCompact, undefined, "", queue);
 			}
 
 			pendingDoneToolCall = null;
@@ -978,7 +992,13 @@ export async function* runProviderLoop(
 
 			// Emit queue events and messages_consumed
 			if (emit) {
-				recordQueueEvents(emit, yieldResult.nonCompact);
+				recordQueueEvents(
+					emit,
+					yieldResult.nonCompact,
+					undefined,
+					"",
+					queue,
+				);
 			}
 			continue;
 		}
@@ -1114,7 +1134,13 @@ export async function* runProviderLoop(
 
 			// Emit queue events for consumed messages AFTER tool_result
 			if (emit) {
-				recordQueueEvents(emit, yieldResult.nonCompact);
+				recordQueueEvents(
+					emit,
+					yieldResult.nonCompact,
+					undefined,
+					"",
+					queue,
+				);
 			}
 
 			pendingYieldToolCall = null;
@@ -1437,6 +1463,31 @@ export async function* runProviderLoop(
 		totalCacheReadTokens += usage.cacheReadTokens ?? 0;
 		estimatedInputTokens = usage.totalContextTokens + usage.outputTokens;
 
+		// Extract text and tool uses from response
+		const responseText = adapter.getResponseText(response);
+		if (responseText) {
+			lastText = responseText;
+		}
+		const toolUses = compactionPending ? [] : adapter.getToolUses(response);
+
+		// Add assistant message to history
+		adapter.addAssistantMessage(messages, response, compactionPending);
+
+		// Emit individual Events for each content block FIRST.
+		// The `usage` event is emitted AFTER so the frontend's `attach_usage`
+		// walk-backwards logic finds this turn's assistant_text, not the
+		// previous turn's (off-by-one bug — cache badge on wrong message).
+		if (emit) {
+			const contentEvents = adapter.buildResponseEvents(
+				response,
+				compactionPending,
+			);
+			for (const evt of contentEvents) {
+				emit(evt);
+			}
+		}
+
+		// Emit usage AFTER content events — see ordering note above.
 		const usageEvt: Event = {
 			type: "usage",
 			inputTokens: usage.totalContextTokens,
@@ -1450,26 +1501,21 @@ export async function* runProviderLoop(
 		emit?.(usageEvt);
 		yield usageEvt;
 
-		// Extract text and tool uses from response
-		const responseText = adapter.getResponseText(response);
-		if (responseText) {
-			lastText = responseText;
-			if (!compactionPending) {
-				// assistant_text is also emitted via buildResponseEvents — this yield
-				// is only for consumer loop advancement
-				yield {
-					type: "assistant_text",
-					content: responseText,
-					taskId: "",
-					ts: Date.now(),
-				};
-			}
+		// Yield assistant_text and tool_call events to the consumer loop AFTER
+		// emission. These yields are control-flow signals only — they are NOT
+		// persisted (assistant_text / tool_call are emitted via buildResponseEvents
+		// above). Consumer loops (SSE pumping, cost tracking) don't care about
+		// ordering relative to usage, so emission order is what matters for JSONL.
+		if (responseText && !compactionPending) {
+			yield {
+				type: "assistant_text",
+				content: responseText,
+				taskId: "",
+				ts: Date.now(),
+			};
 		}
-
-		const toolUses = compactionPending ? [] : adapter.getToolUses(response);
 		if (!compactionPending) {
 			for (const tu of toolUses) {
-				// tool_call is also emitted via buildResponseEvents — yield for control flow
 				yield {
 					type: "tool_call",
 					tool: tu.name,
@@ -1478,20 +1524,6 @@ export async function* runProviderLoop(
 					taskId: "",
 					ts: Date.now(),
 				};
-			}
-		}
-
-		// Add assistant message to history
-		adapter.addAssistantMessage(messages, response, compactionPending);
-
-		// Emit individual Events for each content block
-		if (emit) {
-			const contentEvents = adapter.buildResponseEvents(
-				response,
-				compactionPending,
-			);
-			for (const evt of contentEvents) {
-				emit(evt);
 			}
 		}
 
@@ -1591,7 +1623,13 @@ export async function* runProviderLoop(
 
 			// Emit queue events and messages_consumed
 			if (emit) {
-				recordQueueEvents(emit, yieldResult.nonCompact);
+				recordQueueEvents(
+					emit,
+					yieldResult.nonCompact,
+					undefined,
+					"",
+					queue,
+				);
 			}
 			continue;
 		}
@@ -1796,6 +1834,8 @@ export async function* runProviderLoop(
 				toolUses.map((tu) => ({ id: tu.id, name: tu.name })),
 				execResults,
 				cancellationQueueMsgs,
+				"",
+				queue,
 			);
 			for (const evt of toolEvents) {
 				emit(evt);
