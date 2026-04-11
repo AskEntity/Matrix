@@ -303,7 +303,7 @@ export function getBackgroundStatus(
 	}
 
 	parts.push(
-		"\n(Process still running. Use read_file on the paths above for partial output.)",
+		"\n(Process still running. Call yield() to wait for completion — the background_complete message will wake you up. Or read_file on the paths above for partial output without waiting.)",
 	);
 
 	return parts.join("\n");
