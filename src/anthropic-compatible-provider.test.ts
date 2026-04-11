@@ -88,6 +88,7 @@ async function executeTool(
 	const defaultSession = {
 		queue: queue ?? new MessageQueue(),
 		abortController: new AbortController(),
+		loopTraceId: "test-trace-id",
 		cwd,
 		// Use empty string when no fallbackCwd — bash checks `if (fallbackCwd)` (empty = falsy = no worktree warning)
 		fallbackCwd: fallbackCwd ?? "",
@@ -1968,6 +1969,7 @@ describe("done tool", () => {
 		node.session = {
 			queue,
 			abortController: new AbortController(),
+			loopTraceId: "test-trace-id",
 			cwd: tempDir,
 			fallbackCwd: tempDir,
 			depth: 0,

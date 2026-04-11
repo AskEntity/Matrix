@@ -90,6 +90,23 @@ export class MessageQueue {
 	} | null = null;
 	private closed = false;
 
+	/**
+	 * IDs of messages that were ALREADY persisted to JSONL by the sender
+	 * (via deliverMessage) before being enqueued. The provider loop MUST
+	 * NOT re-emit them during drain — a second write would create a
+	 * byte-identical duplicate on adjacent JSONL lines.
+	 *
+	 * Messages enqueued directly (background_complete from bash, tree_change
+	 * from MCP tool notifyTargetNode, compact from REST route) are NOT
+	 * in this set — the drain code must emit them on first drain to
+	 * persist them to JSONL.
+	 *
+	 * This lives on MessageQueue rather than on QueueMessage itself so the
+	 * QueueMessage shape stays free of runtime-only fields (preserves
+	 * byte-identical JSONL `body` serialization).
+	 */
+	private persistedIds = new Set<string>();
+
 	/** Whether the queue has been closed. */
 	get isClosed(): boolean {
 		return this.closed;
@@ -103,6 +120,30 @@ export class MessageQueue {
 
 	/** Optional callback fired after messages are drained (consumed) from the queue. */
 	onDrain?: () => void;
+
+	/**
+	 * Mark a message id as already persisted to JSONL by the sender.
+	 * Called by deliverMessage after step 1 (JSONL write) and before step 2
+	 * (queue.enqueue). Direct-enqueue paths (bash bg complete, tree_change
+	 * notifyTargetNode, REST compact) do NOT call this — their messages will
+	 * be emitted to JSONL by recordQueueEvents during drain.
+	 */
+	markPersisted(id: string): void {
+		this.persistedIds.add(id);
+	}
+
+	/** Whether the given message id was marked as already persisted to JSONL. */
+	isPersisted(id: string): boolean {
+		return this.persistedIds.has(id);
+	}
+
+	/**
+	 * Forget persisted ids for messages that have been drained and their
+	 * messages_consumed event written. Keeps the set bounded.
+	 */
+	clearPersisted(ids: Iterable<string>): void {
+		for (const id of ids) this.persistedIds.delete(id);
+	}
 
 	/** Add a message to the queue. If someone is waiting via wait(), resolve them immediately.
 	 * When `quiet` is true, the message is added without waking a pending wait() — picked up on next drain() or wait() with pending messages. */

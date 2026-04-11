@@ -154,19 +154,34 @@ async function createAgentContext(
 	registerSideEffects({
 		emit: (projectId: string, event: Record<string, unknown>) => {
 			const ts = (event.ts as number) || Date.now();
+			// Auto-inject traceId from the target task's session if missing.
+			// Tool handlers emit via R.emit and don't carry loopTraceId —
+			// we look it up on the current session so the event can be
+			// attributed to the run that produced it.
+			const lookupTraceId = (taskId: unknown): string | undefined => {
+				if (typeof taskId !== "string" || !taskId) return undefined;
+				const tracker = ctx.trackers.get(projectId);
+				return tracker?.getTask(taskId)?.session?.loopTraceId;
+			};
 			if (event.type === "agent_event") {
 				const evtTaskId = (event.taskId as string) || "";
 				const eventType = event.eventType as string;
 				const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
+				const existingTraceId = (rest as Record<string, unknown>).traceId;
+				const traceId = existingTraceId ?? lookupTraceId(evtTaskId);
 				emitEvent(ctx, projectId, {
 					type: eventType,
 					taskId: evtTaskId,
 					ts,
 					...rest,
+					...(traceId ? { traceId } : {}),
 				} as unknown as Event);
 			} else {
-				const withTs = event.ts ? event : { ...event, ts };
-				emitEvent(ctx, projectId, withTs as unknown as Event);
+				const existingTraceId = event.traceId;
+				const traceId = existingTraceId ?? lookupTraceId(event.taskId);
+				const base = event.ts ? event : { ...event, ts };
+				const withIds = traceId ? { ...base, traceId } : base;
+				emitEvent(ctx, projectId, withIds as unknown as Event);
 			}
 		},
 		broadcastTree: (projectId: string) => {
@@ -303,6 +318,10 @@ export async function stopAgent(
 	// Check if root agent is actually running
 	if (!rootNode?.session) return;
 
+	// Capture the root loop's traceId BEFORE clearing sessions — so the
+	// agent_stopped event below can be attributed to the run that was stopped.
+	const rootLoopTraceId = rootNode.session.loopTraceId;
+
 	// Stop ALL agents (root + children) via session on tracker nodes.
 	// Each node's session has its own queue + abort controller.
 	for (const node of tracker.allNodes()) {
@@ -335,6 +354,7 @@ export async function stopAgent(
 	emitEvent(ctx, projectId, {
 		type: "agent_stopped",
 		taskId: rootNodeId,
+		traceId: rootLoopTraceId,
 		ts: Date.now(),
 	});
 }
@@ -359,6 +379,10 @@ export async function stopTask(
 	if (!node) return false;
 
 	if (!node.session) return false;
+
+	// Capture the loop's traceId BEFORE clearing session — so the
+	// agent_stopped event below can be attributed to the run that was stopped.
+	const stoppedLoopTraceId = node.session.loopTraceId;
 
 	// Grab the loop promise BEFORE clearing session — once session is gone,
 	// the loop's finally block will fire and resolve this promise.
@@ -393,6 +417,7 @@ export async function stopTask(
 	emitEvent(ctx, projectId, {
 		type: "agent_stopped",
 		taskId: nodeId,
+		traceId: stoppedLoopTraceId,
 		ts: Date.now(),
 	});
 
@@ -456,6 +481,11 @@ export async function deliverMessage(
 		const queue = tracker.getTask(nodeId)?.session?.queue;
 		if (queue) {
 			try {
+				// Mark the message id as already persisted BEFORE enqueueing so
+				// recordQueueEvents knows not to re-emit it. Prevents duplicate
+				// `message` events on adjacent JSONL lines (the two-phase message
+				// lifecycle invariant — each message persisted exactly once).
+				queue.markPersisted(message.id);
 				queue.enqueue(message);
 				return "enqueued";
 			} catch {
@@ -624,12 +654,13 @@ export async function runAgentForNode(
 	let ownSession: TaskSession | undefined;
 	// Declared outside try so Phase 2 (after finally) can access the result.
 	let agentResult: AgentResult | undefined;
+	// Generate a unique trace ID for this agent loop instance.
+	// Stored on TaskSession so external emit paths (stopTask, tool handlers via
+	// resource-registry) can look it up and auto-inject it. The provider loop's
+	// emitWithTask also reads this to tag every event with the run's trace.
+	// Enables detection of interleaved events from duplicate launches.
+	const loopTraceId = ulid();
 	try {
-		// Generate a unique trace ID for this agent loop instance.
-		// Injected into every event emitted by this loop via emitWithTask.
-		// Enables detection of interleaved events from duplicate launches.
-		const loopTraceId = ulid();
-
 		// Compute depth from the tree
 		const depth = computeDepth(tracker, nodeId);
 
@@ -641,6 +672,7 @@ export async function runAgentForNode(
 		const taskSession: TaskSession = {
 			queue: childQueue,
 			abortController,
+			loopTraceId,
 			cwd: agentCwd,
 			fallbackCwd: agentCwd,
 			depth,
@@ -710,14 +742,21 @@ export async function runAgentForNode(
 			if (bgOrphans.length > 0 && childIsYielding) {
 				for (const orphan of bgOrphans) {
 					if (orphan.type === "message" && orphan.body) {
+						// Orphans were just appended to JSONL above — mark persisted
+						// so recordQueueEvents doesn't re-emit on drain.
+						childQueue.markPersisted(orphan.body.id);
 						childQueue.enqueue(orphan.body);
 					}
 				}
 			}
 
-			// Recover unconsumed messages
+			// Recover unconsumed messages. These were already persisted to JSONL
+			// by prior deliverMessage calls or direct-enqueue paths — their
+			// `message` events are still on disk (just unconsumed). Mark them
+			// persisted so the provider loop doesn't re-emit them on drain.
 			const unconsumed = findUnconsumedMessages(activeEvents);
 			for (const msg of unconsumed) {
+				childQueue.markPersisted(msg.id);
 				childQueue.enqueue(msg);
 			}
 		}
@@ -854,6 +893,7 @@ export async function runAgentForNode(
 				title: node.title,
 				costUsd: updatedNode.costUsd,
 				budgetUsd: updatedNode.budgetUsd,
+				traceId: loopTraceId,
 				ts: Date.now(),
 			});
 		}
@@ -883,6 +923,7 @@ export async function runAgentForNode(
 					totalTurns: 0,
 					taskCount: childNodes.length,
 				},
+				traceId: loopTraceId,
 				ts: Date.now(),
 			});
 		}
@@ -903,6 +944,7 @@ export async function runAgentForNode(
 				type: "error",
 				taskId: nodeId,
 				message: `Agent error: ${errorMsg}`,
+				traceId: loopTraceId,
 				ts: Date.now(),
 			});
 		}
@@ -934,6 +976,7 @@ export async function runAgentForNode(
 			emitEvent(ctx, project.id, {
 				type: "agent_stopped",
 				taskId: nodeId,
+				traceId: loopTraceId,
 				ts: Date.now(),
 			});
 		}
@@ -1009,6 +1052,7 @@ export async function runAgentForNode(
 					taskId: nodeId,
 					status: newStatus,
 					summary: agentResult.doneSummary ?? "",
+					traceId: loopTraceId,
 					ts: Date.now(),
 				});
 			}
