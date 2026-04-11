@@ -123,6 +123,24 @@ export class MessageQueue {
 		this.onPersist = opts?.onPersist;
 	}
 
+	/** Whether the queue has an onPersist callback wired. */
+	hasOnPersist(): boolean {
+		return this.onPersist != null;
+	}
+
+	/**
+	 * Wire an onPersist callback post-construction. Used by the provider loop
+	 * to enforce `enqueue === persist` at loop entry when the caller passed
+	 * a bare queue (typical in unit tests). Only allowed when no onPersist
+	 * is currently set — prevents silently overwriting production wiring.
+	 */
+	setOnPersist(cb: (msg: QueueMessage) => void): void {
+		if (this.onPersist != null) {
+			throw new Error("onPersist already set");
+		}
+		this.onPersist = cb;
+	}
+
 	/** Whether the queue has been closed. */
 	get isClosed(): boolean {
 		return this.closed;

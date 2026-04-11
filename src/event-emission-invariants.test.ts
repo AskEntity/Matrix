@@ -297,10 +297,7 @@ async function waitForDone(
 	throw new Error(`Agent did not call done() within ${timeoutMs}ms`);
 }
 
-async function waitForIdle(
-	ctx: TestContext,
-	timeoutMs = 10000,
-): Promise<void> {
+async function waitForIdle(ctx: TestContext, timeoutMs = 10000): Promise<void> {
 	const tracker = await ctx.app.getTracker(ctx.projectId);
 	const rootNodeId = tracker.rootNodeId;
 	const start = Date.now();
@@ -421,9 +418,7 @@ async function assertMessageAppearsOnce(
 				.filter((e) => e.type === "message")
 				.map((e) => ({
 					id: (e as { id?: string }).id,
-					source: (
-						(e as { body?: { source?: string } }).body ?? {}
-					).source,
+					source: (e as { body?: { source?: string } }).body?.source,
 				})),
 		);
 	}
@@ -619,6 +614,7 @@ describe("Bug 1 — dedup across restarts (replay path)", () => {
 		const provider = createMockedProviderWithMock(ctx.mockAPI);
 		ctx.app = createApp({ dataDir: ctx.dataDir, agentProvider: provider });
 		await ctx.app.pm.load();
+		await ctx.app.autoResumeProjects();
 		ctx.app.markReady();
 
 		// Allow auto-resume to kick in (finds unconsumed message, replay enqueue)
@@ -667,13 +663,9 @@ describe("Bug 1 — deliverMessage paths produce byte-identical JSONL", () => {
 			"Peer A",
 			"path A content",
 		);
-		await deliverMessage(
-			ctx.app.ctx,
-			project,
-			tracker.rootNodeId,
-			pathAMsg,
-			{ quiet: true },
-		);
+		await deliverMessage(ctx.app.ctx, project, tracker.rootNodeId, pathAMsg, {
+			quiet: true,
+		});
 		// Give time for the direct emit to flush
 		await new Promise((r) => setTimeout(r, 50));
 		const eventsA = await readSessionEvents(ctx, tracker.rootNodeId);
@@ -692,12 +684,7 @@ describe("Bug 1 — deliverMessage paths produce byte-identical JSONL", () => {
 			"Peer B",
 			"path B content",
 		);
-		await deliverMessage(
-			ctx.app.ctx,
-			project,
-			tracker.rootNodeId,
-			pathBMsg,
-		);
+		await deliverMessage(ctx.app.ctx, project, tracker.rootNodeId, pathBMsg);
 
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
@@ -842,9 +829,9 @@ describe("Bug 3 — traceId semantics (A-class events have it, B-class don't)", 
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const events = await readSessionEvents(ctx, tracker.rootNodeId);
-		const started = events.find(
-			(e) => e.type === "orchestration_started",
-		) as (Event & { traceId?: string }) | undefined;
+		const started = events.find((e) => e.type === "orchestration_started") as
+			| (Event & { traceId?: string })
+			| undefined;
 		expect(started?.traceId).toBeDefined();
 		expect(typeof started?.traceId).toBe("string");
 		expect((started?.traceId ?? "").length).toBeGreaterThan(0);
@@ -859,9 +846,9 @@ describe("Bug 3 — traceId semantics (A-class events have it, B-class don't)", 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const events = await readSessionEvents(ctx, tracker.rootNodeId);
 
-		const started = events.find(
-			(e) => e.type === "orchestration_started",
-		) as (Event & { traceId?: string }) | undefined;
+		const started = events.find((e) => e.type === "orchestration_started") as
+			| (Event & { traceId?: string })
+			| undefined;
 		expect(started?.traceId).toBeDefined();
 		const expectedTrace = started?.traceId;
 
@@ -870,7 +857,7 @@ describe("Bug 3 — traceId semantics (A-class events have it, B-class don't)", 
 		) as (Event & { traceId?: string }) | undefined;
 		if (completed) {
 			// orchestration_completed only fires for root agents on finalization
-			expect(completed.traceId).toBe(expectedTrace!);
+			expect(completed.traceId).toBe(expectedTrace as string);
 		}
 
 		const done = events.find((e) => e.type === "done_notified") as
@@ -878,7 +865,7 @@ describe("Bug 3 — traceId semantics (A-class events have it, B-class don't)", 
 			| undefined;
 		if (done) {
 			// done_notified is Phase 2; only for children, not root — so it may not appear
-			expect(done.traceId).toBe(expectedTrace!);
+			expect(done.traceId).toBe(expectedTrace as string);
 		}
 	}, 30000);
 
@@ -890,9 +877,9 @@ describe("Bug 3 — traceId semantics (A-class events have it, B-class don't)", 
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const events = await readSessionEvents(ctx, tracker.rootNodeId);
-		const started = events.find(
-			(e) => e.type === "orchestration_started",
-		) as (Event & { traceId?: string }) | undefined;
+		const started = events.find((e) => e.type === "orchestration_started") as
+			| (Event & { traceId?: string })
+			| undefined;
 		const expectedTrace = started?.traceId;
 		expect(expectedTrace).toBeDefined();
 
@@ -912,7 +899,7 @@ describe("Bug 3 — traceId semantics (A-class events have it, B-class don't)", 
 						`[traceId] ${t} has traceId=${e.traceId} expected=${expectedTrace}`,
 					);
 				}
-				expect(e.traceId).toBe(expectedTrace!);
+				expect(e.traceId).toBe(expectedTrace as string);
 			}
 		}
 	}, 30000);
@@ -926,11 +913,7 @@ describe("Bug 3 — traceId semantics (A-class events have it, B-class don't)", 
 		// through queue.enqueue → onPersist in the running case, which
 		// MUST NOT attach traceId (deliverMessage messages are external
 		// semantics, not part of any specific run).
-		const injected = createTaskMessage(
-			"01EXT000001",
-			"Peer",
-			"external msg",
-		);
+		const injected = createTaskMessage("01EXT000001", "Peer", "external msg");
 		await injectMessage(ctx, injected);
 
 		const status = await waitForDone(ctx);
@@ -1002,9 +985,9 @@ describe("Bug 3 — traceId semantics (A-class events have it, B-class don't)", 
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const before = await readSessionEvents(ctx, tracker.rootNodeId);
-		const started = before.find(
-			(e) => e.type === "orchestration_started",
-		) as (Event & { traceId?: string }) | undefined;
+		const started = before.find((e) => e.type === "orchestration_started") as
+			| (Event & { traceId?: string })
+			| undefined;
 		expect(started?.traceId).toBeDefined();
 		const expected = started?.traceId;
 
@@ -1023,7 +1006,7 @@ describe("Bug 3 — traceId semantics (A-class events have it, B-class don't)", 
 		) as Array<Event & { traceId?: string }>;
 		expect(stoppedEvents.length).toBeGreaterThanOrEqual(1);
 		for (const s of stoppedEvents) {
-			expect(s.traceId).toBe(expected!);
+			expect(s.traceId).toBe(expected as string);
 		}
 	}, 30000);
 
@@ -1213,21 +1196,23 @@ describe("R.emit traceId auto-injection (tool handler paths)", () => {
 			await new Promise((r) => setTimeout(r, 100));
 		}
 
-		const clarify = events.find(
-			(e) => e.type === "clarification_requested",
-		) as (Event & { traceId?: string }) | undefined;
+		const clarify = events.find((e) => e.type === "clarification_requested") as
+			| (Event & { traceId?: string })
+			| undefined;
 		expect(clarify).toBeDefined();
 		expect(clarify?.traceId).toBeDefined();
 
 		// Should match orchestration_started's traceId for this run
-		const started = events.find(
-			(e) => e.type === "orchestration_started",
-		) as (Event & { traceId?: string }) | undefined;
+		const started = events.find((e) => e.type === "orchestration_started") as
+			| (Event & { traceId?: string })
+			| undefined;
 		expect(started?.traceId).toBeDefined();
-		expect(clarify?.traceId).toBe(started?.traceId!);
+		expect(clarify?.traceId).toBe(started?.traceId as string);
 
 		// Answer the clarification so the agent can proceed to done
-		const { handleClarifyResponse } = await import("./daemon/agent-lifecycle.ts");
+		const { handleClarifyResponse } = await import(
+			"./daemon/agent-lifecycle.ts"
+		);
 		await handleClarifyResponse(
 			ctx.app.ctx,
 			ctx.projectId,
@@ -1254,18 +1239,15 @@ describe("traceId distinct across restarts", () => {
 		ctx = await setupTestContext();
 
 		// Run 1
-		await startAgent(
-			ctx,
-			singleTurnDoneInstruction("run 1 ok"),
-		);
+		await startAgent(ctx, singleTurnDoneInstruction("run 1 ok"));
 		const status1 = await waitForDone(ctx);
 		expect(status1).toBe("verify");
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const events1 = await readSessionEvents(ctx, tracker.rootNodeId);
-		const started1 = events1.find(
-			(e) => e.type === "orchestration_started",
-		) as (Event & { traceId?: string }) | undefined;
+		const started1 = events1.find((e) => e.type === "orchestration_started") as
+			| (Event & { traceId?: string })
+			| undefined;
 		const trace1 = started1?.traceId;
 		expect(trace1).toBeDefined();
 
@@ -1275,17 +1257,22 @@ describe("traceId distinct across restarts", () => {
 		const provider = createMockedProviderWithMock(ctx.mockAPI);
 		ctx.app = createApp({ dataDir: ctx.dataDir, agentProvider: provider });
 		await ctx.app.pm.load();
+		await ctx.app.autoResumeProjects();
 		ctx.app.markReady();
 		await new Promise((r) => setTimeout(r, 200));
 
-		// Run 2: send a new message to trigger a new run
-		const project = ctx.app.ctx.pm.get(ctx.projectId);
-		if (!project) throw new Error("project");
-		await deliverMessage(
-			ctx.app.ctx,
-			project,
-			tracker.rootNodeId,
-			createUserMessage(singleTurnDoneInstruction("run 2 ok")),
+		// Run 2: send a new message via HTTP (which launches root with
+		// orchestratorSystemPrompt — deliverMessage direct call can't
+		// cold-start root without it).
+		await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${tracker.rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					content: singleTurnDoneInstruction("run 2 ok"),
+				}),
+			},
 		);
 
 		const status2 = await waitForDone(ctx, 20000);
@@ -1319,7 +1306,7 @@ describe("traceId distinct across restarts", () => {
 			const e = events2[i] as Event & { traceId?: string };
 			// Second run's provider/lifecycle events: must have trace2, not trace1
 			if (e.traceId) {
-				expect(e.traceId).toBe(trace2!);
+				expect(e.traceId).toBe(trace2 as string);
 			}
 		}
 	}, 60000);
@@ -1395,8 +1382,7 @@ describe("Yield wake: bgOrphans persisted exactly once", () => {
 				// Yield tool_call in JSONL; is there a tool_result?
 				const hasResult = events.some(
 					(e) =>
-						e.type === "tool_result" &&
-						e.toolCallId === lastTool.toolCallId,
+						e.type === "tool_result" && e.toolCallId === lastTool.toolCallId,
 				);
 				if (!hasResult) {
 					reachedYield = true;
@@ -1411,15 +1397,11 @@ describe("Yield wake: bgOrphans persisted exactly once", () => {
 		await ctx.app.shutdown();
 		await new Promise((r) => setTimeout(r, 200));
 
-		// Recreate app — triggers auto-resume, which should:
-		// 1. Detect pending yield
-		// 2. Find bg orphan
-		// 3. Append bg_orphan message to JSONL (selected option A)
-		// 4. Enqueue it (replay) to queue
-		// 5. Wake up, drain, write yield tool_result + messages_consumed
+		// Recreate app — then manually trigger auto-resume
 		const provider = createMockedProviderWithMock(ctx.mockAPI);
 		ctx.app = createApp({ dataDir: ctx.dataDir, agentProvider: provider });
 		await ctx.app.pm.load();
+		await ctx.app.autoResumeProjects();
 		ctx.app.markReady();
 
 		const status = await waitForDone(ctx, 30000);
@@ -1462,8 +1444,7 @@ describe("Yield wake: bgOrphans persisted exactly once", () => {
 			const yieldCall = yc as Event & { type: "tool_call"; toolCallId: string };
 			const hasResult = finalEvents.some(
 				(e) =>
-					e.type === "tool_result" &&
-					e.toolCallId === yieldCall.toolCallId,
+					e.type === "tool_result" && e.toolCallId === yieldCall.toolCallId,
 			);
 			expect(hasResult).toBe(true);
 		}
@@ -1515,7 +1496,11 @@ describe("JSONL structural invariants (walker reconstruction safety)", () => {
 		let hasYield = false;
 		while (Date.now() - start < 15000) {
 			const events = await readSessionEvents(ctx, tracker.rootNodeId);
-			if (events.some((e) => e.type === "tool_call" && e.tool === "mcp__mxd__yield")) {
+			if (
+				events.some(
+					(e) => e.type === "tool_call" && e.tool === "mcp__mxd__yield",
+				)
+			) {
 				hasYield = true;
 				break;
 			}
@@ -1547,9 +1532,9 @@ describe("JSONL structural invariants (walker reconstruction safety)", () => {
 		expect(mcAfterYield).toBeGreaterThanOrEqual(0);
 	}, 30000);
 
-	test("JSONL: every message event with id is either referenced by messages_consumed or is the most recent orphan", async () => {
+	test("every message event appears in JSONL exactly once (no dupes)", async () => {
 		ctx = await setupTestContext();
-		await startAgent(ctx, twoTurnInstruction("mc referential ok"));
+		await startAgent(ctx, twoTurnInstruction("no dupes ok"));
 		await waitForIdle(ctx);
 
 		await injectMessage(
@@ -1567,31 +1552,19 @@ describe("JSONL structural invariants (walker reconstruction safety)", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const events = await readSessionEvents(ctx, tracker.rootNodeId);
 
-		// Build set of consumed ids
-		const consumed = new Set<string>();
+		// Every `message` event id appears exactly once in JSONL.
+		const idCounts = new Map<string, number>();
 		for (const e of events) {
-			if (e.type === "messages_consumed") {
-				for (const id of e.messageIds) consumed.add(id);
+			if (e.type === "message") {
+				const id = (e as { id?: string }).id;
+				if (id) idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
 			}
 		}
-
-		// Every message event with id: either in `consumed` set, or it's an
-		// "active tail" — no messages_consumed has been written yet.
-		// In this test, the agent done()s, so all injected messages should
-		// have been consumed.
-		const messageEventsWithIds = events.filter(
-			(e) => e.type === "message" && (e as { id?: string }).id,
-		);
-		for (const e of messageEventsWithIds) {
-			const id = (e as { id?: string }).id;
-			if (!id) continue;
-			// User (HTTP POST) messages: not always consumed if agent done
-			// was reached from the first one. But our injected task_message
-			// and tree_change should definitely be consumed.
-			const body = (e as { body?: { source?: string } }).body;
-			if (body?.source === "task_message" || body?.source === "tree_change") {
-				expect(consumed.has(id)).toBe(true);
+		for (const [id, count] of idCounts) {
+			if (count !== 1) {
+				console.error(`[dup] id=${id} appears ${count} times`);
 			}
+			expect(count).toBe(1);
 		}
 	}, 30000);
 });
