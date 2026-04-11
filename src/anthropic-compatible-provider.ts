@@ -688,42 +688,37 @@ function createAnthropicAdapter(
 		buildUserTurn(params): unknown[] {
 			// Delegate to the JSONL reconstruction path.
 			//
-			// Live path and reconstruction path used to be two independent codepaths
-			// that drifted: the caption "[N image(s) attached by user]" was added by
-			// live path but not by reconstruction's idle-context branch. One missing
-			// block → prefix mismatch on restart → full cache miss.
+			// Live path and reconstruction path used to be two independent
+			// codepaths that drifted (e.g. caption bug: caption added by live
+			// path but not by reconstruction's idle-context branch → prefix
+			// mismatch on restart → full cache miss).
 			//
-			// The fix: construct the same events that will be emitted to JSONL, then
-			// walk them to produce the user message. The walker's callbacks are now
-			// the *single* rule for "how Anthropic user messages are built from
-			// tool_results + queue messages". No second codepath to drift with.
+			// The fix: construct the events that would be emitted to JSONL
+			// (tool_result + messages_consumed), append synthetic `message`
+			// events for every drained queue message so the walker can resolve
+			// them via eventIndex, then run the walker. The walker's callbacks
+			// (onToolResults, onConsumedMessages, isAnthropicWorkingContext)
+			// are the single source of truth for block ordering and caption.
 			const syntheticEvents = buildToolResultEvents(
 				params.toolUses.map((tu) => ({ id: tu.id, name: tu.name })),
 				params.execResults,
 				params.queueMessages,
 			);
 
-			// Walker needs the message events in its index to resolve messages_consumed.
-			// buildToolResultEvents emits user message events into the events array only
-			// for non-user-source queue messages; user-source messages are already in
-			// JSONL (written at send time) and only their IDs appear in messages_consumed.
-			// So we append the user-source queue messages as synthetic message events too,
-			// for the walker to resolve them via eventIndex.
+			// Push synthetic `message` events for every queue message so the
+			// walker's eventIndex can resolve them when it processes the
+			// messages_consumed marker (see buildToolResultEvents). This is
+			// walker input only — never written to JSONL.
 			for (const qm of params.queueMessages) {
-				if (qm.source === "user" && qm.id) {
-					syntheticEvents.push({
-						type: "message",
-						id: qm.id,
-						taskId: "",
-						body: qm,
-						ts: qm.ts,
-					});
-				}
+				syntheticEvents.push({
+					type: "message",
+					id: qm.id,
+					taskId: "",
+					body: qm,
+					ts: qm.ts,
+				});
 			}
 
-			// Walk synthetic events → Anthropic messages. The callbacks
-			// (onToolResults, onConsumedMessages, isAnthropicWorkingContext)
-			// contain the single source of truth for block ordering and caption.
 			return eventsToAnthropicMessages(syntheticEvents);
 		},
 

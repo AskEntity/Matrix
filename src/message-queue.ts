@@ -81,6 +81,27 @@ export type QueueMessage =
 /**
  * A simple async message queue for inter-agent communication.
  * Supports blocking wait(), non-blocking drain(), and graceful close().
+ *
+ * ## Enqueue is the single persistence path
+ *
+ * Every `enqueue(msg)` call synchronously calls the `onPersist` callback
+ * (if configured) BEFORE the message is delivered to a waiter or pushed
+ * onto the array. This folds "write to JSONL" and "deliver to agent" into
+ * a single atomic action.
+ *
+ * The production daemon wires `onPersist` to `emitEvent({ type: "message", ... })`,
+ * so any caller — `deliverMessage`, bash background_complete, MCP
+ * tree_change notifyTargetNode, compact REST route — automatically gets
+ * "persist exactly once" without needing to know about JSONL.
+ *
+ * The `{ replay: true }` option bypasses `onPersist`. It is used when
+ * recovering messages from JSONL on agent startup (findUnconsumedMessages,
+ * bgOrphans) — those messages are already on disk, re-persisting them
+ * would create byte-identical duplicates on adjacent lines.
+ *
+ * The `{ quiet: true }` option suppresses waking a pending `wait()`
+ * caller — used for notifications that shouldn't interrupt. `quiet`
+ * does NOT affect persistence.
  */
 export class MessageQueue {
 	private messages: QueueMessage[] = [];
@@ -89,6 +110,36 @@ export class MessageQueue {
 		reject: (err: Error) => void;
 	} | null = null;
 	private closed = false;
+
+	/**
+	 * Persistence callback — invoked synchronously on every non-replay
+	 * `enqueue` before the message is delivered. Wired to `emitEvent` by
+	 * the daemon so queue = persistence. Undefined in tests / mock sessions
+	 * where JSONL persistence is not needed.
+	 */
+	private onPersist?: (msg: QueueMessage) => void;
+
+	constructor(opts?: { onPersist?: (msg: QueueMessage) => void }) {
+		this.onPersist = opts?.onPersist;
+	}
+
+	/** Whether the queue has an onPersist callback wired. */
+	hasOnPersist(): boolean {
+		return this.onPersist != null;
+	}
+
+	/**
+	 * Wire an onPersist callback post-construction. Used by the provider loop
+	 * to enforce `enqueue === persist` at loop entry when the caller passed
+	 * a bare queue (typical in unit tests). Only allowed when no onPersist
+	 * is currently set — prevents silently overwriting production wiring.
+	 */
+	setOnPersist(cb: (msg: QueueMessage) => void): void {
+		if (this.onPersist != null) {
+			throw new Error("onPersist already set");
+		}
+		this.onPersist = cb;
+	}
 
 	/** Whether the queue has been closed. */
 	get isClosed(): boolean {
@@ -104,9 +155,18 @@ export class MessageQueue {
 	/** Optional callback fired after messages are drained (consumed) from the queue. */
 	onDrain?: () => void;
 
-	/** Add a message to the queue. If someone is waiting via wait(), resolve them immediately.
-	 * When `quiet` is true, the message is added without waking a pending wait() — picked up on next drain() or wait() with pending messages. */
-	enqueue(msg: QueueMessage, options?: { quiet?: boolean }): void {
+	/**
+	 * Add a message to the queue.
+	 *
+	 * - Calls `onPersist(msg)` synchronously unless `replay: true`.
+	 * - Delivers to a pending waiter, otherwise pushes onto the array.
+	 * - `quiet: true` suppresses waking the waiter (picked up on next drain/wait).
+	 * - `replay: true` skips `onPersist` (used when recovering messages already in JSONL).
+	 */
+	enqueue(
+		msg: QueueMessage,
+		options?: { quiet?: boolean; replay?: boolean },
+	): void {
 		if (this.closed) {
 			throw new Error("Queue closed");
 		}
@@ -114,6 +174,13 @@ export class MessageQueue {
 			throw new Error(
 				`QueueMessage must have a non-empty id (source: ${msg.source})`,
 			);
+		}
+
+		// Persist first (unless this is a replay from JSONL).
+		// Any write failure propagates to the caller — we do not silently
+		// drop messages on persistence error.
+		if (!options?.replay && this.onPersist) {
+			this.onPersist(msg);
 		}
 
 		if (options?.quiet) {

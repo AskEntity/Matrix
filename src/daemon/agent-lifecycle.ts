@@ -7,7 +7,6 @@ import {
 	type Event,
 	findOrphanedBackgroundProcesses,
 	findUnconsumedMessages,
-	hasPendingYield,
 	type SessionConfigEvent,
 } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
@@ -154,19 +153,34 @@ async function createAgentContext(
 	registerSideEffects({
 		emit: (projectId: string, event: Record<string, unknown>) => {
 			const ts = (event.ts as number) || Date.now();
+			// Auto-inject traceId from the target task's session if missing.
+			// Tool handlers emit via R.emit and don't carry loopTraceId —
+			// we look it up on the current session so the event can be
+			// attributed to the run that produced it.
+			const lookupTraceId = (taskId: unknown): string | undefined => {
+				if (typeof taskId !== "string" || !taskId) return undefined;
+				const tracker = ctx.trackers.get(projectId);
+				return tracker?.getTask(taskId)?.session?.loopTraceId;
+			};
 			if (event.type === "agent_event") {
 				const evtTaskId = (event.taskId as string) || "";
 				const eventType = event.eventType as string;
 				const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
+				const existingTraceId = (rest as Record<string, unknown>).traceId;
+				const traceId = existingTraceId ?? lookupTraceId(evtTaskId);
 				emitEvent(ctx, projectId, {
 					type: eventType,
 					taskId: evtTaskId,
 					ts,
 					...rest,
+					...(traceId ? { traceId } : {}),
 				} as unknown as Event);
 			} else {
-				const withTs = event.ts ? event : { ...event, ts };
-				emitEvent(ctx, projectId, withTs as unknown as Event);
+				const existingTraceId = event.traceId;
+				const traceId = existingTraceId ?? lookupTraceId(event.taskId);
+				const base = event.ts ? event : { ...event, ts };
+				const withIds = traceId ? { ...base, traceId } : base;
+				emitEvent(ctx, projectId, withIds as unknown as Event);
 			}
 		},
 		broadcastTree: (projectId: string) => {
@@ -303,6 +317,10 @@ export async function stopAgent(
 	// Check if root agent is actually running
 	if (!rootNode?.session) return;
 
+	// Capture the root loop's traceId BEFORE clearing sessions — so the
+	// agent_stopped event below can be attributed to the run that was stopped.
+	const rootLoopTraceId = rootNode.session.loopTraceId;
+
 	// Stop ALL agents (root + children) via session on tracker nodes.
 	// Each node's session has its own queue + abort controller.
 	for (const node of tracker.allNodes()) {
@@ -335,6 +353,7 @@ export async function stopAgent(
 	emitEvent(ctx, projectId, {
 		type: "agent_stopped",
 		taskId: rootNodeId,
+		traceId: rootLoopTraceId,
 		ts: Date.now(),
 	});
 }
@@ -359,6 +378,10 @@ export async function stopTask(
 	if (!node) return false;
 
 	if (!node.session) return false;
+
+	// Capture the loop's traceId BEFORE clearing session — so the
+	// agent_stopped event below can be attributed to the run that was stopped.
+	const stoppedLoopTraceId = node.session.loopTraceId;
 
 	// Grab the loop promise BEFORE clearing session — once session is gone,
 	// the loop's finally block will fire and resolve this promise.
@@ -393,6 +416,7 @@ export async function stopTask(
 	emitEvent(ctx, projectId, {
 		type: "agent_stopped",
 		taskId: nodeId,
+		traceId: stoppedLoopTraceId,
 		ts: Date.now(),
 	});
 
@@ -439,19 +463,12 @@ export async function deliverMessage(
 	// to write shouldn't influence the fresh-vs-resume decision.
 	const shouldResume = eventStore.has(nodeId);
 
-	// Step 1: ALWAYS write to JSONL (SSE broadcast + persistence).
-	// This ensures findUnconsumedMessages can recover it on restart.
-	emitEvent(ctx, project.id, {
-		type: "message",
-		id: message.id,
-		taskId: nodeId,
-		body: message,
-		ts: message.ts,
-	});
-
-	// Step 2: Try direct queue delivery if agent is running AND fully initialized.
-	// Skip if launch lock is held — the agent is still reading JSONL events.
-	// Our message is already in JSONL (step 1) and will be recovered by findUnconsumedMessages.
+	// Preferred path: hand to the running agent's queue. queue.enqueue()
+	// synchronously invokes the onPersist callback (bound in runAgentForNode
+	// to emitEvent), so JSONL write + delivery are a single atomic step.
+	// Skip when the launch lock is held — the agent is still reading JSONL,
+	// so we fall through to the direct-write path and let findUnconsumedMessages
+	// recover the message when the agent finishes booting.
 	if (!ctx.launchingNodes.has(nodeId)) {
 		const queue = tracker.getTask(nodeId)?.session?.queue;
 		if (queue) {
@@ -459,12 +476,22 @@ export async function deliverMessage(
 				queue.enqueue(message);
 				return "enqueued";
 			} catch {
-				// Queue was closed — fall through to persist/launch
+				// Queue was closed — fall through to direct persist/launch
 			}
 		}
 	}
 
-	// Step 3: Agent not running — flush JSONL.
+	// Agent is not running (or is mid-launch): no queue to persist through,
+	// so write the message directly. findUnconsumedMessages will recover it
+	// when the agent next starts, and auto-launch below picks up the slack
+	// for idle tasks.
+	emitEvent(ctx, project.id, {
+		type: "message",
+		id: message.id,
+		taskId: nodeId,
+		body: message,
+		ts: message.ts,
+	});
 	await eventStore.flushSession(nodeId);
 
 	// Step 4: Auto-launch (unless quiet).
@@ -624,23 +651,42 @@ export async function runAgentForNode(
 	let ownSession: TaskSession | undefined;
 	// Declared outside try so Phase 2 (after finally) can access the result.
 	let agentResult: AgentResult | undefined;
+	// Generate a unique trace ID for this agent loop instance.
+	// Stored on TaskSession so external emit paths (stopTask, tool handlers via
+	// resource-registry) can look it up and auto-inject it. The provider loop's
+	// emitWithTask also reads this to tag every event with the run's trace.
+	// Enables detection of interleaved events from duplicate launches.
+	const loopTraceId = ulid();
 	try {
-		// Generate a unique trace ID for this agent loop instance.
-		// Injected into every event emitted by this loop via emitWithTask.
-		// Enables detection of interleaved events from duplicate launches.
-		const loopTraceId = ulid();
-
 		// Compute depth from the tree
 		const depth = computeDepth(tracker, nodeId);
 
-		// Create the queue first — shared between MCP tools and runChildCore
-		const childQueue = new MessageQueue();
+		// Create the queue first — shared between MCP tools and runChildCore.
+		// onPersist binds every queue.enqueue to a single JSONL write via
+		// emitEvent. This is the ONE persistence path for queue messages:
+		// deliverMessage, bash background_complete, MCP tree_change
+		// notifyTargetNode, and REST compact all route through queue.enqueue
+		// and therefore land in JSONL exactly once. JSONL-recovery paths use
+		// `enqueue(msg, { replay: true })` to skip onPersist (the message is
+		// already on disk from the pre-crash session).
+		const childQueue = new MessageQueue({
+			onPersist: (msg) => {
+				emitEvent(ctx, project.id, {
+					type: "message",
+					id: msg.id,
+					taskId: nodeId,
+					body: msg,
+					ts: msg.ts,
+				});
+			},
+		});
 
 		// Create and attach TaskSession to the node
 		const abortController = new AbortController();
 		const taskSession: TaskSession = {
 			queue: childQueue,
 			abortController,
+			loopTraceId,
 			cwd: agentCwd,
 			fallbackCwd: agentCwd,
 			depth,
@@ -698,27 +744,26 @@ export async function runAgentForNode(
 				activeEvents = eventStore.readActive(nodeId);
 			}
 
-			// Write synthetic background_complete for bg processes killed by restart.
-			// For yielding agents: enqueue to queue instead of writing to JSONL
-			// (events between yield tool_call and its tool_result break the converter).
+			// Synthesize background_complete messages for bg processes that
+			// were killed by the restart. Append them to JSONL unconditionally
+			// — the walker skips standalone `message` events with ids (they
+			// materialize only when a messages_consumed event references them),
+			// so writing them between a pending yield tool_call and its
+			// eventual tool_result is safe. findUnconsumedMessages below will
+			// enqueue them via replay so onPersist does not re-write them.
 			const bgOrphans = findOrphanedBackgroundProcesses(activeEvents, nodeId);
-			const childIsYielding = hasPendingYield(activeEvents);
-			if (bgOrphans.length > 0 && !childIsYielding) {
+			if (bgOrphans.length > 0) {
 				await eventStore.appendBatch(nodeId, bgOrphans);
 				activeEvents = [...activeEvents, ...bgOrphans];
 			}
-			if (bgOrphans.length > 0 && childIsYielding) {
-				for (const orphan of bgOrphans) {
-					if (orphan.type === "message" && orphan.body) {
-						childQueue.enqueue(orphan.body);
-					}
-				}
-			}
 
-			// Recover unconsumed messages
+			// Recover unconsumed messages. These were already persisted to JSONL
+			// by prior queue.enqueue calls (or just now by the bgOrphans append
+			// above) — their `message` events are on disk. replay: true skips
+			// onPersist so the recovery does not create byte-identical duplicates.
 			const unconsumed = findUnconsumedMessages(activeEvents);
 			for (const msg of unconsumed) {
-				childQueue.enqueue(msg);
+				childQueue.enqueue(msg, { replay: true });
 			}
 		}
 
@@ -854,6 +899,7 @@ export async function runAgentForNode(
 				title: node.title,
 				costUsd: updatedNode.costUsd,
 				budgetUsd: updatedNode.budgetUsd,
+				traceId: loopTraceId,
 				ts: Date.now(),
 			});
 		}
@@ -883,6 +929,7 @@ export async function runAgentForNode(
 					totalTurns: 0,
 					taskCount: childNodes.length,
 				},
+				traceId: loopTraceId,
 				ts: Date.now(),
 			});
 		}
@@ -903,6 +950,7 @@ export async function runAgentForNode(
 				type: "error",
 				taskId: nodeId,
 				message: `Agent error: ${errorMsg}`,
+				traceId: loopTraceId,
 				ts: Date.now(),
 			});
 		}
@@ -934,6 +982,7 @@ export async function runAgentForNode(
 			emitEvent(ctx, project.id, {
 				type: "agent_stopped",
 				taskId: nodeId,
+				traceId: loopTraceId,
 				ts: Date.now(),
 			});
 		}
@@ -1009,6 +1058,7 @@ export async function runAgentForNode(
 					taskId: nodeId,
 					status: newStatus,
 					summary: agentResult.doneSummary ?? "",
+					traceId: loopTraceId,
 					ts: Date.now(),
 				});
 			}

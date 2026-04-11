@@ -568,6 +568,7 @@ describe("resetTaskOp", () => {
 		task.session = {
 			queue,
 			abortController: new AbortController(),
+			loopTraceId: "test-trace-id",
 			cwd: "/tmp",
 			fallbackCwd: "/tmp",
 			depth: 1,

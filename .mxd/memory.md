@@ -759,3 +759,53 @@ System blocks always use `{ type: "ephemeral", ttl: "1h" }` regardless of per-se
 **Lesson**: module-level constants MUST be frozen. Mutation via `Object.entries` + index assignment bypasses TypeScript's readonly checks. Freeze makes the footgun physically impossible, not just discouraged.
 
 The other two PATCH handlers (`/projects/:id/config/repo`, `/projects/:id/config`) load fresh config from disk and build a new `merged` object — not affected by this bug.
+
+## enqueue === persist (single JSONL write path)
+
+`MessageQueue.enqueue(msg)` synchronously calls `onPersist(msg)` before delivery. This is the ONE way queue messages reach JSONL. All former second-path emissions (recordQueueEvents re-emit, buildToolResultEvents nonUserQueueEvents) are deleted.
+
+### Wiring
+- `runAgentForNode` creates `new MessageQueue({ onPersist: (msg) => emitEvent(ctx, projectId, {type:"message", id: msg.id, taskId: nodeId, body: msg, ts: msg.ts}) })`.
+- `runProviderLoop` auto-wires onPersist from `request.emit` if the queue has no callback (`hasOnPersist()`), via `setOnPersist`. Unit tests that pass a bare `new MessageQueue()` get automatic wiring.
+- `setOnPersist` is one-shot: throws if already set. Production wiring wins over provider-loop auto-wiring.
+
+### replay: true
+Recovery paths (`findUnconsumedMessages`, `bgOrphans` append) use `queue.enqueue(msg, { replay: true })` to skip onPersist — the message is already in JSONL from before the restart.
+
+### quiet is orthogonal
+`quiet: true` only suppresses waking a pending `wait()`. It does NOT affect persistence. `queue.enqueue(msg, { quiet: true })` still persists.
+
+### deliverMessage simplification
+- Agent running → `queue.enqueue(msg)` (one atomic persist + deliver via onPersist).
+- Agent not running → direct `emitEvent({type:"message", ...})` + flush (no queue to go through).
+- `deliverMessage`'s `opts.quiet` still controls auto-launch only (unchanged).
+
+### recordQueueEvents role
+Now emits `messages_consumed` marker only. No `message` event emission. Sole purpose: tell the walker which ids have been consumed by the current turn.
+
+### buildToolResultEvents role
+Outputs `tool_result*` + `messages_consumed`. No `nonUserQueueEvents`. The anthropic provider's `buildUserTurn` synth path pushes synthetic `message` events for ALL queue messages (not just user source) so the walker can resolve them via eventIndex.
+
+### bgOrphans unified branch (option A)
+Yielding and non-yielding sessions both `appendBatch(bgOrphans)` to JSONL at resume. Walker skips standalone `message` events with ids (event-converter.ts line 181-185) — they materialize only when `messages_consumed` references them — so writing them between a pending yield tool_call and its eventual tool_result is safe.
+
+### Bugs fixed (task 01KNWM9YTTMHEF620EKGCAP9HH)
+1. **Duplicate message events**: deliverMessage wrote message to JSONL, then enqueued; provider loop's recordQueueEvents wrote it again for non-user sources. After refactor, single write path. JSONL has each body.id exactly once.
+2. **Usage off-by-one**: `usage` was emitted before `assistant_text` in the same turn. Frontend's walk-backwards `attach_usage` found the PREVIOUS turn's text. Fix: reorder provider-shared.ts to emit content events (buildResponseEvents) BEFORE usage.
+3. **Missing traceId on lifecycle events**: `orchestration_completed`, `error`, `agent_stopped`, `done_notified` had no `traceId`. Fix: `TaskSession.loopTraceId` field (hoisted out of try block), explicit injection in the 4 lifecycle emitEvent calls, `stopAgent/stopTask` capture session.loopTraceId, `resource-registry` emit auto-injects traceId for tool-handler `R.emit` paths (clarification_requested etc.).
+
+### traceId semantics
+- **Has traceId** (A-class): events produced BY a specific agent loop run — orchestration_started/completed, done_notified, agent_stopped, error, all provider events (assistant_text, tool_call, tool_result, usage), tool-handler events via R.emit.
+- **No traceId** (B-class): events semantically external to any run — `message` events (deliverMessage persists them via onPersist which bypasses traceId injection), `task_started` (before loop spawn), `fork_marker` (fork setup).
+
+### Test architecture
+6 new test files, 50+ tests split by concern:
+- `src/message-queue-onpersist.test.ts` — MessageQueue unit contract
+- `src/event-dedup-jsonl.test.ts` — Bug 1 JSONL dedup invariants
+- `src/event-usage-order.test.ts` — Bug 2 emission order
+- `src/event-trace-id.test.ts` — Bug 3 traceId semantics
+- `src/event-structural-invariants.test.ts` — walker safety (messages_consumed after yield tool_result)
+- `src/test-utils/emission-harness.ts` — shared setup/teardown/helpers
+
+### Pitfall: autoResumeProjects not in createApp
+`createApp()` does NOT call `autoResumeProjects()`. Tests that simulate restart must call `await newApp.autoResumeProjects()` explicitly before `markReady()`. Only `import.meta.main` daemon entry point auto-calls it.
