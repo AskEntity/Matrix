@@ -604,6 +604,24 @@ export async function* runProviderLoop(
 	// ── Event emission — all events flow through this callback ──
 	const emit = request.emit;
 
+	// Wire the queue's onPersist callback to emit if the queue doesn't already
+	// have one. This enforces the `enqueue === persist` invariant at the
+	// provider-loop layer: any caller with a queue + emit gets single-write
+	// persistence automatically, regardless of how the queue was constructed.
+	// Production (runAgentForNode) already wires onPersist; unit tests that
+	// pass a bare `new MessageQueue()` also get it automatically.
+	if (queue && emit && !queue.hasOnPersist()) {
+		queue.setOnPersist((msg) => {
+			emit({
+				type: "message",
+				id: msg.id,
+				taskId: "",
+				body: msg,
+				ts: msg.ts,
+			});
+		});
+	}
+
 	// Resume from pre-loaded active events (daemon layer reads these from EventStore)
 	const activeEvents = request.activeEvents ?? [];
 	const isResume = activeEvents.length > 0;
