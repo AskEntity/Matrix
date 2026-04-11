@@ -334,10 +334,11 @@ export function getToolTitle(
 		case TOOL_LIST_PROJECTS:
 			return "List Projects";
 		case TOOL_SEND_MESSAGE_TO_PROJECT: {
-			const projectId = getArg(toolArgs, "projectId");
-			if (projectId) {
-				const projectName = opts?.projectMap?.get(projectId) ?? projectId;
-				return `Cross-project: ${projectName}`;
+			const targetProjectId = getArg(toolArgs, "targetProjectId");
+			if (targetProjectId) {
+				const projectName =
+					opts?.projectMap?.get(targetProjectId) ?? targetProjectId;
+				return `Cross-project → ${projectName}`;
 			}
 			return "Cross-project";
 		}
