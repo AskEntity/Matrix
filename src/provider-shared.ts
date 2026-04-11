@@ -22,11 +22,7 @@ import {
 	getCompactionThresholds,
 	processCompaction,
 } from "./compaction.ts";
-import {
-	type Event,
-	hasPendingImplicitYield,
-	queueMessageToEvent,
-} from "./events.ts";
+import { type Event, hasPendingImplicitYield } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import {
 	drainQueueAtCancellationPoint,
@@ -294,49 +290,28 @@ export function filterEventImages(
  * user message(s). This keeps live path and reconstruction path byte-identical
  * by eliminating the duplicate "build user message from tools+queue" rule.
  */
+/**
+ * Build tool_result events plus the matching messages_consumed marker for a
+ * turn's worth of tool calls and drained queue messages.
+ *
+ * After the `enqueue === persist` refactor, queue messages are persisted
+ * when they enter the queue (via `queue.enqueue`'s onPersist callback).
+ * This function no longer needs to emit `message` events — it only outputs
+ * `tool_result*` and the `messages_consumed` marker referencing their ids.
+ * The walker resolves consumed ids via eventIndex lookup.
+ */
 export function buildToolResultEvents(
 	toolIds: Array<{ id: string; name: string }>,
 	execResults: ToolResult[],
 	cancellationQueueMsgs: QueueMessage[],
 	taskId = "",
-	queue?: MessageQueue,
 ): Event[] {
 	const toolEvents: Event[] = [];
-
-	// Collect consumed message IDs from cancellation queue messages.
-	// Two-phase lifecycle invariant (same as recordQueueEvents): messages
-	// marked `queue.isPersisted(id)` were already written to JSONL at send
-	// time via deliverMessage — we must NOT re-emit them. Direct-enqueue
-	// messages (background_complete from bash, tree_change notifyTargetNode,
-	// compact route) are NOT persisted — we emit them here for the first
-	// (and only) JSONL write.
-	const consumedIds: string[] = [];
-	const nonUserQueueEvents: Event[] = [];
-	for (const qm of cancellationQueueMsgs) {
-		const alreadyPersisted = queue
-			? queue.isPersisted(qm.id)
-			: qm.source === "user"; // legacy fallback when no queue provided
-		if (alreadyPersisted) {
-			consumedIds.push(qm.id);
-		} else {
-			const evt = queueMessageToEvent(qm, taskId);
-			const evtId = (evt as { id?: string }).id;
-			if (evtId) consumedIds.push(evtId);
-			nonUserQueueEvents.push(evt);
-		}
-	}
-
-	// Drop persisted-id bookkeeping for messages that have now been consumed.
-	if (queue && consumedIds.length > 0) {
-		queue.clearPersisted(consumedIds);
-	}
 
 	for (let idx = 0; idx < toolIds.length; idx++) {
 		const toolId = toolIds[idx] as { id: string; name: string };
 		const exec = execResults[idx] as ToolResult;
 
-		// Record pure tool output — queue text is NOT embedded.
-		// The converter reconstructs queue messages from messagesConsumed + message events.
 		const images: EventImageData[] = [];
 		if (exec.mcpImages?.length) {
 			for (const img of exec.mcpImages) {
@@ -370,13 +345,8 @@ export function buildToolResultEvents(
 		});
 	}
 
-	// Record non-user queue messages (from cancellation drain) as separate Events
-	for (const evt of nonUserQueueEvents) {
-		toolEvents.push(evt);
-	}
-
-	// Record standalone messages_consumed event AFTER tool_results and queue events
-	if (consumedIds.length > 0) {
+	if (cancellationQueueMsgs.length > 0) {
+		const consumedIds = cancellationQueueMsgs.map((qm) => qm.id);
 		toolEvents.push({
 			type: "messages_consumed",
 			messageIds: consumedIds,
@@ -766,7 +736,7 @@ export async function* runProviderLoop(
 
 			// Record queue events for the consumed messages
 			if (emit) {
-				recordQueueEvents(emit, allMsgs, undefined, "", queue);
+				recordQueueEvents(emit, allMsgs);
 			}
 		}
 	}
@@ -928,7 +898,7 @@ export async function* runProviderLoop(
 			// Emit queue events (messages_consumed, etc.) — the tool_result itself
 			// is already emitted via yield above, don't double-emit
 			if (emit) {
-				recordQueueEvents(emit, doneResult.nonCompact, undefined, "", queue);
+				recordQueueEvents(emit, doneResult.nonCompact);
 			}
 
 			pendingDoneToolCall = null;
@@ -992,13 +962,7 @@ export async function* runProviderLoop(
 
 			// Emit queue events and messages_consumed
 			if (emit) {
-				recordQueueEvents(
-					emit,
-					yieldResult.nonCompact,
-					undefined,
-					"",
-					queue,
-				);
+				recordQueueEvents(emit, yieldResult.nonCompact);
 			}
 			continue;
 		}
@@ -1132,15 +1096,9 @@ export async function* runProviderLoop(
 			emit?.(yieldResultEvt);
 			yield yieldResultEvt;
 
-			// Emit queue events for consumed messages AFTER tool_result
+			// Emit messages_consumed marker AFTER tool_result
 			if (emit) {
-				recordQueueEvents(
-					emit,
-					yieldResult.nonCompact,
-					undefined,
-					"",
-					queue,
-				);
+				recordQueueEvents(emit, yieldResult.nonCompact);
 			}
 
 			pendingYieldToolCall = null;
@@ -1621,15 +1579,9 @@ export async function* runProviderLoop(
 				messages.push(msg);
 			}
 
-			// Emit queue events and messages_consumed
+			// Emit messages_consumed marker for the drained queue messages
 			if (emit) {
-				recordQueueEvents(
-					emit,
-					yieldResult.nonCompact,
-					undefined,
-					"",
-					queue,
-				);
+				recordQueueEvents(emit, yieldResult.nonCompact);
 			}
 			continue;
 		}
@@ -1828,14 +1780,12 @@ export async function* runProviderLoop(
 			messages.push(msg);
 		}
 
-		// Emit individual tool_result Events
+		// Emit tool_result + messages_consumed events
 		if (emit) {
 			const toolEvents = buildToolResultEvents(
 				toolUses.map((tu) => ({ id: tu.id, name: tu.name })),
 				execResults,
 				cancellationQueueMsgs,
-				"",
-				queue,
 			);
 			for (const evt of toolEvents) {
 				emit(evt);
