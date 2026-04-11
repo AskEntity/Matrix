@@ -224,12 +224,12 @@ export const ToolCard = memo(function ToolCard({
 		}
 	}
 	if (onProjectNavigate && toolName === TOOL_SEND_MESSAGE_TO_PROJECT) {
-		const targetProjectId = getArg(toolArgs, "projectId");
+		const targetProjectId = getArg(toolArgs, "targetProjectId");
 		if (targetProjectId) {
 			const targetName = projectMap?.get(targetProjectId) ?? targetProjectId;
 			cardTitle = (
 				<>
-					{"→ Cross-project: "}
+					{"Cross-project → "}
 					{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate */}
 					{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable project name */}
 					<span
