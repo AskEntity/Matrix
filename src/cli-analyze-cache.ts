@@ -168,6 +168,40 @@ export function formatRow(row: CacheMissRow): string {
 }
 
 /**
+ * Parse a compact duration string into milliseconds.
+ *   "30s" → 30_000
+ *   "5m"  → 300_000
+ *   "1.5h" → 5_400_000
+ * Returns null for invalid input (caller decides how to report).
+ */
+export function parseDuration(s: string): number | null {
+	const m = s.match(/^(\d+(?:\.\d+)?)(s|m|h)$/);
+	if (!m) return null;
+	const n = Number.parseFloat(m[1] as string);
+	if (!Number.isFinite(n)) return null;
+	const unit = m[2];
+	if (unit === "s") return n * 1000;
+	if (unit === "m") return n * 60 * 1000;
+	if (unit === "h") return n * 60 * 60 * 1000;
+	return null;
+}
+
+/**
+ * Filter miss rows by max gap.
+ *   maxGapMs == null → no filter (return all)
+ *   gapMs === null (first usage, unknowable) → KEEP
+ *   gapMs > maxGapMs → drop
+ *   gapMs <= maxGapMs → keep
+ */
+export function filterByMaxGap(
+	rows: CacheMissRow[],
+	maxGapMs: number | null,
+): CacheMissRow[] {
+	if (maxGapMs == null) return rows;
+	return rows.filter((r) => r.gapMs == null || r.gapMs <= maxGapMs);
+}
+
+/**
  * Resolve the JSONL path for a task.
  * `{dataDir}/projects/{projectId}/tasks/{taskId}.jsonl`
  */
@@ -185,11 +219,40 @@ export function resolveTaskJsonlPath(
  * Exits process on error.
  */
 export function runAnalyzeCache(args: string[]): void {
-	const projectId = args[0];
-	const taskId = args[1];
+	// Extract --max-gap <duration> if present
+	const positional: string[] = [];
+	let maxGapRaw: string | null = null;
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		if (a === "--max-gap") {
+			maxGapRaw = args[++i] ?? null;
+			if (maxGapRaw == null) {
+				console.error("--max-gap requires a value (e.g. 61m)");
+				process.exit(1);
+			}
+		} else if (a != null) {
+			positional.push(a);
+		}
+	}
+
+	const projectId = positional[0];
+	const taskId = positional[1];
 	if (!projectId || !taskId) {
-		console.error("Usage: mxd analyze-cache <projectId> <taskId>");
+		console.error(
+			"Usage: mxd analyze-cache <projectId> <taskId> [--max-gap <duration>]",
+		);
 		process.exit(1);
+	}
+
+	let maxGapMs: number | null = null;
+	if (maxGapRaw != null) {
+		maxGapMs = parseDuration(maxGapRaw);
+		if (maxGapMs == null) {
+			console.error(
+				`Invalid --max-gap value: "${maxGapRaw}" (expected e.g. 30s, 5m, 1h, 61m)`,
+			);
+			process.exit(1);
+		}
 	}
 
 	const path = resolveTaskJsonlPath(projectId, taskId);
@@ -199,13 +262,16 @@ export function runAnalyzeCache(args: string[]): void {
 	}
 
 	const content = readFileSync(path, "utf-8");
-	const { misses, totalUsageEvents } = analyzeCacheMisses(content);
+	const { misses: allMisses, totalUsageEvents } = analyzeCacheMisses(content);
+	const shownMisses = filterByMaxGap(allMisses, maxGapMs);
 
-	for (const row of misses) {
+	for (const row of shownMisses) {
 		console.log(formatRow(row));
 	}
 
+	const filterNote =
+		maxGapMs != null ? ` — gap filter <=${maxGapRaw} applied` : "";
 	console.log(
-		`\n${misses.length} misses found out of ${totalUsageEvents} total usage events`,
+		`\n${shownMisses.length} misses shown (out of ${allMisses.length} total misses, ${totalUsageEvents} total usage events)${filterNote}`,
 	);
 }
