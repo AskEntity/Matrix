@@ -809,3 +809,18 @@ Yielding and non-yielding sessions both `appendBatch(bgOrphans)` to JSONL at res
 
 ### Pitfall: autoResumeProjects not in createApp
 `createApp()` does NOT call `autoResumeProjects()`. Tests that simulate restart must call `await newApp.autoResumeProjects()` explicitly before `markReady()`. Only `import.meta.main` daemon entry point auto-calls it.
+
+## buildSessionRepair Scope Boundary — orphan tool_result is OUT
+
+`buildSessionRepair` only repairs states that a **legitimate crash on a valid run** could have produced:
+- Orphan tool_call (no tool_result) → append synthetic interrupted result
+- Duplicate tool_result → truncate from poison point
+- Out-of-order tool_result (result after a new assistant turn) → truncate
+
+It does NOT repair "orphan tool_result" (tool_result without any tool_call). Runtime cannot produce this — tool_result is always emitted by the provider loop immediately after its tool_call. If a JSONL file contains an orphan tool_result, something much more serious is wrong upstream (manual edit, cross-version migration bug, corrupted write). Masking it in the repair layer would hide the real problem.
+
+Walker behavior on this state: emits two consecutive `user` messages (the prior user turn, plus a second user turn wrapping the orphan tool_result). Anthropic API rejects this with 400. The auto-recovery fallback in the provider loop may or may not recover — but the proper fix is to find WHY the orphan tool_result ended up in JSONL, not to paper over it.
+
+`src/jsonl-stress.test.ts` contains behavior snapshots of this case (clearly labeled "BEHAVIOR SNAPSHOT" / "not an invariant"). If someone changes the walker or repair to be "graceful" here, those tests fail and force a deliberate discussion about whether the change masks a real bug.
+
+Lesson: not every "the tool could be nicer to bad input" is a bug. Some inputs should NEVER happen and the layer that sees them isn't the right place to patch the state. Boundaries matter.
