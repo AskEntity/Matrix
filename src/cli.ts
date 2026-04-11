@@ -1598,7 +1598,7 @@ switch (command) {
 		console.log("");
 		console.log("  Debug");
 		console.log(
-			"    analyze-cache <projectId> <taskId>  List cache miss events in a task's JSONL",
+			"    analyze-cache <projectId> <taskId> [--max-gap <dur>]  List cache miss events in a task's JSONL",
 		);
 		console.log("");
 		console.log("  Other");

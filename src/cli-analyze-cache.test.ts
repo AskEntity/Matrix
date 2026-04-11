@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
 	analyzeCacheMisses,
+	type CacheMissRow,
+	filterByMaxGap,
 	formatGap,
 	formatRow,
 	formatTimestamp,
+	parseDuration,
 } from "./cli-analyze-cache.ts";
 
 function buildJsonl(lines: Array<Record<string, unknown>>): string {
@@ -438,5 +441,87 @@ describe("formatRow", () => {
 			stoppedInGap: true,
 		});
 		expect(line).toContain("stopped=yes");
+	});
+});
+
+describe("parseDuration", () => {
+	test("seconds", () => {
+		expect(parseDuration("30s")).toBe(30_000);
+		expect(parseDuration("1s")).toBe(1_000);
+	});
+	test("minutes", () => {
+		expect(parseDuration("5m")).toBe(300_000);
+		expect(parseDuration("61m")).toBe(61 * 60_000);
+	});
+	test("hours", () => {
+		expect(parseDuration("1h")).toBe(3_600_000);
+	});
+	test("fractional values", () => {
+		expect(parseDuration("1.5h")).toBe(5_400_000);
+		expect(parseDuration("0.5m")).toBe(30_000);
+	});
+	test("invalid format returns null", () => {
+		expect(parseDuration("")).toBeNull();
+		expect(parseDuration("invalid")).toBeNull();
+		expect(parseDuration("1x")).toBeNull();
+		expect(parseDuration("5")).toBeNull(); // no unit
+		expect(parseDuration("m5")).toBeNull();
+		expect(parseDuration("-1m")).toBeNull(); // regex rejects leading sign
+	});
+});
+
+describe("filterByMaxGap", () => {
+	function row(
+		gapMs: number | null,
+		extra: Partial<CacheMissRow> = {},
+	): CacheMissRow {
+		return {
+			lineNumber: 1,
+			ts: 0,
+			inputTokens: 100,
+			cacheReadTokens: 10,
+			cacheCreationTokens: 0,
+			outputTokens: 5,
+			hitPct: 10,
+			gapMs,
+			stoppedInGap: false,
+			...extra,
+		};
+	}
+
+	test("null maxGap returns all rows unchanged", () => {
+		const rows = [row(null), row(60_000), row(10 * 60 * 60 * 1000)];
+		expect(filterByMaxGap(rows, null)).toEqual(rows);
+	});
+
+	test("filters out rows with gap > maxGap", () => {
+		const rows = [
+			row(30_000), // 30s
+			row(5 * 60_000), // 5m
+			row(60 * 60_000), // 60m
+			row(90 * 60_000), // 90m
+		];
+		const filtered = filterByMaxGap(rows, 61 * 60_000); // <= 61m
+		expect(filtered).toHaveLength(3);
+		expect(filtered.map((r) => r.gapMs)).toEqual([30_000, 300_000, 3_600_000]);
+	});
+
+	test("keeps rows with gap === maxGap (boundary is inclusive)", () => {
+		const rows = [row(60_000)];
+		expect(filterByMaxGap(rows, 60_000)).toHaveLength(1);
+	});
+
+	test("always keeps rows with gapMs === null (first usage, unknowable)", () => {
+		const rows = [
+			row(null), // first usage
+			row(10 * 60 * 60 * 1000), // 10h — would be filtered
+		];
+		const filtered = filterByMaxGap(rows, 60_000);
+		expect(filtered).toHaveLength(1);
+		expect(filtered[0]?.gapMs).toBeNull();
+	});
+
+	test("empty input returns empty", () => {
+		expect(filterByMaxGap([], 60_000)).toEqual([]);
 	});
 });
