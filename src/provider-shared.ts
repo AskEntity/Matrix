@@ -22,11 +22,7 @@ import {
 	getCompactionThresholds,
 	processCompaction,
 } from "./compaction.ts";
-import {
-	type Event,
-	hasPendingImplicitYield,
-	queueMessageToEvent,
-} from "./events.ts";
+import { type Event, hasPendingImplicitYield } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import {
 	drainQueueAtCancellationPoint,
@@ -294,6 +290,16 @@ export function filterEventImages(
  * user message(s). This keeps live path and reconstruction path byte-identical
  * by eliminating the duplicate "build user message from tools+queue" rule.
  */
+/**
+ * Build tool_result events plus the matching messages_consumed marker for a
+ * turn's worth of tool calls and drained queue messages.
+ *
+ * After the `enqueue === persist` refactor, queue messages are persisted
+ * when they enter the queue (via `queue.enqueue`'s onPersist callback).
+ * This function no longer needs to emit `message` events — it only outputs
+ * `tool_result*` and the `messages_consumed` marker referencing their ids.
+ * The walker resolves consumed ids via eventIndex lookup.
+ */
 export function buildToolResultEvents(
 	toolIds: Array<{ id: string; name: string }>,
 	execResults: ToolResult[],
@@ -302,27 +308,10 @@ export function buildToolResultEvents(
 ): Event[] {
 	const toolEvents: Event[] = [];
 
-	// Collect consumed message IDs from cancellation queue messages
-	const consumedIds: string[] = [];
-	const nonUserQueueEvents: Event[] = [];
-	for (const qm of cancellationQueueMsgs) {
-		if (qm.source === "user" && qm.id) {
-			// message already written to JSONL at send time — just track ID
-			consumedIds.push(qm.id);
-		} else {
-			const evt = queueMessageToEvent(qm, taskId);
-			const evtId = (evt as { id?: string }).id;
-			if (evtId) consumedIds.push(evtId);
-			nonUserQueueEvents.push(evt);
-		}
-	}
-
 	for (let idx = 0; idx < toolIds.length; idx++) {
 		const toolId = toolIds[idx] as { id: string; name: string };
 		const exec = execResults[idx] as ToolResult;
 
-		// Record pure tool output — queue text is NOT embedded.
-		// The converter reconstructs queue messages from messagesConsumed + message events.
 		const images: EventImageData[] = [];
 		if (exec.mcpImages?.length) {
 			for (const img of exec.mcpImages) {
@@ -356,13 +345,8 @@ export function buildToolResultEvents(
 		});
 	}
 
-	// Record non-user queue messages (from cancellation drain) as separate Events
-	for (const evt of nonUserQueueEvents) {
-		toolEvents.push(evt);
-	}
-
-	// Record standalone messages_consumed event AFTER tool_results and queue events
-	if (consumedIds.length > 0) {
+	if (cancellationQueueMsgs.length > 0) {
+		const consumedIds = cancellationQueueMsgs.map((qm) => qm.id);
 		toolEvents.push({
 			type: "messages_consumed",
 			messageIds: consumedIds,
@@ -619,6 +603,24 @@ export async function* runProviderLoop(
 
 	// ── Event emission — all events flow through this callback ──
 	const emit = request.emit;
+
+	// Wire the queue's onPersist callback to emit if the queue doesn't already
+	// have one. This enforces the `enqueue === persist` invariant at the
+	// provider-loop layer: any caller with a queue + emit gets single-write
+	// persistence automatically, regardless of how the queue was constructed.
+	// Production (runAgentForNode) already wires onPersist; unit tests that
+	// pass a bare `new MessageQueue()` also get it automatically.
+	if (queue && emit && !queue.hasOnPersist()) {
+		queue.setOnPersist((msg) => {
+			emit({
+				type: "message",
+				id: msg.id,
+				taskId: "",
+				body: msg,
+				ts: msg.ts,
+			});
+		});
+	}
 
 	// Resume from pre-loaded active events (daemon layer reads these from EventStore)
 	const activeEvents = request.activeEvents ?? [];
@@ -1112,7 +1114,7 @@ export async function* runProviderLoop(
 			emit?.(yieldResultEvt);
 			yield yieldResultEvt;
 
-			// Emit queue events for consumed messages AFTER tool_result
+			// Emit messages_consumed marker AFTER tool_result
 			if (emit) {
 				recordQueueEvents(emit, yieldResult.nonCompact);
 			}
@@ -1437,6 +1439,31 @@ export async function* runProviderLoop(
 		totalCacheReadTokens += usage.cacheReadTokens ?? 0;
 		estimatedInputTokens = usage.totalContextTokens + usage.outputTokens;
 
+		// Extract text and tool uses from response
+		const responseText = adapter.getResponseText(response);
+		if (responseText) {
+			lastText = responseText;
+		}
+		const toolUses = compactionPending ? [] : adapter.getToolUses(response);
+
+		// Add assistant message to history
+		adapter.addAssistantMessage(messages, response, compactionPending);
+
+		// Emit individual Events for each content block FIRST.
+		// The `usage` event is emitted AFTER so the frontend's `attach_usage`
+		// walk-backwards logic finds this turn's assistant_text, not the
+		// previous turn's (off-by-one bug — cache badge on wrong message).
+		if (emit) {
+			const contentEvents = adapter.buildResponseEvents(
+				response,
+				compactionPending,
+			);
+			for (const evt of contentEvents) {
+				emit(evt);
+			}
+		}
+
+		// Emit usage AFTER content events — see ordering note above.
 		const usageEvt: Event = {
 			type: "usage",
 			inputTokens: usage.totalContextTokens,
@@ -1450,26 +1477,21 @@ export async function* runProviderLoop(
 		emit?.(usageEvt);
 		yield usageEvt;
 
-		// Extract text and tool uses from response
-		const responseText = adapter.getResponseText(response);
-		if (responseText) {
-			lastText = responseText;
-			if (!compactionPending) {
-				// assistant_text is also emitted via buildResponseEvents — this yield
-				// is only for consumer loop advancement
-				yield {
-					type: "assistant_text",
-					content: responseText,
-					taskId: "",
-					ts: Date.now(),
-				};
-			}
+		// Yield assistant_text and tool_call events to the consumer loop AFTER
+		// emission. These yields are control-flow signals only — they are NOT
+		// persisted (assistant_text / tool_call are emitted via buildResponseEvents
+		// above). Consumer loops (SSE pumping, cost tracking) don't care about
+		// ordering relative to usage, so emission order is what matters for JSONL.
+		if (responseText && !compactionPending) {
+			yield {
+				type: "assistant_text",
+				content: responseText,
+				taskId: "",
+				ts: Date.now(),
+			};
 		}
-
-		const toolUses = compactionPending ? [] : adapter.getToolUses(response);
 		if (!compactionPending) {
 			for (const tu of toolUses) {
-				// tool_call is also emitted via buildResponseEvents — yield for control flow
 				yield {
 					type: "tool_call",
 					tool: tu.name,
@@ -1478,20 +1500,6 @@ export async function* runProviderLoop(
 					taskId: "",
 					ts: Date.now(),
 				};
-			}
-		}
-
-		// Add assistant message to history
-		adapter.addAssistantMessage(messages, response, compactionPending);
-
-		// Emit individual Events for each content block
-		if (emit) {
-			const contentEvents = adapter.buildResponseEvents(
-				response,
-				compactionPending,
-			);
-			for (const evt of contentEvents) {
-				emit(evt);
 			}
 		}
 
@@ -1589,7 +1597,7 @@ export async function* runProviderLoop(
 				messages.push(msg);
 			}
 
-			// Emit queue events and messages_consumed
+			// Emit messages_consumed marker for the drained queue messages
 			if (emit) {
 				recordQueueEvents(emit, yieldResult.nonCompact);
 			}
@@ -1790,7 +1798,7 @@ export async function* runProviderLoop(
 			messages.push(msg);
 		}
 
-		// Emit individual tool_result Events
+		// Emit tool_result + messages_consumed events
 		if (emit) {
 			const toolEvents = buildToolResultEvents(
 				toolUses.map((tu) => ({ id: tu.id, name: tu.name })),

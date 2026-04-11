@@ -131,6 +131,7 @@ export function attachMockSession(
 	const session: TaskSession = {
 		queue,
 		abortController: new AbortController(),
+		loopTraceId: "mock-trace-id",
 		cwd: opts?.cwd ?? "/tmp/mock-cwd",
 		fallbackCwd: opts?.cwd ?? "/tmp/mock-cwd",
 		depth: opts?.depth ?? 0,

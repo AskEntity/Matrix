@@ -18,6 +18,14 @@ export interface TaskSession {
 	queue: MessageQueue;
 	/** Abort controller for cancelling in-flight API calls. */
 	abortController: AbortController;
+	/**
+	 * Trace ID for this agent loop instance. All events emitted BY this run
+	 * (provider loop, tool handlers, lifecycle events in runAgentForNode) carry
+	 * this value as `event.traceId`. External paths (deliverMessage of user
+	 * input, task_started before loop spawn, fork_marker, tree_change) do NOT
+	 * carry traceId — they exist independently of any specific run.
+	 */
+	loopTraceId: string;
 	/** Current working directory — mutable, updated by bash cd. */
 	cwd: string;
 	/** Project/worktree root — immutable fallback. */

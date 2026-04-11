@@ -2,7 +2,7 @@
  * Queue message utilities: image extraction, formatting, drain logic, and event recording.
  * Used by both providers and the run loop in provider-shared.ts.
  */
-import { type Event, queueMessageToEvent } from "./events.ts";
+import type { Event } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 
 // ── Queue image extraction ──
@@ -85,12 +85,17 @@ export function drainQueueAtCancellationPoint(queue: MessageQueue): {
 	return { messages: nonCompactMsgs, manualCompactRequested };
 }
 
-// ── Event emission helpers ──
+// ── messages_consumed emitter ──
 
 /**
- * Emit queue events and messages_consumed event via the emit callback.
- * Handles the two-phase message lifecycle: user messages with IDs are already
- * written at send time — just track their IDs. Other messages get converted.
+ * Emit a `messages_consumed` event referencing the given drained queue messages.
+ *
+ * After the `enqueue === persist` refactor, every message that lands in the
+ * queue is persisted to JSONL exactly once (by `queue.enqueue`'s onPersist
+ * callback, or by direct `emitEvent` on the agent-not-running path). This
+ * function no longer re-emits message events — its sole job is to tell the
+ * walker which message ids have been consumed by the current turn so the
+ * reconstruction path can resolve them via eventIndex.
  */
 export function recordQueueEvents(
 	emit: (event: Event) => void,
@@ -99,19 +104,9 @@ export function recordQueueEvents(
 	taskId = "",
 ): void {
 	const consumedIds: string[] = [...(additionalConsumedIds ?? [])];
-
 	for (const msg of queueMsgs) {
-		if (msg.source === "user" && msg.id) {
-			// message already written to JSONL at send time — don't duplicate
-			consumedIds.push(msg.id);
-		} else {
-			const evt = queueMessageToEvent(msg, taskId);
-			const evtId = (evt as { id?: string }).id;
-			if (evtId) consumedIds.push(evtId);
-			emit(evt);
-		}
+		consumedIds.push(msg.id);
 	}
-
 	if (consumedIds.length > 0) {
 		emit({
 			type: "messages_consumed",
