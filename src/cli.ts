@@ -9,6 +9,7 @@ import {
 	signCLIToken,
 	signSessionToken,
 } from "./auth.ts";
+import { runAnalyzeCache } from "./cli-analyze-cache.ts";
 import {
 	type AuthGroup,
 	GLOBAL_ONLY_FIELDS,
@@ -1485,6 +1486,9 @@ switch (command) {
 	case "daemon":
 		await handleDaemon(args);
 		break;
+	case "analyze-cache":
+		runAnalyzeCache(args);
+		break;
 	case "send":
 	case "s": {
 		let projectId: string | undefined;
@@ -1590,6 +1594,11 @@ switch (command) {
 		console.log("  Auth");
 		console.log(
 			"    auth <public_key>        Encrypt session token with browser public key",
+		);
+		console.log("");
+		console.log("  Debug");
+		console.log(
+			"    analyze-cache <projectId> <taskId>  List cache miss events in a task's JSONL",
 		);
 		console.log("");
 		console.log("  Other");
