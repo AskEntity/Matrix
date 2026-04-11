@@ -281,9 +281,16 @@ function buildAllToolDefs(): ToolDef[] {
 		{
 			name: "update_task",
 			description:
-				"Update a task node. All fields except taskId are optional — provide only the fields you want to change." +
-				" For surgical description edits, use old_description + new_description (like edit_file's old_string/new_string)." +
-				" Cannot combine description with old_description/new_description.",
+				"Update a task node. All fields except taskId are optional — " +
+				"provide only the fields you want to change.\n\n" +
+				"**Editing the description field**: treat it like a file. " +
+				"Use `description` for a full rewrite (replaces the ENTIRE field). " +
+				"Use `old_description` + `new_description` for surgical edits — " +
+				"SAME semantics as `edit_file`'s `old_string`/`new_string`: " +
+				"the exact substring `old_description` is replaced by `new_description`, " +
+				"and everything else stays byte-identical. " +
+				"If `old_description` is not unique, provide more surrounding context to disambiguate. " +
+				"Cannot combine `description` with `old_description`/`new_description`.",
 			params: {
 				projectId: {
 					schema: z.string(),
@@ -313,18 +320,27 @@ function buildAllToolDefs(): ToolDef[] {
 				description: {
 					schema: z.string(),
 					decl: { kind: "optional" },
-					description: "New description",
+					description:
+						"Replaces the ENTIRE description field (full rewrite). " +
+						"Use this for major rewrites. For local edits, prefer " +
+						"old_description/new_description to avoid accidentally dropping content.",
 				},
 				old_description: {
 					schema: z.string(),
 					decl: { kind: "optional" },
 					description:
-						"Exact substring to find in the current description for surgical edit. Must be unique. Use with new_description.",
+						"Exact substring to find in the current description. Must be unique. " +
+						"ONLY this substring is replaced — the rest of the description stays " +
+						"byte-identical. Same semantics as edit_file's old_string. " +
+						"If you intend to replace the whole description, use the `description` parameter instead.",
 				},
 				new_description: {
 					schema: z.string(),
 					decl: { kind: "optional" },
-					description: "Replacement string for old_description match.",
+					description:
+						"Replacement string for the old_description match. Same semantics as " +
+						"edit_file's new_string — only what matched old_description is replaced, " +
+						"nothing else in the description changes.",
 				},
 				draft: {
 					schema: z.boolean(),
