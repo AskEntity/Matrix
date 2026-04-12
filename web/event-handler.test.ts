@@ -2379,12 +2379,12 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 			},
 		]);
 
-		// task_started should still be there
-		const taskStarted = capturedLogs.find((e) => e.type === "agent_start");
-		expect(taskStarted).toBeDefined();
-
+		// agent_start with resume produces lifecycle entries. Non-resume agent_start produces nothing.
 		// The first empty start/stop pair should be collapsed, keeping only the last resume
 		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
+		// Two resume agent_start → 2 lifecycle entries, but the first start+stop pair collapses
+		// agent_start(resume:false) doesn't produce lifecycle, agent_end(stopped) does,
+		// then both get collapsed with agent_start(resume:true). Last resume + assistant_text remain.
 		expect(lifecycleEntries.length).toBe(1);
 	});
 });

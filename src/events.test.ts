@@ -516,7 +516,7 @@ describe("eventsToAnthropicMessages", () => {
 		]);
 	});
 
-	test("compact_marker is skipped", () => {
+	test("compact_marker is skipped, post-compact messages flow normally", () => {
 		const events: Event[] = [
 			{
 				type: "message",
@@ -531,14 +531,30 @@ describe("eventsToAnthropicMessages", () => {
 				taskId: "test",
 				ts: 2000,
 			},
-			{ type: "compacted_resume", content: "summary",
+			{
+				type: "message",
+				id: "wc1",
+				body: { source: "work_context" as any, id: "wc1", ts: 2001, content: "work context" },
 				taskId: "test",
 				ts: 2001,
-			} as unknown as Event,
+			},
+			{
+				type: "message",
+				id: "cr1",
+				body: { source: "compacted_resume" as any, id: "cr1", ts: 2002, content: "summary" },
+				taskId: "test",
+				ts: 2002,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["wc1", "cr1"],
+				taskId: "test",
+				ts: 2003,
+			},
 		];
 		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "[00:00:01] hello" },
-			{ role: "user", content: "summary" },
+			{ role: "user", content: expect.stringContaining("work context") },
 		]);
 	});
 
@@ -618,7 +634,7 @@ describe("eventsToAnthropicMessages", () => {
 		});
 	});
 
-	test("compaction scenario: compacted_resume + continuation", () => {
+	test.skip("REMOVED: compaction scenario — compacted_resume event type removed", () => {
 		const events: Event[] = [
 			{ type: "compacted_resume", content: "## Checkpoint\n\nCompleted steps 1-3.", cwd: "/tmp", taskId: "test", ts: 2000 } as unknown as Event,
 			{
@@ -1025,23 +1041,8 @@ describe("eventsToOpenAIMessages", () => {
 		]);
 	});
 
-	test("converts compacted_resume", () => {
-		const events: Event[] = [
-			{ type: "compacted_resume", content: "Checkpoint summary", cwd: "/tmp", taskId: "test", ts: 1000 } as unknown as Event,
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "Checkpoint summary" },
-		]);
-	});
-
-	test("converts summarization_request", () => {
-		const events: Event[] = [
-			{ type: "summarization_request", instruction: "Summarize now", taskId: "test", ts: 1000 } as unknown as Event,
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "Summarize now" },
-		]);
-	});
+	// compacted_resume and summarization_request tests removed — event types no longer exist.
+	// Content flows through message path with source: "compacted_resume"/"work_context".
 
 	test("converts budget_warning", () => {
 		const events: Event[] = [
@@ -1265,7 +1266,7 @@ describe("eventsToOpenAIMessages", () => {
 		});
 	});
 
-	test("compact_marker is skipped", () => {
+	test("compact_marker is skipped, post-compact messages flow normally", () => {
 		const events: Event[] = [
 			{
 				type: "message",
@@ -1280,15 +1281,24 @@ describe("eventsToOpenAIMessages", () => {
 				taskId: "test",
 				ts: 2000,
 			},
-			{ type: "compacted_resume", content: "summary",
+			{
+				type: "message",
+				id: "cr1",
+				body: { source: "compacted_resume" as any, id: "cr1", ts: 2001, content: "summary" },
 				taskId: "test",
 				ts: 2001,
-			} as unknown as Event,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["cr1"],
+				taskId: "test",
+				ts: 2002,
+			},
 		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "[00:00:01] hello" },
-			{ role: "user", content: "summary" },
-		]);
+		const msgs = eventsToOpenAIMessages(events);
+		expect(msgs[0]).toEqual({ role: "user", content: "[00:00:01] hello" });
+		// compacted_resume message consumed → becomes user content
+		expect(msgs[1]).toEqual({ role: "user", content: expect.stringContaining("summary") });
 	});
 
 	test("full conversation: user → assistant+tools → results → assistant", () => {
@@ -1431,7 +1441,7 @@ describe("eventsToOpenAIMessages", () => {
 		expect(imgMsg.content).toHaveLength(4);
 	});
 
-	test("compaction scenario: compacted_resume + continuation", () => {
+	test.skip("REMOVED: compaction scenario — compacted_resume event type removed", () => {
 		const events: Event[] = [
 			{ type: "compacted_resume", content: "## Checkpoint\n\nCompleted steps 1-3.", cwd: "/tmp", taskId: "test", ts: 2000 } as unknown as Event,
 			{

@@ -209,27 +209,10 @@ function taskCompleteText(
 }
 
 // ── Tests: onUserMessage callback ──
-// Called for message events WITHOUT id (rare — only compacted_resume, summarization_request, budget_warning).
+// compacted_resume and summarization_request tests removed — these event types
+// no longer exist. Content now flows through the message path as QueueMessage sources.
 
 describe("walker: onUserMessage callback", () => {
-	test("compacted_resume event renders as user message with string content", () => {
-		const events: Event[] = [
-			{
-				type: "compacted_resume" as any,
-				content: "This is the checkpoint summary.",
-				taskId: "",
-				ts: 0,
-			},
-		];
-		const msgs = eventsToAnthropicMessages(events);
-		expect(msgs).toEqual([
-			{ role: "user", content: "This is the checkpoint summary." },
-		]);
-	});
-
-	// summarization_request test removed — event type no longer exists.
-	// Content is now injected as part of compact_started.
-
 	test("budget_warning event renders as user message", () => {
 		const events: Event[] = [
 			{
@@ -1179,26 +1162,8 @@ describe("walker: full turn sequences", () => {
 		expect(content[1]?.text).toContain("</fork_marker>");
 	});
 
-	test("compacted_resume in middle of session rendered as user message", () => {
-		const events: Event[] = [
-			{
-				type: "compacted_resume" as any,
-				content: "=== COMPACTED CHECKPOINT ===\nSummary here.",
-				taskId: "",
-				ts: 0,
-			},
-			assistantTextEvent("Continuing after compaction."),
-		];
-		const msgs = eventsToAnthropicMessages(events);
-		expect(msgs[0]).toEqual({
-			role: "user",
-			content: "=== COMPACTED CHECKPOINT ===\nSummary here.",
-		});
-		expect(msgs[1]).toEqual({
-			role: "assistant",
-			content: [{ type: "text", text: "Continuing after compaction." }],
-		});
-	});
+	// compacted_resume in middle test removed — event type no longer exists.
+	// Content now flows through message path with source: "compacted_resume".
 });
 
 // ── Tests: skipped events (ensure walker doesn't accidentally render them) ──
