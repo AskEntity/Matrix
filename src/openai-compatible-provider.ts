@@ -1,5 +1,14 @@
+import OpenAI from "openai";
+import type {
+	ChatCompletion,
+	ChatCompletionCreateParamsNonStreaming,
+} from "openai/resources/chat/completions/completions";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
-import { writeDebugSnapshot } from "./debug-snapshot.ts";
+import {
+	debugResponsePath,
+	writeDebugResponse,
+	writeDebugSnapshot,
+} from "./debug-snapshot.ts";
 import {
 	type AssistantContent,
 	type AssistantToolCall,
@@ -52,29 +61,6 @@ interface OpenAITool {
 		description: string;
 		parameters: Record<string, unknown>;
 	};
-}
-
-interface OpenAIUsage {
-	prompt_tokens?: number;
-	completion_tokens?: number;
-	total_tokens?: number;
-}
-
-interface OpenAIChoice {
-	index: number;
-	message: {
-		role: "assistant";
-		content: string | null;
-		tool_calls?: OpenAIToolCall[];
-	};
-	finish_reason: string | null;
-}
-
-interface OpenAIChatResponse {
-	id: string;
-	object: "chat.completion";
-	choices: OpenAIChoice[];
-	usage: OpenAIUsage;
 }
 
 // ── Pricing & context windows ──
@@ -238,53 +224,22 @@ export function getContextWindow(model: string): number {
 
 // ── OpenAI API call helper ──
 
+/**
+ * Call the OpenAI Chat Completions API via the SDK.
+ * Caller builds the body. This function only creates the client and calls.
+ */
 async function callOpenAIAPI(
 	baseUrl: string,
 	apiKey: string,
-	messages: OpenAIMessage[],
-	tools: OpenAITool[],
-	model: string,
-	maxTokens: number,
+	body: ChatCompletionCreateParamsNonStreaming,
 	signal?: AbortSignal,
-): Promise<OpenAIChatResponse> {
-	const body: Record<string, unknown> = {
-		model,
-		messages,
-		max_tokens: maxTokens,
-	};
-	if (tools.length > 0) {
-		body.tools = tools;
-		body.tool_choice = "auto";
-	}
-
-	for (let attempt = 0; attempt < 5; attempt++) {
-		const response = await fetch(`${baseUrl}/chat/completions`, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${apiKey}`,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify(body),
-			...(signal ? { signal } : {}),
-		});
-
-		if (response.ok) {
-			return (await response.json()) as OpenAIChatResponse;
-		}
-
-		const status = response.status;
-		const isTransient =
-			status === 429 || status === 500 || status === 503 || status === 529;
-		if (!isTransient || attempt >= 4) {
-			const errorText = await response.text();
-			throw new Error(`OpenAI API error (${status}): ${errorText}`);
-		}
-
-		const delay = Math.min(2000 * 2 ** attempt, 60000);
-		await new Promise((r) => setTimeout(r, delay));
-	}
-
-	throw new Error("Failed to get API response after retries");
+): Promise<ChatCompletion> {
+	const client = new OpenAI({
+		apiKey,
+		baseURL: baseUrl,
+		maxRetries: 2,
+	});
+	return client.chat.completions.create(body, { signal });
 }
 
 // ── OpenAI Event Converter ──
@@ -533,50 +488,50 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 			const systemContent = combinedPrompt
 				? `${combinedPrompt}\n\nIMPORTANT: Always call at least one tool in each response. Use your tools to accomplish the task. Do not generate text responses without making tool calls.`
 				: "IMPORTANT: Always call at least one tool in each response.";
-			const apiMessages: OpenAIMessage[] = [
-				{
-					role: "system",
-					content: systemContent,
-				},
-				...(params.messages as OpenAIMessage[]),
-			];
 
-			// Pre-API-call debug snapshot: evidence for drift debugging.
-			// Non-fatal; never blocks the API call.
+			// Caller builds body — this is the EXACT object passed to the SDK.
+			const body: ChatCompletionCreateParamsNonStreaming = {
+				model: params.model,
+				messages: [
+					{ role: "system" as const, content: systemContent },
+					...(params.messages as ChatCompletionCreateParamsNonStreaming["messages"]),
+				],
+				max_tokens: params.maxTokens,
+			};
+			if (tools.length > 0) {
+				body.tools =
+					tools as unknown as ChatCompletionCreateParamsNonStreaming["tools"];
+				body.tool_choice = "auto";
+			}
+
+			// Snapshot the exact body before sending — zero divergence possible.
 			writeDebugSnapshot(params.debugSnapshotPath, {
 				sessionId: params.sessionId ?? "",
 				provider: "openai",
-				body: {
-					model: params.model,
-					messages: apiMessages,
-					tools,
-					max_tokens: params.maxTokens,
-				},
+				body: body as unknown as Record<string, unknown>,
 			});
 
-			const data = await callOpenAIAPI(
-				baseUrl,
-				apiKey,
-				apiMessages,
-				tools,
-				params.model,
-				params.maxTokens,
-				params.signal,
-			);
+			const data = await callOpenAIAPI(baseUrl, apiKey, body, params.signal);
+
+			// Snapshot the response too.
+			writeDebugResponse(debugResponsePath(params.debugSnapshotPath), data);
 
 			return data;
 		},
 
 		getResponseText(response: unknown): string {
-			const data = response as OpenAIChatResponse;
+			const data = response as ChatCompletion;
 			const choice = data.choices[0];
 			return choice?.message.content ?? "";
 		},
 
 		getToolUses(response: unknown): ProviderToolUse[] {
-			const data = response as OpenAIChatResponse;
+			const data = response as ChatCompletion;
 			const choice = data.choices[0];
-			const toolCalls = choice?.message.tool_calls ?? [];
+			const toolCalls = (choice?.message.tool_calls ?? []).filter(
+				(tc): tc is Extract<typeof tc, { type: "function" }> =>
+					tc.type === "function",
+			);
 			return toolCalls.map((tc) => {
 				let parsedInput: Record<string, unknown> = {};
 				try {
@@ -593,7 +548,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 		},
 
 		getTokenUsage(response: unknown): ProviderTokenUsage {
-			const data = response as OpenAIChatResponse;
+			const data = response as ChatCompletion;
 			const promptTokens = data.usage?.prompt_tokens ?? 0;
 			const completionTokens = data.usage?.completion_tokens ?? 0;
 			return {
@@ -604,7 +559,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 		},
 
 		getStopReason(response: unknown): "end_turn" | "tool_use" {
-			const data = response as OpenAIChatResponse;
+			const data = response as ChatCompletion;
 			const choice = data.choices[0];
 			const toolCalls = choice?.message.tool_calls ?? [];
 			if (toolCalls.length === 0 || choice?.finish_reason === "stop") {
@@ -616,7 +571,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 		supportsTokenCounting: false,
 
 		buildResponseEvents(response: unknown, isCompacting: boolean): Event[] {
-			const data = response as OpenAIChatResponse;
+			const data = response as ChatCompletion;
 			const choice = data.choices[0];
 			const events: Event[] = [];
 
@@ -630,7 +585,11 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 			}
 
 			if (!isCompacting && choice?.message.tool_calls) {
-				for (const tc of choice.message.tool_calls) {
+				const fnCalls = choice.message.tool_calls.filter(
+					(tc): tc is Extract<typeof tc, { type: "function" }> =>
+						tc.type === "function",
+				);
+				for (const tc of fnCalls) {
 					let parsedInput: Record<string, unknown> = {};
 					try {
 						parsedInput = JSON.parse(tc.function.arguments);
@@ -656,7 +615,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 			response: unknown,
 			isCompacting: boolean,
 		): void {
-			const data = response as OpenAIChatResponse;
+			const data = response as ChatCompletion;
 			const choice = data.choices[0];
 			if (!choice) return;
 
@@ -669,7 +628,11 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 				choice.message.tool_calls &&
 				choice.message.tool_calls.length > 0
 			) {
-				historyMsg.tool_calls = choice.message.tool_calls;
+				const fnCalls = choice.message.tool_calls.filter(
+					(tc): tc is Extract<typeof tc, { type: "function" }> =>
+						tc.type === "function",
+				);
+				historyMsg.tool_calls = fnCalls;
 			}
 			(messages as OpenAIMessage[]).push(historyMsg);
 		},

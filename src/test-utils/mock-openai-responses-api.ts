@@ -142,13 +142,58 @@ function eventDataLine(data: unknown): string {
 function sseResponse(
 	events: Array<{ event: string; data: unknown }>,
 ): Response {
+	let seq = 0;
 	const body = events
-		.map(({ event, data }) => `event: ${event}\n${eventDataLine(data)}\n`)
+		.map(({ event, data }) => {
+			// SDK expects `type` and `sequence_number` in parsed JSON data
+			const enriched =
+				typeof data === "object" && data !== null
+					? {
+							type: event,
+							sequence_number: seq++,
+							...(data as Record<string, unknown>),
+						}
+					: data;
+			return `event: ${event}\n${eventDataLine(enriched)}\n`;
+		})
 		.join("");
 	return new Response(body, {
 		status: 200,
 		headers: { "Content-Type": "text/event-stream" },
 	});
+}
+
+/** Build a minimal but complete OAI Response object for mock SSE data. */
+function mockOAIResponse(overrides: {
+	id?: string;
+	output?: unknown[];
+	usage?: Record<string, unknown>;
+}): Record<string, unknown> {
+	return {
+		id: overrides.id ?? "resp-1",
+		object: "response",
+		status: "completed",
+		output: overrides.output ?? [],
+		output_text: "",
+		usage: overrides.usage ?? {
+			input_tokens: 10,
+			output_tokens: 5,
+			total_tokens: 15,
+			input_tokens_details: { cached_tokens: 0 },
+			output_tokens_details: { reasoning_tokens: 0 },
+		},
+		created_at: 0,
+		error: null,
+		incomplete_details: null,
+		instructions: null,
+		metadata: null,
+		model: "gpt-4.1-mini",
+		parallel_tool_calls: true,
+		temperature: 1,
+		tool_choice: "auto",
+		tools: [],
+		top_p: 1,
+	};
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {
@@ -385,14 +430,21 @@ export class ValidatingMockResponsesAPI {
 				data: { response: { id: "resp-1", status: "in_progress" } },
 			},
 		];
+		// Build the final output array for response.completed
+		const outputItems: unknown[] = [];
+
 		turn.blocks.forEach((block, index) => {
 			if (block.type === "text") {
+				const msgItem = {
+					type: "message",
+					id: `msg-${index}`,
+					role: "assistant",
+					content: [{ type: "output_text", text: block.text, annotations: [] }],
+					status: "completed",
+				};
 				events.push({
 					event: "response.output_item.added",
-					data: {
-						output_index: index,
-						item: { type: "message", role: "assistant", content: [] },
-					},
+					data: { output_index: index, item: msgItem },
 				});
 				events.push({
 					event: "response.content_part.added",
@@ -402,18 +454,20 @@ export class ValidatingMockResponsesAPI {
 						part: { type: "output_text", text: block.text },
 					},
 				});
+				outputItems.push(msgItem);
 			} else {
+				const args = JSON.stringify(block.input);
+				const fcItem = {
+					type: "function_call",
+					id: `call-${index}`,
+					call_id: `call-${index}`,
+					name: block.name,
+					arguments: args,
+					status: "completed",
+				};
 				events.push({
 					event: "response.output_item.added",
-					data: {
-						output_index: index,
-						item: {
-							type: "function_call",
-							call_id: `call-${index}`,
-							name: block.name,
-							arguments: "",
-						},
-					},
+					data: { output_index: index, item: fcItem },
 				});
 				events.push({
 					event: "response.function_call_arguments.done",
@@ -421,20 +475,25 @@ export class ValidatingMockResponsesAPI {
 						output_index: index,
 						item_id: `call-${index}`,
 						name: block.name,
-						arguments: JSON.stringify(block.input),
+						arguments: args,
 					},
 				});
+				outputItems.push(fcItem);
 			}
 		});
+
+		// Build output_text from text blocks
+		const outputText = turn.blocks
+			.filter((b) => b.type === "text")
+			.map((b) => (b as TextBlock).text)
+			.join("\n");
+
+		const completedResponse = mockOAIResponse({ output: outputItems });
+		completedResponse.output_text = outputText;
+
 		events.push({
 			event: "response.completed",
-			data: {
-				response: {
-					id: "resp-1",
-					status: "completed",
-					usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
-				},
-			},
+			data: { response: completedResponse },
 		});
 		return sseResponse(events);
 	}

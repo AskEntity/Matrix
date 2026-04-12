@@ -1,5 +1,16 @@
+import OpenAI from "openai";
+import type {
+	Response as OAIResponse,
+	ResponseCreateParams,
+	ResponseFunctionToolCall,
+	ResponseOutputMessage,
+} from "openai/resources/responses/responses";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
-import { writeDebugSnapshot } from "./debug-snapshot.ts";
+import {
+	debugResponsePath,
+	writeDebugResponse,
+	writeDebugSnapshot,
+} from "./debug-snapshot.ts";
 import {
 	type AssistantContent,
 	type AssistantToolCall,
@@ -43,48 +54,13 @@ interface HistoryToolCall {
 	function: { name: string; arguments: string };
 }
 
+/** SDK tool shape for function tools (used in prepareTools). */
 interface ResponsesTool {
 	type: "function";
 	name: string;
 	description: string;
 	strict: false;
 	parameters: Record<string, unknown>;
-}
-
-interface ResponsesUsage {
-	input_tokens?: number;
-	output_tokens?: number;
-	total_tokens?: number;
-}
-
-interface ResponsesMessageContentText {
-	type: "output_text";
-	text: string;
-}
-
-interface ResponsesOutputMessage {
-	id?: string;
-	type: "message";
-	role: "assistant";
-	content: ResponsesMessageContentText[];
-	status?: string;
-}
-
-interface ResponsesFunctionCall {
-	id?: string;
-	type: "function_call";
-	call_id?: string;
-	name: string;
-	arguments: string;
-	status?: string;
-}
-
-interface ResponsesResponse {
-	id: string;
-	status?: string;
-	output?: Array<ResponsesOutputMessage | ResponsesFunctionCall>;
-	usage?: ResponsesUsage | null;
-	error?: { message?: string } | null;
 }
 
 const OPENAI_PRICING: Record<
@@ -478,267 +454,93 @@ function historyToResponsesInput(
 	return messages.flatMap(historyMessageToResponsesInput);
 }
 
-/** @internal Exported for testing only. */
+/**
+ * Stream a Responses API call via the OpenAI SDK.
+ *
+ * Caller owns body construction. This function only does:
+ * 1. Create an OpenAI client with the right base URL / headers
+ * 2. Call `client.responses.create(body, { signal })` with streaming
+ * 3. Yield text_delta events for live UI streaming
+ * 4. Return the completed OAIResponse
+ *
+ * @internal Exported for testing only.
+ */
 export async function* streamResponsesAPI(params: {
 	endpoint: string;
 	authToken: string;
 	accountId?: string;
-	model: string;
-	messages: HistoryMessage[];
-	tools: ResponsesTool[];
-	instructions: string;
-	maxTokens: number;
+	body: ResponseCreateParams;
 	signal?: AbortSignal;
-	/** Override retry delay for testing. Default: exponential backoff (1s, 2s, 4s...). */
-	retryDelayMs?: (attempt: number) => number;
-}): AsyncGenerator<Event, ResponsesResponse> {
+	/** Override max retries for testing. SDK default: 2. */
+	maxRetries?: number;
+}): AsyncGenerator<Event, OAIResponse> {
 	const endpoint = resolveResponsesEndpoint(params.endpoint);
 	const codex = isCodexEndpoint(endpoint);
-	const body: Record<string, unknown> = {
-		model: params.model,
-		instructions: params.instructions,
-		input: historyToResponsesInput(params.messages),
-		tools: params.tools,
-		stream: true,
-		store: false,
-	};
-	if (!codex && params.maxTokens > 0) {
-		body.max_output_tokens = params.maxTokens;
-	}
-	if (codex) {
-		body.include = ["reasoning.encrypted_content"];
-	}
 
-	const headers: Record<string, string> = {
-		Authorization: `Bearer ${params.authToken}`,
-		"Content-Type": "application/json",
-	};
+	// Build SDK client with appropriate base URL and headers.
+	const defaultHeaders: Record<string, string> = {};
 	if (params.accountId) {
-		headers["ChatGPT-Account-Id"] = params.accountId;
+		defaultHeaders["ChatGPT-Account-Id"] = params.accountId;
 	}
 	if (codex) {
-		headers.originator = "matrix";
-		headers["User-Agent"] = "matrix";
+		defaultHeaders.originator = "matrix";
+		defaultHeaders["User-Agent"] = "matrix";
 	}
 
-	const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 529]);
-	const MAX_ATTEMPTS = 5;
-	let response: Response | undefined;
-	for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-		response = await fetch(endpoint, {
-			method: "POST",
-			headers,
-			body: JSON.stringify(body),
-			...(params.signal ? { signal: params.signal } : {}),
-		});
-		if (response.ok && response.body) break;
-		const errorText = await response.text();
-		if (
-			!RETRYABLE_STATUSES.has(response.status) ||
-			attempt >= MAX_ATTEMPTS - 1
-		) {
-			throw new Error(
-				`OpenAI Responses API error (${response.status}): ${errorText}`,
-			);
-		}
-		const delay = params.retryDelayMs
-			? params.retryDelayMs(attempt)
-			: Math.min(1000 * 2 ** attempt, 16000);
-		yield {
-			type: "error" as const,
-			taskId: "",
-			message: `OpenAI API error (retry ${attempt + 1}/${MAX_ATTEMPTS - 1}): ${response.status} ${errorText}`,
-			ts: Date.now(),
-		};
-		await new Promise((r) => setTimeout(r, delay));
-	}
-	if (!response?.ok || !response?.body) {
-		throw new Error("Failed to get API response after retries");
-	}
+	const client = new OpenAI({
+		apiKey: params.authToken,
+		baseURL: endpoint.replace(/\/responses$/, ""),
+		maxRetries: params.maxRetries ?? 2,
+		defaultHeaders,
+	});
 
-	const reader = response.body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
-	const outputByIndex = new Map<
-		number,
-		ResponsesOutputMessage | ResponsesFunctionCall
-	>();
-	let latestResponse: ResponsesResponse | null = null;
+	const stream = await client.responses.create(
+		{ ...params.body, stream: true } as ResponseCreateParams & {
+			stream: true;
+		},
+		{ signal: params.signal },
+	);
 
-	const upsertOutput = (
-		index: number,
-		item: ResponsesOutputMessage | ResponsesFunctionCall,
-	): void => {
-		outputByIndex.set(index, item);
-	};
+	let completedResponse: OAIResponse | null = null;
 
-	const getOrCreateMessage = (
-		index: number,
-		itemId?: string,
-	): ResponsesOutputMessage => {
-		const existing = outputByIndex.get(index);
-		if (existing && existing.type === "message") return existing;
-		const created: ResponsesOutputMessage = {
-			id: itemId,
-			type: "message",
-			role: "assistant",
-			content: [],
-		};
-		outputByIndex.set(index, created);
-		return created;
-	};
-
-	const getOrCreateFunctionCall = (
-		index: number,
-		itemId?: string,
-	): ResponsesFunctionCall => {
-		const existing = outputByIndex.get(index);
-		if (existing && existing.type === "function_call") return existing;
-		const created: ResponsesFunctionCall = {
-			id: itemId,
-			type: "function_call",
-			name: "",
-			arguments: "",
-		};
-		outputByIndex.set(index, created);
-		return created;
-	};
-
-	const processEvent = (eventName: string, dataJson: string): Event[] => {
-		if (!dataJson || dataJson === "[DONE]") return [];
-		const data = JSON.parse(dataJson) as Record<string, unknown>;
-		switch (eventName) {
-			case "response.created":
-			case "response.in_progress":
-			case "response.completed": {
-				const resp = data.response as ResponsesResponse | undefined;
-				if (resp) latestResponse = resp;
-				return [];
-			}
-
-			case "response.output_item.added": {
-				const outputIndex = data.output_index as number;
-				const item = data.item as
-					| ResponsesOutputMessage
-					| ResponsesFunctionCall;
-				if (typeof outputIndex === "number" && item) {
-					upsertOutput(outputIndex, item);
-				}
-				return [];
-			}
-
-			case "response.content_part.added": {
-				const outputIndex = data.output_index as number;
-				const itemId = data.item_id as string | undefined;
-				const part = data.part as ResponsesMessageContentText | undefined;
-				if (typeof outputIndex === "number" && part?.type === "output_text") {
-					const message = getOrCreateMessage(outputIndex, itemId);
-					message.content.push({ type: "output_text", text: part.text ?? "" });
-				}
-				return [];
-			}
-
+	for await (const event of stream) {
+		switch (event.type) {
 			case "response.output_text.delta": {
-				const outputIndex = data.output_index as number;
-				const itemId = data.item_id as string | undefined;
-				const contentIndex = data.content_index as number;
-				const delta = data.delta as string;
-				if (typeof outputIndex === "number") {
-					const message = getOrCreateMessage(outputIndex, itemId);
-					const part = message.content[contentIndex] ?? {
-						type: "output_text" as const,
-						text: "",
-					};
-					part.text += delta ?? "";
-					message.content[contentIndex] = part;
-					return [
-						{
-							type: "text_delta",
-							content: delta ?? "",
-							taskId: "",
-							ts: Date.now(),
-						},
-					];
-				}
-				return [];
+				yield {
+					type: "text_delta",
+					content: event.delta ?? "",
+					taskId: "",
+					ts: Date.now(),
+				};
+				break;
 			}
-
-			case "response.function_call_arguments.done": {
-				const outputIndex = data.output_index as number;
-				const itemId = data.item_id as string | undefined;
-				if (typeof outputIndex === "number") {
-					const item = getOrCreateFunctionCall(outputIndex, itemId);
-					item.name = (data.name as string) ?? item.name;
-					item.arguments = (data.arguments as string) ?? item.arguments;
-				}
-				return [];
+			case "response.completed": {
+				completedResponse = event.response;
+				break;
 			}
-
 			case "response.failed": {
-				const err = ((data.response as ResponsesResponse | undefined)?.error
-					?.message ??
-					(data.error as { message?: string } | undefined)?.message ??
-					"Responses API stream failed") as string;
+				const err =
+					event.response?.error?.message ?? "Responses API stream failed";
 				throw new Error(err);
 			}
-		}
-		return [];
-	};
-
-	while (true) {
-		const { value, done } = await reader.read();
-		if (done) break;
-		buffer += decoder.decode(value, { stream: true });
-
-		while (true) {
-			const sepIdx = buffer.indexOf("\n\n");
-			if (sepIdx === -1) break;
-			const rawEvent = buffer.slice(0, sepIdx);
-			buffer = buffer.slice(sepIdx + 2);
-
-			let eventName = "";
-			const dataLines: string[] = [];
-			for (const line of rawEvent.split("\n")) {
-				if (line.startsWith("event:")) {
-					eventName = line.slice(6).trim();
-				} else if (line.startsWith("data:")) {
-					dataLines.push(line.slice(5).trimStart());
-				}
-			}
-			const emitted = processEvent(eventName, dataLines.join("\n"));
-			for (const evt of emitted) {
-				yield evt;
-			}
+			// All other events (output_item.added, function_call_arguments.done, etc.)
+			// are tracked by the SDK internally — completedResponse.output has the final state.
 		}
 	}
 
-	const output = [...outputByIndex.entries()]
-		.sort((a, b) => a[0] - b[0])
-		.map(([, item]) => item);
-	const responseForReturn = latestResponse as ResponsesResponse | null;
-	if (responseForReturn !== null) {
-		return {
-			id: responseForReturn.id,
-			status: responseForReturn.status ?? "completed",
-			output,
-			usage: responseForReturn.usage ?? undefined,
-			error: responseForReturn.error ?? undefined,
-		};
+	if (completedResponse) {
+		return completedResponse;
 	}
-	return {
-		id: ulid(),
-		status: "completed",
-		output,
-		usage: undefined,
-		error: undefined,
-	};
+
+	// Fallback: stream ended without response.completed (shouldn't happen with SDK)
+	throw new Error("Stream ended without response.completed event");
 }
 
 function createOpenAIResponsesAdapter(
 	baseUrl: string,
 	authToken: string,
 	accountId?: string,
-	opts?: { retryDelayMs?: (attempt: number) => number },
+	opts?: { maxRetries?: number },
 ): ProviderAdapter {
 	return {
 		async getContextWindow(model: string): Promise<number> {
@@ -774,54 +576,59 @@ function createOpenAIResponsesAdapter(
 		async *callAPI(params) {
 			const instructions =
 				`${params.systemPrompt.stable}\n\n${params.systemPrompt.variable}`.trim();
+			const endpoint = resolveResponsesEndpoint(baseUrl);
+			const codex = isCodexEndpoint(endpoint);
 
-			// Pre-API-call debug snapshot: evidence for drift debugging.
-			// Write the fully-assembled request bytes to the debug path. Overwrites.
-			// Non-fatal; never blocks the API call.
+			// Caller builds body — this is the EXACT object passed to the SDK.
+			const body: ResponseCreateParams = {
+				model: params.model,
+				instructions,
+				input: historyToResponsesInput(
+					params.messages as HistoryMessage[],
+				) as unknown as ResponseCreateParams["input"],
+				tools: params.tools as unknown as ResponseCreateParams["tools"],
+				stream: true,
+				store: false,
+			};
+			if (!codex && params.maxTokens > 0) {
+				body.max_output_tokens = params.maxTokens;
+			}
+			if (codex) {
+				body.include = ["reasoning.encrypted_content"];
+			}
+
+			// Snapshot the exact body before sending — zero divergence possible.
 			writeDebugSnapshot(params.debugSnapshotPath, {
 				sessionId: params.sessionId ?? "",
 				provider: "openai-responses",
-				body: {
-					model: params.model,
-					instructions,
-					tools: params.tools,
-					input: params.messages,
-					max_output_tokens: params.maxTokens,
-				},
+				body: body as unknown as Record<string, unknown>,
 			});
 
-			return yield* streamResponsesAPI({
+			const response = yield* streamResponsesAPI({
 				endpoint: baseUrl,
 				authToken,
 				accountId,
-				model: params.model,
-				messages: params.messages as HistoryMessage[],
-				tools: params.tools as ResponsesTool[],
-				instructions,
-				maxTokens: params.maxTokens,
+				body,
 				signal: params.signal,
-				retryDelayMs: opts?.retryDelayMs,
+				maxRetries: opts?.maxRetries,
 			});
+
+			// Snapshot the response too.
+			writeDebugResponse(debugResponsePath(params.debugSnapshotPath), response);
+
+			return response;
 		},
 
 		getResponseText(response: unknown): string {
-			const data = response as ResponsesResponse;
-			const texts: string[] = [];
-			for (const item of data.output ?? []) {
-				if (item.type === "message") {
-					for (const part of item.content ?? []) {
-						if (part.type === "output_text") texts.push(part.text ?? "");
-					}
-				}
-			}
-			return texts.join("\n");
+			const data = response as OAIResponse;
+			return data.output_text ?? "";
 		},
 
 		getToolUses(response: unknown): ProviderToolUse[] {
-			const data = response as ResponsesResponse;
+			const data = response as OAIResponse;
 			return (data.output ?? [])
 				.filter(
-					(item): item is ResponsesFunctionCall =>
+					(item): item is ResponseFunctionToolCall =>
 						item.type === "function_call",
 				)
 				.map((item) => {
@@ -832,7 +639,7 @@ function createOpenAIResponsesAdapter(
 						// Ignore malformed args and let tool validation handle it later.
 					}
 					return {
-						id: item.call_id ?? item.id ?? ulid(),
+						id: item.call_id ?? ulid(),
 						name: item.name,
 						input: parsedInput,
 					};
@@ -840,7 +647,7 @@ function createOpenAIResponsesAdapter(
 		},
 
 		getTokenUsage(response: unknown): ProviderTokenUsage {
-			const data = response as ResponsesResponse;
+			const data = response as OAIResponse;
 			const inputTokens = data.usage?.input_tokens ?? 0;
 			const outputTokens = data.usage?.output_tokens ?? 0;
 			return {
@@ -851,7 +658,7 @@ function createOpenAIResponsesAdapter(
 		},
 
 		getStopReason(response: unknown): "end_turn" | "tool_use" {
-			const hasToolUse = (response as ResponsesResponse).output?.some(
+			const hasToolUse = (response as OAIResponse).output?.some(
 				(item) => item.type === "function_call",
 			);
 			return hasToolUse ? "tool_use" : "end_turn";
@@ -860,13 +667,14 @@ function createOpenAIResponsesAdapter(
 		supportsTokenCounting: false,
 
 		buildResponseEvents(response: unknown, isCompacting: boolean): Event[] {
-			const data = response as ResponsesResponse;
+			const data = response as OAIResponse;
 			const events: Event[] = [];
 			for (const item of data.output ?? []) {
 				if (item.type === "message") {
-					const text = item.content
-						.filter((part) => part.type === "output_text")
-						.map((part) => part.text ?? "")
+					const msg = item as ResponseOutputMessage;
+					const text = (msg.content as Array<{ type: string; text?: string }>)
+						.filter((part: { type: string }) => part.type === "output_text")
+						.map((part: { text?: string }) => part.text ?? "")
 						.join("\n");
 					if (text) {
 						events.push({
@@ -876,17 +684,18 @@ function createOpenAIResponsesAdapter(
 							ts: Date.now(),
 						});
 					}
-				} else if (!isCompacting) {
+				} else if (item.type === "function_call" && !isCompacting) {
+					const fc = item as ResponseFunctionToolCall;
 					let parsedInput: Record<string, unknown> = {};
 					try {
-						parsedInput = JSON.parse(item.arguments);
+						parsedInput = JSON.parse(fc.arguments);
 					} catch {
 						// Keep empty input for malformed function arguments.
 					}
 					events.push({
 						type: "tool_call",
-						tool: item.name,
-						toolCallId: item.call_id ?? item.id ?? ulid(),
+						tool: fc.name,
+						toolCallId: fc.call_id ?? ulid(),
 						input: parsedInput,
 						taskId: "",
 						ts: Date.now(),
@@ -901,24 +710,29 @@ function createOpenAIResponsesAdapter(
 			response: unknown,
 			isCompacting: boolean,
 		): void {
-			const data = response as ResponsesResponse;
+			const data = response as OAIResponse;
 			const contentTexts: string[] = [];
 			const toolCalls: HistoryToolCall[] = [];
 
 			for (const item of data.output ?? []) {
 				if (item.type === "message") {
-					for (const part of item.content ?? []) {
-						if (part.type === "output_text" && part.text) {
-							contentTexts.push(part.text);
+					const msg = item as ResponseOutputMessage;
+					for (const part of msg.content ?? []) {
+						if (
+							part.type === "output_text" &&
+							(part as { text: string }).text
+						) {
+							contentTexts.push((part as { text: string }).text);
 						}
 					}
-				} else if (!isCompacting) {
+				} else if (item.type === "function_call" && !isCompacting) {
+					const fc = item as ResponseFunctionToolCall;
 					toolCalls.push({
-						id: item.call_id ?? item.id ?? ulid(),
+						id: fc.call_id ?? ulid(),
 						type: "function",
 						function: {
-							name: item.name,
-							arguments: item.arguments,
+							name: fc.name,
+							arguments: fc.arguments,
 						},
 					});
 				}
@@ -1086,8 +900,8 @@ export class OpenAIResponsesCompatibleProvider implements AgentProvider {
 	private refreshToken: string;
 	private accountId?: string;
 	private model: string;
-	/** Override inner retry delay for testing. Production uses default (exponential backoff). */
-	retryDelayMs?: (attempt: number) => number;
+	/** Override SDK max retries for testing. SDK default: 2. */
+	maxRetries?: number;
 
 	constructor(
 		model?: string,
@@ -1157,7 +971,7 @@ export class OpenAIResponsesCompatibleProvider implements AgentProvider {
 			this.baseUrl,
 			this.authToken,
 			this.accountId,
-			{ retryDelayMs: this.retryDelayMs },
+			{ maxRetries: this.maxRetries },
 		);
 		const effectiveRequest = {
 			...request,
