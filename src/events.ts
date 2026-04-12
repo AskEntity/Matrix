@@ -191,7 +191,6 @@ export type Event = (
 			ts: number;
 	  }
 	| { type: "compact_started"; taskId: string; ts: number }
-
 	| {
 			type: "messages_consumed";
 			messageIds: string[];

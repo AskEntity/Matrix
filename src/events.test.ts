@@ -534,14 +534,24 @@ describe("eventsToAnthropicMessages", () => {
 			{
 				type: "message",
 				id: "wc1",
-				body: { source: "work_context" as any, id: "wc1", ts: 2001, content: "work context" },
+				body: {
+					source: "work_context" as any,
+					id: "wc1",
+					ts: 2001,
+					content: "work context",
+				},
 				taskId: "test",
 				ts: 2001,
 			},
 			{
 				type: "message",
 				id: "cr1",
-				body: { source: "compacted_resume" as any, id: "cr1", ts: 2002, content: "summary" },
+				body: {
+					source: "compacted_resume" as any,
+					id: "cr1",
+					ts: 2002,
+					content: "summary",
+				},
 				taskId: "test",
 				ts: 2002,
 			},
@@ -559,8 +569,14 @@ describe("eventsToAnthropicMessages", () => {
 		expect(msgs[1]).toEqual({
 			role: "user",
 			content: expect.arrayContaining([
-				expect.objectContaining({ type: "text", text: expect.stringContaining("work context") }),
-				expect.objectContaining({ type: "text", text: expect.stringContaining("summary") }),
+				expect.objectContaining({
+					type: "text",
+					text: expect.stringContaining("work context"),
+				}),
+				expect.objectContaining({
+					type: "text",
+					text: expect.stringContaining("summary"),
+				}),
 			]),
 		});
 	});
@@ -643,12 +659,19 @@ describe("eventsToAnthropicMessages", () => {
 
 	test.skip("REMOVED: compaction scenario — compacted_resume event type removed", () => {
 		const events: Event[] = [
-			{ type: "compacted_resume", content: "## Checkpoint\n\nCompleted steps 1-3.", cwd: "/tmp", taskId: "test", ts: 2000 } as unknown as Event,
+			{
+				type: "compacted_resume",
+				content: "## Checkpoint\n\nCompleted steps 1-3.",
+				cwd: "/tmp",
+				taskId: "test",
+				ts: 2000,
+			} as unknown as Event,
 			{
 				type: "assistant_text",
 				content: "Continuing from checkpoint.",
 				taskId: "test",
-				ts: 2001 } as unknown as Event,
+				ts: 2001,
+			} as unknown as Event,
 			{
 				type: "tool_call",
 				tool: "bash",
@@ -1291,7 +1314,12 @@ describe("eventsToOpenAIMessages", () => {
 			{
 				type: "message",
 				id: "cr1",
-				body: { source: "compacted_resume" as any, id: "cr1", ts: 2001, content: "summary" },
+				body: {
+					source: "compacted_resume" as any,
+					id: "cr1",
+					ts: 2001,
+					content: "summary",
+				},
 				taskId: "test",
 				ts: 2001,
 			},
@@ -1305,7 +1333,10 @@ describe("eventsToOpenAIMessages", () => {
 		const msgs = eventsToOpenAIMessages(events);
 		expect(msgs[0]).toEqual({ role: "user", content: "[00:00:01] hello" });
 		// compacted_resume message consumed → becomes user content
-		expect(msgs[1]).toEqual({ role: "user", content: expect.stringContaining("summary") });
+		expect(msgs[1]).toEqual({
+			role: "user",
+			content: expect.stringContaining("summary"),
+		});
 	});
 
 	test("full conversation: user → assistant+tools → results → assistant", () => {
@@ -1450,12 +1481,19 @@ describe("eventsToOpenAIMessages", () => {
 
 	test.skip("REMOVED: compaction scenario — compacted_resume event type removed", () => {
 		const events: Event[] = [
-			{ type: "compacted_resume", content: "## Checkpoint\n\nCompleted steps 1-3.", cwd: "/tmp", taskId: "test", ts: 2000 } as unknown as Event,
+			{
+				type: "compacted_resume",
+				content: "## Checkpoint\n\nCompleted steps 1-3.",
+				cwd: "/tmp",
+				taskId: "test",
+				ts: 2000,
+			} as unknown as Event,
 			{
 				type: "assistant_text",
 				content: "Continuing from checkpoint.",
 				taskId: "test",
-				ts: 2001 } as unknown as Event,
+				ts: 2001,
+			} as unknown as Event,
 			{
 				type: "tool_call",
 				tool: "bash",
@@ -3485,7 +3523,7 @@ describe("isPersistedByEmitEvent", () => {
 			"status",
 			"clarification_timeout",
 			"compact_started",
-			
+
 			"budget_warning",
 			"compact_marker",
 			"agent_start",

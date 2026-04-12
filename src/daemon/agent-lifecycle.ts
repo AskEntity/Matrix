@@ -893,7 +893,11 @@ export async function runAgentForNode(
 			updatedNode?.budgetUsd &&
 			updatedNode.budgetUsd > 0 &&
 			updatedNode.costUsd > updatedNode.budgetUsd;
-		let endReason: "done_passed" | "done_failed" | "stopped" | "budget_exceeded" =
+		let endReason:
+			| "done_passed"
+			| "done_failed"
+			| "stopped"
+			| "budget_exceeded" =
 			agentResult.exitReason === "done_passed"
 				? "done_passed"
 				: agentResult.exitReason === "done_failed"

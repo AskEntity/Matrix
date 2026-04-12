@@ -3049,7 +3049,9 @@ describe("Drift: compaction lifecycle", () => {
 
 		// Read compacted_resume event from JSONL
 		const events = await readSessionEvents(ctx, rootNodeId);
-		const compactedResume = events.find((e) => e.type === ("compacted_resume" as any)) as
+		const compactedResume = events.find(
+			(e) => e.type === ("compacted_resume" as any),
+		) as
 			| { type: "compacted_resume"; content: string; cwd?: string }
 			| undefined;
 		expect(compactedResume).toBeTruthy();

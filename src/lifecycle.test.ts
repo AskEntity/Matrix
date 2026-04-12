@@ -2479,9 +2479,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			join(dataDir, "projects", project.id, "tasks"),
 		);
 		const allEvents = eventStore.readAllSorted();
-		const orchStartEvents = allEvents.filter(
-			(e) => e.type === "agent_start",
-		);
+		const orchStartEvents = allEvents.filter((e) => e.type === "agent_start");
 		// After clear, only the new session's event exists
 		expect(orchStartEvents.length).toBeGreaterThanOrEqual(1);
 		// biome-ignore lint/style/noNonNullAssertion: length checked above
@@ -2638,9 +2636,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			join(dataDir, "projects", project.id, "tasks"),
 		);
 		const allEvents = eventStore.readAllSorted();
-		const orchStartEvents = allEvents.filter(
-			(e) => e.type === "agent_start",
-		);
+		const orchStartEvents = allEvents.filter((e) => e.type === "agent_start");
 		expect(orchStartEvents.length).toBeGreaterThanOrEqual(2);
 		// biome-ignore lint/style/noNonNullAssertion: length checked above
 		const lastOrchStart = orchStartEvents[
@@ -2775,9 +2771,9 @@ describe("lifecycle edge cases — session continuity", () => {
 			join(dataDir, "projects", project.id, "tasks"),
 		);
 		const allEvents = eventStore.readAllSorted();
-		const orchStart = allEvents.find(
-			(e) => e.type === "agent_start",
-		) as (Event & { type: "agent_start" }) | undefined;
+		const orchStart = allEvents.find((e) => e.type === "agent_start") as
+			| (Event & { type: "agent_start" })
+			| undefined;
 		expect(orchStart).toBeTruthy();
 		// biome-ignore lint/style/noNonNullAssertion: verified above
 		expect(orchStart!.resume).toBe(false);

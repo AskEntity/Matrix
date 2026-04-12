@@ -2138,7 +2138,8 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
 		handleEvent({
-			type: "agent_end", reason: "stopped",
+			type: "agent_end",
+			reason: "stopped",
 			taskId: "task-1",
 			ts: 1000,
 		});
@@ -2163,7 +2164,8 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 
 		processEventBatch([
 			{
-				type: "agent_end", reason: "stopped",
+				type: "agent_end",
+				reason: "stopped",
 				taskId: "task-1",
 				ts: 1000,
 			},
@@ -2312,7 +2314,8 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 				ts: 1000 + i * 2000,
 			});
 			events.push({
-				type: "agent_end", reason: "stopped",
+				type: "agent_end",
+				reason: "stopped",
 				taskId: "task-1",
 				ts: 2000 + i * 2000,
 			});
@@ -2450,7 +2453,8 @@ describe("event-handler activeAgents global updates", () => {
 		const { handleEvent } = createEventHandler(deps);
 
 		handleEvent({
-			type: "agent_end", reason: "stopped",
+			type: "agent_end",
+			reason: "stopped",
 			taskId: "task-2",
 			ts: 1000,
 		});
@@ -2514,7 +2518,8 @@ describe("event-handler activeAgents global updates", () => {
 			ts: 1000,
 		});
 		handleEvent({
-			type: "agent_end", reason: "stopped",
+			type: "agent_end",
+			reason: "stopped",
 			taskId: "task-2",
 			ts: 2000,
 		});
@@ -2551,7 +2556,8 @@ describe("event-handler activeAgents global updates", () => {
 				ts: 2000,
 			},
 			{
-				type: "agent_end", reason: "stopped",
+				type: "agent_end",
+				reason: "stopped",
 				taskId: "task-1",
 				ts: 3000,
 			},

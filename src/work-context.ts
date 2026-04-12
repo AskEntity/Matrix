@@ -20,9 +20,7 @@ export function buildWorkContextContent(cwd?: string): string {
 	try {
 		const memory = readFileSync(join(cwd, ".mxd", "memory.md"), "utf-8");
 		if (memory) {
-			parts.push(
-				`# .mxd/memory.md (Preloaded, do not read again)\n${memory}`,
-			);
+			parts.push(`# .mxd/memory.md (Preloaded, do not read again)\n${memory}`);
 		}
 	} catch {
 		// No memory file — that's fine
