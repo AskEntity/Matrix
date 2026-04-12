@@ -9434,6 +9434,35 @@ describe("Integration: stopTask lifecycle", () => {
 		expect(agentEndEvents.length).toBe(1);
 		expect((agentEndEvents[0] as any)?.reason).toBe("stopped");
 	}, 15000);
+
+	test("shutdown() awaits loop settlement — agent_end persisted to JSONL", async () => {
+		// Bug: stopAgent returned before runAgentForNode's finally block completed.
+		// On daemon shutdown, process exited → agent_end never written to JSONL.
+		// Fix: shutdown() awaits loop promises after stopAgent (with timeout).
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			turns: [{ blocks: [{ type: "text", text: "idle forever" }] }],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		expect(ctx.app.ctx.agentLoopPromises.has(rootNodeId)).toBe(true);
+
+		// shutdown() calls stopAgent + awaits loop promises
+		await ctx.app.shutdown();
+
+		// After shutdown: loop promises settled, agent_end in JSONL
+		expect(ctx.app.ctx.agentLoopPromises.has(rootNodeId)).toBe(false);
+
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const agentEndEvents = events.filter((e) => e.type === "agent_end");
+		expect(agentEndEvents.length).toBe(1);
+		expect((agentEndEvents[0] as any)?.reason).toBe("stopped");
+	}, 15000);
 });
 
 // ── deliverMessage shouldResume ordering ──
