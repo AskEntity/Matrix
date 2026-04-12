@@ -58,7 +58,7 @@ export interface ConsumedMessages {
  * The shared walker calls these at the right points during event traversal.
  */
 export interface EventConverterCallbacks {
-	/** Build a user message from plain content (message/user_message without id, compacted_resume, etc.). */
+	/** Build a user message from plain content (e.g. raw text). */
 	onUserMessage(content: string): unknown;
 
 	/** Build an assistant message from collected text + tool_call blocks. */
@@ -206,15 +206,8 @@ export function walkEventsToMessages(
 				break;
 			}
 
-			case "compacted_resume":
-				messages.push(callbacks.onUserMessage(event.content));
-				i++;
-				break;
-
-			case "summarization_request":
-				messages.push(callbacks.onUserMessage(event.instruction));
-				i++;
-				break;
+			// compacted_resume and summarization_request removed — these are now
+			// QueueMessage source types delivered through the normal message path.
 
 			case "budget_warning":
 				messages.push(callbacks.onUserMessage(event.warning));

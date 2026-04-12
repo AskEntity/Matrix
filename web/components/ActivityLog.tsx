@@ -16,8 +16,7 @@ function getSearchableText(entry: LogEntry): string {
 			// Include tool name in search (getEntryText only returns resultContent)
 			return `${entry.tool} ${base}`;
 		case "compact_marker":
-			// Include checkpoint text in search
-			return `${base} ${entry.checkpoint}`;
+			return base;
 		default:
 			return base;
 	}

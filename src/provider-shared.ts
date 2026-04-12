@@ -24,6 +24,7 @@ import {
 } from "./compaction.ts";
 import { type Event, hasPendingImplicitYield } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
+import { createCompactedResume } from "./queue-message-factory.ts";
 import {
 	drainQueueAtCancellationPoint,
 	recordQueueEvents,
@@ -39,6 +40,7 @@ import {
 } from "./tool-execution.ts";
 import { TOOL_DONE, TOOL_FORK_TASK_CONTEXT, TOOL_YIELD } from "./tool-names.ts";
 import type { AgentResult, ExitReason } from "./types.ts";
+import { buildWorkContextContent } from "./work-context.ts";
 
 // ── Re-exports for backward compatibility ──
 // These symbols were originally defined here. Re-export so existing importers
@@ -800,20 +802,9 @@ export async function* runProviderLoop(
 		currentSession.allTools = jsonTools;
 	}
 
-	// Emit session_config on fresh start (tools are now populated, not [])
-	if (!storedConfig && emit) {
-		const sp = request.systemPrompt ?? { stable: "", variable: "" };
-		const sessionConfigEvt: import("./events.ts").Event = {
-			type: "session_config",
-			tools: jsonTools,
-			systemStable: sp.stable,
-			systemVariable: sp.variable,
-			...(request.cacheTtl ? { cacheTtl: request.cacheTtl } : {}),
-			taskId: "",
-			ts: Date.now(),
-		} as import("./events.ts").Event;
-		emit(sessionConfigEvt);
-	}
+	// session_config for fresh starts is now emitted by runAgentForNode
+	// (before any messages, before launch lock release).
+	// Only compact-refresh session_config is emitted here (see compaction block below).
 
 	let turns = 0;
 	let totalInputTokens = 0;
@@ -1041,8 +1032,7 @@ export async function* runProviderLoop(
 				// yield tool_call forward via pendingCompactYieldToolCall; the compact
 				// path bundles it into the SAME user turn as the summarization text.
 				// Order must match JSONL: this tool_result event was emitted FIRST here,
-				// then summarization_request is emitted in the compact path → walker
-				// reconstructs [tool_result, text] in that order. Live path must match.
+				// then the summarization instruction is pushed to messages[]. Live path must match.
 				pendingCompactYieldToolCall = {
 					id: pendingYieldToolCall.id,
 					name: pendingYieldToolCall.name,
@@ -1174,18 +1164,10 @@ export async function* runProviderLoop(
 
 			if (compactResult) {
 				messages.length = 0;
-				messages.push({
-					role: "user" as const,
-					content: compactResult.userContent,
-				});
 				estimatedInputTokens = compactResult.estimatedInputTokens;
 				manualCompactRequested = false;
 
 				// Refresh session_config after compaction — updates tools, system prompt, date.
-				// Compaction already wipes cache (messages[] replaced with compacted_resume),
-				// so this is the natural boundary for picking up codebase changes without
-				// any additional cache cost. Tools added to the codebase since the session
-				// started become available to the agent after compact.
 				// compact_marker was already emitted by processCompaction; session_config
 				// follows it so readActive() sees the fresh config for this segment.
 				if (emit) {
@@ -1202,7 +1184,7 @@ export async function* runProviderLoop(
 					}
 					// Update request.systemPrompt so subsequent API calls use the
 					// refreshed prompt. Without this, the next iteration's API call
-					// (line ~1370) uses request.systemPrompt which is still frozen.
+					// uses request.systemPrompt which is still frozen.
 					if (freshPrompt) {
 						request.systemPrompt = freshPrompt;
 						const sessionConfigEvt: Event = {
@@ -1216,6 +1198,21 @@ export async function* runProviderLoop(
 						} as Event;
 						emit(sessionConfigEvt);
 					}
+
+					// Re-arm the before-first-message hook so work_context is
+					// injected before the compacted_resume message. Then enqueue
+					// compacted_resume — the hook fires first, injecting work_context.
+					if (queue) {
+						queue.resetBeforeFirstMessage();
+						const resumeMsg = createCompactedResume(compactResult.checkpoint);
+						queue.enqueue(resumeMsg);
+					}
+					// Build the user message for messages[] from both contents
+					const workCtxContent = buildWorkContextContent(cwd);
+					messages.push({
+						role: "user" as const,
+						content: `${workCtxContent}\n\n## Checkpoint Summary\n\n${compactResult.checkpoint}`,
+					});
 				}
 			}
 			continue; // Skip normal processing, go to next API call with rebuilt context
@@ -1236,7 +1233,6 @@ export async function* runProviderLoop(
 			yield s2;
 			const s3: Event = {
 				type: "compact_marker",
-				checkpoint: "Context too short for meaningful compaction",
 				savedTokens: 0,
 				taskId: "",
 				ts: Date.now(),
@@ -1343,14 +1339,7 @@ export async function* runProviderLoop(
 						content: summarizationInstruction,
 					});
 				}
-				if (emit) {
-					emit({
-						type: "summarization_request",
-						instruction: summarizationInstruction,
-						taskId: "",
-						ts: Date.now(),
-					});
-				}
+				// summarization_request event removed — instruction is part of compact_started
 				compactionPending = true;
 				preCompactTokenCount = adapter.supportsTokenCounting
 					? tokenCount

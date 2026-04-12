@@ -38,8 +38,6 @@ export function getEntryText(entry: LogEntry): string {
 			return entry.content ?? "";
 		case "background_complete":
 			return `${entry.command} (exit ${entry.exitCode})`;
-		case "task_started":
-			return entry.title;
 		case "task_completed":
 			return entry.title;
 		case "tree_change":
@@ -54,8 +52,6 @@ export function getEntryText(entry: LogEntry): string {
 			return entry.title ?? entry.question;
 		case "clarification_answered":
 			return entry.answer;
-		case "budget_exceeded":
-			return entry.title;
 		default:
 			return "";
 	}

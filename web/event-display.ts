@@ -609,5 +609,21 @@ function messageToDisplay(body: QueueMessage): MessageDisplay {
 				sender: null,
 				isError: false,
 			};
+		case "work_context":
+			return {
+				kind: "message",
+				source: "work_context",
+				text: "Work context loaded",
+				sender: null,
+				isError: false,
+			};
+		case "compacted_resume":
+			return {
+				kind: "message",
+				source: "compacted_resume",
+				text: "Session resumed from checkpoint",
+				sender: null,
+				isError: false,
+			};
 	}
 }

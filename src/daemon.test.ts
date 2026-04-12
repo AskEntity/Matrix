@@ -1490,7 +1490,6 @@ describe("GET /projects/:id/events", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "cp",
 				savedTokens: 5000,
 				taskId: "session1",
 				ts: 2000,
@@ -1533,7 +1532,6 @@ describe("GET /projects/:id/events", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "cp",
 				savedTokens: 5000,
 				taskId: "session1",
 				ts: 2000,
@@ -1605,7 +1603,6 @@ describe("GET /projects/:id/events/older", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "cp",
 				savedTokens: 5000,
 				taskId: "session1",
 				ts: 2000,
@@ -1758,7 +1755,6 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "cp",
 				savedTokens: 3000,
 				taskId: taskId,
 				ts: 2000,
@@ -1799,7 +1795,6 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "cp",
 				savedTokens: 3000,
 				taskId: taskId,
 				ts: 2000,
@@ -1907,7 +1902,6 @@ describe("streaming text injection in batch events", () => {
 		const events: Event[] = [
 			{
 				type: "compact_marker",
-				checkpoint: "cp",
 				savedTokens: 3000,
 				taskId: taskId,
 				ts: 1000,

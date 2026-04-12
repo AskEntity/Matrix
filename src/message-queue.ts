@@ -12,7 +12,6 @@ export type QueueMessage =
 			ts: number;
 			content: string;
 			images?: QueueImage[];
-			header?: string;
 	  }
 	| {
 			source: "tree_change";
@@ -41,8 +40,6 @@ export type QueueMessage =
 			/** Message subject line (from send_message's title param). */
 			title?: string;
 			requestReply?: boolean;
-			/** Only on cold-start downward messages. */
-			header?: string;
 	  }
 	| { source: "clarify_response"; id: string; ts: number; answer: string }
 	| {
@@ -74,7 +71,22 @@ export type QueueMessage =
 			/** Formatted output — identical to foreground bash tool_result content. From formatBashResult(). */
 			content: string;
 	  }
-	| { source: "compact"; id: string; ts: number };
+	| { source: "compact"; id: string; ts: number }
+	| {
+			/** Injected by enqueue hook on fresh/post-compact sessions.
+			 *  Contains memory.md + task description + git context + instructions. */
+			source: "work_context";
+			id: string;
+			ts: number;
+			content: string;
+	  }
+	| {
+			/** Summary of pre-compact conversation, injected as a message after compact_marker. */
+			source: "compacted_resume";
+			id: string;
+			ts: number;
+			content: string;
+	  };
 
 /**
  * A simple async message queue for inter-agent communication.
@@ -154,6 +166,31 @@ export class MessageQueue {
 	onDrain?: () => void;
 
 	/**
+	 * Hook: called before the first non-replay enqueue. Returns messages to
+	 * inject BEFORE the triggering message (e.g. work_context on fresh session).
+	 * One-shot — fires once then auto-clears. Call `resetBeforeFirstMessage()`
+	 * to re-arm (e.g. after compact_marker).
+	 */
+	private beforeFirstMessageHook?: () => QueueMessage[];
+	private beforeFirstMessageFired = false;
+
+	/** Set the before-first-message hook. Called at session setup. */
+	setBeforeFirstMessage(hook: () => QueueMessage[]): void {
+		this.beforeFirstMessageHook = hook;
+		this.beforeFirstMessageFired = false;
+	}
+
+	/** Re-arm the hook (e.g. after compaction resets the session to fresh-like state). */
+	resetBeforeFirstMessage(): void {
+		this.beforeFirstMessageFired = false;
+	}
+
+	/** Mark the hook as already fired (e.g. resume sessions that already have work_context in JSONL). */
+	markBeforeFirstMessageFired(): void {
+		this.beforeFirstMessageFired = true;
+	}
+
+	/**
 	 * Add a message to the queue.
 	 *
 	 * - Calls `onPersist(msg)` synchronously unless `replay: true`.
@@ -172,6 +209,23 @@ export class MessageQueue {
 			throw new Error(
 				`QueueMessage must have a non-empty id (source: ${msg.source})`,
 			);
+		}
+
+		// Before-first-message hook: inject work_context (etc.) before the
+		// first real message on a fresh or post-compact session. Only fires
+		// on non-replay enqueue (replay = recovering existing JSONL messages).
+		if (
+			!options?.replay &&
+			this.beforeFirstMessageHook &&
+			!this.beforeFirstMessageFired
+		) {
+			this.beforeFirstMessageFired = true;
+			const injected = this.beforeFirstMessageHook();
+			for (const injMsg of injected) {
+				// Persist + deliver each injected message (same path as normal enqueue)
+				this.onPersist?.(injMsg);
+				this.messages.push(injMsg);
+			}
 		}
 
 		// Persist first (unless this is a replay from JSONL).
