@@ -986,30 +986,30 @@ Mock API supports `{type: "thinking", thinking: "...", signature: "..."}` in ins
 Test file: `src/drift-thinking.test.ts` (11 golden + 4 drift integration = 15 tests).
 
 
-## JSONL Lifecycle Refactor (in progress)
+## JSONL Lifecycle Refactor
 
-### Completed
-- Message `header` field deleted from QueueMessage (user + task_message)
-- New message sources: `work_context`, `compacted_resume` (QueueMessage)
-- `compact_marker` is now empty boundary (no checkpoint field)
-- `compacted_resume` and `summarization_request` removed as Event types
+### What changed
+- Message `header` field **deleted** — context injection via `work_context` messages instead
+- `work_context` and `compacted_resume` are QueueMessage source types (not Event types)
+- `compact_marker` is empty boundary (no checkpoint content)
+- `summarization_request` event type removed (merged into `compact_started`)
 - Lifecycle events merged: `agent_start` (replaces task_started + orchestration_started), `agent_end` (replaces orchestration_completed + agent_stopped + budget_exceeded)
 - `done_notified` preserved (crash-safe marker)
-- All 1776 tests pass, 0 fail. Typecheck + biome clean.
+- `session_config` emitted in runAgentForNode before any messages (was in provider loop after)
 
-### Still TODO
-1. **Enqueue hook mechanism** — MessageQueue hook to auto-inject work_context on fresh/post-compact sessions
-2. **Session config position** — move from provider loop to runAgentForNode (before messages)
-3. **Migration script** — convert existing JSONL to new format
-4. **Skipped tests** — 6 tests skipped (need hook mechanism to work): compact lifecycle drift, cold start header, message-to-passed-child race
+### Enqueue hook mechanism
+- `MessageQueue.setBeforeFirstMessage(hook)`: one-shot hook fires before first non-replay enqueue
+- `markBeforeFirstMessageFired()`: skip on resume (work_context already in JSONL)
+- `resetBeforeFirstMessage()`: re-arm after compact
+- Explicit work_context enqueue in runAgentForNode for fresh sessions where deliverMessage replay path fires before hook wiring
 
-### Key Design
-- `work_context` and `compacted_resume` are QueueMessage source types, not Event types
-- They flow through normal enqueue → onPersist → JSONL path
-- Walker handles them via existing message/messages_consumed path
-- `agent_end.reason` discriminates: done_passed, done_failed, stopped, error, budget_exceeded
-- `agent_end.stats` carries what was in orchestration_completed
+### JSONL event sequence (new)
+**Fresh session:** `session_config → message(work_context) → message(trigger) → messages_consumed → ...`
+**Post-compact:** `...compact_started → assistant_text → compact_marker(empty) → session_config → message(work_context) → message(compacted_resume) → messages_consumed → ...`
+**Restart:** No re-emission of session_config or work_context (already in JSONL from first run)
 
+### agent_end.reason
+`done_passed | done_failed | stopped | error | budget_exceeded`
 
-### Migration Script
-`bun src/migrate-jsonl.ts` — run once before daemon restart. Converts all JSONL files in ~/.mxd/projects/*/tasks/*.jsonl to the new format. Idempotent (re-running on already-migrated files is a no-op).
+### Migration
+`bun src/migrate-jsonl.ts` — one-time conversion. Idempotent. Already run on all project JSONL files.
