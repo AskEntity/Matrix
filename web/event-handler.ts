@@ -639,7 +639,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							ts: msg.ts,
 						},
 					],
-					sideEffects: NO_SIDE_EFFECTS,
+					sideEffects: () => {
+						// Compact is a reset boundary — clear all deferred messages.
+						// The compact message itself (source:"compact") has an ID and gets deferred,
+						// but it's filtered from nonCompact in the drain, so messages_consumed never
+						// includes it. Without this clear, "[compact]" stays in the pending area forever.
+						deferredMessages.clear();
+						syncPendingBanner();
+					},
 				};
 
 			case "fork_marker":
@@ -993,31 +1000,27 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				];
 			}
 			case "complete_compact": {
+				const replacement = createLogEntry({
+					type: "compact_marker",
+					savedTokens: op.savedTokens,
+					taskId: op.taskId ?? "",
+					ts: op.ts ?? Date.now(),
+				});
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
 					if (e && e.type === "compact_started") {
-						const updated = [...entries];
-						const replacement = createLogEntry({
-							type: "compact_marker",
-							savedTokens: op.savedTokens,
-							taskId: op.taskId ?? "",
-							ts: op.ts ?? Date.now(),
-						});
 						// Preserve the original entry's timestamp
 						(replacement as { ts: number }).ts = e.ts;
-						updated[i] = replacement;
-						return updated;
+						// Truncate everything from compact_started onward — the checkpoint
+						// assistant_text emitted between compact_started and compact_marker
+						// is an internal artifact, not a conversation turn. Keep only entries
+						// before compact_started + the new compact_marker.
+						return [...entries.slice(0, i), replacement];
 					}
 				}
-				return [
-					...entries,
-					createLogEntry({
-						type: "compact_marker",
-						savedTokens: op.savedTokens,
-						taskId: op.taskId ?? "",
-						ts: op.ts ?? Date.now(),
-					}),
-				];
+				// Fallback: no compact_started found (e.g., historical replay starting
+				// from compact_marker via readFromLastCompactMarker). Just append.
+				return [...entries, replacement];
 			}
 			case "resolve_tool": {
 				for (let i = entries.length - 1; i >= 0; i--) {
