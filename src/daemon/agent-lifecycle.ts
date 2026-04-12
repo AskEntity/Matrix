@@ -333,9 +333,10 @@ export async function stopAgent(
 	// Orphan detection runs reliably at restart (autoResumeProjects / launchAgent)
 	// when the provider loop is guaranteed dead.
 
-	// No agent_end here — runAgentForNode handles all lifecycle events.
-	// stopAgent only interrupts (close queue + abort). The loop's try/catch/finally
-	// in runAgentForNode emits the unified agent_end when it settles.
+	// NOTE: stopAgent does NOT await loop promises. The finally block in
+	// runAgentForNode emits agent_end asynchronously. For production daemon
+	// shutdown, daemon.ts shutdown() awaits the promises with a timeout
+	// to ensure agent_end persists before process exit.
 }
 
 /**
