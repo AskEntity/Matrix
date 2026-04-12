@@ -132,6 +132,7 @@ export class MockValidationError extends Error {
 const KNOWN_API_FIELDS = new Set([
 	"cache_control",
 	"container",
+	"context_management",
 	"inference_geo",
 	"max_tokens",
 	"messages",

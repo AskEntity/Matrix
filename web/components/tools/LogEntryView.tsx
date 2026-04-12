@@ -735,6 +735,37 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
+	// thinking — collapsible gray block showing model's reasoning
+	if (entry.type === "thinking") {
+		const thinkingText = (entry as LogEntry & { thinking: string }).thinking;
+		return (
+			<div
+				className="mxd-lmxd-entry mxd-event-thinking"
+				data-entry-id={String(entry.id)}
+			>
+				<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
+				{taskLabel && (
+					<span
+						className="mxd-lmxd-badge"
+						title={"taskId" in entry ? entry.taskId : undefined}
+					>
+						{taskLabel}
+					</span>
+				)}
+				<Card
+					title="💭 Thinking"
+					className="mxd-tool-card-thinking"
+					defaultExpanded={false}
+					collapsible
+				>
+					<div className="mxd-tool-card-body">
+						<div className="mxd-thinking-content">{thinkingText}</div>
+					</div>
+				</Card>
+			</div>
+		);
+	}
+
 	// assistant_text — render with optional cache info tooltip
 	if (entry.type === "assistant_text") {
 		const text = getEntryText(entry);
