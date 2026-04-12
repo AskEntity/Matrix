@@ -688,6 +688,7 @@ function createAnthropicAdapter(
 						type: "thinking",
 						thinking: block.thinking,
 						signature: block.signature,
+						provider: "anthropic",
 						taskId: "",
 						ts: Date.now(),
 					});
@@ -699,6 +700,7 @@ function createAnthropicAdapter(
 						thinking: "",
 						signature: (block as { data: string }).data,
 						redacted: true,
+						provider: "anthropic",
 						taskId: "",
 						ts: Date.now(),
 					});
