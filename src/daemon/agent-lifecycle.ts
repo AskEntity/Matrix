@@ -326,16 +326,17 @@ export async function stopAgent(
 		clarifications: [],
 	});
 
-	// NOTE: Do NOT write orphaned tool_results here. The provider loop may still be
-	// settling (e.g. bg process killed → completionPromise resolves → provider loop
-	// emits real tool_result). Writing synthetic orphans now races with those writes,
-	// producing duplicate tool_results → API 400 on resume.
-	// Orphan detection runs reliably at restart (autoResumeProjects / launchAgent)
-	// when the provider loop is guaranteed dead.
-
-	// No agent_end here — runAgentForNode handles all lifecycle events.
-	// stopAgent only interrupts (close queue + abort). The loop's try/catch/finally
-	// in runAgentForNode emits the unified agent_end when it settles.
+	// Await all in-flight loop promises so runAgentForNode's finally block
+	// can complete (emit agent_end, clean up MCP, etc.). Without this,
+	// the process may exit before the finally blocks run → agent_end never
+	// written to JSONL.
+	const loopPromises = [...tracker.allNodes()]
+		.filter(isTask)
+		.map((n) => ctx.agentLoopPromises.get(n.id))
+		.filter(Boolean);
+	if (loopPromises.length > 0) {
+		await Promise.all(loopPromises);
+	}
 }
 
 /**
