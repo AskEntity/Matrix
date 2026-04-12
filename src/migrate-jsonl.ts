@@ -174,10 +174,7 @@ function migrateFile(filePath: string): { changed: number; removed: number } {
 }
 
 // Main
-const dataDir = join(
-	process.env.HOME ?? "~",
-	".mxd",
-);
+const dataDir = join(process.env.HOME ?? "~", ".mxd");
 
 const projectsDir = join(dataDir, "projects");
 let totalChanged = 0;

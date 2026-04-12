@@ -24,9 +24,7 @@ import {
 } from "./compaction.ts";
 import { type Event, hasPendingImplicitYield } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
-import {
-	createCompactedResume,
-} from "./queue-message-factory.ts";
+import { createCompactedResume } from "./queue-message-factory.ts";
 import {
 	drainQueueAtCancellationPoint,
 	recordQueueEvents,
