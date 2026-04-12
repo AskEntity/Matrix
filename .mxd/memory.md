@@ -848,3 +848,38 @@ Walker behavior on this state: emits two consecutive `user` messages (the prior 
 `src/jsonl-stress.test.ts` contains behavior snapshots of this case (clearly labeled "BEHAVIOR SNAPSHOT" / "not an invariant"). If someone changes the walker or repair to be "graceful" here, those tests fail and force a deliberate discussion about whether the change masks a real bug.
 
 Lesson: not every "the tool could be nicer to bad input" is a bug. Some inputs should NEVER happen and the layer that sees them isn't the right place to patch the state. Boundaries matter.
+
+## Anthropic Server-Side Cache Injection (2026-04-12 investigation)
+
+**Confirmed behavior**: Anthropic injects ~30% extra tokens into the cache layer. This injection is invisible to the client — not in request body, not in response body, not in count_tokens API. Only visible through usage.inputTokens (which is actually `input_tokens + cache_creation + cache_read` in our JSONL — see `totalContextTokens` computation in anthropic-compatible-provider.ts:615).
+
+### Evidence chain
+1. Debug snapshot (traceId `01KNZM6TFNVRB7T3D2CESZN4BD`) saved exact request body: 161 messages, count_tokens = 127,517
+2. JSONL recorded usage total = 163,938 for the same call
+3. Replay same body now → total = 127,517 (gap = 0). The 36K injection is gone.
+4. Injection disappeared at line 26690 (02:49:40 BST): 181K → 141K in 7 seconds, cr=0 (full cache miss)
+5. Disappearance coincided with us beginning to use evaluate_script to query auth groups for a comparison experiment
+
+### Timeline
+- 02:24:13 compact → 02:24:16 call 26301 cc=74,739 (fresh cache WITH injection)
+- 02:24:23 call 26305 **injection content changed** → prefix broke → cr=22,709 (only tools hit) ← original reported miss
+- 02:24~02:49 injection stable, incremental growth 74K→181K
+- 02:49:40 **injection removed**: 181K→141K, cr=0, full rebuild without injection
+- After: all calls gap=0, injection never returned
+
+### Key properties
+- Injection only exists in Anthropic's server-side cache, never in our request/response body
+- count_tokens API returns client-side count (no injection)
+- Injection attaches to cache entries; new sessions inherit injected cache via cache_read
+- Cache invalidation (system prompt change) produces clean entries (gap=0)
+- Investigation behavior may trigger injection removal (anti-forensic)
+- Cannot be reproduced on demand
+
+### Practical impact on Matrix
+- Explains ALL previously-unexplained cache misses (70K miss, compact-after misses)
+- Our code is correct — all paths verified via count_tokens + raw fetch replay
+- analyze-cache tool's hit% is based on `inputTokens` which includes injection overhead
+- No code change needed; this is external behavior
+
+### JSONL inputTokens field semantics
+`inputTokens` in usage events = `totalContextTokens` = Anthropic's `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. NOT just the raw `input_tokens` field. This is intentional (set at provider-shared.ts:1469).
