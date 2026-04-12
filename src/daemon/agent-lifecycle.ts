@@ -304,10 +304,6 @@ export async function stopAgent(
 	// Check if root agent is actually running
 	if (!rootNode?.session) return;
 
-	// Capture the root loop's traceId BEFORE clearing sessions — so the
-	// agent_end event below can be attributed to the run that was stopped.
-	const rootLoopTraceId = rootNode.session.loopTraceId;
-
 	// Stop ALL agents (root + children) via session on tracker nodes.
 	// Each node's session has its own queue + abort controller.
 	for (const node of tracker.allNodes()) {
@@ -337,13 +333,9 @@ export async function stopAgent(
 	// Orphan detection runs reliably at restart (autoResumeProjects / launchAgent)
 	// when the provider loop is guaranteed dead.
 
-	emitEvent(ctx, projectId, {
-		type: "agent_end",
-		taskId: rootNodeId,
-		reason: "stopped",
-		traceId: rootLoopTraceId,
-		ts: Date.now(),
-	});
+	// No agent_end here — runAgentForNode handles all lifecycle events.
+	// stopAgent only interrupts (close queue + abort). The loop's try/catch/finally
+	// in runAgentForNode emits the unified agent_end when it settles.
 }
 
 /**
@@ -366,10 +358,6 @@ export async function stopTask(
 	if (!node) return false;
 
 	if (!node.session) return false;
-
-	// Capture the loop's traceId BEFORE clearing session — so the
-	// agent_end event below can be attributed to the run that was stopped.
-	const stoppedLoopTraceId = node.session.loopTraceId;
 
 	// Grab the loop promise BEFORE clearing session — once session is gone,
 	// the loop's finally block will fire and resolve this promise.
@@ -401,13 +389,8 @@ export async function stopTask(
 	// NOTE: Do NOT write orphaned tool_results here — same race as stopAgent.
 	// Orphan detection runs at restart when the provider loop is fully dead.
 
-	emitEvent(ctx, projectId, {
-		type: "agent_end",
-		taskId: nodeId,
-		reason: "stopped",
-		traceId: stoppedLoopTraceId,
-		ts: Date.now(),
-	});
+	// No agent_end here — runAgentForNode handles all lifecycle events.
+	// stopTask only interrupts. The loop's try/catch/finally emits agent_end.
 
 	return true;
 }
@@ -633,6 +616,8 @@ export async function runAgentForNode(
 	let ownSession: TaskSession | undefined;
 	// Declared outside try so Phase 2 (after finally) can access the result.
 	let agentResult: AgentResult | undefined;
+	// Track exit state for unified agent_end emission in finally block.
+	let exitReason: "done_passed" | "done_failed" | "stopped" | "error" | "budget_exceeded" | undefined;
 	// Generate a unique trace ID for this agent loop instance.
 	// Stored on TaskSession so external emit paths (stopTask, tool handlers via
 	// resource-registry) can look it up and auto-inject it. The provider loop's
@@ -955,55 +940,19 @@ export async function runAgentForNode(
 			tracker.updateCost(nodeId, agentResult.costUsd);
 		}
 
-		// Determine end reason
+		// Set exit reason — agent_end emitted in finally block (ONE emit point).
 		const updatedNode = tracker.getTask(nodeId);
 		const budgetExceeded =
 			updatedNode?.budgetUsd &&
 			updatedNode.budgetUsd > 0 &&
 			updatedNode.costUsd > updatedNode.budgetUsd;
-		let endReason:
-			| "done_passed"
-			| "done_failed"
-			| "stopped"
-			| "budget_exceeded" =
+		exitReason =
 			agentResult.exitReason === "done_passed"
 				? "done_passed"
 				: agentResult.exitReason === "done_failed"
 					? "done_failed"
 					: "stopped";
-		if (budgetExceeded) endReason = "budget_exceeded";
-
-		// Build stats for agent_end
-		const allTaskNodes = tracker.allNodes().filter(isTask);
-		const childNodes = allTaskNodes.filter(
-			(n) => n.id !== nodeId && n.costUsd > 0,
-		);
-		const childCostUsd = childNodes.reduce((sum, n) => sum + n.costUsd, 0);
-		const totalCostUsd = agentResult.costUsd + childCostUsd;
-
-		emitEvent(ctx, project.id, {
-			type: "agent_end",
-			taskId: nodeId,
-			reason: endReason,
-			summary: agentResult.doneSummary,
-			stats: {
-				costUsd: totalCostUsd,
-				turns: agentResult.turns,
-				inputTokens: agentResult.inputTokens,
-				cacheCreationTokens: agentResult.cacheCreationTokens,
-				cacheReadTokens: agentResult.cacheReadTokens,
-				outputTokens: agentResult.outputTokens,
-				childCosts: isRoot
-					? {
-							totalCostUsd: childCostUsd,
-							totalTurns: 0,
-							taskCount: childNodes.length,
-						}
-					: undefined,
-			},
-			traceId: loopTraceId,
-			ts: Date.now(),
-		});
+		if (budgetExceeded) exitReason = "budget_exceeded";
 
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
@@ -1015,7 +964,6 @@ export async function runAgentForNode(
 			!replacedNode?.session || replacedNode.session !== ownSession;
 		if (!wasReplaced) {
 			// Error = interrupted. Status stays in_progress — agent is resumable.
-			// No task_complete to parent. Emit agent_end with reason "error".
 			const errorMsg = e instanceof Error ? e.message : String(e);
 			emitEvent(ctx, project.id, {
 				type: "error",
@@ -1024,13 +972,10 @@ export async function runAgentForNode(
 				traceId: loopTraceId,
 				ts: Date.now(),
 			});
-			emitEvent(ctx, project.id, {
-				type: "agent_end",
-				taskId: nodeId,
-				reason: "error",
-				traceId: loopTraceId,
-				ts: Date.now(),
-			});
+			exitReason = "error";
+		} else {
+			// Session was replaced by stopTask/stopAgent → this is a "stopped" exit.
+			exitReason = "stopped";
 		}
 		await tracker.save();
 
@@ -1050,8 +995,49 @@ export async function runAgentForNode(
 		}
 		await mcpManager.disconnectAll();
 
-		// agent_end is emitted in the post-completion block above (for normal exits)
-		// or in the catch block (for errors). The finally block only handles cleanup.
+		// ── Unified agent_end emission — ONE emit point for all exit paths ──
+		// exitReason is set by: try block (normal completion), catch block (error/stopped).
+		// Only emit if we have a reason AND this session wasn't replaced.
+		// When session was replaced (stopTask/stopAgent cleared it), the "stopped"
+		// reason was set in catch. We still emit agent_end so JSONL has the record.
+		if (exitReason) {
+			// Build stats from agentResult (available on normal completion, undefined on error/stop)
+			let stats: Record<string, unknown> | undefined;
+			if (agentResult && agentResult.costUsd > 0) {
+				const allTaskNodes = tracker.allNodes().filter(isTask);
+				const childNodes = allTaskNodes.filter(
+					(n) => n.id !== nodeId && n.costUsd > 0,
+				);
+				const childCostUsd = childNodes.reduce(
+					(sum, n) => sum + n.costUsd,
+					0,
+				);
+				stats = {
+					costUsd: agentResult.costUsd + childCostUsd,
+					turns: agentResult.turns,
+					inputTokens: agentResult.inputTokens,
+					cacheCreationTokens: agentResult.cacheCreationTokens,
+					cacheReadTokens: agentResult.cacheReadTokens,
+					outputTokens: agentResult.outputTokens,
+					childCosts: isRoot
+						? {
+								totalCostUsd: childCostUsd,
+								totalTurns: 0,
+								taskCount: childNodes.length,
+							}
+						: undefined,
+				};
+			}
+			emitEvent(ctx, project.id, {
+				type: "agent_end",
+				taskId: nodeId,
+				reason: exitReason,
+				summary: agentResult?.doneSummary,
+				stats,
+				traceId: loopTraceId,
+				ts: Date.now(),
+			} as Event);
+		}
 	}
 
 	// ── Phase 2 of two-phase done() ──
