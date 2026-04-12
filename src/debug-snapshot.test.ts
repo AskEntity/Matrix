@@ -15,7 +15,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DebugSnapshot } from "./debug-snapshot.ts";
-import { rollOldTraceIdDirs, writeDebugSnapshot } from "./debug-snapshot.ts";
+import {
+	debugResponsePath,
+	rollOldTraceIdDirs,
+	writeDebugResponse,
+	writeDebugSnapshot,
+} from "./debug-snapshot.ts";
 import { ulid } from "./ulid.ts";
 
 function makeTmpDir(): string {
@@ -418,6 +423,99 @@ describe("rollOldTraceIdDirs", () => {
 			rollOldTraceIdDirs(taskDir, -1);
 
 			expect(readdirSync(taskDir).sort()).toEqual([t1, t2].sort());
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("debugResponsePath", () => {
+	test("derives last-response.json from last.json path", () => {
+		const p = debugResponsePath("/data/debug/task-abc/TRACE123/last.json");
+		expect(p).toBe("/data/debug/task-abc/TRACE123/last-response.json");
+	});
+
+	test("returns undefined when input is undefined", () => {
+		expect(debugResponsePath(undefined)).toBeUndefined();
+	});
+
+	test("works with any filename (replaces basename, not just 'last.json')", () => {
+		const p = debugResponsePath("/some/path/foo.json");
+		expect(p).toBe("/some/path/last-response.json");
+	});
+});
+
+describe("writeDebugResponse", () => {
+	test("writes response JSON to disk with pretty print", () => {
+		const dir = makeTmpDir();
+		try {
+			const path = join(dir, "last-response.json");
+			const response = {
+				id: "msg_abc123",
+				type: "message",
+				role: "assistant",
+				content: [{ type: "text", text: "Hello" }],
+				model: "claude-opus-4-6",
+				stop_reason: "end_turn",
+				usage: {
+					input_tokens: 100,
+					output_tokens: 50,
+					cache_creation_input_tokens: 80,
+					cache_read_input_tokens: 20,
+				},
+			};
+			writeDebugResponse(path, response);
+			expect(existsSync(path)).toBe(true);
+			const data = JSON.parse(readFileSync(path, "utf-8"));
+			expect(data.id).toBe("msg_abc123");
+			expect(data.model).toBe("claude-opus-4-6");
+			expect(data.usage.input_tokens).toBe(100);
+			expect(data.content).toEqual([{ type: "text", text: "Hello" }]);
+			// Verify pretty-printed (indented)
+			const raw = readFileSync(path, "utf-8");
+			expect(raw).toContain("\n ");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("overwrites on subsequent calls", () => {
+		const dir = makeTmpDir();
+		try {
+			const path = join(dir, "last-response.json");
+			writeDebugResponse(path, { id: "first" });
+			writeDebugResponse(path, { id: "second" });
+			const data = JSON.parse(readFileSync(path, "utf-8"));
+			expect(data.id).toBe("second");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("creates parent directory if missing", () => {
+		const dir = makeTmpDir();
+		try {
+			const path = join(dir, "deep", "nested", "last-response.json");
+			expect(existsSync(join(dir, "deep"))).toBe(false);
+			writeDebugResponse(path, { ok: true });
+			expect(existsSync(path)).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("is no-op when filePath is undefined", () => {
+		expect(() => writeDebugResponse(undefined, { id: "x" })).not.toThrow();
+	});
+
+	test("non-fatal on write failure", () => {
+		const dir = makeTmpDir();
+		try {
+			const blocker = join(dir, "blocker");
+			const fs = require("node:fs");
+			fs.writeFileSync(blocker, "I am a file");
+			const badPath = join(blocker, "child", "last-response.json");
+			expect(() => writeDebugResponse(badPath, { id: "x" })).not.toThrow();
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
