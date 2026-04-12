@@ -251,17 +251,18 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 					if (item.provider !== undefined && item.provider !== "anthropic") {
 						continue;
 					}
-					if (item.thinking) {
+					if (item.redacted) {
+						// Explicitly redacted by Anthropic safety — reconstruct as redacted_thinking
+						blocks.push({
+							type: "redacted_thinking",
+							data: item.signature,
+						});
+					} else {
+						// Normal thinking (including display:omitted with thinking="")
 						blocks.push({
 							type: "thinking",
 							thinking: item.thinking,
 							signature: item.signature,
-						});
-					} else {
-						// Redacted thinking: empty thinking + signature = data
-						blocks.push({
-							type: "redacted_thinking",
-							data: item.signature,
 						});
 					}
 				} else if (item.type === "text") {
@@ -691,12 +692,13 @@ function createAnthropicAdapter(
 						ts: Date.now(),
 					});
 				} else if (block.type === "redacted_thinking") {
-					// Safety-redacted thinking: preserve signature (data) for walker
-					// reconstruction but no thinking content.
+					// Safety-redacted thinking: mark redacted so walker reconstructs
+					// as { type: "redacted_thinking", data } (not { type: "thinking" }).
 					events.push({
 						type: "thinking",
 						thinking: "",
 						signature: (block as { data: string }).data,
+						redacted: true,
 						taskId: "",
 						ts: Date.now(),
 					});
