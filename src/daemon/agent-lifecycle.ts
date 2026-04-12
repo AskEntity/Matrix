@@ -25,7 +25,6 @@ import {
 	registerSideEffects,
 } from "../resource-registry.ts";
 import { buildSystemPrompt, type SystemPrompt } from "../system-prompts.ts";
-import { buildWorkContextContent } from "../work-context.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
 import { createAgentAuth } from "../tool-auth.ts";
@@ -38,6 +37,7 @@ import {
 } from "../tools/index.ts";
 import { type AgentResult, isTask, type TaskSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
+import { buildWorkContextContent } from "../work-context.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
 import {
@@ -51,7 +51,6 @@ import {
 	getProjectProvider,
 	getTracker,
 	projectDebugDir,
-
 	resolveProjectConfig,
 } from "./helpers.ts";
 
