@@ -984,3 +984,29 @@ This means switching providers automatically drops stale thinking blocks from JS
 Mock API supports `{type: "thinking", thinking: "...", signature: "..."}` in instruction blocks. Streams `thinking_delta` + `signature_delta` events.
 
 Test file: `src/drift-thinking.test.ts` (11 golden + 4 drift integration = 15 tests).
+
+
+## JSONL Lifecycle Refactor (in progress)
+
+### Completed
+- Message `header` field deleted from QueueMessage (user + task_message)
+- New message sources: `work_context`, `compacted_resume` (QueueMessage)
+- `compact_marker` is now empty boundary (no checkpoint field)
+- `compacted_resume` and `summarization_request` removed as Event types
+- Lifecycle events merged: `agent_start` (replaces task_started + orchestration_started), `agent_end` (replaces orchestration_completed + agent_stopped + budget_exceeded)
+- `done_notified` preserved (crash-safe marker)
+- All 1776 tests pass, 0 fail. Typecheck + biome clean.
+
+### Still TODO
+1. **Enqueue hook mechanism** — MessageQueue hook to auto-inject work_context on fresh/post-compact sessions
+2. **Session config position** — move from provider loop to runAgentForNode (before messages)
+3. **Migration script** — convert existing JSONL to new format
+4. **Skipped tests** — 6 tests skipped (need hook mechanism to work): compact lifecycle drift, cold start header, message-to-passed-child race
+
+### Key Design
+- `work_context` and `compacted_resume` are QueueMessage source types, not Event types
+- They flow through normal enqueue → onPersist → JSONL path
+- Walker handles them via existing message/messages_consumed path
+- `agent_end.reason` discriminates: done_passed, done_failed, stopped, error, budget_exceeded
+- `agent_end.stats` carries what was in orchestration_completed
+
