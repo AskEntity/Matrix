@@ -337,16 +337,8 @@ function formatBodyForAI(body: QueueMessage): string {
 		}
 		case "cross_project":
 			return `<cross_project from="${body.fromProjectName}" projectId="${body.fromProjectId}">${body.content}</cross_project>`;
-		case "background_complete": {
-			const parts: string[] = [];
-			if (body.stdout) parts.push(`stdout:\n${body.stdout}`);
-			if (body.stderr) parts.push(`stderr:\n${body.stderr}`);
-			const innerContent =
-				parts.length > 0
-					? `${parts.join("\n")}\nexit code: ${body.exitCode}`
-					: `exit code: ${body.exitCode}`;
-			return `<background_complete command="${body.command}" id="${body.commandId}" exit="${body.exitCode}" duration="${body.durationMs}ms">${innerContent}</background_complete>`;
-		}
+		case "background_complete":
+			return `<background_complete command="${body.command}" id="${body.commandId}" exit="${body.exitCode}" duration="${body.durationMs}ms">${body.content}</background_complete>`;
 		case "tree_change":
 			return `<tree_change action="${body.action}" nodeId="${body.nodeId}"${body.title ? ` title="${body.title}"` : ""}>Call get_tree to see latest state.</tree_change>`;
 		case "compact":
@@ -542,8 +534,7 @@ export function findOrphanedBackgroundProcesses(
 				command: info.command,
 				exitCode: null,
 				durationMs: 0,
-				stdout: "",
-				stderr: "Background process interrupted by daemon restart",
+				content: "Background process interrupted by daemon restart",
 			});
 			orphans.push({
 				type: "message",

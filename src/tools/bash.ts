@@ -1,10 +1,7 @@
 import {
-	closeSync,
 	existsSync,
 	mkdirSync,
-	openSync,
 	readFileSync,
-	readSync,
 	realpathSync,
 	statSync,
 	unlinkSync,
@@ -69,9 +66,6 @@ function cleanupBgFiles(bg: BackgroundProcess): void {
 
 /** Max file size (bytes) to inline in response. Above this, return a preview + file path. */
 const LARGE_OUTPUT_THRESHOLD = 50 * 1024; // 50KB
-/** Preview size for large output. */
-const PREVIEW_SIZE = 5 * 1024; // 5KB
-
 /** Get file size in bytes, or 0 if file doesn't exist. */
 function fileSize(path: string): number {
 	try {
@@ -84,7 +78,7 @@ function fileSize(path: string): number {
 /**
  * Read and format output from stdout/stderr files.
  * Small output (< 50KB): inline content, clean up temp files.
- * Large output (> 50KB): preview + file path for read_file, keep temp files.
+ * Large output (> 50KB): file paths ONLY (no preview, no inline content), keep temp files.
  *
  * This is THE formatting function — ALL paths use it:
  * - Foreground completion
@@ -114,15 +108,7 @@ function formatBashResult(
 	if (stdoutPath) {
 		const stdoutSize = fileSize(stdoutPath);
 		if (stdoutSize > LARGE_OUTPUT_THRESHOLD) {
-			try {
-				const buf = Buffer.alloc(PREVIEW_SIZE);
-				const fd = openSync(stdoutPath, "r");
-				const bytesRead = readSync(fd, buf, 0, PREVIEW_SIZE, 0);
-				closeSync(fd);
-				stdout = buf.toString("utf-8", 0, bytesRead);
-			} catch {
-				// File may not exist
-			}
+			// Large output: file path only, no preview
 			stdoutTruncatedPath = stdoutPath;
 		} else {
 			try {
@@ -142,15 +128,7 @@ function formatBashResult(
 	if (stderrPath) {
 		const stderrSize = fileSize(stderrPath);
 		if (stderrSize > LARGE_OUTPUT_THRESHOLD) {
-			try {
-				const buf = Buffer.alloc(PREVIEW_SIZE);
-				const fd = openSync(stderrPath, "r");
-				const bytesRead = readSync(fd, buf, 0, PREVIEW_SIZE, 0);
-				closeSync(fd);
-				stderr = buf.toString("utf-8", 0, bytesRead);
-			} catch {
-				// File may not exist
-			}
+			// Large output: file path only, no preview
 			stderrTruncatedPath = stderrPath;
 		} else {
 			try {
@@ -185,20 +163,12 @@ function formatBashResult(
 
 	parts.push(`exit code: ${exitCode}`);
 
-	// Then show preview of output
-	if (stdout) {
-		if (stdoutTruncatedPath) {
-			parts.push(`\nstdout preview:\n${stdout}`);
-		} else {
-			parts.push(`stdout:\n${stdout}`);
-		}
+	// Inline content only for small output (large output = paths only, no preview)
+	if (stdout && !stdoutTruncatedPath) {
+		parts.push(`stdout:\n${stdout}`);
 	}
-	if (stderr) {
-		if (stderrTruncatedPath) {
-			parts.push(`\nstderr preview:\n${stderr}`);
-		} else {
-			parts.push(`stderr:\n${stderr}`);
-		}
+	if (stderr && !stderrTruncatedPath) {
+		parts.push(`stderr:\n${stderr}`);
 	}
 
 	return {
@@ -465,7 +435,6 @@ export async function executeBashWithTimeout(
 	function moveToBackground(opts: {
 		exitPromise: Promise<number>;
 		reason: string;
-		partialStdout?: string;
 	}): {
 		content: string;
 		isError: boolean;
@@ -510,8 +479,7 @@ export async function executeBashWithTimeout(
 								command,
 								exitCode,
 								durationMs: Date.now() - startTime,
-								stdout: result.stdout || undefined,
-								stderr: result.stderr || undefined,
+								content: result.content,
 							}),
 						);
 					} catch {
@@ -526,12 +494,8 @@ export async function executeBashWithTimeout(
 			}
 		})();
 
-		const partialSuffix = opts.partialStdout
-			? `\n\nPartial stdout so far:\n${opts.partialStdout.slice(0, 5000)}`
-			: "";
-
 		return {
-			content: `${opts.reason}\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes. Use yield() to wait.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialSuffix}`,
+			content: `${opts.reason}\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes. Use yield() to wait.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}`,
 			isError: false,
 			backgroundId: bgId,
 			backgroundCommand: command,
@@ -615,14 +579,6 @@ export async function executeBashWithTimeout(
 		};
 	}
 
-	// Read partial output accumulated so far
-	let partialStdout = "";
-	try {
-		partialStdout = readFileSync(stdoutPath, "utf-8");
-	} catch {
-		// File may be empty
-	}
-
 	const movedReason =
 		result.reason === "user"
 			? "Command moved to background."
@@ -631,6 +587,5 @@ export async function executeBashWithTimeout(
 	return moveToBackground({
 		exitPromise: exitPromise.then((r) => r.exitCode),
 		reason: movedReason,
-		partialStdout: partialStdout || undefined,
 	});
 }

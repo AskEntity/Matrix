@@ -101,7 +101,7 @@ function bgCompleteMsgEvent(
 			command,
 			exitCode,
 			durationMs: 10,
-			stdout: "hi\n",
+			content: "exit code: 0\nstdout:\nhi\n",
 		},
 	};
 }

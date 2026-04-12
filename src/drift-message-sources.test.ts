@@ -566,8 +566,7 @@ describe("Drift prevention: QueueMessage source types", () => {
 					command: "echo hi; echo err >&2",
 					exitCode: 0,
 					durationMs: 123,
-					stdout: "hi\n",
-					stderr: "err\n",
+					content: "exit code: 0\nstdout:\nhi\nstderr:\nerr\n",
 				}),
 			);
 		});
@@ -583,7 +582,7 @@ describe("Drift prevention: QueueMessage source types", () => {
 					command: "echo hi",
 					exitCode: 0,
 					durationMs: 50,
-					stdout: "hi\n",
+					content: "exit code: 0\nstdout:\nhi\n",
 				}),
 			);
 		});
@@ -599,6 +598,7 @@ describe("Drift prevention: QueueMessage source types", () => {
 					command: "true",
 					exitCode: 0,
 					durationMs: 10,
+					content: "exit code: 0",
 				}),
 			);
 		});
@@ -614,7 +614,7 @@ describe("Drift prevention: QueueMessage source types", () => {
 					command: "false",
 					exitCode: 1,
 					durationMs: 5,
-					stderr: "command failed\n",
+					content: "exit code: 1\nstderr:\ncommand failed\n",
 				}),
 			);
 		});
@@ -630,6 +630,7 @@ describe("Drift prevention: QueueMessage source types", () => {
 					command: "sleep 999",
 					exitCode: null,
 					durationMs: 2000,
+					content: "Process killed",
 				}),
 			);
 		});

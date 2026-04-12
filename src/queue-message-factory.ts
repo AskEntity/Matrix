@@ -135,8 +135,8 @@ export function createBackgroundComplete(opts: {
 	command: string;
 	exitCode: number | null;
 	durationMs: number;
-	stdout?: string;
-	stderr?: string;
+	/** Formatted output — identical to foreground bash tool_result content. From formatBashResult(). */
+	content: string;
 }): MessageOf<"background_complete"> {
 	return {
 		source: "background_complete",
@@ -145,8 +145,7 @@ export function createBackgroundComplete(opts: {
 		command: opts.command,
 		exitCode: opts.exitCode,
 		durationMs: opts.durationMs,
-		...(opts.stdout != null ? { stdout: opts.stdout } : {}),
-		...(opts.stderr != null ? { stderr: opts.stderr } : {}),
+		content: opts.content,
 	};
 }
 

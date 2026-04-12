@@ -592,8 +592,7 @@ export const LogEntryView = memo(function LogEntryView({
 		const command = entry.command;
 		const exitCode = entry.exitCode;
 		const durationMs = entry.durationMs;
-		const stdout = entry.stdout;
-		const stderr = entry.stderr;
+		const outputContent = entry.content;
 		const cmdDisplay =
 			command.length > 50 ? `${command.slice(0, 50)}…` : command;
 		const durationSec = durationMs ? `${Math.round(durationMs / 1000)}s` : "";
@@ -601,12 +600,6 @@ export const LogEntryView = memo(function LogEntryView({
 			.filter(Boolean)
 			.join(" · ");
 		const isErr = exitCode != null && exitCode !== 0;
-		// Build output content similar to bash tool_result
-		const outputParts: string[] = [];
-		if (stdout) outputParts.push(`stdout:\n${stdout}`);
-		if (stderr) outputParts.push(`stderr:\n${stderr}`);
-		if (exitCode != null) outputParts.push(`exit code: ${exitCode}`);
-		const outputContent = outputParts.join("\n");
 
 		return (
 			<LogEntryWrapper
