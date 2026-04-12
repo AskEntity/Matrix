@@ -897,3 +897,103 @@ describe("Drift: thinking blocks round-trip across restart", () => {
 		expect(status2).toBe("verify");
 	}, 30000);
 });
+
+// ── Redacted thinking golden snapshots ──
+// Guards the JSONL redacted flag distinction that prevents live/reconstruction drift.
+
+describe("walker: redacted vs display:omitted thinking", () => {
+	function userEvents(id: string, content: string, ts = 1000): Event[] {
+		return [
+			{
+				type: "message",
+				id,
+				taskId: "",
+				body: { source: "user", id, ts, content },
+				ts,
+			},
+			{ type: "messages_consumed", messageIds: [id], taskId: "", ts: ts + 1 },
+		];
+	}
+
+	function thinkEvent(
+		thinking: string,
+		signature: string,
+		opts?: { redacted?: boolean; ts?: number },
+	): Event {
+		return {
+			type: "thinking",
+			thinking,
+			signature,
+			...(opts?.redacted ? { redacted: true } : {}),
+			taskId: "",
+			ts: opts?.ts ?? 2000,
+		};
+	}
+
+	test("display:omitted (empty thinking, no redacted flag) → { type: 'thinking', thinking: '', signature }", () => {
+		const events: Event[] = [
+			...userEvents("p1", "hello"),
+			thinkEvent("", "sig-omitted"),
+			{ type: "assistant_text", content: "result", taskId: "", ts: 2001 },
+		];
+		const messages = eventsToAnthropicMessages(events);
+
+		// biome-ignore lint/suspicious/noExplicitAny: test assertion
+		const assistant = messages[1] as any;
+		const thinkingBlock = assistant.content[0];
+
+		// Must be type: "thinking" — matches live path (SDK finalMessage returns type:"thinking")
+		expect(thinkingBlock).toEqual({
+			type: "thinking",
+			thinking: "",
+			signature: "sig-omitted",
+		});
+	});
+
+	test("redacted_thinking (redacted: true) → { type: 'redacted_thinking', data }", () => {
+		const events: Event[] = [
+			...userEvents("p1", "hello"),
+			thinkEvent("", "encrypted-data-blob", { redacted: true }),
+			{ type: "assistant_text", content: "I can help", taskId: "", ts: 2001 },
+		];
+		const messages = eventsToAnthropicMessages(events);
+
+		// biome-ignore lint/suspicious/noExplicitAny: test assertion
+		const assistant = messages[1] as any;
+		const redactedBlock = assistant.content[0];
+
+		// Must be type: "redacted_thinking" — API expects this format for round-trip
+		expect(redactedBlock).toEqual({
+			type: "redacted_thinking",
+			data: "encrypted-data-blob",
+		});
+	});
+
+	test("redacted + normal thinking in same turn → correct types for each", () => {
+		const events: Event[] = [
+			...userEvents("p1", "complex query"),
+			thinkEvent("", "redacted-data-1", { redacted: true, ts: 2000 }),
+			thinkEvent("visible reasoning", "sig-normal", { ts: 2001 }),
+			{ type: "assistant_text", content: "answer", taskId: "", ts: 2002 },
+		];
+		const messages = eventsToAnthropicMessages(events);
+
+		// biome-ignore lint/suspicious/noExplicitAny: test assertion
+		const assistant = messages[1] as any;
+		expect(assistant.content).toHaveLength(3);
+
+		expect(assistant.content[0]).toEqual({
+			type: "redacted_thinking",
+			data: "redacted-data-1",
+		});
+		expect(assistant.content[1]).toEqual({
+			type: "thinking",
+			thinking: "visible reasoning",
+			signature: "sig-normal",
+		});
+		expect(assistant.content[2]).toEqual({
+			type: "text",
+			text: "answer",
+		});
+	});
+});
