@@ -25,6 +25,15 @@ export interface CacheMissRow {
 	 * "what happened IN the gap", and there is no gap.
 	 */
 	stoppedInGap: boolean;
+	/**
+	 * Was there a `compact_marker` event between the previous usage and this
+	 * one? Post-compact misses have a distinctive shape (inp drops to a few K,
+	 * cc grows, cr=0, then hit ramps back). This flag makes the pattern
+	 * explicit instead of requiring visual inspection of inp column.
+	 *
+	 * Same first-usage semantic as `stoppedInGap`: false if no prior usage.
+	 */
+	compactInGap: boolean;
 }
 
 export interface AnalyzeResult {
@@ -58,6 +67,7 @@ export function analyzeCacheMisses(jsonlContent: string): AnalyzeResult {
 	let totalUsageEvents = 0;
 	let prevUsageTs: number | null = null;
 	let stoppedSinceLastUsage = false;
+	let compactSinceLastUsage = false;
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
@@ -73,6 +83,10 @@ export function analyzeCacheMisses(jsonlContent: string): AnalyzeResult {
 			stoppedSinceLastUsage = true;
 			continue;
 		}
+		if (event.type === "compact_marker") {
+			compactSinceLastUsage = true;
+			continue;
+		}
 
 		if (event.type !== "usage") continue;
 
@@ -84,15 +98,17 @@ export function analyzeCacheMisses(jsonlContent: string): AnalyzeResult {
 
 		const ts = typeof event.ts === "number" ? event.ts : null;
 		const gapMs = prevUsageTs != null && ts != null ? ts - prevUsageTs : null;
-		// Capture BEFORE reset — this row's hasStopped reflects the just-ended gap.
-		// First usage (prevUsageTs === null): no gap exists, so stoppedInGap is
-		// false regardless of any agent_stopped events before it.
+		// Capture BEFORE reset — these flags describe the just-ended gap.
+		// First usage (prevUsageTs === null): no gap exists, so both flags are
+		// false regardless of any pre-existing agent_stopped / compact_marker.
 		const hasStopped = prevUsageTs != null && stoppedSinceLastUsage;
+		const hasCompact = prevUsageTs != null && compactSinceLastUsage;
 
 		// Update prevUsageTs regardless of hit/miss: a hit still resets the clock
 		// so the next miss's gap reflects the real inter-usage interval.
 		if (ts != null) prevUsageTs = ts;
 		stoppedSinceLastUsage = false;
+		compactSinceLastUsage = false;
 
 		const cacheReadTokens =
 			typeof event.cacheReadTokens === "number" ? event.cacheReadTokens : 0;
@@ -116,6 +132,7 @@ export function analyzeCacheMisses(jsonlContent: string): AnalyzeResult {
 			hitPct: ratio * 100,
 			gapMs,
 			stoppedInGap: hasStopped,
+			compactInGap: hasCompact,
 		});
 	}
 
@@ -169,7 +186,8 @@ export function formatRow(row: CacheMissRow): string {
 		`out=${formatNum(row.outputTokens)}  ` +
 		`hit=${row.hitPct.toFixed(1)}%  ` +
 		`gap=${formatGap(row.gapMs)}  ` +
-		`stopped=${row.stoppedInGap ? "yes" : "no"}`
+		`stopped=${row.stoppedInGap ? "yes" : "no"}  ` +
+		`compact=${row.compactInGap ? "yes" : "no"}`
 	);
 }
 
