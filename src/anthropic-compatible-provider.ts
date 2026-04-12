@@ -482,6 +482,11 @@ function createAnthropicAdapter(
 							output_config: adaptiveEffort,
 						}
 					: {}),
+				// Always include context_management — clear_thinking keeps all
+				// thinking blocks to preserve conversation coherence.
+				context_management: {
+					edits: [{ type: "clear_thinking_20251015", keep: "all" }],
+				},
 			} as Parameters<typeof client.messages.stream>[0];
 
 			// Store sessionId on client object for test mock conversation keying.
@@ -854,18 +859,34 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		this.systemPreamble = opts?.systemPreamble;
 		// 1 hour timeout — compaction with very large contexts under API load can be slow
 		const timeout = 60 * 60 * 1000;
+		const betaFeatures = [
+			"interleaved-thinking-2025-05-14",
+			"context-management-2025-06-27",
+			"effort-2025-11-24",
+		];
 		if (this.useOAuth) {
 			this.client = new Anthropic({
 				authToken: oauthToken,
 				timeout,
 				defaultHeaders: {
-					"anthropic-beta": "oauth-2025-04-20",
+					"anthropic-beta": ["oauth-2025-04-20", ...betaFeatures].join(","),
 				},
 			});
 		} else if (apiKey) {
-			this.client = new Anthropic({ apiKey, timeout });
+			this.client = new Anthropic({
+				apiKey,
+				timeout,
+				defaultHeaders: {
+					"anthropic-beta": betaFeatures.join(","),
+				},
+			});
 		} else {
-			this.client = new Anthropic({ timeout });
+			this.client = new Anthropic({
+				timeout,
+				defaultHeaders: {
+					"anthropic-beta": betaFeatures.join(","),
+				},
+			});
 		}
 		this.model = model ?? DEFAULT_MODEL;
 		this.thinkingEffort = opts?.thinkingEffort;
