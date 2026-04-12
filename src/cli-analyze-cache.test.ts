@@ -360,6 +360,189 @@ describe("analyzeCacheMisses", () => {
 		expect(r.misses[2]?.stoppedInGap).toBe(false);
 	});
 
+	test("compactInGap is true when compact_marker appears between usages", () => {
+		const jsonl = buildJsonl([
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 800_000,
+				cacheReadTokens: 750_000,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 1_000,
+			},
+			{ type: "compact_marker", taskId: "t", ts: 2_000 },
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 18_000,
+				cacheReadTokens: 0,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 3_000,
+			},
+		]);
+		const r = analyzeCacheMisses(jsonl);
+		expect(r.misses).toHaveLength(1); // first is 93.75% hit, not a miss
+		const miss = r.misses[0];
+		if (!miss) throw new Error("no miss");
+		expect(miss.compactInGap).toBe(true);
+		expect(miss.stoppedInGap).toBe(false);
+	});
+
+	test("compactInGap is true when MULTIPLE compact_markers appear in gap", () => {
+		const jsonl = buildJsonl([
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 100,
+				cacheReadTokens: 10,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 1_000,
+			},
+			{ type: "compact_marker", taskId: "t", ts: 2_000 },
+			{ type: "compact_marker", taskId: "t", ts: 2_500 },
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 100,
+				cacheReadTokens: 10,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 3_000,
+			},
+		]);
+		const r = analyzeCacheMisses(jsonl);
+		expect(r.misses[1]?.compactInGap).toBe(true);
+	});
+
+	test("compactInGap is false when no compact_marker in gap", () => {
+		const jsonl = buildJsonl([
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 100,
+				cacheReadTokens: 10,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 1_000,
+			},
+			{ type: "tool_call", taskId: "t", tool: "bash", ts: 1_500 },
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 100,
+				cacheReadTokens: 10,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 2_000,
+			},
+		]);
+		const r = analyzeCacheMisses(jsonl);
+		expect(r.misses[1]?.compactInGap).toBe(false);
+	});
+
+	test("compact_marker BEFORE first usage → first usage compactInGap=false", () => {
+		const jsonl = buildJsonl([
+			{ type: "compact_marker", taskId: "t", ts: 500 },
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 100,
+				cacheReadTokens: 10,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 1_000,
+			},
+		]);
+		const r = analyzeCacheMisses(jsonl);
+		expect(r.misses).toHaveLength(1);
+		expect(r.misses[0]?.compactInGap).toBe(false);
+	});
+
+	test("compactInGap resets between consecutive usages (three-usage sequence)", () => {
+		const jsonl = buildJsonl([
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 100,
+				cacheReadTokens: 10,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 1_000,
+			},
+			{ type: "compact_marker", taskId: "t", ts: 2_000 },
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 100,
+				cacheReadTokens: 10,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 3_000,
+			},
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 100,
+				cacheReadTokens: 10,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 4_000,
+			},
+		]);
+		const r = analyzeCacheMisses(jsonl);
+		expect(r.misses).toHaveLength(3);
+		expect(r.misses[0]?.compactInGap).toBe(false);
+		expect(r.misses[1]?.compactInGap).toBe(true);
+		expect(r.misses[2]?.compactInGap).toBe(false);
+	});
+
+	test("hit usage still resets compact flag (mirror of stopped flag semantic)", () => {
+		// usage(miss) → compact_marker → usage(HIT) → usage(miss)
+		// The hit doesn't land in misses, but it MUST reset the compact flag
+		// so the third usage's compactInGap is false — the compact belongs to
+		// the prior gap, not this one.
+		const jsonl = buildJsonl([
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 100,
+				cacheReadTokens: 10,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 1_000,
+			},
+			{ type: "compact_marker", taskId: "t", ts: 1_500 },
+			// HIT — 95% ratio, not a miss, but still updates prevUsageTs and
+			// should clear the compact flag.
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 100,
+				cacheReadTokens: 95,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 2_000,
+			},
+			// miss — no compact since the hit, so compactInGap must be false
+			{
+				type: "usage",
+				taskId: "t",
+				inputTokens: 100,
+				cacheReadTokens: 10,
+				outputTokens: 5,
+				contextWindow: 200_000,
+				ts: 3_000,
+			},
+		]);
+		const r = analyzeCacheMisses(jsonl);
+		expect(r.misses).toHaveLength(2);
+		expect(r.misses[0]?.compactInGap).toBe(false); // first usage
+		expect(r.misses[1]?.compactInGap).toBe(false); // hit in the middle cleared it
+	});
+
 	test("missing cacheCreationTokens/cacheReadTokens default to 0", () => {
 		const jsonl = buildJsonl([
 			{
@@ -424,7 +607,7 @@ describe("formatTimestamp", () => {
 });
 
 describe("formatRow", () => {
-	test("matches example format with stopped=no", () => {
+	test("matches example format with stopped=no compact=no", () => {
 		const line = formatRow({
 			lineNumber: 15234,
 			ts: Date.now(),
@@ -435,6 +618,7 @@ describe("formatRow", () => {
 			hitPct: 32.2,
 			gapMs: 5.8 * 60 * 1000,
 			stoppedInGap: false,
+			compactInGap: false,
 		});
 		expect(line).toContain("line 15234");
 		expect(line).toContain("inp=104,188");
@@ -444,6 +628,7 @@ describe("formatRow", () => {
 		expect(line).toContain("hit=32.2%");
 		expect(line).toContain("gap=5m48s");
 		expect(line).toContain("stopped=no");
+		expect(line).toContain("compact=no");
 	});
 
 	test("stopped=yes when stoppedInGap is true", () => {
@@ -457,8 +642,46 @@ describe("formatRow", () => {
 			hitPct: 10,
 			gapMs: 1000,
 			stoppedInGap: true,
+			compactInGap: false,
 		});
 		expect(line).toContain("stopped=yes");
+		expect(line).toContain("compact=no");
+	});
+
+	test("compact=yes when compactInGap is true", () => {
+		const line = formatRow({
+			lineNumber: 1,
+			ts: Date.now(),
+			inputTokens: 100,
+			cacheReadTokens: 10,
+			cacheCreationTokens: 0,
+			outputTokens: 5,
+			hitPct: 10,
+			gapMs: 1000,
+			stoppedInGap: false,
+			compactInGap: true,
+		});
+		expect(line).toContain("stopped=no");
+		expect(line).toContain("compact=yes");
+	});
+
+	test("compact column appears AFTER stopped column in output order", () => {
+		const line = formatRow({
+			lineNumber: 1,
+			ts: Date.now(),
+			inputTokens: 100,
+			cacheReadTokens: 10,
+			cacheCreationTokens: 0,
+			outputTokens: 5,
+			hitPct: 10,
+			gapMs: 1000,
+			stoppedInGap: true,
+			compactInGap: true,
+		});
+		const stoppedIdx = line.indexOf("stopped=");
+		const compactIdx = line.indexOf("compact=");
+		expect(stoppedIdx).toBeGreaterThan(-1);
+		expect(compactIdx).toBeGreaterThan(stoppedIdx);
 	});
 });
 
@@ -503,6 +726,7 @@ describe("filterByMaxGap", () => {
 			hitPct: 10,
 			gapMs,
 			stoppedInGap: false,
+			compactInGap: false,
 			...extra,
 		};
 	}
