@@ -9368,10 +9368,10 @@ describe("Integration: stopTask lifecycle", () => {
 		// The agent_stopped from stopTask should be BEFORE the second orchestration_started.
 		// With the fix, the old runAgentForNode suppresses its stale agent_stopped.
 		// The new session's agent_stopped only appears on shutdown (root agents stay alive).
-		const stoppedEvents = events.filter((e) => e.type === "agent_stopped");
+		const stoppedEvents = events.filter((e) => e.type === "agent_end");
 		const orcStartEvents = events
 			.map((e, i) => ({ type: e.type, idx: i }))
-			.filter((e) => e.type === "orchestration_started");
+			.filter((e) => e.type === "agent_start");
 
 		// There should be exactly 2 orchestration_started events (first + resume)
 		expect(orcStartEvents.length).toBe(2);
@@ -9384,7 +9384,7 @@ describe("Integration: stopTask lifecycle", () => {
 		expect(stoppedEvents.length).toBeLessThanOrEqual(2);
 
 		// The agent_stopped should be between the two orchestration_started events
-		const stoppedIdx = events.findIndex((e) => e.type === "agent_stopped");
+		const stoppedIdx = events.findIndex((e) => e.type === "agent_end");
 		expect(stoppedIdx).toBeGreaterThan(orcStartEvents[0]?.idx ?? -1);
 		expect(stoppedIdx).toBeLessThan(orcStartEvents[1]?.idx ?? events.length);
 
@@ -9434,7 +9434,7 @@ describe("deliverMessage: shouldResume ordering invariant", () => {
 		// Read JSONL — should have orchestration_started with resume=false
 		const rootNodeId = await getRootNodeId(ctx);
 		const events1 = await readSessionEvents(ctx, rootNodeId);
-		const orch1 = events1.filter((e) => e.type === "orchestration_started");
+		const orch1 = events1.filter((e) => e.type === "agent_start");
 		expect(orch1).toHaveLength(1);
 		expect((orch1[0] as { resume: boolean }).resume).toBe(false);
 
@@ -9463,7 +9463,7 @@ describe("deliverMessage: shouldResume ordering invariant", () => {
 
 		// Read JSONL — should now have TWO orchestration_started events
 		const events2 = await readSessionEvents(ctx, rootNodeId);
-		const orch2 = events2.filter((e) => e.type === "orchestration_started");
+		const orch2 = events2.filter((e) => e.type === "agent_start");
 		expect(orch2).toHaveLength(2);
 		// First was cold start
 		expect((orch2[0] as { resume: boolean }).resume).toBe(false);
@@ -9791,7 +9791,7 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 		// Check: only ONE orchestration_started after restart (no duplicate launch)
 		const events = await readSessionEvents(ctx, rootNodeId);
 		const startTraceIds = events
-			.filter((e) => e.type === "orchestration_started")
+			.filter((e) => e.type === "agent_start")
 			.map((e) => (e as Event & { traceId?: string }).traceId)
 			.filter(Boolean);
 
@@ -9868,7 +9868,7 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 
 		// Find traceIds from orchestration_started events
 		const startTraceIds = events
-			.filter((e) => e.type === "orchestration_started")
+			.filter((e) => e.type === "agent_start")
 			.map((e) => (e as Event & { traceId?: string }).traceId)
 			.filter(Boolean);
 
@@ -9942,7 +9942,7 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 		// Pre-crash orchestration_started has a different traceId from post-restart.
 		const rootEvents = await readSessionEvents(ctx, rootNodeId);
 		const startTraceIds = rootEvents
-			.filter((e) => e.type === "orchestration_started")
+			.filter((e) => e.type === "agent_start")
 			.map((e) => (e as Event & { traceId?: string }).traceId)
 			.filter(Boolean);
 
@@ -9996,7 +9996,7 @@ describe("Integration: traceId injection", () => {
 
 		// orchestration_started should carry the traceId
 		const orchStarted = events.find(
-			(e) => e.type === "orchestration_started",
+			(e) => e.type === "agent_start",
 		) as Event & { traceId?: string };
 		expect(orchStarted).toBeDefined();
 		expect(orchStarted?.traceId).toBeDefined();
@@ -10056,7 +10056,7 @@ describe("Integration: traceId injection", () => {
 
 		// Collect traceIds from orchestration_started events
 		const orchStarted = events.filter(
-			(e) => e.type === "orchestration_started",
+			(e) => e.type === "agent_start",
 		) as Array<Event & { traceId?: string }>;
 		expect(orchStarted).toHaveLength(2);
 
@@ -10071,7 +10071,7 @@ describe("Integration: traceId injection", () => {
 		// Events from second run should all share traceId2
 		// Find the boundary: orchestration_completed after first run
 		const orchCompletedIdx = events.findIndex(
-			(e) => e.type === "orchestration_completed",
+			(e) => e.type === "agent_end",
 		);
 		expect(orchCompletedIdx).toBeGreaterThan(-1);
 
@@ -10085,7 +10085,7 @@ describe("Integration: traceId injection", () => {
 
 		// Events with traceId after the second orchestration_started should be traceId2
 		const secondOrchIdx = events.findIndex(
-			(e, i) => i > orchCompletedIdx && e.type === "orchestration_started",
+			(e, i) => i > orchCompletedIdx && e.type === "agent_start",
 		);
 		for (let i = secondOrchIdx; i < events.length; i++) {
 			const evt = events[i] as Event & { traceId?: string };
@@ -10301,7 +10301,8 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 			ts: Date.now(),
 		});
 		emitEvent(ctx.app.ctx, ctx.projectId, {
-			type: "agent_stopped",
+			type: "agent_end",
+			reason: "stopped",
 			taskId: rootNodeId,
 			ts: Date.now(),
 		});
@@ -10358,7 +10359,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 
 		await eventStore.flushSession(rootNodeId);
 		const events = eventStore.read(rootNodeId);
-		const orchs = events.filter((e) => e.type === "orchestration_started");
+		const orchs = events.filter((e) => e.type === "agent_start");
 		expect(orchs).toHaveLength(1);
 		expect((orchs[0] as Record<string, unknown>).resume).toBe(false);
 	}, 15000);
@@ -10632,7 +10633,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		const simulatedLoop = (async () => {
 			await new Promise((r) => setTimeout(r, 100));
 			await eventStore.append(child.id, {
-				type: "orchestration_started" as const,
+				type: "agent_start" as const,
 				taskId: child.id,
 				ts: Date.now(),
 				resume: false,
@@ -10686,7 +10687,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		const simulatedLoop = (async () => {
 			await new Promise((r) => setTimeout(r, 100));
 			await eventStore.append(child.id, {
-				type: "orchestration_started" as const,
+				type: "agent_start" as const,
 				taskId: child.id,
 				ts: Date.now(),
 				resume: false,

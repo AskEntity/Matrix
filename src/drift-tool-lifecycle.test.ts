@@ -1152,7 +1152,7 @@ describe("Golden snapshots: eventsToAnthropicMessages output", () => {
 	test("compacted_resume event → user message with content", () => {
 		const events: Event[] = [
 			{
-				type: "compacted_resume",
+				type: "assistant_text",
 				content: "Previous session summary: X happened.",
 				taskId: "",
 				ts: 1000,
@@ -1181,7 +1181,6 @@ describe("Golden snapshots: eventsToAnthropicMessages output", () => {
 			assistantTextEvent("yo"),
 			{
 				type: "compact_marker",
-				checkpoint: "cp1",
 				savedTokens: 100,
 				taskId: "",
 				ts: 3,

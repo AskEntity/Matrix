@@ -848,7 +848,6 @@ describe("walker edge cases", () => {
 			} as Event,
 			{
 				type: "compact_marker",
-				checkpoint: "checkpoint-text",
 				savedTokens: 0,
 				taskId: "t1",
 				ts: 1,

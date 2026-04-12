@@ -3029,10 +3029,9 @@ describe("Event deterministic verification", () => {
 		];
 		await eventStore.appendBatch(sessionId, preEvents);
 
-		// Write compact_marker
+		// Write compact_marker (empty boundary)
 		await eventStore.append(sessionId, {
 			type: "compact_marker",
-			checkpoint: "Checkpoint: completed old task",
 			savedTokens: 5000,
 			taskId: "test",
 			ts: 2000,
@@ -3041,9 +3040,8 @@ describe("Event deterministic verification", () => {
 		// Write post-compaction events
 		const postEvents: Event[] = [
 			{
-				type: "compacted_resume",
+				type: "assistant_text",
 				content: "Resuming from checkpoint",
-				cwd: testDir,
 				taskId: "test",
 				ts: 2001,
 			},
@@ -3060,7 +3058,7 @@ describe("Event deterministic verification", () => {
 		await eventStore.flush();
 		const active = eventStore.readActive(sessionId);
 		expect(active.length).toBe(2);
-		expect(active[0]?.type).toBe("compacted_resume");
+		expect(active[0]?.type).toBe("assistant_text");
 		expect(active[1]?.type).toBe("assistant_text");
 
 		// Full read should have all events including marker

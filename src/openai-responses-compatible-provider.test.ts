@@ -407,7 +407,6 @@ describe("eventsToOpenAIResponsesMessages", () => {
 					id: "user-1",
 					ts: 1,
 					content: "Original prompt",
-					header: "Working directory: /repo",
 				},
 			},
 			{

@@ -2106,7 +2106,7 @@ describe("Walker golden snapshots: eventsToAnthropicMessages", () => {
 	test("compacted_resume event → user message", () => {
 		const events: Event[] = [
 			{
-				type: "compacted_resume",
+				type: "assistant_text",
 				content: "Here is your compacted context.",
 				taskId: "",
 				ts: FIXED_TS,
