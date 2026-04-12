@@ -1712,6 +1712,117 @@ describe("event-handler compaction display", () => {
 		expect(capturedLogs[0]?.type).toBe("assistant_text");
 	});
 
+	it("handleEvent: checkpoint assistant_text between compact_started and compact_marker is removed (Bug: raw checkpoint text)", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		// Pre-compact content
+		handleEvent({
+			type: "assistant_text",
+			content: "Normal assistant response",
+			taskId: "task-1",
+			ts: 1000,
+		});
+
+		// Compact sequence: compact_started → assistant_text(checkpoint) → compact_marker
+		handleEvent({ type: "compact_started", taskId: "task-1", ts: 2000 });
+		handleEvent({
+			type: "assistant_text",
+			content:
+				"<summary>\n## 1. Story So Far\nThis is the checkpoint...\n</summary>",
+			taskId: "task-1",
+			ts: 2500,
+		});
+		handleEvent({
+			type: "compact_marker",
+			savedTokens: 50000,
+			taskId: "task-1",
+			ts: 3000,
+		});
+
+		// The checkpoint assistant_text must NOT appear in the log
+		const textEntries = capturedLogs.filter((e) => e.type === "assistant_text");
+		expect(textEntries.length).toBe(1);
+		expect(textEntries[0]?.content).toBe("Normal assistant response");
+
+		// Compact marker should be present
+		const marker = capturedLogs.find((e) => e.type === "compact_marker");
+		expect(marker).toBeDefined();
+		expect(marker?.savedTokens).toBe(50000);
+	});
+
+	it("handleEvent: compact_marker clears [compact] from pending messages (Bug: stuck pending)", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		let capturedPending: Array<{
+			id: string;
+			text: string;
+			taskId: string | null;
+			timestamp: number;
+		}> = [];
+		(deps as Record<string, unknown>).setPendingMessages = mock(
+			(
+				updater: React.SetStateAction<
+					Array<{
+						id: string;
+						text: string;
+						taskId: string | null;
+						timestamp: number;
+					}>
+				>,
+			) => {
+				capturedPending =
+					typeof updater === "function" ? updater(capturedPending) : updater;
+			},
+		);
+
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		// Compact message arrives (source: "compact", has ID, gets deferred)
+		handleEvent({
+			type: "message",
+			id: "compact-msg-1",
+			body: { source: "compact", id: "compact-msg-1", ts: 1000 },
+			taskId: "task-1",
+			ts: 1000,
+		} satisfies IncomingEvent);
+
+		// Should be in pending with "[compact]" text
+		expect(capturedPending.length).toBe(1);
+		expect(capturedPending[0]?.text).toBe("[compact]");
+
+		// Compact processes: compact_started → checkpoint → compact_marker
+		handleEvent({ type: "compact_started", taskId: "task-1", ts: 2000 });
+		handleEvent({
+			type: "compact_marker",
+			savedTokens: 10000,
+			taskId: "task-1",
+			ts: 3000,
+		});
+
+		// [compact] must be cleared from pending
+		expect(capturedPending.length).toBe(0);
+	});
+
 	it("handleEvent: content after compact_marker appends normally", () => {
 		const { deps } = makeDeps();
 
