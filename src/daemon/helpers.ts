@@ -17,28 +17,18 @@ import { TaskTracker } from "../task-tracker.ts";
 import type { TreeNode } from "../types.ts";
 import type { DaemonContext } from "./context.ts";
 
-/** Default budget for extended thinking (tokens). */
-const DEFAULT_THINKING_BUDGET = 10_000;
-
-/** Create an AgentProvider from an AuthGroup, model, and optional thinking config. */
+/** Create an AgentProvider from an AuthGroup, model, and optional thinking effort. */
 function createProviderFromAuth(
 	authGroup: AuthGroup,
 	model?: string,
-	thinkingConfig?: MatrixConfig["thinking"],
+	thinkingEffort?: number,
 ): AgentProvider {
 	if (authGroup.provider === "anthropic") {
 		return new AnthropicCompatibleProvider(model, {
 			apiKey: authGroup.apiKey,
 			oauthToken: authGroup.oauthToken,
 			systemPreamble: authGroup.systemPreamble,
-			...(thinkingConfig
-				? {
-						thinking: {
-							budgetTokens:
-								thinkingConfig.budgetTokens ?? DEFAULT_THINKING_BUDGET,
-						},
-					}
-				: {}),
+			thinkingEffort,
 		});
 	}
 	return new OpenAIResponsesCompatibleProvider(model, {
@@ -63,7 +53,7 @@ function createProviderFromConfig(
 	return createProviderFromAuth(
 		authGroup,
 		effectiveConfig.model,
-		effectiveConfig.thinking,
+		effectiveConfig.thinkingEffort,
 	);
 }
 

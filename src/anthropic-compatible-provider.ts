@@ -352,12 +352,23 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
  * Create an Anthropic adapter for the unified run loop.
  * Encapsulates all Anthropic-specific API call format, streaming, caching, etc.
  */
+/** Map 0-100 thinking effort to Anthropic adaptive effort level. */
+function mapThinkingEffort(
+	effort: number,
+): { effort: "low" | "medium" | "high" | "max" } | null {
+	if (effort <= 0) return null;
+	if (effort <= 25) return { effort: "low" };
+	if (effort <= 50) return { effort: "medium" };
+	if (effort <= 75) return { effort: "high" };
+	return { effort: "max" };
+}
+
 function createAnthropicAdapter(
 	client: Anthropic,
 	useOAuth: boolean,
 	opts?: {
 		outerRetryDelayMs?: (attempt: number, error: unknown) => number;
-		thinking?: { budgetTokens: number };
+		thinkingEffort?: number;
 		systemPreamble?: string;
 	},
 ): ProviderAdapter {
@@ -456,18 +467,19 @@ function createAnthropicAdapter(
 				params.cacheTtl,
 			);
 
+			const adaptiveEffort = opts?.thinkingEffort
+				? mapThinkingEffort(opts.thinkingEffort)
+				: null;
 			const createParams = {
 				model: params.model,
 				max_tokens: params.maxTokens,
 				system: systemBlocks,
 				messages: messagesWithCache,
 				tools: toolsWithCache,
-				...(opts?.thinking
+				...(adaptiveEffort
 					? {
-							thinking: {
-								type: "enabled" as const,
-								budget_tokens: opts.thinking.budgetTokens,
-							},
+							thinking: { type: "adaptive" as const },
+							output_config: adaptiveEffort,
 						}
 					: {}),
 			} as Parameters<typeof client.messages.stream>[0];
@@ -826,8 +838,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	private client: Anthropic;
 	private model: string;
 	private useOAuth: boolean;
-	/** Extended thinking configuration. */
-	private thinking?: { budgetTokens: number };
+	/** Thinking effort level (0-100). 0 = disabled, 1-100 = enabled at varying depth. */
+	private thinkingEffort?: number;
 	/** System preamble from auth group config — prepended as first system block. */
 	private systemPreamble?: string;
 	/** Override outer retry delay for testing. Production uses default (30s+ exponential). */
@@ -838,7 +850,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		opts?: {
 			apiKey?: string;
 			oauthToken?: string;
-			thinking?: { budgetTokens: number };
+			thinkingEffort?: number;
 			systemPreamble?: string;
 		},
 	) {
@@ -862,7 +874,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			this.client = new Anthropic({ timeout });
 		}
 		this.model = model ?? DEFAULT_MODEL;
-		this.thinking = opts?.thinking;
+		this.thinkingEffort = opts?.thinkingEffort;
 	}
 
 	async execute(request: AgentRequest): Promise<AgentResult> {
@@ -914,7 +926,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	): AsyncGenerator<Event, AgentResult> {
 		const adapter = createAnthropicAdapter(this.client, this.useOAuth, {
 			outerRetryDelayMs: this.outerRetryDelayMs,
-			thinking: this.thinking,
+			thinkingEffort: this.thinkingEffort,
 			systemPreamble: this.systemPreamble,
 		});
 		// Override the default model in the request
