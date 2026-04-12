@@ -63,6 +63,46 @@ function getProjectPath(projectId: string, taskId: string | null): string {
 	return R.getProject(projectId)?.path ?? "";
 }
 
+/**
+ * Post-process events for get_logs output:
+ * - Strip thinking `signature` (base64 blobs external clients don't need)
+ * - Filter out `usage` events (token counts not useful for observers)
+ * - Optionally replace tool_result content with a short summary
+ * - Strip message header (memory.md content) via stripEventForUI
+ */
+function stripEventsForLogs(
+	events: unknown[],
+	hideToolResults: boolean,
+): Record<string, unknown>[] {
+	const result: Record<string, unknown>[] = [];
+	for (const raw of events) {
+		const e = raw as Record<string, unknown>;
+		// Drop usage events entirely
+		if (e.type === "usage") continue;
+
+		let processed = stripEventForUI(e);
+
+		// Strip signature from thinking events
+		if (processed.type === "thinking") {
+			const { signature: _, ...rest } = processed;
+			processed = rest;
+		}
+
+		// Replace tool_result content with summary
+		if (hideToolResults && processed.type === "tool_result") {
+			const content = processed.content;
+			const len = typeof content === "string" ? content.length : 0;
+			processed = {
+				...processed,
+				content: `(content hidden, ${len} chars)`,
+			};
+		}
+
+		result.push(processed);
+	}
+	return result;
+}
+
 // ── All tool definitions ──
 
 export function buildAllToolDefs(): ToolDef[] {
@@ -1354,10 +1394,18 @@ export function buildAllToolDefs(): ToolDef[] {
 					decl: { kind: "optional" },
 					description: "End cursor (exclusive). Events up to this position.",
 				},
+				hideToolResults: {
+					schema: z.boolean(),
+					decl: { kind: "optional" },
+					description:
+						"Hide tool_result content (default true). When true, content is replaced with a short summary.",
+				},
 			},
 			handler: async (args) => {
 				const projectId = args.projectId as string;
 				const taskId = args.taskId as string;
+				const hideToolResults =
+					(args.hideToolResults as boolean | undefined) ?? true;
 				const tracker = R.getTracker(projectId);
 				if (!tracker)
 					return {
@@ -1378,9 +1426,7 @@ export function buildAllToolDefs(): ToolDef[] {
 				const end = args.end as number | undefined;
 				// Apply cursor range — precise slice, no limit needed
 				const sliced = allEvents.slice(begin ?? 0, end);
-				const stripped = sliced.map((e) =>
-					stripEventForUI(e as unknown as Record<string, unknown>),
-				);
+				const processed = stripEventsForLogs(sliced, hideToolResults);
 				return {
 					content: [
 						{
@@ -1388,7 +1434,7 @@ export function buildAllToolDefs(): ToolDef[] {
 							text: JSON.stringify(
 								{
 									taskId,
-									events: stripped,
+									events: processed,
 									cursor: allEvents.length,
 									hasOlderEvents,
 								},

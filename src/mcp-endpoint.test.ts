@@ -346,6 +346,166 @@ describe("MCP endpoint", () => {
 			expect(logs.events.length).toBe(2);
 			expect(logs.cursor).toBe(5); // total events
 		});
+
+		test("strips thinking signature by default", async () => {
+			const projectId = await createProject("test-project");
+			const treeResult = await mcpCallTool(hono, "get_tree", { projectId });
+			const rootTaskId = getJson(treeResult).nodes[0].id;
+
+			const eventStore = getEventStore(server.ctx, projectId);
+			await eventStore.append(rootTaskId, {
+				type: "thinking",
+				thinking: "Let me reason about this...",
+				signature: "base64-signature-blob-very-long",
+				provider: "anthropic",
+				taskId: rootTaskId,
+				ts: Date.now(),
+			});
+			await eventStore.flushSession(rootTaskId);
+
+			const result = await mcpCallTool(hono, "get_logs", {
+				projectId,
+				taskId: rootTaskId,
+			});
+			const logs = getJson(result);
+			expect(logs.events.length).toBe(1);
+			const ev = logs.events[0];
+			expect(ev.type).toBe("thinking");
+			expect(ev.thinking).toBe("Let me reason about this...");
+			expect(ev.signature).toBeUndefined();
+			expect(ev.provider).toBe("anthropic");
+		});
+
+		test("filters out usage events", async () => {
+			const projectId = await createProject("test-project");
+			const treeResult = await mcpCallTool(hono, "get_tree", { projectId });
+			const rootTaskId = getJson(treeResult).nodes[0].id;
+
+			const eventStore = getEventStore(server.ctx, projectId);
+			await eventStore.append(rootTaskId, {
+				type: "assistant_text",
+				taskId: rootTaskId,
+				content: "Hello",
+				ts: Date.now(),
+			});
+			await eventStore.append(rootTaskId, {
+				type: "usage",
+				taskId: rootTaskId,
+				inputTokens: 1000,
+				outputTokens: 200,
+				contextWindow: 200000,
+				cacheCreationTokens: 500,
+				cacheReadTokens: 300,
+				ts: Date.now() + 1,
+			});
+			await eventStore.append(rootTaskId, {
+				type: "assistant_text",
+				taskId: rootTaskId,
+				content: "World",
+				ts: Date.now() + 2,
+			});
+			await eventStore.flushSession(rootTaskId);
+
+			const result = await mcpCallTool(hono, "get_logs", {
+				projectId,
+				taskId: rootTaskId,
+			});
+			const logs = getJson(result);
+			// usage event should be filtered out, only 2 assistant_text remain
+			expect(logs.events.length).toBe(2);
+			expect(
+				logs.events.every((e: { type: string }) => e.type === "assistant_text"),
+			).toBe(true);
+		});
+
+		test("hides tool_result content by default", async () => {
+			const projectId = await createProject("test-project");
+			const treeResult = await mcpCallTool(hono, "get_tree", { projectId });
+			const rootTaskId = getJson(treeResult).nodes[0].id;
+
+			const eventStore = getEventStore(server.ctx, projectId);
+			await eventStore.append(rootTaskId, {
+				type: "tool_result",
+				tool: "read_file",
+				toolCallId: "tc_1",
+				content: "A".repeat(5000),
+				isError: false,
+				taskId: rootTaskId,
+				ts: Date.now(),
+			});
+			await eventStore.flushSession(rootTaskId);
+
+			const result = await mcpCallTool(hono, "get_logs", {
+				projectId,
+				taskId: rootTaskId,
+			});
+			const logs = getJson(result);
+			expect(logs.events.length).toBe(1);
+			const ev = logs.events[0];
+			expect(ev.type).toBe("tool_result");
+			expect(ev.tool).toBe("read_file");
+			expect(ev.content).toBe("(content hidden, 5000 chars)");
+		});
+
+		test("shows tool_result content when hideToolResults=false", async () => {
+			const projectId = await createProject("test-project");
+			const treeResult = await mcpCallTool(hono, "get_tree", { projectId });
+			const rootTaskId = getJson(treeResult).nodes[0].id;
+
+			const originalContent = "file content here";
+			const eventStore = getEventStore(server.ctx, projectId);
+			await eventStore.append(rootTaskId, {
+				type: "tool_result",
+				tool: "read_file",
+				toolCallId: "tc_1",
+				content: originalContent,
+				isError: false,
+				taskId: rootTaskId,
+				ts: Date.now(),
+			});
+			await eventStore.flushSession(rootTaskId);
+
+			const result = await mcpCallTool(hono, "get_logs", {
+				projectId,
+				taskId: rootTaskId,
+				hideToolResults: false,
+			});
+			const logs = getJson(result);
+			expect(logs.events.length).toBe(1);
+			expect(logs.events[0].content).toBe(originalContent);
+		});
+
+		test("cursor counts include filtered events", async () => {
+			const projectId = await createProject("test-project");
+			const treeResult = await mcpCallTool(hono, "get_tree", { projectId });
+			const rootTaskId = getJson(treeResult).nodes[0].id;
+
+			const eventStore = getEventStore(server.ctx, projectId);
+			await eventStore.append(rootTaskId, {
+				type: "assistant_text",
+				taskId: rootTaskId,
+				content: "Hello",
+				ts: Date.now(),
+			});
+			await eventStore.append(rootTaskId, {
+				type: "usage",
+				taskId: rootTaskId,
+				inputTokens: 1000,
+				outputTokens: 200,
+				contextWindow: 200000,
+				ts: Date.now() + 1,
+			});
+			await eventStore.flushSession(rootTaskId);
+
+			const result = await mcpCallTool(hono, "get_logs", {
+				projectId,
+				taskId: rootTaskId,
+			});
+			const logs = getJson(result);
+			// 1 event returned (usage filtered), but cursor reflects raw total
+			expect(logs.events.length).toBe(1);
+			expect(logs.cursor).toBe(2);
+		});
 	});
 
 	describe("availability filtering", () => {
