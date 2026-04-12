@@ -16,7 +16,9 @@ import {
 	TOOL_BASH,
 	TOOL_CLARIFY,
 	TOOL_CLOSE_TASK,
+	TOOL_CREATE_FOLDER,
 	TOOL_CREATE_TASK,
+	TOOL_DELETE_FOLDER,
 	TOOL_DELETE_TASK,
 	TOOL_DONE,
 	TOOL_EDIT_FILE,
@@ -28,6 +30,7 @@ import {
 	TOOL_LIST_FILES,
 	TOOL_LIST_PROJECTS,
 	TOOL_READ_FILE,
+	TOOL_RENAME_FOLDER,
 	TOOL_REORDER_TASKS,
 	TOOL_REPORT_TO_PARENT,
 	TOOL_RESET_TASK,
@@ -366,24 +369,18 @@ export function getToolTitle(
 		}
 		case TOOL_EVALUATE_SCRIPT:
 			return "Evaluate";
-		default: {
-			// Handle folder tools and external MCP tools
-			const baseName = stripMcpPrefix(toolName);
-			switch (baseName) {
-				case "create_folder": {
-					const title = getArg(toolArgs, "title");
-					return title ? `Folder Created: ${title}` : "Folder Created";
-				}
-				case "delete_folder":
-					return "Folder Deleted";
-				case "rename_folder": {
-					const title = getArg(toolArgs, "title");
-					return title ? `Folder Renamed: ${title}` : "Folder Renamed";
-				}
-				default:
-					return baseName;
-			}
+		case TOOL_CREATE_FOLDER: {
+			const title = getArg(toolArgs, "title");
+			return title ? `Folder Created: ${title}` : "Folder Created";
 		}
+		case TOOL_DELETE_FOLDER:
+			return "Folder Deleted";
+		case TOOL_RENAME_FOLDER: {
+			const title = getArg(toolArgs, "title");
+			return title ? `Folder Renamed: ${title}` : "Folder Renamed";
+		}
+		default:
+			return stripMcpPrefix(toolName);
 	}
 }
 

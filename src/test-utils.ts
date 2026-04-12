@@ -68,7 +68,7 @@ export function initMockResourceRegistry(opts: {
 	tracker: TaskTracker;
 	projectId: string;
 	projectPath: string;
-	taskId: string | null;
+	taskId: string;
 	dataDir?: string;
 }): { auth: Auth; ctx: DaemonContext } {
 	resetResourceRegistry();
@@ -114,7 +114,7 @@ export function mockOrchestratorDeps(opts: {
 }): { auth: Auth; tracker: TaskTracker } {
 	const { auth } = initMockResourceRegistry({
 		...opts,
-		taskId: null,
+		taskId: opts.tracker.rootNodeId,
 	});
 	return { auth, tracker: opts.tracker };
 }

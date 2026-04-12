@@ -40,9 +40,13 @@ describe("update_task tool description mental model", () => {
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
-			taskId: null,
+			taskId: tracker.rootNodeId,
 		});
-		const { toolDefs } = createOrchestratorTools(auth, "test-project", null);
+		const { toolDefs } = createOrchestratorTools(
+			auth,
+			"test-project",
+			tracker.rootNodeId,
+		);
 		const tool = toolDefs.find((t) => t.name === "update_task");
 		if (!tool) throw new Error("update_task tool not found");
 		return tool;
