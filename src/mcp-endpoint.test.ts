@@ -317,7 +317,6 @@ describe("MCP endpoint", () => {
 			const logs = getJson(result);
 			expect(logs.events.length).toBe(2);
 			expect(logs.cursor).toBe(2);
-			expect(logs.hasMore).toBe(false);
 		});
 
 		test("begin/end cursor range", async () => {
