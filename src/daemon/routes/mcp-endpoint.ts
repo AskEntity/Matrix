@@ -205,6 +205,20 @@ function buildExternalOnlyToolDefs(ctx: DaemonContext): ToolDef[] {
 					"orchestration_completed",
 				]);
 
+				// ── Fast path: agent already idle/stopped/done ──
+				// If the agent isn't actively running, return immediately.
+				// Without this, yield_external would deadlock waiting for
+				// an event that was already emitted before we subscribed.
+				const session = node.session;
+				if (!session) {
+					// No session = agent not running (never started, or stopped)
+					return result("not_running");
+				}
+				if (session.queue?.idle) {
+					// Agent is in yield/idle state — already paused
+					return result("agent_idle");
+				}
+
 				return new Promise<ToolHandlerResult>((resolve) => {
 					let settled = false;
 
