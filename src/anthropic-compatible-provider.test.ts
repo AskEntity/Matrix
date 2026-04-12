@@ -898,14 +898,14 @@ describe("executeBashWithTimeout", () => {
 		expect(result.backgroundId).toMatch(/^bg-/);
 		expect(result.backgroundCommand).toBe("echo bg-test");
 
-		// Wait for background process to complete and notify (with stdout/stderr content)
+		// Wait for background process to complete and notify (with formatted content)
 		const msg = await queue.wait();
 		expect(msg.source).toBe("background_complete");
 		if (msg.source === "background_complete") {
 			expect(msg.exitCode).toBe(0);
 			expect(msg.durationMs).toBeGreaterThanOrEqual(0);
-			// stdout/stderr included when output is small
-			expect(msg.stdout).toContain("bg-test");
+			// content includes formatted output from formatBashResult
+			expect(msg.content).toContain("bg-test");
 		}
 
 		cleanupSessionBackgroundProcesses(bgMap);
@@ -936,14 +936,14 @@ describe("executeBashWithTimeout", () => {
 				.length,
 		).toBe(1);
 
-		// Wait for completion notification — this takes ~5s (with stdout/stderr content)
+		// Wait for completion notification — this takes ~5s (with formatted content)
 		const msg = await queue.wait();
 		expect(msg.source).toBe("background_complete");
 		if (msg.source === "background_complete") {
 			expect(msg.exitCode).toBe(0);
 			expect(msg.durationMs).toBeGreaterThan(100);
-			// stdout/stderr included when output is small
-			expect(msg.stdout).toContain("done-slow");
+			// content includes formatted output from formatBashResult
+			expect(msg.content).toContain("done-slow");
 		}
 
 		// Should no longer be running
@@ -1319,7 +1319,7 @@ describe("executeBashWithTimeout", () => {
 		expect(msg.source).toBe("background_complete");
 		if (msg.source === "background_complete") {
 			expect(msg.exitCode).toBe(0);
-			expect(msg.stdout).toContain("run-in-bg-test");
+			expect(msg.content).toContain("run-in-bg-test");
 		}
 
 		cleanupSessionBackgroundProcesses(bgMap);
@@ -1397,7 +1397,7 @@ describe("executeBashWithTimeout", () => {
 		const msg = await queue.wait();
 		expect(msg.source).toBe("background_complete");
 		if (msg.source === "background_complete") {
-			expect(msg.stderr).toContain("err-output");
+			expect(msg.content).toContain("err-output");
 		}
 
 		cleanupSessionBackgroundProcesses(bgMap);

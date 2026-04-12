@@ -155,7 +155,7 @@ describe("Bug 1: JSONL dedup via deliverMessage (agent idle)", () => {
 				command: "echo hi",
 				exitCode: 0,
 				durationMs: 10,
-				stdout: "hi\n",
+				content: "exit code: 0\nstdout:\nhi\n",
 			}),
 		);
 	}, 30000);

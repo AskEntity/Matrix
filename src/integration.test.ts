@@ -2332,7 +2332,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		);
 		expect(bgCompleteEvents.length).toBeGreaterThanOrEqual(1);
 		expect(
-			(bgCompleteEvents[0] as { body: { stderr: string } }).body.stderr,
+			(bgCompleteEvents[0] as { body: { content: string } }).body.content,
 		).toContain("daemon restart");
 
 		// Verify the synthetic bg_complete has a proper ULID id (not empty string)
