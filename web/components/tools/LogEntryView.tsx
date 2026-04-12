@@ -753,10 +753,10 @@ export const LogEntryView = memo(function LogEntryView({
 					</span>
 				)}
 				<Card
-					title="💭 Thinking"
+					title="Thinking"
 					className="mxd-tool-card-thinking"
-					defaultExpanded={false}
-					collapsible
+					defaultExpanded
+					collapsible={false}
 				>
 					<div className="mxd-tool-card-body">
 						<div className="mxd-thinking-content">{thinkingText}</div>
