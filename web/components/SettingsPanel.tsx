@@ -874,6 +874,84 @@ function CacheTtlSection({
 	);
 }
 
+// ---- Thinking Effort Section ----
+
+function ThinkingEffortSection({
+	tab,
+	layers,
+	draft,
+	onDraftChange,
+}: {
+	tab: ActiveTab;
+	layers: ThreeLayerConfig;
+	draft: Record<string, unknown>;
+	onDraftChange: (patch: Record<string, unknown>) => void;
+}) {
+	const { t } = useLocale();
+
+	// Compute inherited value for non-global tabs
+	const inherited = (() => {
+		if (tab === "global") return undefined;
+		if (tab === "local") {
+			const rv = layers.repo.thinkingEffort;
+			if (rv !== undefined) return rv as number;
+			const gv = layers.global.thinkingEffort;
+			if (gv !== undefined) return gv as number;
+			return undefined;
+		}
+		// project
+		const gv = layers.global.thinkingEffort;
+		return gv !== undefined ? (gv as number) : undefined;
+	})();
+
+	const value = draft.thinkingEffort as number | undefined;
+	const selectValue = value !== undefined ? String(value) : "";
+
+	const effortLabel = (v: number | undefined): string => {
+		if (v === undefined) return "";
+		if (v === 0) return t("settings.thinkingDisabled");
+		if (v <= 25) return t("settings.thinkingLow");
+		if (v <= 50) return t("settings.thinkingMedium");
+		if (v <= 75) return t("settings.thinkingHigh");
+		return t("settings.thinkingMax");
+	};
+
+	return (
+		<div className="mxd-settings-section">
+			<div className="mxd-settings-section-title">
+				{t("settings.sectionThinking")}
+			</div>
+			<div className="mxd-settings-field">
+				<span className="mxd-settings-label">
+					{t("settings.thinkingEffort")}
+				</span>
+				<select
+					className="mxd-select mxd-settings-input"
+					value={selectValue}
+					onChange={(e) => {
+						const v = e.target.value;
+						onDraftChange({
+							thinkingEffort: v === "" ? undefined : Number(v),
+						});
+					}}
+				>
+					{tab !== "global" && (
+						<option value="">
+							{t("settings.inheritOption")}
+							{inherited !== undefined ? ` (${effortLabel(inherited)})` : ""}
+						</option>
+					)}
+					<option value="0">{t("settings.thinkingDisabled")}</option>
+					<option value="25">{t("settings.thinkingLow")}</option>
+					<option value="50">{t("settings.thinkingMedium")}</option>
+					<option value="75">{t("settings.thinkingHigh")}</option>
+					<option value="100">{t("settings.thinkingMax")}</option>
+				</select>
+			</div>
+		</div>
+	);
+}
+
 // ---- Tab-level Save/Revert bar ----
 
 function TabActions({
@@ -1041,6 +1119,13 @@ function GlobalTab({
 				onDraftChange={onDraftChange}
 			/>
 
+			<ThinkingEffortSection
+				tab={tab}
+				layers={layers}
+				draft={draft}
+				onDraftChange={onDraftChange}
+			/>
+
 			<div className="mxd-settings-section">
 				<div className="mxd-settings-section-title">
 					{t("settings.sectionDaemon")}
@@ -1162,6 +1247,13 @@ function ProjectTab({
 			/>
 
 			<CacheTtlSection
+				tab={tab}
+				layers={layers}
+				draft={draft}
+				onDraftChange={onDraftChange}
+			/>
+
+			<ThinkingEffortSection
 				tab={tab}
 				layers={layers}
 				draft={draft}

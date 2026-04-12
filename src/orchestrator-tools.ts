@@ -1354,7 +1354,6 @@ export function buildAllToolDefs(): ToolDef[] {
 					decl: { kind: "optional" },
 					description: "End cursor (exclusive). Events up to this position.",
 				},
-
 			},
 			handler: async (args) => {
 				const projectId = args.projectId as string;
