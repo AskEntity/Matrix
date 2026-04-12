@@ -21,14 +21,13 @@ function stamp() {
 
 export function createUserMessage(
 	content: string,
-	opts?: { images?: QueueImage[]; header?: string; id?: string; ts?: number },
+	opts?: { images?: QueueImage[]; id?: string; ts?: number },
 ): MessageOf<"user"> {
 	return {
 		source: "user",
 		...stamp(),
 		content,
 		...(opts?.images?.length ? { images: opts.images } : {}),
-		...(opts?.header ? { header: opts.header } : {}),
 		...(opts?.id ? { id: opts.id } : {}),
 		...(opts?.ts != null ? { ts: opts.ts } : {}),
 	};
@@ -56,7 +55,7 @@ export function createTaskMessage(
 	fromTaskId: string,
 	fromTitle: string,
 	content: string,
-	opts?: { title?: string; requestReply?: boolean; header?: string },
+	opts?: { title?: string; requestReply?: boolean },
 ): MessageOf<"task_message"> {
 	return {
 		source: "task_message",
@@ -66,7 +65,6 @@ export function createTaskMessage(
 		content,
 		...(opts?.title ? { title: opts.title } : {}),
 		...(opts?.requestReply != null ? { requestReply: opts.requestReply } : {}),
-		...(opts?.header ? { header: opts.header } : {}),
 	};
 }
 
@@ -153,4 +151,18 @@ export function createBackgroundComplete(opts: {
 
 export function createCompactMessage(): MessageOf<"compact"> {
 	return { source: "compact", ...stamp() };
+}
+
+// ── Work context ──
+
+export function createWorkContext(content: string): MessageOf<"work_context"> {
+	return { source: "work_context", ...stamp(), content };
+}
+
+// ── Compacted resume (message form) ──
+
+export function createCompactedResume(
+	content: string,
+): MessageOf<"compacted_resume"> {
+	return { source: "compacted_resume", ...stamp(), content };
 }
