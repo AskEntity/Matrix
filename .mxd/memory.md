@@ -950,3 +950,27 @@ POST `/mcp` — MCP Streamable HTTP transport. Stateless: no attach_to, no sessi
 
 ### yield_external fast path
 Checks `session.queue?.idle` (covers explicit + implicit yield) and `!session` (not running) before subscribing. Without this → deadlock when agent already idle.
+
+## OpenAI SDK Migration
+
+Both OpenAI providers now use the official `openai` npm package (v6.34.0) instead of raw `fetch`.
+
+### Responses provider (`openai-responses-compatible-provider.ts`)
+- `streamResponsesAPI` accepts `body: ResponseCreateParams` (SDK type) instead of individual params
+- SDK's `client.responses.create(body, { stream: true })` handles retries, SSE parsing, streaming
+- Caller (`createOpenAIResponsesAdapter.callAPI`) builds the body, snapshots it, passes to SDK
+- SDK returns typed `Response` (aliased as `OAIResponse`) with `.output`, `.output_text`, `.usage`
+- `ResponseFunctionToolCall` from SDK replaces hand-rolled `ResponsesFunctionCall`
+- ~200 lines of hand-rolled SSE parsing deleted
+
+### Chat Completions provider (`openai-compatible-provider.ts`)
+- `callOpenAIAPI` accepts `body: ChatCompletionCreateParamsNonStreaming` (SDK type)
+- SDK's `client.chat.completions.create(body)` replaces raw fetch + retry loop
+- `ChatCompletion` from SDK replaces hand-rolled `OpenAIChatResponse`
+- **ChatCompletionMessageToolCall union**: SDK type is `FunctionToolCall | CustomToolCall`. Must filter with `tc.type === "function"` before accessing `.function.name`/`.function.arguments`.
+
+### Debug snapshot invariant
+After this change, for ALL providers: `DebugSnapshot.body` === exact object passed to SDK. Caller builds body → snapshots → sends. Zero divergence possible. Both providers also snapshot the API response via `writeDebugResponse`.
+
+### Test mock infrastructure
+SDK parses SSE `data:` JSON directly (not SSE `event:` line) to determine event type. Mocks must include `type` and `sequence_number` in the JSON data payload. Mock helpers: `mockOAIResponse()`, `mockFunctionCall()` build complete Response objects for `response.completed` events.
