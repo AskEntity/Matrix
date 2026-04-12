@@ -9404,6 +9404,36 @@ describe("Integration: stopTask lifecycle", () => {
 		// Session may be undefined (done completed) or still running (timing).
 		expect(rootNode?.status).toBe("verify");
 	}, 30000);
+
+	test("stopAgent emits exactly ONE agent_end (no duplicate from stopAgent + runAgentForNode)", async () => {
+		ctx = await setupTestContext();
+
+		// Instruction: idle forever (agent yields waiting for messages)
+		const instruction = JSON.stringify({
+			turns: [{ blocks: [{ type: "text", text: "idle forever" }] }],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		// Stop the agent
+		const stopResp = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/stop`,
+			{ method: "POST" },
+		);
+		expect(stopResp.status).toBe(200);
+		await new Promise((r) => setTimeout(r, 500));
+
+		// Read JSONL and count agent_end events
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const agentEndEvents = events.filter((e) => e.type === "agent_end");
+
+		// MUST be exactly 1 — no duplicate from both stopAgent and runAgentForNode
+		expect(agentEndEvents.length).toBe(1);
+		expect((agentEndEvents[0] as any)?.reason).toBe("stopped");
+	}, 15000);
 });
 
 // ── deliverMessage shouldResume ordering ──
