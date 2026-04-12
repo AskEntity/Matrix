@@ -4338,8 +4338,7 @@ describe("findOrphanedBackgroundProcesses", () => {
 					command: "sleep 10",
 					exitCode: 0,
 					durationMs: 10000,
-					stdout: "done",
-					stderr: "",
+					content: "exit code: 0\nstdout:\ndone",
 				},
 				taskId: "t1",
 				ts: 2000,
@@ -4383,8 +4382,7 @@ describe("findOrphanedBackgroundProcesses", () => {
 					command: "cmd1",
 					exitCode: 0,
 					durationMs: 500,
-					stdout: "",
-					stderr: "",
+					content: "exit code: 0",
 				},
 				taskId: "t1",
 				ts: 2000,
@@ -4423,7 +4421,7 @@ describe("findOrphanedBackgroundProcesses", () => {
 				commandId: string;
 				command: string;
 				exitCode: null;
-				stderr: string;
+				content: string;
 			};
 		};
 		expect(orphan.type).toBe("message");
@@ -4433,7 +4431,7 @@ describe("findOrphanedBackgroundProcesses", () => {
 		expect(orphan.body.commandId).toBe("bg-xyz");
 		expect(orphan.body.command).toBe("webpack build");
 		expect(orphan.body.exitCode).toBeNull();
-		expect(orphan.body.stderr).toContain("interrupted by daemon restart");
+		expect(orphan.body.content).toContain("interrupted by daemon restart");
 	});
 });
 

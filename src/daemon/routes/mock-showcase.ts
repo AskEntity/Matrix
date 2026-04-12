@@ -978,8 +978,8 @@ function buildMockData() {
 			command: "bun run typecheck",
 			exitCode: 0,
 			durationMs: 12500,
-			stdout: "No errors found.\n\nChecked 142 files in 12.5s.",
-			stderr: "",
+			content:
+				"exit code: 0\nstdout:\nNo errors found.\n\nChecked 142 files in 12.5s.",
 		},
 		m,
 	);
