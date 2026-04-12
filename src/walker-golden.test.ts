@@ -1015,22 +1015,8 @@ describe("walker: onConsumedMessages — idle context (no tool_results)", () => 
 		]);
 	});
 
-	test("user message with header renders header+content", () => {
-		const events: Event[] = [
-			userMessageEvent("msg_01", "main content", {
-				ts: 0,
-				header: "header text here",
-			}),
-			messagesConsumedEvent(["msg_01"]),
-		];
-		const msgs = eventsToAnthropicMessages(events);
-		expect(msgs).toEqual([
-			{
-				role: "user",
-				content: userText(0, "main content", "header text here"),
-			},
-		]);
-	});
+	// "user message with header" test removed — header field deleted.
+	// Context is now delivered via separate work_context messages.
 });
 
 // ── Tests: end-to-end sequences (assistant turn + tool_result + queue) ──
