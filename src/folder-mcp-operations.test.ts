@@ -266,7 +266,7 @@ describe("folder-aware: create_task scope validation", () => {
 	});
 
 	async function invokeCreateTask(
-		currentTaskId: string | null,
+		currentTaskId: string,
 		args: { title: string; description: string; parentId?: string },
 	) {
 		resetResourceRegistry();
@@ -324,7 +324,7 @@ describe("folder-aware: create_task scope validation", () => {
 		const task = tracker.addTask("some task", "");
 		const folder = tracker.addFolder("Folder", task.id);
 
-		const result = await invokeCreateTask(null, {
+		const result = await invokeCreateTask(tracker.rootNodeId, {
 			title: "anywhere",
 			description: "desc",
 			parentId: folder.id,
@@ -377,7 +377,7 @@ describe("folder-aware: update_task reparent", () => {
 	});
 
 	async function invokeUpdateTask(
-		currentTaskId: string | null,
+		currentTaskId: string,
 		args: { taskId: string; parentId?: string },
 	) {
 		resetResourceRegistry();
@@ -475,7 +475,7 @@ describe("folder-aware: delete_task", () => {
 	});
 
 	async function invokeDeleteTask(
-		currentTaskId: string | null,
+		currentTaskId: string,
 		args: { taskId: string },
 	) {
 		resetResourceRegistry();
@@ -501,7 +501,9 @@ describe("folder-aware: delete_task", () => {
 		const folder = tracker.addFolder("Folder", agent.id);
 		const task = tracker.addChild(folder.id, "leaf", "");
 
-		const result = await invokeDeleteTask(null, { taskId: task.id });
+		const result = await invokeDeleteTask(tracker.rootNodeId, {
+			taskId: task.id,
+		});
 		expect(result.isError).toBeUndefined();
 		expect(tracker.getTask(task.id)).toBeUndefined();
 	});
@@ -510,7 +512,9 @@ describe("folder-aware: delete_task", () => {
 		const agent = tracker.addTask("agent", "");
 		const folder = tracker.addFolder("Empty Folder", agent.id);
 
-		const result = await invokeDeleteTask(null, { taskId: folder.id });
+		const result = await invokeDeleteTask(tracker.rootNodeId, {
+			taskId: folder.id,
+		});
 		expect(result.isError).toBeUndefined();
 		expect(tracker.get(folder.id)).toBeUndefined();
 	});
@@ -520,7 +524,9 @@ describe("folder-aware: delete_task", () => {
 		const folder = tracker.addFolder("Folder", agent.id);
 		tracker.addChild(folder.id, "child", "");
 
-		const result = await invokeDeleteTask(null, { taskId: folder.id });
+		const result = await invokeDeleteTask(tracker.rootNodeId, {
+			taskId: folder.id,
+		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain(
 			"Cannot delete folder with children",
@@ -542,7 +548,7 @@ describe("folder-aware: close_task", () => {
 	});
 
 	async function invokeCloseTask(
-		currentTaskId: string | null,
+		currentTaskId: string,
 		args: { taskId: string },
 	) {
 		resetResourceRegistry();
@@ -569,7 +575,9 @@ describe("folder-aware: close_task", () => {
 		const task = tracker.addChild(folder.id, "task", "");
 		tracker.updateStatus(task.id, "verify");
 
-		const result = await invokeCloseTask(null, { taskId: task.id });
+		const result = await invokeCloseTask(tracker.rootNodeId, {
+			taskId: task.id,
+		});
 		expect(result.isError).toBeUndefined();
 		expect(tracker.getTask(task.id)?.status).toBe("closed");
 	});
@@ -578,7 +586,9 @@ describe("folder-aware: close_task", () => {
 		const agent = tracker.addTask("agent", "");
 		const folder = tracker.addFolder("Folder", agent.id);
 
-		const result = await invokeCloseTask(null, { taskId: folder.id });
+		const result = await invokeCloseTask(tracker.rootNodeId, {
+			taskId: folder.id,
+		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain("Cannot close a folder");
 	});
@@ -598,7 +608,7 @@ describe("folder-aware: reset_task", () => {
 	});
 
 	async function invokeResetTask(
-		currentTaskId: string | null,
+		currentTaskId: string,
 		args: { taskId: string },
 	) {
 		resetResourceRegistry();
@@ -625,7 +635,9 @@ describe("folder-aware: reset_task", () => {
 		const task = tracker.addChild(folder.id, "task", "");
 		tracker.updateStatus(task.id, "in_progress");
 
-		const result = await invokeResetTask(null, { taskId: task.id });
+		const result = await invokeResetTask(tracker.rootNodeId, {
+			taskId: task.id,
+		});
 		expect(result.isError).toBeUndefined();
 		expect(tracker.getTask(task.id)?.status).toBe("pending");
 	});
@@ -634,7 +646,9 @@ describe("folder-aware: reset_task", () => {
 		const agent = tracker.addTask("agent", "");
 		const folder = tracker.addFolder("Folder", agent.id);
 
-		const result = await invokeResetTask(null, { taskId: folder.id });
+		const result = await invokeResetTask(tracker.rootNodeId, {
+			taskId: folder.id,
+		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain("Cannot reset a folder");
 	});
@@ -654,7 +668,7 @@ describe("folder-aware: send_message direction validation", () => {
 	});
 
 	async function invokeSendMessage(
-		currentTaskId: string | null,
+		currentTaskId: string,
 		args: { taskId: string; title: string; message: string },
 	) {
 		resetResourceRegistry();
@@ -910,7 +924,7 @@ describe("folder-aware: reorder_tasks", () => {
 	});
 
 	async function invokeReorder(
-		currentTaskId: string | null,
+		currentTaskId: string,
 		args: { nodeId: string; children: string[] },
 	) {
 		resetResourceRegistry();
@@ -1002,7 +1016,7 @@ describe("folder-aware: done() descendant check", () => {
 	});
 
 	async function invokeDone(
-		currentTaskId: string | null,
+		currentTaskId: string,
 		args: { status: string; summary: string },
 	) {
 		resetResourceRegistry();
@@ -1103,7 +1117,7 @@ describe("folder-aware: fork_task_context scope validation", () => {
 	});
 
 	async function invokeForkContext(
-		currentTaskId: string | null,
+		currentTaskId: string,
 		args: { sourceTaskId: string; targetTaskId: string },
 	) {
 		resetResourceRegistry();

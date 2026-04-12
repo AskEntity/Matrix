@@ -2761,7 +2761,7 @@ describe("create_task validation", () => {
 
 	/** Helper to invoke the create_task tool from the MCP tool definitions. */
 	async function invokeCreateTask(
-		currentTaskId: string | null,
+		currentTaskId: string,
 		args: { title: string; description: string; parentId?: string },
 	) {
 		resetResourceRegistry();
@@ -2858,9 +2858,9 @@ describe("create_task validation", () => {
 		expect(parsed.parentId).toBe(sibling.id);
 	});
 
-	test("top-level orchestrator (currentTaskId=null) can create anywhere", async () => {
+	test("top-level orchestrator can create anywhere", async () => {
 		const existing = tracker.addTask("existing", "");
-		const result = await invokeCreateTask(null, {
+		const result = await invokeCreateTask(tracker.rootNodeId, {
 			title: "anywhere",
 			description: "desc",
 			parentId: existing.id,

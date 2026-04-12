@@ -55,6 +55,7 @@ const bindParams = {
 
 const bashTool: ToolDef = {
 	name: "bash",
+	availability: "internal",
 	description:
 		"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). The `cd` command has special behavior: working directory is tracked across calls, so if you `cd` in one command, subsequent commands automatically run from the new directory. Do NOT cd to your current working directory — it will return an error. No need to prefix every command with `cd /path &&`. Exception: after a daemon restart, your workdir resets to the project root. If you navigate outside your worktree, you'll be warned — remember to cd back when done.\n\nforeground_timeout controls how long to wait in the foreground before backgrounding the command. Use `run_in_background: true` as the preferred way to intentionally run a command in the background (equivalent to foreground_timeout=0). If the command finishes before the timeout, results are returned immediately. If not, the command moves to background and you get partial output + a background handle. Background completions are delivered as messages on your next yield() or tool call.\n\nForeground bash commands automatically track CWD changes (cd commands update the working directory for subsequent calls). Background commands (run_in_background=true or commands that exceeded foreground_timeout) do NOT affect CWD — your working directory stays at whatever it was before the backgrounded command. You can read_file on the output file paths to check partial output while the process runs.\n\nBackground completion notifications include stdout/stderr content inline when output is small (< 50KB). For large output, use read_file on the output file paths. Output files persist until the session ends.\n\nDo NOT pipe through head, tail, or grep to truncate output. Long output is automatically saved to files for you to read — if the output is short, truncation is pointless; if it's long, the tool saves it and you can read_file or search the saved file afterward. Especially for test runs: NEVER truncate test output. You need to see every failure, every stack trace, and every flaky result to debug effectively.",
 	params: {
@@ -120,6 +121,7 @@ const bashTool: ToolDef = {
 
 const backgroundTool: ToolDef = {
 	name: "background",
+	availability: "internal",
 	description:
 		"Manage background processes. Use to list, check status, or kill background processes that were started via bash with run_in_background=true or that exceeded foreground_timeout.\n\nActions:\n- list: Show all background processes for this session\n- status: Get detailed status of a specific background process\n- kill: Terminate a running background process\n\nTo wait for background process completion, use yield() — background completions are delivered as queue messages.",
 	params: {
@@ -163,6 +165,7 @@ const backgroundTool: ToolDef = {
 
 const readFileTool: ToolDef = {
 	name: "read_file",
+	availability: "internal",
 	description:
 		"Read the contents of a file with line numbers. You MUST read a file before editing it to understand existing code. For large files, use offset and limit to read in chunks.",
 	params: {
@@ -265,6 +268,7 @@ const readFileTool: ToolDef = {
 
 const writeFileTool: ToolDef = {
 	name: "write_file",
+	availability: "internal",
 	description:
 		"Write content to a file. Creates parent directories automatically. Use for new files or complete rewrites. For modifying existing files, prefer edit_file.",
 	params: {
@@ -298,6 +302,7 @@ const writeFileTool: ToolDef = {
 
 const editFileTool: ToolDef = {
 	name: "edit_file",
+	availability: "internal",
 	description:
 		"Replace a specific string in a file. The old_string must be an EXACT match (including whitespace and indentation). If old_string is not unique, provide more surrounding context lines to make it unique, or use replace_all=true for bulk renames. You must read_file first to see the exact content.",
 	params: {
@@ -368,6 +373,7 @@ const editFileTool: ToolDef = {
 
 const listFilesTool: ToolDef = {
 	name: "list_files",
+	availability: "internal",
 	description:
 		'List files matching a glob pattern. Use to discover project structure and find relevant files before reading them. Examples: "src/**/*.ts", "**/*.test.ts", "*.json".',
 	params: {
@@ -402,6 +408,7 @@ const listFilesTool: ToolDef = {
 
 const searchTool: ToolDef = {
 	name: "search",
+	availability: "internal",
 	description:
 		'A powerful regex search tool. ALWAYS use this for search tasks — NEVER invoke grep or rg via bash. Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+"). The path parameter accepts a directory or a single file. Filter files with glob parameter (e.g., "*.ts", "*.{ts,tsx}"). Output modes: "content" (default) shows matching lines with line numbers, "files_with_matches" shows only file paths (fast discovery), "count" shows match counts per file.',
 	params: {
