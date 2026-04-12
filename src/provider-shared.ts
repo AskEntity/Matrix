@@ -804,20 +804,9 @@ export async function* runProviderLoop(
 		currentSession.allTools = jsonTools;
 	}
 
-	// Emit session_config on fresh start (tools are now populated, not [])
-	if (!storedConfig && emit) {
-		const sp = request.systemPrompt ?? { stable: "", variable: "" };
-		const sessionConfigEvt: import("./events.ts").Event = {
-			type: "session_config",
-			tools: jsonTools,
-			systemStable: sp.stable,
-			systemVariable: sp.variable,
-			...(request.cacheTtl ? { cacheTtl: request.cacheTtl } : {}),
-			taskId: "",
-			ts: Date.now(),
-		} as import("./events.ts").Event;
-		emit(sessionConfigEvt);
-	}
+	// session_config for fresh starts is now emitted by runAgentForNode
+	// (before any messages, before launch lock release).
+	// Only compact-refresh session_config is emitted here (see compaction block below).
 
 	let turns = 0;
 	let totalInputTokens = 0;

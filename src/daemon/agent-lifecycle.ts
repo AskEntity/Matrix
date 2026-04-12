@@ -30,7 +30,7 @@ import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
 import { createAgentAuth } from "../tool-auth.ts";
 import { toToolDefinition } from "../tool-def.ts";
-import type { ToolDefinition } from "../tool-definition.ts";
+import { buildJsonTools, type ToolDefinition } from "../tool-definition.ts";
 import { MCP_SERVER_NAME } from "../tool-names.ts";
 import {
 	buildBuiltinToolDefs,
@@ -709,21 +709,6 @@ export async function runAgentForNode(
 		const eventStore = getEventStore(ctx, project.id);
 		await eventStore.flushSession(nodeId);
 
-		// Wire before-first-message hook for work_context injection.
-		// Always set the hook — handles both fresh sessions AND post-compact
-		// re-arm (resetBeforeFirstMessage in provider-shared.ts compact flow).
-		childQueue.setBeforeFirstMessage(() => {
-			const content = buildWorkContextContent(agentCwd);
-			if (!content) return [];
-			return [createWorkContext(content)];
-		});
-		if (eventStore.has(nodeId)) {
-			// Resume: work_context already in JSONL from first run.
-			// Mark hook as fired so it doesn't re-inject on first queue message.
-			// It will re-arm after compact via resetBeforeFirstMessage().
-			childQueue.markBeforeFirstMessageFired();
-		}
-
 		// Read active events for resume and repair JSONL if needed
 		let activeEvents = eventStore.has(nodeId)
 			? eventStore.readActive(nodeId)
@@ -771,6 +756,59 @@ export async function runAgentForNode(
 			for (const msg of unconsumed) {
 				childQueue.enqueue(msg, { replay: true });
 			}
+		}
+
+		// Wire before-first-message hook for work_context injection.
+		// Always set the hook — handles both fresh sessions AND post-compact
+		// re-arm (resetBeforeFirstMessage in provider-shared.ts compact flow).
+		childQueue.setBeforeFirstMessage(() => {
+			const content = buildWorkContextContent(agentCwd);
+			if (!content) return [];
+			return [createWorkContext(content)];
+		});
+		// Check if work_context is already in JSONL (resume case).
+		// If so, mark hook as fired to prevent re-injection.
+		const hasWorkContext = activeEvents.some(
+			(e) =>
+				e.type === "message" &&
+				e.body &&
+				typeof e.body === "object" &&
+				"source" in e.body &&
+				(e.body as { source: string }).source === "work_context",
+		);
+		if (hasWorkContext) {
+			childQueue.markBeforeFirstMessageFired();
+		}
+
+		// Emit session_config if not already present in JSONL.
+		const hasSessionConfig = activeEvents.some(
+			(e) => e.type === "session_config",
+		);
+		if (!hasSessionConfig) {
+			const jsonToolsForConfig = buildJsonTools(agentCtx.mcpToolDefs);
+			const sp = (() => {
+				if (isRoot && agentCtx.effectiveCfg.selfBootstrap) {
+					return buildSystemPrompt({ selfBootstrap: true });
+				}
+				if (isRoot && opts?.orchestratorSystemPrompt) {
+					return opts.orchestratorSystemPrompt;
+				}
+				return buildSystemPrompt();
+			})();
+			const configuredTtl = isRoot
+				? agentCtx.effectiveCfg.cacheTtl.root
+				: agentCtx.effectiveCfg.cacheTtl.child;
+			const cacheTtl: "1h" | undefined =
+				configuredTtl === "1h" ? "1h" : undefined;
+			emitEvent(ctx, project.id, {
+				type: "session_config",
+				tools: jsonToolsForConfig,
+				systemStable: sp.stable,
+				systemVariable: sp.variable,
+				...(cacheTtl ? { cacheTtl } : {}),
+				taskId: nodeId,
+				ts: Date.now(),
+			});
 		}
 
 		// Release launch lock. deliverMessage skips direct queue delivery while
