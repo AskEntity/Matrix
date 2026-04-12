@@ -55,7 +55,13 @@ interface ToolUseBlock {
 	input: Record<string, unknown>;
 }
 
-type InstructionBlock = TextBlock | ToolUseBlock;
+interface ThinkingInstructionBlock {
+	type: "thinking";
+	thinking: string;
+	signature: string;
+}
+
+type InstructionBlock = TextBlock | ToolUseBlock | ThinkingInstructionBlock;
 
 // ── Assert DSL types ──
 
@@ -99,11 +105,13 @@ interface MultiTurnInstruction {
 type MockInstruction = SingleTurnInstruction | MultiTurnInstruction;
 
 interface ContentBlock {
-	type: "text" | "tool_use";
+	type: "text" | "tool_use" | "thinking";
 	text?: string;
 	id?: string;
 	name?: string;
 	input?: Record<string, unknown>;
+	thinking?: string;
+	signature?: string;
 }
 
 export interface RequestRecord {
@@ -529,6 +537,12 @@ function buildResponseContent(turn: SingleTurnInstruction): {
 	for (const block of turn.blocks) {
 		if (block.type === "text") {
 			content.push({ type: "text", text: block.text });
+		} else if (block.type === "thinking") {
+			content.push({
+				type: "thinking",
+				thinking: block.thinking,
+				signature: block.signature,
+			});
 		} else if (block.type === "tool_use") {
 			hasToolUse = true;
 			toolUseCounter++;
@@ -617,6 +631,13 @@ function createMockAnthropicStream(
 		if (block.type === "text") {
 			return { type: "text" as const, text: block.text ?? "" };
 		}
+		if (block.type === "thinking") {
+			return {
+				type: "thinking" as const,
+				thinking: block.thinking ?? "",
+				signature: block.signature ?? "",
+			};
+		}
 		return {
 			type: "tool_use" as const,
 			id: block.id ?? "",
@@ -649,7 +670,40 @@ function createMockAnthropicStream(
 		const block = content[i];
 		if (!block) continue;
 
-		if (block.type === "text") {
+		if (block.type === "thinking") {
+			events.push({
+				type: "content_block_start",
+				index: i,
+				content_block: {
+					type: "thinking",
+					thinking: "",
+					signature: "",
+				},
+			});
+			// Stream thinking in chunks
+			const thinking = block.thinking ?? "";
+			const chunkSize = Math.max(1, Math.ceil(thinking.length / 3));
+			for (let j = 0; j < thinking.length; j += chunkSize) {
+				events.push({
+					type: "content_block_delta",
+					index: i,
+					delta: {
+						type: "thinking_delta",
+						thinking: thinking.slice(j, j + chunkSize),
+					},
+				});
+			}
+			// Signature delta at the end
+			events.push({
+				type: "content_block_delta",
+				index: i,
+				delta: {
+					type: "signature_delta",
+					signature: block.signature ?? "",
+				},
+			});
+			events.push({ type: "content_block_stop", index: i });
+		} else if (block.type === "text") {
 			events.push({
 				type: "content_block_start",
 				index: i,
@@ -1164,6 +1218,13 @@ export class ValidatingMockAPI {
 		return blocks.map((block) => {
 			if (block.type === "text") {
 				return { ...block, text: substituteStr(block.text) };
+			}
+			if (block.type === "thinking") {
+				return {
+					...block,
+					thinking: substituteStr(block.thinking),
+					signature: substituteStr(block.signature),
+				};
 			}
 			return { ...block, input: substituteObj(block.input) };
 		});
