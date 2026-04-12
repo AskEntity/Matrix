@@ -983,6 +983,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						};
 						return updated;
 					}
+					// Skip assistant_text — it interleaves with thinking in the same turn
+					if (e && e.type === "assistant_text" && e.taskId === op.taskId)
+						continue;
 					if (e && getLogTaskId(e) === op.taskId && e.type !== "thinking")
 						break;
 				}
@@ -1009,6 +1012,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						};
 						return updated;
 					}
+					// Skip assistant_text — it interleaves with thinking in the same turn
+					if (e && e.type === "assistant_text" && e.taskId === op.taskId)
+						continue;
 					if (e && getLogTaskId(e) === op.taskId && e.type !== "thinking")
 						break;
 				}

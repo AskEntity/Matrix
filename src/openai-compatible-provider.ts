@@ -546,7 +546,12 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 			writeDebugSnapshot(params.debugSnapshotPath, {
 				sessionId: params.sessionId ?? "",
 				provider: "openai",
-				body: { model: params.model, messages: apiMessages, tools, max_tokens: params.maxTokens },
+				body: {
+					model: params.model,
+					messages: apiMessages,
+					tools,
+					max_tokens: params.maxTokens,
+				},
 			});
 
 			const data = await callOpenAIAPI(
