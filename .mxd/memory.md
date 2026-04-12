@@ -1010,3 +1010,6 @@ Test file: `src/drift-thinking.test.ts` (11 golden + 4 drift integration = 15 te
 - `agent_end.reason` discriminates: done_passed, done_failed, stopped, error, budget_exceeded
 - `agent_end.stats` carries what was in orchestration_completed
 
+
+### Migration Script
+`bun src/migrate-jsonl.ts` — run once before daemon restart. Converts all JSONL files in ~/.mxd/projects/*/tasks/*.jsonl to the new format. Idempotent (re-running on already-migrated files is a no-op).
