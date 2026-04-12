@@ -1450,17 +1450,35 @@ export class ValidatingMockAPI {
 
 		const convKey = this.getConversationKey(messages, sessionId);
 
-		// Find previous non-compaction request from the SAME conversation
+		// Find previous non-compaction request from the SAME conversation.
+		// Also detect if there's a compaction request between the found request
+		// and the current request — that means we crossed a compact boundary
+		// (new epoch: system/tools legitimately change, messages restart).
 		let prevRequest: (typeof this.requestHistory)[0] | null = null;
+		let compactBetween = false;
 		for (let i = this.requestHistory.length - 2; i >= 0; i--) {
 			const prev = this.requestHistory[i];
-			if (!prev || isCompactionRequest(prev.messages)) continue;
+			if (!prev) continue;
+			if (isCompactionRequest(prev.messages)) {
+				// Found a compaction from this conversation between prev-non-compact and current
+				if (
+					this.getConversationKey(prev.messages, prev.sessionId) === convKey
+				) {
+					compactBetween = true;
+				}
+				continue;
+			}
 			if (this.getConversationKey(prev.messages, prev.sessionId) === convKey) {
 				prevRequest = prev;
 				break;
 			}
 		}
 		if (!prevRequest) return;
+
+		// After a compaction boundary, system/tools legitimately change (refresh)
+		// and messages restart from compacted_resume. The previous epoch's prefix
+		// is irrelevant — only validate within the post-compact epoch.
+		if (compactBetween) return;
 
 		// System prompt must be identical across calls (cache-critical).
 		// Presence asymmetry also throws: if one call has system, all subsequent
