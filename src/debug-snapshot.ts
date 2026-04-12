@@ -75,6 +75,42 @@ export function writeDebugSnapshot(
 	}
 }
 
+/**
+ * Derive the response snapshot path from the request snapshot path.
+ * `last.json` → `last-response.json` in the same directory.
+ * Returns undefined if input is undefined.
+ */
+export function debugResponsePath(
+	debugSnapshotPath: string | undefined,
+): string | undefined {
+	if (!debugSnapshotPath) return undefined;
+	return join(dirname(debugSnapshotPath), "last-response.json");
+}
+
+/**
+ * Write an API response snapshot synchronously. Non-fatal on error.
+ * Creates parent directory if missing.
+ *
+ * The response is written as-is (JSON.stringify, no pretty-print — responses
+ * can be large with many content blocks).
+ */
+export function writeDebugResponse(
+	filePath: string | undefined,
+	response: unknown,
+): void {
+	if (!filePath) return;
+	try {
+		mkdirSync(dirname(filePath), { recursive: true });
+		writeFileSync(filePath, JSON.stringify(response, null, 2));
+	} catch (e) {
+		// Non-fatal — the snapshot is diagnostic, not load-bearing.
+		console.warn(
+			`[debug-snapshot] Failed to write response ${filePath}:`,
+			e instanceof Error ? e.message : String(e),
+		);
+	}
+}
+
 /** ULID = 26 chars, Crockford base32 (0-9, A-H, J, K, M, N, P-T, V-Z). */
 const ULID_REGEX = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 

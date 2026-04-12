@@ -411,4 +411,140 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 			(s1.messages as unknown[]).length,
 		);
 	}, 30000);
+
+	test("last-response.json written alongside last.json after API call", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Done." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "ok" },
+				},
+			],
+			stop_reason: "tool_use",
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForDone(ctx);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const taskDebugDir = join(
+			ctx.dataDir,
+			"projects",
+			ctx.projectId,
+			"debug",
+			rootNodeId,
+		);
+		const traceDirs = readdirSync(taskDebugDir);
+		expect(traceDirs.length).toBe(1);
+		const traceDir = join(taskDebugDir, traceDirs[0] as string);
+
+		// Both files should exist in the same traceId directory
+		expect(existsSync(join(traceDir, "last.json"))).toBe(true);
+		expect(existsSync(join(traceDir, "last-response.json"))).toBe(true);
+
+		// Response should be a valid Anthropic message object
+		const response = JSON.parse(
+			readFileSync(join(traceDir, "last-response.json"), "utf-8"),
+		);
+		expect(response.role).toBe("assistant");
+		expect(response.type).toBe("message");
+		expect(Array.isArray(response.content)).toBe(true);
+		expect(response.content.length).toBeGreaterThan(0);
+		expect(response.stop_reason).toBeDefined();
+		expect(response.usage).toBeDefined();
+		expect(typeof response.usage.input_tokens).toBe("number");
+		expect(typeof response.usage.output_tokens).toBe("number");
+
+		// Verify pretty-printed
+		const raw = readFileSync(join(traceDir, "last-response.json"), "utf-8");
+		expect(raw).toContain("\n ");
+	}, 15000);
+
+	test("last-response.json is overwritten on each API call (multi-turn)", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Final." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const taskDebugDir = join(
+			ctx.dataDir,
+			"projects",
+			ctx.projectId,
+			"debug",
+			rootNodeId,
+		);
+
+		// Wait for first response snapshot
+		let responsePath = "";
+		for (let i = 0; i < 60; i++) {
+			if (existsSync(taskDebugDir)) {
+				const traceDirs = readdirSync(taskDebugDir);
+				if (traceDirs.length > 0) {
+					const candidate = join(
+						taskDebugDir,
+						traceDirs[0] as string,
+						"last-response.json",
+					);
+					if (existsSync(candidate)) {
+						responsePath = candidate;
+						break;
+					}
+				}
+			}
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(responsePath).not.toBe("");
+
+		const firstResponse = JSON.parse(readFileSync(responsePath, "utf-8"));
+		// First turn should have "Turn 1." text
+		const firstText = firstResponse.content?.find(
+			(b: { type: string }) => b.type === "text",
+		)?.text;
+		expect(firstText).toContain("Turn 1");
+
+		// Wake agent for second turn
+		await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: "wake" }),
+			},
+		);
+		await waitForDone(ctx);
+
+		// Response should now be the second turn's response
+		const secondResponse = JSON.parse(readFileSync(responsePath, "utf-8"));
+		const secondText = secondResponse.content?.find(
+			(b: { type: string }) => b.type === "text",
+		)?.text;
+		expect(secondText).toContain("Final");
+	}, 30000);
 });
