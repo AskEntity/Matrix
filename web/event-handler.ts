@@ -953,7 +953,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					const e = entries[i];
 					if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
 						const updated = [...entries];
-						updated[i] = { ...e, content: op.text };
+						// Use persisted event's ts so refresh matches JSONL reconstruction
+						updated[i] = { ...e, content: op.text, ts: op.ts ?? e.ts };
 						return updated;
 					}
 					// Skip thinking entries — they interleave with text in the same turn
