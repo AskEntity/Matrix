@@ -67,9 +67,9 @@ describe("Bug 3: traceId semantics — run-bound vs external", () => {
 		const expectedTrace = started?.traceId;
 		expect(expectedTrace).toBeDefined();
 
-		const completed = events.find(
-			(e) => e.type === "agent_end",
-		) as (Event & { traceId?: string }) | undefined;
+		const completed = events.find((e) => e.type === "agent_end") as
+			| (Event & { traceId?: string })
+			| undefined;
 		if (completed) {
 			expect(completed.traceId).toBe(expectedTrace as string);
 		}
@@ -215,9 +215,9 @@ describe("Bug 3: traceId semantics — run-bound vs external", () => {
 		await new Promise((r) => setTimeout(r, 200));
 
 		const after = await readSessionEvents(ctx, tracker.rootNodeId);
-		const stoppedEvents = after.filter(
-			(e) => e.type === "agent_end",
-		) as Array<Event & { traceId?: string }>;
+		const stoppedEvents = after.filter((e) => e.type === "agent_end") as Array<
+			Event & { traceId?: string }
+		>;
 		expect(stoppedEvents.length).toBeGreaterThanOrEqual(1);
 		for (const s of stoppedEvents) {
 			expect(s.traceId).toBe(expected as string);
@@ -370,18 +370,16 @@ describe("Bug 3: traceId distinct across restarts", () => {
 		expect(status2).toBe("verify");
 
 		const events2 = await readSessionEvents(ctx, tracker.rootNodeId);
-		const allStarted = events2.filter(
-			(e) => e.type === "agent_start",
-		) as Array<Event & { traceId?: string }>;
+		const allStarted = events2.filter((e) => e.type === "agent_start") as Array<
+			Event & { traceId?: string }
+		>;
 		expect(allStarted.length).toBe(2);
 
 		const trace2 = allStarted[1]?.traceId;
 		expect(trace2).toBeDefined();
 		expect(trace1).not.toBe(trace2);
 
-		const firstStartedIdx = events2.findIndex(
-			(e) => e.type === "agent_start",
-		);
+		const firstStartedIdx = events2.findIndex((e) => e.type === "agent_start");
 		const secondStartedIdx = events2.findIndex(
 			(e, i) => i > firstStartedIdx && e.type === "agent_start",
 		);

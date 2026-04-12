@@ -758,10 +758,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				const { body } = msg;
 				const source = body?.source;
 				const umId = msg.id || undefined;
-				const umContent =
-					body && body.source === "user"
-						? body.content
-						: "";
+				const umContent = body && body.source === "user" ? body.content : "";
 				const umImages = body?.source === "user" ? body.images : undefined;
 
 				if (umId) {
@@ -1207,10 +1204,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		if ("taskId" in msg && msg.taskId) {
 			if (msg.type === "agent_start" || msg.type === "agent_active") {
 				setActiveAgents((prev) => new Set(prev).add(msg.taskId));
-			} else if (
-				msg.type === "agent_idle" ||
-				msg.type === "agent_end"
-			) {
+			} else if (msg.type === "agent_idle" || msg.type === "agent_end") {
 				setActiveAgents((prev) => {
 					const next = new Set(prev);
 					next.delete(msg.taskId);

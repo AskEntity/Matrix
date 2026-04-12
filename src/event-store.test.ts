@@ -903,8 +903,18 @@ describe("EventStore", () => {
 	});
 
 	test("clear between appendBatch calls: only post-clear batch survives", async () => {
-		const ev1: Event = { type: "agent_end", reason: "stopped", taskId: "ab", ts: 1 };
-		const ev2: Event = { type: "agent_end", reason: "stopped", taskId: "ab", ts: 2 };
+		const ev1: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "ab",
+			ts: 1,
+		};
+		const ev2: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "ab",
+			ts: 2,
+		};
 		const ev3: Event = {
 			type: "agent_start",
 			taskId: "ab",
@@ -926,7 +936,12 @@ describe("EventStore", () => {
 	});
 
 	test("interleaved append-clear-append-clear: final state is empty", async () => {
-		const event: Event = { type: "agent_end", reason: "stopped", taskId: "ic", ts: 1 };
+		const event: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "ic",
+			ts: 1,
+		};
 
 		store.append("ic", event);
 		store.clear("ic");
@@ -938,8 +953,18 @@ describe("EventStore", () => {
 	});
 
 	test("clear does not affect other sessions", async () => {
-		const ev1: Event = { type: "agent_end", reason: "stopped", taskId: "s1", ts: 1 };
-		const ev2: Event = { type: "agent_end", reason: "stopped", taskId: "s2", ts: 2 };
+		const ev1: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "s1",
+			ts: 1,
+		};
+		const ev2: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "s2",
+			ts: 2,
+		};
 
 		await store.append("s1", ev1);
 		await store.append("s2", ev2);

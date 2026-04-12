@@ -372,11 +372,7 @@ describe("Drift prevention: QueueMessage source types", () => {
 	test("user message with header (cold-start)", async () => {
 		ctx = await setupTestContext();
 		await runDriftCycle(ctx, "user header ok", async (c) => {
-			await injectMessage(
-				c,
-				createUserMessage("Main content here", {
-				}),
-			);
+			await injectMessage(c, createUserMessage("Main content here", {}));
 		});
 	}, 30000);
 

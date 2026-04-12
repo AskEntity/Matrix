@@ -28,7 +28,6 @@ import {
 	createCompactedResume,
 	createWorkContext,
 } from "./queue-message-factory.ts";
-import { buildWorkContextContent } from "./work-context.ts";
 import {
 	drainQueueAtCancellationPoint,
 	recordQueueEvents,
@@ -44,6 +43,7 @@ import {
 } from "./tool-execution.ts";
 import { TOOL_DONE, TOOL_FORK_TASK_CONTEXT, TOOL_YIELD } from "./tool-names.ts";
 import type { AgentResult, ExitReason } from "./types.ts";
+import { buildWorkContextContent } from "./work-context.ts";
 
 // ── Re-exports for backward compatibility ──
 // These symbols were originally defined here. Re-export so existing importers
