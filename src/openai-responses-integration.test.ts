@@ -188,7 +188,7 @@ describe("Responses integration: isolated harness", () => {
 		expect(resp.status).toBe(200);
 
 		const start = Date.now();
-		while (Date.now() - start < 5000 && ctx.mockAPI.getRequestCount() < 1) {
+		while (Date.now() - start < 5000 && ctx.mockAPI.getRequestCount() < 2) {
 			await new Promise((r) => setTimeout(r, 25));
 		}
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
