@@ -375,7 +375,6 @@ describe("Drift prevention: QueueMessage source types", () => {
 			await injectMessage(
 				c,
 				createUserMessage("Main content here", {
-					header: "Working directory: /test\n\n# memory.md\nsome memory",
 				}),
 			);
 		});
@@ -389,7 +388,6 @@ describe("Drift prevention: QueueMessage source types", () => {
 			await injectMessage(
 				c,
 				createUserMessage("Main content with image", {
-					header: "Working directory: /test\n\n# memory.md\nsome memory",
 					images: [{ base64: tinyPng, mediaType: "image/png" }],
 				}),
 			);
@@ -430,8 +428,6 @@ describe("Drift prevention: QueueMessage source types", () => {
 				c,
 				createTaskMessage("01PARENT001", "Parent Task", "Do this work, child", {
 					title: "Start work",
-					header:
-						"# .mxd/memory.md (Preloaded)\nmemory content\n\n# Task: Your Task\nTask ID: abc",
 				}),
 			);
 		});

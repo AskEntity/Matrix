@@ -258,7 +258,6 @@ describe("Stress: compaction + restart", () => {
 
 		const compactMarker = {
 			type: "compact_marker" as const,
-			checkpoint: "<summary>Compacted summary</summary>",
 			savedTokens: 500,
 			taskId: "test",
 			ts: 2000,
@@ -1198,7 +1197,6 @@ describe("Stress: JSONL corruption recovery", () => {
 		});
 		const compactMarker = JSON.stringify({
 			type: "compact_marker",
-			checkpoint: "summary",
 			savedTokens: 100,
 			taskId: "test",
 			ts: 2000,

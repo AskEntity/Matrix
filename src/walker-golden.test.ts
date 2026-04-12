@@ -215,7 +215,7 @@ describe("walker: onUserMessage callback", () => {
 	test("compacted_resume event renders as user message with string content", () => {
 		const events: Event[] = [
 			{
-				type: "compacted_resume",
+				type: "compacted_resume" as any,
 				content: "This is the checkpoint summary.",
 				taskId: "",
 				ts: 0,
@@ -227,18 +227,8 @@ describe("walker: onUserMessage callback", () => {
 		]);
 	});
 
-	test("summarization_request event renders as user message", () => {
-		const events: Event[] = [
-			{
-				type: "summarization_request",
-				instruction: "Summarize please.",
-				taskId: "",
-				ts: 0,
-			},
-		];
-		const msgs = eventsToAnthropicMessages(events);
-		expect(msgs).toEqual([{ role: "user", content: "Summarize please." }]);
-	});
+	// summarization_request test removed — event type no longer exists.
+	// Content is now injected as part of compact_started.
 
 	test("budget_warning event renders as user message", () => {
 		const events: Event[] = [
@@ -1192,7 +1182,7 @@ describe("walker: full turn sequences", () => {
 	test("compacted_resume in middle of session rendered as user message", () => {
 		const events: Event[] = [
 			{
-				type: "compacted_resume",
+				type: "compacted_resume" as any,
 				content: "=== COMPACTED CHECKPOINT ===\nSummary here.",
 				taskId: "",
 				ts: 0,
@@ -1234,7 +1224,6 @@ describe("walker: skipped events", () => {
 		const events: Event[] = [
 			{
 				type: "compact_marker",
-				checkpoint: "x",
 				savedTokens: 100,
 				taskId: "",
 				ts: 0,
