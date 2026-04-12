@@ -3,11 +3,20 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DebugSnapshot } from "./debug-snapshot.ts";
-import { writeDebugSnapshot } from "./debug-snapshot.ts";
+import { rollOldTraceIdDirs, writeDebugSnapshot } from "./debug-snapshot.ts";
+import { ulid } from "./ulid.ts";
 
 function makeTmpDir(): string {
 	const dir = join(
@@ -194,6 +203,221 @@ describe("writeDebugSnapshot", () => {
 			});
 			const data = JSON.parse(readFileSync(path, "utf-8")) as DebugSnapshot;
 			expect(data.messages).toEqual(messages);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("writeDebugSnapshot v2: per-traceId nested layout", () => {
+	test("writes last.json inside <traceId>/ subdirectory, creating nested dirs", () => {
+		const dir = makeTmpDir();
+		try {
+			const traceId = ulid();
+			const path = join(dir, "task-abc", traceId, "last.json");
+			expect(existsSync(join(dir, "task-abc"))).toBe(false);
+
+			writeDebugSnapshot(path, {
+				sessionId: "task-abc",
+				model: "claude-opus-4-6",
+				messages: [{ role: "user", content: "hi" }],
+				provider: "anthropic",
+			});
+
+			expect(existsSync(path)).toBe(true);
+			const data = JSON.parse(readFileSync(path, "utf-8")) as DebugSnapshot;
+			expect(data.sessionId).toBe("task-abc");
+
+			// Dir layout: task-abc/<traceId>/last.json
+			const taskDir = join(dir, "task-abc");
+			expect(readdirSync(taskDir)).toEqual([traceId]);
+			expect(readdirSync(join(taskDir, traceId))).toEqual(["last.json"]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("two runs of the same task produce two parallel traceId dirs", () => {
+		const dir = makeTmpDir();
+		try {
+			const taskDir = join(dir, "task-xyz");
+			const traceA = ulid();
+			const traceB = ulid();
+
+			writeDebugSnapshot(join(taskDir, traceA, "last.json"), {
+				sessionId: "task-xyz",
+				model: "m",
+				messages: [{ run: 1 }],
+				provider: "anthropic",
+			});
+			writeDebugSnapshot(join(taskDir, traceB, "last.json"), {
+				sessionId: "task-xyz",
+				model: "m",
+				messages: [{ run: 2 }],
+				provider: "anthropic",
+			});
+
+			const subdirs = readdirSync(taskDir).sort();
+			expect(subdirs).toEqual([traceA, traceB].sort());
+			const a = JSON.parse(
+				readFileSync(join(taskDir, traceA, "last.json"), "utf-8"),
+			) as DebugSnapshot;
+			const b = JSON.parse(
+				readFileSync(join(taskDir, traceB, "last.json"), "utf-8"),
+			) as DebugSnapshot;
+			expect(a.messages).toEqual([{ run: 1 }]);
+			expect(b.messages).toEqual([{ run: 2 }]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("rollOldTraceIdDirs", () => {
+	/**
+	 * Create a traceId dir with a controlled mtime.
+	 * mtimeSecondsAgo: bigger = older.
+	 */
+	function mkTraceDir(taskDir: string, mtimeSecondsAgo: number): string {
+		const traceId = ulid();
+		const sub = join(taskDir, traceId);
+		mkdirSync(sub, { recursive: true });
+		writeFileSync(join(sub, "last.json"), "{}");
+		const now = Date.now() / 1000;
+		const mtime = now - mtimeSecondsAgo;
+		utimesSync(sub, mtime, mtime);
+		return traceId;
+	}
+
+	test("no-op when dir does not exist", () => {
+		const dir = makeTmpDir();
+		try {
+			const taskDir = join(dir, "nope");
+			expect(() => rollOldTraceIdDirs(taskDir, 5)).not.toThrow();
+			expect(existsSync(taskDir)).toBe(false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("no-op when count <= keepCount", () => {
+		const dir = makeTmpDir();
+		try {
+			const taskDir = join(dir, "task");
+			mkdirSync(taskDir, { recursive: true });
+			const t1 = mkTraceDir(taskDir, 10);
+			const t2 = mkTraceDir(taskDir, 5);
+
+			rollOldTraceIdDirs(taskDir, 10);
+
+			const entries = readdirSync(taskDir).sort();
+			expect(entries).toEqual([t1, t2].sort());
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("keeps N most recent (by mtime), removes the rest", () => {
+		const dir = makeTmpDir();
+		try {
+			const taskDir = join(dir, "task");
+			mkdirSync(taskDir, { recursive: true });
+			// Create 5 dirs; ages 50,40,30,20,10 seconds ago (t5 is newest).
+			const tOldest = mkTraceDir(taskDir, 50);
+			const t4 = mkTraceDir(taskDir, 40);
+			const t3 = mkTraceDir(taskDir, 30);
+			const t2 = mkTraceDir(taskDir, 20);
+			const tNewest = mkTraceDir(taskDir, 10);
+
+			rollOldTraceIdDirs(taskDir, 3);
+
+			const remaining = readdirSync(taskDir).sort();
+			// Should keep the 3 newest: t3, t2, tNewest
+			expect(remaining).toEqual([t3, t2, tNewest].sort());
+			// Oldest two removed
+			expect(remaining).not.toContain(tOldest);
+			expect(remaining).not.toContain(t4);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("11 dirs with keepCount=10 → oldest one removed", () => {
+		const dir = makeTmpDir();
+		try {
+			const taskDir = join(dir, "task");
+			mkdirSync(taskDir, { recursive: true });
+			const created: string[] = [];
+			// Oldest first. t[0] is oldest (should be removed).
+			for (let i = 11; i > 0; i--) {
+				created.push(mkTraceDir(taskDir, i * 5));
+			}
+			const oldest = created[0];
+
+			rollOldTraceIdDirs(taskDir, 10);
+
+			const remaining = readdirSync(taskDir);
+			expect(remaining.length).toBe(10);
+			expect(remaining).not.toContain(oldest);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("ignores non-ULID entries (doesn't count them, doesn't delete them)", () => {
+		const dir = makeTmpDir();
+		try {
+			const taskDir = join(dir, "task");
+			mkdirSync(taskDir, { recursive: true });
+			// Real traceId dirs
+			const t1 = mkTraceDir(taskDir, 50);
+			const t2 = mkTraceDir(taskDir, 40);
+			const t3 = mkTraceDir(taskDir, 30);
+			// Unrelated file + non-ULID dir
+			writeFileSync(join(taskDir, "README.md"), "notes");
+			mkdirSync(join(taskDir, "stray-dir"));
+
+			rollOldTraceIdDirs(taskDir, 2);
+
+			const remaining = readdirSync(taskDir).sort();
+			// Stray entries untouched, 2 newest traceId dirs kept, oldest removed.
+			expect(remaining).toContain("README.md");
+			expect(remaining).toContain("stray-dir");
+			expect(remaining).toContain(t2);
+			expect(remaining).toContain(t3);
+			expect(remaining).not.toContain(t1);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("keepCount of 0 removes all traceId dirs", () => {
+		const dir = makeTmpDir();
+		try {
+			const taskDir = join(dir, "task");
+			mkdirSync(taskDir, { recursive: true });
+			mkTraceDir(taskDir, 20);
+			mkTraceDir(taskDir, 10);
+
+			rollOldTraceIdDirs(taskDir, 0);
+
+			expect(readdirSync(taskDir)).toEqual([]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("negative keepCount is a no-op (defensive)", () => {
+		const dir = makeTmpDir();
+		try {
+			const taskDir = join(dir, "task");
+			mkdirSync(taskDir, { recursive: true });
+			const t1 = mkTraceDir(taskDir, 20);
+			const t2 = mkTraceDir(taskDir, 10);
+
+			rollOldTraceIdDirs(taskDir, -1);
+
+			expect(readdirSync(taskDir).sort()).toEqual([t1, t2].sort());
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
