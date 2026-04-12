@@ -28,11 +28,6 @@ export interface McpServerConfig {
 	cwd?: string;
 }
 
-export interface ThinkingConfig {
-	/** Token budget for extended thinking. Minimum 1024. Default 10000. */
-	budgetTokens: number;
-}
-
 /** Valid cache TTL values. */
 export type CacheTtl = "5m" | "1h";
 
@@ -54,8 +49,8 @@ export interface MatrixConfig {
 	mcpServers: Record<string, McpServerConfig>;
 	port: number;
 	selfBootstrap: boolean;
-	/** Extended thinking. null = disabled. */
-	thinking: ThinkingConfig | null;
+	/** Thinking effort level (0-100). 0 = disabled, 1-100 = enabled at varying depth. undefined = provider default (no thinking). */
+	thinkingEffort: number;
 	/** Cache TTL configuration. */
 	cacheTtl: {
 		root: CacheTtl;
@@ -94,7 +89,7 @@ export const DEFAULT_CONFIG: MatrixConfig = Object.freeze({
 	port: 7433,
 	selfBootstrap: false,
 
-	thinking: null,
+	thinkingEffort: 0,
 	cacheTtl: Object.freeze({ root: "1h", child: "5m" }),
 }) as MatrixConfig;
 

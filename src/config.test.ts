@@ -118,21 +118,19 @@ describe("resolveConfig", () => {
 		expect(result2.selfBootstrap).toBe(false);
 	});
 
-	test("thinking config resolves with later overlay winning", () => {
-		const base = { ...DEFAULT_CONFIG, thinking: { budgetTokens: 5000 } };
-		const repo: ProjectConfig = { thinking: { budgetTokens: 20000 } };
+	test("thinkingEffort resolves with later overlay winning", () => {
+		const base = { ...DEFAULT_CONFIG, thinkingEffort: 50 };
+		const repo: ProjectConfig = { thinkingEffort: 75 };
 
 		const result = resolveConfig(base, repo);
-		expect(result.thinking).toEqual({ budgetTokens: 20000 });
+		expect(result.thinkingEffort).toBe(75);
 
-		const result2 = resolveConfig(base, repo, {
-			thinking: { budgetTokens: 50000 },
-		});
-		expect(result2.thinking).toEqual({ budgetTokens: 50000 });
+		const result2 = resolveConfig(base, repo, { thinkingEffort: 100 });
+		expect(result2.thinkingEffort).toBe(100);
 
-		// null = disabled
-		const result3 = resolveConfig(base, { thinking: null });
-		expect(result3.thinking).toBeNull();
+		// 0 = disabled
+		const result3 = resolveConfig(base, { thinkingEffort: 0 });
+		expect(result3.thinkingEffort).toBe(0);
 	});
 
 	test("cacheTtl shallow merges correctly", () => {
