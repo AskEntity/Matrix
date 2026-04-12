@@ -1354,12 +1354,7 @@ export function buildAllToolDefs(): ToolDef[] {
 					decl: { kind: "optional" },
 					description: "End cursor (exclusive). Events up to this position.",
 				},
-				limit: {
-					schema: z.number(),
-					decl: { kind: "optional" },
-					description:
-						"Maximum number of events to return (default 50, max 500). Applied after cursor range.",
-				},
+
 			},
 			handler: async (args) => {
 				const projectId = args.projectId as string;
@@ -1382,12 +1377,8 @@ export function buildAllToolDefs(): ToolDef[] {
 					eventStore.readFromLastCompactMarker(taskId);
 				const begin = args.begin as number | undefined;
 				const end = args.end as number | undefined;
-				const limit = Math.min(Math.max((args.limit as number) ?? 50, 1), 500);
-				// Apply cursor range
-				const ranged = allEvents.slice(begin ?? 0, end);
-				// Apply limit (tail — most recent events first)
-				const sliced =
-					ranged.length > limit ? ranged.slice(ranged.length - limit) : ranged;
+				// Apply cursor range — precise slice, no limit needed
+				const sliced = allEvents.slice(begin ?? 0, end);
 				const stripped = sliced.map((e) =>
 					stripEventForUI(e as unknown as Record<string, unknown>),
 				);
@@ -1400,7 +1391,6 @@ export function buildAllToolDefs(): ToolDef[] {
 									taskId,
 									events: stripped,
 									cursor: allEvents.length,
-									hasMore: ranged.length > sliced.length,
 									hasOlderEvents,
 								},
 								null,
