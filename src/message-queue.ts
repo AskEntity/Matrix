@@ -71,10 +71,8 @@ export type QueueMessage =
 			command: string;
 			exitCode: number | null;
 			durationMs: number;
-			/** Included when output is small (< 50KB). Undefined for large output — use read_file. */
-			stdout?: string;
-			/** Included when output is small (< 50KB). Undefined for large output — use read_file. */
-			stderr?: string;
+			/** Formatted output — identical to foreground bash tool_result content. From formatBashResult(). */
+			content: string;
 	  }
 	| { source: "compact"; id: string; ts: number };
 

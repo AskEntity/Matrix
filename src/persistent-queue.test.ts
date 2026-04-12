@@ -141,6 +141,7 @@ describe("persistent-queue", () => {
 				command: "ls",
 				exitCode: 0,
 				durationMs: 100,
+				content: "exit code: 0",
 			},
 			{
 				source: "tree_change",

@@ -228,8 +228,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					commandId: qe.commandId,
 					exitCode: qe.exitCode,
 					durationMs: qe.durationMs,
-					stdout: qe.stdout,
-					stderr: qe.stderr,
+					content: qe.content,
 					taskId: parentTaskId,
 					ts: eventTs,
 				};
