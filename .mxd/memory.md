@@ -974,3 +974,13 @@ After this change, for ALL providers: `DebugSnapshot.body` === exact object pass
 
 ### Test mock infrastructure
 SDK parses SSE `data:` JSON directly (not SSE `event:` line) to determine event type. Mocks must include `type` and `sequence_number` in the JSON data payload. Mock helpers: `mockOAIResponse()`, `mockFunctionCall()` build complete Response objects for `response.completed` events.
+
+## Thinking Block Provider Filtering
+
+Thinking events have optional `provider?: string` field. `buildResponseEvents` in Anthropic adapter sets `provider: "anthropic"`. Walker propagates provider through `AssistantContent` items. Anthropic's `onAssistantContent` filters: `provider === undefined` (legacy) or `provider === "anthropic"` → included; any other provider → skipped.
+
+This means switching providers automatically drops stale thinking blocks from JSONL history. OpenAI's walker already ignores thinking items entirely (filters only `text` and `tool_call`).
+
+Mock API supports `{type: "thinking", thinking: "...", signature: "..."}` in instruction blocks. Streams `thinking_delta` + `signature_delta` events.
+
+Test file: `src/drift-thinking.test.ts` (11 golden + 4 drift integration = 15 tests).

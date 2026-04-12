@@ -96,6 +96,9 @@ export type Event = (
 			type: "thinking";
 			thinking: string;
 			signature: string;
+			/** Provider that produced this thinking block (e.g. "anthropic"). Used to filter
+			 *  out stale thinking blocks after provider switch — each provider only sees its own. */
+			provider?: string;
 			taskId: string;
 			ts: number;
 	  }

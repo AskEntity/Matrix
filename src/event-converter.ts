@@ -28,7 +28,12 @@ export interface AssistantContent {
 	items: Array<
 		| { type: "text"; text: string }
 		| { type: "tool_call"; call: AssistantToolCall }
-		| { type: "thinking"; thinking: string; signature: string }
+		| {
+				type: "thinking";
+				thinking: string;
+				signature: string;
+				provider?: string;
+		  }
 	>;
 }
 
@@ -231,6 +236,7 @@ export function walkEventsToMessages(
 							type: "thinking",
 							thinking: cur.thinking,
 							signature: cur.signature,
+							...(cur.provider ? { provider: cur.provider } : {}),
 						});
 						i++;
 					} else if (cur.type === "assistant_text") {
