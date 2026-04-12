@@ -28,6 +28,19 @@ type UpdateOp =
 			ts?: number;
 	  }
 	| {
+			type: "merge_thinking";
+			taskId: string | undefined;
+			text: string;
+			ts?: number;
+	  }
+	| {
+			type: "replace_thinking";
+			taskId: string | undefined;
+			text: string;
+			signature: string;
+			ts?: number;
+	  }
+	| {
 			type: "complete_compact";
 			text: string;
 			checkpoint: string;
@@ -522,22 +535,41 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			}
 
 			case "thinking": {
-				// Persisted thinking block — create a log entry showing the thinking content
+				// Persisted thinking block — replace streaming thinking with final content
 				return {
-					entries: [
-						createLogEntry({
-							...msg,
-							type: "thinking",
-						}),
+					entries: [],
+					updates: [
+						{
+							type: "replace_thinking",
+							taskId: msg.taskId,
+							text: msg.thinking,
+							signature: msg.signature,
+							ts: msg.ts,
+						},
 					],
-					updates: [],
 					sideEffects: NO_SIDE_EFFECTS,
 				};
 			}
 
-			case "thinking_delta":
-				// Ephemeral thinking streaming — no-op for now (UI display TBD)
-				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
+			case "thinking_delta": {
+				// Ephemeral thinking streaming — merge into thinking entry
+				const thinkingText = (msg as { thinking?: string }).thinking;
+				if (!thinkingText) {
+					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
+				}
+				return {
+					entries: [],
+					updates: [
+						{
+							type: "merge_thinking",
+							taskId: msg.taskId,
+							text: thinkingText,
+							ts: msg.ts,
+						},
+					],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
+			}
 
 			case "assistant_text": {
 				if (!msg.content) {
@@ -902,6 +934,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						updated[i] = { ...e, content: e.content + op.text };
 						return updated;
 					}
+					// Skip thinking entries — they interleave with text in the same turn
+					if (e && e.type === "thinking" && e.taskId === op.taskId) continue;
 					if (e && getLogTaskId(e) === op.taskId && e.type !== "assistant_text")
 						break;
 				}
@@ -923,6 +957,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						updated[i] = { ...e, content: op.text };
 						return updated;
 					}
+					// Skip thinking entries — they interleave with text in the same turn
+					if (e && e.type === "thinking" && e.taskId === op.taskId) continue;
 					if (e && getLogTaskId(e) === op.taskId && e.type !== "assistant_text")
 						break;
 				}
@@ -931,6 +967,58 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					createLogEntry({
 						type: "assistant_text",
 						content: op.text,
+						taskId: op.taskId ?? "",
+						ts: op.ts ?? Date.now(),
+					}),
+				];
+			}
+			case "merge_thinking": {
+				for (let i = entries.length - 1; i >= 0; i--) {
+					const e = entries[i];
+					if (e && e.type === "thinking" && e.taskId === op.taskId) {
+						const updated = [...entries];
+						updated[i] = {
+							...e,
+							thinking:
+								(e as unknown as { thinking: string }).thinking + op.text,
+						};
+						return updated;
+					}
+					if (e && getLogTaskId(e) === op.taskId && e.type !== "thinking")
+						break;
+				}
+				return [
+					...entries,
+					createLogEntry({
+						type: "thinking",
+						thinking: op.text,
+						signature: "",
+						taskId: op.taskId ?? "",
+						ts: op.ts ?? Date.now(),
+					}),
+				];
+			}
+			case "replace_thinking": {
+				for (let i = entries.length - 1; i >= 0; i--) {
+					const e = entries[i];
+					if (e && e.type === "thinking" && e.taskId === op.taskId) {
+						const updated = [...entries];
+						updated[i] = {
+							...e,
+							thinking: op.text,
+							signature: op.signature,
+						};
+						return updated;
+					}
+					if (e && getLogTaskId(e) === op.taskId && e.type !== "thinking")
+						break;
+				}
+				return [
+					...entries,
+					createLogEntry({
+						type: "thinking",
+						thinking: op.text,
+						signature: op.signature,
 						taskId: op.taskId ?? "",
 						ts: op.ts ?? Date.now(),
 					}),
