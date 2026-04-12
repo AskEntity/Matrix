@@ -1009,6 +1009,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							...e,
 							thinking: op.text,
 							signature: op.signature,
+							// Use persisted event's ts so refresh matches JSONL reconstruction
+							ts: op.ts ?? e.ts,
 						};
 						return updated;
 					}
