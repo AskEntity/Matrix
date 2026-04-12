@@ -62,6 +62,11 @@ export const TOOL_YIELD = mcpToolName("yield");
 export const TOOL_DONE = mcpToolName("done");
 export const TOOL_FORK_TASK_CONTEXT = mcpToolName("fork_task_context");
 
+export const TOOL_CREATE_FOLDER = mcpToolName("create_folder");
+export const TOOL_DELETE_FOLDER = mcpToolName("delete_folder");
+export const TOOL_RENAME_FOLDER = mcpToolName("rename_folder");
+
+export const TOOL_GET_LOGS = mcpToolName("get_logs");
 export const TOOL_LIST_PROJECTS = mcpToolName("list_projects");
 export const TOOL_EVALUATE_SCRIPT = mcpToolName("evaluate_script");
 

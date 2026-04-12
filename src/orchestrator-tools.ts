@@ -14,6 +14,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { stripEventForUI } from "./daemon/helpers.ts";
 import {
 	createCrossProjectMessage,
 	createTaskMessage,
@@ -64,21 +65,18 @@ function getProjectPath(projectId: string, taskId: string | null): string {
 
 // ── All tool definitions ──
 
-function buildAllToolDefs(): ToolDef[] {
+export function buildAllToolDefs(): ToolDef[] {
 	return [
 		// ── get_tree ──
 		{
 			name: "get_tree",
+			availability: "both",
 			description:
 				"Get the current task tree. Returns all nodes with their status, branch, and hierarchy.",
 			params: {
 				projectId: {
 					schema: z.string(),
 					decl: { kind: "bind", from: "projectId" },
-				},
-				taskId: {
-					schema: z.string(),
-					decl: { kind: "bind", from: "taskId" },
 				},
 				format: {
 					schema: z.enum(["flat", "tree"]),
@@ -97,14 +95,18 @@ function buildAllToolDefs(): ToolDef[] {
 						"Include full details (description, branch, worktreePath, color, costUsd, etc.) for each node. Default false — returns only id, title, status, children, parentId.",
 				},
 			},
-			handler: async (args) => {
+			handler: async (args, auth) => {
 				const tracker = R.getTracker(args.projectId as string);
 				if (!tracker)
 					return {
 						content: [{ type: "text", text: "Project not found" }],
 						isError: true,
 					};
-				const currentTaskId = args.taskId as string | null;
+				// "(you)" marker: agents get their node marked, humans skip.
+				const isMe = checkPermission(auth, "human", {})
+					? (_nodeId: string) => false
+					: (nodeId: string) =>
+							checkPermission(auth, "exact", { taskId: nodeId });
 				let nodes = tracker.allNodes();
 				if (!args.include_closed) {
 					nodes = nodes.filter((n) => isFolder(n) || n.status !== "closed");
@@ -120,13 +122,13 @@ function buildAllToolDefs(): ToolDef[] {
 							return {
 								...rest,
 								children: filterChildren(rest.children),
-								...(rest.id === currentTaskId ? { you: true } : {}),
+								...(isMe(rest.id) ? { you: true } : {}),
 							};
 						})
 					: nodes.map((n) => {
 							const node: Record<string, unknown> = {
 								id: n.id,
-								title: n.title + (n.id === currentTaskId ? " (you)" : ""),
+								title: n.title + (isMe(n.id) ? " (you)" : ""),
 								children: filterChildren(n.children),
 								parentId: n.parentId,
 							};
@@ -148,6 +150,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── get_task ──
 		{
 			name: "get_task",
+			availability: "both",
 			description:
 				"Get a single task's full details including description. Use when you need to read a specific task's description or other detailed fields.",
 			params: {
@@ -189,6 +192,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── create_task ──
 		{
 			name: "create_task",
+			availability: "internal",
 			description:
 				"Create a new task. " +
 				"IMPORTANT: Sibling tasks will run in PARALLEL on separate branches. " +
@@ -280,6 +284,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── update_task ──
 		{
 			name: "update_task",
+			availability: "internal",
 			description:
 				"Update a task node. All fields except taskId are optional — " +
 				"provide only the fields you want to change.\n\n" +
@@ -535,6 +540,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── yield ──
 		{
 			name: "yield",
+			availability: "internal",
 			description:
 				"Suspend execution and wait for messages (child completions, user messages, etc.). " +
 				"Call this when you have spawned tasks and are waiting for results. " +
@@ -552,6 +558,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── send_message ──
 		{
 			name: "send_message",
+			availability: "internal",
 			description:
 				"Send a message to another task. You can message any ancestor in your parent chain (not just direct parent), " +
 				"or any of your direct sub tasks. When messaging a sub task that isn't running yet, " +
@@ -790,6 +797,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── close_task ──
 		{
 			name: "close_task",
+			availability: "internal",
 			description:
 				"Clean up a task's worktree and branch to reclaim disk space. " +
 				"Node and session are preserved — status set to 'closed'. " +
@@ -843,6 +851,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── delete_task ──
 		{
 			name: "delete_task",
+			availability: "internal",
 			description:
 				"Fully remove a task — deletes worktree, session file, and task node from the tree. " +
 				"WARNING: Also deletes ALL sub tasks recursively. Verify all sub tasks are completed and merged before deleting. " +
@@ -900,6 +909,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── reset_task ──
 		{
 			name: "reset_task",
+			availability: "internal",
 			description:
 				"Reset a task for a fresh start — removes worktree and session file but keeps the node. " +
 				"Sets status to pending. Use when you want to retry with a different approach.",
@@ -955,6 +965,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── clarify ──
 		{
 			name: "clarify",
+			availability: "internal",
 			description:
 				"Ask a clarification question and send it to the user. " +
 				"Returns immediately — you can continue doing other work that doesn't need the answer, " +
@@ -1008,6 +1019,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── reorder_tasks ──
 		{
 			name: "reorder_tasks",
+			availability: "internal",
 			description:
 				"Reorder children of a task node. The children array must contain exactly the same task IDs as the current children, just in a different order.",
 			params: {
@@ -1090,6 +1102,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── Folder tools ──
 		{
 			name: "create_folder",
+			availability: "internal",
 			description:
 				"Create a folder for visual grouping. Folders have no status, no lifecycle — pure organization. " +
 				"Tasks inside folders are logically owned by the nearest task ancestor above the folder.",
@@ -1142,6 +1155,7 @@ function buildAllToolDefs(): ToolDef[] {
 
 		{
 			name: "delete_folder",
+			availability: "internal",
 			description:
 				"Delete an empty folder. Fails if the folder has children — move or delete them first.",
 			params: {
@@ -1215,6 +1229,7 @@ function buildAllToolDefs(): ToolDef[] {
 
 		{
 			name: "rename_folder",
+			availability: "internal",
 			description: "Rename a folder.",
 			params: {
 				projectId: {
@@ -1282,6 +1297,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── list_projects ──
 		{
 			name: "list_projects",
+			availability: "both",
 			description:
 				"List all registered projects with their IDs, names, and paths. " +
 				"Use this to discover other projects before sending cross-project messages.",
@@ -1310,9 +1326,96 @@ function buildAllToolDefs(): ToolDef[] {
 			},
 		},
 
+		// ── get_logs ──
+		{
+			name: "get_logs",
+			availability: "both",
+			description:
+				"Returns session events for a task, with cursor-based pagination. " +
+				"Events are returned after the last compact/fork marker. " +
+				"Use begin/end cursors to read a range (e.g., from yield_external's cursor).",
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId" },
+				},
+				taskId: {
+					schema: z.string().describe("Task node ID to fetch logs for"),
+					decl: { kind: "explicit" },
+				},
+				begin: {
+					schema: z.number(),
+					decl: { kind: "optional" },
+					description:
+						"Start cursor (inclusive). Events from this position onward.",
+				},
+				end: {
+					schema: z.number(),
+					decl: { kind: "optional" },
+					description: "End cursor (exclusive). Events up to this position.",
+				},
+				limit: {
+					schema: z.number(),
+					decl: { kind: "optional" },
+					description:
+						"Maximum number of events to return (default 50, max 500). Applied after cursor range.",
+				},
+			},
+			handler: async (args) => {
+				const projectId = args.projectId as string;
+				const taskId = args.taskId as string;
+				const tracker = R.getTracker(projectId);
+				if (!tracker)
+					return {
+						content: [{ type: "text", text: "Project not found" }],
+						isError: true,
+					};
+				const node = tracker.getTask(taskId);
+				if (!node)
+					return {
+						content: [{ type: "text", text: `Task not found: ${taskId}` }],
+						isError: true,
+					};
+				const eventStore = R.getEventStore(projectId);
+				await eventStore.flushSession(taskId);
+				const { events: allEvents, hasOlderEvents } =
+					eventStore.readFromLastCompactMarker(taskId);
+				const begin = args.begin as number | undefined;
+				const end = args.end as number | undefined;
+				const limit = Math.min(Math.max((args.limit as number) ?? 50, 1), 500);
+				// Apply cursor range
+				const ranged = allEvents.slice(begin ?? 0, end);
+				// Apply limit (tail — most recent events first)
+				const sliced =
+					ranged.length > limit ? ranged.slice(ranged.length - limit) : ranged;
+				const stripped = sliced.map((e) =>
+					stripEventForUI(e as unknown as Record<string, unknown>),
+				);
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{
+									taskId,
+									events: stripped,
+									cursor: allEvents.length,
+									hasMore: ranged.length > sliced.length,
+									hasOlderEvents,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			},
+		},
+
 		// ── send_message_to_project ──
 		{
 			name: "send_message_to_project",
+			availability: "internal",
 			description:
 				"Send a message to the orchestrator of another project. " +
 				"The message appears in the target project's orchestrator queue as a cross_project message. " +
@@ -1443,6 +1546,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── fork_task_context ──
 		{
 			name: "fork_task_context",
+			availability: "internal",
 			description:
 				"Copy a task's conversation context into a target task's session. " +
 				"When sourceTaskId == your own taskId, the system picks your next assignment afterward — follow the tool result. " +
@@ -1566,6 +1670,7 @@ function buildAllToolDefs(): ToolDef[] {
 		// ── done ──
 		{
 			name: "done",
+			availability: "internal",
 			description:
 				"Signal that you have finished working on your task. " +
 				"Call this when you are done — either passed (task completed successfully) or failed (you cannot continue). " +
@@ -1666,6 +1771,7 @@ function buildEvaluateScriptTool(
 ): ToolDef {
 	return {
 		name: "evaluate_script",
+		availability: "internal",
 		description:
 			"Execute arbitrary JavaScript/TypeScript code for runtime introspection. " +
 			"Only available in self-bootstrap mode.",
@@ -1779,7 +1885,7 @@ export interface OrchestratorToolsResult {
 export function createOrchestratorTools(
 	auth: Auth,
 	projectId: string,
-	taskId: string | null,
+	taskId: string,
 	selfBootstrap?: boolean,
 ): OrchestratorToolsResult {
 	const allDefs = buildAllToolDefs();
@@ -1812,7 +1918,6 @@ export function createOrchestratorTools(
 		setMessages,
 		setAllTools,
 		hasRunningChildren: () => {
-			if (!taskId) return false;
 			const tracker = R.getTracker(projectId);
 			if (!tracker) return false;
 			return getDescendantIds(tracker, taskId).some(

@@ -17,7 +17,7 @@
  */
 
 import { type ZodRawShape, type ZodTypeAny, z } from "zod";
-import { type Auth, getBindValues } from "./tool-auth.ts";
+import { type Auth, resolveBindParam } from "./tool-auth.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 
 // ── ParamDecl ──
@@ -46,6 +46,15 @@ export interface ToolHandlerResult {
 }
 
 /**
+ * Tool availability — who can call this tool.
+ *
+ * - "internal" (default): only internal agents (via provider loop)
+ * - "external": only external MCP clients (via HTTP /mcp endpoint)
+ * - "both": available to both internal agents and external clients
+ */
+export type ToolAvailability = "internal" | "external" | "both";
+
+/**
  * A tool definition with ParamDecl metadata.
  * Handler receives (args, auth) — nothing else.
  */
@@ -61,6 +70,13 @@ export interface ToolDef {
 	) => Promise<ToolHandlerResult>;
 	/** If true, tool is in handler registry but NOT sent to API. */
 	hidden?: boolean;
+	/**
+	 * Who can call this tool.
+	 * - "internal": only internal agents (via provider loop)
+	 * - "external": only external MCP clients (via HTTP /mcp endpoint)
+	 * - "both": available to both
+	 */
+	availability: ToolAvailability;
 }
 
 // ── Schema generation ──
@@ -96,7 +112,7 @@ export function buildAgentShape(params: ParamDefs): ZodRawShape {
  * Build a Zod raw shape for EXTERNAL callers.
  * - "explicit" → required
  * - "optional" → optional
- * - "bind" (any) → required
+ * - "bind" → required (client provides what the framework would bind for agents)
  */
 export function buildExternalShape(params: ParamDefs): ZodRawShape {
 	const shape: Record<string, ZodTypeAny> = {};
@@ -112,7 +128,6 @@ export function buildExternalShape(params: ParamDefs): ZodRawShape {
 				shape[name] = schema.optional();
 				break;
 			case "bind":
-				// All bind params are required for external callers
 				shape[name] = schema;
 				break;
 		}
@@ -183,16 +198,11 @@ export function resolveBindParams(
 	input: Record<string, unknown>,
 	auth: Auth,
 ): Record<string, unknown> {
-	const bindValues = getBindValues(auth);
 	const resolved = { ...input };
 	for (const [name, def] of Object.entries(params)) {
 		if (def.decl.kind === "bind") {
-			const boundValue =
-				def.decl.from === "projectId"
-					? bindValues.projectId
-					: bindValues.taskId;
 			// Always use bound value — agent cannot override
-			resolved[name] = boundValue;
+			resolved[name] = resolveBindParam(auth, def.decl.from);
 		}
 	}
 	return resolved;
