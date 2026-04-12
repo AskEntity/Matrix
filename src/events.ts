@@ -99,6 +99,10 @@ export type Event = (
 			/** Provider that produced this thinking block (e.g. "anthropic"). Used to filter
 			 *  out stale thinking blocks after provider switch — each provider only sees its own. */
 			provider?: string;
+			/** True when this block was a redacted_thinking from the API (safety redaction).
+			 *  Walker reconstructs as `{ type: "redacted_thinking", data: signature }`.
+			 *  Normal empty thinking (display:omitted) has redacted=undefined. */
+			redacted?: boolean;
 			taskId: string;
 			ts: number;
 	  }

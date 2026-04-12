@@ -33,6 +33,7 @@ export interface AssistantContent {
 				thinking: string;
 				signature: string;
 				provider?: string;
+				redacted?: boolean;
 		  }
 	>;
 }
@@ -237,6 +238,7 @@ export function walkEventsToMessages(
 							thinking: cur.thinking,
 							signature: cur.signature,
 							...(cur.provider ? { provider: cur.provider } : {}),
+							...(cur.redacted ? { redacted: true } : {}),
 						});
 						i++;
 					} else if (cur.type === "assistant_text") {
