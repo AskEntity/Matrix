@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
 import { DEFAULT_MODEL } from "../config.ts";
+import { rollOldTraceIdDirs } from "../debug-snapshot.ts";
 import {
 	buildSessionRepair,
 	type Event,
@@ -56,6 +57,15 @@ import {
 // No more AgentEvent→Event conversion layer.
 // The emit() function in createOrchestratorTools handles agent_event
 // wrappers from MCP tools (child agents forwarding events to parent).
+
+/**
+ * How many per-traceId debug-snapshot directories to retain per task.
+ * Each run of `runAgentForNode` writes under its own traceId subdirectory;
+ * we keep the N most recent so post-mortem drift diagnosis has at least
+ * "current" and "previous run" available, with some slack for multiple
+ * restarts in a row.
+ */
+const DEBUG_SNAPSHOT_KEEP_TRACE_DIRS = 10;
 
 // ── Session config helpers ──
 
@@ -671,12 +681,20 @@ export async function runAgentForNode(
 		// already on disk from the pre-crash session).
 		const childQueue = new MessageQueue({
 			onPersist: (msg) => {
+				// onPersist runs while THIS loop owns the queue — the persistence
+				// act is attributable to this run, even if the message's semantic
+				// origin is external (task_message, cross_project, etc.). Tag
+				// with loopTraceId so downstream tools can correlate the JSONL
+				// write to the exact run that performed it. The direct-write
+				// fallback in deliverMessage (agent not running) intentionally
+				// omits traceId — that path is genuinely external to any run.
 				emitEvent(ctx, project.id, {
 					type: "message",
 					id: msg.id,
 					taskId: nodeId,
 					body: msg,
 					ts: msg.ts,
+					traceId: loopTraceId,
 				});
 			},
 		});
@@ -838,10 +856,18 @@ export async function runAgentForNode(
 				? buildSystemPrompt({ selfBootstrap: true })
 				: buildSystemPrompt();
 
-		const debugSnapshotPath = join(
+		// Debug snapshot v2: per-traceId epoch.
+		// Layout: <dataDir>/projects/<id>/debug/<taskId>/<traceId>/last.json
+		// Each run writes to its own traceId dir → daemon restart preserves the
+		// previous run's final snapshot automatically (it lives under the OLD
+		// traceId). Roll old traceId dirs before the new one is created so the
+		// cleanup never races with the active run's writes.
+		const taskDebugDir = join(
 			projectDebugDir(ctx.config.dataDir, project.id),
-			`${nodeId}.last-messages.json`,
+			nodeId,
 		);
+		rollOldTraceIdDirs(taskDebugDir, DEBUG_SNAPSHOT_KEEP_TRACE_DIRS);
+		const debugSnapshotPath = join(taskDebugDir, loopTraceId, "last.json");
 
 		const sessionRequest: AgentRequest = {
 			cwd: agentCwd,

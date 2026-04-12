@@ -242,28 +242,44 @@ Production root session, post-restart first API call: inputTokens=104,188, cache
 
 **Possible non-drift explanation**: Anthropic server-side cache eviction or routing (similar pattern to Opus token injection in blog notes).
 
-## Pre-API-Call Debug Snapshot
+## Pre-API-Call Debug Snapshot (v2: per-traceId epoch)
 
-Evidence-capture for post-mortem cache-drift debugging. Before each API call, providers write the fully-assembled request bytes to `projects/<id>/debug/<taskId>.last-messages.json`, overwriting. When a restart causes an unexpected cache miss, the file contains the EXACT pre-restart state the API saw — diff against walker(JSONL) to find the divergence.
+Evidence-capture for post-mortem cache-drift debugging. Before each API call, providers write the fully-assembled request bytes to disk. When a restart causes an unexpected cache miss, the **previous run's** snapshot is preserved in its own traceId directory — diff against walker(JSONL) or against the new run's snapshot to find the divergence.
+
+### Layout
+```
+projects/<id>/debug/<taskId>/<traceId>/last.json
+```
+
+- Each `runAgentForNode` invocation has a unique `loopTraceId` (ULID, ~`TaskSession.loopTraceId`) — this is the "epoch" boundary.
+- Every API call within one run **overwrites** `<current_traceId>/last.json` (we only need the latest per run).
+- Daemon restart → new loop → new traceId → new directory → **old directory is preserved with its final pre-restart snapshot**.
+- `rollOldTraceIdDirs(taskDebugDir, 10)` runs at the start of each `runAgentForNode`, keeping the 10 most recent traceId dirs (by mtime) and removing the rest. Non-ULID entries are ignored.
+
+### v1 → v2 migration rationale
+v1 used a single flat file `debug/<taskId>.last-messages.json` that was overwritten on every API call. On restart, the first post-restart call **overwrote the pre-restart snapshot** — destroying the exact evidence needed to diagnose drift, at the exact moment it was needed. v2 fixes this by binding the snapshot path to `loopTraceId`, so each run's snapshots live under their own directory. Old flat files from v1 are disjoint from v2's `debug/<taskId>/` layout — no explicit migration needed; they simply become stale artifacts.
 
 ### Implementation
-- `src/debug-snapshot.ts`: `writeDebugSnapshot(filePath, snapshot)` — sync mkdir + writeFileSync, non-fatal on error.
-- `AgentRequest.debugSnapshotPath` — daemon computes `<dataDir>/projects/<id>/debug/<taskId>.last-messages.json` and threads it to the provider loop.
-- Hook sites: right before `client.messages.stream(createParams)` (anthropic) and `streamResponsesAPI(...)` (openai-responses). Captures the post-`addMessagesCacheControl` messages — the actual bytes sent.
-
-### File format
-`{ ts, sessionId, model, system?, tools?, cacheTtl?, messages, provider }`. One file per task. Overwritten on every API call (not rolling — only the latest matters for cache diagnosis).
-
-### Why overwrite
-Anthropic's cache only knows the LATEST request for that prefix. Rolling history would be disk bloat; the last snapshot is what the cache remembers. Future per-tick rolling history can be a separate tool if needed.
+- `src/debug-snapshot.ts`:
+  - `writeDebugSnapshot(filePath, snapshot)` — sync mkdir + writeFileSync, non-fatal on error. Path is now nested (traceId subdir).
+  - `rollOldTraceIdDirs(taskDebugDir, keepCount)` — readdir + filter by ULID regex + sort by mtime + rm oldest. Non-fatal.
+- `src/daemon/agent-lifecycle.ts` `runAgentForNode`:
+  - Computes `taskDebugDir = <dataDir>/projects/<id>/debug/<taskId>/`
+  - Calls `rollOldTraceIdDirs(taskDebugDir, DEBUG_SNAPSHOT_KEEP_TRACE_DIRS)` (=10) BEFORE creating the new run's dir (no race with active writes).
+  - Sets `debugSnapshotPath = join(taskDebugDir, loopTraceId, "last.json")` on `AgentRequest`.
+- Provider loop is unchanged — it just writes to the path it's given.
 
 ### Post-mortem workflow
 1. Observe restart → high cacheCreation (drift signal).
-2. `cat projects/<id>/debug/<taskId>.last-messages.json` = last pre-restart bytes.
-3. Walker replay: `eventsToAnthropicMessages(eventStore.readActive(taskId))` = current post-restart bytes.
-4. Byte-diff → find first mismatching message → inspect content → fix the drift at source.
+2. `ls projects/<id>/debug/<taskId>/` → find the 2 newest traceId dirs (pre-restart + post-restart).
+3. Diff their `last.json` files:
+   ```
+   diff <(jq . debug/<id>/<taskA>/last.json) <(jq . debug/<id>/<taskB>/last.json)
+   ```
+4. First message-level difference IS the drift location.
+5. Optional 3-way: also compare against walker replay `eventsToAnthropicMessages(eventStore.readActive(taskId))`.
 
-Turns the 70K miss investigation from "exhausted code inspection" into "look at the file".
+Turns the 70K miss investigation from "exhausted code inspection" into "look at the two files".
 
 ## Live/Reconstruction Drift Fix — Caption Bug
 
@@ -797,8 +813,14 @@ Yielding and non-yielding sessions both `appendBatch(bgOrphans)` to JSONL at res
 3. **Missing traceId on lifecycle events**: `orchestration_completed`, `error`, `agent_stopped`, `done_notified` had no `traceId`. Fix: `TaskSession.loopTraceId` field (hoisted out of try block), explicit injection in the 4 lifecycle emitEvent calls, `stopAgent/stopTask` capture session.loopTraceId, `resource-registry` emit auto-injects traceId for tool-handler `R.emit` paths (clarification_requested etc.).
 
 ### traceId semantics
-- **Has traceId** (A-class): events produced BY a specific agent loop run — orchestration_started/completed, done_notified, agent_stopped, error, all provider events (assistant_text, tool_call, tool_result, usage), tool-handler events via R.emit.
-- **No traceId** (B-class): events semantically external to any run — `message` events (deliverMessage persists them via onPersist which bypasses traceId injection), `task_started` (before loop spawn), `fork_marker` (fork setup).
+**The A/B distinction is persistence timestamp, not content origin.** A message's semantic origin (user, task_message, cross_project, etc.) is irrelevant — what matters is whether a specific loop run was alive and performing the JSONL write.
+
+- **Has traceId** (A-class): events produced BY a specific agent loop run — orchestration_started/completed, done_notified, agent_stopped, error, all provider events (assistant_text, tool_call, tool_result, usage), tool-handler events via R.emit, **AND `message` events persisted via onPersist while a loop owns the queue** (regardless of the message's content origin).
+- **No traceId** (B-class): events that exist independently of any run — `task_started` (before loop spawn), `fork_marker` (fork setup), and direct-write `message` events from `deliverMessage`'s fallback path (queue unavailable because the agent is not running).
+
+Wiring: `runAgentForNode`'s `onPersist` callback injects `traceId: loopTraceId`; `deliverMessage`'s fallback `emitEvent` omits `traceId`. `findUnconsumedMessages` replays cold-start messages with `{replay: true}` which skips `onPersist` — their original no-traceId JSONL entries are preserved untouched.
+
+**Earlier memory claimed "all message events have no traceId" — that was wrong.** Counting after the refactor showed ~100% of message events arrive on the onPersist path (agent is typically running when a peer sends a message). The old rule mis-attributed them to B-class. Fixed in commit landing debug-snapshot v2 + message traceId.
 
 ### Test architecture
 6 new test files, 50+ tests split by concern:
