@@ -251,11 +251,19 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 					if (item.provider !== undefined && item.provider !== "anthropic") {
 						continue;
 					}
-					blocks.push({
-						type: "thinking",
-						thinking: item.thinking,
-						signature: item.signature,
-					});
+					if (item.thinking) {
+						blocks.push({
+							type: "thinking",
+							thinking: item.thinking,
+							signature: item.signature,
+						});
+					} else {
+						// Redacted thinking: empty thinking + signature = data
+						blocks.push({
+							type: "redacted_thinking",
+							data: item.signature,
+						});
+					}
 				} else if (item.type === "text") {
 					blocks.push({ type: "text", text: item.text });
 				} else {
@@ -679,7 +687,16 @@ function createAnthropicAdapter(
 						type: "thinking",
 						thinking: block.thinking,
 						signature: block.signature,
-						provider: "anthropic",
+						taskId: "",
+						ts: Date.now(),
+					});
+				} else if (block.type === "redacted_thinking") {
+					// Safety-redacted thinking: preserve signature (data) for walker
+					// reconstruction but no thinking content.
+					events.push({
+						type: "thinking",
+						thinking: "",
+						signature: (block as { data: string }).data,
 						taskId: "",
 						ts: Date.now(),
 					});
