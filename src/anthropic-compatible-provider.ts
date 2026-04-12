@@ -6,7 +6,11 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { DEFAULT_MODEL } from "./config.ts";
-import { writeDebugSnapshot } from "./debug-snapshot.ts";
+import {
+	debugResponsePath,
+	writeDebugResponse,
+	writeDebugSnapshot,
+} from "./debug-snapshot.ts";
 import {
 	type AssistantContent,
 	type ConsumedMessages,
@@ -556,6 +560,16 @@ function createAnthropicAdapter(
 						};
 					}
 					response = await stream.finalMessage();
+
+					// Post-API-call response snapshot: save the complete API
+					// response alongside the request snapshot for forensic
+					// comparison (request count_tokens vs response usage =
+					// injection delta).
+					writeDebugResponse(
+						debugResponsePath(params.debugSnapshotPath),
+						response,
+					);
+
 					break;
 				} catch (e) {
 					const isTransient =
