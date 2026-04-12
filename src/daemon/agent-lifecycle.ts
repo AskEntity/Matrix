@@ -760,13 +760,13 @@ export async function runAgentForNode(
 		// Wire before-first-message hook for work_context injection.
 		// Always set the hook — handles both fresh sessions AND post-compact
 		// re-arm (resetBeforeFirstMessage in provider-shared.ts compact flow).
-		childQueue.setBeforeFirstMessage(() => {
-			const content = buildWorkContextContent(agentCwd);
-			if (!content) return [];
-			return [createWorkContext(content)];
-		});
-		// Check if work_context is already in JSONL (resume case).
-		// If so, mark hook as fired to prevent re-injection.
+		// NOTE: hook fires on first NON-REPLAY enqueue. Unconsumed messages above
+		// are replayed (skip hook). The first real message (from deliverMessage after
+		// lock release) triggers the hook. For fresh sessions where the trigger message
+		// was already written to JSONL by deliverMessage (before runAgentForNode),
+		// it arrives as replay above → hook fires on the NEXT non-replay message.
+		// To ensure work_context is always injected for fresh sessions, we explicitly
+		// enqueue it here if no work_context exists in JSONL yet.
 		const hasWorkContext = activeEvents.some(
 			(e) =>
 				e.type === "message" &&
@@ -775,9 +775,23 @@ export async function runAgentForNode(
 				"source" in e.body &&
 				(e.body as { source: string }).source === "work_context",
 		);
-		if (hasWorkContext) {
-			childQueue.markBeforeFirstMessageFired();
+		if (!hasWorkContext) {
+			// Fresh session or first run without work_context — inject it now
+			const content = buildWorkContextContent(agentCwd);
+			if (content) {
+				const workCtxMsg = createWorkContext(content);
+				// Use regular enqueue (not replay) so it persists to JSONL
+				childQueue.enqueue(workCtxMsg);
+			}
 		}
+		// Set hook for future compact re-arm (resetBeforeFirstMessage in compact flow)
+		childQueue.setBeforeFirstMessage(() => {
+			const content = buildWorkContextContent(agentCwd);
+			if (!content) return [];
+			return [createWorkContext(content)];
+		});
+		// Mark as fired — we just handled injection above (or it was already in JSONL)
+		childQueue.markBeforeFirstMessageFired();
 
 		// Emit session_config if not already present in JSONL.
 		const hasSessionConfig = activeEvents.some(
