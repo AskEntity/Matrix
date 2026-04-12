@@ -266,16 +266,19 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 			const s = JSON.parse(
 				readFileSync(snapshotPath, "utf-8"),
 			) as DebugSnapshot;
-			if (s.ts > firstTs || (s.body.messages as unknown[]).length > firstMsgCount) {
+			if (
+				s.ts > firstTs ||
+				(s.body.messages as unknown[]).length > firstMsgCount
+			) {
 				// Updated — only ONE file exists (not appended)
 				const after = JSON.parse(
 					readFileSync(snapshotPath, "utf-8"),
 				) as DebugSnapshot;
 				expect(after.ts).toBeGreaterThanOrEqual(firstTs);
 				// Messages grew (prior assistant/user turns added)
-				expect((after.body.messages as unknown[]).length).toBeGreaterThanOrEqual(
-					firstMsgCount,
-				);
+				expect(
+					(after.body.messages as unknown[]).length,
+				).toBeGreaterThanOrEqual(firstMsgCount);
 				return;
 			}
 			await new Promise((r) => setTimeout(r, 50));
