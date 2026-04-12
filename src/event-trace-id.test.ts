@@ -172,19 +172,21 @@ describe("Bug 3: traceId semantics — run-bound vs external", () => {
 		}
 	}, 30000);
 
-	test("task_started (before loop spawn), if present, has no traceId", async () => {
+	test("agent_start carries the loop's traceId", async () => {
 		ctx = await setupEmissionTestContext();
-		await startAgent(ctx, singleTurnDoneInstruction("no task_started"));
+		await startAgent(ctx, singleTurnDoneInstruction("agent_start has traceId"));
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const events = await readSessionEvents(ctx, tracker.rootNodeId);
-		const taskStartedEvents = events.filter(
+		const agentStartEvents = events.filter(
 			(e) => e.type === "agent_start",
 		) as Array<Event & { traceId?: string }>;
-		for (const e of taskStartedEvents) {
-			expect(e.traceId).toBeUndefined();
+		expect(agentStartEvents.length).toBeGreaterThanOrEqual(1);
+		for (const e of agentStartEvents) {
+			// agent_start is emitted inside runAgentForNode → has traceId
+			expect(e.traceId).toBeDefined();
 		}
 	}, 30000);
 
