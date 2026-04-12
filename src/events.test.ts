@@ -552,10 +552,17 @@ describe("eventsToAnthropicMessages", () => {
 				ts: 2003,
 			},
 		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "[00:00:01] hello" },
-			{ role: "user", content: expect.stringContaining("work context") },
-		]);
+		const msgs = eventsToAnthropicMessages(events);
+		expect(msgs).toHaveLength(2);
+		expect(msgs[0]).toEqual({ role: "user", content: "[00:00:01] hello" });
+		// Both work_context and compacted_resume consumed together → one user message
+		expect(msgs[1]).toEqual({
+			role: "user",
+			content: expect.arrayContaining([
+				expect.objectContaining({ type: "text", text: expect.stringContaining("work context") }),
+				expect.objectContaining({ type: "text", text: expect.stringContaining("summary") }),
+			]),
+		});
 	});
 
 	test("full conversation: user → assistant+tools → results → assistant", () => {
