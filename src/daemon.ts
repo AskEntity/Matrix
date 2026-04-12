@@ -440,7 +440,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	}
 
-	/** Graceful shutdown: stop all agents. */
+	/** Graceful shutdown: stop all agents, await loop settlement for JSONL persistence. */
 	async function shutdown(): Promise<void> {
 		// Stop all agents — their root nodes stay in_progress so they resume on next start
 		for (const [projectId, tracker] of ctx.trackers) {
@@ -448,6 +448,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			if (rootNode?.session) {
 				await stopAgent(ctx, projectId);
 			}
+		}
+		// Await all in-flight loop promises so runAgentForNode's finally blocks
+		// complete (emit agent_end, clean up MCP, etc.). stopAgent triggers the
+		// unwind but doesn't await — we await here with a timeout to ensure
+		// agent_end persists to JSONL before process exit.
+		const allLoopPromises = [...ctx.agentLoopPromises.values()];
+		if (allLoopPromises.length > 0) {
+			const timeout = new Promise<void>((r) => setTimeout(r, 2000));
+			await Promise.race([Promise.all(allLoopPromises), timeout]);
 		}
 	}
 
