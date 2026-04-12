@@ -246,6 +246,11 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 			// Use ordered items to preserve interleaved thinking/text/tool_call sequence
 			for (const item of content.items) {
 				if (item.type === "thinking") {
+					// Filter out thinking blocks from other providers.
+					// undefined = legacy events before provider field was added → assume anthropic.
+					if (item.provider !== undefined && item.provider !== "anthropic") {
+						continue;
+					}
 					blocks.push({
 						type: "thinking",
 						thinking: item.thinking,
@@ -674,6 +679,7 @@ function createAnthropicAdapter(
 						type: "thinking",
 						thinking: block.thinking,
 						signature: block.signature,
+						provider: "anthropic",
 						taskId: "",
 						ts: Date.now(),
 					});
