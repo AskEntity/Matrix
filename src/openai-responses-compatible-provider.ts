@@ -780,12 +780,8 @@ function createOpenAIResponsesAdapter(
 			// Non-fatal; never blocks the API call.
 			writeDebugSnapshot(params.debugSnapshotPath, {
 				sessionId: params.sessionId ?? "",
-				model: params.model,
-				system: instructions,
-				tools: params.tools,
-				cacheTtl: params.cacheTtl,
-				messages: params.messages,
 				provider: "openai-responses",
+				body: { model: params.model, instructions, tools: params.tools, input: params.messages, max_output_tokens: params.maxTokens },
 			});
 
 			return yield* streamResponsesAPI({

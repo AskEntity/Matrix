@@ -171,9 +171,9 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 		) as DebugSnapshot;
 		expect(snapshot.sessionId).toBe(rootNodeId);
 		expect(snapshot.provider).toBe("anthropic");
-		expect(typeof snapshot.model).toBe("string");
-		expect(Array.isArray(snapshot.messages)).toBe(true);
-		expect((snapshot.messages as unknown[]).length).toBeGreaterThan(0);
+		expect(typeof snapshot.body.model).toBe("string");
+		expect(Array.isArray(snapshot.body.messages)).toBe(true);
+		expect((snapshot.body.messages as unknown[]).length).toBeGreaterThan(0);
 		expect(typeof snapshot.ts).toBe("number");
 		expect(snapshot.ts).toBeGreaterThan(0);
 	}, 15000);
@@ -249,7 +249,7 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 			readFileSync(snapshotPath, "utf-8"),
 		) as DebugSnapshot;
 		const firstTs = first.ts;
-		const firstMsgCount = (first.messages as unknown[]).length;
+		const firstMsgCount = (first.body.messages as unknown[]).length;
 
 		// Send wake message to advance
 		await ctx.app.app.request(
@@ -266,14 +266,14 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 			const s = JSON.parse(
 				readFileSync(snapshotPath, "utf-8"),
 			) as DebugSnapshot;
-			if (s.ts > firstTs || (s.messages as unknown[]).length > firstMsgCount) {
+			if (s.ts > firstTs || (s.body.messages as unknown[]).length > firstMsgCount) {
 				// Updated — only ONE file exists (not appended)
 				const after = JSON.parse(
 					readFileSync(snapshotPath, "utf-8"),
 				) as DebugSnapshot;
 				expect(after.ts).toBeGreaterThanOrEqual(firstTs);
 				// Messages grew (prior assistant/user turns added)
-				expect((after.messages as unknown[]).length).toBeGreaterThanOrEqual(
+				expect((after.body.messages as unknown[]).length).toBeGreaterThanOrEqual(
 					firstMsgCount,
 				);
 				return;
@@ -323,15 +323,15 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 		) as DebugSnapshot;
 
 		// The snapshot should have role="user" first message (the initial prompt)
-		const messages = snapshot.messages as Array<{
+		const messages = snapshot.body.messages as Array<{
 			role: string;
 			content: unknown;
 		}>;
 		expect(messages[0]?.role).toBe("user");
 
 		// System prompt and tools are also captured
-		expect(snapshot.system).toBeDefined();
-		expect(snapshot.tools).toBeDefined();
+		expect(snapshot.body.system).toBeDefined();
+		expect(snapshot.body.tools).toBeDefined();
 	}, 15000);
 
 	test("two runs on the same task produce two traceId dirs, both preserved", async () => {
@@ -407,8 +407,8 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 		const s2 = JSON.parse(
 			readFileSync(join(taskDebugDir, trace2, "last.json"), "utf-8"),
 		) as DebugSnapshot;
-		expect((s2.messages as unknown[]).length).toBeGreaterThan(
-			(s1.messages as unknown[]).length,
+		expect((s2.body.messages as unknown[]).length).toBeGreaterThan(
+			(s1.body.messages as unknown[]).length,
 		);
 	}, 30000);
 

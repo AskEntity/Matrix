@@ -494,8 +494,7 @@ function createAnthropicAdapter(
 			writeDebugSnapshot(params.debugSnapshotPath, {
 				sessionId: params.sessionId ?? "",
 				provider: "anthropic",
-				cacheTtl: params.cacheTtl,
-				...createParams,
+				body: { ...createParams },
 			});
 
 			let response: Anthropic.Messages.Message | undefined;

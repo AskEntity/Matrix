@@ -39,18 +39,10 @@ export interface DebugSnapshot {
 	ts: number;
 	/** Session ID (= taskId). */
 	sessionId: string;
-	/** Model name sent to the API (e.g. "claude-opus-4-6"). */
-	model: string;
-	/** System prompt (as sent — may be array of blocks for Anthropic). */
-	system?: unknown;
-	/** Tools (as sent). */
-	tools?: unknown;
-	/** Cache TTL applied to message breakpoints ("1h" | "5m" | undefined). */
-	cacheTtl?: string;
-	/** Messages (post-cache-control, post-image-filter — exactly as sent). */
-	messages: unknown;
 	/** Provider name (anthropic / openai / openai-responses). */
 	provider: string;
+	/** The exact API request body (createParams) as sent to the provider. */
+	body: Record<string, unknown>;
 }
 
 /**
