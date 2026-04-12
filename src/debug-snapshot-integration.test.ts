@@ -6,7 +6,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,7 +127,7 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 		}
 	});
 
-	test("snapshot written after each API call, located at debug/<taskId>.last-messages.json", async () => {
+	test("snapshot written after each API call, located at debug/<taskId>/<traceId>/last.json", async () => {
 		ctx = await setupTestContext();
 
 		// Single-turn agent: call done() immediately.
@@ -146,16 +146,24 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 		await startAgent(ctx, instruction);
 		await waitForDone(ctx);
 
-		// Snapshot should exist at projects/<id>/debug/<taskId>.last-messages.json
+		// v2 layout: snapshot should exist at
+		// projects/<id>/debug/<taskId>/<traceId>/last.json
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-		const snapshotPath = join(
+		const taskDebugDir = join(
 			ctx.dataDir,
 			"projects",
 			ctx.projectId,
 			"debug",
-			`${rootNodeId}.last-messages.json`,
+			rootNodeId,
 		);
+		expect(existsSync(taskDebugDir)).toBe(true);
+		const traceDirs = readdirSync(taskDebugDir);
+		expect(traceDirs.length).toBe(1);
+		const traceId = traceDirs[0] as string;
+		// traceId is a ULID (26 chars)
+		expect(traceId.length).toBe(26);
+		const snapshotPath = join(taskDebugDir, traceId, "last.json");
 
 		expect(existsSync(snapshotPath)).toBe(true);
 		const snapshot = JSON.parse(
@@ -206,19 +214,34 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 		// Wait until agent is idle (first yield)
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-		const snapshotPath = join(
+		const taskDebugDir = join(
 			ctx.dataDir,
 			"projects",
 			ctx.projectId,
 			"debug",
-			`${rootNodeId}.last-messages.json`,
+			rootNodeId,
 		);
 
-		// Wait for first snapshot
+		// Wait for first snapshot (traceId dir + last.json)
+		let snapshotPath = "";
 		for (let i = 0; i < 60; i++) {
-			if (existsSync(snapshotPath)) break;
+			if (existsSync(taskDebugDir)) {
+				const traceDirs = readdirSync(taskDebugDir);
+				if (traceDirs.length > 0) {
+					const candidate = join(
+						taskDebugDir,
+						traceDirs[0] as string,
+						"last.json",
+					);
+					if (existsSync(candidate)) {
+						snapshotPath = candidate;
+						break;
+					}
+				}
+			}
 			await new Promise((r) => setTimeout(r, 50));
 		}
+		expect(snapshotPath).not.toBe("");
 		expect(existsSync(snapshotPath)).toBe(true);
 
 		// Read first snapshot
@@ -280,12 +303,19 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-		const snapshotPath = join(
+		const taskDebugDir = join(
 			ctx.dataDir,
 			"projects",
 			ctx.projectId,
 			"debug",
-			`${rootNodeId}.last-messages.json`,
+			rootNodeId,
+		);
+		const traceDirs = readdirSync(taskDebugDir);
+		expect(traceDirs.length).toBe(1);
+		const snapshotPath = join(
+			taskDebugDir,
+			traceDirs[0] as string,
+			"last.json",
 		);
 
 		const snapshot = JSON.parse(
@@ -303,4 +333,82 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 		expect(snapshot.system).toBeDefined();
 		expect(snapshot.tools).toBeDefined();
 	}, 15000);
+
+	test("two runs on the same task produce two traceId dirs, both preserved", async () => {
+		ctx = await setupTestContext();
+
+		// Run 1: agent does a single turn + done.
+		const instruction1 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "run 1" },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "run 1 ok" },
+				},
+			],
+			stop_reason: "tool_use",
+		});
+		await startAgent(ctx, instruction1);
+		await waitForDone(ctx);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const taskDebugDir = join(
+			ctx.dataDir,
+			"projects",
+			ctx.projectId,
+			"debug",
+			rootNodeId,
+		);
+
+		const traceDirsAfterRun1 = readdirSync(taskDebugDir);
+		expect(traceDirsAfterRun1.length).toBe(1);
+		const trace1 = traceDirsAfterRun1[0] as string;
+		const snap1Path = join(taskDebugDir, trace1, "last.json");
+		expect(existsSync(snap1Path)).toBe(true);
+
+		// Run 2: wake the root with a new message → new loop, new traceId.
+		const instruction2 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "run 2" },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "run 2 ok" },
+				},
+			],
+			stop_reason: "tool_use",
+		});
+		await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: instruction2 }),
+			},
+		);
+		await waitForDone(ctx);
+
+		const traceDirsAfterRun2 = readdirSync(taskDebugDir);
+		// Both runs' traceId dirs are preserved — pre-restart state available.
+		expect(traceDirsAfterRun2.length).toBe(2);
+		expect(traceDirsAfterRun2).toContain(trace1);
+		const trace2 = traceDirsAfterRun2.find((d) => d !== trace1) as string;
+		expect(trace2).toBeDefined();
+		expect(trace2).not.toBe(trace1);
+
+		// Both snapshot files exist.
+		expect(existsSync(snap1Path)).toBe(true);
+		expect(existsSync(join(taskDebugDir, trace2, "last.json"))).toBe(true);
+
+		// They are DIFFERENT snapshots — run 2 has more messages than run 1.
+		const s1 = JSON.parse(readFileSync(snap1Path, "utf-8")) as DebugSnapshot;
+		const s2 = JSON.parse(
+			readFileSync(join(taskDebugDir, trace2, "last.json"), "utf-8"),
+		) as DebugSnapshot;
+		expect((s2.messages as unknown[]).length).toBeGreaterThan(
+			(s1.messages as unknown[]).length,
+		);
+	}, 30000);
 });
