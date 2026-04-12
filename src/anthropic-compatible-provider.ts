@@ -489,18 +489,13 @@ function createAnthropicAdapter(
 			// biome-ignore lint/suspicious/noExplicitAny: test-only side channel
 			(client as any)._currentSessionId = params.sessionId ?? undefined;
 
-			// Pre-API-call debug snapshot: evidence for drift debugging.
-			// Write the FULLY-ASSEMBLED request bytes (post-cache-control) to
-			// <project>/debug/<taskId>.last-messages.json. Overwrites on each call.
-			// Non-fatal; never blocks the API call.
+			// Pre-API-call debug snapshot: save the EXACT createParams sent to API.
+			// Overwrites on each call. Non-fatal; never blocks the API call.
 			writeDebugSnapshot(params.debugSnapshotPath, {
 				sessionId: params.sessionId ?? "",
-				model: params.model,
-				system: systemBlocks,
-				tools: toolsWithCache,
-				cacheTtl: params.cacheTtl,
-				messages: messagesWithCache,
 				provider: "anthropic",
+				cacheTtl: params.cacheTtl,
+				...createParams,
 			});
 
 			let response: Anthropic.Messages.Message | undefined;
