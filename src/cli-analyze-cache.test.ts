@@ -385,15 +385,33 @@ describe("formatGap", () => {
 	test("null → em dash", () => {
 		expect(formatGap(null)).toBe("—");
 	});
-	test("seconds", () => {
-		expect(formatGap(6000)).toBe("6s");
+	test("zero → 0s", () => {
+		expect(formatGap(0)).toBe("0s");
+	});
+	test("sub-minute → Xs", () => {
+		expect(formatGap(45_000)).toBe("45s");
 		expect(formatGap(30_000)).toBe("30s");
+		expect(formatGap(1_000)).toBe("1s");
 	});
-	test("minutes with one decimal", () => {
-		expect(formatGap(5.8 * 60 * 1000)).toBe("5.8m");
+	test("sub-hour → XmYs", () => {
+		expect(formatGap(65_000)).toBe("1m5s");
+		expect(formatGap(60_000)).toBe("1m0s");
+		expect(formatGap(5 * 60_000)).toBe("5m0s");
 	});
-	test("hours with one decimal", () => {
-		expect(formatGap(1.4 * 60 * 60 * 1000)).toBe("1.4h");
+	test("hours → XhYmZs with zero components kept", () => {
+		expect(formatGap(3_600_000)).toBe("1h0m0s");
+		expect(formatGap(5_460_000)).toBe("1h31m0s");
+	});
+	test("23 seconds past 1h is visible (not rounded to 1.0h)", () => {
+		// This is the motivating case: user saw gap=1.0h and couldn't tell
+		// whether it was 1h0m23s (23s past TTL) or 1h5m (5m past TTL).
+		expect(formatGap(3_623_538)).toBe("1h0m24s"); // 3623.538s rounds to 3624s
+		expect(formatGap(3_623_000)).toBe("1h0m23s");
+	});
+	test("rounds sub-second to nearest second", () => {
+		expect(formatGap(499)).toBe("0s");
+		expect(formatGap(500)).toBe("1s");
+		expect(formatGap(59_500)).toBe("1m0s"); // rolls into minute
 	});
 });
 
@@ -424,7 +442,7 @@ describe("formatRow", () => {
 		expect(line).toContain("cc=70,607");
 		expect(line).toContain("out=892");
 		expect(line).toContain("hit=32.2%");
-		expect(line).toContain("gap=5.8m");
+		expect(line).toContain("gap=5m48s");
 		expect(line).toContain("stopped=no");
 	});
 
