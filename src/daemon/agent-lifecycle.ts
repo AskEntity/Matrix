@@ -617,7 +617,13 @@ export async function runAgentForNode(
 	// Declared outside try so Phase 2 (after finally) can access the result.
 	let agentResult: AgentResult | undefined;
 	// Track exit state for unified agent_end emission in finally block.
-	let exitReason: "done_passed" | "done_failed" | "stopped" | "error" | "budget_exceeded" | undefined;
+	let exitReason:
+		| "done_passed"
+		| "done_failed"
+		| "stopped"
+		| "error"
+		| "budget_exceeded"
+		| undefined;
 	// Generate a unique trace ID for this agent loop instance.
 	// Stored on TaskSession so external emit paths (stopTask, tool handlers via
 	// resource-registry) can look it up and auto-inject it. The provider loop's
@@ -1008,10 +1014,7 @@ export async function runAgentForNode(
 				const childNodes = allTaskNodes.filter(
 					(n) => n.id !== nodeId && n.costUsd > 0,
 				);
-				const childCostUsd = childNodes.reduce(
-					(sum, n) => sum + n.costUsd,
-					0,
-				);
+				const childCostUsd = childNodes.reduce((sum, n) => sum + n.costUsd, 0);
 				stats = {
 					costUsd: agentResult.costUsd + childCostUsd,
 					turns: agentResult.turns,
