@@ -19,7 +19,13 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ulid } from "./ulid.ts";
 
-function migrateEvent(line: string): string | null {
+/**
+ * Migrate a single JSONL line. Returns:
+ * - string: replacement line (may be same as input for no-change)
+ * - null: line should be removed
+ * - string[]: multiple lines (original + injected messages_consumed)
+ */
+function migrateEvent(line: string): string | null | string[] {
 	let event: Record<string, unknown>;
 	try {
 		event = JSON.parse(line);
@@ -38,10 +44,11 @@ function migrateEvent(line: string): string | null {
 
 		case "compacted_resume": {
 			// Convert standalone event → message with source: "compacted_resume"
+			// + messages_consumed so the walker materializes it
 			const id = ulid();
 			const ts = (event.ts as number) ?? Date.now();
 			const content = (event.content as string) ?? "";
-			return JSON.stringify({
+			const msgLine = JSON.stringify({
 				type: "message",
 				id,
 				taskId: event.taskId ?? "",
@@ -54,6 +61,14 @@ function migrateEvent(line: string): string | null {
 				ts,
 				...(event.traceId ? { traceId: event.traceId } : {}),
 			});
+			const consumedLine = JSON.stringify({
+				type: "messages_consumed",
+				messageIds: [id],
+				taskId: event.taskId ?? "",
+				ts: ts + 1,
+				...(event.traceId ? { traceId: event.traceId } : {}),
+			});
+			return [msgLine, consumedLine];
 		}
 
 		case "summarization_request":
@@ -158,6 +173,10 @@ function migrateFile(filePath: string): { changed: number; removed: number } {
 		const result = migrateEvent(line);
 		if (result === null) {
 			removed++;
+		} else if (Array.isArray(result)) {
+			// Multiple lines (e.g. message + messages_consumed)
+			for (const r of result) output.push(r);
+			changed++;
 		} else if (result !== line) {
 			output.push(result);
 			changed++;
