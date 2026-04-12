@@ -1792,6 +1792,26 @@ select {
 	font-family: var(--font-mono);
 }
 
+/* Thinking block — collapsible gray region */
+.mxd-tool-card-thinking {
+	background: var(--surface-dimmer);
+	border-color: var(--border-faint);
+	opacity: 0.85;
+}
+.mxd-tool-card-thinking .mxd-card-header {
+	font-size: 11px;
+	color: var(--text-muted);
+}
+.mxd-thinking-content {
+	font-size: 12px;
+	color: var(--text-muted);
+	white-space: pre-wrap;
+	word-break: break-word;
+	line-height: 1.5;
+	max-height: 300px;
+	overflow-y: auto;
+}
+
 .mxd-thinking-indicator {
 	padding: 8px 16px;
 	color: var(--text-muted);
