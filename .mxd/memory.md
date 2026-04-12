@@ -920,3 +920,33 @@ Bind params become required explicit params for external callers. Simple and mec
 
 ### Folder Tool Constants
 `TOOL_CREATE_FOLDER`, `TOOL_DELETE_FOLDER`, `TOOL_RENAME_FOLDER`, `TOOL_GET_LOGS` added to `src/tool-names.ts`. `web/event-display.ts` uses constants instead of string literals.
+
+## MCP Layer 1 — Stateless External Endpoint
+
+POST `/mcp` — MCP Streamable HTTP transport. Stateless: no attach_to, no session state.
+
+### 6 tools
+- **list_projects** (both), **get_tree(projectId)** (both), **get_task(projectId, taskId)** (both), **get_logs(projectId, taskId, begin?, end?)** (both) — read-only
+- **send_user_message(projectId, taskId, content)** (external) — delivers user message, returns cursor before delivery
+- **yield_external(projectId, taskId, timeoutMs?)** (external) — peek-or-subscribe-or-wait, returns reason + taskStatus + cursor
+
+### Workflow: send → yield → get_logs
+1. `send_user_message` returns `{ cursor: N }` (position before message)
+2. `yield_external` blocks until agent pauses → returns `{ cursor: M, reason, taskStatus }`
+3. `get_logs(begin=N, end=M)` returns events in that range
+
+### ToolDef availability (required field)
+`"internal" | "external" | "both"` on every ToolDef. No default. 25 orchestrator + 7 builtin = internal. list_projects/get_tree/get_task/get_logs = both. send_user_message/yield_external = external.
+
+### Auth changes
+- `checkPermission(auth, "human", {})` — new mode for external callers
+- get_tree "(you)" marker: uses `checkPermission(auth, "exact", { taskId })` per node, no data extracted from auth
+- `getBindValues` deleted → `resolveBindParam(auth, from)`: single param, asserts on human auth. "NOT for handlers" invariant preserved.
+- Auth internals: private Symbol key replaces WeakMap + branded type
+- `createAgentAuth` taskId: `string` not `string | null` (root always has rootNodeId)
+
+### Prefix/suffix headers (deferred)
+`X-MCP-Prefix` / `X-MCP-Suffix` for send_user_message — attempted but reverted. Concurrent request isolation needs per-session McpServer, not shared mutable ref.
+
+### yield_external fast path
+Checks `session.queue?.idle` (covers explicit + implicit yield) and `!session` (not running) before subscribing. Without this → deadlock when agent already idle.
