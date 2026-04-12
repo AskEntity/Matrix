@@ -12,7 +12,6 @@ export type QueueMessage =
 			ts: number;
 			content: string;
 			images?: QueueImage[];
-			header?: string;
 	  }
 	| {
 			source: "tree_change";
@@ -41,8 +40,6 @@ export type QueueMessage =
 			/** Message subject line (from send_message's title param). */
 			title?: string;
 			requestReply?: boolean;
-			/** Only on cold-start downward messages. */
-			header?: string;
 	  }
 	| { source: "clarify_response"; id: string; ts: number; answer: string }
 	| {
@@ -74,7 +71,22 @@ export type QueueMessage =
 			/** Formatted output — identical to foreground bash tool_result content. From formatBashResult(). */
 			content: string;
 	  }
-	| { source: "compact"; id: string; ts: number };
+	| { source: "compact"; id: string; ts: number }
+	| {
+			/** Injected by enqueue hook on fresh/post-compact sessions.
+			 *  Contains memory.md + task description + git context + instructions. */
+			source: "work_context";
+			id: string;
+			ts: number;
+			content: string;
+	  }
+	| {
+			/** Summary of pre-compact conversation, injected as a message after compact_marker. */
+			source: "compacted_resume";
+			id: string;
+			ts: number;
+			content: string;
+	  };
 
 /**
  * A simple async message queue for inter-agent communication.

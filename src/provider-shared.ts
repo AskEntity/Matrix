@@ -25,6 +25,11 @@ import {
 import { type Event, hasPendingImplicitYield } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import {
+	createCompactedResume,
+	createWorkContext,
+} from "./queue-message-factory.ts";
+import { buildWorkContextContent } from "./work-context.ts";
+import {
 	drainQueueAtCancellationPoint,
 	recordQueueEvents,
 } from "./queue-utils.ts";
@@ -1041,8 +1046,7 @@ export async function* runProviderLoop(
 				// yield tool_call forward via pendingCompactYieldToolCall; the compact
 				// path bundles it into the SAME user turn as the summarization text.
 				// Order must match JSONL: this tool_result event was emitted FIRST here,
-				// then summarization_request is emitted in the compact path → walker
-				// reconstructs [tool_result, text] in that order. Live path must match.
+				// then the summarization instruction is pushed to messages[]. Live path must match.
 				pendingCompactYieldToolCall = {
 					id: pendingYieldToolCall.id,
 					name: pendingYieldToolCall.name,
@@ -1174,18 +1178,10 @@ export async function* runProviderLoop(
 
 			if (compactResult) {
 				messages.length = 0;
-				messages.push({
-					role: "user" as const,
-					content: compactResult.userContent,
-				});
 				estimatedInputTokens = compactResult.estimatedInputTokens;
 				manualCompactRequested = false;
 
 				// Refresh session_config after compaction — updates tools, system prompt, date.
-				// Compaction already wipes cache (messages[] replaced with compacted_resume),
-				// so this is the natural boundary for picking up codebase changes without
-				// any additional cache cost. Tools added to the codebase since the session
-				// started become available to the agent after compact.
 				// compact_marker was already emitted by processCompaction; session_config
 				// follows it so readActive() sees the fresh config for this segment.
 				if (emit) {
@@ -1202,7 +1198,7 @@ export async function* runProviderLoop(
 					}
 					// Update request.systemPrompt so subsequent API calls use the
 					// refreshed prompt. Without this, the next iteration's API call
-					// (line ~1370) uses request.systemPrompt which is still frozen.
+					// uses request.systemPrompt which is still frozen.
 					if (freshPrompt) {
 						request.systemPrompt = freshPrompt;
 						const sessionConfigEvt: Event = {
@@ -1216,6 +1212,24 @@ export async function* runProviderLoop(
 						} as Event;
 						emit(sessionConfigEvt);
 					}
+
+					// Enqueue work_context + compacted_resume as messages.
+					// These are persisted to JSONL via onPersist, and the walker
+					// reconstructs them on restart. Live path builds messages[]
+					// directly from their content to match walker output.
+					const workCtxContent = buildWorkContextContent(cwd);
+					const workCtxMsg = createWorkContext(workCtxContent);
+					const resumeMsg = createCompactedResume(compactResult.checkpoint);
+					// Persist via queue (onPersist writes to JSONL)
+					if (queue) {
+						queue.enqueue(workCtxMsg);
+						queue.enqueue(resumeMsg);
+					}
+					// Build the user message for messages[] from both contents
+					messages.push({
+						role: "user" as const,
+						content: `${workCtxContent}\n\n## Checkpoint Summary\n\n${compactResult.checkpoint}`,
+					});
 				}
 			}
 			continue; // Skip normal processing, go to next API call with rebuilt context
@@ -1236,7 +1250,6 @@ export async function* runProviderLoop(
 			yield s2;
 			const s3: Event = {
 				type: "compact_marker",
-				checkpoint: "Context too short for meaningful compaction",
 				savedTokens: 0,
 				taskId: "",
 				ts: Date.now(),
@@ -1343,14 +1356,7 @@ export async function* runProviderLoop(
 						content: summarizationInstruction,
 					});
 				}
-				if (emit) {
-					emit({
-						type: "summarization_request",
-						instruction: summarizationInstruction,
-						taskId: "",
-						ts: Date.now(),
-					});
-				}
+				// summarization_request event removed — instruction is part of compact_started
 				compactionPending = true;
 				preCompactTokenCount = adapter.supportsTokenCounting
 					? tokenCount
