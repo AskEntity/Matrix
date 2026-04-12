@@ -1188,7 +1188,7 @@ describe("event-handler compact_marker savedTokens", () => {
 		handleEvent({
 			type: "compact_marker",
 			savedTokens: 5000,
-			checkpoint: "test checkpoint",
+
 			taskId: "task-1",
 			ts: 2000,
 		});
@@ -1219,7 +1219,7 @@ describe("event-handler compact_marker savedTokens", () => {
 		handleEvent({
 			type: "compact_marker",
 			savedTokens: 8000,
-			checkpoint: "test checkpoint",
+
 			taskId: "task-2",
 			ts: 3000,
 		});
@@ -1246,7 +1246,7 @@ describe("event-handler compact_marker savedTokens", () => {
 			{
 				type: "compact_marker",
 				savedTokens: 12000,
-				checkpoint: "batch checkpoint",
+
 				taskId: "task-3",
 				ts: 2000,
 			},
@@ -1274,7 +1274,7 @@ describe("event-handler compact_marker savedTokens", () => {
 			{
 				type: "compact_marker",
 				savedTokens: 3000,
-				checkpoint: "fallback checkpoint",
+
 				taskId: "task-4",
 				ts: 2000,
 			},
@@ -1532,7 +1532,7 @@ describe("event-handler compaction display", () => {
 			{
 				type: "compact_marker",
 				savedTokens: 10000,
-				checkpoint: "Checkpoint after compaction",
+
 				taskId: "task-1",
 				ts: 2500,
 			},
@@ -1575,9 +1575,6 @@ describe("event-handler compaction display", () => {
 		const marker = capturedLogs.find((e) => e.type === "compact_marker");
 		expect(marker).toBeDefined();
 		expect(marker?.type === "compact_marker" && marker.savedTokens).toBe(10000);
-		expect(marker?.type === "compact_marker" && marker.checkpoint).toBe(
-			"Checkpoint after compaction",
-		);
 
 		// Content before marker preserved
 		const preText = capturedLogs[0];
@@ -1613,7 +1610,7 @@ describe("event-handler compaction display", () => {
 			{
 				type: "compact_marker",
 				savedTokens: 5000,
-				checkpoint: "First compaction",
+
 				taskId: "task-1",
 				ts: 2500,
 			},
@@ -1627,7 +1624,7 @@ describe("event-handler compaction display", () => {
 			{
 				type: "compact_marker",
 				savedTokens: 8000,
-				checkpoint: "Second compaction",
+
 				taskId: "task-1",
 				ts: 4500,
 			},
@@ -1696,7 +1693,7 @@ describe("event-handler compaction display", () => {
 		handleEvent({
 			type: "compact_marker",
 			savedTokens: 7500,
-			checkpoint: "Live compaction checkpoint",
+
 			taskId: "task-1",
 			ts: 3000,
 		});
@@ -1708,8 +1705,8 @@ describe("event-handler compaction display", () => {
 			capturedLogs[1]?.type === "compact_marker" && capturedLogs[1].savedTokens,
 		).toBe(7500);
 		expect(
-			capturedLogs[1]?.type === "compact_marker" && capturedLogs[1].checkpoint,
-		).toBe("Live compaction checkpoint");
+			capturedLogs[1]?.type === "compact_marker" && capturedLogs[1].savedTokens,
+		).toBe(7500);
 
 		// Content before compaction still present
 		expect(capturedLogs[0]?.type).toBe("assistant_text");
@@ -1733,7 +1730,7 @@ describe("event-handler compaction display", () => {
 		handleEvent({
 			type: "compact_marker",
 			savedTokens: 5000,
-			checkpoint: "cp",
+
 			taskId: "task-1",
 			ts: 2000,
 		});
@@ -2094,7 +2091,7 @@ describe("ActivityLog filtering logic", () => {
 			}),
 			createLogEntry({
 				type: "compact_marker",
-				checkpoint: "Root compaction",
+
 				savedTokens: 5000,
 				taskId: "root-1",
 				ts: 2000,
@@ -2141,7 +2138,8 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
 		handleEvent({
-			type: "agent_stopped",
+			type: "agent_end",
+			reason: "stopped",
 			taskId: "task-1",
 			ts: 1000,
 		});
@@ -2166,7 +2164,8 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 
 		processEventBatch([
 			{
-				type: "agent_stopped",
+				type: "agent_end",
+				reason: "stopped",
 				taskId: "task-1",
 				ts: 1000,
 			},
@@ -2192,34 +2191,34 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 		// Simulate many daemon restarts — each produces orchestration_started(resume) + agent_stopped
 		processEventBatch([
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				taskId: "task-1",
 				resume: true,
 				model: "claude-sonnet",
 				provider: "anthropic",
 				ts: 1000,
 			},
-			{ type: "agent_stopped", taskId: "task-1", ts: 2000 },
+			{ type: "agent_end", reason: "stopped", taskId: "task-1", ts: 2000 },
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				taskId: "task-1",
 				resume: true,
 				model: "claude-sonnet",
 				provider: "anthropic",
 				ts: 3000,
 			},
-			{ type: "agent_stopped", taskId: "task-1", ts: 4000 },
+			{ type: "agent_end", reason: "stopped", taskId: "task-1", ts: 4000 },
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				taskId: "task-1",
 				resume: true,
 				model: "claude-sonnet",
 				provider: "anthropic",
 				ts: 5000,
 			},
-			{ type: "agent_stopped", taskId: "task-1", ts: 6000 },
+			{ type: "agent_end", reason: "stopped", taskId: "task-1", ts: 6000 },
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				taskId: "task-1",
 				resume: true,
 				model: "claude-sonnet",
@@ -2258,7 +2257,7 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 
 		processEventBatch([
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				taskId: "task-1",
 				resume: true,
 				model: "claude-sonnet",
@@ -2271,9 +2270,9 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 				taskId: "task-1",
 				ts: 1500,
 			},
-			{ type: "agent_stopped", taskId: "task-1", ts: 2000 },
+			{ type: "agent_end", reason: "stopped", taskId: "task-1", ts: 2000 },
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				taskId: "task-1",
 				resume: true,
 				model: "claude-sonnet",
@@ -2307,7 +2306,7 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 		const events: IncomingEvent[] = [];
 		for (let i = 0; i < 20; i++) {
 			events.push({
-				type: "orchestration_started",
+				type: "agent_start",
 				taskId: "task-1",
 				resume: true,
 				model: "claude-sonnet",
@@ -2315,14 +2314,15 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 				ts: 1000 + i * 2000,
 			});
 			events.push({
-				type: "agent_stopped",
+				type: "agent_end",
+				reason: "stopped",
 				taskId: "task-1",
 				ts: 2000 + i * 2000,
 			});
 		}
 		// Final resume that's actually active
 		events.push({
-			type: "orchestration_started",
+			type: "agent_start",
 			taskId: "task-1",
 			resume: true,
 			model: "claude-sonnet",
@@ -2350,22 +2350,24 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 
 		processEventBatch([
 			{
-				type: "task_started",
+				type: "agent_start",
 				taskId: "task-1",
-				title: "My Task",
+				resume: false,
+				model: "test",
+				provider: "test",
 				ts: 500,
 			},
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				taskId: "task-1",
 				resume: true,
 				model: "claude-sonnet",
 				provider: "anthropic",
 				ts: 1000,
 			},
-			{ type: "agent_stopped", taskId: "task-1", ts: 2000 },
+			{ type: "agent_end", reason: "stopped", taskId: "task-1", ts: 2000 },
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				taskId: "task-1",
 				resume: true,
 				model: "claude-sonnet",
@@ -2380,12 +2382,12 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 			},
 		]);
 
-		// task_started should still be there
-		const taskStarted = capturedLogs.find((e) => e.type === "task_started");
-		expect(taskStarted).toBeDefined();
-
+		// agent_start with resume produces lifecycle entries. Non-resume agent_start produces nothing.
 		// The first empty start/stop pair should be collapsed, keeping only the last resume
 		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
+		// Two resume agent_start → 2 lifecycle entries, but the first start+stop pair collapses
+		// agent_start(resume:false) doesn't produce lifecycle, agent_end(stopped) does,
+		// then both get collapsed with agent_start(resume:true). Last resume + assistant_text remain.
 		expect(lifecycleEntries.length).toBe(1);
 	});
 });
@@ -2451,7 +2453,8 @@ describe("event-handler activeAgents global updates", () => {
 		const { handleEvent } = createEventHandler(deps);
 
 		handleEvent({
-			type: "agent_stopped",
+			type: "agent_end",
+			reason: "stopped",
 			taskId: "task-2",
 			ts: 1000,
 		});
@@ -2466,7 +2469,7 @@ describe("event-handler activeAgents global updates", () => {
 		const { handleEvent } = createEventHandler(deps);
 
 		handleEvent({
-			type: "orchestration_started",
+			type: "agent_start",
 			taskId: "task-2",
 			resume: false,
 			model: "claude-sonnet",
@@ -2486,9 +2489,9 @@ describe("event-handler activeAgents global updates", () => {
 		const { handleEvent } = createEventHandler(deps);
 
 		handleEvent({
-			type: "orchestration_completed",
+			type: "agent_end",
+			reason: "done_passed",
 			taskId: "task-2",
-			success: true,
 			ts: 1000,
 		});
 
@@ -2507,7 +2510,7 @@ describe("event-handler activeAgents global updates", () => {
 
 		// These should update activeAgents but NOT create log entries
 		handleEvent({
-			type: "orchestration_started",
+			type: "agent_start",
 			taskId: "task-2",
 			resume: true,
 			model: "claude-sonnet",
@@ -2515,7 +2518,8 @@ describe("event-handler activeAgents global updates", () => {
 			ts: 1000,
 		});
 		handleEvent({
-			type: "agent_stopped",
+			type: "agent_end",
+			reason: "stopped",
 			taskId: "task-2",
 			ts: 2000,
 		});
@@ -2538,7 +2542,7 @@ describe("event-handler activeAgents global updates", () => {
 		// but the agent is actually stopped
 		processEventBatch([
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				taskId: "task-1",
 				resume: false,
 				model: "claude-sonnet",
@@ -2552,7 +2556,8 @@ describe("event-handler activeAgents global updates", () => {
 				ts: 2000,
 			},
 			{
-				type: "agent_stopped",
+				type: "agent_end",
+				reason: "stopped",
 				taskId: "task-1",
 				ts: 3000,
 			},

@@ -315,21 +315,13 @@ function buildMockData() {
 	// SECTION 1: Lifecycle + content events
 	// ═══════════════════════════════════════════════════════════════════════
 
-	// orchestration_started (initial)
+	// agent_start (initial)
 	events.push({
-		type: "orchestration_started",
+		type: "agent_start",
 		taskId: SESSION_ID,
 		resume: false,
 		model: "claude-sonnet-4-20250514",
 		provider: "anthropic",
-		ts: ts(m--),
-	});
-
-	// task_started
-	events.push({
-		type: "task_started",
-		taskId: SESSION_ID,
-		title: "Refactor event system",
 		ts: ts(m--),
 	});
 
@@ -1056,11 +1048,9 @@ function buildMockData() {
 		ts: ts(m--),
 	});
 
-	// compact_marker
+	// compact_marker (empty boundary)
 	events.push({
 		type: "compact_marker",
-		checkpoint:
-			"## Checkpoint Summary\n\n### Completed:\n- Created backend endpoint at `/mock-showcase`\n- Added task tree with all status variants\n- Generated sample events for all card types\n\n### In Progress:\n- Frontend integration with `?mock=true` parameter\n\n### Key Decisions:\n- Using processEventBatch for consistent rendering\n- Events use the two-phase message lifecycle",
 		savedTokens: 45000,
 		taskId: SESSION_ID,
 		ts: ts(m--),
@@ -1076,9 +1066,9 @@ function buildMockData() {
 		ts: ts(m--),
 	});
 
-	// orchestration_started (resume)
+	// agent_start (resume)
 	events.push({
-		type: "orchestration_started",
+		type: "agent_start",
 		taskId: SESSION_ID,
 		resume: true,
 		model: "claude-sonnet-4-20250514",
@@ -1086,10 +1076,11 @@ function buildMockData() {
 		ts: ts(m--),
 	});
 
-	// agent_stopped
+	// agent_end (stopped)
 	events.push({
-		type: "agent_stopped",
+		type: "agent_end",
 		taskId: SESSION_ID,
+		reason: "stopped",
 		ts: ts(m--),
 	});
 
@@ -1310,19 +1301,21 @@ function buildMockData() {
 	// ═══════════════════════════════════════════════════════════════════════
 
 	events.push({
-		type: "orchestration_completed",
+		type: "agent_end",
 		taskId: SESSION_ID,
-		success: true,
-		costUsd: 2.45,
-		turns: 15,
-		inputTokens: 125000,
-		cacheCreationTokens: 8500,
-		cacheReadTokens: 95000,
-		outputTokens: 12000,
-		childCosts: {
-			totalCostUsd: 1.57,
-			totalTurns: 42,
-			taskCount: 3,
+		reason: "done_passed",
+		stats: {
+			costUsd: 2.45,
+			turns: 15,
+			inputTokens: 125000,
+			cacheCreationTokens: 8500,
+			cacheReadTokens: 95000,
+			outputTokens: 12000,
+			childCosts: {
+				totalCostUsd: 1.57,
+				totalTurns: 42,
+				taskCount: 3,
+			},
 		},
 		ts: ts(m--),
 	});

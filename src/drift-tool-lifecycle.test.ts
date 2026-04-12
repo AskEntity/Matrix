@@ -1149,23 +1149,8 @@ describe("Golden snapshots: eventsToAnthropicMessages output", () => {
 		expect((messages[0] as { role: string }).role).toBe("user");
 	});
 
-	test("compacted_resume event → user message with content", () => {
-		const events: Event[] = [
-			{
-				type: "compacted_resume",
-				content: "Previous session summary: X happened.",
-				taskId: "",
-				ts: 1000,
-			},
-			assistantTextEvent("got it"),
-		];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages).toHaveLength(2);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content: "Previous session summary: X happened.",
-		});
-	});
+	// compacted_resume event test removed — event type no longer exists.
+	// Content now flows through message path with source: "compacted_resume".
 
 	test("Structural events (session_config, compact_marker) are skipped", () => {
 		const events: Event[] = [
@@ -1181,7 +1166,6 @@ describe("Golden snapshots: eventsToAnthropicMessages output", () => {
 			assistantTextEvent("yo"),
 			{
 				type: "compact_marker",
-				checkpoint: "cp1",
 				savedTokens: 100,
 				taskId: "",
 				ts: 3,

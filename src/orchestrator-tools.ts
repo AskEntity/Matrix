@@ -11,7 +11,7 @@
  * for backward compatibility with the existing provider loop.
  */
 
-import { readFileSync } from "node:fs";
+// readFileSync removed — work_context hook handles memory injection
 import { join } from "node:path";
 import { z } from "zod";
 import { stripEventForUI } from "./daemon/helpers.ts";
@@ -29,7 +29,7 @@ import {
 	resetTaskOp,
 	updateTaskOp,
 } from "./task-operations.ts";
-import { buildTaskPrompt, getDescendantIds, slugify } from "./task-utils.ts";
+import { getDescendantIds, slugify } from "./task-utils.ts";
 import type { Auth } from "./tool-auth.ts";
 import { checkPermission } from "./tool-auth.ts";
 import { type ToolDef, toToolDefinition } from "./tool-def.ts";
@@ -780,30 +780,15 @@ export function buildAllToolDefs(): ToolDef[] {
 						tracker.assignWorktree(node.id, wt.branch, wt.path);
 					}
 
+					// No header needed — work_context injected by enqueue hook on fresh sessions
 					const hasPriorContext =
 						node.session != null || R.hasEventStore(projectId, node.id);
-					let header: string | undefined;
-					if (!hasPriorContext) {
-						const repoPath = R.getProject(projectId)?.path ?? "";
-						let memory = "";
-						try {
-							memory = readFileSync(
-								join(node.worktreePath ?? repoPath, ".mxd", "memory.md"),
-								"utf-8",
-							);
-						} catch {
-							/* no memory file */
-						}
-						header = buildTaskPrompt(node, tracker, memory);
-					}
-
 					const queueMessage = createTaskMessage(
 						senderTaskId ?? "unknown",
 						currentNode?.title ?? "unknown",
 						args.message as string,
 						{
 							requestReply: args.requestReply as boolean | undefined,
-							header: header ?? undefined,
 						},
 					);
 

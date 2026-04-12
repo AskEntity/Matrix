@@ -130,30 +130,17 @@ export type Event = (
 			timeoutMs: number;
 			ts: number;
 	  }
-	| {
-			type: "compacted_resume";
-			content: string;
-			cwd?: string;
-			taskId: string;
-			ts: number;
-	  }
-	| {
-			type: "summarization_request";
-			instruction: string;
-			taskId: string;
-			ts: number;
-	  }
 	| { type: "budget_warning"; warning: string; taskId: string; ts: number }
 	| {
+			/** Empty boundary marker — content lives in subsequent compacted_resume message. */
 			type: "compact_marker";
-			checkpoint: string;
 			savedTokens: number;
 			taskId: string;
 			ts: number;
 	  }
 	// Lifecycle events — persisted to JSONL for activity log replay
 	| {
-			type: "orchestration_started";
+			type: "agent_start";
 			taskId: string;
 			resume: boolean;
 			model: string;
@@ -161,32 +148,32 @@ export type Event = (
 			ts: number;
 	  }
 	| {
-			type: "orchestration_completed";
+			type: "agent_end";
 			taskId: string;
-			success: boolean;
-			costUsd?: number;
-			turns?: number;
-			inputTokens?: number;
-			cacheCreationTokens?: number;
-			cacheReadTokens?: number;
-			outputTokens?: number;
-			childCosts?: {
-				totalCostUsd: number;
-				totalTurns: number;
-				taskCount: number;
+			reason:
+				| "done_passed"
+				| "done_failed"
+				| "stopped"
+				| "error"
+				| "budget_exceeded";
+			summary?: string;
+			stats?: {
+				costUsd?: number;
+				turns?: number;
+				inputTokens?: number;
+				cacheCreationTokens?: number;
+				cacheReadTokens?: number;
+				outputTokens?: number;
+				childCosts?: {
+					totalCostUsd: number;
+					totalTurns: number;
+					taskCount: number;
+				};
+				contextWindow?: number;
 			};
 			ts: number;
 	  }
-	| { type: "task_started"; taskId: string; title: string; ts: number }
 	| { type: "error"; taskId: string; message: string; ts: number }
-	| {
-			type: "budget_exceeded";
-			taskId: string;
-			title: string;
-			costUsd: number;
-			budgetUsd: number;
-			ts: number;
-	  }
 	| {
 			type: "clarification_requested";
 			taskId: string;
@@ -204,7 +191,6 @@ export type Event = (
 			ts: number;
 	  }
 	| { type: "compact_started"; taskId: string; ts: number }
-	| { type: "agent_stopped"; taskId: string; ts: number }
 	| {
 			type: "messages_consumed";
 			messageIds: string[];
@@ -273,19 +259,14 @@ export function isPersistedByEmitEvent(event: Event): boolean {
 		case "assistant_text":
 		case "tool_call":
 		case "tool_result":
-		case "compacted_resume":
-		case "summarization_request":
 		case "budget_warning":
 		case "compact_marker":
-		case "orchestration_started":
-		case "orchestration_completed":
-		case "task_started":
+		case "agent_start":
+		case "agent_end":
 		case "error":
-		case "budget_exceeded":
 		case "clarification_requested":
 		case "clarification_answered":
 		case "compact_started":
-		case "agent_stopped":
 		case "messages_consumed":
 		case "fork_marker":
 		case "done_notified":
@@ -336,11 +317,7 @@ function formatBodyForAI(body: QueueMessage): string {
 		case "task_message": {
 			const titleAttr = body.title ? ` title="${body.title}"` : "";
 			const replyAttr = body.requestReply ? ' requestReply="true"' : "";
-			const tag = `<task_message from_task="${body.fromTaskId}" task_name="${body.fromTitle}"${titleAttr}${replyAttr}>${body.content}</task_message>`;
-			if (body.header) {
-				return `${body.header}\n\n${tag}`;
-			}
-			return tag;
+			return `<task_message from_task="${body.fromTaskId}" task_name="${body.fromTitle}"${titleAttr}${replyAttr}>${body.content}</task_message>`;
 		}
 		case "cross_project":
 			return `<cross_project from="${body.fromProjectName}" projectId="${body.fromProjectId}">${body.content}</cross_project>`;
@@ -351,9 +328,10 @@ function formatBodyForAI(body: QueueMessage): string {
 		case "compact":
 			return "Manual compaction requested";
 		case "user":
-			if (body.header) {
-				return `${body.header}\n\n${body.content}`;
-			}
+			return body.content;
+		case "work_context":
+			return body.content;
+		case "compacted_resume":
 			return body.content;
 		default:
 			return "";

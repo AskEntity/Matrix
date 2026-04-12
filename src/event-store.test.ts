@@ -143,13 +143,12 @@ describe("EventStore", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "checkpoint text",
 				savedTokens: 5000,
 				taskId: "test",
 				ts: 2000,
 			},
 			{
-				type: "compacted_resume",
+				type: "assistant_text",
 				content: "checkpoint text",
 				taskId: "test",
 				ts: 2001,
@@ -166,7 +165,7 @@ describe("EventStore", () => {
 		const active = store.readActive("s1");
 		expect(active).toEqual([
 			{
-				type: "compacted_resume",
+				type: "assistant_text",
 				content: "checkpoint text",
 				taskId: "test",
 				ts: 2001,
@@ -191,7 +190,6 @@ describe("EventStore", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "first",
 				savedTokens: 1000,
 				taskId: "test",
 				ts: 2000,
@@ -205,13 +203,12 @@ describe("EventStore", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "second",
 				savedTokens: 2000,
 				taskId: "test",
 				ts: 3000,
 			},
 			{
-				type: "compacted_resume",
+				type: "assistant_text",
 				content: "second checkpoint",
 				taskId: "test",
 				ts: 3001,
@@ -222,7 +219,7 @@ describe("EventStore", () => {
 		const active = store.readActive("s1");
 		expect(active).toEqual([
 			{
-				type: "compacted_resume",
+				type: "assistant_text",
 				content: "second checkpoint",
 				taskId: "test",
 				ts: 3001,
@@ -270,7 +267,6 @@ describe("EventStore", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "checkpoint text",
 				savedTokens: 5000,
 				taskId: "test",
 				ts: 2000,
@@ -289,7 +285,6 @@ describe("EventStore", () => {
 		expect(result.events).toEqual([
 			{
 				type: "compact_marker",
-				checkpoint: "checkpoint text",
 				savedTokens: 5000,
 				taskId: "test",
 				ts: 2000,
@@ -314,7 +309,6 @@ describe("EventStore", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "first",
 				savedTokens: 1000,
 				taskId: "test",
 				ts: 2000,
@@ -328,7 +322,6 @@ describe("EventStore", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "second",
 				savedTokens: 2000,
 				taskId: "test",
 				ts: 3000,
@@ -347,7 +340,6 @@ describe("EventStore", () => {
 		expect(result.events).toEqual([
 			{
 				type: "compact_marker",
-				checkpoint: "second",
 				savedTokens: 2000,
 				taskId: "test",
 				ts: 3000,
@@ -365,7 +357,6 @@ describe("EventStore", () => {
 		const events: Event[] = [
 			{
 				type: "compact_marker",
-				checkpoint: "start",
 				savedTokens: 100,
 				taskId: "test",
 				ts: 1000,
@@ -464,7 +455,6 @@ describe("EventStore", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "child compacted",
 				savedTokens: 1000,
 				taskId: "child-id",
 				ts: 3000,
@@ -483,7 +473,6 @@ describe("EventStore", () => {
 		expect(result.events).toEqual([
 			{
 				type: "compact_marker",
-				checkpoint: "child compacted",
 				savedTokens: 1000,
 				taskId: "child-id",
 				ts: 3000,
@@ -516,7 +505,6 @@ describe("EventStore", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "cp",
 				savedTokens: 500,
 				taskId: "test",
 				ts: 3000,
@@ -707,13 +695,12 @@ describe("EventStore", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "checkpoint",
 				savedTokens: 5000,
 				taskId: "source",
 				ts: 2000,
 			},
 			{
-				type: "compacted_resume",
+				type: "assistant_text",
 				content: "checkpoint",
 				taskId: "source",
 				ts: 2001,
@@ -734,7 +721,7 @@ describe("EventStore", () => {
 		const targetEvents = store.read("target");
 		// 2 events + synthetic tool_call + synthetic tool_result + fork_marker
 		expect(targetEvents).toHaveLength(5);
-		expect(targetEvents[0]?.type).toBe("compacted_resume");
+		expect(targetEvents[0]?.type).toBe("assistant_text");
 		expect(targetEvents[1]?.type).toBe("assistant_text");
 		expect(targetEvents[2]?.type).toBe("tool_call");
 		expect(targetEvents[3]?.type).toBe("tool_result");
@@ -778,7 +765,6 @@ describe("EventStore", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "cp",
 				savedTokens: 100,
 				taskId: "source",
 				ts: 2000,
@@ -846,7 +832,8 @@ describe("EventStore", () => {
 		// Simulate the reset_task race: writes are enqueued, then clear() is called.
 		// The pending writes must NOT re-create the file after deletion.
 		const event: Event = {
-			type: "agent_stopped",
+			type: "agent_end",
+			reason: "stopped",
 			taskId: "race-test",
 			ts: 1000,
 		};
@@ -869,12 +856,13 @@ describe("EventStore", () => {
 	test("clear then new write: new write succeeds", async () => {
 		// After clear, new writes (from a new agent session) should work normally.
 		const oldEvent: Event = {
-			type: "agent_stopped",
+			type: "agent_end",
+			reason: "stopped",
 			taskId: "s1",
 			ts: 1000,
 		};
 		const newEvent: Event = {
-			type: "orchestration_started",
+			type: "agent_start",
 			taskId: "s1",
 			ts: 2000,
 		} as Event;
@@ -892,7 +880,7 @@ describe("EventStore", () => {
 		expect(store.has("s1")).toBe(true);
 		const events = store.read("s1");
 		expect(events).toHaveLength(1);
-		expect(events[0]?.type).toBe("orchestration_started");
+		expect(events[0]?.type).toBe("agent_start");
 	});
 
 	test("double clear: second clear is safe even with no writes", async () => {
@@ -915,10 +903,20 @@ describe("EventStore", () => {
 	});
 
 	test("clear between appendBatch calls: only post-clear batch survives", async () => {
-		const ev1: Event = { type: "agent_stopped", taskId: "ab", ts: 1 };
-		const ev2: Event = { type: "agent_stopped", taskId: "ab", ts: 2 };
+		const ev1: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "ab",
+			ts: 1,
+		};
+		const ev2: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "ab",
+			ts: 2,
+		};
 		const ev3: Event = {
-			type: "orchestration_started",
+			type: "agent_start",
 			taskId: "ab",
 			ts: 3,
 		} as Event;
@@ -938,7 +936,12 @@ describe("EventStore", () => {
 	});
 
 	test("interleaved append-clear-append-clear: final state is empty", async () => {
-		const event: Event = { type: "agent_stopped", taskId: "ic", ts: 1 };
+		const event: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "ic",
+			ts: 1,
+		};
 
 		store.append("ic", event);
 		store.clear("ic");
@@ -950,8 +953,18 @@ describe("EventStore", () => {
 	});
 
 	test("clear does not affect other sessions", async () => {
-		const ev1: Event = { type: "agent_stopped", taskId: "s1", ts: 1 };
-		const ev2: Event = { type: "agent_stopped", taskId: "s2", ts: 2 };
+		const ev1: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "s1",
+			ts: 1,
+		};
+		const ev2: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "s2",
+			ts: 2,
+		};
 
 		await store.append("s1", ev1);
 		await store.append("s2", ev2);

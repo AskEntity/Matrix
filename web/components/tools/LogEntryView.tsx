@@ -117,7 +117,6 @@ export const LogEntryView = memo(function LogEntryView({
 	onProjectNavigate?: (projectId: string) => void;
 	showCacheBadges?: boolean;
 }) {
-	const [expanded, setExpanded] = useState(false);
 	const [movingToBg, setMovingToBg] = useState(false);
 	const taskLabel = null;
 
@@ -153,19 +152,7 @@ export const LogEntryView = memo(function LogEntryView({
 				<div className="mxd-compact-hint">{t("compact.notVisible")}</div>
 				<div className="mxd-compact-bar">
 					<span className="mxd-compact-label">◈ {displayText}</span>
-					{entry.checkpoint && (
-						<button
-							type="button"
-							className="mxd-compact-toggle"
-							onClick={() => setExpanded(!expanded)}
-						>
-							{expanded ? t("compact.collapse") : t("compact.checkpoint")}
-						</button>
-					)}
 				</div>
-				{expanded && entry.checkpoint && (
-					<pre className="mxd-compact-checkpoint">{entry.checkpoint}</pre>
-				)}
 			</div>
 		);
 	}
@@ -361,36 +348,7 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
-	// task_started — lifecycle-style plain text row, task name clickable
-	if (entry.type === "task_started") {
-		const startedTaskId = entry.taskId;
-		const canNavigate = startedTaskId && onTaskNavigate;
-		return (
-			<div
-				className="mxd-lmxd-entry mxd-event-lifecycle"
-				data-entry-id={String(entry.id)}
-			>
-				<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
-				<div className="mxd-lmxd-body">
-					<span className="mxd-lmxd-text">
-						{`▶ ${t("lifecycle.taskStarted")} `}
-						{canNavigate ? (
-							// biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate
-							// biome-ignore lint/a11y/noStaticElementInteractions: clickable task name
-							<span
-								className="mxd-clickable-task-name"
-								onClick={() => onTaskNavigate(startedTaskId, String(entry.id))}
-							>
-								{entry.title}
-							</span>
-						) : (
-							entry.title
-						)}
-					</span>
-				</div>
-			</div>
-		);
-	}
+	// task_started removed — merged into agent_start event
 
 	// task_completed — styled card with green/red border, collapsible output
 	if (entry.type === "task_completed") {

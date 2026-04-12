@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { Hono } from "hono";
-import type { QueueImage, QueueMessage } from "../../message-queue.ts";
+import type { QueueImage } from "../../message-queue.ts";
 import {
 	createTaskMessage,
 	createTreeChange,
@@ -15,7 +15,7 @@ import {
 	TaskOperationError,
 	updateTaskOp,
 } from "../../task-operations.ts";
-import { buildTaskPrompt, slugify } from "../../task-utils.ts";
+import { slugify } from "../../task-utils.ts";
 import { cleanupSessionBackgroundProcesses } from "../../tools/index.ts";
 import { isTask } from "../../types.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
@@ -29,7 +29,7 @@ import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
 import {
 	getEventStore,
 	getTracker,
-	readProjectMemory,
+	// readProjectMemory removed — work_context hook handles context injection
 	stripEventForUI,
 } from "../helpers.ts";
 
@@ -324,18 +324,10 @@ export function registerTaskRoutes(
 			tracker.updateStatus(nodeId, "in_progress");
 			await tracker.save();
 
-			emitEvent(ctx, project.id, {
-				type: "task_started",
-				taskId: nodeId,
-				title: node.title,
-				ts: Date.now(),
-			});
 			broadcastTreeUpdate(ctx, project.id, tracker);
 			notifyParentOfContinue();
 
-			// Persist a message for the agent to drain — header has context
-			const memory = readProjectMemory(node.worktreePath ?? project.path);
-			const header = buildTaskPrompt(node, tracker, memory);
+			// Persist a message for the agent to drain — work_context injected by hook
 			const content = body.message
 				? body.message
 				: "Continue working. Pick up where you left off and complete the task.";
@@ -345,7 +337,6 @@ export function registerTaskRoutes(
 				taskAbove?.id ?? "",
 				taskAbove?.title ?? "User",
 				content,
-				{ header },
 			);
 			emitEvent(ctx, project.id, {
 				type: "message",
@@ -383,25 +374,15 @@ export function registerTaskRoutes(
 				tracker.updateStatus(nodeId, "in_progress");
 				await tracker.save();
 
-				emitEvent(ctx, project.id, {
-					type: "task_started",
-					taskId: nodeId,
-					title: node.title,
-					ts: Date.now(),
-				});
 				broadcastTreeUpdate(ctx, project.id, tracker);
 				notifyParentOfContinue();
 
-				const memory = readProjectMemory(project.path);
-				const updatedNode = tracker.getTask(nodeId);
-				const header = buildTaskPrompt(updatedNode ?? node, tracker, memory);
 				const content = body.message ?? "Start working on this task.";
 				const taskAbove2 = tracker.getTaskAbove(nodeId);
 				const continueMsg2 = createTaskMessage(
 					taskAbove2?.id ?? "",
 					taskAbove2?.title ?? "User",
 					content,
-					{ header },
 				);
 				emitEvent(ctx, project.id, {
 					type: "message",
@@ -570,44 +551,9 @@ export function registerTaskRoutes(
 		const tracker = await getTracker(ctx, project.id);
 		const node = tracker.getTask(nodeId);
 		const statusBeforeDelivery = node?.status;
-		const eventStore = getEventStore(ctx, project.id);
 
-		// Cold-start header: include memory.md context on first message to any node.
-		// Resume agents already have context from their JSONL session.
-		const isColdStart = !eventStore.has(nodeId);
-		let msg: QueueMessage;
-		if (isColdStart) {
-			const memory = readProjectMemory(node?.worktreePath ?? project.path);
-			const isRoot = nodeId === tracker.rootNodeId;
-			if (isRoot) {
-				// Root: memory.md + working dir
-				const header = memory
-					? `Working directory: ${project.path}\n\n# .mxd/memory.md (Preloaded, do not read again)\n${memory}`
-					: `Working directory: ${project.path}`;
-				msg = createUserMessage(content, {
-					images: body.images,
-					header,
-				});
-			} else {
-				// Child: task description + memory + siblings
-				const header = buildTaskPrompt(
-					node ?? {
-						id: nodeId,
-						title: nodeId,
-						description: "",
-						parentId: null,
-					},
-					tracker,
-					memory,
-				);
-				msg = createUserMessage(content, {
-					images: body.images,
-					header,
-				});
-			}
-		} else {
-			msg = createUserMessage(content, { images: body.images });
-		}
+		// No header needed — work_context is injected by enqueue hook on fresh sessions.
+		const msg = createUserMessage(content, { images: body.images });
 
 		// Single delivery path: JSONL persistence + queue delivery + auto-launch.
 		await deliverMessage(ctx, project, nodeId, msg, {

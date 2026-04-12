@@ -209,37 +209,10 @@ function taskCompleteText(
 }
 
 // ── Tests: onUserMessage callback ──
-// Called for message events WITHOUT id (rare — only compacted_resume, summarization_request, budget_warning).
+// compacted_resume and summarization_request tests removed — these event types
+// no longer exist. Content now flows through the message path as QueueMessage sources.
 
 describe("walker: onUserMessage callback", () => {
-	test("compacted_resume event renders as user message with string content", () => {
-		const events: Event[] = [
-			{
-				type: "compacted_resume",
-				content: "This is the checkpoint summary.",
-				taskId: "",
-				ts: 0,
-			},
-		];
-		const msgs = eventsToAnthropicMessages(events);
-		expect(msgs).toEqual([
-			{ role: "user", content: "This is the checkpoint summary." },
-		]);
-	});
-
-	test("summarization_request event renders as user message", () => {
-		const events: Event[] = [
-			{
-				type: "summarization_request",
-				instruction: "Summarize please.",
-				taskId: "",
-				ts: 0,
-			},
-		];
-		const msgs = eventsToAnthropicMessages(events);
-		expect(msgs).toEqual([{ role: "user", content: "Summarize please." }]);
-	});
-
 	test("budget_warning event renders as user message", () => {
 		const events: Event[] = [
 			{
@@ -1042,22 +1015,8 @@ describe("walker: onConsumedMessages — idle context (no tool_results)", () => 
 		]);
 	});
 
-	test("user message with header renders header+content", () => {
-		const events: Event[] = [
-			userMessageEvent("msg_01", "main content", {
-				ts: 0,
-				header: "header text here",
-			}),
-			messagesConsumedEvent(["msg_01"]),
-		];
-		const msgs = eventsToAnthropicMessages(events);
-		expect(msgs).toEqual([
-			{
-				role: "user",
-				content: userText(0, "main content", "header text here"),
-			},
-		]);
-	});
+	// "user message with header" test removed — header field deleted.
+	// Context is now delivered via separate work_context messages.
 });
 
 // ── Tests: end-to-end sequences (assistant turn + tool_result + queue) ──
@@ -1189,26 +1148,8 @@ describe("walker: full turn sequences", () => {
 		expect(content[1]?.text).toContain("</fork_marker>");
 	});
 
-	test("compacted_resume in middle of session rendered as user message", () => {
-		const events: Event[] = [
-			{
-				type: "compacted_resume",
-				content: "=== COMPACTED CHECKPOINT ===\nSummary here.",
-				taskId: "",
-				ts: 0,
-			},
-			assistantTextEvent("Continuing after compaction."),
-		];
-		const msgs = eventsToAnthropicMessages(events);
-		expect(msgs[0]).toEqual({
-			role: "user",
-			content: "=== COMPACTED CHECKPOINT ===\nSummary here.",
-		});
-		expect(msgs[1]).toEqual({
-			role: "assistant",
-			content: [{ type: "text", text: "Continuing after compaction." }],
-		});
-	});
+	// compacted_resume in middle test removed — event type no longer exists.
+	// Content now flows through message path with source: "compacted_resume".
 });
 
 // ── Tests: skipped events (ensure walker doesn't accidentally render them) ──
@@ -1234,7 +1175,6 @@ describe("walker: skipped events", () => {
 		const events: Event[] = [
 			{
 				type: "compact_marker",
-				checkpoint: "x",
 				savedTokens: 100,
 				taskId: "",
 				ts: 0,

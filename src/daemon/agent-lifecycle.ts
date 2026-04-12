@@ -18,6 +18,7 @@ import {
 	createClarifyResponse,
 	createTaskComplete,
 	createUserMessage,
+	createWorkContext,
 } from "../queue-message-factory.ts";
 import {
 	initResourceRegistry,
@@ -28,7 +29,7 @@ import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
 import { createAgentAuth } from "../tool-auth.ts";
 import { toToolDefinition } from "../tool-def.ts";
-import type { ToolDefinition } from "../tool-definition.ts";
+import { buildJsonTools, type ToolDefinition } from "../tool-definition.ts";
 import { MCP_SERVER_NAME } from "../tool-names.ts";
 import {
 	buildBuiltinToolDefs,
@@ -36,6 +37,7 @@ import {
 } from "../tools/index.ts";
 import { type AgentResult, isTask, type TaskSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
+import { buildWorkContextContent } from "../work-context.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
 import {
@@ -49,7 +51,6 @@ import {
 	getProjectProvider,
 	getTracker,
 	projectDebugDir,
-	readProjectMemory,
 	resolveProjectConfig,
 } from "./helpers.ts";
 
@@ -86,31 +87,7 @@ function findSessionConfig(events: Event[]): SessionConfigEvent | undefined {
 // Shared helpers — used by runAgentForNode
 // ---------------------------------------------------------------------------
 
-/**
- * Build a user message with pre-loaded context header.
- * Reads memory.md, constructs the header, generates a msgId, and returns
- * both the QueueMessage and the corresponding Event for broadcast.
- */
-function prepareAgentMessage(
-	projectPath: string,
-	taskId: string,
-	content: string,
-	images?: QueueImage[],
-): { msg: QueueMessage; event: Event } {
-	const memory = readProjectMemory(projectPath);
-	const header = memory
-		? `Working directory: ${projectPath}\n\n# .mxd/memory.md (Preloaded, do not read again)\n${memory}`
-		: `Working directory: ${projectPath}`;
-	const msg = createUserMessage(content, { images, header });
-	const event: Event = {
-		type: "message",
-		id: msg.id,
-		taskId,
-		body: msg,
-		ts: msg.ts,
-	};
-	return { msg, event };
-}
+// prepareAgentMessage removed — context header replaced by work_context hook on enqueue.
 
 /** Config + tools bundle produced by createAgentContext(). */
 interface AgentContextResult {
@@ -328,7 +305,7 @@ export async function stopAgent(
 	if (!rootNode?.session) return;
 
 	// Capture the root loop's traceId BEFORE clearing sessions — so the
-	// agent_stopped event below can be attributed to the run that was stopped.
+	// agent_end event below can be attributed to the run that was stopped.
 	const rootLoopTraceId = rootNode.session.loopTraceId;
 
 	// Stop ALL agents (root + children) via session on tracker nodes.
@@ -361,8 +338,9 @@ export async function stopAgent(
 	// when the provider loop is guaranteed dead.
 
 	emitEvent(ctx, projectId, {
-		type: "agent_stopped",
+		type: "agent_end",
 		taskId: rootNodeId,
+		reason: "stopped",
 		traceId: rootLoopTraceId,
 		ts: Date.now(),
 	});
@@ -390,7 +368,7 @@ export async function stopTask(
 	if (!node.session) return false;
 
 	// Capture the loop's traceId BEFORE clearing session — so the
-	// agent_stopped event below can be attributed to the run that was stopped.
+	// agent_end event below can be attributed to the run that was stopped.
 	const stoppedLoopTraceId = node.session.loopTraceId;
 
 	// Grab the loop promise BEFORE clearing session — once session is gone,
@@ -409,7 +387,7 @@ export async function stopTask(
 	cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
 	node.session = undefined;
 
-	// Await loop exit — ensures finally block (agent_stopped, MCP disconnect,
+	// Await loop exit — ensures finally block (agent_end, MCP disconnect,
 	// Phase 2 done) has completed before we return. Without this, callers
 	// (e.g., resetTask) that clear JSONL after stopTask would race with the
 	// loop's async cleanup writing events to the deleted JSONL.
@@ -424,8 +402,9 @@ export async function stopTask(
 	// Orphan detection runs at restart when the provider loop is fully dead.
 
 	emitEvent(ctx, projectId, {
-		type: "agent_stopped",
+		type: "agent_end",
 		taskId: nodeId,
+		reason: "stopped",
 		traceId: stoppedLoopTraceId,
 		ts: Date.now(),
 	});
@@ -589,17 +568,10 @@ export async function ensureChildAgentRunning(
 	tracker.updateStatus(nodeId, "in_progress");
 	await tracker.save();
 
-	emitEvent(ctx, project.id, {
-		type: "task_started",
-		taskId: nodeId,
-		title: node.title,
-		ts: Date.now(),
-	});
 	broadcastTreeUpdate(ctx, project.id, tracker);
 
 	// The real user/parent message is persisted to disk and will be delivered
-	// via queue drain (runChildCore loads persisted messages).
-	// The message's header field contains task context + working dir.
+	// via queue drain. work_context is injected by enqueue hook.
 	await runAgentForNode(ctx, project, tracker, nodeId, { model });
 }
 
@@ -785,6 +757,59 @@ export async function runAgentForNode(
 			}
 		}
 
+		// Wire before-first-message hook for work_context injection.
+		// Always set the hook — handles both fresh sessions AND post-compact
+		// re-arm (resetBeforeFirstMessage in provider-shared.ts compact flow).
+		childQueue.setBeforeFirstMessage(() => {
+			const content = buildWorkContextContent(agentCwd);
+			if (!content) return [];
+			return [createWorkContext(content)];
+		});
+		// Check if work_context is already in JSONL (resume case).
+		// If so, mark hook as fired to prevent re-injection.
+		const hasWorkContext = activeEvents.some(
+			(e) =>
+				e.type === "message" &&
+				e.body &&
+				typeof e.body === "object" &&
+				"source" in e.body &&
+				(e.body as { source: string }).source === "work_context",
+		);
+		if (hasWorkContext) {
+			childQueue.markBeforeFirstMessageFired();
+		}
+
+		// Emit session_config if not already present in JSONL.
+		const hasSessionConfig = activeEvents.some(
+			(e) => e.type === "session_config",
+		);
+		if (!hasSessionConfig) {
+			const jsonToolsForConfig = buildJsonTools(agentCtx.mcpToolDefs);
+			const sp = (() => {
+				if (isRoot && agentCtx.effectiveCfg.selfBootstrap) {
+					return buildSystemPrompt({ selfBootstrap: true });
+				}
+				if (isRoot && opts?.orchestratorSystemPrompt) {
+					return opts.orchestratorSystemPrompt;
+				}
+				return buildSystemPrompt();
+			})();
+			const configuredTtl = isRoot
+				? agentCtx.effectiveCfg.cacheTtl.root
+				: agentCtx.effectiveCfg.cacheTtl.child;
+			const cacheTtl: "1h" | undefined =
+				configuredTtl === "1h" ? "1h" : undefined;
+			emitEvent(ctx, project.id, {
+				type: "session_config",
+				tools: jsonToolsForConfig,
+				systemStable: sp.stable,
+				systemVariable: sp.variable,
+				...(cacheTtl ? { cacheTtl } : {}),
+				taskId: nodeId,
+				ts: Date.now(),
+			});
+		}
+
 		// Release launch lock. deliverMessage skips direct queue delivery while
 		// lock is held, so messages written during the lock window are in JSONL
 		// and were recovered above by findUnconsumedMessages.
@@ -806,7 +831,7 @@ export async function runAgentForNode(
 
 		// Notify UI that this agent is now active
 		emitEvent(ctx, project.id, {
-			type: "orchestration_started",
+			type: "agent_start",
 			taskId: nodeId,
 			resume: opts?.resume ?? eventStore.has(nodeId),
 			provider: agentCtx.provider.name,
@@ -916,49 +941,55 @@ export async function runAgentForNode(
 			tracker.updateCost(nodeId, agentResult.costUsd);
 		}
 
-		// Budget exceeded check
+		// Determine end reason
 		const updatedNode = tracker.getTask(nodeId);
-		if (updatedNode?.budgetUsd && updatedNode.costUsd > updatedNode.budgetUsd) {
-			emitEvent(ctx, project.id, {
-				type: "budget_exceeded",
-				taskId: nodeId,
-				title: node.title,
-				costUsd: updatedNode.costUsd,
-				budgetUsd: updatedNode.budgetUsd,
-				traceId: loopTraceId,
-				ts: Date.now(),
-			});
-		}
+		const budgetExceeded =
+			updatedNode?.budgetUsd &&
+			updatedNode.budgetUsd > 0 &&
+			updatedNode.costUsd > updatedNode.budgetUsd;
+		let endReason:
+			| "done_passed"
+			| "done_failed"
+			| "stopped"
+			| "budget_exceeded" =
+			agentResult.exitReason === "done_passed"
+				? "done_passed"
+				: agentResult.exitReason === "done_failed"
+					? "done_failed"
+					: "stopped";
+		if (budgetExceeded) endReason = "budget_exceeded";
 
-		// Root agent: emit orchestration_completed with aggregated costs
-		if (isRoot) {
-			const currentNode = tracker.getTask(nodeId);
-			const didPass = currentNode?.status === "verify";
-			const allTaskNodes = tracker.allNodes().filter(isTask);
-			const childNodes = allTaskNodes.filter(
-				(n) => n.id !== nodeId && n.costUsd > 0,
-			);
-			const childCostUsd = childNodes.reduce((sum, n) => sum + n.costUsd, 0);
-			const totalCostUsd = agentResult.costUsd + childCostUsd;
-			emitEvent(ctx, project.id, {
-				type: "orchestration_completed",
-				taskId: nodeId,
-				success: didPass,
+		// Build stats for agent_end
+		const allTaskNodes = tracker.allNodes().filter(isTask);
+		const childNodes = allTaskNodes.filter(
+			(n) => n.id !== nodeId && n.costUsd > 0,
+		);
+		const childCostUsd = childNodes.reduce((sum, n) => sum + n.costUsd, 0);
+		const totalCostUsd = agentResult.costUsd + childCostUsd;
+
+		emitEvent(ctx, project.id, {
+			type: "agent_end",
+			taskId: nodeId,
+			reason: endReason,
+			summary: agentResult.doneSummary,
+			stats: {
 				costUsd: totalCostUsd,
 				turns: agentResult.turns,
 				inputTokens: agentResult.inputTokens,
 				cacheCreationTokens: agentResult.cacheCreationTokens,
 				cacheReadTokens: agentResult.cacheReadTokens,
 				outputTokens: agentResult.outputTokens,
-				childCosts: {
-					totalCostUsd: childCostUsd,
-					totalTurns: 0,
-					taskCount: childNodes.length,
-				},
-				traceId: loopTraceId,
-				ts: Date.now(),
-			});
-		}
+				childCosts: isRoot
+					? {
+							totalCostUsd: childCostUsd,
+							totalTurns: 0,
+							taskCount: childNodes.length,
+						}
+					: undefined,
+			},
+			traceId: loopTraceId,
+			ts: Date.now(),
+		});
 
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
@@ -970,12 +1001,19 @@ export async function runAgentForNode(
 			!replacedNode?.session || replacedNode.session !== ownSession;
 		if (!wasReplaced) {
 			// Error = interrupted. Status stays in_progress — agent is resumable.
-			// No task_complete to parent. Just emit error event so UI knows what happened.
+			// No task_complete to parent. Emit agent_end with reason "error".
 			const errorMsg = e instanceof Error ? e.message : String(e);
 			emitEvent(ctx, project.id, {
 				type: "error",
 				taskId: nodeId,
 				message: `Agent error: ${errorMsg}`,
+				traceId: loopTraceId,
+				ts: Date.now(),
+			});
+			emitEvent(ctx, project.id, {
+				type: "agent_end",
+				taskId: nodeId,
+				reason: "error",
 				traceId: loopTraceId,
 				ts: Date.now(),
 			});
@@ -992,26 +1030,14 @@ export async function runAgentForNode(
 		// Only clear if this is still OUR session — a replacement agent
 		// may have already set a new session on the node.
 		const finalNode = tracker.getTask(nodeId);
-		const sessionWasReplaced =
-			!finalNode?.session || finalNode.session !== ownSession;
 		if (finalNode?.session && finalNode.session === ownSession) {
 			cleanupSessionBackgroundProcesses(finalNode.session.backgroundProcesses);
 			finalNode.session = undefined;
 		}
 		await mcpManager.disconnectAll();
 
-		// Only emit agent_stopped if this session wasn't replaced by a new one.
-		// When stopTask/stopAgent explicitly stops us, they already emitted
-		// agent_stopped. Emitting again would create a stale event that appears
-		// after the new session's orchestration_started.
-		if (!sessionWasReplaced) {
-			emitEvent(ctx, project.id, {
-				type: "agent_stopped",
-				taskId: nodeId,
-				traceId: loopTraceId,
-				ts: Date.now(),
-			});
-		}
+		// agent_end is emitted in the post-completion block above (for normal exits)
+		// or in the catch block (for errors). The finally block only handles cleanup.
 	}
 
 	// ── Phase 2 of two-phase done() ──
@@ -1118,14 +1144,9 @@ export async function handleInjectMessage(
 
 	const tracker = await getTracker(ctx, projectId);
 	const rootNodeId = tracker.rootNodeId;
-	const eventStore = getEventStore(ctx, projectId);
 
-	// Only include header (memory.md + working dir) on true cold start.
-	// Resume agents already have context from their JSONL session.
-	const shouldResume = eventStore.has(rootNodeId);
-	const msg = shouldResume
-		? createUserMessage(message, { images })
-		: prepareAgentMessage(project.path, rootNodeId, message, images).msg;
+	// No header needed — work_context is injected by enqueue hook on fresh sessions.
+	const msg = createUserMessage(message, { images });
 
 	// deliverMessage handles JSONL, queue delivery, and auto-launch (root + child).
 	await deliverMessage(ctx, project, rootNodeId, msg, {

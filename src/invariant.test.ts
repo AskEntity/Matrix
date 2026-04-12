@@ -254,13 +254,12 @@ describe("Invariant: Session Isolation", () => {
 				},
 				{
 					type: "compact_marker",
-					checkpoint: "child checkpoint",
 					savedTokens: 5000,
 					taskId: "child-task",
 					ts: 4000,
 				},
 				{
-					type: "compacted_resume",
+					type: "assistant_text",
 					content: "child checkpoint",
 					taskId: "child-task",
 					ts: 4001,
@@ -279,7 +278,7 @@ describe("Invariant: Session Isolation", () => {
 			// Should only have events after the compact_marker
 			expect(active).toEqual([
 				{
-					type: "compacted_resume",
+					type: "assistant_text",
 					content: "child checkpoint",
 					taskId: "child-task",
 					ts: 4001,
@@ -317,7 +316,6 @@ describe("Invariant: Compact Barrier Correctness", () => {
 				},
 				{
 					type: "compact_marker",
-					checkpoint: "cp1",
 					savedTokens: 1000,
 					taskId: "task-1",
 					ts: 2000,
@@ -394,7 +392,6 @@ describe("Invariant: Compact Barrier Correctness", () => {
 				},
 				{
 					type: "compact_marker",
-					checkpoint: "post-fork compact",
 					savedTokens: 2000,
 					taskId: "task-1",
 					ts: 4000,
@@ -447,7 +444,6 @@ describe("Invariant: Compact Barrier Correctness", () => {
 				},
 				{
 					type: "compact_marker",
-					checkpoint: "cp1",
 					savedTokens: 500,
 					taskId: "task-1",
 					ts: 2000,
@@ -460,7 +456,6 @@ describe("Invariant: Compact Barrier Correctness", () => {
 				},
 				{
 					type: "compact_marker",
-					checkpoint: "cp2",
 					savedTokens: 1000,
 					taskId: "task-1",
 					ts: 4000,
@@ -480,7 +475,6 @@ describe("Invariant: Compact Barrier Correctness", () => {
 			expect(result.hasOlderEvents).toBe(true);
 			expect(result.events[0]?.type).toBe("compact_marker");
 			if (result.events[0]?.type === "compact_marker") {
-				expect(result.events[0].checkpoint).toBe("cp2");
 			}
 			expect(result.events).toHaveLength(2);
 		} finally {
@@ -988,13 +982,12 @@ describe("Invariant: copySessionFrom Correctness", () => {
 				},
 				{
 					type: "compact_marker",
-					checkpoint: "checkpoint",
 					savedTokens: 3000,
 					taskId: "source",
 					ts: 2000,
 				},
 				{
-					type: "compacted_resume",
+					type: "assistant_text",
 					content: "checkpoint",
 					taskId: "source",
 					ts: 2001,

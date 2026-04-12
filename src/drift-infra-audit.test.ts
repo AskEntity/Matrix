@@ -2103,21 +2103,5 @@ describe("Walker golden snapshots: eventsToAnthropicMessages", () => {
 		expect((messages[0] as any).content[0].name).toBe("mcp__mxd__bash");
 	});
 
-	test("compacted_resume event → user message", () => {
-		const events: Event[] = [
-			{
-				type: "compacted_resume",
-				content: "Here is your compacted context.",
-				taskId: "",
-				ts: FIXED_TS,
-			},
-		];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages).toEqual([
-			{
-				role: "user",
-				content: "Here is your compacted context.",
-			},
-		]);
-	});
+	// compacted_resume event test removed — event type no longer exists.
 });

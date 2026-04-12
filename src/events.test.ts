@@ -270,34 +270,9 @@ describe("eventsToAnthropicMessages", () => {
 		]);
 	});
 
-	test("converts compacted_resume", () => {
-		const events: Event[] = [
-			{
-				type: "compacted_resume",
-				content: "Checkpoint summary",
-				cwd: "/tmp",
-				taskId: "test",
-				ts: 1000,
-			},
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "Checkpoint summary" },
-		]);
-	});
-
-	test("converts summarization_request", () => {
-		const events: Event[] = [
-			{
-				type: "summarization_request",
-				instruction: "Summarize now",
-				taskId: "test",
-				ts: 1000,
-			},
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "Summarize now" },
-		]);
-	});
+	// compacted_resume and summarization_request walker tests removed —
+	// these event types no longer exist. Content now flows through message path
+	// with source: "compacted_resume" and source: "work_context".
 
 	test("converts budget_warning", () => {
 		const events: Event[] = [
@@ -541,7 +516,7 @@ describe("eventsToAnthropicMessages", () => {
 		]);
 	});
 
-	test("compact_marker is skipped", () => {
+	test("compact_marker is skipped, post-compact messages flow normally", () => {
 		const events: Event[] = [
 			{
 				type: "message",
@@ -552,22 +527,58 @@ describe("eventsToAnthropicMessages", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "summary",
 				savedTokens: 5000,
 				taskId: "test",
 				ts: 2000,
 			},
 			{
-				type: "compacted_resume",
-				content: "summary",
+				type: "message",
+				id: "wc1",
+				body: {
+					source: "work_context" as any,
+					id: "wc1",
+					ts: 2001,
+					content: "work context",
+				},
 				taskId: "test",
 				ts: 2001,
 			},
+			{
+				type: "message",
+				id: "cr1",
+				body: {
+					source: "compacted_resume" as any,
+					id: "cr1",
+					ts: 2002,
+					content: "summary",
+				},
+				taskId: "test",
+				ts: 2002,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["wc1", "cr1"],
+				taskId: "test",
+				ts: 2003,
+			},
 		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "[00:00:01] hello" },
-			{ role: "user", content: "summary" },
-		]);
+		const msgs = eventsToAnthropicMessages(events);
+		expect(msgs).toHaveLength(2);
+		expect(msgs[0]).toEqual({ role: "user", content: "[00:00:01] hello" });
+		// Both work_context and compacted_resume consumed together → one user message
+		expect(msgs[1]).toEqual({
+			role: "user",
+			content: expect.arrayContaining([
+				expect.objectContaining({
+					type: "text",
+					text: expect.stringContaining("work context"),
+				}),
+				expect.objectContaining({
+					type: "text",
+					text: expect.stringContaining("summary"),
+				}),
+			]),
+		});
 	});
 
 	test("full conversation: user → assistant+tools → results → assistant", () => {
@@ -646,7 +657,7 @@ describe("eventsToAnthropicMessages", () => {
 		});
 	});
 
-	test("compaction scenario: compacted_resume + continuation", () => {
+	test.skip("REMOVED: compaction scenario — compacted_resume event type removed", () => {
 		const events: Event[] = [
 			{
 				type: "compacted_resume",
@@ -654,13 +665,13 @@ describe("eventsToAnthropicMessages", () => {
 				cwd: "/tmp",
 				taskId: "test",
 				ts: 2000,
-			},
+			} as unknown as Event,
 			{
 				type: "assistant_text",
 				content: "Continuing from checkpoint.",
 				taskId: "test",
 				ts: 2001,
-			},
+			} as unknown as Event,
 			{
 				type: "tool_call",
 				tool: "bash",
@@ -1060,34 +1071,8 @@ describe("eventsToOpenAIMessages", () => {
 		]);
 	});
 
-	test("converts compacted_resume", () => {
-		const events: Event[] = [
-			{
-				type: "compacted_resume",
-				content: "Checkpoint summary",
-				cwd: "/tmp",
-				taskId: "test",
-				ts: 1000,
-			},
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "Checkpoint summary" },
-		]);
-	});
-
-	test("converts summarization_request", () => {
-		const events: Event[] = [
-			{
-				type: "summarization_request",
-				instruction: "Summarize now",
-				taskId: "test",
-				ts: 1000,
-			},
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "Summarize now" },
-		]);
-	});
+	// compacted_resume and summarization_request tests removed — event types no longer exist.
+	// Content flows through message path with source: "compacted_resume"/"work_context".
 
 	test("converts budget_warning", () => {
 		const events: Event[] = [
@@ -1311,7 +1296,7 @@ describe("eventsToOpenAIMessages", () => {
 		});
 	});
 
-	test("compact_marker is skipped", () => {
+	test("compact_marker is skipped, post-compact messages flow normally", () => {
 		const events: Event[] = [
 			{
 				type: "message",
@@ -1322,22 +1307,36 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "compact_marker",
-				checkpoint: "summary",
 				savedTokens: 5000,
 				taskId: "test",
 				ts: 2000,
 			},
 			{
-				type: "compacted_resume",
-				content: "summary",
+				type: "message",
+				id: "cr1",
+				body: {
+					source: "compacted_resume" as any,
+					id: "cr1",
+					ts: 2001,
+					content: "summary",
+				},
 				taskId: "test",
 				ts: 2001,
 			},
+			{
+				type: "messages_consumed",
+				messageIds: ["cr1"],
+				taskId: "test",
+				ts: 2002,
+			},
 		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "[00:00:01] hello" },
-			{ role: "user", content: "summary" },
-		]);
+		const msgs = eventsToOpenAIMessages(events);
+		expect(msgs[0]).toEqual({ role: "user", content: "[00:00:01] hello" });
+		// compacted_resume message consumed → becomes user content
+		expect(msgs[1]).toEqual({
+			role: "user",
+			content: expect.stringContaining("summary"),
+		});
 	});
 
 	test("full conversation: user → assistant+tools → results → assistant", () => {
@@ -1480,7 +1479,7 @@ describe("eventsToOpenAIMessages", () => {
 		expect(imgMsg.content).toHaveLength(4);
 	});
 
-	test("compaction scenario: compacted_resume + continuation", () => {
+	test.skip("REMOVED: compaction scenario — compacted_resume event type removed", () => {
 		const events: Event[] = [
 			{
 				type: "compacted_resume",
@@ -1488,13 +1487,13 @@ describe("eventsToOpenAIMessages", () => {
 				cwd: "/tmp",
 				taskId: "test",
 				ts: 2000,
-			},
+			} as unknown as Event,
 			{
 				type: "assistant_text",
 				content: "Continuing from checkpoint.",
 				taskId: "test",
 				ts: 2001,
-			},
+			} as unknown as Event,
 			{
 				type: "tool_call",
 				tool: "bash",
@@ -2387,7 +2386,7 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 	test("Anthropic converter skips lifecycle events without infinite loop", () => {
 		const events: Event[] = [
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				resume: false,
 				model: "test-model",
 				provider: "test-provider",
@@ -2402,9 +2401,9 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 				ts: 2,
 			} as Event,
 			{ type: "assistant_text", content: "hi", taskId: "test", ts: 3 } as Event,
-			{ type: "agent_stopped", taskId: "test", ts: 4 } as Event,
+			{ type: "agent_end", reason: "stopped", taskId: "test", ts: 4 } as Event,
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				resume: true,
 				model: "test-model",
 				provider: "test-provider",
@@ -2420,7 +2419,7 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 	test("OpenAI converter skips lifecycle events without infinite loop", () => {
 		const events: Event[] = [
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				resume: false,
 				model: "test-model",
 				provider: "test-provider",
@@ -2435,9 +2434,9 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 				ts: 2,
 			} as Event,
 			{ type: "assistant_text", content: "hi", taskId: "test", ts: 3 } as Event,
-			{ type: "agent_stopped", taskId: "test", ts: 4 } as Event,
+			{ type: "agent_end", reason: "stopped", taskId: "test", ts: 4 } as Event,
 			{
-				type: "orchestration_started",
+				type: "agent_start",
 				resume: true,
 				model: "test-model",
 				provider: "test-provider",
@@ -3478,19 +3477,14 @@ describe("isPersistedByEmitEvent", () => {
 			"assistant_text",
 			"tool_call",
 			"tool_result",
-			"compacted_resume",
-			"summarization_request",
 			"budget_warning",
 			"compact_marker",
-			"orchestration_started",
-			"orchestration_completed",
-			"task_started",
+			"agent_start",
+			"agent_end",
 			"error",
-			"budget_exceeded",
 			"clarification_requested",
 			"clarification_answered",
 			"compact_started",
-			"agent_stopped",
 			"messages_consumed",
 			"fork_marker",
 			"done_notified",
@@ -3528,19 +3522,19 @@ describe("isPersistedByEmitEvent", () => {
 			"agent_active",
 			"status",
 			"clarification_timeout",
-			"compacted_resume",
-			"summarization_request",
+			"compact_started",
+
 			"budget_warning",
 			"compact_marker",
-			"orchestration_started",
-			"orchestration_completed",
-			"task_started",
+			"agent_start",
+			"agent_end",
+			"agent_start",
 			"error",
-			"budget_exceeded",
+			"agent_end",
 			"clarification_requested",
 			"clarification_answered",
 			"compact_started",
-			"agent_stopped",
+			"agent_end",
 			"messages_consumed",
 			"done_notified",
 		];

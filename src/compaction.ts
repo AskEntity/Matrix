@@ -179,8 +179,13 @@ export function getCompactionThresholds(contextWindow: number): {
 }
 
 /**
- * Process compaction response: extract checkpoint, rebuild context, record events.
- * Returns the new user content and usage info, or null on failure.
+ * Process compaction response: extract checkpoint, emit empty compact_marker,
+ * return the checkpoint text for the caller to enqueue as a compacted_resume message.
+ *
+ * The caller (provider-shared.ts) is responsible for:
+ * 1. Emitting refreshed session_config after compact_marker
+ * 2. Enqueuing compacted_resume message (which triggers work_context hook)
+ * 3. Rebuilding messages[]
  */
 export async function* processCompaction(
 	responseText: string,
@@ -191,37 +196,25 @@ export async function* processCompaction(
 ): AsyncGenerator<
 	Event,
 	{
-		userContent: string;
+		checkpoint: string;
 		estimatedInputTokens: number;
 	} | null
 > {
 	const checkpoint = extractCheckpoint(responseText, cwd);
 
 	try {
-		const compactedContent = await buildCompactedContext(checkpoint, cwd);
-		const userContent = cwd
-			? `Working directory: ${cwd}\n\n${compactedContent}`
-			: compactedContent;
-		const postCompactChars = userContent.length;
+		const postCompactChars = checkpoint.length;
 		const estimatedPostCompactTokens = Math.floor(postCompactChars / 4);
 		const compactSavedTokens = Math.max(
 			0,
 			preCompactTokenCount - estimatedPostCompactTokens,
 		);
 
-		// Emit compact_marker + compacted_resume events
+		// Emit empty compact_marker (boundary only — content moves to compacted_resume message)
 		if (emit) {
 			emit({
 				type: "compact_marker",
-				checkpoint,
 				savedTokens: compactSavedTokens,
-				taskId: "",
-				ts: Date.now(),
-			});
-			emit({
-				type: "compacted_resume",
-				content: userContent,
-				cwd,
 				taskId: "",
 				ts: Date.now(),
 			});
@@ -240,13 +233,12 @@ export async function* processCompaction(
 		// compact_marker already emitted above — yield for consumer loop
 		yield {
 			type: "compact_marker",
-			checkpoint,
 			savedTokens: compactSavedTokens,
 			taskId: "",
 			ts: Date.now(),
 		};
 
-		return { userContent, estimatedInputTokens: estimatedPostCompactTokens };
+		return { checkpoint, estimatedInputTokens: estimatedPostCompactTokens };
 	} catch (e) {
 		const errEvt: Event = {
 			type: "error",
