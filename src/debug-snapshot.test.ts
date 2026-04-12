@@ -39,16 +39,15 @@ describe("writeDebugSnapshot", () => {
 			const path = join(dir, "task-001.last-messages.json");
 			writeDebugSnapshot(path, {
 				sessionId: "task-001",
-				model: "claude-opus-4-6",
-				messages: [{ role: "user", content: "hi" }],
 				provider: "anthropic",
+				body: { model: "claude-opus-4-6", messages: [{ role: "user", content: "hi" }] },
 			});
 			expect(existsSync(path)).toBe(true);
 			const data = JSON.parse(readFileSync(path, "utf-8")) as DebugSnapshot;
 			expect(data.sessionId).toBe("task-001");
-			expect(data.model).toBe("claude-opus-4-6");
+			expect(data.body.model).toBe("claude-opus-4-6");
 			expect(data.provider).toBe("anthropic");
-			expect(data.messages).toEqual([{ role: "user", content: "hi" }]);
+			expect(data.body.messages).toEqual([{ role: "user", content: "hi" }]);
 			expect(typeof data.ts).toBe("number");
 			expect(data.ts).toBeGreaterThan(0);
 		} finally {
@@ -62,9 +61,8 @@ describe("writeDebugSnapshot", () => {
 			const path = join(dir, "task-002.last-messages.json");
 			writeDebugSnapshot(path, {
 				sessionId: "task-002",
-				model: "claude-sonnet-4-6",
-				messages: [{ role: "user", content: "first" }],
 				provider: "anthropic",
+				body: { model: "claude-sonnet-4-6", messages: [{ role: "user", content: "first" }] },
 			});
 			const firstTs = (JSON.parse(readFileSync(path, "utf-8")) as DebugSnapshot)
 				.ts;
@@ -77,12 +75,11 @@ describe("writeDebugSnapshot", () => {
 
 			writeDebugSnapshot(path, {
 				sessionId: "task-002",
-				model: "claude-sonnet-4-6",
-				messages: [{ role: "user", content: "second" }],
 				provider: "anthropic",
+				body: { model: "claude-sonnet-4-6", messages: [{ role: "user", content: "second" }] },
 			});
 			const after = JSON.parse(readFileSync(path, "utf-8")) as DebugSnapshot;
-			expect(after.messages).toEqual([{ role: "user", content: "second" }]);
+			expect(after.body.messages).toEqual([{ role: "user", content: "second" }]);
 			expect(after.ts).toBeGreaterThan(firstTs);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
@@ -97,9 +94,8 @@ describe("writeDebugSnapshot", () => {
 			expect(existsSync(join(dir, "deep"))).toBe(false);
 			writeDebugSnapshot(path, {
 				sessionId: "task-003",
-				model: "m",
-				messages: [],
 				provider: "anthropic",
+				body: { model: "m", messages: [] },
 			});
 			expect(existsSync(path)).toBe(true);
 		} finally {
@@ -115,17 +111,13 @@ describe("writeDebugSnapshot", () => {
 			const tools = [{ name: "bash", description: "run shell" }];
 			writeDebugSnapshot(path, {
 				sessionId: "task-004",
-				model: "claude-opus-4-6",
-				system: systemBlocks,
-				tools,
-				cacheTtl: "1h",
-				messages: [{ role: "user", content: "hi" }],
 				provider: "anthropic",
+				body: { model: "claude-opus-4-6", system: systemBlocks, tools, cacheTtl: "1h", messages: [{ role: "user", content: "hi" }] },
 			});
 			const data = JSON.parse(readFileSync(path, "utf-8")) as DebugSnapshot;
-			expect(data.system).toEqual(systemBlocks);
-			expect(data.tools).toEqual(tools);
-			expect(data.cacheTtl).toBe("1h");
+			expect(data.body.system).toEqual(systemBlocks);
+			expect(data.body.tools).toEqual(tools);
+			expect(data.body.cacheTtl).toBe("1h");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -136,9 +128,8 @@ describe("writeDebugSnapshot", () => {
 		expect(() =>
 			writeDebugSnapshot(undefined, {
 				sessionId: "x",
-				model: "m",
-				messages: [],
 				provider: "anthropic",
+				body: { model: "m", messages: [] },
 			}),
 		).not.toThrow();
 	});
@@ -159,9 +150,8 @@ describe("writeDebugSnapshot", () => {
 			expect(() =>
 				writeDebugSnapshot(badPath, {
 					sessionId: "x",
-					model: "m",
-					messages: [],
 					provider: "anthropic",
+					body: { model: "m", messages: [] },
 				}),
 			).not.toThrow();
 		} finally {
@@ -202,12 +192,11 @@ describe("writeDebugSnapshot", () => {
 			];
 			writeDebugSnapshot(path, {
 				sessionId: "task-005",
-				model: "claude-opus-4-6",
-				messages,
 				provider: "anthropic",
+				body: { model: "claude-opus-4-6", messages },
 			});
 			const data = JSON.parse(readFileSync(path, "utf-8")) as DebugSnapshot;
-			expect(data.messages).toEqual(messages);
+			expect(data.body.messages).toEqual(messages);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -224,9 +213,8 @@ describe("writeDebugSnapshot v2: per-traceId nested layout", () => {
 
 			writeDebugSnapshot(path, {
 				sessionId: "task-abc",
-				model: "claude-opus-4-6",
-				messages: [{ role: "user", content: "hi" }],
 				provider: "anthropic",
+				body: { model: "claude-opus-4-6", messages: [{ role: "user", content: "hi" }] },
 			});
 
 			expect(existsSync(path)).toBe(true);
@@ -251,15 +239,13 @@ describe("writeDebugSnapshot v2: per-traceId nested layout", () => {
 
 			writeDebugSnapshot(join(taskDir, traceA, "last.json"), {
 				sessionId: "task-xyz",
-				model: "m",
-				messages: [{ run: 1 }],
 				provider: "anthropic",
+				body: { model: "m", messages: [{ run: 1 }] },
 			});
 			writeDebugSnapshot(join(taskDir, traceB, "last.json"), {
 				sessionId: "task-xyz",
-				model: "m",
-				messages: [{ run: 2 }],
 				provider: "anthropic",
+				body: { model: "m", messages: [{ run: 2 }] },
 			});
 
 			const subdirs = readdirSync(taskDir).sort();
@@ -270,8 +256,8 @@ describe("writeDebugSnapshot v2: per-traceId nested layout", () => {
 			const b = JSON.parse(
 				readFileSync(join(taskDir, traceB, "last.json"), "utf-8"),
 			) as DebugSnapshot;
-			expect(a.messages).toEqual([{ run: 1 }]);
-			expect(b.messages).toEqual([{ run: 2 }]);
+			expect(a.body.messages).toEqual([{ run: 1 }]);
+			expect(b.body.messages).toEqual([{ run: 2 }]);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

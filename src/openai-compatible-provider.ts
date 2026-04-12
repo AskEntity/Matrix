@@ -545,12 +545,8 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 			// Non-fatal; never blocks the API call.
 			writeDebugSnapshot(params.debugSnapshotPath, {
 				sessionId: params.sessionId ?? "",
-				model: params.model,
-				system: systemContent,
-				tools,
-				cacheTtl: params.cacheTtl,
-				messages: apiMessages,
 				provider: "openai",
+				body: { model: params.model, messages: apiMessages, tools, max_tokens: params.maxTokens },
 			});
 
 			const data = await callOpenAIAPI(
