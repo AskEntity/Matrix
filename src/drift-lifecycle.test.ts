@@ -2718,6 +2718,415 @@ describe("Drift: compaction lifecycle", () => {
 		expect(lastSystemText).not.toContain(BOGUS_VARIABLE);
 	}, 20000);
 
+	// ── Test 1: Full compact lifecycle with prefix validation ──
+	// Pre-seed bogus session_config → drive pre-compact cycles (frozen bogus prefix)
+	// → trigger compact (prefix resets) → drive post-compact cycles (fresh prefix)
+	// → restart (reconstruction from JSONL) → verify post-restart prefix extends
+	// the post-compact chain. enablePrefixValidation() is on throughout.
+	//
+	// WHY: proves that both pre-compact and post-compact halves independently
+	// maintain prefix consistency, and the compact transition is a clean reset
+	// (no cross-epoch drift). Previous tests only checked "are tools refreshed?"
+	// (Invariant A) and "are tools frozen?" (Invariant B), not "does the prefix
+	// chain remain valid across the transition?"
+	test("Full compact lifecycle: prefix valid pre-compact, post-compact, and post-restart", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Pre-seed bogus session_config so pre-compact uses frozen bogus tools/system
+		await seedBogusSessionConfig(ctx, rootNodeId);
+
+		// Drive 3 yield cycles to accumulate enough messages for compact (>4).
+		// After compact, do 2 more yield cycles to prove post-compact prefix
+		// grows correctly. Then restart and wake to prove reconstruction matches.
+		const instruction = JSON.stringify({
+			turns: [
+				// Pre-compact turns (3 yield cycles with frozen bogus config)
+				{
+					blocks: [
+						{ type: "text", text: "Pre-compact turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Pre-compact turn 2." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Pre-compact turn 3." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// Post-compact turn 1: first API call with refreshed tools/system
+				{
+					blocks: [
+						{ type: "text", text: "Post-compact turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// Post-compact turn 2: prefix must extend from post-compact turn 1
+				{
+					blocks: [
+						{ type: "text", text: "Post-compact turn 2." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// Post-compact turn 3: done
+				{
+					blocks: [
+						{ type: "text", text: "All done after compact." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "full compact lifecycle ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+
+		// Pre-compact cycles
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "pre-compact wake 1");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "pre-compact wake 2");
+		await waitForIdle(ctx);
+
+		// Verify pre-compact calls used bogus values (frozen)
+		const preCompactCount = ctx.mockAPI.getRequestCount();
+		expect(preCompactCount).toBeGreaterThan(0);
+		expect(ctx.mockAPI.getToolNames(0)).toContain(BOGUS_TOOL_ONE);
+
+		// Trigger compact
+		const compactRes = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/compact`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ nodeId: rootNodeId }),
+			},
+		);
+		expect(compactRes.status).toBe(200);
+
+		// Post-compact cycles (prefix validation ensures no drift within post-compact epoch)
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "post-compact wake 1");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "post-compact wake 2");
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Verify post-compact calls used real tools (refresh happened)
+		const postCompactCount = ctx.mockAPI.getRequestCount();
+		const lastToolNames = ctx.mockAPI.getToolNames(postCompactCount - 1);
+		expect(lastToolNames.some((n) => n.startsWith("mcp__mxd__"))).toBe(true);
+		expect(lastToolNames).not.toContain(BOGUS_TOOL_ONE);
+
+		// Restart — reconstruction from JSONL must produce same prefix as live
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+		await sendMessage(
+			ctx,
+			wakeDoneInstruction("full compact lifecycle restart ok"),
+		);
+		const status2 = await waitForDone(ctx);
+		expect(status2).toBe("verify");
+	}, 30000);
+
+	// ── Test 2: Post-compact session_config matches actual API call ──
+	// After compact, a session_config event is emitted declaring tools + system.
+	// The very next API call must send exactly those tools and system. If they
+	// don't match, the cache prefix identity is wrong — stored session_config
+	// would tell a future restart to use one set of values, but the API call
+	// actually used different ones.
+	test("Post-compact session_config event matches what API actually receives", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Pre-seed bogus session_config to make the transition visible
+		await seedBogusSessionConfig(ctx, rootNodeId);
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 2." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 3." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Done after compact." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "session_config match ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 1");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 2");
+		await waitForIdle(ctx);
+
+		// Trigger compact
+		const compactRes = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/compact`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ nodeId: rootNodeId }),
+			},
+		);
+		expect(compactRes.status).toBe(200);
+		await waitForDone(ctx);
+
+		// Read the post-compact session_config from JSONL (should be after compact_marker)
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const compactMarkerIdx = events.findLastIndex(
+			(e) => e.type === "compact_marker",
+		);
+		expect(compactMarkerIdx).toBeGreaterThan(-1);
+
+		const postCompactSessionConfig = events
+			.slice(compactMarkerIdx + 1)
+			.find((e) => e.type === "session_config") as
+			| {
+					type: "session_config";
+					tools: Array<{ name: string }>;
+					systemStable: string;
+					systemVariable: string;
+			  }
+			| undefined;
+		expect(postCompactSessionConfig).toBeTruthy();
+
+		// Find the first post-compact non-compaction API request
+		const history = ctx.mockAPI.getRequestHistory();
+		let postCompactRequestIdx = -1;
+		let seenCompaction = false;
+		for (let i = 0; i < history.length; i++) {
+			const req = history[i];
+			if (!req) continue;
+			// Check if this request is a compaction request
+			const lastUser = [...req.messages]
+				.reverse()
+				.find((m) => m.role === "user");
+			if (lastUser) {
+				const texts: string[] = [];
+				if (typeof lastUser.content === "string") {
+					texts.push(lastUser.content);
+				} else if (Array.isArray(lastUser.content)) {
+					for (const b of lastUser.content as Array<{
+						type: string;
+						text?: string;
+					}>) {
+						if (b.type === "text" && b.text) texts.push(b.text);
+					}
+				}
+				const combined = texts.join(" ");
+				if (
+					combined.includes("ENTIRE history") &&
+					combined.includes("<summary>")
+				) {
+					seenCompaction = true;
+					continue;
+				}
+			}
+			if (seenCompaction) {
+				postCompactRequestIdx = i;
+				break;
+			}
+		}
+		expect(postCompactRequestIdx).toBeGreaterThan(-1);
+
+		// Compare session_config tools with what was actually sent to API
+		const apiToolNames = ctx.mockAPI.getToolNames(postCompactRequestIdx);
+		if (!postCompactSessionConfig)
+			throw new Error("postCompactSessionConfig missing");
+		const configToolNames = postCompactSessionConfig.tools.map((t) => t.name);
+
+		// Same set of tools (order matters for cache, but we'll check sorted for robustness)
+		expect(apiToolNames.sort()).toEqual(configToolNames.sort());
+
+		// Compare session_config system with what was actually sent to API
+		const apiSystemText = ctx.mockAPI.getSystemText(postCompactRequestIdx);
+		expect(apiSystemText).toContain(postCompactSessionConfig.systemStable);
+		expect(apiSystemText).toContain(postCompactSessionConfig.systemVariable);
+
+		// Must NOT contain bogus values anymore
+		expect(apiSystemText).not.toContain(BOGUS_STABLE);
+		expect(apiToolNames).not.toContain(BOGUS_TOOL_ONE);
+	}, 20000);
+
+	// ── Test 3: Post-compact first API call's messages[0] matches compacted_resume ──
+	// After compaction, messages[] is rebuilt with a single user message containing
+	// the compacted summary. This must match the compacted_resume event in JSONL,
+	// because on restart the walker builds messages from JSONL events — if the live
+	// messages[0] differs from what the walker produces from compacted_resume,
+	// prefix cache misses occur.
+	test("Post-compact API call messages[0] matches compacted_resume event content", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 2." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 3." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Done." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "compacted_resume match ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 1");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 2");
+		await waitForIdle(ctx);
+
+		// Trigger compact
+		const compactRes = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/compact`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ nodeId: rootNodeId }),
+			},
+		);
+		expect(compactRes.status).toBe(200);
+		await waitForDone(ctx);
+
+		// Read compacted_resume event from JSONL
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const compactedResume = events.find((e) => e.type === "compacted_resume") as
+			| { type: "compacted_resume"; content: string; cwd?: string }
+			| undefined;
+		expect(compactedResume).toBeTruthy();
+
+		// Find the first post-compact non-compaction API request
+		const history = ctx.mockAPI.getRequestHistory();
+		let postCompactRequestIdx = -1;
+		let seenCompaction = false;
+		for (let i = 0; i < history.length; i++) {
+			const req = history[i];
+			if (!req) continue;
+			const lastUser = [...req.messages]
+				.reverse()
+				.find((m) => m.role === "user");
+			if (lastUser) {
+				const texts: string[] = [];
+				if (typeof lastUser.content === "string") {
+					texts.push(lastUser.content);
+				} else if (Array.isArray(lastUser.content)) {
+					for (const b of lastUser.content as Array<{
+						type: string;
+						text?: string;
+					}>) {
+						if (b.type === "text" && b.text) texts.push(b.text);
+					}
+				}
+				const combined = texts.join(" ");
+				if (
+					combined.includes("ENTIRE history") &&
+					combined.includes("<summary>")
+				) {
+					seenCompaction = true;
+					continue;
+				}
+			}
+			if (seenCompaction) {
+				postCompactRequestIdx = i;
+				break;
+			}
+		}
+		expect(postCompactRequestIdx).toBeGreaterThan(-1);
+
+		// The first post-compact API call should have messages[0] as user role
+		// containing the compacted_resume content
+		const postCompactRequest = history[postCompactRequestIdx];
+		expect(postCompactRequest).toBeTruthy();
+		expect(postCompactRequest?.messages.length).toBeGreaterThanOrEqual(1);
+		const firstMsg = postCompactRequest?.messages[0];
+		expect(firstMsg).toBeTruthy();
+		expect(firstMsg?.role).toBe("user");
+
+		// Extract the text content from messages[0]
+		let msgText = "";
+		if (firstMsg && typeof firstMsg.content === "string") {
+			msgText = firstMsg.content;
+		} else if (firstMsg && Array.isArray(firstMsg.content)) {
+			for (const b of firstMsg.content as Array<{
+				type: string;
+				text?: string;
+			}>) {
+				if (b.type === "text" && b.text) msgText += b.text;
+			}
+		}
+
+		// The compacted_resume content should appear in the first message.
+		// The live path sets messages[0] = { role: "user", content: compactResult.userContent }
+		// which includes the compacted_resume text. The walker rebuilds from the
+		// compacted_resume event. Both must produce the same content.
+		if (!compactedResume) throw new Error("compactedResume missing");
+		expect(msgText).toContain(compactedResume.content);
+
+		// Also verify the cwd is included if present
+		if (compactedResume.cwd) {
+			expect(msgText).toContain(compactedResume.cwd);
+		}
+	}, 20000);
+
 	// Related class of bug (not yet fixed): compact arrives WITH regular messages
 	// in the same drain. When handleImplicitYield returns compactOnly=false BUT
 	// manualCompactRequested=true (queue had [regular_msg, compact_msg]), the yield
