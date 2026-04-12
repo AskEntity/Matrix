@@ -1846,7 +1846,7 @@ describe("done tool", () => {
 	}
 
 	async function invokeDoneTool(
-		taskId: string | null,
+		taskId: string,
 		args: { status: "passed" | "failed"; summary: string },
 	) {
 		resetResourceRegistry();

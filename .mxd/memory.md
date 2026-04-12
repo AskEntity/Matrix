@@ -883,3 +883,40 @@ Lesson: not every "the tool could be nicer to bad input" is a bug. Some inputs s
 
 ### JSONL inputTokens field semantics
 `inputTokens` in usage events = `totalContextTokens` = Anthropic's `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. NOT just the raw `input_tokens` field. This is intentional (set at provider-shared.ts:1469).
+
+## Stateless HTTP MCP Endpoint
+
+POST `/mcp` — MCP Streamable HTTP transport for external clients (e.g., Claude Code). Stateless: no attach_to, no session state.
+
+### ToolDef Availability
+Required field `availability: "internal" | "external" | "both"` on every ToolDef. No default — each tool explicitly declares who can call it.
+- `"internal"`: 25 orchestrator tools + 7 builtin tools
+- `"both"`: list_projects, get_tree, get_task, get_logs
+- `"external"`: send_user_message, yield_external
+
+External endpoint filters by `availability !== "internal"`. Internal agent pipeline unchanged.
+
+### External Schema (buildExternalShape)
+Bind params become required explicit params for external callers. Simple and mechanical — no special cases by `from` field. External clients provide projectId explicitly; taskId bind params become required too.
+
+### get_tree "(you)" Marker
+`taskId` removed from get_tree's params entirely. Handler uses `checkPermission(auth, "human", {})` to skip marking for external callers, and `checkPermission(auth, "exact", { taskId: nodeId })` for agent identity. No data extracted from auth — only permission checks.
+
+### Auth Changes
+- **`human` permission mode**: `checkPermission(auth, "human", {})` returns true for human auth, false for agent auth. Used by get_tree to skip "(you)" marker.
+- **`getBindValues` deleted**: replaced by `resolveBindParam(auth, from)` which resolves one param at a time and asserts on human auth (framework-only, not for handlers).
+- **Auth internal storage simplified**: private `Symbol("auth-internal")` as property key instead of WeakMap + branded type.
+- **`createAgentAuth` taskId**: `string` not `string | null`. Root orchestrator always has `tracker.rootNodeId`.
+
+### External-Only Tools
+- **send_user_message(projectId, taskId, content)**: delivers user message via `R.deliverMessage`. Returns cursor (read BEFORE delivery for stable snapshot).
+- **yield_external(projectId, taskId, timeoutMs?)**: subscribes to events via `subscribeToEvents`, waits for wake signals (agent_idle, done_notified, agent_stopped, orchestration_completed). Returns `{ reason, taskStatus, cursor }`.
+- **get_logs begin/end**: cursor range pagination. `begin` (inclusive), `end` (exclusive). Returns `{ events, cursor (total count), hasMore }`.
+
+### Workflow: send → yield → get_logs
+1. `send_user_message` → returns `{ cursor: N }` (position before message)
+2. `yield_external` → blocks until agent pauses → returns `{ cursor: M, reason, taskStatus }`
+3. `get_logs(begin=N, end=M)` → returns events from N to M (the agent's response)
+
+### Folder Tool Constants
+`TOOL_CREATE_FOLDER`, `TOOL_DELETE_FOLDER`, `TOOL_RENAME_FOLDER`, `TOOL_GET_LOGS` added to `src/tool-names.ts`. `web/event-display.ts` uses constants instead of string literals.
