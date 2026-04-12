@@ -9465,6 +9465,97 @@ describe("Integration: stopTask lifecycle", () => {
 	}, 15000);
 });
 
+// ── child done() → shutdown must not deadlock ──
+
+describe("Integration: child done + shutdown no deadlock", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("child done() + immediate shutdown completes without hanging", async () => {
+		// Regression: child done() → Phase 2 (task_complete delivery) → loopPromise
+		// not yet resolved → shutdown() awaits loopPromise → deadlock if Phase 2
+		// awaits something that shutdown already cleaned up.
+		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
+
+		// Parent: create child → send_message → yield (wait for task_complete) → done
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "child done" },
+				},
+			],
+		});
+
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								parentId: "$rootId",
+								title: "Deadlock Test Child",
+								description: "Test child for deadlock scenario",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: { childId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					// After child done: parent receives task_complete
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "parent done after child" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, parentInstruction);
+
+		// Must complete within timeout — deadlock = timeout
+		const status = await waitForDone(ctx, 20000);
+		expect(status).toBe("verify");
+
+		// Shutdown must also complete without hanging
+		const shutdownPromise = ctx.app.shutdown();
+		const timeout = new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 5000));
+		const result = await Promise.race([shutdownPromise.then(() => "ok" as const), timeout]);
+		expect(result).toBe("ok");
+	}, 30000);
+});
+
 // ── deliverMessage shouldResume ordering ──
 
 describe("deliverMessage: shouldResume ordering invariant", () => {
