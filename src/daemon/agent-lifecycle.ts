@@ -18,12 +18,14 @@ import {
 	createClarifyResponse,
 	createTaskComplete,
 	createUserMessage,
+	createWorkContext,
 } from "../queue-message-factory.ts";
 import {
 	initResourceRegistry,
 	registerSideEffects,
 } from "../resource-registry.ts";
 import { buildSystemPrompt, type SystemPrompt } from "../system-prompts.ts";
+import { buildWorkContextContent } from "../work-context.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
 import { createAgentAuth } from "../tool-auth.ts";
@@ -49,7 +51,7 @@ import {
 	getProjectProvider,
 	getTracker,
 	projectDebugDir,
-	// readProjectMemory — used by work_context hook when wired up
+
 	resolveProjectConfig,
 } from "./helpers.ts";
 
@@ -706,6 +708,21 @@ export async function runAgentForNode(
 		// concurrent deliverMessage calls (during the lock window) are on disk.
 		const eventStore = getEventStore(ctx, project.id);
 		await eventStore.flushSession(nodeId);
+
+		// Wire before-first-message hook for work_context injection.
+		// Always set the hook — handles both fresh sessions AND post-compact
+		// re-arm (resetBeforeFirstMessage in provider-shared.ts compact flow).
+		childQueue.setBeforeFirstMessage(() => {
+			const content = buildWorkContextContent(agentCwd);
+			if (!content) return [];
+			return [createWorkContext(content)];
+		});
+		if (eventStore.has(nodeId)) {
+			// Resume: work_context already in JSONL from first run.
+			// Mark hook as fired so it doesn't re-inject on first queue message.
+			// It will re-arm after compact via resetBeforeFirstMessage().
+			childQueue.markBeforeFirstMessageFired();
+		}
 
 		// Read active events for resume and repair JSONL if needed
 		let activeEvents = eventStore.has(nodeId)

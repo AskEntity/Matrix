@@ -26,7 +26,6 @@ import { type Event, hasPendingImplicitYield } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import {
 	createCompactedResume,
-	createWorkContext,
 } from "./queue-message-factory.ts";
 import {
 	drainQueueAtCancellationPoint,
@@ -1213,19 +1212,16 @@ export async function* runProviderLoop(
 						emit(sessionConfigEvt);
 					}
 
-					// Enqueue work_context + compacted_resume as messages.
-					// These are persisted to JSONL via onPersist, and the walker
-					// reconstructs them on restart. Live path builds messages[]
-					// directly from their content to match walker output.
-					const workCtxContent = buildWorkContextContent(cwd);
-					const workCtxMsg = createWorkContext(workCtxContent);
-					const resumeMsg = createCompactedResume(compactResult.checkpoint);
-					// Persist via queue (onPersist writes to JSONL)
+					// Re-arm the before-first-message hook so work_context is
+					// injected before the compacted_resume message. Then enqueue
+					// compacted_resume — the hook fires first, injecting work_context.
 					if (queue) {
-						queue.enqueue(workCtxMsg);
+						queue.resetBeforeFirstMessage();
+						const resumeMsg = createCompactedResume(compactResult.checkpoint);
 						queue.enqueue(resumeMsg);
 					}
 					// Build the user message for messages[] from both contents
+					const workCtxContent = buildWorkContextContent(cwd);
 					messages.push({
 						role: "user" as const,
 						content: `${workCtxContent}\n\n## Checkpoint Summary\n\n${compactResult.checkpoint}`,
