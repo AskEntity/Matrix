@@ -738,6 +738,7 @@ export const LogEntryView = memo(function LogEntryView({
 	// thinking — collapsible gray block showing model's reasoning
 	if (entry.type === "thinking") {
 		const thinkingText = (entry as LogEntry & { thinking: string }).thinking;
+		const isRedacted = !thinkingText;
 		return (
 			<div
 				className="mxd-lmxd-entry mxd-event-thinking"
@@ -753,14 +754,16 @@ export const LogEntryView = memo(function LogEntryView({
 					</span>
 				)}
 				<Card
-					title="Thinking"
+					title={isRedacted ? "Thinking (redacted)" : "Thinking"}
 					className="mxd-tool-card-thinking"
-					defaultExpanded
-					collapsible={false}
+					defaultExpanded={!isRedacted}
+					collapsible={!isRedacted}
 				>
-					<div className="mxd-tool-card-body">
-						<div className="mxd-thinking-content">{thinkingText}</div>
-					</div>
+					{!isRedacted && (
+						<div className="mxd-tool-card-body">
+							<div className="mxd-thinking-content">{thinkingText}</div>
+						</div>
+					)}
 				</Card>
 			</div>
 		);
