@@ -112,10 +112,22 @@ describe("Bug 3: traceId semantics — run-bound vs external", () => {
 		}
 	}, 30000);
 
-	test("deliverMessage-sourced message events (external) have no traceId", async () => {
+	test("deliverMessage-sourced message events while agent is running carry the run's traceId (onPersist path)", async () => {
+		// Semantic: persistence happens through the running queue's onPersist
+		// callback → the CURRENT run performed the JSONL write → it carries the
+		// run's traceId. Content origin (task_message) doesn't matter — the
+		// A/B distinction is persistence timestamp, not semantic origin.
 		ctx = await setupEmissionTestContext();
-		await startAgent(ctx, twoTurnInstruction("ext no trace ok"));
+		await startAgent(ctx, twoTurnInstruction("ext trace ok"));
 		await waitForIdle(ctx);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const before = await readSessionEvents(ctx, tracker.rootNodeId);
+		const started = before.find((e) => e.type === "orchestration_started") as
+			| (Event & { traceId?: string })
+			| undefined;
+		const expectedTrace = started?.traceId;
+		expect(expectedTrace).toBeDefined();
 
 		const injected = createTaskMessage("01EXT000001", "Peer", "external msg");
 		await injectMessage(ctx, injected);
@@ -123,16 +135,21 @@ describe("Bug 3: traceId semantics — run-bound vs external", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
 
-		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const events = await readSessionEvents(ctx, tracker.rootNodeId);
 		const msg = events.find(
 			(e) => e.type === "message" && (e as { id?: string }).id === injected.id,
 		) as (Event & { traceId?: string }) | undefined;
 		expect(msg).toBeDefined();
-		expect(msg?.traceId).toBeUndefined();
+		expect(msg?.traceId).toBe(expectedTrace as string);
 	}, 30000);
 
-	test("user-source deliverMessage (via HTTP POST) also has no traceId", async () => {
+	test("user-source deliverMessage arriving before the loop exists (cold-start) has no traceId", async () => {
+		// Semantic: the first prompt hits the task BEFORE any run has started.
+		// deliverMessage takes the direct-emitEvent fallback (queue unavailable)
+		// → no run to attribute the write to → no traceId. After the agent
+		// starts, that same message will be recovered by findUnconsumedMessages
+		// and replayed into the queue with `replay: true`, skipping onPersist
+		// — so the JSONL entry stays without traceId.
 		ctx = await setupEmissionTestContext();
 		await startAgent(ctx, singleTurnDoneInstruction("http no trace ok"));
 		const status = await waitForDone(ctx);

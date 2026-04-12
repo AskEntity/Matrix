@@ -270,6 +270,10 @@ describe("Bug 1: deliverMessage byte-identical across paths", () => {
 	});
 
 	test("message body structurally identical whether agent is running or not", async () => {
+		// Both paths (direct-emit fallback when agent not running, onPersist
+		// when agent is running) produce a `message` event with an identical
+		// body shape. Top-level envelope differs only in traceId: the onPersist
+		// path is attributable to the running loop, the direct-emit path is not.
 		ctx = await setupEmissionTestContext();
 
 		// Path A: deliverMessage while agent NOT running (quiet skips auto-launch)
@@ -312,9 +316,13 @@ describe("Bug 1: deliverMessage byte-identical across paths", () => {
 		);
 		expect(pathBEvent).toBeDefined();
 
-		// Same top-level keys
-		const keysA = Object.keys(pathAEvent as object).sort();
-		const keysB = Object.keys(pathBEvent as object).sort();
+		// Same top-level keys aside from traceId (the only semantic difference).
+		const keysA = Object.keys(pathAEvent as object)
+			.filter((k) => k !== "traceId")
+			.sort();
+		const keysB = Object.keys(pathBEvent as object)
+			.filter((k) => k !== "traceId")
+			.sort();
 		expect(keysA).toEqual(keysB);
 
 		// Same body keys
@@ -322,9 +330,12 @@ describe("Bug 1: deliverMessage byte-identical across paths", () => {
 		const bodyB = (pathBEvent as { body: Record<string, unknown> }).body;
 		expect(Object.keys(bodyA).sort()).toEqual(Object.keys(bodyB).sort());
 
-		// Neither has traceId (external semantic)
+		// Path A (no running loop) has no traceId; path B (onPersist) does.
 		expect((pathAEvent as { traceId?: string }).traceId).toBeUndefined();
-		expect((pathBEvent as { traceId?: string }).traceId).toBeUndefined();
+		expect((pathBEvent as { traceId?: string }).traceId).toBeDefined();
+		expect(
+			typeof (pathBEvent as { traceId?: string }).traceId === "string",
+		).toBe(true);
 	}, 30000);
 });
 
