@@ -123,19 +123,25 @@ export function analyzeCacheMisses(jsonlContent: string): AnalyzeResult {
 }
 
 /**
- * Format a wall-clock duration in milliseconds using compact SI-style units.
- *   null          → "—"
- *   < 60s         → "Xs"
- *   < 60min       → "Xm" (1 decimal)
- *   otherwise     → "Xh" (1 decimal)
+ * Format a wall-clock duration in milliseconds as a human-readable string
+ * with second-level precision (always — 6-minute rounding errors from a
+ * previous "X.Xh" format made TTL analysis guess-work).
+ *
+ *   null    → "—"
+ *   < 60s   → "Xs"          (e.g. "45s")
+ *   < 60m   → "XmYs"        (e.g. "1m5s")
+ *   ≥ 1h    → "XhYmZs"      (e.g. "1h0m23s" — zero components kept for structure)
  */
 export function formatGap(gapMs: number | null): string {
 	if (gapMs == null) return "—";
-	const s = gapMs / 1000;
-	if (s < 60) return `${Math.round(s)}s`;
-	const m = s / 60;
-	if (m < 60) return `${m.toFixed(1)}m`;
-	return `${(m / 60).toFixed(1)}h`;
+	const totalS = Math.round(gapMs / 1000);
+	if (totalS < 60) return `${totalS}s`;
+	const s = totalS % 60;
+	const totalM = Math.floor(totalS / 60);
+	if (totalM < 60) return `${totalM}m${s}s`;
+	const m = totalM % 60;
+	const h = Math.floor(totalM / 60);
+	return `${h}h${m}m${s}s`;
 }
 
 /** Format unix ms as `YYYY-MM-DD HH:MM:SS` in local time. */
