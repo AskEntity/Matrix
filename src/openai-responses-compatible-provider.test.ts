@@ -41,15 +41,75 @@ function queueWithPrompt(content: string, cwd?: string): MessageQueue {
 function sseResponse(
 	events: Array<{ event: string; data: unknown }>,
 ): Response {
+	let seq = 0;
 	const body = events
-		.map(
-			({ event, data }) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
-		)
+		.map(({ event, data }) => {
+			// SDK expects `type` and `sequence_number` in parsed JSON data
+			const enriched =
+				typeof data === "object" && data !== null
+					? {
+							type: event,
+							sequence_number: seq++,
+							...(data as Record<string, unknown>),
+						}
+					: data;
+			return `event: ${event}\ndata: ${JSON.stringify(enriched)}\n\n`;
+		})
 		.join("");
 	return new Response(body, {
 		status: 200,
 		headers: { "Content-Type": "text/event-stream" },
 	});
+}
+
+/** Build a minimal but complete OAI Response object for mock SSE data. */
+function mockOAIResponse(overrides: {
+	id?: string;
+	output?: unknown[];
+	usage?: { input_tokens: number; output_tokens: number };
+	model?: string;
+}): Record<string, unknown> {
+	return {
+		id: overrides.id ?? "resp-1",
+		object: "response",
+		status: "completed",
+		output: overrides.output ?? [],
+		output_text: "",
+		usage: {
+			input_tokens: overrides.usage?.input_tokens ?? 0,
+			output_tokens: overrides.usage?.output_tokens ?? 0,
+			input_tokens_details: { cached_tokens: 0 },
+			output_tokens_details: { reasoning_tokens: 0 },
+		},
+		created_at: 0,
+		error: null,
+		incomplete_details: null,
+		instructions: null,
+		metadata: null,
+		model: overrides.model ?? "gpt-4.1-mini",
+		parallel_tool_calls: true,
+		temperature: 1,
+		tool_choice: "auto",
+		tools: [],
+		top_p: 1,
+	};
+}
+
+/** Build a function_call output item for mock responses. */
+function mockFunctionCall(opts: {
+	id?: string;
+	call_id: string;
+	name: string;
+	arguments: string;
+}): Record<string, unknown> {
+	return {
+		type: "function_call",
+		id: opts.id ?? opts.call_id,
+		call_id: opts.call_id,
+		name: opts.name,
+		arguments: opts.arguments,
+		status: "completed",
+	};
 }
 
 describe("OpenAIResponsesCompatibleProvider constructor", () => {
@@ -99,6 +159,7 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 	test("uses accessToken when apiKey is absent", async () => {
 		let authHeader: string | undefined;
 		const originalFetch = globalThis.fetch;
+		const doneArgs = JSON.stringify({ status: "passed", summary: "ok" });
 		globalThis.fetch = mock(
 			async (_url: string | URL | Request, init?: RequestInit) => {
 				authHeader =
@@ -112,30 +173,35 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 						event: "response.output_item.added",
 						data: {
 							output_index: 0,
-							item: {
-								type: "function_call",
+							item: mockFunctionCall({
 								call_id: "call-done",
 								name: "mcp__mxd__done",
-								arguments: JSON.stringify({ status: "passed", summary: "ok" }),
-							},
+								arguments: doneArgs,
+							}),
 						},
 					},
 					{
 						event: "response.function_call_arguments.done",
 						data: {
 							output_index: 0,
+							item_id: "call-done",
 							name: "mcp__mxd__done",
-							arguments: JSON.stringify({ status: "passed", summary: "ok" }),
+							arguments: doneArgs,
 						},
 					},
 					{
 						event: "response.completed",
 						data: {
-							response: {
-								id: "resp-1",
-								status: "completed",
+							response: mockOAIResponse({
+								output: [
+									mockFunctionCall({
+										call_id: "call-done",
+										name: "mcp__mxd__done",
+										arguments: doneArgs,
+									}),
+								],
 								usage: { input_tokens: 3, output_tokens: 2 },
-							},
+							}),
 						},
 					},
 				]);
@@ -515,6 +581,10 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 					headers: new Headers(init?.headers),
 					body,
 				});
+				const doneArgs = JSON.stringify({
+					status: "passed",
+					summary: "Task completed",
+				});
 				return sseResponse([
 					{
 						event: "response.created",
@@ -524,16 +594,12 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 						event: "response.output_item.added",
 						data: {
 							output_index: 0,
-							item: {
+							item: mockFunctionCall({
 								id: "fc-1",
-								type: "function_call",
 								call_id: "call-done",
 								name: "mcp__mxd__done",
-								arguments: JSON.stringify({
-									status: "passed",
-									summary: "Task completed",
-								}),
-							},
+								arguments: doneArgs,
+							}),
 						},
 					},
 					{
@@ -542,20 +608,23 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 							output_index: 0,
 							item_id: "fc-1",
 							name: "mcp__mxd__done",
-							arguments: JSON.stringify({
-								status: "passed",
-								summary: "Task completed",
-							}),
+							arguments: doneArgs,
 						},
 					},
 					{
 						event: "response.completed",
 						data: {
-							response: {
-								id: "resp-1",
-								status: "completed",
+							response: mockOAIResponse({
+								output: [
+									mockFunctionCall({
+										id: "fc-1",
+										call_id: "call-done",
+										name: "mcp__mxd__done",
+										arguments: doneArgs,
+									}),
+								],
 								usage: { input_tokens: 200, output_tokens: 20 },
-							},
+							}),
 						},
 					},
 				]);
@@ -654,11 +723,9 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 					{
 						event: "response.completed",
 						data: {
-							response: {
-								id: "resp-1",
-								status: "completed",
+							response: mockOAIResponse({
 								usage: { input_tokens: 3, output_tokens: 2 },
-							},
+							}),
 						},
 					},
 				]);
@@ -732,18 +799,11 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				>;
 				requestBodies.push(body);
 				if (callCount === 1) {
+					const yieldArgs = JSON.stringify({});
 					return sseResponse([
 						{
 							event: "response.created",
 							data: { response: { id: "resp-tool", status: "in_progress" } },
-						},
-						{
-							event: "response.content_part.added",
-							data: {
-								output_index: 0,
-								item_id: "msg-1",
-								part: { type: "output_text", text: "Checking repo" },
-							},
 						},
 						{
 							event: "response.output_text.delta",
@@ -758,13 +818,12 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 							event: "response.output_item.added",
 							data: {
 								output_index: 1,
-								item: {
+								item: mockFunctionCall({
 									id: "fc-yield",
-									type: "function_call",
 									call_id: "call-yield",
 									name: "mcp__mxd__yield",
-									arguments: JSON.stringify({}),
-								},
+									arguments: yieldArgs,
+								}),
 							},
 						},
 						{
@@ -773,17 +832,37 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 								output_index: 1,
 								item_id: "fc-yield",
 								name: "mcp__mxd__yield",
-								arguments: JSON.stringify({}),
+								arguments: yieldArgs,
 							},
 						},
 						{
 							event: "response.completed",
 							data: {
-								response: {
+								response: mockOAIResponse({
 									id: "resp-tool",
-									status: "completed",
+									output: [
+										{
+											type: "message",
+											id: "msg-1",
+											role: "assistant",
+											content: [
+												{
+													type: "output_text",
+													text: "Checking repo now",
+													annotations: [],
+												},
+											],
+											status: "completed",
+										},
+										mockFunctionCall({
+											id: "fc-yield",
+											call_id: "call-yield",
+											name: "mcp__mxd__yield",
+											arguments: yieldArgs,
+										}),
+									],
 									usage: { input_tokens: 100, output_tokens: 10 },
-								},
+								}),
 							},
 						},
 					]);
@@ -794,21 +873,27 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 						data: { response: { id: "resp-idle", status: "in_progress" } },
 					},
 					{
-						event: "response.content_part.added",
-						data: {
-							output_index: 0,
-							item_id: "msg-2",
-							part: { type: "output_text", text: "Back to idle" },
-						},
-					},
-					{
 						event: "response.completed",
 						data: {
-							response: {
+							response: mockOAIResponse({
 								id: "resp-idle",
-								status: "completed",
+								output: [
+									{
+										type: "message",
+										id: "msg-2",
+										role: "assistant",
+										content: [
+											{
+												type: "output_text",
+												text: "Back to idle",
+												annotations: [],
+											},
+										],
+										status: "completed",
+									},
+								],
 								usage: { input_tokens: 50, output_tokens: 5 },
-							},
+							}),
 						},
 					},
 				]);
@@ -908,6 +993,10 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 					{ status: 200, headers: { "Content-Type": "application/json" } },
 				);
 			}
+			const doneArgs = JSON.stringify({
+				status: "passed",
+				summary: "All good",
+			});
 			return sseResponse([
 				{
 					event: "response.created",
@@ -932,20 +1021,23 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 						output_index: 0,
 						item_id: "fc-1",
 						name: "mcp__mxd__done",
-						arguments: JSON.stringify({
-							status: "passed",
-							summary: "All good",
-						}),
+						arguments: doneArgs,
 					},
 				},
 				{
 					event: "response.completed",
 					data: {
-						response: {
-							id: "resp-1",
-							status: "completed",
+						response: mockOAIResponse({
+							output: [
+								mockFunctionCall({
+									id: "fc-1",
+									call_id: "call-done",
+									name: "mcp__mxd__done",
+									arguments: doneArgs,
+								}),
+							],
 							usage: { input_tokens: 100, output_tokens: 10 },
-						},
+						}),
 					},
 				},
 			]);
@@ -1023,7 +1115,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 	});
 });
 
-describe("streamResponsesAPI inner retry", () => {
+describe("streamResponsesAPI (SDK-based)", () => {
 	const originalFetch = globalThis.fetch;
 
 	afterEach(() => {
@@ -1041,9 +1133,27 @@ describe("streamResponsesAPI inner retry", () => {
 				data: {
 					response: {
 						id: "resp-1",
+						object: "response",
 						status: "completed",
 						output: [],
-						usage: { input_tokens: 3, output_tokens: 2 },
+						output_text: "",
+						usage: {
+							input_tokens: 3,
+							output_tokens: 2,
+							input_tokens_details: { cached_tokens: 0 },
+							output_tokens_details: { reasoning_tokens: 0 },
+						},
+						created_at: 0,
+						error: null,
+						incomplete_details: null,
+						instructions: null,
+						metadata: null,
+						model: "gpt-4.1-mini",
+						parallel_tool_calls: true,
+						temperature: 1,
+						tool_choice: "auto",
+						tools: [],
+						top_p: 1,
 					},
 				},
 			},
@@ -1051,25 +1161,33 @@ describe("streamResponsesAPI inner retry", () => {
 	}
 
 	function errorResponse(status: number, body = "error"): Response {
-		return new Response(body, { status, headers: {} });
+		return new Response(body, {
+			status,
+			headers: { "Content-Type": "application/json" },
+		});
 	}
 
-	const baseParams = {
-		endpoint: "https://api.openai.com/v1",
-		authToken: "test-key",
-		model: "gpt-4.1-mini",
-		messages: [] as Parameters<typeof streamResponsesAPI>[0]["messages"],
-		tools: [] as Parameters<typeof streamResponsesAPI>[0]["tools"],
+	const baseBody = {
+		model: "gpt-4.1-mini" as const,
 		instructions: "test",
-		maxTokens: 4096,
-		retryDelayMs: () => 1, // near-zero delay for tests
+		input: [] as [],
+		tools: [] as [],
+		stream: true as const,
+		store: false,
 	};
 
 	async function runStream(
 		fetchMock: typeof fetch,
+		overrides?: Partial<Parameters<typeof streamResponsesAPI>[0]>,
 	): Promise<{ events: Event[]; response: unknown }> {
 		globalThis.fetch = fetchMock;
-		const gen = streamResponsesAPI(baseParams);
+		const gen = streamResponsesAPI({
+			endpoint: "https://api.openai.com/v1",
+			authToken: "test-key",
+			body: baseBody,
+			maxRetries: 0, // disable SDK retries for error tests
+			...overrides,
+		});
 		const events: Event[] = [];
 		let result = await gen.next();
 		while (!result.done) {
@@ -1079,7 +1197,67 @@ describe("streamResponsesAPI inner retry", () => {
 		return { events, response: result.value };
 	}
 
-	test("retries on 429 then succeeds", async () => {
+	test("streams text_delta and returns completed response", async () => {
+		const fetchMock = mock(async () =>
+			sseResponse([
+				{
+					event: "response.created",
+					data: { response: { id: "resp-1", status: "in_progress" } },
+				},
+				{
+					event: "response.output_text.delta",
+					data: { output_index: 0, content_index: 0, delta: "Hello" },
+				},
+				{
+					event: "response.completed",
+					data: {
+						response: {
+							id: "resp-1",
+							object: "response",
+							status: "completed",
+							output: [
+								{
+									type: "message",
+									id: "msg-1",
+									role: "assistant",
+									content: [
+										{ type: "output_text", text: "Hello", annotations: [] },
+									],
+									status: "completed",
+								},
+							],
+							output_text: "Hello",
+							usage: {
+								input_tokens: 10,
+								output_tokens: 5,
+								input_tokens_details: { cached_tokens: 0 },
+								output_tokens_details: { reasoning_tokens: 0 },
+							},
+							created_at: 0,
+							error: null,
+							incomplete_details: null,
+							instructions: null,
+							metadata: null,
+							model: "gpt-4.1-mini",
+							parallel_tool_calls: true,
+							temperature: 1,
+							tool_choice: "auto",
+							tools: [],
+							top_p: 1,
+						},
+					},
+				},
+			]),
+		) as unknown as typeof fetch;
+
+		const { events, response } = await runStream(fetchMock);
+		const textDeltas = events.filter((e) => e.type === "text_delta");
+		expect(textDeltas.length).toBeGreaterThanOrEqual(1);
+		expect((response as { id: string }).id).toBe("resp-1");
+		expect((response as { output_text: string }).output_text).toBe("Hello");
+	});
+
+	test("SDK retries on 429 then succeeds", async () => {
 		let callCount = 0;
 		const fetchMock = mock(async () => {
 			callCount++;
@@ -1087,111 +1265,37 @@ describe("streamResponsesAPI inner retry", () => {
 			return successSSEResponse();
 		}) as unknown as typeof fetch;
 
-		const { events } = await runStream(fetchMock);
-
+		// maxRetries: 2 lets the SDK retry once after 429
+		const { response } = await runStream(fetchMock, { maxRetries: 2 });
 		expect(callCount).toBe(2);
-		const errorEvents = events.filter((e) => e.type === "error");
-		expect(errorEvents.length).toBe(1);
-		expect(
-			errorEvents[0]?.type === "error" && errorEvents[0]?.message,
-		).toContain("retry 1/4");
+		expect((response as { id: string }).id).toBe("resp-1");
 	});
 
-	test("retries on 500 then succeeds", async () => {
+	test("throws on 400 without retry", async () => {
 		let callCount = 0;
 		const fetchMock = mock(async () => {
 			callCount++;
-			if (callCount <= 2) return errorResponse(500, "internal server error");
-			return successSSEResponse();
+			return errorResponse(
+				400,
+				JSON.stringify({ error: { message: "bad request" } }),
+			);
 		}) as unknown as typeof fetch;
 
-		const { events } = await runStream(fetchMock);
-
-		expect(callCount).toBe(3);
-		const errorEvents = events.filter((e) => e.type === "error");
-		expect(errorEvents.length).toBe(2);
-	});
-
-	test("retries on 502, 503, 529", async () => {
-		const transientCodes = [502, 503, 529];
-		for (const code of transientCodes) {
-			let callCount = 0;
-			const fetchMock = mock(async () => {
-				callCount++;
-				if (callCount === 1) return errorResponse(code, `error ${code}`);
-				return successSSEResponse();
-			}) as unknown as typeof fetch;
-
-			const { events } = await runStream(fetchMock);
-			expect(callCount).toBe(2);
-			const errorEvents = events.filter((e) => e.type === "error");
-			expect(errorEvents.length).toBe(1);
-		}
-	});
-
-	test("does not retry on 400 (client error)", async () => {
-		let callCount = 0;
-		const fetchMock = mock(async () => {
-			callCount++;
-			return errorResponse(400, "bad request");
-		}) as unknown as typeof fetch;
-
-		await expect(runStream(fetchMock)).rejects.toThrow(
-			"OpenAI Responses API error (400): bad request",
-		);
+		await expect(runStream(fetchMock)).rejects.toThrow(/400/);
 		expect(callCount).toBe(1);
 	});
 
-	test("does not retry on 401 (unauthorized)", async () => {
+	test("throws on 401 without retry", async () => {
 		let callCount = 0;
 		const fetchMock = mock(async () => {
 			callCount++;
-			return errorResponse(401, "unauthorized");
+			return errorResponse(
+				401,
+				JSON.stringify({ error: { message: "unauthorized" } }),
+			);
 		}) as unknown as typeof fetch;
 
-		await expect(runStream(fetchMock)).rejects.toThrow(
-			"OpenAI Responses API error (401): unauthorized",
-		);
+		await expect(runStream(fetchMock)).rejects.toThrow(/401/);
 		expect(callCount).toBe(1);
-	});
-
-	test("does not retry on 403", async () => {
-		let callCount = 0;
-		const fetchMock = mock(async () => {
-			callCount++;
-			return errorResponse(403, "forbidden");
-		}) as unknown as typeof fetch;
-
-		await expect(runStream(fetchMock)).rejects.toThrow(
-			"OpenAI Responses API error (403): forbidden",
-		);
-		expect(callCount).toBe(1);
-	});
-
-	test("does not retry on 404", async () => {
-		let callCount = 0;
-		const fetchMock = mock(async () => {
-			callCount++;
-			return errorResponse(404, "not found");
-		}) as unknown as typeof fetch;
-
-		await expect(runStream(fetchMock)).rejects.toThrow(
-			"OpenAI Responses API error (404): not found",
-		);
-		expect(callCount).toBe(1);
-	});
-
-	test("throws after exhausting all 5 retry attempts on persistent 429", async () => {
-		let callCount = 0;
-		const fetchMock = mock(async () => {
-			callCount++;
-			return errorResponse(429, "rate limited");
-		}) as unknown as typeof fetch;
-
-		await expect(runStream(fetchMock)).rejects.toThrow(
-			"OpenAI Responses API error (429): rate limited",
-		);
-		expect(callCount).toBe(5);
-		// Should have yielded 4 error events (attempts 1-4 retry, 5th throws)
 	});
 });
