@@ -43,7 +43,6 @@ type UpdateOp =
 	| {
 			type: "complete_compact";
 			text: string;
-			checkpoint: string;
 			savedTokens: number;
 			taskId: string | undefined;
 			ts?: number;
@@ -635,7 +634,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						{
 							type: "complete_compact",
 							text: `Context compacted (saved ~${msg.savedTokens} tokens)`,
-							checkpoint: msg.checkpoint,
 							savedTokens: msg.savedTokens,
 							taskId: msg.taskId,
 							ts: msg.ts,
@@ -664,7 +662,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 			// --- Lifecycle events ---
 
-			case "orchestration_started": {
+			case "agent_start": {
 				const entries: LogEntry[] = [];
 				if (msg.resume) {
 					entries.push(
@@ -676,8 +674,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						}),
 					);
 				}
-				// prompt field removed from orchestration_started — messages are now
-				// delivered via queue with unified schema and displayed via two-phase lifecycle
 				return {
 					entries,
 					updates: [],
@@ -691,43 +687,31 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				};
 			}
 
-			case "orchestration_completed":
-				return {
-					entries: [],
-					updates: [],
-					sideEffects: () => {
-						if (msg.turns !== undefined) setLastTurns(msg.turns);
-						if (msg.inputTokens !== undefined)
-							setLastInputTokens(msg.inputTokens);
-						if (msg.cacheCreationTokens !== undefined)
-							setLastCacheCreationTokens(msg.cacheCreationTokens);
-						if (msg.cacheReadTokens !== undefined)
-							setLastCacheReadTokens(msg.cacheReadTokens);
-						if (msg.outputTokens !== undefined)
-							setLastOutputTokens(msg.outputTokens);
-						if (msg.taskId) {
-							setActiveAgents((prev) => {
-								const next = new Set(prev);
-								next.delete(msg.taskId);
-								return next;
-							});
-						}
-						checkAgentStatus();
-					},
-				};
-
-			case "agent_stopped":
-				return {
-					entries: [
+			case "agent_end": {
+				const entries: LogEntry[] = [];
+				if (msg.reason === "stopped") {
+					entries.push(
 						createLogEntry({
 							type: "lifecycle",
 							content: "⏹ Agent stopped",
 							taskId: msg.taskId,
 							ts: msg.ts,
 						}),
-					],
+					);
+				}
+				return {
+					entries,
 					updates: [],
 					sideEffects: () => {
+						if (msg.stats?.turns !== undefined) setLastTurns(msg.stats.turns);
+						if (msg.stats?.inputTokens !== undefined)
+							setLastInputTokens(msg.stats.inputTokens);
+						if (msg.stats?.cacheCreationTokens !== undefined)
+							setLastCacheCreationTokens(msg.stats.cacheCreationTokens);
+						if (msg.stats?.cacheReadTokens !== undefined)
+							setLastCacheReadTokens(msg.stats.cacheReadTokens);
+						if (msg.stats?.outputTokens !== undefined)
+							setLastOutputTokens(msg.stats.outputTokens);
 						if (msg.taskId) {
 							setActiveAgents((prev) => {
 								const next = new Set(prev);
@@ -738,6 +722,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						checkAgentStatus();
 					},
 				};
+			}
 
 			case "agent_active":
 				return {
@@ -765,28 +750,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					},
 				};
 
-			case "task_started":
-				// Only show in the child task's own view — parent sees it via
-				// queue message two-phase lifecycle (pending → consumed)
-				return {
-					entries: [
-						createLogEntry({
-							type: "task_started",
-							taskId: msg.taskId,
-							title: msg.title,
-							ts: msg.ts,
-						}),
-					],
-					updates: [],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-
 			case "task_completed":
 				// UIOnlyEvent — materialized from task_complete queue messages
-				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
-
-			case "compacted_resume":
-				// Internal compaction state — not user content
 				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 
 			case "message": {
@@ -794,9 +759,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				const source = body?.source;
 				const umId = msg.id || undefined;
 				const umContent =
-					body &&
-					(body.source === "user" ||
-						(body.source === "task_message" && body.header))
+					body && body.source === "user"
 						? body.content
 						: "";
 				const umImages = body?.source === "user" ? body.images : undefined;
@@ -1039,7 +1002,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						const updated = [...entries];
 						const replacement = createLogEntry({
 							type: "compact_marker",
-							checkpoint: op.checkpoint,
 							savedTokens: op.savedTokens,
 							taskId: op.taskId ?? "",
 							ts: op.ts ?? Date.now(),
@@ -1054,7 +1016,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					...entries,
 					createLogEntry({
 						type: "compact_marker",
-						checkpoint: op.checkpoint,
 						savedTokens: op.savedTokens,
 						taskId: op.taskId ?? "",
 						ts: op.ts ?? Date.now(),
@@ -1158,11 +1119,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		const deferredSideEffects: (() => void)[] = [];
 
 		for (const evt of events) {
-			// Skip provider-internal prompt events (message with empty id) and compacted_resume
+			// Skip provider-internal prompt events (message with empty id)
 			if (evt.type === "message" && !evt.id) {
-				continue;
-			}
-			if (evt.type === "compacted_resume") {
 				continue;
 			}
 			// Skip tree_updated from historical JSONL — old code versions persisted these
@@ -1191,7 +1149,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		for (const fn of deferredSideEffects) fn();
 		// Re-fetch real agent status after processing historical events.
 		// processEvent side effects may have stale setActiveAgents calls from
-		// old orchestration_started/agent_stopped events — checkAgentStatus
+		// old agent_start/agent_end events — checkAgentStatus
 		// overwrites with the actual current state from the backend.
 		checkAgentStatus();
 	}
@@ -1200,7 +1158,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	function isMeaningfulEntry(e: LogEntry): boolean {
 		// lifecycle entries (session resumed, agent stopped) are not meaningful
 		if (e.type === "lifecycle") return false;
-		// task_started is a lifecycle marker but meaningful — it's the task launch
 		// All other types are meaningful content
 		return true;
 	}
@@ -1248,12 +1205,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// Agent lifecycle events update activeAgents GLOBALLY — before the per-session filter.
 		// The task tree sidebar needs accurate active/idle status for ALL tasks, not just the viewed one.
 		if ("taskId" in msg && msg.taskId) {
-			if (msg.type === "orchestration_started" || msg.type === "agent_active") {
+			if (msg.type === "agent_start" || msg.type === "agent_active") {
 				setActiveAgents((prev) => new Set(prev).add(msg.taskId));
 			} else if (
 				msg.type === "agent_idle" ||
-				msg.type === "agent_stopped" ||
-				msg.type === "orchestration_completed"
+				msg.type === "agent_end"
 			) {
 				setActiveAgents((prev) => {
 					const next = new Set(prev);
