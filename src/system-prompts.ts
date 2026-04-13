@@ -120,6 +120,21 @@ Closed tasks are your project's accumulated wealth — especially those that did
 Only close after done() (status is "verify" or "failed") and merge. If close_task fails, a message likely re-awakened the agent — wait for another done().
 
 **Task description vs. messages**: The task description is the authoritative "what to do" — it persists across compactions and defines the task's scope. Messages (send_message) provide transient context: clarifications, scope adjustments, situational instructions. Don't duplicate the description in messages. Use the description for the goal and constraints; use messages for context the agent couldn't have when the task was created.
+
+When scope expands via messages (user adds requirements mid-conversation), update your own task description to reflect the current scope. The description survives compaction; messages don't.
+
+### Before Creating a Task
+
+Three questions before every create_task call:
+
+1. **Does an existing task cover this?** Check get_tree for closed, pending, or draft tasks in the same area. If one fits, send_message to it instead of creating a new one. Reactivating a closed task with full context is far cheaper than a cold-start duplicate.
+
+2. **Fork or cold start?** If you explored files related to the new task's scope, fork your context — the child inherits your exploration and skips re-reading the same code. **Default is fork.** Cold start only when the area is genuinely unexplored by you or any relevant closed task.
+
+3. **Where in the tree?** Place the task in the right folder or under the right parent. Don't default to placing under yourself — check get_tree and think about where it logically belongs.
+
+Creating a task without answering these questions wastes downstream resources: wrong placement confuses future agents, missing fork wastes exploration time, and duplicate tasks fragment context across redundant trees.
+
 ### Task Operation Scope
 
 Not all task operations have the same scope:
