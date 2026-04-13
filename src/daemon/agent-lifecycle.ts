@@ -290,8 +290,10 @@ export async function stopAgent(
 	// Check if root agent is actually running
 	if (!rootNode?.session) return;
 
+	// Capture traceId BEFORE clearing sessions
+	const rootTraceId = rootNode.session.loopTraceId;
+
 	// Stop ALL agents (root + children) via session on tracker nodes.
-	// Each node's session has its own queue + abort controller.
 	for (const node of tracker.allNodes()) {
 		if (isTask(node) && node.session) {
 			node.session.queue.close();
@@ -319,10 +321,15 @@ export async function stopAgent(
 	// Orphan detection runs reliably at restart (autoResumeProjects / launchAgent)
 	// when the provider loop is guaranteed dead.
 
-	// NOTE: stopAgent does NOT await loop promises. The finally block in
-	// runAgentForNode emits agent_end asynchronously. For production daemon
-	// shutdown, daemon.ts shutdown() awaits the promises with a timeout
-	// to ensure agent_end persists before process exit.
+	// Emit agent_end synchronously — no await needed.
+	// runAgentForNode's finally checks wasReplaced and skips its own emit.
+	emitEvent(ctx, projectId, {
+		type: "agent_end",
+		taskId: rootNodeId,
+		reason: "stopped",
+		traceId: rootTraceId,
+		ts: Date.now(),
+	});
 }
 
 /**
@@ -345,6 +352,9 @@ export async function stopTask(
 	if (!node) return false;
 
 	if (!node.session) return false;
+
+	// Capture traceId BEFORE clearing session
+	const stoppedTraceId = node.session.loopTraceId;
 
 	// Grab the loop promise BEFORE clearing session — once session is gone,
 	// the loop's finally block will fire and resolve this promise.
@@ -376,8 +386,15 @@ export async function stopTask(
 	// NOTE: Do NOT write orphaned tool_results here — same race as stopAgent.
 	// Orphan detection runs at restart when the provider loop is fully dead.
 
-	// No agent_end here — runAgentForNode handles all lifecycle events.
-	// stopTask only interrupts. The loop's try/catch/finally emits agent_end.
+	// Emit agent_end synchronously — no await needed.
+	// runAgentForNode's finally checks wasReplaced and skips its own emit.
+	emitEvent(ctx, projectId, {
+		type: "agent_end",
+		taskId: nodeId,
+		reason: "stopped",
+		traceId: stoppedTraceId,
+		ts: Date.now(),
+	});
 
 	return true;
 }
@@ -603,14 +620,7 @@ export async function runAgentForNode(
 	let ownSession: TaskSession | undefined;
 	// Declared outside try so Phase 2 (after finally) can access the result.
 	let agentResult: AgentResult | undefined;
-	// Track exit state for unified agent_end emission in finally block.
-	let exitReason:
-		| "done_passed"
-		| "done_failed"
-		| "stopped"
-		| "error"
-		| "budget_exceeded"
-		| undefined;
+
 	// Generate a unique trace ID for this agent loop instance.
 	// Stored on TaskSession so external emit paths (stopTask, tool handlers via
 	// resource-registry) can look it up and auto-inject it. The provider loop's
@@ -923,29 +933,18 @@ export async function runAgentForNode(
 			tracker.updateCost(nodeId, agentResult.costUsd);
 		}
 
-		// Set exit reason — agent_end emitted in finally block (ONE emit point).
-		const updatedNode = tracker.getTask(nodeId);
-		const budgetExceeded =
-			updatedNode?.budgetUsd &&
-			updatedNode.budgetUsd > 0 &&
-			updatedNode.costUsd > updatedNode.budgetUsd;
-		exitReason =
-			agentResult.exitReason === "done_passed"
-				? "done_passed"
-				: agentResult.exitReason === "done_failed"
-					? "done_failed"
-					: "stopped";
-		if (budgetExceeded) exitReason = "budget_exceeded";
+		// Cost tracking (was in orchestration_completed — now just tracker)
+		// tracker.updateCost already called above.
 
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} catch (e) {
 		// Check if our session was replaced (stopTask/stopAgent already cleaned up).
 		// If so, suppress error events — they'd be stale leaks from an old session.
-		const replacedNode = tracker.getTask(nodeId);
-		const wasReplaced =
-			!replacedNode?.session || replacedNode.session !== ownSession;
-		if (!wasReplaced) {
+		const catchNode = tracker.getTask(nodeId);
+		const catchWasReplaced =
+			!catchNode?.session || catchNode.session !== ownSession;
+		if (!catchWasReplaced) {
 			// Error = interrupted. Status stays in_progress — agent is resumable.
 			const errorMsg = e instanceof Error ? e.message : String(e);
 			emitEvent(ctx, project.id, {
@@ -955,11 +954,8 @@ export async function runAgentForNode(
 				traceId: loopTraceId,
 				ts: Date.now(),
 			});
-			exitReason = "error";
-		} else {
-			// Session was replaced by stopTask/stopAgent → this is a "stopped" exit.
-			exitReason = "stopped";
 		}
+		// If wasReplaced: stopAgent/stopTask already emitted agent_end(stopped).
 		await tracker.save();
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
@@ -972,62 +968,27 @@ export async function runAgentForNode(
 		// Only clear if this is still OUR session — a replacement agent
 		// may have already set a new session on the node.
 		const finalNode = tracker.getTask(nodeId);
-		if (finalNode?.session && finalNode.session === ownSession) {
+		const notReplaced =
+			finalNode?.session != null && finalNode.session === ownSession;
+		if (notReplaced && finalNode?.session) {
 			cleanupSessionBackgroundProcesses(finalNode.session.backgroundProcesses);
 			finalNode.session = undefined;
 		}
 		await mcpManager.disconnectAll();
 
-		// ── Unified agent_end emission — ONE emit point for all exit paths ──
-		// exitReason is set by: try block (normal completion), catch block (error/stopped).
-		// Only emit if we have a reason AND this session wasn't replaced.
-		// When session was replaced (stopTask/stopAgent cleared it), the "stopped"
-		// reason was set in catch. We still emit agent_end so JSONL has the record.
-		if (exitReason) {
-			// Build stats from agentResult (available on normal completion, undefined on error/stop)
-			let stats: Record<string, unknown> | undefined;
-			if (agentResult && agentResult.costUsd > 0) {
-				const allTaskNodes = tracker.allNodes().filter(isTask);
-				const childNodes = allTaskNodes.filter(
-					(n) => n.id !== nodeId && n.costUsd > 0,
-				);
-				const childCostUsd = childNodes.reduce((sum, n) => sum + n.costUsd, 0);
-				stats = {
-					costUsd: agentResult.costUsd + childCostUsd,
-					turns: agentResult.turns,
-					inputTokens: agentResult.inputTokens,
-					cacheCreationTokens: agentResult.cacheCreationTokens,
-					cacheReadTokens: agentResult.cacheReadTokens,
-					outputTokens: agentResult.outputTokens,
-					childCosts: isRoot
-						? {
-								totalCostUsd: childCostUsd,
-								totalTurns: 0,
-								taskCount: childNodes.length,
-							}
-						: undefined,
-				};
-			}
+		if (notReplaced) {
 			emitEvent(ctx, project.id, {
 				type: "agent_end",
 				taskId: nodeId,
-				reason: exitReason,
-				summary: agentResult?.doneSummary,
-				stats,
+				reason: "stopped",
 				traceId: loopTraceId,
 				ts: Date.now(),
-			} as Event);
+			});
 		}
 	}
 
 	// ── Phase 2 of two-phase done() ──
-	// Runs AFTER session cleanup (finally block). Session is now null, so any
-	// deliverMessage triggered by our task_complete to parent will correctly see
-	// session=null and launch a new agent if the parent sends a follow-up message.
-	//
-	// Before committing done, check for late messages that arrived during shutdown
-	// (between queue.close in done() and session clear in finally). If found,
-	// re-launch the agent to process them — done didn't actually complete.
+	// Runs AFTER session cleanup (finally block). Session is now null.
 	const isDoneExit =
 		agentResult != null &&
 		(agentResult.exitReason === "done_passed" ||
@@ -1035,7 +996,6 @@ export async function runAgentForNode(
 	if (isDoneExit && agentResult) {
 		const currentNode = tracker.getTask(nodeId);
 		if (currentNode) {
-			// Check for late messages before committing Phase 2
 			const eventStore = getEventStore(ctx, project.id);
 			let hasLateMessages = false;
 			if (!isRoot && eventStore.has(nodeId)) {
@@ -1048,23 +1008,21 @@ export async function runAgentForNode(
 			}
 
 			if (hasLateMessages) {
-				// Late messages arrived — don't commit done. Re-launch agent to
-				// process them. The agent will see the messages and decide again.
-				ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
-					console.warn(
-						`[Phase 2] Re-launching ${nodeId} for late messages:`,
-						e instanceof Error ? e.message : String(e),
-					);
-				});
+				ensureChildAgentRunning(ctx, project, tracker, nodeId).catch(
+					(e) => {
+						console.warn(
+							`[Phase 2] Re-launching ${nodeId} for late messages:`,
+							e instanceof Error ? e.message : String(e),
+						);
+					},
+				);
 			} else {
-				// No late messages — commit done.
 				const newStatus =
 					agentResult.exitReason === "done_passed" ? "verify" : "failed";
 				tracker.updateStatus(nodeId, newStatus);
 				await tracker.save();
 				broadcastTreeUpdate(ctx, project.id, tracker);
 
-				// Deliver task_complete to task above (skip folders)
 				const taskAbove = tracker.getTaskAbove(nodeId);
 				if (taskAbove && !isRoot) {
 					const completionMsg = createTaskComplete(
@@ -1083,8 +1041,6 @@ export async function runAgentForNode(
 					);
 				}
 
-				// Write done_notified marker — crash-safe confirmation that Phase 2 completed.
-				// On crash recovery, if this event exists, Phase 2 was already committed.
 				emitEvent(ctx, project.id, {
 					type: "done_notified",
 					taskId: nodeId,
