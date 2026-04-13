@@ -1355,7 +1355,7 @@ export function buildAllToolDefs(): ToolDef[] {
 		// ── get_logs ──
 		{
 			name: "get_logs",
-			availability: "both",
+			availability: "external",
 			description:
 				"Returns session events for a task, with cursor-based pagination. " +
 				"Events are returned after the last compact/fork marker. " +
