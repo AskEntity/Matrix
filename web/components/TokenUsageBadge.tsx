@@ -21,19 +21,17 @@ export function getCompactThreshold(contextWindow: number): number {
 export const TokenUsageBadge = memo(function TokenUsageBadge({
 	inputTokens,
 	contextWindow,
-	estimated,
 	onCompact,
 }: {
 	inputTokens: number;
 	contextWindow: number;
-	estimated?: boolean;
 	onCompact?: () => void;
 }) {
 	const { t } = useLocale();
 	const threshold = getCompactThreshold(contextWindow);
 	const ratio = threshold > 0 ? inputTokens / threshold : 0;
 	const level = ratio >= 0.95 ? "red" : ratio >= 0.8 ? "yellow" : "green";
-	const tooltip = `${t("footer.contextWindow")}: ${formatTokenCount(inputTokens)} / ${formatTokenCount(threshold)}${estimated ? ` (${t("footer.estimated")})` : ""}\n${t("footer.compactAt")} ${formatTokenCount(threshold)}`;
+	const tooltip = `${t("footer.contextWindow")}: ${formatTokenCount(inputTokens)} / ${formatTokenCount(threshold)}\n${t("footer.compactAt")} ${formatTokenCount(threshold)}`;
 	return (
 		<>
 			{onCompact && (
@@ -48,7 +46,6 @@ export const TokenUsageBadge = memo(function TokenUsageBadge({
 			)}
 			<span className={`mxd-token-badge mxd-token-${level}`} title={tooltip}>
 				{formatTokenCount(inputTokens)} / {formatTokenCount(threshold)}
-				{estimated && <span className="mxd-token-estimated">~</span>}
 			</span>
 		</>
 	);

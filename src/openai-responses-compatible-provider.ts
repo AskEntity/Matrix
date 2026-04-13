@@ -19,7 +19,7 @@ import {
 	type ToolResultData,
 	walkEventsToMessages,
 } from "./event-converter.ts";
-import type { Event } from "./events.ts";
+import type { Event, EventSpec } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
 	extractQueueImageParts,
@@ -473,7 +473,7 @@ export async function* streamResponsesAPI(params: {
 	signal?: AbortSignal;
 	/** Override max retries for testing. SDK default: 2. */
 	maxRetries?: number;
-}): AsyncGenerator<Event, OAIResponse> {
+}): AsyncGenerator<EventSpec, OAIResponse> {
 	const endpoint = resolveResponsesEndpoint(params.endpoint);
 	const codex = isCodexEndpoint(endpoint);
 
@@ -509,7 +509,6 @@ export async function* streamResponsesAPI(params: {
 				yield {
 					type: "text_delta",
 					content: event.delta ?? "",
-					taskId: "",
 					ts: Date.now(),
 				};
 				break;
@@ -666,9 +665,9 @@ function createOpenAIResponsesAdapter(
 
 		supportsTokenCounting: false,
 
-		buildResponseEvents(response: unknown, isCompacting: boolean): Event[] {
+		buildResponseEvents(response: unknown, isCompacting: boolean): EventSpec[] {
 			const data = response as OAIResponse;
-			const events: Event[] = [];
+			const events: EventSpec[] = [];
 			for (const item of data.output ?? []) {
 				if (item.type === "message") {
 					const msg = item as ResponseOutputMessage;
@@ -680,7 +679,6 @@ function createOpenAIResponsesAdapter(
 						events.push({
 							type: "assistant_text",
 							content: text,
-							taskId: "",
 							ts: Date.now(),
 						});
 					}
@@ -697,7 +695,6 @@ function createOpenAIResponsesAdapter(
 						tool: fc.name,
 						toolCallId: fc.call_id ?? ulid(),
 						input: parsedInput,
-						taskId: "",
 						ts: Date.now(),
 					});
 				}
@@ -950,7 +947,7 @@ export class OpenAIResponsesCompatibleProvider implements AgentProvider {
 		return result.value;
 	}
 
-	async *stream(request: AgentRequest): AsyncGenerator<Event, AgentResult> {
+	async *stream(request: AgentRequest): AsyncGenerator<EventSpec, AgentResult> {
 		const sessionId = request.resumeSessionId ?? ulid();
 		const gen = this.runLoop(request, sessionId, request.queue);
 		let result = await gen.next();
@@ -965,7 +962,7 @@ export class OpenAIResponsesCompatibleProvider implements AgentProvider {
 		request: AgentRequest,
 		sessionId: string,
 		queue?: MessageQueue,
-	): AsyncGenerator<Event, AgentResult> {
+	): AsyncGenerator<EventSpec, AgentResult> {
 		void this.refreshToken;
 		const adapter = createOpenAIResponsesAdapter(
 			this.baseUrl,

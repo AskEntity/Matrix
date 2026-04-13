@@ -22,7 +22,11 @@ import {
 	getCompactionThresholds,
 	processCompaction,
 } from "./compaction.ts";
-import { type Event, hasPendingImplicitYield } from "./events.ts";
+import {
+	type Event,
+	type EventSpec,
+	hasPendingImplicitYield,
+} from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import { createCompactedResume } from "./queue-message-factory.ts";
 import {
@@ -71,15 +75,14 @@ const DEFAULT_MAX_TOKENS = 128000;
  */
 async function handleImplicitYield(
 	queue: MessageQueue,
-	emit?: (event: Event) => void,
+	emit?: (spec: EventSpec) => void,
 ): Promise<{
 	nonCompact: QueueMessage[];
 	manualCompactRequested: boolean;
 	compactOnly: boolean;
 } | null> {
-	const idleEvt: Event = {
+	const idleEvt: EventSpec = {
 		type: "agent_idle",
-		taskId: "",
 		ts: Date.now(),
 	};
 	emit?.(idleEvt);
@@ -87,9 +90,8 @@ async function handleImplicitYield(
 		queue.idle = true;
 		const first = await queue.wait();
 		queue.idle = false;
-		const activeEvt: Event = {
+		const activeEvt: EventSpec = {
 			type: "agent_active",
-			taskId: "",
 			ts: Date.now(),
 		};
 		emit?.(activeEvt);
@@ -306,9 +308,8 @@ export function buildToolResultEvents(
 	toolIds: Array<{ id: string; name: string }>,
 	execResults: ToolResult[],
 	cancellationQueueMsgs: QueueMessage[],
-	taskId = "",
-): Event[] {
-	const toolEvents: Event[] = [];
+): EventSpec[] {
+	const toolEvents: EventSpec[] = [];
 
 	for (let idx = 0; idx < toolIds.length; idx++) {
 		const toolId = toolIds[idx] as { id: string; name: string };
@@ -342,7 +343,6 @@ export function buildToolResultEvents(
 			...(exec.backgroundCommand
 				? { backgroundCommand: exec.backgroundCommand }
 				: {}),
-			taskId,
 			ts: Date.now(),
 		});
 	}
@@ -352,7 +352,6 @@ export function buildToolResultEvents(
 		toolEvents.push({
 			type: "messages_consumed",
 			messageIds: consumedIds,
-			taskId,
 			ts: Date.now(),
 		});
 	}
@@ -428,7 +427,7 @@ export interface ProviderAdapter {
 		 * control) to this path before each API call, overwriting.
 		 */
 		debugSnapshotPath?: string;
-	}): AsyncGenerator<Event, unknown>;
+	}): AsyncGenerator<EventSpec, unknown>;
 
 	/** Extract text content from a provider response. */
 	getResponseText(response: unknown): string;
@@ -457,7 +456,7 @@ export interface ProviderAdapter {
 	}): Promise<number>;
 
 	/** Build events to record in JSONL for the response (assistant_text + tool_call events). */
-	buildResponseEvents(response: unknown, isCompacting: boolean): Event[];
+	buildResponseEvents(response: unknown, isCompacting: boolean): EventSpec[];
 
 	/** Add the assistant response to the messages array. */
 	addAssistantMessage(
@@ -594,7 +593,7 @@ export async function* runProviderLoop(
 	request: AgentRequest,
 	sessionId: string,
 	queue?: MessageQueue,
-): AsyncGenerator<Event, AgentResult> {
+): AsyncGenerator<EventSpec, AgentResult> {
 	const model = request.model ?? "claude-sonnet-4-6"; // default overridden by provider
 	let cwd = request.cwd;
 
@@ -617,7 +616,6 @@ export async function* runProviderLoop(
 			emit({
 				type: "message",
 				id: msg.id,
-				taskId: "",
 				body: msg,
 				ts: msg.ts,
 			});
@@ -822,10 +820,9 @@ export async function* runProviderLoop(
 	let doneExitReason: ExitReason | null = null;
 	let doneSummary = "";
 	{
-		const evt: Event = {
+		const evt: EventSpec = {
 			type: "status",
 			message: `Starting agent loop (model: ${model})`,
-			taskId: "",
 			ts: Date.now(),
 		};
 		emit?.(evt);
@@ -871,13 +868,12 @@ export async function* runProviderLoop(
 			// Write done tool_result with wake context
 			const cwdLine = cwd ? `\n\n## Working Directory\n${cwd}` : "";
 			const doneText = `You previously called done(). New messages woke you up:${cwdLine}`;
-			const doneToolResultEvt: Event = {
+			const doneToolResultEvt: EventSpec = {
 				type: "tool_result",
 				tool: pendingDoneToolCall.name,
 				toolCallId: pendingDoneToolCall.id,
 				content: doneText,
 				isError: false,
-				taskId: "",
 				ts: Date.now(),
 			};
 			emit?.(doneToolResultEvt);
@@ -1015,13 +1011,12 @@ export async function* runProviderLoop(
 				// Emit yield tool_result before compaction to avoid orphan tool_call in JSONL.
 				// Without this, the yield tool_call remains unpaired → on resume, converter
 				// finds tool_use without tool_result → duplicate tool_result blocks → API 400.
-				const compactYieldEvt: Event = {
+				const compactYieldEvt: EventSpec = {
 					type: "tool_result",
 					tool: pendingYieldToolCall.name,
 					toolCallId: pendingYieldToolCall.id,
 					content: "Manual compaction requested",
 					isError: false,
-					taskId: "",
 					ts: Date.now(),
 				};
 				emit?.(compactYieldEvt);
@@ -1092,13 +1087,12 @@ export async function* runProviderLoop(
 			// On resume, event converter reads this from JSONL to rebuild the tool_result
 			// message — truncation would cause prompt cache misses.
 			// tool_result must come before messages_consumed to match normal tool path order.
-			const yieldResultEvt: Event = {
+			const yieldResultEvt: EventSpec = {
 				type: "tool_result",
 				tool: pendingYieldToolCall.name,
 				toolCallId: pendingYieldToolCall.id,
 				content: yieldContent,
 				isError: false,
-				taskId: "",
 				ts: Date.now(),
 			};
 			emit?.(yieldResultEvt);
@@ -1115,10 +1109,9 @@ export async function* runProviderLoop(
 
 		// Check abort signal
 		if (request.signal?.aborted) {
-			const evt: Event = {
+			const evt: EventSpec = {
 				type: "status",
 				message: "Aborted",
-				taskId: "",
 				ts: Date.now(),
 			};
 			emit?.(evt);
@@ -1164,7 +1157,7 @@ export async function* runProviderLoop(
 
 			if (compactResult) {
 				messages.length = 0;
-				estimatedInputTokens = compactResult.estimatedInputTokens;
+				estimatedInputTokens = 0;
 				manualCompactRequested = false;
 
 				// Refresh session_config after compaction — updates tools, system prompt, date.
@@ -1187,15 +1180,14 @@ export async function* runProviderLoop(
 					// uses request.systemPrompt which is still frozen.
 					if (freshPrompt) {
 						request.systemPrompt = freshPrompt;
-						const sessionConfigEvt: Event = {
+						const sessionConfigEvt: EventSpec = {
 							type: "session_config",
 							tools: jsonTools,
 							systemStable: freshPrompt.stable,
 							systemVariable: freshPrompt.variable,
 							...(request.cacheTtl ? { cacheTtl: request.cacheTtl } : {}),
-							taskId: "",
 							ts: Date.now(),
-						} as Event;
+						} as EventSpec;
 						emit(sessionConfigEvt);
 					}
 
@@ -1220,21 +1212,19 @@ export async function* runProviderLoop(
 
 		// ── Pre-call compression: count tokens, inject summarization instruction if over threshold ──
 		if (manualCompactRequested && messages.length <= 4) {
-			const s1: Event = {
+			const s1: EventSpec = {
 				type: "status",
 				message: "Context is too short to compact",
-				taskId: "",
 				ts: Date.now(),
 			};
 			emit?.(s1);
 			yield s1;
-			const s2: Event = { type: "compact_started", taskId: "", ts: Date.now() };
+			const s2: EventSpec = { type: "compact_started", ts: Date.now() };
 			emit?.(s2);
 			yield s2;
-			const s3: Event = {
+			const s3: EventSpec = {
 				type: "compact_marker",
 				savedTokens: 0,
-				taskId: "",
 				ts: Date.now(),
 			};
 			emit?.(s3);
@@ -1275,9 +1265,8 @@ export async function* runProviderLoop(
 				(!adapter.supportsTokenCounting &&
 					estimatedInputTokens > compressThreshold)
 			) {
-				const cs1: Event = {
+				const cs1: EventSpec = {
 					type: "compact_started",
-					taskId: "",
 					ts: Date.now(),
 				};
 				emit?.(cs1);
@@ -1285,10 +1274,9 @@ export async function* runProviderLoop(
 				const compactStatusMsg = manualCompactRequested
 					? "Manual compaction triggered"
 					: `Compressing conversation (${adapter.supportsTokenCounting ? "" : "est. "}${tokenCount} tokens, threshold: ${compressThreshold})`;
-				const cs2: Event = {
+				const cs2: EventSpec = {
 					type: "status",
 					message: compactStatusMsg,
-					taskId: "",
 					ts: Date.now(),
 				};
 				emit?.(cs2);
@@ -1381,14 +1369,12 @@ export async function* runProviderLoop(
 						emit({
 							type: "thinking_delta",
 							thinking: (streamEvent as Event & { thinking: string }).thinking,
-							taskId: "",
 							ts: Date.now(),
 						});
 					} else if (streamEvent.type === "text_delta" && emit) {
 						emit({
 							type: "text_delta",
 							content: streamEvent.content,
-							taskId: "",
 							ts: Date.now(),
 						});
 					}
@@ -1408,9 +1394,8 @@ export async function* runProviderLoop(
 					? adapter.getOuterRetryDelayMs(outerAttempt, e)
 					: defaultOuterRetryDelay(outerAttempt);
 				const errMsg = e instanceof Error ? e.message : String(e);
-				const retryEvt: Event = {
+				const retryEvt: EventSpec = {
 					type: "error",
-					taskId: "",
 					message: `API call failed (outer retry ${outerAttempt + 1}/${MAX_OUTER_RETRIES}, waiting ${Math.round(delay / 1000)}s): ${errMsg}`,
 					ts: Date.now(),
 				};
@@ -1453,14 +1438,13 @@ export async function* runProviderLoop(
 		}
 
 		// Emit usage AFTER content events — see ordering note above.
-		const usageEvt: Event = {
+		const usageEvt: EventSpec = {
 			type: "usage",
 			inputTokens: usage.totalContextTokens,
 			outputTokens: usage.outputTokens,
 			contextWindow,
 			cacheCreationTokens: usage.cacheCreationTokens,
 			cacheReadTokens: usage.cacheReadTokens,
-			taskId: "",
 			ts: Date.now(),
 		};
 		emit?.(usageEvt);
@@ -1475,7 +1459,6 @@ export async function* runProviderLoop(
 			yield {
 				type: "assistant_text",
 				content: responseText,
-				taskId: "",
 				ts: Date.now(),
 			};
 		}
@@ -1486,7 +1469,6 @@ export async function* runProviderLoop(
 					tool: tu.name,
 					toolCallId: tu.id,
 					input: tu.input,
-					taskId: "",
 					ts: Date.now(),
 				};
 			}
@@ -1527,11 +1509,10 @@ export async function* runProviderLoop(
 				});
 			}
 
-			const idleStatusEvt: Event = {
+			const idleStatusEvt: EventSpec = {
 				type: "status",
 				message:
 					"Agent ended turn — entering idle state (waiting for messages)",
-				taskId: "",
 				ts: Date.now(),
 			};
 			emit?.(idleStatusEvt);
@@ -1629,14 +1610,13 @@ export async function* runProviderLoop(
 				// JSONL reconstruction walks tool_results into the same user turn as
 				// the real yield's tool_result, matching the bundled live path output.
 				for (const tu of extraYields) {
-					const evt: Event = {
+					const evt: EventSpec = {
 						type: "tool_result" as const,
 						tool: tu.name,
 						toolCallId: tu.id,
 						content:
 							"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
 						isError: false,
-						taskId: "",
 						ts: Date.now(),
 					};
 					if (emit) emit(evt);
@@ -1753,7 +1733,6 @@ export async function* runProviderLoop(
 				...(exec.backgroundCommand
 					? { backgroundCommand: exec.backgroundCommand }
 					: {}),
-				taskId: "",
 				ts: Date.now(),
 			};
 		}
@@ -1841,10 +1820,9 @@ export async function* runProviderLoop(
 					content: budgetResult.warning,
 				});
 				recordBudgetWarning(emit, budgetResult.warning);
-				const bwEvt: Event = {
+				const bwEvt: EventSpec = {
 					type: "status",
 					message: budgetResult.warning,
-					taskId: "",
 					ts: Date.now(),
 				};
 				emit?.(bwEvt);

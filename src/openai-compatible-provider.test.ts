@@ -903,8 +903,8 @@ describe("Event recording via emit callback", () => {
 		}) as unknown as typeof fetch;
 
 		try {
-			const emittedEvents: Event[] = [];
-			const emit = (event: Event) => {
+			const emittedEvents: EventSpec[] = [];
+			const emit = (event: EventSpec) => {
 				emittedEvents.push(event);
 			};
 			const provider = new OpenAICompatibleProvider("gpt-4o");
@@ -978,7 +978,7 @@ describe("Event recording via emit callback", () => {
 	});
 });
 
-import type { Event } from "./events.ts";
+import type { Event, EventSpec } from "./events.ts";
 import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
 // Import AgentResult for type assertion
 import type { AgentResult } from "./types.ts";
@@ -1087,8 +1087,8 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 	test("basic conversation: text only → stop", async () => {
 		const testDir = join(tmpDir, "basic");
-		const emittedEvents: Event[] = [];
-		const emit = (event: Event) => {
+		const emittedEvents: EventSpec[] = [];
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 		};
 
@@ -1147,7 +1147,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 					ts: Date.now(),
 				};
 				const allEvents = [userMsgEvent, ...persistable];
-				const reconstructed = eventsToOpenAIMessages(allEvents);
+				const reconstructed = eventsToOpenAIMessages(allEvents as Event[]);
 				expect(reconstructed.length).toBeGreaterThanOrEqual(2);
 				// First message should contain the content from queue drain
 				const firstMsg = reconstructed[0] as {
@@ -1165,8 +1165,8 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 	test("tool calls: text + tool_use → tool_result → stop", async () => {
 		const testDir = join(tmpDir, "tool-calls");
-		const emittedEvents: Event[] = [];
-		const emit = (event: Event) => {
+		const emittedEvents: EventSpec[] = [];
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 		};
 
@@ -1254,12 +1254,12 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 	test("implicit yield: stop → queue drain → continue", async () => {
 		const testDir = join(tmpDir, "implicit-yield");
-		const emittedEvents: Event[] = [];
+		const emittedEvents: EventSpec[] = [];
 		// Detect idle state via emit callback — handleImplicitYield emits agent_idle
 		// synchronously before queue.wait(), so enqueuing here resolves the wait immediately.
 		let idleCount = 0;
 		let session: ReturnType<OpenAICompatibleProvider["stream"]>;
-		const emit = (event: Event) => {
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 			if (event.type === "agent_idle") {
 				idleCount++;
@@ -1362,7 +1362,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				}
 
 				// Verify reconstruction — queue message should become user message
-				const reconstructed = eventsToOpenAIMessages(events);
+				const reconstructed = eventsToOpenAIMessages(events as Event[]);
 				expect(reconstructed.length).toBeGreaterThanOrEqual(4);
 			},
 		);
@@ -1370,8 +1370,8 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 	test("error tool results: isError preserved", async () => {
 		const testDir = join(tmpDir, "error-tool");
-		const emittedEvents: Event[] = [];
-		const emit = (event: Event) => {
+		const emittedEvents: EventSpec[] = [];
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 		};
 
@@ -1463,8 +1463,8 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 	test("multiple parallel tool calls: 3 tool_use → 3 tool_results", async () => {
 		const testDir = join(tmpDir, "parallel-tools");
-		const emittedEvents: Event[] = [];
-		const emit = (event: Event) => {
+		const emittedEvents: EventSpec[] = [];
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 		};
 
@@ -1571,7 +1571,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 					ts: Date.now(),
 				};
 				const allEvents = [userMsgEvent, ...events];
-				const reconstructed = eventsToOpenAIMessages(allEvents);
+				const reconstructed = eventsToOpenAIMessages(allEvents as Event[]);
 				// user, assistant(with 3 tool_calls), 3 tool results, assistant
 				expect(reconstructed.length).toBeGreaterThanOrEqual(6);
 
