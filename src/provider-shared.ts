@@ -594,6 +594,7 @@ export async function* runProviderLoop(
 	sessionId: string,
 	queue?: MessageQueue,
 ): AsyncGenerator<EventSpec, AgentResult> {
+	console.warn(`[providerLoop:timing] ${sessionId} generator entered`);
 	const model = request.model ?? "claude-sonnet-4-6"; // default overridden by provider
 	let cwd = request.cwd;
 
@@ -830,6 +831,7 @@ export async function* runProviderLoop(
 		yield evt;
 	}
 
+	console.warn(`[providerLoop:timing] ${sessionId} initial drain/wait complete, entering main loop`);
 	let _loopIterStart = Date.now();
 	while (true) {
 		_loopIterStart = Date.now();
