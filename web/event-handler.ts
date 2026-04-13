@@ -90,10 +90,7 @@ export interface EventHandlerDeps {
 	setLogs: React.Dispatch<React.SetStateAction<LogEntry[]>>;
 	setTokenUsage: React.Dispatch<
 		React.SetStateAction<
-			Record<
-				string,
-				{ inputTokens: number; contextWindow: number; estimated?: boolean }
-			>
+			Record<string, { inputTokens: number; contextWindow: number }>
 		>
 	>;
 	setPendingMessages: React.Dispatch<
@@ -608,7 +605,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							[usageKey]: {
 								inputTokens: msg.inputTokens,
 								contextWindow: msg.contextWindow,
-								estimated: msg.estimated || false,
 							},
 						}));
 					},

@@ -18,7 +18,7 @@ import {
 	type ToolResultData,
 	walkEventsToMessages,
 } from "./event-converter.ts";
-import type { Event } from "./events.ts";
+import type { Event, EventSpec } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
 	buildToolResultEvents,
@@ -550,7 +550,6 @@ function createAnthropicAdapter(
 									yield {
 										type: "thinking_delta" as const,
 										thinking: thinkingBuffer,
-										taskId: "",
 										ts: Date.now(),
 									};
 									thinkingBuffer = "";
@@ -559,7 +558,6 @@ function createAnthropicAdapter(
 									yield {
 										type: "text_delta" as const,
 										content: textBuffer,
-										taskId: "",
 										ts: Date.now(),
 									};
 									textBuffer = "";
@@ -572,7 +570,6 @@ function createAnthropicAdapter(
 						yield {
 							type: "thinking_delta" as const,
 							thinking: thinkingBuffer,
-							taskId: "",
 							ts: Date.now(),
 						};
 					}
@@ -580,7 +577,6 @@ function createAnthropicAdapter(
 						yield {
 							type: "text_delta" as const,
 							content: textBuffer,
-							taskId: "",
 							ts: Date.now(),
 						};
 					}
@@ -608,7 +604,6 @@ function createAnthropicAdapter(
 					const delay = Math.min(2000 * 2 ** attempt, 60000);
 					yield {
 						type: "error" as const,
-						taskId: "",
 						message: `API error (retry ${attempt + 1}/4): ${e.message}`,
 						ts: Date.now(),
 					};
@@ -679,9 +674,9 @@ function createAnthropicAdapter(
 			return result.input_tokens;
 		},
 
-		buildResponseEvents(response: unknown, isCompacting: boolean): Event[] {
+		buildResponseEvents(response: unknown, isCompacting: boolean): EventSpec[] {
 			const msg = response as Anthropic.Messages.Message;
-			const events: Event[] = [];
+			const events: EventSpec[] = [];
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
 					events.push({
@@ -689,7 +684,6 @@ function createAnthropicAdapter(
 						thinking: block.thinking,
 						signature: block.signature,
 						provider: "anthropic",
-						taskId: "",
 						ts: Date.now(),
 					});
 				} else if (block.type === "redacted_thinking") {
@@ -701,14 +695,12 @@ function createAnthropicAdapter(
 						signature: (block as { data: string }).data,
 						redacted: true,
 						provider: "anthropic",
-						taskId: "",
 						ts: Date.now(),
 					});
 				} else if (block.type === "text") {
 					events.push({
 						type: "assistant_text",
 						content: block.text,
-						taskId: "",
 						ts: Date.now(),
 					});
 				} else if (block.type === "tool_use" && !isCompacting) {
@@ -717,7 +709,6 @@ function createAnthropicAdapter(
 						tool: block.name,
 						toolCallId: block.id,
 						input: block.input as Record<string, unknown>,
-						taskId: "",
 						ts: Date.now(),
 					});
 				}
@@ -765,13 +756,17 @@ function createAnthropicAdapter(
 				syntheticEvents.push({
 					type: "message",
 					id: qm.id,
-					taskId: "",
 					body: qm,
 					ts: qm.ts,
 				});
 			}
 
-			return eventsToAnthropicMessages(syntheticEvents);
+			// Walker expects Event[] (with taskId). These synthetic events are
+			// local walker input, never persisted — use empty taskId.
+			const walkerEvents = syntheticEvents.map(
+				(s) => ({ ...s, taskId: "" }) as Event,
+			);
+			return eventsToAnthropicMessages(walkerEvents);
 		},
 
 		appendQueueMessagesToMessages(
@@ -950,7 +945,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		return lastResult;
 	}
 
-	async *stream(request: AgentRequest): AsyncGenerator<Event, AgentResult> {
+	async *stream(request: AgentRequest): AsyncGenerator<EventSpec, AgentResult> {
 		const sessionId = request.resumeSessionId ?? ulid();
 		const gen = this.runLoop(request, sessionId, request.queue);
 		let result = await gen.next();
@@ -965,7 +960,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		request: AgentRequest,
 		sessionId: string,
 		queue?: MessageQueue,
-	): AsyncGenerator<Event, AgentResult> {
+	): AsyncGenerator<EventSpec, AgentResult> {
 		const adapter = createAnthropicAdapter(this.client, this.useOAuth, {
 			outerRetryDelayMs: this.outerRetryDelayMs,
 			thinkingEffort: this.thinkingEffort,

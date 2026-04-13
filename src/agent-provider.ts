@@ -1,4 +1,4 @@
-import type { Event } from "./events.ts";
+import type { Event, EventSpec } from "./events.ts";
 import type { MessageQueue } from "./message-queue.ts";
 
 import type { ToolDefinition } from "./tool-definition.ts";
@@ -41,10 +41,10 @@ export interface AgentRequest {
 	/**
 	 * Emit callback for provider events (broadcast + persist).
 	 * Provider calls this instead of writing to EventStore directly.
-	 * The daemon layer wires this to emitEvent() which handles persistence.
-	 * Provider emits events without taskId — the daemon layer injects it.
+	 * The daemon layer wires this to R.emit() which adds taskId + traceId.
+	 * Provider emits EventSpec (no taskId) — the emit layer routes it.
 	 */
-	emit?: (event: Event) => void;
+	emit?: (spec: EventSpec) => void;
 	/**
 	 * Pre-loaded active events for session resume.
 	 * The daemon layer reads these from EventStore and passes them in.
@@ -101,5 +101,5 @@ export interface AgentProvider {
 	 * Execute a task with streaming events.
 	 * The queue, abort signal, and session lifecycle are managed by the caller (daemon layer).
 	 */
-	stream(request: AgentRequest): AsyncGenerator<Event, AgentResult>;
+	stream(request: AgentRequest): AsyncGenerator<EventSpec, AgentResult>;
 }

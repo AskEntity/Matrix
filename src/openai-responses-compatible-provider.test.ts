@@ -12,7 +12,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import type { Event } from "./events.ts";
+import type { Event, EventSpec } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import {
 	clearContextWindowCache,
@@ -919,7 +919,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				},
 			});
 
-			const seen: Event[] = [];
+			const seen: EventSpec[] = [];
 			const consumePromise = (async () => {
 				let result = await session.next();
 				while (!result.done) {
@@ -1049,7 +1049,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 			});
 
 			// Collect events via stream() to verify tool_call shape
-			const seen: Event[] = [];
+			const seen: EventSpec[] = [];
 			const queue = queueWithPrompt("Do the thing", tmpDir);
 			const execQueue = new MessageQueue();
 			for (const msg of queue.drain()) {
@@ -1178,7 +1178,7 @@ describe("streamResponsesAPI (SDK-based)", () => {
 	async function runStream(
 		fetchMock: typeof fetch,
 		overrides?: Partial<Parameters<typeof streamResponsesAPI>[0]>,
-	): Promise<{ events: Event[]; response: unknown }> {
+	): Promise<{ events: EventSpec[]; response: unknown }> {
 		globalThis.fetch = fetchMock;
 		const gen = streamResponsesAPI({
 			endpoint: "https://api.openai.com/v1",
@@ -1187,7 +1187,7 @@ describe("streamResponsesAPI (SDK-based)", () => {
 			maxRetries: 0, // disable SDK retries for error tests
 			...overrides,
 		});
-		const events: Event[] = [];
+		const events: EventSpec[] = [];
 		let result = await gen.next();
 		while (!result.done) {
 			events.push(result.value);

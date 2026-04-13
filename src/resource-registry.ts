@@ -10,6 +10,7 @@
  */
 
 import type { EventStore } from "./event-store.ts";
+import type { EventSpec } from "./events.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import type { TaskSession } from "./types.ts";
@@ -150,7 +151,7 @@ export function getSession(
 // They're declared here so tool handlers can call them with just handles.
 // The actual implementation is injected at init time to avoid circular imports.
 
-type EmitFn = (projectId: string, event: Record<string, unknown>) => void;
+type EmitFn = (projectId: string, taskId: string, spec: EventSpec) => void;
 type BroadcastTreeFn = (projectId: string) => void;
 type DeliverMessageFn = (
 	projectId: string,
@@ -192,9 +193,9 @@ export function registerSideEffects(fns: {
 	_injectMessageToProject = fns.injectMessageToProject;
 }
 
-export function emit(projectId: string, event: Record<string, unknown>): void {
+export function emit(projectId: string, taskId: string, spec: EventSpec): void {
 	if (!_emit) throw new Error("emit not registered");
-	_emit(projectId, event);
+	_emit(projectId, taskId, spec);
 }
 
 export function broadcastTree(projectId: string): void {

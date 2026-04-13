@@ -57,10 +57,7 @@ interface ActionHandlerDeps {
 	setIsCreatingTask: React.Dispatch<React.SetStateAction<boolean>>;
 	setTokenUsage: React.Dispatch<
 		React.SetStateAction<
-			Record<
-				string,
-				{ inputTokens: number; contextWindow: number; estimated?: boolean }
-			>
+			Record<string, { inputTokens: number; contextWindow: number }>
 		>
 	>;
 	setPendingMessages: React.Dispatch<

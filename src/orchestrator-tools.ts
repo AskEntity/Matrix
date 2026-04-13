@@ -15,6 +15,7 @@
 import { join } from "node:path";
 import { z } from "zod";
 import { stripEventForUI } from "./daemon/helpers.ts";
+import type { EventSpec } from "./events.ts";
 import {
 	createCrossProjectMessage,
 	createTaskMessage,
@@ -1014,9 +1015,8 @@ export function buildAllToolDefs(): ToolDef[] {
 			},
 			handler: async (args) => {
 				const taskId = (args.taskId as string) ?? "orchestrator";
-				R.emit(args.projectId as string, {
+				R.emit(args.projectId as string, taskId, {
 					type: "clarification_requested",
-					taskId,
 					question: args.question as string,
 					...((args.question as string).includes("\n")
 						? {
@@ -1028,7 +1028,8 @@ export function buildAllToolDefs(): ToolDef[] {
 									.trim(),
 							}
 						: { title: args.question }),
-				});
+					ts: Date.now(),
+				} as EventSpec);
 				R.broadcastTree(args.projectId as string);
 				return {
 					content: [
