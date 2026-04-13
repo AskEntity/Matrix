@@ -64,7 +64,6 @@ interface MockData {
 	tokenUsage?: {
 		inputTokens: number;
 		contextWindow: number;
-		estimated?: boolean;
 	};
 }
 
@@ -117,7 +116,6 @@ function MockShowcaseInner() {
 	const [tokenUsage, setTokenUsage] = useState<{
 		inputTokens: number;
 		contextWindow: number;
-		estimated?: boolean;
 	} | null>(null);
 	const [theme] = useState<"dark" | "light" | "cute-light" | "cute-dark">(
 		() => {
@@ -549,7 +547,6 @@ function MockShowcaseInner() {
 								<TokenUsageBadge
 									inputTokens={tokenUsage.inputTokens}
 									contextWindow={tokenUsage.contextWindow}
-									estimated={tokenUsage.estimated}
 									onCompact={noop}
 								/>
 							)}

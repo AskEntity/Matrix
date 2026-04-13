@@ -6,7 +6,7 @@ import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { runChildCore } from "./daemon/agent-lifecycle.ts";
 import { createApp } from "./daemon.ts";
 import { EventStore } from "./event-store.ts";
-import type { Event } from "./events.ts";
+import type { Event, EventSpec } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 
 import { TaskTracker } from "./task-tracker.ts";
@@ -2090,7 +2090,7 @@ describe("lifecycle: child completion notification paths", () => {
 		};
 
 		const eventLog: string[] = [];
-		const emit = (event: Event) => {
+		const emit = (event: EventSpec) => {
 			eventLog.push(event.type);
 		};
 

@@ -6,6 +6,7 @@ import { rollOldTraceIdDirs } from "../debug-snapshot.ts";
 import {
 	buildSessionRepair,
 	type Event,
+	type EventSpec,
 	findOrphanedBackgroundProcesses,
 	findUnconsumedMessages,
 	type SessionConfigEvent,
@@ -20,10 +21,7 @@ import {
 	createUserMessage,
 	createWorkContext,
 } from "../queue-message-factory.ts";
-import {
-	initResourceRegistry,
-	registerSideEffects,
-} from "../resource-registry.ts";
+import * as R from "../resource-registry.ts";
 import { buildSystemPrompt, type SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
@@ -136,39 +134,27 @@ async function createAgentContext(
 	}
 
 	// Initialize resource registry with daemon context (idempotent)
-	initResourceRegistry(ctx);
-	registerSideEffects({
-		emit: (projectId: string, event: Record<string, unknown>) => {
-			const ts = (event.ts as number) || Date.now();
-			// Auto-inject traceId from the target task's session if missing.
-			// Tool handlers emit via R.emit and don't carry loopTraceId —
-			// we look it up on the current session so the event can be
-			// attributed to the run that produced it.
-			const lookupTraceId = (taskId: unknown): string | undefined => {
-				if (typeof taskId !== "string" || !taskId) return undefined;
-				const tracker = ctx.trackers.get(projectId);
-				return tracker?.getTask(taskId)?.session?.loopTraceId;
-			};
-			if (event.type === "agent_event") {
-				const evtTaskId = (event.taskId as string) || "";
-				const eventType = event.eventType as string;
-				const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
-				const existingTraceId = (rest as Record<string, unknown>).traceId;
-				const traceId = existingTraceId ?? lookupTraceId(evtTaskId);
-				emitEvent(ctx, projectId, {
-					type: eventType,
-					taskId: evtTaskId,
-					ts,
-					...rest,
-					...(traceId ? { traceId } : {}),
-				} as unknown as Event);
-			} else {
-				const existingTraceId = event.traceId;
-				const traceId = existingTraceId ?? lookupTraceId(event.taskId);
-				const base = event.ts ? event : { ...event, ts };
-				const withIds = traceId ? { ...base, traceId } : base;
-				emitEvent(ctx, projectId, withIds as unknown as Event);
+	R.initResourceRegistry(ctx);
+	R.registerSideEffects({
+		emit: (projectId: string, taskId: string, spec: EventSpec) => {
+			const ts = spec.ts || Date.now();
+			// Auto-inject traceId from the target task's session.
+			const tracker = ctx.trackers.get(projectId);
+			const traceId = tracker?.getTask(taskId)?.session?.loopTraceId;
+			// Streaming text tracking (for partial injection into batch events API)
+			if (spec.type === "text_delta") {
+				const existing = ctx.streamingText.get(taskId) ?? "";
+				ctx.streamingText.set(taskId, existing + spec.content);
+			} else if (spec.type === "assistant_text") {
+				ctx.streamingText.delete(taskId);
 			}
+			const event = {
+				...spec,
+				taskId,
+				ts,
+				...(traceId ? { traceId } : {}),
+			} as Event;
+			emitEvent(ctx, projectId, event);
 		},
 		broadcastTree: (projectId: string) => {
 			const tracker = ctx.trackers.get(projectId);
@@ -822,18 +808,8 @@ export async function runAgentForNode(
 		// After lock release, messages go directly to the queue via deliverMessage.
 		ctx.launchingNodes.delete(nodeId);
 
-		// Build emit callback: emitEvent with taskId + traceId injected + streaming text tracking
-		const emitWithTask = (event: Event) => {
-			const withIds = { ...event, taskId: nodeId, traceId: loopTraceId };
-			// Track streaming text for partial injection into batch events API
-			if (event.type === "text_delta") {
-				const existing = ctx.streamingText.get(nodeId) ?? "";
-				ctx.streamingText.set(nodeId, existing + event.content);
-			} else if (event.type === "assistant_text") {
-				ctx.streamingText.delete(nodeId);
-			}
-			emitEvent(ctx, project.id, withIds as Event);
-		};
+		// Emit binding: routes EventSpec through R.emit which adds taskId + traceId
+		const emit = (spec: EventSpec) => R.emit(project.id, nodeId, spec);
 
 		// Notify UI that this agent is now active
 		emitEvent(ctx, project.id, {
@@ -903,7 +879,7 @@ export async function runAgentForNode(
 		const sessionRequest: AgentRequest = {
 			cwd: agentCwd,
 			projectPath: isRoot ? project.path : undefined,
-			emit: emitWithTask,
+			emit,
 			activeEvents,
 			systemPrompt,
 			refreshSystemPrompt,

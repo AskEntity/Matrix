@@ -62,6 +62,20 @@ export interface SessionConfigEvent {
 	ts: number;
 }
 
+/**
+ * Distributive Omit — preserves union structure unlike plain Omit<Union, K>.
+ * Plain Omit collapses the union to an intersection, losing discriminated union properties.
+ */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+	? Omit<T, K>
+	: never;
+
+/**
+ * EventSpec — an event before routing. Producers create these without taskId;
+ * the emit layer adds taskId + traceId to produce a full Event.
+ */
+export type EventSpec = DistributiveOmit<Event, "taskId">;
+
 export type Event = (
 	| MessageEvent
 	| SessionConfigEvent
@@ -113,7 +127,6 @@ export type Event = (
 			inputTokens: number;
 			outputTokens?: number;
 			contextWindow: number;
-			estimated?: boolean;
 			cacheCreationTokens?: number;
 			cacheReadTokens?: number;
 			ts: number;

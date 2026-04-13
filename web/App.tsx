@@ -227,10 +227,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		return "dark";
 	});
 	const [tokenUsage, setTokenUsage] = useState<
-		Record<
-			string,
-			{ inputTokens: number; contextWindow: number; estimated?: boolean }
-		>
+		Record<string, { inputTokens: number; contextWindow: number }>
 	>({});
 	const [showCacheBadges, setShowCacheBadges] = useState(
 		() => localStorage.getItem("mxd-show-cache-badges") === "true",
@@ -1347,7 +1344,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									<TokenUsageBadge
 										inputTokens={usage.inputTokens}
 										contextWindow={usage.contextWindow}
-										estimated={usage.estimated}
 										onCompact={() => {
 											compact(viewedTaskId ?? undefined);
 										}}
