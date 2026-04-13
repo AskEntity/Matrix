@@ -718,6 +718,7 @@ export async function* runProviderLoop(
 	//    (e.g., messages persisted to JSONL before crash, recovered by findUnconsumedMessages).
 	// 3. Fresh start or resume without user-ending messages — blocking wait for first message.
 	//
+	console.warn(`[providerLoop:timing] ${sessionId} initial drain start`);
 	const isYieldResume =
 		pendingYieldToolCall != null || pendingImplicitYieldResume;
 	const isDoneResume = pendingDoneToolCall != null;
@@ -829,7 +830,9 @@ export async function* runProviderLoop(
 		yield evt;
 	}
 
+	let _loopIterStart = Date.now();
 	while (true) {
+		_loopIterStart = Date.now();
 		// ── Handle pending done resume (done tool_call orphan on JSONL) ──
 		// Agent called done() and the loop exited. On wake (new message), write a
 		// synthetic tool_result for the done tool_call, then continue to next API call.
@@ -1108,6 +1111,7 @@ export async function* runProviderLoop(
 		}
 
 		// Check abort signal
+		console.warn(`[providerLoop:timing] ${sessionId} abort check +${Date.now() - _loopIterStart}ms aborted=${request.signal?.aborted}`);
 		if (request.signal?.aborted) {
 			const evt: EventSpec = {
 				type: "status",
@@ -1339,13 +1343,11 @@ export async function* runProviderLoop(
 		turns++;
 
 		// ── Call provider API (with outer retry for transient errors) ──
-		// The adapter's callAPI has its own internal retry loop (e.g., 5 attempts).
-		// This outer retry catches errors that propagate after internal retries are
-		// exhausted, giving the agent a longer recovery window for persistent transient
-		// errors (rate limits during high load, prolonged outages).
+		console.warn(`[providerLoop:timing] ${sessionId} pre-API-call +${Date.now() - _loopIterStart}ms (turn ${turns})`);
 		let response: unknown;
 		for (let outerAttempt = 0; ; outerAttempt++) {
 			try {
+				const _apiStart = Date.now();
 				const apiGen = adapter.callAPI({
 					model,
 					messages,
@@ -1382,6 +1384,7 @@ export async function* runProviderLoop(
 					apiStep = await apiGen.next();
 				}
 				response = apiStep.value;
+				console.warn(`[providerLoop:timing] ${sessionId} API call done +${Date.now() - _apiStart}ms (turn ${turns})`);
 				break; // Success — exit retry loop
 			} catch (e) {
 				// API 400 (invalid_request_error) — don't try to fix in-memory.
@@ -1627,10 +1630,8 @@ export async function* runProviderLoop(
 		}
 
 		// ── Execute tools concurrently ──
-		// When yield/done appear alongside other tools:
-		// - Other tools execute normally
-		// - yield returns success (no-op — other tool results ARE the "messages")
-		// - done returns error (can't finish without seeing other tools' results)
+		console.warn(`[providerLoop:timing] ${sessionId} tool exec start +${Date.now() - _loopIterStart}ms (${toolUses.length} tools: ${toolUses.map(t => t.name).join(", ")})`);
+		const _toolExecStart = Date.now();
 		const execResults = await Promise.all(
 			toolUses.map(async (toolUse) => {
 				// yield + other tools: yield becomes no-op success
@@ -1667,6 +1668,7 @@ export async function* runProviderLoop(
 			}),
 		);
 
+		console.warn(`[providerLoop:timing] ${sessionId} tool exec done +${Date.now() - _toolExecStart}ms`);
 		// Update cwd if bash tool changed it — sync both the loop-local cwd
 		// and the session's cwd so handler closures see the new value.
 		for (const exec of execResults) {
