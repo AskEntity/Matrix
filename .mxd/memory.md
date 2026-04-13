@@ -1008,8 +1008,16 @@ Test file: `src/drift-thinking.test.ts` (11 golden + 4 drift integration = 15 te
 **Post-compact:** `...compact_started → assistant_text → compact_marker(empty) → session_config → message(work_context) → message(compacted_resume) → messages_consumed → ...`
 **Restart:** No re-emission of session_config or work_context (already in JSONL from first run)
 
-### agent_end.reason
-`done_passed | done_failed | stopped | error | budget_exceeded`
+### agent_end = renamed agent_stopped (not merged lifecycle events)
+`agent_end` is simply `agent_stopped` renamed. Emit positions unchanged from pre-refactor:
+- `stopAgent`/`stopTask`: synchronous emit with captured traceId BEFORE session clear
+- `runAgentForNode` finally: `notReplaced` guard emit (skips when stop already emitted)
+
+**Critical lesson**: Previous attempt merged `orchestration_completed` + `agent_stopped` into one event emitted from ONE place (finally block). This changed lifecycle logic → deadlock on done(). The 2s timeout in shutdown() was a band-aid, not a fix. Correct fix: keep emit positions unchanged, just rename the event.
+
+`orchestration_completed` deleted entirely — stats tracked via `tracker.updateCost`, not events.
+
+agent_end.reason: `stopped` (only value now — other exit reasons tracked elsewhere)
 
 ### Migration
 `bun src/migrate-jsonl.ts` — one-time conversion. Idempotent. Already run on all project JSONL files.
