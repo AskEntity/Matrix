@@ -9552,8 +9552,13 @@ describe("Integration: child done + shutdown no deadlock", () => {
 
 		// Shutdown must also complete without hanging
 		const shutdownPromise = ctx.app.shutdown();
-		const timeout = new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 5000));
-		const result = await Promise.race([shutdownPromise.then(() => "ok" as const), timeout]);
+		const timeout = new Promise<"timeout">((r) =>
+			setTimeout(() => r("timeout"), 5000),
+		);
+		const result = await Promise.race([
+			shutdownPromise.then(() => "ok" as const),
+			timeout,
+		]);
 		expect(result).toBe("ok");
 	}, 30000);
 });

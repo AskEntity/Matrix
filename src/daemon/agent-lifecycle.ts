@@ -1008,14 +1008,12 @@ export async function runAgentForNode(
 			}
 
 			if (hasLateMessages) {
-				ensureChildAgentRunning(ctx, project, tracker, nodeId).catch(
-					(e) => {
-						console.warn(
-							`[Phase 2] Re-launching ${nodeId} for late messages:`,
-							e instanceof Error ? e.message : String(e),
-						);
-					},
-				);
+				ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
+					console.warn(
+						`[Phase 2] Re-launching ${nodeId} for late messages:`,
+						e instanceof Error ? e.message : String(e),
+					);
+				});
 			} else {
 				const newStatus =
 					agentResult.exitReason === "done_passed" ? "verify" : "failed";
