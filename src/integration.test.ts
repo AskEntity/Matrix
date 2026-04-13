@@ -11393,3 +11393,126 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 		expect(status2).toBe("verify");
 	}, 30000);
 });
+
+// ── resetTask timing: reset a yielding agent should be fast ──
+
+describe("Integration: resetTask timing on yielding agent", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("reset a yielding child (with worktree) completes within 5 seconds", async () => {
+		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
+
+		// Child: yield immediately
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Child yielding." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+
+		// Parent: create child → send message → sleep 2s (let child yield) → reset → done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								parentId: "$rootId",
+								title: "Yielding child for reset timing",
+								description: "Will yield immediately",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: { childId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					// Wait for child to start and reach yield state
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "sleep 2" },
+						},
+					],
+				},
+				{
+					// Reset the yielding child — this is what we're timing
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__reset_task",
+							input: { taskId: "$childId" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: '"reset": true',
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "reset timing ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const startTime = Date.now();
+		await startAgent(ctx, parentInstruction);
+		const status = await waitForDone(ctx, 45000);
+		const totalTime = Date.now() - startTime;
+		expect(status).toBe("verify");
+
+		// Total flow: create + send + sleep 2s + reset + done
+		// If reset is fast (~1s): total ~4-6s
+		// If reset is slow (30s): total ~35s+
+		// Threshold: 15s (generous for CI, but catches the 30s bug)
+		console.log(`Total parent→child reset flow took ${totalTime}ms`);
+		expect(totalTime).toBeLessThan(15000);
+
+		// Verify child was reset
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
+		const childId = rootNode?.children?.[0] as string;
+		expect(childId).toBeDefined();
+		const childNode = tracker.getTask(childId);
+		expect(childNode?.status).toBe("pending");
+		expect(childNode?.session).toBeUndefined();
+	}, 45000);
+});
