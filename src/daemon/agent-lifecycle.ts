@@ -304,8 +304,10 @@ export async function stopAgent(
 	// Check if root agent is actually running
 	if (!rootNode?.session) return;
 
+	// Capture traceId BEFORE clearing sessions
+	const rootTraceId = rootNode.session.loopTraceId;
+
 	// Stop ALL agents (root + children) via session on tracker nodes.
-	// Each node's session has its own queue + abort controller.
 	for (const node of tracker.allNodes()) {
 		if (isTask(node) && node.session) {
 			node.session.queue.close();
@@ -339,6 +341,7 @@ export async function stopAgent(
 		type: "agent_end",
 		taskId: rootNodeId,
 		reason: "stopped",
+		traceId: rootTraceId,
 		ts: Date.now(),
 	});
 }
@@ -363,6 +366,9 @@ export async function stopTask(
 	if (!node) return false;
 
 	if (!node.session) return false;
+
+	// Capture traceId BEFORE clearing session
+	const stoppedTraceId = node.session.loopTraceId;
 
 	// Grab the loop promise BEFORE clearing session — once session is gone,
 	// the loop's finally block will fire and resolve this promise.
@@ -400,6 +406,7 @@ export async function stopTask(
 		type: "agent_end",
 		taskId: nodeId,
 		reason: "stopped",
+		traceId: stoppedTraceId,
 		ts: Date.now(),
 	});
 
