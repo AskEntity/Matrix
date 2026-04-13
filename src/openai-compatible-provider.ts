@@ -17,7 +17,7 @@ import {
 	type ToolResultData,
 	walkEventsToMessages,
 } from "./event-converter.ts";
-import type { Event } from "./events.ts";
+import type { Event, EventSpec } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
 	extractQueueImageParts,
@@ -570,16 +570,15 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 
 		supportsTokenCounting: false,
 
-		buildResponseEvents(response: unknown, isCompacting: boolean): Event[] {
+		buildResponseEvents(response: unknown, isCompacting: boolean): EventSpec[] {
 			const data = response as ChatCompletion;
 			const choice = data.choices[0];
-			const events: Event[] = [];
+			const events: EventSpec[] = [];
 
 			if (choice?.message.content) {
 				events.push({
 					type: "assistant_text",
 					content: choice.message.content,
-					taskId: "",
 					ts: Date.now(),
 				});
 			}
@@ -601,7 +600,6 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 						tool: tc.function.name,
 						toolCallId: tc.id,
 						input: parsedInput,
-						taskId: "",
 						ts: Date.now(),
 					});
 				}
@@ -869,7 +867,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		return result.value;
 	}
 
-	async *stream(request: AgentRequest): AsyncGenerator<Event, AgentResult> {
+	async *stream(request: AgentRequest): AsyncGenerator<EventSpec, AgentResult> {
 		const sessionId = request.resumeSessionId ?? ulid();
 		const gen = this.runLoop(request, sessionId, request.queue);
 		let result = await gen.next();
@@ -884,7 +882,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		request: AgentRequest,
 		sessionId: string,
 		queue?: MessageQueue,
-	): AsyncGenerator<Event, AgentResult> {
+	): AsyncGenerator<EventSpec, AgentResult> {
 		const adapter = createOpenAIAdapter(this.baseUrl, this.authToken);
 		const effectiveRequest = {
 			...request,

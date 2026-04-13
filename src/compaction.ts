@@ -4,7 +4,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Event } from "./events.ts";
+import type { EventSpec } from "./events.ts";
 
 // ── Constants ──
 
@@ -191,13 +191,12 @@ export async function* processCompaction(
 	responseText: string,
 	cwd: string | undefined,
 	preCompactTokenCount: number,
-	emit: ((event: Event) => void) | undefined,
-	contextWindow: number,
+	emit: ((spec: EventSpec) => void) | undefined,
+	_contextWindow: number,
 ): AsyncGenerator<
-	Event,
+	EventSpec,
 	{
 		checkpoint: string;
-		estimatedInputTokens: number;
 	} | null
 > {
 	const checkpoint = extractCheckpoint(responseText, cwd);
@@ -211,38 +210,18 @@ export async function* processCompaction(
 		);
 
 		// Emit empty compact_marker (boundary only — content moves to compacted_resume message)
-		if (emit) {
-			emit({
-				type: "compact_marker",
-				savedTokens: compactSavedTokens,
-				taskId: "",
-				ts: Date.now(),
-			});
-		}
-
-		const usageEvt: Event = {
-			type: "usage",
-			inputTokens: estimatedPostCompactTokens,
-			contextWindow,
-			estimated: true,
-			taskId: "",
-			ts: Date.now(),
-		};
-		emit?.(usageEvt);
-		yield usageEvt;
-		// compact_marker already emitted above — yield for consumer loop
-		yield {
+		const markerEvt: EventSpec = {
 			type: "compact_marker",
 			savedTokens: compactSavedTokens,
-			taskId: "",
 			ts: Date.now(),
 		};
+		emit?.(markerEvt);
+		yield markerEvt;
 
-		return { checkpoint, estimatedInputTokens: estimatedPostCompactTokens };
+		return { checkpoint };
 	} catch (e) {
-		const errEvt: Event = {
+		const errEvt: EventSpec = {
 			type: "error",
-			taskId: "",
 			message: `Compaction rebuild failed: ${e instanceof Error ? e.message : String(e)}`,
 			ts: Date.now(),
 		};

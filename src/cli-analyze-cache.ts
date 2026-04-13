@@ -90,13 +90,6 @@ export function analyzeCacheMisses(jsonlContent: string): AnalyzeResult {
 
 		if (event.type !== "usage") continue;
 
-		// Skip compaction-estimated usage: not a real API call, just bookkeeping
-		// written by the compaction module. Must be skipped BEFORE touching any
-		// state so it doesn't (a) appear in misses, (b) count in totalUsageEvents,
-		// (c) update prevUsageTs, or (d) consume the stop/compact flags — the
-		// flags belong to the next REAL post-compact API call.
-		if (event.estimated === true) continue;
-
 		const inputTokens =
 			typeof event.inputTokens === "number" ? event.inputTokens : 0;
 		if (inputTokens === 0) continue; // garbage row — skip

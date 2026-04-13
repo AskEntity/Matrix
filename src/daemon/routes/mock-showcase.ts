@@ -1351,7 +1351,6 @@ function buildMockData() {
 	const tokenUsage = {
 		inputTokens: 98500,
 		contextWindow: 200000,
-		estimated: false,
 	};
 
 	return {

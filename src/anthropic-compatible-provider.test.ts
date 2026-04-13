@@ -23,7 +23,7 @@ import {
 	SUMMARIZATION_INSTRUCTION,
 } from "./compaction.ts";
 import { EventStore } from "./event-store.ts";
-import type { Event } from "./events.ts";
+import type { Event, EventSpec } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
@@ -2506,8 +2506,8 @@ describe("Event deterministic verification", () => {
 
 	test("basic conversation: user → assistant text → done", async () => {
 		const testDir = join(tmpDir, "basic");
-		const emittedEvents: Event[] = [];
-		const emit = (event: Event) => {
+		const emittedEvents: EventSpec[] = [];
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 		};
 
@@ -2547,7 +2547,7 @@ describe("Event deterministic verification", () => {
 		expect(types).toContain("assistant_text");
 
 		// Verify reconstruction matches — the queue message with header is consumed
-		const reconstructed = eventsToAnthropicMessages(events);
+		const reconstructed = eventsToAnthropicMessages(events as Event[]);
 		expect(reconstructed.length).toBeGreaterThanOrEqual(2);
 		// First message should contain the header + content from queue drain
 		const firstMsg = reconstructed[0] as { role: string; content: string };
@@ -2562,8 +2562,8 @@ describe("Event deterministic verification", () => {
 
 	test("tool calls: user → assistant + done tool_use → orphan (no tool_result)", async () => {
 		const testDir = join(tmpDir, "tool-calls");
-		const emittedEvents: Event[] = [];
-		const emit = (event: Event) => {
+		const emittedEvents: EventSpec[] = [];
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 		};
 
@@ -2640,8 +2640,8 @@ describe("Event deterministic verification", () => {
 
 	test("error tool results: isError flag preserved in events", async () => {
 		const testDir = join(tmpDir, "error-tool");
-		const emittedEvents: Event[] = [];
-		const emit = (event: Event) => {
+		const emittedEvents: EventSpec[] = [];
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 		};
 
@@ -2721,7 +2721,7 @@ describe("Event deterministic verification", () => {
 		}
 
 		// Verify reconstruction preserves is_error
-		const reconstructed = eventsToAnthropicMessages(events);
+		const reconstructed = eventsToAnthropicMessages(events as Event[]);
 		const userMsgWithToolResult = reconstructed.find(
 			(m) =>
 				(m as { role: string }).role === "user" &&
@@ -2739,11 +2739,11 @@ describe("Event deterministic verification", () => {
 
 	test("implicit yield: end_turn → queue.wait → queue drain → continue", async () => {
 		const testDir = join(tmpDir, "implicit-yield");
-		const emittedEvents: Event[] = [];
+		const emittedEvents: EventSpec[] = [];
 		// Detect idle state via emit callback — handleImplicitYield emits agent_idle
 		// synchronously before queue.wait(), so enqueuing here resolves the wait immediately.
 		let idleCount = 0;
-		const emit = (event: Event) => {
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 			if (event.type === "agent_idle") {
 				idleCount++;
@@ -2844,7 +2844,7 @@ describe("Event deterministic verification", () => {
 		}
 
 		// Verify reconstruction
-		const reconstructed = eventsToAnthropicMessages(events);
+		const reconstructed = eventsToAnthropicMessages(events as Event[]);
 		// Should have: user_msg, assistant(end_turn), queue message (as user), assistant(continue)
 		expect(reconstructed.length).toBeGreaterThanOrEqual(4);
 
@@ -2861,8 +2861,8 @@ describe("Event deterministic verification", () => {
 
 	test("multiple parallel tool calls: 3 tool_use blocks → 3 tool_results", async () => {
 		const testDir = join(tmpDir, "parallel-tools");
-		const emittedEvents: Event[] = [];
-		const emit = (event: Event) => {
+		const emittedEvents: EventSpec[] = [];
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 		};
 
@@ -2973,7 +2973,7 @@ describe("Event deterministic verification", () => {
 			ts: Date.now(),
 		};
 		const allEvents = [userMsgEvent, ...events];
-		const reconstructed = eventsToAnthropicMessages(allEvents);
+		const reconstructed = eventsToAnthropicMessages(allEvents as Event[]);
 		// user, assistant(text + 3 tool_uses), user(3 tool_results), assistant(end_turn)
 		expect(reconstructed.length).toBe(4);
 
@@ -3147,8 +3147,8 @@ describe("Event deterministic verification", () => {
 
 	test("cancellation point queue drain: messages between tool_call and tool_result", async () => {
 		const testDir = join(tmpDir, "cancellation-point");
-		const emittedEvents: Event[] = [];
-		const emit = (event: Event) => {
+		const emittedEvents: EventSpec[] = [];
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 		};
 
@@ -3315,8 +3315,8 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 		const testDir = join(tmpDir, "mcp-image");
 		await mkdir(testDir, { recursive: true });
 
-		const emittedEvents: Event[] = [];
-		const emit = (event: Event) => {
+		const emittedEvents: EventSpec[] = [];
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 		};
 
@@ -3411,7 +3411,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 		const allEvents = [userMsgEvent, ...emittedEvents];
 
 		// Reconstruct from JSONL events
-		const reconstructed = eventsToAnthropicMessages(allEvents);
+		const reconstructed = eventsToAnthropicMessages(allEvents as Event[]);
 
 		// Find the user message containing the tool_result in both arrays
 		const findToolResultMsg = (msgs: unknown[]) =>
@@ -3451,8 +3451,8 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 		const testDir = join(tmpDir, "multi-queue");
 		await mkdir(testDir, { recursive: true });
 
-		const emittedEvents: Event[] = [];
-		const emit = (event: Event) => {
+		const emittedEvents: EventSpec[] = [];
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 		};
 
@@ -3562,7 +3562,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 		const allEvents = [userMsgEvent, ...emittedEvents];
 
 		// Reconstruct from JSONL events
-		const reconstructed = eventsToAnthropicMessages(allEvents);
+		const reconstructed = eventsToAnthropicMessages(allEvents as Event[]);
 
 		// Find the user message containing tool_result + queue text blocks
 		const findToolResultMsg = (msgs: unknown[]) =>
@@ -3604,7 +3604,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 		const testDir = join(tmpDir, "yield-multi-queue");
 		await mkdir(testDir, { recursive: true });
 
-		const emittedEvents: Event[] = [];
+		const emittedEvents: EventSpec[] = [];
 		let liveMessages: unknown[] | null = null;
 		let idleCount = 0;
 
@@ -3612,7 +3612,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 
 		// Detect idle via emit callback — enqueue messages on first idle (yield),
 		// close queue on second idle (end_turn after wake).
-		const emit = (event: Event) => {
+		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
 			if (event.type === "agent_idle") {
 				idleCount++;
@@ -3744,7 +3744,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 			) {
 				orderedEvents.push(tcMsg1, tcMsg2);
 			}
-			orderedEvents.push(e);
+			orderedEvents.push(e as Event);
 		}
 
 		const reconstructed = eventsToAnthropicMessages(orderedEvents);
