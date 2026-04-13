@@ -593,6 +593,8 @@ function createAnthropicAdapter(
 
 					break;
 				} catch (e) {
+					// Abort signal fired — don't retry, exit immediately
+					if (params.signal?.aborted) throw e;
 					const isTransient =
 						e instanceof Anthropic.RateLimitError ||
 						e instanceof Anthropic.APIConnectionError ||
@@ -607,7 +609,15 @@ function createAnthropicAdapter(
 						message: `API error (retry ${attempt + 1}/4): ${e.message}`,
 						ts: Date.now(),
 					};
-					await new Promise((r) => setTimeout(r, delay));
+					// Sleep with abort check — bail out early if stopped
+					await new Promise<void>((resolve) => {
+						const timer = setTimeout(resolve, delay);
+						if (params.signal) {
+							const onAbort = () => { clearTimeout(timer); resolve(); };
+							params.signal.addEventListener("abort", onAbort, { once: true });
+						}
+					});
+					if (params.signal?.aborted) throw new Error("Aborted");
 				}
 			}
 			if (!response) throw new Error("Failed to get API response");
