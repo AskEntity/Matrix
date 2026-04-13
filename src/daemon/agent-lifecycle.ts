@@ -377,7 +377,10 @@ export async function stopTask(
 	// (e.g., resetTask) that clear JSONL after stopTask would race with the
 	// loop's async cleanup writing events to the deleted JSONL.
 	if (loopPromise) {
+		const t0 = Date.now();
 		await loopPromise;
+		const dt = Date.now() - t0;
+		if (dt > 1000) console.warn(`[stopTask] await loopPromise took ${dt}ms for ${nodeId}`);
 	}
 
 	await tracker.save();
@@ -960,6 +963,7 @@ export async function runAgentForNode(
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} finally {
+		const _finallyStart = Date.now();
 		// Ensure launch lock is released (covers error path before session established)
 		ctx.launchingNodes.delete(nodeId);
 		// Clean up streaming text accumulator
@@ -974,7 +978,10 @@ export async function runAgentForNode(
 			cleanupSessionBackgroundProcesses(finalNode.session.backgroundProcesses);
 			finalNode.session = undefined;
 		}
+		const _mcpStart = Date.now();
 		await mcpManager.disconnectAll();
+		const _mcpDt = Date.now() - _mcpStart;
+		if (_mcpDt > 500) console.warn(`[runAgentForNode] mcpManager.disconnectAll() took ${_mcpDt}ms for ${nodeId}`);
 
 		if (notReplaced) {
 			emitEvent(ctx, project.id, {
@@ -985,6 +992,8 @@ export async function runAgentForNode(
 				ts: Date.now(),
 			});
 		}
+		const _finallyDt = Date.now() - _finallyStart;
+		if (_finallyDt > 1000) console.warn(`[runAgentForNode] finally block took ${_finallyDt}ms for ${nodeId}`);
 	}
 
 	// ── Phase 2 of two-phase done() ──
