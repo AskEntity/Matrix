@@ -1203,7 +1203,7 @@ function daemonPlist(): string {
 \t<array>
 \t\t<string>${bunPath}</string>
 \t\t<string>run</string>
-\t\t<string>${MXD_ROOT}/src/daemon.ts</string>
+\t\t<string>${MXD_ROOT}/src/runtime.ts</string>
 \t</array>
 \t<key>WorkingDirectory</key>
 \t<string>${MXD_ROOT}</string>
