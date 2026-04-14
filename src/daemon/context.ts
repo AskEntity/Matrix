@@ -19,6 +19,7 @@ import type { BaseTaskNode } from "../types.ts";
  */
 export interface PluginTypes {
 	node: BaseTaskNode;
+	done: Record<string, unknown>;
 }
 
 export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
@@ -64,7 +65,7 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 		node: T["node"],
 		tracker: import("../task-tracker.ts").TaskTracker,
 		doneArgs: Record<string, unknown>,
-	) => Record<string, unknown>;
+	) => T["done"];
 }
 
 /** SSE client connection subscribed to a project's event stream. */

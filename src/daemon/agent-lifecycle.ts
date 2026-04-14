@@ -92,11 +92,24 @@ function findSessionConfig(events: Event[]): SessionConfigEvent | undefined {
  * All callers that want standard Matrix behavior pass these to runAgentForNode.
  * This is the ONLY place that knows about orchestrator tools + builtin tools + Matrix system prompt.
  */
+
+/** Matrix's done() result — status + summary. */
+export type MatrixDoneData = {
+	status: "verify" | "failed";
+	summary: string;
+};
+
+/** Matrix's plugin type bundle. */
+export type MatrixPluginTypes = {
+	node: import("../types.ts").TaskNode;
+	done: MatrixDoneData;
+};
+
 export function buildMatrixScopeOpts(
 	projectId: string,
 	selfBootstrap: boolean,
 	ctx?: DaemonContext,
-): ScopeOpts<{ node: import("../types.ts").TaskNode }> {
+): ScopeOpts<MatrixPluginTypes> {
 	return {
 		buildTools: (auth, taskId) => {
 			const { toolDefs, hasRunningChildren, setMessages, setAllTools } =
