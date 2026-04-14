@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
-import type { TaskStatus } from "../../src/types.ts";
+import type { TaskStatus } from "../../../../src/types.ts";
 import { isFolder, isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron, IconEyeOff, IconHexagon, IconStar } from "./icons.tsx";
