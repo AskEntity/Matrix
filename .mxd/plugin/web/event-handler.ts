@@ -1,7 +1,7 @@
 import type React from "react";
-import type { QueueMessage } from "../src/message-queue.ts";
-import { TOOL_YIELD } from "../src/tool-names.ts";
-import { ulid } from "../src/ulid.ts";
+import type { QueueMessage } from "../../../src/message-queue.ts";
+import { TOOL_YIELD } from "../../../src/tool-names.ts";
+import { ulid } from "../../../src/ulid.ts";
 import {
 	createLogEntry,
 	getLogTaskId,

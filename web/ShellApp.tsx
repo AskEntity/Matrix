@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { authFetch, getToken } from "./auth.ts";
 import { LoginPage } from "./LoginPage.tsx";
+
+// Plugin UI loaded dynamically based on active scope
+function loadPluginUI(pluginPath: string) {
+	return lazy(() =>
+		import(/* @vite-ignore */ pluginPath).then((m) => ({
+			default: m.default ?? m.App,
+		})),
+	);
+}
+
+// Default: Matrix plugin (will be configurable per project/scope)
+const DEFAULT_PLUGIN_PATH = "../.mxd/plugin/web/App.tsx";
+let PluginUI = loadPluginUI(DEFAULT_PLUGIN_PATH);
 
 interface ProjectInfo {
 	id: string;
@@ -79,13 +92,9 @@ export function ShellApp() {
 				</select>
 			</div>
 			<div className="mxd-shell-content">
-				{selectedProject && (
-					<iframe
-						src={`/plugin/?project=${selectedProject}&scope=${selectedScope}`}
-						className="mxd-shell-iframe"
-						title="Plugin UI"
-					/>
-				)}
+				<Suspense fallback={<div style={{ padding: 20, color: "#8b949e" }}>Loading plugin...</div>}>
+					<PluginUI />
+				</Suspense>
 			</div>
 		</div>
 	);
