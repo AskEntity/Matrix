@@ -12,7 +12,7 @@ import {
 	TOOL_SEND_MESSAGE_TO_CHILD,
 	TOOL_SEND_MESSAGE_TO_PROJECT,
 	TOOL_UPDATE_TASK,
-} from "../../src/tool-names.ts";
+} from "../../../../src/tool-names.ts";
 import {
 	formatTime,
 	getLogTaskId,
