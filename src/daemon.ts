@@ -265,6 +265,22 @@ if (import.meta.main) {
 				});
 			}
 
+			// ── Plugins (daemon-owned: discovered from project scanning) ──
+			if (url.pathname === "/plugins" && request.method === "GET") {
+				// For now: Matrix is the only registered plugin (global, discovered at startup)
+				// TODO: scan projects for .mxd/plugin/ directories, register dynamically
+				const plugins = [
+					{
+						name: "matrix",
+						scope: "global",
+						webComponentPath: "../.mxd/plugin/web/App.tsx",
+					},
+				];
+				return new Response(JSON.stringify(plugins), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+
 			// ── Global config (daemon-owned) ──
 			if (url.pathname === "/config/global" && request.method === "GET") {
 				return new Response(JSON.stringify(globalConfig), {
