@@ -213,7 +213,6 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 				accessToken: "access-token-123",
 			});
 			const result = await provider.execute({
-				cwd: process.cwd(),
 				systemPrompt: { stable: "stable", variable: "variable" },
 				queue: queueWithPrompt("Do the thing"),
 				mcpToolDefs: {
@@ -636,7 +635,6 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				baseUrl: "https://api.example.com/v1",
 			});
 			const result = await provider.execute({
-				cwd: tmpDir,
 				systemPrompt: { stable: "Stable prompt", variable: "Variable prompt" },
 				queue: queueWithPrompt("Please finish", tmpDir),
 				mcpToolDefs: {
@@ -737,7 +735,6 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				baseUrl: "https://api.example.com/v1",
 			});
 			await provider.execute({
-				cwd: process.cwd(),
 				systemPrompt: { stable: "Stable prompt", variable: "Variable prompt" },
 				queue: queueWithPrompt("Please inspect the schema"),
 				mcpToolDefs: {
@@ -906,7 +903,6 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 			});
 			const queue = queueWithPrompt("Need status", tmpDir);
 			const session = provider.stream({
-				cwd: tmpDir,
 				systemPrompt: { stable: "Stable", variable: "Variable" },
 				queue,
 
@@ -1061,7 +1057,6 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 			};
 
 			const gen = provider.stream({
-				cwd: tmpDir,
 				systemPrompt: { stable: "Stable", variable: "Variable" },
 				queue: execQueue,
 				mcpToolDefs: {
