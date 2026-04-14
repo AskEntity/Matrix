@@ -179,6 +179,7 @@ export function registerAgentRoutes(app: Hono, ctx: DaemonContext) {
 					...(ctx.scopeOpts.get(project.id) ?? {
 						buildTools: () => ({ tools: [] }),
 						buildPrompt: () => ({ stable: "", variable: "" }),
+						buildSummarizationPrompt: () => "Summarize the conversation.",
 					}),
 					resume: true,
 				},
