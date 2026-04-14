@@ -4,7 +4,7 @@ import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { createApp } from "./daemon.ts";
+import { createApp } from "./runtime.ts";
 import {
 	createMockedResponsesProviderWithMock,
 	restoreMockedResponsesFetch,
