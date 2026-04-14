@@ -9,20 +9,6 @@ import type { ToolDefinition } from "../tool-definition.ts";
 import type { BaseTaskNode } from "../types.ts";
 
 /**
- * Plugin type surface — ONE generic defines the entire plugin's type world.
- * Runtime erases T at the boundary; plugin code gets full type safety.
- */
-export interface PluginTypes {
-	/** Shape of node-specific data (Matrix: status, title, description, branch, etc.) */
-	node: Record<string, unknown>;
-	/** Shape of done() result data persisted in done_notified (Matrix: { status, summary }) */
-	done: Record<string, unknown>;
-}
-
-/** Default (untyped) plugin types — used when runtime erases generics. */
-export type DefaultPluginTypes = PluginTypes;
-
-/**
  * Scope options for a project's run loop.
  * T flows through all callbacks — plugin authors get type-safe access to their node data.
  * Runtime stores ScopeOpts (T=DefaultPluginTypes, erased).
