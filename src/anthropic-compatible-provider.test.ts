@@ -1866,7 +1866,7 @@ describe("done tool", () => {
 	test("done(passed) closes queue and returns acknowledgment", async () => {
 		const node = tracker.addTask("Test Task Pass", "description");
 		tracker.updateStatus(node.id, "in_progress");
-		const result = await invokeDoneTool(node.id, {
+		await invokeDoneTool(node.id, {
 			status: "passed",
 			summary: "All tests pass",
 		});
@@ -1878,7 +1878,7 @@ describe("done tool", () => {
 	test("done(failed) closes queue and returns acknowledgment", async () => {
 		const node = tracker.addTask("Test Task Fail", "description");
 		tracker.updateStatus(node.id, "in_progress");
-		const result = await invokeDoneTool(node.id, {
+		await invokeDoneTool(node.id, {
 			status: "failed",
 			summary: "Cannot resolve type errors",
 		});
@@ -1992,7 +1992,7 @@ describe("done tool", () => {
 
 		// Phase 1: done() returns immediately (no blocking)
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		const result = await (doneTool as any).handler({
+		await (doneTool as any).handler({
 			status: "passed",
 			summary: "All tests pass",
 		});
@@ -2001,7 +2001,6 @@ describe("done tool", () => {
 		expect(queue.isClosed).toBe(true);
 		// Status NOT updated by handler (Phase 2 does that)
 		expect(tracker.getTask(node.id)?.status).toBe("in_progress");
-		// Simple acknowledgment text
 	});
 
 	test("done() rejects when child has active session", async () => {
