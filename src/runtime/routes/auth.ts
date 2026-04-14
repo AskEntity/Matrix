@@ -68,7 +68,7 @@ export function createAuthMiddleware(ctx: RuntimeContext) {
 		if (c.req.path.startsWith("/auth/")) return next();
 
 		// Allow SPA static assets through so LoginPage can render
-		if (c.req.path === "/" || c.req.path.startsWith("/web/")) return next();
+		if (c.req.path === "/" || c.req.path.startsWith("/web/") || c.req.path.startsWith("/.mxd/")) return next();
 
 		// If no jwtSecret exists yet, pass through (auth not initialized)
 		const authPath = getAuthPath(ctx);

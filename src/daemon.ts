@@ -171,6 +171,7 @@ export async function createDaemon(opts: {
 						type: "init",
 						dataDir,
 						globalConfigPath,
+						projects: pm.list().map((p) => ({ id: p.id, name: p.name, path: p.path })),
 					});
 				}
 				if (msg.type === "ready") {
@@ -304,7 +305,12 @@ export async function createDaemon(opts: {
 		const skipAuth =
 			url.pathname === "/" ||
 			url.pathname.startsWith("/web/") ||
-			url.pathname.startsWith("/auth/");
+			url.pathname.startsWith("/auth/") ||
+			url.pathname.startsWith("/.mxd/") ||
+			url.pathname.endsWith(".js") ||
+			url.pathname.endsWith(".css") ||
+			url.pathname.endsWith(".tsx") ||
+			url.pathname.endsWith(".ts");
 
 		if (!skipAuth) {
 			const authPath = join(dataDir, "auth.json");
@@ -376,6 +382,7 @@ export async function createDaemon(opts: {
 					}
 				}
 
+				syncProjectsToWorkers();
 				return new Response(JSON.stringify(project), {
 					status: 201,
 					headers: { "content-type": "application/json" },
@@ -418,6 +425,7 @@ export async function createDaemon(opts: {
 					));
 				}
 				await pm.delete(projectId);
+				syncProjectsToWorkers();
 				return new Response(JSON.stringify({ ok: true }), {
 					headers: { "content-type": "application/json" },
 				});
@@ -563,6 +571,16 @@ export async function createDaemon(opts: {
 			);
 		}
 		return forwardToWorker(globalWorkerName, request);
+	}
+
+	/** Push current project list to all workers. */
+	function syncProjectsToWorkers(): void {
+		const projects = pm.list().map((p) => ({ id: p.id, name: p.name, path: p.path }));
+		for (const [, sw] of workers) {
+			if (sw.ready) {
+				sw.worker.postMessage({ type: "projects_sync", projects });
+			}
+		}
 	}
 
 	// ── Shutdown ──
