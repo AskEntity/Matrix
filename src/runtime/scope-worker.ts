@@ -106,13 +106,14 @@ self.onmessage = async (event: MessageEvent) => {
 		}
 	}
 
-	if (msg.type === "projects_sync") {
-		const { projects } = msg as {
-			type: "projects_sync";
-			projects: Array<{ id: string; name: string; path: string }>;
-		};
-		if (appInstance) {
-			appInstance.pm.syncFromDaemon(projects);
+	if (msg.type === "sync") {
+		const { key, data } = msg as import("./worker-api.ts").SyncMessage;
+		if (!appInstance) return;
+
+		if (key === "projects") {
+			appInstance.pm.syncFromDaemon(data as import("./worker-api.ts").SyncMap["projects"]);
+		} else if (key === "config") {
+			appInstance.ctx.globalConfig = data as import("./worker-api.ts").SyncMap["config"];
 		}
 	}
 

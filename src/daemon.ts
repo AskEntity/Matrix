@@ -26,6 +26,7 @@ import {
 } from "./config.ts";
 import type { PluginManifest } from "./plugin.ts";
 import { ProjectManager } from "./project-manager.ts";
+import type { SyncMap } from "./runtime/worker-api.ts";
 import { ulid } from "./ulid.ts";
 
 // Read version
@@ -382,7 +383,7 @@ export async function createDaemon(opts: {
 					}
 				}
 
-				syncProjectsToWorkers();
+				syncProjects();
 				return new Response(JSON.stringify(project), {
 					status: 201,
 					headers: { "content-type": "application/json" },
@@ -425,7 +426,7 @@ export async function createDaemon(opts: {
 					));
 				}
 				await pm.delete(projectId);
-				syncProjectsToWorkers();
+				syncProjects();
 				return new Response(JSON.stringify({ ok: true }), {
 					headers: { "content-type": "application/json" },
 				});
@@ -497,6 +498,7 @@ export async function createDaemon(opts: {
 			}
 			globalConfig = next;
 			await saveGlobalConfig(globalConfig, globalConfigPath);
+			syncConfig();
 			return new Response(JSON.stringify(globalConfig), {
 				headers: { "content-type": "application/json" },
 			});
@@ -573,14 +575,24 @@ export async function createDaemon(opts: {
 		return forwardToWorker(globalWorkerName, request);
 	}
 
-	/** Push current project list to all workers. */
-	function syncProjectsToWorkers(): void {
-		const projects = pm.list().map((p) => ({ id: p.id, name: p.name, path: p.path }));
+	/**
+	 * Typed sync primitive — daemon (golden) → workers (read-only).
+	 * SyncMap shared between daemon + worker for type safety on both sides.
+	 */
+	function syncToWorkers<K extends keyof SyncMap>(key: K, data: SyncMap[K]): void {
 		for (const [, sw] of workers) {
 			if (sw.ready) {
-				sw.worker.postMessage({ type: "projects_sync", projects });
+				sw.worker.postMessage({ type: "sync", key, data });
 			}
 		}
+	}
+
+	function syncProjects(): void {
+		syncToWorkers("projects", pm.list().map((p) => ({ id: p.id, name: p.name, path: p.path })));
+	}
+
+	function syncConfig(): void {
+		syncToWorkers("config", globalConfig);
 	}
 
 	// ── Shutdown ──

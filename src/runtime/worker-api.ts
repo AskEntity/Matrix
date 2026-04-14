@@ -5,11 +5,27 @@
  * The worker runs the full app (routes + ctx + agent lifecycle).
  *
  * Two directions:
- * 1. Shell → Worker: forward HTTP requests
+ * 1. Shell → Worker: forward HTTP requests + sync state
  * 2. Worker → Shell: emit events (for SSE relay to browser)
  */
 
+import type { MatrixConfig } from "../config.ts";
 import type { Event } from "../events.ts";
+
+// ── Typed state sync (daemon golden → worker read-only) ──
+
+/** All syncable state types. Shared between daemon and worker for type safety. */
+export interface SyncMap {
+	projects: Array<{ id: string; name: string; path: string }>;
+	config: MatrixConfig;
+}
+
+/** Sync message from daemon to worker. */
+export interface SyncMessage<K extends keyof SyncMap = keyof SyncMap> {
+	type: "sync";
+	key: K;
+	data: SyncMap[K];
+}
 
 // ── Shell → Worker messages ──
 
