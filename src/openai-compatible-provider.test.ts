@@ -358,7 +358,7 @@ describe("runLoop integration", () => {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const testQueue = queueWithPrompt("Do something", tmpDir);
 			const session = provider.stream({
-				systemPrompt: { stable: "You are a helpful agent.", variable: "" },
+				buildSystemPrompt: () => ({ stable: "You are a helpful agent.", variable: "" }),
 				queue: testQueue,
 				mcpToolDefs: {
 					mxd: [
@@ -480,7 +480,7 @@ describe("runLoop integration", () => {
 			// execute() doesn't pass a queue, so on end_turn the provider exits
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const result = await provider.execute({
-				systemPrompt: { stable: "You are helpful.", variable: "" },
+				buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 				queue: queueWithPrompt("Say hello", tmpDir),
 			});
 			expect(result.exitReason).not.toBe("done_failed");
@@ -528,7 +528,7 @@ describe("runLoop integration", () => {
 		try {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			await provider.execute({
-				systemPrompt: { stable: "You are helpful.", variable: "" },
+				buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 				queue: queueWithPrompt("Say hello", tmpDir),
 				mcpToolDefs: {
 					mxd: [
@@ -651,7 +651,7 @@ describe("runLoop integration", () => {
 				retryQueue.close();
 			};
 			const gen = provider.stream({
-				systemPrompt: { stable: "Be helpful", variable: "" },
+				buildSystemPrompt: () => ({ stable: "Be helpful", variable: "" }),
 				queue: retryQueue,
 			});
 			let result = await gen.next();
@@ -907,7 +907,7 @@ describe("Event recording via emit callback", () => {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const testQueue = queueWithPrompt("Do something", tmpDir);
 			const session = provider.stream({
-				systemPrompt: { stable: "You are a helpful agent.", variable: "" },
+				buildSystemPrompt: () => ({ stable: "You are a helpful agent.", variable: "" }),
 				emit,
 				queue: testQueue,
 				mcpToolDefs: {
@@ -1107,7 +1107,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const result = await provider.execute({
-					systemPrompt: { stable: "You are helpful.", variable: "" },
+					buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 					emit,
 					queue: queueWithPrompt("Say hello", testDir),
 				});
@@ -1195,7 +1195,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const testQueue = queueWithPrompt("Do the task", testDir);
 				const session = provider.stream({
-					systemPrompt: { stable: "You are helpful.", variable: "" },
+					buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 					emit,
 					queue: testQueue,
 					mcpToolDefs: {
@@ -1299,7 +1299,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				queue = queueWithPrompt("Start working", testDir);
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				session = provider.stream({
-					systemPrompt: { stable: "You are helpful.", variable: "" },
+					buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 					emit,
 					queue,
 				});
@@ -1405,7 +1405,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const testQueue = queueWithPrompt("Try something", testDir);
 				const session = provider.stream({
-					systemPrompt: { stable: "You are helpful.", variable: "" },
+					buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 					emit,
 					queue: testQueue,
 					mcpToolDefs: {
@@ -1504,7 +1504,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const testQueue = queueWithPrompt("Run three tools", testDir);
 				const session = provider.stream({
-					systemPrompt: { stable: "You are helpful.", variable: "" },
+					buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 					emit,
 					queue: testQueue,
 					mcpToolDefs: {
