@@ -14,10 +14,9 @@ export interface AgentRequest {
 	buildSummarizationPrompt?: () => string;
 	/** Build done-resume context text. Plugin hook. */
 	buildDoneResumeContext?: () => string;
-	/** Initial system prompt (frozen for resume, fresh for new sessions). */
-	systemPrompt?: import("./system-prompts.ts").SystemPrompt;
-	/** Rebuild system prompt after compact. If not provided, reuses systemPrompt. */
-	refreshSystemPrompt?: () => import("./system-prompts.ts").SystemPrompt;
+	/** Build system prompt. Called for fresh sessions and compact refresh.
+	 * On resume, provider loop uses frozen prompt from session_config in JSONL. */
+	buildSystemPrompt?: () => import("./system-prompts.ts").SystemPrompt;
 	/** Abort signal for cancellation. */
 	signal?: AbortSignal;
 	/** Session ID to resume a previous conversation. */
