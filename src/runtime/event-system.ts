@@ -105,7 +105,12 @@ export function broadcast(
 		}
 	}
 
-	// 2. In-process subscribers for this project (O(subs_for_this_project),
+	// 2. Relay to parent thread (shell) for SSE when running in a worker.
+	if (ctx.onBroadcast) {
+		ctx.onBroadcast(projectId, event);
+	}
+
+	// 3. In-process subscribers for this project (O(subs_for_this_project),
 	//    not O(all_subs_across_all_projects)).
 	const subs = ctx.eventSubscribers.get(projectId);
 	if (subs) {

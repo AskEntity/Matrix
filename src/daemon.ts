@@ -36,6 +36,16 @@ try {
 
 // ── Worker management ──
 
+/** SSE client connected to the shell */
+interface ShellSSEClient {
+	controller: ReadableStreamDefaultController;
+	projectId: string;
+}
+
+const sseClients = new Set<ShellSSEClient>();
+const sseEncoder = new TextEncoder();
+let sseSeqId = 0;
+
 interface ScopeWorker {
 	worker: Worker;
 	ready: boolean;
@@ -90,7 +100,22 @@ function startWorker(scopeName: string, dataDir: string, globalConfigPath: strin
 				}
 			}
 
-			// TODO: handle event relay for SSE
+			// SSE relay: worker broadcasts events → shell relays to browser
+			if (msg.type === "sse_event") {
+				const { projectId, event } = msg;
+				sseSeqId++;
+				const data = JSON.stringify(event);
+				const sseMessage = sseEncoder.encode(`id: ${sseSeqId}\ndata: ${data}\n\n`);
+				for (const client of sseClients) {
+					if (client.projectId === projectId) {
+						try {
+							client.controller.enqueue(sseMessage);
+						} catch {
+							sseClients.delete(client);
+						}
+					}
+				}
+			}
 		};
 
 		workers.set(scopeName, scopeWorker);
@@ -185,7 +210,35 @@ if (import.meta.main) {
 			"/": webIndex.default,
 		},
 		fetch: async (request) => {
-			// For now: forward everything to the matrix worker
+			const url = new URL(request.url);
+
+			// SSE endpoint — handled by shell, not forwarded to worker
+			if (url.pathname.startsWith("/projects/") && url.pathname.endsWith("/events/stream")) {
+				const projectId = url.pathname.split("/")[2];
+				if (!projectId) {
+					return new Response("Missing projectId", { status: 400 });
+				}
+				const stream = new ReadableStream({
+					start(controller) {
+						sseClients.add({ controller, projectId });
+						// Send initial connection message
+						const msg = sseEncoder.encode(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
+						controller.enqueue(msg);
+					},
+					cancel() {
+						// Client disconnected — clean up handled by enqueue catch
+					},
+				});
+				return new Response(stream, {
+					headers: {
+						"content-type": "text/event-stream",
+						"cache-control": "no-cache",
+						connection: "keep-alive",
+					},
+				});
+			}
+
+			// Everything else: forward to the matrix worker
 			return forwardToWorker("matrix", request);
 		},
 		port,
