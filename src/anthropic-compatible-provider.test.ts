@@ -2521,7 +2521,7 @@ describe("Event deterministic verification", () => {
 
 		// Provider drains queue for first message
 		const result = await provider.execute({
-			systemPrompt: { stable: "You are helpful.", variable: "" },
+			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			emit,
 			queue: queueWithPrompt("Say hello", testDir),
 		});
@@ -2586,7 +2586,7 @@ describe("Event deterministic verification", () => {
 
 		const testQueue = queueWithPrompt("Do the task", testDir);
 		const session = provider.stream({
-			systemPrompt: { stable: "You are helpful.", variable: "" },
+			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -2672,7 +2672,7 @@ describe("Event deterministic verification", () => {
 
 		const testQueue = queueWithPrompt("Try something", testDir);
 		const session = provider.stream({
-			systemPrompt: { stable: "You are helpful.", variable: "" },
+			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -2784,7 +2784,7 @@ describe("Event deterministic verification", () => {
 
 		const queue = queueWithPrompt("Start working", testDir);
 		const session = provider.stream({
-			systemPrompt: { stable: "You are helpful.", variable: "" },
+			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			emit,
 			queue,
 		});
@@ -2901,7 +2901,7 @@ describe("Event deterministic verification", () => {
 
 		const testQueue = queueWithPrompt("Run three tools", testDir);
 		const session = provider.stream({
-			systemPrompt: { stable: "You are helpful.", variable: "" },
+			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -3176,7 +3176,7 @@ describe("Event deterministic verification", () => {
 
 		const testQueue = queueWithPrompt("Do task", testDir);
 		const session = provider.stream({
-			systemPrompt: { stable: "You are helpful.", variable: "" },
+			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -3347,7 +3347,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 		const testQueue = queueWithPrompt("Take a screenshot", testDir);
 
 		const session = provider.stream({
-			systemPrompt: { stable: "You are helpful.", variable: "" },
+			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			emit,
 			queue: testQueue,
 			setMessages: (msgs) => {
@@ -3481,7 +3481,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 		const testQueue = queueWithPrompt("Start", testDir);
 
 		const session = provider.stream({
-			systemPrompt: { stable: "You are helpful.", variable: "" },
+			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			emit,
 			queue: testQueue,
 			setMessages: (msgs) => {
@@ -3663,7 +3663,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 		});
 
 		const session = provider.stream({
-			systemPrompt: { stable: "You are helpful.", variable: "" },
+			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			emit,
 			queue: testQueue,
 			setMessages: (msgs) => {
@@ -3808,7 +3808,7 @@ describe("systemPreamble", () => {
 		});
 
 		await provider.execute({
-			systemPrompt: { stable: "stable-prompt", variable: "variable-prompt" },
+			buildSystemPrompt: () => ({ stable: "stable-prompt", variable: "variable-prompt" }),
 			queue: queueWithPrompt(endTurnInstruction, testDir),
 		});
 
@@ -3830,7 +3830,7 @@ describe("systemPreamble", () => {
 		const provider = createMockedProviderWithMock(mockAPI);
 
 		await provider.execute({
-			systemPrompt: { stable: "stable-prompt", variable: "variable-prompt" },
+			buildSystemPrompt: () => ({ stable: "stable-prompt", variable: "variable-prompt" }),
 			queue: queueWithPrompt(endTurnInstruction, testDir),
 		});
 
@@ -3852,7 +3852,7 @@ describe("systemPreamble", () => {
 		});
 
 		await provider.execute({
-			systemPrompt: { stable: "stable-prompt", variable: "variable-prompt" },
+			buildSystemPrompt: () => ({ stable: "stable-prompt", variable: "variable-prompt" }),
 			queue: queueWithPrompt(endTurnInstruction, testDir),
 		});
 
@@ -3923,7 +3923,7 @@ describe("Abort signal stops inner retry immediately", () => {
 		const startTime = Date.now();
 		try {
 			await provider.execute({
-				systemPrompt: { stable: "test", variable: "" },
+				buildSystemPrompt: () => ({ stable: "test", variable: "" }),
 				emit: () => {},
 				queue: queueWithPrompt("test"),
 				signal: abortController.signal,
@@ -3963,7 +3963,7 @@ describe("Abort signal stops inner retry immediately", () => {
 		const startTime = Date.now();
 		try {
 			await provider.execute({
-				systemPrompt: { stable: "test", variable: "" },
+				buildSystemPrompt: () => ({ stable: "test", variable: "" }),
 				emit: () => {},
 				queue: queueWithPrompt("test"),
 				signal: abortController.signal,
@@ -4015,7 +4015,7 @@ describe("Abort signal stops inner retry immediately", () => {
 
 		const startTime = Date.now();
 		const result = await provider.execute({
-			systemPrompt: { stable: "test", variable: "" },
+			buildSystemPrompt: () => ({ stable: "test", variable: "" }),
 			emit: () => {},
 			queue: queueWithPrompt("test"),
 		});
