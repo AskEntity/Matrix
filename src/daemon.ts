@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { hasJwtSecret, verifyJWT } from "./auth.ts";
+import { loadGlobalConfig, type MatrixConfig, saveGlobalConfig } from "./config.ts";
 import { ulid } from "./ulid.ts";
 
 // Read version
@@ -187,12 +188,20 @@ if (import.meta.main) {
 	const dataDir = join(homedir(), ".mxd");
 	const globalConfigPath = join(dataDir, "config.json");
 
-	// For now: start a single "matrix" scope worker
-	console.log(`Matrix shell v${VERSION} (${GIT_HASH}) starting...`);
+	// Load global config for port + auth settings
+	let globalConfig: MatrixConfig;
+	try {
+		globalConfig = await loadGlobalConfig(globalConfigPath);
+	} catch {
+		const { DEFAULT_CONFIG } = await import("./config.ts");
+		globalConfig = { ...DEFAULT_CONFIG };
+	}
+	const port = globalConfig.port ?? 7433;
+
+	// Start the matrix scope worker
+	console.log(`Matrix daemon v${VERSION} (${GIT_HASH}) starting...`);
 
 	await startWorker("matrix", dataDir, globalConfigPath);
-
-	const port = 7433; // TODO: read from config
 
 	// Check if port is in use
 	try {
@@ -256,23 +265,84 @@ if (import.meta.main) {
 				});
 			}
 
-			// ── SSE endpoint — handled by shell, not forwarded to worker ──
-			if (url.pathname.startsWith("/projects/") && url.pathname.endsWith("/events/stream")) {
-				const projectId = url.pathname.split("/")[2];
-				if (!projectId) {
-					return new Response("Missing projectId", { status: 400 });
+			// ── Global config (daemon-owned) ──
+			if (url.pathname === "/config/global" && request.method === "GET") {
+				return new Response(JSON.stringify(globalConfig), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+			if (url.pathname === "/config/global" && request.method === "PATCH") {
+				const partial = await request.json() as Partial<MatrixConfig>;
+				const next = { ...globalConfig } as MatrixConfig;
+				for (const [k, v] of Object.entries(partial)) {
+					if (v === null || v === undefined) {
+						delete (next as unknown as Record<string, unknown>)[k];
+					} else {
+						(next as unknown as Record<string, unknown>)[k] = v;
+					}
 				}
+				globalConfig = next;
+				await saveGlobalConfig(globalConfig, globalConfigPath);
+				return new Response(JSON.stringify(globalConfig), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+
+			// ── SSE endpoint — handled by shell, events relayed from worker ──
+			if (url.pathname === "/events") {
+				const projectId = url.searchParams.get("projectId");
+				if (!projectId) {
+					return new Response("projectId required", { status: 400 });
+				}
+
 				const stream = new ReadableStream({
-					start(controller) {
-						sseClients.add({ controller, projectId });
-						// Send initial connection message
-						const msg = sseEncoder.encode(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
-						controller.enqueue(msg);
-					},
-					cancel() {
-						// Client disconnected — clean up handled by enqueue catch
+					async start(controller) {
+						const client: ShellSSEClient = { controller, projectId };
+						sseClients.add(client);
+
+						// Get initial state from worker (tree + clarifications)
+						// by fetching from the worker's internal /events endpoint
+						try {
+							await forwardToWorker("matrix", new Request(
+								`http://localhost/events?projectId=${projectId}`,
+								{ headers: request.headers },
+							));
+							// The worker's SSE response is a stream — we can't easily proxy it.
+							// Instead, request tree data via regular HTTP and send as initial SSE event.
+							const treeResp = await forwardToWorker("matrix", new Request(
+								`http://localhost/tasks?projectId=${projectId}`,
+								{ headers: request.headers },
+							));
+							if (treeResp.ok) {
+								const treeData = await treeResp.json();
+								const msg = sseEncoder.encode(
+									`data: ${JSON.stringify({ type: "tree_updated", ...treeData })}\n\n`,
+								);
+								controller.enqueue(msg);
+							}
+						} catch {
+							// Best effort — events will stream from worker anyway
+						}
+
+						// Heartbeat every 15s
+						const heartbeat = setInterval(() => {
+							try {
+								controller.enqueue(
+									sseEncoder.encode(`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`),
+								);
+							} catch {
+								// disconnected
+							}
+						}, 15_000);
+
+						// Clean up on disconnect
+						request.signal.addEventListener("abort", () => {
+							clearInterval(heartbeat);
+							sseClients.delete(client);
+						});
 					},
 				});
+
 				return new Response(stream, {
 					headers: {
 						"content-type": "text/event-stream",
