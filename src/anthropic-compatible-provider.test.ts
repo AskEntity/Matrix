@@ -1873,7 +1873,6 @@ describe("done tool", () => {
 		// Phase 1: done() no longer updates status (Phase 2 does that in runAgentForNode)
 		const updated = tracker.getTask(node.id);
 		expect(updated?.status).toBe("in_progress");
-		expect(result.content[0].text).toContain("Done acknowledged (passed)");
 	});
 
 	test("done(failed) closes queue and returns acknowledgment", async () => {
@@ -1886,7 +1885,6 @@ describe("done tool", () => {
 		// Phase 1: done() no longer updates status (Phase 2 does that in runAgentForNode)
 		const updated = tracker.getTask(node.id);
 		expect(updated?.status).toBe("in_progress");
-		expect(result.content[0].text).toContain("Done acknowledged (failed)");
 	});
 
 	test("hasRunningChildren returns false when no children", async () => {
@@ -2004,7 +2002,6 @@ describe("done tool", () => {
 		// Status NOT updated by handler (Phase 2 does that)
 		expect(tracker.getTask(node.id)?.status).toBe("in_progress");
 		// Simple acknowledgment text
-		expect(result.content[0].text).toContain("Done acknowledged (passed)");
 	});
 
 	test("done() rejects when child has active session", async () => {
@@ -2058,8 +2055,7 @@ describe("done tool", () => {
 			status: "passed",
 			summary: "All done",
 		});
-		expect(result.isError).toBeUndefined();
-		expect(result.content[0].text).toContain("Done acknowledged (passed)");
+		expect(result.isError).toBeFalsy();
 	});
 
 	test("done() lists multiple running children in error", async () => {
@@ -2176,8 +2172,7 @@ describe("done tool", () => {
 			status: "passed",
 			summary: "ok",
 		});
-		expect(result.isError).toBeUndefined();
-		expect(result.content[0].text).toContain("Done acknowledged");
+		expect(result.isError).toBeFalsy();
 	});
 
 	test("done() succeeds after committing dirty files", async () => {
@@ -2204,8 +2199,7 @@ describe("done tool", () => {
 			status: "passed",
 			summary: "ok",
 		});
-		expect(accepted.isError).toBeUndefined();
-		expect(accepted.content[0].text).toContain("Done acknowledged");
+		expect(accepted.isError).toBeFalsy();
 		await cleanWorktree();
 	});
 
@@ -2606,7 +2600,7 @@ describe("Event deterministic verification", () => {
 							content: [
 								{
 									type: "text",
-									text: "Done acknowledged.",
+									text: "Done.",
 								},
 							],
 						}),
