@@ -110,6 +110,11 @@ export async function getTracker(
 			? await detectBranch(project.path)
 			: undefined;
 		await tracker.load(defaultBranch);
+		// Backfill root worktreePath = project root
+		const root = tracker.getTask(tracker.rootNodeId);
+		if (root && !root.worktreePath && project) {
+			root.worktreePath = project.path;
+		}
 		ctx.trackers.set(projectId, tracker);
 	}
 

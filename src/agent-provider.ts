@@ -6,9 +6,7 @@ import type { AgentResult, TaskSession } from "./types.ts";
 
 /** What the orchestrator sends to an agent. */
 export interface AgentRequest {
-	/** Working directory for the agent to operate in. */
-	cwd: string;
-	/** Absolute path to the project root. Defaults to cwd if omitted. */
+	/** Absolute path to the project root. */
 	projectPath?: string;
 	/** System prompt injected into the agent session. Split for cache optimization. */
 	systemPrompt?: import("./system-prompts.ts").SystemPrompt;

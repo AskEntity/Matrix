@@ -595,7 +595,9 @@ export async function* runProviderLoop(
 	queue?: MessageQueue,
 ): AsyncGenerator<EventSpec, AgentResult> {
 	const model = request.model ?? "claude-sonnet-4-6"; // default overridden by provider
-	let cwd = request.cwd;
+	// Loop-local cwd: used by work_context and compaction (Matrix-specific, transitional).
+	// Updated when bash tool changes cwd. Long-term: these should be plugin hooks.
+	let cwd = request.projectPath ?? "";
 
 	// ── Context window + compaction thresholds ──
 	const contextWindow = await adapter.getContextWindow(model);
@@ -1664,10 +1666,8 @@ export async function* runProviderLoop(
 		for (const exec of execResults) {
 			if (exec.cwd) {
 				cwd = exec.cwd;
-				const currentSession = request.getSession?.(sessionId);
-				if (currentSession) {
-					currentSession.cwd = exec.cwd;
-				}
+				// node.cwd is updated by the bash tool handler directly.
+				// Loop-local cwd tracks it for work_context and other loop-level uses.
 			}
 		}
 
