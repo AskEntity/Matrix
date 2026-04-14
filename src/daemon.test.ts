@@ -80,7 +80,7 @@ describe("daemon pipeline", () => {
 		expect(updated.budgetUsd).toBe(50);
 	});
 
-	test("POST to worker also returns 503 when no worker", async () => {
+	test("POST /projects handled by daemon (not forwarded to worker)", async () => {
 		const res = await daemon.fetch(
 			new Request("http://localhost/projects", {
 				method: "POST",
@@ -88,7 +88,8 @@ describe("daemon pipeline", () => {
 				body: JSON.stringify({ path: "/nonexistent" }),
 			}),
 		);
-		expect(res.status).toBe(503);
+		// Daemon handles project CRUD directly — returns 409 (error from pm.init)
+		expect(res.status).toBe(409);
 	});
 });
 
