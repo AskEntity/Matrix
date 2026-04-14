@@ -18,7 +18,6 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
-import type { TaskNode } from "./types.ts";
 
 // ── Test infrastructure (same as integration.test.ts) ──
 
@@ -286,7 +285,7 @@ describe("Plugin hooks: buildSystemPrompt", () => {
 		const events = await readSessionEvents(ctx, rootNodeId);
 		const sessionConfig = events.find((e) => e.type === "session_config");
 		expect(sessionConfig).toBeDefined();
-		const sc = sessionConfig as Record<string, unknown>;
+		const sc = sessionConfig as unknown as Record<string, unknown>;
 		expect(sc.systemStable).toBeDefined();
 		expect(typeof sc.systemStable).toBe("string");
 		expect((sc.systemStable as string).length).toBeGreaterThan(0);
