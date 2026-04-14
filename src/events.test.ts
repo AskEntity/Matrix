@@ -657,54 +657,6 @@ describe("eventsToAnthropicMessages", () => {
 		});
 	});
 
-	test.skip("REMOVED: compaction scenario — compacted_resume event type removed", () => {
-		const events: Event[] = [
-			{
-				type: "compacted_resume",
-				content: "## Checkpoint\n\nCompleted steps 1-3.",
-				cwd: "/tmp",
-				taskId: "test",
-				ts: 2000,
-			} as unknown as Event,
-			{
-				type: "assistant_text",
-				content: "Continuing from checkpoint.",
-				taskId: "test",
-				ts: 2001,
-			} as unknown as Event,
-			{
-				type: "tool_call",
-				tool: "bash",
-				toolCallId: "tc1",
-				input: { command: "ls" },
-				taskId: "test",
-				ts: 2002,
-			},
-			{
-				type: "tool_result",
-				tool: "test_tool",
-				toolCallId: "tc1",
-				content: "src/",
-				isError: false,
-				taskId: "test",
-				ts: 2003,
-			},
-			{
-				type: "assistant_text",
-				content: "Found the source directory.",
-				taskId: "test",
-				ts: 2004,
-			},
-		];
-
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages).toHaveLength(4);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content: "## Checkpoint\n\nCompleted steps 1-3.",
-		});
-	});
-
 	test("tool_result with error flag", () => {
 		const events: Event[] = [
 			{
@@ -1477,54 +1429,6 @@ describe("eventsToOpenAIMessages", () => {
 		expect(messages).toHaveLength(4);
 		const imgMsg = messages[3] as { content: unknown[] };
 		expect(imgMsg.content).toHaveLength(4);
-	});
-
-	test.skip("REMOVED: compaction scenario — compacted_resume event type removed", () => {
-		const events: Event[] = [
-			{
-				type: "compacted_resume",
-				content: "## Checkpoint\n\nCompleted steps 1-3.",
-				cwd: "/tmp",
-				taskId: "test",
-				ts: 2000,
-			} as unknown as Event,
-			{
-				type: "assistant_text",
-				content: "Continuing from checkpoint.",
-				taskId: "test",
-				ts: 2001,
-			} as unknown as Event,
-			{
-				type: "tool_call",
-				tool: "bash",
-				toolCallId: "call_1",
-				input: { command: "ls" },
-				taskId: "test",
-				ts: 2002,
-			},
-			{
-				type: "tool_result",
-				tool: "test_tool",
-				toolCallId: "call_1",
-				content: "src/",
-				isError: false,
-				taskId: "test",
-				ts: 2003,
-			},
-			{
-				type: "assistant_text",
-				content: "Found the source directory.",
-				taskId: "test",
-				ts: 2004,
-			},
-		];
-
-		const messages = eventsToOpenAIMessages(events);
-		expect(messages).toHaveLength(4);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content: "## Checkpoint\n\nCompleted steps 1-3.",
-		});
 	});
 
 	test("tool_result with error flag", () => {

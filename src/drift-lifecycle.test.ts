@@ -2729,7 +2729,13 @@ describe("Drift: compaction lifecycle", () => {
 	// (no cross-epoch drift). Previous tests only checked "are tools refreshed?"
 	// (Invariant A) and "are tools frozen?" (Invariant B), not "does the prefix
 	// chain remain valid across the transition?"
-	test.skip("NEEDS HOOK: Full compact lifecycle: prefix valid pre-compact, post-compact, and post-restart", async () => {
+	//
+	// STATUS: hooks are available (ScopeOpts refactor unblocked), but prefix
+	// validation fails on the 2nd post-compact API call — agent errors out and
+	// waitForIdle times out. The first post-compact yield works; the wake after
+	// "post-compact wake 1" kills the agent. Likely a live/reconstruction drift
+	// in the post-compact user message construction. Needs investigation.
+	test.skip("PREFIX DRIFT: post-compact prefix validation fails — agent dies on 2nd post-compact API call", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
 		const tracker = await ctx.app.getTracker(ctx.projectId);
@@ -2990,7 +2996,7 @@ describe("Drift: compaction lifecycle", () => {
 	// because on restart the walker builds messages from JSONL events — if the live
 	// messages[0] differs from what the walker produces from compacted_resume,
 	// prefix cache misses occur.
-	test.skip("NEEDS HOOK: Post-compact API call messages[0] matches compacted_resume event content", async () => {
+	test("Post-compact API call messages[0] matches compacted_resume event content", async () => {
 		ctx = await setupTestContext();
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
@@ -3047,14 +3053,17 @@ describe("Drift: compaction lifecycle", () => {
 		expect(compactRes.status).toBe(200);
 		await waitForDone(ctx);
 
-		// Read compacted_resume event from JSONL
+		// Read compacted_resume message from JSONL — now a QueueMessage source, not an Event type
 		const events = await readSessionEvents(ctx, rootNodeId);
-		const compactedResume = events.find(
-			(e) => e.type === ("compacted_resume" as any),
+		const compactedResumeEvent = events.find(
+			(e) =>
+				e.type === "message" &&
+				(e as { body?: { source?: string } }).body?.source ===
+					"compacted_resume",
 		) as
-			| { type: "compacted_resume"; content: string; cwd?: string }
+			| { type: "message"; body: { source: "compacted_resume"; content: string } }
 			| undefined;
-		expect(compactedResume).toBeTruthy();
+		expect(compactedResumeEvent).toBeTruthy();
 
 		// Find the first post-compact non-compaction API request
 		const history = ctx.mockAPI.getRequestHistory();
@@ -3119,14 +3128,9 @@ describe("Drift: compaction lifecycle", () => {
 		// The compacted_resume content should appear in the first message.
 		// The live path sets messages[0] = { role: "user", content: compactResult.userContent }
 		// which includes the compacted_resume text. The walker rebuilds from the
-		// compacted_resume event. Both must produce the same content.
-		if (!compactedResume) throw new Error("compactedResume missing");
-		expect(msgText).toContain(compactedResume.content);
-
-		// Also verify the cwd is included if present
-		if (compactedResume.cwd) {
-			expect(msgText).toContain(compactedResume.cwd);
-		}
+		// compacted_resume message event. Both must produce the same content.
+		if (!compactedResumeEvent) throw new Error("compactedResumeEvent missing");
+		expect(msgText).toContain(compactedResumeEvent.body.content);
 	}, 20000);
 
 	// Related class of bug (not yet fixed): compact arrives WITH regular messages
