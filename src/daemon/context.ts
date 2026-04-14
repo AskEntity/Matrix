@@ -8,10 +8,26 @@ import type { Auth } from "../tool-auth.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
 
 /**
- * Scope options for a project's run loop.
- * Determines what tools and prompt agents in this scope use.
+ * Plugin type surface — ONE generic defines the entire plugin's type world.
+ * Runtime erases T at the boundary; plugin code gets full type safety.
  */
-export interface ScopeOpts {
+export interface PluginTypes {
+	/** Shape of node-specific data (Matrix: status, title, description, branch, etc.) */
+	node: Record<string, unknown>;
+	/** Shape of done() result data persisted in done_notified (Matrix: { status, summary }) */
+	done: Record<string, unknown>;
+}
+
+/** Default (untyped) plugin types — used when runtime erases generics. */
+export type DefaultPluginTypes = PluginTypes;
+
+/**
+ * Scope options for a project's run loop.
+ * T flows through all callbacks — plugin authors get type-safe access to their node data.
+ * Runtime stores ScopeOpts (T=DefaultPluginTypes, erased).
+ */
+export interface ScopeOpts<T extends PluginTypes = DefaultPluginTypes> {
+	// ── Agent behavior ──
 	buildTools: (
 		auth: Auth,
 		taskId: string,
@@ -23,49 +39,26 @@ export interface ScopeOpts {
 		setAllTools?: (tools: unknown[]) => void;
 	};
 	buildPrompt: () => SystemPrompt;
-	/**
-	 * Connect external MCP servers for this scope.
-	 * Matrix reads mcpServers from resolved project config internally.
-	 * Plugins handle their own MCP config or connect nothing.
-	 */
+
+	// ── Infrastructure ──
 	connectMcp?: (projectPath: string) => Promise<import("../mcp-client.ts").McpClientManager>;
-	/**
-	 * Prepare a child node before launching its agent.
-	 * Matrix uses this to create git worktrees. Plugins may create
-	 * different workspace structures or do nothing.
-	 * Must set node.worktreePath if the agent needs a working directory
-	 * different from the project root.
-	 */
 	beforeChildLaunch?: (
 		node: import("../types.ts").TaskNode,
 		tracker: import("../task-tracker.ts").TaskTracker,
 		projectPath: string,
 	) => Promise<void>;
-	/**
-	 * Should this node be resumed on daemon restart?
-	 * Called for nodes that have JSONL but no running session.
-	 * Matrix: true if status === "in_progress".
-	 */
+
+	// ── Lifecycle (typed with T) ──
 	shouldResume?: (node: import("../types.ts").TaskNode) => boolean;
-	/**
-	 * Update node state when an agent is launched.
-	 * Matrix: sets status to "in_progress".
-	 */
 	onLaunch?: (
 		node: import("../types.ts").TaskNode,
 		tracker: import("../task-tracker.ts").TaskTracker,
 	) => void;
-	/**
-	 * Update node state when an agent calls done().
-	 * doneArgs is the opaque data from the done() tool call.
-	 * Returns data to persist in done_notified event (for crash recovery).
-	 * Matrix: sets status to "verify" or "failed", returns { status, summary }.
-	 */
 	onDone?: (
 		node: import("../types.ts").TaskNode,
 		tracker: import("../task-tracker.ts").TaskTracker,
 		doneArgs: Record<string, unknown>,
-	) => Record<string, unknown>;
+	) => T["done"];
 }
 
 /** SSE client connection subscribed to a project's event stream. */
