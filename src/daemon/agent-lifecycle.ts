@@ -508,9 +508,6 @@ export async function deliverMessage(
 			});
 		} else if (
 			ctx.scopeOpts.has(project.id) &&
-			node?.status !== "verify" &&
-			node?.status !== "failed" &&
-			node?.status !== "closed" &&
 			!ctx.restartingProjects.has(project.id) &&
 			!ctx.launchingNodes.has(nodeId)
 		) {

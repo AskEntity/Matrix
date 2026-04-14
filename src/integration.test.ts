@@ -9532,7 +9532,17 @@ describe("Integration: child done + shutdown no deadlock", () => {
 					],
 				},
 				{
-					// After child done: parent receives task_complete
+					// Wait for child to complete
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// After child done: parent receives task_complete, wakes from yield
 					blocks: [
 						{
 							type: "tool_use",
