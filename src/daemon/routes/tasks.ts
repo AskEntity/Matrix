@@ -7,7 +7,7 @@ import {
 	createUserMessage,
 	createUserMessageForwarded,
 } from "../../queue-message-factory.ts";
-import type { SystemPrompt } from "../../system-prompts.ts";
+// SystemPrompt import removed — scope opts come from ctx.scopeOpts
 import {
 	createTaskOp,
 	deleteTaskOp,
@@ -112,11 +112,7 @@ function notifyTreeChange(
 	}
 }
 
-export function registerTaskRoutes(
-	app: Hono,
-	ctx: DaemonContext,
-	orchestratorSystemPrompt: SystemPrompt,
-) {
+export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 	// Task tree
 	app.get("/projects/:id/tasks", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));
@@ -347,7 +343,13 @@ export function registerTaskRoutes(
 			});
 
 			// Run async — return immediately so UI updates
-			runAgentForNode(ctx, project, tracker, nodeId, { model: body.model });
+			const scopeOpts = ctx.scopeOpts.get(project.id);
+			if (scopeOpts) {
+				runAgentForNode(ctx, project, tracker, nodeId, {
+					...scopeOpts,
+					model: body.model,
+				});
+			}
 
 			return c.json(tracker.getTask(nodeId));
 		}
@@ -392,7 +394,13 @@ export function registerTaskRoutes(
 					ts: continueMsg2.ts,
 				});
 
-				runAgentForNode(ctx, project, tracker, nodeId, { model: body.model });
+				const scopeOpts2 = ctx.scopeOpts.get(project.id);
+				if (scopeOpts2) {
+					runAgentForNode(ctx, project, tracker, nodeId, {
+						...scopeOpts2,
+						model: body.model,
+					});
+				}
 
 				return c.json(tracker.getTask(nodeId));
 			} catch (e) {
@@ -556,9 +564,8 @@ export function registerTaskRoutes(
 		const msg = createUserMessage(content, { images: body.images });
 
 		// Single delivery path: JSONL persistence + queue delivery + auto-launch.
-		await deliverMessage(ctx, project, nodeId, msg, {
-			orchestratorSystemPrompt,
-		});
+		// Scope opts looked up from ctx.scopeOpts by deliverMessage.
+		await deliverMessage(ctx, project, nodeId, msg);
 
 		// Notify parent chain for non-root nodes (user sending to child task)
 		if (node?.parentId) {

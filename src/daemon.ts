@@ -11,6 +11,7 @@ import {
 	resolveAuthGroup,
 } from "./config.ts";
 import {
+	buildMatrixScopeOpts,
 	deliverMessage,
 	runAgentForNode,
 	stopAgent,
@@ -39,7 +40,7 @@ import type { Event } from "./events.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { createTaskComplete } from "./queue-message-factory.ts";
 
-import { buildSystemPrompt } from "./system-prompts.ts";
+// buildSystemPrompt import removed — prompt is now provided by buildMatrixScopeOpts
 import { TOOL_DONE } from "./tool-names.ts";
 import {
 	type HealthResponse,
@@ -151,6 +152,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		eventStores: new Map(),
 		streamingText: new Map(),
 		agentLoopPromises: new Map(),
+		scopeOpts: new Map(),
 		requestCount: 0,
 		startupReady: false,
 		// Defensive clone: DEFAULT_CONFIG is frozen, and even if initialConfig is
@@ -300,9 +302,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Register all route groups
 	registerProjectRoutes(app, ctx);
-	registerTaskRoutes(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
+	registerTaskRoutes(app, ctx);
 	registerConfigRoutes(app, ctx);
-	registerAgentRoutes(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
+	registerAgentRoutes(app, ctx);
 	registerSSERoute(app, ctx);
 	registerMcpEndpoint(app, ctx);
 	registerMockShowcaseRoute(app);
@@ -332,10 +334,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		project: { id: string; name: string; path: string },
 		tracker: import("./task-tracker.ts").TaskTracker,
 		eventStore: import("./event-store.ts").EventStore,
-		opts?: {
-			/** System prompt for root agent (non-selfBootstrap projects). */
-			orchestratorSystemPrompt?: import("./system-prompts.ts").SystemPrompt;
-		},
+		scopeOpts: Pick<
+			import("./daemon/agent-lifecycle.ts").RunAgentOpts,
+			"buildTools" | "buildPrompt"
+		>,
 	): Promise<void> {
 		// ── Phase 2 crash recovery ──
 		const allNodes = tracker.allNodes();
@@ -418,9 +420,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			console.log(`Auto-resuming ${project.name} node ${node.id}`);
 
 			runAgentForNode(ctx, project, tracker, node.id, {
-				orchestratorSystemPrompt: isRoot
-					? opts?.orchestratorSystemPrompt
-					: undefined,
+				...scopeOpts,
 				resume: true,
 			}).catch((e) => {
 				console.error(
@@ -436,9 +436,14 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		for (const project of projects) {
 			const tracker = await getTracker(ctx, project.id);
 			const eventStore = getEventStore(ctx, project.id);
-			await resumeScope(project, tracker, eventStore, {
-				orchestratorSystemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
-			});
+			const matrixOpts = buildMatrixScopeOpts(
+				project.id,
+				ctx.globalConfig.selfBootstrap,
+			);
+			// Register scope opts so internal paths (deliverMessage, ensureChildAgentRunning)
+			// can look up the project's tools + prompt without passing them through every call.
+			ctx.scopeOpts.set(project.id, matrixOpts);
+			await resumeScope(project, tracker, eventStore, matrixOpts);
 		}
 	}
 
@@ -477,7 +482,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	};
 }
 
-const ORCHESTRATOR_SYSTEM_PROMPT = buildSystemPrompt();
+// ORCHESTRATOR_SYSTEM_PROMPT removed — prompt is now provided by buildMatrixScopeOpts
+// and stored in ctx.scopeOpts per project.
 
 // Only start the server when run directly, not when imported for testing.
 if (import.meta.main) {
