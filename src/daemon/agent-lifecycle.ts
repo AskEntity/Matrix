@@ -96,7 +96,7 @@ export function buildMatrixScopeOpts(
 	projectId: string,
 	selfBootstrap: boolean,
 	ctx?: DaemonContext,
-): Pick<RunAgentOpts, "buildTools" | "buildPrompt" | "connectMcp" | "beforeChildLaunch"> {
+): Pick<RunAgentOpts, "buildTools" | "buildPrompt" | "connectMcp" | "beforeChildLaunch" | "shouldResume" | "onLaunch" | "onDone"> {
 	return {
 		buildTools: (auth, taskId) => {
 			const { toolDefs, hasRunningChildren, setMessages, setAllTools } =
@@ -137,6 +137,15 @@ export function buildMatrixScopeOpts(
 			const wm = new WorktreeManager(projectPath, wtRoot);
 			const wt = await wm.create(node.id, slugify(node.title), baseBranch);
 			tracker.assignWorktree(node.id, wt.branch, wt.path);
+		},
+		shouldResume: (node) => node.status === "in_progress",
+		onLaunch: (node, tracker) => {
+			tracker.updateStatus(node.id, "in_progress");
+		},
+		onDone: (node, tracker, doneArgs) => {
+			const newStatus =
+				doneArgs.status === "passed" ? "verify" : "failed";
+			tracker.updateStatus(node.id, newStatus as import("../types.ts").TaskStatus);
 		},
 	};
 }
@@ -539,7 +548,8 @@ export async function deliverMessage(
 		) {
 			// Root node — same launch path as child, scope opts from ctx
 			const rootScopeOpts = ctx.scopeOpts.get(project.id)!;
-			tracker.updateStatus(nodeId, "in_progress");
+			const rootNode = tracker.getTask(nodeId);
+			if (rootNode && rootScopeOpts.onLaunch) rootScopeOpts.onLaunch(rootNode, tracker);
 			runAgentForNode(ctx, project, tracker, nodeId, {
 				...rootScopeOpts,
 				resume: shouldResume,
@@ -573,8 +583,12 @@ export async function ensureChildAgentRunning(
 	const node = tracker.getTask(nodeId);
 	if (!node) return;
 
+	const scopeOpts = ctx.scopeOpts.get(project.id);
+	if (!scopeOpts) {
+		throw new Error(`No scope opts registered for project ${project.id}`);
+	}
+
 	// Guard: if agent is already running or being launched, do nothing.
-	// Message was already enqueued to JSONL by deliverMessage — the agent picks it up.
 	if (node.session != null || ctx.launchingNodes.has(nodeId)) {
 		return;
 	}
@@ -582,28 +596,18 @@ export async function ensureChildAgentRunning(
 	// Prepare child workspace via scope hook (Matrix creates worktrees, plugins may differ)
 	if (!node.worktreePath || !existsSync(node.worktreePath)) {
 		if (node.worktreePath && !existsSync(node.worktreePath)) {
-			// Stale worktreePath — directory was deleted outside close_task
 			node.worktreePath = null;
 			node.branch = null;
 		}
-		const scopeOpts = ctx.scopeOpts.get(project.id);
-		if (scopeOpts?.beforeChildLaunch) {
+		if (scopeOpts.beforeChildLaunch) {
 			await scopeOpts.beforeChildLaunch(node, tracker, project.path);
 		}
-		// If hook didn't set worktreePath, child runs in project root (no worktree needed)
 	}
 
-	tracker.updateStatus(nodeId, "in_progress");
+	if (scopeOpts.onLaunch) scopeOpts.onLaunch(node, tracker);
 	await tracker.save();
 
 	broadcastTreeUpdate(ctx, project.id, tracker);
-
-	// The real user/parent message is persisted to disk and will be delivered
-	// via queue drain. work_context is injected by enqueue hook.
-	const scopeOpts = ctx.scopeOpts.get(project.id);
-	if (!scopeOpts) {
-		throw new Error(`No scope opts registered for project ${project.id}`);
-	}
 	await runAgentForNode(ctx, project, tracker, nodeId, {
 		...scopeOpts,
 		model,
@@ -664,6 +668,19 @@ export interface RunAgentOpts {
 		tracker: TaskTracker,
 		projectPath: string,
 	) => Promise<void>;
+	/** Should this node be resumed on daemon restart? */
+	shouldResume?: (node: import("../types.ts").TaskNode) => boolean;
+	/** Update node state when agent launches. */
+	onLaunch?: (
+		node: import("../types.ts").TaskNode,
+		tracker: TaskTracker,
+	) => void;
+	/** Update node state when agent calls done(). doneArgs = opaque data from done() tool. */
+	onDone?: (
+		node: import("../types.ts").TaskNode,
+		tracker: TaskTracker,
+		doneArgs: Record<string, unknown>,
+	) => void;
 }
 
 /** Run an agent for any node (root or child). Shared launch path. */
@@ -1074,9 +1091,13 @@ export async function runAgentForNode(
 					);
 				});
 			} else {
-				const newStatus =
-					agentResult.exitReason === "done_passed" ? "verify" : "failed";
-				tracker.updateStatus(nodeId, newStatus);
+				// Let plugin update node state on done
+				if (opts.onDone) {
+					opts.onDone(currentNode, tracker, {
+						status: agentResult.exitReason === "done_passed" ? "passed" : "failed",
+						summary: agentResult.doneSummary ?? "",
+					});
+				}
 				await tracker.save();
 				broadcastTreeUpdate(ctx, project.id, tracker);
 
@@ -1101,7 +1122,7 @@ export async function runAgentForNode(
 				emitEvent(ctx, project.id, {
 					type: "done_notified",
 					taskId: nodeId,
-					status: newStatus,
+					status: currentNode.status as "verify" | "failed",
 					summary: agentResult.doneSummary ?? "",
 					traceId: loopTraceId,
 					ts: Date.now(),
