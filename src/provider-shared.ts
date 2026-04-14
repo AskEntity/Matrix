@@ -881,7 +881,7 @@ export async function* runProviderLoop(
 			// Write done tool_result with wake context
 			const doneText = request.buildDoneResumeContext
 				? request.buildDoneResumeContext()
-				: "You previously called done(). New messages woke you up:";
+				: "resumed.";
 			const doneToolResultEvt: EventSpec = {
 				type: "tool_result",
 				tool: pendingDoneToolCall.name,
