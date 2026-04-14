@@ -16,34 +16,83 @@ declare const self: Worker;
 
 import { createApp } from "../daemon.ts";
 
-// Wait for config from main thread
+let appInstance: ReturnType<typeof createApp> | null = null;
+
 self.onmessage = async (event: MessageEvent) => {
 	const msg = event.data;
 
 	if (msg.type === "init") {
 		const { dataDir, globalConfigPath } = msg;
-		
+
 		try {
-			const app = createApp({ dataDir, globalConfigPath });
-			await app.pm.load();
-			await app.loadConfig();
-			await app.autoResumeProjects();
-			app.markReady();
+			appInstance = createApp({ dataDir, globalConfigPath });
+			await appInstance.pm.load();
+			await appInstance.loadConfig();
+			await appInstance.autoResumeProjects();
+			appInstance.markReady();
 
 			self.postMessage({ type: "ready" });
-			console.log("[scope-worker] Runtime initialized successfully");
 		} catch (e) {
-			self.postMessage({ 
-				type: "error", 
-				message: e instanceof Error ? e.message : String(e) 
+			self.postMessage({
+				type: "error",
+				message: e instanceof Error ? e.message : String(e),
+			});
+		}
+	}
+
+	if (msg.type === "http_request") {
+		const { id, method, url, headers, body } = msg;
+		if (!appInstance) {
+			self.postMessage({
+				type: "http_response",
+				id,
+				status: 503,
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ error: "Worker not ready" }),
+			});
+			return;
+		}
+
+		try {
+			// Reconstruct Request and let Hono handle it
+			const request = new Request(url, {
+				method,
+				headers,
+				body: body ?? undefined,
+			});
+
+			const response = await appInstance.app.fetch(request);
+
+			// Read response body
+			const responseBody = await response.text();
+			const responseHeaders: Record<string, string> = {};
+			response.headers.forEach((v, k) => {
+				responseHeaders[k] = v;
+			});
+
+			self.postMessage({
+				type: "http_response",
+				id,
+				status: response.status,
+				headers: responseHeaders,
+				body: responseBody,
+			});
+		} catch (e) {
+			self.postMessage({
+				type: "http_response",
+				id,
+				status: 500,
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					error: e instanceof Error ? e.message : String(e),
+				}),
 			});
 		}
 	}
 
 	if (msg.type === "shutdown") {
-		// TODO: graceful shutdown
+		if (appInstance) await appInstance.shutdown();
 		self.postMessage({ type: "shutdown_complete" });
-		process.exit(0);
 	}
 };
 
