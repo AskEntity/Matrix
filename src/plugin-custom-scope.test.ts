@@ -5,7 +5,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,15 +13,14 @@ import { z } from "zod";
 import { createApp } from "./daemon.ts";
 import type { Event } from "./events.ts";
 import type { ScopeOpts } from "./daemon/context.ts";
-import { createAgentAuth } from "./tool-auth.ts";
 import { toToolDefinition } from "./tool-def.ts";
 import type { ToolDef } from "./tool-def.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
-import * as R from "./resource-registry.ts";
 import type { TaskNode } from "./types.ts";
+import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
 
 // ── Test infrastructure ──
 
@@ -87,7 +86,7 @@ async function readSessionEvents(
 
 // ── Custom "story" scope — minimal, non-Matrix ──
 
-function buildStoryScopeOpts(projectId: string): ScopeOpts<any> {
+function buildStoryScopeOpts(_projectId: string): ScopeOpts<any> {
 	return {
 		buildTools: (auth, _taskId) => {
 			// Custom tool + runtime primitives (done/yield)
@@ -118,31 +117,17 @@ function buildStoryScopeOpts(projectId: string): ScopeOpts<any> {
 					};
 				},
 			};
-			const yieldTool: ToolDef = {
-				name: "yield",
-				description: "Wait for messages.",
-				availability: "internal",
-				params: {},
-				handler: async () => ({ content: [{ type: "text" as const, text: "" }], isError: false, _isYield: true }),
-			};
-			const doneTool: ToolDef = {
-				name: "done",
-				description: "Signal completion.",
-				availability: "internal",
-				params: {
-					projectId: { schema: z.string(), decl: { kind: "bind", from: "projectId" } },
-					taskId: { schema: z.string(), decl: { kind: "bind", from: "taskId" } },
-					status: { schema: z.enum(["passed", "failed"]), decl: { kind: "explicit" } },
-					summary: { schema: z.string(), decl: { kind: "explicit" } },
-				},
-				handler: async (args) => {
-					const session = R.getSession(args.projectId as string, args.taskId as string);
-					if (session?.queue) session.queue.close();
-					return { content: [{ type: "text" as const, text: "Done." }], isError: false };
-				},
-			};
 			return {
-				tools: [storyTool, yieldTool, doneTool].map((def) => toToolDefinition(def, auth)),
+				tools: [
+					storyTool,
+					createYieldTool(),
+					createDoneTool({
+						extraParams: {
+							status: { schema: z.enum(["passed", "failed"]), decl: { kind: "explicit" } },
+							summary: { schema: z.string(), decl: { kind: "explicit" } },
+						},
+					}),
+				].map((def) => toToolDefinition(def, auth)),
 			};
 		},
 		buildPrompt: () => ({
