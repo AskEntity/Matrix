@@ -26,10 +26,7 @@ export interface TaskSession {
 	 * carry traceId — they exist independently of any specific run.
 	 */
 	loopTraceId: string;
-	/** Current working directory — mutable, updated by bash cd. */
-	cwd: string;
-	/** Project/worktree root — immutable fallback. */
-	fallbackCwd: string;
+
 	depth: number;
 	/** Background processes for this session, keyed by background process ID. */
 	backgroundProcesses: Map<string, BackgroundProcess>;
@@ -69,6 +66,8 @@ export interface TaskNode {
 	children: string[];
 	/** Absolute path to the git worktree for this task. */
 	worktreePath: string | null;
+	/** Current working directory — persists across restarts. Updated by bash cd. */
+	cwd: string | null;
 	/** Accumulated cost in USD for this task's agent execution. Default 0. */
 	costUsd: number;
 	/** Maximum cost in USD this task is allowed to spend. */

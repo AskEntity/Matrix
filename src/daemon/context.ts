@@ -46,14 +46,7 @@ export interface ScopeOpts<T extends PluginTypes = DefaultPluginTypes> {
 		node: import("../types.ts").TaskNode,
 		tracker: import("../task-tracker.ts").TaskTracker,
 		projectPath: string,
-	) => Promise<void>;
-
-	// ── Workspace ──
-	/** Determine the working directory for an agent. Default: project root. */
-	getAgentCwd?: (
-		node: import("../types.ts").TaskNode,
-		projectPath: string,
-	) => string | null;
+	) => Promise<{ cwd: string } | void>;
 
 	// ── Lifecycle (typed with T) ──
 	shouldResume?: (node: import("../types.ts").TaskNode) => boolean;

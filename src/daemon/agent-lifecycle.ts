@@ -126,8 +126,11 @@ export function buildMatrixScopeOpts(
 				}
 			: undefined,
 		beforeChildLaunch: async (node, tracker, projectPath) => {
-			// Already has a valid worktree — nothing to do
-			if (node.worktreePath && existsSync(node.worktreePath)) return;
+			// Already has a valid worktree — ensure cwd is set, return
+			if (node.worktreePath && existsSync(node.worktreePath)) {
+				if (!node.cwd) node.cwd = node.worktreePath;
+				return { cwd: node.cwd };
+			}
 			// Stale worktreePath — directory was deleted outside close_task
 			if (node.worktreePath && !existsSync(node.worktreePath)) {
 				node.worktreePath = null;
@@ -144,9 +147,9 @@ export function buildMatrixScopeOpts(
 			const wm = new WorktreeManager(projectPath, wtRoot);
 			const wt = await wm.create(node.id, slugify(node.title), baseBranch);
 			tracker.assignWorktree(node.id, wt.branch, wt.path);
+			node.cwd = wt.path;
+			return { cwd: wt.path };
 		},
-		getAgentCwd: (node, projectPath) =>
-			node.worktreePath ?? projectPath,
 		shouldResume: (node) => node.status === "in_progress",
 		onLaunch: (node, tracker) => {
 			tracker.updateStatus(node.id, "in_progress");
@@ -642,6 +645,8 @@ export interface RunAgentOpts extends ScopeOpts {
 	model?: string;
 	/** Whether this is a resume (pre-computed by caller). Used for agent_start event. */
 	resume?: boolean;
+	/** Agent working directory. Set by beforeChildLaunch return value. Default: project root. */
+	cwd?: string;
 }
 
 /** Run an agent for any node (root or child). Shared launch path. */
@@ -655,10 +660,7 @@ export async function runAgentForNode(
 	const node = tracker.getTask(nodeId);
 	if (!node) return;
 	const isRoot = !node.parentId;
-	const agentCwd = opts.getAgentCwd
-		? opts.getAgentCwd(node, project.path)
-		: project.path;
-	if (!agentCwd) return;
+	const agentCwd = project.path; // project root — tools read cwd from node data
 
 	// Launch lock: prevent duplicate launches when messages arrive before session is established.
 	if (node.session != null || ctx.launchingNodes.has(nodeId)) {
@@ -723,8 +725,6 @@ export async function runAgentForNode(
 			queue: childQueue,
 			abortController,
 			loopTraceId,
-			cwd: agentCwd,
-			fallbackCwd: agentCwd,
 			depth,
 			backgroundProcesses: new Map(),
 			foregroundExecutions: new Map(),
@@ -926,7 +926,6 @@ export async function runAgentForNode(
 		const debugSnapshotPath = join(taskDebugDir, loopTraceId, "last.json");
 
 		const sessionRequest: AgentRequest = {
-			cwd: agentCwd,
 			projectPath: isRoot ? project.path : undefined,
 			emit,
 			activeEvents,

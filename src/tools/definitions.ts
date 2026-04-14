@@ -26,11 +26,15 @@ function textResult(
 	};
 }
 
-/** Get cwd for a session, falling back to project path. */
-function getSessionCwd(projectId: string, taskId: string | null): string {
-	const session = taskId ? R.getSession(projectId, taskId) : undefined;
-	if (session?.cwd) return session.cwd;
-	return R.getProject(projectId)?.path ?? "";
+/** Get cwd for a task: node.cwd → node.worktreePath. */
+function getTaskCwd(projectId: string, taskId: string | null): string {
+	if (taskId) {
+		const tracker = R.getTracker(projectId);
+		const node = tracker?.getTask(taskId);
+		if (node?.cwd) return node.cwd;
+		if (node?.worktreePath) return node.worktreePath;
+	}
+	return "";
 }
 
 /** Common bind params for all builtin tools (projectId + taskId). */
@@ -87,8 +91,10 @@ const bashTool: ToolDef = {
 			: Math.max((args.foreground_timeout as number) ?? 120000, 0);
 
 		const session = R.getSession(projectId, taskId);
-		const cwd = getSessionCwd(projectId, taskId);
-		const fallbackCwd = session?.fallbackCwd;
+		const cwd = getTaskCwd(projectId, taskId);
+		const tracker = R.getTracker(projectId);
+		const node = taskId ? tracker?.getTask(taskId) : undefined;
+		const fallbackCwd = node?.worktreePath ?? R.getProject(projectId)?.path;
 		const queue = session?.queue;
 
 		try {
@@ -103,6 +109,15 @@ const bashTool: ToolDef = {
 				session?.backgroundProcesses,
 				session?.foregroundExecutions,
 			);
+			// Update node.cwd if bash cd changed it — persisted on node, survives restart
+			if (result.cwd && taskId) {
+				const t = R.getTracker(projectId);
+				const n = t?.getTask(taskId);
+				if (n) {
+					n.cwd = result.cwd;
+					await t?.save();
+				}
+			}
 			return textResult(result.content, result.isError, {
 				cwd: result.cwd,
 				backgroundId: result.backgroundId,
@@ -187,7 +202,7 @@ const readFileTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getSessionCwd(args.projectId as string, args.taskId as string);
+		const cwd = getTaskCwd(args.projectId as string, args.taskId as string);
 		const path = resolvePath(args.path as string, cwd);
 		const ext = path.split(".").pop()?.toLowerCase();
 		const IMAGE_MEDIA_TYPES: Record<
@@ -283,7 +298,7 @@ const writeFileTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getSessionCwd(args.projectId as string, args.taskId as string);
+		const cwd = getTaskCwd(args.projectId as string, args.taskId as string);
 		const path = resolvePath(args.path as string, cwd);
 		try {
 			mkdirSync(dirname(path), { recursive: true });
@@ -331,7 +346,7 @@ const editFileTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getSessionCwd(args.projectId as string, args.taskId as string);
+		const cwd = getTaskCwd(args.projectId as string, args.taskId as string);
 		const path = resolvePath(args.path as string, cwd);
 		const oldStr = args.old_string as string;
 		const newStr = args.new_string as string;
@@ -385,7 +400,7 @@ const listFilesTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getSessionCwd(args.projectId as string, args.taskId as string);
+		const cwd = getTaskCwd(args.projectId as string, args.taskId as string);
 		const pattern = (args.pattern as string) ?? "*";
 		try {
 			const glob = new Bun.Glob(pattern);
@@ -465,7 +480,7 @@ const searchTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getSessionCwd(args.projectId as string, args.taskId as string);
+		const cwd = getTaskCwd(args.projectId as string, args.taskId as string);
 		try {
 			const result = await jsSearch({
 				pattern: args.pattern as string,
