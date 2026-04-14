@@ -1217,9 +1217,12 @@ export async function* runProviderLoop(
 					const workCtxContent = request.buildWorkContext
 						? request.buildWorkContext()
 						: null;
+					const compactContent = workCtxContent
+						? `${workCtxContent}\n\n## Checkpoint Summary\n\n${compactResult.checkpoint}`
+						: `## Checkpoint Summary\n\n${compactResult.checkpoint}`;
 					messages.push({
 						role: "user" as const,
-						content: `${workCtxContent}\n\n## Checkpoint Summary\n\n${compactResult.checkpoint}`,
+						content: compactContent,
 					});
 				}
 			}
