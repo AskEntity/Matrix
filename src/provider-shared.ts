@@ -595,9 +595,7 @@ export async function* runProviderLoop(
 	queue?: MessageQueue,
 ): AsyncGenerator<EventSpec, AgentResult> {
 	const model = request.model ?? "claude-sonnet-4-6"; // default overridden by provider
-	// Loop-local cwd: used by work_context and compaction (Matrix-specific, transitional).
-	// Updated when bash tool changes cwd. Long-term: these should be plugin hooks.
-	let cwd = request.projectPath ?? "";
+	let systemPrompt = request.systemPrompt ?? { stable: "", variable: "" };
 
 	// ── Context window + compaction thresholds ──
 	const contextWindow = await adapter.getContextWindow(model);
@@ -868,8 +866,9 @@ export async function* runProviderLoop(
 			}
 
 			// Write done tool_result with wake context
-			const cwdLine = cwd ? `\n\n## Working Directory\n${cwd}` : "";
-			const doneText = `You previously called done(). New messages woke you up:${cwdLine}`;
+			const doneText = request.buildDoneResumeContext
+				? request.buildDoneResumeContext()
+				: "You previously called done(). New messages woke you up:";
 			const doneToolResultEvt: EventSpec = {
 				type: "tool_result",
 				tool: pendingDoneToolCall.name,
@@ -1145,7 +1144,7 @@ export async function* runProviderLoop(
 
 			const compactGen = processCompaction(
 				compactionText,
-				cwd,
+				undefined,
 				preCompactTokenCount,
 				emit,
 				contextWindow,
@@ -1168,7 +1167,7 @@ export async function* runProviderLoop(
 				if (emit) {
 					const freshPrompt = request.refreshSystemPrompt
 						? request.refreshSystemPrompt()
-						: request.systemPrompt;
+						: systemPrompt;
 					// Rebuild tools from current code (not stored session_config).
 					jsonTools = buildJsonTools(request.mcpToolDefs);
 					allTools = adapter.prepareTools(jsonTools);
@@ -1177,11 +1176,11 @@ export async function* runProviderLoop(
 					if (currentSession) {
 						currentSession.allTools = jsonTools;
 					}
-					// Update request.systemPrompt so subsequent API calls use the
+					// Update systemPrompt so subsequent API calls use the
 					// refreshed prompt. Without this, the next iteration's API call
-					// uses request.systemPrompt which is still frozen.
+					// uses systemPrompt which is still frozen.
 					if (freshPrompt) {
-						request.systemPrompt = freshPrompt;
+						systemPrompt = freshPrompt;
 						const sessionConfigEvt: EventSpec = {
 							type: "session_config",
 							tools: jsonTools,
@@ -1202,7 +1201,9 @@ export async function* runProviderLoop(
 						queue.enqueue(resumeMsg);
 					}
 					// Build the user message for messages[] from both contents
-					const workCtxContent = buildWorkContextContent(cwd);
+					const workCtxContent = request.buildWorkContext
+						? request.buildWorkContext()
+						: buildWorkContextContent(undefined);
 					messages.push({
 						role: "user" as const,
 						content: `${workCtxContent}\n\n## Checkpoint Summary\n\n${compactResult.checkpoint}`,
@@ -1249,7 +1250,7 @@ export async function* runProviderLoop(
 					adapter.supportsTokenCounting &&
 					adapter.countTokens
 				) {
-					const sp = request.systemPrompt ?? { stable: "", variable: "" };
+					const sp = systemPrompt;
 					const result = await adapter.countTokens({
 						model,
 						system: `${sp.stable}\n\n${sp.variable}`,
@@ -1287,7 +1288,9 @@ export async function* runProviderLoop(
 				// If a pending compactOnly-yield tool_call is carried forward, bundle
 				// its tool_result INTO THIS SAME user message — otherwise we'd emit
 				// two consecutive user messages (tool_result + this one) → API 400.
-				const summarizationInstruction = buildSummarizationInstruction(cwd);
+				const summarizationInstruction = request.buildSummarizationPrompt
+					? request.buildSummarizationPrompt()
+					: buildSummarizationInstruction(undefined);
 				if (pendingCompactYieldToolCall) {
 					// Build a structured user message: [tool_result, text] via the
 					// walker-delegating buildUserTurn. Walker is the single source of
@@ -1348,7 +1351,7 @@ export async function* runProviderLoop(
 					model,
 					messages,
 					tools: allTools,
-					systemPrompt: request.systemPrompt ?? { stable: "", variable: "" },
+					systemPrompt: systemPrompt,
 					maxTokens: compactionPending
 						? COMPACTION_MAX_TOKENS
 						: DEFAULT_MAX_TOKENS,
@@ -1661,15 +1664,7 @@ export async function* runProviderLoop(
 			}),
 		);
 
-		// Update cwd if bash tool changed it — sync both the loop-local cwd
-		// and the session's cwd so handler closures see the new value.
-		for (const exec of execResults) {
-			if (exec.cwd) {
-				cwd = exec.cwd;
-				// node.cwd is updated by the bash tool handler directly.
-				// Loop-local cwd tracks it for work_context and other loop-level uses.
-			}
-		}
+		// node.cwd is updated by the bash tool handler directly — no loop-local tracking.
 
 		// ── done() alone: intended orphan (like yield) ──
 		// done() handler closes the queue. No tool_result is written to JSONL or

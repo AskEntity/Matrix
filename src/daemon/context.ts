@@ -49,16 +49,13 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 		projectPath: string,
 	) => Promise<{ cwd: string } | void>;
 
-	// ── Context injection ──
-	/**
-	 * Build work_context content for agent sessions.
-	 * Matrix: task description + memory.md path + cwd.
-	 * Plugin: whatever context the agent needs.
-	 */
-	buildWorkContext?: (
-		node: T["node"],
-		projectPath: string,
-	) => string | null;
+	// ── Context injection at lifecycle moments ──
+	/** Fresh start / post-compact: inject work context. */
+	buildWorkContext?: (node: T["node"], projectPath: string) => string | null;
+	/** Compaction: build the summarization instruction. */
+	buildSummarizationPrompt?: (node: T["node"], projectPath: string) => string;
+	/** Done resume: build the wake-up context text. */
+	buildDoneResumeContext?: (node: T["node"], projectPath: string) => string;
 
 	// ── Lifecycle (typed with T) ──
 	shouldResume?: (node: T["node"]) => boolean;
