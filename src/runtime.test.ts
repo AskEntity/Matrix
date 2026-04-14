@@ -16,7 +16,6 @@ import { executeTool } from "./tool-execution.ts";
 import type {
 	AgentResult,
 	HealthResponse,
-	Project,
 	StatsResponse,
 	TaskNode,
 	VersionResponse,
@@ -240,12 +239,7 @@ describe("daemon stats", () => {
 		await pm.load();
 
 		// Create a project with tasks in different statuses
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "stats-proj") }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await pm.init(join(tempDir, "stats-proj"));
 
 		// Get the auto-created root node ID
 		const tasksRes = await app.request(`/projects/${project.id}/tasks`);
@@ -313,242 +307,6 @@ describe("daemon stats", () => {
 	});
 });
 
-describe("daemon projects API", () => {
-	let tempDir: string;
-	let dataDir: string;
-	let app: ReturnType<typeof createApp>["app"];
-
-	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "mxd-projects-"));
-		dataDir = await mkdtemp(join(tmpdir(), "mxd-data-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		app = result.app;
-		await result.pm.load();
-	});
-
-	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
-	});
-
-	test("POST /projects with new path creates project", async () => {
-		const projectPath = join(tempDir, "my-app");
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectPath }),
-		});
-		expect(res.status).toBe(201);
-
-		const project = (await res.json()) as Project;
-		expect(project.name).toBe("my-app");
-		expect(project.path).toBe(projectPath);
-	});
-
-	test("POST /projects rejects duplicate path", async () => {
-		const projectPath = join(tempDir, "dup");
-		await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectPath }),
-		});
-
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectPath }),
-		});
-		expect(res.status).toBe(409);
-	});
-
-	test("POST /projects requires path", async () => {
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({}),
-		});
-		expect(res.status).toBe(400);
-	});
-
-	test("GET /projects lists all", async () => {
-		await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "a") }),
-		});
-		await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "b") }),
-		});
-
-		const res = await app.request("/projects");
-		const list = (await res.json()) as Project[];
-		expect(list).toHaveLength(2);
-	});
-
-	test("GET /projects/:id returns project", async () => {
-		const createRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "find-me") }),
-		});
-		const created = (await createRes.json()) as Project;
-
-		const res = await app.request(`/projects/${created.id}`);
-		expect(res.status).toBe(200);
-		const project = (await res.json()) as Project;
-		expect(project.name).toBe("find-me");
-	});
-
-	test("GET /projects/:id returns 404 for unknown", async () => {
-		const res = await app.request("/projects/nonexistent");
-		expect(res.status).toBe(404);
-	});
-
-	test("DELETE /projects/:id removes metadata", async () => {
-		const createRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "delete-me") }),
-		});
-		const created = (await createRes.json()) as Project;
-
-		const delRes = await app.request(`/projects/${created.id}`, {
-			method: "DELETE",
-		});
-		expect(delRes.status).toBe(200);
-
-		const getRes = await app.request(`/projects/${created.id}`);
-		expect(getRes.status).toBe(404);
-	});
-
-	test("GET /projects includes pathExists field", async () => {
-		await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "path-check") }),
-		});
-
-		const res = await app.request("/projects");
-		const list = (await res.json()) as (Project & { pathExists: boolean })[];
-		expect(list).toHaveLength(1);
-		expect(list[0]?.pathExists).toBe(true);
-	});
-
-	test("GET /projects shows pathExists=false for moved project", async () => {
-		const projectPath = join(tempDir, "will-move");
-		const createRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectPath }),
-		});
-		const created = (await createRes.json()) as Project;
-
-		// Rename the directory to simulate a move
-		await rename(projectPath, join(tempDir, "moved-away"));
-
-		const res = await app.request("/projects");
-		const list = (await res.json()) as (Project & { pathExists: boolean })[];
-		const proj = list.find((p) => p.id === created.id);
-		expect(proj?.pathExists).toBe(false);
-	});
-
-	test("GET /projects/:id includes pathExists field", async () => {
-		const createRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "single-check") }),
-		});
-		const created = (await createRes.json()) as Project;
-
-		const res = await app.request(`/projects/${created.id}`);
-		const project = (await res.json()) as Project & { pathExists: boolean };
-		expect(project.pathExists).toBe(true);
-	});
-
-	test("PATCH /projects/:id updates path", async () => {
-		const createRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "to-relocate") }),
-		});
-		const created = (await createRes.json()) as Project;
-
-		// Simulate move: rename old dir, new dir has .mxd/
-		const newPath = join(tempDir, "relocated");
-		await rename(created.path, newPath);
-
-		const res = await app.request(`/projects/${created.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: newPath }),
-		});
-		expect(res.status).toBe(200);
-		const updated = (await res.json()) as Project & { pathExists: boolean };
-		expect(updated.path).toBe(newPath);
-		expect(updated.pathExists).toBe(true);
-	});
-
-	test("PATCH /projects/:id updates name", async () => {
-		const createRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "rename-me") }),
-		});
-		const created = (await createRes.json()) as Project;
-
-		const res = await app.request(`/projects/${created.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ name: "better-name" }),
-		});
-		expect(res.status).toBe(200);
-		const updated = (await res.json()) as Project;
-		expect(updated.name).toBe("better-name");
-	});
-
-	test("PATCH /projects/:id rejects empty body", async () => {
-		const createRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "empty-patch") }),
-		});
-		const created = (await createRes.json()) as Project;
-
-		const res = await app.request(`/projects/${created.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({}),
-		});
-		expect(res.status).toBe(400);
-	});
-
-	test("PATCH /projects/:id rejects nonexistent path", async () => {
-		const createRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "bad-relocate") }),
-		});
-		const created = (await createRes.json()) as Project;
-
-		const res = await app.request(`/projects/${created.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: "/nonexistent/path" }),
-		});
-		expect(res.status).toBe(400);
-	});
-
-	test("PATCH /projects/:id returns 404 for unknown project", async () => {
-		const res = await app.request("/projects/nonexistent", {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ name: "foo" }),
-		});
-		expect(res.status).toBe(404);
-	});
-});
 
 describe("daemon tasks API", () => {
 	let tempDir: string;
@@ -567,12 +325,7 @@ describe("daemon tasks API", () => {
 		await result.pm.load();
 
 		// Create a project for task tests
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "task-app") }),
-		});
-		const project = (await res.json()) as Project;
+		const project = await result.pm.init(join(tempDir, "task-app"));
 		projectId = project.id;
 		// Get root node ID for task creation
 		const tracker = await getTracker(projectId);
@@ -1084,12 +837,7 @@ describe("daemon tasks API", () => {
 		await localPm.load();
 
 		// Create a project
-		const projRes = await localApp.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "cont-wt-app") }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await localPm.init(join(tempDir, "cont-wt-app"));
 		const localTracker = await localGetTracker(project.id);
 		const localRootId = localTracker.rootNodeId;
 
@@ -1186,12 +934,7 @@ describe("daemon tasks API", () => {
 		await localPm.load();
 
 		const projPath = join(tempDir, "gitlog-app");
-		const projRes = await localApp.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projPath }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await localPm.init(projPath);
 		const localTracker2 = await localGetTracker(project.id);
 		const localRootId2 = localTracker2.rootNodeId;
 
@@ -1418,12 +1161,7 @@ describe("GET /projects/:id/events", () => {
 		app = result.app;
 		await result.pm.load();
 
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await res.json()) as { id: string };
+		const project = await result.pm.init(tempDir);
 		projectId = project.id;
 	});
 
@@ -1569,12 +1307,7 @@ describe("GET /projects/:id/events/older", () => {
 		app = result.app;
 		await result.pm.load();
 
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await res.json()) as { id: string };
+		const project = await result.pm.init(tempDir);
 		projectId = project.id;
 	});
 
@@ -1713,12 +1446,7 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 		app = result.app;
 		await result.pm.load();
 
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await result.pm.init(tempDir);
 		projectId = project.id;
 		const tasksRes = await app.request(`/projects/${projectId}/tasks`);
 		rootNodeId = ((await tasksRes.json()) as { rootNodeId: string }).rootNodeId;
@@ -1832,12 +1560,7 @@ describe("streaming text injection in batch events", () => {
 		ctx = result.ctx;
 		await result.pm.load();
 
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await result.pm.init(tempDir);
 		projectId = project.id;
 		const tasksRes = await app.request(`/projects/${projectId}/tasks`);
 		rootNodeId = ((await tasksRes.json()) as { rootNodeId: string }).rootNodeId;
@@ -2025,12 +1748,7 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		});
 		await localPm.load();
 
-		const projRes = await localApp.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "proj") }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await localPm.init(join(tempDir, "proj"));
 		projectId = project.id;
 		const tracker = await getTracker(projectId);
 		rootNodeId = tracker.rootNodeId;
@@ -2210,12 +1928,7 @@ describe("POST /projects/:id/tasks/:nodeId/message (root node)", () => {
 		await result.pm.load();
 		result.markReady();
 
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "proj") }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await result.pm.init(join(tempDir, "proj"));
 		projectId = project.id;
 	});
 
@@ -2284,12 +1997,7 @@ describe("POST /projects/:id/clarify", () => {
 		app = result.app;
 		await result.pm.load();
 
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "proj") }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await result.pm.init(join(tempDir, "proj"));
 		projectId = project.id;
 	});
 
@@ -2379,12 +2087,7 @@ describe("POST /projects/:id/clarify", () => {
 		localMarkReady();
 
 		// Create project and start agent
-		const projRes = await localApp.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "clarify-route-proj") }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await localPm.init(join(tempDir, "clarify-route-proj"));
 
 		const orchRes = await startRootAgent(
 			localApp,
@@ -2457,15 +2160,8 @@ describe("POST /projects/:id/clarify", () => {
 		await localPm.load();
 		localMarkReady();
 
-		// Create project and start agent
-		const projRes = await localApp.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				path: join(tempDir, "clarify-child-route-proj"),
-			}),
-		});
-		const project = (await projRes.json()) as Project;
+		// Create project
+		const project = await localPm.init(join(tempDir, "clarify-child-route-proj"));
 
 		const orchRes = await startRootAgent(
 			localApp,
@@ -2567,15 +2263,8 @@ describe("POST /projects/:id/clarify", () => {
 		await localPm.load();
 		localMarkReady();
 
-		// Create project and start agent
-		const projRes = await localApp.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				path: join(tempDir, "clarify-closed-queue-proj"),
-			}),
-		});
-		const project = (await projRes.json()) as Project;
+		// Create project
+		const project = await localPm.init(join(tempDir, "clarify-closed-queue-proj"));
 
 		const orchRes = await startRootAgent(
 			localApp,
@@ -2668,12 +2357,7 @@ describe("task message API — agent launch", () => {
 		await pm.load();
 		markReady();
 
-		const projectRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "oa-app") }),
-		});
-		const project = (await projectRes.json()) as Project;
+		const project = await pm.init(join(tempDir, "oa-app"));
 
 		const res = await startRootAgent(app, project.id, "Build a todo app");
 		expect(res.status).toBe(200);
@@ -2697,12 +2381,7 @@ describe("task message API — agent launch", () => {
 		await pm.load();
 		markReady();
 
-		const projectRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "oa2") }),
-		});
-		const project = (await projectRes.json()) as Project;
+		const project = await pm.init(join(tempDir, "oa2"));
 
 		const tasksRes = await app.request(`/projects/${project.id}/tasks`);
 		const { rootNodeId } = (await tasksRes.json()) as { rootNodeId: string };
@@ -2907,12 +2586,7 @@ describe("GET /projects/:id/agent", () => {
 		await result.pm.load();
 		result.markReady();
 
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await res.json()) as { id: string };
+		const project = await result.pm.init(tempDir);
 		projectId = project.id;
 	});
 
@@ -2950,12 +2624,7 @@ describe("POST /projects/:id/stop", () => {
 		await result.pm.load();
 		result.markReady();
 
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await res.json()) as { id: string };
+		const project = await result.pm.init(tempDir);
 		projectId = project.id;
 	});
 
@@ -3019,12 +2688,7 @@ describe("POST /projects/:id/stop", () => {
 		localMarkReady();
 
 		// Create a project
-		const projRes = await localApp.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "cascade-proj") }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await localPm.init(join(tempDir, "cascade-proj"));
 
 		// Start an agent
 		const orchRes = await startRootAgent(localApp, project.id, "do something");
@@ -3109,12 +2773,7 @@ describe("POST /projects/:id/tasks/:nodeId/message — root agent", () => {
 		await result.pm.load();
 		result.markReady();
 
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await res.json()) as { id: string };
+		const project = await result.pm.init(tempDir);
 		projectId = project.id;
 	});
 
@@ -3173,12 +2832,7 @@ describe("POST /projects/:id/sessions/prune", () => {
 		app = result.app;
 		await result.pm.load();
 
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await res.json()) as { id: string };
+		const project = await result.pm.init(tempDir);
 		projectId = project.id;
 	});
 
@@ -3281,12 +2935,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		getTracker = result.getTracker;
 		await result.pm.load();
 
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "cont-proj") }),
-		});
-		const project = (await res.json()) as Project;
+		const project = await result.pm.init(join(tempDir, "cont-proj"));
 		projectId = project.id;
 		const tracker = await getTracker(projectId);
 		rootNodeId = tracker.rootNodeId;
@@ -3716,12 +3365,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		});
 		await localPm.load();
 
-		const projRes = await localApp.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "child-sess-proj") }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await localPm.init(join(tempDir, "child-sess-proj"));
 		const emitTracker = await localGetTracker(project.id);
 		const emitRootId = emitTracker.rootNodeId;
 
@@ -3787,12 +3431,7 @@ describe("GET /projects/:id/clarifications", () => {
 		await result.pm.load();
 		result.markReady();
 
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "proj") }),
-		});
-		const project = (await res.json()) as Project;
+		const project = await result.pm.init(join(tempDir, "proj"));
 		projectId = project.id;
 	});
 
@@ -3847,12 +3486,7 @@ describe("GET /projects/:id/config", () => {
 		app = result.app;
 		await result.pm.load();
 
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await res.json()) as Project;
+		const project = await result.pm.init(tempDir);
 		projectId = project.id;
 	});
 
@@ -3900,12 +3534,7 @@ describe("PATCH /projects/:id/config", () => {
 		app = result.app;
 		await result.pm.load();
 
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await res.json()) as Project;
+		const project = await result.pm.init(tempDir);
 		projectId = project.id;
 	});
 
@@ -4063,12 +3692,7 @@ describe("GET /projects/:id/config/repo", () => {
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await pm.init(tempDir);
 
 		const res = await app.request(`/projects/${project.id}/config/repo`);
 		expect(res.status).toBe(200);
@@ -4085,12 +3709,7 @@ describe("GET /projects/:id/config/repo", () => {
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await pm.init(tempDir);
 
 		// Write a repo config file in the project directory
 		await mkdir(join(tempDir, ".mxd"), { recursive: true });
@@ -4150,12 +3769,7 @@ describe("POST /projects/:id/restart", () => {
 	test("returns 404 when no active agent", async () => {
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const proj = (await projRes.json()) as Project;
+		const proj = await pm.init(projectDir);
 
 		const res = await app.request(`/projects/${proj.id}/restart`, {
 			method: "POST",
@@ -4197,12 +3811,7 @@ describe("POST /projects/:id/restart", () => {
 		markReady();
 
 		// Create project
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const proj = (await projRes.json()) as Project;
+		const proj = await pm.init(projectDir);
 
 		// Start orchestration
 		const startRes = await startRootAgent(app, proj.id, "test");
@@ -4262,12 +3871,7 @@ describe("POST /projects/:id/restart", () => {
 		await pm.load();
 		markReady();
 
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const proj = (await projRes.json()) as Project;
+		const proj = await pm.init(projectDir);
 
 		// Start orchestration
 		await startRootAgent(app, proj.id, "test");
@@ -4320,12 +3924,7 @@ describe("POST /projects/:id/restart", () => {
 		await pm.load();
 		markReady();
 
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const proj = (await projRes.json()) as Project;
+		const proj = await pm.init(projectDir);
 
 		// Start orchestration
 		await startRootAgent(app, proj.id, "test");
@@ -4391,12 +3990,7 @@ describe("POST /projects/:id/restart", () => {
 		await pm.load();
 		markReady();
 
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const proj = (await projRes.json()) as Project;
+		const proj = await pm.init(projectDir);
 
 		// Start orchestration — session 1
 		await startRootAgent(app, proj.id, "test");
@@ -4468,12 +4062,7 @@ describe("POST /projects/:id/restart", () => {
 		await pm.load();
 		markReady();
 
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const proj = (await projRes.json()) as Project;
+		const proj = await pm.init(projectDir);
 
 		// Start orchestration
 		await startRootAgent(app, proj.id, "test");
@@ -4499,12 +4088,7 @@ describe("POST /projects/:id/restart", () => {
 		await pm.load();
 		// Don't call markReady() — startup guard should block
 
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const proj = (await projRes.json()) as Project;
+		const proj = await pm.init(projectDir);
 
 		// Should return 503 before markReady
 		const tasksRes = await app.request(`/projects/${proj.id}/tasks`);
@@ -4569,12 +4153,7 @@ describe("lifecycle edge cases", () => {
 		markReady();
 
 		// Create project
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await pm.init(projectDir);
 
 		// Start agent
 		await startRootAgent(app, project.id, "test");
@@ -4623,12 +4202,7 @@ describe("lifecycle edge cases", () => {
 		markReady();
 
 		// Create project
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await pm.init(projectDir);
 
 		// Start agent
 		await startRootAgent(app, project.id, "test");
@@ -4647,7 +4221,7 @@ describe("lifecycle edge cases", () => {
 		expect(tracker.getTask(tracker.rootNodeId)?.session).toBeUndefined();
 	});
 
-	test("deleting project stops running agent", async () => {
+	test.skip("deleting project stops running agent — MOVED to daemon tests (DELETE /projects is daemon-owned)", async () => {
 		const provider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
@@ -4677,12 +4251,7 @@ describe("lifecycle edge cases", () => {
 		markReady();
 
 		// Create project
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await pm.init(projectDir);
 
 		// Start agent
 		await startRootAgent(app, project.id, "test");
@@ -4705,12 +4274,7 @@ describe("lifecycle edge cases", () => {
 		markReady();
 
 		// Create project
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await pm.init(projectDir);
 
 		// Clear sessions without running agent — should succeed
 		const clearRes = await app.request(
@@ -4731,12 +4295,7 @@ describe("lifecycle edge cases", () => {
 		markReady();
 
 		// Create project
-		const projRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectDir }),
-		});
-		const project = (await projRes.json()) as Project;
+		const project = await pm.init(projectDir);
 
 		// Start and stop agent to create root node + tasks
 		await startRootAgent(app, project.id, "test");
@@ -4789,16 +4348,9 @@ describe("project directory structure", () => {
 	test("new project registration creates tasks/ and debug/ directories", async () => {
 		const { existsSync: exists } = await import("node:fs");
 		const result = createApp({ dataDir, agentProvider: mockProvider });
-		const app = result.app;
 		await result.pm.load();
 
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		expect(res.ok).toBe(true);
-		const project = (await res.json()) as { id: string };
+		const project = await result.pm.init(tempDir);
 
 		expect(exists(join(dataDir, "projects", project.id, "tasks"))).toBe(true);
 		expect(exists(join(dataDir, "projects", project.id, "debug"))).toBe(true);
@@ -4807,15 +4359,9 @@ describe("project directory structure", () => {
 	test("EventStore created for a project writes under projects/<id>/tasks/", async () => {
 		const { existsSync: exists } = await import("node:fs");
 		const result = createApp({ dataDir, agentProvider: mockProvider });
-		const app = result.app;
 		await result.pm.load();
 
-		const createRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await createRes.json()) as { id: string };
+		const project = await result.pm.init(tempDir);
 
 		// Directly touch the store through helpers
 		const { getEventStore } = await import("./runtime/helpers.ts");
