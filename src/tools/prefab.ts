@@ -23,7 +23,7 @@ export function createYieldTool(): ToolDef {
 			"Returns all accumulated messages. Zero token burn while waiting.",
 		params: {},
 		handler: async () => ({
-			content: [{ type: "text" as const, text: "" }],
+			content: [],
 			isError: false,
 			_isYield: true,
 		}),
@@ -109,13 +109,10 @@ export function createDoneTool(opts?: {
 				}
 			}
 
-			// Runtime: close queue → loop exits
+			// Runtime: close queue → loop exits. No response — done is intended orphan.
 			const session = R.getSession(projectId, taskId);
 			if (session?.queue) session.queue.close();
-			return {
-				content: [{ type: "text" as const, text: "Done." }],
-				isError: false,
-			};
+			return { content: [], isError: false };
 		},
 	};
 }
