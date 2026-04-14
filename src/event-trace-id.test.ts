@@ -313,15 +313,14 @@ describe("Bug 3: R.emit traceId auto-injection from tool handlers", () => {
 		expect(started?.traceId).toBeDefined();
 		expect(clarify?.traceId).toBe(started?.traceId as string);
 
-		await handleClarifyResponse(
-			ctx.app.ctx,
-			ctx.projectId,
-			tracker.rootNodeId,
-			"yes, proceed",
-		);
-
+		// Agent already completed (clarify tool_result → done in same turn).
+		// Verify status before sending clarify_response — sending it after done
+		// would re-launch the root agent (expected behavior: messages wake done agents).
 		const status = await waitForDone(ctx, 20000);
 		expect(status).toBe("verify");
+
+		// Clarify response after done is still valid — it would re-launch,
+		// but for this test we only need the traceId assertion above.
 	}, 40000);
 });
 
