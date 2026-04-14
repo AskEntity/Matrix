@@ -8,9 +8,9 @@ import {
 	saveProjectLocalConfig,
 	saveProjectRepoConfig,
 } from "../../config.ts";
-import type { DaemonContext } from "../context.ts";
+import type { RuntimeContext } from "../context.ts";
 
-export function registerConfigRoutes(app: Hono, ctx: DaemonContext) {
+export function registerConfigRoutes(app: Hono, ctx: RuntimeContext) {
 	// Global config
 	app.get("/config/global", async (c) => {
 		return c.json(ctx.globalConfig);

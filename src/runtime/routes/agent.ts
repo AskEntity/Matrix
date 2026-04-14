@@ -13,7 +13,7 @@ import {
 	runAgentForNode,
 	stopAgent,
 } from "../agent-lifecycle.ts";
-import type { DaemonContext } from "../context.ts";
+import type { RuntimeContext } from "../context.ts";
 import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
 import {
 	getEventStore,
@@ -23,7 +23,7 @@ import {
 	resolveProjectConfig,
 } from "../helpers.ts";
 
-export function registerAgentRoutes(app: Hono, ctx: DaemonContext) {
+export function registerAgentRoutes(app: Hono, ctx: RuntimeContext) {
 	// Agent status
 	app.get("/projects/:id/agent", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));

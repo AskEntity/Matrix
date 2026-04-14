@@ -432,7 +432,7 @@ function buildMockData() {
 		events,
 		TOOL_READ_FILE,
 		{ path: "src/daemon/routes/projects.ts", offset: 1, limit: 10 },
-		'1: import type { Hono } from "hono";\n2: import { stopAgent } from "../agent-lifecycle.ts";\n3: import type { DaemonContext } from "../context.ts";\n4: import { getPendingClarifications } from "../event-system.ts";\n5: import { getEventStore, stripEventForUI } from "../helpers.ts";\n6:\n7: export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {\n8:   // Projects CRUD\n9:   app.post("/projects", async (c) => {\n10:    const body = await c.req.json<{ path: string }>();',
+		'1: import type { Hono } from "hono";\n2: import { stopAgent } from "../agent-lifecycle.ts";\n3: import type { RuntimeContext } from "../context.ts";\n4: import { getPendingClarifications } from "../event-system.ts";\n5: import { getEventStore, stripEventForUI } from "../helpers.ts";\n6:\n7: export function registerProjectRoutes(app: Hono, ctx: RuntimeContext) {\n8:   // Projects CRUD\n9:   app.post("/projects", async (c) => {\n10:    const body = await c.req.json<{ path: string }>();',
 		m,
 	);
 

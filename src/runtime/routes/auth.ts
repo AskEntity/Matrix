@@ -15,9 +15,9 @@
 import { join } from "node:path";
 import type { Context, Hono, Next } from "hono";
 import { hasJwtSecret, verifyJWT } from "../../auth.ts";
-import type { DaemonContext } from "../context.ts";
+import type { RuntimeContext } from "../context.ts";
 
-function getAuthPath(ctx: DaemonContext): string {
+function getAuthPath(ctx: RuntimeContext): string {
 	return join(ctx.config.dataDir, "auth.json");
 }
 
@@ -36,7 +36,7 @@ function extractToken(c: Context): string | null {
 
 // ── Routes ─────────────────────────────────────────────────────────────────
 
-export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
+export function registerAuthRoutes(app: Hono, ctx: RuntimeContext) {
 	// Check auth status
 	app.get("/auth/status", async (c) => {
 		const authPath = getAuthPath(ctx);
@@ -62,7 +62,7 @@ export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
 
 // ── Auth Middleware ────────────────────────────────────────────────────────
 
-export function createAuthMiddleware(ctx: DaemonContext) {
+export function createAuthMiddleware(ctx: RuntimeContext) {
 	return async (c: Context, next: Next) => {
 		// Skip auth endpoints themselves
 		if (c.req.path.startsWith("/auth/")) return next();

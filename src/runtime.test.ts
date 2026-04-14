@@ -4818,7 +4818,7 @@ describe("project directory structure", () => {
 		const project = (await createRes.json()) as { id: string };
 
 		// Directly touch the store through helpers
-		const { getEventStore } = await import("./daemon/helpers.ts");
+		const { getEventStore } = await import("./runtime/helpers.ts");
 		const store = getEventStore(result.ctx, project.id);
 		await store.append("sid-1", {
 			type: "assistant_text",

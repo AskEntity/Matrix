@@ -3,7 +3,7 @@
  *
  * This is the entry point for a Bun Worker. It:
  * 1. Receives config via initial message from main thread
- * 2. Creates the app (DaemonContext + routes + agent lifecycle)
+ * 2. Creates the app (RuntimeContext + routes + agent lifecycle)
  * 3. Handles requests forwarded from main thread
  * 4. Emits events back to main thread for SSE relay
  *

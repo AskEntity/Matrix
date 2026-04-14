@@ -11,7 +11,7 @@
  * - SSE relay: worker events → browser
  * - Static files (web UI shell)
  *
- * Does NOT own: DaemonContext, trackers, eventStores, agent lifecycle, tools.
+ * Does NOT own: RuntimeContext, trackers, eventStores, agent lifecycle, tools.
  * Those live in the worker (PluginContext).
  */
 
@@ -51,7 +51,7 @@ const workers = new Map<string, ScopeWorker>();
 function startWorker(scopeName: string, dataDir: string, globalConfigPath: string): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const worker = new Worker(
-			new URL("./daemon/scope-worker.ts", import.meta.url).href,
+			new URL("./runtime/scope-worker.ts", import.meta.url).href,
 		);
 
 		const scopeWorker: ScopeWorker = {

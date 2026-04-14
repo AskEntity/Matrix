@@ -15,26 +15,26 @@ import {
 	deliverMessage,
 	runAgentForNode,
 	stopAgent,
-} from "./daemon/agent-lifecycle.ts";
+} from "./runtime/agent-lifecycle.ts";
 import type {
 	DaemonConfig,
-	DaemonContext,
+	RuntimeContext,
 	PendingClarification,
 	SSEClient,
-} from "./daemon/context.ts";
-import { broadcastTreeUpdate, emitEvent } from "./daemon/event-system.ts";
-import { getEventStore, getTracker } from "./daemon/helpers.ts";
-import { registerAgentRoutes } from "./daemon/routes/agent.ts";
+} from "./runtime/context.ts";
+import { broadcastTreeUpdate, emitEvent } from "./runtime/event-system.ts";
+import { getEventStore, getTracker } from "./runtime/helpers.ts";
+import { registerAgentRoutes } from "./runtime/routes/agent.ts";
 import {
 	createAuthMiddleware,
 	registerAuthRoutes,
-} from "./daemon/routes/auth.ts";
-import { registerConfigRoutes } from "./daemon/routes/config.ts";
-import { registerMcpEndpoint } from "./daemon/routes/mcp-endpoint.ts";
-import { registerMockShowcaseRoute } from "./daemon/routes/mock-showcase.ts";
-import { registerProjectRoutes } from "./daemon/routes/projects.ts";
-import { registerSSERoute } from "./daemon/routes/sse.ts";
-import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
+} from "./runtime/routes/auth.ts";
+import { registerConfigRoutes } from "./runtime/routes/config.ts";
+import { registerMcpEndpoint } from "./runtime/routes/mcp-endpoint.ts";
+import { registerMockShowcaseRoute } from "./runtime/routes/mock-showcase.ts";
+import { registerProjectRoutes } from "./runtime/routes/projects.ts";
+import { registerSSERoute } from "./runtime/routes/sse.ts";
+import { registerTaskRoutes } from "./runtime/routes/tasks.ts";
 
 import type { Event } from "./events.ts";
 import { ProjectManager } from "./project-manager.ts";
@@ -50,7 +50,7 @@ import {
 } from "./types.ts";
 
 // Re-export DaemonConfig so tests can import from runtime.ts
-export type { DaemonConfig } from "./daemon/context.ts";
+export type { DaemonConfig } from "./runtime/context.ts";
 
 // Read version from package.json at startup.
 const _pkg = JSON.parse(
@@ -140,7 +140,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const app = new Hono();
 
 	// Build the shared context object
-	const ctx: DaemonContext = {
+	const ctx: RuntimeContext = {
 		config,
 		pm: new ProjectManager(config.dataDir),
 		trackers: new Map(),
@@ -335,7 +335,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		tracker: import("./task-tracker.ts").TaskTracker,
 		eventStore: import("./event-store.ts").EventStore,
 		// biome-ignore lint/suspicious/noExplicitAny: erased generic
-		scopeOpts: import("./daemon/context.ts").ScopeOpts<any>,
+		scopeOpts: import("./runtime/context.ts").ScopeOpts<any>,
 	): Promise<void> {
 		const shouldResumeFn = scopeOpts.shouldResume ?? ((n: import("./types.ts").TaskNode) => n.status === "in_progress");
 

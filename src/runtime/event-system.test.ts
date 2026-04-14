@@ -11,15 +11,15 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { DaemonContext, SSEClient } from "./context.ts";
+import type { RuntimeContext, SSEClient } from "./context.ts";
 import { broadcast, subscribeToEvents } from "./event-system.ts";
 
-function makeCtx(): DaemonContext {
+function makeCtx(): RuntimeContext {
 	return {
 		sseClients: new Set<SSEClient>(),
 		eventSubscribers: new Map(),
 		// deliberately cast — tests only touch the two fields above
-	} as unknown as DaemonContext;
+	} as unknown as RuntimeContext;
 }
 
 describe("event-system: subscribeToEvents + broadcast", () => {

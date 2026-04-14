@@ -16,7 +16,7 @@ import { OpenAIResponsesCompatibleProvider } from "../openai-responses-compatibl
 import { TaskTracker } from "../task-tracker.ts";
 import type { TreeNode } from "../types.ts";
 import { buildMatrixScopeOpts } from "./agent-lifecycle.ts";
-import type { DaemonContext } from "./context.ts";
+import type { RuntimeContext } from "./context.ts";
 
 /** Create an AgentProvider from an AuthGroup, model, and optional thinking effort. */
 function createProviderFromAuth(
@@ -93,7 +93,7 @@ async function detectBranch(projectPath: string): Promise<string | undefined> {
 
 /** Get or create a TaskTracker for a project. */
 export async function getTracker(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 ): Promise<TaskTracker> {
 	let tracker = ctx.trackers.get(projectId);
@@ -150,7 +150,7 @@ export function projectDebugDir(dataDir: string, projectId: string): string {
 
 /** Get or create an EventStore for a project. */
 export function getEventStore(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 ): EventStore {
 	let store = ctx.eventStores.get(projectId);
@@ -163,7 +163,7 @@ export function getEventStore(
 
 /** Resolve the effective config for a project: global + repo + local. */
 export async function resolveProjectConfig(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectPath: string,
 	projectId: string,
 ): Promise<MatrixConfig> {
@@ -177,7 +177,7 @@ export async function resolveProjectConfig(
 
 /** Create a provider for a project using resolved config. */
 export function getProjectProvider(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	effectiveConfig: MatrixConfig,
 ): AgentProvider {
 	// If a provider was explicitly injected (e.g. tests), use it
@@ -203,7 +203,7 @@ export function readProjectMemory(projectPath: string): string {
  * Used by autoResumeProjects (startup) and POST /sessions/prune.
  */
 export async function pruneSessionFiles(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 	keepCount: number,
 ): Promise<{ pruned: number; remaining: number }> {
