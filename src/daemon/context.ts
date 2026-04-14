@@ -41,6 +41,30 @@ export interface ScopeOpts {
 		tracker: import("../task-tracker.ts").TaskTracker,
 		projectPath: string,
 	) => Promise<void>;
+	/**
+	 * Should this node be resumed on daemon restart?
+	 * Called for nodes that have JSONL but no running session.
+	 * Matrix: true if status === "in_progress".
+	 */
+	shouldResume?: (node: import("../types.ts").TaskNode) => boolean;
+	/**
+	 * Update node state when an agent is launched.
+	 * Matrix: sets status to "in_progress".
+	 */
+	onLaunch?: (
+		node: import("../types.ts").TaskNode,
+		tracker: import("../task-tracker.ts").TaskTracker,
+	) => void;
+	/**
+	 * Update node state when an agent calls done().
+	 * doneArgs is the opaque data from the done() tool call.
+	 * Matrix: sets status to "verify" or "failed" based on doneArgs.status.
+	 */
+	onDone?: (
+		node: import("../types.ts").TaskNode,
+		tracker: import("../task-tracker.ts").TaskTracker,
+		doneArgs: Record<string, unknown>,
+	) => void;
 }
 
 /** SSE client connection subscribed to a project's event stream. */

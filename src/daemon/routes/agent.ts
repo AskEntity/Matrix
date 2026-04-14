@@ -91,7 +91,10 @@ export function registerAgentRoutes(app: Hono, ctx: DaemonContext) {
 				// so the UI can reconcile its running state.
 				if (tracker?.rootNodeId) {
 					const rootNode = tracker.getTask(tracker.rootNodeId);
-					if (rootNode && rootNode.status === "in_progress") {
+					const agentScopeOpts = ctx.scopeOpts.get(project.id);
+					if (rootNode && agentScopeOpts?.shouldResume?.(rootNode)) {
+						// Node claims it should be active but no agent is running.
+						// Mark as failed so UI can reconcile.
 						tracker.updateStatus(tracker.rootNodeId, "failed");
 						await tracker.save();
 						broadcastTreeUpdate(ctx, project.id, tracker);
