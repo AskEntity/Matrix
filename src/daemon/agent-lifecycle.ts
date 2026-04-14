@@ -150,6 +150,8 @@ export function buildMatrixScopeOpts(
 			node.cwd = wt.path;
 			return { cwd: wt.path };
 		},
+		buildWorkContext: (node, projectPath) =>
+			buildWorkContextContent(node.cwd ?? node.worktreePath ?? projectPath),
 		shouldResume: (node) => node.status === "in_progress",
 		onLaunch: (node, tracker) => {
 			tracker.updateStatus(node.id, "in_progress");
@@ -820,18 +822,16 @@ export async function runAgentForNode(
 				"source" in e.body &&
 				(e.body as { source: string }).source === "work_context",
 		);
-		if (!hasWorkContext) {
-			// Fresh session or first run without work_context — inject it now
-			const content = buildWorkContextContent(agentCwd);
+		if (!hasWorkContext && opts.buildWorkContext) {
+			const content = opts.buildWorkContext(node, project.path);
 			if (content) {
-				const workCtxMsg = createWorkContext(content);
-				// Use regular enqueue (not replay) so it persists to JSONL
-				childQueue.enqueue(workCtxMsg);
+				childQueue.enqueue(createWorkContext(content));
 			}
 		}
 		// Set hook for future compact re-arm (resetBeforeFirstMessage in compact flow)
 		childQueue.setBeforeFirstMessage(() => {
-			const content = buildWorkContextContent(agentCwd);
+			if (!opts.buildWorkContext) return [];
+			const content = opts.buildWorkContext(node, project.path);
 			if (!content) return [];
 			return [createWorkContext(content)];
 		});
@@ -1082,11 +1082,11 @@ export async function runAgentForNode(
 					);
 				}
 
-				// Crash-safe marker: stores plugin's onDone return data
+				// Crash-safe marker: plugin fields spread directly onto event
 				emitEvent(ctx, project.id, {
 					type: "done_notified",
 					taskId: nodeId,
-					doneData,
+					...doneData,
 					traceId: loopTraceId,
 					ts: Date.now(),
 				});

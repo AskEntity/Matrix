@@ -383,7 +383,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				emitEvent(ctx, project.id, {
 					type: "done_notified",
 					taskId: node.id,
-					doneData: { status, summary },
+					status,
+					summary,
 					ts: Date.now(),
 				});
 				await eventStore.flushSession(node.id);
