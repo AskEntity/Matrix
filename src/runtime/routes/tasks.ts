@@ -24,7 +24,7 @@ import {
 	runAgentForNode,
 	stopTask,
 } from "../agent-lifecycle.ts";
-import type { DaemonContext } from "../context.ts";
+import type { RuntimeContext } from "../context.ts";
 import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
 import {
 	getEventStore,
@@ -35,7 +35,7 @@ import {
 
 /** Notify each ancestor in the parent chain that the user sent a message to a child task. */
 async function notifyParentChain(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	project: { id: string; path: string },
 	taskId: string,
 	taskTitle: string,
@@ -81,7 +81,7 @@ async function notifyParentChain(
 /** Notify agents in the parent chain that the task tree was modified by the user.
  * Walks from nodeId up through parentId, then to root. Quiet — doesn't auto-launch. */
 function notifyTreeChange(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	project: { id: string; path: string },
 	action: "created" | "updated" | "reordered" | "deleted",
 	nodeId: string,
@@ -112,7 +112,7 @@ function notifyTreeChange(
 	}
 }
 
-export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
+export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 	// Task tree
 	app.get("/projects/:id/tasks", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));

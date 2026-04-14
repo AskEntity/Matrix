@@ -7,8 +7,8 @@
  * contains each body.id exactly once, no byte-identical duplicates.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { deliverMessage } from "./daemon/agent-lifecycle.ts";
-import { createApp } from "./daemon.ts";
+import { deliverMessage } from "./runtime/agent-lifecycle.ts";
+import { createApp } from "./runtime.ts";
 import type { Event } from "./events.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import {

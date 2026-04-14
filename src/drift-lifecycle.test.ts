@@ -31,7 +31,7 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
-import { createApp } from "./daemon.ts";
+import { createApp } from "./runtime.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import {

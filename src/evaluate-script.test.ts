@@ -437,7 +437,7 @@ describe("evaluate_script tool", () => {
 
 	test("accesses ctx.daemonCtx when provided", async () => {
 		// The daemonCtx is the full context registered in the resource registry.
-		// initMockResourceRegistry sets up a DaemonContext with pm, eventStores, etc.
+		// initMockResourceRegistry sets up a RuntimeContext with pm, eventStores, etc.
 		// We use that same context, then extend it for the test assertion.
 		const tracker3 = new TaskTracker("root-node");
 		const { auth: auth3, ctx: testCtx } = initMockResourceRegistry({

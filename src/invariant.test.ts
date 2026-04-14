@@ -13,7 +13,7 @@ import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "./daemon.ts";
+import { createApp } from "./runtime.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import {
