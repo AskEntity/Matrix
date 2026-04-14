@@ -51,6 +51,7 @@ function makeNode(
 		children: [],
 		branch: null,
 		worktreePath: null,
+		cwd: null,
 		updatedAt: "2026-04-01T00:00:00Z",
 		createdAt: "2026-04-01T00:00:00Z",
 		costUsd: 0,
