@@ -21,6 +21,7 @@ import {
 	OpenAICompatibleProvider,
 } from "./openai-compatible-provider.ts";
 import { tool } from "./tool-definition.ts";
+import type { EventSpec } from "./events.ts";
 
 /** Create a MessageQueue pre-loaded with a user message (for tests). */
 function queueWithPrompt(content: string, cwd?: string): MessageQueue {
@@ -357,7 +358,6 @@ describe("runLoop integration", () => {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const testQueue = queueWithPrompt("Do something", tmpDir);
 			const session = provider.stream({
-				cwd: tmpDir,
 				systemPrompt: { stable: "You are a helpful agent.", variable: "" },
 				queue: testQueue,
 				mcpToolDefs: {
@@ -382,7 +382,7 @@ describe("runLoop integration", () => {
 				},
 			});
 
-			const events: Array<{ type: string }> = [];
+			const events: EventSpec[] = [];
 
 			// Consume events but stop the session when we see the idle status
 			// (after done() tool is called and model responds with end_turn,
@@ -480,7 +480,6 @@ describe("runLoop integration", () => {
 			// execute() doesn't pass a queue, so on end_turn the provider exits
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const result = await provider.execute({
-				cwd: tmpDir,
 				systemPrompt: { stable: "You are helpful.", variable: "" },
 				queue: queueWithPrompt("Say hello", tmpDir),
 			});
@@ -529,7 +528,6 @@ describe("runLoop integration", () => {
 		try {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			await provider.execute({
-				cwd: tmpDir,
 				systemPrompt: { stable: "You are helpful.", variable: "" },
 				queue: queueWithPrompt("Say hello", tmpDir),
 				mcpToolDefs: {
@@ -653,7 +651,6 @@ describe("runLoop integration", () => {
 				retryQueue.close();
 			};
 			const gen = provider.stream({
-				cwd: tmpDir,
 				systemPrompt: { stable: "Be helpful", variable: "" },
 				queue: retryQueue,
 			});
@@ -910,7 +907,6 @@ describe("Event recording via emit callback", () => {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const testQueue = queueWithPrompt("Do something", tmpDir);
 			const session = provider.stream({
-				cwd: tmpDir,
 				systemPrompt: { stable: "You are a helpful agent.", variable: "" },
 				emit,
 				queue: testQueue,
@@ -978,7 +974,7 @@ describe("Event recording via emit callback", () => {
 	});
 });
 
-import type { Event, EventSpec } from "./events.ts";
+import type { Event } from "./events.ts";
 import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
 // Import AgentResult for type assertion
 import type { AgentResult } from "./types.ts";
@@ -1111,7 +1107,6 @@ describe("Event deterministic verification (OpenAI)", () => {
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const result = await provider.execute({
-					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
 					queue: queueWithPrompt("Say hello", testDir),
@@ -1123,7 +1118,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				expect(events.length).toBeGreaterThanOrEqual(2);
 				// Filter to persistable events (skip ephemeral status/usage events)
 				const persistable = events.filter(
-					(e) => !["status", "usage", "text_delta"].includes(e.type),
+					(e) => !["status", "usage", "text_delta"].includes(e.type as string),
 				);
 				// First persistable should be messages_consumed (from queue drain), then assistant_text
 				expect(persistable).toEqual(
@@ -1200,7 +1195,6 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const testQueue = queueWithPrompt("Do the task", testDir);
 				const session = provider.stream({
-					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
 					queue: testQueue,
@@ -1305,7 +1299,6 @@ describe("Event deterministic verification (OpenAI)", () => {
 				queue = queueWithPrompt("Start working", testDir);
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				session = provider.stream({
-					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
 					queue,
@@ -1412,7 +1405,6 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const testQueue = queueWithPrompt("Try something", testDir);
 				const session = provider.stream({
-					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
 					queue: testQueue,
@@ -1512,7 +1504,6 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const testQueue = queueWithPrompt("Run three tools", testDir);
 				const session = provider.stream({
-					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
 					queue: testQueue,

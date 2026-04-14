@@ -1958,7 +1958,6 @@ describe("lifecycle: child completion notification paths", () => {
 			tracker,
 			taskId: childNode.id,
 			sessionRequest: {
-				cwd: projectDir,
 				queue: firstQueue,
 			},
 		});
@@ -2000,7 +1999,6 @@ describe("lifecycle: child completion notification paths", () => {
 			tracker,
 			taskId: childNode.id,
 			sessionRequest: {
-				cwd: projectDir,
 				queue: secondQueue,
 			},
 		});
@@ -2091,7 +2089,7 @@ describe("lifecycle: child completion notification paths", () => {
 
 		const eventLog: string[] = [];
 		const emit = (event: EventSpec) => {
-			eventLog.push(event.type);
+			eventLog.push(event.type as string);
 		};
 
 		const doneQueue = new MessageQueue();
@@ -2106,7 +2104,6 @@ describe("lifecycle: child completion notification paths", () => {
 			tracker,
 			taskId: childId,
 			sessionRequest: {
-				cwd: projectDir,
 				queue: doneQueue,
 				emit,
 			},
@@ -2187,7 +2184,6 @@ describe("lifecycle: child completion notification paths", () => {
 			tracker,
 			taskId: childId,
 			sessionRequest: {
-				cwd: projectDir,
 				queue: deadlockQueue,
 			},
 		});

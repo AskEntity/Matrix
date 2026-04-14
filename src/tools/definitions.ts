@@ -94,7 +94,7 @@ const bashTool: ToolDef = {
 		const cwd = getTaskCwd(projectId, taskId);
 		const tracker = R.getTracker(projectId);
 		const node = taskId ? tracker?.getTask(taskId) : undefined;
-		const fallbackCwd = node?.worktreePath;
+		const fallbackCwd = node?.worktreePath ?? undefined;
 		const queue = session?.queue;
 
 		try {
