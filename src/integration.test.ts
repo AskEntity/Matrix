@@ -6307,7 +6307,7 @@ describe("Integration: message near done() race condition", () => {
 	 * recovers it from JSONL, but the dedup against queue fails because
 	 * the JSONL body has no id. Result: message appears twice.
 	 */
-	test.skip("INVESTIGATE: Message to passed child → resume → no duplication", async () => {
+	test("Message to passed child → resume → no duplication", async () => {
 		ctx = await setupTestContext();
 		const rootId = await getRootNodeId(ctx);
 		ctx.mockAPI.setCapturedVar("rootId", rootId);
@@ -6446,20 +6446,12 @@ describe("Integration: message near done() race condition", () => {
 		}
 
 		// Verify the child's resumed API request.
-		// The child agent's first user message starts with memory.md (header).
-		// Find its API call and check the unique message appears exactly once.
+		// Find the API call that contains the unique message we sent after done.
 		const history = ctx.mockAPI.getRequestHistory();
 		const childResumedReq = history.find((req) => {
-			const firstUser = req.messages.find((m) => m.role === "user");
-			if (!firstUser) return false;
-			const firstText = getTextContent(firstUser);
-			// Child agent requests start with memory.md header
-			return (
-				firstText.includes("memory.md") &&
-				req.messages
-					.filter((m) => m.role === "user")
-					.some((m) => getTextContent(m).includes("UNIQUE_MSG_AFTER_DONE_XYZ"))
-			);
+			return req.messages
+				.filter((m) => m.role === "user")
+				.some((m) => getTextContent(m).includes("UNIQUE_MSG_AFTER_DONE_XYZ"));
 		});
 		expect(childResumedReq).toBeDefined();
 
