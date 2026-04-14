@@ -6,6 +6,7 @@ import type { SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type { Auth } from "../tool-auth.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
+import type { BaseTaskNode } from "../types.ts";
 
 /**
  * Plugin type surface — ONE generic defines the entire plugin's type world.
@@ -26,7 +27,7 @@ export type DefaultPluginTypes = PluginTypes;
  * T flows through all callbacks — plugin authors get type-safe access to their node data.
  * Runtime stores ScopeOpts (T=DefaultPluginTypes, erased).
  */
-export interface ScopeOpts<_T extends PluginTypes = DefaultPluginTypes> {
+export interface ScopeOpts<TNode extends BaseTaskNode = BaseTaskNode> {
 	// ── Agent behavior ──
 	buildTools: (
 		auth: Auth,
@@ -43,7 +44,7 @@ export interface ScopeOpts<_T extends PluginTypes = DefaultPluginTypes> {
 	// ── Infrastructure ──
 	connectMcp?: (projectPath: string) => Promise<import("../mcp-client.ts").McpClientManager>;
 	beforeChildLaunch?: (
-		node: import("../types.ts").TaskNode,
+		node: TNode,
 		tracker: import("../task-tracker.ts").TaskTracker,
 		projectPath: string,
 	) => Promise<{ cwd: string } | void>;
@@ -55,18 +56,18 @@ export interface ScopeOpts<_T extends PluginTypes = DefaultPluginTypes> {
 	 * Plugin: whatever context the agent needs.
 	 */
 	buildWorkContext?: (
-		node: import("../types.ts").TaskNode,
+		node: TNode,
 		projectPath: string,
 	) => string | null;
 
 	// ── Lifecycle (typed with T) ──
-	shouldResume?: (node: import("../types.ts").TaskNode) => boolean;
+	shouldResume?: (node: TNode) => boolean;
 	onLaunch?: (
-		node: import("../types.ts").TaskNode,
+		node: TNode,
 		tracker: import("../task-tracker.ts").TaskTracker,
 	) => void;
 	onDone?: (
-		node: import("../types.ts").TaskNode,
+		node: TNode,
 		tracker: import("../task-tracker.ts").TaskTracker,
 		doneArgs: Record<string, unknown>,
 	) => Record<string, unknown>;
@@ -153,7 +154,8 @@ export interface DaemonContext {
 	 * Per-project scope configuration. Determines tools + prompt for agents.
 	 * Set during autoResumeProjects or project registration.
 	 */
-	readonly scopeOpts: Map<string, ScopeOpts>;
+	// biome-ignore lint/suspicious/noExplicitAny: erased generic — runtime doesn't know the plugin's node type
+	readonly scopeOpts: Map<string, ScopeOpts<any>>;
 
 	/** Mutable counters/flags */
 	requestCount: number;

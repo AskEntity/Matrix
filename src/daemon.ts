@@ -334,7 +334,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		project: { id: string; name: string; path: string },
 		tracker: import("./task-tracker.ts").TaskTracker,
 		eventStore: import("./event-store.ts").EventStore,
-		scopeOpts: import("./daemon/context.ts").ScopeOpts,
+		// biome-ignore lint/suspicious/noExplicitAny: erased generic
+		scopeOpts: import("./daemon/context.ts").ScopeOpts<any>,
 	): Promise<void> {
 		const shouldResumeFn = scopeOpts.shouldResume ?? ((n: import("./types.ts").TaskNode) => n.status === "in_progress");
 
