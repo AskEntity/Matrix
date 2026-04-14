@@ -15,6 +15,7 @@ import { EventStore } from "../event-store.ts";
 import { OpenAIResponsesCompatibleProvider } from "../openai-responses-compatible-provider.ts";
 import { TaskTracker } from "../task-tracker.ts";
 import type { TreeNode } from "../types.ts";
+import { buildMatrixScopeOpts } from "./agent-lifecycle.ts";
 import type { DaemonContext } from "./context.ts";
 
 /** Create an AgentProvider from an AuthGroup, model, and optional thinking effort. */
@@ -110,6 +111,16 @@ export async function getTracker(
 			: undefined;
 		await tracker.load(defaultBranch);
 		ctx.trackers.set(projectId, tracker);
+	}
+
+	// Register default Matrix scope opts if not already set.
+	// autoResumeProjects sets these explicitly; this catches projects
+	// accessed for the first time via REST/MCP (not resumed at startup).
+	if (!ctx.scopeOpts.has(projectId)) {
+		ctx.scopeOpts.set(
+			projectId,
+			buildMatrixScopeOpts(projectId, ctx.globalConfig.selfBootstrap),
+		);
 	}
 	return tracker;
 }
