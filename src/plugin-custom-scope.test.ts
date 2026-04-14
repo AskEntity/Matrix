@@ -138,6 +138,8 @@ function buildStoryScopeOpts(_projectId: string): ScopeOpts<any> {
 		// No beforeChildLaunch — no worktrees
 		buildWorkContext: (_node, _projectPath) =>
 			"You are writing a story. Be creative.",
+		buildSummarizationPrompt: () =>
+			"Summarize the story so far. Preserve character names and plot points.",
 		shouldResume: (node: TaskNode) => node.status === "in_progress",
 		onLaunch: (node: TaskNode, tracker) => {
 			tracker.updateStatus(node.id, "in_progress");
