@@ -23,6 +23,24 @@ export interface ScopeOpts {
 		setAllTools?: (tools: unknown[]) => void;
 	};
 	buildPrompt: () => SystemPrompt;
+	/**
+	 * Connect external MCP servers for this scope.
+	 * Matrix reads mcpServers from resolved project config internally.
+	 * Plugins handle their own MCP config or connect nothing.
+	 */
+	connectMcp?: (projectPath: string) => Promise<import("../mcp-client.ts").McpClientManager>;
+	/**
+	 * Prepare a child node before launching its agent.
+	 * Matrix uses this to create git worktrees. Plugins may create
+	 * different workspace structures or do nothing.
+	 * Must set node.worktreePath if the agent needs a working directory
+	 * different from the project root.
+	 */
+	beforeChildLaunch?: (
+		node: import("../types.ts").TaskNode,
+		tracker: import("../task-tracker.ts").TaskTracker,
+		projectPath: string,
+	) => Promise<void>;
 }
 
 /** SSE client connection subscribed to a project's event stream. */

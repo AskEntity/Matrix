@@ -95,7 +95,8 @@ function findSessionConfig(events: Event[]): SessionConfigEvent | undefined {
 export function buildMatrixScopeOpts(
 	projectId: string,
 	selfBootstrap: boolean,
-): Pick<RunAgentOpts, "buildTools" | "buildPrompt"> {
+	ctx?: DaemonContext,
+): Pick<RunAgentOpts, "buildTools" | "buildPrompt" | "connectMcp" | "beforeChildLaunch"> {
 	return {
 		buildTools: (auth, taskId) => {
 			const { toolDefs, hasRunningChildren, setMessages, setAllTools } =
@@ -114,6 +115,29 @@ export function buildMatrixScopeOpts(
 			selfBootstrap
 				? buildSystemPrompt({ selfBootstrap: true })
 				: buildSystemPrompt(),
+		connectMcp: ctx
+			? async (projectPath) => {
+					const mgr = new McpClientManager();
+					const cfg = await resolveProjectConfig(ctx, projectPath, projectId);
+					if (cfg.mcpServers && Object.keys(cfg.mcpServers).length > 0) {
+						await mgr.connectAll(cfg.mcpServers, projectPath);
+					}
+					return mgr;
+				}
+			: undefined,
+		beforeChildLaunch: async (node, tracker, projectPath) => {
+			const parentNode = tracker.getTaskAbove(node.id);
+			const baseBranch = parentNode?.branch;
+			if (!baseBranch) {
+				throw new Error(
+					`Cannot create worktree — current task has no branch assigned.`,
+				);
+			}
+			const wtRoot = join(projectPath, ".worktrees");
+			const wm = new WorktreeManager(projectPath, wtRoot);
+			const wt = await wm.create(node.id, slugify(node.title), baseBranch);
+			tracker.assignWorktree(node.id, wt.branch, wt.path);
+		},
 	};
 }
 
@@ -145,6 +169,10 @@ async function createAgentContext(
 		depth: number;
 		mcpManager?: McpClientManager;
 		/**
+		 * Connect external MCP servers. If not provided, no MCP servers.
+		 */
+		connectMcp?: (projectPath: string) => Promise<McpClientManager>;
+		/**
 		 * Tool builder for this scope. Always provided by caller.
 		 * MCP external servers are still appended by createAgentContext.
 		 */
@@ -164,13 +192,11 @@ async function createAgentContext(
 	);
 	const provider = getProjectProvider(ctx, effectiveCfg);
 
-	const mcpManager = opts.mcpManager ?? new McpClientManager();
-	if (
-		effectiveCfg.mcpServers &&
-		Object.keys(effectiveCfg.mcpServers).length > 0
-	) {
-		await mcpManager.connectAll(effectiveCfg.mcpServers, opts.projectPath);
-	}
+	const mcpManager =
+		opts.mcpManager ??
+		(opts.connectMcp
+			? await opts.connectMcp(opts.projectPath)
+			: new McpClientManager());
 
 	// Initialize resource registry with daemon context (idempotent)
 	R.initResourceRegistry(ctx);
@@ -553,25 +579,18 @@ export async function ensureChildAgentRunning(
 		return;
 	}
 
-	// Create worktree if the task doesn't have one yet, or if the directory was deleted
+	// Prepare child workspace via scope hook (Matrix creates worktrees, plugins may differ)
 	if (!node.worktreePath || !existsSync(node.worktreePath)) {
 		if (node.worktreePath && !existsSync(node.worktreePath)) {
 			// Stale worktreePath — directory was deleted outside close_task
 			node.worktreePath = null;
 			node.branch = null;
 		}
-		// Use getTaskAbove to skip folders — a folder has no branch to branch from
-		const parentNode = tracker.getTaskAbove(nodeId);
-		const baseBranch = parentNode?.branch;
-		if (!baseBranch) {
-			throw new Error(
-				`Cannot create worktree for task ${nodeId} — parent has no branch assigned.`,
-			);
+		const scopeOpts = ctx.scopeOpts.get(project.id);
+		if (scopeOpts?.beforeChildLaunch) {
+			await scopeOpts.beforeChildLaunch(node, tracker, project.path);
 		}
-		const wtRoot = join(project.path, ".worktrees");
-		const wm = new WorktreeManager(project.path, wtRoot);
-		const wt = await wm.create(node.id, slugify(node.title), baseBranch);
-		tracker.assignWorktree(node.id, wt.branch, wt.path);
+		// If hook didn't set worktreePath, child runs in project root (no worktree needed)
 	}
 
 	tracker.updateStatus(nodeId, "in_progress");
@@ -631,6 +650,20 @@ export interface RunAgentOpts {
 	 * Matrix system prompt vs plugin prompt.
 	 */
 	buildPrompt: () => SystemPrompt;
+	/**
+	 * Connect external MCP servers for this scope.
+	 * If not provided, no MCP servers are connected.
+	 */
+	connectMcp?: (projectPath: string) => Promise<McpClientManager>;
+	/**
+	 * Prepare a child node before launching its agent.
+	 * Matrix creates git worktrees here. Plugins may do something else or nothing.
+	 */
+	beforeChildLaunch?: (
+		node: import("../types.ts").TaskNode,
+		tracker: TaskTracker,
+		projectPath: string,
+	) => Promise<void>;
 }
 
 /** Run an agent for any node (root or child). Shared launch path. */
@@ -729,6 +762,7 @@ export async function runAgentForNode(
 			depth,
 			mcpManager,
 			buildTools: opts.buildTools,
+			connectMcp: opts.connectMcp,
 		});
 
 		// Priority: API param > resolved config
