@@ -17,9 +17,14 @@ import type { BaseTaskNode } from "../types.ts";
  * Plugin type bundle — ties together all type extensions.
  * ONE generic parameter on ScopeOpts distributes types everywhere.
  */
+/** Base done data — runtime only knows the agent finished. Plugins extend with fields. */
+export interface BaseDoneData {
+	[key: string]: unknown;
+}
+
 export interface PluginTypes {
 	node: BaseTaskNode;
-	done: Record<string, unknown>;
+	done: BaseDoneData;
 }
 
 export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
