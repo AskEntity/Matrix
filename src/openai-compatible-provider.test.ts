@@ -359,6 +359,8 @@ describe("runLoop integration", () => {
 			const testQueue = queueWithPrompt("Do something", tmpDir);
 			const session = provider.stream({
 				buildSystemPrompt: () => ({ stable: "You are a helpful agent.", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize the conversation.",
 				queue: testQueue,
 				mcpToolDefs: {
 					mxd: [
@@ -481,6 +483,8 @@ describe("runLoop integration", () => {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const result = await provider.execute({
 				buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize the conversation.",
 				queue: queueWithPrompt("Say hello", tmpDir),
 			});
 			expect(result.exitReason).not.toBe("done_failed");
@@ -529,6 +533,8 @@ describe("runLoop integration", () => {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			await provider.execute({
 				buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize the conversation.",
 				queue: queueWithPrompt("Say hello", tmpDir),
 				mcpToolDefs: {
 					mxd: [
@@ -652,6 +658,8 @@ describe("runLoop integration", () => {
 			};
 			const gen = provider.stream({
 				buildSystemPrompt: () => ({ stable: "Be helpful", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize the conversation.",
 				queue: retryQueue,
 			});
 			let result = await gen.next();
@@ -908,6 +916,8 @@ describe("Event recording via emit callback", () => {
 			const testQueue = queueWithPrompt("Do something", tmpDir);
 			const session = provider.stream({
 				buildSystemPrompt: () => ({ stable: "You are a helpful agent.", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize the conversation.",
 				emit,
 				queue: testQueue,
 				mcpToolDefs: {
@@ -1108,6 +1118,8 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const result = await provider.execute({
 					buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize the conversation.",
 					emit,
 					queue: queueWithPrompt("Say hello", testDir),
 				});
@@ -1196,6 +1208,8 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const testQueue = queueWithPrompt("Do the task", testDir);
 				const session = provider.stream({
 					buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize the conversation.",
 					emit,
 					queue: testQueue,
 					mcpToolDefs: {
@@ -1300,6 +1314,8 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				session = provider.stream({
 					buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize the conversation.",
 					emit,
 					queue,
 				});
@@ -1406,6 +1422,8 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const testQueue = queueWithPrompt("Try something", testDir);
 				const session = provider.stream({
 					buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize the conversation.",
 					emit,
 					queue: testQueue,
 					mcpToolDefs: {
@@ -1505,6 +1523,8 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const testQueue = queueWithPrompt("Run three tools", testDir);
 				const session = provider.stream({
 					buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize the conversation.",
 					emit,
 					queue: testQueue,
 					mcpToolDefs: {

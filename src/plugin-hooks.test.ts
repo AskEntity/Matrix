@@ -18,7 +18,6 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
-import type { TaskNode } from "./types.ts";
 
 // ── Test infrastructure (same as integration.test.ts) ──
 
@@ -216,9 +215,9 @@ describe("Plugin hooks: cwd persistence", () => {
 		const rootInTree = treeData.nodes?.find?.(
 			(n: Record<string, unknown>) => n.id === rootNodeId,
 		) ?? Object.values(treeData.nodes ?? {}).find(
-			(n: unknown) => (n as Record<string, unknown>).id === rootNodeId,
+			(n: unknown) => (n as unknown as Record<string, unknown>).id === rootNodeId,
 		);
-		expect((rootInTree as Record<string, unknown>)?.cwd).toBe("/tmp");
+		expect((rootInTree as unknown as Record<string, unknown>)?.cwd).toBe("/tmp");
 	}, 15000);
 });
 
@@ -251,7 +250,7 @@ describe("Plugin hooks: done_notified spread", () => {
 		expect(doneNotified).toBeDefined();
 
 		// Fields should be directly on event (spread), not in a doneData bag
-		const dn = doneNotified as Record<string, unknown>;
+		const dn = doneNotified as unknown as Record<string, unknown>;
 		expect(dn.status).toBe("verify");
 		expect(dn.summary).toBe("spread test");
 		expect(dn.doneData).toBeUndefined(); // no bag
@@ -286,7 +285,7 @@ describe("Plugin hooks: buildSystemPrompt", () => {
 		const events = await readSessionEvents(ctx, rootNodeId);
 		const sessionConfig = events.find((e) => e.type === "session_config");
 		expect(sessionConfig).toBeDefined();
-		const sc = sessionConfig as Record<string, unknown>;
+		const sc = sessionConfig as unknown as Record<string, unknown>;
 		expect(sc.systemStable).toBeDefined();
 		expect(typeof sc.systemStable).toBe("string");
 		expect((sc.systemStable as string).length).toBeGreaterThan(0);
