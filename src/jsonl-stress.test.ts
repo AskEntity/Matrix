@@ -673,13 +673,13 @@ describe("runtime vs recovery: done state machine 4 combinations", () => {
 	//   (d) orphan=no,  notified=no  → null (clean)
 
 	test("case d: no done orphan, no notified → null (clean state)", async () => {
-		const { findInterruptedDonePhase2 } = await import("./daemon.ts");
+		const { findInterruptedDonePhase2 } = await import("./runtime.ts");
 		const events: Event[] = [userMsgEvent("u1", "start"), assistantText("ok")];
 		expect(findInterruptedDonePhase2(events)).toBeNull();
 	});
 
 	test("case b: done orphan, no notified → needs_phase2", async () => {
-		const { findInterruptedDonePhase2 } = await import("./daemon.ts");
+		const { findInterruptedDonePhase2 } = await import("./runtime.ts");
 		const events: Event[] = [
 			assistantText("finishing"),
 			toolCall("tc-done", TOOL_DONE, {
@@ -696,7 +696,7 @@ describe("runtime vs recovery: done state machine 4 combinations", () => {
 	});
 
 	test("case a: done orphan AND notified → status_stale", async () => {
-		const { findInterruptedDonePhase2 } = await import("./daemon.ts");
+		const { findInterruptedDonePhase2 } = await import("./runtime.ts");
 		const events: Event[] = [
 			assistantText("finishing"),
 			toolCall("tc-done", TOOL_DONE, { status: "passed", summary: "ok" }),
@@ -710,7 +710,7 @@ describe("runtime vs recovery: done state machine 4 combinations", () => {
 	});
 
 	test("case: done with tool_result (resumed done) → null (not an orphan)", async () => {
-		const { findInterruptedDonePhase2 } = await import("./daemon.ts");
+		const { findInterruptedDonePhase2 } = await import("./runtime.ts");
 		const events: Event[] = [
 			toolCall("tc-done", TOOL_DONE, { status: "passed" }),
 			toolResult("tc-done", TOOL_DONE, "resumed"),
@@ -720,7 +720,7 @@ describe("runtime vs recovery: done state machine 4 combinations", () => {
 
 	// Adversarial: failed status is propagated through findInterruptedDonePhase2
 	test("case b: done orphan with status=failed → needs_phase2 with failed", async () => {
-		const { findInterruptedDonePhase2 } = await import("./daemon.ts");
+		const { findInterruptedDonePhase2 } = await import("./runtime.ts");
 		const events: Event[] = [
 			toolCall("tc-done", TOOL_DONE, {
 				status: "failed",
@@ -736,7 +736,7 @@ describe("runtime vs recovery: done state machine 4 combinations", () => {
 
 	// Adversarial: done with missing input → still parseable
 	test("case b: done orphan with no input → needs_phase2 defaults to failed+empty", async () => {
-		const { findInterruptedDonePhase2 } = await import("./daemon.ts");
+		const { findInterruptedDonePhase2 } = await import("./runtime.ts");
 		const events: Event[] = [
 			{
 				type: "tool_call",

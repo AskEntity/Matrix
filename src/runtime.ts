@@ -49,7 +49,7 @@ import {
 	type VersionResponse,
 } from "./types.ts";
 
-// Re-export DaemonConfig so tests can import from daemon.ts
+// Re-export DaemonConfig so tests can import from runtime.ts
 export type { DaemonConfig } from "./daemon/context.ts";
 
 // Read version from package.json at startup.

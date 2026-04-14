@@ -14,7 +14,7 @@
 /// <reference lib="webworker" />
 declare const self: Worker;
 
-import { createApp } from "../daemon.ts";
+import { createApp } from "../runtime.ts";
 
 let appInstance: ReturnType<typeof createApp> | null = null;
 
