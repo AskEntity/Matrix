@@ -1157,7 +1157,7 @@ export async function* runProviderLoop(
 
 			const compactGen = processCompaction(
 				compactionText,
-				undefined,
+				request.projectPath,
 				preCompactTokenCount,
 				emit,
 				contextWindow,
@@ -1216,7 +1216,7 @@ export async function* runProviderLoop(
 					// Build the user message for messages[] from both contents
 					const workCtxContent = request.buildWorkContext
 						? request.buildWorkContext()
-						: buildWorkContextContent(undefined);
+						: buildWorkContextContent(request.projectPath);
 					messages.push({
 						role: "user" as const,
 						content: `${workCtxContent}\n\n## Checkpoint Summary\n\n${compactResult.checkpoint}`,
@@ -1303,7 +1303,7 @@ export async function* runProviderLoop(
 				// two consecutive user messages (tool_result + this one) → API 400.
 				const summarizationInstruction = request.buildSummarizationPrompt
 					? request.buildSummarizationPrompt()
-					: buildSummarizationInstruction(undefined);
+					: buildSummarizationInstruction(request.projectPath);
 				if (pendingCompactYieldToolCall) {
 					// Build a structured user message: [tool_result, text] via the
 					// walker-delegating buildUserTurn. Walker is the single source of
