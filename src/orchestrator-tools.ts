@@ -15,6 +15,7 @@
 import { join } from "node:path";
 import { z } from "zod";
 import { stripEventForUI } from "./daemon/helpers.ts";
+import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
 import type { EventSpec } from "./events.ts";
 import {
 	createCrossProjectMessage,
@@ -578,23 +579,8 @@ export function buildAllToolDefs(): ToolDef[] {
 			},
 		},
 
-		// ── yield ──
-		{
-			name: "yield",
-			availability: "internal",
-			description:
-				"Suspend execution and wait for messages (child completions, user messages, etc.). " +
-				"Call this when you have spawned tasks and are waiting for results. " +
-				"Returns all accumulated messages. Zero token burn while waiting.",
-			params: {},
-			handler: async () => {
-				return {
-					content: [{ type: "text", text: "" }],
-					isError: false,
-					_isYield: true,
-				};
-			},
-		},
+		// ── yield (prefab) ──
+		createYieldTool(),
 
 		// ── send_message ──
 		{
@@ -1688,23 +1674,13 @@ export function buildAllToolDefs(): ToolDef[] {
 			},
 		},
 
-		// ── done ──
-		{
-			name: "done",
-			availability: "internal",
+		// ── done (prefab with Matrix guards) ──
+		createDoneTool({
 			description:
 				"Signal that you have finished working on your task. " +
 				"Call this when you are done — either passed (task completed successfully) or failed (you cannot continue). " +
 				"This is the proper way to exit. Do NOT just stop responding — always call done().",
-			params: {
-				projectId: {
-					schema: z.string(),
-					decl: { kind: "bind", from: "projectId" },
-				},
-				taskId: {
-					schema: z.string(),
-					decl: { kind: "bind", from: "taskId" },
-				},
+			extraParams: {
 				status: {
 					schema: z
 						.enum(["passed", "failed"])
@@ -1720,67 +1696,23 @@ export function buildAllToolDefs(): ToolDef[] {
 					decl: { kind: "explicit" },
 				},
 			},
-			handler: async (args) => {
-				const projectId = args.projectId as string;
-				const taskId = args.taskId as string;
-				const tracker = R.getTracker(projectId);
-
-				// Guard: reject done() if any descendants have active sessions
-				if (taskId && tracker) {
-					const runningDescendants = getDescendantIds(tracker, taskId)
-						.filter((id) => tracker.getTask(id)?.session != null)
-						.map((id) => {
-							const n = tracker.get(id);
-							return `${n?.title ?? id} (${id})`;
-						});
-					if (runningDescendants.length > 0) {
-						return {
-							content: [
-								{
-									type: "text",
-									text: `Cannot call done() while child tasks are still running:\n${runningDescendants.map((r) => `  - ${r}`).join("\n")}\nWait for them to complete or stop them first.`,
-								},
-							],
-							isError: true,
-						};
-					}
-				}
-
-				// Guard: reject done() if worktree has uncommitted changes
-				const projPath = getProjectPath(projectId, taskId);
+			beforeDone: async (args) => {
+				// Matrix-specific: reject done() if worktree has uncommitted changes
+				const projPath = getProjectPath(
+					args.projectId as string,
+					args.taskId as string,
+				);
 				const gitCheck = await isGitClean(projPath);
 				if (!gitCheck.clean) {
-					return {
-						content: [
-							{
-								type: "text",
-								text:
-									`Cannot call done() — your worktree has uncommitted changes:\n${gitCheck.files}\n\n` +
-									`Resolve this yourself — protect your work, do the right thing. ` +
-									`If you're waiting for direction on what to do with these changes, call yield() instead of done().`,
-							},
-						],
-						isError: true,
-					};
+					return (
+						`Cannot call done() — your worktree has uncommitted changes:\n${gitCheck.files}\n\n` +
+						`Resolve this yourself — protect your work, do the right thing. ` +
+						`If you're waiting for direction on what to do with these changes, call yield() instead of done().`
+					);
 				}
-
-				// Phase 1 of two-phase done(): close queue and return.
-				const session = R.getSession(projectId, taskId);
-				const queue = session?.queue;
-				if (queue) {
-					queue.close();
-				}
-
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Done acknowledged (${args.status}).`,
-						},
-					],
-				};
+				return null;
 			},
-		},
+		}),
 	];
 }
 
