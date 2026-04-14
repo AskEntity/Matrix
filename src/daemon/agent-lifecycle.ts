@@ -126,6 +126,13 @@ export function buildMatrixScopeOpts(
 				}
 			: undefined,
 		beforeChildLaunch: async (node, tracker, projectPath) => {
+			// Already has a valid worktree — nothing to do
+			if (node.worktreePath && existsSync(node.worktreePath)) return;
+			// Stale worktreePath — directory was deleted outside close_task
+			if (node.worktreePath && !existsSync(node.worktreePath)) {
+				node.worktreePath = null;
+				node.branch = null;
+			}
 			const parentNode = tracker.getTaskAbove(node.id);
 			const baseBranch = parentNode?.branch;
 			if (!baseBranch) {
@@ -138,6 +145,8 @@ export function buildMatrixScopeOpts(
 			const wt = await wm.create(node.id, slugify(node.title), baseBranch);
 			tracker.assignWorktree(node.id, wt.branch, wt.path);
 		},
+		getAgentCwd: (node, projectPath) =>
+			node.worktreePath ?? projectPath,
 		shouldResume: (node) => node.status === "in_progress",
 		onLaunch: (node, tracker) => {
 			tracker.updateStatus(node.id, "in_progress");
@@ -596,14 +605,9 @@ export async function ensureChildAgentRunning(
 	}
 
 	// Prepare child workspace via scope hook (Matrix creates worktrees, plugins may differ)
-	if (!node.worktreePath || !existsSync(node.worktreePath)) {
-		if (node.worktreePath && !existsSync(node.worktreePath)) {
-			node.worktreePath = null;
-			node.branch = null;
-		}
-		if (scopeOpts.beforeChildLaunch) {
-			await scopeOpts.beforeChildLaunch(node, tracker, project.path);
-		}
+	// Hook decides if preparation is needed — runtime doesn't check workspace state.
+	if (scopeOpts.beforeChildLaunch) {
+		await scopeOpts.beforeChildLaunch(node, tracker, project.path);
 	}
 
 	if (scopeOpts.onLaunch) scopeOpts.onLaunch(node, tracker);
@@ -651,7 +655,9 @@ export async function runAgentForNode(
 	const node = tracker.getTask(nodeId);
 	if (!node) return;
 	const isRoot = !node.parentId;
-	const agentCwd = isRoot ? project.path : (node.worktreePath as string);
+	const agentCwd = opts.getAgentCwd
+		? opts.getAgentCwd(node, project.path)
+		: project.path;
 	if (!agentCwd) return;
 
 	// Launch lock: prevent duplicate launches when messages arrive before session is established.

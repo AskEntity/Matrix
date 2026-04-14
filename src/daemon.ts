@@ -414,8 +414,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			);
 
 		for (const node of resumableNodes) {
-			const isRoot = node.id === tracker.rootNodeId;
-			if (!isRoot && !node.worktreePath) continue;
 
 			console.log(`Auto-resuming ${project.name} node ${node.id}`);
 

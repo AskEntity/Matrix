@@ -48,6 +48,13 @@ export interface ScopeOpts<T extends PluginTypes = DefaultPluginTypes> {
 		projectPath: string,
 	) => Promise<void>;
 
+	// ── Workspace ──
+	/** Determine the working directory for an agent. Default: project root. */
+	getAgentCwd?: (
+		node: import("../types.ts").TaskNode,
+		projectPath: string,
+	) => string | null;
+
 	// ── Lifecycle (typed with T) ──
 	shouldResume?: (node: import("../types.ts").TaskNode) => boolean;
 	onLaunch?: (
