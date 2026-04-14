@@ -10,8 +10,8 @@ export interface AgentRequest {
 	projectPath?: string;
 	/** Build work context content. Plugin hook. */
 	buildWorkContext?: () => string | null;
-	/** Build summarization instruction for compaction. Plugin hook. */
-	buildSummarizationPrompt?: () => string;
+	/** Build summarization instruction for compaction. Required — runtime needs to compact. */
+	buildSummarizationPrompt: () => string;
 	/** Build done-resume context text. Plugin hook. */
 	buildDoneResumeContext?: () => string;
 	/** Build system prompt. Called for fresh sessions and compact refresh.
