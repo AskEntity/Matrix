@@ -595,7 +595,6 @@ export async function* runProviderLoop(
 	queue?: MessageQueue,
 ): AsyncGenerator<EventSpec, AgentResult> {
 	const model = request.model ?? "claude-sonnet-4-6"; // default overridden by provider
-	let systemPrompt = request.systemPrompt ?? { stable: "", variable: "" };
 
 	// ── Context window + compaction thresholds ──
 	const contextWindow = await adapter.getContextWindow(model);
@@ -625,6 +624,20 @@ export async function* runProviderLoop(
 	// Resume from pre-loaded active events (daemon layer reads these from EventStore)
 	const activeEvents = request.activeEvents ?? [];
 	const isResume = activeEvents.length > 0;
+
+	// System prompt: use frozen from session_config on resume, build fresh otherwise.
+	const storedPromptConfig = isResume
+		? (() => {
+				for (let i = activeEvents.length - 1; i >= 0; i--) {
+					if (activeEvents[i]?.type === "session_config") {
+						const sc = activeEvents[i] as import("./events.ts").SessionConfigEvent;
+						return { stable: sc.systemStable, variable: sc.systemVariable };
+					}
+				}
+				return undefined;
+			})()
+		: undefined;
+	let systemPrompt = storedPromptConfig ?? request.buildSystemPrompt?.() ?? { stable: "", variable: "" };
 
 	// Reconstruct messages from active events on resume, or start fresh.
 	// Filter oversized images from events before conversion — prevents poison
@@ -1165,8 +1178,8 @@ export async function* runProviderLoop(
 				// compact_marker was already emitted by processCompaction; session_config
 				// follows it so readActive() sees the fresh config for this segment.
 				if (emit) {
-					const freshPrompt = request.refreshSystemPrompt
-						? request.refreshSystemPrompt()
+					const freshPrompt = request.buildSystemPrompt
+						? request.buildSystemPrompt()
 						: systemPrompt;
 					// Rebuild tools from current code (not stored session_config).
 					jsonTools = buildJsonTools(request.mcpToolDefs);

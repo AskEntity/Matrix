@@ -23,7 +23,7 @@ import {
 	createWorkContext,
 } from "../queue-message-factory.ts";
 import * as R from "../resource-registry.ts";
-import { buildSystemPrompt, type SystemPrompt } from "../system-prompts.ts";
+import { buildSystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
 import { createAgentAuth } from "../tool-auth.ts";
@@ -912,22 +912,12 @@ export async function runAgentForNode(
 		const cacheTtl: "1h" | undefined =
 			configuredTtl === "1h" ? "1h" : undefined;
 
-		// Resolve system prompt: use stored session_config on resume, fresh on start.
+		// System prompt resolution moved to provider loop (reads stored session_config internally).
+		// Cache TTL: on resume, inherit from stored config (preserves fork inheritance).
 		const isResume = activeEvents.length > 0;
 		const storedConfig = isResume ? findSessionConfig(activeEvents) : undefined;
-		let systemPrompt: SystemPrompt;
-		// On resume, use cacheTtl from stored config (preserves fork inheritance).
-		// On fresh start, use computed cacheTtl.
 		const effectiveCacheTtl = storedConfig?.cacheTtl ?? cacheTtl;
-		if (storedConfig) {
-			// Resume: use frozen system prompt from JSONL for cache stability
-			systemPrompt = {
-				stable: storedConfig.systemStable,
-				variable: storedConfig.systemVariable,
-			};
-		} else {
-			// Fresh start: use scope's prompt builder
-			systemPrompt = opts.buildPrompt();
+		if (!storedConfig) {
 			// session_config is emitted by runProviderLoop after tools are built.
 			// Previously we emitted here with tools=[] — now tools are populated.
 		}
@@ -949,8 +939,7 @@ export async function runAgentForNode(
 			projectPath: isRoot ? project.path : undefined,
 			emit,
 			activeEvents,
-			systemPrompt,
-			refreshSystemPrompt: opts.buildPrompt,
+			buildSystemPrompt: opts.buildPrompt,
 			resumeSessionId: nodeId,
 			model: effectiveModel,
 			mcpToolDefs: agentCtx.mcpToolDefs,
