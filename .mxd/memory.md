@@ -1101,3 +1101,81 @@ After step 0 + step 1, `runAgentForNode` has zero Matrix imports. Runtime doesn'
 ### get_logs Availability
 
 Changed from `"both"` to `"external"` — agents don't need to read other tasks' JSONL. get_logs is for external MCP clients (send → yield → get_logs workflow).
+
+## Daemon / Runtime / Plugin Split
+
+### Architecture
+
+```
+daemon.ts (meta-daemon shell):
+  - HTTP server (:7433, port from config)
+  - Auth middleware (shell-level, before worker forwarding)
+  - Plugin discovery (scans projects for .mxd/plugin/index.ts)
+  - Worker management (start/stop scope workers)
+  - SSE relay (worker events → browser)
+  - Global config CRUD
+  - /plugins endpoint (registered plugins)
+
+runtime.ts (worker code, was daemon.ts):
+  - createApp() — full Hono app + RuntimeContext
+  - All agent lifecycle, tools, providers
+  - Routes run inside worker, HTTP forwarded from shell
+  - Production entry point (cli.ts points here until shell is ready)
+
+src/runtime/ (was src/daemon/):
+  - context.ts — RuntimeContext (was DaemonContext)
+  - agent-lifecycle.ts, event-system.ts, helpers.ts
+  - routes/ — Hono route handlers (run in worker)
+  - scope-worker.ts — Worker entry point
+```
+
+### Worker Communication
+
+- Shell → Worker: HTTP request serialized via postMessage → Worker's Hono app.fetch() → response back
+- Worker → Shell: `ctx.onBroadcast` hook → postMessage sse_event → shell relays to SSE clients
+- Shell handles: auth, global config, SSE connections, plugin discovery
+- Worker handles: everything else (routes, agent loop, tools, events, JSONL)
+
+### Plugin System
+
+`src/plugin.ts` defines `PluginManifest`:
+```ts
+interface PluginManifest {
+  name: string;
+  scope: "global" | "project";
+  web?: string;           // React component path
+  runtime?: string;       // ScopeOpts builder path
+  onProjectInit?: (path, { isNew }) => Promise<void>;
+}
+```
+
+Matrix plugin at `.mxd/plugin/index.ts`: `{ name: "matrix", scope: "global" }`. Not special-cased — discovered through same scanning mechanism as any plugin.
+
+### File Ownership
+
+```
+.mxd/
+  config.json        ← daemon (project config)
+  plugin/            ← daemon reads for discovery
+    index.ts         ← plugin manifest
+    runtime.ts       ← plugin ScopeOpts (worker)
+    web/             ← plugin React components (shell imports)
+  hooks/             ← matrix plugin runtime
+  memory.md          ← matrix plugin runtime
+  tree.json          ← matrix plugin runtime
+```
+
+### Addressing: `<scope>:<project>`
+
+- `matrix:story1001` = story1001 in dev mode (matrix worker handles it)
+- `story1001:story1001` = story1001 in product mode (story1001 worker)
+- Inside worker: scope is implicit (worker IS the scope), just `projectId`
+- Cross-scope: worker can't handle → escalates to shell → shell routes to correct worker
+
+### Shell Web UI
+
+`web/` = daemon shell React app (auth + project/scope selector). Plugin UI loaded as dynamic React component import (not iframe): `React.lazy(() => import(pluginWebPath))`.
+
+### Current State (half-state)
+
+Production still runs `runtime.ts` directly (cli.ts → runtime.ts). daemon.ts is WIP — has auth, config, SSE relay, HTTP proxy, plugin discovery, but not yet wired as production entry. Dual path: ProjectManager.init() still has old Matrix-specific code alongside new onProjectInit hook.
