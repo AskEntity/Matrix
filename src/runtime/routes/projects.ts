@@ -1,14 +1,82 @@
 import type { Hono } from "hono";
+import { stopAgent } from "../agent-lifecycle.ts";
 import type { RuntimeContext } from "../context.ts";
 import { getPendingClarifications } from "../event-system.ts";
 import { getEventStore, stripEventForUI } from "../helpers.ts";
 
-/**
- * Project data routes — event history, clarifications.
- * Project CRUD (list, create, delete, update) is handled by the daemon shell.
- * These routes provide data that lives in the worker (JSONL events, streaming text).
- */
 export function registerProjectRoutes(app: Hono, ctx: RuntimeContext) {
+	// Projects CRUD
+	app.post("/projects", async (c) => {
+		const body = await c.req.json<{ path: string }>();
+		if (!body.path) {
+			return c.json({ error: "path is required" }, 400);
+		}
+		try {
+			const project = await ctx.pm.init(body.path);
+			return c.json(project, 201);
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 409);
+		}
+	});
+
+	app.get("/projects", (c) => {
+		const projects = ctx.pm.list().map((p) => ({
+			...p,
+			pathExists: ctx.pm.checkPathExists(p.id),
+		}));
+		return c.json(projects);
+	});
+
+	app.get("/projects/:id", (c) => {
+		const project = ctx.pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		return c.json({
+			...project,
+			pathExists: ctx.pm.checkPathExists(project.id),
+		});
+	});
+
+	app.patch("/projects/:id", async (c) => {
+		const projectId = c.req.param("id");
+		const body = await c.req.json<{ path?: string; name?: string }>();
+
+		if (!body.path && !body.name) {
+			return c.json({ error: "At least one of path or name is required" }, 400);
+		}
+
+		try {
+			const updated = await ctx.pm.updateProject(projectId, body);
+			return c.json({
+				...updated,
+				pathExists: ctx.pm.checkPathExists(updated.id),
+			});
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			const status = message.includes("not found") ? 404 : 400;
+			return c.json({ error: message }, status);
+		}
+	});
+
+	app.delete("/projects/:id", async (c) => {
+		const projectId = c.req.param("id");
+		await stopAgent(ctx, projectId);
+		try {
+			await ctx.pm.delete(projectId);
+
+			// Clean up in-memory caches (disk data preserved for re-adding)
+			ctx.trackers.delete(projectId);
+			ctx.pendingClarifications.delete(projectId);
+			ctx.eventStores.delete(projectId);
+			return c.json({ ok: true });
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 404);
+		}
+	});
+
 	// Event history — merged from all tasks' JSONL EventStores, sorted by ts
 	app.get("/projects/:id/events", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));
@@ -18,6 +86,7 @@ export function registerProjectRoutes(app: Hono, ctx: RuntimeContext) {
 		const eventStore = getEventStore(ctx, project.id);
 		const afterCompact = c.req.query("after") === "compact";
 
+		// Read all sessions and normalize for UI consumption
 		const all: Record<string, unknown>[] = [];
 		let hasOlderEvents = false;
 
