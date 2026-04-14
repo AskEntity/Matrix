@@ -74,6 +74,7 @@ function mockTaskNode(
 		parentId,
 		children: [],
 		worktreePath: null,
+		cwd: null,
 		costUsd: opts?.costUsd ?? 0,
 		editedBy: "agent",
 		color: opts?.color,
