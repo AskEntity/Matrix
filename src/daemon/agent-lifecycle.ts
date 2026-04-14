@@ -96,7 +96,7 @@ export function buildMatrixScopeOpts(
 	projectId: string,
 	selfBootstrap: boolean,
 	ctx?: DaemonContext,
-): ScopeOpts<import("../types.ts").TaskNode> {
+): ScopeOpts<{ node: import("../types.ts").TaskNode }> {
 	return {
 		buildTools: (auth, taskId) => {
 			const { toolDefs, hasRunningChildren, setMessages, setAllTools } =
