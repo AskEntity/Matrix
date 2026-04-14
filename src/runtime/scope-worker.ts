@@ -29,6 +29,11 @@ self.onmessage = async (event: MessageEvent) => {
 			await appInstance.pm.load();
 			await appInstance.loadConfig();
 			await appInstance.autoResumeProjects();
+			// Wire broadcast events to parent thread for SSE relay
+			appInstance.ctx.onBroadcast = (projectId, event) => {
+				self.postMessage({ type: "sse_event", projectId, event });
+			};
+
 			appInstance.markReady();
 
 			self.postMessage({ type: "ready" });

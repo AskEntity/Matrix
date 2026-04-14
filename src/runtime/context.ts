@@ -154,6 +154,13 @@ export interface RuntimeContext {
 	// biome-ignore lint/suspicious/noExplicitAny: erased generic — runtime doesn't know the plugin's node type
 	readonly scopeOpts: Map<string, ScopeOpts<any>>;
 
+	/**
+	 * Hook for relaying broadcast events to the parent thread (shell).
+	 * When running in a Worker, set this to postMessage events to the shell
+	 * for SSE relay. When running in-process (tests, standalone), leave undefined.
+	 */
+	onBroadcast?: (projectId: string, event: Record<string, unknown>) => void;
+
 	/** Mutable counters/flags */
 	requestCount: number;
 	startupReady: boolean;
