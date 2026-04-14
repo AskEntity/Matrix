@@ -9683,8 +9683,8 @@ describe("Integration: Phase 2 done_notified", () => {
 		expect(doneNotified).toBeTruthy();
 
 		const dn = doneNotified as Event & { type: "done_notified" };
-		expect(dn.status).toBe("verify");
-		expect(dn.summary).toBe("everything works");
+		expect((dn as any).doneData?.status).toBe("verify");
+		expect((dn as any).doneData?.summary).toBe("everything works");
 		expect(dn.taskId).toBe(rootNodeId);
 	}, 30000);
 
@@ -9714,8 +9714,8 @@ describe("Integration: Phase 2 done_notified", () => {
 		expect(doneNotified).toBeTruthy();
 
 		const dn = doneNotified as Event & { type: "done_notified" };
-		expect(dn.status).toBe("failed");
-		expect(dn.summary).toBe("stuck on a problem");
+		expect((dn as any).doneData?.status).toBe("failed");
+		expect((dn as any).doneData?.summary).toBe("stuck on a problem");
 	}, 30000);
 });
 
@@ -9806,8 +9806,8 @@ describe("Integration: Phase 2 crash recovery", () => {
 		);
 		expect(recoveredDoneNotified).toHaveLength(1);
 		const dn = recoveredDoneNotified[0] as Event & { type: "done_notified" };
-		expect(dn.status).toBe("verify");
-		expect(dn.summary).toBe("task complete");
+		expect((dn as any).doneData?.status).toBe("verify");
+		expect((dn as any).doneData?.summary).toBe("task complete");
 	}, 30000);
 
 	test("crash after done_notified but before status save → autoResume fixes status", async () => {
