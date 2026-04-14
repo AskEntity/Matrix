@@ -141,4 +141,51 @@ describe("daemon-shell", () => {
 		expect(status).toBeGreaterThanOrEqual(400);
 		expect(status).toBeLessThan(600);
 	});
+
+	test("worker events relay to shell via onBroadcast", async () => {
+		const events: Array<{ type: string; projectId?: string; event?: unknown }> = [];
+
+		// Listen for sse_event messages alongside http_response
+		const origHandler = worker.onmessage;
+		worker.onmessage = (event: MessageEvent) => {
+			const msg = event.data;
+			if (msg.type === "sse_event") {
+				events.push(msg);
+			}
+			// Keep http_response handling for shellFetch
+			if (msg.type === "http_response") {
+				const p = pending.get(msg.id);
+				if (p) p.resolve({ status: msg.status, headers: msg.headers, body: msg.body });
+			}
+		};
+
+		// Create a project first
+		await shellFetch("/projects", {
+			method: "POST",
+			body: JSON.stringify({ path: tempDir }),
+		});
+
+		// Get projects to find the project ID
+		const { body: projects } = await shellFetch("/projects");
+		const project = (projects as Array<{ id: string }>)[0];
+		expect(project).toBeDefined();
+
+		// POST a message to root — this triggers agent start + events broadcast
+		await shellFetch(`/projects/${project!.id}/tasks/${project!.id}/message`, {
+			method: "POST",
+			body: JSON.stringify({ content: "hello" }),
+			headers: { "content-type": "application/json" },
+		});
+
+		// Wait briefly for events to relay
+		await new Promise((r) => setTimeout(r, 500));
+
+		// Restore handler
+		worker.onmessage = origHandler;
+
+		// Should have received sse_events from the worker
+		expect(events.length).toBeGreaterThan(0);
+		expect(events[0]!.type).toBe("sse_event");
+		expect(events[0]!.projectId).toBeDefined();
+	});
 });
