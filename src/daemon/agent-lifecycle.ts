@@ -1071,7 +1071,7 @@ export async function runAgentForNode(
 					status: agentResult.exitReason === "done_passed" ? "passed" : "failed",
 					summary: agentResult.doneSummary ?? "",
 				};
-				const doneData: Record<string, unknown> = opts.onDone
+				const doneData = opts.onDone
 					? (opts.onDone(currentNode, tracker, doneArgs) ?? doneArgs)
 					: doneArgs;
 				await tracker.save();
