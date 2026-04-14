@@ -223,10 +223,8 @@ export type Event = (
 	  }
 	| {
 			type: "done_notified";
-			/** The committed status after done() — "verify" for passed, "failed" for failed. */
-			status: "verify" | "failed";
-			/** The agent's summary text from done(). */
-			summary: string;
+			/** Opaque done data — plugin decides what to store. */
+			doneData: Record<string, unknown>;
 			taskId: string;
 			ts: number;
 	  }

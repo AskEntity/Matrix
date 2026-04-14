@@ -37,7 +37,7 @@ import { type AgentResult, isTask, type TaskSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
 import { buildWorkContextContent } from "../work-context.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
-import type { DaemonContext } from "./context.ts";
+import type { DaemonContext, ScopeOpts } from "./context.ts";
 import {
 	broadcast,
 	broadcastTreeUpdate,
@@ -96,7 +96,7 @@ export function buildMatrixScopeOpts(
 	projectId: string,
 	selfBootstrap: boolean,
 	ctx?: DaemonContext,
-): Pick<RunAgentOpts, "buildTools" | "buildPrompt" | "connectMcp" | "beforeChildLaunch" | "shouldResume" | "onLaunch" | "onDone"> {
+): ScopeOpts {
 	return {
 		buildTools: (auth, taskId) => {
 			const { toolDefs, hasRunningChildren, setMessages, setAllTools } =
@@ -145,7 +145,9 @@ export function buildMatrixScopeOpts(
 		onDone: (node, tracker, doneArgs) => {
 			const newStatus =
 				doneArgs.status === "passed" ? "verify" : "failed";
+			const summary = (doneArgs.summary as string) ?? "";
 			tracker.updateStatus(node.id, newStatus as import("../types.ts").TaskStatus);
+			return { status: newStatus, summary };
 		},
 	};
 }
@@ -630,57 +632,12 @@ function computeDepth(tracker: TaskTracker, nodeId: string): number {
 // (orchestrator-tools.ts needs it, and agent-lifecycle.ts imports from orchestrator-tools.ts)
 
 /** Run a child agent in the background for a specific task node. */
-/** Options for running an agent node. */
-export interface RunAgentOpts {
+/** Options for running an agent node. Extends ScopeOpts with per-launch overrides. */
+export interface RunAgentOpts extends ScopeOpts {
 	/** Model override (from API parameter). */
 	model?: string;
 	/** Whether this is a resume (pre-computed by caller). Used for agent_start event. */
 	resume?: boolean;
-	/**
-	 * Tool builder for this scope. Called with agent auth + taskId to produce the tool set.
-	 * The caller decides what tools are available — runtime doesn't know about
-	 * Matrix orchestrator tools vs plugin tools.
-	 */
-	buildTools: (auth: ReturnType<typeof createAgentAuth>, taskId: string) => {
-		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-		tools: ToolDefinition<any>[];
-		hasRunningChildren?: () => boolean;
-		setMessages?: (msgs: unknown[]) => void;
-		setAllTools?: (tools: unknown[]) => void;
-	};
-	/**
-	 * Prompt builder for this scope. Called for fresh sessions and compact refresh.
-	 * The caller decides the system prompt — runtime doesn't know about
-	 * Matrix system prompt vs plugin prompt.
-	 */
-	buildPrompt: () => SystemPrompt;
-	/**
-	 * Connect external MCP servers for this scope.
-	 * If not provided, no MCP servers are connected.
-	 */
-	connectMcp?: (projectPath: string) => Promise<McpClientManager>;
-	/**
-	 * Prepare a child node before launching its agent.
-	 * Matrix creates git worktrees here. Plugins may do something else or nothing.
-	 */
-	beforeChildLaunch?: (
-		node: import("../types.ts").TaskNode,
-		tracker: TaskTracker,
-		projectPath: string,
-	) => Promise<void>;
-	/** Should this node be resumed on daemon restart? */
-	shouldResume?: (node: import("../types.ts").TaskNode) => boolean;
-	/** Update node state when agent launches. */
-	onLaunch?: (
-		node: import("../types.ts").TaskNode,
-		tracker: TaskTracker,
-	) => void;
-	/** Update node state when agent calls done(). doneArgs = opaque data from done() tool. */
-	onDone?: (
-		node: import("../types.ts").TaskNode,
-		tracker: TaskTracker,
-		doneArgs: Record<string, unknown>,
-	) => void;
 }
 
 /** Run an agent for any node (root or child). Shared launch path. */
@@ -1091,13 +1048,14 @@ export async function runAgentForNode(
 					);
 				});
 			} else {
-				// Let plugin update node state on done
-				if (opts.onDone) {
-					opts.onDone(currentNode, tracker, {
-						status: agentResult.exitReason === "done_passed" ? "passed" : "failed",
-						summary: agentResult.doneSummary ?? "",
-					});
-				}
+				// Let plugin update node state on done — returns data for crash-safe marker
+				const doneArgs = {
+					status: agentResult.exitReason === "done_passed" ? "passed" : "failed",
+					summary: agentResult.doneSummary ?? "",
+				};
+				const doneData: Record<string, unknown> = opts.onDone
+					? (opts.onDone(currentNode, tracker, doneArgs) ?? doneArgs)
+					: doneArgs;
 				await tracker.save();
 				broadcastTreeUpdate(ctx, project.id, tracker);
 
@@ -1119,11 +1077,11 @@ export async function runAgentForNode(
 					);
 				}
 
+				// Crash-safe marker: stores plugin's onDone return data
 				emitEvent(ctx, project.id, {
 					type: "done_notified",
 					taskId: nodeId,
-					status: currentNode.status as "verify" | "failed",
-					summary: agentResult.doneSummary ?? "",
+					doneData,
 					traceId: loopTraceId,
 					ts: Date.now(),
 				});

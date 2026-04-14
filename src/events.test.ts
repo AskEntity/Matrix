@@ -3498,8 +3498,7 @@ describe("isPersistedByEmitEvent", () => {
 	test("done_notified event is persisted", () => {
 		const event: Event = {
 			type: "done_notified",
-			status: "verify",
-			summary: "Task completed successfully",
+			doneData: { status: "verify", summary: "Task completed successfully" },
 			taskId: "test",
 			ts: 1000,
 		};
@@ -4530,8 +4529,7 @@ describe("findInterruptedDonePhase2", () => {
 			},
 			{
 				type: "done_notified",
-				status: "verify",
-				summary: "done",
+				doneData: { status: "verify", summary: "done" },
 				taskId: "t1",
 				ts: 200,
 			},
@@ -4556,8 +4554,7 @@ describe("findInterruptedDonePhase2", () => {
 			},
 			{
 				type: "done_notified",
-				status: "verify",
-				summary: "first attempt",
+				doneData: { status: "verify", summary: "first attempt" },
 				taskId: "t1",
 				ts: 150,
 			},

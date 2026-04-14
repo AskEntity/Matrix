@@ -147,7 +147,7 @@ function doneNotifiedEvent(
 	ts = 0,
 	taskId = "t1",
 ): Event {
-	return { type: "done_notified", status, summary, taskId, ts };
+	return { type: "done_notified", doneData: { status, summary }, taskId, ts };
 }
 
 function forkMarkerEvent(

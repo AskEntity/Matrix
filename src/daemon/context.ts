@@ -58,13 +58,14 @@ export interface ScopeOpts {
 	/**
 	 * Update node state when an agent calls done().
 	 * doneArgs is the opaque data from the done() tool call.
-	 * Matrix: sets status to "verify" or "failed" based on doneArgs.status.
+	 * Returns data to persist in done_notified event (for crash recovery).
+	 * Matrix: sets status to "verify" or "failed", returns { status, summary }.
 	 */
 	onDone?: (
 		node: import("../types.ts").TaskNode,
 		tracker: import("../task-tracker.ts").TaskTracker,
 		doneArgs: Record<string, unknown>,
-	) => void;
+	) => Record<string, unknown>;
 }
 
 /** SSE client connection subscribed to a project's event stream. */

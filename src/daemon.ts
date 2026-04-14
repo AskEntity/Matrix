@@ -334,10 +334,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		project: { id: string; name: string; path: string },
 		tracker: import("./task-tracker.ts").TaskTracker,
 		eventStore: import("./event-store.ts").EventStore,
-		scopeOpts: Pick<
-			import("./daemon/agent-lifecycle.ts").RunAgentOpts,
-			"buildTools" | "buildPrompt" | "shouldResume" | "onLaunch" | "onDone"
-		>,
+		scopeOpts: import("./daemon/context.ts").ScopeOpts,
 	): Promise<void> {
 		const shouldResumeFn = scopeOpts.shouldResume ?? ((n: import("./types.ts").TaskNode) => n.status === "in_progress");
 
@@ -386,8 +383,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				emitEvent(ctx, project.id, {
 					type: "done_notified",
 					taskId: node.id,
-					status,
-					summary,
+					doneData: { status, summary },
 					ts: Date.now(),
 				});
 				await eventStore.flushSession(node.id);
