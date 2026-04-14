@@ -13,7 +13,15 @@ import type { BaseTaskNode } from "../types.ts";
  * T flows through all callbacks — plugin authors get type-safe access to their node data.
  * Runtime stores ScopeOpts (T=DefaultPluginTypes, erased).
  */
-export interface ScopeOpts<TNode extends BaseTaskNode = BaseTaskNode> {
+/**
+ * Plugin type bundle — ties together all type extensions.
+ * ONE generic parameter on ScopeOpts distributes types everywhere.
+ */
+export interface PluginTypes {
+	node: BaseTaskNode;
+}
+
+export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 	// ── Agent behavior ──
 	buildTools: (
 		auth: Auth,
@@ -30,7 +38,7 @@ export interface ScopeOpts<TNode extends BaseTaskNode = BaseTaskNode> {
 	// ── Infrastructure ──
 	connectMcp?: (projectPath: string) => Promise<import("../mcp-client.ts").McpClientManager>;
 	beforeChildLaunch?: (
-		node: TNode,
+		node: T["node"],
 		tracker: import("../task-tracker.ts").TaskTracker,
 		projectPath: string,
 	) => Promise<{ cwd: string } | void>;
@@ -42,18 +50,18 @@ export interface ScopeOpts<TNode extends BaseTaskNode = BaseTaskNode> {
 	 * Plugin: whatever context the agent needs.
 	 */
 	buildWorkContext?: (
-		node: TNode,
+		node: T["node"],
 		projectPath: string,
 	) => string | null;
 
 	// ── Lifecycle (typed with T) ──
-	shouldResume?: (node: TNode) => boolean;
+	shouldResume?: (node: T["node"]) => boolean;
 	onLaunch?: (
-		node: TNode,
+		node: T["node"],
 		tracker: import("../task-tracker.ts").TaskTracker,
 	) => void;
 	onDone?: (
-		node: TNode,
+		node: T["node"],
 		tracker: import("../task-tracker.ts").TaskTracker,
 		doneArgs: Record<string, unknown>,
 	) => Record<string, unknown>;
