@@ -377,10 +377,7 @@ export async function stopTask(
 	// (e.g., resetTask) that clear JSONL after stopTask would race with the
 	// loop's async cleanup writing events to the deleted JSONL.
 	if (loopPromise) {
-		const t0 = Date.now();
 		await loopPromise;
-		const dt = Date.now() - t0;
-		if (dt > 1000) console.warn(`[stopTask] await loopPromise took ${dt}ms for ${nodeId}`);
 	}
 
 	await tracker.save();
@@ -630,7 +627,6 @@ export async function runAgentForNode(
 	// emitWithTask also reads this to tag every event with the run's trace.
 	// Enables detection of interleaved events from duplicate launches.
 	const loopTraceId = ulid();
-	const _loopStartMs = Date.now();
 	try {
 		// Compute depth from the tree
 		const depth = computeDepth(tracker, nodeId);
@@ -681,7 +677,6 @@ export async function runAgentForNode(
 		// getSession lookup: find session from tracker by sessionId
 		const getSession = (sid: string) => tracker.getTask(sid)?.session;
 
-		console.warn(`[runAgentForNode:timing] ${nodeId} session created +${Date.now() - _loopStartMs}ms`);
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
 			projectPath: agentCwd,
@@ -693,7 +688,6 @@ export async function runAgentForNode(
 				: undefined,
 		});
 
-		console.warn(`[runAgentForNode:timing] ${nodeId} createAgentContext done +${Date.now() - _loopStartMs}ms`);
 		// Priority: API param > resolved config
 		const effectiveModel = opts?.model ?? agentCtx.effectiveCfg.model;
 
@@ -818,7 +812,6 @@ export async function runAgentForNode(
 			});
 		}
 
-		console.warn(`[runAgentForNode:timing] ${nodeId} JSONL+hooks ready +${Date.now() - _loopStartMs}ms`);
 		// Release launch lock. deliverMessage skips direct queue delivery while
 		// lock is held, so messages written during the lock window are in JSONL
 		// and were recovered above by findUnconsumedMessages.
@@ -914,7 +907,6 @@ export async function runAgentForNode(
 			queue: childQueue,
 		};
 
-		console.warn(`[runAgentForNode:timing] ${nodeId} entering provider loop +${Date.now() - _loopStartMs}ms`);
 		// Root agents: stream directly — done() enters idle-yield, session stays alive.
 		// Child agents: runChildCore adds done() detection — queue close on done.
 		if (isRoot) {
@@ -934,7 +926,6 @@ export async function runAgentForNode(
 			});
 		}
 
-		console.warn(`[runAgentForNode:timing] ${nodeId} provider loop exited +${Date.now() - _loopStartMs}ms`);
 		// --- Post-completion logic (unified for both MCP and daemon paths) ---
 
 		// Cost reporting
@@ -948,7 +939,6 @@ export async function runAgentForNode(
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} catch (e) {
-		console.warn(`[runAgentForNode:timing] ${nodeId} catch block entered +${Date.now() - _loopStartMs}ms`);
 		// Check if our session was replaced (stopTask/stopAgent already cleaned up).
 		// If so, suppress error events — they'd be stale leaks from an old session.
 		const catchNode = tracker.getTask(nodeId);
@@ -970,8 +960,6 @@ export async function runAgentForNode(
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} finally {
-		const _finallyStart = Date.now();
-		console.warn(`[runAgentForNode:timing] ${nodeId} finally block entered +${Date.now() - _loopStartMs}ms`);
 		// Ensure launch lock is released (covers error path before session established)
 		ctx.launchingNodes.delete(nodeId);
 		// Clean up streaming text accumulator
@@ -986,10 +974,7 @@ export async function runAgentForNode(
 			cleanupSessionBackgroundProcesses(finalNode.session.backgroundProcesses);
 			finalNode.session = undefined;
 		}
-		const _mcpStart = Date.now();
 		await mcpManager.disconnectAll();
-		const _mcpDt = Date.now() - _mcpStart;
-		if (_mcpDt > 500) console.warn(`[runAgentForNode] mcpManager.disconnectAll() took ${_mcpDt}ms for ${nodeId}`);
 
 		if (notReplaced) {
 			emitEvent(ctx, project.id, {
@@ -1000,8 +985,6 @@ export async function runAgentForNode(
 				ts: Date.now(),
 			});
 		}
-		const _finallyDt = Date.now() - _finallyStart;
-		if (_finallyDt > 1000) console.warn(`[runAgentForNode] finally block took ${_finallyDt}ms for ${nodeId}`);
 	}
 
 	// ── Phase 2 of two-phase done() ──
