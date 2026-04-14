@@ -15,11 +15,13 @@
  * Those live in the worker (PluginContext).
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { hasJwtSecret, verifyJWT } from "./auth.ts";
 import { loadGlobalConfig, type MatrixConfig, saveGlobalConfig } from "./config.ts";
+import type { PluginManifest } from "./plugin.ts";
+import { ProjectManager } from "./project-manager.ts";
 import { ulid } from "./ulid.ts";
 
 // Read version
@@ -198,10 +200,49 @@ if (import.meta.main) {
 	}
 	const port = globalConfig.port ?? 7433;
 
-	// Start the matrix scope worker
+	// ── Discover plugins from registered projects ──
+	const pm = new ProjectManager(dataDir);
+	await pm.load();
+
+	interface RegisteredPlugin extends PluginManifest {
+		/** Absolute path to plugin root (.mxd/plugin/) */
+		pluginRoot: string;
+		/** Project that registered this plugin */
+		projectId: string;
+		/** Resolved web component path (absolute) */
+		resolvedWebPath?: string;
+	}
+	const registeredPlugins: RegisteredPlugin[] = [];
+
+	for (const project of pm.list()) {
+		const pluginDir = join(project.path, ".mxd", "plugin");
+		const pluginIndex = join(pluginDir, "index.ts");
+		if (existsSync(pluginIndex)) {
+			try {
+				const mod = await import(pluginIndex);
+				const manifest = (mod.default ?? mod) as PluginManifest;
+				registeredPlugins.push({
+					...manifest,
+					pluginRoot: pluginDir,
+					projectId: project.id,
+					resolvedWebPath: manifest.web
+						? resolve(pluginDir, manifest.web)
+						: undefined,
+				});
+				console.log(`[daemon] Discovered plugin: ${manifest.name} (${manifest.scope}) from ${project.name}`);
+			} catch (e) {
+				console.warn(`[daemon] Failed to load plugin from ${project.name}:`, e);
+			}
+		}
+	}
+
+	// Start workers for discovered plugins
 	console.log(`Matrix daemon v${VERSION} (${GIT_HASH}) starting...`);
 
-	await startWorker("matrix", dataDir, globalConfigPath);
+	// For now: start a worker per global plugin
+	for (const plugin of registeredPlugins.filter((p) => p.scope === "global")) {
+		await startWorker(plugin.name, dataDir, globalConfigPath);
+	}
 
 	// Check if port is in use
 	try {
@@ -267,15 +308,12 @@ if (import.meta.main) {
 
 			// ── Plugins (daemon-owned: discovered from project scanning) ──
 			if (url.pathname === "/plugins" && request.method === "GET") {
-				// For now: Matrix is the only registered plugin (global, discovered at startup)
-				// TODO: scan projects for .mxd/plugin/ directories, register dynamically
-				const plugins = [
-					{
-						name: "matrix",
-						scope: "global",
-						webComponentPath: "../.mxd/plugin/web/App.tsx",
-					},
-				];
+				const plugins = registeredPlugins.map((p) => ({
+					name: p.name,
+					scope: p.scope,
+					webComponentPath: p.resolvedWebPath,
+					projectId: p.projectId,
+				}));
 				return new Response(JSON.stringify(plugins), {
 					headers: { "content-type": "application/json" },
 				});
