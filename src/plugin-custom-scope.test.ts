@@ -20,6 +20,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import * as R from "./resource-registry.ts";
 import type { TaskNode } from "./types.ts";
 
 // ── Test infrastructure ──
@@ -89,7 +90,7 @@ async function readSessionEvents(
 function buildStoryScopeOpts(projectId: string): ScopeOpts<any> {
 	return {
 		buildTools: (auth, _taskId) => {
-			// ONE custom tool — "write_paragraph"
+			// Custom tool + runtime primitives (done/yield)
 			const storyTool: ToolDef = {
 				name: "write_paragraph",
 				description: "Write a paragraph of the story",
@@ -117,8 +118,31 @@ function buildStoryScopeOpts(projectId: string): ScopeOpts<any> {
 					};
 				},
 			};
+			const yieldTool: ToolDef = {
+				name: "yield",
+				description: "Wait for messages.",
+				availability: "internal",
+				params: {},
+				handler: async () => ({ content: [{ type: "text" as const, text: "" }], isError: false, _isYield: true }),
+			};
+			const doneTool: ToolDef = {
+				name: "done",
+				description: "Signal completion.",
+				availability: "internal",
+				params: {
+					projectId: { schema: z.string(), decl: { kind: "bind", from: "projectId" } },
+					taskId: { schema: z.string(), decl: { kind: "bind", from: "taskId" } },
+					status: { schema: z.enum(["passed", "failed"]), decl: { kind: "explicit" } },
+					summary: { schema: z.string(), decl: { kind: "explicit" } },
+				},
+				handler: async (args) => {
+					const session = R.getSession(args.projectId as string, args.taskId as string);
+					if (session?.queue) session.queue.close();
+					return { content: [{ type: "text" as const, text: "Done." }], isError: false };
+				},
+			};
 			return {
-				tools: [toToolDefinition(storyTool, auth)],
+				tools: [storyTool, yieldTool, doneTool].map((def) => toToolDefinition(def, auth)),
 			};
 		},
 		buildPrompt: () => ({
@@ -251,9 +275,11 @@ describe("Custom scope: non-Matrix agent on Matrix runtime", () => {
 		expect(sessionConfig).toBeDefined();
 
 		const toolNames = sessionConfig?.tools?.map((t) => t.name) ?? [];
-		// Should have only the custom tool (done/yield are runtime primitives, not in tool list)
+		// Should have custom tool + runtime primitives
 		expect(toolNames).toContain("mcp__mxd__write_paragraph");
-		expect(toolNames.length).toBe(1); // ONLY write_paragraph
+		expect(toolNames).toContain("mcp__mxd__done");
+		expect(toolNames).toContain("mcp__mxd__yield");
+		expect(toolNames.length).toBe(3);
 
 		// Should NOT have Matrix tools
 		expect(toolNames).not.toContain("mcp__mxd__bash");
@@ -313,50 +339,58 @@ describe("Custom scope: non-Matrix agent on Matrix runtime", () => {
 		);
 	}, 20000);
 
-	test.todo("custom onDone: done_notified has plugin fields — needs child agent (root doesn't produce done_notified)");
-	test.skip("custom onDone: done_notified has plugin fields (status=published, wordCount)", async () => {
+	test("custom onDone: child done_notified has plugin fields (no worktree, runs in project root)", async () => {
 		ctx = await setupTestContext();
 
 		const storyOpts = buildStoryScopeOpts(ctx.projectId);
 		ctx.app.ctx.scopeOpts.set(ctx.projectId, storyOpts);
 
-		const instruction = JSON.stringify({
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Create child directly (story scope has no create_task tool)
+		const child = tracker.addChild(rootNodeId, "Chapter 1", "First chapter");
+		// No cwd, no worktreePath — story agents don't need filesystem
+		await tracker.save();
+
+		// Child instruction: done immediately
+		const childInstruction = JSON.stringify({
 			blocks: [
-				{ type: "text", text: "Story complete." },
+				{ type: "text", text: "Chapter done." },
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "done test" },
+					input: { status: "passed", summary: "chapter complete" },
 				},
 			],
 		});
 
-		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNodeId = tracker.rootNodeId;
-
-		await ctx.app.app.request(
-			`/projects/${ctx.projectId}/tasks/${rootNodeId}/message`,
+		// Send message to child via REST
+		const resp = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${child.id}/message`,
 			{
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ content: instruction }),
+				body: JSON.stringify({ content: childInstruction }),
 			},
 		);
+		expect(resp.status).toBe(200);
 
-		// Wait for done_notified event (Phase 2 is async)
+		// Wait for done_notified on child
 		let events: Event[] = [];
 		const start = Date.now();
 		while (Date.now() - start < 15000) {
-			events = await readSessionEvents(ctx, rootNodeId);
+			events = await readSessionEvents(ctx, child.id);
 			if (events.some((e) => e.type === "done_notified")) break;
 			await new Promise((r) => setTimeout(r, 100));
 		}
 		const doneNotified = events.find((e) => e.type === "done_notified") as
 			| (Event & { status?: string; wordCount?: number })
 			| undefined;
+
 		expect(doneNotified).toBeDefined();
-		// Story plugin returns { status: "published", wordCount: 42 }
+		// Story plugin onDone returns { status: "published", wordCount: 42 }
 		expect(doneNotified?.status).toBe("published");
 		expect(doneNotified?.wordCount).toBe(42);
-	}, 20000);
+	}, 30000);
 });
