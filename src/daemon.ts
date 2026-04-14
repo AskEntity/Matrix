@@ -18,6 +18,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { hasJwtSecret, verifyJWT } from "./auth.ts";
 import { ulid } from "./ulid.ts";
 
 // Read version
@@ -212,7 +213,50 @@ if (import.meta.main) {
 		fetch: async (request) => {
 			const url = new URL(request.url);
 
-			// SSE endpoint — handled by shell, not forwarded to worker
+			// ── Auth (shell-level, before any forwarding) ──
+
+			// Skip auth for: SPA root, static assets, auth endpoints
+			const skipAuth = url.pathname === "/" 
+				|| url.pathname.startsWith("/web/")
+				|| url.pathname.startsWith("/auth/");
+
+			if (!skipAuth) {
+				const authPath = join(dataDir, "auth.json");
+				if (await hasJwtSecret(authPath)) {
+					const authHeader = request.headers.get("authorization");
+					const token = authHeader?.startsWith("Bearer ") 
+						? authHeader.slice(7) 
+						: url.searchParams.get("token");
+					if (!token || !(await verifyJWT(authPath, token))) {
+						return new Response(JSON.stringify({ error: "Unauthorized" }), {
+							status: 401,
+							headers: { "content-type": "application/json" },
+						});
+					}
+				}
+			}
+
+			// ── Auth routes (handled by shell directly) ──
+			if (url.pathname === "/auth/status") {
+				const authPath = join(dataDir, "auth.json");
+				const hasSecret = await hasJwtSecret(authPath);
+				const authHeader = request.headers.get("authorization");
+				const token = authHeader?.startsWith("Bearer ")
+					? authHeader.slice(7)
+					: url.searchParams.get("token");
+				const hasValidToken = token ? (await verifyJWT(authPath, token)) !== null : false;
+				const authenticated = hasValidToken || !hasSecret;
+				return new Response(JSON.stringify({ enabled: hasSecret, authenticated }), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+			if (url.pathname === "/auth/logout") {
+				return new Response(JSON.stringify({ ok: true }), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+
+			// ── SSE endpoint — handled by shell, not forwarded to worker ──
 			if (url.pathname.startsWith("/projects/") && url.pathname.endsWith("/events/stream")) {
 				const projectId = url.pathname.split("/")[2];
 				if (!projectId) {
