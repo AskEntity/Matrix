@@ -17,7 +17,7 @@
 import type { AgentRequest } from "./agent-provider.ts";
 import { checkBudget, recordBudgetWarning } from "./budget.ts";
 import {
-	buildSummarizationInstruction,
+
 	COMPACTION_MAX_TOKENS,
 	getCompactionThresholds,
 	processCompaction,
@@ -44,7 +44,7 @@ import {
 } from "./tool-execution.ts";
 import { TOOL_DONE, TOOL_FORK_TASK_CONTEXT, TOOL_YIELD } from "./tool-names.ts";
 import type { AgentResult, ExitReason } from "./types.ts";
-import { buildWorkContextContent } from "./work-context.ts";
+// buildWorkContextContent import removed — work context now provided by plugin hook
 
 // ── Re-exports for backward compatibility ──
 // These symbols were originally defined here. Re-export so existing importers
@@ -1216,7 +1216,7 @@ export async function* runProviderLoop(
 					// Build the user message for messages[] from both contents
 					const workCtxContent = request.buildWorkContext
 						? request.buildWorkContext()
-						: buildWorkContextContent(undefined);
+						: null;
 					messages.push({
 						role: "user" as const,
 						content: `${workCtxContent}\n\n## Checkpoint Summary\n\n${compactResult.checkpoint}`,
@@ -1301,9 +1301,7 @@ export async function* runProviderLoop(
 				// If a pending compactOnly-yield tool_call is carried forward, bundle
 				// its tool_result INTO THIS SAME user message — otherwise we'd emit
 				// two consecutive user messages (tool_result + this one) → API 400.
-				const summarizationInstruction = request.buildSummarizationPrompt
-					? request.buildSummarizationPrompt()
-					: buildSummarizationInstruction(undefined);
+				const summarizationInstruction = request.buildSummarizationPrompt!();
 				if (pendingCompactYieldToolCall) {
 					// Build a structured user message: [tool_result, text] via the
 					// walker-delegating buildUserTurn. Walker is the single source of

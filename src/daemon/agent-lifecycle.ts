@@ -956,9 +956,7 @@ export async function runAgentForNode(
 			buildWorkContext: opts.buildWorkContext
 				? () => opts.buildWorkContext!(node, project.path)
 				: undefined,
-			buildSummarizationPrompt: opts.buildSummarizationPrompt
-				? () => opts.buildSummarizationPrompt!(node, project.path)
-				: undefined,
+			buildSummarizationPrompt: () => opts.buildSummarizationPrompt(node, project.path),
 			buildDoneResumeContext: opts.buildDoneResumeContext
 				? () => opts.buildDoneResumeContext!(node, project.path)
 				: undefined,
