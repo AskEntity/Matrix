@@ -1082,11 +1082,11 @@ export async function runAgentForNode(
 					);
 				}
 
-				// Crash-safe marker: stores plugin's onDone return data
+				// Crash-safe marker: plugin fields spread directly onto event
 				emitEvent(ctx, project.id, {
 					type: "done_notified",
 					taskId: nodeId,
-					doneData,
+					...doneData,
 					traceId: loopTraceId,
 					ts: Date.now(),
 				});

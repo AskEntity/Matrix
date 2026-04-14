@@ -26,7 +26,7 @@ export type DefaultPluginTypes = PluginTypes;
  * T flows through all callbacks — plugin authors get type-safe access to their node data.
  * Runtime stores ScopeOpts (T=DefaultPluginTypes, erased).
  */
-export interface ScopeOpts<T extends PluginTypes = DefaultPluginTypes> {
+export interface ScopeOpts<_T extends PluginTypes = DefaultPluginTypes> {
 	// ── Agent behavior ──
 	buildTools: (
 		auth: Auth,
@@ -69,7 +69,7 @@ export interface ScopeOpts<T extends PluginTypes = DefaultPluginTypes> {
 		node: import("../types.ts").TaskNode,
 		tracker: import("../task-tracker.ts").TaskTracker,
 		doneArgs: Record<string, unknown>,
-	) => T["done"];
+	) => Record<string, unknown>;
 }
 
 /** SSE client connection subscribed to a project's event stream. */

@@ -223,9 +223,8 @@ export type Event = (
 	  }
 	| {
 			type: "done_notified";
-			/** Opaque done data — plugin decides what to store. */
-			doneData: Record<string, unknown>;
 			taskId: string;
+			[key: string]: unknown;
 			ts: number;
 	  }
 ) & {
