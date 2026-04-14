@@ -11,7 +11,7 @@ export {
 	summarizeToolResult,
 } from "../../event-display.ts";
 
-import { TOOL_BASH } from "../../../src/tool-names.ts";
+import { TOOL_BASH } from "../../../../../src/tool-names.ts";
 
 import type { LogEntry } from "../../hooks.ts";
 
