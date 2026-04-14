@@ -8,10 +8,10 @@ import type { AgentResult, TaskSession } from "./types.ts";
 export interface AgentRequest {
 	/** Absolute path to the project root. */
 	projectPath?: string;
-	/** Build work context content. Required — agents need context on start + compact. */
-	buildWorkContext: () => string | null;
-	/** Build summarization instruction for compaction. Required — runtime needs to compact. */
-	buildSummarizationPrompt: () => string;
+	/** Build work context content. Plugin hook. */
+	buildWorkContext?: () => string | null;
+	/** Build summarization instruction for compaction. Plugin hook. */
+	buildSummarizationPrompt?: () => string;
 	/** Build done-resume context text. Plugin hook. */
 	buildDoneResumeContext?: () => string;
 	/** Build system prompt. Called for fresh sessions and compact refresh.
