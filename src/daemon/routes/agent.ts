@@ -180,6 +180,7 @@ export function registerAgentRoutes(app: Hono, ctx: DaemonContext) {
 						buildTools: () => ({ tools: [] }),
 						buildPrompt: () => ({ stable: "", variable: "" }),
 						buildSummarizationPrompt: () => "Summarize the conversation.",
+						buildWorkContext: () => null,
 					}),
 					resume: true,
 				},
