@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type Anthropic from "@anthropic-ai/sdk";
+import Anthropic from "@anthropic-ai/sdk";
 import type {
 	MessageParam,
 	TextBlockParam,
@@ -3873,4 +3873,173 @@ describe("systemPreamble", () => {
 		expect(system.length).toBe(2); // no preamble
 		expect(system[0]?.text).toBe("stable-prompt");
 	});
+});
+
+// ── Abort signal + inner retry tests ──
+
+describe("Abort signal stops inner retry immediately", () => {
+	let tmpDir: string;
+
+	beforeAll(async () => {
+		tmpDir = await mkdtemp(join(tmpdir(), "mxd-abort-retry-"));
+	});
+
+	afterAll(async () => {
+		await rm(tmpDir, { recursive: true, force: true });
+	});
+
+	function createProviderWithStreamFn(
+		streamFn: (params: unknown) => unknown,
+	) {
+		const savedKey = process.env.ANTHROPIC_API_KEY;
+		process.env.ANTHROPIC_API_KEY = "test-key";
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6");
+		process.env.ANTHROPIC_API_KEY = savedKey;
+		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
+		(provider as any).client = {
+			messages: {
+				stream: streamFn,
+				countTokens: async () => ({ input_tokens: 100 }),
+			},
+		};
+		return provider;
+	}
+
+	function queueWithPrompt(prompt: string) {
+		const { MessageQueue } = require("./message-queue.ts") as typeof import("./message-queue.ts");
+		const { createUserMessage } = require("./queue-message-factory.ts") as typeof import("./queue-message-factory.ts");
+		const q = new MessageQueue();
+		q.enqueue(createUserMessage(prompt));
+		return q;
+	}
+
+	test("abort before retry sleep → exits immediately, no 30s delay", async () => {
+		let callCount = 0;
+		const abortController = new AbortController();
+
+		// Stream function always throws InternalServerError (triggers retry)
+		const provider = createProviderWithStreamFn(() => {
+			callCount++;
+			// After first call, abort — simulates stopTask during API call
+			if (callCount === 1) {
+				setTimeout(() => abortController.abort(), 10);
+			}
+			throw new Anthropic.InternalServerError(
+				500,
+				{ type: "error", error: { type: "internal_error", message: "test" } },
+				"Internal Server Error",
+				new Headers(),
+			);
+		});
+
+		const startTime = Date.now();
+		try {
+			await provider.execute({
+				cwd: tmpDir,
+				systemPrompt: { stable: "test", variable: "" },
+				emit: () => {},
+				queue: queueWithPrompt("test"),
+				signal: abortController.signal,
+			});
+		} catch {
+			// Expected — abort causes error
+		}
+		const duration = Date.now() - startTime;
+
+		// Without abort fix: 2s + 4s + 8s + 16s = 30s of retry backoff
+		// With abort fix: should exit almost immediately after abort fires
+		expect(duration).toBeLessThan(2000);
+		// Should have attempted only 1 call (no retries after abort)
+		expect(callCount).toBe(1);
+	}, 10000);
+
+	test("abort during retry backoff sleep → exits immediately", async () => {
+		let callCount = 0;
+		const abortController = new AbortController();
+
+		// First call: throw 429 (triggers retry with backoff)
+		// The abort fires during the 2s backoff sleep
+		const provider = createProviderWithStreamFn(() => {
+			callCount++;
+			if (callCount === 1) {
+				// Abort 50ms after the first error — during the 2s retry sleep
+				setTimeout(() => abortController.abort(), 50);
+			}
+			throw new Anthropic.RateLimitError(
+				429,
+				{ type: "error", error: { type: "rate_limit_error", message: "rate limited" } },
+				"Rate Limited",
+				new Headers(),
+			);
+		});
+
+		const startTime = Date.now();
+		try {
+			await provider.execute({
+				cwd: tmpDir,
+				systemPrompt: { stable: "test", variable: "" },
+				emit: () => {},
+				queue: queueWithPrompt("test"),
+				signal: abortController.signal,
+			});
+		} catch {
+			// Expected
+		}
+		const duration = Date.now() - startTime;
+
+		// Without fix: first retry sleep = 2s minimum
+		// With fix: abort during sleep → exits in ~50ms
+		expect(duration).toBeLessThan(1000);
+	}, 10000);
+
+	test("no abort → normal retry backoff works", async () => {
+		let callCount = 0;
+
+		// Throw 500 twice, then succeed
+		const successResponse: Anthropic.Messages.Message = {
+			id: "msg_test",
+			type: "message",
+			role: "assistant",
+			model: "claude-sonnet-4-20250514",
+			content: [{ type: "text", text: "Success after retry" }],
+			stop_reason: "end_turn",
+			stop_sequence: null,
+			usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+		} as Anthropic.Messages.Message;
+
+		const mockStream = () => ({
+			[Symbol.asyncIterator]: async function* () {
+				yield { type: "content_block_delta", delta: { type: "text_delta", text: "Success after retry" } };
+			},
+			finalMessage: () => Promise.resolve(successResponse),
+		});
+
+		const provider = createProviderWithStreamFn(() => {
+			callCount++;
+			if (callCount <= 2) {
+				throw new Anthropic.InternalServerError(
+					500,
+					{ type: "error", error: { type: "internal_error", message: "test" } },
+					"Internal Server Error",
+					new Headers(),
+				);
+			}
+			return mockStream();
+		});
+
+		const startTime = Date.now();
+		const result = await provider.execute({
+			cwd: tmpDir,
+			systemPrompt: { stable: "test", variable: "" },
+			emit: () => {},
+			queue: queueWithPrompt("test"),
+		});
+		const duration = Date.now() - startTime;
+
+		// Should succeed after retries (2s + 4s backoff)
+		expect(callCount).toBe(3);
+		// Backoff should have kicked in: 2s + 4s = 6s minimum
+		expect(duration).toBeGreaterThanOrEqual(5500);
+		expect(result.exitReason).not.toBe("done_failed");
+	}, 30000);
 });
