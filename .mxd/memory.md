@@ -1021,3 +1021,83 @@ agent_end.reason: `stopped` (only value now — other exit reasons tracked elsew
 
 ### Migration
 `bun src/migrate-jsonl.ts` — one-time conversion. Idempotent. Already run on all project JSONL files.
+
+## EventSpec Type
+
+`EventSpec = DistributiveOmit<Event, "taskId">` — event before routing. Producers create EventSpec (no taskId), emit layer adds taskId + traceId. `DistributiveOmit` preserves discriminated union structure.
+
+**Single emit path**: `R.emit(projectId, taskId, spec: EventSpec)` is the ONE path above `emitEvent`. Deleted `emitWithTask` closure. Streaming text tracking + traceId lookup unified in R.emit's registered implementation. Provider loop stays decoupled — receives emit via `AgentRequest.emit: (spec: EventSpec) => void`.
+
+## Abort Signal + Inner Retry Fix
+
+Anthropic provider inner retry was catching abort errors as transient errors → 4 retries × exponential backoff = 30s delay on stopTask/resetTask. Fix: (1) catch checks `signal.aborted` first, (2) retry sleep responds to abort, (3) post-sleep abort check. Reset time: 30s → instant.
+
+## Plugin Architecture (ScopeOpts)
+
+Runtime/plugin separation in progress. Matrix-specific behavior extracted from runtime into configurable hooks.
+
+### ScopeOpts on DaemonContext
+
+`ctx.scopeOpts: Map<projectId, ScopeOpts<T>>` — per-project scope configuration. `buildMatrixScopeOpts()` is the ONE place that knows Matrix tools + prompt + hooks.
+
+```ts
+interface ScopeOpts<T extends PluginTypes> {
+  buildTools: (auth, taskId) => { tools, ... };
+  buildPrompt: () => SystemPrompt;
+  connectMcp?: (projectPath) => Promise<McpClientManager>;
+  beforeChildLaunch?: (node, tracker, projectPath) => Promise<void>;
+  shouldResume?: (node) => boolean;
+  onLaunch?: (node) => void;
+  onDone?: (node, doneData) => void;
+  buildWorkContext?: (node, project) => string;
+  buildSummarizationPrompt?: (node) => string;
+  buildDoneResumeContext?: (node) => string;
+}
+```
+
+### BaseTaskNode / TaskNode Split
+
+Runtime uses `BaseTaskNode` (id, parentId, children, title, session). Matrix extends with `TaskNode` (adds status, description, branch, worktreePath, cwd, color, costUsd, budgetUsd, etc.).
+
+```ts
+interface BaseTaskNode { id, parentId, children, title, session, ... }
+interface TaskNode extends BaseTaskNode { status, description, branch, worktreePath, cwd, ... }
+```
+
+### PluginTypes Generic
+
+```ts
+interface PluginTypes { node: BaseTaskNode; done: BaseDoneData; }
+interface MatrixPluginTypes { node: TaskNode; done: MatrixDoneData; }
+```
+
+ScopeOpts<T> flows the generic through all hooks — type-safe per-plugin.
+
+### cwd Migration
+
+- `node.cwd`: persistent field on TaskNode (survives restart)
+- Bash `cd` updates `node.cwd` directly
+- `session.cwd`, `session.fallbackCwd`, `AgentRequest.cwd`: all deleted
+- Tools read via `getTaskCwd()`: node.cwd → node.worktreePath fallback
+- provider-shared.ts loop-local cwd: deleted
+
+### AgentRequest Simplified
+
+- `buildSystemPrompt: () => SystemPrompt` replaces both `systemPrompt` and `refreshSystemPrompt`
+- Provider loop owns resume/frozen logic internally
+- `cwd` field deleted (lives on node)
+- `projectPath` field deleted (lives on node as worktreePath)
+
+### What Runtime No Longer Knows
+
+After step 0 + step 1, `runAgentForNode` has zero Matrix imports. Runtime doesn't know about:
+- Matrix's tools or system prompt (ScopeOpts.buildTools/buildPrompt)
+- MCP server config (ScopeOpts.connectMcp)
+- Git worktrees (ScopeOpts.beforeChildLaunch)
+- Node lifecycle states (ScopeOpts.shouldResume/onLaunch/onDone)
+- Work context / compaction prompt (ScopeOpts hooks)
+- cwd semantics (plugin's node field)
+
+### get_logs Availability
+
+Changed from `"both"` to `"external"` — agents don't need to read other tasks' JSONL. get_logs is for external MCP clients (send → yield → get_logs workflow).
