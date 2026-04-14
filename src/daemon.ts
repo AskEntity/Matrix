@@ -348,6 +348,114 @@ export async function createDaemon(opts: {
 			});
 		}
 
+		// ── Project CRUD (daemon-owned) ──
+		if (url.pathname === "/projects" && request.method === "GET") {
+			const projects = pm.list().map((p) => ({
+				...p,
+				pathExists: pm.checkPathExists(p.id),
+			}));
+			return new Response(JSON.stringify(projects), {
+				headers: { "content-type": "application/json" },
+			});
+		}
+		if (url.pathname === "/projects" && request.method === "POST") {
+			try {
+				const body = await request.json() as { path: string };
+				if (!body.path) {
+					return new Response(JSON.stringify({ error: "path is required" }), {
+						status: 400,
+						headers: { "content-type": "application/json" },
+					});
+				}
+				const project = await pm.init(body.path);
+
+				// Call onProjectInit for all global plugins
+				for (const plugin of registeredPlugins.filter((p) => p.scope === "global")) {
+					if (plugin.onProjectInit) {
+						await plugin.onProjectInit(body.path, { isNew: !existsSync(join(body.path, ".git")) });
+					}
+				}
+
+				return new Response(JSON.stringify(project), {
+					status: 201,
+					headers: { "content-type": "application/json" },
+				});
+			} catch (e) {
+				const message = e instanceof Error ? e.message : "Unknown error";
+				return new Response(JSON.stringify({ error: message }), {
+					status: 409,
+					headers: { "content-type": "application/json" },
+				});
+			}
+		}
+		if (url.pathname.match(/^\/projects\/[^/]+$/) && request.method === "GET") {
+			const projectId = url.pathname.split("/")[2]!;
+			const project = pm.get(projectId);
+			if (!project) {
+				return new Response(JSON.stringify({ error: "Project not found" }), {
+					status: 404,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify({
+				...project,
+				pathExists: pm.checkPathExists(project.id),
+			}), {
+				headers: { "content-type": "application/json" },
+			});
+		}
+		if (url.pathname.match(/^\/projects\/[^/]+$/) && request.method === "DELETE") {
+			const projectId = url.pathname.split("/")[2]!;
+			try {
+				// Stop worker agents first
+				const globalWorkerName = registeredPlugins.find(
+					(p) => p.scope === "global" && workers.has(p.name),
+				)?.name;
+				if (globalWorkerName) {
+					await forwardToWorker(globalWorkerName, new Request(
+						`http://localhost/projects/${projectId}/stop`,
+						{ method: "POST" },
+					));
+				}
+				await pm.delete(projectId);
+				return new Response(JSON.stringify({ ok: true }), {
+					headers: { "content-type": "application/json" },
+				});
+			} catch (e) {
+				const message = e instanceof Error ? e.message : "Unknown error";
+				return new Response(JSON.stringify({ error: message }), {
+					status: 404,
+					headers: { "content-type": "application/json" },
+				});
+			}
+		}
+		if (url.pathname.match(/^\/projects\/[^/]+$/) && request.method === "PATCH") {
+			const projectId = url.pathname.split("/")[2]!;
+			try {
+				const body = await request.json() as { path?: string; name?: string };
+				if (!body.path && !body.name) {
+					return new Response(JSON.stringify({ error: "At least one of path or name is required" }), {
+						status: 400,
+						headers: { "content-type": "application/json" },
+					});
+				}
+				const updated = await pm.updateProject(projectId, body);
+				return new Response(JSON.stringify({
+					...updated,
+					pathExists: pm.checkPathExists(updated.id),
+				}), {
+					headers: { "content-type": "application/json" },
+				});
+			} catch (e) {
+				const message = e instanceof Error ? e.message : "Unknown error";
+				const status = message.includes("not found") ? 404 : 400;
+				return new Response(JSON.stringify({ error: message }), {
+					status,
+					headers: { "content-type": "application/json" },
+				});
+			}
+		}
+
 		// Plugins
 		if (url.pathname === "/plugins" && request.method === "GET") {
 			return new Response(
