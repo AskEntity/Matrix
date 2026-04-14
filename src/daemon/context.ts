@@ -52,8 +52,8 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 	// ── Context injection at lifecycle moments ──
 	/** Fresh start / post-compact: inject work context. */
 	buildWorkContext?: (node: T["node"], projectPath: string) => string | null;
-	/** Compaction: build the summarization instruction. */
-	buildSummarizationPrompt?: (node: T["node"], projectPath: string) => string;
+	/** Compaction: build the summarization instruction. Required — runtime needs to compact. */
+	buildSummarizationPrompt: (node: T["node"], projectPath: string) => string;
 	/** Done resume: build the wake-up context text. */
 	buildDoneResumeContext?: (node: T["node"], projectPath: string) => string;
 
