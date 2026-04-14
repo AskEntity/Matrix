@@ -128,12 +128,12 @@ export function attachMockSession(
 	queue: MessageQueue,
 	opts?: { cwd?: string; depth?: number },
 ): TaskSession {
+	// Set node.cwd so tools can read it
+	if (!node.cwd) node.cwd = opts?.cwd ?? "/tmp/mock-cwd";
 	const session: TaskSession = {
 		queue,
 		abortController: new AbortController(),
 		loopTraceId: "mock-trace-id",
-		cwd: opts?.cwd ?? "/tmp/mock-cwd",
-		fallbackCwd: opts?.cwd ?? "/tmp/mock-cwd",
 		depth: opts?.depth ?? 0,
 		backgroundProcesses: new Map(),
 		foregroundExecutions: new Map(),

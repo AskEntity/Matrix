@@ -218,8 +218,6 @@ describe("read_file pixel dimension guard", () => {
 			} as never,
 			abortController: new AbortController(),
 			loopTraceId: "test-trace-id",
-			cwd: tmpDir,
-			fallbackCwd: tmpDir,
 			depth: 0,
 			backgroundProcesses: new Map(),
 			foregroundExecutions: new Map(),
