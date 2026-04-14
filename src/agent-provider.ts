@@ -8,12 +8,15 @@ import type { AgentResult, TaskSession } from "./types.ts";
 export interface AgentRequest {
 	/** Absolute path to the project root. */
 	projectPath?: string;
-	/** System prompt injected into the agent session. Split for cache optimization. */
+	/** Build work context content. Plugin hook. */
+	buildWorkContext?: () => string | null;
+	/** Build summarization instruction for compaction. Plugin hook. */
+	buildSummarizationPrompt?: () => string;
+	/** Build done-resume context text. Plugin hook. */
+	buildDoneResumeContext?: () => string;
+	/** Initial system prompt (frozen for resume, fresh for new sessions). */
 	systemPrompt?: import("./system-prompts.ts").SystemPrompt;
-	/**
-	 * Rebuild the system prompt with fresh date. Called after compaction to refresh
-	 * the session_config. If not provided, the original systemPrompt is reused.
-	 */
+	/** Rebuild system prompt after compact. If not provided, reuses systemPrompt. */
 	refreshSystemPrompt?: () => import("./system-prompts.ts").SystemPrompt;
 	/** Abort signal for cancellation. */
 	signal?: AbortSignal;

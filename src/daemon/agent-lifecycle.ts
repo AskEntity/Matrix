@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
+import { buildSummarizationInstruction } from "../compaction.ts";
 import { DEFAULT_MODEL } from "../config.ts";
 import { rollOldTraceIdDirs } from "../debug-snapshot.ts";
 import {
@@ -165,6 +166,14 @@ export function buildMatrixScopeOpts(
 		},
 		buildWorkContext: (node, projectPath) =>
 			buildWorkContextContent(node.cwd ?? node.worktreePath ?? projectPath),
+		buildSummarizationPrompt: (node, projectPath) =>
+			buildSummarizationInstruction(node.cwd ?? node.worktreePath ?? projectPath),
+		buildDoneResumeContext: (node, projectPath) => {
+			const cwdLine = (node.cwd ?? node.worktreePath ?? projectPath)
+				? `\n\n## Working Directory\n${node.cwd ?? node.worktreePath ?? projectPath}`
+				: "";
+			return `You previously called done(). New messages woke you up:${cwdLine}`;
+		},
 		shouldResume: (node) => node.status === "in_progress",
 		onLaunch: (node, tracker) => {
 			tracker.updateStatus(node.id, "in_progress");
@@ -923,8 +932,6 @@ export async function runAgentForNode(
 			// Previously we emitted here with tools=[] — now tools are populated.
 		}
 
-		const refreshSystemPrompt = opts.buildPrompt;
-
 		// Debug snapshot v2: per-traceId epoch.
 		// Layout: <dataDir>/projects/<id>/debug/<taskId>/<traceId>/last.json
 		// Each run writes to its own traceId dir → daemon restart preserves the
@@ -943,7 +950,7 @@ export async function runAgentForNode(
 			emit,
 			activeEvents,
 			systemPrompt,
-			refreshSystemPrompt,
+			refreshSystemPrompt: opts.buildPrompt,
 			resumeSessionId: nodeId,
 			model: effectiveModel,
 			mcpToolDefs: agentCtx.mcpToolDefs,
@@ -956,6 +963,16 @@ export async function runAgentForNode(
 
 			signal: abortController.signal,
 			queue: childQueue,
+			// Lifecycle hooks bound to this node — plugin provides content, runtime calls at right time
+			buildWorkContext: opts.buildWorkContext
+				? () => opts.buildWorkContext!(node, project.path)
+				: undefined,
+			buildSummarizationPrompt: opts.buildSummarizationPrompt
+				? () => opts.buildSummarizationPrompt!(node, project.path)
+				: undefined,
+			buildDoneResumeContext: opts.buildDoneResumeContext
+				? () => opts.buildDoneResumeContext!(node, project.path)
+				: undefined,
 		};
 
 		// Root agents: stream directly — done() enters idle-yield, session stays alive.
