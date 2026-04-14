@@ -1,5 +1,7 @@
 import { createRoot } from "react-dom/client";
-import { App } from "./App.tsx";
+import { ShellApp } from "./ShellApp.tsx";
 
-const el = document.getElementById("app");
-if (el) createRoot(el).render(<App />);
+const root = document.getElementById("root");
+if (root) {
+	createRoot(root).render(<ShellApp />);
+}
