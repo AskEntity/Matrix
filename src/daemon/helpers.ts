@@ -110,6 +110,19 @@ export async function getTracker(
 			: undefined;
 		await tracker.load(defaultBranch);
 		ctx.trackers.set(projectId, tracker);
+
+		// Register default Matrix scope opts if not already set.
+		// autoResumeProjects sets these explicitly; this catches projects
+		// accessed for the first time via REST/MCP (not resumed at startup).
+		if (!ctx.scopeOpts.has(projectId)) {
+			const { buildMatrixScopeOpts } = await import(
+				"./agent-lifecycle.ts"
+			);
+			ctx.scopeOpts.set(
+				projectId,
+				buildMatrixScopeOpts(projectId, ctx.globalConfig.selfBootstrap),
+			);
+		}
 	}
 	return tracker;
 }

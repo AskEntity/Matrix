@@ -87,6 +87,36 @@ function findSessionConfig(events: Event[]): SessionConfigEvent | undefined {
 
 // prepareAgentMessage removed — context header replaced by work_context hook on enqueue.
 
+/**
+ * Build the Matrix-default scope options (tools + prompt).
+ * All callers that want standard Matrix behavior pass these to runAgentForNode.
+ * This is the ONLY place that knows about orchestrator tools + builtin tools + Matrix system prompt.
+ */
+export function buildMatrixScopeOpts(
+	projectId: string,
+	selfBootstrap: boolean,
+): Pick<RunAgentOpts, "buildTools" | "buildPrompt"> {
+	return {
+		buildTools: (auth, taskId) => {
+			const { toolDefs, hasRunningChildren, setMessages, setAllTools } =
+				createOrchestratorTools(auth, projectId, taskId, selfBootstrap);
+			const builtinTools = buildBuiltinToolDefs().map((def) =>
+				toToolDefinition(def, auth),
+			);
+			return {
+				tools: [...builtinTools, ...toolDefs],
+				hasRunningChildren,
+				setMessages,
+				setAllTools,
+			};
+		},
+		buildPrompt: () =>
+			selfBootstrap
+				? buildSystemPrompt({ selfBootstrap: true })
+				: buildSystemPrompt(),
+	};
+}
+
 /** Config + tools bundle produced by createAgentContext(). */
 interface AgentContextResult {
 	provider: ReturnType<typeof getProjectProvider>;
@@ -114,8 +144,17 @@ async function createAgentContext(
 		currentTaskId: string;
 		depth: number;
 		mcpManager?: McpClientManager;
-		/** System prompt for auto-launching target project agents (cross-project). Only needed at depth 0. */
-		orchestratorSystemPrompt?: SystemPrompt;
+		/**
+		 * Tool builder for this scope. Always provided by caller.
+		 * MCP external servers are still appended by createAgentContext.
+		 */
+		buildTools: (auth: ReturnType<typeof createAgentAuth>, taskId: string) => {
+			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+			tools: ToolDefinition<any>[];
+			hasRunningChildren?: () => boolean;
+			setMessages?: (msgs: unknown[]) => void;
+			setAllTools?: (tools: unknown[]) => void;
+		};
 	},
 ): Promise<AgentContextResult> {
 	const effectiveCfg = await resolveProjectConfig(
@@ -176,36 +215,19 @@ async function createAgentContext(
 			const promise = ctx.agentLoopPromises.get(nodeId);
 			if (promise) await promise;
 		},
-		injectMessageToProject: opts.orchestratorSystemPrompt
-			? async (projectId: string, message: string) => {
-					return handleInjectMessage(
-						ctx,
-						projectId,
-						message,
-						undefined,
-						opts.orchestratorSystemPrompt,
-					);
-				}
-			: async () => ({ ok: false, error: "Auto-launch not available" }),
+		injectMessageToProject: async (projectId: string, message: string) => {
+			return handleInjectMessage(ctx, projectId, message);
+		},
 	});
 
 	// Create auth for this agent
 	const auth = createAgentAuth(project.id, opts.currentTaskId, opts.tracker);
 
-	const { toolDefs, hasRunningChildren, setMessages, setAllTools } =
-		createOrchestratorTools(
-			auth,
-			project.id,
-			opts.currentTaskId,
-			effectiveCfg.selfBootstrap,
-		);
-
-	// Convert builtin ToolDefs to ToolDefinitions using the same auth
-	const builtinDefs = buildBuiltinToolDefs();
-	const builtinTools = builtinDefs.map((def) => toToolDefinition(def, auth));
+	const { tools: internalTools, hasRunningChildren, setMessages, setAllTools } =
+		opts.buildTools(auth, opts.currentTaskId);
 
 	const mcpToolDefs: Record<string, ToolDefinition[]> = {
-		[MCP_SERVER_NAME]: [...builtinTools, ...toolDefs],
+		[MCP_SERVER_NAME]: internalTools,
 		...mcpManager.getToolDefs(),
 	};
 
@@ -408,8 +430,7 @@ export async function stopTask(
  * loads persisted messages on startup.
  *
  * For child nodes, auto-launches the agent via ensureChildAgentRunning.
- * For root nodes, returns "persisted" so the caller can handle launch
- * (root launch requires orchestratorSystemPrompt and resume logic).
+ * For root nodes, auto-launches using scope opts from ctx.scopeOpts.
  *
  * Callers should NOT include the message content in any launch prompt — the agent
  * will receive it via queue drain of persisted messages.
@@ -430,7 +451,7 @@ export async function deliverMessage(
 	project: { id: string; path: string },
 	nodeId: string,
 	message: QueueMessage,
-	opts?: { quiet?: boolean; orchestratorSystemPrompt?: SystemPrompt },
+	opts?: { quiet?: boolean },
 ): Promise<"enqueued" | "persisted"> {
 	const tracker = await getTracker(ctx, project.id);
 	const eventStore = getEventStore(ctx, project.id);
@@ -486,14 +507,15 @@ export async function deliverMessage(
 				});
 			});
 		} else if (
-			opts?.orchestratorSystemPrompt &&
+			ctx.scopeOpts.has(project.id) &&
 			!ctx.restartingProjects.has(project.id) &&
 			!ctx.launchingNodes.has(nodeId)
 		) {
-			// Root node — same launch path as child
+			// Root node — same launch path as child, scope opts from ctx
+			const rootScopeOpts = ctx.scopeOpts.get(project.id)!;
 			tracker.updateStatus(nodeId, "in_progress");
 			runAgentForNode(ctx, project, tracker, nodeId, {
-				orchestratorSystemPrompt: opts.orchestratorSystemPrompt,
+				...rootScopeOpts,
 				resume: shouldResume,
 			}).catch((e) => {
 				emitEvent(ctx, project.id, {
@@ -559,7 +581,14 @@ export async function ensureChildAgentRunning(
 
 	// The real user/parent message is persisted to disk and will be delivered
 	// via queue drain. work_context is injected by enqueue hook.
-	await runAgentForNode(ctx, project, tracker, nodeId, { model });
+	const scopeOpts = ctx.scopeOpts.get(project.id);
+	if (!scopeOpts) {
+		throw new Error(`No scope opts registered for project ${project.id}`);
+	}
+	await runAgentForNode(ctx, project, tracker, nodeId, {
+		...scopeOpts,
+		model,
+	});
 }
 
 /** Compute the depth of a task in the tree by walking up the parentId chain. */
@@ -579,13 +608,29 @@ function computeDepth(tracker: TaskTracker, nodeId: string): number {
 
 /** Run a child agent in the background for a specific task node. */
 /** Options for running an agent node. */
-interface RunAgentOpts {
+export interface RunAgentOpts {
 	/** Model override (from API parameter). */
 	model?: string;
-	/** System prompt for fresh root start (non-selfBootstrap projects). */
-	orchestratorSystemPrompt?: SystemPrompt;
-	/** Whether this is a resume (pre-computed by caller). Used for orchestration_started event. */
+	/** Whether this is a resume (pre-computed by caller). Used for agent_start event. */
 	resume?: boolean;
+	/**
+	 * Tool builder for this scope. Called with agent auth + taskId to produce the tool set.
+	 * The caller decides what tools are available — runtime doesn't know about
+	 * Matrix orchestrator tools vs plugin tools.
+	 */
+	buildTools: (auth: ReturnType<typeof createAgentAuth>, taskId: string) => {
+		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+		tools: ToolDefinition<any>[];
+		hasRunningChildren?: () => boolean;
+		setMessages?: (msgs: unknown[]) => void;
+		setAllTools?: (tools: unknown[]) => void;
+	};
+	/**
+	 * Prompt builder for this scope. Called for fresh sessions and compact refresh.
+	 * The caller decides the system prompt — runtime doesn't know about
+	 * Matrix system prompt vs plugin prompt.
+	 */
+	buildPrompt: () => SystemPrompt;
 }
 
 /** Run an agent for any node (root or child). Shared launch path. */
@@ -594,7 +639,7 @@ export async function runAgentForNode(
 	project: { id: string; path: string },
 	tracker: TaskTracker,
 	nodeId: string,
-	opts?: RunAgentOpts,
+	opts: RunAgentOpts,
 ): Promise<void> {
 	const node = tracker.getTask(nodeId);
 	if (!node) return;
@@ -683,9 +728,7 @@ export async function runAgentForNode(
 			currentTaskId: nodeId,
 			depth,
 			mcpManager,
-			orchestratorSystemPrompt: isRoot
-				? opts?.orchestratorSystemPrompt
-				: undefined,
+			buildTools: opts.buildTools,
 		});
 
 		// Priority: API param > resolved config
@@ -787,15 +830,7 @@ export async function runAgentForNode(
 		);
 		if (!hasSessionConfig) {
 			const jsonToolsForConfig = buildJsonTools(agentCtx.mcpToolDefs);
-			const sp = (() => {
-				if (isRoot && agentCtx.effectiveCfg.selfBootstrap) {
-					return buildSystemPrompt({ selfBootstrap: true });
-				}
-				if (isRoot && opts?.orchestratorSystemPrompt) {
-					return opts.orchestratorSystemPrompt;
-				}
-				return buildSystemPrompt();
-			})();
+			const sp = opts.buildPrompt();
 			const configuredTtl = isRoot
 				? agentCtx.effectiveCfg.cacheTtl.root
 				: agentCtx.effectiveCfg.cacheTtl.child;
@@ -855,23 +890,13 @@ export async function runAgentForNode(
 				variable: storedConfig.systemVariable,
 			};
 		} else {
-			// Fresh start or migration: build fresh system prompt
-			// Root: selfBootstrap flag or orchestratorSystemPrompt; child: default
-			if (isRoot && agentCtx.effectiveCfg.selfBootstrap) {
-				systemPrompt = buildSystemPrompt({ selfBootstrap: true });
-			} else if (isRoot && opts?.orchestratorSystemPrompt) {
-				systemPrompt = opts.orchestratorSystemPrompt;
-			} else {
-				systemPrompt = buildSystemPrompt();
-			}
+			// Fresh start: use scope's prompt builder
+			systemPrompt = opts.buildPrompt();
 			// session_config is emitted by runProviderLoop after tools are built.
 			// Previously we emitted here with tools=[] — now tools are populated.
 		}
 
-		const refreshSystemPrompt = () =>
-			isRoot && agentCtx.effectiveCfg.selfBootstrap
-				? buildSystemPrompt({ selfBootstrap: true })
-				: buildSystemPrompt();
+		const refreshSystemPrompt = opts.buildPrompt;
 
 		// Debug snapshot v2: per-traceId epoch.
 		// Layout: <dataDir>/projects/<id>/debug/<taskId>/<traceId>/last.json
@@ -1069,7 +1094,6 @@ export async function handleInjectMessage(
 	projectId: string,
 	message: string,
 	images?: QueueImage[],
-	orchestratorSystemPrompt?: SystemPrompt,
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
 	const project = ctx.pm.get(projectId);
 	if (!project) {
@@ -1083,9 +1107,8 @@ export async function handleInjectMessage(
 	const msg = createUserMessage(message, { images });
 
 	// deliverMessage handles JSONL, queue delivery, and auto-launch (root + child).
-	await deliverMessage(ctx, project, rootNodeId, msg, {
-		orchestratorSystemPrompt,
-	});
+	// Scope opts looked up from ctx.scopeOpts by deliverMessage.
+	await deliverMessage(ctx, project, rootNodeId, msg);
 
 	return { ok: true };
 }
