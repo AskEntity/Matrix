@@ -2912,7 +2912,7 @@ describe("lifecycle: header only on cold start", () => {
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	test.skip("NEEDS HOOK: cold start work_context injection (header removed)", async () => {
+	test("cold start injects work_context message before user message", async () => {
 		const { provider, queueMessages } = createCapturingProvider();
 		const { app, pm, getTracker, markReady } = createApp({
 			dataDir,
@@ -2926,16 +2926,20 @@ describe("lifecycle: header only on cold start", () => {
 		await sendRootMessage(app, getTracker, project.id, "hello world");
 		await delay(200);
 
-		// Find the user message in queue
+		// Find work_context message in queue — injected before user message
 		const msgs = queueMessages[0] ?? [];
+		const workCtx = msgs.find((m) => m.source === "work_context") as
+			| (QueueMessage & { content: string })
+			| undefined;
+		expect(workCtx).toBeDefined();
+		// work_context should contain working directory info
+		expect(workCtx?.content).toBeDefined();
+
+		// User message should still be present (no header field)
 		const userMsg = msgs.find(
 			(m) => m.source === "user" && m.content === "hello world",
-		) as (QueueMessage & { header?: string }) | undefined;
+		);
 		expect(userMsg).toBeDefined();
-		// Cold start should have header with memory.md content
-		expect(userMsg?.header).toBeDefined();
-		expect(userMsg?.header).toContain("memory.md");
-		expect(userMsg?.header).toContain("Important fact");
 
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
 		await delay(100);
