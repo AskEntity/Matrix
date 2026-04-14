@@ -1959,6 +1959,8 @@ describe("lifecycle: child completion notification paths", () => {
 			taskId: childNode.id,
 			sessionRequest: {
 				queue: firstQueue,
+				buildWorkContext: () => null,
+				buildSummarizationPrompt: () => "Summarize.",
 			},
 		});
 		expect(result1.exitReason).toBe("interrupted");
@@ -2000,6 +2002,8 @@ describe("lifecycle: child completion notification paths", () => {
 			taskId: childNode.id,
 			sessionRequest: {
 				queue: secondQueue,
+				buildWorkContext: () => null,
+				buildSummarizationPrompt: () => "Summarize.",
 			},
 		});
 		expect(result2.exitReason).toBe("interrupted");
@@ -2106,6 +2110,8 @@ describe("lifecycle: child completion notification paths", () => {
 			sessionRequest: {
 				queue: doneQueue,
 				emit,
+				buildWorkContext: () => null,
+				buildSummarizationPrompt: () => "Summarize.",
 			},
 		});
 
@@ -2185,6 +2191,8 @@ describe("lifecycle: child completion notification paths", () => {
 			taskId: childId,
 			sessionRequest: {
 				queue: deadlockQueue,
+				buildWorkContext: () => null,
+				buildSummarizationPrompt: () => "Summarize.",
 			},
 		});
 

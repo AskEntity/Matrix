@@ -215,9 +215,9 @@ describe("Plugin hooks: cwd persistence", () => {
 		const rootInTree = treeData.nodes?.find?.(
 			(n: Record<string, unknown>) => n.id === rootNodeId,
 		) ?? Object.values(treeData.nodes ?? {}).find(
-			(n: unknown) => (n as Record<string, unknown>).id === rootNodeId,
+			(n: unknown) => (n as unknown as Record<string, unknown>).id === rootNodeId,
 		);
-		expect((rootInTree as Record<string, unknown>)?.cwd).toBe("/tmp");
+		expect((rootInTree as unknown as Record<string, unknown>)?.cwd).toBe("/tmp");
 	}, 15000);
 });
 
@@ -250,7 +250,7 @@ describe("Plugin hooks: done_notified spread", () => {
 		expect(doneNotified).toBeDefined();
 
 		// Fields should be directly on event (spread), not in a doneData bag
-		const dn = doneNotified as Record<string, unknown>;
+		const dn = doneNotified as unknown as Record<string, unknown>;
 		expect(dn.status).toBe("verify");
 		expect(dn.summary).toBe("spread test");
 		expect(dn.doneData).toBeUndefined(); // no bag

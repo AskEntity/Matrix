@@ -1214,7 +1214,7 @@ export async function* runProviderLoop(
 						queue.enqueue(resumeMsg);
 					}
 					// Build the user message for messages[] from both contents
-					const workCtxContent = request.buildWorkContext?.();
+					const workCtxContent = request.buildWorkContext();
 					const compactContent = workCtxContent
 						? `${workCtxContent}\n\n## Checkpoint Summary\n\n${compactResult.checkpoint}`
 						: `## Checkpoint Summary\n\n${compactResult.checkpoint}`;
