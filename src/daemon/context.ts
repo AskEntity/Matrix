@@ -48,6 +48,17 @@ export interface ScopeOpts<T extends PluginTypes = DefaultPluginTypes> {
 		projectPath: string,
 	) => Promise<{ cwd: string } | void>;
 
+	// ── Context injection ──
+	/**
+	 * Build work_context content for agent sessions.
+	 * Matrix: task description + memory.md path + cwd.
+	 * Plugin: whatever context the agent needs.
+	 */
+	buildWorkContext?: (
+		node: import("../types.ts").TaskNode,
+		projectPath: string,
+	) => string | null;
+
 	// ── Lifecycle (typed with T) ──
 	shouldResume?: (node: import("../types.ts").TaskNode) => boolean;
 	onLaunch?: (
