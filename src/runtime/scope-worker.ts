@@ -22,12 +22,23 @@ self.onmessage = async (event: MessageEvent) => {
 	const msg = event.data;
 
 	if (msg.type === "init") {
-		const { dataDir, globalConfigPath } = msg;
+		const { dataDir, globalConfigPath, projects } = msg as {
+			type: "init";
+			dataDir: string;
+			globalConfigPath: string;
+			projects?: Array<{ id: string; name: string; path: string }>;
+		};
 
 		try {
 			appInstance = createApp({ dataDir, globalConfigPath });
 			await appInstance.pm.load();
 			await appInstance.loadConfig();
+
+			// If daemon sent project list, sync worker's pm to match
+			if (projects && projects.length > 0) {
+				appInstance.pm.syncFromDaemon(projects);
+			}
+
 			await appInstance.autoResumeProjects();
 			// Wire broadcast events to parent thread for SSE relay
 			appInstance.ctx.onBroadcast = (projectId, event) => {
@@ -92,6 +103,16 @@ self.onmessage = async (event: MessageEvent) => {
 					error: e instanceof Error ? e.message : String(e),
 				}),
 			});
+		}
+	}
+
+	if (msg.type === "projects_sync") {
+		const { projects } = msg as {
+			type: "projects_sync";
+			projects: Array<{ id: string; name: string; path: string }>;
+		};
+		if (appInstance) {
+			appInstance.pm.syncFromDaemon(projects);
 		}
 	}
 
