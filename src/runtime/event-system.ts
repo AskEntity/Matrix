@@ -2,7 +2,7 @@ import { type Event, isPersistedByEmitEvent } from "../events.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { ulid } from "../ulid.ts";
 import type {
-	DaemonContext,
+	RuntimeContext,
 	EventSubscriber,
 	PendingClarification,
 } from "./context.ts";
@@ -85,7 +85,7 @@ export function getEventsSince(
  * not interrupt the broadcast.
  */
 export function broadcast(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 	event: Record<string, unknown>,
 ) {
@@ -105,7 +105,12 @@ export function broadcast(
 		}
 	}
 
-	// 2. In-process subscribers for this project (O(subs_for_this_project),
+	// 2. Relay to parent thread (shell) for SSE when running in a worker.
+	if (ctx.onBroadcast) {
+		ctx.onBroadcast(projectId, event);
+	}
+
+	// 3. In-process subscribers for this project (O(subs_for_this_project),
 	//    not O(all_subs_across_all_projects)).
 	const subs = ctx.eventSubscribers.get(projectId);
 	if (subs) {
@@ -132,7 +137,7 @@ export function broadcast(
  *   try { await somethingLong(); } finally { unsub(); }
  */
 export function subscribeToEvents(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 	callback: EventSubscriber,
 ): () => void {
@@ -162,7 +167,7 @@ export function subscribeToEvents(
  *
  * All callers use this instead of separate broadcast + persist calls.
  */
-export function emitEvent(ctx: DaemonContext, projectId: string, event: Event) {
+export function emitEvent(ctx: RuntimeContext, projectId: string, event: Event) {
 	broadcast(ctx, projectId, event as unknown as Record<string, unknown>);
 
 	// Persist to JSONL (skips ephemeral events like text_delta, usage, etc.)
@@ -195,7 +200,7 @@ export function emitEvent(ctx: DaemonContext, projectId: string, event: Event) {
  * Tree changes are also delivered as structured queue messages to running agents.
  */
 export function broadcastTreeUpdate(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 	tracker: TaskTracker,
 ) {
@@ -209,7 +214,7 @@ export function broadcastTreeUpdate(
 // --- Pending Clarifications ---
 
 export function getPendingClarifications(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 ): PendingClarification[] {
 	if (!ctx.pendingClarifications.has(projectId))
@@ -218,7 +223,7 @@ export function getPendingClarifications(
 }
 
 function addPendingClarification(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 	taskId: string,
 	question: string,
@@ -244,7 +249,7 @@ function addPendingClarification(
 }
 
 export function removePendingClarification(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 	taskId: string,
 	clarificationId?: string,

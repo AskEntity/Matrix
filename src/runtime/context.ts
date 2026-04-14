@@ -113,7 +113,7 @@ export interface DaemonConfig {
  * Shared daemon context — passed to all route handlers and lifecycle functions.
  * Contains all shared mutable state that was previously captured via closure in createApp().
  */
-export interface DaemonContext {
+export interface RuntimeContext {
 	readonly config: DaemonConfig;
 	readonly pm: ProjectManager;
 	readonly trackers: Map<string, TaskTracker>;
@@ -153,6 +153,13 @@ export interface DaemonContext {
 	 */
 	// biome-ignore lint/suspicious/noExplicitAny: erased generic — runtime doesn't know the plugin's node type
 	readonly scopeOpts: Map<string, ScopeOpts<any>>;
+
+	/**
+	 * Hook for relaying broadcast events to the parent thread (shell).
+	 * When running in a Worker, set this to postMessage events to the shell
+	 * for SSE relay. When running in-process (tests, standalone), leave undefined.
+	 */
+	onBroadcast?: (projectId: string, event: Record<string, unknown>) => void;
 
 	/** Mutable counters/flags */
 	requestCount: number;

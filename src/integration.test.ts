@@ -15,7 +15,7 @@ import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "./daemon.ts";
+import { createApp } from "./runtime.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import {
@@ -10329,7 +10329,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		expect(eventStore.has(rootNodeId)).toBe(true);
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
 
@@ -10414,7 +10414,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		if (!eventStore) throw new Error("EventStore not found");
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
 
@@ -10444,11 +10444,11 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		if (!eventStore) throw new Error("EventStore not found");
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
 
-		const { emitEvent } = await import("./daemon/event-system.ts");
+		const { emitEvent } = await import("./runtime/event-system.ts");
 		emitEvent(ctx.app.ctx, ctx.projectId, {
 			type: "error",
 			taskId: rootNodeId,
@@ -10491,7 +10491,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		if (!eventStore) throw new Error("EventStore not found");
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
 		eventStore.clear(rootNodeId);
@@ -10542,7 +10542,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		if (!eventStore) throw new Error("EventStore not found");
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		const [result1, result2] = await Promise.all([
 			stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId),
@@ -10743,7 +10743,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		expect(eventStore.has(childId)).toBe(true);
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		await stopTaskFn(ctx.app.ctx, ctx.projectId, childId);
 		eventStore.clear(childId);
@@ -10754,7 +10754,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 
 		// Wake parent
 		const { createTaskComplete } = await import("./queue-message-factory.ts");
-		const { deliverMessage } = await import("./daemon/agent-lifecycle.ts");
+		const { deliverMessage } = await import("./runtime/agent-lifecycle.ts");
 		const project = ctx.app.ctx.pm.get(ctx.projectId);
 		if (project) {
 			const fakeComplete = createTaskComplete(
@@ -10781,7 +10781,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		});
 		await tracker.save();
 
-		const { getEventStore } = await import("./daemon/helpers.ts");
+		const { getEventStore } = await import("./runtime/helpers.ts");
 		const eventStore = getEventStore(ctx.app.ctx, ctx.projectId);
 
 		ctx.app.ctx.launchingNodes.add(child.id);
@@ -10835,7 +10835,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		);
 		await tracker.save();
 
-		const { getEventStore } = await import("./daemon/helpers.ts");
+		const { getEventStore } = await import("./runtime/helpers.ts");
 		const eventStore = getEventStore(ctx.app.ctx, ctx.projectId);
 
 		ctx.app.ctx.launchingNodes.add(child.id);

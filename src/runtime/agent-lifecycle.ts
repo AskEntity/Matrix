@@ -38,7 +38,7 @@ import { type AgentResult, isTask, type TaskSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
 import { buildWorkContextContent } from "../work-context.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
-import type { DaemonContext, ScopeOpts } from "./context.ts";
+import type { RuntimeContext, ScopeOpts } from "./context.ts";
 import {
 	broadcast,
 	broadcastTreeUpdate,
@@ -109,7 +109,7 @@ export type MatrixPluginTypes = {
 export function buildMatrixScopeOpts(
 	projectId: string,
 	selfBootstrap: boolean,
-	ctx?: DaemonContext,
+	ctx?: RuntimeContext,
 ): ScopeOpts<MatrixPluginTypes> {
 	return {
 		buildTools: (auth, taskId) => {
@@ -207,7 +207,7 @@ interface AgentContextResult {
  * and build orchestrator tools. Used by runAgentForNode.
  */
 async function createAgentContext(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	project: { id: string; path: string },
 	opts: {
 		tracker: TaskTracker;
@@ -373,7 +373,7 @@ export async function runChildCore(
  * Single path for all stop operations (explicit stop, restart, project delete).
  */
 export async function stopAgent(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 ): Promise<void> {
 	const tracker = ctx.trackers.get(projectId);
@@ -436,7 +436,7 @@ export async function stopAgent(
  * Can be resumed by sending a new message.
  */
 export async function stopTask(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 	nodeId: string,
 ): Promise<boolean> {
@@ -520,7 +520,7 @@ export async function stopTask(
  *          "persisted" if written to JSONL (agent not running).
  */
 export async function deliverMessage(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	project: { id: string; path: string },
 	nodeId: string,
 	message: QueueMessage,
@@ -612,7 +612,7 @@ export async function deliverMessage(
  * endpoint and any other daemon-level code that needs to auto-launch a child.
  */
 export async function ensureChildAgentRunning(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	project: { id: string; path: string },
 	tracker: TaskTracker,
 	nodeId: string,
@@ -675,7 +675,7 @@ export interface RunAgentOpts extends ScopeOpts {
 
 /** Run an agent for any node (root or child). Shared launch path. */
 export async function runAgentForNode(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	project: { id: string; path: string },
 	tracker: TaskTracker,
 	nodeId: string,
@@ -1122,7 +1122,7 @@ export async function runAgentForNode(
  * Used by POST /tasks/:nodeId/message (root branch) and cross-project messaging.
  */
 export async function handleInjectMessage(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 	message: string,
 	images?: QueueImage[],
@@ -1147,7 +1147,7 @@ export async function handleInjectMessage(
 
 /** Answer a pending clarification. Used by POST /clarify and WS clarify_response. */
 export async function handleClarifyResponse(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	projectId: string,
 	taskId: string,
 	answer: string,

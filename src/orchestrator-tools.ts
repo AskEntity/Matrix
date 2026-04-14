@@ -14,7 +14,7 @@
 // readFileSync removed — work_context hook handles memory injection
 import { join } from "node:path";
 import { z } from "zod";
-import { stripEventForUI } from "./daemon/helpers.ts";
+import { stripEventForUI } from "./runtime/helpers.ts";
 import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
 import type { EventSpec } from "./events.ts";
 import {
@@ -1756,7 +1756,7 @@ function buildEvaluateScriptTool(
 					projectId,
 					taskId,
 					sessionId: taskId,
-					daemonCtx: R.getDaemonContext(),
+					daemonCtx: R.getRuntimeContext(),
 					allTools: allToolsRef.current,
 				};
 

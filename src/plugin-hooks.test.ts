@@ -12,7 +12,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "./daemon.ts";
+import { createApp } from "./runtime.ts";
 import type { Event } from "./events.ts";
 import {
 	createMockedProviderWithMock,
