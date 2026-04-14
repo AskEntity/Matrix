@@ -1,5 +1,5 @@
 import type { Hono } from "hono";
-import type { DaemonContext, SSEClient } from "../context.ts";
+import type { RuntimeContext, SSEClient } from "../context.ts";
 import { getEventsSince, getPendingClarifications } from "../event-system.ts";
 import { getTracker } from "../helpers.ts";
 
@@ -23,7 +23,7 @@ function sendSSE(
 
 /** Send initial state (tree + pending clarifications) on SSE connect. */
 async function sendInitialState(
-	ctx: DaemonContext,
+	ctx: RuntimeContext,
 	client: SSEClient,
 	projectId: string,
 ): Promise<void> {
@@ -82,7 +82,7 @@ function replayCatchUp(
 	return true;
 }
 
-export function registerSSERoute(app: Hono, ctx: DaemonContext) {
+export function registerSSERoute(app: Hono, ctx: RuntimeContext) {
 	app.get("/events", (c) => {
 		const projectId = c.req.query("projectId");
 		if (!projectId) return c.text("projectId required", 400);

@@ -77,7 +77,7 @@ describe("daemon-shell", () => {
 		dataDir = join(tempDir, ".mxd");
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		worker = new Worker(new URL("./daemon/scope-worker.ts", import.meta.url).href);
+		worker = new Worker(new URL("./runtime/scope-worker.ts", import.meta.url).href);
 
 		worker.onmessage = (event: MessageEvent) => {
 			const msg = event.data;

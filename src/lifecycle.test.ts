@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
-import { runChildCore } from "./daemon/agent-lifecycle.ts";
+import { runChildCore } from "./runtime/agent-lifecycle.ts";
 import { createApp } from "./runtime.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event, EventSpec } from "./events.ts";

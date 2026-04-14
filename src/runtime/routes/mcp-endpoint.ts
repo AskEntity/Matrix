@@ -28,14 +28,14 @@ import {
 	type ToolDef,
 	type ToolHandlerResult,
 } from "../../tool-def.ts";
-import type { DaemonContext } from "../context.ts";
+import type { RuntimeContext } from "../context.ts";
 import { subscribeToEvents } from "../event-system.ts";
 
 /**
  * Build external-only ToolDefs (availability: "external").
  * These are NOT in orchestrator-tools — they only exist for external MCP clients.
  */
-function buildExternalOnlyToolDefs(ctx: DaemonContext): ToolDef[] {
+function buildExternalOnlyToolDefs(ctx: RuntimeContext): ToolDef[] {
 	return [
 		// ── send_user_message ──
 		{
@@ -293,7 +293,7 @@ function registerToolDefOnMcpServer(server: McpServer, toolDef: ToolDef): void {
  * GET /mcp — SSE stream (for MCP clients that use GET for server-initiated messages)
  * DELETE /mcp — session termination (no-op for stateless)
  */
-export function registerMcpEndpoint(app: Hono, ctx: DaemonContext): void {
+export function registerMcpEndpoint(app: Hono, ctx: RuntimeContext): void {
 	// Ensure resource registry is initialized — MCP tools call R.* functions
 	// which need the daemon context. Idempotent if already initialized by agent-lifecycle.
 	initResourceRegistry(ctx);

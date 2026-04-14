@@ -113,7 +113,7 @@ export interface DaemonConfig {
  * Shared daemon context — passed to all route handlers and lifecycle functions.
  * Contains all shared mutable state that was previously captured via closure in createApp().
  */
-export interface DaemonContext {
+export interface RuntimeContext {
 	readonly config: DaemonConfig;
 	readonly pm: ProjectManager;
 	readonly trackers: Map<string, TaskTracker>;

@@ -1,10 +1,10 @@
 import type { Hono } from "hono";
 import { stopAgent } from "../agent-lifecycle.ts";
-import type { DaemonContext } from "../context.ts";
+import type { RuntimeContext } from "../context.ts";
 import { getPendingClarifications } from "../event-system.ts";
 import { getEventStore, stripEventForUI } from "../helpers.ts";
 
-export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
+export function registerProjectRoutes(app: Hono, ctx: RuntimeContext) {
 	// Projects CRUD
 	app.post("/projects", async (c) => {
 		const body = await c.req.json<{ path: string }>();

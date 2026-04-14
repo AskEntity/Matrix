@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { createApp } from "./runtime.ts";
 import type { Event } from "./events.ts";
-import type { ScopeOpts } from "./daemon/context.ts";
+import type { ScopeOpts } from "./runtime/context.ts";
 import { toToolDefinition } from "./tool-def.ts";
 import type { ToolDef } from "./tool-def.ts";
 import {
