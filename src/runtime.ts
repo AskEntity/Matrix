@@ -310,7 +310,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	registerMockShowcaseRoute(app);
 
 	// Static file serving for the web UI (fallback for non-Bun environments)
-	app.use("/web/*", serveStatic({ root: "./" }));
+	app.use("/web/*", serveStatic({ root: ".mxd/plugin/" }));
 
 	/** Auto-resume agents that were running before daemon restart.
 	 *
@@ -518,7 +518,8 @@ if (import.meta.main) {
 	console.log(`Web UI: http://localhost:${port}/`);
 
 	// Use Bun's HTML import for the web UI (auto-bundles TSX/CSS)
-	const webIndex = await import("../web/index.html");
+	// Points to Matrix plugin's web UI (runtime.ts = production entry, serves full UI directly)
+	const webIndex = await import("../.mxd/plugin/web/index.html");
 	Bun.serve({
 		routes: {
 			"/": webIndex.default,
