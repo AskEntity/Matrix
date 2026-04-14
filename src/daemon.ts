@@ -11,6 +11,7 @@ import {
 	resolveAuthGroup,
 } from "./config.ts";
 import {
+	buildMatrixScopeOpts,
 	deliverMessage,
 	runAgentForNode,
 	stopAgent,
@@ -39,7 +40,7 @@ import type { Event } from "./events.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { createTaskComplete } from "./queue-message-factory.ts";
 
-import { buildSystemPrompt } from "./system-prompts.ts";
+// buildSystemPrompt import removed — prompt is now provided by buildMatrixScopeOpts
 import { TOOL_DONE } from "./tool-names.ts";
 import {
 	type HealthResponse,
@@ -151,6 +152,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		eventStores: new Map(),
 		streamingText: new Map(),
 		agentLoopPromises: new Map(),
+		scopeOpts: new Map(),
 		requestCount: 0,
 		startupReady: false,
 		// Defensive clone: DEFAULT_CONFIG is frozen, and even if initialConfig is
@@ -300,9 +302,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Register all route groups
 	registerProjectRoutes(app, ctx);
-	registerTaskRoutes(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
+	registerTaskRoutes(app, ctx);
 	registerConfigRoutes(app, ctx);
-	registerAgentRoutes(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
+	registerAgentRoutes(app, ctx);
 	registerSSERoute(app, ctx);
 	registerMcpEndpoint(app, ctx);
 	registerMockShowcaseRoute(app);
@@ -324,119 +326,124 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	 * - Interrupted (JSONL has orphaned tool_calls): buildSessionRepair adds
 	 *   tool_results → messages end with user content → skip initial drain → API call
 	 */
+	/**
+	 * Resume a single project scope: crash recovery + launch in_progress agents.
+	 * Extracted so plugin scopes can reuse the same startup logic.
+	 */
+	async function resumeScope(
+		project: { id: string; name: string; path: string },
+		tracker: import("./task-tracker.ts").TaskTracker,
+		eventStore: import("./event-store.ts").EventStore,
+		scopeOpts: Pick<
+			import("./daemon/agent-lifecycle.ts").RunAgentOpts,
+			"buildTools" | "buildPrompt"
+		>,
+	): Promise<void> {
+		// ── Phase 2 crash recovery ──
+		const allNodes = tracker.allNodes();
+		for (const node of allNodes) {
+			if (!isTask(node)) continue;
+			if (!eventStore.has(node.id)) continue;
+
+			await eventStore.flushSession(node.id);
+			const events = eventStore.readActive(node.id);
+
+			const crashRecovery = findInterruptedDonePhase2(events);
+			if (!crashRecovery) continue;
+
+			if (crashRecovery.type === "needs_phase2") {
+				const { status, summary } = crashRecovery;
+				console.log(
+					`[autoResume] Completing interrupted Phase 2 for ${node.id} (status=${status})`,
+				);
+				tracker.updateStatus(node.id, status);
+
+				const isRoot = node.id === tracker.rootNodeId;
+				const taskAbove = tracker.getTaskAbove(node.id);
+				if (taskAbove && !isRoot) {
+					const completionMsg = createTaskComplete(
+						node.id,
+						node.title ?? "unknown",
+						status === "verify",
+						summary,
+					);
+					await deliverMessage(
+						ctx,
+						project,
+						taskAbove.id,
+						completionMsg,
+						{ quiet: true },
+					).catch((e) => {
+						console.warn(
+							`[autoResume] Failed to deliver task_complete to parent ${taskAbove.id}:`,
+							e,
+						);
+					});
+				}
+
+				emitEvent(ctx, project.id, {
+					type: "done_notified",
+					taskId: node.id,
+					status,
+					summary,
+					ts: Date.now(),
+				});
+				await eventStore.flushSession(node.id);
+				await tracker.save();
+				broadcastTreeUpdate(ctx, project.id, tracker);
+			} else if (
+				crashRecovery.type === "status_stale" &&
+				node.status === "in_progress"
+			) {
+				const { status } = crashRecovery;
+				console.log(
+					`[autoResume] Fixing stale status for ${node.id} (→${status})`,
+				);
+				tracker.updateStatus(node.id, status);
+				await tracker.save();
+				broadcastTreeUpdate(ctx, project.id, tracker);
+			}
+		}
+
+		// ── Launch in_progress agents ──
+		const inProgressNodes = tracker
+			.allNodes()
+			.filter(
+				(n): n is import("./types.ts").TaskNode =>
+					isTask(n) && n.status === "in_progress" && eventStore.has(n.id),
+			);
+
+		for (const node of inProgressNodes) {
+			const isRoot = node.id === tracker.rootNodeId;
+			if (!isRoot && !node.worktreePath) continue;
+
+			console.log(`Auto-resuming ${project.name} node ${node.id}`);
+
+			runAgentForNode(ctx, project, tracker, node.id, {
+				...scopeOpts,
+				resume: true,
+			}).catch((e) => {
+				console.error(
+					`[autoResume] Failed to resume ${node.id}:`,
+					e instanceof Error ? e.message : e,
+				);
+			});
+		}
+	}
+
 	async function autoResumeProjects(): Promise<void> {
 		const projects = ctx.pm.list();
 		for (const project of projects) {
 			const tracker = await getTracker(ctx, project.id);
 			const eventStore = getEventStore(ctx, project.id);
-
-			// ── Phase 2 crash recovery ──
-			// Check all nodes with JSONL sessions for interrupted Phase 2:
-			// - done tool_call exists without done_notified after it → complete Phase 2
-			// - done_notified exists but status still in_progress → fix status
-			const allNodes = tracker.allNodes();
-			for (const node of allNodes) {
-				if (!isTask(node)) continue;
-				if (!eventStore.has(node.id)) continue;
-
-				await eventStore.flushSession(node.id);
-				const events = eventStore.readActive(node.id);
-
-				const crashRecovery = findInterruptedDonePhase2(events);
-				if (!crashRecovery) continue;
-
-				if (crashRecovery.type === "needs_phase2") {
-					// done() was called but Phase 2 never completed (no done_notified)
-					const { status, summary } = crashRecovery;
-					console.log(
-						`[autoResume] Completing interrupted Phase 2 for ${node.id} (status=${status})`,
-					);
-					tracker.updateStatus(node.id, status);
-
-					// Deliver task_complete to task above (skip folders)
-					const isRoot = node.id === tracker.rootNodeId;
-					const taskAbove = tracker.getTaskAbove(node.id);
-					if (taskAbove && !isRoot) {
-						const completionMsg = createTaskComplete(
-							node.id,
-							node.title ?? "unknown",
-							status === "verify",
-							summary,
-						);
-						await deliverMessage(
-							ctx,
-							project,
-							taskAbove.id,
-							completionMsg,
-							// quiet: skip auto-launch — the parent will be launched
-							// by the autoResume loop below. Without quiet, deliverMessage
-							// would auto-launch the parent here, then autoResume would
-							// also try to launch it → duplicate agent loop.
-							{ quiet: true },
-						).catch((e) => {
-							console.warn(
-								`[autoResume] Failed to deliver task_complete to parent ${taskAbove.id}:`,
-								e,
-							);
-						});
-					}
-
-					// Write done_notified marker
-					emitEvent(ctx, project.id, {
-						type: "done_notified",
-						taskId: node.id,
-						status,
-						summary,
-						ts: Date.now(),
-					});
-					await eventStore.flushSession(node.id);
-					await tracker.save();
-					broadcastTreeUpdate(ctx, project.id, tracker);
-				} else if (
-					crashRecovery.type === "status_stale" &&
-					node.status === "in_progress"
-				) {
-					// done_notified was written but status wasn't saved (crash between write and save)
-					const { status } = crashRecovery;
-					console.log(
-						`[autoResume] Fixing stale status for ${node.id} (→${status})`,
-					);
-					tracker.updateStatus(node.id, status);
-					await tracker.save();
-					broadcastTreeUpdate(ctx, project.id, tracker);
-				}
-			}
-
-			// Collect all in_progress task nodes that have JSONL sessions
-			const inProgressNodes = tracker
-				.allNodes()
-				.filter(
-					(n): n is import("./types.ts").TaskNode =>
-						isTask(n) && n.status === "in_progress" && eventStore.has(n.id),
-				);
-
-			if (inProgressNodes.length === 0) continue;
-
-			for (const node of inProgressNodes) {
-				const isRoot = node.id === tracker.rootNodeId;
-
-				// Skip child nodes without worktrees — they can't run
-				if (!isRoot && !node.worktreePath) continue;
-
-				console.log(`Auto-resuming ${project.name} node ${node.id}`);
-
-				runAgentForNode(ctx, project, tracker, node.id, {
-					orchestratorSystemPrompt: isRoot
-						? ORCHESTRATOR_SYSTEM_PROMPT
-						: undefined,
-					resume: true,
-				}).catch((e) => {
-					console.error(
-						`[autoResume] Failed to resume ${node.id}:`,
-						e instanceof Error ? e.message : e,
-					);
-				});
-			}
+			const matrixOpts = buildMatrixScopeOpts(
+				project.id,
+				ctx.globalConfig.selfBootstrap,
+			);
+			// Register scope opts so internal paths (deliverMessage, ensureChildAgentRunning)
+			// can look up the project's tools + prompt without passing them through every call.
+			ctx.scopeOpts.set(project.id, matrixOpts);
+			await resumeScope(project, tracker, eventStore, matrixOpts);
 		}
 	}
 
@@ -475,7 +482,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	};
 }
 
-const ORCHESTRATOR_SYSTEM_PROMPT = buildSystemPrompt();
+// ORCHESTRATOR_SYSTEM_PROMPT removed — prompt is now provided by buildMatrixScopeOpts
+// and stored in ctx.scopeOpts per project.
 
 // Only start the server when run directly, not when imported for testing.
 if (import.meta.main) {

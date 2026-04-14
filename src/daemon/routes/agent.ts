@@ -4,7 +4,7 @@ import {
 	createCompactMessage,
 	createUserMessage,
 } from "../../queue-message-factory.ts";
-import type { SystemPrompt } from "../../system-prompts.ts";
+// SystemPrompt import removed — scope opts come from ctx.scopeOpts
 import { moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
 import { isTask } from "../../types.ts";
@@ -23,11 +23,7 @@ import {
 	resolveProjectConfig,
 } from "../helpers.ts";
 
-export function registerAgentRoutes(
-	app: Hono,
-	ctx: DaemonContext,
-	orchestratorSystemPrompt: SystemPrompt,
-) {
+export function registerAgentRoutes(app: Hono, ctx: DaemonContext) {
 	// Agent status
 	app.get("/projects/:id/agent", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));
@@ -177,7 +173,10 @@ export function registerAgentRoutes(
 				restartTracker2,
 				restartTracker2.rootNodeId,
 				{
-					orchestratorSystemPrompt,
+					...(ctx.scopeOpts.get(project.id) ?? {
+						buildTools: () => ({ tools: [] }),
+						buildPrompt: () => ({ stable: "", variable: "" }),
+					}),
 					resume: true,
 				},
 			).catch((e) => {

@@ -2,7 +2,28 @@ import type { AgentProvider } from "../agent-provider.ts";
 import type { MatrixConfig } from "../config.ts";
 import type { EventStore } from "../event-store.ts";
 import type { ProjectManager } from "../project-manager.ts";
+import type { SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
+import type { Auth } from "../tool-auth.ts";
+import type { ToolDefinition } from "../tool-definition.ts";
+
+/**
+ * Scope options for a project's run loop.
+ * Determines what tools and prompt agents in this scope use.
+ */
+export interface ScopeOpts {
+	buildTools: (
+		auth: Auth,
+		taskId: string,
+	) => {
+		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+		tools: ToolDefinition<any>[];
+		hasRunningChildren?: () => boolean;
+		setMessages?: (msgs: unknown[]) => void;
+		setAllTools?: (tools: unknown[]) => void;
+	};
+	buildPrompt: () => SystemPrompt;
+}
 
 /** SSE client connection subscribed to a project's event stream. */
 export interface SSEClient {
@@ -80,6 +101,12 @@ export interface DaemonContext {
 	 * Used by stopTask/resetTask to await loop exit before clearing JSONL.
 	 */
 	readonly agentLoopPromises: Map<string, Promise<void>>;
+
+	/**
+	 * Per-project scope configuration. Determines tools + prompt for agents.
+	 * Set during autoResumeProjects or project registration.
+	 */
+	readonly scopeOpts: Map<string, ScopeOpts>;
 
 	/** Mutable counters/flags */
 	requestCount: number;
