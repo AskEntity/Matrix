@@ -205,6 +205,7 @@ describe("read_file pixel dimension guard", () => {
 			"test-task",
 			"",
 		);
+		testNode.cwd = tmpDir;
 		testNode.session = {
 			queue: {
 				enqueue: () => {},
