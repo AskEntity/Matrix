@@ -26,10 +26,7 @@ export interface TaskSession {
 	 * carry traceId — they exist independently of any specific run.
 	 */
 	loopTraceId: string;
-	/** Current working directory — mutable, updated by bash cd. */
-	cwd: string;
-	/** Project/worktree root — immutable fallback. */
-	fallbackCwd: string;
+
 	depth: number;
 	/** Background processes for this session, keyed by background process ID. */
 	backgroundProcesses: Map<string, BackgroundProcess>;
@@ -59,24 +56,15 @@ export interface FolderNode {
  * A task node — maps 1:1 to an agent and a git branch.
  * Has full lifecycle: draft → pending → in_progress → verify | failed → closed.
  */
-export interface TaskNode {
+/**
+ * Base node — runtime-level fields only.
+ * Plugin extends this with domain-specific fields.
+ */
+export interface BaseTaskNode {
 	id: string;
 	title: string;
-	description: string;
-	status: TaskStatus;
-	branch: string | null;
 	parentId: string | null;
 	children: string[];
-	/** Absolute path to the git worktree for this task. */
-	worktreePath: string | null;
-	/** Accumulated cost in USD for this task's agent execution. Default 0. */
-	costUsd: number;
-	/** Maximum cost in USD this task is allowed to spend. */
-	budgetUsd?: number;
-	/** Who last modified this node: 'user' (REST/CLI) or 'agent' (MCP tools). Default "agent". */
-	editedBy: "user" | "agent";
-	/** Optional color label for visual categorization. */
-	color?: string;
 	createdAt: string;
 	updatedAt: string;
 	/**
@@ -86,6 +74,28 @@ export interface TaskNode {
 	session?: TaskSession;
 	/** Discriminator: task nodes are always "task" (or undefined for backward compat on load). */
 	type?: "task";
+}
+
+/**
+ * Matrix-specific task node — extends base with coding-IDE fields.
+ * This is what Matrix's plugin operates on. Other plugins define their own extends.
+ */
+export interface TaskNode extends BaseTaskNode {
+	description: string;
+	status: TaskStatus;
+	branch: string | null;
+	/** Absolute path to the git worktree for this task. */
+	worktreePath: string | null;
+	/** Current working directory — persists across restarts. Updated by bash cd. */
+	cwd: string | null;
+	/** Accumulated cost in USD for this task's agent execution. Default 0. */
+	costUsd: number;
+	/** Maximum cost in USD this task is allowed to spend. */
+	budgetUsd?: number;
+	/** Who last modified this node: 'user' (REST/CLI) or 'agent' (MCP tools). Default "agent". */
+	editedBy: "user" | "agent";
+	/** Optional color label for visual categorization. */
+	color?: string;
 }
 
 /** Any node in the task tree — either a task or a folder. */

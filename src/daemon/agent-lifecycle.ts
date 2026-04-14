@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
+import { buildSummarizationInstruction } from "../compaction.ts";
 import { DEFAULT_MODEL } from "../config.ts";
 import { rollOldTraceIdDirs } from "../debug-snapshot.ts";
 import {
@@ -22,7 +23,7 @@ import {
 	createWorkContext,
 } from "../queue-message-factory.ts";
 import * as R from "../resource-registry.ts";
-import { buildSystemPrompt, type SystemPrompt } from "../system-prompts.ts";
+import { buildSystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
 import { createAgentAuth } from "../tool-auth.ts";
@@ -37,7 +38,7 @@ import { type AgentResult, isTask, type TaskSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
 import { buildWorkContextContent } from "../work-context.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
-import type { DaemonContext } from "./context.ts";
+import type { DaemonContext, ScopeOpts } from "./context.ts";
 import {
 	broadcast,
 	broadcastTreeUpdate,
@@ -92,11 +93,24 @@ function findSessionConfig(events: Event[]): SessionConfigEvent | undefined {
  * All callers that want standard Matrix behavior pass these to runAgentForNode.
  * This is the ONLY place that knows about orchestrator tools + builtin tools + Matrix system prompt.
  */
+
+/** Matrix's done() result — status + summary. */
+export type MatrixDoneData = {
+	status: "verify" | "failed";
+	summary: string;
+};
+
+/** Matrix's plugin type bundle. */
+export type MatrixPluginTypes = {
+	node: import("../types.ts").TaskNode;
+	done: MatrixDoneData;
+};
+
 export function buildMatrixScopeOpts(
 	projectId: string,
 	selfBootstrap: boolean,
 	ctx?: DaemonContext,
-): Pick<RunAgentOpts, "buildTools" | "buildPrompt" | "connectMcp" | "beforeChildLaunch"> {
+): ScopeOpts<MatrixPluginTypes> {
 	return {
 		buildTools: (auth, taskId) => {
 			const { toolDefs, hasRunningChildren, setMessages, setAllTools } =
@@ -126,6 +140,16 @@ export function buildMatrixScopeOpts(
 				}
 			: undefined,
 		beforeChildLaunch: async (node, tracker, projectPath) => {
+			// Already has a valid worktree — ensure cwd is set, return
+			if (node.worktreePath && existsSync(node.worktreePath)) {
+				if (!node.cwd) node.cwd = node.worktreePath;
+				return { cwd: node.cwd };
+			}
+			// Stale worktreePath — directory was deleted outside close_task
+			if (node.worktreePath && !existsSync(node.worktreePath)) {
+				node.worktreePath = null;
+				node.branch = null;
+			}
 			const parentNode = tracker.getTaskAbove(node.id);
 			const baseBranch = parentNode?.branch;
 			if (!baseBranch) {
@@ -137,6 +161,29 @@ export function buildMatrixScopeOpts(
 			const wm = new WorktreeManager(projectPath, wtRoot);
 			const wt = await wm.create(node.id, slugify(node.title), baseBranch);
 			tracker.assignWorktree(node.id, wt.branch, wt.path);
+			node.cwd = wt.path;
+			return { cwd: wt.path };
+		},
+		buildWorkContext: (node, projectPath) =>
+			buildWorkContextContent(node.cwd ?? node.worktreePath ?? projectPath),
+		buildSummarizationPrompt: (node, projectPath) =>
+			buildSummarizationInstruction(node.cwd ?? node.worktreePath ?? projectPath),
+		buildDoneResumeContext: (node, projectPath) => {
+			const cwdLine = (node.cwd ?? node.worktreePath ?? projectPath)
+				? `\n\n## Working Directory\n${node.cwd ?? node.worktreePath ?? projectPath}`
+				: "";
+			return `You previously called done(). New messages woke you up:${cwdLine}`;
+		},
+		shouldResume: (node) => node.status === "in_progress",
+		onLaunch: (node, tracker) => {
+			tracker.updateStatus(node.id, "in_progress");
+		},
+		onDone: (node, tracker, doneArgs) => {
+			const newStatus =
+				doneArgs.status === "passed" ? "verify" : "failed";
+			const summary = (doneArgs.summary as string) ?? "";
+			tracker.updateStatus(node.id, newStatus as import("../types.ts").TaskStatus);
+			return { status: newStatus, summary };
 		},
 	};
 }
@@ -539,7 +586,8 @@ export async function deliverMessage(
 		) {
 			// Root node — same launch path as child, scope opts from ctx
 			const rootScopeOpts = ctx.scopeOpts.get(project.id)!;
-			tracker.updateStatus(nodeId, "in_progress");
+			const rootNode = tracker.getTask(nodeId);
+			if (rootNode && rootScopeOpts.onLaunch) rootScopeOpts.onLaunch(rootNode, tracker);
 			runAgentForNode(ctx, project, tracker, nodeId, {
 				...rootScopeOpts,
 				resume: shouldResume,
@@ -573,37 +621,26 @@ export async function ensureChildAgentRunning(
 	const node = tracker.getTask(nodeId);
 	if (!node) return;
 
+	const scopeOpts = ctx.scopeOpts.get(project.id);
+	if (!scopeOpts) {
+		throw new Error(`No scope opts registered for project ${project.id}`);
+	}
+
 	// Guard: if agent is already running or being launched, do nothing.
-	// Message was already enqueued to JSONL by deliverMessage — the agent picks it up.
 	if (node.session != null || ctx.launchingNodes.has(nodeId)) {
 		return;
 	}
 
 	// Prepare child workspace via scope hook (Matrix creates worktrees, plugins may differ)
-	if (!node.worktreePath || !existsSync(node.worktreePath)) {
-		if (node.worktreePath && !existsSync(node.worktreePath)) {
-			// Stale worktreePath — directory was deleted outside close_task
-			node.worktreePath = null;
-			node.branch = null;
-		}
-		const scopeOpts = ctx.scopeOpts.get(project.id);
-		if (scopeOpts?.beforeChildLaunch) {
-			await scopeOpts.beforeChildLaunch(node, tracker, project.path);
-		}
-		// If hook didn't set worktreePath, child runs in project root (no worktree needed)
+	// Hook decides if preparation is needed — runtime doesn't check workspace state.
+	if (scopeOpts.beforeChildLaunch) {
+		await scopeOpts.beforeChildLaunch(node, tracker, project.path);
 	}
 
-	tracker.updateStatus(nodeId, "in_progress");
+	if (scopeOpts.onLaunch) scopeOpts.onLaunch(node, tracker);
 	await tracker.save();
 
 	broadcastTreeUpdate(ctx, project.id, tracker);
-
-	// The real user/parent message is persisted to disk and will be delivered
-	// via queue drain. work_context is injected by enqueue hook.
-	const scopeOpts = ctx.scopeOpts.get(project.id);
-	if (!scopeOpts) {
-		throw new Error(`No scope opts registered for project ${project.id}`);
-	}
 	await runAgentForNode(ctx, project, tracker, nodeId, {
 		...scopeOpts,
 		model,
@@ -626,44 +663,14 @@ function computeDepth(tracker: TaskTracker, nodeId: string): number {
 // (orchestrator-tools.ts needs it, and agent-lifecycle.ts imports from orchestrator-tools.ts)
 
 /** Run a child agent in the background for a specific task node. */
-/** Options for running an agent node. */
-export interface RunAgentOpts {
+/** Options for running an agent node. Extends ScopeOpts with per-launch overrides. */
+export interface RunAgentOpts extends ScopeOpts {
 	/** Model override (from API parameter). */
 	model?: string;
 	/** Whether this is a resume (pre-computed by caller). Used for agent_start event. */
 	resume?: boolean;
-	/**
-	 * Tool builder for this scope. Called with agent auth + taskId to produce the tool set.
-	 * The caller decides what tools are available — runtime doesn't know about
-	 * Matrix orchestrator tools vs plugin tools.
-	 */
-	buildTools: (auth: ReturnType<typeof createAgentAuth>, taskId: string) => {
-		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-		tools: ToolDefinition<any>[];
-		hasRunningChildren?: () => boolean;
-		setMessages?: (msgs: unknown[]) => void;
-		setAllTools?: (tools: unknown[]) => void;
-	};
-	/**
-	 * Prompt builder for this scope. Called for fresh sessions and compact refresh.
-	 * The caller decides the system prompt — runtime doesn't know about
-	 * Matrix system prompt vs plugin prompt.
-	 */
-	buildPrompt: () => SystemPrompt;
-	/**
-	 * Connect external MCP servers for this scope.
-	 * If not provided, no MCP servers are connected.
-	 */
-	connectMcp?: (projectPath: string) => Promise<McpClientManager>;
-	/**
-	 * Prepare a child node before launching its agent.
-	 * Matrix creates git worktrees here. Plugins may do something else or nothing.
-	 */
-	beforeChildLaunch?: (
-		node: import("../types.ts").TaskNode,
-		tracker: TaskTracker,
-		projectPath: string,
-	) => Promise<void>;
+	/** Agent working directory. Set by beforeChildLaunch return value. Default: project root. */
+	cwd?: string;
 }
 
 /** Run an agent for any node (root or child). Shared launch path. */
@@ -677,8 +684,7 @@ export async function runAgentForNode(
 	const node = tracker.getTask(nodeId);
 	if (!node) return;
 	const isRoot = !node.parentId;
-	const agentCwd = isRoot ? project.path : (node.worktreePath as string);
-	if (!agentCwd) return;
+	const agentCwd = project.path; // project root — tools read cwd from node data
 
 	// Launch lock: prevent duplicate launches when messages arrive before session is established.
 	if (node.session != null || ctx.launchingNodes.has(nodeId)) {
@@ -743,8 +749,6 @@ export async function runAgentForNode(
 			queue: childQueue,
 			abortController,
 			loopTraceId,
-			cwd: agentCwd,
-			fallbackCwd: agentCwd,
 			depth,
 			backgroundProcesses: new Map(),
 			foregroundExecutions: new Map(),
@@ -840,18 +844,16 @@ export async function runAgentForNode(
 				"source" in e.body &&
 				(e.body as { source: string }).source === "work_context",
 		);
-		if (!hasWorkContext) {
-			// Fresh session or first run without work_context — inject it now
-			const content = buildWorkContextContent(agentCwd);
+		if (!hasWorkContext && opts.buildWorkContext) {
+			const content = opts.buildWorkContext(node, project.path);
 			if (content) {
-				const workCtxMsg = createWorkContext(content);
-				// Use regular enqueue (not replay) so it persists to JSONL
-				childQueue.enqueue(workCtxMsg);
+				childQueue.enqueue(createWorkContext(content));
 			}
 		}
 		// Set hook for future compact re-arm (resetBeforeFirstMessage in compact flow)
 		childQueue.setBeforeFirstMessage(() => {
-			const content = buildWorkContextContent(agentCwd);
+			if (!opts.buildWorkContext) return [];
+			const content = opts.buildWorkContext(node, project.path);
 			if (!content) return [];
 			return [createWorkContext(content)];
 		});
@@ -910,27 +912,15 @@ export async function runAgentForNode(
 		const cacheTtl: "1h" | undefined =
 			configuredTtl === "1h" ? "1h" : undefined;
 
-		// Resolve system prompt: use stored session_config on resume, fresh on start.
+		// System prompt resolution moved to provider loop (reads stored session_config internally).
+		// Cache TTL: on resume, inherit from stored config (preserves fork inheritance).
 		const isResume = activeEvents.length > 0;
 		const storedConfig = isResume ? findSessionConfig(activeEvents) : undefined;
-		let systemPrompt: SystemPrompt;
-		// On resume, use cacheTtl from stored config (preserves fork inheritance).
-		// On fresh start, use computed cacheTtl.
 		const effectiveCacheTtl = storedConfig?.cacheTtl ?? cacheTtl;
-		if (storedConfig) {
-			// Resume: use frozen system prompt from JSONL for cache stability
-			systemPrompt = {
-				stable: storedConfig.systemStable,
-				variable: storedConfig.systemVariable,
-			};
-		} else {
-			// Fresh start: use scope's prompt builder
-			systemPrompt = opts.buildPrompt();
+		if (!storedConfig) {
 			// session_config is emitted by runProviderLoop after tools are built.
 			// Previously we emitted here with tools=[] — now tools are populated.
 		}
-
-		const refreshSystemPrompt = opts.buildPrompt;
 
 		// Debug snapshot v2: per-traceId epoch.
 		// Layout: <dataDir>/projects/<id>/debug/<taskId>/<traceId>/last.json
@@ -946,12 +936,10 @@ export async function runAgentForNode(
 		const debugSnapshotPath = join(taskDebugDir, loopTraceId, "last.json");
 
 		const sessionRequest: AgentRequest = {
-			cwd: agentCwd,
 			projectPath: isRoot ? project.path : undefined,
 			emit,
 			activeEvents,
-			systemPrompt,
-			refreshSystemPrompt,
+			buildSystemPrompt: opts.buildPrompt,
 			resumeSessionId: nodeId,
 			model: effectiveModel,
 			mcpToolDefs: agentCtx.mcpToolDefs,
@@ -964,6 +952,16 @@ export async function runAgentForNode(
 
 			signal: abortController.signal,
 			queue: childQueue,
+			// Lifecycle hooks bound to this node — plugin provides content, runtime calls at right time
+			buildWorkContext: opts.buildWorkContext
+				? () => opts.buildWorkContext!(node, project.path)
+				: undefined,
+			buildSummarizationPrompt: opts.buildSummarizationPrompt
+				? () => opts.buildSummarizationPrompt!(node, project.path)
+				: undefined,
+			buildDoneResumeContext: opts.buildDoneResumeContext
+				? () => opts.buildDoneResumeContext!(node, project.path)
+				: undefined,
 		};
 
 		// Root agents: stream directly — done() enters idle-yield, session stays alive.
@@ -1074,9 +1072,14 @@ export async function runAgentForNode(
 					);
 				});
 			} else {
-				const newStatus =
-					agentResult.exitReason === "done_passed" ? "verify" : "failed";
-				tracker.updateStatus(nodeId, newStatus);
+				// Let plugin update node state on done — returns data for crash-safe marker
+				const doneArgs = {
+					status: agentResult.exitReason === "done_passed" ? "passed" : "failed",
+					summary: agentResult.doneSummary ?? "",
+				};
+				const doneData = opts.onDone
+					? (opts.onDone(currentNode, tracker, doneArgs) ?? doneArgs)
+					: doneArgs;
 				await tracker.save();
 				broadcastTreeUpdate(ctx, project.id, tracker);
 
@@ -1098,11 +1101,11 @@ export async function runAgentForNode(
 					);
 				}
 
+				// Crash-safe marker: plugin fields spread directly onto event
 				emitEvent(ctx, project.id, {
 					type: "done_notified",
 					taskId: nodeId,
-					status: newStatus,
-					summary: agentResult.doneSummary ?? "",
+					...doneData,
 					traceId: loopTraceId,
 					ts: Date.now(),
 				});

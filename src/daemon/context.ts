@@ -6,12 +6,29 @@ import type { SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type { Auth } from "../tool-auth.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
+import type { BaseTaskNode } from "../types.ts";
 
 /**
  * Scope options for a project's run loop.
- * Determines what tools and prompt agents in this scope use.
+ * T flows through all callbacks — plugin authors get type-safe access to their node data.
+ * Runtime stores ScopeOpts (T=DefaultPluginTypes, erased).
  */
-export interface ScopeOpts {
+/**
+ * Plugin type bundle — ties together all type extensions.
+ * ONE generic parameter on ScopeOpts distributes types everywhere.
+ */
+/** Base done data — runtime only knows the agent finished. Plugins extend with fields. */
+export interface BaseDoneData {
+	[key: string]: unknown;
+}
+
+export interface PluginTypes {
+	node: BaseTaskNode;
+	done: BaseDoneData;
+}
+
+export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
+	// ── Agent behavior ──
 	buildTools: (
 		auth: Auth,
 		taskId: string,
@@ -23,24 +40,34 @@ export interface ScopeOpts {
 		setAllTools?: (tools: unknown[]) => void;
 	};
 	buildPrompt: () => SystemPrompt;
-	/**
-	 * Connect external MCP servers for this scope.
-	 * Matrix reads mcpServers from resolved project config internally.
-	 * Plugins handle their own MCP config or connect nothing.
-	 */
+
+	// ── Infrastructure ──
 	connectMcp?: (projectPath: string) => Promise<import("../mcp-client.ts").McpClientManager>;
-	/**
-	 * Prepare a child node before launching its agent.
-	 * Matrix uses this to create git worktrees. Plugins may create
-	 * different workspace structures or do nothing.
-	 * Must set node.worktreePath if the agent needs a working directory
-	 * different from the project root.
-	 */
 	beforeChildLaunch?: (
-		node: import("../types.ts").TaskNode,
+		node: T["node"],
 		tracker: import("../task-tracker.ts").TaskTracker,
 		projectPath: string,
-	) => Promise<void>;
+	) => Promise<{ cwd: string } | void>;
+
+	// ── Context injection at lifecycle moments ──
+	/** Fresh start / post-compact: inject work context. */
+	buildWorkContext?: (node: T["node"], projectPath: string) => string | null;
+	/** Compaction: build the summarization instruction. */
+	buildSummarizationPrompt?: (node: T["node"], projectPath: string) => string;
+	/** Done resume: build the wake-up context text. */
+	buildDoneResumeContext?: (node: T["node"], projectPath: string) => string;
+
+	// ── Lifecycle (typed with T) ──
+	shouldResume?: (node: T["node"]) => boolean;
+	onLaunch?: (
+		node: T["node"],
+		tracker: import("../task-tracker.ts").TaskTracker,
+	) => void;
+	onDone?: (
+		node: T["node"],
+		tracker: import("../task-tracker.ts").TaskTracker,
+		doneArgs: Record<string, unknown>,
+	) => T["done"];
 }
 
 /** SSE client connection subscribed to a project's event stream. */
@@ -124,7 +151,8 @@ export interface DaemonContext {
 	 * Per-project scope configuration. Determines tools + prompt for agents.
 	 * Set during autoResumeProjects or project registration.
 	 */
-	readonly scopeOpts: Map<string, ScopeOpts>;
+	// biome-ignore lint/suspicious/noExplicitAny: erased generic — runtime doesn't know the plugin's node type
+	readonly scopeOpts: Map<string, ScopeOpts<any>>;
 
 	/** Mutable counters/flags */
 	requestCount: number;

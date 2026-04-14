@@ -51,6 +51,7 @@ export class TaskTracker {
 					};
 					node.costUsd ??= 0;
 					node.editedBy ??= "agent";
+					node.cwd ??= null;
 					// Migration: strip legacy persistent field
 					delete (node as unknown as Record<string, unknown>).persistent;
 					// Migrate: "passed" → "verify" (two-phase done() lifecycle)
@@ -452,6 +453,7 @@ export class TaskTracker {
 			parentId,
 			children: [],
 			worktreePath: null,
+			cwd: null,
 			costUsd: 0,
 			editedBy: opts?.editedBy ?? "agent",
 			...(opts?.budgetUsd !== undefined ? { budgetUsd: opts.budgetUsd } : {}),

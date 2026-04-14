@@ -334,11 +334,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		project: { id: string; name: string; path: string },
 		tracker: import("./task-tracker.ts").TaskTracker,
 		eventStore: import("./event-store.ts").EventStore,
-		scopeOpts: Pick<
-			import("./daemon/agent-lifecycle.ts").RunAgentOpts,
-			"buildTools" | "buildPrompt"
-		>,
+		// biome-ignore lint/suspicious/noExplicitAny: erased generic
+		scopeOpts: import("./daemon/context.ts").ScopeOpts<any>,
 	): Promise<void> {
+		const shouldResumeFn = scopeOpts.shouldResume ?? ((n: import("./types.ts").TaskNode) => n.status === "in_progress");
+
 		// ── Phase 2 crash recovery ──
 		const allNodes = tracker.allNodes();
 		for (const node of allNodes) {
@@ -393,8 +393,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				broadcastTreeUpdate(ctx, project.id, tracker);
 			} else if (
 				crashRecovery.type === "status_stale" &&
-				node.status === "in_progress"
+				shouldResumeFn(node)
 			) {
+				// Node should have been updated to done status but crashed before save.
+				// Apply the done status from JSONL's done_notified event.
 				const { status } = crashRecovery;
 				console.log(
 					`[autoResume] Fixing stale status for ${node.id} (→${status})`,
@@ -405,17 +407,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			}
 		}
 
-		// ── Launch in_progress agents ──
-		const inProgressNodes = tracker
+		// ── Launch agents that should be active ──
+		const resumableNodes = tracker
 			.allNodes()
 			.filter(
 				(n): n is import("./types.ts").TaskNode =>
-					isTask(n) && n.status === "in_progress" && eventStore.has(n.id),
+					isTask(n) && shouldResumeFn(n) && eventStore.has(n.id),
 			);
 
-		for (const node of inProgressNodes) {
-			const isRoot = node.id === tracker.rootNodeId;
-			if (!isRoot && !node.worktreePath) continue;
+		for (const node of resumableNodes) {
 
 			console.log(`Auto-resuming ${project.name} node ${node.id}`);
 

@@ -569,8 +569,6 @@ describe("resetTaskOp", () => {
 			queue,
 			abortController: new AbortController(),
 			loopTraceId: "test-trace-id",
-			cwd: "/tmp",
-			fallbackCwd: "/tmp",
 			depth: 1,
 			backgroundProcesses: new Map(),
 			foregroundExecutions: new Map(),

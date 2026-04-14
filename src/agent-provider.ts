@@ -6,17 +6,17 @@ import type { AgentResult, TaskSession } from "./types.ts";
 
 /** What the orchestrator sends to an agent. */
 export interface AgentRequest {
-	/** Working directory for the agent to operate in. */
-	cwd: string;
-	/** Absolute path to the project root. Defaults to cwd if omitted. */
+	/** Absolute path to the project root. */
 	projectPath?: string;
-	/** System prompt injected into the agent session. Split for cache optimization. */
-	systemPrompt?: import("./system-prompts.ts").SystemPrompt;
-	/**
-	 * Rebuild the system prompt with fresh date. Called after compaction to refresh
-	 * the session_config. If not provided, the original systemPrompt is reused.
-	 */
-	refreshSystemPrompt?: () => import("./system-prompts.ts").SystemPrompt;
+	/** Build work context content. Plugin hook. */
+	buildWorkContext?: () => string | null;
+	/** Build summarization instruction for compaction. Plugin hook. */
+	buildSummarizationPrompt?: () => string;
+	/** Build done-resume context text. Plugin hook. */
+	buildDoneResumeContext?: () => string;
+	/** Build system prompt. Called for fresh sessions and compact refresh.
+	 * On resume, provider loop uses frozen prompt from session_config in JSONL. */
+	buildSystemPrompt?: () => import("./system-prompts.ts").SystemPrompt;
 	/** Abort signal for cancellation. */
 	signal?: AbortSignal;
 	/** Session ID to resume a previous conversation. */
