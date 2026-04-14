@@ -439,6 +439,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			const matrixOpts = buildMatrixScopeOpts(
 				project.id,
 				ctx.globalConfig.selfBootstrap,
+				ctx,
 			);
 			// Register scope opts so internal paths (deliverMessage, ensureChildAgentRunning)
 			// can look up the project's tools + prompt without passing them through every call.

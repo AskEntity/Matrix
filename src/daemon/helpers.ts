@@ -119,7 +119,7 @@ export async function getTracker(
 	if (!ctx.scopeOpts.has(projectId)) {
 		ctx.scopeOpts.set(
 			projectId,
-			buildMatrixScopeOpts(projectId, ctx.globalConfig.selfBootstrap),
+			buildMatrixScopeOpts(projectId, ctx.globalConfig.selfBootstrap, ctx),
 		);
 	}
 	return tracker;

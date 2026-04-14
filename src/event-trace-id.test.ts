@@ -8,7 +8,7 @@
  * run.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { handleClarifyResponse, stopTask } from "./daemon/agent-lifecycle.ts";
+import { stopTask } from "./daemon/agent-lifecycle.ts";
 import { createApp } from "./daemon.ts";
 import type { Event } from "./events.ts";
 import {
