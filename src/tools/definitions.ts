@@ -26,7 +26,7 @@ function textResult(
 	};
 }
 
-/** Get cwd for a task: node.cwd → node.worktreePath. */
+/** Get cwd for a task: node.cwd → node.worktreePath. Throws if neither set. */
 function getTaskCwd(projectId: string, taskId: string | null): string {
 	if (taskId) {
 		const tracker = R.getTracker(projectId);
@@ -34,7 +34,7 @@ function getTaskCwd(projectId: string, taskId: string | null): string {
 		if (node?.cwd) return node.cwd;
 		if (node?.worktreePath) return node.worktreePath;
 	}
-	return "";
+	throw new Error(`No working directory for task ${taskId} in project ${projectId}`);
 }
 
 /** Common bind params for all builtin tools (projectId + taskId). */
