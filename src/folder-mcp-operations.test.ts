@@ -297,7 +297,7 @@ describe("folder-aware: create_task scope validation", () => {
 			description: "desc",
 			parentId: folder.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.parentId).toBe(folder.id);
 	});
@@ -315,7 +315,7 @@ describe("folder-aware: create_task scope validation", () => {
 			description: "desc",
 			parentId: folder.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.parentId).toBe(folder.id);
 	});
@@ -329,7 +329,7 @@ describe("folder-aware: create_task scope validation", () => {
 			description: "desc",
 			parentId: folder.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.parentId).toBe(folder.id);
 	});
@@ -345,7 +345,7 @@ describe("folder-aware: create_task scope validation", () => {
 			description: "desc",
 			parentId: f2.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.parentId).toBe(f2.id);
 	});
@@ -359,7 +359,7 @@ describe("folder-aware: create_task scope validation", () => {
 			description: "desc",
 			parentId: folder.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 	});
 });
 
@@ -408,7 +408,7 @@ describe("folder-aware: update_task reparent", () => {
 			taskId: child.id,
 			parentId: folder.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 
 		// Verify reparent happened
 		const updated = tracker.getTask(child.id);
@@ -442,7 +442,7 @@ describe("folder-aware: update_task reparent", () => {
 			taskId: task.id,
 			parentId: f2.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(tracker.getTask(task.id)?.parentId).toBe(f2.id);
 	});
 
@@ -456,7 +456,7 @@ describe("folder-aware: update_task reparent", () => {
 			taskId: task.id,
 			parentId: agent.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(tracker.getTask(task.id)?.parentId).toBe(agent.id);
 	});
 });
@@ -504,7 +504,7 @@ describe("folder-aware: delete_task", () => {
 		const result = await invokeDeleteTask(tracker.rootNodeId, {
 			taskId: task.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(tracker.getTask(task.id)).toBeUndefined();
 	});
 
@@ -515,7 +515,7 @@ describe("folder-aware: delete_task", () => {
 		const result = await invokeDeleteTask(tracker.rootNodeId, {
 			taskId: folder.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(tracker.get(folder.id)).toBeUndefined();
 	});
 
@@ -578,7 +578,7 @@ describe("folder-aware: close_task", () => {
 		const result = await invokeCloseTask(tracker.rootNodeId, {
 			taskId: task.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(tracker.getTask(task.id)?.status).toBe("closed");
 	});
 
@@ -638,7 +638,7 @@ describe("folder-aware: reset_task", () => {
 		const result = await invokeResetTask(tracker.rootNodeId, {
 			taskId: task.id,
 		});
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(tracker.getTask(task.id)?.status).toBe("pending");
 	});
 
@@ -708,7 +708,7 @@ describe("folder-aware: send_message direction validation", () => {
 			message: "50% done",
 		});
 
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(result.content[0].text).toContain("Message sent to ancestor task");
 	});
 
@@ -734,7 +734,7 @@ describe("folder-aware: send_message direction validation", () => {
 			message: "Do this",
 		});
 
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		// Should be recognized as downward (child's getTaskAbove = root)
 		expect(result.content[0].text).toContain("Message sent to task");
 	});
@@ -782,7 +782,7 @@ describe("folder-aware: send_message direction validation", () => {
 			message: "Start working",
 		});
 
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 	});
 
 	test("grandchild sends upward to grandparent (skip parent) → succeeds", async () => {
@@ -805,7 +805,7 @@ describe("folder-aware: send_message direction validation", () => {
 			message: "Need root's help",
 		});
 
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(result.content[0].text).toContain("Message sent to ancestor task");
 	});
 
@@ -829,7 +829,7 @@ describe("folder-aware: send_message direction validation", () => {
 			message: "3 levels up",
 		});
 
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(result.content[0].text).toContain("Message sent to ancestor task");
 	});
 
@@ -852,7 +852,7 @@ describe("folder-aware: send_message direction validation", () => {
 			message: "Skipping folder and parent",
 		});
 
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(result.content[0].text).toContain("Message sent to ancestor task");
 	});
 
@@ -958,7 +958,7 @@ describe("folder-aware: reorder_tasks", () => {
 			children: [t3.id, t1.id, t2.id],
 		});
 
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		const node = tracker.get(folder.id);
 		if (!node) throw new Error("folder not found");
 		expect(node.children).toEqual([t3.id, t1.id, t2.id]);
@@ -993,7 +993,7 @@ describe("folder-aware: reorder_tasks", () => {
 			children: [t2.id, subFolder.id, t1.id],
 		});
 
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(tracker.get(folder.id)?.children).toEqual([
 			t2.id,
 			subFolder.id,
@@ -1078,7 +1078,7 @@ describe("folder-aware: done() descendant check", () => {
 		});
 
 		// Should succeed — child is not running
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 	});
 
 	test("done() blocked when deeply nested child (through folders) is running", async () => {
@@ -1157,7 +1157,7 @@ describe("folder-aware: fork_task_context scope validation", () => {
 			targetTaskId: target.id,
 		});
 
-		expect(result.isError).toBeUndefined();
+		expect(result.isError).toBeFalsy();
 		expect(result.content[0].text).toContain("fork_task_context completed");
 	});
 
