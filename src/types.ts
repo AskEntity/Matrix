@@ -56,14 +56,34 @@ export interface FolderNode {
  * A task node — maps 1:1 to an agent and a git branch.
  * Has full lifecycle: draft → pending → in_progress → verify | failed → closed.
  */
-export interface TaskNode {
+/**
+ * Base node — runtime-level fields only.
+ * Plugin extends this with domain-specific fields.
+ */
+export interface BaseTaskNode {
 	id: string;
 	title: string;
+	parentId: string | null;
+	children: string[];
+	createdAt: string;
+	updatedAt: string;
+	/**
+	 * Runtime-only session state. Present while the agent is running.
+	 * NOT persisted to disk — stripped during save(), undefined on load().
+	 */
+	session?: TaskSession;
+	/** Discriminator: task nodes are always "task" (or undefined for backward compat on load). */
+	type?: "task";
+}
+
+/**
+ * Matrix-specific task node — extends base with coding-IDE fields.
+ * This is what Matrix's plugin operates on. Other plugins define their own extends.
+ */
+export interface TaskNode extends BaseTaskNode {
 	description: string;
 	status: TaskStatus;
 	branch: string | null;
-	parentId: string | null;
-	children: string[];
 	/** Absolute path to the git worktree for this task. */
 	worktreePath: string | null;
 	/** Current working directory — persists across restarts. Updated by bash cd. */
@@ -76,15 +96,6 @@ export interface TaskNode {
 	editedBy: "user" | "agent";
 	/** Optional color label for visual categorization. */
 	color?: string;
-	createdAt: string;
-	updatedAt: string;
-	/**
-	 * Runtime-only session state. Present while the agent is running.
-	 * NOT persisted to disk — stripped during save(), undefined on load().
-	 */
-	session?: TaskSession;
-	/** Discriminator: task nodes are always "task" (or undefined for backward compat on load). */
-	type?: "task";
 }
 
 /** Any node in the task tree — either a task or a folder. */
