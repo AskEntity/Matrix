@@ -84,9 +84,8 @@ async function setupTestContext(): Promise<TestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 
-	const appResult = createApp({ dataDir, agentProvider: provider });
 	const projectId = ulid();
-	appResult.pm.sync([{ id: projectId, name: basename(projectDir), path: projectDir }]);
+	const appResult = createApp({ dataDir, agentProvider: provider, projects: [{ id: projectId, name: basename(projectDir), path: projectDir }] });
 
 	// Clean up quality task templates
 	const tasksDir = join(projectDir, ".mxd", "tasks");
@@ -199,8 +198,7 @@ async function recreateApp(
 	ctx: TestContext,
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedProviderWithMock(ctx.mockAPI);
-	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider });
-	newApp.pm.sync([{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }]);
+	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider, projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }] });
 	newApp.markReady();
 	return newApp;
 }
