@@ -24,6 +24,7 @@ import {
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
 import type { TaskNode } from "./types.ts";
+import { initTestProject } from "./test-utils/init-test-project.ts";
 
 // ── Test infrastructure ──
 
@@ -68,6 +69,8 @@ async function setupTestContext(): Promise<TestContext> {
 
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
+
+	await initTestProject(projectDir);
 
 	const project = { id: ulid(), name: basename(projectDir), path: projectDir };
 	const appResult = createApp({

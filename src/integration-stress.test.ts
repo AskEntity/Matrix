@@ -25,6 +25,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { initTestProject } from "./test-utils/init-test-project.ts";
 
 // ── Shared test infrastructure (mirrors integration.test.ts) ──
 
@@ -57,6 +58,8 @@ async function setupTestContext(): Promise<TestContext> {
 
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
+
+	await initTestProject(projectDir);
 
 	const project = { id: ulid(), name: basename(projectDir), path: projectDir };
 	const appResult = createApp({
