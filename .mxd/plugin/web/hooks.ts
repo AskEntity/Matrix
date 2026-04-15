@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.ts";
-import { authFetch, getToken } from "./auth.ts";
+import { useAuthFetch, useGetToken } from "./auth.ts";
 
 export type {
 	FolderNode,
@@ -187,6 +187,7 @@ export function useSSE(
 	onConnect?: () => void,
 	onReconnect?: () => void,
 ) {
+	const getToken = useGetToken();
 	const [connected, setConnected] = useState(false);
 	// Bump to force EventSource re-creation when watchdog detects stale connection
 	const [reconnectKey, setReconnectKey] = useState(0);
@@ -253,7 +254,7 @@ export function useSSE(
 			clearInterval(watchdog);
 			source.close();
 		};
-	}, [projectId, reconnectKey, onMessage, onConnect, onReconnect]);
+	}, [getToken, projectId, reconnectKey, onMessage, onConnect, onReconnect]);
 
 	return { connected };
 }
@@ -261,6 +262,7 @@ export function useSSE(
 // --- useProjects ---
 
 export function useProjects() {
+	const authFetch = useAuthFetch();
 	const [projects, setProjects] = useState<Project[]>([]);
 
 	const refresh = useCallback(async () => {
@@ -272,7 +274,7 @@ export function useProjects() {
 		} catch (e) {
 			console.warn("[useProjects] Failed to fetch projects:", e);
 		}
-	}, []);
+	}, [authFetch]);
 
 	useEffect(() => {
 		refresh();
@@ -290,7 +292,7 @@ export function useProjects() {
 			await refresh();
 			return project as Project;
 		},
-		[refresh],
+		[authFetch, refresh],
 	);
 
 	const deleteProject = useCallback(
@@ -299,7 +301,7 @@ export function useProjects() {
 			if (!res.ok) throw new Error((await res.json()).error);
 			await refresh();
 		},
-		[refresh],
+		[authFetch, refresh],
 	);
 
 	const updateProject = useCallback(
@@ -314,7 +316,7 @@ export function useProjects() {
 			await refresh();
 			return project as Project;
 		},
-		[refresh],
+		[authFetch, refresh],
 	);
 
 	return { projects, refresh, initProject, deleteProject, updateProject };
@@ -326,6 +328,7 @@ export function useTasks(
 	projectId: string,
 	setRootNodeId?: React.Dispatch<React.SetStateAction<string | null>>,
 ) {
+	const authFetch = useAuthFetch();
 	const [nodes, setNodes] = useState<TreeNode[]>([]);
 
 	const refresh = useCallback(async () => {
@@ -343,7 +346,7 @@ export function useTasks(
 		} catch (e) {
 			console.warn("[useTasks] Failed to fetch tasks:", e);
 		}
-	}, [projectId, setRootNodeId]);
+	}, [authFetch, projectId, setRootNodeId]);
 
 	useEffect(() => {
 		refresh();
@@ -359,6 +362,7 @@ export function useTasks(
 // --- useAgent ---
 
 export function useAgent(projectId: string) {
+	const authFetch = useAuthFetch();
 	const [activeAgents, setActiveAgents] = useState<Set<string>>(new Set());
 	const running = activeAgents.size > 0;
 	const [provider, setProvider] = useState<string | null>(null);
@@ -389,7 +393,7 @@ export function useAgent(projectId: string) {
 		} catch (e) {
 			console.warn("[useAgent] Failed to check agent status:", e);
 		}
-	}, [projectId]);
+	}, [authFetch, projectId]);
 
 	useEffect(() => {
 		checkStatus();
@@ -409,7 +413,7 @@ export function useAgent(projectId: string) {
 			if (!res.ok) throw new Error((await res.json()).error);
 			// The orchestration_started SSE event will add the root to activeAgents
 		},
-		[projectId],
+		[authFetch, projectId],
 	);
 
 	const stop = useCallback(async () => {
@@ -425,7 +429,7 @@ export function useAgent(projectId: string) {
 			throw new Error((await res.json()).error);
 		}
 		// agent_stopped WS event will clear activeAgents via checkStatus
-	}, [projectId]);
+	}, [authFetch, projectId]);
 
 	const continueTask = useCallback(
 		async (taskId: string, message?: string) => {
@@ -439,7 +443,7 @@ export function useAgent(projectId: string) {
 			if (!res.ok) throw new Error((await res.json()).error);
 			return await res.json();
 		},
-		[projectId],
+		[authFetch, projectId],
 	);
 
 	const deleteTask = useCallback(
@@ -449,7 +453,7 @@ export function useAgent(projectId: string) {
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
 		},
-		[projectId],
+		[authFetch, projectId],
 	);
 
 	const stopTask = useCallback(
@@ -463,7 +467,7 @@ export function useAgent(projectId: string) {
 				throw new Error((await res.json()).error);
 			}
 		},
-		[projectId],
+		[authFetch, projectId],
 	);
 
 	const clearTaskSession = useCallback(
@@ -473,7 +477,7 @@ export function useAgent(projectId: string) {
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
 		},
-		[projectId],
+		[authFetch, projectId],
 	);
 
 	const compact = useCallback(
@@ -485,7 +489,7 @@ export function useAgent(projectId: string) {
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
 		},
-		[projectId],
+		[authFetch, projectId],
 	);
 
 	const sendMessageToTask = useCallback(
@@ -503,7 +507,7 @@ export function useAgent(projectId: string) {
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
 		},
-		[projectId],
+		[authFetch, projectId],
 	);
 
 	const reorderTasks = useCallback(
@@ -515,7 +519,7 @@ export function useAgent(projectId: string) {
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
 		},
-		[projectId],
+		[authFetch, projectId],
 	);
 
 	const reparentTask = useCallback(
@@ -527,7 +531,7 @@ export function useAgent(projectId: string) {
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
 		},
-		[projectId],
+		[authFetch, projectId],
 	);
 
 	return {
@@ -584,6 +588,7 @@ export interface ThreeLayerConfig {
 }
 
 export function useThreeLayerConfig(projectId: string | null) {
+	const authFetch = useAuthFetch();
 	const [layers, setLayers] = useState<ThreeLayerConfig>({
 		global: {},
 		repo: {},
@@ -606,7 +611,7 @@ export function useThreeLayerConfig(projectId: string | null) {
 		} finally {
 			setLoading(false);
 		}
-	}, [projectId]);
+	}, [authFetch, projectId]);
 
 	useEffect(() => {
 		refresh();
@@ -621,7 +626,7 @@ export function useThreeLayerConfig(projectId: string | null) {
 			});
 			if (res.ok) await refresh();
 		},
-		[refresh],
+		[authFetch, refresh],
 	);
 
 	const updateRepo = useCallback(
@@ -634,7 +639,7 @@ export function useThreeLayerConfig(projectId: string | null) {
 			});
 			if (res.ok) await refresh();
 		},
-		[projectId, refresh],
+		[authFetch, projectId, refresh],
 	);
 
 	const updateLocal = useCallback(
@@ -647,7 +652,7 @@ export function useThreeLayerConfig(projectId: string | null) {
 			});
 			if (res.ok) await refresh();
 		},
-		[projectId, refresh],
+		[authFetch, projectId, refresh],
 	);
 
 	return { layers, loading, refresh, updateGlobal, updateRepo, updateLocal };

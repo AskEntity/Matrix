@@ -15,3 +15,15 @@ export const AuthFetchProvider = AuthFetchContext.Provider;
 export function useAuthFetch(): AuthFetchFn {
 	return useContext(AuthFetchContext);
 }
+
+/** For SSE EventSource URLs that can't use fetch — shell provides raw token getter. */
+export type GetTokenFn = () => string | null;
+
+const GetTokenContext = createContext<GetTokenFn>(() => null);
+
+export const GetTokenProvider = GetTokenContext.Provider;
+
+/** Hook: get raw auth token (for EventSource query params). */
+export function useGetToken(): GetTokenFn {
+	return useContext(GetTokenContext);
+}

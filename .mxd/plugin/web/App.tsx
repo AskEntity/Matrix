@@ -1,7 +1,7 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.ts";
-import { authFetch } from "./auth.ts";
+import { useAuthFetch } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
 import { AppFooter } from "./components/AppFooter.tsx";
 import { AppHeader } from "./components/AppHeader.tsx";
@@ -98,6 +98,7 @@ function AppInner() {
 }
 
 function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
+	const authFetch = useAuthFetch();
 	const { t } = useLocale();
 	const {
 		projects,
