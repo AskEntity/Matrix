@@ -70,6 +70,7 @@ function makeDeps(overrides?: Partial<Record<string, unknown>>) {
 	}
 
 	const deps = {
+		authFetch: mock(async () => new Response("{}", { status: 200 })) as unknown as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
 		projectId: "proj-1",
 		selectedTaskId: "task-a",
 		rootNodeId: "root",
@@ -186,12 +187,7 @@ describe("handleDeleteProject resets all derived state", () => {
 describe("handleCreateTask selects the newly created task", () => {
 	it("sets selectedTaskId to the new task's ID after creation", async () => {
 		const newTaskId = "new-task-123";
-		const { deps, calls } = makeDeps({
-			initProject: mock(async () => ({ id: "proj-1" })),
-		});
-		// Mock authFetch to return a node with an ID
-		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async () => {
+		const mockAuthFetch = mock(async () => {
 			return new Response(
 				JSON.stringify({ id: newTaskId, title: "New Task" }),
 				{
@@ -199,19 +195,19 @@ describe("handleCreateTask selects the newly created task", () => {
 					headers: { "Content-Type": "application/json" },
 				},
 			);
-		}) as unknown as typeof fetch;
+		}) as unknown as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+		const { deps, calls } = makeDeps({
+			authFetch: mockAuthFetch,
+			initProject: mock(async () => ({ id: "proj-1" })),
+		});
 
-		try {
-			const handlers = createActionHandlers(deps);
-			await handlers.handleCreateTask("New Task");
+		const handlers = createActionHandlers(deps);
+		await handlers.handleCreateTask("New Task");
 
-			// Should select the newly created task
-			expect(calls.setSelectedTaskId).toContainEqual(newTaskId);
-			// Should refresh tasks tree
-			expect(deps.refreshTasks).toHaveBeenCalled();
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
+		// Should select the newly created task
+		expect(calls.setSelectedTaskId).toContainEqual(newTaskId);
+		// Should refresh tasks tree
+		expect(deps.refreshTasks).toHaveBeenCalled();
 	});
 });
 

@@ -6,7 +6,7 @@ import {
 	TOOL_YIELD,
 } from "../../../../../src/tool-names.ts";
 import { api } from "../../api.ts";
-import { authFetch } from "../../auth.ts";
+import { useAuthFetch } from "../../auth.ts";
 import {
 	type CacheInfo,
 	formatTime,
@@ -117,6 +117,7 @@ export const LogEntryView = memo(function LogEntryView({
 	onProjectNavigate?: (projectId: string) => void;
 	showCacheBadges?: boolean;
 }) {
+	const authFetch = useAuthFetch();
 	const [movingToBg, setMovingToBg] = useState(false);
 	const taskLabel = null;
 
