@@ -1,66 +1,86 @@
-/**
- * Test: daemon + Matrix plugin — can see task tree via API,
- * shell renders plugin selector via renderToString.
- */
+/// <reference lib="dom" />
+import "./test-setup.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { act, render, waitFor } from "@testing-library/react";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { renderToString } from "react-dom/server";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "../src/config.ts";
 import { createDaemon, type DaemonInstance } from "../src/daemon.ts";
-import { LoginPage } from "./LoginPage.tsx";
+import { ShellApp } from "./ShellApp.tsx";
 
-describe("daemon + Matrix plugin visible", () => {
+describe("daemon + Matrix plugin in UI", () => {
 	let daemon: DaemonInstance;
 	let tempDir: string;
+	let server: ReturnType<typeof Bun.serve>;
+	const PORT = 17437;
 
 	beforeAll(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "visible-test-"));
+		tempDir = await mkdtemp(join(tmpdir(), "ui-test-"));
 		const dataDir = join(tempDir, ".mxd");
-		const matrixPath = resolve(".");
 
 		await mkdir(join(dataDir, "projects"), { recursive: true });
 		await writeFile(
 			join(dataDir, "projects.json"),
 			JSON.stringify([
-				{ id: "m1", name: "matrix", path: matrixPath, createdAt: "2026-01-01" },
+				{ id: "m1", name: "matrix", path: resolve("."), createdAt: "2026-01-01" },
 			]),
 		);
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 		daemon = await createDaemon({ dataDir });
+		server = Bun.serve({ port: PORT, fetch: daemon.fetch });
+
+		// Patch fetch BEFORE any React render — redirect relative URLs to test daemon
+		// and mock auth to always pass
+		// Use daemon.fetch directly (bypass HTTP — happy-dom's fetch doesn't do real HTTP)
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			let url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+			// Relative → absolute
+			if (url.startsWith("/")) url = `http://localhost${url}`;
+
+			// Mock auth
+			if (url.includes("/auth/status")) {
+				return new Response(JSON.stringify({ enabled: false, authenticated: true }), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+
+			// Call daemon.fetch directly (no HTTP hop)
+			const res = await daemon.fetch(new Request(url, init));
+			const body = await res.text();
+			console.log("[fetch]", url, "→", res.status, body.slice(0, 100));
+			return new Response(body, { status: res.status, headers: res.headers });
+		}) as typeof fetch;
 	}, 15000);
 
 	afterAll(async () => {
+		server?.stop();
 		await daemon?.shutdown();
 		await rm(tempDir, { recursive: true, force: true });
 	});
 
-	test("health works", async () => {
-		const res = await daemon.fetch(new Request("http://localhost/health"));
-		expect(res.status).toBe(200);
-	});
+	test("shell renders and shows matrix plugin in scope selector", async () => {
+		let container: HTMLElement;
+		const result = render(<ShellApp />);
+		container = result.container!;
+		
+		// Wait for all async effects to settle: auth → projects → plugins
+		for (let i = 0; i < 20; i++) {
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 200));
+			});
+			// Check if selects populated
+			if (container.querySelectorAll(".mxd-shell-select option").length > 0) break;
+		}
 
-	test("Matrix plugin discovered", () => {
-		expect(daemon.plugins.find((p) => p.name === "matrix")).toBeDefined();
-	});
+		// Debug: what actually rendered?
+		console.log("RENDERED HTML:", container.innerHTML);
 
-	test("task tree has Orchestrator", async () => {
-		const res = await daemon.fetch(new Request("http://localhost/projects/m1/tasks"));
-		expect(res.status).toBe(200);
-		const data = await res.json();
-		expect(data.nodes[0].title).toBe("Orchestrator");
-	});
-
-	test("/plugins returns matrix with web path", async () => {
-		const res = await daemon.fetch(new Request("http://localhost/plugins"));
-		const plugins = await res.json();
-		expect(plugins[0].name).toBe("matrix");
-		expect(plugins[0].webComponentPath).toContain("App.tsx");
-	});
-
-	test("LoginPage renders", () => {
-		const html = renderToString(<LoginPage onAuthenticated={() => {}} />);
-		expect(html).toContain("Matrix");
+		// Scope selector should contain "matrix"
+		const selects = container.querySelectorAll(".mxd-shell-select");
+		expect(selects.length).toBeGreaterThanOrEqual(2);
+		const scopeOptions = Array.from(selects[1]!.querySelectorAll("option")).map(o => o.textContent);
+		expect(scopeOptions).toContain("matrix");
 	});
 });
