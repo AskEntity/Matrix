@@ -1,7 +1,7 @@
 import type React from "react";
 import { memo, useEffect, useState } from "react";
-import { useAuthFetch } from "../auth.ts";
-import type { Project } from "../hooks.ts";
+import { useAuthFetch } from "../auth-context.ts";
+import type { Project } from "./types.ts";
 import { useLocale } from "../i18n.ts";
 import {
 	IconClose,

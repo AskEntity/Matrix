@@ -13,8 +13,6 @@ import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuthFetch } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
-import { AppFooter } from "./components/AppFooter.tsx";
-import { AppHeader } from "./components/AppHeader.tsx";
 import { BackgroundProcessBar } from "./components/BackgroundProcessBar.tsx";
 import { CuteCat } from "./components/CuteCat.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
@@ -387,23 +385,7 @@ function MockShowcaseInner() {
 
 	return (
 		<>
-			<AppHeader
-				connected={true}
-				projects={mockProjects}
-				projectId="mock"
-				showAddProject={false}
-				newProjectPath=""
-				creatingProject={false}
-				showSettings={false}
-				onProjectChange={noop}
-				onShowAddProject={noop}
-				onAddProject={noop}
-				onNewProjectPathChange={noop}
-				onCancelAddProject={noop}
-				onToggleSettings={noop}
-				onToggleSidebar={handleToggleSidebar}
-			/>
-
+			{/* AppHeader moved to daemon shell — mock renders content only */}
 			<main
 				className={`mxd-main${fullscreen ? " mxd-fullscreen" : ""}${isSidebarDragging ? " mxd-sidebar-resizing" : ""}`}
 			>
