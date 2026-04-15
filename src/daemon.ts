@@ -908,10 +908,9 @@ if (import.meta.main) {
 		fetch: daemon.fetch,
 		port,
 		idleTimeout: 255,
-		development:
-			process.env.NODE_ENV === "development"
-				? { hmr: true, console: true }
-				: false,
+		development: process.env.NODE_ENV === "production"
+			? false
+			: { hmr: true, console: true },
 	});
 
 	console.log(
