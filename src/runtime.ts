@@ -25,10 +25,7 @@ import type {
 import { broadcastTreeUpdate, emitEvent } from "./runtime/event-system.ts";
 import { getEventStore, getTracker } from "./runtime/helpers.ts";
 import { registerAgentRoutes } from "./runtime/routes/agent.ts";
-import {
-	createAuthMiddleware,
-	registerAuthRoutes,
-} from "./runtime/routes/auth.ts";
+// Auth handled by daemon shell — runtime has no auth.
 import { registerConfigRoutes } from "./runtime/routes/config.ts";
 import { registerMcpEndpoint } from "./runtime/routes/mcp-endpoint.ts";
 import { registerMockShowcaseRoute } from "./runtime/routes/mock-showcase.ts";
@@ -181,13 +178,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		await next();
 	});
 
-	// Auth middleware — must be before all routes
-	const authMiddleware = createAuthMiddleware(ctx);
-	app.use("*", authMiddleware);
-
-	// Auth routes (login/logout/status + registration on main port)
-	// Registration endpoints are guarded per-route: return 403 when enforced
-	registerAuthRoutes(app, ctx);
+	// Auth is handled by daemon (shell layer). Runtime runs in worker — no auth needed.
 
 	// Health
 	app.get("/health", async (c) => {
@@ -506,61 +497,5 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 // ORCHESTRATOR_SYSTEM_PROMPT removed — prompt is now provided by buildMatrixScopeOpts
 // and stored in ctx.scopeOpts per project.
 
-// Only start the server when run directly, not when imported for testing.
-if (import.meta.main) {
-	const {
-		app,
-		autoResumeProjects,
-		shutdown,
-		markReady,
-		loadConfig,
-		getConfig,
-	} = createApp();
-	await loadConfig();
-
-	const port = getConfig().port ?? 7433;
-
-	// Check if another daemon is already running on this port
-	try {
-		const res = await fetch(`http://localhost:${port}/health`);
-		if (res.ok) {
-			console.error(`Error: Matrix daemon already running on port ${port}`);
-			process.exit(1);
-		}
-	} catch {
-		// Port is free, proceed
-	}
-	console.log(
-		`Matrix daemon v${VERSION} (${GIT_HASH}) listening on http://localhost:${port}`,
-	);
-	console.log(`Web UI: http://localhost:${port}/`);
-
-	// Use Bun's HTML import for the web UI (auto-bundles TSX/CSS)
-	// Points to Matrix plugin's web UI (runtime.ts = production entry, serves full UI directly)
-	const webIndex = await import("../.mxd/plugin/web/index.html");
-	Bun.serve({
-		routes: {
-			"/": webIndex.default,
-		},
-		fetch: app.fetch,
-		port,
-		idleTimeout: 255, // Bun max (4.25 min) — data heartbeat at 15s keeps it alive
-		development:
-			process.env.NODE_ENV === "development"
-				? { hmr: true, console: true }
-				: false,
-	});
-
-	// Graceful shutdown: save sessions before exit
-	const handleShutdown = async () => {
-		console.log("Shutting down — saving sessions...");
-		await shutdown();
-		process.exit(0);
-	};
-	process.on("SIGTERM", handleShutdown);
-	process.on("SIGINT", handleShutdown);
-
-	// Auto-resume any orchestrations that were running before daemon restart
-	await autoResumeProjects();
-	markReady();
-}
+// runtime.ts is a library — no standalone entry point.
+// Production entry is daemon.ts. Tests import createApp() directly.
