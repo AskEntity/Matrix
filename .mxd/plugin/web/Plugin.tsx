@@ -71,12 +71,12 @@ function updateHash(
 	}
 }
 
-// ── Main App ───────────────────────────────────────────────────────────────
+// ── Main Plugin ───────────────────────────────────────────────────────────────
 
 /** Check ?mock query param once at module load — never changes during session. */
 const IS_MOCK_MODE = new URLSearchParams(window.location.search).has("mock");
 
-export function App() {
+export function Plugin() {
 	return (
 		<LocaleProvider>
 			<ErrorBoundary>
@@ -507,7 +507,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			.then((r) => r.json())
 			.then(processEventResponse)
 			.catch((e) =>
-				console.warn("[App] Failed to re-fetch events on reconnect:", e),
+				console.warn("[Plugin] Failed to re-fetch events on reconnect:", e),
 			);
 		// Re-fetch pending clarifications (still ephemeral/in-memory)
 		authFetch(api.clarifications(projectId))
@@ -526,7 +526,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			)
 			.catch((e) =>
 				console.warn(
-					"[App] Failed to re-fetch clarifications on reconnect:",
+					"[Plugin] Failed to re-fetch clarifications on reconnect:",
 					e,
 				),
 			);
@@ -560,7 +560,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				processEventResponse(data);
 			})
 			.catch((e) =>
-				console.warn("[App] Failed to fetch events for session:", e),
+				console.warn("[Plugin] Failed to fetch events for session:", e),
 			);
 		return () => {
 			cancelled = true;

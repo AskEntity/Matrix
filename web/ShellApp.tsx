@@ -7,7 +7,7 @@ import { LoginPage } from "./LoginPage.tsx";
 function loadPluginUI(pluginPath: string) {
 	return lazy(() =>
 		import(/* @vite-ignore */ pluginPath).then((m) => ({
-			default: m.default ?? m.App,
+			default: m.Plugin ?? m.default,
 		})),
 	);
 }
