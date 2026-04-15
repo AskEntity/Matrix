@@ -1,8 +1,9 @@
 /**
  * ProjectStore — read-only project registry for the runtime worker.
  *
- * Worker receives project list from daemon via sync().
- * No create, no delete, no save — daemon owns project lifecycle.
+ * Purely in-memory. Populated via sync() from daemon.
+ * No create, no delete, no save, no disk access.
+ * Daemon owns project lifecycle and syncs state to workers.
  */
 
 export interface ProjectInfo {
