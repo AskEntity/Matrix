@@ -8,9 +8,17 @@ import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 export async function initTestProject(projectPath: string): Promise<void> {
-	// Create directory
+	// Create directory + hooks
 	await mkdir(projectPath, { recursive: true });
-	await mkdir(join(projectPath, ".mxd"), { recursive: true });
+	await mkdir(join(projectPath, ".mxd", "hooks"), { recursive: true });
+
+	// Create setup_worktree.sh (required for child task worktree creation)
+	const hookPath = join(projectPath, ".mxd", "hooks", "setup_worktree.sh");
+	if (!existsSync(hookPath)) {
+		await writeFile(hookPath, "#!/bin/bash\n# test hook\n", "utf-8");
+		const { chmod } = await import("node:fs/promises");
+		await chmod(hookPath, 0o755);
+	}
 
 	// Git init if not already
 	if (!existsSync(join(projectPath, ".git"))) {
