@@ -426,6 +426,7 @@ export async function createDaemon(opts: {
 					));
 				}
 				await pm.delete(projectId);
+				syncToWorkers("project_deleted", { projectId });
 				syncProjects();
 				return new Response(JSON.stringify({ ok: true }), {
 					headers: { "content-type": "application/json" },
@@ -598,8 +599,23 @@ export async function createDaemon(opts: {
 	// ── Shutdown ──
 
 	async function shutdown(): Promise<void> {
-		for (const [, sw] of workers) {
+		for (const [name, sw] of workers) {
 			sw.worker.postMessage({ type: "shutdown" });
+			// Wait for graceful shutdown (agent stop, JSONL flush) before terminating
+			await new Promise<void>((resolve) => {
+				const timeout = setTimeout(() => {
+					console.warn(`[daemon] Worker "${name}" shutdown timeout — terminating`);
+					resolve();
+				}, 5000);
+				const handler = (event: MessageEvent) => {
+					if (event.data.type === "shutdown_complete") {
+						clearTimeout(timeout);
+						sw.worker.removeEventListener("message", handler);
+						resolve();
+					}
+				};
+				sw.worker.addEventListener("message", handler);
+			});
 			sw.worker.terminate();
 		}
 		workers.clear();
