@@ -158,6 +158,83 @@ describe("daemon integration: config", () => {
 	});
 });
 
+describe("daemon integration: project config", () => {
+	let app: DaemonTestApp;
+	let projectId: string;
+
+	beforeAll(async () => {
+		app = await createDaemonTestApp();
+		const res = await app.fetch(new Request("http://localhost/projects"));
+		const projects = await res.json();
+		projectId = projects[0]?.id;
+	});
+
+	afterAll(async () => {
+		await app.cleanup();
+	});
+
+	test("GET /projects/:id/config returns empty for new project", async () => {
+		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}/config`));
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body).toEqual({});
+	});
+
+	test("PATCH /projects/:id/config sets and returns config", async () => {
+		await app.fetch(new Request(`http://localhost/projects/${projectId}/config`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ model: "claude-opus-4-5" }),
+		}));
+		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}/config`));
+		expect(res.status).toBe(200);
+		const body = await res.json() as { model?: string };
+		expect(body.model).toBe("claude-opus-4-5");
+	});
+
+	test("PATCH preserves unrelated fields", async () => {
+		await app.fetch(new Request(`http://localhost/projects/${projectId}/config`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ model: "a", budgetUsd: 2 }),
+		}));
+		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}/config`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ model: "b" }),
+		}));
+		const body = await res.json() as { model?: string; budgetUsd?: number };
+		expect(body.model).toBe("b");
+		expect(body.budgetUsd).toBe(2);
+	});
+
+	test("PATCH null removes field", async () => {
+		await app.fetch(new Request(`http://localhost/projects/${projectId}/config`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ model: "x" }),
+		}));
+		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}/config`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ model: null }),
+		}));
+		const body = await res.json() as { model?: string };
+		expect(body.model).toBeUndefined();
+	});
+
+	test("GET /projects/:id/config/repo returns empty when no repo config", async () => {
+		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}/config/repo`));
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({});
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.fetch(new Request("http://localhost/projects/nonexistent/config"));
+		expect(res.status).toBe(404);
+	});
+});
+
 describe("daemon integration: tasks through worker", () => {
 	let app: DaemonTestApp;
 	let projectId: string;
