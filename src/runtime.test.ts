@@ -942,7 +942,7 @@ describe("daemon tasks API", () => {
 
 		// Find out the default branch name (could be "main" or "master" depending on git config)
 		const branchProc = Bun.spawn(["git", "branch", "--show-current"], {
-			cwd: projPath,
+			cwd: project.path,
 			stdout: "pipe",
 			stderr: "pipe",
 		});
@@ -951,7 +951,7 @@ describe("daemon tasks API", () => {
 
 		// Use assignWorktree to set both branch and worktreePath (PATCH only sets branch)
 		const daemonTracker = await localGetTracker(project.id);
-		daemonTracker.assignWorktree(task.id, defaultBranch, projPath);
+		daemonTracker.assignWorktree(task.id, defaultBranch, project.path);
 		await daemonTracker.save();
 
 		const res = await localApp.request(
@@ -2913,7 +2913,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const projPath = join(tempDir, "cont-proj");
 		const gitExec = (args: string[]) =>
 			Bun.spawn(["git", ...args], {
-				cwd: projPath,
+				cwd: project.path,
 				stdout: "pipe",
 				stderr: "pipe",
 			});
@@ -3755,9 +3755,11 @@ describe("POST /projects/:id/restart", () => {
 			},
 		};
 
+		const proj = { id: ulid(), name: "test", path: join(dataDir, "restart-proj") };
 		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: restartProvider,
+			projects: [proj],
 		});
 
 		markReady();
