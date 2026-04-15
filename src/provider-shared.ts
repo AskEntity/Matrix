@@ -1208,20 +1208,28 @@ export async function* runProviderLoop(
 					// Re-arm the before-first-message hook so work_context is
 					// injected before the compacted_resume message. Then enqueue
 					// compacted_resume — the hook fires first, injecting work_context.
+					// Both messages are persisted to JSONL via onPersist.
 					if (queue) {
 						queue.resetBeforeFirstMessage();
 						const resumeMsg = createCompactedResume(compactResult.checkpoint);
 						queue.enqueue(resumeMsg);
 					}
-					// Build the user message for messages[] from both contents
-					const workCtxContent = request.buildWorkContext();
-					const compactContent = workCtxContent
-						? `${workCtxContent}\n\n## Checkpoint Summary\n\n${compactResult.checkpoint}`
-						: `## Checkpoint Summary\n\n${compactResult.checkpoint}`;
-					messages.push({
-						role: "user" as const,
-						content: compactContent,
-					});
+					// Drain the just-enqueued messages and build the user message
+					// through the unified adapter path — same walker callbacks used
+					// by JSONL reconstruction. This ensures byte-identical output
+					// and emits messages_consumed so the walker can materialize them
+					// at the correct position on restart.
+					if (queue) {
+						const compactMsgs = queue.drain();
+						if (compactMsgs.length > 0) {
+							filterQueueMessageImages(adapter, compactMsgs);
+							adapter.appendQueueMessagesToMessages(
+								messages,
+								compactMsgs,
+							);
+							recordQueueEvents(emit, compactMsgs);
+						}
+					}
 				}
 			}
 			continue; // Skip normal processing, go to next API call with rebuilt context
