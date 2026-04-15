@@ -107,6 +107,8 @@ export interface DaemonConfig {
 	agentProvider?: AgentProvider;
 	initialConfig?: MatrixConfig;
 	globalConfigPath?: string;
+	/** Initial project list — injected by daemon at worker init. */
+	projects?: Array<{ id: string; name: string; path: string }>;
 }
 
 /**
