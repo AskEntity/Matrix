@@ -309,8 +309,9 @@ export async function createDaemon(opts: {
 		const url = new URL(request.url);
 
 		// Auth
-		// Only skip auth for SPA root, static assets (path prefix), and auth endpoints.
-		// NEVER skip based on file extension — attackers can append .ts to any URL.
+		// Only skip auth for SPA root, shell static assets, and auth endpoints.
+		// NOT /.mxd/ (has config.json, tree.json, memory.md — sensitive).
+		// NOT file extensions (attackers can append .ts to bypass).
 		const skipAuth =
 			url.pathname === "/" ||
 			url.pathname.startsWith("/web/") ||
@@ -333,6 +334,14 @@ export async function createDaemon(opts: {
 					);
 				}
 			}
+		}
+
+		// Health — daemon-owned, not worker-forwarded
+		if (url.pathname === "/health") {
+			return new Response(
+				JSON.stringify({ status: "ok", version: VERSION }),
+				{ headers: { "content-type": "application/json" } },
+			);
 		}
 
 		// Auth routes

@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { authFetch, getToken } from "./auth.ts";
-import { AuthFetchProvider } from "../.mxd/plugin/web/auth.ts";
+import { AuthFetchProvider } from "./auth-context.ts";
 import { LoginPage } from "./LoginPage.tsx";
 
 // Plugin UI loaded dynamically from registered plugin path
