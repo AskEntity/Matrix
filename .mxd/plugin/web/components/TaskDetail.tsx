@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
-import { authFetch } from "../auth.ts";
+import { useAuthFetch } from "../auth.ts";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconCopy, IconPause, IconTrash } from "./icons.tsx";
@@ -58,6 +58,7 @@ export const TaskDetail = memo(function TaskDetail({
 	onClearSession?: () => void;
 	compact?: boolean;
 }) {
+	const authFetch = useAuthFetch();
 	const { t } = useLocale();
 	const isRunning = isActive ?? node.status === "in_progress";
 	const [editingTitle, setEditingTitle] = useState(false);
