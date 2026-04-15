@@ -22,15 +22,28 @@ self.onmessage = async (event: MessageEvent) => {
 	const msg = event.data;
 
 	if (msg.type === "init") {
-		const { dataDir, globalConfigPath, projects } = msg as {
+		const { dataDir, globalConfigPath, projects, pluginRuntimePath } = msg as {
 			type: "init";
 			dataDir: string;
 			globalConfigPath: string;
 			projects?: Array<{ id: string; name: string; path: string }>;
+			/** Path to plugin's runtime module (exports buildScopeOpts). */
+			pluginRuntimePath?: string;
 		};
 
 		try {
-			appInstance = createApp({ dataDir, globalConfigPath, projects });
+			// Load plugin's scope opts builder if provided
+			// biome-ignore lint/suspicious/noExplicitAny: plugin module shape varies
+			let buildScopeOpts: any;
+			if (pluginRuntimePath) {
+				const pluginMod = await import(pluginRuntimePath);
+				const builder = pluginMod.buildMatrixScopeOpts ?? pluginMod.buildScopeOpts ?? pluginMod.default;
+				if (typeof builder === "function") {
+					buildScopeOpts = (projectId: string, ctx: import("./context.ts").RuntimeContext) =>
+						builder(projectId, ctx.globalConfig.selfBootstrap, ctx);
+				}
+			}
+			appInstance = createApp({ dataDir, globalConfigPath, projects, buildScopeOpts });
 			await appInstance.loadConfig();
 
 			// Wire broadcast BEFORE autoResume — events during crash recovery must reach shell
