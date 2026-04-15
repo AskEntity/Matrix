@@ -585,13 +585,24 @@ export async function createDaemon(opts: {
 	// Plugins
 	app.get("/plugins", (c) => {
 		return c.json(
-			registeredPlugins.map((p) => ({
-				name: p.name,
-				scope: p.scope,
-				// Filesystem path — Bun.serve dev mode resolves & transpiles .tsx imports
-				webComponentPath: p.resolvedWebPath,
-				projectId: p.projectId,
-			})),
+			registeredPlugins.map((p) => {
+				// Convert filesystem resolvedWebPath to URL path via /plugin-assets/
+				let webComponentPath: string | undefined;
+				if (p.resolvedWebPath && p.pluginRoot) {
+					// resolvedWebPath = /abs/path/.mxd/plugin/web/App.tsx
+					// pluginRoot = /abs/path/.mxd/plugin
+					// relative = web/App.tsx
+					// URL = /plugin-assets/<name>/web/App.tsx
+					const relative = p.resolvedWebPath.slice(p.pluginRoot.length + 1);
+					webComponentPath = `/plugin-assets/${p.name}/${relative}`;
+				}
+				return {
+					name: p.name,
+					scope: p.scope,
+					webComponentPath,
+					projectId: p.projectId,
+				};
+			}),
 		);
 	});
 
