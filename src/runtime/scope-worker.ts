@@ -40,7 +40,7 @@ self.onmessage = async (event: MessageEvent) => {
 				const builder = pluginMod.buildMatrixScopeOpts ?? pluginMod.buildScopeOpts ?? pluginMod.default;
 				if (typeof builder === "function") {
 					buildScopeOpts = (projectId: string, ctx: import("./context.ts").RuntimeContext) =>
-						builder(projectId, ctx.globalConfig.selfBootstrap, ctx);
+						builder(projectId, ctx.globalConfig.selfBootstrap ?? false, ctx);
 				}
 			}
 			appInstance = createApp({ dataDir, globalConfigPath, projects, buildScopeOpts });
@@ -87,20 +87,47 @@ self.onmessage = async (event: MessageEvent) => {
 
 			const response = await appInstance.app.fetch(request);
 
-			// Read response body
-			const responseBody = await response.text();
 			const responseHeaders: Record<string, string> = {};
 			response.headers.forEach((v, k) => {
 				responseHeaders[k] = v;
 			});
 
-			self.postMessage({
-				type: "http_response",
-				id,
-				status: response.status,
-				headers: responseHeaders,
-				body: responseBody,
-			});
+			// Streaming responses (SSE, MCP) can't be buffered — stream chunks via postMessage
+			const contentType = response.headers.get("content-type") ?? "";
+			if (contentType.includes("text/event-stream") && response.body) {
+				// Send headers first, then stream chunks
+				self.postMessage({
+					type: "http_response_stream_start",
+					id,
+					status: response.status,
+					headers: responseHeaders,
+				});
+				const reader = response.body.getReader();
+				const decoder = new TextDecoder();
+				try {
+					while (true) {
+						const { done: readerDone, value } = await reader.read();
+						if (readerDone) break;
+						self.postMessage({
+							type: "http_response_stream_chunk",
+							id,
+							chunk: decoder.decode(value, { stream: true }),
+						});
+					}
+				} finally {
+					self.postMessage({ type: "http_response_stream_end", id });
+				}
+			} else {
+				// Buffered response (normal HTTP)
+				const responseBody = await response.text();
+				self.postMessage({
+					type: "http_response",
+					id,
+					status: response.status,
+					headers: responseHeaders,
+					body: responseBody,
+				});
+			}
 		} catch (e) {
 			self.postMessage({
 				type: "http_response",
@@ -119,7 +146,16 @@ self.onmessage = async (event: MessageEvent) => {
 		if (!appInstance) return;
 
 		if (key === "projects") {
-			appInstance.pm.sync(data as import("./worker-api.ts").SyncMap["projects"]);
+			const projects = data as import("./worker-api.ts").SyncMap["projects"];
+			appInstance.pm.sync(projects);
+			// Ensure data directories exist for new projects
+			const { mkdirSync } = await import("node:fs");
+			const { join } = await import("node:path");
+			for (const p of projects) {
+				const projectDir = join(appInstance.ctx.config.dataDir, "projects", p.id);
+				mkdirSync(join(projectDir, "tasks"), { recursive: true });
+				mkdirSync(join(projectDir, "debug"), { recursive: true });
+			}
 		} else if (key === "config") {
 			appInstance.ctx.globalConfig = data as import("./worker-api.ts").SyncMap["config"];
 		} else if (key === "project_deleted") {

@@ -167,6 +167,46 @@ export async function createDaemon(opts: {
 				}
 			}
 
+			// Streaming response support (SSE/MCP)
+			if (msg.type === "http_response_stream_start") {
+				const pending = scopeWorker.pending.get(msg.id);
+				if (pending) {
+					scopeWorker.pending.delete(msg.id);
+					const encoder = new TextEncoder();
+					const stream = new ReadableStream({
+						start(controller) {
+							// Store controller for subsequent chunks
+							scopeWorker.pending.set(`stream:${msg.id}`, {
+								resolve: () => {},
+								reject: () => {},
+								_streamController: controller,
+							} as unknown as typeof pending);
+						},
+					});
+					pending.resolve({
+						status: msg.status,
+						headers: msg.headers,
+						body: stream as unknown as string, // will be used as Response body
+						_isStream: true,
+					});
+				}
+			}
+			if (msg.type === "http_response_stream_chunk") {
+				const streamPending = scopeWorker.pending.get(`stream:${msg.id}`) as unknown as { _streamController?: ReadableStreamDefaultController } | undefined;
+				if (streamPending?._streamController) {
+					try {
+						streamPending._streamController.enqueue(new TextEncoder().encode(msg.chunk));
+					} catch { /* client disconnected */ }
+				}
+			}
+			if (msg.type === "http_response_stream_end") {
+				const streamPending = scopeWorker.pending.get(`stream:${msg.id}`) as unknown as { _streamController?: ReadableStreamDefaultController } | undefined;
+				if (streamPending?._streamController) {
+					try { streamPending._streamController.close(); } catch {}
+				}
+				scopeWorker.pending.delete(`stream:${msg.id}`);
+			}
+
 			if (msg.type === "sse_event") {
 				const { projectId, event: evt } = msg;
 				const seqId = nextSseSeqId(projectId);
@@ -283,8 +323,12 @@ export async function createDaemon(opts: {
 			sw.pending.set(id, {
 				resolve: (resp) => {
 					clearTimeout(timeout);
+					// For streaming responses, body is already a ReadableStream
+					const responseBody = (resp as { _isStream?: boolean })._isStream
+						? (resp.body as unknown as ReadableStream)
+						: resp.body;
 					resolve(
-						new Response(resp.body, {
+						new Response(responseBody, {
 							status: resp.status,
 							headers: resp.headers,
 						}),
@@ -367,7 +411,8 @@ export async function createDaemon(opts: {
 		const skipAuth =
 			c.req.path === "/" ||
 			c.req.path.startsWith("/web/") ||
-			c.req.path.startsWith("/auth/");
+			c.req.path.startsWith("/auth/") ||
+			c.req.path.startsWith("/plugin-assets/");
 
 		if (!skipAuth) {
 			const authPath = join(dataDir, "auth.json");
@@ -493,6 +538,7 @@ export async function createDaemon(opts: {
 				);
 			}
 			const updated = await pm.updateProject(projectId, body);
+			syncProjects();
 			return c.json({
 				...updated,
 				pathExists: pm.checkPathExists(updated.id),
@@ -504,13 +550,38 @@ export async function createDaemon(opts: {
 		}
 	});
 
+	// Plugin web assets — serve from filesystem via URL
+	app.get("/plugin-assets/:pluginName/*", async (c) => {
+		const pluginName = c.req.param("pluginName");
+		const plugin = registeredPlugins.find((p) => p.name === pluginName);
+		if (!plugin) return c.json({ error: "Plugin not found" }, 404);
+
+		// Strip prefix to get relative path within plugin's web dir
+		const prefix = `/plugin-assets/${pluginName}/`;
+		const relativePath = c.req.path.slice(prefix.length);
+		if (!relativePath) return c.json({ error: "File not specified" }, 400);
+
+		const filePath = join(plugin.pluginRoot, relativePath);
+		// Security: ensure resolved path is under pluginRoot
+		if (!filePath.startsWith(plugin.pluginRoot)) {
+			return c.json({ error: "Forbidden" }, 403);
+		}
+
+		const file = Bun.file(filePath);
+		if (!(await file.exists())) return c.json({ error: "Not found" }, 404);
+		return new Response(file);
+	});
+
 	// Plugins
 	app.get("/plugins", (c) => {
 		return c.json(
 			registeredPlugins.map((p) => ({
 				name: p.name,
 				scope: p.scope,
-				webComponentPath: p.resolvedWebPath,
+				// Return URL path (not filesystem path) so browser can import()
+				webComponentPath: p.web
+					? `/plugin-assets/${p.name}/${p.web}`
+					: undefined,
 				projectId: p.projectId,
 			})),
 		);
@@ -666,7 +737,7 @@ export async function createDaemon(opts: {
 						const treeResp = workerName
 							? await forwardToWorker(
 									workerName,
-									new Request(`http://localhost/tasks?projectId=${projectId}`, {
+									new Request(`http://localhost/projects/${projectId}/tasks`, {
 										headers: request.headers,
 									}),
 								)
