@@ -142,7 +142,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	// Build the shared context object
 	const ctx: RuntimeContext = {
 		config,
-		pm: new ProjectStore(),
+		pm: (() => {
+			const store = new ProjectStore();
+			if (config.projects) store.sync(config.projects);
+			return store;
+		})(),
 		trackers: new Map(),
 		restartingProjects: new Set(),
 		launchingNodes: new Set(),
@@ -490,14 +494,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 if (import.meta.main) {
 	const {
 		app,
-		pm,
 		autoResumeProjects,
 		shutdown,
 		markReady,
 		loadConfig,
 		getConfig,
 	} = createApp();
-	await pm.load();
 	await loadConfig();
 
 	const port = getConfig().port ?? 7433;

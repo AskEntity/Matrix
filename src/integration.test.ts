@@ -15,7 +15,7 @@ import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "ulid";
+import { ulid } from "./ulid.ts";
 import { createApp } from "./runtime.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";

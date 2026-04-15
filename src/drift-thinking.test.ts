@@ -21,7 +21,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
 import { createApp } from "./runtime.ts";
 import { EventStore } from "./event-store.ts";
@@ -478,8 +479,8 @@ async function setupTestContext(): Promise<TestContext> {
 	const provider = createMockedProviderWithMock(mockAPI);
 	const appResult = createApp({ dataDir, agentProvider: provider });
 
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
+	const projectId = ulid();
+	appResult.pm.sync([{ id: projectId, name: basename(projectDir), path: projectDir }]);
 
 	const tasksDir = join(projectDir, ".mxd", "tasks");
 	if (existsSync(tasksDir)) rmSync(tasksDir, { recursive: true });
@@ -504,7 +505,7 @@ async function setupTestContext(): Promise<TestContext> {
 		projectDir,
 		app: appResult,
 		mockAPI,
-		projectId: project.id,
+		projectId,
 	};
 }
 
@@ -606,7 +607,7 @@ async function recreateApp(
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedProviderWithMock(ctx.mockAPI);
 	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider });
-	await newApp.pm.load();
+	newApp.pm.sync([{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }]);
 	await newApp.autoResumeProjects();
 	newApp.markReady();
 	return newApp;
