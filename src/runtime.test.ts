@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -2896,7 +2897,18 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-continue-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-continued-"));
-		const project = { id: ulid(), name: "cont-proj", path: join(tempDir, "cont-proj") };
+		const projPath = join(tempDir, "cont-proj");
+
+		// Manually init project directory (createApp no longer calls ProjectManager.init)
+		await mkdir(projPath, { recursive: true });
+		Bun.spawnSync(["git", "init"], { cwd: projPath });
+		Bun.spawnSync(["git", "config", "user.email", "test@test.com"], { cwd: projPath });
+		Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: projPath });
+		await writeFile(join(projPath, ".gitignore"), "*\n!/.gitignore\n!/.mxd/\n!/.mxd/**\n");
+		Bun.spawnSync(["git", "add", "."], { cwd: projPath });
+		Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projPath });
+
+		const project = { id: ulid(), name: "cont-proj", path: projPath };
 		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 		app = result.app;
 		getTracker = result.getTracker;
@@ -2905,20 +2917,15 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		rootNodeId = tracker.rootNodeId;
 
 		// Activate the .example hook so worktree creation works in tests
-		const hookDir = join(tempDir, "cont-proj", ".mxd", "hooks");
+		const hookDir = join(projPath, ".mxd", "hooks");
 		const examplePath = join(hookDir, "setup_worktree.sh.example");
 		const hookPath = join(hookDir, "setup_worktree.sh");
-		await rename(examplePath, hookPath);
-		await chmod(hookPath, 0o755);
-		const projPath = join(tempDir, "cont-proj");
-		const gitExec = (args: string[]) =>
-			Bun.spawn(["git", ...args], {
-				cwd: project.path,
-				stdout: "pipe",
-				stderr: "pipe",
-			});
-		await gitExec(["add", "-A"]).exited;
-		await gitExec(["commit", "-m", "activate setup hook"]).exited;
+		if (existsSync(examplePath)) {
+			await rename(examplePath, hookPath);
+			await chmod(hookPath, 0o755);
+			Bun.spawnSync(["git", "add", "-A"], { cwd: projPath });
+			Bun.spawnSync(["git", "commit", "-m", "activate setup hook"], { cwd: projPath });
+		}
 	});
 
 	afterEach(async () => {
