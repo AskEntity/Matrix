@@ -30,13 +30,8 @@ self.onmessage = async (event: MessageEvent) => {
 		};
 
 		try {
-			appInstance = createApp({ dataDir, globalConfigPath });
+			appInstance = createApp({ dataDir, globalConfigPath, projects });
 			await appInstance.loadConfig();
-
-			// If daemon sent project list, sync worker's pm to match
-			if (projects && projects.length > 0) {
-				appInstance.pm.sync(projects);
-			}
 
 			await appInstance.autoResumeProjects();
 			// Wire broadcast events to parent thread for SSE relay
