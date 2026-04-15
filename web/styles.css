@@ -261,6 +261,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 	border-radius: 50%;
 	animation: mxd-spin 0.7s linear infinite;
 }
+
+@media (max-width: 600px) {
 	.mxd-login-page {
 		padding: 1rem;
 		align-items: flex-start;
