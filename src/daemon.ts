@@ -24,7 +24,7 @@ import {
 	type MatrixConfig,
 	saveGlobalConfig,
 } from "./config.ts";
-import type { PluginManifest } from "./plugin.ts";
+import { checkDataRootCollisions, type PluginManifest } from "./plugin.ts";
 import { ProjectManager } from "./project-manager.ts";
 import type { SyncMap } from "./runtime/worker-api.ts";
 import { ulid } from "./ulid.ts";
@@ -288,6 +288,12 @@ export async function createDaemon(opts: {
 				);
 			}
 		}
+	}
+
+	// Check for dataRoot collisions — two plugins writing to the same directory
+	const collision = checkDataRootCollisions(registeredPlugins);
+	if (collision) {
+		throw new Error(collision);
 	}
 
 	// Start workers for global plugins
