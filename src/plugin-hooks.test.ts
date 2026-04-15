@@ -52,7 +52,7 @@ async function setupTestContext(): Promise<TestContext> {
 
 	const appResult = createApp({ dataDir, agentProvider: provider });
 	const projectId = ulid();
-	appResult.pm.syncFromDaemon([{ id: projectId, name: basename(projectDir), path: projectDir }]);
+	appResult.pm.sync([{ id: projectId, name: basename(projectDir), path: projectDir }]);
 
 	// Activate setup hook if exists
 	const { renameSync } = await import("node:fs");
