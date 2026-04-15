@@ -921,7 +921,15 @@ describe("daemon tasks API", () => {
 	test("GET /tasks/:nodeId/gitlog returns commits when branch exists", async () => {
 		// Use a local app instance to access getTracker
 		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-gitlog-wt-"));
-		const _projInfo2 = { id: ulid(), name: "test", path: join(tempDir, "gitlog-app") };
+		const gitlogProjPath = join(tempDir, "gitlog-app");
+		await mkdir(gitlogProjPath, { recursive: true });
+		// Initialize a git repo so the gitlog endpoint has commits to return
+		const gitExec = (args: string[]) => Bun.spawn(["git", ...args], { cwd: gitlogProjPath, stdout: "pipe", stderr: "pipe" });
+		await gitExec(["init"]).exited;
+		await writeFile(join(gitlogProjPath, "README.md"), "# test\n");
+		await gitExec(["add", "README.md"]).exited;
+		await gitExec(["commit", "-m", "initial commit"]).exited;
+		const _projInfo2 = { id: ulid(), name: "test", path: gitlogProjPath };
 		const {
 			app: localApp,
 			getTracker: localGetTracker,
