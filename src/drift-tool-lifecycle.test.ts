@@ -77,13 +77,12 @@ async function setupTestContext(): Promise<TestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 
+	const projectId = ulid();
 	const appResult = createApp({
 		dataDir,
 		agentProvider: provider,
+		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
 	});
-
-	const projectId = ulid();
-	appResult.pm.sync([{ id: projectId, name: basename(projectDir), path: projectDir }]);
 
 	const tasksDir = join(projectDir, ".mxd", "tasks");
 	if (existsSync(tasksDir)) {
@@ -220,8 +219,8 @@ async function recreateApp(
 	const newApp = createApp({
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
+		projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }],
 	});
-	newApp.pm.sync([{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }]);
 	newApp.markReady();
 	return newApp;
 }
