@@ -1202,3 +1202,47 @@ Tests needing git worktrees use `initTestProject(path)` helper (creates git repo
 ### Current State (half-state)
 
 Production still runs `runtime.ts` directly (cli.ts → runtime.ts). daemon.ts is WIP — has auth, config, SSE relay, HTTP proxy, plugin discovery, project CRUD, typed sync. Not yet wired as production entry. 12 emission-harness test failures remain (cwd/worktreePath on root node).
+
+
+## Worker-Based Scope Isolation (Plugin Architecture)
+
+### Architecture
+- `src/daemon.ts`: Meta-daemon shell — Hono routes, auth, config, project CRUD, plugin discovery, worker management, SSE relay with ring buffer + Last-Event-ID catch-up
+- `src/runtime.ts`: Plugin-agnostic runtime — ZERO Matrix imports. Receives `buildScopeOpts` via `DaemonConfig`
+- `src/runtime/scope-worker.ts`: Worker entry — loads plugin runtime module, passes `buildScopeOpts` to `createApp`
+- `.mxd/plugin/`: Matrix plugin — manifest, runtime (exports `buildMatrixScopeOpts`), web UI
+- `web/`: Daemon shell UI — auth context (shell-owned), ShellApp, LoginPage
+- `web/auth-context.ts`: Shell-owned React contexts (AuthFetchProvider, GetTokenProvider). Plugin re-exports from here.
+
+### Key Invariant: Import Direction
+- Shell (`web/`, `src/`) → ZERO imports from `.mxd/plugin/` (delete plugin → shell compiles)
+- Plugin → shell/runtime is OK (plugin consumes from host)
+
+### buildScopeOpts Injection
+- `DaemonConfig.buildScopeOpts`: required callback `(projectId, ctx) => ScopeOpts`
+- Daemon resolves plugin runtime path → passes to worker via `pluginRuntimePath`
+- Worker dynamically imports plugin module → wraps as `buildScopeOpts`
+- Tests use `createMatrixApp` (from `test-utils/create-matrix-app.ts`) which auto-injects Matrix scope opts
+- Runtime throws if `buildScopeOpts` not provided (no silent fallback)
+
+### Daemon SSE
+- Per-project ring buffer (2000 entries) + monotonic seqId
+- `Last-Event-ID` header on reconnect → catch-up from ring buffer
+- Falls back to full tree fetch if gap too large
+
+### Streaming Response Forwarding
+- Worker detects `text/event-stream` content-type → streams chunks via postMessage
+- Daemon receives `http_response_stream_start/chunk/end` → creates ReadableStream for client
+- Normal HTTP: buffered `response.text()` as before
+
+### Plugin Web Assets
+- Served at `/plugin-assets/<pluginName>/` URL path (not filesystem path)
+- `/plugins` endpoint returns URL paths, not absolute filesystem paths
+- Auth skips `/plugin-assets/` prefix
+
+### Post-Compact PREFIX DRIFT Fix
+- Root cause: post-compact user message built via manual string construction (duplicate codepath)
+- Fix: route through `queue.drain()` → `adapter.appendQueueMessagesToMessages()` → `recordQueueEvents()` — same path as yield wake
+- This emits `messages_consumed` so walker can materialize deferred messages before first post-compact assistant turn
+- Previously-skipped test now passes (44 pass in drift-lifecycle.test.ts)
+
