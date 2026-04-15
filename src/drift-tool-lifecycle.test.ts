@@ -36,7 +36,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { ulid } from "./ulid.ts";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
-import { createApp } from "./runtime.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import type { Event } from "./events.ts";
 import {
 	createMockedProviderWithMock,

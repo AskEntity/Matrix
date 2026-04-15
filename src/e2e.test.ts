@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AnthropicCompatibleProvider } from "./anthropic-compatible-provider.ts";
-import { createApp } from "./runtime.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 
 const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
 

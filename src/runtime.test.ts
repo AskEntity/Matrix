@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { ulid } from "./ulid.ts";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
-import { createApp } from "./runtime.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";

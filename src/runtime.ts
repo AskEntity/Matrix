@@ -11,7 +11,6 @@ import {
 	resolveAuthGroup,
 } from "./config.ts";
 import {
-	buildMatrixScopeOpts,
 	deliverMessage,
 	runAgentForNode,
 	stopAgent,
@@ -37,7 +36,6 @@ import type { Event } from "./events.ts";
 import { ProjectStore } from "./project-store.ts";
 import { createTaskComplete } from "./queue-message-factory.ts";
 
-// buildSystemPrompt import removed — prompt is now provided by buildMatrixScopeOpts
 import { TOOL_DONE } from "./tool-names.ts";
 import {
 	type HealthResponse,
@@ -173,16 +171,18 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	}
 
 	/**
-	 * Get ScopeOpts for a project. Prefers injected plugin builder (config.buildScopeOpts),
-	 * falls back to Matrix's hardcoded builder during migration.
-	 * TODO: delete fallback when all callers provide buildScopeOpts explicitly.
+	 * Get ScopeOpts for a project from the injected plugin builder.
+	 * No fallback — caller MUST provide buildScopeOpts in DaemonConfig.
 	 */
 	// biome-ignore lint/suspicious/noExplicitAny: ScopeOpts generic varies by plugin
 	function getScopeOptsForProject(projectId: string): import("./runtime/context.ts").ScopeOpts<any> {
-		if (config.buildScopeOpts) {
-			return config.buildScopeOpts(projectId, ctx);
+		if (!config.buildScopeOpts) {
+			throw new Error(
+				"buildScopeOpts not provided in DaemonConfig. " +
+				"Runtime is plugin-agnostic — the caller must inject scope opts.",
+			);
 		}
-		return buildMatrixScopeOpts(projectId, ctx.globalConfig.selfBootstrap, ctx);
+		return config.buildScopeOpts(projectId, ctx);
 	}
 
 	// Request counter middleware
@@ -456,6 +456,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	}
 
 	async function autoResumeProjects(): Promise<void> {
+		if (!config.buildScopeOpts) {
+			// No plugin runtime → no agent lifecycle. Worker serves routes only.
+			return;
+		}
 		const projects = ctx.pm.list();
 		for (const project of projects) {
 			const tracker = await getTracker(ctx, project.id);
@@ -503,8 +507,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	};
 }
 
-// ORCHESTRATOR_SYSTEM_PROMPT removed — prompt is now provided by buildMatrixScopeOpts
-// and stored in ctx.scopeOpts per project.
+// Runtime is plugin-agnostic. Prompt + tools provided via config.buildScopeOpts.
 
 // runtime.ts is a library — no standalone entry point.
 // Production entry is daemon.ts. Tests import createApp() directly.

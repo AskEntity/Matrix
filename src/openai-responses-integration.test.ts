@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { ulid } from "./ulid.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { createApp } from "./runtime.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import {
 	createMockedResponsesProviderWithMock,
 	restoreMockedResponsesFetch,

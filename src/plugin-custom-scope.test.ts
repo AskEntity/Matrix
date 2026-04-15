@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { ulid } from "./ulid.ts";
 import { z } from "zod";
-import { createApp } from "./runtime.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import type { Event } from "./events.ts";
 import type { ScopeOpts } from "./runtime/context.ts";
 import { toToolDefinition } from "./tool-def.ts";

@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import { ulid } from "./ulid.ts";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { runChildCore } from "./runtime/agent-lifecycle.ts";
-import { createApp } from "./runtime.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event, EventSpec } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
