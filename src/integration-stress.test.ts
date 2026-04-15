@@ -58,13 +58,12 @@ async function setupTestContext(): Promise<TestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 
+	const project = { id: ulid(), name: basename(projectDir), path: projectDir };
 	const appResult = createApp({
 		dataDir,
 		agentProvider: provider,
+		projects: [project],
 	});
-
-	const project = { id: ulid(), name: basename(projectDir), path: projectDir };
-	appResult.pm.sync([project]);
 
 	// Clean up quality task templates that interfere with test assumptions
 	const tasksDir = join(projectDir, ".mxd", "tasks");
@@ -113,8 +112,8 @@ async function recreateApp(
 	const newApp = createApp({
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
+		projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }],
 	});
-	newApp.pm.sync([{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }]);
 	newApp.markReady();
 	return newApp;
 }
