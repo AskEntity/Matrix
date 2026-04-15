@@ -105,6 +105,16 @@ async function setupTestContext(): Promise<TestContext> {
 
 	appResult.markReady();
 
+	// Ensure root node has cwd + worktreePath set to project root.
+	// In production, getTracker() backfills worktreePath. But cwd also needs
+	// to be set for tools (getTaskCwd reads cwd first, worktreePath as fallback).
+	const tracker = await appResult.getTracker(project.id);
+	const rootNode = tracker.getTask(tracker.rootNodeId);
+	if (rootNode) {
+		if (!rootNode.worktreePath) rootNode.worktreePath = projectDir;
+		if (!rootNode.cwd) rootNode.cwd = projectDir;
+	}
+
 	return {
 		dataDir,
 		projectDir,
@@ -394,6 +404,10 @@ describe("Integration: full stack with mock API", () => {
 	test("Scenario 2: multiple tools execute with real results", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+
+		// DEBUG: verify root has cwd
+		const _tracker = await ctx.app.getTracker(ctx.projectId);
+		const _root = _tracker.getTask(_tracker.rootNodeId);
 
 		// Write a file to read
 		await Bun.write(join(ctx.projectDir, "test-file.txt"), "file_content_here");
