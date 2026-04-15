@@ -14,7 +14,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
 import { createApp } from "./runtime.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
@@ -23,6 +24,7 @@ import {
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
 import type { TaskNode } from "./types.ts";
+import { initTestProject } from "./test-utils/init-test-project.ts";
 
 // ── Test infrastructure ──
 
@@ -68,13 +70,14 @@ async function setupTestContext(): Promise<TestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 
+	await initTestProject(projectDir);
+
+	const project = { id: ulid(), name: basename(projectDir), path: projectDir };
 	const appResult = createApp({
 		dataDir,
 		agentProvider: provider,
+		projects: [project],
 	});
-
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
 
 	// Clean up quality task templates that interfere with test assumptions
 	const tasksDir = join(projectDir, ".mxd", "tasks");
@@ -734,8 +737,8 @@ async function recreateApp(
 	const newApp = createApp({
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
+		projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }],
 	});
-	await newApp.pm.load();
 	newApp.markReady();
 	return newApp;
 }
@@ -8616,13 +8619,12 @@ describe("Default branch", () => {
 		const mockAPI = new ValidatingMockAPI();
 		const provider = createMockedProviderWithMock(mockAPI);
 
+		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
 		const appResult = createApp({
 			dataDir,
 			agentProvider: provider,
+			projects: [project],
 		});
-
-		await appResult.pm.load();
-		const project = await appResult.pm.init(projectDir);
 
 		// Activate setup hook
 		const hookExample = join(
@@ -8673,9 +8675,8 @@ describe("Default branch", () => {
 
 		const mockAPI = new ValidatingMockAPI();
 		const provider = createMockedProviderWithMock(mockAPI);
-		const appResult = createApp({ dataDir, agentProvider: provider });
-		await appResult.pm.load();
-		const project = await appResult.pm.init(projectDir);
+		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const appResult = createApp({ dataDir, agentProvider: provider, projects: [project] });
 
 		const hookExample = join(
 			projectDir,

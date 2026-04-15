@@ -3,7 +3,7 @@
  */
 import type { RuntimeContext } from "./runtime/context.ts";
 import type { MessageQueue } from "./message-queue.ts";
-import type { ProjectManager } from "./project-manager.ts";
+import type { ProjectStore } from "./project-store.ts";
 import {
 	initResourceRegistry,
 	registerSideEffects,
@@ -30,11 +30,11 @@ export function mockRuntimeContext(opts: {
 		createdAt: new Date().toISOString(),
 	};
 
-	// Minimal ProjectManager mock — just needs get() and list()
+	// Minimal ProjectStore mock — just needs get() and list()
 	const pm = {
 		get: (id: string) => (id === opts.projectId ? project : undefined),
 		list: () => [project],
-	} as unknown as ProjectManager;
+	} as unknown as ProjectStore;
 
 	const trackers = new Map<string, TaskTracker>();
 	trackers.set(opts.projectId, opts.tracker);

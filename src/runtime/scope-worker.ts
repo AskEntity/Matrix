@@ -30,14 +30,8 @@ self.onmessage = async (event: MessageEvent) => {
 		};
 
 		try {
-			appInstance = createApp({ dataDir, globalConfigPath });
-			await appInstance.pm.load();
+			appInstance = createApp({ dataDir, globalConfigPath, projects });
 			await appInstance.loadConfig();
-
-			// If daemon sent project list, sync worker's pm to match
-			if (projects && projects.length > 0) {
-				appInstance.pm.syncFromDaemon(projects);
-			}
 
 			await appInstance.autoResumeProjects();
 			// Wire broadcast events to parent thread for SSE relay
@@ -111,7 +105,7 @@ self.onmessage = async (event: MessageEvent) => {
 		if (!appInstance) return;
 
 		if (key === "projects") {
-			appInstance.pm.syncFromDaemon(data as import("./worker-api.ts").SyncMap["projects"]);
+			appInstance.pm.sync(data as import("./worker-api.ts").SyncMap["projects"]);
 		} else if (key === "config") {
 			appInstance.ctx.globalConfig = data as import("./worker-api.ts").SyncMap["config"];
 		}
