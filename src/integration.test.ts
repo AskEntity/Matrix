@@ -10363,7 +10363,13 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		eventStore.clear(rootNodeId);
 		expect(eventStore.has(rootNodeId)).toBe(false);
 
-		await new Promise((r) => setTimeout(r, 500));
+		// Poll instead of fixed 500ms to avoid flakiness under load
+		for (let i = 0; i < 20; i++) {
+			await new Promise((r) => setTimeout(r, 100));
+			if (eventStore.has(rootNodeId)) {
+				throw new Error(`JSONL reappeared after ${(i + 1) * 100}ms — async cleanup wrote after clear`);
+			}
+		}
 		expect(eventStore.has(rootNodeId)).toBe(false);
 	}, 15000);
 
