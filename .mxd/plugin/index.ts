@@ -96,6 +96,7 @@ function exec(cmd: string[], cwd: string): Promise<void> {
 const manifest: PluginManifest = {
 	name: "matrix",
 	scope: "global",
+	dataRoot: "@",
 	web: "./web/App.tsx",
 	runtime: "./runtime.ts",
 
