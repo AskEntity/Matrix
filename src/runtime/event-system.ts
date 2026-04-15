@@ -106,8 +106,9 @@ export function broadcast(
 	}
 
 	// 2. Relay to parent thread (shell) for SSE when running in a worker.
+	//    Must strip before postMessage — shell doesn't have stripEventForUI.
 	if (ctx.onBroadcast) {
-		ctx.onBroadcast(projectId, event);
+		ctx.onBroadcast(projectId, stripEventForUI(event));
 	}
 
 	// 3. In-process subscribers for this project (O(subs_for_this_project),

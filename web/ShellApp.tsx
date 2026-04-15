@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { authFetch, getToken } from "./auth.ts";
-import { AuthFetchProvider } from "./auth-context.ts";
+import { AuthFetchProvider, GetTokenProvider } from "./auth-context.ts";
 import { LoginPage } from "./LoginPage.tsx";
 
 // Plugin UI loaded dynamically from registered plugin path
@@ -120,9 +120,11 @@ export function ShellApp() {
 			<div className="mxd-shell-content">
 				{PluginUI && (
 					<AuthFetchProvider value={authFetch}>
-						<Suspense fallback={<div style={{ padding: 20, color: "#8b949e" }}>Loading plugin...</div>}>
-							<PluginUI />
-						</Suspense>
+						<GetTokenProvider value={getToken}>
+							<Suspense fallback={<div style={{ padding: 20, color: "#8b949e" }}>Loading plugin...</div>}>
+								<PluginUI />
+							</Suspense>
+						</GetTokenProvider>
 					</AuthFetchProvider>
 				)}
 				{!PluginUI && (

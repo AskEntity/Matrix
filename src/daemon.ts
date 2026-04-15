@@ -164,6 +164,17 @@ export async function createDaemon(opts: {
 				pending: new Map(),
 			};
 
+			// Handle worker crash — reject all pending requests
+			worker.onerror = (event: ErrorEvent) => {
+				console.error(`[daemon] Worker "${scopeName}" crashed:`, event.message);
+				scopeWorker.ready = false;
+				// Reject all pending HTTP requests so they don't hang forever
+				for (const [id, pending] of scopeWorker.pending) {
+					pending.reject(new Error(`Worker "${scopeName}" crashed: ${event.message}`));
+				}
+				scopeWorker.pending.clear();
+			};
+
 			// Temporary handler for init sequence
 			worker.onmessage = (event: MessageEvent) => {
 				const msg = event.data;

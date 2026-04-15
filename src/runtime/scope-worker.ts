@@ -111,6 +111,11 @@ self.onmessage = async (event: MessageEvent) => {
 			appInstance.ctx.globalConfig = data as import("./worker-api.ts").SyncMap["config"];
 		} else if (key === "project_deleted") {
 			const { projectId } = data as import("./worker-api.ts").SyncMap["project_deleted"];
+			// Defensive: stop any running agents before clearing caches.
+			// Daemon already sends POST /stop before this sync, but if that
+			// failed or timed out, agents would keep running on a deleted project.
+			const { stopAgent } = await import("./agent-lifecycle.ts");
+			await stopAgent(appInstance.ctx, projectId);
 			appInstance.ctx.trackers.delete(projectId);
 			appInstance.ctx.eventStores.delete(projectId);
 			appInstance.ctx.pendingClarifications.delete(projectId);
