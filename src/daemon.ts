@@ -505,6 +505,83 @@ export async function createDaemon(opts: {
 			});
 		}
 
+		// ── Project config (daemon-owned: per-project settings) ──
+		const projectConfigMatch = url.pathname.match(/^\/projects\/([^/]+)\/config(\/repo|\/all)?$/);
+		if (projectConfigMatch) {
+			const projectId = projectConfigMatch[1]!;
+			const subpath = projectConfigMatch[2] ?? "";
+			const project = pm.get(projectId);
+			if (!project) {
+				return new Response(JSON.stringify({ error: "Project not found" }), {
+					status: 404,
+					headers: { "content-type": "application/json" },
+				});
+			}
+
+			const {
+				loadProjectLocalConfig,
+				loadProjectRepoConfig,
+				saveProjectLocalConfig,
+				saveProjectRepoConfig,
+				resolveConfig,
+			} = await import("./config.ts");
+
+			if (subpath === "/repo" && request.method === "GET") {
+				const cfg = await loadProjectRepoConfig(project.path);
+				return new Response(JSON.stringify(cfg), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+			if (subpath === "/repo" && request.method === "PATCH") {
+				const partial = (await request.json()) as Partial<MatrixConfig>;
+				const existing = await loadProjectRepoConfig(project.path);
+				const merged = { ...existing };
+				for (const [k, v] of Object.entries(partial)) {
+					if (v === null || v === undefined) {
+						delete (merged as unknown as Record<string, unknown>)[k];
+					} else {
+						(merged as unknown as Record<string, unknown>)[k] = v;
+					}
+				}
+				await saveProjectRepoConfig(project.path, merged);
+				return new Response(JSON.stringify(merged), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+			if (subpath === "/all" && request.method === "GET") {
+				const [repoConfig, localConfig] = await Promise.all([
+					loadProjectRepoConfig(project.path),
+					loadProjectLocalConfig(dataDir, project.id),
+				]);
+				const resolved = resolveConfig(globalConfig, repoConfig, localConfig);
+				return new Response(JSON.stringify({ global: globalConfig, repo: repoConfig, local: localConfig, resolved }), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+			if (subpath === "" && request.method === "GET") {
+				const cfg = await loadProjectLocalConfig(dataDir, project.id);
+				return new Response(JSON.stringify(cfg), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+			if (subpath === "" && request.method === "PATCH") {
+				const partial = (await request.json()) as Partial<MatrixConfig>;
+				const existing = await loadProjectLocalConfig(dataDir, project.id);
+				const merged = { ...existing };
+				for (const [k, v] of Object.entries(partial)) {
+					if (v === null || v === undefined) {
+						delete (merged as unknown as Record<string, unknown>)[k];
+					} else {
+						(merged as unknown as Record<string, unknown>)[k] = v;
+					}
+				}
+				await saveProjectLocalConfig(dataDir, project.id, merged);
+				return new Response(JSON.stringify(merged), {
+					headers: { "content-type": "application/json" },
+				});
+			}
+		}
+
 		// SSE
 		if (url.pathname === "/events") {
 			const projectId = url.searchParams.get("projectId");
