@@ -143,7 +143,7 @@ beforeEach(async () => {
 	dataDir = await mkdtemp(join(tmpdir(), "mxd-mcp-test-"));
 	server = createApp({ dataDir });
 	hono = server.app;
-	await server.pm.load();
+
 	server.markReady();
 });
 

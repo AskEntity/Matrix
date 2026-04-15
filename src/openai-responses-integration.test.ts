@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { createApp } from "./runtime.ts";
 import {
@@ -47,14 +48,8 @@ async function setupTestContext(): Promise<TestContext> {
 		agentProvider: provider,
 		initialConfig: { ...DEFAULT_CONFIG, model: "gpt-4.1-mini" },
 	});
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
-
-	// Clean up quality task templates that interfere with test assumptions
-	const tasksDir = join(projectDir, ".mxd", "tasks");
-	if (existsSync(tasksDir)) {
-		rmSync(tasksDir, { recursive: true });
-	}
+	const projectId = ulid();
+	appResult.pm.sync([{ id: projectId, name: basename(projectDir), path: projectDir }]);
 
 	const hookExample = join(
 		projectDir,
@@ -77,7 +72,7 @@ async function setupTestContext(): Promise<TestContext> {
 		projectDir,
 		app: appResult,
 		mockAPI,
-		projectId: project.id,
+		projectId,
 	};
 }
 
@@ -98,7 +93,7 @@ async function recreateApp(
 		agentProvider: provider,
 		initialConfig: { ...DEFAULT_CONFIG, model: "gpt-4.1-mini" },
 	});
-	await newApp.pm.load();
+	newApp.pm.sync(ctx.app.pm.list());
 	newApp.markReady();
 	return newApp;
 }

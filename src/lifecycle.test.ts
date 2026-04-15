@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { runChildCore } from "./runtime/agent-lifecycle.ts";
 import { createApp } from "./runtime.ts";
@@ -148,11 +149,13 @@ async function startRootAgent(
 }
 
 /** Create a project directly via pm (not HTTP — project CRUD is daemon-owned). */
-async function createProject(
+function createProject(
 	pm: ReturnType<typeof createApp>["pm"],
 	projectDir: string,
-): Promise<Project> {
-	return pm.init(projectDir);
+): Project {
+	const project = { id: ulid(), name: basename(projectDir), path: projectDir, createdAt: new Date().toISOString() };
+	pm.sync([project]);
+	return project;
 }
 
 /** Create a task under a project. Defaults parentId to rootNodeId if not provided. */
@@ -258,7 +261,7 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -293,7 +296,7 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -331,7 +334,7 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -368,7 +371,7 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -396,7 +399,7 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -416,7 +419,7 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -441,7 +444,7 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -469,7 +472,7 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -516,7 +519,7 @@ describe("lifecycle: concurrent message sources", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -555,7 +558,7 @@ describe("lifecycle: concurrent message sources", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -586,7 +589,7 @@ describe("lifecycle: concurrent message sources", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -619,7 +622,7 @@ describe("lifecycle: concurrent message sources", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -669,7 +672,7 @@ describe("lifecycle: concurrent message sources", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -870,7 +873,7 @@ describe("lifecycle: session consistency on tracker nodes", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -942,7 +945,7 @@ describe("lifecycle: parent chain notifications", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -990,7 +993,7 @@ describe("lifecycle: parent chain notifications", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1041,7 +1044,7 @@ describe("lifecycle: parent chain notifications", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1083,7 +1086,7 @@ describe("lifecycle: parent chain notifications", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1155,7 +1158,7 @@ describe("lifecycle: orchestrator message routing", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1193,7 +1196,7 @@ describe("lifecycle: orchestrator message routing", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1225,7 +1228,7 @@ describe("lifecycle: orchestrator message routing", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1312,7 +1315,7 @@ describe("lifecycle: message persistence via JSONL", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1343,7 +1346,7 @@ describe("lifecycle: message persistence via JSONL", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1397,7 +1400,7 @@ describe("lifecycle: stop agent cascading", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1464,7 +1467,7 @@ describe("lifecycle: clarify response routing", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1507,7 +1510,7 @@ describe("lifecycle: clarify response routing", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1562,7 +1565,7 @@ describe("lifecycle: edge cases and error handling", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1583,7 +1586,7 @@ describe("lifecycle: edge cases and error handling", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1605,7 +1608,7 @@ describe("lifecycle: edge cases and error handling", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const res = await app.request(
@@ -1624,7 +1627,7 @@ describe("lifecycle: edge cases and error handling", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		// Note: NOT calling markReady()
 
 		const project = await createProject(pm, projectDir);
@@ -1804,7 +1807,7 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1837,7 +1840,7 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1858,7 +1861,7 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -1888,7 +1891,7 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -2209,7 +2212,7 @@ describe("lifecycle: child completion notification paths", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -2262,7 +2265,7 @@ describe("lifecycle: child completion notification paths", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -2427,7 +2430,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -2507,7 +2510,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -2592,7 +2595,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -2660,7 +2663,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -2709,7 +2712,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const res = await app.request(
@@ -2734,7 +2737,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -2791,7 +2794,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -2827,7 +2830,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const project = await createProject(pm, projectDir);
@@ -2913,7 +2916,7 @@ describe("lifecycle: header only on cold start", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 		const project = await createProject(pm, projectDir);
 
@@ -2946,7 +2949,7 @@ describe("lifecycle: header only on cold start", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 		const project = await createProject(pm, projectDir);
 
@@ -2981,7 +2984,7 @@ describe("lifecycle: header only on cold start", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 		const project = await createProject(pm, projectDir);
 
