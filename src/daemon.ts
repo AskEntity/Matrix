@@ -309,15 +309,12 @@ export async function createDaemon(opts: {
 		const url = new URL(request.url);
 
 		// Auth
+		// Only skip auth for SPA root, static assets (path prefix), and auth endpoints.
+		// NEVER skip based on file extension — attackers can append .ts to any URL.
 		const skipAuth =
 			url.pathname === "/" ||
 			url.pathname.startsWith("/web/") ||
-			url.pathname.startsWith("/auth/") ||
-			url.pathname.startsWith("/.mxd/") ||
-			url.pathname.endsWith(".js") ||
-			url.pathname.endsWith(".css") ||
-			url.pathname.endsWith(".tsx") ||
-			url.pathname.endsWith(".ts");
+			url.pathname.startsWith("/auth/");
 
 		if (!skipAuth) {
 			const authPath = join(dataDir, "auth.json");
