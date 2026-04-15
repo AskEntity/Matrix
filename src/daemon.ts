@@ -430,7 +430,16 @@ export async function createDaemon(opts: {
 	});
 
 	// Health — daemon-owned, not worker-forwarded
-	app.get("/health", (c) => {
+	app.get("/health", async (c) => {
+		if (c.req.query("check_model")) {
+			// Forward to worker for full health check (includes Anthropic API ping)
+			const workerName = registeredPlugins.find(
+				(p) => p.scope === "global" && workers.has(p.name),
+			)?.name;
+			if (workerName) {
+				return forwardToWorker(workerName, c.req.raw);
+			}
+		}
 		return c.json({ status: "ok", version: VERSION });
 	});
 
@@ -449,7 +458,7 @@ export async function createDaemon(opts: {
 		return c.json({ enabled: hasSecret, authenticated });
 	});
 
-	app.get("/auth/logout", (c) => {
+	app.post("/auth/logout", (c) => {
 		return c.json({ ok: true });
 	});
 
@@ -578,10 +587,8 @@ export async function createDaemon(opts: {
 			registeredPlugins.map((p) => ({
 				name: p.name,
 				scope: p.scope,
-				// Return URL path (not filesystem path) so browser can import()
-				webComponentPath: p.web
-					? `/plugin-assets/${p.name}/${p.web}`
-					: undefined,
+				// Filesystem path — Bun.serve dev mode resolves & transpiles .tsx imports
+				webComponentPath: p.resolvedWebPath,
 				projectId: p.projectId,
 			})),
 		);
@@ -749,6 +756,21 @@ export async function createDaemon(opts: {
 							);
 							controller.enqueue(msg);
 						}
+						// Send pending clarifications (worker has them)
+						const clarifyResp = await forwardToWorker(
+							workerName!,
+							new Request(`http://localhost/projects/${projectId}/clarifications`, {
+								headers: request.headers,
+							}),
+						);
+						if (clarifyResp?.ok) {
+							const clarifications = await clarifyResp.json();
+							if (Array.isArray(clarifications) && clarifications.length > 0) {
+								controller.enqueue(sseEncoder.encode(
+									`data: ${JSON.stringify({ type: "pending_clarifications", projectId, clarifications })}\n\n`,
+								));
+							}
+						}
 					} catch {}
 				}
 
@@ -776,6 +798,15 @@ export async function createDaemon(opts: {
 				connection: "keep-alive",
 			},
 		});
+	});
+
+	// Restart daemon — daemon-owned (process.exit must run on main thread, not worker)
+	app.post("/restart-daemon", async (c) => {
+		setTimeout(async () => {
+			await shutdown();
+			process.exit(0);
+		}, 100);
+		return c.json({ restarting: true });
 	});
 
 	// Fallthrough: forward to first available global worker

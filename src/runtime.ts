@@ -309,15 +309,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json(response);
 	});
 
-	// Restart daemon
-	app.post("/restart-daemon", async (c) => {
-		// Respond first, then shutdown
-		setTimeout(async () => {
-			await shutdown();
-			process.exit(0);
-		}, 100);
-		return c.json({ restarting: true });
-	});
+	// restart-daemon is daemon-owned (needs process.exit on the main thread)
 
 	// Project list — runtime exposes it so scope-worker can serve GET /projects
 	app.get("/projects", (c) => {

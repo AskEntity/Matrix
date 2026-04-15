@@ -1,13 +1,13 @@
 import { describe, expect, it, mock } from "bun:test";
 import type React from "react";
-import { createEventHandler, type EventHandlerDeps } from "./event-handler.ts";
+import { createEventHandler, type EventHandlerDeps } from "../.mxd/plugin/web/event-handler.ts";
 import {
 	createLogEntry,
 	getLogTaskId,
 	type IncomingEvent,
 	type LogEntry,
 	type TaskNode,
-} from "./hooks.ts";
+} from "../.mxd/plugin/web/hooks.ts";
 
 /** Minimal deps that satisfy the EventHandlerDeps interface */
 function makeDeps() {
