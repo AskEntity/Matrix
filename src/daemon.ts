@@ -620,7 +620,7 @@ export type { RegisteredPlugin };
 // ── Production entry ──
 
 if (import.meta.main) {
-	const dataDir = join(homedir(), ".mxd");
+	const dataDir = process.env.MXD_DATA_DIR ?? join(homedir(), ".mxd");
 	const daemon = await createDaemon({ dataDir });
 
 	const port = daemon.globalConfig.port ?? 7433;
