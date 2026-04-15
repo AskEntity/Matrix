@@ -497,7 +497,6 @@ if (import.meta.main) {
 		loadConfig,
 		getConfig,
 	} = createApp();
-	await pm.load();
 	await loadConfig();
 
 	const port = getConfig().port ?? 7433;
