@@ -1176,6 +1176,29 @@ Matrix plugin at `.mxd/plugin/index.ts`: `{ name: "matrix", scope: "global" }`. 
 
 `web/` = daemon shell React app (auth + project/scope selector). Plugin UI loaded as dynamic React component import (not iframe): `React.lazy(() => import(pluginWebPath))`.
 
+### ProjectStore (worker's read-only project registry)
+
+`ProjectStore` replaces `ProjectManager` in worker/runtime. Pure in-memory, sync-only:
+- `sync(projects)` — daemon pushes full project list
+- `get(id)` / `list()` / `has(id)` — read-only lookups
+- No disk access, no CRUD methods
+- `createApp({ projects })` — injects project list at construction
+
+`ProjectManager` remains in daemon only — it owns disk persistence + CRUD.
+
+### Test pattern for projects
+
+```ts
+// Runtime tests: inject projects directly (no HTTP)
+const app = createApp({ dataDir, projects: [{ id, name, path }] });
+
+// Daemon tests: full pipeline
+const daemon = await createDaemon({ dataDir });
+await daemon.fetch(new Request("/projects", { method: "POST", body: ... }));
+```
+
+Tests needing git worktrees use `initTestProject(path)` helper (creates git repo + .mxd/ structure).
+
 ### Current State (half-state)
 
-Production still runs `runtime.ts` directly (cli.ts → runtime.ts). daemon.ts is WIP — has auth, config, SSE relay, HTTP proxy, plugin discovery, but not yet wired as production entry. Dual path: ProjectManager.init() still has old Matrix-specific code alongside new onProjectInit hook.
+Production still runs `runtime.ts` directly (cli.ts → runtime.ts). daemon.ts is WIP — has auth, config, SSE relay, HTTP proxy, plugin discovery, project CRUD, typed sync. Not yet wired as production entry. 12 emission-harness test failures remain (cwd/worktreePath on root node).
