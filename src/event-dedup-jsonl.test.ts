@@ -241,7 +241,6 @@ describe("Bug 1: dedup across restarts (replay path)", () => {
 		await new Promise((r) => setTimeout(r, 100));
 		const provider = createMockedProviderWithMock(ctx.mockAPI);
 		ctx.app = createApp({ dataDir: ctx.dataDir, agentProvider: provider });
-		await ctx.app.pm.load();
 		await ctx.app.autoResumeProjects();
 		ctx.app.markReady();
 		await new Promise((r) => setTimeout(r, 500));
@@ -477,7 +476,6 @@ describe("Bug 1: yield wake bgOrphans persisted exactly once", () => {
 
 		const provider = createMockedProviderWithMock(ctx.mockAPI);
 		ctx.app = createApp({ dataDir: ctx.dataDir, agentProvider: provider });
-		await ctx.app.pm.load();
 		await ctx.app.autoResumeProjects();
 		ctx.app.markReady();
 
