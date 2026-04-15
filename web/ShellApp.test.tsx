@@ -13,6 +13,7 @@ describe("daemon + Matrix plugin in UI", () => {
 	let daemon: DaemonInstance;
 	let tempDir: string;
 	let server: ReturnType<typeof Bun.serve>;
+	let savedFetch: typeof fetch;
 	const PORT = 17437;
 
 	beforeAll(async () => {
@@ -32,6 +33,8 @@ describe("daemon + Matrix plugin in UI", () => {
 
 		// Patch fetch BEFORE any React render — redirect relative URLs to test daemon
 		// and mock auth to always pass
+		// Save original fetch for restoration in afterAll
+		savedFetch = globalThis.fetch;
 		// Use daemon.fetch directly (bypass HTTP — happy-dom's fetch doesn't do real HTTP)
 		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 			let url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -55,6 +58,8 @@ describe("daemon + Matrix plugin in UI", () => {
 	}, 15000);
 
 	afterAll(async () => {
+		// Restore original fetch — CRITICAL: our override pollutes other test files
+		globalThis.fetch = savedFetch;
 		server?.stop();
 		await daemon?.shutdown();
 		await rm(tempDir, { recursive: true, force: true });
