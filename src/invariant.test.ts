@@ -54,12 +54,12 @@ async function setupTestContext(): Promise<TestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 
+	const projectId = ulid();
 	const appResult = createApp({
 		dataDir,
 		agentProvider: provider,
+		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
 	});
-	const projectId = ulid();
-	appResult.pm.sync([{ id: projectId, name: basename(projectDir), path: projectDir }]);
 
 	// Activate setup hook
 	const hookExample = join(
