@@ -1,6 +1,6 @@
 import type React from "react";
 import { memo, useEffect, useState } from "react";
-import { authFetch } from "../auth.ts";
+import { useAuthFetch } from "../auth.ts";
 import type { Project } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import {
@@ -44,6 +44,7 @@ export const AppHeader = memo(function AppHeader({
 	onLogout?: () => void;
 	onToggleSidebar?: () => void;
 }) {
+	const authFetch = useAuthFetch();
 	const { t } = useLocale();
 	const [versionInfo, setVersionInfo] = useState<string>("");
 
