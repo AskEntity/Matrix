@@ -46,9 +46,12 @@ export async function setupEmissionTestContext(): Promise<EmissionTestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 
-	const appResult = createApp({ dataDir, agentProvider: provider });
 	const projectId = ulid();
-	appResult.pm.sync([{ id: projectId, name: basename(projectDir), path: projectDir }]);
+	const appResult = createApp({
+		dataDir,
+		agentProvider: provider,
+		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
+	});
 
 	const hookExample = join(
 		projectDir,
