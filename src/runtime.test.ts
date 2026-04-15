@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "ulid";
+import { ulid } from "./ulid.ts";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { createApp } from "./runtime.ts";
 import { EventStore } from "./event-store.ts";
@@ -837,10 +837,11 @@ describe("daemon tasks API", () => {
 			dataDir: localDataDir,
 			agentProvider,
 		});
-		await localPm.load();
 
 		// Create a project
-		const project = await localPm.init(join(tempDir, "cont-wt-app"));
+		const _tmpId = ulid();
+		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "cont-wt-app") }]);
+		const project = localPm.get(_tmpId)!;
 		const localTracker = await localGetTracker(project.id);
 		const localRootId = localTracker.rootNodeId;
 
@@ -934,10 +935,11 @@ describe("daemon tasks API", () => {
 			pm: localPm,
 			getTracker: localGetTracker,
 		} = createApp({ dataDir: localDataDir, agentProvider: mockProvider });
-		await localPm.load();
 
 		const projPath = join(tempDir, "gitlog-app");
-		const project = await localPm.init(projPath);
+		const _tmpId = ulid();
+		localPm.sync([{ id: _tmpId, name: "test", path: projPath }]);
+		const project = localPm.get(_tmpId)!;
 		const localTracker2 = await localGetTracker(project.id);
 		const localRootId2 = localTracker2.rootNodeId;
 
@@ -1753,9 +1755,12 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 			dataDir,
 			agentProvider: mockProvider,
 		});
-		await localPm.load();
 
-		const project = await localPm.init(join(tempDir, "proj"));
+		const _tmpId = ulid();
+
+		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "proj") }]);
+
+		const project = localPm.get(_tmpId)!;
 		projectId = project.id;
 		const tracker = await getTracker(projectId);
 		rootNodeId = tracker.rootNodeId;
@@ -2092,11 +2097,12 @@ describe("POST /projects/:id/clarify", () => {
 			dataDir: localDataDir,
 			agentProvider: longRunningProvider,
 		});
-		await localPm.load();
 		localMarkReady();
 
 		// Create project and start agent
-		const project = await localPm.init(join(tempDir, "clarify-route-proj"));
+		const _tmpId = ulid();
+		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "clarify-route-proj") }]);
+		const project = localPm.get(_tmpId)!;
 
 		const orchRes = await startRootAgent(
 			localApp,
@@ -2166,11 +2172,12 @@ describe("POST /projects/:id/clarify", () => {
 			dataDir: localDataDir,
 			agentProvider: longRunningProvider,
 		});
-		await localPm.load();
 		localMarkReady();
 
 		// Create project
-		const project = await localPm.init(join(tempDir, "clarify-child-route-proj"));
+		const _tmpId = ulid();
+		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "clarify-child-route-proj") }]);
+		const project = localPm.get(_tmpId)!;
 
 		const orchRes = await startRootAgent(
 			localApp,
@@ -2269,11 +2276,12 @@ describe("POST /projects/:id/clarify", () => {
 			dataDir: localDataDir,
 			agentProvider: longRunningProvider,
 		});
-		await localPm.load();
 		localMarkReady();
 
 		// Create project
-		const project = await localPm.init(join(tempDir, "clarify-closed-queue-proj"));
+		const _tmpId = ulid();
+		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "clarify-closed-queue-proj") }]);
+		const project = localPm.get(_tmpId)!;
 
 		const orchRes = await startRootAgent(
 			localApp,
@@ -2697,11 +2705,12 @@ describe("POST /projects/:id/stop", () => {
 			dataDir: localDataDir,
 			agentProvider: longRunningProvider,
 		});
-		await localPm.load();
 		localMarkReady();
 
 		// Create a project
-		const project = await localPm.init(join(tempDir, "cascade-proj"));
+		const _tmpId = ulid();
+		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "cascade-proj") }]);
+		const project = localPm.get(_tmpId)!;
 
 		// Start an agent
 		const orchRes = await startRootAgent(localApp, project.id, "do something");
@@ -3379,9 +3388,12 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 			dataDir: localDataDir,
 			agentProvider,
 		});
-		await localPm.load();
 
-		const project = await localPm.init(join(tempDir, "child-sess-proj"));
+		const _tmpId = ulid();
+
+		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "child-sess-proj") }]);
+
+		const project = localPm.get(_tmpId)!;
 		const emitTracker = await localGetTracker(project.id);
 		const emitRootId = emitTracker.rootNodeId;
 

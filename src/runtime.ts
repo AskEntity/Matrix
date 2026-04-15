@@ -490,7 +490,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 if (import.meta.main) {
 	const {
 		app,
-		pm,
 		autoResumeProjects,
 		shutdown,
 		markReady,
