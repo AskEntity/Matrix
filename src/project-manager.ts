@@ -29,24 +29,6 @@ export class ProjectManager {
 		this.loaded = true;
 	}
 
-	/**
-	 * Sync project list from daemon (golden source).
-	 * Worker receives the full project list and replaces its local copy.
-	 * No disk write — worker is read-only.
-	 */
-	syncFromDaemon(projects: Array<{ id: string; name: string; path: string }>): void {
-		this.projects.clear();
-		for (const p of projects) {
-			this.projects.set(p.id, {
-				id: p.id,
-				name: p.name,
-				path: p.path,
-				createdAt: new Date().toISOString(),
-			});
-		}
-		this.loaded = true;
-	}
-
 	/** Persist project metadata to disk. */
 	private async save(): Promise<void> {
 		await mkdir(this.dataDir, { recursive: true });

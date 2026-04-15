@@ -253,44 +253,5 @@ describe("ProjectManager", () => {
 		});
 	});
 
-	describe("syncFromDaemon", () => {
-		test("replaces local projects with daemon-provided list", () => {
-			pm.syncFromDaemon([
-				{ id: "p1", name: "project-1", path: "/tmp/p1" },
-				{ id: "p2", name: "project-2", path: "/tmp/p2" },
-			]);
-			expect(pm.list().length).toBe(2);
-			expect(pm.get("p1")?.name).toBe("project-1");
-			expect(pm.get("p2")?.path).toBe("/tmp/p2");
-		});
-
-		test("clears existing projects", async () => {
-			await mkdir(join(tempDir, "before-sync"), { recursive: true });
-			await pm.init(join(tempDir, "before-sync"));
-			expect(pm.list().length).toBeGreaterThan(0);
-
-			pm.syncFromDaemon([
-				{ id: "new1", name: "synced", path: "/tmp/synced" },
-			]);
-			expect(pm.list().length).toBe(1);
-			expect(pm.get("new1")?.name).toBe("synced");
-		});
-
-		test("sets loaded flag", () => {
-			const fresh = new ProjectManager(dataDir);
-			// Not loaded yet — but syncFromDaemon should set it
-			fresh.syncFromDaemon([{ id: "x", name: "x", path: "/tmp/x" }]);
-			expect(fresh.list().length).toBe(1);
-		});
-
-		test("empty list clears all projects", () => {
-			pm.syncFromDaemon([
-				{ id: "a", name: "a", path: "/tmp/a" },
-			]);
-			expect(pm.list().length).toBe(1);
-
-			pm.syncFromDaemon([]);
-			expect(pm.list().length).toBe(0);
-		});
-	});
+	// syncFromDaemon deleted — worker uses ProjectStore.sync(), not PM.
 });
