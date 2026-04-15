@@ -20,6 +20,17 @@ export async function initTestProject(projectPath: string): Promise<void> {
 		await chmod(hookPath, 0o755);
 	}
 
+	// Commit .mxd/ so worktrees see it
+	const addMxd = Bun.spawn(["git", "add", ".mxd/"], {
+		cwd: projectPath, stdout: "pipe", stderr: "pipe",
+	});
+	await addMxd.exited;
+	const commitMxd = Bun.spawn(["git", "commit", "-m", "add .mxd hooks", "--allow-empty"], {
+		cwd: projectPath, stdout: "pipe", stderr: "pipe",
+		env: { ...process.env, GIT_AUTHOR_NAME: "test", GIT_AUTHOR_EMAIL: "test@test.com", GIT_COMMITTER_NAME: "test", GIT_COMMITTER_EMAIL: "test@test.com" },
+	});
+	await commitMxd.exited;
+
 	// Git init if not already
 	if (!existsSync(join(projectPath, ".git"))) {
 		const gitInit = Bun.spawn(["git", "init"], {
