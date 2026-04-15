@@ -11,10 +11,10 @@ export function formatTokenCount(n: number): string {
 /**
  * Compute the compaction threshold from the context window.
  * Mirrors getCompactionThresholds() in src/compaction.ts.
- * Smaller windows need more buffer (17%), 1M+ windows use 8%.
+ * Smaller windows need more buffer (17%), 1M+ windows use 10%.
  */
 export function getCompactThreshold(contextWindow: number): number {
-	const ratio = contextWindow >= 1_000_000 ? 0.08 : 0.17;
+	const ratio = contextWindow >= 1_000_000 ? 0.1 : 0.17;
 	return Math.floor(contextWindow * (1 - ratio));
 }
 

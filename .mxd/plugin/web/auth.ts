@@ -1,29 +1,13 @@
 /**
- * Auth fetch context for plugin.
- * Plugin receives authenticated fetch from daemon shell via React context.
- * Plugin NEVER manages tokens — shell owns auth.
+ * Auth context re-export for plugin code.
+ * The REAL definitions live in web/auth-context.ts (shell owns them).
+ * Plugin code imports from this file for convenience — same React context instance.
  */
-import { createContext, useContext } from "react";
-
-export type AuthFetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-
-const AuthFetchContext = createContext<AuthFetchFn>(globalThis.fetch);
-
-export const AuthFetchProvider = AuthFetchContext.Provider;
-
-/** Hook: get authenticated fetch from shell-provided context. */
-export function useAuthFetch(): AuthFetchFn {
-	return useContext(AuthFetchContext);
-}
-
-/** For SSE EventSource URLs that can't use fetch — shell provides raw token getter. */
-export type GetTokenFn = () => string | null;
-
-const GetTokenContext = createContext<GetTokenFn>(() => null);
-
-export const GetTokenProvider = GetTokenContext.Provider;
-
-/** Hook: get raw auth token (for EventSource query params). */
-export function useGetToken(): GetTokenFn {
-	return useContext(GetTokenContext);
-}
+export {
+	AuthFetchProvider,
+	useAuthFetch,
+	GetTokenProvider,
+	useGetToken,
+	type AuthFetchFn,
+	type GetTokenFn,
+} from "../../../web/auth-context.ts";

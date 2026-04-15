@@ -9,7 +9,78 @@ import { join } from "node:path";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "./config.ts";
 import { createDaemon, type DaemonInstance } from "./daemon.ts";
 
-describe("daemon pipeline", () => {
+describe("daemon without plugins — bare daemon invariant", () => {
+	// Invariant: delete .mxd/plugin/ entirely → daemon still starts.
+	// Shell shows auth + selector, scope is empty, content shows "no plugin".
+	let tempDir: string;
+	let dataDir: string;
+	let daemon: DaemonInstance;
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "daemon-bare-test-"));
+		dataDir = join(tempDir, ".mxd");
+		await saveGlobalConfig(
+			{ ...DEFAULT_CONFIG },
+			join(dataDir, "config.json"),
+		);
+
+		// No projects → no plugin directories → pure bare daemon
+		daemon = await createDaemon({ dataDir });
+	});
+
+	afterAll(async () => {
+		await daemon.shutdown();
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("GET /health → 200 (daemon-owned, not worker-forwarded)", async () => {
+		const res = await daemon.fetch(
+			new Request("http://localhost/health"),
+		);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.status).toBe("ok");
+	});
+
+	test("GET /plugins → 200, empty array", async () => {
+		const res = await daemon.fetch(
+			new Request("http://localhost/plugins"),
+		);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body).toEqual([]);
+	});
+
+	test("GET /auth/status → 200, authenticated (no secret)", async () => {
+		const res = await daemon.fetch(
+			new Request("http://localhost/auth/status"),
+		);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.authenticated).toBe(true);
+		expect(body.enabled).toBe(false);
+	});
+
+	test("GET /projects → 200, empty array", async () => {
+		const res = await daemon.fetch(
+			new Request("http://localhost/projects"),
+		);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body).toEqual([]);
+	});
+
+	test("unhandled routes return 503 with clear message (no worker)", async () => {
+		const res = await daemon.fetch(
+			new Request("http://localhost/some/worker/route"),
+		);
+		expect(res.status).toBe(503);
+		const body = await res.json();
+		expect(body.error).toContain("No global plugin");
+	});
+});
+
+describe("daemon pipeline (legacy)", () => {
 	let tempDir: string;
 	let dataDir: string;
 	let daemon: DaemonInstance;
@@ -28,14 +99,6 @@ describe("daemon pipeline", () => {
 	afterAll(async () => {
 		await daemon.shutdown();
 		await rm(tempDir, { recursive: true, force: true });
-	});
-
-	test("worker-forwarded requests return 503 when no plugins registered", async () => {
-		// No projects → no plugins → no workers → 503 for worker-routed requests
-		const res = await daemon.fetch(
-			new Request("http://localhost/health"),
-		);
-		expect(res.status).toBe(503);
 	});
 
 	test("auth/status returns authenticated when no secret", async () => {
