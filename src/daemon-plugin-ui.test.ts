@@ -12,7 +12,7 @@ describe("daemon with Matrix plugin e2e", () => {
 	let tempDir: string;
 	let daemon: DaemonInstance;
 	let server: ReturnType<typeof Bun.serve>;
-	const TEST_PORT = 17434;
+	let TEST_PORT: number;
 
 	beforeAll(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "daemon-matrix-e2e-"));
@@ -61,10 +61,8 @@ describe("daemon with Matrix plugin e2e", () => {
 
 		daemon = await createDaemon({ dataDir });
 
-		server = Bun.serve({
-			port: TEST_PORT,
-			fetch: daemon.fetch,
-		});
+		server = Bun.serve({ port: 0, fetch: daemon.fetch });
+		TEST_PORT = server.port;
 	}, 15000);
 
 	afterAll(async () => {
