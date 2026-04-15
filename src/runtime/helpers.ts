@@ -15,7 +15,6 @@ import { EventStore } from "../event-store.ts";
 import { OpenAIResponsesCompatibleProvider } from "../openai-responses-compatible-provider.ts";
 import { TaskTracker } from "../task-tracker.ts";
 import type { TreeNode } from "../types.ts";
-import { buildMatrixScopeOpts } from "./agent-lifecycle.ts";
 import type { RuntimeContext } from "./context.ts";
 
 /** Create an AgentProvider from an AuthGroup, model, and optional thinking effort. */
@@ -118,19 +117,13 @@ export async function getTracker(
 		ctx.trackers.set(projectId, tracker);
 	}
 
-	// Register scope opts if not already set.
+	// Register scope opts if not already set and builder is available.
 	// autoResumeProjects sets these explicitly; this catches projects
 	// accessed for the first time via REST/MCP (not resumed at startup).
-	if (!ctx.scopeOpts.has(projectId)) {
-		if (ctx.config.buildScopeOpts) {
-			ctx.scopeOpts.set(projectId, ctx.config.buildScopeOpts(projectId, ctx));
-		} else {
-			// TODO: remove fallback when all callers provide buildScopeOpts
-			ctx.scopeOpts.set(
-				projectId,
-				buildMatrixScopeOpts(projectId, ctx.globalConfig.selfBootstrap, ctx),
-			);
-		}
+	// Without buildScopeOpts (bare worker, no plugin runtime), CRUD still works
+	// — only agent lifecycle paths need scope opts.
+	if (!ctx.scopeOpts.has(projectId) && ctx.config.buildScopeOpts) {
+		ctx.scopeOpts.set(projectId, ctx.config.buildScopeOpts(projectId, ctx));
 	}
 	return tracker;
 }

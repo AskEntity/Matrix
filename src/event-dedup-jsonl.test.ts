@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { basename } from "node:path";
 import { deliverMessage } from "./runtime/agent-lifecycle.ts";
-import { createApp } from "./runtime.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import type { Event } from "./events.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import {

@@ -13,6 +13,7 @@ import { createApp } from "../runtime.ts";
 import { EventStore } from "../event-store.ts";
 import type { Event } from "../events.ts";
 import type { QueueMessage } from "../message-queue.ts";
+import { matrixBuildScopeOpts } from "./matrix-scope.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
@@ -51,6 +52,7 @@ export async function setupEmissionTestContext(): Promise<EmissionTestContext> {
 		dataDir,
 		agentProvider: provider,
 		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
+		buildScopeOpts: matrixBuildScopeOpts,
 	});
 
 	// Create setup_worktree.sh (required for child task worktree creation)

@@ -31,7 +31,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { ulid } from "./ulid.ts";
 import { deliverMessage } from "./runtime/agent-lifecycle.ts";
-import { createApp } from "./runtime.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import {
 	createBackgroundComplete,
