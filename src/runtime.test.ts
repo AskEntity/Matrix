@@ -13,6 +13,7 @@ import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { isDescendantOf } from "./task-utils.ts";
+import { initTestProject } from "./test-utils/init-test-project.ts";
 import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
 import { executeTool } from "./tool-execution.ts";
 import type {
@@ -823,6 +824,7 @@ describe("daemon tasks API", () => {
 
 		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-cont-wt-"));
 		const _projInfo = { id: ulid(), name: "test", path: join(tempDir, "cont-wt-app") };
+		await initTestProject(_projInfo.path);
 		const {
 			app: localApp,
 			getTracker: localGetTracker,
@@ -2906,15 +2908,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-continue-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-continued-"));
 		const projPath = join(tempDir, "cont-proj");
-
-		// Manually init project directory (createApp no longer calls ProjectManager.init)
-		await mkdir(projPath, { recursive: true });
-		Bun.spawnSync(["git", "init"], { cwd: projPath });
-		Bun.spawnSync(["git", "config", "user.email", "test@test.com"], { cwd: projPath });
-		Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: projPath });
-		await writeFile(join(projPath, ".gitignore"), "*\n!/.gitignore\n!/.mxd/\n!/.mxd/**\n");
-		Bun.spawnSync(["git", "add", "."], { cwd: projPath });
-		Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projPath });
+		await initTestProject(projPath);
 
 		const project = { id: ulid(), name: "cont-proj", path: projPath };
 		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
