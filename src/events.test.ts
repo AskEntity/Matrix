@@ -4333,7 +4333,7 @@ describe("findOrphanedBackgroundProcesses", () => {
 });
 
 // ── findInterruptedDonePhase2 tests ──
-import { findInterruptedDonePhase2 } from "./daemon.ts";
+import { findInterruptedDonePhase2 } from "./runtime.ts";
 
 describe("findInterruptedDonePhase2", () => {
 	test("returns null when no done tool_call exists", () => {

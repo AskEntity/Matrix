@@ -1,298 +1,807 @@
-import { readFileSync } from "node:fs";
+#!/usr/bin/env bun
+/**
+ * Meta-daemon — the main entry point.
+ *
+ * Responsibilities:
+ * - HTTP server
+ * - Auth middleware
+ * - Plugin discovery (scans projects for .mxd/plugin/index.ts)
+ * - Worker management (start/stop scope workers)
+ * - SSE relay (worker events → browser)
+ * - Global config + plugin registry endpoints
+ *
+ * Does NOT own: RuntimeContext, trackers, eventStores, agent lifecycle, tools.
+ * Those live in the worker.
+ */
+
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import Anthropic from "@anthropic-ai/sdk";
+import { join, resolve } from "node:path";
 import { Hono } from "hono";
-import { serveStatic } from "hono/bun";
+import { hasJwtSecret, verifyJWT } from "./auth.ts";
 import {
 	DEFAULT_CONFIG,
-	DEFAULT_MODEL,
 	loadGlobalConfig,
-	resolveAuthGroup,
+	type MatrixConfig,
+	saveGlobalConfig,
 } from "./config.ts";
-import {
-	buildMatrixScopeOpts,
-	deliverMessage,
-	runAgentForNode,
-	stopAgent,
-} from "./daemon/agent-lifecycle.ts";
-import type {
-	DaemonConfig,
-	DaemonContext,
-	PendingClarification,
-	SSEClient,
-} from "./daemon/context.ts";
-import { broadcastTreeUpdate, emitEvent } from "./daemon/event-system.ts";
-import { getEventStore, getTracker } from "./daemon/helpers.ts";
-import { registerAgentRoutes } from "./daemon/routes/agent.ts";
-import {
-	createAuthMiddleware,
-	registerAuthRoutes,
-} from "./daemon/routes/auth.ts";
-import { registerConfigRoutes } from "./daemon/routes/config.ts";
-import { registerMcpEndpoint } from "./daemon/routes/mcp-endpoint.ts";
-import { registerMockShowcaseRoute } from "./daemon/routes/mock-showcase.ts";
-import { registerProjectRoutes } from "./daemon/routes/projects.ts";
-import { registerSSERoute } from "./daemon/routes/sse.ts";
-import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
-
-import type { Event } from "./events.ts";
+import { checkDataRootCollisions, type PluginManifest } from "./plugin.ts";
 import { ProjectManager } from "./project-manager.ts";
-import { createTaskComplete } from "./queue-message-factory.ts";
+import type { SyncMap } from "./runtime/worker-api.ts";
+import { ulid } from "./ulid.ts";
 
-// buildSystemPrompt import removed — prompt is now provided by buildMatrixScopeOpts
-import { TOOL_DONE } from "./tool-names.ts";
-import {
-	type HealthResponse,
-	isTask,
-	type StatsResponse,
-	type VersionResponse,
-} from "./types.ts";
-
-// Re-export DaemonConfig so tests can import from daemon.ts
-export type { DaemonConfig } from "./daemon/context.ts";
-
-// Read version from package.json at startup.
+// Read version
 const _pkg = JSON.parse(
 	readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 ) as { version: string };
 const VERSION = _pkg.version;
 
-// Capture git commit hash once at startup for traceability.
 let GIT_HASH = "unknown";
 try {
 	const result = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"]);
 	if (result.exitCode === 0) {
 		GIT_HASH = new TextDecoder().decode(result.stdout).trim();
 	}
-} catch {
-	// git not available or not a git repo — keep "unknown"
+} catch {}
+
+// ── Types ──
+
+interface ShellSSEClient {
+	controller: ReadableStreamDefaultController;
+	projectId: string;
 }
 
-const startTime = Date.now();
-
-const defaultConfig: DaemonConfig = {
-	dataDir: join(homedir(), ".mxd"),
-};
-
-/**
- * Detect interrupted Phase 2 of two-phase done() from JSONL events.
- *
- * Returns null if no recovery needed.
- * Returns { type: "needs_phase2", status, summary } if done tool_call exists without done_notified.
- * Returns { type: "status_stale", status } if done_notified exists but node status wasn't saved.
- */
-export function findInterruptedDonePhase2(events: Event[]):
-	| {
-			type: "needs_phase2";
-			status: "verify" | "failed";
-			summary: string;
-	  }
-	| {
-			type: "status_stale";
-			status: "verify" | "failed";
-	  }
-	| null {
-	// Find the last done tool_call (orphan — no tool_result follows it)
-	let lastDoneCall: (Event & { type: "tool_call" }) | null = null;
-	let lastDoneCallTs = 0;
-	const toolResultIds = new Set<string>();
-
-	for (const e of events) {
-		if (e.type === "tool_call" && e.tool === TOOL_DONE) {
-			lastDoneCall = e as Event & { type: "tool_call" };
-			lastDoneCallTs = e.ts;
+interface ScopeWorker {
+	worker: Worker;
+	ready: boolean;
+	pending: Map<
+		string,
+		{
+			resolve: (response: {
+				status: number;
+				headers: Record<string, string>;
+				body: string;
+			}) => void;
+			reject: (error: Error) => void;
 		}
-		if (e.type === "tool_result") {
-			toolResultIds.add(e.toolCallId);
+	>;
+}
+
+interface RegisteredPlugin extends PluginManifest {
+	pluginRoot: string;
+	projectId: string;
+	resolvedWebPath?: string;
+}
+
+export interface DaemonInstance {
+	/** Handle an HTTP request (for testing — bypasses Bun.serve) */
+	fetch: (request: Request) => Promise<Response>;
+	/** Registered plugins */
+	plugins: RegisteredPlugin[];
+	/** Graceful shutdown */
+	shutdown: () => Promise<void>;
+	/** Project manager */
+	pm: ProjectManager;
+	/** Global config */
+	globalConfig: MatrixConfig;
+}
+
+// ── createDaemon ──
+
+export async function createDaemon(opts: {
+	dataDir: string;
+	globalConfigPath?: string;
+}): Promise<DaemonInstance> {
+	const { dataDir } = opts;
+	const globalConfigPath =
+		opts.globalConfigPath ?? join(dataDir, "config.json");
+
+	// Load global config
+	let globalConfig: MatrixConfig;
+	try {
+		globalConfig = await loadGlobalConfig(globalConfigPath);
+	} catch {
+		globalConfig = { ...DEFAULT_CONFIG };
+	}
+
+	// SSE state
+	const sseClients = new Set<ShellSSEClient>();
+	const sseEncoder = new TextEncoder();
+
+	// Per-project SSE sequencing + ring buffer for Last-Event-ID catch-up
+	const sseSeqCounters = new Map<string, number>();
+	interface SSERingEntry { seqId: number; data: string; }
+	const sseEventBuffers = new Map<string, SSERingEntry[]>();
+	const SSE_RING_BUFFER_SIZE = 2000;
+
+	function nextSseSeqId(projectId: string): number {
+		const current = sseSeqCounters.get(projectId) ?? 0;
+		const next = current + 1;
+		sseSeqCounters.set(projectId, next);
+		return next;
+	}
+
+	function bufferSseEvent(projectId: string, seqId: number, data: string): void {
+		let buffer = sseEventBuffers.get(projectId);
+		if (!buffer) {
+			buffer = [];
+			sseEventBuffers.set(projectId, buffer);
+		}
+		buffer.push({ seqId, data });
+		if (buffer.length > SSE_RING_BUFFER_SIZE) {
+			buffer.splice(0, buffer.length - SSE_RING_BUFFER_SIZE);
 		}
 	}
 
-	if (!lastDoneCall) return null;
-
-	// If the done tool_call has a tool_result, it was a resumed done (not an orphan).
-	// The agent already processed it. No crash recovery needed.
-	if (toolResultIds.has(lastDoneCall.toolCallId)) return null;
-
-	// Check for done_notified after the done tool_call
-	const hasDoneNotified = events.some(
-		(e) => e.type === "done_notified" && e.ts >= lastDoneCallTs,
-	);
-
-	const doneInput = lastDoneCall.input as
-		| { status?: string; summary?: string }
-		| undefined;
-	const status =
-		doneInput?.status === "passed" ? ("verify" as const) : ("failed" as const);
-	const summary = doneInput?.summary ?? "";
-
-	if (!hasDoneNotified) {
-		// Phase 2 never completed — need to run it now
-		return { type: "needs_phase2", status, summary };
+	function getEventsSince(projectId: string, lastSeqId: number): SSERingEntry[] | null {
+		const buffer = sseEventBuffers.get(projectId);
+		if (!buffer || buffer.length === 0) return null;
+		const firstEntry = buffer[0];
+		if (!firstEntry) return null;
+		// Gap too large — can't guarantee no missed events
+		if (lastSeqId < firstEntry.seqId - 1) return null;
+		const idx = buffer.findIndex((e) => e.seqId > lastSeqId);
+		if (idx === -1) return []; // Client is up to date
+		return buffer.slice(idx);
 	}
 
-	// done_notified exists — check if the node still has stale status.
-	// The caller checks node.status === "in_progress" to decide if status_stale applies.
-	return { type: "status_stale", status };
-}
+	// Worker state
+	const workers = new Map<string, ScopeWorker>();
 
-export function createApp(config: DaemonConfig = defaultConfig) {
+	function setupWorkerMessageHandler(
+		_scopeName: string,
+		scopeWorker: ScopeWorker,
+	) {
+		scopeWorker.worker.onmessage = (event: MessageEvent) => {
+			const msg = event.data;
+
+			if (msg.type === "http_response") {
+				const pending = scopeWorker.pending.get(msg.id);
+				if (pending) {
+					scopeWorker.pending.delete(msg.id);
+					pending.resolve({
+						status: msg.status,
+						headers: msg.headers,
+						body: msg.body,
+					});
+				}
+			}
+
+			// Streaming response support (SSE/MCP)
+			if (msg.type === "http_response_stream_start") {
+				const pending = scopeWorker.pending.get(msg.id);
+				if (pending) {
+					scopeWorker.pending.delete(msg.id);
+					const encoder = new TextEncoder();
+					const stream = new ReadableStream({
+						start(controller) {
+							// Store controller for subsequent chunks
+							scopeWorker.pending.set(`stream:${msg.id}`, {
+								resolve: () => {},
+								reject: () => {},
+								_streamController: controller,
+							} as unknown as typeof pending);
+						},
+					});
+					pending.resolve({
+						status: msg.status,
+						headers: msg.headers,
+						body: stream as unknown as string, // will be used as Response body
+						_isStream: true,
+					});
+				}
+			}
+			if (msg.type === "http_response_stream_chunk") {
+				const streamPending = scopeWorker.pending.get(`stream:${msg.id}`) as unknown as { _streamController?: ReadableStreamDefaultController } | undefined;
+				if (streamPending?._streamController) {
+					try {
+						streamPending._streamController.enqueue(new TextEncoder().encode(msg.chunk));
+					} catch { /* client disconnected */ }
+				}
+			}
+			if (msg.type === "http_response_stream_end") {
+				const streamPending = scopeWorker.pending.get(`stream:${msg.id}`) as unknown as { _streamController?: ReadableStreamDefaultController } | undefined;
+				if (streamPending?._streamController) {
+					try { streamPending._streamController.close(); } catch {}
+				}
+				scopeWorker.pending.delete(`stream:${msg.id}`);
+			}
+
+			if (msg.type === "sse_event") {
+				const { projectId, event: evt } = msg;
+				const seqId = nextSseSeqId(projectId);
+				const data = JSON.stringify(evt);
+				bufferSseEvent(projectId, seqId, data);
+				const sseMessage = sseEncoder.encode(
+					`id: ${seqId}\ndata: ${data}\n\n`,
+				);
+				for (const client of sseClients) {
+					if (client.projectId === projectId) {
+						try {
+							client.controller.enqueue(sseMessage);
+						} catch {
+							sseClients.delete(client);
+						}
+					}
+				}
+			}
+		};
+	}
+
+	async function startWorkerForPlugin(
+		scopeName: string,
+		pluginRuntimePath?: string,
+	): Promise<void> {
+		return new Promise((resolve, reject) => {
+			const worker = new Worker(
+				new URL("./runtime/scope-worker.ts", import.meta.url).href,
+			);
+
+			const scopeWorker: ScopeWorker = {
+				worker,
+				ready: false,
+				pending: new Map(),
+			};
+
+			// Handle worker crash — reject all pending requests
+			worker.onerror = (event: ErrorEvent) => {
+				console.error(`[daemon] Worker "${scopeName}" crashed:`, event.message);
+				scopeWorker.ready = false;
+				// Reject all pending HTTP requests so they don't hang forever
+				for (const [id, pending] of scopeWorker.pending) {
+					pending.reject(
+						new Error(`Worker "${scopeName}" crashed: ${event.message}`),
+					);
+				}
+				scopeWorker.pending.clear();
+			};
+
+			// Temporary handler for init sequence
+			worker.onmessage = (event: MessageEvent) => {
+				const msg = event.data;
+				if (msg.type === "loaded") {
+					worker.postMessage({
+						type: "init",
+						dataDir,
+						globalConfigPath,
+						projects: pm
+							.list()
+							.map((p) => ({ id: p.id, name: p.name, path: p.path })),
+						pluginRuntimePath,
+					});
+				}
+				if (msg.type === "ready") {
+					scopeWorker.ready = true;
+					setupWorkerMessageHandler(scopeName, scopeWorker);
+					resolve();
+				}
+				if (msg.type === "error") {
+					reject(
+						new Error(`Worker "${scopeName}" init failed: ${msg.message}`),
+					);
+				}
+			};
+
+			workers.set(scopeName, scopeWorker);
+		});
+	}
+
+	async function forwardToWorker(
+		scopeName: string,
+		request: Request,
+	): Promise<Response> {
+		const sw = workers.get(scopeName);
+		if (!sw || !sw.ready) {
+			return new Response(
+				JSON.stringify({ error: `Worker "${scopeName}" not ready` }),
+				{ status: 503, headers: { "content-type": "application/json" } },
+			);
+		}
+
+		const id = ulid();
+		const body =
+			request.method !== "GET" && request.method !== "HEAD"
+				? await request.text()
+				: undefined;
+
+		const headers: Record<string, string> = {};
+		request.headers.forEach((v: string, k: string) => {
+			headers[k] = v;
+		});
+
+		return new Promise((resolve) => {
+			const timeout = setTimeout(() => {
+				sw.pending.delete(id);
+				resolve(
+					new Response(JSON.stringify({ error: "Worker timeout" }), {
+						status: 504,
+						headers: { "content-type": "application/json" },
+					}),
+				);
+			}, 60000);
+
+			sw.pending.set(id, {
+				resolve: (resp) => {
+					clearTimeout(timeout);
+					// For streaming responses, body is already a ReadableStream
+					const responseBody = (resp as { _isStream?: boolean })._isStream
+						? (resp.body as unknown as ReadableStream)
+						: resp.body;
+					resolve(
+						new Response(responseBody, {
+							status: resp.status,
+							headers: resp.headers,
+						}),
+					);
+				},
+				reject: (err) => {
+					clearTimeout(timeout);
+					resolve(
+						new Response(JSON.stringify({ error: err.message }), {
+							status: 500,
+							headers: { "content-type": "application/json" },
+						}),
+					);
+				},
+			});
+
+			sw.worker.postMessage({
+				type: "http_request",
+				id,
+				method: request.method,
+				url: request.url,
+				headers,
+				body,
+			});
+		});
+	}
+
+	// ── Discover plugins ──
+
+	const pm = new ProjectManager(dataDir);
+	await pm.load();
+
+	const registeredPlugins: RegisteredPlugin[] = [];
+
+	for (const project of pm.list()) {
+		const pluginDir = join(project.path, ".mxd", "plugin");
+		const pluginIndex = join(pluginDir, "index.ts");
+		if (existsSync(pluginIndex)) {
+			try {
+				const mod = await import(pluginIndex);
+				const manifest = (mod.default ?? mod) as PluginManifest;
+				registeredPlugins.push({
+					...manifest,
+					pluginRoot: pluginDir,
+					projectId: project.id,
+					resolvedWebPath: manifest.web
+						? resolve(pluginDir, manifest.web)
+						: undefined,
+				});
+			} catch (e) {
+				console.warn(`[daemon] Failed to load plugin from ${project.name}:`, e);
+			}
+		}
+	}
+
+	// Check for dataRoot collisions — two plugins writing to the same directory
+	const collision = checkDataRootCollisions(registeredPlugins);
+	if (collision) {
+		throw new Error(collision);
+	}
+
+	// Start workers for global plugins
+	for (const plugin of registeredPlugins.filter((p) => p.scope === "global")) {
+		// Resolve plugin's runtime module path for the worker
+		const runtimePath = plugin.runtime
+			? resolve(plugin.pluginRoot, plugin.runtime)
+			: undefined;
+		await startWorkerForPlugin(plugin.name, runtimePath);
+	}
+
+	// ── Hono app with routes ──
+
 	const app = new Hono();
 
-	// Build the shared context object
-	const ctx: DaemonContext = {
-		config,
-		pm: new ProjectManager(config.dataDir),
-		trackers: new Map(),
-		restartingProjects: new Set(),
-		launchingNodes: new Set(),
-		sseClients: new Set<SSEClient>(),
-		eventSubscribers: new Map(),
-		pendingClarifications: new Map<string, PendingClarification[]>(),
-		eventStores: new Map(),
-		streamingText: new Map(),
-		agentLoopPromises: new Map(),
-		scopeOpts: new Map(),
-		requestCount: 0,
-		startupReady: false,
-		// Defensive clone: DEFAULT_CONFIG is frozen, and even if initialConfig is
-		// provided we don't want mutations leaking back to the caller's object.
-		globalConfig: { ...(config.initialConfig ?? DEFAULT_CONFIG) },
-	};
+	// Auth middleware
+	// Only skip auth for SPA root, shell static assets, and auth endpoints.
+	// NOT /.mxd/ (has config.json, tree.json, memory.md — sensitive).
+	// NOT file extensions (attackers can append .ts to bypass).
+	app.use("*", async (c, next) => {
+		const skipAuth =
+			c.req.path === "/" ||
+			c.req.path.startsWith("/web/") ||
+			c.req.path.startsWith("/auth/") ||
+			c.req.path.startsWith("/plugin-assets/");
 
-	// Request counter middleware
-	app.use("*", async (_c, next) => {
-		ctx.requestCount++;
+		if (!skipAuth) {
+			const authPath = join(dataDir, "auth.json");
+			if (await hasJwtSecret(authPath)) {
+				const authHeader = c.req.header("authorization");
+				const token = authHeader?.startsWith("Bearer ")
+					? authHeader.slice(7)
+					: c.req.query("token");
+				if (!token || !(await verifyJWT(authPath, token))) {
+					return c.json({ error: "Unauthorized" }, 401);
+				}
+			}
+		}
 		await next();
 	});
 
-	// Auth middleware — must be before all routes
-	const authMiddleware = createAuthMiddleware(ctx);
-	app.use("*", authMiddleware);
-
-	// Auth routes (login/logout/status + registration on main port)
-	// Registration endpoints are guarded per-route: return 403 when enforced
-	registerAuthRoutes(app, ctx);
-
-	// Health
+	// Health — daemon-owned, not worker-forwarded
 	app.get("/health", async (c) => {
-		const response: HealthResponse = {
-			status: "ok",
-			version: VERSION,
-			gitHash: GIT_HASH,
-			uptime: Date.now() - startTime,
-		};
-
-		if (c.req.query("check_model") === "true") {
-			const authGroup = resolveAuthGroup(ctx.globalConfig);
-			const modelName = ctx.globalConfig.model ?? DEFAULT_MODEL;
-
-			const apiKey =
-				authGroup?.provider === "anthropic" ? authGroup.apiKey : undefined;
-			const oauthToken =
-				authGroup?.provider === "anthropic" ? authGroup.oauthToken : undefined;
-			const useOAuth = Boolean(oauthToken && !apiKey);
-
-			let client: Anthropic;
-			if (useOAuth) {
-				client = new Anthropic({
-					authToken: oauthToken,
-					defaultHeaders: {
-						"anthropic-beta": "oauth-2025-04-20",
-					},
-				});
-			} else if (apiKey) {
-				client = new Anthropic({ apiKey });
-			} else {
-				client = new Anthropic();
+		if (c.req.query("check_model")) {
+			// Forward to worker for full health check (includes Anthropic API ping)
+			const workerName = registeredPlugins.find(
+				(p) => p.scope === "global" && workers.has(p.name),
+			)?.name;
+			if (workerName) {
+				return forwardToWorker(workerName, c.req.raw);
 			}
+		}
+		return c.json({ status: "ok", version: VERSION });
+	});
 
-			const preamble =
-				authGroup?.provider === "anthropic"
-					? authGroup.systemPreamble
-					: undefined;
-			const msgParams = {
-				model: modelName,
-				messages: [{ role: "user" as const, content: "ping" }],
-				max_tokens: 10,
-				...(preamble
-					? {
-							system: [{ type: "text" as const, text: preamble }],
-						}
-					: {}),
-			};
-			const t0 = Date.now();
-			try {
-				if (useOAuth) {
-					// biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
-					await (client.beta.messages.create as any)(msgParams);
-				} else {
-					await client.messages.create(msgParams);
+	// Auth routes
+	app.get("/auth/status", async (c) => {
+		const authPath = join(dataDir, "auth.json");
+		const hasSecret = await hasJwtSecret(authPath);
+		const authHeader = c.req.header("authorization");
+		const token = authHeader?.startsWith("Bearer ")
+			? authHeader.slice(7)
+			: c.req.query("token");
+		const hasValidToken = token
+			? (await verifyJWT(authPath, token)) !== null
+			: false;
+		const authenticated = hasValidToken || !hasSecret;
+		return c.json({ enabled: hasSecret, authenticated });
+	});
+
+	app.post("/auth/logout", (c) => {
+		return c.json({ ok: true });
+	});
+
+	// ── Project CRUD (daemon-owned) ──
+
+	app.get("/projects", (c) => {
+		const projects = pm.list().map((p) => ({
+			...p,
+			pathExists: pm.checkPathExists(p.id),
+		}));
+		return c.json(projects);
+	});
+
+	app.post("/projects", async (c) => {
+		try {
+			const body = await c.req.json<{ path: string }>();
+			if (!body.path) {
+				return c.json({ error: "path is required" }, 400);
+			}
+			const project = await pm.init(body.path);
+
+			// Call onProjectInit for all global plugins
+			for (const plugin of registeredPlugins.filter(
+				(p) => p.scope === "global",
+			)) {
+				if (plugin.onProjectInit) {
+					await plugin.onProjectInit(body.path, {
+						isNew: !existsSync(join(body.path, ".git")),
+					});
 				}
-				const latencyMs = Date.now() - t0;
-				response.model = { status: "ok", model: modelName, latencyMs };
-			} catch (err) {
-				response.model = {
-					status: "error",
-					error: err instanceof Error ? err.message : String(err),
-				};
+			}
+
+			syncProjects();
+			return c.json(project, 201);
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 409);
+		}
+	});
+
+	app.get("/projects/:id", (c) => {
+		const projectId = c.req.param("id");
+		const project = pm.get(projectId);
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		return c.json({
+			...project,
+			pathExists: pm.checkPathExists(project.id),
+		});
+	});
+
+	app.delete("/projects/:id", async (c) => {
+		const projectId = c.req.param("id");
+		try {
+			// Stop worker agents first
+			const globalWorkerName = registeredPlugins.find(
+				(p) => p.scope === "global" && workers.has(p.name),
+			)?.name;
+			if (globalWorkerName) {
+				await forwardToWorker(
+					globalWorkerName,
+					new Request(`http://localhost/projects/${projectId}/stop`, {
+						method: "POST",
+					}),
+				);
+			}
+			await pm.delete(projectId);
+			syncToWorkers("project_deleted", { projectId });
+			syncProjects();
+			return c.json({ ok: true });
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 404);
+		}
+	});
+
+	app.patch("/projects/:id", async (c) => {
+		const projectId = c.req.param("id");
+		try {
+			const body = await c.req.json<{ path?: string; name?: string }>();
+			if (!body.path && !body.name) {
+				return c.json(
+					{ error: "At least one of path or name is required" },
+					400,
+				);
+			}
+			const updated = await pm.updateProject(projectId, body);
+			syncProjects();
+			return c.json({
+				...updated,
+				pathExists: pm.checkPathExists(updated.id),
+			});
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			const status = message.includes("not found") ? 404 : 400;
+			return c.json({ error: message }, status);
+		}
+	});
+
+	// Plugin web assets — serve from filesystem via URL
+	app.get("/plugin-assets/:pluginName/*", async (c) => {
+		const pluginName = c.req.param("pluginName");
+		const plugin = registeredPlugins.find((p) => p.name === pluginName);
+		if (!plugin) return c.json({ error: "Plugin not found" }, 404);
+
+		// Strip prefix to get relative path within plugin's web dir
+		const prefix = `/plugin-assets/${pluginName}/`;
+		const relativePath = c.req.path.slice(prefix.length);
+		if (!relativePath) return c.json({ error: "File not specified" }, 400);
+
+		const filePath = join(plugin.pluginRoot, relativePath);
+		// Security: ensure resolved path is under pluginRoot
+		if (!filePath.startsWith(plugin.pluginRoot)) {
+			return c.json({ error: "Forbidden" }, 403);
+		}
+
+		const file = Bun.file(filePath);
+		if (!(await file.exists())) return c.json({ error: "Not found" }, 404);
+		return new Response(file);
+	});
+
+	// Plugins
+	app.get("/plugins", (c) => {
+		return c.json(
+			registeredPlugins.map((p) => ({
+				name: p.name,
+				scope: p.scope,
+				// Filesystem path — Bun.serve dev mode resolves & transpiles .tsx imports
+				webComponentPath: p.resolvedWebPath,
+				projectId: p.projectId,
+			})),
+		);
+	});
+
+	// Global config
+	app.get("/config/global", (c) => {
+		return c.json(globalConfig);
+	});
+
+	app.patch("/config/global", async (c) => {
+		const partial = await c.req.json<Partial<MatrixConfig>>();
+		const next = { ...globalConfig } as MatrixConfig;
+		for (const [k, v] of Object.entries(partial)) {
+			if (v === null || v === undefined) {
+				delete (next as unknown as Record<string, unknown>)[k];
+			} else {
+				(next as unknown as Record<string, unknown>)[k] = v;
 			}
 		}
-
-		return c.json(response);
+		globalConfig = next;
+		await saveGlobalConfig(globalConfig, globalConfigPath);
+		syncConfig();
+		return c.json(globalConfig);
 	});
 
-	// Version
-	app.get("/version", async (c) => {
-		const projects = ctx.pm.list();
-		const projectCount = projects.length;
+	// ── Project config (daemon-owned: per-project settings) ──
 
-		let nodeCount = 0;
-		for (const project of projects) {
-			const tracker = await getTracker(ctx, project.id);
-			nodeCount += tracker.allNodes().length;
-		}
+	// Helper: resolve project or 404
+	function getProjectOrNull(projectId: string) {
+		return pm.get(projectId) ?? null;
+	}
 
-		const response: VersionResponse = {
-			version: VERSION,
-			gitHash: GIT_HASH,
-			nodeCount,
-			projectCount,
-		};
-		return c.json(response);
+	app.get("/projects/:id/config/repo", async (c) => {
+		const project = getProjectOrNull(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const { loadProjectRepoConfig } = await import("./config.ts");
+		const cfg = await loadProjectRepoConfig(project.path);
+		return c.json(cfg);
 	});
 
-	// Stats
-	app.get("/stats", async (c) => {
-		const projects = ctx.pm.list();
-		const taskCounts = {
-			draft: 0,
-			pending: 0,
-			in_progress: 0,
-			verify: 0,
-			failed: 0,
-			closed: 0,
-		};
-
-		for (const project of projects) {
-			const tracker = await getTracker(ctx, project.id);
-			for (const node of tracker.allNodes()) {
-				if (isTask(node)) taskCounts[node.status]++;
+	app.patch("/projects/:id/config/repo", async (c) => {
+		const project = getProjectOrNull(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const { loadProjectRepoConfig, saveProjectRepoConfig } = await import(
+			"./config.ts"
+		);
+		const partial = await c.req.json<Partial<MatrixConfig>>();
+		const existing = await loadProjectRepoConfig(project.path);
+		const merged = { ...existing };
+		for (const [k, v] of Object.entries(partial)) {
+			if (v === null || v === undefined) {
+				delete (merged as unknown as Record<string, unknown>)[k];
+			} else {
+				(merged as unknown as Record<string, unknown>)[k] = v;
 			}
 		}
-
-		const response: StatsResponse = {
-			uptime: Math.floor((Date.now() - startTime) / 1000),
-			requestCount: ctx.requestCount,
-			projectCount: projects.length,
-			taskCounts,
-		};
-		return c.json(response);
+		await saveProjectRepoConfig(project.path, merged);
+		return c.json(merged);
 	});
 
-	// Restart daemon
+	app.get("/projects/:id/config/all", async (c) => {
+		const project = getProjectOrNull(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const { loadProjectRepoConfig, loadProjectLocalConfig, resolveConfig } =
+			await import("./config.ts");
+		const [repoConfig, localConfig] = await Promise.all([
+			loadProjectRepoConfig(project.path),
+			loadProjectLocalConfig(dataDir, project.id),
+		]);
+		const resolved = resolveConfig(globalConfig, repoConfig, localConfig);
+		return c.json({
+			global: globalConfig,
+			repo: repoConfig,
+			local: localConfig,
+			resolved,
+		});
+	});
+
+	app.get("/projects/:id/config", async (c) => {
+		const project = getProjectOrNull(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const { loadProjectLocalConfig } = await import("./config.ts");
+		const cfg = await loadProjectLocalConfig(dataDir, project.id);
+		return c.json(cfg);
+	});
+
+	app.patch("/projects/:id/config", async (c) => {
+		const project = getProjectOrNull(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const { loadProjectLocalConfig, saveProjectLocalConfig } = await import(
+			"./config.ts"
+		);
+		const partial = await c.req.json<Partial<MatrixConfig>>();
+		const existing = await loadProjectLocalConfig(dataDir, project.id);
+		const merged = { ...existing };
+		for (const [k, v] of Object.entries(partial)) {
+			if (v === null || v === undefined) {
+				delete (merged as unknown as Record<string, unknown>)[k];
+			} else {
+				(merged as unknown as Record<string, unknown>)[k] = v;
+			}
+		}
+		await saveProjectLocalConfig(dataDir, project.id, merged);
+		return c.json(merged);
+	});
+
+	// SSE
+	app.get("/events", async (c) => {
+		const projectId = c.req.query("projectId");
+		if (!projectId) {
+			return c.text("projectId required", 400);
+		}
+
+		const request = c.req.raw;
+
+		// EventSource sends Last-Event-ID on reconnect
+		const lastEventIdHeader = request.headers.get("Last-Event-ID");
+		const lastSeqId = lastEventIdHeader ? Number.parseInt(lastEventIdHeader, 10) : null;
+
+		const stream = new ReadableStream({
+			async start(controller) {
+				const client: ShellSSEClient = { controller, projectId };
+				sseClients.add(client);
+
+				let catchUpDone = false;
+
+				// If reconnecting with Last-Event-ID, try ring buffer catch-up
+				if (lastSeqId != null && !Number.isNaN(lastSeqId)) {
+					const missed = getEventsSince(projectId, lastSeqId);
+					if (missed !== null) {
+						catchUpDone = true;
+						for (const entry of missed) {
+							try {
+								controller.enqueue(sseEncoder.encode(
+									`id: ${entry.seqId}\ndata: ${entry.data}\n\n`,
+								));
+							} catch {
+								catchUpDone = false;
+								break;
+							}
+						}
+					}
+				}
+
+				// If no Last-Event-ID or catch-up failed (gap too large),
+				// send full initial state
+				if (!catchUpDone) {
+					try {
+						const workerName = registeredPlugins.find(
+							(p) => p.scope === "global" && workers.has(p.name),
+						)?.name;
+						const treeResp = workerName
+							? await forwardToWorker(
+									workerName,
+									new Request(`http://localhost/projects/${projectId}/tasks`, {
+										headers: request.headers,
+									}),
+								)
+							: null;
+						if (treeResp?.ok) {
+							const treeData = await treeResp.json();
+							const msg = sseEncoder.encode(
+								`data: ${JSON.stringify({ type: "tree_updated", ...treeData })}\n\n`,
+							);
+							controller.enqueue(msg);
+						}
+						// Send pending clarifications (worker has them)
+						const clarifyResp = await forwardToWorker(
+							workerName!,
+							new Request(`http://localhost/projects/${projectId}/clarifications`, {
+								headers: request.headers,
+							}),
+						);
+						if (clarifyResp?.ok) {
+							const clarifications = await clarifyResp.json();
+							if (Array.isArray(clarifications) && clarifications.length > 0) {
+								controller.enqueue(sseEncoder.encode(
+									`data: ${JSON.stringify({ type: "pending_clarifications", projectId, clarifications })}\n\n`,
+								));
+							}
+						}
+					} catch {}
+				}
+
+				const heartbeat = setInterval(() => {
+					try {
+						controller.enqueue(
+							sseEncoder.encode(
+								`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`,
+							),
+						);
+					} catch {}
+				}, 15_000);
+
+				request.signal.addEventListener("abort", () => {
+					clearInterval(heartbeat);
+					sseClients.delete(client);
+				});
+			},
+		});
+
+		return new Response(stream, {
+			headers: {
+				"content-type": "text/event-stream",
+				"cache-control": "no-cache",
+				connection: "keep-alive",
+			},
+		});
+	});
+
+	// Restart daemon — daemon-owned (process.exit must run on main thread, not worker)
 	app.post("/restart-daemon", async (c) => {
-		// Respond first, then shutdown
 		setTimeout(async () => {
 			await shutdown();
 			process.exit(0);
@@ -300,248 +809,120 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ restarting: true });
 	});
 
-	// Register all route groups
-	registerProjectRoutes(app, ctx);
-	registerTaskRoutes(app, ctx);
-	registerConfigRoutes(app, ctx);
-	registerAgentRoutes(app, ctx);
-	registerSSERoute(app, ctx);
-	registerMcpEndpoint(app, ctx);
-	registerMockShowcaseRoute(app);
+	// Fallthrough: forward to first available global worker
+	app.all("*", async (c) => {
+		const globalWorkerName = registeredPlugins.find(
+			(p) => p.scope === "global" && workers.has(p.name),
+		)?.name;
+		if (!globalWorkerName) {
+			return c.json({ error: "No global plugin worker available" }, 503);
+		}
+		return forwardToWorker(globalWorkerName, c.req.raw);
+	});
 
-	// Static file serving for the web UI (fallback for non-Bun environments)
-	app.use("/web/*", serveStatic({ root: "./" }));
-
-	/** Auto-resume agents that were running before daemon restart.
-	 *
-	 * Simply finds all in_progress nodes with JSONL sessions and launches them
-	 * via runAgentForNode. No resume messages, no root/child split, no
-	 * yielding/interrupted distinction.
-	 *
-	 * The three resume states handle themselves inside the provider loop:
-	 * - Explicit yield (JSONL ends with yield tool_call): pendingYieldToolCall
-	 *   bypasses initial drain → queue.wait → zero API call until message arrives
-	 * - Implicit yield (JSONL ends with assistant_text): pendingImplicitYieldResume
-	 *   bypasses initial drain → handleImplicitYield → zero API call until message
-	 * - Interrupted (JSONL has orphaned tool_calls): buildSessionRepair adds
-	 *   tool_results → messages end with user content → skip initial drain → API call
-	 */
 	/**
-	 * Resume a single project scope: crash recovery + launch in_progress agents.
-	 * Extracted so plugin scopes can reuse the same startup logic.
+	 * Typed sync primitive — daemon (golden) → workers (read-only).
+	 * SyncMap shared between daemon + worker for type safety on both sides.
 	 */
-	async function resumeScope(
-		project: { id: string; name: string; path: string },
-		tracker: import("./task-tracker.ts").TaskTracker,
-		eventStore: import("./event-store.ts").EventStore,
-		// biome-ignore lint/suspicious/noExplicitAny: erased generic
-		scopeOpts: import("./daemon/context.ts").ScopeOpts<any>,
-	): Promise<void> {
-		const shouldResumeFn = scopeOpts.shouldResume ?? ((n: import("./types.ts").TaskNode) => n.status === "in_progress");
-
-		// ── Phase 2 crash recovery ──
-		const allNodes = tracker.allNodes();
-		for (const node of allNodes) {
-			if (!isTask(node)) continue;
-			if (!eventStore.has(node.id)) continue;
-
-			await eventStore.flushSession(node.id);
-			const events = eventStore.readActive(node.id);
-
-			const crashRecovery = findInterruptedDonePhase2(events);
-			if (!crashRecovery) continue;
-
-			if (crashRecovery.type === "needs_phase2") {
-				const { status, summary } = crashRecovery;
-				console.log(
-					`[autoResume] Completing interrupted Phase 2 for ${node.id} (status=${status})`,
-				);
-				tracker.updateStatus(node.id, status);
-
-				const isRoot = node.id === tracker.rootNodeId;
-				const taskAbove = tracker.getTaskAbove(node.id);
-				if (taskAbove && !isRoot) {
-					const completionMsg = createTaskComplete(
-						node.id,
-						node.title ?? "unknown",
-						status === "verify",
-						summary,
-					);
-					await deliverMessage(
-						ctx,
-						project,
-						taskAbove.id,
-						completionMsg,
-						{ quiet: true },
-					).catch((e) => {
-						console.warn(
-							`[autoResume] Failed to deliver task_complete to parent ${taskAbove.id}:`,
-							e,
-						);
-					});
-				}
-
-				emitEvent(ctx, project.id, {
-					type: "done_notified",
-					taskId: node.id,
-					status,
-					summary,
-					ts: Date.now(),
-				});
-				await eventStore.flushSession(node.id);
-				await tracker.save();
-				broadcastTreeUpdate(ctx, project.id, tracker);
-			} else if (
-				crashRecovery.type === "status_stale" &&
-				shouldResumeFn(node)
-			) {
-				// Node should have been updated to done status but crashed before save.
-				// Apply the done status from JSONL's done_notified event.
-				const { status } = crashRecovery;
-				console.log(
-					`[autoResume] Fixing stale status for ${node.id} (→${status})`,
-				);
-				tracker.updateStatus(node.id, status);
-				await tracker.save();
-				broadcastTreeUpdate(ctx, project.id, tracker);
+	function syncToWorkers<K extends keyof SyncMap>(
+		key: K,
+		data: SyncMap[K],
+	): void {
+		for (const [, sw] of workers) {
+			if (sw.ready) {
+				sw.worker.postMessage({ type: "sync", key, data });
 			}
 		}
-
-		// ── Launch agents that should be active ──
-		const resumableNodes = tracker
-			.allNodes()
-			.filter(
-				(n): n is import("./types.ts").TaskNode =>
-					isTask(n) && shouldResumeFn(n) && eventStore.has(n.id),
-			);
-
-		for (const node of resumableNodes) {
-
-			console.log(`Auto-resuming ${project.name} node ${node.id}`);
-
-			runAgentForNode(ctx, project, tracker, node.id, {
-				...scopeOpts,
-				resume: true,
-			}).catch((e) => {
-				console.error(
-					`[autoResume] Failed to resume ${node.id}:`,
-					e instanceof Error ? e.message : e,
-				);
-			});
-		}
 	}
 
-	async function autoResumeProjects(): Promise<void> {
-		const projects = ctx.pm.list();
-		for (const project of projects) {
-			const tracker = await getTracker(ctx, project.id);
-			const eventStore = getEventStore(ctx, project.id);
-			const matrixOpts = buildMatrixScopeOpts(
-				project.id,
-				ctx.globalConfig.selfBootstrap,
-				ctx,
-			);
-			// Register scope opts so internal paths (deliverMessage, ensureChildAgentRunning)
-			// can look up the project's tools + prompt without passing them through every call.
-			ctx.scopeOpts.set(project.id, matrixOpts);
-			await resumeScope(project, tracker, eventStore, matrixOpts);
-		}
+	function syncProjects(): void {
+		syncToWorkers(
+			"projects",
+			pm.list().map((p) => ({ id: p.id, name: p.name, path: p.path })),
+		);
 	}
 
-	/** Graceful shutdown: stop all agents, await loop settlement for JSONL persistence. */
+	function syncConfig(): void {
+		syncToWorkers("config", globalConfig);
+	}
+
+	// ── Shutdown ──
+
 	async function shutdown(): Promise<void> {
-		// Stop all agents — their root nodes stay in_progress so they resume on next start
-		for (const [projectId, tracker] of ctx.trackers) {
-			const rootNode = tracker.getTask(tracker.rootNodeId);
-			if (rootNode?.session) {
-				await stopAgent(ctx, projectId);
-			}
+		for (const [name, sw] of workers) {
+			sw.worker.postMessage({ type: "shutdown" });
+			// Wait for graceful shutdown (agent stop, JSONL flush) before terminating
+			await new Promise<void>((resolve) => {
+				const timeout = setTimeout(() => {
+					console.warn(
+						`[daemon] Worker "${name}" shutdown timeout — terminating`,
+					);
+					resolve();
+				}, 5000);
+				const handler = (event: MessageEvent) => {
+					if (event.data.type === "shutdown_complete") {
+						clearTimeout(timeout);
+						sw.worker.removeEventListener("message", handler);
+						resolve();
+					}
+				};
+				sw.worker.addEventListener("message", handler);
+			});
+			sw.worker.terminate();
 		}
-		// stopAgent emits agent_end synchronously — no need to await loop promises.
-	}
-
-	function markReady() {
-		ctx.startupReady = true;
-	}
-
-	async function loadConfig() {
-		ctx.globalConfig = await loadGlobalConfig(ctx.config.globalConfigPath);
+		workers.clear();
 	}
 
 	return {
-		app,
-		ctx,
-		pm: ctx.pm,
-		dataDir: config.dataDir,
-		sseClients: ctx.sseClients,
-		autoResumeProjects,
+		fetch: app.fetch as (request: Request) => Promise<Response>,
+		plugins: registeredPlugins,
 		shutdown,
-		getTracker: (projectId: string) => getTracker(ctx, projectId),
-		markReady,
-		loadConfig,
-		getConfig: () => ctx.globalConfig,
+		pm,
+		globalConfig,
 	};
 }
 
-// ORCHESTRATOR_SYSTEM_PROMPT removed — prompt is now provided by buildMatrixScopeOpts
-// and stored in ctx.scopeOpts per project.
+// Re-export for tests
+export type { RegisteredPlugin };
 
-// Only start the server when run directly, not when imported for testing.
+// ── Production entry ──
+
 if (import.meta.main) {
-	const {
-		app,
-		pm,
-		autoResumeProjects,
-		shutdown,
-		markReady,
-		loadConfig,
-		getConfig,
-	} = createApp();
-	await pm.load();
-	await loadConfig();
+	const dataDir = process.env.MXD_DATA_DIR ?? join(homedir(), ".mxd");
+	const daemon = await createDaemon({ dataDir });
 
-	const port = getConfig().port ?? 7433;
+	const port = daemon.globalConfig.port ?? 7433;
 
-	// Check if another daemon is already running on this port
 	try {
 		const res = await fetch(`http://localhost:${port}/health`);
 		if (res.ok) {
-			console.error(`Error: Matrix daemon already running on port ${port}`);
+			console.error(`Error: daemon already running on port ${port}`);
 			process.exit(1);
 		}
-	} catch {
-		// Port is free, proceed
-	}
-	console.log(
-		`Matrix daemon v${VERSION} (${GIT_HASH}) listening on http://localhost:${port}`,
-	);
-	console.log(`Web UI: http://localhost:${port}/`);
+	} catch {}
 
-	// Use Bun's HTML import for the web UI (auto-bundles TSX/CSS)
 	const webIndex = await import("../web/index.html");
+
 	Bun.serve({
-		routes: {
-			"/": webIndex.default,
-		},
-		fetch: app.fetch,
+		routes: { "/": webIndex.default },
+		fetch: daemon.fetch,
 		port,
-		idleTimeout: 255, // Bun max (4.25 min) — data heartbeat at 15s keeps it alive
+		idleTimeout: 255,
 		development:
 			process.env.NODE_ENV === "development"
 				? { hmr: true, console: true }
 				: false,
 	});
 
-	// Graceful shutdown: save sessions before exit
+	console.log(
+		`Matrix daemon v${VERSION} (${GIT_HASH}) listening on http://localhost:${port}`,
+	);
+
 	const handleShutdown = async () => {
-		console.log("Shutting down — saving sessions...");
-		await shutdown();
+		console.log("Shutting down...");
+		await daemon.shutdown();
 		process.exit(0);
 	};
 	process.on("SIGTERM", handleShutdown);
 	process.on("SIGINT", handleShutdown);
-
-	// Auto-resume any orchestrations that were running before daemon restart
-	await autoResumeProjects();
-	markReady();
 }

@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { createApp } from "./daemon.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import {
 	createMockedResponsesProviderWithMock,
 	restoreMockedResponsesFetch,
@@ -42,19 +43,13 @@ async function setupTestContext(): Promise<TestContext> {
 
 	const mockAPI = new ValidatingMockResponsesAPI();
 	const provider = createMockedResponsesProviderWithMock(mockAPI);
+	const projectId = ulid();
 	const appResult = createApp({
 		dataDir,
 		agentProvider: provider,
 		initialConfig: { ...DEFAULT_CONFIG, model: "gpt-4.1-mini" },
+		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
 	});
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
-
-	// Clean up quality task templates that interfere with test assumptions
-	const tasksDir = join(projectDir, ".mxd", "tasks");
-	if (existsSync(tasksDir)) {
-		rmSync(tasksDir, { recursive: true });
-	}
 
 	const hookExample = join(
 		projectDir,
@@ -77,7 +72,7 @@ async function setupTestContext(): Promise<TestContext> {
 		projectDir,
 		app: appResult,
 		mockAPI,
-		projectId: project.id,
+		projectId,
 	};
 }
 
@@ -97,8 +92,8 @@ async function recreateApp(
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
 		initialConfig: { ...DEFAULT_CONFIG, model: "gpt-4.1-mini" },
+		projects: ctx.app.pm.list(),
 	});
-	await newApp.pm.load();
 	newApp.markReady();
 	return newApp;
 }

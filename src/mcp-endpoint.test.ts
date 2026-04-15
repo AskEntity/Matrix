@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getEventStore, getTracker } from "./daemon/helpers.ts";
-import { createApp } from "./daemon.ts";
+import { getEventStore, getTracker } from "./runtime/helpers.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
+import { ulid } from "./ulid.ts";
 
 // ── Helpers ──
 
@@ -117,15 +118,12 @@ function getJson(result: {
 	return JSON.parse(getText(result));
 }
 
-/** Create a project via REST and ensure tracker + event store are loaded. */
+/** Register a project via pm.sync and ensure tracker + event store are loaded. */
 async function createProject(name: string): Promise<string> {
 	const projDir = await mkdtemp(join(tmpdir(), "mxd-proj-"));
-	const res = await hono.request("/projects", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ name, path: projDir }),
-	});
-	const { id } = (await res.json()) as { id: string };
+	const id = ulid();
+	const existing = server.pm.list();
+	server.pm.sync([...existing, { id, name, path: projDir }]);
 	// Load tracker + event store into ctx so R.getTracker/R.getEventStore work
 	await getTracker(server.ctx, id);
 	getEventStore(server.ctx, id);
@@ -143,7 +141,7 @@ beforeEach(async () => {
 	dataDir = await mkdtemp(join(tmpdir(), "mxd-mcp-test-"));
 	server = createApp({ dataDir });
 	hono = server.app;
-	await server.pm.load();
+
 	server.markReady();
 });
 

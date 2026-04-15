@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectManager } from "./project-manager.ts";
@@ -22,248 +22,45 @@ describe("ProjectManager", () => {
 		await rm(dataDir, { recursive: true });
 	});
 
-	describe("init — new directory", () => {
-		test("creates directory structure with .mxd/memory.md and git", async () => {
+	describe("init — registry only", () => {
+		test("registers project and returns metadata", async () => {
 			const projectPath = join(tempDir, "new-app");
+			await mkdir(projectPath, { recursive: true });
 			const project = await pm.init(projectPath);
 
 			expect(project.name).toBe("new-app");
 			expect(project.path).toBe(projectPath);
-			expect(existsSync(join(projectPath, ".mxd", "memory.md"))).toBe(true);
-			expect(existsSync(join(projectPath, ".git"))).toBe(true);
-			expect(existsSync(join(projectPath, "src"))).toBe(true);
-			expect(existsSync(join(projectPath, ".gitignore"))).toBe(true);
+			expect(project.id).toBeTruthy();
+			expect(project.createdAt).toBeTruthy();
 		});
 
-		test("new project memory has scratch pad content", async () => {
-			const projectPath = join(tempDir, "fresh");
-			await pm.init(projectPath);
-
-			const memory = await readFile(
-				join(projectPath, ".mxd", "memory.md"),
-				"utf-8",
-			);
-			expect(memory).toContain("scratch pad");
-		});
-
-		test("new project memory includes critical first-launch bootstrap", async () => {
-			const projectPath = join(tempDir, "bootstrap");
-			await pm.init(projectPath);
-
-			const memory = await readFile(
-				join(projectPath, ".mxd", "memory.md"),
-				"utf-8",
-			);
-			expect(memory).toContain("CRITICAL: First Launch Setup");
-			expect(memory).toContain("setup_worktree.sh.example");
-			expect(memory).toContain("DO THIS FIRST");
-		});
-
-		test("creates setup hook as .example template", async () => {
-			const projectPath = join(tempDir, "hook-test");
-			await pm.init(projectPath);
-
-			const examplePath = join(
-				projectPath,
-				".mxd",
-				"hooks",
-				"setup_worktree.sh.example",
-			);
-			const finalPath = join(projectPath, ".mxd", "hooks", "setup_worktree.sh");
-			expect(existsSync(examplePath)).toBe(true);
-			expect(existsSync(finalPath)).toBe(false);
-			const content = await readFile(examplePath, "utf-8");
-			expect(content).toContain("#!/bin/bash");
-		});
-	});
-
-	describe("init — existing directory", () => {
-		test("converts existing directory without overwriting files", async () => {
-			const projectPath = join(tempDir, "existing-app");
+		test("creates daemon-side data directories", async () => {
+			const projectPath = join(tempDir, "data-dirs");
 			await mkdir(projectPath, { recursive: true });
-			await writeFile(join(projectPath, "README.md"), "# My App\n", "utf-8");
-
 			const project = await pm.init(projectPath);
 
-			expect(project.name).toBe("existing-app");
-			// Original file preserved
-			const readme = await readFile(join(projectPath, "README.md"), "utf-8");
-			expect(readme).toBe("# My App\n");
-			// .mxd/ created
-			expect(existsSync(join(projectPath, ".mxd", "memory.md"))).toBe(true);
+			expect(existsSync(join(dataDir, "projects", project.id, "tasks"))).toBe(true);
+			expect(existsSync(join(dataDir, "projects", project.id, "debug"))).toBe(true);
 		});
 
-		test("converted project memory says to explore codebase", async () => {
-			const projectPath = join(tempDir, "convert-me");
+		test("does NOT create .mxd/ or .git in project path", async () => {
+			const projectPath = join(tempDir, "no-fs");
 			await mkdir(projectPath, { recursive: true });
-
 			await pm.init(projectPath);
 
-			const memory = await readFile(
-				join(projectPath, ".mxd", "memory.md"),
-				"utf-8",
-			);
-			expect(memory).toContain("Converted existing project");
-			expect(memory).toContain("Check existing documentation");
-			expect(memory).not.toContain("CLAUDE.md");
+			// pm.init() should not touch the project directory
+			expect(existsSync(join(projectPath, ".mxd"))).toBe(false);
+			expect(existsSync(join(projectPath, ".git"))).toBe(false);
 		});
 
-		test("creates setup hook with bun install when bun.lockb exists", async () => {
-			const projectPath = join(tempDir, "bun-project");
-			await mkdir(projectPath, { recursive: true });
-			await writeFile(join(projectPath, "bun.lockb"), "", "utf-8");
+		test("registers non-existent path (plugin creates it later)", async () => {
+			const projectPath = join(tempDir, "not-yet");
+			const project = await pm.init(projectPath);
 
-			await pm.init(projectPath);
-
-			const hookPath = join(
-				projectPath,
-				".mxd",
-				"hooks",
-				"setup_worktree.sh.example",
-			);
-			const content = await readFile(hookPath, "utf-8");
-			expect(content).toContain("bun install --frozen-lockfile");
-		});
-
-		test("creates setup hook with npm ci when package-lock.json exists", async () => {
-			const projectPath = join(tempDir, "npm-project");
-			await mkdir(projectPath, { recursive: true });
-			await writeFile(join(projectPath, "package-lock.json"), "{}", "utf-8");
-
-			await pm.init(projectPath);
-
-			const hookPath = join(
-				projectPath,
-				".mxd",
-				"hooks",
-				"setup_worktree.sh.example",
-			);
-			const content = await readFile(hookPath, "utf-8");
-			expect(content).toContain("npm ci");
-		});
-
-		test("does not create .example when setup_worktree.sh already exists", async () => {
-			const projectPath = join(tempDir, "has-hook");
-			const hookDir = join(projectPath, ".mxd", "hooks");
-			await mkdir(hookDir, { recursive: true });
-			await writeFile(
-				join(hookDir, "setup_worktree.sh"),
-				"#!/bin/bash\nexit 0\n",
-				"utf-8",
-			);
-
-			await pm.init(projectPath);
-
-			expect(existsSync(join(hookDir, "setup_worktree.sh.example"))).toBe(
-				false,
-			);
-			// Original hook preserved
-			const content = await readFile(
-				join(hookDir, "setup_worktree.sh"),
-				"utf-8",
-			);
-			expect(content).toBe("#!/bin/bash\nexit 0\n");
-		});
-
-		test("does not overwrite existing .mxd/memory.md", async () => {
-			const projectPath = join(tempDir, "has-memory");
-			await mkdir(join(projectPath, ".mxd"), { recursive: true });
-			await writeFile(
-				join(projectPath, ".mxd", "memory.md"),
-				"# Custom memory\n",
-				"utf-8",
-			);
-
-			await pm.init(projectPath);
-
-			const memory = await readFile(
-				join(projectPath, ".mxd", "memory.md"),
-				"utf-8",
-			);
-			expect(memory).toBe("# Custom memory\n");
-		});
-
-		test("does not re-init git if .git exists", async () => {
-			const projectPath = join(tempDir, "has-git");
-			await mkdir(projectPath, { recursive: true });
-			// Init git with a commit so we can verify it wasn't wiped
-			const exec = async (cmd: string[]) => {
-				const proc = Bun.spawn(cmd, {
-					cwd: projectPath,
-					stdout: "pipe",
-					stderr: "pipe",
-				});
-				await proc.exited;
-			};
-			await exec(["git", "init"]);
-			await writeFile(join(projectPath, "file.txt"), "hello\n", "utf-8");
-			await exec(["git", "add", "-A"]);
-			await exec(["git", "commit", "-m", "existing commit"]);
-
-			await pm.init(projectPath);
-
-			// Verify existing commit is still there
-			const proc = Bun.spawn(["git", "log", "--oneline"], {
-				cwd: projectPath,
-				stdout: "pipe",
-			});
-			const log = await new Response(proc.stdout).text();
-			expect(log).toContain("existing commit");
-		});
-	});
-
-	describe("git exclude — .worktrees", () => {
-		test("new project has .worktrees in .git/info/exclude", async () => {
-			const projectPath = join(tempDir, "new-exclude");
-			await pm.init(projectPath);
-
-			const exclude = await readFile(
-				join(projectPath, ".git", "info", "exclude"),
-				"utf-8",
-			);
-			expect(exclude).toContain(".worktrees");
-		});
-
-		test("existing project gets .worktrees in .git/info/exclude", async () => {
-			const projectPath = join(tempDir, "existing-exclude");
-			await mkdir(projectPath, { recursive: true });
-			// Init git manually
-			const proc = Bun.spawn(["git", "init"], {
-				cwd: projectPath,
-				stdout: "pipe",
-				stderr: "pipe",
-			});
-			await proc.exited;
-
-			await pm.init(projectPath);
-
-			const exclude = await readFile(
-				join(projectPath, ".git", "info", "exclude"),
-				"utf-8",
-			);
-			expect(exclude).toContain(".worktrees");
-		});
-
-		test("does not duplicate .worktrees if already in exclude", async () => {
-			const projectPath = join(tempDir, "no-dup-exclude");
-			await mkdir(projectPath, { recursive: true });
-			const proc = Bun.spawn(["git", "init"], {
-				cwd: projectPath,
-				stdout: "pipe",
-				stderr: "pipe",
-			});
-			await proc.exited;
-
-			// Pre-add .worktrees to exclude
-			const excludePath = join(projectPath, ".git", "info", "exclude");
-			const existing = await readFile(excludePath, "utf-8");
-			await writeFile(excludePath, `${existing}.worktrees\n`, "utf-8");
-
-			await pm.init(projectPath);
-
-			const exclude = await readFile(excludePath, "utf-8");
-			const matches = exclude.match(/\.worktrees/g);
-			expect(matches).toHaveLength(1);
+			expect(project.name).toBe("not-yet");
+			expect(project.path).toBe(projectPath);
+			// Directory doesn't exist — plugin's onProjectInit will create it
+			expect(existsSync(projectPath)).toBe(false);
 		});
 	});
 
@@ -280,12 +77,15 @@ describe("ProjectManager", () => {
 
 		test("init accepts absolute paths", async () => {
 			const projectPath = join(tempDir, "absolute-ok");
+			await mkdir(projectPath, { recursive: true });
 			const project = await pm.init(projectPath);
 			expect(project.path).toBe(projectPath);
 		});
 
 		test("updateProject rejects relative paths", async () => {
-			const project = await pm.init(join(tempDir, "for-update"));
+			const projectPath = join(tempDir, "for-update");
+			await mkdir(projectPath, { recursive: true });
+			const project = await pm.init(projectPath);
 			expect(
 				pm.updateProject(project.id, { path: "relative-new" }),
 			).rejects.toThrow(/must be absolute.*relative-new/);
@@ -294,11 +94,14 @@ describe("ProjectManager", () => {
 
 	test("rejects duplicate path registration", async () => {
 		const projectPath = join(tempDir, "dup");
+		await mkdir(projectPath, { recursive: true });
 		await pm.init(projectPath);
 		expect(pm.init(projectPath)).rejects.toThrow("already registered");
 	});
 
 	test("list returns all projects", async () => {
+		await mkdir(join(tempDir, "a"), { recursive: true });
+		await mkdir(join(tempDir, "b"), { recursive: true });
 		await pm.init(join(tempDir, "a"));
 		await pm.init(join(tempDir, "b"));
 
@@ -308,20 +111,29 @@ describe("ProjectManager", () => {
 	});
 
 	test("get returns project by id", async () => {
+		await mkdir(join(tempDir, "find-me"), { recursive: true });
 		const project = await pm.init(join(tempDir, "find-me"));
 		const found = pm.get(project.id);
 		expect(found?.name).toBe("find-me");
 	});
 
-	test("delete removes metadata but not code directory", async () => {
+	test("delete removes metadata and daemon data dir", async () => {
+		await mkdir(join(tempDir, "delete-me"), { recursive: true });
 		const project = await pm.init(join(tempDir, "delete-me"));
+		const projectDataDir = join(dataDir, "projects", project.id);
+		expect(existsSync(projectDataDir)).toBe(true);
+
 		await pm.delete(project.id);
 
 		expect(pm.get(project.id)).toBeUndefined();
+		// Project directory on disk is NOT touched
 		expect(existsSync(project.path)).toBe(true);
+		// Daemon data dir IS removed
+		expect(existsSync(projectDataDir)).toBe(false);
 	});
 
 	test("persists and reloads across instances", async () => {
+		await mkdir(join(tempDir, "persistent"), { recursive: true });
 		await pm.init(join(tempDir, "persistent"));
 
 		const pm2 = new ProjectManager(dataDir);
@@ -334,13 +146,15 @@ describe("ProjectManager", () => {
 
 	describe("checkPathExists", () => {
 		test("returns true when project path exists", async () => {
+			await mkdir(join(tempDir, "exists"), { recursive: true });
 			const project = await pm.init(join(tempDir, "exists"));
 			expect(pm.checkPathExists(project.id)).toBe(true);
 		});
 
 		test("returns false when project path is missing", async () => {
-			const project = await pm.init(join(tempDir, "will-vanish"));
-			// Remove the project directory
+			const projectPath = join(tempDir, "will-vanish");
+			await mkdir(projectPath, { recursive: true });
+			const project = await pm.init(projectPath);
 			await rm(project.path, { recursive: true });
 			expect(pm.checkPathExists(project.id)).toBe(false);
 		});
@@ -352,8 +166,8 @@ describe("ProjectManager", () => {
 
 	describe("updateProject", () => {
 		test("updates project path to a valid mxd directory", async () => {
+			await mkdir(join(tempDir, "original"), { recursive: true });
 			const project = await pm.init(join(tempDir, "original"));
-			// Create a new directory with .mxd/
 			const newPath = join(tempDir, "relocated");
 			await mkdir(join(newPath, ".mxd"), { recursive: true });
 
@@ -363,6 +177,7 @@ describe("ProjectManager", () => {
 		});
 
 		test("updates project name", async () => {
+			await mkdir(join(tempDir, "old-name"), { recursive: true });
 			const project = await pm.init(join(tempDir, "old-name"));
 			const updated = await pm.updateProject(project.id, {
 				name: "new-name",
@@ -371,6 +186,7 @@ describe("ProjectManager", () => {
 		});
 
 		test("updates both path and name", async () => {
+			await mkdir(join(tempDir, "both"), { recursive: true });
 			const project = await pm.init(join(tempDir, "both"));
 			const newPath = join(tempDir, "both-new");
 			await mkdir(join(newPath, ".mxd"), { recursive: true });
@@ -384,6 +200,7 @@ describe("ProjectManager", () => {
 		});
 
 		test("rejects nonexistent path", async () => {
+			await mkdir(join(tempDir, "reject-path"), { recursive: true });
 			const project = await pm.init(join(tempDir, "reject-path"));
 			expect(
 				pm.updateProject(project.id, {
@@ -393,6 +210,7 @@ describe("ProjectManager", () => {
 		});
 
 		test("rejects path without .mxd/ directory", async () => {
+			await mkdir(join(tempDir, "reject-mxd"), { recursive: true });
 			const project = await pm.init(join(tempDir, "reject-mxd"));
 			const badPath = join(tempDir, "no-mxd");
 			await mkdir(badPath, { recursive: true });
@@ -403,6 +221,8 @@ describe("ProjectManager", () => {
 		});
 
 		test("rejects path already used by another project", async () => {
+			await mkdir(join(tempDir, "proj-a"), { recursive: true });
+			await mkdir(join(tempDir, "proj-b", ".mxd"), { recursive: true });
 			const projectA = await pm.init(join(tempDir, "proj-a"));
 			await pm.init(join(tempDir, "proj-b"));
 
@@ -420,6 +240,7 @@ describe("ProjectManager", () => {
 		});
 
 		test("persists updated path across reload", async () => {
+			await mkdir(join(tempDir, "persist-update"), { recursive: true });
 			const project = await pm.init(join(tempDir, "persist-update"));
 			const newPath = join(tempDir, "persist-new");
 			await mkdir(join(newPath, ".mxd"), { recursive: true });
@@ -431,4 +252,6 @@ describe("ProjectManager", () => {
 			expect(pm2.get(project.id)?.path).toBe(newPath);
 		});
 	});
+
+	// syncFromDaemon deleted — worker uses ProjectStore.sync(), not PM.
 });
