@@ -236,12 +236,8 @@ describe("daemon stats", () => {
 	test("GET /stats reflects projects and task counts", async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "mxd-stats4-"));
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-stats4d-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
-
-
-		// Create a project with tasks in different statuses
 		const project = { id: ulid(), name: "stats-proj", path: join(tempDir, "stats-proj") };
-		pm.sync([project]);
+		const { app } = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 
 		// Get the auto-created root node ID
 		const tasksRes = await app.request(`/projects/${project.id}/tasks`);
@@ -321,14 +317,10 @@ describe("daemon tasks API", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-tasks-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-tdata-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
+		const project = { id: ulid(), name: "task-app", path: join(tempDir, "task-app") };
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 		app = result.app;
 		getTracker = result.getTracker;
-
-
-		// Create a project for task tests
-		const project = { id: ulid(), name: "task-app", path: join(tempDir, "task-app") };
-		result.pm.sync([project]);
 		projectId = project.id;
 		// Get root node ID for task creation
 		const tracker = await getTracker(projectId);
@@ -829,19 +821,17 @@ describe("daemon tasks API", () => {
 		};
 
 		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-cont-wt-"));
+		const _projInfo = { id: ulid(), name: "test", path: join(tempDir, "cont-wt-app") };
 		const {
 			app: localApp,
-			pm: localPm,
 			getTracker: localGetTracker,
 		} = createApp({
 			dataDir: localDataDir,
 			agentProvider,
+			projects: [_projInfo],
 		});
 
-		// Create a project
-		const _tmpId = ulid();
-		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "cont-wt-app") }]);
-		const project = localPm.get(_tmpId)!;
+		const project = _projInfo;
 		const localTracker = await localGetTracker(project.id);
 		const localRootId = localTracker.rootNodeId;
 
@@ -930,16 +920,12 @@ describe("daemon tasks API", () => {
 	test("GET /tasks/:nodeId/gitlog returns commits when branch exists", async () => {
 		// Use a local app instance to access getTracker
 		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-gitlog-wt-"));
+		const _projInfo2 = { id: ulid(), name: "test", path: join(tempDir, "gitlog-app") };
 		const {
 			app: localApp,
-			pm: localPm,
 			getTracker: localGetTracker,
-		} = createApp({ dataDir: localDataDir, agentProvider: mockProvider });
-
-		const projPath = join(tempDir, "gitlog-app");
-		const _tmpId = ulid();
-		localPm.sync([{ id: _tmpId, name: "test", path: projPath }]);
-		const project = localPm.get(_tmpId)!;
+		} = createApp({ dataDir: localDataDir, agentProvider: mockProvider, projects: [_projInfo2] });
+		const project = _projInfo2;
 		const localTracker2 = await localGetTracker(project.id);
 		const localRootId2 = localTracker2.rootNodeId;
 
@@ -1162,12 +1148,9 @@ describe("GET /projects/:id/events", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-events-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-evdata-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		app = result.app;
-
-
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
+		app = result.app;
 		projectId = project.id;
 	});
 
@@ -1309,12 +1292,9 @@ describe("GET /projects/:id/events/older", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-older-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-olderdata-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		app = result.app;
-
-
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
+		app = result.app;
 		projectId = project.id;
 	});
 
@@ -1449,12 +1429,9 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-taskev-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-taskevd-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		app = result.app;
-
-
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
+		app = result.app;
 		projectId = project.id;
 		const tasksRes = await app.request(`/projects/${projectId}/tasks`);
 		rootNodeId = ((await tasksRes.json()) as { rootNodeId: string }).rootNodeId;
@@ -1563,13 +1540,10 @@ describe("streaming text injection in batch events", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-stream-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-streamd-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
+		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 		app = result.app;
 		ctx = result.ctx;
-
-
-		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
 		projectId = project.id;
 		const tasksRes = await app.request(`/projects/${projectId}/tasks`);
 		rootNodeId = ((await tasksRes.json()) as { rootNodeId: string }).rootNodeId;
@@ -1744,24 +1718,22 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	let taskQueue: MessageQueue;
 	let rootNodeId: string;
 
+	let projectInfo: { id: string; name: string; path: string };
+
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-taskmsg-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-taskmsgd-"));
+		projectInfo = { id: ulid(), name: "test", path: join(tempDir, "proj") };
 		const {
 			app: localApp,
-			pm: localPm,
 			getTracker,
 		} = createApp({
 			dataDir,
 			agentProvider: mockProvider,
+			projects: [projectInfo],
 		});
 
-		const _tmpId = ulid();
-
-		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "proj") }]);
-
-		const project = localPm.get(_tmpId)!;
-		projectId = project.id;
+		projectId = projectInfo.id;
 		const tracker = await getTracker(projectId);
 		rootNodeId = tracker.rootNodeId;
 
@@ -1784,9 +1756,10 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 
 	test("persists message when no queue registered for task", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
+			projects: [projectInfo],
 		});
 
 		markReady();
@@ -1809,12 +1782,12 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	test("routes message to registered task queue", async () => {
 		const {
 			app,
-			pm,
 			markReady,
 			getTracker: gt,
 		} = createApp({
 			dataDir,
 			agentProvider: mockProvider,
+			projects: [projectInfo],
 		});
 
 		markReady();
@@ -1848,9 +1821,10 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 
 	test("returns 400 when content is missing", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
+			projects: [projectInfo],
 		});
 
 		markReady();
@@ -1867,9 +1841,10 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 
 	test("returns 404 for unknown project", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
+			projects: [projectInfo],
 		});
 
 		markReady();
@@ -1888,12 +1863,12 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	test("falls through to persist when queue is closed (no 409)", async () => {
 		const {
 			app,
-			pm,
 			markReady,
 			getTracker: gt,
 		} = createApp({
 			dataDir,
 			agentProvider: mockProvider,
+			projects: [projectInfo],
 		});
 
 		markReady();
@@ -1934,14 +1909,12 @@ describe("POST /projects/:id/tasks/:nodeId/message (root node)", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-projmsg-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-projmsgd-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
+		const project = { id: ulid(), name: "proj", path: join(tempDir, "proj") };
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 		app = result.app;
 		getTracker = result.getTracker;
 
 		result.markReady();
-
-		const project = { id: ulid(), name: "proj", path: join(tempDir, "proj") };
-		result.pm.sync([project]);
 		projectId = project.id;
 	});
 
@@ -2006,12 +1979,9 @@ describe("POST /projects/:id/clarify", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-clarify-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-clarifyd-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		app = result.app;
-
-
 		const project = { id: ulid(), name: "proj", path: join(tempDir, "proj") };
-		result.pm.sync([project]);
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
+		app = result.app;
 		projectId = project.id;
 	});
 
@@ -2088,21 +2058,17 @@ describe("POST /projects/:id/clarify", () => {
 		};
 
 		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-clarify-route-"));
+		const project = { id: ulid(), name: "test", path: join(tempDir, "clarify-route-proj") };
 		const {
 			app: localApp,
-			pm: localPm,
 			markReady: localMarkReady,
 			getTracker: localGetTracker,
 		} = createApp({
 			dataDir: localDataDir,
 			agentProvider: longRunningProvider,
+			projects: [project],
 		});
 		localMarkReady();
-
-		// Create project and start agent
-		const _tmpId = ulid();
-		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "clarify-route-proj") }]);
-		const project = localPm.get(_tmpId)!;
 
 		const orchRes = await startRootAgent(
 			localApp,
@@ -2163,21 +2129,17 @@ describe("POST /projects/:id/clarify", () => {
 		const localDataDir = await mkdtemp(
 			join(tmpdir(), "mxd-clarify-child-route-"),
 		);
+		const project = { id: ulid(), name: "test", path: join(tempDir, "clarify-child-route-proj") };
 		const {
 			app: localApp,
-			pm: localPm,
 			markReady: localMarkReady,
 			getTracker: localGetTracker,
 		} = createApp({
 			dataDir: localDataDir,
 			agentProvider: longRunningProvider,
+			projects: [project],
 		});
 		localMarkReady();
-
-		// Create project
-		const _tmpId = ulid();
-		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "clarify-child-route-proj") }]);
-		const project = localPm.get(_tmpId)!;
 
 		const orchRes = await startRootAgent(
 			localApp,
@@ -2267,21 +2229,17 @@ describe("POST /projects/:id/clarify", () => {
 		const localDataDir = await mkdtemp(
 			join(tmpdir(), "mxd-clarify-closed-queue-"),
 		);
+		const project = { id: ulid(), name: "test", path: join(tempDir, "clarify-closed-queue-proj") };
 		const {
 			app: localApp,
-			pm: localPm,
 			markReady: localMarkReady,
 			getTracker: localGetTracker,
 		} = createApp({
 			dataDir: localDataDir,
 			agentProvider: longRunningProvider,
+			projects: [project],
 		});
 		localMarkReady();
-
-		// Create project
-		const _tmpId = ulid();
-		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "clarify-closed-queue-proj") }]);
-		const project = localPm.get(_tmpId)!;
 
 		const orchRes = await startRootAgent(
 			localApp,
@@ -2370,12 +2328,10 @@ describe("task message API — agent launch", () => {
 			},
 		};
 
-		const { app, pm, markReady } = createApp({ dataDir, agentProvider });
+		const project = { id: ulid(), name: "oa-app", path: join(tempDir, "oa-app") };
+		const { app, markReady } = createApp({ dataDir, agentProvider, projects: [project] });
 
 		markReady();
-
-		const project = { id: ulid(), name: "oa-app", path: join(tempDir, "oa-app") };
-		pm.sync([project]);
 
 		const res = await startRootAgent(app, project.id, "Build a todo app");
 		expect(res.status).toBe(200);
@@ -2392,15 +2348,14 @@ describe("task message API — agent launch", () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "mxd-oa2-"));
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-oa2d-"));
 
-		const { app, pm, markReady } = createApp({
+		const project = { id: ulid(), name: "oa2", path: join(tempDir, "oa2") };
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
+			projects: [project],
 		});
 
 		markReady();
-
-		const project = { id: ulid(), name: "oa2", path: join(tempDir, "oa2") };
-		pm.sync([project]);
 
 		const tasksRes = await app.request(`/projects/${project.id}/tasks`);
 		const { rootNodeId } = (await tasksRes.json()) as { rootNodeId: string };
@@ -2600,13 +2555,11 @@ describe("GET /projects/:id/agent", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-agent-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-agentd-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
+		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 		app = result.app;
 
 		result.markReady();
-
-		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
 		projectId = project.id;
 	});
 
@@ -2639,13 +2592,11 @@ describe("POST /projects/:id/stop", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-stop-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-stopd-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
+		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 		app = result.app;
 
 		result.markReady();
-
-		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
 		projectId = project.id;
 	});
 
@@ -2696,21 +2647,17 @@ describe("POST /projects/:id/stop", () => {
 		};
 
 		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-stop-cascade-"));
+		const project = { id: ulid(), name: "test", path: join(tempDir, "cascade-proj") };
 		const {
 			app: localApp,
-			pm: localPm,
 			markReady: localMarkReady,
 			getTracker: localGetTracker,
 		} = createApp({
 			dataDir: localDataDir,
 			agentProvider: longRunningProvider,
+			projects: [project],
 		});
 		localMarkReady();
-
-		// Create a project
-		const _tmpId = ulid();
-		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "cascade-proj") }]);
-		const project = localPm.get(_tmpId)!;
 
 		// Start an agent
 		const orchRes = await startRootAgent(localApp, project.id, "do something");
@@ -2790,13 +2737,11 @@ describe("POST /projects/:id/tasks/:nodeId/message — root agent", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-run-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-rund-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
+		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 		app = result.app;
 
 		result.markReady();
-
-		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
 		projectId = project.id;
 	});
 
@@ -2851,12 +2796,9 @@ describe("POST /projects/:id/sessions/prune", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-prune-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-pruned-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		app = result.app;
-
-
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
+		app = result.app;
 		projectId = project.id;
 	});
 
@@ -2954,13 +2896,10 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-continue-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-continued-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
+		const project = { id: ulid(), name: "cont-proj", path: join(tempDir, "cont-proj") };
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 		app = result.app;
 		getTracker = result.getTracker;
-
-
-		const project = { id: ulid(), name: "cont-proj", path: join(tempDir, "cont-proj") };
-		result.pm.sync([project]);
 		projectId = project.id;
 		const tracker = await getTracker(projectId);
 		rootNodeId = tracker.rootNodeId;
@@ -3380,20 +3319,15 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		};
 
 		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-child-sess-"));
+		const project = { id: ulid(), name: "test", path: join(tempDir, "child-sess-proj") };
 		const {
 			app: localApp,
-			pm: localPm,
 			getTracker: localGetTracker,
 		} = createApp({
 			dataDir: localDataDir,
 			agentProvider,
+			projects: [project],
 		});
-
-		const _tmpId = ulid();
-
-		localPm.sync([{ id: _tmpId, name: "test", path: join(tempDir, "child-sess-proj") }]);
-
-		const project = localPm.get(_tmpId)!;
 		const emitTracker = await localGetTracker(project.id);
 		const emitRootId = emitTracker.rootNodeId;
 
@@ -3454,13 +3388,11 @@ describe("GET /projects/:id/clarifications", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-clarifs-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-clarifsd-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
+		const project = { id: ulid(), name: "proj", path: join(tempDir, "proj") };
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 		app = result.app;
 
 		result.markReady();
-
-		const project = { id: ulid(), name: "proj", path: join(tempDir, "proj") };
-		result.pm.sync([project]);
 		projectId = project.id;
 	});
 
@@ -3511,12 +3443,9 @@ describe("GET /projects/:id/config", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-cfg-get-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-cfg-get-data-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		app = result.app;
-
-
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
+		app = result.app;
 		projectId = project.id;
 	});
 
@@ -3560,12 +3489,9 @@ describe("PATCH /projects/:id/config", () => {
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-cfg-patch-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-cfg-patch-data-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		app = result.app;
-
-
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
+		app = result.app;
 		projectId = project.id;
 	});
 
@@ -3720,11 +3646,8 @@ describe("GET /projects/:id/config/repo", () => {
 	test("returns empty object when no repo config exists", async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "mxd-repo-cfg-"));
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-repo-cfg-data-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
-
-
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		pm.sync([project]);
+		const { app } = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 
 		const res = await app.request(`/projects/${project.id}/config/repo`);
 		expect(res.status).toBe(200);
@@ -3738,11 +3661,8 @@ describe("GET /projects/:id/config/repo", () => {
 	test("returns repo config when .mxd/config.json exists", async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "mxd-repo-cfg2-"));
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-repo-cfg2-data-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
-
-
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		pm.sync([project]);
+		const { app } = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 
 		// Write a repo config file in the project directory
 		await mkdir(join(tempDir, ".mxd"), { recursive: true });
@@ -3800,10 +3720,8 @@ describe("POST /projects/:id/restart", () => {
 	});
 
 	test("returns 404 when no active agent", async () => {
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
-
 		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([proj]);
+		const { app } = createApp({ dataDir, agentProvider: mockProvider, projects: [proj] });
 
 		const res = await app.request(`/projects/${proj.id}/restart`, {
 			method: "POST",
@@ -3843,10 +3761,6 @@ describe("POST /projects/:id/restart", () => {
 		});
 
 		markReady();
-
-		// Create project
-		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([proj]);
 
 		// Start orchestration
 		const startRes = await startRootAgent(app, proj.id, "test");
@@ -3899,15 +3813,14 @@ describe("POST /projects/:id/restart", () => {
 			},
 		};
 
-		const { app, pm, markReady } = createApp({
+		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: slowStopProvider,
+			projects: [proj],
 		});
 
 		markReady();
-
-		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([proj]);
 
 		// Start orchestration
 		await startRootAgent(app, proj.id, "test");
@@ -3953,15 +3866,14 @@ describe("POST /projects/:id/restart", () => {
 			},
 		};
 
-		const { app, pm, markReady } = createApp({
+		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: trackingProvider,
+			projects: [proj],
 		});
 
 		markReady();
-
-		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([proj]);
 
 		// Start orchestration
 		await startRootAgent(app, proj.id, "test");
@@ -4020,15 +3932,14 @@ describe("POST /projects/:id/restart", () => {
 			},
 		};
 
-		const { app, pm, markReady } = createApp({
+		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: restartSafeProvider,
+			projects: [proj],
 		});
 
 		markReady();
-
-		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([proj]);
 
 		// Start orchestration — session 1
 		await startRootAgent(app, proj.id, "test");
@@ -4093,15 +4004,14 @@ describe("POST /projects/:id/restart", () => {
 			},
 		};
 
-		const { app, pm, markReady, getTracker } = createApp({
+		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const { app, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: sessionIdProvider,
+			projects: [proj],
 		});
 
 		markReady();
-
-		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([proj]);
 
 		// Start orchestration
 		await startRootAgent(app, proj.id, "test");
@@ -4120,15 +4030,14 @@ describe("POST /projects/:id/restart", () => {
 	});
 
 	test("start after startup guard is released succeeds", async () => {
-		const { app, pm } = createApp({
+		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const { app } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
+			projects: [proj],
 		});
 
 		// Don't call markReady() — startup guard should block
-
-		const proj = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([proj]);
 
 		// Should return 503 before markReady
 		const tasksRes = await app.request(`/projects/${proj.id}/tasks`);
@@ -4185,16 +4094,14 @@ describe("lifecycle edge cases", () => {
 
 	test("stopping agent clears pending clarifications", async () => {
 		const provider = createLongRunningProvider();
-		const { app, pm, markReady } = createApp({
+		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
+			projects: [project],
 		});
 
 		markReady();
-
-		// Create project
-		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([project]);
 
 		// Start agent
 		await startRootAgent(app, project.id, "test");
@@ -4235,16 +4142,14 @@ describe("lifecycle edge cases", () => {
 			},
 		};
 
-		const { app, pm, markReady, getTracker } = createApp({
+		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const { app, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: provider,
+			projects: [project],
 		});
 
 		markReady();
-
-		// Create project
-		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([project]);
 
 		// Start agent
 		await startRootAgent(app, project.id, "test");
@@ -4285,16 +4190,14 @@ describe("lifecycle edge cases", () => {
 			},
 		};
 
-		const { app, pm, markReady } = createApp({
+		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
+			projects: [project],
 		});
 
 		markReady();
-
-		// Create project
-		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([project]);
 
 		// Start agent
 		await startRootAgent(app, project.id, "test");
@@ -4309,16 +4212,14 @@ describe("lifecycle edge cases", () => {
 	});
 
 	test("clearing sessions works when no agent is running", async () => {
-		const { app, pm, markReady } = createApp({
+		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
+			projects: [project],
 		});
 
 		markReady();
-
-		// Create project
-		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([project]);
 
 		// Clear sessions without running agent — should succeed
 		const clearRes = await app.request(
@@ -4331,16 +4232,14 @@ describe("lifecycle edge cases", () => {
 	});
 
 	test("clearing sessions preserves task tree and rootNodeId in GET /tasks", async () => {
-		const { app, pm, markReady } = createApp({
+		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
+			projects: [project],
 		});
 
 		markReady();
-
-		// Create project
-		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
-		pm.sync([project]);
 
 		// Start and stop agent to create root node + tasks
 		await startRootAgent(app, project.id, "test");
@@ -4392,11 +4291,8 @@ describe("project directory structure", () => {
 
 	test("new project registration creates tasks/ and debug/ directories", async () => {
 		const { existsSync: exists } = await import("node:fs");
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-
-
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 
 		expect(exists(join(dataDir, "projects", project.id, "tasks"))).toBe(true);
 		expect(exists(join(dataDir, "projects", project.id, "debug"))).toBe(true);
@@ -4404,11 +4300,8 @@ describe("project directory structure", () => {
 
 	test("EventStore created for a project writes under projects/<id>/tasks/", async () => {
 		const { existsSync: exists } = await import("node:fs");
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-
-
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		result.pm.sync([project]);
+		const result = createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 
 		// Directly touch the store through helpers
 		const { getEventStore } = await import("./runtime/helpers.ts");
