@@ -14,8 +14,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createApp } from "./daemon.ts";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import {
@@ -23,6 +24,7 @@ import {
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
 import type { TaskNode } from "./types.ts";
+import { initTestProject } from "./test-utils/init-test-project.ts";
 
 // ── Test infrastructure ──
 
@@ -68,13 +70,14 @@ async function setupTestContext(): Promise<TestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 
+	await initTestProject(projectDir);
+
+	const project = { id: ulid(), name: basename(projectDir), path: projectDir };
 	const appResult = createApp({
 		dataDir,
 		agentProvider: provider,
+		projects: [project],
 	});
-
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
 
 	// Clean up quality task templates that interfere with test assumptions
 	const tasksDir = join(projectDir, ".mxd", "tasks");
@@ -101,6 +104,16 @@ async function setupTestContext(): Promise<TestContext> {
 	});
 
 	appResult.markReady();
+
+	// Ensure root node has cwd + worktreePath set to project root.
+	// In production, getTracker() backfills worktreePath. But cwd also needs
+	// to be set for tools (getTaskCwd reads cwd first, worktreePath as fallback).
+	const tracker = await appResult.getTracker(project.id);
+	const rootNode = tracker.getTask(tracker.rootNodeId);
+	if (rootNode) {
+		if (!rootNode.worktreePath) rootNode.worktreePath = projectDir;
+		if (!rootNode.cwd) rootNode.cwd = projectDir;
+	}
 
 	return {
 		dataDir,
@@ -392,6 +405,10 @@ describe("Integration: full stack with mock API", () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
 
+		// DEBUG: verify root has cwd
+		const _tracker = await ctx.app.getTracker(ctx.projectId);
+		const _root = _tracker.getTask(_tracker.rootNodeId);
+
 		// Write a file to read
 		await Bun.write(join(ctx.projectDir, "test-file.txt"), "file_content_here");
 
@@ -428,7 +445,17 @@ describe("Integration: full stack with mock API", () => {
 						},
 					],
 					blocks: [
-						{ type: "text", text: "Got both results." },
+						{ type: "text", text: "Got both results. Committing." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "git add -A && git commit -m 'test commit' --allow-empty" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Done." },
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
@@ -445,9 +472,7 @@ describe("Integration: full stack with mock API", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
 
-		// Asserts in the DSL already validated both tool results.
-		// If we got here without MockValidationError, both tools executed correctly.
-		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(3);
 	}, 20000);
 
 	test("Scenario 3: explicit yield + wake with message", async () => {
@@ -734,8 +759,8 @@ async function recreateApp(
 	const newApp = createApp({
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
+		projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }],
 	});
-	await newApp.pm.load();
 	newApp.markReady();
 	return newApp;
 }
@@ -5128,11 +5153,12 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "write+read ok" },
-						},
+						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+					],
+				},
+				{
+					blocks: [
+						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "write+read ok" } },
 					],
 				},
 			],
@@ -5214,11 +5240,12 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "edit ok" },
-						},
+						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+					],
+				},
+				{
+					blocks: [
+						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "edit ok" } },
 					],
 				},
 			],
@@ -5283,11 +5310,12 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "search ok" },
-						},
+						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+					],
+				},
+				{
+					blocks: [
+						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "search ok" } },
 					],
 				},
 			],
@@ -5342,11 +5370,12 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "list_files ok" },
-						},
+						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+					],
+				},
+				{
+					blocks: [
+						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "list_files ok" } },
 					],
 				},
 			],
@@ -8616,13 +8645,12 @@ describe("Default branch", () => {
 		const mockAPI = new ValidatingMockAPI();
 		const provider = createMockedProviderWithMock(mockAPI);
 
+		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
 		const appResult = createApp({
 			dataDir,
 			agentProvider: provider,
+			projects: [project],
 		});
-
-		await appResult.pm.load();
-		const project = await appResult.pm.init(projectDir);
 
 		// Activate setup hook
 		const hookExample = join(
@@ -8673,9 +8701,8 @@ describe("Default branch", () => {
 
 		const mockAPI = new ValidatingMockAPI();
 		const provider = createMockedProviderWithMock(mockAPI);
-		const appResult = createApp({ dataDir, agentProvider: provider });
-		await appResult.pm.load();
-		const project = await appResult.pm.init(projectDir);
+		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const appResult = createApp({ dataDir, agentProvider: provider, projects: [project] });
 
 		const hookExample = join(
 			projectDir,
@@ -10329,14 +10356,20 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		expect(eventStore.has(rootNodeId)).toBe(true);
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
 
 		eventStore.clear(rootNodeId);
 		expect(eventStore.has(rootNodeId)).toBe(false);
 
-		await new Promise((r) => setTimeout(r, 500));
+		// Poll instead of fixed 500ms to avoid flakiness under load
+		for (let i = 0; i < 20; i++) {
+			await new Promise((r) => setTimeout(r, 100));
+			if (eventStore.has(rootNodeId)) {
+				throw new Error(`JSONL reappeared after ${(i + 1) * 100}ms — async cleanup wrote after clear`);
+			}
+		}
 		expect(eventStore.has(rootNodeId)).toBe(false);
 	}, 15000);
 
@@ -10414,7 +10447,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		if (!eventStore) throw new Error("EventStore not found");
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
 
@@ -10444,11 +10477,11 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		if (!eventStore) throw new Error("EventStore not found");
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
 
-		const { emitEvent } = await import("./daemon/event-system.ts");
+		const { emitEvent } = await import("./runtime/event-system.ts");
 		emitEvent(ctx.app.ctx, ctx.projectId, {
 			type: "error",
 			taskId: rootNodeId,
@@ -10491,7 +10524,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		if (!eventStore) throw new Error("EventStore not found");
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
 		eventStore.clear(rootNodeId);
@@ -10542,7 +10575,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		if (!eventStore) throw new Error("EventStore not found");
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		const [result1, result2] = await Promise.all([
 			stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId),
@@ -10743,7 +10776,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		expect(eventStore.has(childId)).toBe(true);
 
 		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+			"./runtime/agent-lifecycle.ts"
 		);
 		await stopTaskFn(ctx.app.ctx, ctx.projectId, childId);
 		eventStore.clear(childId);
@@ -10754,7 +10787,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 
 		// Wake parent
 		const { createTaskComplete } = await import("./queue-message-factory.ts");
-		const { deliverMessage } = await import("./daemon/agent-lifecycle.ts");
+		const { deliverMessage } = await import("./runtime/agent-lifecycle.ts");
 		const project = ctx.app.ctx.pm.get(ctx.projectId);
 		if (project) {
 			const fakeComplete = createTaskComplete(
@@ -10781,7 +10814,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		});
 		await tracker.save();
 
-		const { getEventStore } = await import("./daemon/helpers.ts");
+		const { getEventStore } = await import("./runtime/helpers.ts");
 		const eventStore = getEventStore(ctx.app.ctx, ctx.projectId);
 
 		ctx.app.ctx.launchingNodes.add(child.id);
@@ -10835,7 +10868,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		);
 		await tracker.save();
 
-		const { getEventStore } = await import("./daemon/helpers.ts");
+		const { getEventStore } = await import("./runtime/helpers.ts");
 		const eventStore = getEventStore(ctx.app.ctx, ctx.projectId);
 
 		ctx.app.ctx.launchingNodes.add(child.id);
@@ -11150,12 +11183,13 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 				},
 				{
 					blocks: [
-						{ type: "text", text: "Got the image." },
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "image tool_result ok" },
-						},
+						{ type: "text", text: "Got the image. Committing." },
+						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+					],
+				},
+				{
+					blocks: [
+						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "image tool_result ok" } },
 					],
 				},
 			],

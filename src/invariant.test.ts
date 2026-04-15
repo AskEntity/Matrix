@@ -9,11 +9,12 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createApp } from "./daemon.ts";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import {
@@ -53,19 +54,12 @@ async function setupTestContext(): Promise<TestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 
+	const projectId = ulid();
 	const appResult = createApp({
 		dataDir,
 		agentProvider: provider,
+		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
 	});
-
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
-
-	// Clean up quality task templates
-	const tasksDir = join(projectDir, ".mxd", "tasks");
-	if (existsSync(tasksDir)) {
-		rmSync(tasksDir, { recursive: true });
-	}
 
 	// Activate setup hook
 	const hookExample = join(
@@ -90,7 +84,7 @@ async function setupTestContext(): Promise<TestContext> {
 		projectDir,
 		app: appResult,
 		mockAPI,
-		projectId: project.id,
+		projectId,
 	};
 }
 

@@ -1101,3 +1101,148 @@ After step 0 + step 1, `runAgentForNode` has zero Matrix imports. Runtime doesn'
 ### get_logs Availability
 
 Changed from `"both"` to `"external"` — agents don't need to read other tasks' JSONL. get_logs is for external MCP clients (send → yield → get_logs workflow).
+
+## Daemon / Runtime / Plugin Split
+
+### Architecture
+
+```
+daemon.ts (meta-daemon shell):
+  - HTTP server (:7433, port from config)
+  - Auth middleware (shell-level, before worker forwarding)
+  - Plugin discovery (scans projects for .mxd/plugin/index.ts)
+  - Worker management (start/stop scope workers)
+  - SSE relay (worker events → browser)
+  - Global config CRUD
+  - /plugins endpoint (registered plugins)
+
+runtime.ts (worker code, was daemon.ts):
+  - createApp() — full Hono app + RuntimeContext
+  - All agent lifecycle, tools, providers
+  - Routes run inside worker, HTTP forwarded from shell
+  - Production entry point (cli.ts points here until shell is ready)
+
+src/runtime/ (was src/daemon/):
+  - context.ts — RuntimeContext (was DaemonContext)
+  - agent-lifecycle.ts, event-system.ts, helpers.ts
+  - routes/ — Hono route handlers (run in worker)
+  - scope-worker.ts — Worker entry point
+```
+
+### Worker Communication
+
+- Shell → Worker: HTTP request serialized via postMessage → Worker's Hono app.fetch() → response back
+- Worker → Shell: `ctx.onBroadcast` hook → postMessage sse_event → shell relays to SSE clients
+- Shell handles: auth, global config, SSE connections, plugin discovery
+- Worker handles: everything else (routes, agent loop, tools, events, JSONL)
+
+### Plugin System
+
+`src/plugin.ts` defines `PluginManifest`:
+```ts
+interface PluginManifest {
+  name: string;
+  scope: "global" | "project";
+  web?: string;           // React component path
+  runtime?: string;       // ScopeOpts builder path
+  onProjectInit?: (path, { isNew }) => Promise<void>;
+}
+```
+
+Matrix plugin at `.mxd/plugin/index.ts`: `{ name: "matrix", scope: "global" }`. Not special-cased — discovered through same scanning mechanism as any plugin.
+
+### File Ownership
+
+```
+.mxd/
+  config.json        ← daemon (project config)
+  plugin/            ← daemon reads for discovery
+    index.ts         ← plugin manifest
+    runtime.ts       ← plugin ScopeOpts (worker)
+    web/             ← plugin React components (shell imports)
+  hooks/             ← matrix plugin runtime
+  memory.md          ← matrix plugin runtime
+  tree.json          ← matrix plugin runtime
+```
+
+### Addressing: `<scope>:<project>`
+
+- `matrix:story1001` = story1001 in dev mode (matrix worker handles it)
+- `story1001:story1001` = story1001 in product mode (story1001 worker)
+- Inside worker: scope is implicit (worker IS the scope), just `projectId`
+- Cross-scope: worker can't handle → escalates to shell → shell routes to correct worker
+
+### Shell Web UI
+
+`web/` = daemon shell React app (auth + project/scope selector). Plugin UI loaded as dynamic React component import (not iframe): `React.lazy(() => import(pluginWebPath))`.
+
+### ProjectStore (worker's read-only project registry)
+
+`ProjectStore` replaces `ProjectManager` in worker/runtime. Pure in-memory, sync-only:
+- `sync(projects)` — daemon pushes full project list
+- `get(id)` / `list()` / `has(id)` — read-only lookups
+- No disk access, no CRUD methods
+- `createApp({ projects })` — injects project list at construction
+
+`ProjectManager` remains in daemon only — it owns disk persistence + CRUD.
+
+### Test pattern for projects
+
+```ts
+// Runtime tests: inject projects directly (no HTTP)
+const app = createApp({ dataDir, projects: [{ id, name, path }] });
+
+// Daemon tests: full pipeline
+const daemon = await createDaemon({ dataDir });
+await daemon.fetch(new Request("/projects", { method: "POST", body: ... }));
+```
+
+Tests needing git worktrees use `initTestProject(path)` helper (creates git repo + .mxd/ structure).
+
+### Current State (half-state)
+
+Production still runs `runtime.ts` directly (cli.ts → runtime.ts). daemon.ts is WIP — has auth, config, SSE relay, HTTP proxy, plugin discovery, project CRUD, typed sync. Not yet wired as production entry. 12 emission-harness test failures remain (cwd/worktreePath on root node).
+
+
+## Worker-Based Scope Isolation (Plugin Architecture)
+
+### Architecture
+- `src/daemon.ts`: Meta-daemon shell — Hono routes, auth, config, project CRUD, plugin discovery, worker management, SSE relay with ring buffer + Last-Event-ID catch-up
+- `src/runtime.ts`: Plugin-agnostic runtime — ZERO Matrix imports. Receives `buildScopeOpts` via `DaemonConfig`
+- `src/runtime/scope-worker.ts`: Worker entry — loads plugin runtime module, passes `buildScopeOpts` to `createApp`
+- `.mxd/plugin/`: Matrix plugin — manifest, runtime (exports `buildMatrixScopeOpts`), web UI
+- `web/`: Daemon shell UI — auth context (shell-owned), ShellApp, LoginPage
+- `web/auth-context.ts`: Shell-owned React contexts (AuthFetchProvider, GetTokenProvider). Plugin re-exports from here.
+
+### Key Invariant: Import Direction
+- Shell (`web/`, `src/`) → ZERO imports from `.mxd/plugin/` (delete plugin → shell compiles)
+- Plugin → shell/runtime is OK (plugin consumes from host)
+
+### buildScopeOpts Injection
+- `DaemonConfig.buildScopeOpts`: required callback `(projectId, ctx) => ScopeOpts`
+- Daemon resolves plugin runtime path → passes to worker via `pluginRuntimePath`
+- Worker dynamically imports plugin module → wraps as `buildScopeOpts`
+- Tests use `createMatrixApp` (from `test-utils/create-matrix-app.ts`) which auto-injects Matrix scope opts
+- Runtime throws if `buildScopeOpts` not provided (no silent fallback)
+
+### Daemon SSE
+- Per-project ring buffer (2000 entries) + monotonic seqId
+- `Last-Event-ID` header on reconnect → catch-up from ring buffer
+- Falls back to full tree fetch if gap too large
+
+### Streaming Response Forwarding
+- Worker detects `text/event-stream` content-type → streams chunks via postMessage
+- Daemon receives `http_response_stream_start/chunk/end` → creates ReadableStream for client
+- Normal HTTP: buffered `response.text()` as before
+
+### Plugin Web Assets
+- Served at `/plugin-assets/<pluginName>/` URL path (not filesystem path)
+- `/plugins` endpoint returns URL paths, not absolute filesystem paths
+- Auth skips `/plugin-assets/` prefix
+
+### Post-Compact PREFIX DRIFT Fix
+- Root cause: post-compact user message built via manual string construction (duplicate codepath)
+- Fix: route through `queue.drain()` → `adapter.appendQueueMessagesToMessages()` → `recordQueueEvents()` — same path as yield wake
+- This emits `messages_consumed` so walker can materialize deferred messages before first post-compact assistant turn
+- Previously-skipped test now passes (44 pass in drift-lifecycle.test.ts)
+

@@ -29,15 +29,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
-import { createApp } from "./daemon.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { initTestProject } from "./test-utils/init-test-project.ts";
 import { TOOL_DONE, TOOL_YIELD } from "./tool-names.ts";
 
 // ── Test infrastructure (copied from integration.test.ts — kept local to avoid cross-file deps) ──
@@ -71,12 +73,12 @@ async function setupTestContext(): Promise<TestContext> {
 	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
 	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
 
+	await initTestProject(projectDir);
+
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
-	const appResult = createApp({ dataDir, agentProvider: provider });
-
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
+	const projectId = ulid();
+	const appResult = createApp({ dataDir, agentProvider: provider, projects: [{ id: projectId, name: basename(projectDir), path: projectDir }] });
 
 	const tasksDir = join(projectDir, ".mxd", "tasks");
 	if (existsSync(tasksDir)) rmSync(tasksDir, { recursive: true });
@@ -99,7 +101,7 @@ async function setupTestContext(): Promise<TestContext> {
 		projectDir,
 		app: appResult,
 		mockAPI,
-		projectId: project.id,
+		projectId,
 	};
 }
 
@@ -217,8 +219,7 @@ async function recreateApp(
 	ctx: TestContext,
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedProviderWithMock(ctx.mockAPI);
-	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider });
-	await newApp.pm.load();
+	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider, projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }] });
 	newApp.markReady();
 	return newApp;
 }
@@ -2735,7 +2736,7 @@ describe("Drift: compaction lifecycle", () => {
 	// waitForIdle times out. The first post-compact yield works; the wake after
 	// "post-compact wake 1" kills the agent. Likely a live/reconstruction drift
 	// in the post-compact user message construction. Needs investigation.
-	test.skip("PREFIX DRIFT: post-compact prefix validation fails — agent dies on 2nd post-compact API call", async () => {
+	test("Post-compact prefix validation + restart reconstruction", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
 		const tracker = await ctx.app.getTracker(ctx.projectId);
@@ -2744,9 +2745,11 @@ describe("Drift: compaction lifecycle", () => {
 		// Pre-seed bogus session_config so pre-compact uses frozen bogus tools/system
 		await seedBogusSessionConfig(ctx, rootNodeId);
 
-		// Drive 3 yield cycles to accumulate enough messages for compact (>4).
-		// After compact, do 2 more yield cycles to prove post-compact prefix
-		// grows correctly. Then restart and wake to prove reconstruction matches.
+		// Drive 3 yield cycles → compact → post-compact yield cycles → done.
+		//
+		// After compact, work_context + compacted_resume messages are drained
+		// immediately (not via yield wake), so they don't auto-wake the agent
+		// from its pending yield. The agent processes one turn per wake.
 		const instruction = JSON.stringify({
 			turns: [
 				// Pre-compact turns (3 yield cycles with frozen bogus config)
@@ -2768,21 +2771,21 @@ describe("Drift: compaction lifecycle", () => {
 						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
 					],
 				},
-				// Post-compact turn 1: first API call with refreshed tools/system
+				// Post-compact turn 1: initial post-compact call
 				{
 					blocks: [
 						{ type: "text", text: "Post-compact turn 1." },
 						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
 					],
 				},
-				// Post-compact turn 2: prefix must extend from post-compact turn 1
+				// Post-compact turn 2: wake from sendMessage → yield
 				{
 					blocks: [
 						{ type: "text", text: "Post-compact turn 2." },
 						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
 					],
 				},
-				// Post-compact turn 3: done
+				// Post-compact turn 3: wake from 2nd sendMessage → done
 				{
 					blocks: [
 						{ type: "text", text: "All done after compact." },
@@ -2821,10 +2824,15 @@ describe("Drift: compaction lifecycle", () => {
 		);
 		expect(compactRes.status).toBe(200);
 
-		// Post-compact cycles (prefix validation ensures no drift within post-compact epoch)
+		// Post-compact: compact messages were drained during compact handling,
+		// so the agent yields after the first post-compact API call.
 		await waitForIdle(ctx);
+
+		// Post-compact manual wake 1
 		await sendMessage(ctx, "post-compact wake 1");
 		await waitForIdle(ctx);
+
+		// Post-compact manual wake 2 → done
 		await sendMessage(ctx, "post-compact wake 2");
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");

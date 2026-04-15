@@ -28,9 +28,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { deliverMessage } from "./daemon/agent-lifecycle.ts";
-import { createApp } from "./daemon.ts";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
+import { deliverMessage } from "./runtime/agent-lifecycle.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import {
 	createBackgroundComplete,
@@ -83,9 +84,8 @@ async function setupTestContext(): Promise<TestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 
-	const appResult = createApp({ dataDir, agentProvider: provider });
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
+	const projectId = ulid();
+	const appResult = createApp({ dataDir, agentProvider: provider, projects: [{ id: projectId, name: basename(projectDir), path: projectDir }] });
 
 	// Clean up quality task templates
 	const tasksDir = join(projectDir, ".mxd", "tasks");
@@ -112,7 +112,7 @@ async function setupTestContext(): Promise<TestContext> {
 		projectDir,
 		app: appResult,
 		mockAPI,
-		projectId: project.id,
+		projectId,
 	};
 }
 
@@ -198,8 +198,7 @@ async function recreateApp(
 	ctx: TestContext,
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedProviderWithMock(ctx.mockAPI);
-	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider });
-	await newApp.pm.load();
+	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider, projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }] });
 	newApp.markReady();
 	return newApp;
 }

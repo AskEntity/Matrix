@@ -5,7 +5,7 @@
  * (projectId, taskId) and return the corresponding resources. No closures,
  * no dependency injection bags — just global functions with explicit handles.
  *
- * The registry is initialized once at daemon startup with a DaemonContext reference.
+ * The registry is initialized once at daemon startup with a RuntimeContext reference.
  * Tool handlers call these functions directly with handles from their args.
  */
 
@@ -29,19 +29,19 @@ export function initResourceRegistry(ctx: unknown): void {
 }
 
 /** Get the raw daemon context. Only for internal use within this module. */
-function ctx(): DaemonContextLike {
+function ctx(): RuntimeContextLike {
 	if (!_ctx) {
 		throw new Error(
 			"Resource registry not initialized. Call initResourceRegistry() at daemon startup.",
 		);
 	}
-	return _ctx as DaemonContextLike;
+	return _ctx as RuntimeContextLike;
 }
 
-// ── Minimal interface we need from DaemonContext ──
-// Avoids importing DaemonContext directly (would create circular deps from daemon/)
+// ── Minimal interface we need from RuntimeContext ──
+// Avoids importing RuntimeContext directly (would create circular deps from daemon/)
 
-interface DaemonContextLike {
+interface RuntimeContextLike {
 	readonly pm: {
 		list(): Array<{ id: string; name: string; path: string }>;
 		get(id: string): { id: string; name: string; path: string } | undefined;
@@ -236,7 +236,7 @@ export function injectMessageToProject(
  * Get the raw daemon context for evaluate_script ONLY.
  * This is the one escape hatch — evaluate_script needs full runtime access for debugging.
  */
-export function getDaemonContext(): unknown {
+export function getRuntimeContext(): unknown {
 	return _ctx;
 }
 

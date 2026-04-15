@@ -8,16 +8,20 @@
 	},
 	"scripts": {
 		"dev": "bun run --watch src/daemon.ts",
-		"test": "bun test",
+		"test": "bun test; bun test ./web/",
 		"check": "biome check --write .",
 		"check:ci": "biome check .",
 		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.6",
+		"@happy-dom/global-registrator": "^20.9.0",
+		"@testing-library/dom": "^10.4.1",
+		"@testing-library/react": "^16.3.2",
 		"@types/bun": "latest",
 		"@types/react": "^19.2.14",
 		"@types/react-dom": "^19.2.3",
+		"happy-dom": "^20.9.0",
 		"typescript": "^5"
 	},
 	"dependencies": {

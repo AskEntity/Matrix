@@ -1,9 +1,9 @@
 /**
  * Shared test utilities for building mock contexts.
  */
-import type { DaemonContext } from "./daemon/context.ts";
+import type { RuntimeContext } from "./runtime/context.ts";
 import type { MessageQueue } from "./message-queue.ts";
-import type { ProjectManager } from "./project-manager.ts";
+import type { ProjectStore } from "./project-store.ts";
 import {
 	initResourceRegistry,
 	registerSideEffects,
@@ -14,15 +14,15 @@ import { type Auth, createAgentAuth } from "./tool-auth.ts";
 import type { Project, TaskNode, TaskSession } from "./types.ts";
 
 /**
- * Build a minimal DaemonContext for tests that call createOrchestratorTools directly.
+ * Build a minimal RuntimeContext for tests that call createOrchestratorTools directly.
  * Only the fields actually used by the tools are populated — the rest are empty/mock.
  */
-export function mockDaemonContext(opts: {
+export function mockRuntimeContext(opts: {
 	tracker: TaskTracker;
 	projectId: string;
 	projectPath: string;
 	dataDir?: string;
-}): DaemonContext {
+}): RuntimeContext {
 	const project: Project = {
 		id: opts.projectId,
 		name: "test-project",
@@ -30,11 +30,11 @@ export function mockDaemonContext(opts: {
 		createdAt: new Date().toISOString(),
 	};
 
-	// Minimal ProjectManager mock — just needs get() and list()
+	// Minimal ProjectStore mock — just needs get() and list()
 	const pm = {
 		get: (id: string) => (id === opts.projectId ? project : undefined),
 		list: () => [project],
-	} as unknown as ProjectManager;
+	} as unknown as ProjectStore;
 
 	const trackers = new Map<string, TaskTracker>();
 	trackers.set(opts.projectId, opts.tracker);
@@ -56,11 +56,11 @@ export function mockDaemonContext(opts: {
 		requestCount: 0,
 		startupReady: true,
 		globalConfig: {},
-	} as DaemonContext;
+	} as RuntimeContext;
 }
 
 /**
- * Initialize the resource registry with a mock DaemonContext for tests.
+ * Initialize the resource registry with a mock RuntimeContext for tests.
  * Returns an Auth object for the given task.
  * Call resetResourceRegistry() in afterEach to clean up.
  */
@@ -70,9 +70,9 @@ export function initMockResourceRegistry(opts: {
 	projectPath: string;
 	taskId: string;
 	dataDir?: string;
-}): { auth: Auth; ctx: DaemonContext } {
+}): { auth: Auth; ctx: RuntimeContext } {
 	resetResourceRegistry();
-	const ctx = mockDaemonContext(opts);
+	const ctx = mockRuntimeContext(opts);
 	initResourceRegistry(ctx);
 	registerSideEffects({
 		emit: () => {},
