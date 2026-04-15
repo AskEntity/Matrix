@@ -239,11 +239,9 @@ async function createAgentContext(
 	);
 	const provider = getProjectProvider(ctx, effectiveCfg);
 
-	const mcpManager =
-		opts.mcpManager ??
-		(opts.connectMcp
-			? await opts.connectMcp(opts.projectPath)
-			: new McpClientManager());
+	const mcpManager = opts.connectMcp
+		? await opts.connectMcp(opts.projectPath)
+		: new McpClientManager();
 
 	// Initialize resource registry with daemon context (idempotent)
 	R.initResourceRegistry(ctx);
@@ -700,7 +698,7 @@ export async function runAgentForNode(
 	});
 	ctx.agentLoopPromises.set(nodeId, loopPromise);
 
-	const mcpManager = new McpClientManager();
+	let mcpManager: McpClientManager | undefined;
 	let ownSession: TaskSession | undefined;
 	// Declared outside try so Phase 2 (after finally) can access the result.
 	let agentResult: AgentResult | undefined;
@@ -764,12 +762,11 @@ export async function runAgentForNode(
 			projectPath: agentCwd,
 			currentTaskId: nodeId,
 			depth,
-			mcpManager,
 			buildTools: opts.buildTools,
 			connectMcp: opts.connectMcp,
 		});
+		mcpManager = agentCtx.mcpManager;
 
-		// Priority: API param > resolved config
 		const effectiveModel = opts?.model ?? agentCtx.effectiveCfg.model;
 
 		// Flush pending JSONL writes before reading — ensures messages persisted by
@@ -1026,7 +1023,7 @@ export async function runAgentForNode(
 			cleanupSessionBackgroundProcesses(finalNode.session.backgroundProcesses);
 			finalNode.session = undefined;
 		}
-		await mcpManager.disconnectAll();
+		await mcpManager?.disconnectAll();
 
 		if (notReplaced) {
 			emitEvent(ctx, project.id, {
