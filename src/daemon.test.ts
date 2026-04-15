@@ -85,10 +85,10 @@ describe("daemon pipeline", () => {
 			new Request("http://localhost/projects", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ path: "/nonexistent" }),
+				body: JSON.stringify({ path: "relative-path" }),
 			}),
 		);
-		// Daemon handles project CRUD directly — returns 409 (error from pm.init)
+		// Daemon handles project CRUD directly — returns 409 (relative path rejected by pm.init)
 		expect(res.status).toBe(409);
 	});
 });
