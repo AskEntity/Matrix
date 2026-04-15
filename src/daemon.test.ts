@@ -216,10 +216,15 @@ describe("daemon with matrix plugin", () => {
 		expect(body[0].name).toBe("test-matrix");
 	});
 
-	test("worker started for global plugin — health works", async () => {
+	test("worker started for global plugin — version returns counts", async () => {
+		// /version is forwarded to worker (unlike /health which is daemon-owned)
+		// This actually verifies the worker is running and responding
 		const res = await daemon.fetch(
-			new Request("http://localhost/health"),
+			new Request("http://localhost/version"),
 		);
 		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
+		expect(typeof body.nodeCount).toBe("number");
 	});
 });

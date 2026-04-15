@@ -254,18 +254,21 @@ describe("daemon integration: tasks through worker", () => {
 	});
 
 	test("GET /projects/:id/tasks returns tree", async () => {
-		if (!projectId) return;
+		expect(projectId).toBeTruthy();
 		const res = await app.fetch(
 			new Request(`http://localhost/projects/${projectId}/tasks`),
 		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.rootNodeId).toBeDefined();
-		expect(body.nodes).toBeDefined();
+		expect(typeof body.rootNodeId).toBe("string");
+		expect(body.rootNodeId.length).toBeGreaterThan(0);
+		expect(Array.isArray(body.nodes)).toBe(true);
+		expect(body.nodes.length).toBeGreaterThan(0);
+		expect(body.nodes[0].title).toBe("Orchestrator");
 	});
 
 	test("POST /projects/:id/tasks creates task through worker", async () => {
-		if (!projectId) return;
+		expect(projectId).toBeTruthy();
 
 		// Get root node ID first
 		const treeRes = await app.fetch(
@@ -382,5 +385,49 @@ describe("daemon integration: project CRUD coverage", () => {
 		// Verify gone
 		const getRes = await app.fetch(new Request(`http://localhost/projects/${created.id}`));
 		expect(getRes.status).toBe(404);
+	});
+});
+
+describe("daemon integration: onProjectInit pipeline", () => {
+	let app: DaemonTestApp;
+
+	beforeAll(async () => {
+		// Use a plugin manifest WITH onProjectInit so the pipeline test is real
+		const pluginWithInit = `
+import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+export default {
+	name: "test-with-init",
+	scope: "global",
+	async onProjectInit(projectPath, { isNew }) {
+		await mkdir(join(projectPath, ".mxd"), { recursive: true });
+		if (!existsSync(join(projectPath, ".mxd", "memory.md"))) {
+			await writeFile(join(projectPath, ".mxd", "memory.md"), "# Project Memory\\nTest init.\\n");
+		}
+	},
+};`;
+		app = await createDaemonTestApp({ pluginManifest: pluginWithInit });
+	});
+
+	afterAll(async () => { await app.cleanup(); });
+
+	test("POST /projects calls plugin onProjectInit — new project gets memory.md", async () => {
+		const { mkdir, readFile } = await import("node:fs/promises");
+		const { existsSync } = await import("node:fs");
+		const projectPath = join(app.tempDir, "init-test-project");
+		await mkdir(projectPath, { recursive: true });
+
+		const res = await app.fetch(new Request("http://localhost/projects", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ path: projectPath }),
+		}));
+		expect(res.status).toBe(201);
+
+		// Plugin's onProjectInit should have created .mxd/memory.md
+		expect(existsSync(join(projectPath, ".mxd", "memory.md"))).toBe(true);
+		const memory = await readFile(join(projectPath, ".mxd", "memory.md"), "utf-8");
+		expect(memory).toContain("Project Memory");
 	});
 });
