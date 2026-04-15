@@ -445,7 +445,17 @@ describe("Integration: full stack with mock API", () => {
 						},
 					],
 					blocks: [
-						{ type: "text", text: "Got both results." },
+						{ type: "text", text: "Got both results. Committing." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "git add -A && git commit -m 'test commit' --allow-empty" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Done." },
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
@@ -462,9 +472,7 @@ describe("Integration: full stack with mock API", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
 
-		// Asserts in the DSL already validated both tool results.
-		// If we got here without MockValidationError, both tools executed correctly.
-		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(3);
 	}, 20000);
 
 	test("Scenario 3: explicit yield + wake with message", async () => {
@@ -5145,11 +5153,12 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "write+read ok" },
-						},
+						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+					],
+				},
+				{
+					blocks: [
+						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "write+read ok" } },
 					],
 				},
 			],
@@ -5231,11 +5240,12 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "edit ok" },
-						},
+						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+					],
+				},
+				{
+					blocks: [
+						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "edit ok" } },
 					],
 				},
 			],
@@ -5300,11 +5310,12 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "search ok" },
-						},
+						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+					],
+				},
+				{
+					blocks: [
+						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "search ok" } },
 					],
 				},
 			],
@@ -5359,11 +5370,12 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "list_files ok" },
-						},
+						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+					],
+				},
+				{
+					blocks: [
+						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "list_files ok" } },
 					],
 				},
 			],
@@ -11165,12 +11177,13 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 				},
 				{
 					blocks: [
-						{ type: "text", text: "Got the image." },
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "image tool_result ok" },
-						},
+						{ type: "text", text: "Got the image. Committing." },
+						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+					],
+				},
+				{
+					blocks: [
+						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "image tool_result ok" } },
 					],
 				},
 			],

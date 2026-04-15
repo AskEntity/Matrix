@@ -136,6 +136,7 @@ export async function executeTool(
 		if (r.mediaType) result.mediaType = r.mediaType as string;
 		if (mcpImages.length > 0) result.mcpImages = mcpImages;
 		if (r.pending) result.pending = r.pending as PendingState;
+
 		return result;
 	} catch (e) {
 		return {
