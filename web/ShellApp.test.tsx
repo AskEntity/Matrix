@@ -74,13 +74,31 @@ describe("daemon + Matrix plugin in UI", () => {
 			if (container.querySelectorAll(".mxd-shell-select option").length > 0) break;
 		}
 
-		// Debug: what actually rendered?
-		console.log("RENDERED HTML:", container.innerHTML);
-
 		// Scope selector should contain "matrix"
 		const selects = container.querySelectorAll(".mxd-shell-select");
 		expect(selects.length).toBeGreaterThanOrEqual(2);
 		const scopeOptions = Array.from(selects[1]!.querySelectorAll("option")).map(o => o.textContent);
 		expect(scopeOptions).toContain("matrix");
+	});
+
+	test("plugin component loads (not just 'Loading plugin...')", async () => {
+		const result = render(<ShellApp />);
+		const container = result.container;
+
+		// Wait for selects to populate
+		for (let i = 0; i < 30; i++) {
+			await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+			const content = container.querySelector(".mxd-shell-content");
+			const text = content?.textContent ?? "";
+			if (text !== "Loading plugin..." && text !== "Select a scope to load plugin UI" && text.length > 0) {
+				console.log("PLUGIN LOADED:", content?.innerHTML?.slice(0, 300));
+				break;
+			}
+		}
+
+		const content = container.querySelector(".mxd-shell-content");
+		console.log("FINAL CONTENT:", content?.innerHTML?.slice(0, 500));
+		// Should not be just the loading fallback
+		expect(content?.textContent).not.toBe("Loading plugin...");
 	});
 });
