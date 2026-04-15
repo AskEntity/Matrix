@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "ulid";
+import { ulid } from "./ulid.ts";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { runChildCore } from "./runtime/agent-lifecycle.ts";
 import { createApp } from "./runtime.ts";
