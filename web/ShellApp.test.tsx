@@ -36,7 +36,7 @@ describe("daemon + Matrix plugin in UI", () => {
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 		daemon = await createDaemon({ dataDir });
 		server = Bun.serve({ port: 0, fetch: daemon.fetch });
-		PORT = server.port;
+		PORT = server.port!;
 
 		// Patch fetch BEFORE any React render — redirect relative URLs to test daemon
 		// and mock auth to always pass

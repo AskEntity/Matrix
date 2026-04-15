@@ -33,11 +33,12 @@ self.onmessage = async (event: MessageEvent) => {
 			appInstance = createApp({ dataDir, globalConfigPath, projects });
 			await appInstance.loadConfig();
 
-			await appInstance.autoResumeProjects();
-			// Wire broadcast events to parent thread for SSE relay
+			// Wire broadcast BEFORE autoResume — events during crash recovery must reach shell
 			appInstance.ctx.onBroadcast = (projectId, event) => {
 				self.postMessage({ type: "sse_event", projectId, event });
 			};
+
+			await appInstance.autoResumeProjects();
 
 			appInstance.markReady();
 
@@ -108,6 +109,11 @@ self.onmessage = async (event: MessageEvent) => {
 			appInstance.pm.sync(data as import("./worker-api.ts").SyncMap["projects"]);
 		} else if (key === "config") {
 			appInstance.ctx.globalConfig = data as import("./worker-api.ts").SyncMap["config"];
+		} else if (key === "project_deleted") {
+			const { projectId } = data as import("./worker-api.ts").SyncMap["project_deleted"];
+			appInstance.ctx.trackers.delete(projectId);
+			appInstance.ctx.eventStores.delete(projectId);
+			appInstance.ctx.pendingClarifications.delete(projectId);
 		}
 	}
 

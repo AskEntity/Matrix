@@ -62,7 +62,7 @@ describe("daemon with Matrix plugin e2e", () => {
 		daemon = await createDaemon({ dataDir });
 
 		server = Bun.serve({ port: 0, fetch: daemon.fetch });
-		TEST_PORT = server.port;
+		TEST_PORT = server.port!;
 	}, 15000);
 
 	afterAll(async () => {

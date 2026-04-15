@@ -26,7 +26,7 @@ import { broadcastTreeUpdate, emitEvent } from "./runtime/event-system.ts";
 import { getEventStore, getTracker } from "./runtime/helpers.ts";
 import { registerAgentRoutes } from "./runtime/routes/agent.ts";
 // Auth handled by daemon shell — runtime has no auth.
-import { registerConfigRoutes } from "./runtime/routes/config.ts";
+// Config routes handled by daemon shell — worker has no config CRUD.
 import { registerMcpEndpoint } from "./runtime/routes/mcp-endpoint.ts";
 import { registerMockShowcaseRoute } from "./runtime/routes/mock-showcase.ts";
 import { registerProjectRoutes } from "./runtime/routes/projects.ts";
@@ -314,7 +314,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	// Register all route groups
 	registerProjectRoutes(app, ctx);
 	registerTaskRoutes(app, ctx);
-	registerConfigRoutes(app, ctx);
+	// Config routes removed — daemon shell owns config CRUD.
 	registerAgentRoutes(app, ctx);
 	registerSSERoute(app, ctx);
 	registerMcpEndpoint(app, ctx);

@@ -18,6 +18,8 @@ import type { Event } from "../events.ts";
 export interface SyncMap {
 	projects: Array<{ id: string; name: string; path: string }>;
 	config: MatrixConfig;
+	/** Signal worker to clean up in-memory caches for a deleted project */
+	project_deleted: { projectId: string };
 }
 
 /** Sync message from daemon to worker. */
