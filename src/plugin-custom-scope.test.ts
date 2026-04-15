@@ -8,7 +8,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
 import { z } from "zod";
 import { createApp } from "./runtime.ts";
 import type { Event } from "./events.ts";
@@ -53,8 +54,8 @@ async function setupTestContext(): Promise<TestContext> {
 	const provider = createMockedProviderWithMock(mockAPI);
 
 	const appResult = createApp({ dataDir, agentProvider: provider });
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
+	const projectId = ulid();
+	appResult.pm.syncFromDaemon([{ id: projectId, name: basename(projectDir), path: projectDir }]);
 
 	appResult.markReady();
 
@@ -63,7 +64,7 @@ async function setupTestContext(): Promise<TestContext> {
 		projectDir,
 		app: appResult,
 		mockAPI,
-		projectId: project.id,
+		projectId,
 	};
 }
 
