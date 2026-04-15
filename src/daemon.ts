@@ -410,6 +410,7 @@ export async function createDaemon(opts: {
 	app.use("*", async (c, next) => {
 		const skipAuth =
 			c.req.path === "/" ||
+			c.req.path.startsWith("/_bun/") ||
 			c.req.path.startsWith("/web/") ||
 			c.req.path.startsWith("/auth/") ||
 			c.req.path.startsWith("/plugin-assets/");
