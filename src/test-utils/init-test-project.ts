@@ -25,8 +25,10 @@ export async function initTestProject(projectPath: string): Promise<void> {
 		await chmod(hookPath, 0o755);
 	}
 
-	// .gitignore
-	await writeFile(join(projectPath, ".gitignore"), "node_modules/\n.worktrees/\n", "utf-8");
+	// .gitignore — only create if not already present (caller may have a more permissive one)
+	if (!existsSync(join(projectPath, ".gitignore"))) {
+		await writeFile(join(projectPath, ".gitignore"), "node_modules/\n.worktrees/\n", "utf-8");
+	}
 
 	// Commit everything so worktrees can see it
 	const gitAdd = Bun.spawn(["git", "add", "-A"], {
