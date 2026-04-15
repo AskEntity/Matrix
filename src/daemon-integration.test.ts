@@ -5,6 +5,7 @@
  * These mirror runtime.test.ts scenarios but go through createDaemon.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { createDaemonTestApp, type DaemonTestApp } from "./test-utils/daemon-harness.ts";
 
 describe("daemon integration: health + version + stats", () => {
@@ -287,5 +288,99 @@ describe("daemon integration: tasks through worker", () => {
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.title).toBe("Test task via daemon");
+	});
+});
+
+describe("daemon integration: project CRUD coverage", () => {
+	let app: DaemonTestApp;
+	let projectId: string;
+	let projectPath: string;
+
+	beforeAll(async () => {
+		app = await createDaemonTestApp();
+		projectPath = join(app.tempDir, "crud-project");
+		const { mkdir } = await import("node:fs/promises");
+		await mkdir(projectPath, { recursive: true });
+		
+		const res = await app.fetch(new Request("http://localhost/projects", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ path: projectPath }),
+		}));
+		const body = await res.json();
+		projectId = body.id;
+	});
+
+	afterAll(async () => { await app.cleanup(); });
+
+	test("GET /projects/:id returns project", async () => {
+		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}`));
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.id).toBe(projectId);
+		expect(body.name).toBe("crud-project");
+	});
+
+	test("GET /projects/:id returns 404 for unknown", async () => {
+		const res = await app.fetch(new Request("http://localhost/projects/nonexistent"));
+		expect(res.status).toBe(404);
+	});
+
+	test("GET /projects includes pathExists field", async () => {
+		const res = await app.fetch(new Request("http://localhost/projects"));
+		const projects = await res.json();
+		const proj = projects.find((p: any) => p.id === projectId);
+		expect(proj.pathExists).toBeDefined();
+	});
+
+	test("PATCH /projects/:id updates name", async () => {
+		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ name: "renamed-project" }),
+		}));
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.name).toBe("renamed-project");
+	});
+
+	test("PATCH /projects/:id rejects empty body", async () => {
+		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({}),
+		}));
+		expect(res.status).toBe(400);
+	});
+
+	test("PATCH /projects/:id returns 404 for unknown", async () => {
+		const res = await app.fetch(new Request("http://localhost/projects/nonexistent", {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ name: "x" }),
+		}));
+		expect(res.status).toBe(404);
+	});
+
+	test("DELETE /projects/:id removes project", async () => {
+		// Create a throwaway project to delete
+		const { mkdir } = await import("node:fs/promises");
+		const delPath = join(app.tempDir, "to-delete");
+		await mkdir(delPath, { recursive: true });
+		const createRes = await app.fetch(new Request("http://localhost/projects", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ path: delPath }),
+		}));
+		const created = await createRes.json();
+
+		const res = await app.fetch(new Request(`http://localhost/projects/${created.id}`, {
+			method: "DELETE",
+		}));
+		expect(res.status).toBe(200);
+
+		// Verify gone
+		const getRes = await app.fetch(new Request(`http://localhost/projects/${created.id}`));
+		expect(getRes.status).toBe(404);
 	});
 });
