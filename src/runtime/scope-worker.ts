@@ -31,12 +31,11 @@ self.onmessage = async (event: MessageEvent) => {
 
 		try {
 			appInstance = createApp({ dataDir, globalConfigPath });
-			await appInstance.pm.load();
 			await appInstance.loadConfig();
 
 			// If daemon sent project list, sync worker's pm to match
 			if (projects && projects.length > 0) {
-				appInstance.pm.syncFromDaemon(projects);
+				appInstance.pm.sync(projects);
 			}
 
 			await appInstance.autoResumeProjects();
@@ -111,7 +110,7 @@ self.onmessage = async (event: MessageEvent) => {
 		if (!appInstance) return;
 
 		if (key === "projects") {
-			appInstance.pm.syncFromDaemon(data as import("./worker-api.ts").SyncMap["projects"]);
+			appInstance.pm.sync(data as import("./worker-api.ts").SyncMap["projects"]);
 		} else if (key === "config") {
 			appInstance.ctx.globalConfig = data as import("./worker-api.ts").SyncMap["config"];
 		}
