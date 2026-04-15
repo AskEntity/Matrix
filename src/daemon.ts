@@ -17,6 +17,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { Hono } from "hono";
 import { hasJwtSecret, verifyJWT } from "./auth.ts";
 import {
 	DEFAULT_CONFIG,
@@ -171,7 +172,9 @@ export async function createDaemon(opts: {
 				scopeWorker.ready = false;
 				// Reject all pending HTTP requests so they don't hang forever
 				for (const [id, pending] of scopeWorker.pending) {
-					pending.reject(new Error(`Worker "${scopeName}" crashed: ${event.message}`));
+					pending.reject(
+						new Error(`Worker "${scopeName}" crashed: ${event.message}`),
+					);
 				}
 				scopeWorker.pending.clear();
 			};
@@ -184,7 +187,9 @@ export async function createDaemon(opts: {
 						type: "init",
 						dataDir,
 						globalConfigPath,
-						projects: pm.list().map((p) => ({ id: p.id, name: p.name, path: p.path })),
+						projects: pm
+							.list()
+							.map((p) => ({ id: p.id, name: p.name, path: p.path })),
 						pluginRuntimePath,
 					});
 				}
@@ -195,9 +200,7 @@ export async function createDaemon(opts: {
 				}
 				if (msg.type === "error") {
 					reject(
-						new Error(
-							`Worker "${scopeName}" init failed: ${msg.message}`,
-						),
+						new Error(`Worker "${scopeName}" init failed: ${msg.message}`),
 					);
 				}
 			};
@@ -295,10 +298,7 @@ export async function createDaemon(opts: {
 						: undefined,
 				});
 			} catch (e) {
-				console.warn(
-					`[daemon] Failed to load plugin from ${project.name}:`,
-					e,
-				);
+				console.warn(`[daemon] Failed to load plugin from ${project.name}:`, e);
 			}
 		}
 	}
@@ -310,9 +310,7 @@ export async function createDaemon(opts: {
 	}
 
 	// Start workers for global plugins
-	for (const plugin of registeredPlugins.filter(
-		(p) => p.scope === "global",
-	)) {
+	for (const plugin of registeredPlugins.filter((p) => p.scope === "global")) {
 		// Resolve plugin's runtime module path for the worker
 		const runtimePath = plugin.runtime
 			? resolve(plugin.pluginRoot, plugin.runtime)
@@ -320,373 +318,348 @@ export async function createDaemon(opts: {
 		await startWorkerForPlugin(plugin.name, runtimePath);
 	}
 
-	// ── Request handler ──
+	// ── Hono app with routes ──
 
-	async function fetch(request: Request): Promise<Response> {
-		const url = new URL(request.url);
+	const app = new Hono();
 
-		// Auth
-		// Only skip auth for SPA root, shell static assets, and auth endpoints.
-		// NOT /.mxd/ (has config.json, tree.json, memory.md — sensitive).
-		// NOT file extensions (attackers can append .ts to bypass).
+	// Auth middleware
+	// Only skip auth for SPA root, shell static assets, and auth endpoints.
+	// NOT /.mxd/ (has config.json, tree.json, memory.md — sensitive).
+	// NOT file extensions (attackers can append .ts to bypass).
+	app.use("*", async (c, next) => {
 		const skipAuth =
-			url.pathname === "/" ||
-			url.pathname.startsWith("/web/") ||
-			url.pathname.startsWith("/auth/");
+			c.req.path === "/" ||
+			c.req.path.startsWith("/web/") ||
+			c.req.path.startsWith("/auth/");
 
 		if (!skipAuth) {
 			const authPath = join(dataDir, "auth.json");
 			if (await hasJwtSecret(authPath)) {
-				const authHeader = request.headers.get("authorization");
+				const authHeader = c.req.header("authorization");
 				const token = authHeader?.startsWith("Bearer ")
 					? authHeader.slice(7)
-					: url.searchParams.get("token");
+					: c.req.query("token");
 				if (!token || !(await verifyJWT(authPath, token))) {
-					return new Response(
-						JSON.stringify({ error: "Unauthorized" }),
-						{
-							status: 401,
-							headers: { "content-type": "application/json" },
-						},
-					);
+					return c.json({ error: "Unauthorized" }, 401);
 				}
 			}
 		}
+		await next();
+	});
 
-		// Health — daemon-owned, not worker-forwarded
-		if (url.pathname === "/health") {
-			return new Response(
-				JSON.stringify({ status: "ok", version: VERSION }),
-				{ headers: { "content-type": "application/json" } },
-			);
-		}
+	// Health — daemon-owned, not worker-forwarded
+	app.get("/health", (c) => {
+		return c.json({ status: "ok", version: VERSION });
+	});
 
-		// Auth routes
-		if (url.pathname === "/auth/status") {
-			const authPath = join(dataDir, "auth.json");
-			const hasSecret = await hasJwtSecret(authPath);
-			const authHeader = request.headers.get("authorization");
-			const token = authHeader?.startsWith("Bearer ")
-				? authHeader.slice(7)
-				: url.searchParams.get("token");
-			const hasValidToken = token
-				? (await verifyJWT(authPath, token)) !== null
-				: false;
-			const authenticated = hasValidToken || !hasSecret;
-			return new Response(
-				JSON.stringify({ enabled: hasSecret, authenticated }),
-				{ headers: { "content-type": "application/json" } },
-			);
-		}
-		if (url.pathname === "/auth/logout") {
-			return new Response(JSON.stringify({ ok: true }), {
-				headers: { "content-type": "application/json" },
-			});
-		}
+	// Auth routes
+	app.get("/auth/status", async (c) => {
+		const authPath = join(dataDir, "auth.json");
+		const hasSecret = await hasJwtSecret(authPath);
+		const authHeader = c.req.header("authorization");
+		const token = authHeader?.startsWith("Bearer ")
+			? authHeader.slice(7)
+			: c.req.query("token");
+		const hasValidToken = token
+			? (await verifyJWT(authPath, token)) !== null
+			: false;
+		const authenticated = hasValidToken || !hasSecret;
+		return c.json({ enabled: hasSecret, authenticated });
+	});
 
-		// ── Project CRUD (daemon-owned) ──
-		if (url.pathname === "/projects" && request.method === "GET") {
-			const projects = pm.list().map((p) => ({
-				...p,
-				pathExists: pm.checkPathExists(p.id),
-			}));
-			return new Response(JSON.stringify(projects), {
-				headers: { "content-type": "application/json" },
-			});
-		}
-		if (url.pathname === "/projects" && request.method === "POST") {
-			try {
-				const body = await request.json() as { path: string };
-				if (!body.path) {
-					return new Response(JSON.stringify({ error: "path is required" }), {
-						status: 400,
-						headers: { "content-type": "application/json" },
+	app.get("/auth/logout", (c) => {
+		return c.json({ ok: true });
+	});
+
+	// ── Project CRUD (daemon-owned) ──
+
+	app.get("/projects", (c) => {
+		const projects = pm.list().map((p) => ({
+			...p,
+			pathExists: pm.checkPathExists(p.id),
+		}));
+		return c.json(projects);
+	});
+
+	app.post("/projects", async (c) => {
+		try {
+			const body = await c.req.json<{ path: string }>();
+			if (!body.path) {
+				return c.json({ error: "path is required" }, 400);
+			}
+			const project = await pm.init(body.path);
+
+			// Call onProjectInit for all global plugins
+			for (const plugin of registeredPlugins.filter(
+				(p) => p.scope === "global",
+			)) {
+				if (plugin.onProjectInit) {
+					await plugin.onProjectInit(body.path, {
+						isNew: !existsSync(join(body.path, ".git")),
 					});
 				}
-				const project = await pm.init(body.path);
-
-				// Call onProjectInit for all global plugins
-				for (const plugin of registeredPlugins.filter((p) => p.scope === "global")) {
-					if (plugin.onProjectInit) {
-						await plugin.onProjectInit(body.path, { isNew: !existsSync(join(body.path, ".git")) });
-					}
-				}
-
-				syncProjects();
-				return new Response(JSON.stringify(project), {
-					status: 201,
-					headers: { "content-type": "application/json" },
-				});
-			} catch (e) {
-				const message = e instanceof Error ? e.message : "Unknown error";
-				return new Response(JSON.stringify({ error: message }), {
-					status: 409,
-					headers: { "content-type": "application/json" },
-				});
 			}
+
+			syncProjects();
+			return c.json(project, 201);
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 409);
 		}
-		if (url.pathname.match(/^\/projects\/[^/]+$/) && request.method === "GET") {
-			const projectId = url.pathname.split("/")[2]!;
-			const project = pm.get(projectId);
-			if (!project) {
-				return new Response(JSON.stringify({ error: "Project not found" }), {
-					status: 404,
-					headers: { "content-type": "application/json" },
-				});
+	});
+
+	app.get("/projects/:id", (c) => {
+		const projectId = c.req.param("id");
+		const project = pm.get(projectId);
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		return c.json({
+			...project,
+			pathExists: pm.checkPathExists(project.id),
+		});
+	});
+
+	app.delete("/projects/:id", async (c) => {
+		const projectId = c.req.param("id");
+		try {
+			// Stop worker agents first
+			const globalWorkerName = registeredPlugins.find(
+				(p) => p.scope === "global" && workers.has(p.name),
+			)?.name;
+			if (globalWorkerName) {
+				await forwardToWorker(
+					globalWorkerName,
+					new Request(`http://localhost/projects/${projectId}/stop`, {
+						method: "POST",
+					}),
+				);
 			}
-			return new Response(JSON.stringify({
-				...project,
-				pathExists: pm.checkPathExists(project.id),
-			}), {
-				headers: { "content-type": "application/json" },
+			await pm.delete(projectId);
+			syncToWorkers("project_deleted", { projectId });
+			syncProjects();
+			return c.json({ ok: true });
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 404);
+		}
+	});
+
+	app.patch("/projects/:id", async (c) => {
+		const projectId = c.req.param("id");
+		try {
+			const body = await c.req.json<{ path?: string; name?: string }>();
+			if (!body.path && !body.name) {
+				return c.json(
+					{ error: "At least one of path or name is required" },
+					400,
+				);
+			}
+			const updated = await pm.updateProject(projectId, body);
+			return c.json({
+				...updated,
+				pathExists: pm.checkPathExists(updated.id),
 			});
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			const status = message.includes("not found") ? 404 : 400;
+			return c.json({ error: message }, status);
 		}
-		if (url.pathname.match(/^\/projects\/[^/]+$/) && request.method === "DELETE") {
-			const projectId = url.pathname.split("/")[2]!;
-			try {
-				// Stop worker agents first
-				const globalWorkerName = registeredPlugins.find(
-					(p) => p.scope === "global" && workers.has(p.name),
-				)?.name;
-				if (globalWorkerName) {
-					await forwardToWorker(globalWorkerName, new Request(
-						`http://localhost/projects/${projectId}/stop`,
-						{ method: "POST" },
-					));
-				}
-				await pm.delete(projectId);
-				syncToWorkers("project_deleted", { projectId });
-				syncProjects();
-				return new Response(JSON.stringify({ ok: true }), {
-					headers: { "content-type": "application/json" },
-				});
-			} catch (e) {
-				const message = e instanceof Error ? e.message : "Unknown error";
-				return new Response(JSON.stringify({ error: message }), {
-					status: 404,
-					headers: { "content-type": "application/json" },
-				});
+	});
+
+	// Plugins
+	app.get("/plugins", (c) => {
+		return c.json(
+			registeredPlugins.map((p) => ({
+				name: p.name,
+				scope: p.scope,
+				webComponentPath: p.resolvedWebPath,
+				projectId: p.projectId,
+			})),
+		);
+	});
+
+	// Global config
+	app.get("/config/global", (c) => {
+		return c.json(globalConfig);
+	});
+
+	app.patch("/config/global", async (c) => {
+		const partial = await c.req.json<Partial<MatrixConfig>>();
+		const next = { ...globalConfig } as MatrixConfig;
+		for (const [k, v] of Object.entries(partial)) {
+			if (v === null || v === undefined) {
+				delete (next as unknown as Record<string, unknown>)[k];
+			} else {
+				(next as unknown as Record<string, unknown>)[k] = v;
 			}
 		}
-		if (url.pathname.match(/^\/projects\/[^/]+$/) && request.method === "PATCH") {
-			const projectId = url.pathname.split("/")[2]!;
-			try {
-				const body = await request.json() as { path?: string; name?: string };
-				if (!body.path && !body.name) {
-					return new Response(JSON.stringify({ error: "At least one of path or name is required" }), {
-						status: 400,
-						headers: { "content-type": "application/json" },
-					});
-				}
-				const updated = await pm.updateProject(projectId, body);
-				return new Response(JSON.stringify({
-					...updated,
-					pathExists: pm.checkPathExists(updated.id),
-				}), {
-					headers: { "content-type": "application/json" },
-				});
-			} catch (e) {
-				const message = e instanceof Error ? e.message : "Unknown error";
-				const status = message.includes("not found") ? 404 : 400;
-				return new Response(JSON.stringify({ error: message }), {
-					status,
-					headers: { "content-type": "application/json" },
-				});
+		globalConfig = next;
+		await saveGlobalConfig(globalConfig, globalConfigPath);
+		syncConfig();
+		return c.json(globalConfig);
+	});
+
+	// ── Project config (daemon-owned: per-project settings) ──
+
+	// Helper: resolve project or 404
+	function getProjectOrNull(projectId: string) {
+		return pm.get(projectId) ?? null;
+	}
+
+	app.get("/projects/:id/config/repo", async (c) => {
+		const project = getProjectOrNull(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const { loadProjectRepoConfig } = await import("./config.ts");
+		const cfg = await loadProjectRepoConfig(project.path);
+		return c.json(cfg);
+	});
+
+	app.patch("/projects/:id/config/repo", async (c) => {
+		const project = getProjectOrNull(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const { loadProjectRepoConfig, saveProjectRepoConfig } = await import(
+			"./config.ts"
+		);
+		const partial = await c.req.json<Partial<MatrixConfig>>();
+		const existing = await loadProjectRepoConfig(project.path);
+		const merged = { ...existing };
+		for (const [k, v] of Object.entries(partial)) {
+			if (v === null || v === undefined) {
+				delete (merged as unknown as Record<string, unknown>)[k];
+			} else {
+				(merged as unknown as Record<string, unknown>)[k] = v;
 			}
 		}
+		await saveProjectRepoConfig(project.path, merged);
+		return c.json(merged);
+	});
 
-		// Plugins
-		if (url.pathname === "/plugins" && request.method === "GET") {
-			return new Response(
-				JSON.stringify(
-					registeredPlugins.map((p) => ({
-						name: p.name,
-						scope: p.scope,
-						webComponentPath: p.resolvedWebPath,
-						projectId: p.projectId,
-					})),
-				),
-				{ headers: { "content-type": "application/json" } },
-			);
+	app.get("/projects/:id/config/all", async (c) => {
+		const project = getProjectOrNull(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const { loadProjectRepoConfig, loadProjectLocalConfig, resolveConfig } =
+			await import("./config.ts");
+		const [repoConfig, localConfig] = await Promise.all([
+			loadProjectRepoConfig(project.path),
+			loadProjectLocalConfig(dataDir, project.id),
+		]);
+		const resolved = resolveConfig(globalConfig, repoConfig, localConfig);
+		return c.json({
+			global: globalConfig,
+			repo: repoConfig,
+			local: localConfig,
+			resolved,
+		});
+	});
+
+	app.get("/projects/:id/config", async (c) => {
+		const project = getProjectOrNull(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const { loadProjectLocalConfig } = await import("./config.ts");
+		const cfg = await loadProjectLocalConfig(dataDir, project.id);
+		return c.json(cfg);
+	});
+
+	app.patch("/projects/:id/config", async (c) => {
+		const project = getProjectOrNull(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const { loadProjectLocalConfig, saveProjectLocalConfig } = await import(
+			"./config.ts"
+		);
+		const partial = await c.req.json<Partial<MatrixConfig>>();
+		const existing = await loadProjectLocalConfig(dataDir, project.id);
+		const merged = { ...existing };
+		for (const [k, v] of Object.entries(partial)) {
+			if (v === null || v === undefined) {
+				delete (merged as unknown as Record<string, unknown>)[k];
+			} else {
+				(merged as unknown as Record<string, unknown>)[k] = v;
+			}
+		}
+		await saveProjectLocalConfig(dataDir, project.id, merged);
+		return c.json(merged);
+	});
+
+	// SSE
+	app.get("/events", async (c) => {
+		const projectId = c.req.query("projectId");
+		if (!projectId) {
+			return c.text("projectId required", 400);
 		}
 
-		// Global config
-		if (url.pathname === "/config/global" && request.method === "GET") {
-			return new Response(JSON.stringify(globalConfig), {
-				headers: { "content-type": "application/json" },
-			});
-		}
-		if (url.pathname === "/config/global" && request.method === "PATCH") {
-			const partial = (await request.json()) as Partial<MatrixConfig>;
-			const next = { ...globalConfig } as MatrixConfig;
-			for (const [k, v] of Object.entries(partial)) {
-				if (v === null || v === undefined) {
-					delete (next as unknown as Record<string, unknown>)[k];
-				} else {
-					(next as unknown as Record<string, unknown>)[k] = v;
-				}
-			}
-			globalConfig = next;
-			await saveGlobalConfig(globalConfig, globalConfigPath);
-			syncConfig();
-			return new Response(JSON.stringify(globalConfig), {
-				headers: { "content-type": "application/json" },
-			});
-		}
+		const request = c.req.raw;
+		const stream = new ReadableStream({
+			async start(controller) {
+				const client: ShellSSEClient = { controller, projectId };
+				sseClients.add(client);
 
-		// ── Project config (daemon-owned: per-project settings) ──
-		const projectConfigMatch = url.pathname.match(/^\/projects\/([^/]+)\/config(\/repo|\/all)?$/);
-		if (projectConfigMatch) {
-			const projectId = projectConfigMatch[1]!;
-			const subpath = projectConfigMatch[2] ?? "";
-			const project = pm.get(projectId);
-			if (!project) {
-				return new Response(JSON.stringify({ error: "Project not found" }), {
-					status: 404,
-					headers: { "content-type": "application/json" },
-				});
-			}
-
-			const {
-				loadProjectLocalConfig,
-				loadProjectRepoConfig,
-				saveProjectLocalConfig,
-				saveProjectRepoConfig,
-				resolveConfig,
-			} = await import("./config.ts");
-
-			if (subpath === "/repo" && request.method === "GET") {
-				const cfg = await loadProjectRepoConfig(project.path);
-				return new Response(JSON.stringify(cfg), {
-					headers: { "content-type": "application/json" },
-				});
-			}
-			if (subpath === "/repo" && request.method === "PATCH") {
-				const partial = (await request.json()) as Partial<MatrixConfig>;
-				const existing = await loadProjectRepoConfig(project.path);
-				const merged = { ...existing };
-				for (const [k, v] of Object.entries(partial)) {
-					if (v === null || v === undefined) {
-						delete (merged as unknown as Record<string, unknown>)[k];
-					} else {
-						(merged as unknown as Record<string, unknown>)[k] = v;
+				try {
+					const workerName = registeredPlugins.find(
+						(p) => p.scope === "global" && workers.has(p.name),
+					)?.name;
+					const treeResp = workerName
+						? await forwardToWorker(
+								workerName,
+								new Request(`http://localhost/tasks?projectId=${projectId}`, {
+									headers: request.headers,
+								}),
+							)
+						: null;
+					if (treeResp?.ok) {
+						const treeData = await treeResp.json();
+						const msg = sseEncoder.encode(
+							`data: ${JSON.stringify({ type: "tree_updated", ...treeData })}\n\n`,
+						);
+						controller.enqueue(msg);
 					}
-				}
-				await saveProjectRepoConfig(project.path, merged);
-				return new Response(JSON.stringify(merged), {
-					headers: { "content-type": "application/json" },
-				});
-			}
-			if (subpath === "/all" && request.method === "GET") {
-				const [repoConfig, localConfig] = await Promise.all([
-					loadProjectRepoConfig(project.path),
-					loadProjectLocalConfig(dataDir, project.id),
-				]);
-				const resolved = resolveConfig(globalConfig, repoConfig, localConfig);
-				return new Response(JSON.stringify({ global: globalConfig, repo: repoConfig, local: localConfig, resolved }), {
-					headers: { "content-type": "application/json" },
-				});
-			}
-			if (subpath === "" && request.method === "GET") {
-				const cfg = await loadProjectLocalConfig(dataDir, project.id);
-				return new Response(JSON.stringify(cfg), {
-					headers: { "content-type": "application/json" },
-				});
-			}
-			if (subpath === "" && request.method === "PATCH") {
-				const partial = (await request.json()) as Partial<MatrixConfig>;
-				const existing = await loadProjectLocalConfig(dataDir, project.id);
-				const merged = { ...existing };
-				for (const [k, v] of Object.entries(partial)) {
-					if (v === null || v === undefined) {
-						delete (merged as unknown as Record<string, unknown>)[k];
-					} else {
-						(merged as unknown as Record<string, unknown>)[k] = v;
-					}
-				}
-				await saveProjectLocalConfig(dataDir, project.id, merged);
-				return new Response(JSON.stringify(merged), {
-					headers: { "content-type": "application/json" },
-				});
-			}
-		}
+				} catch {}
 
-		// SSE
-		if (url.pathname === "/events") {
-			const projectId = url.searchParams.get("projectId");
-			if (!projectId) {
-				return new Response("projectId required", { status: 400 });
-			}
-
-			const stream = new ReadableStream({
-				async start(controller) {
-					const client: ShellSSEClient = { controller, projectId };
-					sseClients.add(client);
-
+				const heartbeat = setInterval(() => {
 					try {
-						const workerName = registeredPlugins.find(
-							(p) => p.scope === "global" && workers.has(p.name),
-						)?.name;
-						const treeResp = workerName ? await forwardToWorker(
-							workerName,
-							new Request(
-								`http://localhost/tasks?projectId=${projectId}`,
-								{ headers: request.headers },
+						controller.enqueue(
+							sseEncoder.encode(
+								`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`,
 							),
-						) : null;
-						if (treeResp?.ok) {
-							const treeData = await treeResp.json();
-							const msg = sseEncoder.encode(
-								`data: ${JSON.stringify({ type: "tree_updated", ...treeData })}\n\n`,
-							);
-							controller.enqueue(msg);
-						}
+						);
 					} catch {}
+				}, 15_000);
 
-					const heartbeat = setInterval(() => {
-						try {
-							controller.enqueue(
-								sseEncoder.encode(
-									`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`,
-								),
-							);
-						} catch {}
-					}, 15_000);
+				request.signal.addEventListener("abort", () => {
+					clearInterval(heartbeat);
+					sseClients.delete(client);
+				});
+			},
+		});
 
-					request.signal.addEventListener("abort", () => {
-						clearInterval(heartbeat);
-						sseClients.delete(client);
-					});
-				},
-			});
+		return new Response(stream, {
+			headers: {
+				"content-type": "text/event-stream",
+				"cache-control": "no-cache",
+				connection: "keep-alive",
+			},
+		});
+	});
 
-			return new Response(stream, {
-				headers: {
-					"content-type": "text/event-stream",
-					"cache-control": "no-cache",
-					connection: "keep-alive",
-				},
-			});
-		}
-
-		// Forward to first available global worker
+	// Fallthrough: forward to first available global worker
+	app.all("*", async (c) => {
 		const globalWorkerName = registeredPlugins.find(
 			(p) => p.scope === "global" && workers.has(p.name),
 		)?.name;
 		if (!globalWorkerName) {
-			return new Response(
-				JSON.stringify({ error: "No global plugin worker available" }),
-				{ status: 503, headers: { "content-type": "application/json" } },
-			);
+			return c.json({ error: "No global plugin worker available" }, 503);
 		}
-		return forwardToWorker(globalWorkerName, request);
-	}
+		return forwardToWorker(globalWorkerName, c.req.raw);
+	});
 
 	/**
 	 * Typed sync primitive — daemon (golden) → workers (read-only).
 	 * SyncMap shared between daemon + worker for type safety on both sides.
 	 */
-	function syncToWorkers<K extends keyof SyncMap>(key: K, data: SyncMap[K]): void {
+	function syncToWorkers<K extends keyof SyncMap>(
+		key: K,
+		data: SyncMap[K],
+	): void {
 		for (const [, sw] of workers) {
 			if (sw.ready) {
 				sw.worker.postMessage({ type: "sync", key, data });
@@ -695,7 +668,10 @@ export async function createDaemon(opts: {
 	}
 
 	function syncProjects(): void {
-		syncToWorkers("projects", pm.list().map((p) => ({ id: p.id, name: p.name, path: p.path })));
+		syncToWorkers(
+			"projects",
+			pm.list().map((p) => ({ id: p.id, name: p.name, path: p.path })),
+		);
 	}
 
 	function syncConfig(): void {
@@ -710,7 +686,9 @@ export async function createDaemon(opts: {
 			// Wait for graceful shutdown (agent stop, JSONL flush) before terminating
 			await new Promise<void>((resolve) => {
 				const timeout = setTimeout(() => {
-					console.warn(`[daemon] Worker "${name}" shutdown timeout — terminating`);
+					console.warn(
+						`[daemon] Worker "${name}" shutdown timeout — terminating`,
+					);
 					resolve();
 				}, 5000);
 				const handler = (event: MessageEvent) => {
@@ -728,7 +706,7 @@ export async function createDaemon(opts: {
 	}
 
 	return {
-		fetch,
+		fetch: app.fetch as (request: Request) => Promise<Response>,
 		plugins: registeredPlugins,
 		shutdown,
 		pm,
