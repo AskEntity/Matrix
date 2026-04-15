@@ -15,6 +15,8 @@ export interface DaemonTestApp {
 	dataDir: string;
 	/** Fetch through the daemon pipeline */
 	fetch: (request: Request) => Promise<Response>;
+	/** Create a project through the daemon (calls onProjectInit hooks) */
+	createProject: (path: string) => Promise<{ id: string; name: string; path: string }>;
 	/** Clean up */
 	cleanup: () => Promise<void>;
 }
@@ -65,6 +67,20 @@ export async function createDaemonTestApp(opts?: {
 		tempDir,
 		dataDir,
 		fetch: daemon.fetch,
+		async createProject(path: string) {
+			const res = await daemon.fetch(
+				new Request("http://localhost/projects", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ path }),
+				}),
+			);
+			if (!res.ok) {
+				const err = await res.text();
+				throw new Error(`createProject failed (${res.status}): ${err}`);
+			}
+			return res.json();
+		},
 		async cleanup() {
 			await daemon.shutdown();
 			await rm(tempDir, { recursive: true, force: true });

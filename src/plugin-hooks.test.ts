@@ -11,7 +11,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
 import { createApp } from "./runtime.ts";
 import type { Event } from "./events.ts";
 import {
@@ -49,9 +50,8 @@ async function setupTestContext(): Promise<TestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 
-	const appResult = createApp({ dataDir, agentProvider: provider });
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
+	const projectId = ulid();
+	const appResult = createApp({ dataDir, agentProvider: provider, projects: [{ id: projectId, name: basename(projectDir), path: projectDir }] });
 
 	// Activate setup hook if exists
 	const { renameSync } = await import("node:fs");
@@ -68,7 +68,7 @@ async function setupTestContext(): Promise<TestContext> {
 		projectDir,
 		app: appResult,
 		mockAPI,
-		projectId: project.id,
+		projectId,
 	};
 }
 

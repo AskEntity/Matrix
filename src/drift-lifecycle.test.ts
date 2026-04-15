@@ -29,7 +29,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
 import { createApp } from "./runtime.ts";
 import { EventStore } from "./event-store.ts";
@@ -38,6 +39,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { initTestProject } from "./test-utils/init-test-project.ts";
 import { TOOL_DONE, TOOL_YIELD } from "./tool-names.ts";
 
 // ── Test infrastructure (copied from integration.test.ts — kept local to avoid cross-file deps) ──
@@ -71,12 +73,12 @@ async function setupTestContext(): Promise<TestContext> {
 	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
 	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
 
+	await initTestProject(projectDir);
+
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
-	const appResult = createApp({ dataDir, agentProvider: provider });
-
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
+	const projectId = ulid();
+	const appResult = createApp({ dataDir, agentProvider: provider, projects: [{ id: projectId, name: basename(projectDir), path: projectDir }] });
 
 	const tasksDir = join(projectDir, ".mxd", "tasks");
 	if (existsSync(tasksDir)) rmSync(tasksDir, { recursive: true });
@@ -99,7 +101,7 @@ async function setupTestContext(): Promise<TestContext> {
 		projectDir,
 		app: appResult,
 		mockAPI,
-		projectId: project.id,
+		projectId,
 	};
 }
 
@@ -217,8 +219,7 @@ async function recreateApp(
 	ctx: TestContext,
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedProviderWithMock(ctx.mockAPI);
-	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider });
-	await newApp.pm.load();
+	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider, projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }] });
 	newApp.markReady();
 	return newApp;
 }

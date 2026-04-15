@@ -46,7 +46,7 @@ describe.skipIf(!hasApiKey)("E2E: AnthropicCompatibleProvider", () => {
 			agentProvider: new AnthropicCompatibleProvider(),
 		});
 		app = result.app;
-		await result.pm.load();
+
 	});
 
 	afterAll(async () => {

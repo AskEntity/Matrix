@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { ulid } from "./ulid.ts";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { runChildCore } from "./runtime/agent-lifecycle.ts";
 import { createApp } from "./runtime.ts";
@@ -147,17 +148,14 @@ async function startRootAgent(
 	});
 }
 
-/** Create a project in the daemon and return its ID. */
-async function createProject(
-	app: ReturnType<typeof createApp>["app"],
+/** Build project info and register it with the app's ProjectStore. */
+function createProject(
+	pm: ReturnType<typeof createApp>["pm"],
 	projectDir: string,
-): Promise<Project> {
-	const res = await app.request("/projects", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ path: projectDir }),
-	});
-	return (await res.json()) as Project;
+): Project {
+	const project = { id: ulid(), name: basename(projectDir), path: projectDir, createdAt: new Date().toISOString() };
+	pm.sync([project]);
+	return project;
 }
 
 /** Create a task under a project. Defaults parentId to rootNodeId if not provided. */
@@ -263,10 +261,10 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Fresh task");
 		expect(task.status).toBe("pending");
 
@@ -298,10 +296,10 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Running task");
 
 		// Attach session to simulate a running agent
@@ -336,10 +334,10 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Idle task");
 
 		// Attach session simulating an idle agent (waiting on queue.wait())
@@ -373,10 +371,10 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Done task");
 		await setTaskStatus(app, project.id, task.id, "passed");
 
@@ -401,10 +399,10 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Failed task");
 		await setTaskStatus(app, project.id, task.id, "failed");
 
@@ -421,10 +419,10 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Closed task");
 		await setTaskStatus(app, project.id, task.id, "closed");
 
@@ -446,10 +444,10 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Draft task");
 		// Set status to draft via PATCH (POST /tasks doesn't accept status)
 		await setTaskStatus(app, project.id, task.id, "draft");
@@ -474,10 +472,10 @@ describe("lifecycle: task state vs message delivery", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Closing task");
 
 		// Attach session with a closed queue — simulates a race condition where
@@ -521,10 +519,10 @@ describe("lifecycle: concurrent message sources", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Rapid messages task");
 
 		// Attach session to simulate running agent
@@ -560,10 +558,10 @@ describe("lifecycle: concurrent message sources", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Multi message task");
 
 		const taskQueue = new MessageQueue();
@@ -591,10 +589,10 @@ describe("lifecycle: concurrent message sources", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "No queue task");
 
 		// No session — message gets persisted
@@ -624,10 +622,10 @@ describe("lifecycle: concurrent message sources", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Dedup task");
 
 		// First message — no session, triggers auto-launch
@@ -674,10 +672,10 @@ describe("lifecycle: concurrent message sources", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Stale worktree task");
 
 		const tracker = await getTracker(project.id);
@@ -875,10 +873,10 @@ describe("lifecycle: session consistency on tracker nodes", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Ephemeral task");
 
 		// Send message to trigger auto-launch
@@ -947,10 +945,10 @@ describe("lifecycle: parent chain notifications", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const parent = await createTask(app, project.id, "Parent");
 		const child = await createTask(app, project.id, "Child", {
 			parentId: parent.id,
@@ -995,10 +993,10 @@ describe("lifecycle: parent chain notifications", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const grandparent = await createTask(app, project.id, "Grandparent");
 		const parent = await createTask(app, project.id, "Parent", {
 			parentId: grandparent.id,
@@ -1046,10 +1044,10 @@ describe("lifecycle: parent chain notifications", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const parent = await createTask(app, project.id, "Offline parent");
 		const child = await createTask(app, project.id, "Child task", {
 			parentId: parent.id,
@@ -1088,10 +1086,10 @@ describe("lifecycle: parent chain notifications", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Create root → child hierarchy
 		const root = await createTask(app, project.id, "Root orchestrator");
@@ -1160,10 +1158,10 @@ describe("lifecycle: orchestrator message routing", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const tracker = await getTracker(project.id);
 		const rootNodeId = tracker.rootNodeId;
 
@@ -1198,10 +1196,10 @@ describe("lifecycle: orchestrator message routing", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const tracker = await getTracker(project.id);
 		const rootNodeId = tracker.rootNodeId;
 
@@ -1230,10 +1228,10 @@ describe("lifecycle: orchestrator message routing", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Start orchestrator
 		await startRootAgent(app, project.id, "first");
@@ -1317,10 +1315,10 @@ describe("lifecycle: message persistence via JSONL", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Persist test");
 
 		// No session — message should be written to JSONL via deliverMessage
@@ -1348,10 +1346,10 @@ describe("lifecycle: message persistence via JSONL", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Multi persist");
 
 		// Send multiple messages (will persist to JSONL since no queue)
@@ -1402,10 +1400,10 @@ describe("lifecycle: stop agent cascading", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Start orchestrator
 		await startRootAgent(app, project.id, "test");
@@ -1469,10 +1467,10 @@ describe("lifecycle: clarify response routing", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Start orchestrator
 		await startRootAgent(app, project.id, "test");
@@ -1512,10 +1510,10 @@ describe("lifecycle: clarify response routing", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Offline task");
 
 		// No session running — clarify response should persist
@@ -1567,10 +1565,10 @@ describe("lifecycle: edge cases and error handling", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Send message to a task ID that doesn't exist
 		const res = await sendTaskMessage(
@@ -1588,10 +1586,10 @@ describe("lifecycle: edge cases and error handling", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Test task");
 
 		const res = await app.request(
@@ -1610,7 +1608,7 @@ describe("lifecycle: edge cases and error handling", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
 		const res = await app.request(
@@ -1629,10 +1627,10 @@ describe("lifecycle: edge cases and error handling", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		// Note: NOT calling markReady()
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		const res = await startRootAgent(app, project.id, "test");
 		expect(res.status).toBe(503);
@@ -1809,10 +1807,10 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Deletable task");
 
 		// Attach session (simulating running agent)
@@ -1842,10 +1840,10 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const parent = await createTask(app, project.id, "Parent");
 		await createTask(app, project.id, "Child", { parentId: parent.id });
 
@@ -1863,10 +1861,10 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Leaf task");
 
 		const tracker = await getTracker(project.id);
@@ -1893,10 +1891,10 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "No queue task");
 
 		// No session — delete should still work
@@ -2214,10 +2212,10 @@ describe("lifecycle: child completion notification paths", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const parent = await createTask(app, project.id, "Parent");
 		const child = await createTask(app, project.id, "Child", {
 			parentId: parent.id,
@@ -2267,10 +2265,10 @@ describe("lifecycle: child completion notification paths", () => {
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 		const task = await createTask(app, project.id, "Running child");
 		await setTaskStatus(app, project.id, task.id, "in_progress");
 
@@ -2432,10 +2430,10 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Launch agent with initial prompt
 		await startRootAgent(app, project.id, "initial task");
@@ -2512,10 +2510,10 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Launch agent
 		await startRootAgent(app, project.id, "hello");
@@ -2597,10 +2595,10 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Launch agent
 		await startRootAgent(app, project.id, "initial work");
@@ -2665,10 +2663,10 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Launch and stop to establish session
 		await startRootAgent(app, project.id, "setup");
@@ -2714,7 +2712,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
 		const res = await app.request(
@@ -2739,10 +2737,10 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Root node exists from tracker.load()
 		const tracker = await getTracker(project.id);
@@ -2796,10 +2794,10 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Launch agent to generate some events
 		await startRootAgent(app, project.id, "generate events");
@@ -2832,10 +2830,10 @@ describe("lifecycle edge cases — session continuity", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
 
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Launch agent
 		await startRootAgent(app, project.id, "do work");
@@ -2918,9 +2916,9 @@ describe("lifecycle: header only on cold start", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Send message to fresh project (no JSONL exists) — cold start
 		await sendRootMessage(app, getTracker, project.id, "hello world");
@@ -2951,9 +2949,9 @@ describe("lifecycle: header only on cold start", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// First: launch agent (cold start) to create JSONL
 		await sendRootMessage(app, getTracker, project.id, "initial task");
@@ -2986,9 +2984,9 @@ describe("lifecycle: header only on cold start", () => {
 			dataDir,
 			agentProvider: provider,
 		});
-		await pm.load();
+
 		markReady();
-		const project = await createProject(app, projectDir);
+		const project = createProject(pm, projectDir);
 
 		// Launch agent
 		await startRootAgent(app, project.id, "start");

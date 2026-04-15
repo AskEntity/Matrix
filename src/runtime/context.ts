@@ -1,7 +1,7 @@
 import type { AgentProvider } from "../agent-provider.ts";
 import type { MatrixConfig } from "../config.ts";
 import type { EventStore } from "../event-store.ts";
-import type { ProjectManager } from "../project-manager.ts";
+import type { ProjectStore } from "../project-store.ts";
 import type { SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type { Auth } from "../tool-auth.ts";
@@ -107,6 +107,8 @@ export interface DaemonConfig {
 	agentProvider?: AgentProvider;
 	initialConfig?: MatrixConfig;
 	globalConfigPath?: string;
+	/** Initial project list — injected by daemon at worker init. */
+	projects?: Array<{ id: string; name: string; path: string }>;
 }
 
 /**
@@ -115,7 +117,7 @@ export interface DaemonConfig {
  */
 export interface RuntimeContext {
 	readonly config: DaemonConfig;
-	readonly pm: ProjectManager;
+	readonly pm: ProjectStore;
 	readonly trackers: Map<string, TaskTracker>;
 	readonly restartingProjects: Set<string>;
 	/**

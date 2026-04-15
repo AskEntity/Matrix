@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -37,7 +37,7 @@ import { registerSSERoute } from "./runtime/routes/sse.ts";
 import { registerTaskRoutes } from "./runtime/routes/tasks.ts";
 
 import type { Event } from "./events.ts";
-import { ProjectManager } from "./project-manager.ts";
+import { ProjectStore } from "./project-store.ts";
 import { createTaskComplete } from "./queue-message-factory.ts";
 
 // buildSystemPrompt import removed — prompt is now provided by buildMatrixScopeOpts
@@ -142,7 +142,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	// Build the shared context object
 	const ctx: RuntimeContext = {
 		config,
-		pm: new ProjectManager(config.dataDir),
+		pm: (() => {
+			const store = new ProjectStore();
+			if (config.projects) store.sync(config.projects);
+			return store;
+		})(),
 		trackers: new Map(),
 		restartingProjects: new Set(),
 		launchingNodes: new Set(),
@@ -159,6 +163,17 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		// provided we don't want mutations leaking back to the caller's object.
 		globalConfig: { ...(config.initialConfig ?? DEFAULT_CONFIG) },
 	};
+
+	// Ensure project data directories exist for injected projects.
+	// Daemon creates these via ProjectManager.register(); runtime ensures
+	// they exist when projects are injected directly (e.g. tests, worker init).
+	if (config.projects) {
+		for (const p of config.projects) {
+			const projectDir = join(config.dataDir, "projects", p.id);
+			mkdirSync(join(projectDir, "tasks"), { recursive: true });
+			mkdirSync(join(projectDir, "debug"), { recursive: true });
+		}
+	}
 
 	// Request counter middleware
 	app.use("*", async (_c, next) => {
@@ -298,6 +313,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			process.exit(0);
 		}, 100);
 		return c.json({ restarting: true });
+	});
+
+	// Project list — runtime exposes it so scope-worker can serve GET /projects
+	app.get("/projects", (c) => {
+		return c.json(ctx.pm.list());
 	});
 
 	// Register all route groups
@@ -490,14 +510,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 if (import.meta.main) {
 	const {
 		app,
-		pm,
 		autoResumeProjects,
 		shutdown,
 		markReady,
 		loadConfig,
 		getConfig,
 	} = createApp();
-	await pm.load();
 	await loadConfig();
 
 	const port = getConfig().port ?? 7433;
