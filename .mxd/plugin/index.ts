@@ -97,7 +97,7 @@ const manifest: PluginManifest = {
 	name: "matrix",
 	scope: "global",
 	dataRoot: "@",
-	web: "./web/App.tsx",
+	web: "./web/Plugin.tsx",
 	runtime: "./runtime.ts",
 
 	async onProjectInit(projectPath, { isNew }) {

@@ -390,6 +390,39 @@ export async function createDaemon(opts: {
 		throw new Error(collision);
 	}
 
+	// ── Build web assets (React vendor + shell + plugins) ──
+	const { buildWebAssets, generateIndexHTML } = await import("./web-builder.ts");
+	const buildDir = join(dataDir, "build");
+	const projectRoot = resolve(".");
+	const shellEntry = new URL("../web/main.tsx", import.meta.url).pathname;
+	const shellCssPath = new URL("../web/styles.css", import.meta.url).pathname;
+
+	const pluginBuildEntries = registeredPlugins
+		.filter((p) => p.resolvedWebPath)
+		.map((p) => ({
+			name: p.name,
+			webEntry: p.resolvedWebPath!,
+			cssPath: existsSync(join(p.pluginRoot, "web", "style.css"))
+				? join(p.pluginRoot, "web", "style.css")
+				: undefined,
+		}));
+
+	let webBuild: Awaited<ReturnType<typeof buildWebAssets>> | null = null;
+	let indexHTML = "<html><body>Web build failed</body></html>";
+	try {
+		webBuild = await buildWebAssets({
+			buildDir,
+			shellEntry,
+			plugins: pluginBuildEntries,
+			shellCssPath,
+			projectRoot,
+			minify: process.env.NODE_ENV === "production",
+		});
+		indexHTML = generateIndexHTML(webBuild);
+	} catch (e) {
+		console.error("[daemon] Web build failed:", e);
+	}
+
 	// Start workers for global plugins
 	for (const plugin of registeredPlugins.filter((p) => p.scope === "global")) {
 		// Resolve plugin's runtime module path for the worker
@@ -410,10 +443,9 @@ export async function createDaemon(opts: {
 	app.use("*", async (c, next) => {
 		const skipAuth =
 			c.req.path === "/" ||
-			c.req.path.startsWith("/_bun/") ||
-			c.req.path.startsWith("/web/") ||
-			c.req.path.startsWith("/auth/") ||
-			c.req.path.startsWith("/plugin-assets/");
+			c.req.path.startsWith("/vendor/") ||
+			c.req.path.startsWith("/app/") ||
+			c.req.path.startsWith("/auth/");
 
 		if (!skipAuth) {
 			const authPath = join(dataDir, "auth.json");
@@ -428,6 +460,11 @@ export async function createDaemon(opts: {
 			}
 		}
 		await next();
+	});
+
+	// Root page — generated HTML with importmap
+	app.get("/", (c) => {
+		return c.html(indexHTML);
 	});
 
 	// Health — daemon-owned, not worker-forwarded
@@ -560,23 +597,20 @@ export async function createDaemon(opts: {
 		}
 	});
 
-	// Plugin web assets — serve from filesystem via URL
-	app.get("/plugin-assets/:pluginName/*", async (c) => {
-		const pluginName = c.req.param("pluginName");
-		const plugin = registeredPlugins.find((p) => p.name === pluginName);
-		if (!plugin) return c.json({ error: "Plugin not found" }, 404);
+	// Built web assets — vendor (React ESM) + app (shell + plugins)
+	app.get("/vendor/*", async (c) => {
+		const relativePath = c.req.path.slice("/vendor/".length);
+		const filePath = join(buildDir, "vendor", relativePath);
+		if (!resolve(filePath).startsWith(resolve(buildDir))) return c.json({ error: "Forbidden" }, 403);
+		const file = Bun.file(filePath);
+		if (!(await file.exists())) return c.json({ error: "Not found" }, 404);
+		return new Response(file, { headers: { "content-type": "application/javascript" } });
+	});
 
-		// Strip prefix to get relative path within plugin's web dir
-		const prefix = `/plugin-assets/${pluginName}/`;
-		const relativePath = c.req.path.slice(prefix.length);
-		if (!relativePath) return c.json({ error: "File not specified" }, 400);
-
-		const filePath = join(plugin.pluginRoot, relativePath);
-		// Security: ensure resolved path is under pluginRoot
-		if (!filePath.startsWith(plugin.pluginRoot)) {
-			return c.json({ error: "Forbidden" }, 403);
-		}
-
+	app.get("/app/*", async (c) => {
+		const relativePath = c.req.path.slice("/app/".length);
+		const filePath = join(buildDir, "app", relativePath);
+		if (!resolve(filePath).startsWith(resolve(buildDir))) return c.json({ error: "Forbidden" }, 403);
 		const file = Bun.file(filePath);
 		if (!(await file.exists())) return c.json({ error: "Not found" }, 404);
 		return new Response(file);
@@ -585,24 +619,12 @@ export async function createDaemon(opts: {
 	// Plugins
 	app.get("/plugins", (c) => {
 		return c.json(
-			registeredPlugins.map((p) => {
-				// Convert filesystem resolvedWebPath to URL path via /plugin-assets/
-				let webComponentPath: string | undefined;
-				if (p.resolvedWebPath && p.pluginRoot) {
-					// resolvedWebPath = /abs/path/.mxd/plugin/web/App.tsx
-					// pluginRoot = /abs/path/.mxd/plugin
-					// relative = web/App.tsx
-					// URL = /plugin-assets/<name>/web/App.tsx
-					const relative = p.resolvedWebPath.slice(p.pluginRoot.length + 1);
-					webComponentPath = `/plugin-assets/${p.name}/${relative}`;
-				}
-				return {
-					name: p.name,
-					scope: p.scope,
-					webComponentPath,
-					projectId: p.projectId,
-				};
-			}),
+			registeredPlugins.map((p) => ({
+				name: p.name,
+				scope: p.scope,
+				webComponentPath: webBuild?.pluginEntryPaths.get(p.name),
+				projectId: p.projectId,
+			})),
 		);
 	});
 
@@ -913,16 +935,10 @@ if (import.meta.main) {
 		}
 	} catch {}
 
-	const webIndex = await import("../web/index.html");
-
 	Bun.serve({
-		routes: { "/": webIndex.default },
 		fetch: daemon.fetch,
 		port,
 		idleTimeout: 255,
-		development: process.env.NODE_ENV === "production"
-			? false
-			: { hmr: true, console: true },
 	});
 
 	console.log(
