@@ -1,7 +1,7 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.ts";
-import { authFetch, clearToken } from "./auth.ts";
+import { authFetch } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
 import { AppFooter } from "./components/AppFooter.tsx";
 import { AppHeader } from "./components/AppHeader.tsx";
@@ -18,7 +18,7 @@ import {
 	IconPlus,
 	IconRefresh,
 } from "./components/icons.tsx";
-import { LoginPage } from "./components/LoginPage.tsx";
+// LoginPage removed — auth handled by daemon shell
 import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
 import { RelocateBanner } from "./components/RelocateBanner.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
@@ -87,64 +87,12 @@ export function App() {
 }
 
 function AppInner() {
-	// Auth state — check on mount
-	const [authState, setAuthState] = useState<
-		"loading" | "authenticated" | "login"
-	>("loading");
-
-	const handleLogout = useCallback(async () => {
-		try {
-			await authFetch("/auth/logout", { method: "POST" });
-		} catch {
-			// ignore
-		}
-		clearToken();
-		setAuthState("login");
+	// Auth is handled by the daemon shell — plugin assumes authenticated.
+	// Logout is a no-op here (shell manages session).
+	const handleLogout = useCallback(() => {
+		// Shell owns auth lifecycle — reload to trigger shell's auth check
+		window.location.reload();
 	}, []);
-
-	useEffect(() => {
-		authFetch("/auth/status")
-			.then((r) => r.json())
-			.then((data: { enabled?: boolean; authenticated?: boolean }) => {
-				if (data.authenticated) {
-					setAuthState("authenticated");
-				} else {
-					setAuthState("login");
-				}
-			})
-			.catch(() => {
-				// If auth endpoint fails, assume no auth needed (backward compatible)
-				setAuthState("authenticated");
-			});
-	}, []);
-
-	if (authState === "loading") {
-		return (
-			<div className="mxd-login-page">
-				<div className="mxd-login-container">
-					<div className="mxd-login-brand">
-						<div className="mxd-login-brand-content">
-							<div className="mxd-login-logo">
-								<IconHexagon size={32} />
-							</div>
-							<h1 className="mxd-login-title">Matrix</h1>
-						</div>
-						<div className="mxd-login-brand-decoration" />
-					</div>
-					<div className="mxd-login-auth">
-						<div className="mxd-login-loading">
-							<div className="mxd-login-spinner" />
-							<p>Loading…</p>
-						</div>
-					</div>
-				</div>
-			</div>
-		);
-	}
-
-	if (authState === "login") {
-		return <LoginPage onAuthenticated={() => setAuthState("authenticated")} />;
-	}
 
 	return <AuthenticatedApp onLogout={handleLogout} />;
 }
