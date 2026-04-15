@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useState } from "react";
 import { api } from "../api.ts";
-import { authFetch } from "../auth.ts";
+import { useAuthFetch } from "../auth.ts";
 
 interface BackgroundProcess {
 	id: string;
@@ -28,6 +28,7 @@ export const BackgroundProcessBar = memo(function BackgroundProcessBar({
 	filterTaskId: string | null;
 	rootNodeId: string | null;
 }) {
+	const authFetch = useAuthFetch();
 	const [now, setNow] = useState(Date.now());
 	const [killing, setKilling] = useState<Set<string>>(new Set());
 

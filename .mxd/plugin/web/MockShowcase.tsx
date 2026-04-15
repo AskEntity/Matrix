@@ -11,7 +11,7 @@
 
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { authFetch } from "./auth.ts";
+import { useAuthFetch } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
 import { AppFooter } from "./components/AppFooter.tsx";
 import { AppHeader } from "./components/AppHeader.tsx";
@@ -76,6 +76,7 @@ export function MockShowcase() {
 }
 
 function MockShowcaseInner() {
+	const authFetch = useAuthFetch();
 	const { t } = useLocale();
 
 	// ── State (mirrors AuthenticatedApp) ──

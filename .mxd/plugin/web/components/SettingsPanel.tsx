@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { authFetch } from "../auth.ts";
+import { useAuthFetch } from "../auth.ts";
 import type { ThreeLayerConfig } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconPlus, IconRefresh, IconTrash } from "./icons.tsx";
@@ -1316,6 +1316,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 	onDeleteProject?: () => void;
 	onClearAllSessions?: () => void;
 }) {
+	const authFetch = useAuthFetch();
 	const { t } = useLocale();
 	const [activeTab, setActiveTab] = useState<ActiveTab>("global");
 
