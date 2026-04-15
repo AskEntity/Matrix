@@ -4,7 +4,7 @@ import { authFetch, getToken } from "./auth.ts";
 import { LoginPage } from "./LoginPage.tsx";
 import { useState, useEffect, useCallback } from "react";
 // Static import — Bun's bundler transpiles this. Dynamic plugin loading is future work.
-import PluginApp from "../.mxd/plugin/web/App.tsx";
+import { App as PluginApp } from "../.mxd/plugin/web/App.tsx";
 
 function Shell() {
 	const [authenticated, setAuthenticated] = useState(false);
