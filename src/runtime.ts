@@ -37,7 +37,7 @@ import { registerSSERoute } from "./runtime/routes/sse.ts";
 import { registerTaskRoutes } from "./runtime/routes/tasks.ts";
 
 import type { Event } from "./events.ts";
-import { ProjectManager } from "./project-manager.ts";
+import { ProjectStore } from "./project-store.ts";
 import { createTaskComplete } from "./queue-message-factory.ts";
 
 // buildSystemPrompt import removed — prompt is now provided by buildMatrixScopeOpts
@@ -142,7 +142,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	// Build the shared context object
 	const ctx: RuntimeContext = {
 		config,
-		pm: new ProjectManager(config.dataDir),
+		pm: new ProjectStore(),
 		trackers: new Map(),
 		restartingProjects: new Set(),
 		launchingNodes: new Set(),
