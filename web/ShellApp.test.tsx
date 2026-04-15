@@ -95,3 +95,36 @@ describe("ShellApp with jsdom", () => {
 		}, { timeout: 3000 });
 	});
 });
+
+describe("Matrix plugin TaskTree", () => {
+	afterEach(() => cleanup());
+
+	test("renders task tree with nodes", async () => {
+		const { TaskTree } = await import("../.mxd/plugin/web/components/TaskTree.tsx");
+
+		const mockNodes = [
+			{ id: "root", title: "Orchestrator", parentId: null, children: ["t1"], status: "in_progress", description: "", branch: "main", worktreePath: "/tmp", cwd: "/tmp", session: null, costUsd: 0, budgetUsd: -1, createdAt: "2026-01-01", updatedAt: "2026-01-01", editedBy: "agent" as const, failCount: 0 },
+			{ id: "t1", title: "Test Task", parentId: "root", children: [], status: "pending", description: "A test", branch: null, worktreePath: null, cwd: null, session: null, costUsd: 0, budgetUsd: -1, createdAt: "2026-01-01", updatedAt: "2026-01-01", editedBy: "agent" as const, failCount: 0 },
+		];
+
+		const { container } = render(
+			<TaskTree
+				nodes={mockNodes as any}
+				selectedTaskId={null}
+				rootNodeId="root"
+				activeAgents={new Set()}
+				onSelect={() => {}}
+				onDoubleClick={() => {}}
+				onReorder={() => {}}
+				onReparent={() => {}}
+				isCreating={false}
+				onCreateTask={() => {}}
+				onCancelCreate={() => {}}
+			/>,
+		);
+
+		// Should render the tree with task titles
+		expect(container.textContent).toContain("Orchestrator");
+		expect(container.textContent).toContain("Test Task");
+	});
+});
