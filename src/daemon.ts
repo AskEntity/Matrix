@@ -106,7 +106,43 @@ export async function createDaemon(opts: {
 	// SSE state
 	const sseClients = new Set<ShellSSEClient>();
 	const sseEncoder = new TextEncoder();
-	let sseSeqId = 0;
+
+	// Per-project SSE sequencing + ring buffer for Last-Event-ID catch-up
+	const sseSeqCounters = new Map<string, number>();
+	interface SSERingEntry { seqId: number; data: string; }
+	const sseEventBuffers = new Map<string, SSERingEntry[]>();
+	const SSE_RING_BUFFER_SIZE = 2000;
+
+	function nextSseSeqId(projectId: string): number {
+		const current = sseSeqCounters.get(projectId) ?? 0;
+		const next = current + 1;
+		sseSeqCounters.set(projectId, next);
+		return next;
+	}
+
+	function bufferSseEvent(projectId: string, seqId: number, data: string): void {
+		let buffer = sseEventBuffers.get(projectId);
+		if (!buffer) {
+			buffer = [];
+			sseEventBuffers.set(projectId, buffer);
+		}
+		buffer.push({ seqId, data });
+		if (buffer.length > SSE_RING_BUFFER_SIZE) {
+			buffer.splice(0, buffer.length - SSE_RING_BUFFER_SIZE);
+		}
+	}
+
+	function getEventsSince(projectId: string, lastSeqId: number): SSERingEntry[] | null {
+		const buffer = sseEventBuffers.get(projectId);
+		if (!buffer || buffer.length === 0) return null;
+		const firstEntry = buffer[0];
+		if (!firstEntry) return null;
+		// Gap too large — can't guarantee no missed events
+		if (lastSeqId < firstEntry.seqId - 1) return null;
+		const idx = buffer.findIndex((e) => e.seqId > lastSeqId);
+		if (idx === -1) return []; // Client is up to date
+		return buffer.slice(idx);
+	}
 
 	// Worker state
 	const workers = new Map<string, ScopeWorker>();
@@ -132,10 +168,11 @@ export async function createDaemon(opts: {
 
 			if (msg.type === "sse_event") {
 				const { projectId, event: evt } = msg;
-				sseSeqId++;
+				const seqId = nextSseSeqId(projectId);
 				const data = JSON.stringify(evt);
+				bufferSseEvent(projectId, seqId, data);
 				const sseMessage = sseEncoder.encode(
-					`id: ${sseSeqId}\ndata: ${data}\n\n`,
+					`id: ${seqId}\ndata: ${data}\n\n`,
 				);
 				for (const client of sseClients) {
 					if (client.projectId === projectId) {
@@ -618,30 +655,58 @@ export async function createDaemon(opts: {
 				return new Response("projectId required", { status: 400 });
 			}
 
+			// EventSource sends Last-Event-ID on reconnect
+			const lastEventIdHeader = request.headers.get("Last-Event-ID");
+			const lastSeqId = lastEventIdHeader ? Number.parseInt(lastEventIdHeader, 10) : null;
+
 			const stream = new ReadableStream({
 				async start(controller) {
 					const client: ShellSSEClient = { controller, projectId };
 					sseClients.add(client);
 
-					try {
-						const workerName = registeredPlugins.find(
-							(p) => p.scope === "global" && workers.has(p.name),
-						)?.name;
-						const treeResp = workerName ? await forwardToWorker(
-							workerName,
-							new Request(
-								`http://localhost/tasks?projectId=${projectId}`,
-								{ headers: request.headers },
-							),
-						) : null;
-						if (treeResp?.ok) {
-							const treeData = await treeResp.json();
-							const msg = sseEncoder.encode(
-								`data: ${JSON.stringify({ type: "tree_updated", ...treeData })}\n\n`,
-							);
-							controller.enqueue(msg);
+					let catchUpDone = false;
+
+					// If reconnecting with Last-Event-ID, try ring buffer catch-up
+					if (lastSeqId != null && !Number.isNaN(lastSeqId)) {
+						const missed = getEventsSince(projectId, lastSeqId);
+						if (missed !== null) {
+							catchUpDone = true;
+							for (const entry of missed) {
+								try {
+									controller.enqueue(sseEncoder.encode(
+										`id: ${entry.seqId}\ndata: ${entry.data}\n\n`,
+									));
+								} catch {
+									catchUpDone = false;
+									break;
+								}
+							}
 						}
-					} catch {}
+					}
+
+					// If no Last-Event-ID or catch-up failed (gap too large),
+					// send full initial state
+					if (!catchUpDone) {
+						try {
+							const workerName = registeredPlugins.find(
+								(p) => p.scope === "global" && workers.has(p.name),
+							)?.name;
+							const treeResp = workerName ? await forwardToWorker(
+								workerName,
+								new Request(
+									`http://localhost/tasks?projectId=${projectId}`,
+									{ headers: request.headers },
+								),
+							) : null;
+							if (treeResp?.ok) {
+								const treeData = await treeResp.json();
+								const msg = sseEncoder.encode(
+									`data: ${JSON.stringify({ type: "tree_updated", ...treeData })}\n\n`,
+								);
+								controller.enqueue(msg);
+							}
+						} catch {}
+					}
 
 					const heartbeat = setInterval(() => {
 						try {
