@@ -4,7 +4,7 @@
  * files can focus on assertions.
  */
 import { existsSync } from "node:fs";
-import { mkdtemp, rename, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { ulid } from "../ulid.ts";
@@ -53,18 +53,17 @@ export async function setupEmissionTestContext(): Promise<EmissionTestContext> {
 		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
 	});
 
-	const hookExample = join(
-		projectDir,
-		".mxd",
-		"hooks",
-		"setup_worktree.sh.example",
-	);
-	const hookActive = join(projectDir, ".mxd", "hooks", "setup_worktree.sh");
-	if (existsSync(hookExample)) await rename(hookExample, hookActive);
-	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
-	Bun.spawnSync(["git", "commit", "-m", "activate setup hook"], {
-		cwd: projectDir,
-	});
+	// Create setup_worktree.sh (required for child task worktree creation)
+	const hookDir = join(projectDir, ".mxd", "hooks");
+	await mkdir(hookDir, { recursive: true });
+	const hookActive = join(hookDir, "setup_worktree.sh");
+	if (!existsSync(hookActive)) {
+		await Bun.write(hookActive, "#!/bin/bash\n# test hook\n");
+		const { chmod } = await import("node:fs/promises");
+		await chmod(hookActive, 0o755);
+	}
+	Bun.spawnSync(["git", "add", "-A"], { cwd: projectDir });
+	Bun.spawnSync(["git", "commit", "-m", "add hooks"], { cwd: projectDir });
 
 	appResult.markReady();
 
