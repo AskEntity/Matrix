@@ -53,7 +53,7 @@ Agent reply language: follows the sender's language.
 ## How to Run Tests
 
 ```bash
-bun test              # ALL tests (unit + integration). ~1173 pass, 3 skip.
+bun run test          # ALL tests (src/ + web/). MUST use `bun run test` not `bun test`.
 bun run typecheck     # tsc --noEmit
 bun run check         # biome lint + format
 ```
