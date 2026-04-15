@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type React from "react";
-import { createActionHandlers } from "./handlers.ts";
-import type { TaskNode } from "./hooks.ts";
+import { createActionHandlers } from "../.mxd/plugin/web/handlers.ts";
+import type { TaskNode } from "../.mxd/plugin/web/hooks.ts";
 
 // Mock localStorage for authFetch (Bun runtime doesn't have it)
 const originalLocalStorage = globalThis.localStorage;
