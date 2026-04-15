@@ -39,6 +39,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { initTestProject } from "./test-utils/init-test-project.ts";
 import { TOOL_DONE, TOOL_YIELD } from "./tool-names.ts";
 
 // ── Test infrastructure (copied from integration.test.ts — kept local to avoid cross-file deps) ──
@@ -71,6 +72,8 @@ async function setupTestContext(): Promise<TestContext> {
 	await Bun.write(join(projectDir, "README.md"), "# Test Project\n");
 	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
 	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
+
+	await initTestProject(projectDir);
 
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
