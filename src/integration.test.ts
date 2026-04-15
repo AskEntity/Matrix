@@ -14,7 +14,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { ulid } from "ulid";
 import { createApp } from "./runtime.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
@@ -73,8 +74,8 @@ async function setupTestContext(): Promise<TestContext> {
 		agentProvider: provider,
 	});
 
-	await appResult.pm.load();
-	const project = await appResult.pm.init(projectDir);
+	const project = { id: ulid(), name: basename(projectDir), path: projectDir };
+	appResult.pm.sync([project]);
 
 	// Clean up quality task templates that interfere with test assumptions
 	const tasksDir = join(projectDir, ".mxd", "tasks");
@@ -735,7 +736,7 @@ async function recreateApp(
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
 	});
-	await newApp.pm.load();
+	newApp.pm.sync([{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }]);
 	newApp.markReady();
 	return newApp;
 }
@@ -8621,8 +8622,8 @@ describe("Default branch", () => {
 			agentProvider: provider,
 		});
 
-		await appResult.pm.load();
-		const project = await appResult.pm.init(projectDir);
+		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
+		appResult.pm.sync([project]);
 
 		// Activate setup hook
 		const hookExample = join(
@@ -8674,8 +8675,8 @@ describe("Default branch", () => {
 		const mockAPI = new ValidatingMockAPI();
 		const provider = createMockedProviderWithMock(mockAPI);
 		const appResult = createApp({ dataDir, agentProvider: provider });
-		await appResult.pm.load();
-		const project = await appResult.pm.init(projectDir);
+		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
+		appResult.pm.sync([project]);
 
 		const hookExample = join(
 			projectDir,
