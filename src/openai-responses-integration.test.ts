@@ -43,13 +43,13 @@ async function setupTestContext(): Promise<TestContext> {
 
 	const mockAPI = new ValidatingMockResponsesAPI();
 	const provider = createMockedResponsesProviderWithMock(mockAPI);
+	const projectId = ulid();
 	const appResult = createApp({
 		dataDir,
 		agentProvider: provider,
 		initialConfig: { ...DEFAULT_CONFIG, model: "gpt-4.1-mini" },
+		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
 	});
-	const projectId = ulid();
-	appResult.pm.sync([{ id: projectId, name: basename(projectDir), path: projectDir }]);
 
 	const hookExample = join(
 		projectDir,
@@ -92,8 +92,8 @@ async function recreateApp(
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
 		initialConfig: { ...DEFAULT_CONFIG, model: "gpt-4.1-mini" },
+		projects: ctx.app.pm.list(),
 	});
-	newApp.pm.sync(ctx.app.pm.list());
 	newApp.markReady();
 	return newApp;
 }
