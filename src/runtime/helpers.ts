@@ -118,14 +118,19 @@ export async function getTracker(
 		ctx.trackers.set(projectId, tracker);
 	}
 
-	// Register default Matrix scope opts if not already set.
+	// Register scope opts if not already set.
 	// autoResumeProjects sets these explicitly; this catches projects
 	// accessed for the first time via REST/MCP (not resumed at startup).
 	if (!ctx.scopeOpts.has(projectId)) {
-		ctx.scopeOpts.set(
-			projectId,
-			buildMatrixScopeOpts(projectId, ctx.globalConfig.selfBootstrap, ctx),
-		);
+		if (ctx.config.buildScopeOpts) {
+			ctx.scopeOpts.set(projectId, ctx.config.buildScopeOpts(projectId, ctx));
+		} else {
+			// TODO: remove fallback when all callers provide buildScopeOpts
+			ctx.scopeOpts.set(
+				projectId,
+				buildMatrixScopeOpts(projectId, ctx.globalConfig.selfBootstrap, ctx),
+			);
+		}
 	}
 	return tracker;
 }

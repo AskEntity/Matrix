@@ -109,6 +109,13 @@ export interface DaemonConfig {
 	globalConfigPath?: string;
 	/** Initial project list — injected by daemon at worker init. */
 	projects?: Array<{ id: string; name: string; path: string }>;
+	/**
+	 * Plugin-provided scope opts builder. Runtime calls this to get tools,
+	 * prompt, hooks etc. for each project. If not provided, falls back to
+	 * buildMatrixScopeOpts (backward compat during migration).
+	 */
+	// biome-ignore lint/suspicious/noExplicitAny: ScopeOpts generic varies by plugin
+	buildScopeOpts?: (projectId: string, ctx: RuntimeContext) => ScopeOpts<any>;
 }
 
 /**

@@ -172,6 +172,19 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	}
 
+	/**
+	 * Get ScopeOpts for a project. Prefers injected plugin builder (config.buildScopeOpts),
+	 * falls back to Matrix's hardcoded builder during migration.
+	 * TODO: delete fallback when all callers provide buildScopeOpts explicitly.
+	 */
+	// biome-ignore lint/suspicious/noExplicitAny: ScopeOpts generic varies by plugin
+	function getScopeOptsForProject(projectId: string): import("./runtime/context.ts").ScopeOpts<any> {
+		if (config.buildScopeOpts) {
+			return config.buildScopeOpts(projectId, ctx);
+		}
+		return buildMatrixScopeOpts(projectId, ctx.globalConfig.selfBootstrap, ctx);
+	}
+
 	// Request counter middleware
 	app.use("*", async (_c, next) => {
 		ctx.requestCount++;
@@ -447,15 +460,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		for (const project of projects) {
 			const tracker = await getTracker(ctx, project.id);
 			const eventStore = getEventStore(ctx, project.id);
-			const matrixOpts = buildMatrixScopeOpts(
-				project.id,
-				ctx.globalConfig.selfBootstrap,
-				ctx,
-			);
+			const scopeOpts = getScopeOptsForProject(project.id);
 			// Register scope opts so internal paths (deliverMessage, ensureChildAgentRunning)
 			// can look up the project's tools + prompt without passing them through every call.
-			ctx.scopeOpts.set(project.id, matrixOpts);
-			await resumeScope(project, tracker, eventStore, matrixOpts);
+			ctx.scopeOpts.set(project.id, scopeOpts);
+			await resumeScope(project, tracker, eventStore, scopeOpts);
 		}
 	}
 
