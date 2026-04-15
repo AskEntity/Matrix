@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -164,6 +164,17 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		globalConfig: { ...(config.initialConfig ?? DEFAULT_CONFIG) },
 	};
 
+	// Ensure project data directories exist for injected projects.
+	// Daemon creates these via ProjectManager.register(); runtime ensures
+	// they exist when projects are injected directly (e.g. tests, worker init).
+	if (config.projects) {
+		for (const p of config.projects) {
+			const projectDir = join(config.dataDir, "projects", p.id);
+			mkdirSync(join(projectDir, "tasks"), { recursive: true });
+			mkdirSync(join(projectDir, "debug"), { recursive: true });
+		}
+	}
+
 	// Request counter middleware
 	app.use("*", async (_c, next) => {
 		ctx.requestCount++;
@@ -302,6 +313,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			process.exit(0);
 		}, 100);
 		return c.json({ restarting: true });
+	});
+
+	// Project list — runtime exposes it so scope-worker can serve GET /projects
+	app.get("/projects", (c) => {
+		return c.json(ctx.pm.list());
 	});
 
 	// Register all route groups
