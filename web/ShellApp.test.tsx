@@ -1,4 +1,10 @@
 /// <reference lib="dom" />
+/**
+ * NOTE: This file requires happy-dom globals. Run separately:
+ *   bun test --preload web/test-setup.ts web/ShellApp.test.tsx
+ * 
+ * DO NOT run with `bun test` (all files) — GlobalRegistrator pollutes other tests.
+ */
 import "./test-setup.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { act, render, waitFor } from "@testing-library/react";
