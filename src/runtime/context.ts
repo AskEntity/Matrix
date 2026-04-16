@@ -116,6 +116,11 @@ export interface DaemonConfig {
 	 */
 	// biome-ignore lint/suspicious/noExplicitAny: ScopeOpts generic varies by plugin
 	buildScopeOpts?: (projectId: string, ctx: RuntimeContext) => ScopeOpts<any>;
+	/**
+	 * Plugin's effective dataRoot. Determines where tree.json and tasks/ live.
+	 * "@" = project root (default for Matrix), "@/plugin/<name>" = plugin subdirectory.
+	 */
+	dataRoot?: string;
 }
 
 /**

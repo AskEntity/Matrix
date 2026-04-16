@@ -231,6 +231,7 @@ export async function createDaemon(opts: {
 	async function startWorkerForPlugin(
 		scopeName: string,
 		pluginRuntimePath?: string,
+		pluginDataRoot?: string,
 	): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const worker = new Worker(
@@ -268,6 +269,7 @@ export async function createDaemon(opts: {
 							.list()
 							.map((p) => ({ id: p.id, name: p.name, path: p.path })),
 						pluginRuntimePath,
+						dataRoot: pluginDataRoot,
 					});
 				}
 				if (msg.type === "ready") {
@@ -429,7 +431,8 @@ export async function createDaemon(opts: {
 		const runtimePath = plugin.runtime
 			? resolve(plugin.pluginRoot, plugin.runtime)
 			: undefined;
-		await startWorkerForPlugin(plugin.name, runtimePath);
+		const { effectiveDataRoot } = await import("./plugin.ts");
+		await startWorkerForPlugin(plugin.name, runtimePath, effectiveDataRoot(plugin));
 	}
 
 	// ── Hono app with routes ──
