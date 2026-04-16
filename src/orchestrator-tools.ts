@@ -107,7 +107,7 @@ function stripEventsForLogs(
 
 // ── All tool definitions ──
 
-export function buildAllToolDefs(): AnyToolDef[] {
+export function buildAllToolDefs() {
 	return [
 		// ── get_tree ──
 		defineTool({
@@ -121,17 +121,17 @@ export function buildAllToolDefs(): AnyToolDef[] {
 					decl: { kind: "bind", from: "projectId" },
 				},
 				format: {
-					schema: z.enum(["flat", "tree"]),
+					schema: z.enum(["flat", "tree"]).optional(),
 					decl: { kind: "optional" },
 				},
 				include_closed: {
-					schema: z.boolean(),
+					schema: z.boolean().optional(),
 					decl: { kind: "optional" },
 					description:
 						"Include closed tasks in the result. Default false — closed tasks are hidden to reduce noise.",
 				},
 				include_details: {
-					schema: z.boolean(),
+					schema: z.boolean().optional(),
 					decl: { kind: "optional" },
 					description:
 						"Include full details (description, branch, worktreePath, color, costUsd, etc.) for each node. Default false — returns only id, title, status, children, parentId.",
@@ -264,13 +264,13 @@ export function buildAllToolDefs(): AnyToolDef[] {
 					decl: { kind: "explicit" },
 				},
 				draft: {
-					schema: z.boolean(),
+					schema: z.boolean().optional(),
 					decl: { kind: "optional" },
 					description:
 						"If true, creates the task as a draft. Draft tasks can be edited but not executed.",
 				},
 				color: {
-					schema: z.string(),
+					schema: z.string().optional(),
 					decl: { kind: "optional" },
 					description:
 						"Optional color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex like '#ff5733'). " +
@@ -292,8 +292,8 @@ export function buildAllToolDefs(): AnyToolDef[] {
 							title: args.title as string,
 							description: args.description as string,
 							parentId: args.parentId as string,
-							draft: args.draft as boolean | undefined,
-							color: args.color as string | undefined,
+							draft: args.draft,
+							color: args.color,
 							budgetUsd: defaultBudgetUsd || undefined,
 						},
 						"agent",
@@ -301,7 +301,7 @@ export function buildAllToolDefs(): AnyToolDef[] {
 							broadcastTree: () => R.broadcastTree(args.projectId as string),
 							projectPath: getProjectPath(
 								args.projectId as string,
-								args.parentId as string | null,
+								args.parentId,
 							),
 						},
 					);
@@ -355,17 +355,17 @@ export function buildAllToolDefs(): AnyToolDef[] {
 						"verify",
 						"failed",
 						"closed",
-					]),
+					]).optional(),
 					decl: { kind: "optional" },
 					description: "New status",
 				},
 				title: {
-					schema: z.string(),
+					schema: z.string().optional(),
 					decl: { kind: "optional" },
 					description: "New title",
 				},
 				description: {
-					schema: z.string(),
+					schema: z.string().optional(),
 					decl: { kind: "optional" },
 					description:
 						"Replaces the ENTIRE description field (full rewrite). " +
@@ -373,7 +373,7 @@ export function buildAllToolDefs(): AnyToolDef[] {
 						"old_description/new_description to avoid accidentally dropping content.",
 				},
 				old_description: {
-					schema: z.string(),
+					schema: z.string().optional(),
 					decl: { kind: "optional" },
 					description:
 						"Exact substring to find in the current description. Must be unique. " +
@@ -382,7 +382,7 @@ export function buildAllToolDefs(): AnyToolDef[] {
 						"If you intend to replace the whole description, use the `description` parameter instead.",
 				},
 				new_description: {
-					schema: z.string(),
+					schema: z.string().optional(),
 					decl: { kind: "optional" },
 					description:
 						"Replacement string for the old_description match. Same semantics as " +
@@ -390,19 +390,19 @@ export function buildAllToolDefs(): AnyToolDef[] {
 						"nothing else in the description changes.",
 				},
 				draft: {
-					schema: z.boolean(),
+					schema: z.boolean().optional(),
 					decl: { kind: "optional" },
 					description:
 						"Set draft flag. true = status becomes 'draft', false = status becomes 'pending'.",
 				},
 				parentId: {
-					schema: z.string(),
+					schema: z.string().optional(),
 					decl: { kind: "optional" },
 					description:
 						"New parent task ID. Moves the task under this parent (reparent).",
 				},
 				color: {
-					schema: z.string(),
+					schema: z.string().optional(),
 					decl: { kind: "optional" },
 					description:
 						"Color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex). " +
@@ -453,7 +453,7 @@ export function buildAllToolDefs(): AnyToolDef[] {
 					}
 
 					// Surgical description edit
-					let finalDescription = args.description as string | undefined;
+					let finalDescription = args.description;
 					if (
 						args.old_description !== undefined ||
 						args.new_description !== undefined
@@ -536,11 +536,11 @@ export function buildAllToolDefs(): AnyToolDef[] {
 						args.taskId as string,
 						{
 							status: args.status as TaskStatus | undefined,
-							title: args.title as string | undefined,
+							title: args.title,
 							description: finalDescription,
-							draft: args.draft as boolean | undefined,
-							parentId: args.parentId as string | undefined,
-							color: args.color as string | undefined,
+							draft: args.draft,
+							parentId: args.parentId,
+							color: args.color,
 						},
 						"agent",
 						{
@@ -616,14 +616,14 @@ export function buildAllToolDefs(): AnyToolDef[] {
 					decl: { kind: "explicit" },
 				},
 				requestReply: {
-					schema: z.boolean(),
+					schema: z.boolean().optional(),
 					decl: { kind: "optional" },
 					description: "If true, signals that a reply is expected.",
 				},
 			},
 			handler: async (args) => {
 				const projectId = args.projectId as string;
-				const senderTaskId = args.senderTaskId as string | null;
+				const senderTaskId = args.senderTaskId;
 				const targetTaskId = args.taskId as string;
 				const tracker = R.getTracker(projectId);
 				if (!tracker)
@@ -692,7 +692,7 @@ export function buildAllToolDefs(): AnyToolDef[] {
 							args.message as string,
 							{
 								title: args.title as string,
-								requestReply: args.requestReply as boolean | undefined,
+								requestReply: args.requestReply,
 							},
 						);
 						await R.deliverMessage(projectId, targetTaskId, queueMessage, {
@@ -775,7 +775,7 @@ export function buildAllToolDefs(): AnyToolDef[] {
 						currentNode?.title ?? "unknown",
 						args.message as string,
 						{
-							requestReply: args.requestReply as boolean | undefined,
+							requestReply: args.requestReply,
 						},
 					);
 
@@ -1356,18 +1356,18 @@ export function buildAllToolDefs(): AnyToolDef[] {
 					decl: { kind: "explicit" },
 				},
 				begin: {
-					schema: z.number(),
+					schema: z.number().optional(),
 					decl: { kind: "optional" },
 					description:
 						"Start cursor (inclusive). Events from this position onward.",
 				},
 				end: {
-					schema: z.number(),
+					schema: z.number().optional(),
 					decl: { kind: "optional" },
 					description: "End cursor (exclusive). Events up to this position.",
 				},
 				hideToolResults: {
-					schema: z.boolean(),
+					schema: z.boolean().optional(),
 					decl: { kind: "optional" },
 					description:
 						"Hide tool_result content (default true). When true, content is replaced with a short summary.",
@@ -1377,7 +1377,7 @@ export function buildAllToolDefs(): AnyToolDef[] {
 				const projectId = args.projectId as string;
 				const taskId = args.taskId as string;
 				const hideToolResults =
-					(args.hideToolResults as boolean | undefined) ?? true;
+					(args.hideToolResults) ?? true;
 				const tracker = R.getTracker(projectId);
 				if (!tracker)
 					return {
@@ -1394,8 +1394,8 @@ export function buildAllToolDefs(): AnyToolDef[] {
 				await eventStore.flushSession(taskId);
 				const { events: allEvents, hasOlderEvents } =
 					eventStore.readFromLastCompactMarker(taskId);
-				const begin = args.begin as number | undefined;
-				const end = args.end as number | undefined;
+				const begin = args.begin;
+				const end = args.end;
 				// Apply cursor range — precise slice, no limit needed
 				const sliced = allEvents.slice(begin ?? 0, end);
 				const processed = stripEventsForLogs(sliced, hideToolResults);
