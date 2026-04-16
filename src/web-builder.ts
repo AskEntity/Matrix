@@ -24,7 +24,8 @@ const REACT_EXTERNALS = [
 
 /** Shared modules — built once, importmap'd, external in shell + plugin builds. */
 const SHARED_MODULES = [
-	"@mxd/auth-context", // web/auth-context.ts — must be single instance for React context
+	"@mxd/auth-context", // web/auth-context.ts — single instance for React context
+	"@mxd/types",        // web/runtime-types.ts — runtime Event, TreeNode, QueueMessage etc.
 ];
 
 /** Paths to vendor shim source files (written to buildDir at build time). */
@@ -124,24 +125,32 @@ export async function buildWebAssets(opts: {
 	}
 
 	// ── Step 1b: Build shared modules (external React, importmap'd) ──
-	const authContextEntry = join(opts.projectRoot, "web", "auth-context.ts");
-	const sharedResult = await Bun.build({
-		entrypoints: [authContextEntry],
-		outdir: join(vendorDir, "shared"),
-		target: "browser",
-		format: "esm",
-		external: REACT_EXTERNALS,
-		root: opts.projectRoot,
-		naming: "auth-context.js",
-		minify,
-	});
-	if (!sharedResult.success) {
-		console.error("[web-builder] Shared module build failed:", sharedResult.logs);
+	const sharedEntries = [
+		{ specifier: "@mxd/auth-context", entry: join(opts.projectRoot, "web", "auth-context.ts"), outName: "auth-context.js" },
+		{ specifier: "@mxd/types", entry: join(opts.projectRoot, "web", "runtime-types.ts"), outName: "runtime-types.js" },
+	];
+
+	for (const shared of sharedEntries) {
+		const result = await Bun.build({
+			entrypoints: [shared.entry],
+			outdir: join(vendorDir, "shared"),
+			target: "browser",
+			format: "esm",
+			external: REACT_EXTERNALS,
+			root: opts.projectRoot,
+			naming: shared.outName,
+			minify,
+		});
+		if (!result.success) {
+			console.error(`[web-builder] Shared module ${shared.specifier} build failed:`, result.logs);
+		}
 	}
 
 	// Add shared modules to importmap
 	const importmap = { imports: { ...IMPORTMAP_ENTRIES } as Record<string, string> };
-	importmap.imports["@mxd/auth-context"] = "/vendor/shared/auth-context.js";
+	for (const shared of sharedEntries) {
+		importmap.imports[shared.specifier] = `/vendor/shared/${shared.outName}`;
+	}
 
 	const allExternals = [...REACT_EXTERNALS, ...SHARED_MODULES];
 

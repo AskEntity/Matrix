@@ -21,7 +21,8 @@
 		"noUnusedParameters": true,
 		"noPropertyAccessFromIndexSignature": false,
 		"paths": {
-			"@mxd/auth-context": ["./web/auth-context.ts"]
+			"@mxd/auth-context": ["./web/auth-context.ts"],
+			"@mxd/types": ["./web/runtime-types.ts"]
 		}
 	}
 }

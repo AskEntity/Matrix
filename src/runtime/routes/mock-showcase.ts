@@ -36,9 +36,6 @@ const TOOL_RENAME_FOLDER = T("rename_folder");
 import type { FolderNode, TaskNode, TaskStatus } from "../../types.ts";
 import { ulid } from "../../ulid.ts";
 
-const TOOL_CREATE_FOLDER = mcpToolName("create_folder");
-const TOOL_DELETE_FOLDER = mcpToolName("delete_folder");
-const TOOL_RENAME_FOLDER = mcpToolName("rename_folder");
 
 /**
  * Mock showcase endpoint — returns a complete dataset for UI development.

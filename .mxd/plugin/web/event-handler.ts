@@ -430,7 +430,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							msg.nodes
 								.filter(
 									(node) =>
-										isTask(node) && node.status === "pending" && !node.session,
+										isTask(node) && node.status === "pending",
 								)
 								.map((node) => node.id),
 						);

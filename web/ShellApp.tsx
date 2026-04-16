@@ -15,7 +15,8 @@ import { LocaleProvider } from "./i18n.ts";
 import { LoginPage } from "./LoginPage.tsx";
 
 // Dynamic import of compiled plugin JS (served at URL from build pipeline)
-function loadPluginUI(pluginPath: string) {
+// biome-ignore lint/suspicious/noExplicitAny: plugin component props vary
+function loadPluginUI(pluginPath: string): React.LazyExoticComponent<React.ComponentType<any>> {
 	return lazy(() =>
 		import(/* @vite-ignore */ pluginPath).then((m) => ({
 			default: m.Plugin ?? m.default,
