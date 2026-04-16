@@ -459,7 +459,7 @@ check state synchronously → subscribe → add timeout → unsubscribe in final
 
 ## Stateless HTTP MCP Endpoint
 
-POST `/mcp` — MCP Streamable HTTP transport for external clients. Stateless: no attach_to, no session state. 6 tools (list_projects, get_tree, get_task, get_logs, send_user_message, yield_external). See "MCP Layer 1" section below for details.
+POST `/mcp` — MCP Streamable HTTP transport for external clients. Stateless: no attach_to, no session state. 6 tools: list_projects, get_tree, get_task, get_logs (both), send_user_message, yield_external (external-only). ToolDef `availability: "internal" | "external" | "both"` on every tool. Workflow: send_user_message → yield_external → get_logs.
 
 ## Anti-pattern: Conflating Attached-Observer with Peer-Project (reverted)
 
@@ -575,34 +575,11 @@ Three layers: Intention → Test → Architecture. Three mutations guard each la
 
 Tests are the single source of truth. Bottom-up: write tests → find simplest architecture that passes them. Architecture is replaceable long-term, improved short-term. Reject spec-driven development.
 
-## System Prompt v2
+## System Prompt
 
-10 chapters. Two roles: root orchestrator, worker. Fork = "changing jobs". Memory callee-saved convention. Ch7 "Keeping Honest" (test your tests, check coupling, challenge the task). "ASK — NEVER SILENTLY FALL BACK." Adversarial testing.
+14 chapters. Two roles: root orchestrator, worker. Key principles: "ASK — NEVER SILENTLY FALL BACK", adversarial testing, fork = "changing jobs", memory callee-saved.
 
-## System Prompt Chapter 7 Renamed
-
-"Three Mutations" → "Keeping Honest". Same three practices, reframed: "Test your tests", "Check coupling", "Challenge the task". Closing paragraph removed.
-
-## System Prompt Ch5 "Using Tools" Added
-
-New chapter between Git(4) and Writing Code(now 6). All subsequent chapters renumbered (5→6...10→11). Four sections:
-- **Reversibility**: worktree-internal mistakes recoverable via git; external interactions may not be
-- **Scope awareness**: blast radius of each tool, precision matching
-- **Time awareness**: foreground blocks loop, background results via yield(), don't re-run running commands
-- **Dangerous operations**: filesystem (rm, write_file), git (checkout, add .), tasks (delete erases the decision, reset destroys session, close loses unmerged commits). Hierarchy: send_message > close > reset > delete.
-
-## Compaction Prompt Fix
-
-"this session" → "ENTIRE history". Re-compaction must integrate previous checkpoint into new narrative, not restart. Section 1 and Section 8 both updated.
-
-## System Prompt Editing Discipline
-
-System prompt is for ALL Matrix users, not our project notebook. When editing it:
-- Only add universal principles that help any project, not matrix-specific concerns
-- Matrix-specific rules go in memory.md
-- Read the full prompt before editing — understand the 10-chapter structure
-- Delegate to a child for full review if context is insufficient
-- Prompt contains only principles and behavioral rules. Flow details go to tool descriptions.
+**Editing discipline**: prompt is for ALL Matrix users, not our project notebook. Matrix-specific rules → memory.md. Read the full prompt before editing. Principles and behavioral rules only — flow details go to tool descriptions.
 
 ## evaluate_script Discipline
 
@@ -827,72 +804,7 @@ Lesson: not every "the tool could be nicer to bad input" is a bug. Some inputs s
 ### JSONL inputTokens field semantics
 `inputTokens` in usage events = `totalContextTokens` = Anthropic's `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. NOT just the raw `input_tokens` field. This is intentional (set at provider-shared.ts:1469).
 
-## Stateless HTTP MCP Endpoint
 
-POST `/mcp` — MCP Streamable HTTP transport for external clients (e.g., Claude Code). Stateless: no attach_to, no session state.
-
-### ToolDef Availability
-Required field `availability: "internal" | "external" | "both"` on every ToolDef. No default — each tool explicitly declares who can call it.
-- `"internal"`: 25 orchestrator tools + 7 builtin tools
-- `"both"`: list_projects, get_tree, get_task, get_logs
-- `"external"`: send_user_message, yield_external
-
-External endpoint filters by `availability !== "internal"`. Internal agent pipeline unchanged.
-
-### External Schema (buildExternalShape)
-Bind params become required explicit params for external callers. Simple and mechanical — no special cases by `from` field. External clients provide projectId explicitly; taskId bind params become required too.
-
-### get_tree "(you)" Marker
-`taskId` removed from get_tree's params entirely. Handler uses `checkPermission(auth, "human", {})` to skip marking for external callers, and `checkPermission(auth, "exact", { taskId: nodeId })` for agent identity. No data extracted from auth — only permission checks.
-
-### Auth Changes
-- **`human` permission mode**: `checkPermission(auth, "human", {})` returns true for human auth, false for agent auth. Used by get_tree to skip "(you)" marker.
-- **`getBindValues` deleted**: replaced by `resolveBindParam(auth, from)` which resolves one param at a time and asserts on human auth (framework-only, not for handlers).
-- **Auth internal storage simplified**: private `Symbol("auth-internal")` as property key instead of WeakMap + branded type.
-- **`createAgentAuth` taskId**: `string` not `string | null`. Root orchestrator always has `tracker.rootNodeId`.
-
-### External-Only Tools
-- **send_user_message(projectId, taskId, content)**: delivers user message via `R.deliverMessage`. Returns cursor (read BEFORE delivery for stable snapshot).
-- **yield_external(projectId, taskId, timeoutMs?)**: subscribes to events via `subscribeToEvents`, waits for wake signals (agent_idle, done_notified, agent_stopped, orchestration_completed). Returns `{ reason, taskStatus, cursor }`.
-- **get_logs begin/end**: cursor range pagination. `begin` (inclusive), `end` (exclusive). Returns `{ events, cursor (total count), hasMore }`.
-
-### Workflow: send → yield → get_logs
-1. `send_user_message` → returns `{ cursor: N }` (position before message)
-2. `yield_external` → blocks until agent pauses → returns `{ cursor: M, reason, taskStatus }`
-3. `get_logs(begin=N, end=M)` → returns events from N to M (the agent's response)
-
-### Folder Tool Constants
-`TOOL_CREATE_FOLDER`, `TOOL_DELETE_FOLDER`, `TOOL_RENAME_FOLDER`, `TOOL_GET_LOGS` added to `src/tool-names.ts`. `web/event-display.ts` uses constants instead of string literals.
-
-## MCP Layer 1 — Stateless External Endpoint
-
-POST `/mcp` — MCP Streamable HTTP transport. Stateless: no attach_to, no session state.
-
-### 6 tools
-- **list_projects** (both), **get_tree(projectId)** (both), **get_task(projectId, taskId)** (both), **get_logs(projectId, taskId, begin?, end?)** (both) — read-only
-- **send_user_message(projectId, taskId, content)** (external) — delivers user message, returns cursor before delivery
-- **yield_external(projectId, taskId, timeoutMs?)** (external) — peek-or-subscribe-or-wait, returns reason + taskStatus + cursor
-
-### Workflow: send → yield → get_logs
-1. `send_user_message` returns `{ cursor: N }` (position before message)
-2. `yield_external` blocks until agent pauses → returns `{ cursor: M, reason, taskStatus }`
-3. `get_logs(begin=N, end=M)` returns events in that range
-
-### ToolDef availability (required field)
-`"internal" | "external" | "both"` on every ToolDef. No default. 25 orchestrator + 7 builtin = internal. list_projects/get_tree/get_task/get_logs = both. send_user_message/yield_external = external.
-
-### Auth changes
-- `checkPermission(auth, "human", {})` — new mode for external callers
-- get_tree "(you)" marker: uses `checkPermission(auth, "exact", { taskId })` per node, no data extracted from auth
-- `getBindValues` deleted → `resolveBindParam(auth, from)`: single param, asserts on human auth. "NOT for handlers" invariant preserved.
-- Auth internals: private Symbol key replaces WeakMap + branded type
-- `createAgentAuth` taskId: `string` not `string | null` (root always has rootNodeId)
-
-### Prefix/suffix headers (deferred)
-`X-MCP-Prefix` / `X-MCP-Suffix` for send_user_message — attempted but reverted. Concurrent request isolation needs per-session McpServer, not shared mutable ref.
-
-### yield_external fast path
-Checks `session.queue?.idle` (covers explicit + implicit yield) and `!session` (not running) before subscribing. Without this → deadlock when agent already idle.
 
 ## OpenAI SDK Migration
 
@@ -975,11 +887,14 @@ agent_end.reason: `stopped` (only value now — other exit reasons tracked elsew
 
 Anthropic provider inner retry was catching abort errors as transient errors → 4 retries × exponential backoff = 30s delay on stopTask/resetTask. Fix: (1) catch checks `signal.aborted` first, (2) retry sleep responds to abort, (3) post-sleep abort check. Reset time: 30s → instant.
 
-## Plugin Architecture (ScopeOpts)
+## Plugin Architecture
 
-Runtime/plugin separation in progress. Matrix-specific behavior extracted from runtime into configurable hooks.
+### Three-Layer Split
+- **Daemon** (`src/daemon.ts`): HTTP shell, auth, config, project CRUD, plugin discovery, worker management, SSE relay (ring buffer + Last-Event-ID), web build (Bun.build + importmap)
+- **Runtime** (`src/runtime.ts`): Plugin-agnostic. ZERO Matrix imports. Receives `buildScopeOpts` via config.
+- **Plugin** (`.mxd/plugin/`): Matrix-specific — manifest, tools, prompt, hooks, web UI component
 
-### ScopeOpts on DaemonContext
+### ScopeOpts on RuntimeContext
 
 `ctx.scopeOpts: Map<projectId, ScopeOpts<T>>` — per-project scope configuration. `buildMatrixScopeOpts()` is the ONE place that knows Matrix tools + prompt + hooks.
 
@@ -1045,9 +960,8 @@ After step 0 + step 1, `runAgentForNode` has zero Matrix imports. Runtime doesn'
 
 Changed from `"both"` to `"external"` — agents don't need to read other tasks' JSONL. get_logs is for external MCP clients (send → yield → get_logs workflow).
 
-## Daemon / Runtime / Plugin Split
+### Key Details (formerly "Daemon / Runtime / Plugin Split")
 
-### Architecture
 
 ```
 daemon.ts (meta-daemon shell):
@@ -1144,48 +1058,12 @@ Tests needing git worktrees use `initTestProject(path)` helper (creates git repo
 
 ### Current State (half-state)
 
-Production still runs `runtime.ts` directly (cli.ts → runtime.ts). daemon.ts is WIP — has auth, config, SSE relay, HTTP proxy, plugin discovery, project CRUD, typed sync. Not yet wired as production entry. 12 emission-harness test failures remain (cwd/worktreePath on root node).
+Production: daemon.ts is entry point (cli.ts → daemon.ts). Daemon starts worker per global plugin.
 
-
-## Worker-Based Scope Isolation (Plugin Architecture)
-
-### Architecture
-- `src/daemon.ts`: Meta-daemon shell — Hono routes, auth, config, project CRUD, plugin discovery, worker management, SSE relay with ring buffer + Last-Event-ID catch-up
-- `src/runtime.ts`: Plugin-agnostic runtime — ZERO Matrix imports. Receives `buildScopeOpts` via `DaemonConfig`
-- `src/runtime/scope-worker.ts`: Worker entry — loads plugin runtime module, passes `buildScopeOpts` to `createApp`
-- `.mxd/plugin/`: Matrix plugin — manifest, runtime (exports `buildMatrixScopeOpts`), web UI
-- `web/`: Daemon shell UI — auth context (shell-owned), ShellApp, LoginPage
-- `web/auth-context.ts`: Shell-owned React contexts (AuthFetchProvider, GetTokenProvider). Plugin re-exports from here.
-
-### Key Invariant: Import Direction
-- Shell (`web/`, `src/`) → ZERO imports from `.mxd/plugin/` (delete plugin → shell compiles)
-- Plugin → shell/runtime is OK (plugin consumes from host)
-
-### buildScopeOpts Injection
-- `DaemonConfig.buildScopeOpts`: required callback `(projectId, ctx) => ScopeOpts`
-- Daemon resolves plugin runtime path → passes to worker via `pluginRuntimePath`
-- Worker dynamically imports plugin module → wraps as `buildScopeOpts`
-- Tests use `createMatrixApp` (from `test-utils/create-matrix-app.ts`) which auto-injects Matrix scope opts
-- Runtime throws if `buildScopeOpts` not provided (no silent fallback)
-
-### Daemon SSE
-- Per-project ring buffer (2000 entries) + monotonic seqId
-- `Last-Event-ID` header on reconnect → catch-up from ring buffer
-- Falls back to full tree fetch if gap too large
-
-### Streaming Response Forwarding
-- Worker detects `text/event-stream` content-type → streams chunks via postMessage
-- Daemon receives `http_response_stream_start/chunk/end` → creates ReadableStream for client
-- Normal HTTP: buffered `response.text()` as before
-
-### Plugin Web Assets
-- Served at `/plugin-assets/<pluginName>/` URL path (not filesystem path)
-- `/plugins` endpoint returns URL paths, not absolute filesystem paths
-- Auth skips `/plugin-assets/` prefix
-
-### Post-Compact PREFIX DRIFT Fix
-- Root cause: post-compact user message built via manual string construction (duplicate codepath)
-- Fix: route through `queue.drain()` → `adapter.appendQueueMessagesToMessages()` → `recordQueueEvents()` — same path as yield wake
-- This emits `messages_consumed` so walker can materialize deferred messages before first post-compact assistant turn
-- Previously-skipped test now passes (44 pass in drift-lifecycle.test.ts)
+### Key Invariants
+- Shell/src → ZERO imports from `.mxd/plugin/` (delete plugin → still compiles)
+- Plugin web → ZERO imports from `../../../src/` (plugin is independent repo)
+- Plugin web imports via `@mxd/auth-context`, `@mxd/types` (importmap shared modules)
+- Runtime throws if `buildScopeOpts` not provided
+- Tests use `createMatrixApp` (auto-injects Matrix scope opts)
 
