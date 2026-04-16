@@ -58,6 +58,14 @@ bun run typecheck     # tsc --noEmit
 bun run check         # biome lint + format
 ```
 
+**CRITICAL: `bun run test` is the ONLY correct way to run tests.** NOT `bun test`.
+- `bun test` only runs `src/` (due to `bunfig.toml root = "src"`) — silently skips ALL web/ frontend tests.
+- `bun run test` runs `package.json` script which runs both `bun test` AND `bun test ./web/`.
+- This has caused real production bugs: frontend tests silently not running → broken UI merged to main.
+- Never pipe test output (`| grep`, `| head`, `| tail`). Run bare, read the full saved output file afterward.
+- If tests are flaky, run multiple times without pipes and read each output file separately.
+```
+
 ## Architecture Overview
 
 ```
