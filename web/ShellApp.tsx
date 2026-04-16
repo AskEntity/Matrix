@@ -5,7 +5,7 @@
  * settings panel, scope selector.
  * Plugin renders below the header as a dynamically-loaded React component.
  */
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { authFetch, clearToken, getToken } from "./auth.ts";
 import { AuthFetchProvider, GetTokenProvider } from "@mxd/auth-context";
 import { AppHeader } from "./components/AppHeader.tsx";

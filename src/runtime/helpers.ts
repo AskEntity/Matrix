@@ -147,8 +147,11 @@ export function projectTasksDir(dataDir: string, projectId: string, dataRoot?: s
  * Used for drift snapshots (pre-API-call messages[]) and other investigation
  * artifacts.
  */
-export function projectDebugDir(dataDir: string, projectId: string): string {
-	return join(dataDir, "projects", projectId, "debug");
+export function projectDebugDir(dataDir: string, projectId: string, dataRoot?: string): string {
+	if (!dataRoot || dataRoot === "@") {
+		return join(dataDir, "projects", projectId, "debug");
+	}
+	return join(dataDir, "projects", projectId, dataRoot.slice(2), "debug");
 }
 
 /** Get or create an EventStore for a project. */

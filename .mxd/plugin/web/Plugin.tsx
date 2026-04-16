@@ -12,7 +12,6 @@ import {
 	IconArrowDown,
 	IconClose,
 	IconExpand,
-	IconGear,
 	IconHexagon,
 	IconMinimize,
 	IconPlus,
@@ -706,6 +705,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 	} = useMemo(
 		() =>
 			createActionHandlers({
+				authFetch,
 				projectId,
 				selectedTaskId,
 				rootNodeId,

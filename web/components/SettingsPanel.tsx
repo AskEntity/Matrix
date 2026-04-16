@@ -1003,10 +1003,12 @@ function GlobalTab({
 	onDraftChange: (patch: Record<string, unknown>) => void;
 	onSave: () => void;
 	onRevert: () => void;
+	// authFetch obtained via hook inside component
 	dirty: boolean;
 	theme: string;
 	onThemeChange: (theme: string) => void;
 }) {
+	const authFetch = useAuthFetch();
 	const { locale, setLocale, t } = useLocale();
 	const [restarting, setRestarting] = useState(false);
 	const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
