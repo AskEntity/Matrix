@@ -27,22 +27,21 @@ export type ParamDecl =
 	| { kind: "explicit" }
 	| { kind: "bind"; from: "projectId" | "taskId" };
 
-/** Map of parameter name → { zod schema, decl metadata, description } */
-export type ParamDefs = Record<
-	string,
-	{ schema: ZodTypeAny; decl: ParamDecl; description?: string }
->;
+/** Single param definition — schema type constrained by decl kind. */
+export type ParamDef =
+	| { schema: ZodTypeAny; decl: { kind: "explicit" }; description?: string }
+	| { schema: ZodTypeAny; decl: { kind: "bind"; from: "projectId" | "taskId" }; description?: string }
+	| { schema: z.ZodOptional<ZodTypeAny>; decl: { kind: "optional" }; description?: string };
+
+/** Map of parameter name → param definition */
+export type ParamDefs = Record<string, ParamDef>;
 
 /**
  * Infer the handler args type from ParamDefs.
- * bind params are always present (framework injects them).
- * explicit params are required.
- * optional params are T | undefined.
+ * No conditional needed — optional schemas are z.ZodOptional<T> which infer as T | undefined.
  */
 export type InferParams<P extends ParamDefs> = {
-	[K in keyof P]: P[K]["decl"] extends { kind: "optional" }
-		? z.infer<P[K]["schema"]> | undefined
-		: z.infer<P[K]["schema"]>;
+	[K in keyof P]: z.infer<P[K]["schema"]>;
 };
 
 // ── ToolDef ──
