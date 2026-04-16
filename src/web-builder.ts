@@ -22,6 +22,11 @@ const REACT_EXTERNALS = [
 	"react/jsx-dev-runtime",
 ];
 
+/** Shared modules — built once, importmap'd, external in shell + plugin builds. */
+const SHARED_MODULES = [
+	"@mxd/auth-context", // web/auth-context.ts — must be single instance for React context
+];
+
 /** Paths to vendor shim source files (written to buildDir at build time). */
 const VENDOR_SHIMS: Record<string, { importPath: string; hasDefault: boolean }> = {
 	react: { importPath: "react", hasDefault: true },
@@ -113,13 +118,35 @@ export async function buildWebAssets(opts: {
 		throw new Error("Vendor build failed");
 	}
 
-	// ── Step 2: Build shell (external React) ──
+	// ── Step 1b: Build shared modules (external React, importmap'd) ──
+	const authContextEntry = join(opts.projectRoot, "web", "auth-context.ts");
+	const sharedResult = await Bun.build({
+		entrypoints: [authContextEntry],
+		outdir: join(vendorDir, "shared"),
+		target: "browser",
+		format: "esm",
+		external: REACT_EXTERNALS,
+		root: opts.projectRoot,
+		naming: "auth-context.js",
+		minify,
+	});
+	if (!sharedResult.success) {
+		console.error("[web-builder] Shared module build failed:", sharedResult.logs);
+	}
+
+	// Add shared modules to importmap
+	const importmap = { imports: { ...IMPORTMAP_ENTRIES } as Record<string, string> };
+	importmap.imports["@mxd/auth-context"] = "/vendor/shared/auth-context.js";
+
+	const allExternals = [...REACT_EXTERNALS, ...SHARED_MODULES];
+
+	// ── Step 2: Build shell (external React + shared modules) ──
 	const shellResult = await Bun.build({
 		entrypoints: [shellEntry],
 		outdir: appDir,
 		target: "browser",
 		format: "esm",
-		external: REACT_EXTERNALS,
+		external: allExternals,
 		root: projectRoot,
 		minify,
 	});
@@ -137,7 +164,7 @@ export async function buildWebAssets(opts: {
 			outdir: appDir,
 			target: "browser",
 			format: "esm",
-			external: REACT_EXTERNALS,
+			external: allExternals,
 			root: projectRoot,
 			minify,
 		});
@@ -200,7 +227,7 @@ export async function buildWebAssets(opts: {
 
 	return {
 		buildDir,
-		importmap: { imports: { ...IMPORTMAP_ENTRIES } },
+		importmap,
 		shellEntryPath: `/app/${shellRelPath}`,
 		pluginEntryPaths,
 		cssPaths,
