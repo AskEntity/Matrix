@@ -1,7 +1,12 @@
 /**
  * Matrix plugin runtime — builds ScopeOpts for the worker.
  *
- * This is the Matrix coding IDE's runtime configuration:
- * tools, prompt, MCP, worktree hooks, lifecycle.
+ * Generic interface: (projectId, ctx) → ScopeOpts.
+ * Matrix-specific args (selfBootstrap) read from ctx.globalConfig.
  */
-export { buildMatrixScopeOpts } from "../../src/runtime/agent-lifecycle.ts";
+import { buildMatrixScopeOpts } from "../../src/runtime/agent-lifecycle.ts";
+import type { RuntimeContext } from "../../src/runtime/context.ts";
+
+export function buildScopeOpts(projectId: string, ctx: RuntimeContext) {
+	return buildMatrixScopeOpts(projectId, ctx.globalConfig.selfBootstrap ?? false, ctx);
+}

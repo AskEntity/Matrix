@@ -108,11 +108,10 @@ describe("scope-worker", () => {
 		expect(body.projectCount).toBe(0);
 	});
 
-	test("projects list works through worker", async () => {
+	test("projects list is daemon-owned (worker returns 404)", async () => {
+		// /projects GET is served by daemon, not worker
 		const res = await workerFetch(worker, "http://localhost/projects");
-		expect(res.status).toBe(200);
-		const body = JSON.parse(res.body);
-		expect(Array.isArray(body)).toBe(true);
+		expect(res.status).toBe(404);
 	});
 
 	test("stats endpoint works through worker", async () => {

@@ -29,7 +29,6 @@ import { registerAgentRoutes } from "./runtime/routes/agent.ts";
 import { registerMcpEndpoint } from "./runtime/routes/mcp-endpoint.ts";
 import { registerMockShowcaseRoute } from "./runtime/routes/mock-showcase.ts";
 import { registerProjectRoutes } from "./runtime/routes/projects.ts";
-import { registerSSERoute } from "./runtime/routes/sse.ts";
 import { registerTaskRoutes } from "./runtime/routes/tasks.ts";
 
 import type { Event } from "./events.ts";
@@ -311,17 +310,13 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// restart-daemon is daemon-owned (needs process.exit on the main thread)
 
-	// Project list — runtime exposes it so scope-worker can serve GET /projects
-	app.get("/projects", (c) => {
-		return c.json(ctx.pm.list());
-	});
+	// Project list served by daemon. Worker has it for internal routes that need project lookup.
 
 	// Register all route groups
 	registerProjectRoutes(app, ctx);
 	registerTaskRoutes(app, ctx);
 	// Config routes removed — daemon shell owns config CRUD.
 	registerAgentRoutes(app, ctx);
-	registerSSERoute(app, ctx);
 	registerMcpEndpoint(app, ctx);
 	registerMockShowcaseRoute(app);
 

@@ -39,8 +39,10 @@ self.onmessage = async (event: MessageEvent) => {
 				const pluginMod = await import(pluginRuntimePath);
 				const builder = pluginMod.buildMatrixScopeOpts ?? pluginMod.buildScopeOpts ?? pluginMod.default;
 				if (typeof builder === "function") {
+					// Plugin's builder receives (projectId, ctx) — generic interface.
+					// Plugin-specific args (like selfBootstrap) are read from ctx.globalConfig inside the builder.
 					buildScopeOpts = (projectId: string, ctx: import("./context.ts").RuntimeContext) =>
-						builder(projectId, ctx.globalConfig.selfBootstrap ?? false, ctx);
+						builder(projectId, ctx);
 				}
 			}
 			appInstance = createApp({ dataDir, globalConfigPath, projects, buildScopeOpts });
@@ -146,16 +148,8 @@ self.onmessage = async (event: MessageEvent) => {
 		if (!appInstance) return;
 
 		if (key === "projects") {
-			const projects = data as import("./worker-api.ts").SyncMap["projects"];
-			appInstance.pm.sync(projects);
-			// Ensure data directories exist for new projects
-			const { mkdirSync } = await import("node:fs");
-			const { join } = await import("node:path");
-			for (const p of projects) {
-				const projectDir = join(appInstance.ctx.config.dataDir, "projects", p.id);
-				mkdirSync(join(projectDir, "tasks"), { recursive: true });
-				mkdirSync(join(projectDir, "debug"), { recursive: true });
-			}
+			appInstance.pm.sync(data as import("./worker-api.ts").SyncMap["projects"]);
+			// Data directories created by daemon before sync (POST /projects handler)
 		} else if (key === "config") {
 			appInstance.ctx.globalConfig = data as import("./worker-api.ts").SyncMap["config"];
 		} else if (key === "project_deleted") {
