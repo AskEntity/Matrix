@@ -1,6 +1,3 @@
 [test]
-# web/ tests use happy-dom GlobalRegistrator which pollutes globalThis.
-# Run web tests separately: bun test ./web/
-# Bun runs all test files in one process (no isolation), so happy-dom's
-# global overrides break non-DOM tests. This is Bun's known limitation.
-root = "src"
+# All tests (src/ + web/) run with a single `bun test`.
+# Web render tests manage happy-dom lifecycle internally (beforeAll/afterAll).
