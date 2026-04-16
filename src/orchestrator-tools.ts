@@ -34,7 +34,7 @@ import {
 import { getDescendantIds, slugify } from "./task-utils.ts";
 import type { Auth } from "./tool-auth.ts";
 import { checkPermission } from "./tool-auth.ts";
-import { type ToolDef, toToolDefinition } from "./tool-def.ts";
+import { type AnyToolDef, defineTool, type ToolDef, toToolDefinition } from "./tool-def.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import { isFolder, isTask, stripSession, type TaskStatus } from "./types.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
@@ -107,10 +107,10 @@ function stripEventsForLogs(
 
 // ── All tool definitions ──
 
-export function buildAllToolDefs(): ToolDef[] {
+export function buildAllToolDefs(): AnyToolDef[] {
 	return [
 		// ── get_tree ──
-		{
+		defineTool({
 			name: "get_tree",
 			availability: "both",
 			description:
@@ -187,10 +187,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					],
 				};
 			},
-		},
+		}),
 
 		// ── get_task ──
-		{
+		defineTool({
 			name: "get_task",
 			availability: "both",
 			description:
@@ -229,10 +229,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					],
 				};
 			},
-		},
+		}),
 
 		// ── create_task ──
-		{
+		defineTool({
 			name: "create_task",
 			availability: "internal",
 			description:
@@ -321,10 +321,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
 		// ── update_task ──
-		{
+		defineTool({
 			name: "update_task",
 			availability: "internal",
 			description:
@@ -577,13 +577,13 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
 		// ── yield (prefab) ──
 		createYieldTool(),
 
 		// ── send_message ──
-		{
+		defineTool({
 			name: "send_message",
 			availability: "internal",
 			description:
@@ -804,10 +804,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
 		// ── close_task ──
-		{
+		defineTool({
 			name: "close_task",
 			availability: "internal",
 			description:
@@ -858,10 +858,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
 		// ── delete_task ──
-		{
+		defineTool({
 			name: "delete_task",
 			availability: "internal",
 			description:
@@ -916,10 +916,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
 		// ── reset_task ──
-		{
+		defineTool({
 			name: "reset_task",
 			availability: "internal",
 			description:
@@ -972,10 +972,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
 		// ── clarify ──
-		{
+		defineTool({
 			name: "clarify",
 			availability: "internal",
 			description:
@@ -1026,10 +1026,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					],
 				};
 			},
-		},
+		}),
 
 		// ── reorder_tasks ──
-		{
+		defineTool({
 			name: "reorder_tasks",
 			availability: "internal",
 			description:
@@ -1109,10 +1109,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
 		// ── Folder tools ──
-		{
+		defineTool({
 			name: "create_folder",
 			availability: "internal",
 			description:
@@ -1163,9 +1163,9 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
-		{
+		defineTool({
 			name: "delete_folder",
 			availability: "internal",
 			description:
@@ -1237,9 +1237,9 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
-		{
+		defineTool({
 			name: "rename_folder",
 			availability: "internal",
 			description: "Rename a folder.",
@@ -1304,10 +1304,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
 		// ── list_projects ──
-		{
+		defineTool({
 			name: "list_projects",
 			availability: "both",
 			description:
@@ -1336,10 +1336,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					],
 				};
 			},
-		},
+		}),
 
 		// ── get_logs ──
-		{
+		defineTool({
 			name: "get_logs",
 			availability: "external",
 			description:
@@ -1417,10 +1417,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					],
 				};
 			},
-		},
+		}),
 
 		// ── send_message_to_project ──
-		{
+		defineTool({
 			name: "send_message_to_project",
 			availability: "internal",
 			description:
@@ -1548,10 +1548,10 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
 		// ── fork_task_context ──
-		{
+		defineTool({
 			name: "fork_task_context",
 			availability: "internal",
 			description:
@@ -1672,7 +1672,7 @@ export function buildAllToolDefs(): ToolDef[] {
 					};
 				}
 			},
-		},
+		}),
 
 		// ── done (prefab with Matrix guards) ──
 		createDoneTool({
@@ -1721,8 +1721,8 @@ export function buildAllToolDefs(): ToolDef[] {
 function buildEvaluateScriptTool(
 	messagesRef: { current: unknown[] },
 	allToolsRef: { current: unknown[] },
-): ToolDef {
-	return {
+){
+	return defineTool({
 		name: "evaluate_script",
 		availability: "internal",
 		description:
@@ -1813,7 +1813,7 @@ function buildEvaluateScriptTool(
 				};
 			}
 		},
-	};
+	});
 }
 
 // ── Public API ──
