@@ -236,7 +236,7 @@ function AuthenticatedShell() {
 			<div style={{ flex: 1, overflow: "hidden" }}>
 				{PluginUI ? (
 					<Suspense fallback={<div style={{ padding: 20, color: "#8b949e" }}>Loading plugin...</div>}>
-						<PluginUI />
+						<PluginUI projectId={projectId} />
 					</Suspense>
 				) : (
 					<div style={{ padding: 20, color: "#8b949e" }}>Select a scope to load plugin UI</div>
