@@ -198,7 +198,7 @@ function AuthenticatedShell() {
 	}, [projectId]);
 
 	return (
-		<>
+		<div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
 			<AppHeader
 				connected={connected}
 				projects={projects}
@@ -245,6 +245,6 @@ function AuthenticatedShell() {
 					<div style={{ padding: 20, color: "#8b949e" }}>Select a scope to load plugin UI</div>
 				)}
 			</div>
-		</>
+		</div>
 	);
 }
