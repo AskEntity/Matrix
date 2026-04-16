@@ -27,6 +27,9 @@ export const AppHeader = memo(function AppHeader({
 	onToggleSettings,
 	onLogout,
 	onToggleSidebar,
+	scopes,
+	selectedScope,
+	onScopeChange,
 }: {
 	connected: boolean;
 	projects: Project[];
@@ -43,6 +46,9 @@ export const AppHeader = memo(function AppHeader({
 	onToggleSettings: () => void;
 	onLogout?: () => void;
 	onToggleSidebar?: () => void;
+	scopes?: { name: string }[];
+	selectedScope?: string;
+	onScopeChange?: (scope: string) => void;
 }) {
 	const authFetch = useAuthFetch();
 	const { t } = useLocale();
@@ -187,6 +193,19 @@ export const AppHeader = memo(function AppHeader({
 							<span style={{ fontSize: "12px", color: "var(--text-faint)" }}>
 								{t("project.noProjects")}
 							</span>
+						)}
+						{scopes && scopes.length > 0 && (
+							<select
+								className="mxd-select mxd-scope-select"
+								value={selectedScope ?? ""}
+								onChange={(e) => onScopeChange?.(e.target.value)}
+							>
+								{scopes.map((s) => (
+									<option key={s.name} value={s.name}>
+										{s.name}
+									</option>
+								))}
+							</select>
 						)}
 						<button
 							type="button"
