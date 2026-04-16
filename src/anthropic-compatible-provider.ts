@@ -492,7 +492,15 @@ function createAnthropicAdapter(
 				tools: toolsWithCache,
 				...(adaptiveEffort
 					? {
-							thinking: { type: "adaptive" as const },
+							// display:"summarized" is the 4.6 default but was changed to
+							// "omitted" in 4.7. Matrix persists thinking to JSONL and
+							// renders it in a developer activity log (not a user-facing
+							// stream), so we opt in to preserve the audit trail. Cost is
+							// identical; only streaming latency differs.
+							thinking: {
+								type: "adaptive" as const,
+								display: "summarized" as const,
+							},
 							output_config: adaptiveEffort,
 						}
 					: {}),
