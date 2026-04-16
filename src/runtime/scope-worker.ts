@@ -22,13 +22,13 @@ self.onmessage = async (event: MessageEvent) => {
 	const msg = event.data;
 
 	if (msg.type === "init") {
-		const { dataDir, globalConfigPath, projects, pluginRuntimePath } = msg as {
+		const { dataDir, globalConfigPath, projects, pluginRuntimePath, dataRoot } = msg as {
 			type: "init";
 			dataDir: string;
 			globalConfigPath: string;
 			projects?: Array<{ id: string; name: string; path: string }>;
-			/** Path to plugin's runtime module (exports buildScopeOpts). */
 			pluginRuntimePath?: string;
+			dataRoot?: string;
 		};
 
 		try {
@@ -45,7 +45,7 @@ self.onmessage = async (event: MessageEvent) => {
 						builder(projectId, ctx);
 				}
 			}
-			appInstance = createApp({ dataDir, globalConfigPath, projects, buildScopeOpts });
+			appInstance = createApp({ dataDir, globalConfigPath, projects, buildScopeOpts, dataRoot });
 			await appInstance.loadConfig();
 
 			// Wire broadcast BEFORE autoResume — events during crash recovery must reach shell
