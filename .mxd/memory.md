@@ -37,8 +37,8 @@ This is a product property of Matrix's commit model, not a policy preference. Br
 3. **Won't communicate** — text blocks invisible to parent. Use send_message.
 4. **Won't question architecture** — "why does this exist" > "how to make it work".
 5. **"Unify" = add third path** — delete until ONE remains.
-6. **Premature heuristic stacking** — when building a tool/analyzer, agents default to "handle every imagined case upfront": classifications, category labels, filter flags, pattern-match explanations. Each branch corresponds to an **imagined** use need, not an **observed** one. Half of them end up dead code, and the non-dead ones often hide data patterns the raw output would have revealed. **Correct default: start with the simplest raw dump. Add heuristics only after real use exposes a concrete need.** A 50-line dump is far more valuable than a 500-line "smart analyzer" whose categories were invented at design time. User framing: "先列出原始数据，实际使用的时候慢慢加 heuristic — 我们还不确定是不是真正需要某些条目".
-7. **Create-task as path of least resistance** — when a new requirement emerges, agents default to `create_task` even when an existing task (closed, verify, pending) is a better target. Three alternatives exist: (a) create_task fresh, (b) create_task + fork from source, (c) send_message to existing. Option (c) is often correct but loses in every "cheap" dimension: fresh description vs stale, clean session vs unknown state, single step vs two operations, "closed = finished" word bias. The agent picks (a) because it's the local optimum at every dimension — but globally it fragments context across redundant task trees. **Prompt alone cannot fix this** — mechanism is required: (1) required `origin` param on create_task forcing explicit fresh/fork/continue choice, (2) auto-search for similar titles on "fresh" with warning, (3) `latestDirective` field surfaced in get_tree so existing tasks' current focus is visible (not just their original description), (4) collapse fork_task_context into create_task's origin option to eliminate "two-step" cost. See draft task 01KNZGYY4T6SYWVT66DK13XCPV for full design. User framing: "达成同一件事的方式太多，而最省事的方式不是最优的".
+6. **Premature heuristic stacking** — when building a tool/analyzer, agents default to "handle every imagined case upfront": classifications, category labels, filter flags, pattern-match explanations. Each branch corresponds to an **imagined** use need, not an **observed** one. Half of them end up dead code, and the non-dead ones often hide data patterns the raw output would have revealed. **Correct default: start with the simplest raw dump. Add heuristics only after real use exposes a concrete need.** A 50-line dump is far more valuable than a 500-line "smart analyzer" whose categories were invented at design time. User framing: "List raw data first, add heuristics incrementally during actual use — we're not sure we actually need certain items."
+7. **Create-task as path of least resistance** — when a new requirement emerges, agents default to `create_task` even when an existing task (closed, verify, pending) is a better target. Three alternatives exist: (a) create_task fresh, (b) create_task + fork from source, (c) send_message to existing. Option (c) is often correct but loses in every "cheap" dimension: fresh description vs stale, clean session vs unknown state, single step vs two operations, "closed = finished" word bias. The agent picks (a) because it's the local optimum at every dimension — but globally it fragments context across redundant task trees. **Prompt alone cannot fix this** — mechanism is required: (1) required `origin` param on create_task forcing explicit fresh/fork/continue choice, (2) auto-search for similar titles on "fresh" with warning, (3) `latestDirective` field surfaced in get_tree so existing tasks' current focus is visible (not just their original description), (4) collapse fork_task_context into create_task's origin option to eliminate "two-step" cost. See draft task 01KNZGYY4T6SYWVT66DK13XCPV for full design. User framing: "Too many ways to achieve the same thing, and the easiest way isn't optimal."
 
 ## Change Ownership Principle
 
@@ -53,49 +53,60 @@ Agent reply language: follows the sender's language.
 ## How to Run Tests
 
 ```bash
-bun run test          # ALL tests (src/ + web/). MUST use `bun run test` not `bun test`.
+bun test              # ALL tests (src/ + web/). Single command.
 bun run typecheck     # tsc --noEmit
 bun run check         # biome lint + format
 ```
 
-**CRITICAL: `bun run test` is the ONLY correct way to run tests.** NOT `bun test`.
-- `bun test` only runs `src/` (due to `bunfig.toml root = "src"`) — silently skips ALL web/ frontend tests.
-- `bun run test` runs `package.json` script which runs both `bun test` AND `bun test ./web/`.
-- This has caused real production bugs: frontend tests silently not running → broken UI merged to main.
-- Never pipe test output (`| grep`, `| head`, `| tail`). Run bare, read the full saved output file afterward.
+**Rules:**
+- Never pipe test output (`| grep`, `| head`, `| tail`). Run bare, read the saved output file afterward.
 - If tests are flaky, run multiple times without pipes and read each output file separately.
+- ~1834 tests pass, 4 skip.
 ```
 
 ## Architecture Overview
 
 ```
-Daemon (Hono: HTTP + SSE on :7433)
-    ↑               ↑
-   CLI (mxd)     Web UI (React, bundled by Bun)
+Daemon (src/daemon.ts — Hono HTTP shell, :7433)
+  ├── Auth, project CRUD, config CRUD, plugin discovery
+  ├── Web build (Bun.build → importmap + vendor React + shell + plugin)
+  ├── SSE relay (ring buffer + Last-Event-ID catch-up)
+  └── Worker (src/runtime/scope-worker.ts — per-plugin)
+        └── Runtime (src/runtime.ts — agent lifecycle, tools, JSONL, MCP)
+              └── Plugin (ScopeOpts: tools, prompt, hooks)
+
+CLI (mxd) → HTTP API → Daemon → Worker
+Browser → Daemon (static assets + SSE) + Worker (API forwarding)
 ```
 
-- Two providers: `AnthropicCompatibleProvider`, `OpenAIResponsesCompatibleProvider`. Shared `runProviderLoop` + `ProviderAdapter`.
+- **Daemon** = HTTP shell. Owns auth, projects, config, SSE, web build. No agent logic.
+- **Worker** = Bun Worker thread running runtime. Owns agents, tools, JSONL, trackers.
+- **Plugin** = `.mxd/plugin/` — provides ScopeOpts (tools, prompt, hooks) + web UI component.
+- **Shell UI** = `web/` — auth, header, project/scope selector, settings.
+- **Plugin UI** = `.mxd/plugin/web/Plugin.tsx` — compiled React component library, NOT SPA. Receives `projectId` prop.
+- Two providers: `AnthropicCompatibleProvider`, `OpenAIResponsesCompatibleProvider`.
 - Three-layer config: global > repo > local. Auth groups define provider+credentials.
 - Agent tree = Task tree. Each agent gets worktree + branch from parent's branch.
-- All mutable APIs fire-and-forget. Observe via SSE.
 - External MCP servers: `McpClientManager` (src/mcp-client.ts).
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
+| src/daemon.ts | Meta-daemon: HTTP, auth, plugins, workers, SSE relay, web build |
+| src/runtime.ts | Worker runtime: createApp, agent lifecycle, routes |
+| src/runtime/agent-lifecycle.ts | runAgentForNode, stop, deliverMessage, autoResume |
+| src/runtime/scope-worker.ts | Worker entry: postMessage protocol, HTTP forwarding |
+| src/web-builder.ts | Bun.build pipeline: vendor React ESM + importmap + shell + plugin |
+| src/plugin.ts | PluginManifest type, dataRoot resolution, collision detection |
+| .mxd/plugin/index.ts | Matrix plugin manifest (scope, web, runtime, onProjectInit) |
+| .mxd/plugin/web/Plugin.tsx | Matrix UI component (task tree, activity, input bar) |
 | src/task-operations.ts | Shared CRUD operations (MCP + REST call these) |
-| src/tool-names.ts | MCP tool name constants + helpers |
-| src/queue-message-factory.ts | QueueMessage factories (enforce id/ts invariant) |
-| web/event-display.ts | Tool display logic — title generation, summaries (frontend-only, no truncation) |
-| web/api.ts | Centralized API URL builder |
-| src/daemon/agent-lifecycle.ts | runAgentForNode, stop, deliverMessage, autoResume |
 | src/provider-shared.ts | Run loop, ProviderAdapter, yield/done handling |
 | src/events.ts | Event types, formatBodyForAI, buildSessionRepair |
 | src/event-store.ts | JSONL EventStore (with truncateAfterLine) |
 | src/event-converter.ts | walkEventsToMessages + EventConverterCallbacks |
 | src/task-tracker.ts | Task tree, node CRUD, tree.json persistence |
-| src/image-dimensions.ts | PNG/JPEG pixel dimension parsing |
 
 ## Key Architectural Invariants
 
@@ -138,26 +149,11 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 
 ## Two-Phase done() Lifecycle
 
-### Design
-- **Phase 1** (agent-side): done() handler closes queue + returns. No status update, no parent notification. Intended orphan like yield — no tool_result written to JSONL. Provider loop detects done, sets doneExitReason + doneSummary, exits.
-- **Phase 2** (daemon-side, in runAgentForNode): After loop exits with done exit reason, updates status (verify/failed), delivers task_complete to parent, writes `done_notified` crash-safe marker to JSONL.
-- **Crash recovery**: `findInterruptedDonePhase2` in daemon.ts detects orphaned TOOL_DONE without done_notified → completes Phase 2 on restart. Also fixes stale status (done_notified exists but status still in_progress).
-
-### Status Changes
-- "verify" added to TaskStatus: `done("passed")` → verify, `done("failed")` → failed.
-- closeTaskOp: verify→closed. Rejects in_progress/pending/draft.
-- buildSessionRepair: TOOL_DONE skipped alongside TOOL_YIELD (not treated as orphans).
-- AgentResult.doneSummary carries summary from done() handler through to Phase 2.
-
-### Done Resume from JSONL
-When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provider loop waits for wake messages, writes synthetic tool_result with "You previously called done()" context.
-
-### Key Pitfalls
-- waitForDone test helper must check "verify" or "failed" (no "passed" status exists).
-- Root agents no longer block in waitForQueueMessages after done() — loop exits immediately.
-- Background processes may be killed by cleanup before completing after done().
-- closeTaskOp now rejects pending/draft/in_progress — tests must set verify or failed before close_task.
-- **Phase 2 ordering is critical**: session=null is the irreversibility boundary. Phase 2 (status update, parent notification) runs AFTER session cleanup, not before. Before session=null: late messages → relaunch (reversible). After session=null: commit verify + notify parent (irreversible). No race window.
+- **Phase 1** (agent-side): close queue, loop exits. No status update. Intended orphan (no tool_result).
+- **Phase 2** (daemon-side): status→verify/failed, task_complete to parent, `done_notified` crash-safe marker.
+- **Crash recovery**: `findInterruptedDonePhase2` detects orphaned TOOL_DONE without done_notified → completes Phase 2 on restart.
+- **Status**: `done("passed")` → verify → close_task → closed. `done("failed")` → failed.
+- **Phase 2 ordering**: session=null is irreversibility boundary. Phase 2 runs AFTER session cleanup.
 
 ## JSONL Repair
 
@@ -236,19 +232,9 @@ Breakpoint on **last** user message (not second-to-last). Last message sent to A
 ### await_background Deleted
 await blocked entire agent loop. yield is the one path — accepts all message types. -360 lines.
 
-## 70K Post-Restart Cache Miss (unresolved)
+## 70K Post-Restart Cache Miss (RESOLVED — Anthropic server-side injection)
 
-Production root session, post-restart first API call: inputTokens=104,188, cacheCreation=70,607, cacheRead=33,575 (32% hit). Pre-restart last call: 99.67% hit. ~70K drifted between pre-restart live messages[] and post-restart walker reconstruction.
-
-**Cannot isolate by inspection**: pre-restart live state is lost; post-restart live == walker(JSONL) by construction. Comparing current live to current walker-recon shows 0 mismatches.
-
-**Evidence drift was AFTER fork (same session)**: a forked child had 100% cache hit throughout its session, proving pre-fork prefix was walker-consistent. Comparing my live[0..57] to child's inherited reconstruction: byte-identical. Drift appeared between fork and restart — 26-minute window.
-
-**Audited candidates**: addAssistantMessage vs walker onAssistantContent (match), addMessagesCacheControl (same breakpoint strategy), SDK input key ordering (preserved), session_config (latest read both times), walker batching (correct), image filtering (same rejection text), timestamp drift (not reflected in bytes). Nothing found.
-
-**Needs production instrumentation** to catch: persist each API request's exact byte representation + walker-would-produce delta at each tick. Not yet built.
-
-**Possible non-drift explanation**: Anthropic server-side cache eviction or routing (similar pattern to Opus token injection in blog notes).
+Was caused by Anthropic server-side cache injection (~30% extra tokens injected into cache layer, invisible to client). Confirmed via count_tokens + replay experiments. NOT a Matrix bug. See "Anthropic Server-Side Cache Injection" section below.
 
 ## Pre-API-Call Debug Snapshot (v2: per-traceId epoch)
 
@@ -471,28 +457,9 @@ Use this for: task hooks, budget monitors, external webhooks, test
 `waitForEvent` helpers, condition-wait primitives (peek-or-subscribe-or-wait:
 check state synchronously → subscribe → add timeout → unsubscribe in finally).
 
-## HTTP MCP Endpoint — Removed Pending Rebuild
+## Stateless HTTP MCP Endpoint
 
-Prior HTTP MCP endpoint (POST /mcp) was removed. It was built on an
-**attach-based session model** (attach_to → session state → scoped tools)
-which conflicts with Matrix's correct architecture: scope should be an
-explicit per-call parameter, not ambient session state.
-
-Removed in a single surgical commit:
-- `src/daemon/routes/mcp-endpoint.ts` (the endpoint + 10 tools)
-- `src/daemon/mcp-session-state.ts` (attach state container)
-- `src/daemon/routes/mcp-endpoint.test.ts`, `mcp-endpoint-yield.test.ts`
-- `DaemonContext.mcpSessionStore` field
-
-**Preserved**: in-process event-subscriber primitive (above) — it is
-general-purpose daemon infrastructure, not MCP-specific. Will be reused by
-the rebuilt stateless MCP endpoint.
-
-**Rebuild plan**: stateless ToolDef architecture where each tool declares
-its scope (daemon/project/task/special) and availability (internal/external/
-both). Same handler code for both internal agent calls and external MCP
-calls — scope resolved from agent context (internal) or tool-call params
-(external). See the ToolDef refactor task under Agent Loop folder.
+POST `/mcp` — MCP Streamable HTTP transport for external clients. Stateless: no attach_to, no session state. 6 tools (list_projects, get_tree, get_task, get_logs, send_user_message, yield_external). See "MCP Layer 1" section below for details.
 
 ## Anti-pattern: Conflating Attached-Observer with Peer-Project (reverted)
 
@@ -665,35 +632,9 @@ Embrace large type refactors. Rename TaskNode → TreeNode = TaskNode | FolderNo
 
 - Manual compaction during yield → consecutive user messages → API 400.
 
-## Vertical Boundary Audit (Daemon → Provider Loop → Tool Handler)
+## Vertical Dependency Boundaries
 
-Full audit: `VERTICAL-BOUNDARY-AUDIT.md` in repo root.
-
-### Three Layers
-- **Daemon**: DaemonContext, agent-lifecycle, event-system. Creates sessions, manages lifecycle.
-- **Provider Loop**: runProviderLoop in provider-shared.ts. Owns messages[], API calls, yield/done detection.
-- **Tool Handler**: executeTool dispatch, orchestrator-tools closures, built-in tool closures.
-
-### Clean Boundaries
-- **Daemon→Loop** (AgentRequest): 14/17 fields structural. Clean config+IO bundle.
-- **Loop→Handler** (executeTool): Pure dispatch — name lookup, Zod validation, call handler. No state leaks.
-- **Handler→Loop** (ToolResult): Value type with no back-references.
-
-### Accidental Crossings (block operator/resource split)
-1. **`getSession` on AgentRequest**: Loop writes cwd to daemon's TaskSession. Mixes daemon-owned state with loop-local state.
-2. **`setMessages`/`setAllTools`**: Reverse binding — loop pushes state UP into daemon for evaluate_script. Exists solely for the hidden debug tool.
-3. **`done()` closes queue**: Handler reaches into loop's queue via closure. Should be a return-value signal (loop already intercepts done by name).
-4. **TaskSession three-way mutation**: Daemon creates, loop writes (messages, allTools, cwd), handler writes (backgroundProcesses, foregroundExecutions). Worst cross-cutting state.
-
-### Key Finding: yield vs done asymmetry
-- **yield**: Clean boundary. Loop intercepts by name, `executeTool` never runs. Handler's `_isYield` return flag is dead code.
-- **done**: Boundary violation. `executeTool` runs the handler, which closes queue as side effect. Loop then checks result. Queue.close() couples handler to loop internals.
-
-### Recommendations for Operator/Resource Split
-1. Split TaskSession into SessionControl (daemon), LoopState (loop), ProcessState (handlers)
-2. Make done() a return-value signal (loop closes queue itself, like yield)
-3. Remove setMessages/setAllTools from AgentRequest (replace with callback read)
-4. Formalize OrchestratorToolsDeps into OperatorDeps + ResourceDeps
+Three layers: daemon → provider loop → tool handler. executeTool is clean (pure dispatch). done() closes queue through closure (boundary violation, but structural). evaluate_script punctures all layers (intentional). TaskSession has three-way mutation. Full audit in `VERTICAL-BOUNDARY-AUDIT.md`.
 
 ## Unresolved Design (prioritized)
 
@@ -737,13 +678,7 @@ handler(args, auth, toolCallId) {
 - TaskSession internal structure unchanged (audit identified it as needing split, but separate refactor)
 - External MCP endpoint not yet updated (separate task)
 
-## Vertical Dependency Boundary Audit Findings
 
-Three execution layers: daemon → provider loop → tool handler.
-- executeTool boundary is clean (pure dispatch)
-- done() closes queue through closure (boundary violation, but structural — leave for now)
-- evaluate_script punctures all layers (intentional escape hatch)
-- TaskSession is worst cross-cutting state (three-way mutation across all layers)
 
 ## Builtin Tools Migration
 
