@@ -1,6 +1,6 @@
 import type React from "react";
 import { memo, useEffect, useState } from "react";
-import { useAuthFetch } from "../auth-context.ts";
+import { useAuthFetch } from "@mxd/auth-context";
 import type { Project } from "./types.ts";
 import { useLocale } from "../i18n.ts";
 import {

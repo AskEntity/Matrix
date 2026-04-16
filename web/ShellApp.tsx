@@ -7,7 +7,7 @@
  */
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { authFetch, clearToken, getToken } from "./auth.ts";
-import { AuthFetchProvider, GetTokenProvider } from "./auth-context.ts";
+import { AuthFetchProvider, GetTokenProvider } from "@mxd/auth-context";
 import { AppHeader } from "./components/AppHeader.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
 import type { Project, ThreeLayerConfig } from "./components/types.ts";
