@@ -7,14 +7,13 @@
  */
 import { z } from "zod";
 import * as R from "../resource-registry.ts";
-import { defineTool, type AnyToolDef } from "../tool-def.ts";
-import type { ParamDefs } from "../tool-def.ts";
+import { defineTool, type InferParams, type ParamDefs } from "../tool-def.ts";
 
 /**
  * Standard yield tool. No configuration needed.
  * Every plugin includes this in its tool set.
  */
-export function createYieldTool(): AnyToolDef {
+export function createYieldTool() {
 	return defineTool({
 		name: "yield",
 		availability: "internal",
@@ -42,31 +41,36 @@ export function createYieldTool(): AnyToolDef {
  * Runtime always handles: queue.close(), loop exit, Phase 2.
  * Plugin's onDone hook (on ScopeOpts) handles node state updates.
  */
-export function createDoneTool(opts?: {
-	extraParams?: ParamDefs;
+const doneBaseParams = {
+	projectId: {
+		schema: z.string(),
+		decl: { kind: "bind", from: "projectId" } as const,
+	},
+	taskId: {
+		schema: z.string(),
+		decl: { kind: "bind", from: "taskId" } as const,
+	},
+};
+
+export function createDoneTool<E extends ParamDefs = Record<string, never>>(opts?: {
+	extraParams?: E;
 	description?: string;
-	beforeDone?: (args: Record<string, unknown>) => Promise<string | null>;
-}): AnyToolDef {
+	beforeDone?: (args: InferParams<typeof doneBaseParams> & Partial<InferParams<E>>) => Promise<string | null>;
+}) {
+	const params = {
+		...doneBaseParams,
+		...(opts?.extraParams ?? {}),
+	};
 	return defineTool({
 		name: "done",
 		availability: "internal",
 		description:
 			opts?.description ??
 			"Signal that you have finished. Call this when done.",
-		params: {
-			projectId: {
-				schema: z.string(),
-				decl: { kind: "bind", from: "projectId" },
-			},
-			taskId: {
-				schema: z.string(),
-				decl: { kind: "bind", from: "taskId" },
-			},
-			...(opts?.extraParams ?? {}),
-		},
+		params,
 		handler: async (args) => {
-			const projectId = args.projectId as string;
-			const taskId = args.taskId as string;
+			const projectId = args.projectId;
+			const taskId = args.taskId;
 
 			// Runtime guard: reject if descendants have active sessions
 			const tracker = R.getTracker(projectId);
@@ -100,7 +104,8 @@ export function createDoneTool(opts?: {
 
 			// Plugin hook: extra validation (Matrix: git clean check)
 			if (opts?.beforeDone) {
-				const error = await opts.beforeDone(args);
+				// Safe cast: args contains all base + extra params, TS can't prove spread equivalence
+				const error = await opts.beforeDone(args as Parameters<typeof opts.beforeDone>[0]);
 				if (error) {
 					return {
 						content: [{ type: "text" as const, text: error }],
