@@ -70,7 +70,7 @@ export type ToolAvailability = "internal" | "external" | "both";
  * A tool definition with ParamDecl metadata.
  * Handler receives typed args inferred from params.
  */
-export interface ToolDef<P extends ParamDefs = ParamDefs> {
+export interface ToolDef<P extends ParamDefs> {
 	name: string;
 	description: string;
 	params: P;
@@ -90,6 +90,10 @@ export interface ToolDef<P extends ParamDefs = ParamDefs> {
 	 */
 	availability: ToolAvailability;
 }
+
+/** Type-erased ToolDef for arrays holding mixed tools. */
+// biome-ignore lint/suspicious/noExplicitAny: type erasure for heterogeneous tool arrays
+export type AnyToolDef = ToolDef<any>;
 
 /** Helper to define a tool with full type inference on handler args. */
 export function defineTool<P extends ParamDefs>(def: ToolDef<P>): ToolDef<P> {
@@ -235,7 +239,7 @@ export function resolveBindParams(
  * - Wraps the handler to validate, resolve bind params, and pass auth
  * - Plugs into the existing executeTool / buildJsonTools / provider loop
  */
-export function toToolDefinition(def: ToolDef, auth: Auth): ToolDefinition {
+export function toToolDefinition(def: AnyToolDef, auth: Auth): ToolDefinition {
 	const agentShape = buildAgentShape(def.params);
 	const jsonSchema = buildAgentJsonSchema(def.params);
 

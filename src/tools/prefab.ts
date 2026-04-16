@@ -7,15 +7,15 @@
  */
 import { z } from "zod";
 import * as R from "../resource-registry.ts";
-import type { ToolDef } from "../tool-def.ts";
+import { defineTool, type AnyToolDef } from "../tool-def.ts";
 import type { ParamDefs } from "../tool-def.ts";
 
 /**
  * Standard yield tool. No configuration needed.
  * Every plugin includes this in its tool set.
  */
-export function createYieldTool(): ToolDef {
-	return {
+export function createYieldTool(): AnyToolDef {
+	return defineTool({
 		name: "yield",
 		availability: "internal",
 		description:
@@ -27,7 +27,7 @@ export function createYieldTool(): ToolDef {
 			isError: false,
 			_isYield: true,
 		}),
-	};
+	});
 }
 
 /**
@@ -46,8 +46,8 @@ export function createDoneTool(opts?: {
 	extraParams?: ParamDefs;
 	description?: string;
 	beforeDone?: (args: Record<string, unknown>) => Promise<string | null>;
-}): ToolDef {
-	return {
+}): AnyToolDef {
+	return defineTool({
 		name: "done",
 		availability: "internal",
 		description:
@@ -114,5 +114,5 @@ export function createDoneTool(opts?: {
 			if (session?.queue) session.queue.close();
 			return { content: [], isError: false };
 		},
-	};
+	});
 }
