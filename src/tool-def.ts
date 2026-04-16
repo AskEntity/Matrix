@@ -33,6 +33,18 @@ export type ParamDefs = Record<
 	{ schema: ZodTypeAny; decl: ParamDecl; description?: string }
 >;
 
+/**
+ * Infer the handler args type from ParamDefs.
+ * bind params are always present (framework injects them).
+ * explicit params are required.
+ * optional params are T | undefined.
+ */
+export type InferParams<P extends ParamDefs> = {
+	[K in keyof P]: P[K]["decl"] extends { kind: "optional" }
+		? z.infer<P[K]["schema"]> | undefined
+		: z.infer<P[K]["schema"]>;
+};
+
 // ── ToolDef ──
 
 /** Handler return type — matches MCP CallToolResult shape. */
@@ -56,14 +68,14 @@ export type ToolAvailability = "internal" | "external" | "both";
 
 /**
  * A tool definition with ParamDecl metadata.
- * Handler receives (args, auth) — nothing else.
+ * Handler receives typed args inferred from params.
  */
-export interface ToolDef {
+export interface ToolDef<P extends ParamDefs = ParamDefs> {
 	name: string;
 	description: string;
-	params: ParamDefs;
+	params: P;
 	handler: (
-		args: Record<string, unknown>,
+		args: InferParams<P>,
 		auth: Auth,
 		/** Tool call ID — from API (agents) or MCP/transport (external). */
 		toolCallId: string,
@@ -77,6 +89,11 @@ export interface ToolDef {
 	 * - "both": available to both
 	 */
 	availability: ToolAvailability;
+}
+
+/** Helper to define a tool with full type inference on handler args. */
+export function defineTool<P extends ParamDefs>(def: ToolDef<P>): ToolDef<P> {
+	return def;
 }
 
 // ── Schema generation ──
