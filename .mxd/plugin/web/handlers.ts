@@ -20,9 +20,7 @@ interface ActionHandlerDeps {
 		question: string;
 		timestamp: number;
 	}[];
-	newProjectPath: string;
-	creatingProject: boolean;
-	projects: Project[];
+	// project list + add/delete managed by shell
 
 	addLog: AddLogFn;
 	setLogs: React.Dispatch<React.SetStateAction<LogEntry[]>>;
@@ -33,7 +31,7 @@ interface ActionHandlerDeps {
 	>;
 	setLastCacheReadTokens: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastOutputTokens: React.Dispatch<React.SetStateAction<number | null>>;
-	setProjectId: React.Dispatch<React.SetStateAction<string>>;
+	// setProjectId removed — shell manages project selection
 	setSelectedTaskId: React.Dispatch<React.SetStateAction<string | null>>;
 	setRootNodeId: React.Dispatch<React.SetStateAction<string | null>>;
 	setClarifyAnswers: React.Dispatch<
@@ -51,10 +49,7 @@ interface ActionHandlerDeps {
 			}[]
 		>
 	>;
-	setCreatingProject: React.Dispatch<React.SetStateAction<boolean>>;
-	setNewProjectPath: React.Dispatch<React.SetStateAction<string>>;
-	setShowAddProject: React.Dispatch<React.SetStateAction<boolean>>;
-	setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
+	// setCreatingProject, setNewProjectPath, setShowAddProject, setShowSettings — shell manages
 	setIsCreatingTask: React.Dispatch<React.SetStateAction<boolean>>;
 	setTokenUsage: React.Dispatch<
 		React.SetStateAction<
@@ -101,8 +96,8 @@ interface ActionHandlerDeps {
 	deleteTask: (taskId: string) => Promise<void>;
 	stopTask: (taskId: string) => Promise<void>;
 	clearTaskSession: (taskId: string) => Promise<void>;
-	initProject: (path: string) => Promise<{ id: string }>;
-	deleteProject: (id: string) => Promise<void>;
+	// initProject — shell manages
+	// deleteProject — shell manages
 	refreshTasks: () => void;
 	t: (key: string, params?: Record<string, string>) => string;
 }
@@ -118,9 +113,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		targetNodeId,
 		clarifyAnswers,
 		pendingClarifications,
-		newProjectPath,
-		creatingProject,
-		projects,
 		addLog,
 		setLogs,
 		setLastTurns,
@@ -128,15 +120,10 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		setLastCacheCreationTokens,
 		setLastCacheReadTokens,
 		setLastOutputTokens,
-		setProjectId,
 		setSelectedTaskId,
 		setRootNodeId,
 		setClarifyAnswers,
 		setPendingClarifications,
-		setCreatingProject,
-		setNewProjectPath,
-		setShowAddProject,
-		setShowSettings,
 		setIsCreatingTask,
 		setTokenUsage,
 		setPendingMessages,
@@ -150,8 +137,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		deleteTask,
 		stopTask,
 		clearTaskSession,
-		initProject,
-		deleteProject,
 		refreshTasks,
 		t,
 	} = deps;
@@ -437,75 +422,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		}
 	}
 
-	async function handleAddProject(e: React.FormEvent) {
-		e.preventDefault();
-		const path = newProjectPath.trim();
-		if (!path || creatingProject) return;
-		setCreatingProject(true);
-		try {
-			const project = await initProject(path);
-			setProjectId(project.id);
-			setSelectedTaskId(null);
-			setRootNodeId(null);
-			setLogs([]);
-			setTokenUsage({});
-			setPendingMessages([]);
-			setPendingClarifications([]);
-			setBackgroundProcesses(new Map());
-			setActiveAgents(new Set());
-			setOlderEventsAvailable(new Map());
-			setLastTurns(null);
-			setLastInputTokens(null);
-			setLastCacheCreationTokens(null);
-			setLastCacheReadTokens(null);
-			setLastOutputTokens(null);
-			setNewProjectPath("");
-			setShowAddProject(false);
-		} catch (err) {
-			addLog({
-				type: "error",
-				message: (err as Error).message,
-				taskId: "",
-				ts: Date.now(),
-			});
-		} finally {
-			setCreatingProject(false);
-		}
-	}
-
-	async function handleDeleteProject() {
-		if (!projectId) return;
-		const project = projects.find((p) => p.id === projectId);
-		if (
-			!confirm(t("confirm.removeProject", { name: project?.name ?? projectId }))
-		)
-			return;
-		try {
-			await deleteProject(projectId);
-			setProjectId("");
-			setSelectedTaskId(null);
-			setRootNodeId(null);
-			setLogs([]);
-			setTokenUsage({});
-			setPendingMessages([]);
-			setPendingClarifications([]);
-			setBackgroundProcesses(new Map());
-			setActiveAgents(new Set());
-			setOlderEventsAvailable(new Map());
-			setLastTurns(null);
-			setLastInputTokens(null);
-			setLastCacheCreationTokens(null);
-			setLastCacheReadTokens(null);
-			setLastOutputTokens(null);
-		} catch (err) {
-			addLog({
-				type: "error",
-				message: (err as Error).message,
-				taskId: "",
-				ts: Date.now(),
-			});
-		}
-	}
+	// handleAddProject, handleDeleteProject — moved to shell
 
 	function handleAddTask() {
 		if (!projectId) return;
@@ -551,8 +468,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		handleDeleteTask,
 		handleStopTask,
 		handleClearTaskSession,
-		handleAddProject,
-		handleDeleteProject,
 		handleAddTask,
 		handleCreateTask,
 		handleCancelCreate,
