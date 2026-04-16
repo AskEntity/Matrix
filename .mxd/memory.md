@@ -238,42 +238,7 @@ Was caused by Anthropic server-side cache injection (~30% extra tokens injected 
 
 ## Pre-API-Call Debug Snapshot (v2: per-traceId epoch)
 
-Evidence-capture for post-mortem cache-drift debugging. Before each API call, providers write the fully-assembled request bytes to disk. When a restart causes an unexpected cache miss, the **previous run's** snapshot is preserved in its own traceId directory — diff against walker(JSONL) or against the new run's snapshot to find the divergence.
-
-### Layout
-```
-projects/<id>/debug/<taskId>/<traceId>/last.json
-```
-
-- Each `runAgentForNode` invocation has a unique `loopTraceId` (ULID, ~`TaskSession.loopTraceId`) — this is the "epoch" boundary.
-- Every API call within one run **overwrites** `<current_traceId>/last.json` (we only need the latest per run).
-- Daemon restart → new loop → new traceId → new directory → **old directory is preserved with its final pre-restart snapshot**.
-- `rollOldTraceIdDirs(taskDebugDir, 10)` runs at the start of each `runAgentForNode`, keeping the 10 most recent traceId dirs (by mtime) and removing the rest. Non-ULID entries are ignored.
-
-### v1 → v2 migration rationale
-v1 used a single flat file `debug/<taskId>.last-messages.json` that was overwritten on every API call. On restart, the first post-restart call **overwrote the pre-restart snapshot** — destroying the exact evidence needed to diagnose drift, at the exact moment it was needed. v2 fixes this by binding the snapshot path to `loopTraceId`, so each run's snapshots live under their own directory. Old flat files from v1 are disjoint from v2's `debug/<taskId>/` layout — no explicit migration needed; they simply become stale artifacts.
-
-### Implementation
-- `src/debug-snapshot.ts`:
-  - `writeDebugSnapshot(filePath, snapshot)` — sync mkdir + writeFileSync, non-fatal on error. Path is now nested (traceId subdir).
-  - `rollOldTraceIdDirs(taskDebugDir, keepCount)` — readdir + filter by ULID regex + sort by mtime + rm oldest. Non-fatal.
-- `src/daemon/agent-lifecycle.ts` `runAgentForNode`:
-  - Computes `taskDebugDir = <dataDir>/projects/<id>/debug/<taskId>/`
-  - Calls `rollOldTraceIdDirs(taskDebugDir, DEBUG_SNAPSHOT_KEEP_TRACE_DIRS)` (=10) BEFORE creating the new run's dir (no race with active writes).
-  - Sets `debugSnapshotPath = join(taskDebugDir, loopTraceId, "last.json")` on `AgentRequest`.
-- Provider loop is unchanged — it just writes to the path it's given.
-
-### Post-mortem workflow
-1. Observe restart → high cacheCreation (drift signal).
-2. `ls projects/<id>/debug/<taskId>/` → find the 2 newest traceId dirs (pre-restart + post-restart).
-3. Diff their `last.json` files:
-   ```
-   diff <(jq . debug/<id>/<taskA>/last.json) <(jq . debug/<id>/<taskB>/last.json)
-   ```
-4. First message-level difference IS the drift location.
-5. Optional 3-way: also compare against walker replay `eventsToAnthropicMessages(eventStore.readActive(taskId))`.
-
-Turns the 70K miss investigation from "exhausted code inspection" into "look at the two files".
+Layout: `projects/<id>/debug/<taskId>/<traceId>/last.json`. Each `runAgentForNode` gets unique `loopTraceId`. Restart → new dir → old snapshot preserved. `rollOldTraceIdDirs` keeps 10 most recent. Post-mortem: diff two newest traceId dirs' `last.json` files to find drift.
 
 ## Live/Reconstruction Drift Fix — Caption Bug
 
@@ -409,57 +374,15 @@ Each project is now a self-contained folder:
 
 ## In-Process Event Subscribers
 
-Daemon's event flow has three consumers:
-1. JSONL (persistence, disk)
-2. SSE clients (browser UI, HTTP stream)
-3. **In-process subscribers** (any daemon code, callback-based)
-
-API in `src/daemon/event-system.ts`:
-```ts
-const unsubscribe = subscribeToEvents(ctx, projectId, (rawEvent) => { ... });
-try { ... } finally { unsubscribe(); }
-```
-
-- Keyed by `Map<projectId, Set<EventSubscriber>>` — fanout is O(subs for
-  this project), not O(all subs).
-- Callbacks receive RAW event objects (pre-strip) — see `taskId` and all
-  routing fields directly.
-- Throwing subscribers don't kill the broadcast (caught + logged).
-- Empty buckets auto-cleaned on last unsubscribe (no unbounded map growth).
-
-`broadcast(ctx, projectId, event)` signature is clean — reaches into ctx
-for both sseClients and eventSubscribers.
-
-Use this for: task hooks, budget monitors, external webhooks, test
-`waitForEvent` helpers, condition-wait primitives (peek-or-subscribe-or-wait:
-check state synchronously → subscribe → add timeout → unsubscribe in finally).
+Third event consumer (alongside JSONL + SSE): `subscribeToEvents(ctx, projectId, callback)`. Per-project keyed Map. Used by yield_external, test helpers. Throwing subscribers caught + logged.
 
 ## Stateless HTTP MCP Endpoint
 
 POST `/mcp` — MCP Streamable HTTP transport for external clients. Stateless: no attach_to, no session state. 6 tools: list_projects, get_tree, get_task, get_logs (both), send_user_message, yield_external (external-only). ToolDef `availability: "internal" | "external" | "both"` on every tool. Workflow: send_user_message → yield_external → get_logs.
 
-## Anti-pattern: Conflating Attached-Observer with Peer-Project (reverted)
+## Anti-pattern: Conflating Attached-Observer with Peer-Project
 
-**What happened**: tried to add `send_message` to the HTTP MCP endpoint (commits 244665c + 1185983), wrapping peer messages as `cross_project` source. Merged, then realized the semantic was wrong. Reverted in 5efd5f9.
-
-**The confusion**: two architectural layers got conflated into one tool:
-
-| Layer | Model | Relationship | Identity | Scope |
-|-------|-------|--------------|----------|-------|
-| **1. Attached external client** | Observer + injector | attach_to → operate ON target | "who is doing this" (header on injected user messages) | Scoped to attached task subtree |
-| **2. Peer project** | Symmetric project-to-project | No attachment | projectId in cross_project wrapper | Matrix project registry |
-
-Layer 1: client attaches to a project/task, reads state, injects **user_message-style** content with a header like `[from: CC]`. The client is an **external actor** acting ON the target tree — not a peer.
-
-Layer 2: client IS another Matrix project from Matrix's perspective. Registered in project registry. Sends/receives `cross_project` messages. Opaque (Matrix doesn't know its internals).
-
-**Why the wrong merge**: wrapping Layer 1 attach_to's send as `cross_project` implied "attached client IS a peer project" — breaking both semantics. An attached observer isn't a peer; a peer doesn't attach.
-
-**Correct design** (TBD, drafted as follow-up):
-- Layer 1: add `send_user_message` tool — injects as user_message with peer header. Remove `read_file`/`list_files`/`search` from MCP tools (client uses its own, just needs worktreePath from attach_to return).
-- Layer 2: separate tool set on separate config (possibly separate port). Reuses existing `list_projects` + `send_message_to_project` semantics. Needs new `yield_cross_project` to drain peer's own inbox.
-
-**Lesson**: when one tool looks right for two different use cases, check whether the relationships are symmetric (both parties peers) or asymmetric (one observes the other). Same-wire-format ≠ same-semantic.
+**Lesson**: Layer 1 (attached external client, asymmetric) and Layer 2 (peer project, symmetric) are different relationships. Same wire format ≠ same semantic. Check symmetry before unifying.
 
 ## Auth
 
@@ -605,46 +528,17 @@ Three layers: daemon → provider loop → tool handler. executeTool is clean (p
 
 
 
-## Builtin Tools Migration
-
-All 7 builtin tools (bash, background, read_file, write_file, edit_file, list_files, search) migrated from closure-based `createBuiltinTools()` to ToolDef objects using global functions.
-
-- `buildBuiltinToolDefs()` replaces `createBuiltinTools()` — returns ToolDef[] instead of ToolDefinition[]
-- All tools use `R.getSession(projectId, taskId)` for session access (cwd, queue, backgroundProcesses)
-- `getSession` param removed from `createAgentContext` opts — no longer needed
-- Common `bindParams` pattern: all builtin tools bind projectId + taskId (non-overridable)
-
-Now ALL 32 tools (25 orchestrator + 7 builtin) use the same ToolDef + auth + global functions pattern. Zero closure-based tool handlers remain.
-
 ## AuthGroup Discriminated Union
 
-`AuthGroup = AnthropicAuthGroup | OpenAIAuthGroup` — discriminated on `provider` field. Each variant has only its own fields (no cross-provider optionals).
+`AuthGroup = AnthropicAuthGroup | OpenAIAuthGroup` — discriminated on `provider` field. Field names simplified (`anthropicApiKey` → `apiKey`). `systemPreamble?: string` on Anthropic — prepended as first system block at API call time (not stored in session_config). System blocks always use `ttl: "1h"`.
 
-### Field Renames (BREAKING config change)
-- `anthropicApiKey` → `apiKey`, `claudeOauthToken` → `oauthToken`
-- `openaiApiKey` → `apiKey`, `openaiAccessToken` → `accessToken`, `openaiRefreshToken` → `refreshToken`, `openaiAccountId` → `accountId`, `openaiBaseUrl` → `baseUrl`
+## ParamDecl Bind
 
-### systemPreamble (Anthropic only)
-`AnthropicAuthGroup.systemPreamble?: string` — prepended as the first system text block at API call time. Not stored in session_config. Takes effect immediately on next API call (no compact/restart needed). Empty string or undefined = no preamble.
+All bind params hidden from agent schema, auto-bound by framework. `create_task`/`create_folder` parentId is `explicit` (agent must always specify).
 
-### System Prompt Cache TTL
-System blocks always use `{ type: "ephemeral", ttl: "1h" }` regardless of per-session `cacheTtl`. System prompt is shared across agents, changes rarely, benefits most from long cache. Tools and messages still use per-session TTL.
+## DEFAULT_CONFIG Immutability
 
-## ParamDecl Bind: No Overridable
-
-`ParamDecl` bind variant has no `overridable` field. All bind params are always hidden from agent schema and auto-bound by the framework. create_task and create_folder's parentId changed to `kind: "explicit"` (agent must always specify).
-
-## DEFAULT_CONFIG Immutability (frozen + defensive clone)
-
-`DEFAULT_CONFIG` in `src/config.ts` is `Object.freeze`d at module load (top level + nested `mcpServers`, `cacheTtl`, `authGroups`). Any mutation attempt throws at the point of the bug, not three test files later.
-
-`createApp()` in `daemon.ts` defensive-clones: `globalConfig: { ...(config.initialConfig ?? DEFAULT_CONFIG) }`. PATCH `/config/global` in `daemon/routes/config.ts` builds a new object and replaces `ctx.globalConfig` — never mutates in place.
-
-**Bug fixed**: PATCH `/config/global` used to mutate `ctx.globalConfig` field-by-field. When `initialConfig` was not passed to `createApp`, `ctx.globalConfig` was the SAME reference as `DEFAULT_CONFIG`. A PATCH in one test (e.g. `daemon.test.ts` setting `budgetUsd: 50`) poisoned `DEFAULT_CONFIG` for the rest of the process → `config.test.ts` later failed `budgetUsd === -1` assertion. Production consequence: any long-lived daemon that accepts a PATCH `/config/global` has the module singleton mutated for subsequent `createApp()` calls in the same process.
-
-**Lesson**: module-level constants MUST be frozen. Mutation via `Object.entries` + index assignment bypasses TypeScript's readonly checks. Freeze makes the footgun physically impossible, not just discouraged.
-
-The other two PATCH handlers (`/projects/:id/config/repo`, `/projects/:id/config`) load fresh config from disk and build a new `merged` object — not affected by this bug.
+`Object.freeze`d at module load. `createApp()` defensive-clones. PATCH builds new object — never mutates in place. **Lesson**: module-level constants MUST be frozen.
 
 ## enqueue === persist (single JSONL write path)
 
@@ -682,36 +576,15 @@ Lesson: not every "the tool could be nicer to bad input" is a bug. Some inputs s
 1. Debug snapshot (traceId `01KNZM6TFNVRB7T3D2CESZN4BD`) saved exact request body: 161 messages, count_tokens = 127,517
 2. JSONL recorded usage total = 163,938 for the same call
 3. Replay same body now → total = 127,517 (gap = 0). The 36K injection is gone.
-4. Injection disappeared at line 26690 (02:49:40 BST): 181K → 141K in 7 seconds, cr=0 (full cache miss)
-5. Disappearance coincided with us beginning to use evaluate_script to query auth groups for a comparison experiment
-
-### Timeline
-- 02:24:13 compact → 02:24:16 call 26301 cc=74,739 (fresh cache WITH injection)
-- 02:24:23 call 26305 **injection content changed** → prefix broke → cr=22,709 (only tools hit) ← original reported miss
-- 02:24~02:49 injection stable, incremental growth 74K→181K
-- 02:49:40 **injection removed**: 181K→141K, cr=0, full rebuild without injection
-- After: all calls gap=0, injection never returned
-
-### Key facts
-- Injection invisible to client (not in request/response body, not in count_tokens API)
-- Explains all previously-unexplained cache misses. Our code is correct.
-- `inputTokens` in usage events = `totalContextTokens` (input + cache_creation + cache_read)
+Injection invisible to client. Explains all previously-unexplained cache misses. Our code is correct. `inputTokens` = `totalContextTokens` (input + cache_creation + cache_read).
 
 ## OpenAI SDK Migration
 
-Both providers use official `openai` npm package (v6.34.0). SDK types replace hand-rolled types. `ChatCompletionMessageToolCall` is a union — filter with `tc.type === "function"` before accessing `.function`.
-
-### Debug snapshot invariant
-After this change, for ALL providers: `DebugSnapshot.body` === exact object passed to SDK. Caller builds body → snapshots → sends. Zero divergence possible. Both providers also snapshot the API response via `writeDebugResponse`.
-
-### Test mock infrastructure
-SDK parses SSE `data:` JSON directly (not SSE `event:` line) to determine event type. Mocks must include `type` and `sequence_number` in the JSON data payload. Mock helpers: `mockOAIResponse()`, `mockFunctionCall()` build complete Response objects for `response.completed` events.
+Both providers use `openai` npm package (v6.34.0). `DebugSnapshot.body` === exact object passed to SDK. `ChatCompletionMessageToolCall` is union — filter `tc.type === "function"`.
 
 ## Thinking Block Provider Filtering
 
-Thinking events have optional `provider?: string` field. `buildResponseEvents` in Anthropic adapter sets `provider: "anthropic"`. Walker propagates provider through `AssistantContent` items. Anthropic's `onAssistantContent` filters: `provider === undefined` (legacy) or `provider === "anthropic"` → included; any other provider → skipped.
-
-This means switching providers automatically drops stale thinking blocks from JSONL history. OpenAI's walker already ignores thinking items entirely (filters only `text` and `tool_call`).
+Thinking events have `provider?: string`. Switching providers automatically drops stale thinking blocks (provider mismatch → filtered). OpenAI walker ignores thinking entirely.
 
 Mock API supports `{type: "thinking", thinking: "...", signature: "..."}` in instruction blocks. Streams `thinking_delta` + `signature_delta` events.
 
@@ -720,49 +593,20 @@ Test file: `src/drift-thinking.test.ts` (11 golden + 4 drift integration = 15 te
 
 ## JSONL Lifecycle Refactor
 
-### What changed
-- Message `header` field **deleted** — context injection via `work_context` messages instead
-- `work_context` and `compacted_resume` are QueueMessage source types (not Event types)
-- `compact_marker` is empty boundary (no checkpoint content)
-- `summarization_request` event type removed (merged into `compact_started`)
-- Lifecycle events merged: `agent_start` (replaces task_started + orchestration_started), `agent_end` (replaces orchestration_completed + agent_stopped + budget_exceeded)
-- `done_notified` preserved (crash-safe marker)
-- `session_config` emitted in runAgentForNode before any messages (was in provider loop after)
-
-### Enqueue hook mechanism
-- `MessageQueue.setBeforeFirstMessage(hook)`: one-shot hook fires before first non-replay enqueue
-- `markBeforeFirstMessageFired()`: skip on resume (work_context already in JSONL)
-- `resetBeforeFirstMessage()`: re-arm after compact
-- Explicit work_context enqueue in runAgentForNode for fresh sessions where deliverMessage replay path fires before hook wiring
-
-### JSONL event sequence (new)
-**Fresh session:** `session_config → message(work_context) → message(trigger) → messages_consumed → ...`
-**Post-compact:** `...compact_started → assistant_text → compact_marker(empty) → session_config → message(work_context) → message(compacted_resume) → messages_consumed → ...`
-**Restart:** No re-emission of session_config or work_context (already in JSONL from first run)
-
-### agent_end = renamed agent_stopped (not merged lifecycle events)
-`agent_end` is simply `agent_stopped` renamed. Emit positions unchanged from pre-refactor:
-- `stopAgent`/`stopTask`: synchronous emit with captured traceId BEFORE session clear
-- `runAgentForNode` finally: `notReplaced` guard emit (skips when stop already emitted)
-
-**Critical lesson**: Previous attempt merged `orchestration_completed` + `agent_stopped` into one event emitted from ONE place (finally block). This changed lifecycle logic → deadlock on done(). The 2s timeout in shutdown() was a band-aid, not a fix. Correct fix: keep emit positions unchanged, just rename the event.
-
-`orchestration_completed` deleted entirely — stats tracked via `tracker.updateCost`, not events.
-
-agent_end.reason: `stopped` (only value now — other exit reasons tracked elsewhere)
-
-### Migration
-`bun src/migrate-jsonl.ts` — one-time conversion. Idempotent. Already run on all project JSONL files.
+- Message `header` deleted → `work_context` QueueMessage source instead
+- `compact_marker` is empty boundary (no content). `summarization_request` merged into `compact_started`.
+- `agent_start`/`agent_end` replace old lifecycle events. `done_notified` preserved.
+- **JSONL sequence**: `session_config → message(work_context) → message(trigger) → messages_consumed → ...`
+- **Post-compact**: `compact_started → assistant_text → compact_marker → session_config → work_context → compacted_resume → messages_consumed`
+- **Critical lesson**: "delete until ONE remains" ≠ "merge into one place". agent_end deadlock came from merging two emit points. Keep positions, just rename.
 
 ## EventSpec Type
 
-`EventSpec = DistributiveOmit<Event, "taskId">` — event before routing. Producers create EventSpec (no taskId), emit layer adds taskId + traceId. `DistributiveOmit` preserves discriminated union structure.
-
-**Single emit path**: `R.emit(projectId, taskId, spec: EventSpec)` is the ONE path above `emitEvent`. Deleted `emitWithTask` closure. Streaming text tracking + traceId lookup unified in R.emit's registered implementation. Provider loop stays decoupled — receives emit via `AgentRequest.emit: (spec: EventSpec) => void`.
+`EventSpec = DistributiveOmit<Event, "taskId">`. Single emit path: `R.emit(projectId, taskId, spec)`.
 
 ## Abort Signal + Inner Retry Fix
 
-Anthropic provider inner retry was catching abort errors as transient errors → 4 retries × exponential backoff = 30s delay on stopTask/resetTask. Fix: (1) catch checks `signal.aborted` first, (2) retry sleep responds to abort, (3) post-sleep abort check. Reset time: 30s → instant.
+Inner retry checks `signal.aborted` first + abort-responsive sleep. Reset time: 30s → instant.
 
 ## Plugin Architecture
 
