@@ -3880,6 +3880,97 @@ describe("systemPreamble", () => {
 	});
 });
 
+// ── Adaptive thinking: display opt-in ──
+// The default `display` for adaptive thinking was `"summarized"` on Opus 4.6
+// but changed to `"omitted"` on Opus 4.7. Matrix persists thinking to JSONL
+// and renders it in a developer activity log, so we explicitly opt in to
+// `"summarized"` to preserve the audit trail on 4.7+.
+describe("adaptive thinking display", () => {
+	let tmpDir: string;
+
+	beforeAll(async () => {
+		tmpDir = await mkdtemp(join(tmpdir(), "mxd-thinking-display-"));
+	});
+
+	afterAll(async () => {
+		await rm(tmpDir, { recursive: true, force: true });
+	});
+
+	/**
+	 * Build a provider whose client.messages.stream captures the params passed to it.
+	 * We can't use the ValidatingMockAPI's RequestRecord here because it doesn't
+	 * record the `thinking` / `output_config` fields — but those are exactly what
+	 * this test needs to assert on, so we capture params directly.
+	 */
+	function createProviderCapturingParams(thinkingEffort: number | undefined) {
+		let capturedParams: Record<string, unknown> | null = null;
+		const response = buildAnthropicResponse({
+			text: "ok",
+			stopReason: "end_turn",
+		});
+
+		const savedKey = process.env.ANTHROPIC_API_KEY;
+		process.env.ANTHROPIC_API_KEY = "test-key";
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+			apiKey: "test-key",
+			...(thinkingEffort !== undefined ? { thinkingEffort } : {}),
+		});
+		process.env.ANTHROPIC_API_KEY = savedKey;
+
+		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
+		(provider as any).client = {
+			messages: {
+				stream: (params: Record<string, unknown>) => {
+					capturedParams = params;
+					return createMockStream(response, ["ok"]);
+				},
+				countTokens: async () => ({ input_tokens: 100 }),
+			},
+		};
+
+		return { provider, getParams: () => capturedParams };
+	}
+
+	test("thinkingEffort > 0: request body includes thinking with display='summarized'", async () => {
+		const { provider, getParams } = createProviderCapturingParams(50);
+
+		await provider.execute({
+			buildSystemPrompt: () => ({ stable: "sys", variable: "var" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize.",
+			queue: queueWithPrompt("hello", tmpDir),
+		});
+
+		const params = getParams();
+		expect(params).not.toBeNull();
+		// The key assertion: display field MUST be present and set to "summarized".
+		// On Opus 4.7 without this field, the API defaults to "omitted" and
+		// thinking blocks come back with empty content — breaking our audit trail.
+		expect(params?.thinking).toEqual({
+			type: "adaptive",
+			display: "summarized",
+		});
+		// Sanity check: output_config (effort level) is also emitted alongside.
+		expect(params?.output_config).toBeDefined();
+	});
+
+	test("thinkingEffort = 0 (disabled): no thinking or output_config in request", async () => {
+		const { provider, getParams } = createProviderCapturingParams(0);
+
+		await provider.execute({
+			buildSystemPrompt: () => ({ stable: "sys", variable: "var" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize.",
+			queue: queueWithPrompt("hello", tmpDir),
+		});
+
+		const params = getParams();
+		expect(params).not.toBeNull();
+		expect(params?.thinking).toBeUndefined();
+		expect(params?.output_config).toBeUndefined();
+	});
+});
+
 // ── Abort signal + inner retry tests ──
 
 describe("Abort signal stops inner retry immediately", () => {
