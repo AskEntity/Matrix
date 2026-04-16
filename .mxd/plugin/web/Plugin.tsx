@@ -4,7 +4,7 @@ import { api } from "./api.ts";
 import { useAuthFetch } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
 import { AppFooter } from "./components/AppFooter.tsx";
-import { AppHeader } from "./components/AppHeader.tsx";
+// AppHeader moved to daemon shell (web/components/AppHeader.tsx)
 import { BackgroundProcessBar } from "./components/BackgroundProcessBar.tsx";
 import { CuteCat } from "./components/CuteCat.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
@@ -20,8 +20,7 @@ import {
 } from "./components/icons.tsx";
 // LoginPage removed — auth handled by daemon shell
 import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
-import { RelocateBanner } from "./components/RelocateBanner.tsx";
-import { SettingsPanel } from "./components/SettingsPanel.tsx";
+// SettingsPanel moved to daemon shell (web/components/SettingsPanel.tsx)
 import { statusDotClass } from "./components/StatusBadge.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
 import { TaskTree } from "./components/TaskTree.tsx";
@@ -36,10 +35,8 @@ import {
 	type TreeNode,
 	type UIEvent,
 	useAgent,
-	useProjects,
 	useSSE,
 	useTasks,
-	useThreeLayerConfig,
 } from "./hooks.ts";
 import { LocaleProvider, useLocale } from "./i18n.ts";
 import { MockShowcase } from "./MockShowcase.tsx";
@@ -71,47 +68,28 @@ function updateHash(
 	}
 }
 
-// ── Main App ───────────────────────────────────────────────────────────────
+// ── Main Plugin ───────────────────────────────────────────────────────────────
 
 /** Check ?mock query param once at module load — never changes during session. */
 const IS_MOCK_MODE = new URLSearchParams(window.location.search).has("mock");
 
-export function App() {
+/**
+ * Plugin component — renders content for a single project.
+ * NOT a SPA. Receives projectId from shell. No auth, no project selection, no settings.
+ */
+export function Plugin({ projectId }: { projectId: string }) {
+	if (!projectId) return <div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>;
 	return (
-		<LocaleProvider>
-			<ErrorBoundary>
-				{IS_MOCK_MODE ? <MockShowcase /> : <AppInner />}
-			</ErrorBoundary>
-		</LocaleProvider>
+		<ErrorBoundary>
+			<ProjectContent projectId={projectId} />
+		</ErrorBoundary>
 	);
 }
 
-function AppInner() {
-	// Auth is handled by the daemon shell — plugin assumes authenticated.
-	// Logout is a no-op here (shell manages session).
-	const handleLogout = useCallback(() => {
-		// Shell owns auth lifecycle — reload to trigger shell's auth check
-		window.location.reload();
-	}, []);
-
-	return <AuthenticatedApp onLogout={handleLogout} />;
-}
-
-function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
+function ProjectContent({ projectId }: { projectId: string }) {
 	const authFetch = useAuthFetch();
 	const { t } = useLocale();
-	const {
-		projects,
-		refresh: refreshProjects,
-		initProject,
-		deleteProject,
-		updateProject,
-	} = useProjects();
 	const initialHash = useMemo(() => parseHash(), []);
-	const [projectId, setProjectId] = useState(initialHash.projectId ?? "");
-	const [showAddProject, setShowAddProject] = useState(false);
-	const [newProjectPath, setNewProjectPath] = useState("");
-	const [creatingProject, setCreatingProject] = useState(false);
 	const [isCreatingTask, setIsCreatingTask] = useState(false);
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
 		initialHash.taskId ?? null,
@@ -128,7 +106,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	);
 	const [lastOutputTokens, setLastOutputTokens] = useState<number | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
-	const [showSettings, setShowSettings] = useState(false);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(
 		() => localStorage.getItem("mxd-sidebar-collapsed") === "true",
@@ -249,13 +226,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		reorderTasks,
 		reparentTask,
 	} = useAgent(projectId);
-	const {
-		layers,
-		loading: configLoading,
-		updateGlobal,
-		updateRepo,
-		updateLocal,
-	} = useThreeLayerConfig(projectId);
+	// Config/settings managed by shell — plugin doesn't need it
 
 	const nodeMap = useMemo(() => {
 		const map = new Map<string, TreeNode>();
@@ -507,7 +478,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			.then((r) => r.json())
 			.then(processEventResponse)
 			.catch((e) =>
-				console.warn("[App] Failed to re-fetch events on reconnect:", e),
+				console.warn("[Plugin] Failed to re-fetch events on reconnect:", e),
 			);
 		// Re-fetch pending clarifications (still ephemeral/in-memory)
 		authFetch(api.clarifications(projectId))
@@ -526,7 +497,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			)
 			.catch((e) =>
 				console.warn(
-					"[App] Failed to re-fetch clarifications on reconnect:",
+					"[Plugin] Failed to re-fetch clarifications on reconnect:",
 					e,
 				),
 			);
@@ -539,12 +510,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		handleReconnect,
 	);
 
-	useEffect(() => {
-		if (projects.length === 0) return;
-		if (projectId && projects.some((p) => p.id === projectId)) return;
-		const first = projects[0];
-		if (first) setProjectId(first.id);
-	}, [projects, projectId]);
+	// Project selection is managed by shell — plugin receives projectId as prop
 
 	// Fetch event history for the viewed session (compact barrier optimization).
 	// Re-fires on project change AND task selection change so each session's events are fetched independently.
@@ -560,7 +526,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				processEventResponse(data);
 			})
 			.catch((e) =>
-				console.warn("[App] Failed to fetch events for session:", e),
+				console.warn("[Plugin] Failed to fetch events for session:", e),
 			);
 		return () => {
 			cancelled = true;
@@ -579,7 +545,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		const onHashChange = () => {
 			const { projectId: hp, taskId: ht } = parseHash();
 			if (hp && hp !== projectId) {
-				setProjectId(hp);
 				setSelectedTaskId(ht ?? rootNodeId);
 				setLogs([]);
 				setTokenUsage({});
@@ -728,8 +693,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		handleDeleteTask,
 		handleStopTask,
 		handleClearTaskSession,
-		handleAddProject,
-		handleDeleteProject,
 		handleAddTask,
 		handleCreateTask,
 		handleCancelCreate,
@@ -744,9 +707,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				targetNodeId,
 				clarifyAnswers,
 				pendingClarifications,
-				newProjectPath,
-				creatingProject,
-				projects,
 				addLog,
 				setLogs,
 				setLastTurns,
@@ -754,15 +714,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setLastCacheCreationTokens,
 				setLastCacheReadTokens,
 				setLastOutputTokens,
-				setProjectId,
 				setSelectedTaskId,
 				setRootNodeId,
 				setClarifyAnswers,
 				setPendingClarifications,
-				setCreatingProject,
-				setNewProjectPath,
-				setShowAddProject,
-				setShowSettings,
 				setIsCreatingTask,
 				setTokenUsage,
 				setPendingMessages,
@@ -776,8 +731,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				deleteTask,
 				stopTask,
 				clearTaskSession,
-				initProject,
-				deleteProject,
 				refreshTasks,
 				t,
 			}),
@@ -790,9 +743,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			targetNodeId,
 			clarifyAnswers,
 			pendingClarifications,
-			newProjectPath,
-			creatingProject,
-			projects,
 			addLog,
 			start,
 			stop,
@@ -801,8 +751,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			deleteTask,
 			stopTask,
 			clearTaskSession,
-			initProject,
-			deleteProject,
 			refreshTasks,
 			t,
 			setActiveAgents,
@@ -811,9 +759,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 	// ── Stabilized callbacks for memoized child components ───────────────────
 
-	const handleProjectChange = useCallback(
-		(id: string) => {
-			setProjectId(id);
+	// Reset all project state when projectId changes (shell controls project selection)
+	const prevProjectId = useRef(projectId);
+	useEffect(() => {
+		if (prevProjectId.current !== projectId) {
+			prevProjectId.current = projectId;
 			setSelectedTaskId(null);
 			setRootNodeId(null);
 			setOpenTabs([]);
@@ -830,21 +780,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			setLastCacheCreationTokens(null);
 			setLastCacheReadTokens(null);
 			setLastOutputTokens(null);
-		},
-		[setActiveAgents],
-	);
-
-	const handleShowAddProject = useCallback(() => setShowAddProject(true), []);
-
-	const handleCancelAddProject = useCallback(() => {
-		setShowAddProject(false);
-		setNewProjectPath("");
-	}, []);
-
-	const handleToggleSettings = useCallback(
-		() => setShowSettings((s) => !s),
-		[],
-	);
+		}
+	}, [projectId, setActiveAgents]);
 
 	const handleThemeChange = useCallback(
 		(t: string) => setThemeState(t as typeof theme),
@@ -1066,52 +1003,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const currentProject = projects.find((p) => p.id === projectId);
 	const projectPathMissing = currentProject?.pathExists === false;
 
-	const handleRelocate = useCallback(
-		async (newPath: string) => {
-			if (!projectId) return;
-			await updateProject(projectId, { path: newPath });
-		},
-		[projectId, updateProject],
-	);
-
 	// ── Render ───────────────────────────────────────────────────────────────
 
 	return (
 		<>
-			<AppHeader
-				connected={connected}
-				projects={projects}
-				projectId={projectId}
-				showAddProject={showAddProject}
-				newProjectPath={newProjectPath}
-				creatingProject={creatingProject}
-				showSettings={showSettings}
-				onProjectChange={handleProjectChange}
-				onShowAddProject={handleShowAddProject}
-				onAddProject={handleAddProject}
-				onNewProjectPathChange={setNewProjectPath}
-				onCancelAddProject={handleCancelAddProject}
-				onToggleSettings={handleToggleSettings}
-				onLogout={onLogout}
-				onToggleSidebar={handleToggleSidebar}
-			/>
-
-			{showSettings && projectId && (
-				<SettingsPanel
-					projectId={projectId}
-					layers={layers}
-					loading={configLoading}
-					theme={theme}
-					onThemeChange={handleThemeChange}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
-					onClose={() => setShowSettings(false)}
-					onDeleteProject={handleDeleteProject}
-					onClearAllSessions={handleClearSessions}
-				/>
-			)}
-
 			<main
 				className={`mxd-main${fullscreen ? " mxd-fullscreen" : ""}${isSidebarDragging ? " mxd-sidebar-resizing" : ""}`}
 			>
@@ -1151,19 +1046,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 							>
 								<IconRefresh size={13} />
 							</button>
-							{projectId && (
-								<button
-									type="button"
-									className="mxd-btn-icon mxd-sidebar-settings-btn"
-									onClick={() => {
-										setSidebarOpen(false);
-										handleToggleSettings();
-									}}
-									data-tip={t("project.settings")}
-								>
-									<IconGear size={13} />
-								</button>
-							)}
+							{/* Settings button moved to shell header */}
 						</div>
 					</div>
 					<TaskTree
@@ -1237,12 +1120,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 							})}
 						</div>
 					)}
-					{projectPathMissing && currentProject && (
-						<RelocateBanner
-							projectPath={currentProject.path}
-							onRelocate={handleRelocate}
-						/>
-					)}
+					{/* RelocateBanner moved to shell */}
 
 					{/* Compact metadata header for task views */}
 					{!isOrchestratorNode && selectedNode && isTask(selectedNode) && (
@@ -1370,7 +1248,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								onLoadOlderEvents={handleLoadOlderEvents}
 								onTaskNavigate={handleTaskNavigate}
 								projectMap={projectMap}
-								onProjectNavigate={handleProjectChange}
 								showCacheBadges={showCacheBadges}
 							/>
 						</div>
