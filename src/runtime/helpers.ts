@@ -97,12 +97,11 @@ export async function getTracker(
 ): Promise<TaskTracker> {
 	let tracker = ctx.trackers.get(projectId);
 	if (!tracker) {
-		const treePath = join(
-			ctx.config.dataDir,
-			"projects",
-			projectId,
-			"tree.json",
-		);
+		const dataRoot = ctx.config.dataRoot;
+		const projectDir = (!dataRoot || dataRoot === "@")
+			? join(ctx.config.dataDir, "projects", projectId)
+			: join(ctx.config.dataDir, "projects", projectId, dataRoot.slice(2));
+		const treePath = join(projectDir, "tree.json");
 		tracker = new TaskTracker(treePath);
 		const project = ctx.pm.get(projectId);
 		const defaultBranch = project
@@ -130,10 +129,16 @@ export async function getTracker(
 
 /**
  * Compute the directory where a project's task JSONL files live.
- * Unified layout: `{dataDir}/projects/{projectId}/tasks/`.
+ *
+ * @param dataRoot - Plugin's effective dataRoot. "@" = project root (default),
+ *   "@/plugin/foo" = plugin subdirectory.
  */
-export function projectTasksDir(dataDir: string, projectId: string): string {
-	return join(dataDir, "projects", projectId, "tasks");
+export function projectTasksDir(dataDir: string, projectId: string, dataRoot?: string): string {
+	if (!dataRoot || dataRoot === "@") {
+		return join(dataDir, "projects", projectId, "tasks");
+	}
+	// "@/some/path" → strip "@/" → join under project dir
+	return join(dataDir, "projects", projectId, dataRoot.slice(2), "tasks");
 }
 
 /**
@@ -153,7 +158,7 @@ export function getEventStore(
 ): EventStore {
 	let store = ctx.eventStores.get(projectId);
 	if (!store) {
-		store = new EventStore(projectTasksDir(ctx.config.dataDir, projectId));
+		store = new EventStore(projectTasksDir(ctx.config.dataDir, projectId, ctx.config.dataRoot));
 		ctx.eventStores.set(projectId, store);
 	}
 	return store;
@@ -205,7 +210,7 @@ export async function pruneSessionFiles(
 	projectId: string,
 	keepCount: number,
 ): Promise<{ pruned: number; remaining: number }> {
-	const tasksDir = projectTasksDir(ctx.config.dataDir, projectId);
+	const tasksDir = projectTasksDir(ctx.config.dataDir, projectId, ctx.config.dataRoot);
 	try {
 		const files = await readdir(tasksDir).catch((e) => {
 			console.warn(`[helpers] Failed to read tasks dir ${tasksDir}:`, e);
