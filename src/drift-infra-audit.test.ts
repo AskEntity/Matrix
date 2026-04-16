@@ -2050,43 +2050,9 @@ describe("Walker golden snapshots: eventsToAnthropicMessages", () => {
 		]);
 	});
 
-	test("tool_name alias resolved: send_message_to_child → send_message", () => {
-		// Walker maps old tool names to current names (MCP-prefixed).
-		// Locks the alias map defined in event-converter.ts.
-		const events: Event[] = [
-			{
-				type: "tool_call",
-				tool: "mcp__mxd__send_message_to_child", // old MCP-prefixed name
-				toolCallId: "tc_1",
-				input: {},
-				taskId: "",
-				ts: FIXED_TS,
-			},
-		];
-		const messages = eventsToAnthropicMessages(events);
-		// biome-ignore lint/suspicious/noExplicitAny: test assertion
-		const block = (messages[0] as any).content[0];
-		expect(block.name).toBe("mcp__mxd__send_message");
-	});
+	// Legacy alias tests removed — TOOL_NAME_ALIASES deleted, no remapping exists.
 
-	test("tool_name alias resolved: report_to_parent → send_message", () => {
-		const events: Event[] = [
-			{
-				type: "tool_call",
-				tool: "mcp__mxd__report_to_parent",
-				toolCallId: "tc_1",
-				input: {},
-				taskId: "",
-				ts: FIXED_TS,
-			},
-		];
-		const messages = eventsToAnthropicMessages(events);
-		// biome-ignore lint/suspicious/noExplicitAny: test assertion
-		const block = (messages[0] as any).content[0];
-		expect(block.name).toBe("mcp__mxd__send_message");
-	});
-
-	test("current tool names unchanged by alias resolver", () => {
+	test("current tool names pass through unchanged", () => {
 		// Non-aliased names pass through unchanged.
 		const events: Event[] = [
 			{
