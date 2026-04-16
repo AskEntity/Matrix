@@ -233,11 +233,17 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		for (const n of nodes) map.set(n.id, n);
 		return map;
 	}, [nodes]);
+	// Fetch current project info (name, pathExists) — plugin doesn't manage project list
+	const [currentProject, setCurrentProject] = useState<{ id: string; name: string; path: string; pathExists?: boolean } | null>(null);
+	useEffect(() => {
+		if (!projectId) { setCurrentProject(null); return; }
+		authFetch(`/projects/${projectId}`).then(r => r.ok ? r.json() : null).then(setCurrentProject).catch(() => setCurrentProject(null));
+	}, [projectId, authFetch]);
 	const projectMap = useMemo(() => {
 		const map = new Map<string, string>();
-		for (const p of projects) map.set(p.id, p.name);
+		if (currentProject) map.set(currentProject.id, currentProject.name);
 		return map;
-	}, [projects]);
+	}, [currentProject]);
 	const totalCost = useMemo(() => {
 		const sum = nodes.reduce(
 			(acc, n) => (isTask(n) ? acc + n.costUsd : acc),
@@ -271,7 +277,6 @@ function ProjectContent({ projectId }: { projectId: string }) {
 	}, [theme]);
 
 	useEffect(() => {
-		const currentProject = projects.find((p) => p.id === projectId);
 		const projectName = currentProject?.name ?? "";
 		const base = `Matrix${projectName ? ` — ${projectName}` : ""}`;
 
@@ -292,7 +297,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		if (failed > 0) document.title = `${base} [!${failed}]`;
 		else if (passed === total) document.title = `${base} [✓]`;
 		else document.title = `${base} [${passed}/${total}]`;
-	}, [nodes, rootNodeId, projects, projectId]);
+	}, [nodes, rootNodeId, currentProject, projectId]);
 
 	// ── Sidebar resize ───────────────────────────────────────────────────
 
@@ -1000,7 +1005,6 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		[projectId, loadingOlderEvents, olderEventsAvailable, processEventBatch],
 	);
 
-	const currentProject = projects.find((p) => p.id === projectId);
 	const projectPathMissing = currentProject?.pathExists === false;
 
 	// ── Render ───────────────────────────────────────────────────────────────
@@ -1040,7 +1044,6 @@ function ProjectContent({ projectId }: { projectId: string }) {
 								className="mxd-btn-icon"
 								onClick={() => {
 									refreshTasks();
-									refreshProjects();
 								}}
 								data-tip={t("tasks.refresh")}
 							>
