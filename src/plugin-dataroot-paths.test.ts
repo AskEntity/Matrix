@@ -78,7 +78,7 @@ describe("dataRoot integration: two plugins write to separate directories", () =
 		await matrixTracker.save();
 
 		const matrixStore = new EventStore(join(matrixRoot, "tasks"));
-		await matrixStore.append(matrixTracker.rootNodeId, { type: "agent_start", taskId: matrixTracker.rootNodeId, ts: Date.now() });
+		await matrixStore.append(matrixTracker.rootNodeId, { type: "agent_start", taskId: matrixTracker.rootNodeId, ts: Date.now(), resume: false, model: "test", provider: "test" } as import("./events.ts").Event);
 
 		// Story: create tracker + write JSONL
 		const storyTracker = new TaskTracker(join(storyRoot, "tree.json"));
@@ -87,7 +87,7 @@ describe("dataRoot integration: two plugins write to separate directories", () =
 		await storyTracker.save();
 
 		const storyStore = new EventStore(join(storyRoot, "tasks"));
-		await storyStore.append(storyTracker.rootNodeId, { type: "agent_start", taskId: storyTracker.rootNodeId, ts: Date.now() });
+		await storyStore.append(storyTracker.rootNodeId, { type: "agent_start", taskId: storyTracker.rootNodeId, ts: Date.now(), resume: false, model: "test", provider: "test" } as import("./events.ts").Event);
 
 		// Assert: files exist at correct paths
 		// Matrix

@@ -1106,7 +1106,7 @@ describe("event-handler live session clearing", () => {
 					branch: null,
 					worktreePath: null,
 					cwd: null,
-					session: undefined,
+					
 					color: undefined,
 				},
 				{
@@ -1123,7 +1123,7 @@ describe("event-handler live session clearing", () => {
 					branch: null,
 					worktreePath: null,
 					cwd: null,
-					session: undefined,
+					
 					color: undefined,
 				},
 				{
@@ -1140,7 +1140,7 @@ describe("event-handler live session clearing", () => {
 					branch: null,
 					worktreePath: null,
 					cwd: null,
-					session: {} as TaskNode["session"],
+					
 					color: undefined,
 				},
 			],

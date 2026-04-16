@@ -61,6 +61,7 @@ interface ScopeWorker {
 				status: number;
 				headers: Record<string, string>;
 				body: string;
+				_isStream?: boolean;
 			}) => void;
 			reject: (error: Error) => void;
 		}

@@ -1,7 +1,14 @@
 /**
- * Matrix plugin types — defines the shapes this plugin works with.
- * These match the API response format. Plugin does NOT import from src/.
+ * Matrix plugin types.
+ *
+ * Runtime types: re-exported from @mxd/types (importmap shared module).
+ * Matrix-specific types: defined here.
  */
+
+// Runtime types — shared via importmap, type-only in compiled JS
+export type { Event, QueueMessage, BaseTaskNode } from "@mxd/types";
+
+// Matrix-specific types
 
 export type TaskStatus =
 	| "draft"
@@ -46,41 +53,4 @@ export function isFolder(node: TreeNode): node is FolderNode {
 
 export function isTask(node: TreeNode): node is TaskNode {
 	return node.type !== "folder";
-}
-
-/**
- * SSE Event — the shape of events received from the daemon.
- * Plugin doesn't need the full discriminated union from src/events.ts.
- * This is the wire format.
- */
-export interface Event {
-	type: string;
-	taskId: string;
-	ts: number;
-	// Common fields across event types (plugin accesses these)
-	content?: string;
-	tool?: string;
-	toolCallId?: string;
-	input?: Record<string, unknown>;
-	body?: Record<string, unknown>;
-	traceId?: string;
-	// Allow additional fields
-	[key: string]: unknown;
-}
-
-/**
- * QueueMessage — the shape of message bodies in "message" events.
- */
-export interface QueueMessage {
-	id: string;
-	source: string;
-	ts: number;
-	content?: string;
-	title?: string;
-	taskId?: string;
-	taskName?: string;
-	fromProjectId?: string;
-	fromProjectName?: string;
-	images?: Array<{ base64: string; mediaType: string }>;
-	[key: string]: unknown;
 }
