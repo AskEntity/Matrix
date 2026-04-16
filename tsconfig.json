@@ -19,6 +19,9 @@
 		"noImplicitOverride": true,
 		"noUnusedLocals": true,
 		"noUnusedParameters": true,
-		"noPropertyAccessFromIndexSignature": false
+		"noPropertyAccessFromIndexSignature": false,
+		"paths": {
+			"@mxd/auth-context": ["./web/auth-context.ts"]
+		}
 	}
 }

@@ -248,13 +248,23 @@ export async function createDaemon(opts: {
 			worker.onerror = (event: ErrorEvent) => {
 				console.error(`[daemon] Worker "${scopeName}" crashed:`, event.message);
 				scopeWorker.ready = false;
-				// Reject all pending HTTP requests so they don't hang forever
+				// Reject pending HTTP requests + close zombie stream controllers
 				for (const [id, pending] of scopeWorker.pending) {
-					pending.reject(
-						new Error(`Worker "${scopeName}" crashed: ${event.message}`),
-					);
+					const streamCtrl = (pending as unknown as { _streamController?: ReadableStreamDefaultController })._streamController;
+					if (streamCtrl) {
+						try { streamCtrl.error(new Error(`Worker "${scopeName}" crashed`)); } catch {}
+					} else {
+						pending.reject(new Error(`Worker "${scopeName}" crashed: ${event.message}`));
+					}
 				}
 				scopeWorker.pending.clear();
+				// Auto-restart worker after 2s
+				setTimeout(() => {
+					console.log(`[daemon] Restarting worker "${scopeName}"...`);
+					startWorkerForPlugin(scopeName, pluginRuntimePath, pluginDataRoot).catch((e) => {
+						console.error(`[daemon] Worker "${scopeName}" restart failed:`, e);
+					});
+				}, 2000);
 			};
 
 			// Temporary handler for init sequence
@@ -573,6 +583,9 @@ export async function createDaemon(opts: {
 			await pm.delete(projectId);
 			syncToWorkers("project_deleted", { projectId });
 			syncProjects();
+			// Clean up SSE ring buffers for deleted project
+			sseSeqCounters.delete(projectId);
+			sseEventBuffers.delete(projectId);
 			return c.json({ ok: true });
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -797,14 +810,15 @@ export async function createDaemon(opts: {
 							controller.enqueue(msg);
 						}
 						// Send pending clarifications (worker has them)
-						const clarifyResp = await forwardToWorker(
-							workerName!,
+						const clarifyResp = workerName ? await forwardToWorker(
+							workerName,
 							new Request(`http://localhost/projects/${projectId}/clarifications`, {
 								headers: request.headers,
 							}),
-						);
+						) : null;
 						if (clarifyResp?.ok) {
-							const clarifications = await clarifyResp.json();
+							const result = await clarifyResp.json();
+							const clarifications = Array.isArray(result) ? result : result?.clarifications;
 							if (Array.isArray(clarifications) && clarifications.length > 0) {
 								controller.enqueue(sseEncoder.encode(
 									`data: ${JSON.stringify({ type: "pending_clarifications", projectId, clarifications })}\n\n`,
