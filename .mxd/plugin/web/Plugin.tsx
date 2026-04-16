@@ -80,9 +80,11 @@ const IS_MOCK_MODE = new URLSearchParams(window.location.search).has("mock");
 export function Plugin({ projectId }: { projectId: string }) {
 	if (!projectId) return <div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>;
 	return (
-		<ErrorBoundary>
-			<ProjectContent projectId={projectId} />
-		</ErrorBoundary>
+		<LocaleProvider>
+			<ErrorBoundary>
+				<ProjectContent projectId={projectId} />
+			</ErrorBoundary>
+		</LocaleProvider>
 	);
 }
 
