@@ -30,6 +30,7 @@ const SHARED_MODULES = [
 /** Paths to vendor shim source files (written to buildDir at build time). */
 const VENDOR_SHIMS: Record<string, { importPath: string; hasDefault: boolean }> = {
 	react: { importPath: "react", hasDefault: true },
+	"react-dom": { importPath: "react-dom", hasDefault: true },
 	"react-dom-client": { importPath: "react-dom/client", hasDefault: false },
 	"react-jsx-runtime": { importPath: "react/jsx-runtime", hasDefault: false },
 	"react-jsx-dev-runtime": { importPath: "react/jsx-dev-runtime", hasDefault: false },
@@ -38,6 +39,7 @@ const VENDOR_SHIMS: Record<string, { importPath: string; hasDefault: boolean }> 
 /** Map from bare specifier → vendor URL path for importmap. */
 const IMPORTMAP_ENTRIES: Record<string, string> = {
 	react: "/vendor/react.js",
+	"react-dom": "/vendor/react-dom.js",
 	"react-dom/client": "/vendor/react-dom-client.js",
 	"react/jsx-runtime": "/vendor/react-jsx-runtime.js",
 	"react/jsx-dev-runtime": "/vendor/react-jsx-dev-runtime.js",
@@ -69,6 +71,9 @@ export async function buildWebAssets(opts: {
 	minify?: boolean;
 }): Promise<WebBuildResult> {
 	const { buildDir, shellEntry, plugins, projectRoot, minify } = opts;
+
+	// Clean previous build
+	try { const { rmSync } = await import("node:fs"); rmSync(buildDir, { recursive: true, force: true }); } catch {}
 
 	const vendorDir = join(buildDir, "vendor");
 	const appDir = join(buildDir, "app");
@@ -211,10 +216,10 @@ export async function buildWebAssets(opts: {
 		.replace(projectRoot + "/", "")
 		.replace(/\.tsx?$/, ".js");
 
-	// Clean up shim source files
+	// Clean up shim source files (always, even on error)
 	try {
 		const { rmSync } = await import("node:fs");
-		rmSync(shimDir, { recursive: true });
+		rmSync(shimDir, { recursive: true, force: true });
 	} catch {}
 
 	const totalOutputs =

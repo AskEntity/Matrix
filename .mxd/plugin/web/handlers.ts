@@ -195,10 +195,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			}
 			return true;
 		}
-		if (cmd === "/settings") {
-			setShowSettings(true);
-			return true;
-		}
+		// /settings removed — settings is shell's responsibility (header gear icon)
 		if (cmd === "/dump-messages") {
 			try {
 				const nodeId =
