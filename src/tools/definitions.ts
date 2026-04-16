@@ -69,13 +69,13 @@ const bashTool = defineTool({
 			decl: { kind: "explicit" },
 		},
 		run_in_background: {
-			schema: z.boolean(),
+			schema: z.boolean().optional(),
 			decl: { kind: "optional" },
 			description:
 				"If true, run command in background immediately (equivalent to foreground_timeout=0). Preferred way to intentionally background a command.",
 		},
 		foreground_timeout: {
-			schema: z.number(),
+			schema: z.number().optional(),
 			decl: { kind: "optional" },
 			description:
 				"Maximum time in ms to run in foreground before backgrounding. 0 = immediate background. Default: 120000 (2 minutes).",
@@ -150,7 +150,7 @@ const backgroundTool = defineTool({
 			decl: { kind: "explicit" },
 		},
 		id: {
-			schema: z.string(),
+			schema: z.string().optional(),
 			decl: { kind: "optional" },
 			description:
 				"Background process ID (e.g. 'bg-A1B2C3D4'). Required for status and kill actions.",
@@ -190,12 +190,12 @@ const readFileTool = defineTool({
 			decl: { kind: "explicit" },
 		},
 		offset: {
-			schema: z.number(),
+			schema: z.number().optional(),
 			decl: { kind: "optional" },
 			description: "Start reading from this line number, 1-based (default: 1)",
 		},
 		limit: {
-			schema: z.number(),
+			schema: z.number().optional(),
 			decl: { kind: "optional" },
 			description:
 				"Maximum number of lines to return (default: all). Use with offset for paginating large files.",
@@ -339,7 +339,7 @@ const editFileTool = defineTool({
 			decl: { kind: "explicit" },
 		},
 		replace_all: {
-			schema: z.boolean(),
+			schema: z.boolean().optional(),
 			decl: { kind: "optional" },
 			description:
 				"If true, replace all occurrences (default: false, which requires old_string to be unique in file)",
@@ -394,7 +394,7 @@ const listFilesTool = defineTool({
 	params: {
 		...bindParams,
 		pattern: {
-			schema: z.string(),
+			schema: z.string().optional(),
 			decl: { kind: "optional" },
 			description: 'Glob pattern (e.g. "src/**/*.ts", "*.json"). Default: "*"',
 		},
@@ -435,45 +435,45 @@ const searchTool = defineTool({
 			decl: { kind: "explicit" },
 		},
 		path: {
-			schema: z.string(),
+			schema: z.string().optional(),
 			decl: { kind: "optional" },
 			description: "Directory or file to search in (default: .)",
 		},
 		glob: {
-			schema: z.string(),
+			schema: z.string().optional(),
 			decl: { kind: "optional" },
 			description: 'File glob filter (e.g. "*.ts", "*.{ts,tsx}")',
 		},
 		context: {
-			schema: z.number(),
+			schema: z.number().optional(),
 			decl: { kind: "optional" },
 			description:
 				"Number of context lines before and after each match (default: 0)",
 		},
 		output_mode: {
-			schema: z.enum(["content", "files_with_matches", "count"]),
+			schema: z.enum(["content", "files_with_matches", "count"]).optional(),
 			decl: { kind: "optional" },
 			description:
 				"'content' (default): matching lines with line numbers. 'files_with_matches': file paths only (fast discovery). 'count': match counts per file.",
 		},
 		head_limit: {
-			schema: z.number(),
+			schema: z.number().optional(),
 			decl: { kind: "optional" },
 			description: "Max number of output entries (default: 50, max: 200)",
 		},
 		case_insensitive: {
-			schema: z.boolean(),
+			schema: z.boolean().optional(),
 			decl: { kind: "optional" },
 			description: "Case-insensitive search (default: false)",
 		},
 		multiline: {
-			schema: z.boolean(),
+			schema: z.boolean().optional(),
 			decl: { kind: "optional" },
 			description:
 				"Enable multiline matching with RegExp 's' flag, allowing '.' to match newlines (default: false).",
 		},
 		excluded_dirs: {
-			schema: z.array(z.string()),
+			schema: z.array(z.string()).optional(),
 			decl: { kind: "optional" },
 			description:
 				"Directories to exclude from search. Defaults to: node_modules, .git, dist, out, .worktrees, .cache, coverage, .next, build. Pass empty array to include all.",
@@ -507,7 +507,7 @@ const searchTool = defineTool({
 // ── Public API ──
 
 /** All builtin tool definitions. */
-export function buildBuiltinToolDefs(): AnyToolDef[] {
+export function buildBuiltinToolDefs() {
 	return [
 		bashTool,
 		backgroundTool,
