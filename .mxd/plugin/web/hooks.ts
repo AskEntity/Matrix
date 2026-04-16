@@ -7,13 +7,13 @@ export type {
 	TaskNode,
 	TaskStatus,
 	TreeNode,
-} from "../../../src/types.ts";
-export { isFolder, isTask } from "../../../src/types.ts";
+} from "./types.ts";
+export { isFolder, isTask } from "./types.ts";
 
-import type { Event } from "../../../src/events.ts";
-import type { TreeNode } from "../../../src/types.ts";
+import type { Event } from "./types.ts";
+import type { TreeNode } from "./types.ts";
 
-export type { Event } from "../../../src/events.ts";
+export type { Event } from "./types.ts";
 
 // --- Types ---
 

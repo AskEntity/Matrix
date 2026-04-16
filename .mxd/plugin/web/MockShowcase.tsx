@@ -6,7 +6,6 @@
  * No SSE connection — pure static render with all UI elements visible.
  *
  * Mirrors AuthenticatedApp layout: AppHeader, sidebar with TaskTree, tab bar,
- * view toggle (activity/description), TaskDetail, OrchestratorDetail, AppFooter.
  */
 
 import type React from "react";
@@ -628,18 +627,7 @@ function MockShowcaseInner() {
 				</section>
 			</main>
 
-			<AppFooter
-				projectId=""
-				targetNodeId={null}
-				rootNodeId={rootNodeId}
-				nodeMap={nodeMap}
-				pendingMessages={pendingMessages}
-				pendingClarifications={pendingClarifications}
-				clarifyAnswers={clarifyAnswers}
-				onSend={noop}
-				onClarifySubmit={noop}
-				onClarifyAnswerChange={handleClarifyAnswerChange}
-			/>
+				{/* AppFooter moved to shell */}
 
 			{themes[theme]?.hasCat && <CuteCat />}
 		</>
