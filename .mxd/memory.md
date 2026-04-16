@@ -108,6 +108,10 @@ Browser → Daemon (static assets + SSE) + Worker (API forwarding)
 | src/event-converter.ts | walkEventsToMessages + EventConverterCallbacks |
 | src/task-tracker.ts | Task tree, node CRUD, tree.json persistence |
 
+---
+# Core Mechanisms
+---
+
 ## Key Architectural Invariants
 
 ### JSONL Content Fidelity
@@ -163,9 +167,9 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 - `EventStore.truncateAfterLine(sessionId, lineIndex)`: rewrites file keeping lines 0..lineIndex
 - Repair runs in runAgentForNode before provider loop starts
 
-## Default Branch
-
-Root node stores branch at init. `baseBranch` required on worktree create (no fallback). Child worktrees branch from parent's branch.
+---
+# Cache & Drift Prevention
+---
 
 ## Session Config + Cache
 
@@ -268,6 +272,10 @@ Seven paths in `provider-shared.ts` have this shape. 3 are clean (`continue;` wi
 
 **Latent walker bug** (deferred): walker reading `[tool_result, messages_consumed, summarization_request]` produces two consecutive user messages. Proper structural fix: summarization_request should append to the current user turn, not create a separate one. Requires matching live + walker changes for byte-identical output. Documented as test.todo in drift-lifecycle.test.ts.
 
+---
+# Providers & API
+---
+
 ## Auto-Recovery from API 400
 
 Provider loop auto-recovers from 400 invalid_request_error. On 400, pops broken user message, replaces with safe synthetic tool_results + recovery text, retries once (`autoRecoveryAttempted` flag). Production: `enableAutoRecovery ?? true`. Tests: `enableAutoRecovery: false`.
@@ -292,6 +300,22 @@ Provider loop auto-recovers from 400 invalid_request_error. On 400, pops broken 
 - Anthropic agents: can invoke create_folder, delete_folder, etc. by name even in sessions where those tools weren't frozen in
 - OpenAI agents: must see the tool in their list to call it
 - This is WHY compact-refresh-tools fix is OpenAI-critical, Anthropic-nice-to-have
+
+## OpenAI SDK Migration
+
+Both providers use `openai` npm package (v6.34.0). `DebugSnapshot.body` === exact object passed to SDK. `ChatCompletionMessageToolCall` is union — filter `tc.type === "function"`.
+
+## Thinking Block Provider Filtering
+
+Thinking events have `provider?: string`. Switching providers automatically drops stale thinking blocks (provider mismatch → filtered). OpenAI walker ignores thinking entirely.
+
+## Abort Signal + Inner Retry Fix
+
+Inner retry checks `signal.aborted` first + abort-responsive sleep. Reset time: 30s → instant.
+
+---
+# Data Model & Storage
+---
 
 ## Image Handling
 
@@ -404,6 +428,10 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_k
 - hideCompleted filter: hides `closed` and `failed` only. `verify` is actionable and remains visible.
 - Scroll follow mode: scroll-to-bottom re-enables follow, scroll-up disables. Follow button also enables.
 
+---
+# Testing
+---
+
 ## Integration Test Framework
 
 - `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation.
@@ -490,6 +518,14 @@ evaluate_script is for runtime debug introspection ONLY (inspecting messages, ch
 Embrace large type refactors. Rename TaskNode → TreeNode = TaskNode | FolderNode. Let the compiler show you every place that assumes "all nodes are tasks." Each error is a location that needs to decide how to handle the new case. Hundreds of errors is not a problem — it is the audit.
 
 "Don't fear large changes" is not just about courage. Static type systems make large changes SAFE — the compiler catches what you miss. The errors are your todo list.
+
+---
+# Reference & Pitfalls
+---
+
+## Default Branch
+
+Root node stores branch at init. `baseBranch` required on worktree create (no fallback). Child worktrees branch from parent's branch.
 
 ## Known Pitfalls
 
@@ -578,19 +614,6 @@ Lesson: not every "the tool could be nicer to bad input" is a bug. Some inputs s
 3. Replay same body now → total = 127,517 (gap = 0). The 36K injection is gone.
 Injection invisible to client. Explains all previously-unexplained cache misses. Our code is correct. `inputTokens` = `totalContextTokens` (input + cache_creation + cache_read).
 
-## OpenAI SDK Migration
-
-Both providers use `openai` npm package (v6.34.0). `DebugSnapshot.body` === exact object passed to SDK. `ChatCompletionMessageToolCall` is union — filter `tc.type === "function"`.
-
-## Thinking Block Provider Filtering
-
-Thinking events have `provider?: string`. Switching providers automatically drops stale thinking blocks (provider mismatch → filtered). OpenAI walker ignores thinking entirely.
-
-Mock API supports `{type: "thinking", thinking: "...", signature: "..."}` in instruction blocks. Streams `thinking_delta` + `signature_delta` events.
-
-Test file: `src/drift-thinking.test.ts` (11 golden + 4 drift integration = 15 tests).
-
-
 ## JSONL Lifecycle Refactor
 
 - Message `header` deleted → `work_context` QueueMessage source instead
@@ -603,10 +626,6 @@ Test file: `src/drift-thinking.test.ts` (11 golden + 4 drift integration = 15 te
 ## EventSpec Type
 
 `EventSpec = DistributiveOmit<Event, "taskId">`. Single emit path: `R.emit(projectId, taskId, spec)`.
-
-## Abort Signal + Inner Retry Fix
-
-Inner retry checks `signal.aborted` first + abort-responsive sleep. Reset time: 30s → instant.
 
 ## Plugin Architecture
 
