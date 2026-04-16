@@ -4,7 +4,7 @@ import {
 	TOOL_BASH,
 	TOOL_DONE,
 	TOOL_YIELD,
-} from "../../../../../src/tool-names.ts";
+} from "../../tool-names.ts";
 import { api } from "../../api.ts";
 import { useAuthFetch } from "../../auth.ts";
 import {

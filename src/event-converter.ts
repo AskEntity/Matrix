@@ -7,9 +7,7 @@
 import { type Event, formatEventForAI, isQueueEvent } from "./events.ts";
 import type { EventImageData, PendingState } from "./shared-types.ts";
 import {
-	TOOL_REPORT_TO_PARENT,
 	TOOL_SEND_MESSAGE,
-	TOOL_SEND_MESSAGE_TO_CHILD,
 } from "./tool-names.ts";
 
 export type { EventImageData } from "./shared-types.ts";
@@ -99,15 +97,8 @@ export interface EventConverterCallbacks {
  * these to the API which checks that tool names in conversation history match
  * current tool definitions. This mapping prevents API errors on resume.
  */
-const TOOL_NAME_ALIASES: Record<string, string> = {
-	[TOOL_SEND_MESSAGE_TO_CHILD]: TOOL_SEND_MESSAGE,
-	[TOOL_REPORT_TO_PARENT]: TOOL_SEND_MESSAGE,
-};
 
 /** Resolve a tool name, mapping old aliases to current names. */
-function resolveToolName(name: string): string {
-	return TOOL_NAME_ALIASES[name] ?? name;
-}
 
 // ── Internal helpers ──
 
@@ -240,7 +231,7 @@ export function walkEventsToMessages(
 					} else if (cur.type === "tool_call") {
 						const call: AssistantToolCall = {
 							id: cur.toolCallId,
-							name: resolveToolName(cur.tool),
+							name: cur.tool,
 							input: cur.input,
 						};
 						content.items.push({ type: "tool_call", call });

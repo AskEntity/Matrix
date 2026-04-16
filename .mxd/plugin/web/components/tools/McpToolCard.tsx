@@ -1,4 +1,4 @@
-import { stripMcpPrefix } from "../../../../../src/tool-names.ts";
+import { stripMcpPrefix } from "../../tool-names.ts";
 import { DiffView } from "./DiffView.tsx";
 import { getArg, summarizeToolResult } from "./utils.ts";
 

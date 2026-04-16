@@ -2,39 +2,40 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import type { Event } from "../../events.ts";
-import {
-	mcpToolName,
-	TOOL_BACKGROUND,
-	TOOL_BASH,
-	TOOL_CLARIFY,
-	TOOL_CLOSE_TASK,
-	TOOL_CREATE_TASK,
-	TOOL_DELETE_TASK,
-	TOOL_DONE,
-	TOOL_EDIT_FILE,
-	TOOL_EVALUATE_SCRIPT,
-	TOOL_EXECUTE_TASKS,
-	TOOL_FORK_TASK_CONTEXT,
-	TOOL_GET_TASK,
-	TOOL_GET_TREE,
-	TOOL_LIST_FILES,
-	TOOL_LIST_PROJECTS,
-	TOOL_READ_FILE,
-	TOOL_REORDER_TASKS,
-	TOOL_RESET_TASK,
-	TOOL_SEARCH,
-	TOOL_SEND_MESSAGE,
-	TOOL_SEND_MESSAGE_TO_PROJECT,
-	TOOL_UPDATE_TASK,
-	TOOL_WRITE_FILE,
-	TOOL_YIELD,
-} from "../../tool-names.ts";
+import { mcpToolName } from "../../tool-names.ts";
+
+// Matrix tool constants — local to this demo file
+const T = mcpToolName;
+const TOOL_BACKGROUND = T("background");
+const TOOL_BASH = T("bash");
+const TOOL_CLARIFY = T("clarify");
+const TOOL_CLOSE_TASK = T("close_task");
+const TOOL_CREATE_TASK = T("create_task");
+const TOOL_DELETE_TASK = T("delete_task");
+const TOOL_DONE = T("done");
+const TOOL_EDIT_FILE = T("edit_file");
+const TOOL_EVALUATE_SCRIPT = T("evaluate_script");
+const TOOL_EXECUTE_TASKS = T("execute_tasks");
+const TOOL_FORK_TASK_CONTEXT = T("fork_task_context");
+const TOOL_GET_TASK = T("get_task");
+const TOOL_GET_TREE = T("get_tree");
+const TOOL_LIST_FILES = T("list_files");
+const TOOL_LIST_PROJECTS = T("list_projects");
+const TOOL_READ_FILE = T("read_file");
+const TOOL_REORDER_TASKS = T("reorder_tasks");
+const TOOL_RESET_TASK = T("reset_task");
+const TOOL_SEARCH = T("search");
+const TOOL_SEND_MESSAGE = T("send_message");
+const TOOL_SEND_MESSAGE_TO_PROJECT = T("send_message_to_project");
+const TOOL_UPDATE_TASK = T("update_task");
+const TOOL_WRITE_FILE = T("write_file");
+const TOOL_YIELD = T("yield");
+const TOOL_CREATE_FOLDER = T("create_folder");
+const TOOL_DELETE_FOLDER = T("delete_folder");
+const TOOL_RENAME_FOLDER = T("rename_folder");
 import type { FolderNode, TaskNode, TaskStatus } from "../../types.ts";
 import { ulid } from "../../ulid.ts";
 
-const TOOL_CREATE_FOLDER = mcpToolName("create_folder");
-const TOOL_DELETE_FOLDER = mcpToolName("delete_folder");
-const TOOL_RENAME_FOLDER = mcpToolName("rename_folder");
 
 /**
  * Mock showcase endpoint — returns a complete dataset for UI development.

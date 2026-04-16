@@ -1,7 +1,7 @@
 import type React from "react";
-import type { QueueMessage } from "../../../src/message-queue.ts";
-import { TOOL_YIELD } from "../../../src/tool-names.ts";
-import { ulid } from "../../../src/ulid.ts";
+import type { QueueMessage } from "./types.ts";
+import { TOOL_YIELD } from "./tool-names.ts";
+// ID generation — crypto.randomUUID() for local UI state
 import {
 	createLogEntry,
 	getLogTaskId,
@@ -354,7 +354,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			id: "",
 			body: {
 				source: "user",
-				id: ulid(),
+				id: crypto.randomUUID(),
 				ts: Date.now(),
 				content: msg.content,
 				...(msg.images?.length ? { images: msg.images } : {}),
@@ -430,7 +430,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							msg.nodes
 								.filter(
 									(node) =>
-										isTask(node) && node.status === "pending" && !node.session,
+										isTask(node) && node.status === "pending",
 								)
 								.map((node) => node.id),
 						);
@@ -821,7 +821,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							id: umId ?? "",
 							body: {
 								source: "user",
-								id: umId ?? ulid(),
+								id: umId ?? crypto.randomUUID(),
 								ts: Date.now(),
 								content: umContent,
 								...(umImages?.length ? { images: umImages } : {}),

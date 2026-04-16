@@ -1,7 +1,7 @@
 import type React from "react";
 import { api } from "./api.ts";
 import type { AuthFetchFn } from "./auth.ts";
-import type { LogEntry, Project, TreeNode, UIEvent } from "./hooks.ts";
+import type { LogEntry, TreeNode, UIEvent } from "./hooks.ts";
 
 type AddLogFn = (event: UIEvent) => void;
 
