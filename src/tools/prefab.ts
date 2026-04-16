@@ -7,7 +7,7 @@
  */
 import { z } from "zod";
 import * as R from "../resource-registry.ts";
-import { defineTool, type InferParams, type ParamDefs } from "../tool-def.ts";
+import { defineTool, type InferParams, type ParamDefs, type ToolDef } from "../tool-def.ts";
 
 /**
  * Standard yield tool. No configuration needed.
@@ -55,13 +55,11 @@ const doneBaseParams = {
 export function createDoneTool<E extends ParamDefs = Record<string, never>>(opts?: {
 	extraParams?: E;
 	description?: string;
-	beforeDone?: (args: InferParams<typeof doneBaseParams> & Partial<InferParams<E>>) => Promise<string | null>;
+	beforeDone?: (args: InferParams<typeof doneBaseParams & E>) => Promise<string | null>;
 }) {
-	const params = {
-		...doneBaseParams,
-		...(opts?.extraParams ?? {}),
-	};
-	return defineTool({
+	type P = typeof doneBaseParams & E;
+	const params = { ...doneBaseParams, ...(opts?.extraParams ?? {}) } as P;
+	const def: ToolDef<P> = {
 		name: "done",
 		availability: "internal",
 		description:
@@ -104,8 +102,7 @@ export function createDoneTool<E extends ParamDefs = Record<string, never>>(opts
 
 			// Plugin hook: extra validation (Matrix: git clean check)
 			if (opts?.beforeDone) {
-				// Safe cast: args contains all base + extra params, TS can't prove spread equivalence
-				const error = await opts.beforeDone(args as Parameters<typeof opts.beforeDone>[0]);
+				const error = await opts.beforeDone(args);
 				if (error) {
 					return {
 						content: [{ type: "text" as const, text: error }],
@@ -119,5 +116,6 @@ export function createDoneTool<E extends ParamDefs = Record<string, never>>(opts
 			if (session?.queue) session.queue.close();
 			return { content: [], isError: false };
 		},
-	});
+	};
+	return def;
 }
