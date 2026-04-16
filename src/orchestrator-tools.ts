@@ -1699,8 +1699,8 @@ export function buildAllToolDefs() {
 			beforeDone: async (args) => {
 				// Matrix-specific: reject done() if worktree has uncommitted changes
 				const projPath = getProjectPath(
-					args.projectId as string,
-					args.taskId as string,
+					args.projectId,
+					args.taskId,
 				);
 				const gitCheck = await isGitClean(projPath);
 				if (!gitCheck.clean) {
