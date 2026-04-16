@@ -305,43 +305,7 @@ describe("walker: onAssistantContent callback", () => {
 		]);
 	});
 
-	test("tool_call with old alias (send_message_to_child) remapped to send_message", () => {
-		// Historical JSONL may contain obsolete tool names (with mcp__mxd__ prefix).
-		// Walker remaps via TOOL_NAME_ALIASES so the provider sees current names.
-		const events: Event[] = [
-			toolCallEvent("tool_04", "mcp__mxd__send_message_to_child", {
-				taskId: "abc",
-				message: "hi",
-			}),
-		];
-		const msgs = eventsToAnthropicMessages(events);
-		expect(msgs).toEqual([
-			{
-				role: "assistant",
-				content: [
-					{
-						type: "tool_use",
-						id: "tool_04",
-						name: "mcp__mxd__send_message",
-						input: { taskId: "abc", message: "hi" },
-						caller: { type: "direct" },
-					},
-				],
-			},
-		]);
-	});
-
-	test("report_to_parent alias remapped to send_message", () => {
-		const events: Event[] = [
-			toolCallEvent("tool_05", "mcp__mxd__report_to_parent", {
-				message: "done",
-			}),
-		];
-		const msgs = eventsToAnthropicMessages(events);
-		expect(
-			(msgs[0] as { content: Array<{ name: string }> }).content[0]?.name,
-		).toBe("mcp__mxd__send_message");
-	});
+	// Legacy alias tests removed — TOOL_NAME_ALIASES deleted, no remapping exists.
 
 	test("unknown tool name passes through unchanged", () => {
 		// Non-aliased names flow through resolveToolName unchanged.
