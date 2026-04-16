@@ -215,6 +215,9 @@ function AuthenticatedShell() {
 				onToggleSettings={() => setShowSettings((s) => !s)}
 				onLogout={handleLogout}
 				onToggleSidebar={() => {}} // Plugin manages sidebar — no-op from shell
+				scopes={plugins.map((p) => ({ name: p.name }))}
+				selectedScope={selectedScope}
+				onScopeChange={setSelectedScope}
 			/>
 
 			{showSettings && projectId && layers && (
