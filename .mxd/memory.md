@@ -277,30 +277,7 @@ Turns the 70K miss investigation from "exhausted code inspection" into "look at 
 
 ## Live/Reconstruction Drift Fix — Caption Bug
 
-### Bug
-User sends image message while agent in idle context (after end_turn implicit yield). Live path `buildUserTurn` adds `[N image(s) attached by user]` caption text block. Reconstruction path `onConsumedMessages` idle branch did NOT. One missing block → prefix mismatch → full cache miss on restart (580K creation observed in production).
-
-### Fix: delete buildUserTurn's duplicate implementation entirely
-NOT "extract shared helper both call" — that's hidden duplication. Instead: Anthropic's `buildUserTurn` **delegates** to the JSONL reconstruction path.
-
-`buildUserTurn(params)` now:
-1. Calls `buildToolResultEvents(...)` (exported from provider-shared.ts) to build synthetic events equivalent to what will be emitted to JSONL
-2. Appends synthetic `message` events for user-source queue messages (walker resolves them via eventIndex)
-3. Returns `eventsToAnthropicMessages(syntheticEvents)` — the same walker callbacks used by JSONL reconstruction
-
-Walker callbacks (`onToolResults`, `onConsumedMessages`, `isAnthropicWorkingContext`) are now the **SINGLE source of truth** for "how Anthropic user messages are built from tool_results + queue messages". Live path can no longer drift because it has no independent construction logic.
-
-Deleted ~160 lines from `buildUserTurn`. Also added caption to idle branch of `onConsumedMessages` (the actual bug fix — live path now routes through this).
-
-### Third Codepath Unified (commit 39e420b)
-`provider-shared.ts` initial drain previously had its own ad-hoc construction logic that dropped images and missed caption. Now delegates to `adapter.appendQueueMessagesToMessages(messages, queueMsgs)`.
-
-Each provider extracts its walker's `onConsumedMessages` logic into a named function (`applyAnthropicQueueContent`, `applyOpenAIResponsesQueueContent`). Both the walker callback AND the adapter hook route through this one function. Single source of truth per provider — walker + initial drain can no longer drift.
-
-4 test.todo → 2 pass (image drift tests closed), 2 remain as skeleton tests blocked by mock-API infra for non-user queue sources (task_message, cross_project).
-
-### Dead Code Cleaned (commit f75a512)
-`formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages` on ToolResult type — removed. No code was setting these (orchestrator-tools doesn't return them; they originated from the deleted `agent-tools.ts`). -81 lines across 5 files. Simplified `collectToolResultImages`, `buildToolResultEvents`, and both OpenAI providers' image routing.
+`buildUserTurn` now delegates to walker callbacks (single source of truth per provider). Live path has no independent construction logic — can't drift from JSONL reconstruction. Initial drain also delegates via `adapter.appendQueueMessagesToMessages`. Dead ToolResult fields (`formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages`) removed.
 
 ## Duplicate Yield Handling
 
@@ -619,41 +596,12 @@ Three layers: daemon → provider loop → tool handler. executeTool is clean (p
 2. Folder/grouping feature (UI-only visual grouping, not tree structure)
 3. Tool search — dynamic tool discovery (draft exists, Anthropic has server-side `defer_loading` but user prefers client-side)
 
-## Auth/Resource Split (operator/resource refactor)
+## Auth/Resource Split
 
-### Architecture
-Three new modules replace the old closure-based OrchestratorToolsDeps:
-
-1. **`src/tool-auth.ts`** — Auth branded opaque type. Only `checkPermission(auth, mode, resource)` can look inside. Modes: project, exact, subtree, family, root. `getBindValues(auth)` is framework-only (for ToolDef adapter).
-
-2. **`src/resource-registry.ts`** — Global handle-based functions. Initialized once at daemon startup via `initResourceRegistry(ctx)` + `registerSideEffects(...)`. All resource access: `getTracker(projectId)`, `getSession(projectId, taskId)`, `emit(projectId, event)`, `deliverMessage(projectId, nodeId, msg)`, etc. No closures, no injection bags.
-
-3. **`src/tool-def.ts`** — ParamDecl with `bind` (not "infer"). Framework binds resource params from agent identity. Decision table: handler always gets T; agent sees bind params as invisible (non-overridable) or optional (overridable); external sees bind params as required.
-
-### Key Naming Decisions
-- **auth** not "operator" — writing `auth.taskId` feels wrong (that's the point)
-- **bind** not "infer" — framework **binds** a resource param from identity, not "infers" it
-- Resource params are just params (called `taskId`, `projectId`) not "callerTaskId" or "hidden params"
-
-### Handler Signature
-```ts
-handler(args, auth, toolCallId) {
-  checkPermission(auth, "subtree", { taskId: args.taskId });
-  const tracker = R.getTracker(args.projectId);
-  // do work with resources from args + global functions
-}
-```
-
-### Deleted
-- `OrchestratorToolsDeps` interface — replaced by resource-registry global functions
-- `LifecycleDeps` interface — deliverMessage/injectMessageToProject now in resource-registry
-- All closure-captured deps in createOrchestratorTools
-- `execute_tasks` tool (deprecated alias)
-
-### What's NOT Changed Yet
-- Built-in tools (bash, read_file, etc. in `src/tools/definitions.ts`) still use closure-based `createBuiltinTools`. They're next.
-- TaskSession internal structure unchanged (audit identified it as needing split, but separate refactor)
-- External MCP endpoint not yet updated (separate task)
+- `tool-auth.ts`: Auth opaque type. `checkPermission(auth, mode, resource)` only way to check. Modes: project, exact, subtree, family, root, human.
+- `resource-registry.ts`: Global handle-based functions (`R.getTracker(projectId)`, `R.emit(projectId, taskId, spec)`, etc.). No closures.
+- `tool-def.ts`: ParamDecl with `bind` kind. Framework binds resource params from agent identity. Handler signature: `handler(args, auth, toolCallId)`.
+- All 32 tools (25 orchestrator + 7 builtin) use ToolDef + auth + global functions. Zero closure-based handlers remain.
 
 
 
@@ -707,63 +655,20 @@ The other two PATCH handlers (`/projects/:id/config/repo`, `/projects/:id/config
 - `runProviderLoop` auto-wires onPersist from `request.emit` if the queue has no callback (`hasOnPersist()`), via `setOnPersist`. Unit tests that pass a bare `new MessageQueue()` get automatic wiring.
 - `setOnPersist` is one-shot: throws if already set. Production wiring wins over provider-loop auto-wiring.
 
-### replay: true
-Recovery paths (`findUnconsumedMessages`, `bgOrphans` append) use `queue.enqueue(msg, { replay: true })` to skip onPersist — the message is already in JSONL from before the restart.
-
-### quiet is orthogonal
-`quiet: true` only suppresses waking a pending `wait()`. It does NOT affect persistence. `queue.enqueue(msg, { quiet: true })` still persists.
-
-### deliverMessage simplification
-- Agent running → `queue.enqueue(msg)` (one atomic persist + deliver via onPersist).
-- Agent not running → direct `emitEvent({type:"message", ...})` + flush (no queue to go through).
-- `deliverMessage`'s `opts.quiet` still controls auto-launch only (unchanged).
-
-### recordQueueEvents role
-Now emits `messages_consumed` marker only. No `message` event emission. Sole purpose: tell the walker which ids have been consumed by the current turn.
-
-### buildToolResultEvents role
-Outputs `tool_result*` + `messages_consumed`. No `nonUserQueueEvents`. The anthropic provider's `buildUserTurn` synth path pushes synthetic `message` events for ALL queue messages (not just user source) so the walker can resolve them via eventIndex.
-
-### bgOrphans unified branch (option A)
-Yielding and non-yielding sessions both `appendBatch(bgOrphans)` to JSONL at resume. Walker skips standalone `message` events with ids (event-converter.ts line 181-185) — they materialize only when `messages_consumed` references them — so writing them between a pending yield tool_call and its eventual tool_result is safe.
-
-### Bugs fixed (task 01KNWM9YTTMHEF620EKGCAP9HH)
-1. **Duplicate message events**: deliverMessage wrote message to JSONL, then enqueued; provider loop's recordQueueEvents wrote it again for non-user sources. After refactor, single write path. JSONL has each body.id exactly once.
-2. **Usage off-by-one**: `usage` was emitted before `assistant_text` in the same turn. Frontend's walk-backwards `attach_usage` found the PREVIOUS turn's text. Fix: reorder provider-shared.ts to emit content events (buildResponseEvents) BEFORE usage.
-3. **Missing traceId on lifecycle events**: `orchestration_completed`, `error`, `agent_stopped`, `done_notified` had no `traceId`. Fix: `TaskSession.loopTraceId` field (hoisted out of try block), explicit injection in the 4 lifecycle emitEvent calls, `stopAgent/stopTask` capture session.loopTraceId, `resource-registry` emit auto-injects traceId for tool-handler `R.emit` paths (clarification_requested etc.).
+### Flags
+- `replay: true` — skip onPersist (message already in JSONL from before restart)
+- `quiet: true` — suppress wake, NOT persistence. Orthogonal to replay.
 
 ### traceId semantics
-**The A/B distinction is persistence timestamp, not content origin.** A message's semantic origin (user, task_message, cross_project, etc.) is irrelevant — what matters is whether a specific loop run was alive and performing the JSONL write.
+- **Has traceId**: events produced BY a specific agent loop run (provider events, lifecycle events, onPersist messages)
+- **No traceId**: events external to any run (`task_started` before spawn, `fork_marker`, direct-write `deliverMessage` fallback)
 
-- **Has traceId** (A-class): events produced BY a specific agent loop run — orchestration_started/completed, done_notified, agent_stopped, error, all provider events (assistant_text, tool_call, tool_result, usage), tool-handler events via R.emit, **AND `message` events persisted via onPersist while a loop owns the queue** (regardless of the message's content origin).
-- **No traceId** (B-class): events that exist independently of any run — `task_started` (before loop spawn), `fork_marker` (fork setup), and direct-write `message` events from `deliverMessage`'s fallback path (queue unavailable because the agent is not running).
+### Pitfall
+`createApp()` does NOT call `autoResumeProjects()`. Tests must call it explicitly.
 
-Wiring: `runAgentForNode`'s `onPersist` callback injects `traceId: loopTraceId`; `deliverMessage`'s fallback `emitEvent` omits `traceId`. `findUnconsumedMessages` replays cold-start messages with `{replay: true}` which skips `onPersist` — their original no-traceId JSONL entries are preserved untouched.
+## buildSessionRepair Scope Boundary
 
-**Earlier memory claimed "all message events have no traceId" — that was wrong.** Counting after the refactor showed ~100% of message events arrive on the onPersist path (agent is typically running when a peer sends a message). The old rule mis-attributed them to B-class. Fixed in commit landing debug-snapshot v2 + message traceId.
-
-### Test architecture
-6 new test files, 50+ tests split by concern:
-- `src/message-queue-onpersist.test.ts` — MessageQueue unit contract
-- `src/event-dedup-jsonl.test.ts` — Bug 1 JSONL dedup invariants
-- `src/event-usage-order.test.ts` — Bug 2 emission order
-- `src/event-trace-id.test.ts` — Bug 3 traceId semantics
-- `src/event-structural-invariants.test.ts` — walker safety (messages_consumed after yield tool_result)
-- `src/test-utils/emission-harness.ts` — shared setup/teardown/helpers
-
-### Pitfall: autoResumeProjects not in createApp
-`createApp()` does NOT call `autoResumeProjects()`. Tests that simulate restart must call `await newApp.autoResumeProjects()` explicitly before `markReady()`. Only `import.meta.main` daemon entry point auto-calls it.
-
-## buildSessionRepair Scope Boundary — orphan tool_result is OUT
-
-`buildSessionRepair` only repairs states that a **legitimate crash on a valid run** could have produced:
-- Orphan tool_call (no tool_result) → append synthetic interrupted result
-- Duplicate tool_result → truncate from poison point
-- Out-of-order tool_result (result after a new assistant turn) → truncate
-
-It does NOT repair "orphan tool_result" (tool_result without any tool_call). Runtime cannot produce this — tool_result is always emitted by the provider loop immediately after its tool_call. If a JSONL file contains an orphan tool_result, something much more serious is wrong upstream (manual edit, cross-version migration bug, corrupted write). Masking it in the repair layer would hide the real problem.
-
-Walker behavior on this state: emits two consecutive `user` messages (the prior user turn, plus a second user turn wrapping the orphan tool_result). Anthropic API rejects this with 400. The auto-recovery fallback in the provider loop may or may not recover — but the proper fix is to find WHY the orphan tool_result ended up in JSONL, not to paper over it.
+Repairs: orphan tool_call → synthetic result, duplicate tool_result → truncate, out-of-order result → truncate. Does NOT repair orphan tool_result (no tool_call) — that state can't be produced by runtime, so masking it hides real bugs.
 
 `src/jsonl-stress.test.ts` contains behavior snapshots of this case (clearly labeled "BEHAVIOR SNAPSHOT" / "not an invariant"). If someone changes the walker or repair to be "graceful" here, those tests fail and force a deliberate discussion about whether the change masks a real bug.
 
@@ -787,42 +692,14 @@ Lesson: not every "the tool could be nicer to bad input" is a bug. Some inputs s
 - 02:49:40 **injection removed**: 181K→141K, cr=0, full rebuild without injection
 - After: all calls gap=0, injection never returned
 
-### Key properties
-- Injection only exists in Anthropic's server-side cache, never in our request/response body
-- count_tokens API returns client-side count (no injection)
-- Injection attaches to cache entries; new sessions inherit injected cache via cache_read
-- Cache invalidation (system prompt change) produces clean entries (gap=0)
-- Investigation behavior may trigger injection removal (anti-forensic)
-- Cannot be reproduced on demand
-
-### Practical impact on Matrix
-- Explains ALL previously-unexplained cache misses (70K miss, compact-after misses)
-- Our code is correct — all paths verified via count_tokens + raw fetch replay
-- analyze-cache tool's hit% is based on `inputTokens` which includes injection overhead
-- No code change needed; this is external behavior
-
-### JSONL inputTokens field semantics
-`inputTokens` in usage events = `totalContextTokens` = Anthropic's `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. NOT just the raw `input_tokens` field. This is intentional (set at provider-shared.ts:1469).
-
-
+### Key facts
+- Injection invisible to client (not in request/response body, not in count_tokens API)
+- Explains all previously-unexplained cache misses. Our code is correct.
+- `inputTokens` in usage events = `totalContextTokens` (input + cache_creation + cache_read)
 
 ## OpenAI SDK Migration
 
-Both OpenAI providers now use the official `openai` npm package (v6.34.0) instead of raw `fetch`.
-
-### Responses provider (`openai-responses-compatible-provider.ts`)
-- `streamResponsesAPI` accepts `body: ResponseCreateParams` (SDK type) instead of individual params
-- SDK's `client.responses.create(body, { stream: true })` handles retries, SSE parsing, streaming
-- Caller (`createOpenAIResponsesAdapter.callAPI`) builds the body, snapshots it, passes to SDK
-- SDK returns typed `Response` (aliased as `OAIResponse`) with `.output`, `.output_text`, `.usage`
-- `ResponseFunctionToolCall` from SDK replaces hand-rolled `ResponsesFunctionCall`
-- ~200 lines of hand-rolled SSE parsing deleted
-
-### Chat Completions provider (`openai-compatible-provider.ts`)
-- `callOpenAIAPI` accepts `body: ChatCompletionCreateParamsNonStreaming` (SDK type)
-- SDK's `client.chat.completions.create(body)` replaces raw fetch + retry loop
-- `ChatCompletion` from SDK replaces hand-rolled `OpenAIChatResponse`
-- **ChatCompletionMessageToolCall union**: SDK type is `FunctionToolCall | CustomToolCall`. Must filter with `tc.type === "function"` before accessing `.function.name`/`.function.arguments`.
+Both providers use official `openai` npm package (v6.34.0). SDK types replace hand-rolled types. `ChatCompletionMessageToolCall` is a union — filter with `tc.type === "function"` before accessing `.function`.
 
 ### Debug snapshot invariant
 After this change, for ALL providers: `DebugSnapshot.body` === exact object passed to SDK. Caller builds body → snapshots → sends. Zero divergence possible. Both providers also snapshot the API response via `writeDebugResponse`.
