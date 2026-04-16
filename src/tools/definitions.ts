@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { getImageDimensions } from "../image-dimensions.ts";
 import * as R from "../resource-registry.ts";
-import type { ToolDef } from "../tool-def.ts";
+import { defineTool, type AnyToolDef, type ToolDef } from "../tool-def.ts";
 import { executeBackgroundTool } from "./background.ts";
 import { executeBashWithTimeout } from "./bash.ts";
 import { jsSearch } from "./search.ts";
@@ -57,7 +57,7 @@ const bindParams = {
 
 // ── bash ──
 
-const bashTool: ToolDef = {
+const bashTool = defineTool({
 	name: "bash",
 	availability: "internal",
 	description:
@@ -82,13 +82,13 @@ const bashTool: ToolDef = {
 		},
 	},
 	handler: async (args, _auth, toolCallId) => {
-		const projectId = args.projectId as string;
-		const taskId = args.taskId as string;
-		const command = args.command as string;
-		const runInBackground = args.run_in_background as boolean | undefined;
+		const projectId = args.projectId;
+		const taskId = args.taskId;
+		const command = args.command;
+		const runInBackground = args.run_in_background;
 		const foregroundTimeout = runInBackground
 			? 0
-			: Math.max((args.foreground_timeout as number) ?? 120000, 0);
+			: Math.max((args.foreground_timeout) ?? 120000, 0);
 
 		const session = R.getSession(projectId, taskId);
 		const cwd = getTaskCwd(projectId, taskId);
@@ -130,11 +130,11 @@ const bashTool: ToolDef = {
 			);
 		}
 	},
-};
+});
 
 // ── background ──
 
-const backgroundTool: ToolDef = {
+const backgroundTool = defineTool({
 	name: "background",
 	availability: "internal",
 	description:
@@ -157,8 +157,8 @@ const backgroundTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const projectId = args.projectId as string;
-		const taskId = args.taskId as string;
+		const projectId = args.projectId;
+		const taskId = args.taskId;
 		const session = R.getSession(projectId, taskId);
 		if (!session) {
 			return textResult(
@@ -168,17 +168,17 @@ const backgroundTool: ToolDef = {
 		}
 
 		const result = await executeBackgroundTool(
-			args.action as string,
-			args.id as string | undefined,
+			args.action,
+			args.id,
 			session.backgroundProcesses,
 		);
 		return textResult(result.content, result.isError);
 	},
-};
+});
 
 // ── read_file ──
 
-const readFileTool: ToolDef = {
+const readFileTool = defineTool({
 	name: "read_file",
 	availability: "internal",
 	description:
@@ -202,8 +202,8 @@ const readFileTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getTaskCwd(args.projectId as string, args.taskId as string);
-		const path = resolvePath(args.path as string, cwd);
+		const cwd = getTaskCwd(args.projectId, args.taskId);
+		const path = resolvePath(args.path, cwd);
 		const ext = path.split(".").pop()?.toLowerCase();
 		const IMAGE_MEDIA_TYPES: Record<
 			string,
@@ -251,8 +251,8 @@ const readFileTool: ToolDef = {
 			}
 		}
 
-		const offset = Math.max(1, (args.offset as number) ?? 1);
-		const limit = args.limit as number | undefined;
+		const offset = Math.max(1, (args.offset) ?? 1);
+		const limit = args.limit;
 		try {
 			const raw = readFileSync(path, "utf-8");
 			if (offset === 1 && !limit) {
@@ -277,11 +277,11 @@ const readFileTool: ToolDef = {
 			);
 		}
 	},
-};
+});
 
 // ── write_file ──
 
-const writeFileTool: ToolDef = {
+const writeFileTool = defineTool({
 	name: "write_file",
 	availability: "internal",
 	description:
@@ -298,11 +298,11 @@ const writeFileTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getTaskCwd(args.projectId as string, args.taskId as string);
-		const path = resolvePath(args.path as string, cwd);
+		const cwd = getTaskCwd(args.projectId, args.taskId);
+		const path = resolvePath(args.path, cwd);
 		try {
 			mkdirSync(dirname(path), { recursive: true });
-			writeFileSync(path, args.content as string, "utf-8");
+			writeFileSync(path, args.content, "utf-8");
 			return textResult(`File written: ${path}`);
 		} catch (e) {
 			return textResult(
@@ -311,11 +311,11 @@ const writeFileTool: ToolDef = {
 			);
 		}
 	},
-};
+});
 
 // ── edit_file ──
 
-const editFileTool: ToolDef = {
+const editFileTool = defineTool({
 	name: "edit_file",
 	availability: "internal",
 	description:
@@ -346,11 +346,11 @@ const editFileTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getTaskCwd(args.projectId as string, args.taskId as string);
-		const path = resolvePath(args.path as string, cwd);
-		const oldStr = args.old_string as string;
-		const newStr = args.new_string as string;
-		const replaceAll = (args.replace_all as boolean) ?? false;
+		const cwd = getTaskCwd(args.projectId, args.taskId);
+		const path = resolvePath(args.path, cwd);
+		const oldStr = args.old_string;
+		const newStr = args.new_string;
+		const replaceAll = (args.replace_all) ?? false;
 		try {
 			if (!existsSync(path)) {
 				return textResult(`File not found: ${path}`, true);
@@ -382,11 +382,11 @@ const editFileTool: ToolDef = {
 			);
 		}
 	},
-};
+});
 
 // ── list_files ──
 
-const listFilesTool: ToolDef = {
+const listFilesTool = defineTool({
 	name: "list_files",
 	availability: "internal",
 	description:
@@ -400,8 +400,8 @@ const listFilesTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getTaskCwd(args.projectId as string, args.taskId as string);
-		const pattern = (args.pattern as string) ?? "*";
+		const cwd = getTaskCwd(args.projectId, args.taskId);
+		const pattern = (args.pattern) ?? "*";
 		try {
 			const glob = new Bun.Glob(pattern);
 			const files: string[] = [];
@@ -417,11 +417,11 @@ const listFilesTool: ToolDef = {
 			);
 		}
 	},
-};
+});
 
 // ── search ──
 
-const searchTool: ToolDef = {
+const searchTool = defineTool({
 	name: "search",
 	availability: "internal",
 	description:
@@ -480,18 +480,18 @@ const searchTool: ToolDef = {
 		},
 	},
 	handler: async (args) => {
-		const cwd = getTaskCwd(args.projectId as string, args.taskId as string);
+		const cwd = getTaskCwd(args.projectId, args.taskId);
 		try {
 			const result = await jsSearch({
-				pattern: args.pattern as string,
-				searchPath: (args.path as string) ?? ".",
-				glob: args.glob as string | undefined,
-				contextLines: args.context as number | undefined,
-				outputMode: (args.output_mode as string) ?? "content",
-				headLimit: Math.min((args.head_limit as number) ?? 50, 200),
-				caseInsensitive: (args.case_insensitive as boolean) ?? false,
-				multiline: (args.multiline as boolean) ?? false,
-				excludedDirs: args.excluded_dirs as string[] | undefined,
+				pattern: args.pattern,
+				searchPath: (args.path) ?? ".",
+				glob: args.glob,
+				contextLines: args.context,
+				outputMode: (args.output_mode) ?? "content",
+				headLimit: Math.min((args.head_limit) ?? 50, 200),
+				caseInsensitive: (args.case_insensitive) ?? false,
+				multiline: (args.multiline) ?? false,
+				excludedDirs: args.excluded_dirs,
 				cwd,
 			});
 			return textResult(result || "(no matches)");
@@ -502,12 +502,12 @@ const searchTool: ToolDef = {
 			);
 		}
 	},
-};
+});
 
 // ── Public API ──
 
 /** All builtin tool definitions. */
-export function buildBuiltinToolDefs(): ToolDef[] {
+export function buildBuiltinToolDefs(): AnyToolDef[] {
 	return [
 		bashTool,
 		backgroundTool,

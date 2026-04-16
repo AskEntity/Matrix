@@ -25,7 +25,7 @@ import { initResourceRegistry } from "../../resource-registry.ts";
 import { createHumanAuth } from "../../tool-auth.ts";
 import {
 	buildExternalShape,
-	type ToolDef,
+	type AnyToolDef, type ToolDef,
 	type ToolHandlerResult,
 } from "../../tool-def.ts";
 import type { RuntimeContext } from "../context.ts";
@@ -35,7 +35,7 @@ import { subscribeToEvents } from "../event-system.ts";
  * Build external-only ToolDefs (availability: "external").
  * These are NOT in orchestrator-tools — they only exist for external MCP clients.
  */
-function buildExternalOnlyToolDefs(ctx: RuntimeContext): ToolDef[] {
+function buildExternalOnlyToolDefs(ctx: RuntimeContext): AnyToolDef[] {
 	return [
 		// ── send_user_message ──
 		{
@@ -252,7 +252,7 @@ function buildExternalOnlyToolDefs(ctx: RuntimeContext): ToolDef[] {
  * Uses buildExternalShape: bind params become required explicit params.
  * Calls the SAME handler with createHumanAuth() (all permissions granted).
  */
-function registerToolDefOnMcpServer(server: McpServer, toolDef: ToolDef): void {
+function registerToolDefOnMcpServer(server: McpServer, toolDef: AnyToolDef): void {
 	const shape = buildExternalShape(toolDef.params);
 
 	const humanAuth = createHumanAuth();

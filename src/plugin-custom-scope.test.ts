@@ -15,7 +15,7 @@ import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts"
 import type { Event } from "./events.ts";
 import type { ScopeOpts } from "./runtime/context.ts";
 import { toToolDefinition } from "./tool-def.ts";
-import type { ToolDef } from "./tool-def.ts";
+import { defineTool, type AnyToolDef } from "./tool-def.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
@@ -90,7 +90,7 @@ function buildStoryScopeOpts(_projectId: string): ScopeOpts<any> {
 	return {
 		buildTools: (auth, _taskId) => {
 			// Custom tool + runtime primitives (done/yield)
-			const storyTool: ToolDef = {
+			const storyTool = defineTool({
 				name: "write_paragraph",
 				description: "Write a paragraph of the story",
 				availability: "internal",
@@ -116,7 +116,7 @@ function buildStoryScopeOpts(_projectId: string): ScopeOpts<any> {
 						isError: false,
 					};
 				},
-			};
+			});
 			return {
 				tools: [
 					storyTool,
