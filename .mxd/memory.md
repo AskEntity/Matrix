@@ -167,6 +167,28 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 - `EventStore.truncateAfterLine(sessionId, lineIndex)`: rewrites file keeping lines 0..lineIndex
 - Repair runs in runAgentForNode before provider loop starts
 
+## enqueue === persist (single JSONL write path)
+
+`MessageQueue.enqueue(msg)` synchronously calls `onPersist(msg)` before delivery. ONE way queue messages reach JSONL.
+- `replay: true` — skip onPersist (already in JSONL). `quiet: true` — suppress wake, NOT persistence.
+- **traceId**: has traceId = produced by agent loop run. No traceId = external to any run.
+- **Pitfall**: `createApp()` does NOT call `autoResumeProjects()`. Tests must call it explicitly.
+
+## buildSessionRepair Scope Boundary
+
+Repairs: orphan tool_call → synthetic result, duplicate tool_result → truncate, out-of-order → truncate. Does NOT repair orphan tool_result — can't be produced by runtime, masking hides bugs.
+
+## JSONL Lifecycle Refactor
+
+- Message `header` deleted → `work_context` QueueMessage source instead
+- `compact_marker` is empty boundary. `agent_start`/`agent_end` replace old lifecycle events.
+- **JSONL sequence**: `session_config → work_context → trigger → messages_consumed → ...`
+- **Critical lesson**: "delete until ONE remains" ≠ "merge into one place". Keep emit positions, just rename.
+
+## EventSpec Type
+
+`EventSpec = DistributiveOmit<Event, "taskId">`. Single emit path: `R.emit(projectId, taskId, spec)`.
+
 ---
 # Cache & Drift Prevention
 ---
@@ -236,9 +258,9 @@ Breakpoint on **last** user message (not second-to-last). Last message sent to A
 ### await_background Deleted
 await blocked entire agent loop. yield is the one path — accepts all message types. -360 lines.
 
-## 70K Post-Restart Cache Miss (RESOLVED — Anthropic server-side injection)
+## 70K Post-Restart Cache Miss (RESOLVED)
 
-Was caused by Anthropic server-side cache injection (~30% extra tokens injected into cache layer, invisible to client). Confirmed via count_tokens + replay experiments. NOT a Matrix bug. See "Anthropic Server-Side Cache Injection" section below.
+Caused by Anthropic server-side cache injection (~30% extra tokens, invisible to client). Confirmed via count_tokens + replay. NOT a Matrix bug. Injection invisible to client, explains all previously-unexplained cache misses. `inputTokens` = `totalContextTokens` (input + cache_creation + cache_read).
 
 ## Pre-API-Call Debug Snapshot (v2: per-traceId epoch)
 
@@ -412,6 +434,25 @@ POST `/mcp` — MCP Streamable HTTP transport for external clients. Stateless: n
 
 Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_key>` → encrypted JWT → paste to browser. CLI auto-auth via `signCLIToken()`.
 
+## Auth/Resource Split
+
+- `tool-auth.ts`: Auth opaque type. `checkPermission(auth, mode, resource)`. Modes: project, exact, subtree, family, root, human.
+- `resource-registry.ts`: Global handle-based functions (`R.getTracker`, `R.emit`, etc.). No closures.
+- `tool-def.ts`: ParamDecl with `bind`. Handler signature: `handler(args, auth, toolCallId)`.
+- All 32 tools use ToolDef + auth + global functions. Zero closure-based handlers.
+
+## AuthGroup Discriminated Union
+
+`AuthGroup = AnthropicAuthGroup | OpenAIAuthGroup` — discriminated on `provider`. `systemPreamble?: string` on Anthropic. System blocks always `ttl: "1h"`.
+
+## ParamDecl Bind
+
+All bind params hidden from agent, auto-bound. `create_task`/`create_folder` parentId is `explicit`.
+
+## DEFAULT_CONFIG Immutability
+
+`Object.freeze`d at module load. `createApp()` defensive-clones. PATCH never mutates. **Lesson**: module-level constants MUST be frozen.
+
 ## CLI Installation
 
 `mxd` CLI globally installed via `bun link`. package.json `"bin": { "mxd": "src/cli.ts" }`, cli.ts has `#!/usr/bin/env bun` shebang.
@@ -554,78 +595,6 @@ Three layers: daemon → provider loop → tool handler. executeTool is clean (p
 1. Message routing expansion (subtree + parent chain, not just direct parent/child)
 2. Folder/grouping feature (UI-only visual grouping, not tree structure)
 3. Tool search — dynamic tool discovery (draft exists, Anthropic has server-side `defer_loading` but user prefers client-side)
-
-## Auth/Resource Split
-
-- `tool-auth.ts`: Auth opaque type. `checkPermission(auth, mode, resource)` only way to check. Modes: project, exact, subtree, family, root, human.
-- `resource-registry.ts`: Global handle-based functions (`R.getTracker(projectId)`, `R.emit(projectId, taskId, spec)`, etc.). No closures.
-- `tool-def.ts`: ParamDecl with `bind` kind. Framework binds resource params from agent identity. Handler signature: `handler(args, auth, toolCallId)`.
-- All 32 tools (25 orchestrator + 7 builtin) use ToolDef + auth + global functions. Zero closure-based handlers remain.
-
-
-
-## AuthGroup Discriminated Union
-
-`AuthGroup = AnthropicAuthGroup | OpenAIAuthGroup` — discriminated on `provider` field. Field names simplified (`anthropicApiKey` → `apiKey`). `systemPreamble?: string` on Anthropic — prepended as first system block at API call time (not stored in session_config). System blocks always use `ttl: "1h"`.
-
-## ParamDecl Bind
-
-All bind params hidden from agent schema, auto-bound by framework. `create_task`/`create_folder` parentId is `explicit` (agent must always specify).
-
-## DEFAULT_CONFIG Immutability
-
-`Object.freeze`d at module load. `createApp()` defensive-clones. PATCH builds new object — never mutates in place. **Lesson**: module-level constants MUST be frozen.
-
-## enqueue === persist (single JSONL write path)
-
-`MessageQueue.enqueue(msg)` synchronously calls `onPersist(msg)` before delivery. This is the ONE way queue messages reach JSONL. All former second-path emissions (recordQueueEvents re-emit, buildToolResultEvents nonUserQueueEvents) are deleted.
-
-### Wiring
-- `runAgentForNode` creates `new MessageQueue({ onPersist: (msg) => emitEvent(ctx, projectId, {type:"message", id: msg.id, taskId: nodeId, body: msg, ts: msg.ts}) })`.
-- `runProviderLoop` auto-wires onPersist from `request.emit` if the queue has no callback (`hasOnPersist()`), via `setOnPersist`. Unit tests that pass a bare `new MessageQueue()` get automatic wiring.
-- `setOnPersist` is one-shot: throws if already set. Production wiring wins over provider-loop auto-wiring.
-
-### Flags
-- `replay: true` — skip onPersist (message already in JSONL from before restart)
-- `quiet: true` — suppress wake, NOT persistence. Orthogonal to replay.
-
-### traceId semantics
-- **Has traceId**: events produced BY a specific agent loop run (provider events, lifecycle events, onPersist messages)
-- **No traceId**: events external to any run (`task_started` before spawn, `fork_marker`, direct-write `deliverMessage` fallback)
-
-### Pitfall
-`createApp()` does NOT call `autoResumeProjects()`. Tests must call it explicitly.
-
-## buildSessionRepair Scope Boundary
-
-Repairs: orphan tool_call → synthetic result, duplicate tool_result → truncate, out-of-order result → truncate. Does NOT repair orphan tool_result (no tool_call) — that state can't be produced by runtime, so masking it hides real bugs.
-
-`src/jsonl-stress.test.ts` contains behavior snapshots of this case (clearly labeled "BEHAVIOR SNAPSHOT" / "not an invariant"). If someone changes the walker or repair to be "graceful" here, those tests fail and force a deliberate discussion about whether the change masks a real bug.
-
-Lesson: not every "the tool could be nicer to bad input" is a bug. Some inputs should NEVER happen and the layer that sees them isn't the right place to patch the state. Boundaries matter.
-
-## Anthropic Server-Side Cache Injection (2026-04-12 investigation)
-
-**Confirmed behavior**: Anthropic injects ~30% extra tokens into the cache layer. This injection is invisible to the client — not in request body, not in response body, not in count_tokens API. Only visible through usage.inputTokens (which is actually `input_tokens + cache_creation + cache_read` in our JSONL — see `totalContextTokens` computation in anthropic-compatible-provider.ts:615).
-
-### Evidence chain
-1. Debug snapshot (traceId `01KNZM6TFNVRB7T3D2CESZN4BD`) saved exact request body: 161 messages, count_tokens = 127,517
-2. JSONL recorded usage total = 163,938 for the same call
-3. Replay same body now → total = 127,517 (gap = 0). The 36K injection is gone.
-Injection invisible to client. Explains all previously-unexplained cache misses. Our code is correct. `inputTokens` = `totalContextTokens` (input + cache_creation + cache_read).
-
-## JSONL Lifecycle Refactor
-
-- Message `header` deleted → `work_context` QueueMessage source instead
-- `compact_marker` is empty boundary (no content). `summarization_request` merged into `compact_started`.
-- `agent_start`/`agent_end` replace old lifecycle events. `done_notified` preserved.
-- **JSONL sequence**: `session_config → message(work_context) → message(trigger) → messages_consumed → ...`
-- **Post-compact**: `compact_started → assistant_text → compact_marker → session_config → work_context → compacted_resume → messages_consumed`
-- **Critical lesson**: "delete until ONE remains" ≠ "merge into one place". agent_end deadlock came from merging two emit points. Keep positions, just rename.
-
-## EventSpec Type
-
-`EventSpec = DistributiveOmit<Event, "taskId">`. Single emit path: `R.emit(projectId, taskId, spec)`.
 
 ## Plugin Architecture
 
