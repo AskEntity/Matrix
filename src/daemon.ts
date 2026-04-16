@@ -14,7 +14,7 @@
  * Those live in the worker.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Hono } from "hono";
@@ -529,6 +529,9 @@ export async function createDaemon(opts: {
 				}
 			}
 
+			// Create data directories before syncing to worker
+			mkdirSync(join(dataDir, "projects", project.id, "tasks"), { recursive: true });
+			mkdirSync(join(dataDir, "projects", project.id, "debug"), { recursive: true });
 			syncProjects();
 			return c.json(project, 201);
 		} catch (e) {
