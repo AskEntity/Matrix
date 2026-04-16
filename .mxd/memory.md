@@ -422,6 +422,10 @@ Each project is now a self-contained folder:
 
 Third event consumer (alongside JSONL + SSE): `subscribeToEvents(ctx, projectId, callback)`. Per-project keyed Map. Used by yield_external, test helpers. Throwing subscribers caught + logged.
 
+---
+# Auth & External API
+---
+
 ## Stateless HTTP MCP Endpoint
 
 POST `/mcp` — MCP Streamable HTTP transport for external clients. Stateless: no attach_to, no session state. 6 tools: list_projects, get_tree, get_task, get_logs (both), send_user_message, yield_external (external-only). ToolDef `availability: "internal" | "external" | "both"` on every tool. Workflow: send_user_message → yield_external → get_logs.
@@ -544,25 +548,23 @@ Three layers: Intention → Test → Architecture. Three mutations guard each la
 
 Tests are the single source of truth. Bottom-up: write tests → find simplest architecture that passes them. Architecture is replaceable long-term, improved short-term. Reject spec-driven development.
 
+---
+# Reference & Pitfalls
+---
+
 ## System Prompt
 
 14 chapters. Two roles: root orchestrator, worker. Key principles: "ASK — NEVER SILENTLY FALL BACK", adversarial testing, fork = "changing jobs", memory callee-saved.
 
-**Editing discipline**: prompt is for ALL Matrix users, not our project notebook. Matrix-specific rules → memory.md. Read the full prompt before editing. Principles and behavioral rules only — flow details go to tool descriptions.
+**Editing discipline**: prompt is for ALL Matrix users, not our project notebook. Matrix-specific rules → memory.md. Read the full prompt before editing.
 
 ## evaluate_script Discipline
 
-evaluate_script is for runtime debug introspection ONLY (inspecting messages, checking provider state, comparing JSONL vs live memory). Do NOT use it to: reparent tasks, modify tree structure, batch operations, or anything that has a proper MCP tool. Using eval to bypass tool limitations is a trap — fix the tool instead.
+Runtime debug introspection ONLY. Do NOT use to: reparent tasks, modify tree structure, batch operations. Fix the tool instead.
 
 ## Refactoring Philosophy
 
-Embrace large type refactors. Rename TaskNode → TreeNode = TaskNode | FolderNode. Let the compiler show you every place that assumes "all nodes are tasks." Each error is a location that needs to decide how to handle the new case. Hundreds of errors is not a problem — it is the audit.
-
-"Don't fear large changes" is not just about courage. Static type systems make large changes SAFE — the compiler catches what you miss. The errors are your todo list.
-
----
-# Reference & Pitfalls
----
+Embrace large type refactors. Delete first, let compiler show every dependency. Hundreds of errors = your todo list. Static type systems make large changes SAFE.
 
 ## Default Branch
 
