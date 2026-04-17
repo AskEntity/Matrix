@@ -21,39 +21,43 @@ const LARGE_CONTEXT_THRESHOLD = 1_000_000;
 export const COMPACTION_MAX_TOKENS = 64_000;
 
 /** Summarization instruction injected as a user message for in-context compaction. */
-export const SUMMARIZATION_INSTRUCTION = `[SYSTEM: Context compression required. Generate a checkpoint summary NOW.
+export const SUMMARIZATION_INSTRUCTION = `[SYSTEM: Context compression required. Generate a summary NOW.
 
-Do NOT use any tools. Respond with ONLY the checkpoint in <summary>...</summary> tags.
+Do NOT use any tools. Respond with ONLY the summary in <summary>...</summary> tags.
 
-Write the checkpoint with these sections IN ORDER. Every section is required.
+The raw event log preserves what happened; this summary preserves what you understood. Facts can be re-read from disk or tool results. The reasoning behind decisions, the user's direction, the moments that shifted course — those live only in what you write here.
+
+Write the summary with these sections IN ORDER. Every section is required.
 
 ## 1. Story So Far (MOST CRITICAL)
-Chronological narrative of the ENTIRE history — not a list of facts, but the story of decisions and discoveries. If there is a previous checkpoint, integrate it with everything that happened since into one cohesive narrative. Each compaction deepens the story, not restarts it.
+Chronological narrative of the ENTIRE history — not a list of facts, but the story of decisions and discoveries. If there is a previous summary, integrate it with everything that happened since into one cohesive narrative. Each compaction deepens the story, not restarts it.
 
-Start with the user's overarching intent — not individual requests, but the trajectory. What are they trying to build or achieve? What direction are they pushing? This through-line gives the resuming agent the "feel" of the user's vision, so it can make decisions aligned with where the user is heading, not just what they last said.
+Start with the user's overarching intent — not individual requests, but the trajectory. What are they trying to build or achieve? What direction are they pushing? This through-line lets the resuming agent make decisions aligned with where the user is heading, not just what they last said.
 
 Then, for each significant episode, capture:
 - What was attempted and why it seemed right at the time
 - What went wrong or what was discovered that changed the approach
 - The reasoning that led to the final decision — not just "we decided X" but "we tried Y, discovered Z, and that's why X"
-- User insights that course-corrected thinking — preserve their actual words/reasoning, not just their conclusion
+- User insights that course-corrected thinking — integrate them here with brief attribution; longer verbatim quotes belong in Section 8
 
-This is the section the resuming agent will read most carefully. Facts can be re-derived from code and tests. Reasoning cannot — once lost, the agent will repeat the same wrong approaches and miss the same insights.
+This is the section the resuming agent will read most carefully. Facts can be re-derived from code, tests, and the raw event log. Reasoning cannot — once lost, the agent will repeat the same wrong approaches and miss the same insights.
 
 For resolved issues: keep the LESSON (what class of problem was this, how to recognize it), drop the step-by-step debugging log. The journey matters, not every step.
 
 For in-progress issues: keep the full narrative including what's been tried and what's currently hypothesized.
 
 ## 2. Current Phase
-What the agent is doing RIGHT NOW: planning / implementing / testing / debugging / reviewing / orchestrating / done
+What the agent is doing RIGHT NOW: planning / implementing / testing / debugging / reviewing / orchestrating / done.
 If debugging: include the exact error message, current hypothesis, and what has been tried.
-If orchestrating: which sub tasks are running, which are blocked, what's being waited on.
+
+(Sub-task status belongs in Section 4 — Tree Mental Model.)
 
 ## 3. Completed Work
-What has been built, tested, committed, and merged — with key decisions and their reasoning.
+What has been built, tested, committed, and merged.
 Include specific file paths and function names.
-For each significant decision: state the choice AND the rejected alternative with reasoning.
 Focus on outcomes, not blow-by-blow implementation steps.
+
+Decisions and their reasoning belong in Section 1's narrative. This section is the concrete record of what was produced.
 
 ## 4. Tree Mental Model
 The tree is on disk — don't snapshot it. Capture what the agent KNOWS about the tree that can't be re-derived from get_tree:
@@ -62,6 +66,7 @@ The tree is on disk — don't snapshot it. Capture what the agent KNOWS about th
 - What ongoing conversations or negotiations am I having with which tasks?
 - What am I planning to do next with the tree — what to create, start, merge, restructure?
 - Any coordination concerns: tasks that depend on each other, potential merge conflicts, sequencing decisions.
+- Communication state: pending clarifications, recent messages to/from tasks above or below.
 
 ## 5. Rejected Approaches & Lessons
 Two categories:
@@ -71,13 +76,14 @@ Two categories:
 
 For each: state the principle, what triggered the discovery, and what was wrong about the initial assumption.
 
+Decisions made within a single episode (and the alternatives rejected in that moment) belong in Section 1's narrative. This section is for the meta-level, reusable insights — patterns that transcend the immediate episode.
+
 If nothing was learned, write "None so far."
 
 ## 6. Key Context
 Important state and knowledge that is HARD to reconstruct from disk:
 - Constraints or invariants that affect remaining work
 - Environment or configuration state
-- Communication state: pending clarifications, recent messages to/from tasks above or below
 - User preferences or style observations discovered during the session
 
 ## 7. Pending Work
@@ -86,7 +92,9 @@ Be specific: "implement X in file Y", "add test for Z", "merge child branch A".
 For each item, note any dependencies on other items.
 
 ## 8. User Messages (Reference)
-Verbatim or close paraphrase of every user message and task message in the conversation, in chronological order. On re-compaction, carry forward important messages from the previous checkpoint and append new ones. Section 1 captures the meaning and narrative; this section preserves the raw record. The resuming agent has NO access to previous messages — this is the only copy.
+Verbatim or close paraphrase of user messages whose exact wording shaped decisions — in chronological order. On re-compaction, carry forward important quotes from the previous summary and append new ones. Section 1 captures the meaning and narrative; this section preserves the raw wording.
+
+The raw event log preserves a complete transcript. This section is for the messages worth having immediately at hand on resume, without needing to re-read the log.
 
 Rules:
 - Be precise: file paths, function names, exact error messages, task IDs
