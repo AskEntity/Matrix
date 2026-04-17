@@ -29,7 +29,6 @@ export function createYieldTool() {
 		handler: async () => ({
 			content: [],
 			isError: false,
-			_isYield: true,
 		}),
 	});
 }

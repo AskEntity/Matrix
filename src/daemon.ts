@@ -14,7 +14,7 @@
  * Those live in the worker.
  */
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Hono } from "hono";
@@ -29,20 +29,7 @@ import { checkDataRootCollisions, type PluginManifest } from "./plugin.ts";
 import { ProjectManager } from "./project-manager.ts";
 import type { SyncMap } from "./runtime/worker-api.ts";
 import { ulid } from "./ulid.ts";
-
-// Read version
-const _pkg = JSON.parse(
-	readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-) as { version: string };
-const VERSION = _pkg.version;
-
-let GIT_HASH = "unknown";
-try {
-	const result = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"]);
-	if (result.exitCode === 0) {
-		GIT_HASH = new TextDecoder().decode(result.stdout).trim();
-	}
-} catch {}
+import { GIT_HASH, VERSION } from "./version.ts";
 
 // ── Types ──
 

@@ -14,15 +14,6 @@ import type { Event, TreeNode } from "./types.ts";
 
 export type { Event } from "./types.ts";
 
-// --- Types ---
-
-export interface Project {
-	id: string;
-	name: string;
-	path: string;
-	pathExists?: boolean;
-}
-
 /**
  * UI-only event types that only exist in the frontend rendering layer.
  * Queue-originated message types (task_message, user_message_forwarded, etc.) are
@@ -256,69 +247,6 @@ export function useSSE(
 	}, [getToken, projectId, reconnectKey, onMessage, onConnect, onReconnect]);
 
 	return { connected };
-}
-
-// --- useProjects ---
-
-export function useProjects() {
-	const authFetch = useAuthFetch();
-	const [projects, setProjects] = useState<Project[]>([]);
-
-	const refresh = useCallback(async () => {
-		try {
-			const res = await authFetch("/projects");
-			if (!res.ok) return;
-			const data = await res.json();
-			if (Array.isArray(data)) setProjects(data);
-		} catch (e) {
-			console.warn("[useProjects] Failed to fetch projects:", e);
-		}
-	}, [authFetch]);
-
-	useEffect(() => {
-		refresh();
-	}, [refresh]);
-
-	const initProject = useCallback(
-		async (path: string) => {
-			const res = await authFetch("/projects", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ path }),
-			});
-			if (!res.ok) throw new Error((await res.json()).error);
-			const project = await res.json();
-			await refresh();
-			return project as Project;
-		},
-		[authFetch, refresh],
-	);
-
-	const deleteProject = useCallback(
-		async (id: string) => {
-			const res = await authFetch(api.project(id), { method: "DELETE" });
-			if (!res.ok) throw new Error((await res.json()).error);
-			await refresh();
-		},
-		[authFetch, refresh],
-	);
-
-	const updateProject = useCallback(
-		async (id: string, updates: { path?: string; name?: string }) => {
-			const res = await authFetch(api.project(id), {
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(updates),
-			});
-			if (!res.ok) throw new Error((await res.json()).error);
-			const project = await res.json();
-			await refresh();
-			return project as Project;
-		},
-		[authFetch, refresh],
-	);
-
-	return { projects, refresh, initProject, deleteProject, updateProject };
 }
 
 // --- useTasks ---
@@ -575,84 +503,4 @@ export function formatTime(ts: number): string {
 export function getLogTaskId(entry: LogEntry): string | undefined {
 	if ("taskId" in entry) return entry.taskId as string | undefined;
 	return undefined;
-}
-
-// --- useThreeLayerConfig ---
-
-export interface ThreeLayerConfig {
-	global: Record<string, unknown>;
-	repo: Record<string, unknown>;
-	local: Record<string, unknown>;
-	resolved: Record<string, unknown>;
-}
-
-export function useThreeLayerConfig(projectId: string | null) {
-	const authFetch = useAuthFetch();
-	const [layers, setLayers] = useState<ThreeLayerConfig>({
-		global: {},
-		repo: {},
-		local: {},
-		resolved: {},
-	});
-	const [loading, setLoading] = useState(false);
-
-	const refresh = useCallback(async () => {
-		if (!projectId) {
-			setLayers({ global: {}, repo: {}, local: {}, resolved: {} });
-			return;
-		}
-		setLoading(true);
-		try {
-			const res = await authFetch(api.configAll(projectId));
-			if (res.ok) setLayers(await res.json());
-		} catch (e) {
-			console.warn("[useConfigLayers] Failed to fetch config:", e);
-		} finally {
-			setLoading(false);
-		}
-	}, [authFetch, projectId]);
-
-	useEffect(() => {
-		refresh();
-	}, [refresh]);
-
-	const updateGlobal = useCallback(
-		async (partial: Record<string, unknown>) => {
-			const res = await authFetch("/config/global", {
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(partial),
-			});
-			if (res.ok) await refresh();
-		},
-		[authFetch, refresh],
-	);
-
-	const updateRepo = useCallback(
-		async (partial: Record<string, unknown>) => {
-			if (!projectId) return;
-			const res = await authFetch(api.configRepo(projectId), {
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(partial),
-			});
-			if (res.ok) await refresh();
-		},
-		[authFetch, projectId, refresh],
-	);
-
-	const updateLocal = useCallback(
-		async (partial: Record<string, unknown>) => {
-			if (!projectId) return;
-			const res = await authFetch(api.config(projectId), {
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(partial),
-			});
-			if (res.ok) await refresh();
-		},
-		[authFetch, projectId, refresh],
-	);
-
-	return { layers, loading, refresh, updateGlobal, updateRepo, updateLocal };
 }

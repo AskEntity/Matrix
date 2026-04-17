@@ -18,8 +18,13 @@ export interface PluginManifest {
 	/** Unique plugin name (e.g., "matrix", "story1001") */
 	name: string;
 
-	/** Scope: global plugins are available in ALL projects, project plugins only in their own */
-	scope: "global" | "project";
+	/**
+	 * Scope. Only "global" is implemented — every global plugin is available
+	 * in every project. "project" (per-project plugin variant) was declared
+	 * during design; no code path handles it. Re-introduce when the variant
+	 * is genuinely needed.
+	 */
+	scope: "global";
 
 	/**
 	 * Where this plugin's data lives, relative to `~/.mxd/projects/<projectId>/`.
