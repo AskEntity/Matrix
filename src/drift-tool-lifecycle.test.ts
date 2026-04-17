@@ -34,14 +34,14 @@ import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "./ulid.ts";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
-import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import type { Event } from "./events.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { ulid } from "./ulid.ts";
 
 // ── Test infrastructure (mirrors integration.test.ts) ──
 
@@ -219,7 +219,13 @@ async function recreateApp(
 	const newApp = createApp({
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
-		projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }],
+		projects: [
+			{
+				id: ctx.projectId,
+				name: basename(ctx.projectDir),
+				path: ctx.projectDir,
+			},
+		],
 	});
 	newApp.markReady();
 	return newApp;

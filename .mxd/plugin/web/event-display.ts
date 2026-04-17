@@ -7,8 +7,7 @@
  *
  * Start with the most common event types: tool_call, tool_result, message, assistant_text.
  */
-import type { Event } from "./types.ts";
-import type { QueueMessage } from "./types.ts";
+
 import {
 	isBuiltinTool,
 	stripMcpPrefix,
@@ -42,6 +41,7 @@ import {
 	TOOL_WRITE_FILE,
 	TOOL_YIELD,
 } from "./tool-names.ts";
+import type { Event, QueueMessage } from "./types.ts";
 
 // ── Display data types ──
 

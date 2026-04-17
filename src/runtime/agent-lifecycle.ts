@@ -167,11 +167,14 @@ export function buildMatrixScopeOpts(
 		buildWorkContext: (node, projectPath) =>
 			buildWorkContextContent(node.cwd ?? node.worktreePath ?? projectPath),
 		buildSummarizationPrompt: (node, projectPath) =>
-			buildSummarizationInstruction(node.cwd ?? node.worktreePath ?? projectPath),
+			buildSummarizationInstruction(
+				node.cwd ?? node.worktreePath ?? projectPath,
+			),
 		buildDoneResumeContext: (node, projectPath) => {
-			const cwdLine = (node.cwd ?? node.worktreePath ?? projectPath)
-				? `\n\n## Working Directory\n${node.cwd ?? node.worktreePath ?? projectPath}`
-				: "";
+			const cwdLine =
+				(node.cwd ?? node.worktreePath ?? projectPath)
+					? `\n\n## Working Directory\n${node.cwd ?? node.worktreePath ?? projectPath}`
+					: "";
 			return `You previously called done(). New messages woke you up:${cwdLine}`;
 		},
 		shouldResume: (node) => node.status === "in_progress",
@@ -179,10 +182,12 @@ export function buildMatrixScopeOpts(
 			tracker.updateStatus(node.id, "in_progress");
 		},
 		onDone: (node, tracker, doneArgs) => {
-			const newStatus =
-				doneArgs.status === "passed" ? "verify" : "failed";
+			const newStatus = doneArgs.status === "passed" ? "verify" : "failed";
 			const summary = (doneArgs.summary as string) ?? "";
-			tracker.updateStatus(node.id, newStatus as import("../types.ts").TaskStatus);
+			tracker.updateStatus(
+				node.id,
+				newStatus as import("../types.ts").TaskStatus,
+			);
 			return { status: newStatus, summary };
 		},
 	};
@@ -223,7 +228,10 @@ async function createAgentContext(
 		 * Tool builder for this scope. Always provided by caller.
 		 * MCP external servers are still appended by createAgentContext.
 		 */
-		buildTools: (auth: ReturnType<typeof createAgentAuth>, taskId: string) => {
+		buildTools: (
+			auth: ReturnType<typeof createAgentAuth>,
+			taskId: string,
+		) => {
 			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
 			tools: ToolDefinition<any>[];
 			hasRunningChildren?: () => boolean;
@@ -294,8 +302,12 @@ async function createAgentContext(
 	// Create auth for this agent
 	const auth = createAgentAuth(project.id, opts.currentTaskId, opts.tracker);
 
-	const { tools: internalTools, hasRunningChildren, setMessages, setAllTools } =
-		opts.buildTools(auth, opts.currentTaskId);
+	const {
+		tools: internalTools,
+		hasRunningChildren,
+		setMessages,
+		setAllTools,
+	} = opts.buildTools(auth, opts.currentTaskId);
 
 	const mcpToolDefs: Record<string, ToolDefinition[]> = {
 		[MCP_SERVER_NAME]: internalTools,
@@ -624,7 +636,8 @@ export async function deliverMessage(
 			// Root node — same launch path as child, scope opts from ctx
 			const rootScopeOpts = ctx.scopeOpts.get(project.id)!;
 			const rootNode = tracker.getTask(nodeId);
-			if (rootNode && rootScopeOpts.onLaunch) rootScopeOpts.onLaunch(rootNode, tracker);
+			if (rootNode && rootScopeOpts.onLaunch)
+				rootScopeOpts.onLaunch(rootNode, tracker);
 			runAgentForNode(ctx, project, tracker, nodeId, {
 				...rootScopeOpts,
 				resume: shouldResume,
@@ -989,7 +1002,8 @@ export async function runAgentForNode(
 			queue: childQueue,
 			// Lifecycle hooks bound to this node — plugin provides content, runtime calls at right time
 			buildWorkContext: () => opts.buildWorkContext(node, project.path),
-			buildSummarizationPrompt: () => opts.buildSummarizationPrompt(node, project.path),
+			buildSummarizationPrompt: () =>
+				opts.buildSummarizationPrompt(node, project.path),
 			buildDoneResumeContext: opts.buildDoneResumeContext
 				? () => opts.buildDoneResumeContext!(node, project.path)
 				: undefined,
@@ -1105,7 +1119,8 @@ export async function runAgentForNode(
 			} else {
 				// Let plugin update node state on done — returns data for crash-safe marker
 				const doneArgs = {
-					status: agentResult.exitReason === "done_passed" ? "passed" : "failed",
+					status:
+						agentResult.exitReason === "done_passed" ? "passed" : "failed",
 					summary: agentResult.doneSummary ?? "",
 				};
 				const doneData = opts.onDone

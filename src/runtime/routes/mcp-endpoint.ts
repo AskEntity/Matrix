@@ -24,8 +24,8 @@ import * as R from "../../resource-registry.ts";
 import { initResourceRegistry } from "../../resource-registry.ts";
 import { createHumanAuth } from "../../tool-auth.ts";
 import {
+	type AnyToolDef,
 	buildExternalShape,
-	type AnyToolDef, type ToolDef,
 	type ToolHandlerResult,
 } from "../../tool-def.ts";
 import type { RuntimeContext } from "../context.ts";
@@ -252,7 +252,10 @@ function buildExternalOnlyToolDefs(ctx: RuntimeContext): AnyToolDef[] {
  * Uses buildExternalShape: bind params become required explicit params.
  * Calls the SAME handler with createHumanAuth() (all permissions granted).
  */
-function registerToolDefOnMcpServer(server: McpServer, toolDef: AnyToolDef): void {
+function registerToolDefOnMcpServer(
+	server: McpServer,
+	toolDef: AnyToolDef,
+): void {
 	const shape = buildExternalShape(toolDef.params);
 
 	const humanAuth = createHumanAuth();

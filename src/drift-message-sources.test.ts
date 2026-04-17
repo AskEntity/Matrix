@@ -29,9 +29,6 @@ import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "./ulid.ts";
-import { deliverMessage } from "./runtime/agent-lifecycle.ts";
-import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import {
 	createBackgroundComplete,
@@ -43,10 +40,13 @@ import {
 	createUserMessage,
 	createUserMessageForwarded,
 } from "./queue-message-factory.ts";
+import { deliverMessage } from "./runtime/agent-lifecycle.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { ulid } from "./ulid.ts";
 
 // createUserMessage used indirectly via deliverMessage; these factories are all
 // used in the tests below.
@@ -85,7 +85,11 @@ async function setupTestContext(): Promise<TestContext> {
 	const provider = createMockedProviderWithMock(mockAPI);
 
 	const projectId = ulid();
-	const appResult = createApp({ dataDir, agentProvider: provider, projects: [{ id: projectId, name: basename(projectDir), path: projectDir }] });
+	const appResult = createApp({
+		dataDir,
+		agentProvider: provider,
+		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
+	});
 
 	// Clean up quality task templates
 	const tasksDir = join(projectDir, ".mxd", "tasks");
@@ -198,7 +202,17 @@ async function recreateApp(
 	ctx: TestContext,
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedProviderWithMock(ctx.mockAPI);
-	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider, projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }] });
+	const newApp = createApp({
+		dataDir: ctx.dataDir,
+		agentProvider: provider,
+		projects: [
+			{
+				id: ctx.projectId,
+				name: basename(ctx.projectDir),
+				path: ctx.projectDir,
+			},
+		],
+	});
 	newApp.markReady();
 	return newApp;
 }

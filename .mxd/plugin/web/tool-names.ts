@@ -10,7 +10,9 @@ function mcpToolName<T extends string>(base: T): `mcp__mxd__${T}` {
 }
 
 export function stripMcpPrefix(fullName: string): string {
-	return fullName.startsWith(MCP_PREFIX) ? fullName.slice(MCP_PREFIX.length) : fullName;
+	return fullName.startsWith(MCP_PREFIX)
+		? fullName.slice(MCP_PREFIX.length)
+		: fullName;
 }
 
 export const TOOL_BASH = mcpToolName("bash");
@@ -30,7 +32,9 @@ export const TOOL_RESET_TASK = mcpToolName("reset_task");
 export const TOOL_EXECUTE_TASKS = mcpToolName("execute_tasks");
 export const TOOL_REORDER_TASKS = mcpToolName("reorder_tasks");
 export const TOOL_SEND_MESSAGE = mcpToolName("send_message");
-export const TOOL_SEND_MESSAGE_TO_PROJECT = mcpToolName("send_message_to_project");
+export const TOOL_SEND_MESSAGE_TO_PROJECT = mcpToolName(
+	"send_message_to_project",
+);
 export const TOOL_SEND_MESSAGE_TO_CHILD = mcpToolName("send_message_to_child");
 export const TOOL_REPORT_TO_PARENT = mcpToolName("report_to_parent");
 export const TOOL_CLARIFY = mcpToolName("clarify");

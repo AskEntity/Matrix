@@ -3,8 +3,8 @@ import { join } from "node:path";
 import {
 	checkDataRootCollisions,
 	effectiveDataRoot,
-	resolveDataRoot,
 	type PluginManifest,
+	resolveDataRoot,
 } from "./plugin.ts";
 
 describe("plugin dataRoot", () => {

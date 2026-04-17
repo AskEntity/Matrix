@@ -4,15 +4,15 @@
  * files can focus on assertions.
  */
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "../ulid.ts";
-import { deliverMessage } from "../runtime/agent-lifecycle.ts";
-import { createApp } from "../runtime.ts";
 import { EventStore } from "../event-store.ts";
 import type { Event } from "../events.ts";
 import type { QueueMessage } from "../message-queue.ts";
+import { deliverMessage } from "../runtime/agent-lifecycle.ts";
+import { createApp } from "../runtime.ts";
+import { ulid } from "../ulid.ts";
 import { matrixBuildScopeOpts } from "./matrix-scope.ts";
 import {
 	createMockedProviderWithMock,

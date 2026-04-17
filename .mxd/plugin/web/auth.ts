@@ -4,10 +4,10 @@
  * Both shell and plugin resolve to the same module → same React context instance.
  */
 export {
-	AuthFetchProvider,
-	useAuthFetch,
-	GetTokenProvider,
-	useGetToken,
 	type AuthFetchFn,
+	AuthFetchProvider,
 	type GetTokenFn,
+	GetTokenProvider,
+	useAuthFetch,
+	useGetToken,
 } from "@mxd/auth-context";

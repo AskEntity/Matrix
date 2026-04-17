@@ -11,9 +11,8 @@ export {
 	summarizeToolResult,
 } from "../../event-display.ts";
 
-import { TOOL_BASH } from "../../tool-names.ts";
-
 import type { LogEntry } from "../../hooks.ts";
+import { TOOL_BASH } from "../../tool-names.ts";
 
 /** Get the primary display text for any LogEntry type. */
 export function getEntryText(entry: LogEntry): string {

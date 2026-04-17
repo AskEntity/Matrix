@@ -10,8 +10,7 @@ export type {
 } from "./types.ts";
 export { isFolder, isTask } from "./types.ts";
 
-import type { Event } from "./types.ts";
-import type { TreeNode } from "./types.ts";
+import type { Event, TreeNode } from "./types.ts";
 
 export type { Event } from "./types.ts";
 

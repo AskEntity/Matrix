@@ -33,9 +33,9 @@ const TOOL_YIELD = T("yield");
 const TOOL_CREATE_FOLDER = T("create_folder");
 const TOOL_DELETE_FOLDER = T("delete_folder");
 const TOOL_RENAME_FOLDER = T("rename_folder");
+
 import type { FolderNode, TaskNode, TaskStatus } from "../../types.ts";
 import { ulid } from "../../ulid.ts";
-
 
 /**
  * Mock showcase endpoint — returns a complete dataset for UI development.

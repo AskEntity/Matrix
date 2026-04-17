@@ -8,7 +8,10 @@
  */
 import { createContext, useContext } from "react";
 
-export type AuthFetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type AuthFetchFn = (
+	input: RequestInfo | URL,
+	init?: RequestInit,
+) => Promise<Response>;
 
 const AuthFetchContext = createContext<AuthFetchFn>(globalThis.fetch);
 

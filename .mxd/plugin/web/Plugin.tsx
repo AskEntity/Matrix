@@ -38,7 +38,6 @@ import {
 	useTasks,
 } from "./hooks.ts";
 import { LocaleProvider, useLocale } from "./i18n.ts";
-import { MockShowcase } from "./MockShowcase.tsx";
 import { applyTheme, themes } from "./themes.ts";
 
 // ── Hash routing helpers ───────────────────────────────────────────────────
@@ -69,15 +68,15 @@ function updateHash(
 
 // ── Main Plugin ───────────────────────────────────────────────────────────────
 
-/** Check ?mock query param once at module load — never changes during session. */
-const IS_MOCK_MODE = new URLSearchParams(window.location.search).has("mock");
-
 /**
  * Plugin component — renders content for a single project.
  * NOT a SPA. Receives projectId from shell. No auth, no project selection, no settings.
  */
 export function Plugin({ projectId }: { projectId: string }) {
-	if (!projectId) return <div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>;
+	if (!projectId)
+		return (
+			<div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>
+		);
 	return (
 		<LocaleProvider>
 			<ErrorBoundary>
@@ -145,14 +144,18 @@ function ProjectContent({ projectId }: { projectId: string }) {
 	>(new Map());
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [fullscreen, setFullscreen] = useState(false);
-	const [theme, setThemeState] = useState<
-		"dark" | "light" | "cute-light" | "cute-dark"
-	>(() => {
-		const stored = localStorage.getItem("mxd-theme");
-		if (stored === "light" || stored === "cute-light" || stored === "cute-dark")
-			return stored;
-		return "dark";
-	});
+	const [theme] = useState<"dark" | "light" | "cute-light" | "cute-dark">(
+		() => {
+			const stored = localStorage.getItem("mxd-theme");
+			if (
+				stored === "light" ||
+				stored === "cute-light" ||
+				stored === "cute-dark"
+			)
+				return stored;
+			return "dark";
+		},
+	);
 	const [tokenUsage, setTokenUsage] = useState<
 		Record<string, { inputTokens: number; contextWindow: number }>
 	>({});
@@ -235,10 +238,21 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		return map;
 	}, [nodes]);
 	// Fetch current project info (name, pathExists) — plugin doesn't manage project list
-	const [currentProject, setCurrentProject] = useState<{ id: string; name: string; path: string; pathExists?: boolean } | null>(null);
+	const [currentProject, setCurrentProject] = useState<{
+		id: string;
+		name: string;
+		path: string;
+		pathExists?: boolean;
+	} | null>(null);
 	useEffect(() => {
-		if (!projectId) { setCurrentProject(null); return; }
-		authFetch(`/projects/${projectId}`).then(r => r.ok ? r.json() : null).then(setCurrentProject).catch(() => setCurrentProject(null));
+		if (!projectId) {
+			setCurrentProject(null);
+			return;
+		}
+		authFetch(`/projects/${projectId}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then(setCurrentProject)
+			.catch(() => setCurrentProject(null));
 	}, [projectId, authFetch]);
 	const projectMap = useMemo(() => {
 		const map = new Map<string, string>();
@@ -298,7 +312,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		if (failed > 0) document.title = `${base} [!${failed}]`;
 		else if (passed === total) document.title = `${base} [✓]`;
 		else document.title = `${base} [${passed}/${total}]`;
-	}, [nodes, rootNodeId, currentProject, projectId]);
+	}, [nodes, rootNodeId, currentProject]);
 
 	// ── Sidebar resize ───────────────────────────────────────────────────
 
@@ -507,14 +521,9 @@ function ProjectContent({ projectId }: { projectId: string }) {
 					e,
 				),
 			);
-	}, [projectId, processEventResponse]);
+	}, [projectId, processEventResponse, authFetch]);
 
-	const { connected } = useSSE(
-		projectId,
-		handleEvent,
-		checkStatus,
-		handleReconnect,
-	);
+	useSSE(projectId, handleEvent, checkStatus, handleReconnect);
 
 	// Project selection is managed by shell — plugin receives projectId as prop
 
@@ -598,7 +607,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				setPendingClarifications(data.clarifications ?? []),
 			)
 			.catch(() => setPendingClarifications([]));
-	}, [projectId]);
+	}, [projectId, authFetch]);
 
 	useEffect(() => {
 		if (!selectedTaskId || selectedTaskId === rootNodeId) {
@@ -694,7 +703,6 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		handleSend,
 		handleStop,
 		handleClarifySubmit,
-		handleClearSessions,
 		handleClearRootSession,
 		handleDeleteTask,
 		handleStopTask,
@@ -761,6 +769,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 			refreshTasks,
 			t,
 			setActiveAgents,
+			authFetch,
 		],
 	);
 
@@ -789,13 +798,6 @@ function ProjectContent({ projectId }: { projectId: string }) {
 			setLastOutputTokens(null);
 		}
 	}, [projectId, setActiveAgents]);
-
-	const handleThemeChange = useCallback(
-		(t: string) => setThemeState(t as typeof theme),
-		[],
-	);
-
-	const handleToggleSidebar = useCallback(() => setSidebarOpen((s) => !s), []);
 
 	// Use refs to read current preview/tabs without deps
 	const previewTabRef = useRef(previewTabId);
@@ -1004,10 +1006,14 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				setLoadingOlderEvents(false);
 			}
 		},
-		[projectId, loadingOlderEvents, olderEventsAvailable, processEventBatch],
+		[
+			projectId,
+			loadingOlderEvents,
+			olderEventsAvailable,
+			processEventBatch,
+			authFetch,
+		],
 	);
-
-	const projectPathMissing = currentProject?.pathExists === false;
 
 	// ── Render ───────────────────────────────────────────────────────────────
 

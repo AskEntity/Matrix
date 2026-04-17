@@ -3819,7 +3819,10 @@ describe("systemPreamble", () => {
 		});
 
 		await provider.execute({
-			buildSystemPrompt: () => ({ stable: "stable-prompt", variable: "variable-prompt" }),
+			buildSystemPrompt: () => ({
+				stable: "stable-prompt",
+				variable: "variable-prompt",
+			}),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
 			queue: queueWithPrompt(endTurnInstruction, testDir),
@@ -3843,7 +3846,10 @@ describe("systemPreamble", () => {
 		const provider = createMockedProviderWithMock(mockAPI);
 
 		await provider.execute({
-			buildSystemPrompt: () => ({ stable: "stable-prompt", variable: "variable-prompt" }),
+			buildSystemPrompt: () => ({
+				stable: "stable-prompt",
+				variable: "variable-prompt",
+			}),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
 			queue: queueWithPrompt(endTurnInstruction, testDir),
@@ -3867,7 +3873,10 @@ describe("systemPreamble", () => {
 		});
 
 		await provider.execute({
-			buildSystemPrompt: () => ({ stable: "stable-prompt", variable: "variable-prompt" }),
+			buildSystemPrompt: () => ({
+				stable: "stable-prompt",
+				variable: "variable-prompt",
+			}),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
 			queue: queueWithPrompt(endTurnInstruction, testDir),
@@ -3984,9 +3993,7 @@ describe("Abort signal stops inner retry immediately", () => {
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
-	function createProviderWithStreamFn(
-		streamFn: (params: unknown) => unknown,
-	) {
+	function createProviderWithStreamFn(streamFn: (params: unknown) => unknown) {
 		const savedKey = process.env.ANTHROPIC_API_KEY;
 		process.env.ANTHROPIC_API_KEY = "test-key";
 		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6");
@@ -4002,8 +4009,10 @@ describe("Abort signal stops inner retry immediately", () => {
 	}
 
 	function queueWithPrompt(prompt: string) {
-		const { MessageQueue } = require("./message-queue.ts") as typeof import("./message-queue.ts");
-		const { createUserMessage } = require("./queue-message-factory.ts") as typeof import("./queue-message-factory.ts");
+		const { MessageQueue } =
+			require("./message-queue.ts") as typeof import("./message-queue.ts");
+		const { createUserMessage } =
+			require("./queue-message-factory.ts") as typeof import("./queue-message-factory.ts");
 		const q = new MessageQueue();
 		q.enqueue(createUserMessage(prompt));
 		return q;
@@ -4032,8 +4041,8 @@ describe("Abort signal stops inner retry immediately", () => {
 		try {
 			await provider.execute({
 				buildSystemPrompt: () => ({ stable: "test", variable: "" }),
-			buildWorkContext: () => null,
-			buildSummarizationPrompt: () => "Summarize the conversation.",
+				buildWorkContext: () => null,
+				buildSummarizationPrompt: () => "Summarize the conversation.",
 				emit: () => {},
 				queue: queueWithPrompt("test"),
 				signal: abortController.signal,
@@ -4064,7 +4073,10 @@ describe("Abort signal stops inner retry immediately", () => {
 			}
 			throw new Anthropic.RateLimitError(
 				429,
-				{ type: "error", error: { type: "rate_limit_error", message: "rate limited" } },
+				{
+					type: "error",
+					error: { type: "rate_limit_error", message: "rate limited" },
+				},
 				"Rate Limited",
 				new Headers(),
 			);
@@ -4074,8 +4086,8 @@ describe("Abort signal stops inner retry immediately", () => {
 		try {
 			await provider.execute({
 				buildSystemPrompt: () => ({ stable: "test", variable: "" }),
-			buildWorkContext: () => null,
-			buildSummarizationPrompt: () => "Summarize the conversation.",
+				buildWorkContext: () => null,
+				buildSummarizationPrompt: () => "Summarize the conversation.",
 				emit: () => {},
 				queue: queueWithPrompt("test"),
 				signal: abortController.signal,
@@ -4102,12 +4114,20 @@ describe("Abort signal stops inner retry immediately", () => {
 			content: [{ type: "text", text: "Success after retry" }],
 			stop_reason: "end_turn",
 			stop_sequence: null,
-			usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+			usage: {
+				input_tokens: 100,
+				output_tokens: 50,
+				cache_creation_input_tokens: 0,
+				cache_read_input_tokens: 0,
+			},
 		} as Anthropic.Messages.Message;
 
 		const mockStream = () => ({
 			[Symbol.asyncIterator]: async function* () {
-				yield { type: "content_block_delta", delta: { type: "text_delta", text: "Success after retry" } };
+				yield {
+					type: "content_block_delta",
+					delta: { type: "text_delta", text: "Success after retry" },
+				};
 			},
 			finalMessage: () => Promise.resolve(successResponse),
 		});

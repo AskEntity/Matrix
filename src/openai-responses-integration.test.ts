@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "./ulid.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import {
@@ -11,6 +10,7 @@ import {
 	restoreMockedResponsesFetch,
 	ValidatingMockResponsesAPI,
 } from "./test-utils/mock-openai-responses-api.ts";
+import { ulid } from "./ulid.ts";
 
 interface TestContext {
 	dataDir: string;

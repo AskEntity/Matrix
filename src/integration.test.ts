@@ -15,16 +15,16 @@ import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "./ulid.ts";
-import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
+import { initTestProject } from "./test-utils/init-test-project.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
 import type { TaskNode } from "./types.ts";
-import { initTestProject } from "./test-utils/init-test-project.ts";
+import { ulid } from "./ulid.ts";
 
 // ── Test infrastructure ──
 
@@ -405,10 +405,6 @@ describe("Integration: full stack with mock API", () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
 
-		// DEBUG: verify root has cwd
-		const _tracker = await ctx.app.getTracker(ctx.projectId);
-		const _root = _tracker.getTask(_tracker.rootNodeId);
-
 		// Write a file to read
 		await Bun.write(join(ctx.projectDir, "test-file.txt"), "file_content_here");
 
@@ -449,7 +445,10 @@ describe("Integration: full stack with mock API", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__bash",
-							input: { command: "git add -A && git commit -m 'test commit' --allow-empty" },
+							input: {
+								command:
+									"git add -A && git commit -m 'test commit' --allow-empty",
+							},
 						},
 					],
 				},
@@ -759,7 +758,13 @@ async function recreateApp(
 	const newApp = createApp({
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
-		projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }],
+		projects: [
+			{
+				id: ctx.projectId,
+				name: basename(ctx.projectDir),
+				path: ctx.projectDir,
+			},
+		],
 	});
 	newApp.markReady();
 	return newApp;
@@ -5309,12 +5314,22 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: {
+								command: "git add -A && git commit -m 'test' --allow-empty",
+							},
+						},
 					],
 				},
 				{
 					blocks: [
-						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "write+read ok" } },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "write+read ok" },
+						},
 					],
 				},
 			],
@@ -5396,12 +5411,22 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: {
+								command: "git add -A && git commit -m 'test' --allow-empty",
+							},
+						},
 					],
 				},
 				{
 					blocks: [
-						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "edit ok" } },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "edit ok" },
+						},
 					],
 				},
 			],
@@ -5466,12 +5491,22 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: {
+								command: "git add -A && git commit -m 'test' --allow-empty",
+							},
+						},
 					],
 				},
 				{
 					blocks: [
-						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "search ok" } },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "search ok" },
+						},
 					],
 				},
 			],
@@ -5526,12 +5561,22 @@ describe("Integration: file operations", () => {
 						},
 					],
 					blocks: [
-						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: {
+								command: "git add -A && git commit -m 'test' --allow-empty",
+							},
+						},
 					],
 				},
 				{
 					blocks: [
-						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "list_files ok" } },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "list_files ok" },
+						},
 					],
 				},
 			],
@@ -8801,7 +8846,11 @@ describe("Default branch", () => {
 		const mockAPI = new ValidatingMockAPI();
 		const provider = createMockedProviderWithMock(mockAPI);
 
-		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
+		const project = {
+			id: ulid(),
+			name: basename(projectDir),
+			path: projectDir,
+		};
 		const appResult = createApp({
 			dataDir,
 			agentProvider: provider,
@@ -8857,8 +8906,16 @@ describe("Default branch", () => {
 
 		const mockAPI = new ValidatingMockAPI();
 		const provider = createMockedProviderWithMock(mockAPI);
-		const project = { id: ulid(), name: basename(projectDir), path: projectDir };
-		const appResult = createApp({ dataDir, agentProvider: provider, projects: [project] });
+		const project = {
+			id: ulid(),
+			name: basename(projectDir),
+			path: projectDir,
+		};
+		const appResult = createApp({
+			dataDir,
+			agentProvider: provider,
+			projects: [project],
+		});
 
 		const hookExample = join(
 			projectDir,
@@ -10523,7 +10580,9 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 		for (let i = 0; i < 20; i++) {
 			await new Promise((r) => setTimeout(r, 100));
 			if (eventStore.has(rootNodeId)) {
-				throw new Error(`JSONL reappeared after ${(i + 1) * 100}ms — async cleanup wrote after clear`);
+				throw new Error(
+					`JSONL reappeared after ${(i + 1) * 100}ms — async cleanup wrote after clear`,
+				);
 			}
 		}
 		expect(eventStore.has(rootNodeId)).toBe(false);
@@ -11340,12 +11399,22 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 				{
 					blocks: [
 						{ type: "text", text: "Got the image. Committing." },
-						{ type: "tool_use", name: "mcp__mxd__bash", input: { command: "git add -A && git commit -m 'test' --allow-empty" } },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: {
+								command: "git add -A && git commit -m 'test' --allow-empty",
+							},
+						},
 					],
 				},
 				{
 					blocks: [
-						{ type: "tool_use", name: "mcp__mxd__done", input: { status: "passed", summary: "image tool_result ok" } },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "image tool_result ok" },
+						},
 					],
 				},
 			],

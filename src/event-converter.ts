@@ -6,9 +6,6 @@
  */
 import { type Event, formatEventForAI, isQueueEvent } from "./events.ts";
 import type { EventImageData, PendingState } from "./shared-types.ts";
-import {
-	TOOL_SEND_MESSAGE,
-} from "./tool-names.ts";
 
 export type { EventImageData } from "./shared-types.ts";
 
