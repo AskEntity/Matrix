@@ -1,5 +1,6 @@
 import { type Event, isPersistedByEmitEvent } from "../events.ts";
 import type { TaskTracker } from "../task-tracker.ts";
+import { isFolder, stripSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
 import type {
 	EventSubscriber,
@@ -123,6 +124,12 @@ export function emitEvent(
  * Broadcast a tree update to all subscribers of a project.
  * This is ephemeral — carries full tree data for immediate UI update.
  * Tree changes are also delivered as structured queue messages to running agents.
+ *
+ * Sessions MUST be stripped before crossing the postMessage boundary — the
+ * live session object contains MessageQueue, AbortController, messages[] with
+ * non-cloneable references. `structuredClone` throws DataCloneError on these.
+ * Pre-FU8 the triple-JSON-serialize path silently dropped these fields; after
+ * FU8 removed that path, stripping became explicitly required.
  */
 export function broadcastTreeUpdate(
 	ctx: RuntimeContext,
@@ -131,7 +138,7 @@ export function broadcastTreeUpdate(
 ) {
 	broadcast(ctx, projectId, {
 		type: "tree_updated",
-		nodes: tracker.allNodes(),
+		nodes: tracker.allNodes().map((n) => (isFolder(n) ? n : stripSession(n))),
 		rootNodeId: tracker.rootNodeId,
 	});
 }
