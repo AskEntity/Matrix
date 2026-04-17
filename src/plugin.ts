@@ -12,7 +12,7 @@
  * - runtime: path to module exporting ScopeOpts builder
  */
 
-import { join } from "node:path";
+import { resolveDataRoot, validateDataRoot } from "./data-paths.ts";
 
 export interface PluginManifest {
 	/** Unique plugin name (e.g., "matrix", "story1001") */
@@ -26,6 +26,8 @@ export interface PluginManifest {
 	 *
 	 * - `"@"` = project data root (`~/.mxd/projects/<projectId>/`)
 	 * - Default (omitted) = `"@/plugin/<name>/"` — namespaced under plugin/<name>/
+	 *
+	 * Shape must match `/^@(\/[A-Za-z0-9_-]+)*$/` — enforced at daemon startup.
 	 *
 	 * Used for: EventStore (JSONL), TaskTracker (tree.json), debug snapshots.
 	 * Collision: two plugins with the same resolved dataRoot → daemon rejects startup.
@@ -61,50 +63,70 @@ export interface PluginManifest {
 
 /**
  * Get the effective dataRoot for a plugin (normalized, no trailing slash).
- * Default: `@/plugin/<name>` when omitted.
+ * Default: `@/plugin/<name>` when `dataRoot` is omitted.
+ *
+ * Only two normalizations happen here:
+ *  - `undefined` → auto-default (based on plugin name)
+ *  - trailing slashes stripped
+ *
+ * We deliberately do NOT fall back from empty string to `"@"`. An empty string
+ * is a user-supplied value; silently reinterpreting it would be the exact
+ * "silent misbehavior on malformed input" pattern this audit removes.
+ * Validation catches empty string and throws.
  */
 export function effectiveDataRoot(manifest: PluginManifest): string {
-	const raw = manifest.dataRoot ?? `@/plugin/${manifest.name}`;
-	// Normalize: strip trailing slashes
-	return raw.replace(/\/+$/, "") || "@";
+	if (manifest.dataRoot === undefined) return `@/plugin/${manifest.name}`;
+	// Normalize: strip trailing slashes. No further fallback.
+	return manifest.dataRoot.replace(/\/+$/, "");
 }
 
 /**
- * Resolve a plugin's dataRoot to an absolute path for a specific project.
- *
- * `"@"` → `{dataDir}/projects/{projectId}/`
- * `"@/plugin/foo"` → `{dataDir}/projects/{projectId}/plugin/foo/`
+ * Validate a plugin manifest — currently just its dataRoot.
+ * Runs at daemon startup; throws with a clear message on malformed input.
  */
-export function resolveDataRoot(
-	manifest: PluginManifest,
-	dataDir: string,
-	projectId: string,
-): string {
-	const root = effectiveDataRoot(manifest);
-	if (root === "@") {
-		return join(dataDir, "projects", projectId);
+export function validatePluginManifest(manifest: PluginManifest): void {
+	const effective = effectiveDataRoot(manifest);
+	try {
+		validateDataRoot(effective);
+	} catch (e) {
+		const msg = e instanceof Error ? e.message : String(e);
+		throw new Error(`Plugin "${manifest.name}": ${msg}`);
 	}
-	// "@/some/path" → strip "@/" prefix → join under project dir
-	return join(dataDir, "projects", projectId, root.slice(2));
 }
 
 /**
  * Check for dataRoot collisions among plugins.
- * Two plugins with the same effective dataRoot would write to the same directory.
+ *
+ * Two plugins with the same *resolved* dataRoot path would write to the same
+ * directory — compare canonical paths, not raw strings, so that `"@"` and a
+ * hypothetical `"@/foo/.."` (were it to slip past validation) would be caught.
+ *
+ * In practice {@link validateDataRoot} is run before this (at daemon startup),
+ * so inputs here are already canonical strings. The canonical-path compare is
+ * the belt to the validator's braces.
  *
  * Returns null if no collision, or an error message string if collision detected.
  */
 export function checkDataRootCollisions(
 	plugins: ReadonlyArray<Pick<PluginManifest, "name" | "dataRoot">>,
 ): string | null {
-	const seen = new Map<string, string>(); // effectiveRoot → plugin name
+	const seen = new Map<string, string>(); // canonical resolved path → plugin name
+	// Placeholder dataDir + projectId — values only need to be consistent, the
+	// relative subpath is what determines collision.
+	const CANON_DATA_DIR = "/_mxd_collision_check";
+	const CANON_PROJECT_ID = "_canon_project_";
 	for (const plugin of plugins) {
-		const root = effectiveDataRoot(plugin as PluginManifest);
-		const existing = seen.get(root);
+		const effective = effectiveDataRoot(plugin as PluginManifest);
+		const canonical = resolveDataRoot(
+			CANON_DATA_DIR,
+			CANON_PROJECT_ID,
+			effective,
+		);
+		const existing = seen.get(canonical);
 		if (existing) {
-			return `Plugin dataRoot collision: "${existing}" and "${plugin.name}" both resolve to "${root}"`;
+			return `Plugin dataRoot collision: "${existing}" and "${plugin.name}" both resolve to "${effective}"`;
 		}
-		seen.set(root, plugin.name);
+		seen.set(canonical, plugin.name);
 	}
 	return null;
 }

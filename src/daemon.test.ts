@@ -207,3 +207,110 @@ describe("daemon with matrix plugin", () => {
 		expect(typeof body.nodeCount).toBe("number");
 	});
 });
+
+describe("daemon startup — dataRoot hardening (Audit FU5)", () => {
+	// Each case sets up its own temp project with a specific plugin manifest
+	// and verifies createDaemon either throws (malformed) or succeeds (legal).
+	async function setupProject(manifest: string): Promise<{
+		tempDir: string;
+		dataDir: string;
+		cleanup: () => Promise<void>;
+	}> {
+		const tempDir = await mkdtemp(join(tmpdir(), "daemon-fu5-test-"));
+		const dataDir = join(tempDir, ".mxd");
+		const projectPath = join(tempDir, "proj");
+
+		await mkdir(join(projectPath, ".mxd", "plugin"), { recursive: true });
+		await writeFile(
+			join(projectPath, ".mxd", "plugin", "index.ts"),
+			manifest,
+			"utf-8",
+		);
+		await mkdir(join(dataDir, "projects"), { recursive: true });
+		await writeFile(
+			join(dataDir, "projects.json"),
+			JSON.stringify([
+				{
+					id: "p1",
+					name: "proj",
+					path: projectPath,
+					createdAt: new Date().toISOString(),
+				},
+			]),
+		);
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
+
+		return {
+			tempDir,
+			dataDir,
+			cleanup: async () => {
+				await rm(tempDir, { recursive: true, force: true });
+			},
+		};
+	}
+
+	test("manifest with traversal dataRoot '@/../etc' → createDaemon throws", async () => {
+		const ctx = await setupProject(
+			`export default { name: "evil", scope: "global", dataRoot: "@/../etc" };`,
+		);
+		try {
+			await expect(createDaemon({ dataDir: ctx.dataDir })).rejects.toThrow(
+				/Invalid dataRoot/,
+			);
+		} finally {
+			await ctx.cleanup();
+		}
+	});
+
+	test("manifest with no-prefix dataRoot 'foo' → createDaemon throws", async () => {
+		const ctx = await setupProject(
+			`export default { name: "bad", scope: "global", dataRoot: "foo" };`,
+		);
+		try {
+			await expect(createDaemon({ dataDir: ctx.dataDir })).rejects.toThrow(
+				/Invalid dataRoot/,
+			);
+		} finally {
+			await ctx.cleanup();
+		}
+	});
+
+	test("manifest with empty dataRoot '' → createDaemon throws", async () => {
+		const ctx = await setupProject(
+			`export default { name: "empty", scope: "global", dataRoot: "" };`,
+		);
+		try {
+			await expect(createDaemon({ dataDir: ctx.dataDir })).rejects.toThrow(
+				/Invalid dataRoot/,
+			);
+		} finally {
+			await ctx.cleanup();
+		}
+	});
+
+	test("manifest with absolute dataRoot '/etc' → createDaemon throws", async () => {
+		const ctx = await setupProject(
+			`export default { name: "abs", scope: "global", dataRoot: "/etc" };`,
+		);
+		try {
+			await expect(createDaemon({ dataDir: ctx.dataDir })).rejects.toThrow(
+				/Invalid dataRoot/,
+			);
+		} finally {
+			await ctx.cleanup();
+		}
+	});
+
+	test("manifest with legal '@' → daemon starts", async () => {
+		const ctx = await setupProject(
+			`export default { name: "ok", scope: "global", dataRoot: "@" };`,
+		);
+		try {
+			const daemon = await createDaemon({ dataDir: ctx.dataDir });
+			expect(daemon.plugins.length).toBe(1);
+			await daemon.shutdown();
+		} finally {
+			await ctx.cleanup();
+		}
+	});
+});

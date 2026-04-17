@@ -973,13 +973,15 @@ export async function runAgentForNode(
 		}
 
 		// Debug snapshot v2: per-traceId epoch.
-		// Layout: <dataDir>/projects/<id>/debug/<taskId>/<traceId>/last.json
+		// Layout: <resolvedDataRoot>/debug/<taskId>/<traceId>/last.json
 		// Each run writes to its own traceId dir → daemon restart preserves the
 		// previous run's final snapshot automatically (it lives under the OLD
 		// traceId). Roll old traceId dirs before the new one is created so the
 		// cleanup never races with the active run's writes.
+		// MUST pass dataRoot so non-"@" plugins land under their own subdirectory
+		// instead of Matrix's debug path.
 		const taskDebugDir = join(
-			projectDebugDir(ctx.config.dataDir, project.id),
+			projectDebugDir(ctx.config.dataDir, project.id, ctx.config.dataRoot),
 			nodeId,
 		);
 		rollOldTraceIdDirs(taskDebugDir, DEBUG_SNAPSHOT_KEEP_TRACE_DIRS);

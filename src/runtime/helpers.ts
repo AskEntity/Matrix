@@ -11,11 +11,20 @@ import {
 	resolveAuthGroup,
 	resolveConfig,
 } from "../config.ts";
+import {
+	projectDebugDir,
+	projectTasksDir,
+	resolveDataRoot,
+} from "../data-paths.ts";
 import { EventStore } from "../event-store.ts";
 import { OpenAIResponsesCompatibleProvider } from "../openai-responses-compatible-provider.ts";
 import { TaskTracker } from "../task-tracker.ts";
 import type { TreeNode } from "../types.ts";
 import type { RuntimeContext } from "./context.ts";
+
+// Re-export so existing callers importing path builders from ./helpers keep working.
+// data-paths.ts is the single source of truth; helpers.ts is a convenience barrel.
+export { projectDebugDir, projectTasksDir };
 
 /** Create an AgentProvider from an AuthGroup, model, and optional thinking effort. */
 function createProviderFromAuth(
@@ -97,11 +106,11 @@ export async function getTracker(
 ): Promise<TaskTracker> {
 	let tracker = ctx.trackers.get(projectId);
 	if (!tracker) {
-		const dataRoot = ctx.config.dataRoot;
-		const projectDir =
-			!dataRoot || dataRoot === "@"
-				? join(ctx.config.dataDir, "projects", projectId)
-				: join(ctx.config.dataDir, "projects", projectId, dataRoot.slice(2));
+		const projectDir = resolveDataRoot(
+			ctx.config.dataDir,
+			projectId,
+			ctx.config.dataRoot,
+		);
 		const treePath = join(projectDir, "tree.json");
 		tracker = new TaskTracker(treePath);
 		const project = ctx.pm.get(projectId);
@@ -126,41 +135,6 @@ export async function getTracker(
 		ctx.scopeOpts.set(projectId, ctx.config.buildScopeOpts(projectId, ctx));
 	}
 	return tracker;
-}
-
-/**
- * Compute the directory where a project's task JSONL files live.
- *
- * @param dataRoot - Plugin's effective dataRoot. "@" = project root (default),
- *   "@/plugin/foo" = plugin subdirectory.
- */
-export function projectTasksDir(
-	dataDir: string,
-	projectId: string,
-	dataRoot?: string,
-): string {
-	if (!dataRoot || dataRoot === "@") {
-		return join(dataDir, "projects", projectId, "tasks");
-	}
-	// "@/some/path" → strip "@/" → join under project dir
-	return join(dataDir, "projects", projectId, dataRoot.slice(2), "tasks");
-}
-
-/**
- * Compute the directory where a project's debug snapshots live.
- * Unified layout: `{dataDir}/projects/{projectId}/debug/`.
- * Used for drift snapshots (pre-API-call messages[]) and other investigation
- * artifacts.
- */
-export function projectDebugDir(
-	dataDir: string,
-	projectId: string,
-	dataRoot?: string,
-): string {
-	if (!dataRoot || dataRoot === "@") {
-		return join(dataDir, "projects", projectId, "debug");
-	}
-	return join(dataDir, "projects", projectId, dataRoot.slice(2), "debug");
 }
 
 /** Get or create an EventStore for a project. */
