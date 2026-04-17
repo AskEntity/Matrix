@@ -63,6 +63,7 @@ const en: Translations = {
 	// Sidebar
 	"sidebar.collapse": "Collapse sidebar",
 	"sidebar.expand": "Expand sidebar",
+	"sidebar.toggle": "Toggle sidebar",
 
 	// Orchestrator
 	"orch.label": "Orchestrator",
@@ -380,6 +381,7 @@ const zh: Translations = {
 	// Sidebar
 	"sidebar.collapse": "折叠侧边栏",
 	"sidebar.expand": "展开侧边栏",
+	"sidebar.toggle": "切换侧边栏",
 
 	// Orchestrator
 	"orch.label": "编排器",

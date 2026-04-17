@@ -41,6 +41,63 @@ import {
 import { LocaleProvider, useLocale } from "./i18n.ts";
 import { applyTheme, themes } from "./themes.ts";
 
+// ── Sidebar state model ────────────────────────────────────────────────────
+// ONE visibility state (`sidebarOpen`) works on both desktop (flex sibling)
+// and mobile (fixed overlay). CSS handles the platform difference. Width is
+// a separate concern — always represents "how wide when open", never encodes
+// hidden-ness. Treating 0-width as "closed" was a double-state that caused
+// the "button hides sidebar but sidebar is invisible" bug.
+const SIDEBAR_MIN_OPEN_WIDTH = 180;
+const SIDEBAR_MAX_WIDTH = 600;
+const SIDEBAR_SNAP_CLOSE_THRESHOLD = 100;
+const SIDEBAR_DEFAULT_WIDTH = 288;
+const MOBILE_BREAKPOINT_PX = 768;
+
+const STORAGE_KEY_OPEN = "mxd-sidebar-open";
+const STORAGE_KEY_WIDTH = "mxd-sidebar-width";
+const LEGACY_STORAGE_KEY_COLLAPSED = "mxd-sidebar-collapsed"; // migrated to OPEN
+
+/**
+ * Initial sidebar-open state. Priority:
+ * 1. New key `mxd-sidebar-open` — authoritative if set.
+ * 2. Legacy key `mxd-sidebar-collapsed` — migrate (inverted), then delete.
+ * 3. First visit: viewport default (desktop→open, mobile→closed).
+ *
+ * The migration runs lazily on first mount per browser. After one pass the
+ * legacy key is gone and the new key owns the value.
+ */
+function readInitialSidebarOpen(): boolean {
+	const stored = localStorage.getItem(STORAGE_KEY_OPEN);
+	if (stored === "true") return true;
+	if (stored === "false") return false;
+
+	const legacy = localStorage.getItem(LEGACY_STORAGE_KEY_COLLAPSED);
+	if (legacy !== null) {
+		const open = legacy !== "true";
+		localStorage.setItem(STORAGE_KEY_OPEN, String(open));
+		localStorage.removeItem(LEGACY_STORAGE_KEY_COLLAPSED);
+		return open;
+	}
+
+	// First visit — sensible default per viewport.
+	return window.matchMedia(`(min-width: ${MOBILE_BREAKPOINT_PX + 1}px)`)
+		.matches;
+}
+
+/**
+ * Initial sidebar width. Always returns a valid width (>= MIN). Legacy
+ * stored value of "0" (possible from earlier buggy snap-close code paths)
+ * is treated as "missing" and falls back to default.
+ */
+function readInitialSidebarWidth(): number {
+	const stored = localStorage.getItem(STORAGE_KEY_WIDTH);
+	const parsed = stored != null ? Number(stored) : Number.NaN;
+	if (Number.isFinite(parsed) && parsed >= SIDEBAR_MIN_OPEN_WIDTH) {
+		return Math.min(parsed, SIDEBAR_MAX_WIDTH);
+	}
+	return SIDEBAR_DEFAULT_WIDTH;
+}
+
 // ── Hash routing helpers ───────────────────────────────────────────────────
 
 function parseHash(): { projectId?: string; taskId?: string } {
@@ -107,14 +164,10 @@ function ProjectContent({ projectId }: { projectId: string }) {
 	);
 	const [lastOutputTokens, setLastOutputTokens] = useState<number | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
-	const [sidebarOpen, setSidebarOpen] = useState(false);
-	const [sidebarCollapsed, setSidebarCollapsed] = useState(
-		() => localStorage.getItem("mxd-sidebar-collapsed") === "true",
-	);
-	const [sidebarWidth, setSidebarWidth] = useState(() => {
-		const stored = localStorage.getItem("mxd-sidebar-width");
-		return stored ? Number(stored) : 288;
-	});
+	// Unified visibility state — same flag controls desktop collapse AND
+	// mobile drawer. Width is an orthogonal attribute, always >= MIN.
+	const [sidebarOpen, setSidebarOpen] = useState(readInitialSidebarOpen);
+	const [sidebarWidth, setSidebarWidth] = useState(readInitialSidebarWidth);
 	const [isSidebarDragging, setIsSidebarDragging] = useState(false);
 	const [openTabs, setOpenTabs] = useState<string[]>(() => {
 		let tabs: string[] = [];
@@ -324,52 +377,54 @@ function ProjectContent({ projectId }: { projectId: string }) {
 
 	useEffect(() => {
 		if (!isSidebarDragging) return;
-		const SNAP_CLOSE_THRESHOLD = 100;
-		const MIN_OPEN_WIDTH = 180;
-		const MAX_WIDTH = 600;
 		let hasDragged = false;
+
+		/**
+		 * During drag: mirror the "what the user is aiming at" state, but NEVER
+		 * set width to 0. Below threshold = mark closed (CSS hides via class);
+		 * width stays at the last valid value so re-opening is instant and
+		 * visible. This eliminates the "0-width as hidden" double-state.
+		 */
 		const handleMouseMove = (e: MouseEvent) => {
 			hasDragged = true;
-			if (e.clientX < SNAP_CLOSE_THRESHOLD) {
-				// Snap closed — show at 0 width during drag
-				setSidebarWidth(0);
-				setSidebarCollapsed(true);
+			if (e.clientX < SIDEBAR_SNAP_CLOSE_THRESHOLD) {
+				setSidebarOpen(false);
+				// Width untouched — keep last valid value.
 			} else {
-				setSidebarCollapsed(false);
+				setSidebarOpen(true);
 				setSidebarWidth(
-					Math.min(MAX_WIDTH, Math.max(MIN_OPEN_WIDTH, e.clientX)),
+					Math.min(
+						SIDEBAR_MAX_WIDTH,
+						Math.max(SIDEBAR_MIN_OPEN_WIDTH, e.clientX),
+					),
 				);
 			}
 		};
 		const handleMouseUp = (e: MouseEvent) => {
 			setIsSidebarDragging(false);
-			// If user just clicked (no drag), toggle collapsed
 			if (!hasDragged) {
-				setSidebarCollapsed((prev) => {
+				// Pure click on the handle — same semantic as the toggle button.
+				setSidebarOpen((prev) => {
 					const next = !prev;
-					localStorage.setItem("mxd-sidebar-collapsed", String(next));
-					if (!next) {
-						// Restore previous width when expanding via click
-						const stored = localStorage.getItem("mxd-sidebar-width");
-						if (stored) setSidebarWidth(Number(stored));
-					}
+					localStorage.setItem(STORAGE_KEY_OPEN, String(next));
 					return next;
 				});
 				return;
 			}
-			if (e.clientX < SNAP_CLOSE_THRESHOLD) {
-				// Snap to collapsed
-				setSidebarCollapsed(true);
-				localStorage.setItem("mxd-sidebar-collapsed", "true");
+			if (e.clientX < SIDEBAR_SNAP_CLOSE_THRESHOLD) {
+				setSidebarOpen(false);
+				localStorage.setItem(STORAGE_KEY_OPEN, "false");
+				// Width unchanged — the user's last valid width is preserved in
+				// both state and localStorage.
 			} else {
 				const finalWidth = Math.min(
-					MAX_WIDTH,
-					Math.max(MIN_OPEN_WIDTH, e.clientX),
+					SIDEBAR_MAX_WIDTH,
+					Math.max(SIDEBAR_MIN_OPEN_WIDTH, e.clientX),
 				);
 				setSidebarWidth(finalWidth);
-				setSidebarCollapsed(false);
-				localStorage.setItem("mxd-sidebar-collapsed", "false");
-				localStorage.setItem("mxd-sidebar-width", String(finalWidth));
+				setSidebarOpen(true);
+				localStorage.setItem(STORAGE_KEY_OPEN, "true");
+				localStorage.setItem(STORAGE_KEY_WIDTH, String(finalWidth));
 			}
 		};
 		document.addEventListener("mousemove", handleMouseMove);
@@ -380,10 +435,19 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		};
 	}, [isSidebarDragging]);
 
-	const handleToggleSidebarCollapse = useCallback(() => {
-		setSidebarCollapsed((prev) => {
+	/**
+	 * Unified sidebar-visibility toggle. Used by:
+	 * - Floating toggle button on the content area (always visible)
+	 * - Cmd/Ctrl+B keyboard shortcut
+	 *
+	 * A pure flip of `sidebarOpen`. No viewport check, no width manipulation:
+	 * width is always valid (>= MIN, invariant maintained by the drag handler
+	 * never setting it to 0), so opening is guaranteed to be visible.
+	 */
+	const handleToggleSidebar = useCallback(() => {
+		setSidebarOpen((prev) => {
 			const next = !prev;
-			localStorage.setItem("mxd-sidebar-collapsed", String(next));
+			localStorage.setItem(STORAGE_KEY_OPEN, String(next));
 			return next;
 		});
 	}, []);
@@ -412,12 +476,12 @@ function ProjectContent({ projectId }: { projectId: string }) {
 			// Ctrl+B / Cmd+B toggles sidebar (VSCode convention)
 			if (e.key === "b" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
 				e.preventDefault();
-				handleToggleSidebarCollapse();
+				handleToggleSidebar();
 			}
 		};
 		document.addEventListener("keydown", handleKeyDown);
 		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [rootNodeId, fullscreen, handleToggleSidebarCollapse]);
+	}, [rootNodeId, fullscreen, handleToggleSidebar]);
 
 	// ── SSE handler ──────────────────────────────────────────────────────────
 
@@ -1021,7 +1085,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 	return (
 		<>
 			<main
-				className={`mxd-main${fullscreen ? " mxd-fullscreen" : ""}${isSidebarDragging ? " mxd-sidebar-resizing" : ""}${sidebarCollapsed && !fullscreen ? " mxd-has-collapsed-sidebar" : ""}`}
+				className={`mxd-main${fullscreen ? " mxd-fullscreen" : ""}${isSidebarDragging ? " mxd-sidebar-resizing" : ""}`}
 			>
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop is a visual overlay, not a focusable control */}
 				{/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop is dismissed by Escape key or clicking outside */}
@@ -1030,9 +1094,9 @@ function ProjectContent({ projectId }: { projectId: string }) {
 					onClick={() => setSidebarOpen(false)}
 				/>
 				<aside
-					className={`mxd-sidebar${sidebarOpen ? " mxd-sidebar-open" : ""}${sidebarCollapsed ? " mxd-sidebar-collapsed" : ""}`}
+					className={`mxd-sidebar${sidebarOpen ? " mxd-sidebar-open" : " mxd-sidebar-collapsed"}`}
 					style={
-						!sidebarCollapsed
+						sidebarOpen
 							? ({ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties)
 							: undefined
 					}
@@ -1078,18 +1142,18 @@ function ProjectContent({ projectId }: { projectId: string }) {
 
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */}
 				<div
-					className={`mxd-sidebar-resize-handle${sidebarCollapsed ? " mxd-sidebar-resize-handle-collapsed" : ""}`}
+					className={`mxd-sidebar-resize-handle${!sidebarOpen ? " mxd-sidebar-resize-handle-collapsed" : ""}`}
 					onMouseDown={handleSidebarResizeStart}
 				/>
 
 				<section className="mxd-content">
-					{sidebarCollapsed && !fullscreen && (
+					{!fullscreen && (
 						<button
 							type="button"
 							className="mxd-sidebar-expand-btn"
-							onClick={handleToggleSidebarCollapse}
-							title={t("sidebar.expand")}
-							aria-label={t("sidebar.expand")}
+							onClick={handleToggleSidebar}
+							title={t("sidebar.toggle")}
+							aria-label={t("sidebar.toggle")}
 						>
 							<IconSidebarLeft size={14} />
 						</button>
