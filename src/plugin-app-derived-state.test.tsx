@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type React from "react";
 import { createActionHandlers } from "../.mxd/plugin/web/handlers.ts";
 import type { TaskNode } from "../.mxd/plugin/web/hooks.ts";
 

@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { getImageDimensions } from "../image-dimensions.ts";
 import * as R from "../resource-registry.ts";
-import { type AnyToolDef, defineTool, type ToolDef } from "../tool-def.ts";
+import { defineTool } from "../tool-def.ts";
 import { executeBackgroundTool } from "./background.ts";
 import { executeBashWithTimeout } from "./bash.ts";
 import { jsSearch } from "./search.ts";

@@ -9,7 +9,6 @@ import {
 	getLogTaskId,
 	type IncomingEvent,
 	type LogEntry,
-	type TaskNode,
 } from "../.mxd/plugin/web/hooks.ts";
 
 /** Minimal deps that satisfy the EventHandlerDeps interface */

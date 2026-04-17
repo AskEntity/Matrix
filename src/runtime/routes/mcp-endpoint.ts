@@ -26,7 +26,6 @@ import { createHumanAuth } from "../../tool-auth.ts";
 import {
 	type AnyToolDef,
 	buildExternalShape,
-	type ToolDef,
 	type ToolHandlerResult,
 } from "../../tool-def.ts";
 import type { RuntimeContext } from "../context.ts";

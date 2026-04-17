@@ -1041,7 +1041,7 @@ function GlobalTab({
 		}, 1500);
 
 		return () => clearTimeout(startDelay);
-	}, []);
+	}, [authFetch]);
 
 	const tab: ActiveTab = "global";
 	const authGroupNames = Object.keys(
@@ -1318,7 +1318,6 @@ export const SettingsPanel = memo(function SettingsPanel({
 	onDeleteProject?: () => void;
 	onClearAllSessions?: () => void;
 }) {
-	const authFetch = useAuthFetch();
 	const { t } = useLocale();
 	const [activeTab, setActiveTab] = useState<ActiveTab>("global");
 

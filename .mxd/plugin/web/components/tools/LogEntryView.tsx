@@ -144,7 +144,7 @@ export const LogEntryView = memo(function LogEntryView({
 		} finally {
 			setMovingToBg(false);
 		}
-	}, [projectId, rootNodeId, entry]);
+	}, [projectId, rootNodeId, entry, authFetch]);
 
 	if (entry.type === "compact_marker") {
 		const displayText = `Context compacted (saved ~${entry.savedTokens} tokens)`;

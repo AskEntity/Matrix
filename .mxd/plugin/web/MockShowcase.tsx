@@ -85,7 +85,7 @@ function MockShowcaseInner() {
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
-	const [pendingMessages, setPendingMessages] = useState<
+	const [, setPendingMessages] = useState<
 		{
 			id: string;
 			taskId: string | null;
@@ -94,7 +94,7 @@ function MockShowcaseInner() {
 			images?: Array<{ base64: string; mediaType: string }>;
 		}[]
 	>([]);
-	const [pendingClarifications, setPendingClarifications] = useState<
+	const [, setPendingClarifications] = useState<
 		{
 			id: string;
 			taskId: string;
@@ -104,7 +104,6 @@ function MockShowcaseInner() {
 			timestamp: number;
 		}[]
 	>([]);
-	const [clarifyAnswers] = useState<Record<string, string>>({});
 	const [backgroundProcesses, setBackgroundProcesses] = useState<
 		Map<
 			string,
@@ -232,7 +231,7 @@ function MockShowcaseInner() {
 		return () => {
 			cancelled = true;
 		};
-	}, [processEventBatch]);
+	}, [processEventBatch, authFetch]);
 
 	// ── Sidebar resize ──
 	const handleSidebarResizeStart = useCallback((e: React.MouseEvent) => {
@@ -262,11 +261,6 @@ function MockShowcaseInner() {
 
 	// ── Callbacks ──
 	const noop = useCallback(() => {}, []);
-	const handleClarifyAnswerChange = useCallback(
-		(_id: string, _v: string) => {},
-		[],
-	);
-	const handleToggleSidebar = useCallback(() => setSidebarOpen((s) => !s), []);
 
 	const openTabsRef = useRef(openTabs);
 	openTabsRef.current = openTabs;
@@ -372,15 +366,6 @@ function MockShowcaseInner() {
 			</div>
 		);
 	}
-
-	const mockProjects = [
-		{
-			id: "mock",
-			name: "Mock Showcase",
-			path: "/mock",
-			pathExists: true as const,
-		},
-	];
 
 	return (
 		<>

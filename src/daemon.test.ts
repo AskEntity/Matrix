@@ -185,8 +185,8 @@ describe("daemon with matrix plugin", () => {
 
 	test("discovers plugin from registered project", async () => {
 		expect(daemon.plugins.length).toBe(1);
-		expect(daemon.plugins[0]!.name).toBe("test-matrix");
-		expect(daemon.plugins[0]!.scope).toBe("global");
+		expect(daemon.plugins[0]?.name).toBe("test-matrix");
+		expect(daemon.plugins[0]?.scope).toBe("global");
 	});
 
 	test("/plugins returns discovered plugin", async () => {

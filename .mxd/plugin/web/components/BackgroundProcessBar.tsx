@@ -68,7 +68,7 @@ export const BackgroundProcessBar = memo(function BackgroundProcessBar({
 				});
 			}
 		},
-		[projectId, rootNodeId],
+		[projectId, rootNodeId, authFetch],
 	);
 
 	if (visible.length === 0) return null;

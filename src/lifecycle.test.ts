@@ -1608,7 +1608,7 @@ describe("lifecycle: edge cases and error handling", () => {
 	});
 
 	test("message to nonexistent project returns 404", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
@@ -2712,7 +2712,7 @@ describe("lifecycle edge cases — session continuity", () => {
 
 	test("send message to non-existent project returns 404", async () => {
 		const { provider } = createCapturingProvider();
-		const { app, pm, markReady } = createApp({
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
 		});

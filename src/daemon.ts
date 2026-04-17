@@ -183,7 +183,6 @@ export async function createDaemon(opts: {
 				const pending = scopeWorker.pending.get(msg.id);
 				if (pending) {
 					scopeWorker.pending.delete(msg.id);
-					const encoder = new TextEncoder();
 					const stream = new ReadableStream({
 						start(controller) {
 							// Store controller for subsequent chunks
@@ -272,7 +271,7 @@ export async function createDaemon(opts: {
 				console.error(`[daemon] Worker "${scopeName}" crashed:`, event.message);
 				scopeWorker.ready = false;
 				// Reject pending HTTP requests + close zombie stream controllers
-				for (const [id, pending] of scopeWorker.pending) {
+				for (const [, pending] of scopeWorker.pending) {
 					const streamCtrl = (
 						pending as unknown as {
 							_streamController?: ReadableStreamDefaultController;
