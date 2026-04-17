@@ -700,98 +700,27 @@ interface ScopeOpts<T extends PluginTypes> {
 
 ### BaseTaskNode / TaskNode Split
 
-Runtime uses `BaseTaskNode` (id, parentId, children, title, session). Matrix extends with `TaskNode` (adds status, description, branch, worktreePath, cwd, color, costUsd, budgetUsd, etc.).
+Runtime uses `BaseTaskNode` (id, parentId, children, title, session). Matrix extends: `TaskNode extends BaseTaskNode` adds status, description, branch, worktreePath, cwd, color, costUsd, budgetUsd. `PluginTypes { node; done }` generic flows through all `ScopeOpts<T>` hooks — type-safe per plugin. `MatrixPluginTypes` binds `node: TaskNode, done: MatrixDoneData`.
 
-```ts
-interface BaseTaskNode { id, parentId, children, title, session, ... }
-interface TaskNode extends BaseTaskNode { status, description, branch, worktreePath, cwd, ... }
-```
+### cwd / AgentRequest
 
-### PluginTypes Generic
-
-```ts
-interface PluginTypes { node: BaseTaskNode; done: BaseDoneData; }
-interface MatrixPluginTypes { node: TaskNode; done: MatrixDoneData; }
-```
-
-ScopeOpts<T> flows the generic through all hooks — type-safe per-plugin.
-
-### cwd Migration
-
-- `node.cwd`: persistent field on TaskNode (survives restart)
-- Bash `cd` updates `node.cwd` directly
-- `session.cwd`, `session.fallbackCwd`, `AgentRequest.cwd`: all deleted
-- Tools read via `getTaskCwd()`: node.cwd → node.worktreePath fallback
-- provider-shared.ts loop-local cwd: deleted
-
-### AgentRequest Simplified
-
-- `buildSystemPrompt: () => SystemPrompt` replaces both `systemPrompt` and `refreshSystemPrompt`
-- Provider loop owns resume/frozen logic internally
-- `cwd` field deleted (lives on node)
-- `projectPath` field deleted (lives on node as worktreePath)
-
-### What Runtime No Longer Knows
-
-After step 0 + step 1, `runAgentForNode` has zero Matrix imports. Runtime doesn't know about:
-- Matrix's tools or system prompt (ScopeOpts.buildTools/buildPrompt)
-- MCP server config (ScopeOpts.connectMcp)
-- Git worktrees (ScopeOpts.beforeChildLaunch)
-- Node lifecycle states (ScopeOpts.shouldResume/onLaunch/onDone)
-- Work context / compaction prompt (ScopeOpts hooks)
-- cwd semantics (plugin's node field)
+- `node.cwd` is source of truth (persistent, survives restart). Bash `cd` updates it directly. Tools read via `getTaskCwd()` (node.cwd → node.worktreePath fallback).
+- `AgentRequest.buildSystemPrompt: () => SystemPrompt` — single entry point; provider loop owns resume-vs-refresh internally.
 
 ### get_logs Availability
 
 Changed from `"both"` to `"external"` — agents don't need to read other tasks' JSONL. get_logs is for external MCP clients (send → yield → get_logs workflow).
 
-### Key Details (formerly "Daemon / Runtime / Plugin Split")
-
-
-```
-daemon.ts (meta-daemon shell):
-  - HTTP server (:7433, port from config)
-  - Auth middleware (shell-level, before worker forwarding)
-  - Plugin discovery (scans projects for .mxd/plugin/index.ts)
-  - Worker management (start/stop scope workers)
-  - SSE relay (worker events → browser)
-  - Global config CRUD
-  - /plugins endpoint (registered plugins)
-
-runtime.ts (worker code, was daemon.ts):
-  - createApp() — full Hono app + RuntimeContext
-  - All agent lifecycle, tools, providers
-  - Routes run inside worker, HTTP forwarded from shell
-  - Production entry point (cli.ts points here until shell is ready)
-
-src/runtime/ (was src/daemon/):
-  - context.ts — RuntimeContext (was DaemonContext)
-  - agent-lifecycle.ts, event-system.ts, helpers.ts
-  - routes/ — Hono route handlers (run in worker)
-  - scope-worker.ts — Worker entry point
-```
-
 ### Worker Communication
 
-- Shell → Worker: HTTP request serialized via postMessage → Worker's Hono app.fetch() → response back
-- Worker → Shell: `ctx.onBroadcast` hook → postMessage sse_event → shell relays to SSE clients
-- Shell handles: auth, global config, SSE connections, plugin discovery
-- Worker handles: everything else (routes, agent loop, tools, events, JSONL)
+- Shell → Worker: HTTP request serialized via postMessage → worker's Hono app.fetch() → response back. `text/event-stream` detected; chunks stream via postMessage.
+- Worker → Shell: `ctx.onBroadcast` hook → postMessage sse_event → shell relays to SSE clients.
+- Shell owns: auth, global config, SSE connections, plugin discovery, web build, `/plugin-assets/<pluginName>/` asset serving.
+- Worker owns: routes, agent loop, tools, events, JSONL, per-project tracker.
 
-### Plugin System
+### Plugin Manifest
 
-`src/plugin.ts` defines `PluginManifest`:
-```ts
-interface PluginManifest {
-  name: string;
-  scope: "global" | "project";
-  web?: string;           // React component path
-  runtime?: string;       // ScopeOpts builder path
-  onProjectInit?: (path, { isNew }) => Promise<void>;
-}
-```
-
-Matrix plugin at `.mxd/plugin/index.ts`: `{ name: "matrix", scope: "global" }`. Not special-cased — discovered through same scanning mechanism as any plugin.
+`PluginManifest` (src/plugin.ts): `{ name, scope: "global" | "project", web?, runtime?, onProjectInit? }`. Matrix plugin at `.mxd/plugin/index.ts` with `{ name: "matrix", scope: "global" }` — not special-cased; discovered through the same scan as any plugin.
 
 ### File Ownership
 
@@ -812,43 +741,23 @@ Matrix plugin at `.mxd/plugin/index.ts`: `{ name: "matrix", scope: "global" }`. 
 - `matrix:story1001` = story1001 in dev mode (matrix worker handles it)
 - `story1001:story1001` = story1001 in product mode (story1001 worker)
 - Inside worker: scope is implicit (worker IS the scope), just `projectId`
-- Cross-scope: worker can't handle → escalates to shell → shell routes to correct worker
+- Cross-scope: worker escalates to shell → shell routes to correct worker
 
-### Shell Web UI
+### ProjectStore
 
-`web/` = daemon shell React app (auth + project/scope selector). Plugin UI loaded as dynamic React component import (not iframe): `React.lazy(() => import(pluginWebPath))`.
+Worker's read-only project registry. `sync(projects)` from daemon; `get`/`list`/`has` read-only. No disk access, no CRUD. `createApp({ projects })` injects at construction. `ProjectManager` (daemon-only) owns disk persistence + CRUD.
 
-### ProjectStore (worker's read-only project registry)
+### Test patterns
 
-`ProjectStore` replaces `ProjectManager` in worker/runtime. Pure in-memory, sync-only:
-- `sync(projects)` — daemon pushes full project list
-- `get(id)` / `list()` / `has(id)` — read-only lookups
-- No disk access, no CRUD methods
-- `createApp({ projects })` — injects project list at construction
-
-`ProjectManager` remains in daemon only — it owns disk persistence + CRUD.
-
-### Test pattern for projects
-
-```ts
-// Runtime tests: inject projects directly (no HTTP)
-const app = createApp({ dataDir, projects: [{ id, name, path }] });
-
-// Daemon tests: full pipeline
-const daemon = await createDaemon({ dataDir });
-await daemon.fetch(new Request("/projects", { method: "POST", body: ... }));
-```
-
-Tests needing git worktrees use `initTestProject(path)` helper (creates git repo + .mxd/ structure).
-
-### Current State (half-state)
-
-Production: daemon.ts is entry point (cli.ts → daemon.ts). Daemon starts worker per global plugin.
+- Runtime tests: `createApp({ dataDir, projects: [...] })` — inject directly, no HTTP.
+- Daemon tests: `createDaemon({ dataDir })` + `daemon.fetch(new Request("/projects", { method: "POST", body: ... }))`.
+- Tests needing git worktrees: `initTestProject(path)` helper.
+- Matrix scope auto-injected via `createMatrixApp` (test-utils).
 
 ### Key Invariants
-- Shell/src → ZERO imports from `.mxd/plugin/` (delete plugin → still compiles)
-- Plugin web → ZERO imports from `../../../src/` (plugin is independent repo)
+- Shell/src → ZERO imports from `.mxd/plugin/` (delete plugin → shell still compiles)
+- Plugin web → ZERO imports from `../../../src/` (plugin is independent)
 - Plugin web imports via `@mxd/auth-context`, `@mxd/types` (importmap shared modules)
-- Runtime throws if `buildScopeOpts` not provided
-- Tests use `createMatrixApp` (auto-injects Matrix scope opts)
+- Runtime throws if `buildScopeOpts` not provided (no silent fallback)
+- Shell web UI (`web/`) is auth + project/scope selector. Plugin UI via `React.lazy(() => import(pluginWebPath))` (not iframe).
 
