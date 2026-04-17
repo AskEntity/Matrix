@@ -873,7 +873,12 @@ function ProjectContent({ projectId }: { projectId: string }) {
 	const handleTaskSelect = useCallback(
 		(id: string | null) => {
 			setSelectedTaskId(id);
-			setSidebarOpen(false);
+			// Auto-dismiss drawer on mobile only: on mobile the sidebar is an
+			// overlay that covers content, so selecting a task needs to dismiss
+			// it. On desktop the sidebar is a persistent sibling — keep it open.
+			if (window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches) {
+				setSidebarOpen(false);
+			}
 			if (!id || id === rootNodeId) return;
 			const prev = openTabsRef.current;
 			const curPreview = previewTabRef.current;
@@ -900,7 +905,10 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		(id: string | null) => {
 			if (!id || id === rootNodeId) return;
 			setSelectedTaskId(id);
-			setSidebarOpen(false);
+			// See handleTaskSelect — dismiss drawer only on mobile.
+			if (window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches) {
+				setSidebarOpen(false);
+			}
 			// Pin: add to tabs if not present, clear preview
 			setPreviewTabId((prev) => (prev === id ? null : prev));
 			setOpenTabs((prev) => {
