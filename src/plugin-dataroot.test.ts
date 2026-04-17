@@ -27,7 +27,7 @@ describe("plugin dataRoot", () => {
 	test("plugin without dataRoot defaults to @/plugin/<name>/", () => {
 		const manifest: PluginManifest = {
 			name: "story1001",
-			scope: "project",
+			scope: "global",
 			// dataRoot omitted — should default
 		};
 

@@ -2,31 +2,41 @@ import type { AgentProvider } from "../agent-provider.ts";
 import type { MatrixConfig } from "../config.ts";
 import type { EventStore } from "../event-store.ts";
 import type { ProjectStore } from "../project-store.ts";
-import type { SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type { Auth } from "../tool-auth.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
 import type { BaseTaskNode } from "../types.ts";
 
 /**
- * Scope options for a project's run loop.
- * T flows through all callbacks — plugin authors get type-safe access to their node data.
- * Runtime stores ScopeOpts (T=DefaultPluginTypes, erased).
+ * Split system prompt — the plugin-agnostic shape used throughout the
+ * runtime. `stable` is cached across agents + days; `variable` carries
+ * per-agent or per-day additions. Plugins provide the prompt text via
+ * ScopeOpts.buildPrompt; the runtime cares only about the shape.
  */
-/**
- * Plugin type bundle — ties together all type extensions.
- * ONE generic parameter on ScopeOpts distributes types everywhere.
- */
+export interface SystemPrompt {
+	stable: string;
+	variable: string;
+}
+
 /** Base done data — runtime only knows the agent finished. Plugins extend with fields. */
 export interface BaseDoneData {
 	[key: string]: unknown;
 }
 
+/**
+ * Plugin type bundle — ties together all type extensions.
+ * ONE generic parameter on ScopeOpts distributes node + done types everywhere.
+ */
 export interface PluginTypes {
 	node: BaseTaskNode;
 	done: BaseDoneData;
 }
 
+/**
+ * Scope options for a project's run loop.
+ * T flows through all callbacks — plugin authors get type-safe access to
+ * their node + done data. Runtime stores ScopeOpts<PluginTypes> (erased).
+ */
 export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 	// ── Agent behavior ──
 	buildTools: (
@@ -72,12 +82,6 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 	) => T["done"];
 }
 
-/** SSE client connection subscribed to a project's event stream. */
-export interface SSEClient {
-	controller: ReadableStreamDefaultController;
-	projectId: string;
-}
-
 /**
  * Generic event subscriber for in-process consumers (task hooks, test
  * utilities, future MCP endpoints, etc.). Registered via subscribeToEvents()
@@ -103,8 +107,16 @@ export interface PendingClarification {
 	timestamp: number;
 }
 
-/** Configuration passed to createApp(). */
-export interface DaemonConfig {
+/**
+ * Runtime worker configuration — passed to createApp().
+ *
+ * This lives inside the worker thread; the daemon (shell) constructs one
+ * and ships it via postMessage or in-process test injection. Historically
+ * named "DaemonConfig" — that was backwards. The daemon owns different
+ * state (auth, projects on disk, SSE fanout); this object configures the
+ * worker runtime.
+ */
+export interface RuntimeConfig {
 	dataDir: string;
 	agentProvider?: AgentProvider;
 	initialConfig?: MatrixConfig;
@@ -113,8 +125,8 @@ export interface DaemonConfig {
 	projects?: Array<{ id: string; name: string; path: string }>;
 	/**
 	 * Plugin-provided scope opts builder. Runtime calls this to get tools,
-	 * prompt, hooks etc. for each project. If not provided, falls back to
-	 * buildMatrixScopeOpts (backward compat during migration).
+	 * prompt, hooks etc. for each project. Required — runtime throws on
+	 * createApp() if missing (no silent fallback; each plugin owns its tools).
 	 */
 	// biome-ignore lint/suspicious/noExplicitAny: ScopeOpts generic varies by plugin
 	buildScopeOpts?: (projectId: string, ctx: RuntimeContext) => ScopeOpts<any>;
@@ -130,7 +142,7 @@ export interface DaemonConfig {
  * Contains all shared mutable state that was previously captured via closure in createApp().
  */
 export interface RuntimeContext {
-	readonly config: DaemonConfig;
+	readonly config: RuntimeConfig;
 	readonly pm: ProjectStore;
 	readonly trackers: Map<string, TaskTracker>;
 	readonly restartingProjects: Set<string>;
@@ -139,7 +151,6 @@ export interface RuntimeContext {
 	 * Prevents duplicate launches when messages arrive before the session is established.
 	 */
 	readonly launchingNodes: Set<string>;
-	readonly sseClients: Set<SSEClient>;
 	/**
 	 * In-process event subscribers keyed by projectId. Fanned out to by
 	 * broadcast() after SSE clients. Use subscribeToEvents() to register

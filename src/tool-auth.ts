@@ -66,7 +66,6 @@ export type PermissionMode =
 	| "project" // auth belongs to this project?
 	| "exact" // auth IS this task?
 	| "subtree" // target in auth's subtree?
-	| "family" // target in auth's subtree or parent chain?
 	| "root" // auth is the root agent (depth 0)?
 	| "human"; // auth is a human (external) caller?
 
@@ -106,19 +105,6 @@ export function checkPermission(
 			if (resource.taskId === taskId) return true;
 			// Descendant
 			return isDescendantOf(tracker, resource.taskId, taskId);
-		}
-
-		case "family": {
-			if (!resource.taskId) return false;
-			// Root can access everything
-			if (taskId === null) return true;
-			// Self
-			if (resource.taskId === taskId) return true;
-			// Descendant
-			if (isDescendantOf(tracker, resource.taskId, taskId)) return true;
-			// Ancestor in parent chain
-			if (isDescendantOf(tracker, taskId, resource.taskId)) return true;
-			return false;
 		}
 
 		case "root":

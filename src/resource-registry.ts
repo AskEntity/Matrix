@@ -53,7 +53,6 @@ interface RuntimeContextLike {
 		clarifyTimeoutMs: number;
 		budgetUsd: number;
 	};
-	readonly sseClients: Set<unknown>;
 	readonly eventSubscribers: Map<string, Set<unknown>>;
 	readonly launchingNodes: Set<string>;
 	readonly agentLoopPromises: Map<string, Promise<void>>;

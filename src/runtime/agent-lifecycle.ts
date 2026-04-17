@@ -699,8 +699,10 @@ export async function ensureChildAgentRunning(
 	});
 }
 
-/** Compute the depth of a task in the tree by walking up the parentId chain. */
-/** Compute depth by counting task ancestors (folders are transparent). */
+/**
+ * Compute depth by counting task ancestors (folders are transparent).
+ * Root task = 0; each task-typed ancestor adds 1.
+ */
 function computeDepth(tracker: TaskTracker, nodeId: string): number {
 	let depth = 0;
 	let current = tracker.getTaskAbove(nodeId);
@@ -714,7 +716,6 @@ function computeDepth(tracker: TaskTracker, nodeId: string): number {
 // findParentQueue moved to agent-tools.ts to avoid circular imports
 // (orchestrator-tools.ts needs it, and agent-lifecycle.ts imports from orchestrator-tools.ts)
 
-/** Run a child agent in the background for a specific task node. */
 /** Options for running an agent node. Extends ScopeOpts with per-launch overrides. */
 export interface RunAgentOpts extends ScopeOpts {
 	/** Model override (from API parameter). */
