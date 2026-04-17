@@ -3550,6 +3550,162 @@ describe("Integration: parent-child lifecycle", () => {
 		const childNode = tracker.getTask(childId);
 		expect(childNode?.status).toBe("failed");
 	}, 45000);
+
+	test("Scenario: child launch failure → parent receives failed task_complete (not stuck in yield)", async () => {
+		// Reproduces ai-playground "Cache behavior testing" incident:
+		// send_message auto-launches a pending target, beforeChildLaunch throws
+		// (missing hook file), and the yielding parent has no way to know the
+		// target never started. Fix: launch failure delivers task_complete(failed)
+		// through the same channel as done("failed"), so the parent wakes up and
+		// can react — same semantic as any other failed subtask.
+		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Simulate a launch-failure: override beforeChildLaunch to throw.
+		// This is exactly the shape of a missing setup_worktree.sh hook failure
+		// in ai-playground — the hook file was absent, hook execution threw.
+		const originalOpts = ctx.app.ctx.scopeOpts.get(ctx.projectId);
+		if (!originalOpts) throw new Error("scopeOpts not registered");
+		ctx.app.ctx.scopeOpts.set(ctx.projectId, {
+			...originalOpts,
+			beforeChildLaunch: async () => {
+				throw new Error("simulated hook failure");
+			},
+		});
+
+		// Parent: create child → send_message (triggers failing auto-launch) →
+		// yield → assert task_complete(failed) arrived → done.
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								parentId: "$rootId",
+								title: "Doomed Child",
+								description: "Will fail to launch",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: "begin work",
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// Yield wake: the whole point of the fix — parent must see
+					// task_complete(failed) with the launch-failure error as summary.
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "resumed.",
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "task_complete",
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: 'status="failed"',
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "Auto-launch failed",
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "simulated hook failure",
+						},
+					],
+					blocks: [
+						{
+							type: "text",
+							text: "Got launch failure via task_complete. Done.",
+						},
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "handled launch failure",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx, 30000);
+		// The mock will only reach its final done() turn if block-1 text
+		// contains task_complete + status="failed" + "Auto-launch failed" +
+		// "simulated hook failure". Mutation test: removing the
+		// createTaskComplete/deliverMessage call in agent-lifecycle.ts makes the
+		// parent yield forever — waitForDone times out and this assertion fails.
+		expect(status).toBe("verify");
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
+		const childId = rootNode?.children?.[0] as string;
+		expect(childId).toBeDefined();
+
+		// Child node marked failed → UI shows red.
+		// Mutation test: removing `tracker.updateStatus(nodeId, "failed")` makes
+		// this assertion fail (status stays "pending").
+		const childNode = tracker.getTask(childId);
+		expect(childNode?.status).toBe("failed");
+
+		// Child's activity log preserves the error event (current UI behavior).
+		// Mutation test: removing the emitEvent(type: "error") call makes this
+		// assertion fail.
+		const childEvents = await readSessionEvents(ctx, childId);
+		const errorEvents = childEvents.filter((e) => e.type === "error") as Array<{
+			type: "error";
+			message: string;
+		}>;
+		expect(errorEvents.length).toBe(1);
+		expect(errorEvents[0]?.message).toContain("Auto-launch failed");
+		expect(errorEvents[0]?.message).toContain("simulated hook failure");
+	}, 45000);
 });
 
 // ── Lifecycle: exitReason + interrupt + yield bypass tests ──

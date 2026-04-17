@@ -159,6 +159,19 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 - **Status**: `done("passed")` → verify → close_task → closed. `done("failed")` → failed.
 - **Phase 2 ordering**: session=null is irreversibility boundary. Phase 2 runs AFTER session cleanup.
 
+## Auto-Launch Failure = task_complete(failed)
+
+`deliverMessage` auto-launches a pending child via `ensureChildAgentRunning`. When `beforeChildLaunch` throws (e.g., missing hook file, worktree creation fails), the sender's yield would have hung forever — target never ran, so no done() ever fires, so no task_complete ever delivered.
+
+Launch failure IS task completion: failed before starting. The catch in `deliverMessage` (agent-lifecycle.ts ~580) handles this by reusing the existing task_complete channel — same semantic as `done("failed")`:
+1. emit error event on target (activity log)
+2. `tracker.updateStatus(nodeId, "failed")` + save + broadcast (UI red)
+3. `deliverMessage(taskAbove, createTaskComplete(nodeId, title, false, errorMsg))`
+
+Sender's yield wakes with `<task_complete status="failed" summary="Auto-launch failed: ...">` — handled by existing yield-resume flow, no new code paths. **Root launch failure is not handled** — root has no `taskAbove`; separate concern.
+
+Design rule: any code path that could silently hang a yielding parent MUST notify via task_complete. The channel is reusable because "failed before starting" and "failed during work" look identical from the sender's perspective.
+
 ## JSONL Repair
 
 `buildSessionRepair()` in events.ts handles all repair:
