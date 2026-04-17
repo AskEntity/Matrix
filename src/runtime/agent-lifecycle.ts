@@ -381,7 +381,25 @@ export async function runChildCore(
 /**
  * Stop a running agent and clean up all associated state.
  * Single path for all stop operations (explicit stop, restart, project delete).
+ *
+ * Durability contract (symmetric with stopTask): awaits every stopped loop's
+ * promise up to STOP_AGENT_LOOP_TIMEOUT_MS before returning, so callers
+ * (`pm.delete` → rm -rf, shutdown flush, agent_end emission) observe a fully
+ * settled runtime. Without this await, `POST /projects/:id/stop` returns while
+ * finally blocks are still emitting agent_end / Phase 2 / MCP disconnect, and
+ * downstream cleanup races with in-flight JSONL writes.
+ *
+ * The timeout is a safety valve for the "stuck tool" case — a foreground bash
+ * whose subprocess ignores abort, or an MCP call that never returns. Real
+ * providers abort within ms; slow tools get a bounded grace period. We do NOT
+ * resolve foreground executions here: that cleanly moves bash-to-background
+ * and emits a non-error tool_result, which breaks the orphan-repair contract
+ * that restart tests rely on. When the process exits after shutdown(), Bun.spawn
+ * subprocesses die with the parent — orphan repair synthesizes the
+ * interrupted-bash tool_result on next startup.
  */
+const STOP_AGENT_LOOP_TIMEOUT_MS = 1_000;
+
 export async function stopAgent(
 	ctx: RuntimeContext,
 	projectId: string,
@@ -398,6 +416,16 @@ export async function stopAgent(
 	// Capture traceId BEFORE clearing sessions
 	const rootTraceId = rootNode.session.loopTraceId;
 
+	// Collect loop promises BEFORE clearing sessions — finally blocks resolve
+	// these once session is cleared and the provider stream exits.
+	const loopPromises: Promise<void>[] = [];
+	for (const node of tracker.allNodes()) {
+		if (isTask(node) && node.session) {
+			const promise = ctx.agentLoopPromises.get(node.id);
+			if (promise) loopPromises.push(promise);
+		}
+	}
+
 	// Stop ALL agents (root + children) via session on tracker nodes.
 	for (const node of tracker.allNodes()) {
 		if (isTask(node) && node.session) {
@@ -406,6 +434,19 @@ export async function stopAgent(
 			cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
 			node.session = undefined;
 		}
+	}
+
+	// Await loop settlement with a bounded timeout. Real providers respect abort
+	// and exit within ms; a stuck tool (or a test mock that doesn't honor abort)
+	// still gets bounded grace — we prefer eventually-consistent JSONL over
+	// indefinite shutdown blocking.
+	if (loopPromises.length > 0) {
+		await Promise.race([
+			Promise.allSettled(loopPromises),
+			new Promise<void>((resolve) =>
+				setTimeout(resolve, STOP_AGENT_LOOP_TIMEOUT_MS),
+			),
+		]);
 	}
 
 	await tracker.save();
