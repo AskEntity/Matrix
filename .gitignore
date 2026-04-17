@@ -36,6 +36,10 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Matrix worktrees (created during task execution)
 .worktrees
 
+# Vendor shim directory — temp scratch for Bun.build vendor step.
+# Normally cleaned up in `finally`; this guards against SIGKILL leaks.
+_vendor_shims
+
 # Test project artifacts (from E2E runs)
 test-project-*
 
