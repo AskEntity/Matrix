@@ -3,7 +3,7 @@
  * Same interface as createApp() tests expect, but runs through daemon → worker pipeline.
  * Use this to verify that daemon+plugin behavior matches direct runtime behavior.
  */
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "../config.ts";
@@ -16,7 +16,9 @@ export interface DaemonTestApp {
 	/** Fetch through the daemon pipeline */
 	fetch: (request: Request) => Promise<Response>;
 	/** Create a project through the daemon (calls onProjectInit hooks) */
-	createProject: (path: string) => Promise<{ id: string; name: string; path: string }>;
+	createProject: (
+		path: string,
+	) => Promise<{ id: string; name: string; path: string }>;
 	/** Clean up */
 	cleanup: () => Promise<void>;
 }

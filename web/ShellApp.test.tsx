@@ -5,11 +5,12 @@
  * Part 1 (HTTP): build pipeline outputs correct (importmap, compiled JS, routes).
  * Part 2 (Render): Plugin component renders real Matrix UI (task tree, Orchestrator).
  */
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
+
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "../src/config.ts";
 import { createDaemon, type DaemonInstance } from "../src/daemon.ts";
 
@@ -23,8 +24,17 @@ describe("daemon web build pipeline", () => {
 		tempDir = await mkdtemp(join(tmpdir(), "ui-http-"));
 		const dataDir = join(tempDir, ".mxd");
 		await mkdir(join(dataDir, "projects"), { recursive: true });
-		await writeFile(join(dataDir, "projects.json"),
-			JSON.stringify([{ id: "m1", name: "matrix", path: resolve("."), createdAt: "2026-01-01" }]));
+		await writeFile(
+			join(dataDir, "projects.json"),
+			JSON.stringify([
+				{
+					id: "m1",
+					name: "matrix",
+					path: resolve("."),
+					createdAt: "2026-01-01",
+				},
+			]),
+		);
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 		daemon = await createDaemon({ dataDir });
 	}, 15000);
@@ -43,14 +53,22 @@ describe("daemon web build pipeline", () => {
 	});
 
 	test("plugins returns compiled JS path", async () => {
-		const plugins = await (await daemon.fetch(new Request("http://localhost/plugins"))).json();
+		const plugins = await (
+			await daemon.fetch(new Request("http://localhost/plugins"))
+		).json();
 		const matrix = plugins.find((p: { name: string }) => p.name === "matrix");
 		expect(matrix.webComponentPath).toMatch(/^\/app\/.*\.js$/);
 	});
 
 	test("vendor + app assets servable", async () => {
-		expect((await daemon.fetch(new Request("http://localhost/vendor/react.js"))).status).toBe(200);
-		expect((await daemon.fetch(new Request("http://localhost/app/web/main.js"))).status).toBe(200);
+		expect(
+			(await daemon.fetch(new Request("http://localhost/vendor/react.js")))
+				.status,
+		).toBe(200);
+		expect(
+			(await daemon.fetch(new Request("http://localhost/app/web/main.js")))
+				.status,
+		).toBe(200);
 	});
 });
 
@@ -68,31 +86,51 @@ describe("plugin component renders Matrix UI", () => {
 		tempDir = await mkdtemp(join(tmpdir(), "ui-render-"));
 		const dataDir = join(tempDir, ".mxd");
 		await mkdir(join(dataDir, "projects"), { recursive: true });
-		await writeFile(join(dataDir, "projects.json"),
-			JSON.stringify([{ id: "m1", name: "matrix", path: resolve("."), createdAt: "2026-01-01" }]));
+		await writeFile(
+			join(dataDir, "projects.json"),
+			JSON.stringify([
+				{
+					id: "m1",
+					name: "matrix",
+					path: resolve("."),
+					createdAt: "2026-01-01",
+				},
+			]),
+		);
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 		daemon = await createDaemon({ dataDir });
 
 		// Mock EventSource (happy-dom doesn't have it, plugin's SSE hook needs it)
 		if (!globalThis.EventSource) {
-			(globalThis as unknown as Record<string, unknown>).EventSource = class MockEventSource {
-				onmessage: ((e: unknown) => void) | null = null;
-				onerror: ((e: unknown) => void) | null = null;
-				onopen: (() => void) | null = null;
-				close() {}
-				addEventListener() {}
-				removeEventListener() {}
-			};
+			(globalThis as unknown as Record<string, unknown>).EventSource =
+				class MockEventSource {
+					onmessage: ((e: unknown) => void) | null = null;
+					onerror: ((e: unknown) => void) | null = null;
+					onopen: (() => void) | null = null;
+					close() {}
+					addEventListener() {}
+					removeEventListener() {}
+				};
 		}
 
 		// Patch fetch — route through daemon.fetch
 		savedFetch = globalThis.fetch;
-		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-			let url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+		globalThis.fetch = (async (
+			input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
+			let url =
+				typeof input === "string"
+					? input
+					: input instanceof URL
+						? input.toString()
+						: input.url;
 			if (url.startsWith("/")) url = `http://localhost${url}`;
 			if (url.includes("/auth/status"))
-				return new Response(JSON.stringify({ enabled: false, authenticated: true }),
-					{ headers: { "content-type": "application/json" } });
+				return new Response(
+					JSON.stringify({ enabled: false, authenticated: true }),
+					{ headers: { "content-type": "application/json" } },
+				);
 			const res = await daemon.fetch(new Request(url, init));
 			const body = await res.text();
 			return new Response(body, { status: res.status, headers: res.headers });
@@ -109,7 +147,9 @@ describe("plugin component renders Matrix UI", () => {
 	test("Plugin renders Orchestrator + task tree (not just loading)", async () => {
 		const { createRoot } = await import("react-dom/client");
 		const { createElement } = await import("react");
-		const { AuthFetchProvider, GetTokenProvider } = await import("./auth-context.ts");
+		const { AuthFetchProvider, GetTokenProvider } = await import(
+			"./auth-context.ts"
+		);
 		const { authFetch, getToken } = await import("./auth.ts");
 		const { Plugin } = await import("../.mxd/plugin/web/Plugin.tsx");
 
@@ -120,11 +160,15 @@ describe("plugin component renders Matrix UI", () => {
 
 		await new Promise<void>((resolve) => {
 			root.render(
-				createElement(AuthFetchProvider, { value: authFetch },
-					createElement(GetTokenProvider, { value: getToken },
-						createElement(Plugin, { projectId: "m1" })
-					)
-				)
+				createElement(
+					AuthFetchProvider,
+					{ value: authFetch },
+					createElement(
+						GetTokenProvider,
+						{ value: getToken },
+						createElement(Plugin, { projectId: "m1" }),
+					),
+				),
 			);
 			setTimeout(resolve, 100);
 		});

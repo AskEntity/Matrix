@@ -12,13 +12,13 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "./ulid.ts";
-import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import type { Event } from "./events.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { ulid } from "./ulid.ts";
 
 // ── Test infrastructure (same as integration.test.ts) ──
 
@@ -51,15 +51,26 @@ async function setupTestContext(): Promise<TestContext> {
 	const provider = createMockedProviderWithMock(mockAPI);
 
 	const projectId = ulid();
-	const appResult = createApp({ dataDir, agentProvider: provider, projects: [{ id: projectId, name: basename(projectDir), path: projectDir }] });
+	const appResult = createApp({
+		dataDir,
+		agentProvider: provider,
+		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
+	});
 
 	// Activate setup hook if exists
 	const { renameSync } = await import("node:fs");
-	const hookExample = join(projectDir, ".mxd", "hooks", "setup_worktree.sh.example");
+	const hookExample = join(
+		projectDir,
+		".mxd",
+		"hooks",
+		"setup_worktree.sh.example",
+	);
 	const hookActive = join(projectDir, ".mxd", "hooks", "setup_worktree.sh");
 	if (existsSync(hookExample)) renameSync(hookExample, hookActive);
 	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
-	Bun.spawnSync(["git", "commit", "-m", "activate setup hook"], { cwd: projectDir });
+	Bun.spawnSync(["git", "commit", "-m", "activate setup hook"], {
+		cwd: projectDir,
+	});
 
 	appResult.markReady();
 
@@ -96,7 +107,10 @@ async function startAgent(ctx: TestContext, prompt: string): Promise<Response> {
 	);
 }
 
-async function waitForDone(ctx: TestContext, timeoutMs = 15000): Promise<string> {
+async function waitForDone(
+	ctx: TestContext,
+	timeoutMs = 15000,
+): Promise<string> {
 	const tracker = await ctx.app.getTracker(ctx.projectId);
 	const rootNodeId = tracker.rootNodeId;
 	const start = Date.now();
@@ -110,7 +124,10 @@ async function waitForDone(ctx: TestContext, timeoutMs = 15000): Promise<string>
 	throw new Error(`Agent did not call done() within ${timeoutMs}ms`);
 }
 
-async function readSessionEvents(ctx: TestContext, sessionId: string): Promise<Event[]> {
+async function readSessionEvents(
+	ctx: TestContext,
+	sessionId: string,
+): Promise<Event[]> {
 	const store = ctx.app.ctx.eventStores.get(ctx.projectId);
 	if (store) await store.flushSession(sessionId);
 	if (!store?.has(sessionId)) return [];
@@ -212,12 +229,17 @@ describe("Plugin hooks: cwd persistence", () => {
 		const { readFileSync } = await import("node:fs");
 		const treePath = join(ctx.dataDir, "projects", ctx.projectId, "tree.json");
 		const treeData = JSON.parse(readFileSync(treePath, "utf-8"));
-		const rootInTree = treeData.nodes?.find?.(
-			(n: Record<string, unknown>) => n.id === rootNodeId,
-		) ?? Object.values(treeData.nodes ?? {}).find(
-			(n: unknown) => (n as unknown as Record<string, unknown>).id === rootNodeId,
+		const rootInTree =
+			treeData.nodes?.find?.(
+				(n: Record<string, unknown>) => n.id === rootNodeId,
+			) ??
+			Object.values(treeData.nodes ?? {}).find(
+				(n: unknown) =>
+					(n as unknown as Record<string, unknown>).id === rootNodeId,
+			);
+		expect((rootInTree as unknown as Record<string, unknown>)?.cwd).toBe(
+			"/tmp",
 		);
-		expect((rootInTree as unknown as Record<string, unknown>)?.cwd).toBe("/tmp");
 	}, 15000);
 });
 

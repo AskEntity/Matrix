@@ -1,7 +1,7 @@
 /**
  * Shared test utilities for building mock contexts.
  */
-import type { RuntimeContext } from "./runtime/context.ts";
+
 import type { MessageQueue } from "./message-queue.ts";
 import type { ProjectStore } from "./project-store.ts";
 import {
@@ -9,6 +9,7 @@ import {
 	registerSideEffects,
 	resetResourceRegistry,
 } from "./resource-registry.ts";
+import type { RuntimeContext } from "./runtime/context.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import { type Auth, createAgentAuth } from "./tool-auth.ts";
 import type { Project, TaskNode, TaskSession } from "./types.ts";

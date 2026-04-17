@@ -6,7 +6,10 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { createDaemonTestApp, type DaemonTestApp } from "./test-utils/daemon-harness.ts";
+import {
+	createDaemonTestApp,
+	type DaemonTestApp,
+} from "./test-utils/daemon-harness.ts";
 
 describe("daemon integration: health + version + stats", () => {
 	let app: DaemonTestApp;
@@ -43,9 +46,7 @@ describe("daemon integration: health + version + stats", () => {
 	});
 
 	test("GET /unknown returns 404", async () => {
-		const res = await app.fetch(
-			new Request("http://localhost/nonexistent"),
-		);
+		const res = await app.fetch(new Request("http://localhost/nonexistent"));
 		expect(res.status).toBe(404);
 	});
 });
@@ -126,9 +127,7 @@ describe("daemon integration: config", () => {
 	});
 
 	test("GET /config/global returns config (daemon-owned)", async () => {
-		const res = await app.fetch(
-			new Request("http://localhost/config/global"),
-		);
+		const res = await app.fetch(new Request("http://localhost/config/global"));
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.budgetUsd).toBe(-1);
@@ -148,9 +147,7 @@ describe("daemon integration: config", () => {
 	});
 
 	test("/plugins returns discovered plugins", async () => {
-		const res = await app.fetch(
-			new Request("http://localhost/plugins"),
-		);
+		const res = await app.fetch(new Request("http://localhost/plugins"));
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(Array.isArray(body)).toBe(true);
@@ -175,63 +172,81 @@ describe("daemon integration: project config", () => {
 	});
 
 	test("GET /projects/:id/config returns empty for new project", async () => {
-		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}/config`));
+		const res = await app.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`),
+		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body).toEqual({});
 	});
 
 	test("PATCH /projects/:id/config sets and returns config", async () => {
-		await app.fetch(new Request(`http://localhost/projects/${projectId}/config`, {
-			method: "PATCH",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ model: "claude-opus-4-5" }),
-		}));
-		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}/config`));
+		await app.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ model: "claude-opus-4-5" }),
+			}),
+		);
+		const res = await app.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`),
+		);
 		expect(res.status).toBe(200);
-		const body = await res.json() as { model?: string };
+		const body = (await res.json()) as { model?: string };
 		expect(body.model).toBe("claude-opus-4-5");
 	});
 
 	test("PATCH preserves unrelated fields", async () => {
-		await app.fetch(new Request(`http://localhost/projects/${projectId}/config`, {
-			method: "PATCH",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ model: "a", budgetUsd: 2 }),
-		}));
-		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}/config`, {
-			method: "PATCH",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ model: "b" }),
-		}));
-		const body = await res.json() as { model?: string; budgetUsd?: number };
+		await app.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ model: "a", budgetUsd: 2 }),
+			}),
+		);
+		const res = await app.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ model: "b" }),
+			}),
+		);
+		const body = (await res.json()) as { model?: string; budgetUsd?: number };
 		expect(body.model).toBe("b");
 		expect(body.budgetUsd).toBe(2);
 	});
 
 	test("PATCH null removes field", async () => {
-		await app.fetch(new Request(`http://localhost/projects/${projectId}/config`, {
-			method: "PATCH",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ model: "x" }),
-		}));
-		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}/config`, {
-			method: "PATCH",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ model: null }),
-		}));
-		const body = await res.json() as { model?: string };
+		await app.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ model: "x" }),
+			}),
+		);
+		const res = await app.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ model: null }),
+			}),
+		);
+		const body = (await res.json()) as { model?: string };
 		expect(body.model).toBeUndefined();
 	});
 
 	test("GET /projects/:id/config/repo returns empty when no repo config", async () => {
-		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}/config/repo`));
+		const res = await app.fetch(
+			new Request(`http://localhost/projects/${projectId}/config/repo`),
+		);
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({});
 	});
 
 	test("returns 404 for unknown project", async () => {
-		const res = await app.fetch(new Request("http://localhost/projects/nonexistent/config"));
+		const res = await app.fetch(
+			new Request("http://localhost/projects/nonexistent/config"),
+		);
 		expect(res.status).toBe(404);
 	});
 });
@@ -304,20 +319,26 @@ describe("daemon integration: project CRUD coverage", () => {
 		projectPath = join(app.tempDir, "crud-project");
 		const { mkdir } = await import("node:fs/promises");
 		await mkdir(projectPath, { recursive: true });
-		
-		const res = await app.fetch(new Request("http://localhost/projects", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ path: projectPath }),
-		}));
+
+		const res = await app.fetch(
+			new Request("http://localhost/projects", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ path: projectPath }),
+			}),
+		);
 		const body = await res.json();
 		projectId = body.id;
 	});
 
-	afterAll(async () => { await app.cleanup(); });
+	afterAll(async () => {
+		await app.cleanup();
+	});
 
 	test("GET /projects/:id returns project", async () => {
-		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}`));
+		const res = await app.fetch(
+			new Request(`http://localhost/projects/${projectId}`),
+		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.id).toBe(projectId);
@@ -325,7 +346,9 @@ describe("daemon integration: project CRUD coverage", () => {
 	});
 
 	test("GET /projects/:id returns 404 for unknown", async () => {
-		const res = await app.fetch(new Request("http://localhost/projects/nonexistent"));
+		const res = await app.fetch(
+			new Request("http://localhost/projects/nonexistent"),
+		);
 		expect(res.status).toBe(404);
 	});
 
@@ -337,31 +360,37 @@ describe("daemon integration: project CRUD coverage", () => {
 	});
 
 	test("PATCH /projects/:id updates name", async () => {
-		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}`, {
-			method: "PATCH",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ name: "renamed-project" }),
-		}));
+		const res = await app.fetch(
+			new Request(`http://localhost/projects/${projectId}`, {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: "renamed-project" }),
+			}),
+		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.name).toBe("renamed-project");
 	});
 
 	test("PATCH /projects/:id rejects empty body", async () => {
-		const res = await app.fetch(new Request(`http://localhost/projects/${projectId}`, {
-			method: "PATCH",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({}),
-		}));
+		const res = await app.fetch(
+			new Request(`http://localhost/projects/${projectId}`, {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({}),
+			}),
+		);
 		expect(res.status).toBe(400);
 	});
 
 	test("PATCH /projects/:id returns 404 for unknown", async () => {
-		const res = await app.fetch(new Request("http://localhost/projects/nonexistent", {
-			method: "PATCH",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ name: "x" }),
-		}));
+		const res = await app.fetch(
+			new Request("http://localhost/projects/nonexistent", {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: "x" }),
+			}),
+		);
 		expect(res.status).toBe(404);
 	});
 
@@ -370,20 +399,26 @@ describe("daemon integration: project CRUD coverage", () => {
 		const { mkdir } = await import("node:fs/promises");
 		const delPath = join(app.tempDir, "to-delete");
 		await mkdir(delPath, { recursive: true });
-		const createRes = await app.fetch(new Request("http://localhost/projects", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ path: delPath }),
-		}));
+		const createRes = await app.fetch(
+			new Request("http://localhost/projects", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ path: delPath }),
+			}),
+		);
 		const created = await createRes.json();
 
-		const res = await app.fetch(new Request(`http://localhost/projects/${created.id}`, {
-			method: "DELETE",
-		}));
+		const res = await app.fetch(
+			new Request(`http://localhost/projects/${created.id}`, {
+				method: "DELETE",
+			}),
+		);
 		expect(res.status).toBe(200);
 
 		// Verify gone
-		const getRes = await app.fetch(new Request(`http://localhost/projects/${created.id}`));
+		const getRes = await app.fetch(
+			new Request(`http://localhost/projects/${created.id}`),
+		);
 		expect(getRes.status).toBe(404);
 	});
 });
@@ -410,7 +445,9 @@ export default {
 		app = await createDaemonTestApp({ pluginManifest: pluginWithInit });
 	});
 
-	afterAll(async () => { await app.cleanup(); });
+	afterAll(async () => {
+		await app.cleanup();
+	});
 
 	test("POST /projects calls plugin onProjectInit — new project gets memory.md", async () => {
 		const { mkdir, readFile } = await import("node:fs/promises");
@@ -418,16 +455,21 @@ export default {
 		const projectPath = join(app.tempDir, "init-test-project");
 		await mkdir(projectPath, { recursive: true });
 
-		const res = await app.fetch(new Request("http://localhost/projects", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ path: projectPath }),
-		}));
+		const res = await app.fetch(
+			new Request("http://localhost/projects", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ path: projectPath }),
+			}),
+		);
 		expect(res.status).toBe(201);
 
 		// Plugin's onProjectInit should have created .mxd/memory.md
 		expect(existsSync(join(projectPath, ".mxd", "memory.md"))).toBe(true);
-		const memory = await readFile(join(projectPath, ".mxd", "memory.md"), "utf-8");
+		const memory = await readFile(
+			join(projectPath, ".mxd", "memory.md"),
+			"utf-8",
+		);
 		expect(memory).toContain("Project Memory");
 	});
 });

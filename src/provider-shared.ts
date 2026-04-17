@@ -17,7 +17,6 @@
 import type { AgentRequest } from "./agent-provider.ts";
 import { checkBudget, recordBudgetWarning } from "./budget.ts";
 import {
-
 	COMPACTION_MAX_TOKENS,
 	getCompactionThresholds,
 	processCompaction,
@@ -44,6 +43,7 @@ import {
 } from "./tool-execution.ts";
 import { TOOL_DONE, TOOL_FORK_TASK_CONTEXT, TOOL_YIELD } from "./tool-names.ts";
 import type { AgentResult, ExitReason } from "./types.ts";
+
 // buildWorkContextContent import removed — work context now provided by plugin hook
 
 // ── Re-exports for backward compatibility ──
@@ -630,14 +630,17 @@ export async function* runProviderLoop(
 		? (() => {
 				for (let i = activeEvents.length - 1; i >= 0; i--) {
 					if (activeEvents[i]?.type === "session_config") {
-						const sc = activeEvents[i] as import("./events.ts").SessionConfigEvent;
+						const sc = activeEvents[
+							i
+						] as import("./events.ts").SessionConfigEvent;
 						return { stable: sc.systemStable, variable: sc.systemVariable };
 					}
 				}
 				return undefined;
 			})()
 		: undefined;
-	let systemPrompt = storedPromptConfig ?? request.buildSystemPrompt?.() ?? { stable: "", variable: "" };
+	let systemPrompt = storedPromptConfig ??
+		request.buildSystemPrompt?.() ?? { stable: "", variable: "" };
 
 	// Reconstruct messages from active events on resume, or start fresh.
 	// Filter oversized images from events before conversion — prevents poison
@@ -1223,10 +1226,7 @@ export async function* runProviderLoop(
 						const compactMsgs = queue.drain();
 						if (compactMsgs.length > 0) {
 							filterQueueMessageImages(adapter, compactMsgs);
-							adapter.appendQueueMessagesToMessages(
-								messages,
-								compactMsgs,
-							);
+							adapter.appendQueueMessagesToMessages(messages, compactMsgs);
 							recordQueueEvents(emit, compactMsgs);
 						}
 					}

@@ -42,7 +42,9 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 	buildPrompt: () => SystemPrompt;
 
 	// ── Infrastructure ──
-	connectMcp?: (projectPath: string) => Promise<import("../mcp-client.ts").McpClientManager>;
+	connectMcp?: (
+		projectPath: string,
+	) => Promise<import("../mcp-client.ts").McpClientManager>;
 	beforeChildLaunch?: (
 		node: T["node"],
 		tracker: import("../task-tracker.ts").TaskTracker,

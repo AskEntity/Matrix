@@ -4,8 +4,15 @@
  * Registered as scope: "global" — available in all projects.
  * This is NOT special-cased. Any plugin can register as global.
  */
-import { chmod, mkdir, writeFile, readFile, appendFile } from "node:fs/promises";
+
 import { existsSync } from "node:fs";
+import {
+	appendFile,
+	chmod,
+	mkdir,
+	readFile,
+	writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import type { PluginManifest } from "../../src/plugin.ts";
 

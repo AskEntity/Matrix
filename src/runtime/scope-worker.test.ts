@@ -56,14 +56,9 @@ describe("scope-worker", () => {
 	beforeAll(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "scope-worker-test-"));
 		dataDir = join(tempDir, ".mxd");
-		await saveGlobalConfig(
-			{ ...DEFAULT_CONFIG },
-			join(dataDir, "config.json"),
-		);
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		worker = new Worker(
-			new URL("./scope-worker.ts", import.meta.url).href,
-		);
+		worker = new Worker(new URL("./scope-worker.ts", import.meta.url).href);
 
 		// Wait for loaded
 		await new Promise<void>((resolve) => {

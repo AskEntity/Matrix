@@ -39,8 +39,12 @@ describe("ProjectManager", () => {
 			await mkdir(projectPath, { recursive: true });
 			const project = await pm.init(projectPath);
 
-			expect(existsSync(join(dataDir, "projects", project.id, "tasks"))).toBe(true);
-			expect(existsSync(join(dataDir, "projects", project.id, "debug"))).toBe(true);
+			expect(existsSync(join(dataDir, "projects", project.id, "tasks"))).toBe(
+				true,
+			);
+			expect(existsSync(join(dataDir, "projects", project.id, "debug"))).toBe(
+				true,
+			);
 		});
 
 		test("does NOT create .mxd/ or .git in project path", async () => {

@@ -9,10 +9,18 @@ beforeEach(() => {
 		Object.defineProperty(globalThis, "localStorage", {
 			value: {
 				_store: new Map<string, string>(),
-				getItem(key: string) { return this._store.get(key) ?? null; },
-				setItem(key: string, val: string) { this._store.set(key, val); },
-				removeItem(key: string) { this._store.delete(key); },
-				clear() { this._store.clear(); },
+				getItem(key: string) {
+					return this._store.get(key) ?? null;
+				},
+				setItem(key: string, val: string) {
+					this._store.set(key, val);
+				},
+				removeItem(key: string) {
+					this._store.delete(key);
+				},
+				clear() {
+					this._store.clear();
+				},
 			},
 			configurable: true,
 		});
@@ -20,23 +28,51 @@ beforeEach(() => {
 });
 afterEach(() => {
 	if (originalLocalStorage) {
-		Object.defineProperty(globalThis, "localStorage", { value: originalLocalStorage, configurable: true });
+		Object.defineProperty(globalThis, "localStorage", {
+			value: originalLocalStorage,
+			configurable: true,
+		});
 	}
 });
 
-function makeNode(id: string, title: string, parentId: string | null): TaskNode {
-	return { id, title, description: `${title} description`, status: "pending", parentId, children: [], branch: null, worktreePath: null, cwd: null, updatedAt: "2026-04-01T00:00:00Z", createdAt: "2026-04-01T00:00:00Z", costUsd: 0, editedBy: "user" };
+function makeNode(
+	id: string,
+	title: string,
+	parentId: string | null,
+): TaskNode {
+	return {
+		id,
+		title,
+		description: `${title} description`,
+		status: "pending",
+		parentId,
+		children: [],
+		branch: null,
+		worktreePath: null,
+		cwd: null,
+		updatedAt: "2026-04-01T00:00:00Z",
+		createdAt: "2026-04-01T00:00:00Z",
+		costUsd: 0,
+		editedBy: "user",
+	};
 }
 
 function makeDeps(overrides?: Partial<Record<string, unknown>>) {
 	const calls: Record<string, unknown[]> = {};
 	function tracker(name: string) {
 		calls[name] = [];
-		return mock((...args: unknown[]) => { calls[name]?.push(args[0]); });
+		return mock((...args: unknown[]) => {
+			calls[name]?.push(args[0]);
+		});
 	}
 
 	const deps = {
-		authFetch: mock(async () => new Response("{}", { status: 200 })) as unknown as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+		authFetch: mock(
+			async () => new Response("{}", { status: 200 }),
+		) as unknown as (
+			input: RequestInfo | URL,
+			init?: RequestInit,
+		) => Promise<Response>,
 		projectId: "proj-1",
 		selectedTaskId: "task-a",
 		rootNodeId: "root",
@@ -83,8 +119,14 @@ describe("handleCreateTask selects the newly created task", () => {
 	it("sets selectedTaskId to the new task's ID after creation", async () => {
 		const newTaskId = "new-task-123";
 		const mockAuthFetch = mock(async () => {
-			return new Response(JSON.stringify({ id: newTaskId, title: "New Task" }), { status: 201, headers: { "Content-Type": "application/json" } });
-		}) as unknown as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+			return new Response(
+				JSON.stringify({ id: newTaskId, title: "New Task" }),
+				{ status: 201, headers: { "Content-Type": "application/json" } },
+			);
+		}) as unknown as (
+			input: RequestInfo | URL,
+			init?: RequestInit,
+		) => Promise<Response>;
 		const { deps, calls } = makeDeps({ authFetch: mockAuthFetch });
 
 		const handlers = createActionHandlers(deps);
@@ -100,10 +142,17 @@ describe("handleClearRootSession resets token counters", () => {
 		const originalConfirm = globalThis.confirm;
 		globalThis.confirm = () => true;
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown as typeof fetch;
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+			})) as unknown as typeof fetch;
 
 		try {
-			const { deps, calls } = makeDeps({ selectedTaskId: "root", isOrchestratorNode: true, selectedNode: null });
+			const { deps, calls } = makeDeps({
+				selectedTaskId: "root",
+				isOrchestratorNode: true,
+				selectedNode: null,
+			});
 			const handlers = createActionHandlers(deps);
 			await handlers.handleClearRootSession();
 

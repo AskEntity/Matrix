@@ -14,8 +14,6 @@
 // readFileSync removed — work_context hook handles memory injection
 import { join } from "node:path";
 import { z } from "zod";
-import { stripEventForUI } from "./runtime/helpers.ts";
-import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
 import type { EventSpec } from "./events.ts";
 import {
 	createCrossProjectMessage,
@@ -23,6 +21,7 @@ import {
 	createTreeChange,
 } from "./queue-message-factory.ts";
 import * as R from "./resource-registry.ts";
+import { stripEventForUI } from "./runtime/helpers.ts";
 import {
 	closeTaskOp,
 	createTaskOp,
@@ -34,8 +33,14 @@ import {
 import { getDescendantIds, slugify } from "./task-utils.ts";
 import type { Auth } from "./tool-auth.ts";
 import { checkPermission } from "./tool-auth.ts";
-import { type AnyToolDef, defineTool, type ToolDef, toToolDefinition } from "./tool-def.ts";
+import {
+	type AnyToolDef,
+	defineTool,
+	type ToolDef,
+	toToolDefinition,
+} from "./tool-def.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
+import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
 import { isFolder, isTask, stripSession, type TaskStatus } from "./types.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 
@@ -348,14 +353,16 @@ export function buildAllToolDefs() {
 					decl: { kind: "explicit" },
 				},
 				status: {
-					schema: z.enum([
-						"draft",
-						"pending",
-						"in_progress",
-						"verify",
-						"failed",
-						"closed",
-					]).optional(),
+					schema: z
+						.enum([
+							"draft",
+							"pending",
+							"in_progress",
+							"verify",
+							"failed",
+							"closed",
+						])
+						.optional(),
 					decl: { kind: "optional" },
 					description: "New status",
 				},
@@ -1376,8 +1383,7 @@ export function buildAllToolDefs() {
 			handler: async (args) => {
 				const projectId = args.projectId as string;
 				const taskId = args.taskId as string;
-				const hideToolResults =
-					(args.hideToolResults) ?? true;
+				const hideToolResults = args.hideToolResults ?? true;
 				const tracker = R.getTracker(projectId);
 				if (!tracker)
 					return {
@@ -1698,10 +1704,7 @@ export function buildAllToolDefs() {
 			},
 			beforeDone: async (args) => {
 				// Matrix-specific: reject done() if worktree has uncommitted changes
-				const projPath = getProjectPath(
-					args.projectId,
-					args.taskId,
-				);
+				const projPath = getProjectPath(args.projectId, args.taskId);
 				const gitCheck = await isGitClean(projPath);
 				if (!gitCheck.clean) {
 					return (
@@ -1721,7 +1724,7 @@ export function buildAllToolDefs() {
 function buildEvaluateScriptTool(
 	messagesRef: { current: unknown[] },
 	allToolsRef: { current: unknown[] },
-){
+) {
 	return defineTool({
 		name: "evaluate_script",
 		availability: "internal",

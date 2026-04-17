@@ -4,4 +4,12 @@
  */
 export type { Event } from "../src/events.ts";
 export type { QueueMessage } from "../src/message-queue.ts";
-export { isFolder, isTask, type TreeNode, type TaskNode, type FolderNode, type BaseTaskNode, type TaskStatus } from "../src/types.ts";
+export {
+	type BaseTaskNode,
+	type FolderNode,
+	isFolder,
+	isTask,
+	type TaskNode,
+	type TaskStatus,
+	type TreeNode,
+} from "../src/types.ts";

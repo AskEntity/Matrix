@@ -2,9 +2,9 @@ import { type Event, isPersistedByEmitEvent } from "../events.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { ulid } from "../ulid.ts";
 import type {
-	RuntimeContext,
 	EventSubscriber,
 	PendingClarification,
+	RuntimeContext,
 } from "./context.ts";
 import { getEventStore, stripEventForUI } from "./helpers.ts";
 
@@ -168,7 +168,11 @@ export function subscribeToEvents(
  *
  * All callers use this instead of separate broadcast + persist calls.
  */
-export function emitEvent(ctx: RuntimeContext, projectId: string, event: Event) {
+export function emitEvent(
+	ctx: RuntimeContext,
+	projectId: string,
+	event: Event,
+) {
 	broadcast(ctx, projectId, event as unknown as Record<string, unknown>);
 
 	// Persist to JSONL (skips ephemeral events like text_delta, usage, etc.)
