@@ -14,7 +14,15 @@
  * Those live in the worker.
  */
 
-import { existsSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	unlinkSync,
+	writeSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { Hono } from "hono";
@@ -205,6 +213,133 @@ export interface DaemonInstance {
 	globalConfig: MatrixConfig;
 }
 
+// ── Filesystem daemon lock ──
+//
+// Prevents two daemons sharing the same dataDir. Without this, a second daemon
+// (e.g. accidentally launched on a different port with the same MXD_DATA_DIR)
+// would race on projects.json, tree.json, and JSONL files — producing lost
+// writes and tree corruption.
+//
+// Lock contents: JSON `{ pid, startedAt, version }`. On startup we attempt to
+// create the file with O_EXCL; if it already exists we check whether the
+// holding process is still alive. Dead PID → stale lock, we steal it. Live PID
+// → refuse to start.
+
+const LOCK_FILE_NAME = ".mxd.lock";
+
+interface LockFilePayload {
+	pid: number;
+	startedAt: string;
+	version: string;
+}
+
+function isProcessAlive(pid: number): boolean {
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		// signal 0 = existence probe. Throws ESRCH if the process is gone,
+		// EPERM if it exists but we don't own it (still "alive" for our purposes).
+		process.kill(pid, 0);
+		return true;
+	} catch (e) {
+		const err = e as NodeJS.ErrnoException;
+		return err.code === "EPERM";
+	}
+}
+
+function tryWriteLockFile(lockPath: string, payload: LockFilePayload): boolean {
+	try {
+		// `wx` — create + fail if exists. Atomic check-and-create.
+		const fd = openSync(lockPath, "wx");
+		try {
+			writeSync(fd, JSON.stringify(payload, null, "\t"));
+		} finally {
+			closeSync(fd);
+		}
+		return true;
+	} catch (e) {
+		const err = e as NodeJS.ErrnoException;
+		if (err.code === "EEXIST") return false;
+		throw e;
+	}
+}
+
+/**
+ * Acquire the dataDir lock. Returns a release function or throws if another
+ * live daemon holds it. Stale locks (dead PID) are stolen transparently.
+ */
+export function acquireDataDirLock(
+	dataDir: string,
+	version = VERSION,
+): () => void {
+	mkdirSync(dataDir, { recursive: true });
+	const lockPath = join(dataDir, LOCK_FILE_NAME);
+	const payload: LockFilePayload = {
+		pid: process.pid,
+		startedAt: new Date().toISOString(),
+		version,
+	};
+
+	const take = () => tryWriteLockFile(lockPath, payload);
+
+	if (take()) return () => releaseLock(lockPath, payload.pid);
+
+	// Lock exists — read + probe holder.
+	let holder: Partial<LockFilePayload> | null = null;
+	try {
+		holder = JSON.parse(readFileSync(lockPath, "utf-8")) as LockFilePayload;
+	} catch {
+		// Malformed lock (partial write, manual edit). Treat as stale.
+		holder = null;
+	}
+
+	const holderPid =
+		typeof holder?.pid === "number" ? (holder.pid as number) : null;
+	if (holderPid !== null && isProcessAlive(holderPid)) {
+		// Refuses even when `holderPid === process.pid` — that case means we
+		// already hold the lock in this process (e.g., a test forgot to release,
+		// or createDaemon was called twice). Reusing the same lock would mask
+		// real bugs.
+		throw new Error(
+			`Matrix daemon already running on dataDir ${dataDir} (PID ${holderPid}, started ${holder?.startedAt ?? "unknown"}). ` +
+				`If you're sure no daemon is running, delete ${lockPath}.`,
+		);
+	}
+
+	// Stale or malformed — remove and retry once. A racing peer could
+	// re-create between unlink and openSync(..., 'wx'), in which case `take()`
+	// returns false and we surface the same "already running" error.
+	try {
+		unlinkSync(lockPath);
+	} catch {
+		/* racing cleanup */
+	}
+	if (take()) return () => releaseLock(lockPath, payload.pid);
+
+	throw new Error(
+		`Matrix daemon lock at ${lockPath} is contested by another process. Retry in a moment.`,
+	);
+}
+
+function releaseLock(lockPath: string, expectedPid: number): void {
+	try {
+		const raw = readFileSync(lockPath, "utf-8");
+		const existing = JSON.parse(raw) as LockFilePayload;
+		if (existing.pid !== expectedPid) {
+			// Someone else owns the lock now (e.g., we stole a stale one and a
+			// racing daemon's lock got in first). Leave it alone.
+			return;
+		}
+	} catch {
+		// Already gone or malformed — nothing to do.
+		return;
+	}
+	try {
+		unlinkSync(lockPath);
+	} catch {
+		/* already gone */
+	}
+}
+
 // ── createDaemon ──
 
 export async function createDaemon(opts: {
@@ -217,8 +352,23 @@ export async function createDaemon(opts: {
 	 * auto-enable auth and have to pass a token on every request.
 	 */
 	autoInitAuth?: boolean;
+	/**
+	 * Acquire a filesystem lock at `<dataDir>/.mxd.lock` to prevent two
+	 * daemons from sharing the same dataDir. Enabled by default in production
+	 * (see `if (import.meta.main)`); tests disable it because they spin up
+	 * many daemons concurrently against isolated tempdirs.
+	 */
+	lockDataDir?: boolean;
+	/**
+	 * Override worker init timeout (ms). Defaults to 30s in production.
+	 * Tests use a short override so the "hung plugin" path exits quickly.
+	 */
+	workerInitTimeoutMs?: number;
 }): Promise<DaemonInstance> {
 	const { dataDir } = opts;
+	const releaseDataDirLock = opts.lockDataDir
+		? acquireDataDirLock(dataDir)
+		: () => {};
 	const globalConfigPath =
 		opts.globalConfigPath ?? join(dataDir, "config.json");
 	const autoInitAuth = opts.autoInitAuth ?? true;
@@ -284,6 +434,127 @@ export async function createDaemon(opts: {
 
 	// Worker state
 	const workers = new Map<string, ScopeWorker>();
+
+	// ── Worker init/restart durability knobs ──
+	//
+	// A hung plugin `runtime.ts` (top-level `await new Promise(()=>{})`) must not
+	// hang the daemon forever. INIT_TIMEOUT_MS caps how long we wait for a worker
+	// to report `ready` before we terminate it and surface the failure.
+	//
+	// A deterministically crashing worker must not spin-loop restarting. We track
+	// attempts per scope with exponential backoff (2, 4, 8, 16, 30s cap) and
+	// circuit-break after MAX_RESTARTS_BEFORE_CIRCUIT_BREAK. After STABLE_RESET_MS
+	// of healthy uptime the attempt counter resets so transient crashes don't
+	// poison later restarts.
+	const WORKER_INIT_TIMEOUT_MS = opts.workerInitTimeoutMs ?? 30_000;
+	const MAX_RESTARTS_BEFORE_CIRCUIT_BREAK = 5;
+	const STABLE_RESET_MS = 60_000;
+	const RESTART_BACKOFF_MS = [2_000, 4_000, 8_000, 16_000, 30_000] as const;
+
+	interface WorkerRestartState {
+		attempts: number;
+		lastReadyAt: number;
+		circuitBroken: boolean;
+	}
+	const workerRestartState = new Map<string, WorkerRestartState>();
+
+	function getRestartState(scopeName: string): WorkerRestartState {
+		let s = workerRestartState.get(scopeName);
+		if (!s) {
+			s = { attempts: 0, lastReadyAt: 0, circuitBroken: false };
+			workerRestartState.set(scopeName, s);
+		}
+		return s;
+	}
+
+	/**
+	 * Broadcast a worker-restart signal to every SSE client (all projects).
+	 * Uses a null-ish projectId so the message reaches clients regardless of
+	 * what project they're watching — the UI treats this as a global
+	 * daemon-health event.
+	 */
+	function broadcastWorkerEvent(event: Record<string, unknown>): void {
+		const data = JSON.stringify(event);
+		const msg = sseEncoder.encode(`data: ${data}\n\n`);
+		for (const client of sseClients) {
+			try {
+				client.controller.enqueue(msg);
+			} catch {
+				sseClients.delete(client);
+			}
+		}
+	}
+
+	function scheduleWorkerRestart(
+		scopeName: string,
+		pluginRuntimePath: string | undefined,
+		pluginDataRoot: string | undefined,
+		reason: string,
+	): void {
+		const state = getRestartState(scopeName);
+
+		// If the worker stayed healthy for STABLE_RESET_MS since its last ready,
+		// reset the attempt counter — prior transient crashes shouldn't block
+		// a legitimate recovery.
+		if (
+			state.lastReadyAt > 0 &&
+			Date.now() - state.lastReadyAt >= STABLE_RESET_MS
+		) {
+			state.attempts = 0;
+			state.circuitBroken = false;
+		}
+
+		if (state.circuitBroken) {
+			console.error(
+				`[daemon] Worker "${scopeName}" circuit broken — refusing restart (reason: ${reason})`,
+			);
+			return;
+		}
+
+		if (state.attempts >= MAX_RESTARTS_BEFORE_CIRCUIT_BREAK) {
+			state.circuitBroken = true;
+			console.error(
+				`[daemon] Worker "${scopeName}" crashed ${state.attempts} times — circuit-break engaged. Manual restart required.`,
+			);
+			broadcastWorkerEvent({
+				type: "worker_circuit_broken",
+				scope: scopeName,
+				attempts: state.attempts,
+				reason,
+			});
+			return;
+		}
+
+		const idx = Math.min(state.attempts, RESTART_BACKOFF_MS.length - 1);
+		const delayMs = RESTART_BACKOFF_MS[idx] ?? 30_000;
+		state.attempts++;
+
+		broadcastWorkerEvent({
+			type: "worker_restart_scheduled",
+			scope: scopeName,
+			attempt: state.attempts,
+			delayMs,
+			reason,
+		});
+
+		setTimeout(() => {
+			console.log(
+				`[daemon] Restarting worker "${scopeName}" (attempt ${state.attempts}/${MAX_RESTARTS_BEFORE_CIRCUIT_BREAK})...`,
+			);
+			startWorkerForPlugin(scopeName, pluginRuntimePath, pluginDataRoot).catch(
+				(e) => {
+					console.error(`[daemon] Worker "${scopeName}" restart failed:`, e);
+					// Restart failed (e.g. init timeout) — schedule another attempt.
+					scheduleWorkerRestart(
+						scopeName,
+						pluginRuntimePath,
+						pluginDataRoot,
+						`restart error: ${e instanceof Error ? e.message : String(e)}`,
+					);
+				},
+			);
+		}, delayMs);
+	}
 
 	function setupWorkerMessageHandler(
 		_scopeName: string,
@@ -392,10 +663,38 @@ export async function createDaemon(opts: {
 				pending: new Map(),
 			};
 
-			// Handle worker crash — reject all pending requests
+			// Init timeout — guards against hung `runtime.ts` top-level await.
+			// Without this, a blocking plugin module hangs `createDaemon()` forever:
+			// no log, no 503, no diagnostic — operators see an idle daemon with
+			// no signal that anything is wrong.
+			let initTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(
+				() => {
+					initTimer = undefined;
+					console.error(
+						`[daemon] Worker "${scopeName}" init timed out after ${WORKER_INIT_TIMEOUT_MS}ms — terminating`,
+					);
+					try {
+						worker.terminate();
+					} catch {}
+					// Don't remove from workers map here — onerror handler below may
+					// also fire; either path causes a single cleanup via the reject.
+					reject(
+						new Error(
+							`Worker init timed out: ${scopeName} (>${WORKER_INIT_TIMEOUT_MS}ms)`,
+						),
+					);
+				},
+				WORKER_INIT_TIMEOUT_MS,
+			);
+
+			// Handle worker crash — reject all pending requests + schedule restart.
 			worker.onerror = (event: ErrorEvent) => {
 				console.error(`[daemon] Worker "${scopeName}" crashed:`, event.message);
 				scopeWorker.ready = false;
+				if (initTimer) {
+					clearTimeout(initTimer);
+					initTimer = undefined;
+				}
 				// Reject pending HTTP requests + close zombie stream controllers
 				for (const [, pending] of scopeWorker.pending) {
 					const streamCtrl = (
@@ -414,17 +713,13 @@ export async function createDaemon(opts: {
 					}
 				}
 				scopeWorker.pending.clear();
-				// Auto-restart worker after 2s
-				setTimeout(() => {
-					console.log(`[daemon] Restarting worker "${scopeName}"...`);
-					startWorkerForPlugin(
-						scopeName,
-						pluginRuntimePath,
-						pluginDataRoot,
-					).catch((e) => {
-						console.error(`[daemon] Worker "${scopeName}" restart failed:`, e);
-					});
-				}, 2000);
+				// Exponential backoff + circuit-break (handled by scheduleWorkerRestart).
+				scheduleWorkerRestart(
+					scopeName,
+					pluginRuntimePath,
+					pluginDataRoot,
+					`crash: ${event.message || "unknown"}`,
+				);
 			};
 
 			// Temporary handler for init sequence
@@ -443,11 +738,20 @@ export async function createDaemon(opts: {
 					});
 				}
 				if (msg.type === "ready") {
+					if (initTimer) {
+						clearTimeout(initTimer);
+						initTimer = undefined;
+					}
 					scopeWorker.ready = true;
+					getRestartState(scopeName).lastReadyAt = Date.now();
 					setupWorkerMessageHandler(scopeName, scopeWorker);
 					resolve();
 				}
 				if (msg.type === "error") {
+					if (initTimer) {
+						clearTimeout(initTimer);
+						initTimer = undefined;
+					}
 					reject(
 						new Error(`Worker "${scopeName}" init failed: ${msg.message}`),
 					);
@@ -463,7 +767,7 @@ export async function createDaemon(opts: {
 		request: Request,
 	): Promise<Response> {
 		const sw = workers.get(scopeName);
-		if (!sw || !sw.ready) {
+		if (!sw?.ready) {
 			return new Response(
 				JSON.stringify({ error: `Worker "${scopeName}" not ready` }),
 				{ status: 503, headers: { "content-type": "application/json" } },
@@ -1237,6 +1541,9 @@ export async function createDaemon(opts: {
 			sw.worker.terminate();
 		}
 		workers.clear();
+		// Release filesystem lock LAST — after all workers are gone, so a
+		// subsequent daemon on the same dataDir can safely re-acquire it.
+		releaseDataDirLock();
 	}
 
 	return {
@@ -1255,7 +1562,15 @@ export type { RegisteredPlugin };
 
 if (import.meta.main) {
 	const dataDir = process.env.MXD_DATA_DIR ?? join(homedir(), ".mxd");
-	const daemon = await createDaemon({ dataDir });
+	let daemon: DaemonInstance;
+	try {
+		daemon = await createDaemon({ dataDir, lockDataDir: true });
+	} catch (e) {
+		// Most common failure mode: another daemon owns this dataDir.
+		// Surface a clean error instead of a scary stack trace.
+		console.error(e instanceof Error ? e.message : String(e));
+		process.exit(1);
+	}
 
 	const port = daemon.globalConfig.port ?? 7433;
 	// Default to loopback so a fresh install isn't LAN-reachable before
@@ -1267,6 +1582,7 @@ if (import.meta.main) {
 		const res = await fetch(`http://localhost:${port}/health`);
 		if (res.ok) {
 			console.error(`Error: daemon already running on port ${port}`);
+			await daemon.shutdown();
 			process.exit(1);
 		}
 	} catch {}

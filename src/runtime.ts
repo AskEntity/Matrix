@@ -436,16 +436,52 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 		}
 	}
 
-	/** Graceful shutdown: stop all agents, await loop settlement for JSONL persistence. */
+	/** Graceful shutdown: stop all agents, await loop settlement, flush pending JSONL writes.
+	 *
+	 * Durability contract: when shutdown() returns, every event emitted up to that
+	 * point MUST be on disk. `emitEvent` queues async `eventStore.append()` writes
+	 * without awaiting — without this flush, the last ~hundreds of ms of writes
+	 * (agent_end from stopAgent, done_notified from Phase 2, tool_results) are lost
+	 * when the worker terminates.
+	 *
+	 * Order matters:
+	 *   1. stopAgent on every running project (emits agent_end, triggers finally cleanup)
+	 *   2. await residual in-flight loops with bounded timeout (Phase 2 writes)
+	 *   3. flush every EventStore (drains queued async appends to disk)
+	 *
+	 * The loop-wait timeout matches stopAgent's (3s): real providers abort within
+	 * ms, stuck tools (foreground bash ignoring abort) get a bounded grace period.
+	 * Exceeding the timeout is an orphan on next startup — the buildSessionRepair
+	 * path handles that correctly via synthetic tool_results.
+	 */
+	const SHUTDOWN_LOOP_TIMEOUT_MS = 1_000;
 	async function shutdown(): Promise<void> {
-		// Stop all agents — their root nodes stay in_progress so they resume on next start
+		// Stop all agents — their root nodes stay in_progress so they resume on next start.
+		// stopAgent awaits loop settlement internally with its own bounded timeout.
 		for (const [projectId, tracker] of ctx.trackers) {
 			const rootNode = tracker.getTask(tracker.rootNodeId);
 			if (rootNode?.session) {
 				await stopAgent(ctx, projectId);
 			}
 		}
-		// stopAgent emits agent_end synchronously — no need to await loop promises.
+		// Residual in-flight agent loops (children still cleaning up after root
+		// finally fires; Phase 2 tails; MCP disconnect). Bounded wait so a stuck
+		// tool can't block shutdown indefinitely — orphan-repair on next startup
+		// handles any mid-tool interruption.
+		const pendingLoops = Array.from(ctx.agentLoopPromises.values());
+		if (pendingLoops.length > 0) {
+			await Promise.race([
+				Promise.allSettled(pendingLoops),
+				new Promise<void>((resolve) =>
+					setTimeout(resolve, SHUTDOWN_LOOP_TIMEOUT_MS),
+				),
+			]);
+		}
+		// Flush every EventStore so queued async appends land on disk.
+		const flushes = Array.from(ctx.eventStores.values()).map((store) =>
+			store.flush(),
+		);
+		await Promise.all(flushes);
 	}
 
 	function markReady() {
