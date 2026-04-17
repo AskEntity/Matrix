@@ -501,7 +501,7 @@ describe("folder-aware: delete_task", () => {
 		const folder = tracker.addFolder("Folder", agent.id);
 		const task = tracker.addChild(folder.id, "leaf", "");
 
-		const result = await invokeDeleteTask(tracker.rootNodeId, {
+		const result = await invokeDeleteTask(agent.id, {
 			taskId: task.id,
 		});
 		expect(result.isError).toBeFalsy();
@@ -512,7 +512,7 @@ describe("folder-aware: delete_task", () => {
 		const agent = tracker.addTask("agent", "");
 		const folder = tracker.addFolder("Empty Folder", agent.id);
 
-		const result = await invokeDeleteTask(tracker.rootNodeId, {
+		const result = await invokeDeleteTask(agent.id, {
 			taskId: folder.id,
 		});
 		expect(result.isError).toBeFalsy();
@@ -524,13 +524,29 @@ describe("folder-aware: delete_task", () => {
 		const folder = tracker.addFolder("Folder", agent.id);
 		tracker.addChild(folder.id, "child", "");
 
-		const result = await invokeDeleteTask(tracker.rootNodeId, {
+		const result = await invokeDeleteTask(agent.id, {
 			taskId: folder.id,
 		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain(
 			"Cannot delete folder with children",
 		);
+	});
+
+	test("agent cannot delete a task outside its subtree", async () => {
+		// Regression guard: checkPermission("subtree") on delete_task (Audit G H1).
+		const parent = tracker.addTask("parent", "");
+		const agent = tracker.addChild(parent.id, "agent", "");
+		const sibling = tracker.addChild(parent.id, "sibling", "");
+		const siblingChild = tracker.addChild(sibling.id, "sib-child", "");
+
+		const result = await invokeDeleteTask(agent.id, {
+			taskId: siblingChild.id,
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("not your task or descendant");
+		// And the sibling's subtree is still intact
+		expect(tracker.getTask(siblingChild.id)).toBeDefined();
 	});
 });
 
@@ -575,7 +591,7 @@ describe("folder-aware: close_task", () => {
 		const task = tracker.addChild(folder.id, "task", "");
 		tracker.updateStatus(task.id, "verify");
 
-		const result = await invokeCloseTask(tracker.rootNodeId, {
+		const result = await invokeCloseTask(agent.id, {
 			taskId: task.id,
 		});
 		expect(result.isError).toBeFalsy();
@@ -586,11 +602,26 @@ describe("folder-aware: close_task", () => {
 		const agent = tracker.addTask("agent", "");
 		const folder = tracker.addFolder("Folder", agent.id);
 
-		const result = await invokeCloseTask(tracker.rootNodeId, {
+		const result = await invokeCloseTask(agent.id, {
 			taskId: folder.id,
 		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain("Cannot close a folder");
+	});
+
+	test("agent cannot close a task outside its subtree", async () => {
+		// Regression guard: checkPermission("subtree") on close_task.
+		const parent = tracker.addTask("parent", "");
+		const agent = tracker.addChild(parent.id, "agent", "");
+		const sibling = tracker.addChild(parent.id, "sibling", "");
+		tracker.updateStatus(sibling.id, "verify");
+
+		const result = await invokeCloseTask(agent.id, {
+			taskId: sibling.id,
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("not your task or descendant");
+		expect(tracker.getTask(sibling.id)?.status).toBe("verify");
 	});
 });
 
@@ -635,7 +666,7 @@ describe("folder-aware: reset_task", () => {
 		const task = tracker.addChild(folder.id, "task", "");
 		tracker.updateStatus(task.id, "in_progress");
 
-		const result = await invokeResetTask(tracker.rootNodeId, {
+		const result = await invokeResetTask(agent.id, {
 			taskId: task.id,
 		});
 		expect(result.isError).toBeFalsy();
@@ -646,11 +677,26 @@ describe("folder-aware: reset_task", () => {
 		const agent = tracker.addTask("agent", "");
 		const folder = tracker.addFolder("Folder", agent.id);
 
-		const result = await invokeResetTask(tracker.rootNodeId, {
+		const result = await invokeResetTask(agent.id, {
 			taskId: folder.id,
 		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain("Cannot reset a folder");
+	});
+
+	test("agent cannot reset a task outside its subtree", async () => {
+		const parent = tracker.addTask("parent", "");
+		const agent = tracker.addChild(parent.id, "agent", "");
+		const sibling = tracker.addChild(parent.id, "sibling", "");
+		tracker.updateStatus(sibling.id, "in_progress");
+
+		const result = await invokeResetTask(agent.id, {
+			taskId: sibling.id,
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("not your task or descendant");
+		// Sibling still in_progress, not reset to pending
+		expect(tracker.getTask(sibling.id)?.status).toBe("in_progress");
 	});
 });
 
