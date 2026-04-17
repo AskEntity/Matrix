@@ -16,6 +16,7 @@ import {
 	IconMinimize,
 	IconPlus,
 	IconRefresh,
+	IconSidebarLeft,
 } from "./components/icons.tsx";
 // LoginPage removed — auth handled by daemon shell
 import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
@@ -1020,7 +1021,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 	return (
 		<>
 			<main
-				className={`mxd-main${fullscreen ? " mxd-fullscreen" : ""}${isSidebarDragging ? " mxd-sidebar-resizing" : ""}`}
+				className={`mxd-main${fullscreen ? " mxd-fullscreen" : ""}${isSidebarDragging ? " mxd-sidebar-resizing" : ""}${sidebarCollapsed && !fullscreen ? " mxd-has-collapsed-sidebar" : ""}`}
 			>
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop is a visual overlay, not a focusable control */}
 				{/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop is dismissed by Escape key or clicking outside */}
@@ -1082,6 +1083,17 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				/>
 
 				<section className="mxd-content">
+					{sidebarCollapsed && !fullscreen && (
+						<button
+							type="button"
+							className="mxd-sidebar-expand-btn"
+							onClick={handleToggleSidebarCollapse}
+							title={t("sidebar.expand")}
+							aria-label={t("sidebar.expand")}
+						>
+							<IconSidebarLeft size={14} />
+						</button>
+					)}
 					{/* Tab bar */}
 					{openTabs.length > 0 && (
 						<div className="mxd-tab-bar">
