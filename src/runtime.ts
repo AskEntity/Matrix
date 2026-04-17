@@ -10,6 +10,9 @@ import {
 	loadGlobalConfig,
 	resolveAuthGroup,
 } from "./config.ts";
+import type { Event } from "./events.ts";
+import { ProjectStore } from "./project-store.ts";
+import { createTaskComplete } from "./queue-message-factory.ts";
 import {
 	deliverMessage,
 	runAgentForNode,
@@ -17,8 +20,8 @@ import {
 } from "./runtime/agent-lifecycle.ts";
 import type {
 	DaemonConfig,
-	RuntimeContext,
 	PendingClarification,
+	RuntimeContext,
 	SSEClient,
 } from "./runtime/context.ts";
 import { broadcastTreeUpdate, emitEvent } from "./runtime/event-system.ts";
@@ -30,10 +33,6 @@ import { registerMcpEndpoint } from "./runtime/routes/mcp-endpoint.ts";
 import { registerMockShowcaseRoute } from "./runtime/routes/mock-showcase.ts";
 import { registerProjectRoutes } from "./runtime/routes/projects.ts";
 import { registerTaskRoutes } from "./runtime/routes/tasks.ts";
-
-import type { Event } from "./events.ts";
-import { ProjectStore } from "./project-store.ts";
-import { createTaskComplete } from "./queue-message-factory.ts";
 
 import { TOOL_DONE } from "./tool-names.ts";
 import {
@@ -174,11 +173,13 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	 * No fallback — caller MUST provide buildScopeOpts in DaemonConfig.
 	 */
 	// biome-ignore lint/suspicious/noExplicitAny: ScopeOpts generic varies by plugin
-	function getScopeOptsForProject(projectId: string): import("./runtime/context.ts").ScopeOpts<any> {
+	function getScopeOptsForProject(
+		projectId: string,
+	): import("./runtime/context.ts").ScopeOpts<any> {
 		if (!config.buildScopeOpts) {
 			throw new Error(
 				"buildScopeOpts not provided in DaemonConfig. " +
-				"Runtime is plugin-agnostic — the caller must inject scope opts.",
+					"Runtime is plugin-agnostic — the caller must inject scope opts.",
 			);
 		}
 		return config.buildScopeOpts(projectId, ctx);
@@ -348,7 +349,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		// biome-ignore lint/suspicious/noExplicitAny: erased generic
 		scopeOpts: import("./runtime/context.ts").ScopeOpts<any>,
 	): Promise<void> {
-		const shouldResumeFn = scopeOpts.shouldResume ?? ((n: import("./types.ts").TaskNode) => n.status === "in_progress");
+		const shouldResumeFn =
+			scopeOpts.shouldResume ??
+			((n: import("./types.ts").TaskNode) => n.status === "in_progress");
 
 		// ── Phase 2 crash recovery ──
 		const allNodes = tracker.allNodes();
@@ -378,13 +381,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						status === "verify",
 						summary,
 					);
-					await deliverMessage(
-						ctx,
-						project,
-						taskAbove.id,
-						completionMsg,
-						{ quiet: true },
-					).catch((e) => {
+					await deliverMessage(ctx, project, taskAbove.id, completionMsg, {
+						quiet: true,
+					}).catch((e) => {
 						console.warn(
 							`[autoResume] Failed to deliver task_complete to parent ${taskAbove.id}:`,
 							e,
@@ -427,7 +426,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			);
 
 		for (const node of resumableNodes) {
-
 			console.log(`Auto-resuming ${project.name} node ${node.id}`);
 
 			runAgentForNode(ctx, project, tracker, node.id, {

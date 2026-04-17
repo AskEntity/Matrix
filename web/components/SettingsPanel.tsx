@@ -1,8 +1,8 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useAuthFetch } from "@mxd/auth-context";
-import type { ThreeLayerConfig } from "./types.ts";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconPlus, IconRefresh, IconTrash } from "./icons.tsx";
+import type { ThreeLayerConfig } from "./types.ts";
 
 // ---- Types ----
 

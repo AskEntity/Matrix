@@ -2,8 +2,7 @@
  * Test: daemon pipeline — createDaemon discovers plugins, starts workers, proxies requests.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "./config.ts";
@@ -19,10 +18,7 @@ describe("daemon without plugins — bare daemon invariant", () => {
 	beforeAll(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "daemon-bare-test-"));
 		dataDir = join(tempDir, ".mxd");
-		await saveGlobalConfig(
-			{ ...DEFAULT_CONFIG },
-			join(dataDir, "config.json"),
-		);
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
 		// No projects → no plugin directories → pure bare daemon
 		daemon = await createDaemon({ dataDir });
@@ -34,27 +30,21 @@ describe("daemon without plugins — bare daemon invariant", () => {
 	});
 
 	test("GET /health → 200 (daemon-owned, not worker-forwarded)", async () => {
-		const res = await daemon.fetch(
-			new Request("http://localhost/health"),
-		);
+		const res = await daemon.fetch(new Request("http://localhost/health"));
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.status).toBe("ok");
 	});
 
 	test("GET /plugins → 200, empty array", async () => {
-		const res = await daemon.fetch(
-			new Request("http://localhost/plugins"),
-		);
+		const res = await daemon.fetch(new Request("http://localhost/plugins"));
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body).toEqual([]);
 	});
 
 	test("GET /auth/status → 200, authenticated (no secret)", async () => {
-		const res = await daemon.fetch(
-			new Request("http://localhost/auth/status"),
-		);
+		const res = await daemon.fetch(new Request("http://localhost/auth/status"));
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.authenticated).toBe(true);
@@ -62,9 +52,7 @@ describe("daemon without plugins — bare daemon invariant", () => {
 	});
 
 	test("GET /projects → 200, empty array", async () => {
-		const res = await daemon.fetch(
-			new Request("http://localhost/projects"),
-		);
+		const res = await daemon.fetch(new Request("http://localhost/projects"));
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body).toEqual([]);
@@ -88,10 +76,7 @@ describe("daemon pipeline (legacy)", () => {
 	beforeAll(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "daemon-pipeline-test-"));
 		dataDir = join(tempDir, ".mxd");
-		await saveGlobalConfig(
-			{ ...DEFAULT_CONFIG },
-			join(dataDir, "config.json"),
-		);
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
 		daemon = await createDaemon({ dataDir });
 	});
@@ -102,9 +87,7 @@ describe("daemon pipeline (legacy)", () => {
 	});
 
 	test("auth/status returns authenticated when no secret", async () => {
-		const res = await daemon.fetch(
-			new Request("http://localhost/auth/status"),
-		);
+		const res = await daemon.fetch(new Request("http://localhost/auth/status"));
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.authenticated).toBe(true);
@@ -112,9 +95,7 @@ describe("daemon pipeline (legacy)", () => {
 	});
 
 	test("/plugins returns registered plugins", async () => {
-		const res = await daemon.fetch(
-			new Request("http://localhost/plugins"),
-		);
+		const res = await daemon.fetch(new Request("http://localhost/plugins"));
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(Array.isArray(body)).toBe(true);
@@ -179,7 +160,12 @@ describe("daemon with matrix plugin", () => {
 		await mkdir(join(dataDir, "projects"), { recursive: true });
 		const projectId = "test-project-id";
 		const projectsMeta = [
-			{ id: projectId, name: "test-project", path: projectPath, createdAt: new Date().toISOString() },
+			{
+				id: projectId,
+				name: "test-project",
+				path: projectPath,
+				createdAt: new Date().toISOString(),
+			},
 		];
 		await writeFile(
 			join(dataDir, "projects.json"),
@@ -187,10 +173,7 @@ describe("daemon with matrix plugin", () => {
 			"utf-8",
 		);
 
-		await saveGlobalConfig(
-			{ ...DEFAULT_CONFIG },
-			join(dataDir, "config.json"),
-		);
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
 		daemon = await createDaemon({ dataDir });
 	});
@@ -207,9 +190,7 @@ describe("daemon with matrix plugin", () => {
 	});
 
 	test("/plugins returns discovered plugin", async () => {
-		const res = await daemon.fetch(
-			new Request("http://localhost/plugins"),
-		);
+		const res = await daemon.fetch(new Request("http://localhost/plugins"));
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.length).toBe(1);
@@ -219,9 +200,7 @@ describe("daemon with matrix plugin", () => {
 	test("worker started for global plugin — version returns counts", async () => {
 		// /version is forwarded to worker (unlike /health which is daemon-owned)
 		// This actually verifies the worker is running and responding
-		const res = await daemon.fetch(
-			new Request("http://localhost/version"),
-		);
+		const res = await daemon.fetch(new Request("http://localhost/version"));
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.version).toMatch(/^\d+\.\d+\.\d+/);

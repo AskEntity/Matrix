@@ -8,5 +8,9 @@ import { buildMatrixScopeOpts } from "../../src/runtime/agent-lifecycle.ts";
 import type { RuntimeContext } from "../../src/runtime/context.ts";
 
 export function buildScopeOpts(projectId: string, ctx: RuntimeContext) {
-	return buildMatrixScopeOpts(projectId, ctx.globalConfig.selfBootstrap ?? false, ctx);
+	return buildMatrixScopeOpts(
+		projectId,
+		ctx.globalConfig.selfBootstrap ?? false,
+		ctx,
+	);
 }

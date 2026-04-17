@@ -214,8 +214,8 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 			});
 			const result = await provider.execute({
 				buildSystemPrompt: () => ({ stable: "stable", variable: "variable" }),
-			buildWorkContext: () => null,
-			buildSummarizationPrompt: () => "Summarize the conversation.",
+				buildWorkContext: () => null,
+				buildSummarizationPrompt: () => "Summarize the conversation.",
 				queue: queueWithPrompt("Do the thing"),
 				mcpToolDefs: {
 					mxd: [
@@ -637,9 +637,12 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				baseUrl: "https://api.example.com/v1",
 			});
 			const result = await provider.execute({
-				buildSystemPrompt: () => ({ stable: "Stable prompt", variable: "Variable prompt" }),
-			buildWorkContext: () => null,
-			buildSummarizationPrompt: () => "Summarize the conversation.",
+				buildSystemPrompt: () => ({
+					stable: "Stable prompt",
+					variable: "Variable prompt",
+				}),
+				buildWorkContext: () => null,
+				buildSummarizationPrompt: () => "Summarize the conversation.",
 				queue: queueWithPrompt("Please finish", tmpDir),
 				mcpToolDefs: {
 					mxd: [
@@ -739,9 +742,12 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				baseUrl: "https://api.example.com/v1",
 			});
 			await provider.execute({
-				buildSystemPrompt: () => ({ stable: "Stable prompt", variable: "Variable prompt" }),
-			buildWorkContext: () => null,
-			buildSummarizationPrompt: () => "Summarize the conversation.",
+				buildSystemPrompt: () => ({
+					stable: "Stable prompt",
+					variable: "Variable prompt",
+				}),
+				buildWorkContext: () => null,
+				buildSummarizationPrompt: () => "Summarize the conversation.",
 				queue: queueWithPrompt("Please inspect the schema"),
 				mcpToolDefs: {
 					mxd: [
@@ -910,8 +916,8 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 			const queue = queueWithPrompt("Need status", tmpDir);
 			const session = provider.stream({
 				buildSystemPrompt: () => ({ stable: "Stable", variable: "Variable" }),
-			buildWorkContext: () => null,
-			buildSummarizationPrompt: () => "Summarize the conversation.",
+				buildWorkContext: () => null,
+				buildSummarizationPrompt: () => "Summarize the conversation.",
 				queue,
 
 				mcpToolDefs: {
@@ -1066,8 +1072,8 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 
 			const gen = provider.stream({
 				buildSystemPrompt: () => ({ stable: "Stable", variable: "Variable" }),
-			buildWorkContext: () => null,
-			buildSummarizationPrompt: () => "Summarize the conversation.",
+				buildWorkContext: () => null,
+				buildSummarizationPrompt: () => "Summarize the conversation.",
 				queue: execQueue,
 				mcpToolDefs: {
 					mxd: [

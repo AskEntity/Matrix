@@ -627,7 +627,7 @@ function MockShowcaseInner() {
 				</section>
 			</main>
 
-				{/* AppFooter moved to shell */}
+			{/* AppFooter moved to shell */}
 
 			{themes[theme]?.hasCat && <CuteCat />}
 		</>

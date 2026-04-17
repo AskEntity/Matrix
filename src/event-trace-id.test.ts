@@ -9,14 +9,14 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { basename } from "node:path";
-import { stopTask } from "./runtime/agent-lifecycle.ts";
-import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import type { Event } from "./events.ts";
 import {
 	createTaskComplete,
 	createTaskMessage,
 	createUserMessage,
 } from "./queue-message-factory.ts";
+import { stopTask } from "./runtime/agent-lifecycle.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import {
 	type EmissionTestContext,
 	injectMessage,
@@ -349,7 +349,17 @@ describe("Bug 3: traceId distinct across restarts", () => {
 		await ctx.app.shutdown();
 		await new Promise((r) => setTimeout(r, 100));
 		const provider = createMockedProviderWithMock(ctx.mockAPI);
-		ctx.app = createApp({ dataDir: ctx.dataDir, agentProvider: provider, projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }] });
+		ctx.app = createApp({
+			dataDir: ctx.dataDir,
+			agentProvider: provider,
+			projects: [
+				{
+					id: ctx.projectId,
+					name: basename(ctx.projectDir),
+					path: ctx.projectDir,
+				},
+			],
+		});
 		await ctx.app.autoResumeProjects();
 		ctx.app.markReady();
 		await new Promise((r) => setTimeout(r, 200));

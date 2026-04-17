@@ -9,19 +9,18 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "./ulid.ts";
 import { z } from "zod";
-import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import type { Event } from "./events.ts";
 import type { ScopeOpts } from "./runtime/context.ts";
-import { toToolDefinition } from "./tool-def.ts";
-import { defineTool, type AnyToolDef } from "./tool-def.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
-import type { TaskNode } from "./types.ts";
+import { type AnyToolDef, defineTool, toToolDefinition } from "./tool-def.ts";
 import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
+import type { TaskNode } from "./types.ts";
+import { ulid } from "./ulid.ts";
 
 // ── Test infrastructure ──
 
@@ -54,7 +53,11 @@ async function setupTestContext(): Promise<TestContext> {
 	const provider = createMockedProviderWithMock(mockAPI);
 
 	const projectId = ulid();
-	const appResult = createApp({ dataDir, agentProvider: provider, projects: [{ id: projectId, name: basename(projectDir), path: projectDir }] });
+	const appResult = createApp({
+		dataDir,
+		agentProvider: provider,
+		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
+	});
 
 	appResult.markReady();
 
@@ -111,7 +114,10 @@ function buildStoryScopeOpts(_projectId: string): ScopeOpts<any> {
 				handler: async (args) => {
 					return {
 						content: [
-							{ type: "text" as const, text: `Paragraph written: ${args.text}` },
+							{
+								type: "text" as const,
+								text: `Paragraph written: ${args.text}`,
+							},
 						],
 						isError: false,
 					};
@@ -123,7 +129,10 @@ function buildStoryScopeOpts(_projectId: string): ScopeOpts<any> {
 					createYieldTool(),
 					createDoneTool({
 						extraParams: {
-							status: { schema: z.enum(["passed", "failed"]), decl: { kind: "explicit" } },
+							status: {
+								schema: z.enum(["passed", "failed"]),
+								decl: { kind: "explicit" },
+							},
 							summary: { schema: z.string(), decl: { kind: "explicit" } },
 						},
 					}),

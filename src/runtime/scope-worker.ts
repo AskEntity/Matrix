@@ -22,14 +22,15 @@ self.onmessage = async (event: MessageEvent) => {
 	const msg = event.data;
 
 	if (msg.type === "init") {
-		const { dataDir, globalConfigPath, projects, pluginRuntimePath, dataRoot } = msg as {
-			type: "init";
-			dataDir: string;
-			globalConfigPath: string;
-			projects?: Array<{ id: string; name: string; path: string }>;
-			pluginRuntimePath?: string;
-			dataRoot?: string;
-		};
+		const { dataDir, globalConfigPath, projects, pluginRuntimePath, dataRoot } =
+			msg as {
+				type: "init";
+				dataDir: string;
+				globalConfigPath: string;
+				projects?: Array<{ id: string; name: string; path: string }>;
+				pluginRuntimePath?: string;
+				dataRoot?: string;
+			};
 
 		try {
 			// Load plugin's scope opts builder if provided
@@ -37,15 +38,26 @@ self.onmessage = async (event: MessageEvent) => {
 			let buildScopeOpts: any;
 			if (pluginRuntimePath) {
 				const pluginMod = await import(pluginRuntimePath);
-				const builder = pluginMod.buildMatrixScopeOpts ?? pluginMod.buildScopeOpts ?? pluginMod.default;
+				const builder =
+					pluginMod.buildMatrixScopeOpts ??
+					pluginMod.buildScopeOpts ??
+					pluginMod.default;
 				if (typeof builder === "function") {
 					// Plugin's builder receives (projectId, ctx) — generic interface.
 					// Plugin-specific args (like selfBootstrap) are read from ctx.globalConfig inside the builder.
-					buildScopeOpts = (projectId: string, ctx: import("./context.ts").RuntimeContext) =>
-						builder(projectId, ctx);
+					buildScopeOpts = (
+						projectId: string,
+						ctx: import("./context.ts").RuntimeContext,
+					) => builder(projectId, ctx);
 				}
 			}
-			appInstance = createApp({ dataDir, globalConfigPath, projects, buildScopeOpts, dataRoot });
+			appInstance = createApp({
+				dataDir,
+				globalConfigPath,
+				projects,
+				buildScopeOpts,
+				dataRoot,
+			});
 			await appInstance.loadConfig();
 
 			// Wire broadcast BEFORE autoResume — events during crash recovery must reach shell
@@ -148,12 +160,16 @@ self.onmessage = async (event: MessageEvent) => {
 		if (!appInstance) return;
 
 		if (key === "projects") {
-			appInstance.pm.sync(data as import("./worker-api.ts").SyncMap["projects"]);
+			appInstance.pm.sync(
+				data as import("./worker-api.ts").SyncMap["projects"],
+			);
 			// Data directories created by daemon before sync (POST /projects handler)
 		} else if (key === "config") {
-			appInstance.ctx.globalConfig = data as import("./worker-api.ts").SyncMap["config"];
+			appInstance.ctx.globalConfig =
+				data as import("./worker-api.ts").SyncMap["config"];
 		} else if (key === "project_deleted") {
-			const { projectId } = data as import("./worker-api.ts").SyncMap["project_deleted"];
+			const { projectId } =
+				data as import("./worker-api.ts").SyncMap["project_deleted"];
 			// Defensive: stop any running agents before clearing caches.
 			// Daemon already sends POST /stop before this sync, but if that
 			// failed or timed out, agents would keep running on a deleted project.

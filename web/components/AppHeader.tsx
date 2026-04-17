@@ -1,7 +1,6 @@
+import { useAuthFetch } from "@mxd/auth-context";
 import type React from "react";
 import { memo, useEffect, useState } from "react";
-import { useAuthFetch } from "@mxd/auth-context";
-import type { Project } from "./types.ts";
 import { useLocale } from "../i18n.ts";
 import {
 	IconClose,
@@ -10,6 +9,7 @@ import {
 	IconLogout,
 	IconPlus,
 } from "./icons.tsx";
+import type { Project } from "./types.ts";
 
 export const AppHeader = memo(function AppHeader({
 	connected,

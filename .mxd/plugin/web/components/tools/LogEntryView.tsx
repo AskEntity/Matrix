@@ -1,10 +1,4 @@
 import { memo, useCallback, useState } from "react";
-import {
-	isBuiltinTool,
-	TOOL_BASH,
-	TOOL_DONE,
-	TOOL_YIELD,
-} from "../../tool-names.ts";
 import { api } from "../../api.ts";
 import { useAuthFetch } from "../../auth.ts";
 import {
@@ -15,6 +9,12 @@ import {
 	type TreeNode,
 } from "../../hooks.ts";
 import { useLocale } from "../../i18n.ts";
+import {
+	isBuiltinTool,
+	TOOL_BASH,
+	TOOL_DONE,
+	TOOL_YIELD,
+} from "../../tool-names.ts";
 import { Card } from "../Card.tsx";
 import { ToolResultImages } from "./ToolResultImages.tsx";
 import {

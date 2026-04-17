@@ -1,6 +1,13 @@
 import type { ReactNode } from "react";
 import { memo, useState } from "react";
 import {
+	formatTime,
+	getLogTaskId,
+	type LogEntry,
+	type TreeNode,
+} from "../hooks.ts";
+import { useLocale } from "../i18n.ts";
+import {
 	isBuiltinTool,
 	stripMcpPrefix,
 	TOOL_CLOSE_TASK,
@@ -13,13 +20,6 @@ import {
 	TOOL_SEND_MESSAGE_TO_PROJECT,
 	TOOL_UPDATE_TASK,
 } from "../tool-names.ts";
-import {
-	formatTime,
-	getLogTaskId,
-	type LogEntry,
-	type TreeNode,
-} from "../hooks.ts";
-import { useLocale } from "../i18n.ts";
 import { Card } from "./Card.tsx";
 import { MCP_CARD_BODY_TOOLS, McpToolCardBody } from "./tools/McpToolCard.tsx";
 import { ToolResultImages } from "./tools/ToolResultImages.tsx";

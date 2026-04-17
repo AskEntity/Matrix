@@ -15,6 +15,7 @@ import { TaskTracker } from "./task-tracker.ts";
 import { initMockResourceRegistry } from "./test-utils.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import { executeTool } from "./tool-execution.ts";
+
 const TOOL_EVALUATE_SCRIPT = "mcp__mxd__evaluate_script";
 
 // ── Helpers ──

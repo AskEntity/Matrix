@@ -51,7 +51,10 @@ export interface PluginManifest {
 	 * Plugin sets up project-specific files (memory.md, hooks, git init, etc.).
 	 * Daemon handles registry only — plugin handles project initialization.
 	 */
-	onProjectInit?: (projectPath: string, opts: { isNew: boolean }) => Promise<void>;
+	onProjectInit?: (
+		projectPath: string,
+		opts: { isNew: boolean },
+	) => Promise<void>;
 }
 
 // ── dataRoot helpers ──

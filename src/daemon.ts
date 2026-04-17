@@ -111,7 +111,10 @@ export async function createDaemon(opts: {
 
 	// Per-project SSE sequencing + ring buffer for Last-Event-ID catch-up
 	const sseSeqCounters = new Map<string, number>();
-	interface SSERingEntry { seqId: number; data: string; }
+	interface SSERingEntry {
+		seqId: number;
+		data: string;
+	}
 	const sseEventBuffers = new Map<string, SSERingEntry[]>();
 	const SSE_RING_BUFFER_SIZE = 2000;
 
@@ -122,7 +125,11 @@ export async function createDaemon(opts: {
 		return next;
 	}
 
-	function bufferSseEvent(projectId: string, seqId: number, data: string): void {
+	function bufferSseEvent(
+		projectId: string,
+		seqId: number,
+		data: string,
+	): void {
 		let buffer = sseEventBuffers.get(projectId);
 		if (!buffer) {
 			buffer = [];
@@ -134,7 +141,10 @@ export async function createDaemon(opts: {
 		}
 	}
 
-	function getEventsSince(projectId: string, lastSeqId: number): SSERingEntry[] | null {
+	function getEventsSince(
+		projectId: string,
+		lastSeqId: number,
+	): SSERingEntry[] | null {
 		const buffer = sseEventBuffers.get(projectId);
 		if (!buffer || buffer.length === 0) return null;
 		const firstEntry = buffer[0];
@@ -193,17 +203,31 @@ export async function createDaemon(opts: {
 				}
 			}
 			if (msg.type === "http_response_stream_chunk") {
-				const streamPending = scopeWorker.pending.get(`stream:${msg.id}`) as unknown as { _streamController?: ReadableStreamDefaultController } | undefined;
+				const streamPending = scopeWorker.pending.get(
+					`stream:${msg.id}`,
+				) as unknown as
+					| { _streamController?: ReadableStreamDefaultController }
+					| undefined;
 				if (streamPending?._streamController) {
 					try {
-						streamPending._streamController.enqueue(new TextEncoder().encode(msg.chunk));
-					} catch { /* client disconnected */ }
+						streamPending._streamController.enqueue(
+							new TextEncoder().encode(msg.chunk),
+						);
+					} catch {
+						/* client disconnected */
+					}
 				}
 			}
 			if (msg.type === "http_response_stream_end") {
-				const streamPending = scopeWorker.pending.get(`stream:${msg.id}`) as unknown as { _streamController?: ReadableStreamDefaultController } | undefined;
+				const streamPending = scopeWorker.pending.get(
+					`stream:${msg.id}`,
+				) as unknown as
+					| { _streamController?: ReadableStreamDefaultController }
+					| undefined;
 				if (streamPending?._streamController) {
-					try { streamPending._streamController.close(); } catch {}
+					try {
+						streamPending._streamController.close();
+					} catch {}
 				}
 				scopeWorker.pending.delete(`stream:${msg.id}`);
 			}
@@ -213,9 +237,7 @@ export async function createDaemon(opts: {
 				const seqId = nextSseSeqId(projectId);
 				const data = JSON.stringify(evt);
 				bufferSseEvent(projectId, seqId, data);
-				const sseMessage = sseEncoder.encode(
-					`id: ${seqId}\ndata: ${data}\n\n`,
-				);
+				const sseMessage = sseEncoder.encode(`id: ${seqId}\ndata: ${data}\n\n`);
 				for (const client of sseClients) {
 					if (client.projectId === projectId) {
 						try {
@@ -251,18 +273,30 @@ export async function createDaemon(opts: {
 				scopeWorker.ready = false;
 				// Reject pending HTTP requests + close zombie stream controllers
 				for (const [id, pending] of scopeWorker.pending) {
-					const streamCtrl = (pending as unknown as { _streamController?: ReadableStreamDefaultController })._streamController;
+					const streamCtrl = (
+						pending as unknown as {
+							_streamController?: ReadableStreamDefaultController;
+						}
+					)._streamController;
 					if (streamCtrl) {
-						try { streamCtrl.error(new Error(`Worker "${scopeName}" crashed`)); } catch {}
+						try {
+							streamCtrl.error(new Error(`Worker "${scopeName}" crashed`));
+						} catch {}
 					} else {
-						pending.reject(new Error(`Worker "${scopeName}" crashed: ${event.message}`));
+						pending.reject(
+							new Error(`Worker "${scopeName}" crashed: ${event.message}`),
+						);
 					}
 				}
 				scopeWorker.pending.clear();
 				// Auto-restart worker after 2s
 				setTimeout(() => {
 					console.log(`[daemon] Restarting worker "${scopeName}"...`);
-					startWorkerForPlugin(scopeName, pluginRuntimePath, pluginDataRoot).catch((e) => {
+					startWorkerForPlugin(
+						scopeName,
+						pluginRuntimePath,
+						pluginDataRoot,
+					).catch((e) => {
 						console.error(`[daemon] Worker "${scopeName}" restart failed:`, e);
 					});
 				}, 2000);
@@ -404,7 +438,9 @@ export async function createDaemon(opts: {
 	}
 
 	// ── Build web assets (React vendor + shell + plugins) ──
-	const { buildWebAssets, generateIndexHTML } = await import("./web-builder.ts");
+	const { buildWebAssets, generateIndexHTML } = await import(
+		"./web-builder.ts"
+	);
 	const buildDir = join(dataDir, "build");
 	const projectRoot = resolve(".");
 	const shellEntry = new URL("../web/main.tsx", import.meta.url).pathname;
@@ -443,7 +479,11 @@ export async function createDaemon(opts: {
 			? resolve(plugin.pluginRoot, plugin.runtime)
 			: undefined;
 		const { effectiveDataRoot } = await import("./plugin.ts");
-		await startWorkerForPlugin(plugin.name, runtimePath, effectiveDataRoot(plugin));
+		await startWorkerForPlugin(
+			plugin.name,
+			runtimePath,
+			effectiveDataRoot(plugin),
+		);
 	}
 
 	// ── Hono app with routes ──
@@ -544,8 +584,12 @@ export async function createDaemon(opts: {
 			}
 
 			// Create data directories before syncing to worker
-			mkdirSync(join(dataDir, "projects", project.id, "tasks"), { recursive: true });
-			mkdirSync(join(dataDir, "projects", project.id, "debug"), { recursive: true });
+			mkdirSync(join(dataDir, "projects", project.id, "tasks"), {
+				recursive: true,
+			});
+			mkdirSync(join(dataDir, "projects", project.id, "debug"), {
+				recursive: true,
+			});
 			syncProjects();
 			return c.json(project, 201);
 		} catch (e) {
@@ -621,16 +665,20 @@ export async function createDaemon(opts: {
 	app.get("/vendor/*", async (c) => {
 		const relativePath = c.req.path.slice("/vendor/".length);
 		const filePath = join(buildDir, "vendor", relativePath);
-		if (!resolve(filePath).startsWith(resolve(buildDir))) return c.json({ error: "Forbidden" }, 403);
+		if (!resolve(filePath).startsWith(resolve(buildDir)))
+			return c.json({ error: "Forbidden" }, 403);
 		const file = Bun.file(filePath);
 		if (!(await file.exists())) return c.json({ error: "Not found" }, 404);
-		return new Response(file, { headers: { "content-type": "application/javascript" } });
+		return new Response(file, {
+			headers: { "content-type": "application/javascript" },
+		});
 	});
 
 	app.get("/app/*", async (c) => {
 		const relativePath = c.req.path.slice("/app/".length);
 		const filePath = join(buildDir, "app", relativePath);
-		if (!resolve(filePath).startsWith(resolve(buildDir))) return c.json({ error: "Forbidden" }, 403);
+		if (!resolve(filePath).startsWith(resolve(buildDir)))
+			return c.json({ error: "Forbidden" }, 403);
 		const file = Bun.file(filePath);
 		if (!(await file.exists())) return c.json({ error: "Not found" }, 404);
 		return new Response(file);
@@ -761,7 +809,9 @@ export async function createDaemon(opts: {
 
 		// EventSource sends Last-Event-ID on reconnect
 		const lastEventIdHeader = request.headers.get("Last-Event-ID");
-		const lastSeqId = lastEventIdHeader ? Number.parseInt(lastEventIdHeader, 10) : null;
+		const lastSeqId = lastEventIdHeader
+			? Number.parseInt(lastEventIdHeader, 10)
+			: null;
 
 		const stream = new ReadableStream({
 			async start(controller) {
@@ -777,9 +827,11 @@ export async function createDaemon(opts: {
 						catchUpDone = true;
 						for (const entry of missed) {
 							try {
-								controller.enqueue(sseEncoder.encode(
-									`id: ${entry.seqId}\ndata: ${entry.data}\n\n`,
-								));
+								controller.enqueue(
+									sseEncoder.encode(
+										`id: ${entry.seqId}\ndata: ${entry.data}\n\n`,
+									),
+								);
 							} catch {
 								catchUpDone = false;
 								break;
@@ -811,19 +863,28 @@ export async function createDaemon(opts: {
 							controller.enqueue(msg);
 						}
 						// Send pending clarifications (worker has them)
-						const clarifyResp = workerName ? await forwardToWorker(
-							workerName,
-							new Request(`http://localhost/projects/${projectId}/clarifications`, {
-								headers: request.headers,
-							}),
-						) : null;
+						const clarifyResp = workerName
+							? await forwardToWorker(
+									workerName,
+									new Request(
+										`http://localhost/projects/${projectId}/clarifications`,
+										{
+											headers: request.headers,
+										},
+									),
+								)
+							: null;
 						if (clarifyResp?.ok) {
 							const result = await clarifyResp.json();
-							const clarifications = Array.isArray(result) ? result : result?.clarifications;
+							const clarifications = Array.isArray(result)
+								? result
+								: result?.clarifications;
 							if (Array.isArray(clarifications) && clarifications.length > 0) {
-								controller.enqueue(sseEncoder.encode(
-									`data: ${JSON.stringify({ type: "pending_clarifications", projectId, clarifications })}\n\n`,
-								));
+								controller.enqueue(
+									sseEncoder.encode(
+										`data: ${JSON.stringify({ type: "pending_clarifications", projectId, clarifications })}\n\n`,
+									),
+								);
 							}
 						}
 					} catch {}

@@ -77,7 +77,10 @@ const IS_MOCK_MODE = new URLSearchParams(window.location.search).has("mock");
  * NOT a SPA. Receives projectId from shell. No auth, no project selection, no settings.
  */
 export function Plugin({ projectId }: { projectId: string }) {
-	if (!projectId) return <div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>;
+	if (!projectId)
+		return (
+			<div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>
+		);
 	return (
 		<LocaleProvider>
 			<ErrorBoundary>
@@ -235,10 +238,21 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		return map;
 	}, [nodes]);
 	// Fetch current project info (name, pathExists) — plugin doesn't manage project list
-	const [currentProject, setCurrentProject] = useState<{ id: string; name: string; path: string; pathExists?: boolean } | null>(null);
+	const [currentProject, setCurrentProject] = useState<{
+		id: string;
+		name: string;
+		path: string;
+		pathExists?: boolean;
+	} | null>(null);
 	useEffect(() => {
-		if (!projectId) { setCurrentProject(null); return; }
-		authFetch(`/projects/${projectId}`).then(r => r.ok ? r.json() : null).then(setCurrentProject).catch(() => setCurrentProject(null));
+		if (!projectId) {
+			setCurrentProject(null);
+			return;
+		}
+		authFetch(`/projects/${projectId}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then(setCurrentProject)
+			.catch(() => setCurrentProject(null));
 	}, [projectId, authFetch]);
 	const projectMap = useMemo(() => {
 		const map = new Map<string, string>();

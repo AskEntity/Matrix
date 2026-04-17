@@ -1,6 +1,4 @@
 import type React from "react";
-import type { QueueMessage } from "./types.ts";
-import { TOOL_YIELD } from "./tool-names.ts";
 // ID generation — crypto.randomUUID() for local UI state
 import {
 	createLogEntry,
@@ -11,6 +9,8 @@ import {
 	type TreeNode,
 	type UIEvent,
 } from "./hooks.ts";
+import { TOOL_YIELD } from "./tool-names.ts";
+import type { QueueMessage } from "./types.ts";
 
 // --- Update operations for in-place entry mutations ---
 
@@ -428,10 +428,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 						const clearedSessionIds = new Set(
 							msg.nodes
-								.filter(
-									(node) =>
-										isTask(node) && node.status === "pending",
-								)
+								.filter((node) => isTask(node) && node.status === "pending")
 								.map((node) => node.id),
 						);
 						clearSessionState(clearedSessionIds);

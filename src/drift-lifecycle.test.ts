@@ -30,17 +30,17 @@ import { existsSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "./ulid.ts";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
-import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
+import { initTestProject } from "./test-utils/init-test-project.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
-import { initTestProject } from "./test-utils/init-test-project.ts";
 import { TOOL_DONE, TOOL_YIELD } from "./tool-names.ts";
+import { ulid } from "./ulid.ts";
 
 // ── Test infrastructure (copied from integration.test.ts — kept local to avoid cross-file deps) ──
 
@@ -78,7 +78,11 @@ async function setupTestContext(): Promise<TestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 	const projectId = ulid();
-	const appResult = createApp({ dataDir, agentProvider: provider, projects: [{ id: projectId, name: basename(projectDir), path: projectDir }] });
+	const appResult = createApp({
+		dataDir,
+		agentProvider: provider,
+		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
+	});
 
 	const tasksDir = join(projectDir, ".mxd", "tasks");
 	if (existsSync(tasksDir)) rmSync(tasksDir, { recursive: true });
@@ -219,7 +223,17 @@ async function recreateApp(
 	ctx: TestContext,
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedProviderWithMock(ctx.mockAPI);
-	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider, projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }] });
+	const newApp = createApp({
+		dataDir: ctx.dataDir,
+		agentProvider: provider,
+		projects: [
+			{
+				id: ctx.projectId,
+				name: basename(ctx.projectDir),
+				path: ctx.projectDir,
+			},
+		],
+	});
 	newApp.markReady();
 	return newApp;
 }
@@ -3069,7 +3083,10 @@ describe("Drift: compaction lifecycle", () => {
 				(e as { body?: { source?: string } }).body?.source ===
 					"compacted_resume",
 		) as
-			| { type: "message"; body: { source: "compacted_resume"; content: string } }
+			| {
+					type: "message";
+					body: { source: "compacted_resume"; content: string };
+			  }
 			| undefined;
 		expect(compactedResumeEvent).toBeTruthy();
 
