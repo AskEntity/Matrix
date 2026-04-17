@@ -1,8 +1,8 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useAuthFetch } from "@mxd/auth-context";
-import type { ThreeLayerConfig } from "./types.ts";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconPlus, IconRefresh, IconTrash } from "./icons.tsx";
+import type { ThreeLayerConfig } from "./types.ts";
 
 // ---- Types ----
 
@@ -1041,7 +1041,7 @@ function GlobalTab({
 		}, 1500);
 
 		return () => clearTimeout(startDelay);
-	}, []);
+	}, [authFetch]);
 
 	const tab: ActiveTab = "global";
 	const authGroupNames = Object.keys(
@@ -1318,7 +1318,6 @@ export const SettingsPanel = memo(function SettingsPanel({
 	onDeleteProject?: () => void;
 	onClearAllSessions?: () => void;
 }) {
-	const authFetch = useAuthFetch();
 	const { t } = useLocale();
 	const [activeTab, setActiveTab] = useState<ActiveTab>("global");
 

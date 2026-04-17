@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
+import { join } from "node:path";
 
 import manifest from "../.mxd/plugin/index.ts";
 
@@ -209,10 +214,7 @@ describe("git init", () => {
 describe(".git/info/exclude", () => {
 	test(".worktrees added to exclude", async () => {
 		await manifest.onProjectInit!(tmp, { isNew: true });
-		const exclude = readFileSync(
-			join(tmp, ".git", "info", "exclude"),
-			"utf-8",
-		);
+		const exclude = readFileSync(join(tmp, ".git", "info", "exclude"), "utf-8");
 		expect(exclude).toContain(".worktrees");
 	});
 
@@ -220,27 +222,19 @@ describe(".git/info/exclude", () => {
 		await manifest.onProjectInit!(tmp, { isNew: true });
 		// Run again
 		await manifest.onProjectInit!(tmp, { isNew: false });
-		const exclude = readFileSync(
-			join(tmp, ".git", "info", "exclude"),
-			"utf-8",
-		);
-		const matches = exclude.split("\n").filter((l) => l.trim() === ".worktrees");
+		const exclude = readFileSync(join(tmp, ".git", "info", "exclude"), "utf-8");
+		const matches = exclude
+			.split("\n")
+			.filter((l) => l.trim() === ".worktrees");
 		expect(matches).toHaveLength(1);
 	});
 
 	test("appends to existing exclude content", async () => {
 		// Create .git/info/exclude with existing content (no trailing newline)
 		mkdirSync(join(tmp, ".git", "info"), { recursive: true });
-		writeFileSync(
-			join(tmp, ".git", "info", "exclude"),
-			"some-dir",
-			"utf-8",
-		);
+		writeFileSync(join(tmp, ".git", "info", "exclude"), "some-dir", "utf-8");
 		await manifest.onProjectInit!(tmp, { isNew: false });
-		const exclude = readFileSync(
-			join(tmp, ".git", "info", "exclude"),
-			"utf-8",
-		);
+		const exclude = readFileSync(join(tmp, ".git", "info", "exclude"), "utf-8");
 		expect(exclude).toContain("some-dir");
 		expect(exclude).toContain(".worktrees");
 		// Properly separated (newline between existing and new)

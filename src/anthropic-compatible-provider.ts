@@ -621,7 +621,10 @@ function createAnthropicAdapter(
 					await new Promise<void>((resolve) => {
 						const timer = setTimeout(resolve, delay);
 						if (params.signal) {
-							const onAbort = () => { clearTimeout(timer); resolve(); };
+							const onAbort = () => {
+								clearTimeout(timer);
+								resolve();
+							};
 							params.signal.addEventListener("abort", onAbort, { once: true });
 						}
 					});

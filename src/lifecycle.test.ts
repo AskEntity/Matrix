@@ -2,17 +2,16 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "./ulid.ts";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
-import { runChildCore } from "./runtime/agent-lifecycle.ts";
-import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event, EventSpec } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
-
+import { runChildCore } from "./runtime/agent-lifecycle.ts";
 import { TaskTracker } from "./task-tracker.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { attachMockSession } from "./test-utils.ts";
 import type { AgentResult, Project, TaskNode } from "./types.ts";
+import { ulid } from "./ulid.ts";
 
 // ---------------------------------------------------------------------------
 // Mock providers
@@ -153,7 +152,12 @@ function createProject(
 	pm: ReturnType<typeof createApp>["pm"],
 	projectDir: string,
 ): Project {
-	const project = { id: ulid(), name: basename(projectDir), path: projectDir, createdAt: new Date().toISOString() };
+	const project = {
+		id: ulid(),
+		name: basename(projectDir),
+		path: projectDir,
+		createdAt: new Date().toISOString(),
+	};
 	pm.sync([project]);
 	return project;
 }
@@ -1604,7 +1608,7 @@ describe("lifecycle: edge cases and error handling", () => {
 	});
 
 	test("message to nonexistent project returns 404", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
@@ -2708,7 +2712,7 @@ describe("lifecycle edge cases — session continuity", () => {
 
 	test("send message to non-existent project returns 404", async () => {
 		const { provider } = createCapturingProvider();
-		const { app, pm, markReady } = createApp({
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
 		});

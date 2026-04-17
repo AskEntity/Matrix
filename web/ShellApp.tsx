@@ -5,9 +5,10 @@
  * settings panel, scope selector.
  * Plugin renders below the header as a dynamically-loaded React component.
  */
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
-import { authFetch, clearToken, getToken } from "./auth.ts";
+
 import { AuthFetchProvider, GetTokenProvider } from "@mxd/auth-context";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { authFetch, clearToken, getToken } from "./auth.ts";
 import { AppHeader } from "./components/AppHeader.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
 import type { Project, ThreeLayerConfig } from "./components/types.ts";
@@ -16,7 +17,9 @@ import { LoginPage } from "./LoginPage.tsx";
 
 // Dynamic import of compiled plugin JS (served at URL from build pipeline)
 // biome-ignore lint/suspicious/noExplicitAny: plugin component props vary
-function loadPluginUI(pluginPath: string): React.LazyExoticComponent<React.ComponentType<any>> {
+function loadPluginUI(
+	pluginPath: string,
+): React.LazyExoticComponent<React.ComponentType<any>> {
 	return lazy(() =>
 		import(/* @vite-ignore */ pluginPath).then((m) => ({
 			default: m.Plugin ?? m.default,
@@ -55,7 +58,8 @@ export function ShellApp() {
 	}, []);
 
 	if (checking) return null;
-	if (!authenticated) return <LoginPage onAuthenticated={handleAuthenticated} />;
+	if (!authenticated)
+		return <LoginPage onAuthenticated={handleAuthenticated} />;
 
 	return (
 		<LocaleProvider>
@@ -87,7 +91,9 @@ function AuthenticatedShell() {
 	// ── Plugin state ──
 	const [plugins, setPlugins] = useState<PluginInfo[]>([]);
 	const [selectedScope, setSelectedScope] = useState("");
-	const [PluginUI, setPluginUI] = useState<ReturnType<typeof loadPluginUI> | null>(null);
+	const [PluginUI, setPluginUI] = useState<ReturnType<
+		typeof loadPluginUI
+	> | null>(null);
 
 	// ── Fetch projects + plugins ──
 	const refresh = useCallback(async () => {
@@ -105,7 +111,9 @@ function AuthenticatedShell() {
 		} catch {}
 	}, [projectId, selectedScope]);
 
-	useEffect(() => { refresh(); }, []);
+	useEffect(() => {
+		refresh();
+	}, [refresh]);
 
 	// ── Connected check via health ──
 	useEffect(() => {
@@ -136,7 +144,10 @@ function AuthenticatedShell() {
 		setConfigLoading(true);
 		authFetch(`/projects/${projectId}/config/all`)
 			.then((r) => r.json())
-			.then((data) => { setLayers(data); setConfigLoading(false); })
+			.then((data) => {
+				setLayers(data);
+				setConfigLoading(false);
+			})
 			.catch(() => setConfigLoading(false));
 	}, [showSettings, projectId]);
 
@@ -146,27 +157,30 @@ function AuthenticatedShell() {
 		setShowSettings(false);
 	}, []);
 
-	const handleAddProject = useCallback(async (e: React.FormEvent) => {
-		e.preventDefault();
-		if (!newProjectPath.trim()) return;
-		setCreatingProject(true);
-		try {
-			const res = await authFetch("/projects", {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ path: newProjectPath.trim() }),
-			});
-			if (res.ok) {
-				const proj = await res.json();
-				setProjectId(proj.id);
-				setNewProjectPath("");
-				setShowAddProject(false);
-				refresh();
+	const handleAddProject = useCallback(
+		async (e: React.FormEvent) => {
+			e.preventDefault();
+			if (!newProjectPath.trim()) return;
+			setCreatingProject(true);
+			try {
+				const res = await authFetch("/projects", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ path: newProjectPath.trim() }),
+				});
+				if (res.ok) {
+					const proj = await res.json();
+					setProjectId(proj.id);
+					setNewProjectPath("");
+					setShowAddProject(false);
+					refresh();
+				}
+			} finally {
+				setCreatingProject(false);
 			}
-		} finally {
-			setCreatingProject(false);
-		}
-	}, [newProjectPath, refresh]);
+		},
+		[newProjectPath, refresh],
+	);
 
 	const handleLogout = useCallback(() => {
 		clearToken();
@@ -182,24 +196,39 @@ function AuthenticatedShell() {
 
 	const handleClearSessions = useCallback(async () => {
 		if (!projectId) return;
-		await authFetch(`/projects/${projectId}/sessions/clear`, { method: "POST" });
+		await authFetch(`/projects/${projectId}/sessions/clear`, {
+			method: "POST",
+		});
 	}, [projectId]);
 
-	const updateConfig = useCallback(async (layer: string, patch: Record<string, unknown>) => {
-		if (!projectId) return;
-		const url = layer === "global" ? "/config/global" : `/projects/${projectId}/config${layer === "repo" ? "/repo" : ""}`;
-		await authFetch(url, {
-			method: "PATCH",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify(patch),
-		});
-		// Refresh config
-		const res = await authFetch(`/projects/${projectId}/config/all`);
-		setLayers(await res.json());
-	}, [projectId]);
+	const updateConfig = useCallback(
+		async (layer: string, patch: Record<string, unknown>) => {
+			if (!projectId) return;
+			const url =
+				layer === "global"
+					? "/config/global"
+					: `/projects/${projectId}/config${layer === "repo" ? "/repo" : ""}`;
+			await authFetch(url, {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(patch),
+			});
+			// Refresh config
+			const res = await authFetch(`/projects/${projectId}/config/all`);
+			setLayers(await res.json());
+		},
+		[projectId],
+	);
 
 	return (
-		<div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+		<div
+			style={{
+				display: "flex",
+				flexDirection: "column",
+				height: "100%",
+				overflow: "hidden",
+			}}
+		>
 			<AppHeader
 				connected={connected}
 				projects={projects}
@@ -212,7 +241,10 @@ function AuthenticatedShell() {
 				onShowAddProject={() => setShowAddProject(true)}
 				onAddProject={handleAddProject}
 				onNewProjectPathChange={setNewProjectPath}
-				onCancelAddProject={() => { setShowAddProject(false); setNewProjectPath(""); }}
+				onCancelAddProject={() => {
+					setShowAddProject(false);
+					setNewProjectPath("");
+				}}
 				onToggleSettings={() => setShowSettings((s) => !s)}
 				onLogout={handleLogout}
 				onToggleSidebar={() => {}} // Plugin manages sidebar — no-op from shell
@@ -237,13 +269,29 @@ function AuthenticatedShell() {
 				/>
 			)}
 
-			<div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+			<div
+				style={{
+					flex: 1,
+					minHeight: 0,
+					display: "flex",
+					flexDirection: "column",
+					overflow: "hidden",
+				}}
+			>
 				{PluginUI ? (
-					<Suspense fallback={<div style={{ padding: 20, color: "#8b949e" }}>Loading plugin...</div>}>
+					<Suspense
+						fallback={
+							<div style={{ padding: 20, color: "#8b949e" }}>
+								Loading plugin...
+							</div>
+						}
+					>
 						<PluginUI projectId={projectId} />
 					</Suspense>
 				) : (
-					<div style={{ padding: 20, color: "#8b949e" }}>Select a scope to load plugin UI</div>
+					<div style={{ padding: 20, color: "#8b949e" }}>
+						Select a scope to load plugin UI
+					</div>
 				)}
 			</div>
 		</div>

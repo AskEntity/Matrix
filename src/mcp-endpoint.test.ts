@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resetResourceRegistry } from "./resource-registry.ts";
 import { getEventStore, getTracker } from "./runtime/helpers.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
-import { resetResourceRegistry } from "./resource-registry.ts";
 import { ulid } from "./ulid.ts";
 
 // ── Helpers ──

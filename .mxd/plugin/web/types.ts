@@ -6,7 +6,7 @@
  */
 
 // Runtime types — shared via importmap, type-only in compiled JS
-export type { Event, QueueMessage, BaseTaskNode } from "@mxd/types";
+export type { BaseTaskNode, Event, QueueMessage } from "@mxd/types";
 
 // Matrix-specific types
 

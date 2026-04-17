@@ -1,12 +1,14 @@
 import { describe, expect, it, mock } from "bun:test";
 import type React from "react";
-import { createEventHandler, type EventHandlerDeps } from "../.mxd/plugin/web/event-handler.ts";
+import {
+	createEventHandler,
+	type EventHandlerDeps,
+} from "../.mxd/plugin/web/event-handler.ts";
 import {
 	createLogEntry,
 	getLogTaskId,
 	type IncomingEvent,
 	type LogEntry,
-	type TaskNode,
 } from "../.mxd/plugin/web/hooks.ts";
 
 /** Minimal deps that satisfy the EventHandlerDeps interface */
@@ -1106,7 +1108,7 @@ describe("event-handler live session clearing", () => {
 					branch: null,
 					worktreePath: null,
 					cwd: null,
-					
+
 					color: undefined,
 				},
 				{
@@ -1123,7 +1125,7 @@ describe("event-handler live session clearing", () => {
 					branch: null,
 					worktreePath: null,
 					cwd: null,
-					
+
 					color: undefined,
 				},
 				{
@@ -1140,7 +1142,7 @@ describe("event-handler live session clearing", () => {
 					branch: null,
 					worktreePath: null,
 					cwd: null,
-					
+
 					color: undefined,
 				},
 			],

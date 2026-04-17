@@ -98,9 +98,10 @@ export async function getTracker(
 	let tracker = ctx.trackers.get(projectId);
 	if (!tracker) {
 		const dataRoot = ctx.config.dataRoot;
-		const projectDir = (!dataRoot || dataRoot === "@")
-			? join(ctx.config.dataDir, "projects", projectId)
-			: join(ctx.config.dataDir, "projects", projectId, dataRoot.slice(2));
+		const projectDir =
+			!dataRoot || dataRoot === "@"
+				? join(ctx.config.dataDir, "projects", projectId)
+				: join(ctx.config.dataDir, "projects", projectId, dataRoot.slice(2));
 		const treePath = join(projectDir, "tree.json");
 		tracker = new TaskTracker(treePath);
 		const project = ctx.pm.get(projectId);
@@ -133,7 +134,11 @@ export async function getTracker(
  * @param dataRoot - Plugin's effective dataRoot. "@" = project root (default),
  *   "@/plugin/foo" = plugin subdirectory.
  */
-export function projectTasksDir(dataDir: string, projectId: string, dataRoot?: string): string {
+export function projectTasksDir(
+	dataDir: string,
+	projectId: string,
+	dataRoot?: string,
+): string {
 	if (!dataRoot || dataRoot === "@") {
 		return join(dataDir, "projects", projectId, "tasks");
 	}
@@ -147,7 +152,11 @@ export function projectTasksDir(dataDir: string, projectId: string, dataRoot?: s
  * Used for drift snapshots (pre-API-call messages[]) and other investigation
  * artifacts.
  */
-export function projectDebugDir(dataDir: string, projectId: string, dataRoot?: string): string {
+export function projectDebugDir(
+	dataDir: string,
+	projectId: string,
+	dataRoot?: string,
+): string {
 	if (!dataRoot || dataRoot === "@") {
 		return join(dataDir, "projects", projectId, "debug");
 	}
@@ -161,7 +170,9 @@ export function getEventStore(
 ): EventStore {
 	let store = ctx.eventStores.get(projectId);
 	if (!store) {
-		store = new EventStore(projectTasksDir(ctx.config.dataDir, projectId, ctx.config.dataRoot));
+		store = new EventStore(
+			projectTasksDir(ctx.config.dataDir, projectId, ctx.config.dataRoot),
+		);
 		ctx.eventStores.set(projectId, store);
 	}
 	return store;
@@ -213,7 +224,11 @@ export async function pruneSessionFiles(
 	projectId: string,
 	keepCount: number,
 ): Promise<{ pruned: number; remaining: number }> {
-	const tasksDir = projectTasksDir(ctx.config.dataDir, projectId, ctx.config.dataRoot);
+	const tasksDir = projectTasksDir(
+		ctx.config.dataDir,
+		projectId,
+		ctx.config.dataRoot,
+	);
 	try {
 		const files = await readdir(tasksDir).catch((e) => {
 			console.warn(`[helpers] Failed to read tasks dir ${tasksDir}:`, e);

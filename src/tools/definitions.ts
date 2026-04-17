@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { getImageDimensions } from "../image-dimensions.ts";
 import * as R from "../resource-registry.ts";
-import { defineTool, type AnyToolDef, type ToolDef } from "../tool-def.ts";
+import { defineTool } from "../tool-def.ts";
 import { executeBackgroundTool } from "./background.ts";
 import { executeBashWithTimeout } from "./bash.ts";
 import { jsSearch } from "./search.ts";
@@ -34,7 +34,9 @@ function getTaskCwd(projectId: string, taskId: string | null): string {
 		if (node?.cwd) return node.cwd;
 		if (node?.worktreePath) return node.worktreePath;
 	}
-	throw new Error(`No working directory for task ${taskId} in project ${projectId}`);
+	throw new Error(
+		`No working directory for task ${taskId} in project ${projectId}`,
+	);
 }
 
 /** Common bind params for all builtin tools (projectId + taskId). */
@@ -88,7 +90,7 @@ const bashTool = defineTool({
 		const runInBackground = args.run_in_background;
 		const foregroundTimeout = runInBackground
 			? 0
-			: Math.max((args.foreground_timeout) ?? 120000, 0);
+			: Math.max(args.foreground_timeout ?? 120000, 0);
 
 		const session = R.getSession(projectId, taskId);
 		const cwd = getTaskCwd(projectId, taskId);
@@ -251,7 +253,7 @@ const readFileTool = defineTool({
 			}
 		}
 
-		const offset = Math.max(1, (args.offset) ?? 1);
+		const offset = Math.max(1, args.offset ?? 1);
 		const limit = args.limit;
 		try {
 			const raw = readFileSync(path, "utf-8");
@@ -350,7 +352,7 @@ const editFileTool = defineTool({
 		const path = resolvePath(args.path, cwd);
 		const oldStr = args.old_string;
 		const newStr = args.new_string;
-		const replaceAll = (args.replace_all) ?? false;
+		const replaceAll = args.replace_all ?? false;
 		try {
 			if (!existsSync(path)) {
 				return textResult(`File not found: ${path}`, true);
@@ -401,7 +403,7 @@ const listFilesTool = defineTool({
 	},
 	handler: async (args) => {
 		const cwd = getTaskCwd(args.projectId, args.taskId);
-		const pattern = (args.pattern) ?? "*";
+		const pattern = args.pattern ?? "*";
 		try {
 			const glob = new Bun.Glob(pattern);
 			const files: string[] = [];
@@ -484,13 +486,13 @@ const searchTool = defineTool({
 		try {
 			const result = await jsSearch({
 				pattern: args.pattern,
-				searchPath: (args.path) ?? ".",
+				searchPath: args.path ?? ".",
 				glob: args.glob,
 				contextLines: args.context,
-				outputMode: (args.output_mode) ?? "content",
-				headLimit: Math.min((args.head_limit) ?? 50, 200),
-				caseInsensitive: (args.case_insensitive) ?? false,
-				multiline: (args.multiline) ?? false,
+				outputMode: args.output_mode ?? "content",
+				headLimit: Math.min(args.head_limit ?? 50, 200),
+				caseInsensitive: args.case_insensitive ?? false,
+				multiline: args.multiline ?? false,
 				excludedDirs: args.excluded_dirs,
 				cwd,
 			});

@@ -7,7 +7,12 @@
  */
 import { z } from "zod";
 import * as R from "../resource-registry.ts";
-import { defineTool, type InferParams, type ParamDefs, type ToolDef } from "../tool-def.ts";
+import {
+	defineTool,
+	type InferParams,
+	type ParamDefs,
+	type ToolDef,
+} from "../tool-def.ts";
 
 /**
  * Standard yield tool. No configuration needed.
@@ -52,10 +57,14 @@ const doneBaseParams = {
 	},
 };
 
-export function createDoneTool<E extends ParamDefs = Record<string, never>>(opts?: {
+export function createDoneTool<
+	E extends ParamDefs = Record<string, never>,
+>(opts?: {
 	extraParams?: E;
 	description?: string;
-	beforeDone?: (args: InferParams<typeof doneBaseParams & E>) => Promise<string | null>;
+	beforeDone?: (
+		args: InferParams<typeof doneBaseParams & E>,
+	) => Promise<string | null>;
 }) {
 	type P = typeof doneBaseParams & E;
 	const params = { ...doneBaseParams, ...(opts?.extraParams ?? {}) } as P;

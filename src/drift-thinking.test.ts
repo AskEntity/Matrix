@@ -22,15 +22,15 @@ import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ulid } from "./ulid.ts";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
-import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
+import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { ulid } from "./ulid.ts";
 
 // ── Realistic signature (long base64 string, matching production format) ──
 const MOCK_SIGNATURE_1 =
@@ -478,7 +478,11 @@ async function setupTestContext(): Promise<TestContext> {
 	const mockAPI = new ValidatingMockAPI();
 	const provider = createMockedProviderWithMock(mockAPI);
 	const projectId = ulid();
-	const appResult = createApp({ dataDir, agentProvider: provider, projects: [{ id: projectId, name: basename(projectDir), path: projectDir }] });
+	const appResult = createApp({
+		dataDir,
+		agentProvider: provider,
+		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
+	});
 
 	const tasksDir = join(projectDir, ".mxd", "tasks");
 	if (existsSync(tasksDir)) rmSync(tasksDir, { recursive: true });
@@ -604,7 +608,17 @@ async function recreateApp(
 	ctx: TestContext,
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedProviderWithMock(ctx.mockAPI);
-	const newApp = createApp({ dataDir: ctx.dataDir, agentProvider: provider, projects: [{ id: ctx.projectId, name: basename(ctx.projectDir), path: ctx.projectDir }] });
+	const newApp = createApp({
+		dataDir: ctx.dataDir,
+		agentProvider: provider,
+		projects: [
+			{
+				id: ctx.projectId,
+				name: basename(ctx.projectDir),
+				path: ctx.projectDir,
+			},
+		],
+	});
 	await newApp.autoResumeProjects();
 	newApp.markReady();
 	return newApp;

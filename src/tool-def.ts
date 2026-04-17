@@ -30,8 +30,16 @@ export type ParamDecl =
 /** Single param definition — schema type constrained by decl kind. */
 export type ParamDef =
 	| { schema: ZodTypeAny; decl: { kind: "explicit" }; description?: string }
-	| { schema: ZodTypeAny; decl: { kind: "bind"; from: "projectId" | "taskId" }; description?: string }
-	| { schema: z.ZodOptional<ZodTypeAny>; decl: { kind: "optional" }; description?: string };
+	| {
+			schema: ZodTypeAny;
+			decl: { kind: "bind"; from: "projectId" | "taskId" };
+			description?: string;
+	  }
+	| {
+			schema: z.ZodOptional<ZodTypeAny>;
+			decl: { kind: "optional" };
+			description?: string;
+	  };
 
 /** Map of parameter name → param definition */
 export type ParamDefs = Record<string, ParamDef>;

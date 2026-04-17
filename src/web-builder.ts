@@ -11,8 +11,8 @@
  * → single React instance → context sharing works.
  */
 
-import { existsSync, mkdirSync, writeFileSync, copyFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const REACT_EXTERNALS = [
 	"react",
@@ -25,16 +25,22 @@ const REACT_EXTERNALS = [
 /** Shared modules — built once, importmap'd, external in shell + plugin builds. */
 const SHARED_MODULES = [
 	"@mxd/auth-context", // web/auth-context.ts — single instance for React context
-	"@mxd/types",        // web/runtime-types.ts — runtime Event, TreeNode, QueueMessage etc.
+	"@mxd/types", // web/runtime-types.ts — runtime Event, TreeNode, QueueMessage etc.
 ];
 
 /** Paths to vendor shim source files (written to buildDir at build time). */
-const VENDOR_SHIMS: Record<string, { importPath: string; hasDefault: boolean }> = {
+const VENDOR_SHIMS: Record<
+	string,
+	{ importPath: string; hasDefault: boolean }
+> = {
 	react: { importPath: "react", hasDefault: true },
 	"react-dom": { importPath: "react-dom", hasDefault: true },
 	"react-dom-client": { importPath: "react-dom/client", hasDefault: false },
 	"react-jsx-runtime": { importPath: "react/jsx-runtime", hasDefault: false },
-	"react-jsx-dev-runtime": { importPath: "react/jsx-dev-runtime", hasDefault: false },
+	"react-jsx-dev-runtime": {
+		importPath: "react/jsx-dev-runtime",
+		hasDefault: false,
+	},
 };
 
 /** Map from bare specifier → vendor URL path for importmap. */
@@ -74,7 +80,10 @@ export async function buildWebAssets(opts: {
 	const { buildDir, shellEntry, plugins, projectRoot, minify } = opts;
 
 	// Clean previous build
-	try { const { rmSync } = await import("node:fs"); rmSync(buildDir, { recursive: true, force: true }); } catch {}
+	try {
+		const { rmSync } = await import("node:fs");
+		rmSync(buildDir, { recursive: true, force: true });
+	} catch {}
 
 	const vendorDir = join(buildDir, "vendor");
 	const appDir = join(buildDir, "app");
@@ -126,8 +135,16 @@ export async function buildWebAssets(opts: {
 
 	// ── Step 1b: Build shared modules (external React, importmap'd) ──
 	const sharedEntries = [
-		{ specifier: "@mxd/auth-context", entry: join(opts.projectRoot, "web", "auth-context.ts"), outName: "auth-context.js" },
-		{ specifier: "@mxd/types", entry: join(opts.projectRoot, "web", "runtime-types.ts"), outName: "runtime-types.js" },
+		{
+			specifier: "@mxd/auth-context",
+			entry: join(opts.projectRoot, "web", "auth-context.ts"),
+			outName: "auth-context.js",
+		},
+		{
+			specifier: "@mxd/types",
+			entry: join(opts.projectRoot, "web", "runtime-types.ts"),
+			outName: "runtime-types.js",
+		},
 	];
 
 	for (const shared of sharedEntries) {
@@ -142,12 +159,17 @@ export async function buildWebAssets(opts: {
 			minify,
 		});
 		if (!result.success) {
-			console.error(`[web-builder] Shared module ${shared.specifier} build failed:`, result.logs);
+			console.error(
+				`[web-builder] Shared module ${shared.specifier} build failed:`,
+				result.logs,
+			);
 		}
 	}
 
 	// Add shared modules to importmap
-	const importmap = { imports: { ...IMPORTMAP_ENTRIES } as Record<string, string> };
+	const importmap = {
+		imports: { ...IMPORTMAP_ENTRIES } as Record<string, string>,
+	};
 	for (const shared of sharedEntries) {
 		importmap.imports[shared.specifier] = `/vendor/shared/${shared.outName}`;
 	}
@@ -232,12 +254,8 @@ export async function buildWebAssets(opts: {
 	} catch {}
 
 	const totalOutputs =
-		vendorResult.outputs.length +
-		shellResult.outputs.length +
-		plugins.length;
-	console.log(
-		`[web-builder] Built ${totalOutputs} assets → ${buildDir}`,
-	);
+		vendorResult.outputs.length + shellResult.outputs.length + plugins.length;
+	console.log(`[web-builder] Built ${totalOutputs} assets → ${buildDir}`);
 
 	return {
 		buildDir,

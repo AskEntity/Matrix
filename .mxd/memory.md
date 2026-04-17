@@ -632,6 +632,9 @@ Root node stores branch at init. `baseBranch` required on worktree create (no fa
 - **Async JSONL writes**: `emitEvent` fire-and-forgets `eventStore.append()`. Flush before reading in tests.
 - **delete_task cascades**: Deletes all descendants AND session JSONL. Enforced: returns 400 with children.
 - **Abort signal leak**: After stop, old runAgentForNode settles async. catch/finally check `sessionWasReplaced` to suppress stale error events.
+- **TS6133 `_` prefix**: TypeScript's `noUnusedLocals` does NOT respect `_` prefix for local variables or destructured locals — only for function parameters. For unused destructured React state, use `const [, setX] = useState(...)` (skip the getter slot). For unused `const` locals, delete outright. The underscore-prefix hint in our prompts is a holdover that doesn't match TypeScript's actual behavior.
+- **`bun run check` auto-writes**: `bun run check` runs `biome check --write` and silently formats 70+ files. `bun run check:ci` is the non-write variant used by the pre-commit hook. When debugging lint, use `check:ci`. When committing formatting sweeps, use `check` and split format-only changes into a separate commit.
+- **Pre-commit hook disabled in worktrees**: `config.worktree` sets `core.hooksPath = /dev/null` in every worktree, so `git commit` in a sub-task skips the hook entirely. To verify the hook passes, run `bash /path/to/main/.hooks/pre-commit` manually. Only root-orchestrator commits on `main` are actually gated.
 
 ## Known Bugs (unfixed)
 
