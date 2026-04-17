@@ -1,11 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { resolveDataRoot as resolveLowLevel } from "./data-paths.ts";
 import {
 	checkDataRootCollisions,
 	effectiveDataRoot,
 	type PluginManifest,
-	resolveDataRoot,
 } from "./plugin.ts";
+
+// Convenience wrapper — plugin.ts used to host a manifest-oriented resolver;
+// after the dataRoot unification (Audit FU5) the canonical resolver lives in
+// data-paths.ts. This test keeps its original shape by wrapping it.
+function resolveFromManifest(
+	manifest: PluginManifest,
+	dataDir: string,
+	projectId: string,
+): string {
+	return resolveLowLevel(dataDir, projectId, effectiveDataRoot(manifest));
+}
 
 describe("plugin dataRoot", () => {
 	const dataDir = "/tmp/test-mxd";
@@ -19,7 +30,7 @@ describe("plugin dataRoot", () => {
 		};
 
 		expect(effectiveDataRoot(manifest)).toBe("@");
-		expect(resolveDataRoot(manifest, dataDir, projectId)).toBe(
+		expect(resolveFromManifest(manifest, dataDir, projectId)).toBe(
 			join(dataDir, "projects", projectId),
 		);
 	});
@@ -32,7 +43,7 @@ describe("plugin dataRoot", () => {
 		};
 
 		expect(effectiveDataRoot(manifest)).toBe("@/plugin/story1001");
-		expect(resolveDataRoot(manifest, dataDir, projectId)).toBe(
+		expect(resolveFromManifest(manifest, dataDir, projectId)).toBe(
 			join(dataDir, "projects", projectId, "plugin", "story1001"),
 		);
 	});

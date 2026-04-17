@@ -1,4 +1,3 @@
-import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -143,16 +142,11 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 		globalConfig: { ...(config.initialConfig ?? DEFAULT_CONFIG) },
 	};
 
-	// Ensure project data directories exist for injected projects.
-	// Daemon creates these via ProjectManager.register(); runtime ensures
-	// they exist when projects are injected directly (e.g. tests, worker init).
-	if (config.projects) {
-		for (const p of config.projects) {
-			const projectDir = join(config.dataDir, "projects", p.id);
-			mkdirSync(join(projectDir, "tasks"), { recursive: true });
-			mkdirSync(join(projectDir, "debug"), { recursive: true });
-		}
-	}
+	// NOTE: tasks/ and debug/ directories are NOT eagerly created here.
+	// EventStore's constructor and TaskTracker.save() mkdir on demand,
+	// respecting the worker's dataRoot. Pre-creating them hardcoded
+	// Matrix's "@" layout and would produce stale empty dirs at the wrong
+	// location for any plugin with a nested dataRoot.
 
 	/**
 	 * Get ScopeOpts for a project from the injected plugin builder.
