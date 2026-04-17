@@ -603,9 +603,31 @@ Tests are the single source of truth. Bottom-up: write tests → find simplest a
 
 ## System Prompt
 
-14 chapters. Two roles: root orchestrator, worker. Key principles: "ASK — NEVER SILENTLY FALL BACK", adversarial testing, fork = "changing jobs", memory callee-saved.
+**7 chapters + Staying Alive + Closing** (v2, rewritten for 4.7-era calibration). Core framings:
+- Three engagement modes (§3 Dialogue): Upward / User / Autonomous — decision authority varies, reporting threshold constant
+- Silent deliberation named as canonical failure mode + self-check ("if the person above you would only learn what you decided by reading your thinking...")
+- Tests as **current** truth (§5): Intent → Tests → Arch hierarchy; task is certificate of intent change; "absent a task certifying intent change, tests ARE the intent"
+- Memory as calling convention (§6): callee-saved inheritance
+- "fork" is the only allowed parent/child context; everywhere else positional (task above / sub task / ancestor)
 
-**Editing discipline**: prompt is for ALL Matrix users, not our project notebook. Matrix-specific rules → memory.md. Read the full prompt before editing.
+### Authorship rule — what goes in prompt vs memory
+
+System prompt is **universal** across all matrix projects. Each project has its own `memory.md`. Agents in OTHER matrix projects see: shared system prompt + THEIR memory.md. They do NOT see our memory.md, and they do NOT need Matrix's implementation details.
+
+- **System prompt content**: principles, roles, tool semantics, communication patterns, task lifecycle, craft — things that apply to ANY project using Matrix.
+- **memory.md content**: matrix-internal implementation details, project-specific architecture, pitfalls, design decisions — things meaningful only within THIS project.
+
+**The one matrix-internal detail system prompt IS allowed to expose**: the file path where pre-compaction events are preserved. Agents must be able to retrieve lost context after compaction; without the path, a compacted agent has no way to read their own history. Everything else matrix-internal goes to memory.md.
+
+### Pitfall: "avoid internal" ≠ "delete the concept"
+
+Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", agents DELETE the whole concept. Wrong. "Avoid internal" means **strip implementation-specific words, keep the agent-experience concept**. Example: the §6 Session history section — don't delete the memory/compaction block; rewrite without `JSONL` / `checkpoint` / type names, but keep the file path agents operationally need. Preserve what agents experience; remove what only implementers reason about.
+
+### Editing discipline
+
+- Read the full prompt before editing. Prompt is for ALL Matrix users, not our project notebook.
+- Matrix-specific rules → memory.md (this file), not prompt.
+- Principle over rule: 4.7 generalizes from framings better than from rule lists. Prefer "tests are our current truth" (principle that generates behavior) over "don't contort arch for old tests" (rule specifying one behavior). Keep explicit rules only when they protect a product property (e.g., git worktree invariants) — those stay as-is.
 
 ## evaluate_script Discipline
 
