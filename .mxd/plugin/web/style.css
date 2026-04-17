@@ -946,10 +946,12 @@ select {
 	user-select: none;
 }
 
-/* Sidebar expand button — floats on the left edge of the content area
-   when the sidebar is collapsed. Acts like VSCode's "show sidebar" icon.
-   The parent `.mxd-has-collapsed-sidebar` class shifts the first header
-   row right so the button doesn't overlap with tabs or view toggle. */
+/* Sidebar toggle button — always-visible control on the left edge of the
+   content area. Hidden only in fullscreen mode. Anchored top-left on
+   every viewport so users never lose the entry point — discoverability
+   matters more than pixel purity (users may not know the drag-handle
+   trick exists). On mobile the button toggles the overlay drawer; on
+   desktop it toggles the collapse state. */
 .mxd-sidebar-expand-btn {
 	position: absolute;
 	top: 7px;
@@ -981,12 +983,12 @@ select {
 	border-color: var(--border);
 }
 
-/* When the sidebar is collapsed, reserve space on the left edge of the
-   top row (tab-bar, task-meta-bar, or view-toggle panel-header — whichever
-   comes first) so the floating expand button doesn't overlap its content.
-   The button itself is a <button>, so `div:first-of-type` reliably targets
-   the first div child regardless of whether the button is rendered. */
-.mxd-has-collapsed-sidebar .mxd-content > div:first-of-type {
+/* Reserve space on the left edge of the first header row inside the
+   content area so the always-visible toggle button doesn't overlap
+   tabs / task-meta-bar / view-toggle. The button is a <button>, so
+   `div:first-of-type` reliably targets the first div child. Applies
+   on all viewports because the button is always visible. */
+.mxd-content > div:first-of-type {
 	padding-left: 34px;
 }
 
