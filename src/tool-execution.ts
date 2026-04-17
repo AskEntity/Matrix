@@ -157,7 +157,10 @@ export function classifyUpstreamError(e: unknown): {
 }
 
 /** Format a classified error for the activity log (headline + details). */
-export function formatUpstreamError(e: unknown, prefix = "Agent error"): string {
+export function formatUpstreamError(
+	e: unknown,
+	prefix = "Agent error",
+): string {
 	const c = classifyUpstreamError(e);
 	// Trim the raw to 300 chars so 5KB JSON blobs don't bloat the log.
 	const trimmed = c.raw.length > 300 ? `${c.raw.slice(0, 300)}…` : c.raw;
