@@ -258,9 +258,45 @@ Breakpoint on **last** user message (not second-to-last). Last message sent to A
 ### await_background Deleted
 await blocked entire agent loop. yield is the one path — accepts all message types. -360 lines.
 
-## 70K Post-Restart Cache Miss (RESOLVED)
+## 70K Post-Restart Cache Miss (RESOLVED — correct diagnosis 2026-04-16, bit-exact proof)
 
-Caused by Anthropic server-side cache injection (~30% extra tokens, invisible to client). Confirmed via count_tokens + replay. NOT a Matrix bug. Injection invisible to client, explains all previously-unexplained cache misses. `inputTokens` = `totalContextTokens` (input + cache_creation + cache_read).
+Caused by **Anthropic occasionally routing our OAuth traffic to what was then the unreleased Opus 4.7 tokenizer/model**. NOT a Matrix bug. The previous hypothesis ("server-side system prompt injection") was wrong — corrected via bit-exact replay experiment.
+
+**Proof method** (task 01KPC6VS500NNABTTC5606A8P9):
+1. Reset worktree to commit 8e49c1a (2026-04-04, the commit running when miss was observed)
+2. Captured two JSONL states around the transition: reqA at ts=1775332443540 (20:54:03 PT, 220,712 tokens observed), reqB at ts=1775333012661 (21:03:32 PT, 284,800 tokens observed, 0 cache_read)
+3. Added `MXD_CAPTURE_BODY` env hook to intercept `client.messages.stream` → save request body to file
+4. Added `MXD_REPLAY_DATA_DIR` + `MXD_REPLAY_PORT` to run April-4 daemon against replay JSONL
+5. Daemon's own buildSessionRepair + walker + adapter.callAPI produced bit-identical request bodies to what was sent April 4
+6. Called today's count_tokens API with those captured bodies
+
+**Results — bit-exact match**:
+| Body | Model | Historical | Today | Match |
+|------|-------|------------|-------|-------|
+| reqA | opus-4-6 | 220,712 | 220,712 | **bit-exact** |
+| reqB | opus-4-7 | 284,800 | 284,800 | **bit-exact** |
+
+Cross-validation (same body, two tokenizers today): reqA on 4.6 = 220,712, reqA on 4.7 = 284,471. Pure tokenizer ratio = 1.2889x = **+28.9%** on identical content.
+
+**What this proves**: Two different tokenizers were used on the same session 9 minutes apart:
+- 20:54:03 PT: tokenizer matches today's opus-4-6 output exactly → 220,712
+- 21:03:32 PT (9m 29s later, same session, ~1K new events): tokenizer matches today's opus-4-7 output exactly → 284,800
+- `response.model` continued reporting "claude-opus-4-6" — the swap was client-invisible
+
+Since tokenizers are typically bound to model weights (embedding layer dimensions match vocabulary), this strongly suggests the underlying model was swapped to opus-4-7 during that window. Other interpretations are possible (e.g., preprocessor-only swap) but less likely. Bottom line: **we suspect we were hot-routed to opus-4-7 while declaring opus-4-6**.
+
+Opus 4.7 GA was 2026-04-16 — **12 days AFTER our observation**. During that period, Anthropic occasionally routed our requests to opus-4-7 while we declared model="claude-opus-4-6". Routing was sporadic (per-account, per-session) and generally undetectable client-side — the only reliable signal is a cache-miss event where the tokenizer signature shifts. Billing semantics are unknown.
+
+**Intermediate gotcha**: On first replay attempt, daemon produced 210,197 (not 220,712). Gap = 10,515 tokens = compacted_resume content. Root cause: commit c5722b6 (2026-04-12) changed `type: "compacted_resume"` event shape → `type: "message" + body.source: "compacted_resume"`. Migration rewrote old events. April-4 walker deferred new-format (has `id`, no `messages_consumed`) and dropped the content. Pre-migration backup at `~/.mxd copy/sessions/.../events.jsonl.bak` (2026-04-03 18:48) confirmed old format. Fix: 10-line patch to April-4 walker.
+
+**Lesson**: our JSONL is a log — it survives through format migrations but loses bit-fidelity against the code that wrote it. For reproducibility, preserve pre-migration snapshots when changing persisted event shapes.
+
+**Observable side effects when routed to 4.7**:
+- Unexplained cache misses when tokenizer differed between prefix-write and new-call
+- ~29% higher input token counts vs 4.6 baseline for same content
+- Possibly different response quality/style (not measured — indistinguishable from normal opus-4-6 variance unless compared side-by-side)
+
+**Why this matters**: Silent model routing means `response.model` cannot be trusted as ground truth for which model actually served a request. A client declaring model X may receive model Y's output without any disclosed indicator. Tokenizer ratio is the most reliable post-hoc signal, but only visible at cache-transition moments.
 
 ## Pre-API-Call Debug Snapshot (v2: per-traceId epoch)
 
