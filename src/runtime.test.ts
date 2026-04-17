@@ -4155,13 +4155,17 @@ describe("project directory structure", () => {
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	test("new project registration creates tasks/ and debug/ directories", async () => {
+	test("new project registration does NOT eagerly create tasks/ and debug/", async () => {
+		// Audit FU5: lazy creation. createApp no longer mkdirs tasks/ and
+		// debug/ at a hardcoded Matrix location — EventStore and TaskTracker
+		// create them at the plugin's dataRoot when they first write. This
+		// test is the regression guard.
 		const { existsSync: exists } = await import("node:fs");
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
 		createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 
-		expect(exists(join(dataDir, "projects", project.id, "tasks"))).toBe(true);
-		expect(exists(join(dataDir, "projects", project.id, "debug"))).toBe(true);
+		expect(exists(join(dataDir, "projects", project.id, "tasks"))).toBe(false);
+		expect(exists(join(dataDir, "projects", project.id, "debug"))).toBe(false);
 	});
 
 	test("EventStore created for a project writes under projects/<id>/tasks/", async () => {
@@ -4199,5 +4203,44 @@ describe("project directory structure", () => {
 		expect(
 			exists(join(dataDir, "sessions", project.id, "sid-1.events.jsonl")),
 		).toBe(false);
+	});
+
+	test("plugin with dataRoot '@/custom' lands data in the plugin subdir, NOT Matrix's path", async () => {
+		// Audit FU5: projectDebugDir / projectTasksDir / getTracker MUST respect
+		// ctx.config.dataRoot. A plugin with dataRoot="@/custom" must write its
+		// tasks/ and tree.json under projects/<id>/custom/, not under the
+		// Matrix-canonical projects/<id>/.
+		const { existsSync: exists } = await import("node:fs");
+		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
+		const result = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+			projects: [project],
+			dataRoot: "@/custom",
+		});
+
+		const { getEventStore, getTracker } = await import("./runtime/helpers.ts");
+		const store = getEventStore(result.ctx, project.id);
+		await store.append("sid-x", {
+			type: "assistant_text",
+			content: "custom",
+			taskId: "sid-x",
+			ts: 1,
+		});
+		await store.flush();
+		const tracker = await getTracker(result.ctx, project.id);
+		await tracker.save();
+
+		const pluginRoot = join(dataDir, "projects", project.id, "custom");
+		const matrixRoot = join(dataDir, "projects", project.id);
+
+		expect(exists(join(pluginRoot, "tasks", "sid-x.jsonl"))).toBe(true);
+		expect(exists(join(pluginRoot, "tree.json"))).toBe(true);
+
+		// Critical: the Matrix-canonical path must NOT exist for this data.
+		// A bug where projectDebugDir / projectTasksDir ignored dataRoot would
+		// quietly write to the wrong dir — this guards against regression.
+		expect(exists(join(matrixRoot, "tasks", "sid-x.jsonl"))).toBe(false);
+		expect(exists(join(matrixRoot, "tree.json"))).toBe(false);
 	});
 });

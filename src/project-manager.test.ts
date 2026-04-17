@@ -34,16 +34,21 @@ describe("ProjectManager", () => {
 			expect(project.createdAt).toBeTruthy();
 		});
 
-		test("creates daemon-side data directories", async () => {
-			const projectPath = join(tempDir, "data-dirs");
+		test("does NOT eagerly create tasks/debug (lazy creation respects plugin dataRoot)", async () => {
+			// After Audit FU5: project-manager no longer eagerly creates
+			// tasks/ and debug/ at the Matrix hardcoded location. EventStore
+			// and TaskTracker create them on first write, at the plugin's
+			// dataRoot. Pre-creating here produced stale empty dirs at the
+			// wrong path for any plugin with `dataRoot !== "@"`.
+			const projectPath = join(tempDir, "no-eager");
 			await mkdir(projectPath, { recursive: true });
 			const project = await pm.init(projectPath);
 
 			expect(existsSync(join(dataDir, "projects", project.id, "tasks"))).toBe(
-				true,
+				false,
 			);
 			expect(existsSync(join(dataDir, "projects", project.id, "debug"))).toBe(
-				true,
+				false,
 			);
 		});
 
@@ -125,6 +130,9 @@ describe("ProjectManager", () => {
 		await mkdir(join(tempDir, "delete-me"), { recursive: true });
 		const project = await pm.init(join(tempDir, "delete-me"));
 		const projectDataDir = join(dataDir, "projects", project.id);
+		// Simulate lazy dir creation that normally happens when EventStore /
+		// TaskTracker write. Audit FU5 removed pm.init's eager mkdir.
+		await mkdir(join(projectDataDir, "tasks"), { recursive: true });
 		expect(existsSync(projectDataDir)).toBe(true);
 
 		await pm.delete(project.id);
