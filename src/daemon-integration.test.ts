@@ -354,9 +354,12 @@ describe("daemon integration: project CRUD coverage", () => {
 
 	test("GET /projects includes pathExists field", async () => {
 		const res = await app.fetch(new Request("http://localhost/projects"));
-		const projects = await res.json();
-		const proj = projects.find((p: any) => p.id === projectId);
-		expect(proj.pathExists).toBeDefined();
+		const projects = (await res.json()) as Array<{
+			id: string;
+			pathExists?: boolean;
+		}>;
+		const proj = projects.find((p) => p.id === projectId);
+		expect(proj?.pathExists).toBeDefined();
 	});
 
 	test("PATCH /projects/:id updates name", async () => {

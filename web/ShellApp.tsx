@@ -113,7 +113,7 @@ function AuthenticatedShell() {
 
 	useEffect(() => {
 		refresh();
-	}, []);
+	}, [refresh]);
 
 	// ── Connected check via health ──
 	useEffect(() => {

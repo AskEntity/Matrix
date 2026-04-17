@@ -97,7 +97,7 @@ export const TaskDetail = memo(function TaskDetail({
 			}
 			setEditingTitle(false);
 		},
-		[projectId, node.id, node.title],
+		[projectId, node.id, node.title, authFetch],
 	);
 
 	const saveDescription = useCallback(
@@ -111,7 +111,7 @@ export const TaskDetail = memo(function TaskDetail({
 			}
 			setEditingDesc(false);
 		},
-		[projectId, node.id, node.description],
+		[projectId, node.id, node.description, authFetch],
 	);
 
 	if (compact) {

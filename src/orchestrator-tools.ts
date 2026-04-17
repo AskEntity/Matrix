@@ -33,12 +33,7 @@ import {
 import { getDescendantIds, slugify } from "./task-utils.ts";
 import type { Auth } from "./tool-auth.ts";
 import { checkPermission } from "./tool-auth.ts";
-import {
-	type AnyToolDef,
-	defineTool,
-	type ToolDef,
-	toToolDefinition,
-} from "./tool-def.ts";
+import { defineTool, toToolDefinition } from "./tool-def.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
 import { isFolder, isTask, stripSession, type TaskStatus } from "./types.ts";

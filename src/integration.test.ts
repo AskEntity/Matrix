@@ -405,10 +405,6 @@ describe("Integration: full stack with mock API", () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
 
-		// DEBUG: verify root has cwd
-		const _tracker = await ctx.app.getTracker(ctx.projectId);
-		const _root = _tracker.getTask(_tracker.rootNodeId);
-
 		// Write a file to read
 		await Bun.write(join(ctx.projectDir, "test-file.txt"), "file_content_here");
 

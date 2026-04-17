@@ -77,7 +77,7 @@ async function startRootAgent(
 describe("daemon health", () => {
 	test("GET /health returns ok with version and uptime", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-health-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const { app } = createApp({ dataDir, agentProvider: mockProvider });
 
 		const res = await app.request("/health");
 		expect(res.status).toBe(200);
@@ -92,7 +92,7 @@ describe("daemon health", () => {
 
 	test("GET /health without check_model has no model field", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-health-nomodel-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const { app } = createApp({ dataDir, agentProvider: mockProvider });
 
 		const res = await app.request("/health");
 		expect(res.status).toBe(200);
@@ -106,7 +106,7 @@ describe("daemon health", () => {
 
 	test("GET /health?check_model=true returns model status", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-health-model-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const { app } = createApp({ dataDir, agentProvider: mockProvider });
 
 		const res = await app.request("/health?check_model=true");
 		expect(res.status).toBe(200);
@@ -138,7 +138,7 @@ describe("daemon health", () => {
 
 	test("GET /unknown returns 404", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-404-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const { app } = createApp({ dataDir, agentProvider: mockProvider });
 
 		const res = await app.request("/unknown");
 		expect(res.status).toBe(404);
@@ -150,7 +150,7 @@ describe("daemon health", () => {
 describe("daemon version", () => {
 	test("GET /version returns version, nodeCount, and projectCount", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-version-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const { app } = createApp({ dataDir, agentProvider: mockProvider });
 
 		const res = await app.request("/version");
 		expect(res.status).toBe(200);
@@ -170,7 +170,7 @@ describe("daemon version", () => {
 describe("daemon stats", () => {
 	test("GET /stats returns uptime, requestCount, projectCount, and taskCounts", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-stats-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const { app } = createApp({ dataDir, agentProvider: mockProvider });
 
 		const res = await app.request("/stats");
 		expect(res.status).toBe(200);
@@ -196,7 +196,7 @@ describe("daemon stats", () => {
 
 	test("GET /stats requestCount increments with each request", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-stats2-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const { app } = createApp({ dataDir, agentProvider: mockProvider });
 
 		const res1 = await app.request("/stats");
 		const body1 = (await res1.json()) as StatsResponse;
@@ -213,7 +213,7 @@ describe("daemon stats", () => {
 
 	test("GET /stats uptime is in seconds not milliseconds", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-stats3-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const { app } = createApp({ dataDir, agentProvider: mockProvider });
 
 		const res = await app.request("/stats");
 		const body = (await res.json()) as StatsResponse;
@@ -2441,7 +2441,7 @@ describe("task message API — agent launch", () => {
 
 	test("POST /tasks/:nodeId/message returns 404 for unknown project", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-oa3d-"));
-		const { app, pm, markReady } = createApp({
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
 		});
@@ -3545,7 +3545,7 @@ describe("POST /projects/:id/restart", () => {
 	});
 
 	test("returns 404 when project not found", async () => {
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const { app } = createApp({ dataDir, agentProvider: mockProvider });
 
 		const res = await app.request("/projects/nonexistent/restart", {
 			method: "POST",
@@ -3600,7 +3600,7 @@ describe("POST /projects/:id/restart", () => {
 			name: "test",
 			path: join(dataDir, "restart-proj"),
 		};
-		const { app, pm, markReady } = createApp({
+		const { app, markReady } = createApp({
 			dataDir,
 			agentProvider: restartProvider,
 			projects: [proj],
@@ -4158,11 +4158,7 @@ describe("project directory structure", () => {
 	test("new project registration creates tasks/ and debug/ directories", async () => {
 		const { existsSync: exists } = await import("node:fs");
 		const project = { id: ulid(), name: basename(tempDir), path: tempDir };
-		const result = createApp({
-			dataDir,
-			agentProvider: mockProvider,
-			projects: [project],
-		});
+		createApp({ dataDir, agentProvider: mockProvider, projects: [project] });
 
 		expect(exists(join(dataDir, "projects", project.id, "tasks"))).toBe(true);
 		expect(exists(join(dataDir, "projects", project.id, "debug"))).toBe(true);

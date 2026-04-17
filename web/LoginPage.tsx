@@ -140,8 +140,10 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 						<div className="mxd-login-logo">
 							<IconHexagon size={32} />
 						</div>
-						<h1 className="mxd-login-title">Matrix</h1>
-						<p className="mxd-login-tagline">Autonomous agent orchestration</p>
+						<h1 className="mxd-login-title">{"Matrix"}</h1>
+						<p className="mxd-login-tagline">
+							{"Autonomous agent orchestration"}
+						</p>
 					</div>
 					<div className="mxd-login-brand-decoration" />
 				</div>
@@ -155,7 +157,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 						</div>
 					) : (
 						<>
-							<h2 className="mxd-login-auth-title">Authenticate</h2>
+							<h2 className="mxd-login-auth-title">{"Authenticate"}</h2>
 							<p className="mxd-login-auth-desc">
 								Verify your identity with a challenge-response handshake.
 							</p>

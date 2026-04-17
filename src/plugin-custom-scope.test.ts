@@ -17,7 +17,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
-import { type AnyToolDef, defineTool, toToolDefinition } from "./tool-def.ts";
+import { defineTool, toToolDefinition } from "./tool-def.ts";
 import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
 import type { TaskNode } from "./types.ts";
 import { ulid } from "./ulid.ts";
