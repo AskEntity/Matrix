@@ -1,56 +1,19 @@
 /**
- * Matrix plugin types.
+ * Matrix plugin types — re-exports from the shared @mxd/types module.
  *
- * Runtime types: re-exported from @mxd/types (importmap shared module).
- * Matrix-specific types: defined here.
+ * Single source of truth lives in src/types.ts (exposed to plugins via
+ * web/runtime-types.ts → @mxd/types importmap entry). Re-exporting here
+ * keeps the plugin's existing import surface (`from "./types.ts"`) while
+ * eliminating structural drift between src and plugin type definitions.
  */
-
-// Runtime types — shared via importmap, type-only in compiled JS
-export type { BaseTaskNode, Event, QueueMessage } from "@mxd/types";
-
-// Matrix-specific types
-
-export type TaskStatus =
-	| "draft"
-	| "pending"
-	| "in_progress"
-	| "verify"
-	| "failed"
-	| "closed";
-
-export interface FolderNode {
-	id: string;
-	title: string;
-	parentId: string | null;
-	children: string[];
-	type: "folder";
-}
-
-export interface TaskNode {
-	id: string;
-	title: string;
-	description: string;
-	status: TaskStatus;
-	parentId: string | null;
-	children: string[];
-	branch: string | null;
-	worktreePath: string | null;
-	cwd: string | null;
-	costUsd: number;
-	budgetUsd?: number;
-	editedBy: "user" | "agent";
-	color?: string;
-	createdAt: string;
-	updatedAt: string;
-	type?: "task";
-}
-
-export type TreeNode = TaskNode | FolderNode;
-
-export function isFolder(node: TreeNode): node is FolderNode {
-	return node.type === "folder";
-}
-
-export function isTask(node: TreeNode): node is TaskNode {
-	return node.type !== "folder";
-}
+export {
+	type BaseTaskNode,
+	type Event,
+	type FolderNode,
+	isFolder,
+	isTask,
+	type QueueMessage,
+	type TaskNode,
+	type TaskStatus,
+	type TreeNode,
+} from "@mxd/types";

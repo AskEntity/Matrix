@@ -11,14 +11,13 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { RuntimeContext, SSEClient } from "./context.ts";
+import type { RuntimeContext } from "./context.ts";
 import { broadcast, subscribeToEvents } from "./event-system.ts";
 
 function makeCtx(): RuntimeContext {
 	return {
-		sseClients: new Set<SSEClient>(),
 		eventSubscribers: new Map(),
-		// deliberately cast — tests only touch the two fields above
+		// deliberately cast — tests only touch eventSubscribers
 	} as unknown as RuntimeContext;
 }
 

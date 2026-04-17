@@ -8,7 +8,7 @@ import {
 	IconHexagon,
 	IconLogout,
 	IconPlus,
-} from "./icons.tsx";
+} from "../icons.tsx";
 import type { Project } from "./types.ts";
 
 export const AppHeader = memo(function AppHeader({

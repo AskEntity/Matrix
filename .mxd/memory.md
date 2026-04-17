@@ -448,11 +448,6 @@ Each project is now a self-contained folder:
     debug/                    (empty; drift snapshots etc.)
 ```
 
-### Migration
-- `src/storage-migration.ts` → `migrateStorageLayout(dataDir)` runs at daemon startup (inside `autoResumeProjects`).
-- Idempotent, crash-safe: move `.events.jsonl` → `.jsonl`, skip files already at destination, remove emptied old dirs.
-- No-op after first successful run (old `sessions/` directory is gone).
-
 ### Path helper
 - `projectTasksDir(dataDir, projectId)` in `daemon/helpers.ts` = `{dataDir}/projects/{projectId}/tasks/`.
 - `getEventStore` uses this. Tests use `join(dataDir, "projects", projectId, "tasks")` directly.
@@ -761,3 +756,25 @@ Worker's read-only project registry. `sync(projects)` from daemon; `get`/`list`/
 - Runtime throws if `buildScopeOpts` not provided (no silent fallback)
 - Shell web UI (`web/`) is auth + project/scope selector. Plugin UI via `React.lazy(() => import(pluginWebPath))` (not iframe).
 
+
+## Audit FU8 Dead-Code Sweep (2026-04-17)
+
+Consolidated cleanup of items flagged by the 12-audit review:
+
+- **Shared `src/version.ts`** for VERSION + GIT_HASH — was duplicated in daemon.ts + runtime.ts.
+- **Worker-side SSE ring buffer deleted** — daemon owns SSE (seqId, buffer, fanout). Worker just calls `onBroadcast`; daemon serializes + fans out. Removes triple-JSON-serialize path.
+- **`ctx.sseClients` removed from RuntimeContext** — worker never had SSE clients attached.
+- **`persistent-queue.ts` deleted** — dead code that bypassed the unified `projects/<id>/` storage layout.
+- **`scope: "project"` union variant dropped** from PluginManifest (only "global" is implemented). Re-introduce via task when a real per-project plugin appears.
+- **`family` PermissionMode dropped** (zero call sites). `send_message` still walks parent/child manually; when we finally apply a shared mode there, re-introduce.
+- **`@mxd/types` is now the plugin's single source** of TaskNode / FolderNode / TreeNode / TaskStatus / isFolder / isTask — `.mxd/plugin/web/types.ts` re-exports from it instead of redeclaring. `src/types.ts` is the one truth.
+- **Shell icon set reduced** from 19 to 7 in `web/icons.tsx`. `web/components/icons.tsx` (381 lines duplicated from plugin) deleted.
+- **`DaemonConfig` renamed to `RuntimeConfig`** in `runtime/context.ts` — the type configures the worker runtime, not the daemon. Old name re-exported from `runtime.ts` as a type alias for back-compat.
+- **`SystemPrompt` type moved** to `runtime/context.ts` (plugin-agnostic); `system-prompts.ts` re-exports for back-compat.
+- **ShellApp tests made hermetic** — no more `resolve(".")` (CWD-dependent). Tests derive matrix-repo path from `import.meta.url`.
+- **`_isYield` field removed** from yield prefab — yield detection is by name.
+- **`buildMatrixScopeOpts` fallback dropped** from scope-worker — plugin contract is `buildScopeOpts` or `default`.
+- **`worker-api.ts` reduced** to `SyncMap` + `SyncMessage` (everything else was declared-and-never-imported).
+- **JSDoc cleanups**: orphan comments on ScopeOpts/BaseDoneData, duplicate JSDoc on computeDepth + RunAgentOpts, "extracted for plugin reuse" that was never exported, `stripEventForUI` transitional-fix note.
+
+Net: ~880 lines deleted, 0 test failures, no functional behavior change.
