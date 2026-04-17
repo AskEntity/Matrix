@@ -14,7 +14,7 @@
  * Those live in the worker.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { Hono } from "hono";
@@ -25,7 +25,11 @@ import {
 	type MatrixConfig,
 	saveGlobalConfig,
 } from "./config.ts";
-import { checkDataRootCollisions, type PluginManifest } from "./plugin.ts";
+import {
+	checkDataRootCollisions,
+	type PluginManifest,
+	validatePluginManifest,
+} from "./plugin.ts";
 import { ProjectManager } from "./project-manager.ts";
 import type { SyncMap } from "./runtime/worker-api.ts";
 import { ulid } from "./ulid.ts";
@@ -399,25 +403,34 @@ export async function createDaemon(opts: {
 	for (const project of pm.list()) {
 		const pluginDir = join(project.path, ".mxd", "plugin");
 		const pluginIndex = join(pluginDir, "index.ts");
-		if (existsSync(pluginIndex)) {
-			try {
-				const mod = await import(pluginIndex);
-				const manifest = (mod.default ?? mod) as PluginManifest;
-				registeredPlugins.push({
-					...manifest,
-					pluginRoot: pluginDir,
-					projectId: project.id,
-					resolvedWebPath: manifest.web
-						? resolve(pluginDir, manifest.web)
-						: undefined,
-				});
-			} catch (e) {
-				console.warn(`[daemon] Failed to load plugin from ${project.name}:`, e);
-			}
+		if (!existsSync(pluginIndex)) continue;
+		let manifest: PluginManifest;
+		try {
+			const mod = await import(pluginIndex);
+			manifest = (mod.default ?? mod) as PluginManifest;
+		} catch (e) {
+			// Import failure is recoverable — the plugin is broken, the daemon
+			// continues without it. Other plugins may still work.
+			console.warn(`[daemon] Failed to load plugin from ${project.name}:`, e);
+			continue;
 		}
+		// Malformed dataRoot is NOT recoverable — failing here is the point.
+		// An attacker-controlled manifest with `dataRoot: "@/../etc"` must not
+		// silently be skipped, or the security invariant degrades to "first
+		// legitimate plugin wins, malicious ones still run alongside".
+		validatePluginManifest(manifest);
+		registeredPlugins.push({
+			...manifest,
+			pluginRoot: pluginDir,
+			projectId: project.id,
+			resolvedWebPath: manifest.web
+				? resolve(pluginDir, manifest.web)
+				: undefined,
+		});
 	}
 
-	// Check for dataRoot collisions — two plugins writing to the same directory
+	// Check for dataRoot collisions — two plugins writing to the same directory.
+	// Runs after per-manifest validation so the inputs here are already canonical.
 	const collision = checkDataRootCollisions(registeredPlugins);
 	if (collision) {
 		throw new Error(collision);
@@ -574,13 +587,11 @@ export async function createDaemon(opts: {
 				}
 			}
 
-			// Create data directories before syncing to worker
-			mkdirSync(join(dataDir, "projects", project.id, "tasks"), {
-				recursive: true,
-			});
-			mkdirSync(join(dataDir, "projects", project.id, "debug"), {
-				recursive: true,
-			});
+			// tasks/ and debug/ directories are NOT eagerly created here.
+			// EventStore's constructor and TaskTracker.save() mkdir on demand,
+			// respecting the owning plugin's dataRoot. Creating them eagerly at
+			// `projects/<id>/` hardcoded Matrix's "@" layout — wrong for any
+			// plugin with a nested dataRoot.
 			syncProjects();
 			return c.json(project, 201);
 		} catch (e) {

@@ -2,14 +2,37 @@
  * TDD: dataRoot determines where each plugin's data lives.
  *
  * Matrix (dataRoot: "@") → projects/<id>/tree.json, projects/<id>/tasks/
- * story1001 (default @/plugin/story1001) → projects/<id>/plugin/story1001/tree.json, projects/<id>/plugin/story1001/tasks/
+ * story1001 (default @/plugin/story1001) →
+ *   projects/<id>/plugin/story1001/tree.json, projects/<id>/plugin/story1001/tasks/
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { effectiveDataRoot, resolveDataRoot } from "./plugin.ts";
+import {
+	projectTasksDir,
+	resolveDataRoot as resolveLowLevel,
+} from "./data-paths.ts";
+import { effectiveDataRoot } from "./plugin.ts";
+
+// Convenience wrapper for manifest-oriented tests.
+type ManifestLike = {
+	name: string;
+	scope?: "global";
+	dataRoot?: string;
+};
+function resolveFromManifest(
+	manifest: ManifestLike,
+	dataDir: string,
+	projectId: string,
+): string {
+	return resolveLowLevel(
+		dataDir,
+		projectId,
+		effectiveDataRoot({ scope: "global", ...manifest }),
+	);
+}
 
 describe("dataRoot path resolution", () => {
 	const matrixManifest = {
@@ -21,33 +44,33 @@ describe("dataRoot path resolution", () => {
 
 	test("matrix dataRoot '@' resolves to project root", () => {
 		expect(effectiveDataRoot(matrixManifest)).toBe("@");
-		const resolved = resolveDataRoot(matrixManifest, "/data", "proj1");
+		const resolved = resolveFromManifest(matrixManifest, "/data", "proj1");
 		expect(resolved).toBe("/data/projects/proj1");
 	});
 
 	test("story1001 default dataRoot resolves to plugin subdirectory", () => {
 		expect(effectiveDataRoot(storyManifest)).toBe("@/plugin/story1001");
-		const resolved = resolveDataRoot(storyManifest, "/data", "proj1");
+		const resolved = resolveFromManifest(storyManifest, "/data", "proj1");
 		expect(resolved).toBe("/data/projects/proj1/plugin/story1001");
 	});
 
 	test("tree.json path uses resolved dataRoot", () => {
-		const matrixRoot = resolveDataRoot(matrixManifest, "/data", "proj1");
+		const matrixRoot = resolveFromManifest(matrixManifest, "/data", "proj1");
 		expect(join(matrixRoot, "tree.json")).toBe(
 			"/data/projects/proj1/tree.json",
 		);
 
-		const storyRoot = resolveDataRoot(storyManifest, "/data", "proj1");
+		const storyRoot = resolveFromManifest(storyManifest, "/data", "proj1");
 		expect(join(storyRoot, "tree.json")).toBe(
 			"/data/projects/proj1/plugin/story1001/tree.json",
 		);
 	});
 
 	test("tasks dir uses resolved dataRoot", () => {
-		const matrixRoot = resolveDataRoot(matrixManifest, "/data", "proj1");
+		const matrixRoot = resolveFromManifest(matrixManifest, "/data", "proj1");
 		expect(join(matrixRoot, "tasks")).toBe("/data/projects/proj1/tasks");
 
-		const storyRoot = resolveDataRoot(storyManifest, "/data", "proj1");
+		const storyRoot = resolveFromManifest(storyManifest, "/data", "proj1");
 		expect(join(storyRoot, "tasks")).toBe(
 			"/data/projects/proj1/plugin/story1001/tasks",
 		);
@@ -69,17 +92,16 @@ describe("dataRoot integration: two plugins write to separate directories", () =
 	});
 
 	test("matrix and story1001 write tree.json and JSONL to different paths", async () => {
-		const { resolveDataRoot: resolve } = await import("./plugin.ts");
 		const { TaskTracker } = await import("./task-tracker.ts");
 		const { EventStore } = await import("./event-store.ts");
 
 		// Resolve data roots
-		const matrixRoot = resolve(
+		const matrixRoot = resolveFromManifest(
 			{ name: "matrix", scope: "global", dataRoot: "@" },
 			dataDir,
 			projectId,
 		);
-		const storyRoot = resolve(
+		const storyRoot = resolveFromManifest(
 			{ name: "story1001", scope: "global" },
 			dataDir,
 			projectId,
@@ -174,9 +196,6 @@ describe("dataRoot integration: two plugins write to separate directories", () =
 
 describe("runtime helpers use dataRoot (not hardcoded)", () => {
 	test("projectTasksDir accepts dataRoot parameter", () => {
-		const { projectTasksDir } =
-			require("./runtime/helpers.ts") as typeof import("./runtime/helpers.ts");
-
 		// Default (no dataRoot) → projects/<id>/tasks/
 		const defaultPath = projectTasksDir("/data", "proj1");
 		expect(defaultPath).toBe(join("/data", "projects", "proj1", "tasks"));

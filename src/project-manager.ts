@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
+import { validateProjectId } from "./data-paths.ts";
 import type { Project } from "./types.ts";
 import { ulid } from "./ulid.ts";
 
@@ -23,6 +24,10 @@ export class ProjectManager {
 			const raw = await readFile(metaPath, "utf-8");
 			const entries = JSON.parse(raw) as Project[];
 			for (const p of entries) {
+				// Defence in depth: refuse to load a projects.json with a
+				// path-unsafe ID. Legal IDs pass `/^[A-Za-z0-9_-]+$/` so this
+				// only fires on hand-edited / corrupted metadata.
+				validateProjectId(p.id);
 				this.projects.set(p.id, p);
 			}
 		}
@@ -60,6 +65,10 @@ export class ProjectManager {
 		}
 
 		const id = ulid();
+		// ULIDs match /^[A-Za-z0-9]{26}$/ which is a subset of the projectId
+		// regex — the validate call costs nothing and makes the invariant
+		// explicit at the spawn point.
+		validateProjectId(id);
 		const now = new Date().toISOString();
 		const project: Project = {
 			id,
@@ -71,13 +80,10 @@ export class ProjectManager {
 		this.projects.set(id, project);
 		await this.save();
 
-		// Create daemon-side project data directory with unified layout:
-		//   projects/<id>/
-		//     tasks/    — per-task JSONL event files
-		//     debug/    — drift snapshots and future investigation artifacts
-		const projectDir = join(this.dataDir, "projects", id);
-		await mkdir(join(projectDir, "tasks"), { recursive: true });
-		await mkdir(join(projectDir, "debug"), { recursive: true });
+		// NOTE: tasks/ and debug/ directories are created lazily by EventStore
+		// and TaskTracker when the first write happens. Creating them eagerly
+		// here hardcoded Matrix's dataRoot="@" layout — wrong for plugins with
+		// a nested dataRoot. Lazy creation respects the owning plugin's path.
 
 		return project;
 	}
