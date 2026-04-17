@@ -938,11 +938,56 @@ select {
 	display: flex;
 	flex-direction: column;
 	background: var(--bg-base);
+	position: relative;
 }
 
 .mxd-content.dragging {
 	cursor: row-resize;
 	user-select: none;
+}
+
+/* Sidebar expand button — floats on the left edge of the content area
+   when the sidebar is collapsed. Acts like VSCode's "show sidebar" icon.
+   The parent `.mxd-has-collapsed-sidebar` class shifts the first header
+   row right so the button doesn't overlap with tabs or view toggle. */
+.mxd-sidebar-expand-btn {
+	position: absolute;
+	top: 7px;
+	left: 6px;
+	z-index: 10;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 1px solid var(--border-subtle);
+	border-radius: 4px;
+	background: var(--bg-surface);
+	color: var(--text-muted);
+	cursor: pointer;
+	opacity: 0.85;
+	transition:
+		opacity var(--t-fast),
+		background var(--t-fast),
+		color var(--t-fast),
+		border-color var(--t-fast);
+}
+
+.mxd-sidebar-expand-btn:hover {
+	opacity: 1;
+	background: var(--bg-raised);
+	color: var(--text-primary);
+	border-color: var(--border);
+}
+
+/* When the sidebar is collapsed, reserve space on the left edge of the
+   top row (tab-bar, task-meta-bar, or view-toggle panel-header — whichever
+   comes first) so the floating expand button doesn't overlap its content.
+   The button itself is a <button>, so `div:first-of-type` reliably targets
+   the first div child regardless of whether the button is rendered. */
+.mxd-has-collapsed-sidebar .mxd-content > div:first-of-type {
+	padding-left: 34px;
 }
 
 /* =========================================================
