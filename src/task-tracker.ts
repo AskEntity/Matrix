@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import {
 	type FolderNode,
 	isFolder,
@@ -73,7 +73,19 @@ export class TaskTracker {
 		}
 	}
 
-	/** Persist task tree to disk. Strips runtime-only `session` field. */
+	/** Persist task tree to disk. Strips runtime-only `session` field.
+	 *
+	 * Atomic via temp-file + rename: `writeFile` truncates + writes, so a crash
+	 * mid-write would leave tree.json empty or half-written — and tree.json is
+	 * the single source of truth for task state. Writing to a unique `.tmp`
+	 * sibling then renaming gives us all-or-nothing semantics on POSIX
+	 * filesystems.
+	 *
+	 * The temp file uses a per-call random suffix so concurrent saves (tests,
+	 * racing broadcasts) don't clobber each other's in-flight temp. If the
+	 * rename fails, the caller observes the error and the old tree.json is
+	 * still intact.
+	 */
 	async save(): Promise<void> {
 		const dir = dirname(this.treePath);
 		await mkdir(dir, { recursive: true });
@@ -85,7 +97,17 @@ export class TaskTracker {
 				return rest;
 			}),
 		};
-		await writeFile(this.treePath, JSON.stringify(data, null, "\t"), "utf-8");
+		const tmpName = `.${basename(this.treePath)}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}`;
+		const tmpPath = join(dir, tmpName);
+		try {
+			await writeFile(tmpPath, JSON.stringify(data, null, "\t"), "utf-8");
+			await rename(tmpPath, this.treePath);
+		} catch (e) {
+			// Best-effort cleanup: remove the temp file if the rename failed
+			// (so we don't accumulate orphan `.tree.json.tmp.*` files).
+			await unlink(tmpPath).catch(() => {});
+			throw e;
+		}
 	}
 
 	/** Root node ID. Always present after load(). */

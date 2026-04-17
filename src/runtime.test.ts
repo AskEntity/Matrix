@@ -57,6 +57,30 @@ function createMockProvider(
 
 const mockProvider = createMockProvider();
 
+/**
+ * Abort-aware sleep for mock provider streams.
+ *
+ * Real providers (Anthropic / OpenAI SDKs) terminate promptly when the signal
+ * aborts — stopAgent/stopTask both await the agent loop's exit, so mocks must
+ * also cut short on abort or shutdown blocks for the full sleep window. Use
+ * this helper inside `stream:` bodies instead of raw `setTimeout`.
+ */
+async function abortableSleep(
+	ms: number,
+	signal: AbortSignal | undefined,
+): Promise<void> {
+	if (signal?.aborted) return;
+	await new Promise<void>((resolve) => {
+		const t = setTimeout(resolve, ms);
+		if (!signal) return;
+		const onAbort = () => {
+			clearTimeout(t);
+			resolve();
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
 /** Helper: get root node ID for a project, then send a message to start the agent. */
 async function startRootAgent(
 	app: {
@@ -87,7 +111,7 @@ describe("daemon health", () => {
 		expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
 		expect(typeof body.uptime).toBe("number");
 
-		await rm(dataDir, { recursive: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("GET /health without check_model has no model field", async () => {
@@ -101,7 +125,7 @@ describe("daemon health", () => {
 		expect(body.status).toBe("ok");
 		expect(body.model).toBeUndefined();
 
-		await rm(dataDir, { recursive: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("GET /health?check_model=true returns model status", async () => {
@@ -133,7 +157,7 @@ describe("daemon health", () => {
 			expect(typeof m.latencyMs).toBe("number");
 		}
 
-		await rm(dataDir, { recursive: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("GET /unknown returns 404", async () => {
@@ -143,7 +167,7 @@ describe("daemon health", () => {
 		const res = await app.request("/unknown");
 		expect(res.status).toBe(404);
 
-		await rm(dataDir, { recursive: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 });
 
@@ -163,7 +187,7 @@ describe("daemon version", () => {
 		expect(typeof body.projectCount).toBe("number");
 		expect(body.projectCount).toBeGreaterThanOrEqual(0);
 
-		await rm(dataDir, { recursive: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 });
 
@@ -191,7 +215,7 @@ describe("daemon stats", () => {
 			closed: 0,
 		});
 
-		await rm(dataDir, { recursive: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("GET /stats requestCount increments with each request", async () => {
@@ -208,7 +232,7 @@ describe("daemon stats", () => {
 
 		expect(count2).toBeGreaterThan(count1);
 
-		await rm(dataDir, { recursive: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("GET /stats uptime is in seconds not milliseconds", async () => {
@@ -224,7 +248,7 @@ describe("daemon stats", () => {
 		// threshold, so check it's plausibly seconds-scale (<1 hour).
 		expect(body.uptime).toBeLessThan(3600);
 
-		await rm(dataDir, { recursive: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("GET /stats reflects projects and task counts", async () => {
@@ -302,8 +326,8 @@ describe("daemon stats", () => {
 		expect(stats.taskCounts.verify).toBe(1); // Child1
 		expect(stats.taskCounts.failed).toBe(0);
 
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 });
 
@@ -337,8 +361,8 @@ describe("daemon tasks API", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("POST /tasks requires parentId", async () => {
@@ -897,7 +921,7 @@ describe("daemon tasks API", () => {
 		await new Promise((r) => setTimeout(r, 50));
 		expect(daemonTracker.getTask(task.id)?.session).toBeUndefined();
 
-		await rm(localDataDir, { recursive: true });
+		await rm(localDataDir, { recursive: true, force: true });
 	});
 
 	test("GET /tasks/:nodeId/gitlog returns empty commits when no branch", async () => {
@@ -992,7 +1016,7 @@ describe("daemon tasks API", () => {
 		expect(body.commits[0]).toHaveProperty("hash");
 		expect(body.commits[0]).toHaveProperty("message");
 
-		await rm(localDataDir, { recursive: true });
+		await rm(localDataDir, { recursive: true, force: true });
 	});
 
 	test("PATCH /tasks/:nodeId/reorder reorders children", async () => {
@@ -1184,8 +1208,8 @@ describe("GET /projects/:id/events", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("returns empty events for new project", async () => {
@@ -1332,8 +1356,8 @@ describe("GET /projects/:id/events/older", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("returns older events before timestamp", async () => {
@@ -1487,8 +1511,8 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("?after=compact returns post-compact events with hasOlderEvents", async () => {
@@ -1603,8 +1627,8 @@ describe("streaming text injection in batch events", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("streaming in progress → GET task events → partial text at end", async () => {
@@ -1789,8 +1813,8 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("persists message when no queue registered for task", async () => {
@@ -1961,8 +1985,8 @@ describe("POST /projects/:id/tasks/:nodeId/message (root node)", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("returns 404 for unknown project", async () => {
@@ -2032,8 +2056,8 @@ describe("POST /projects/:id/clarify", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("returns 400 when taskId is missing", async () => {
@@ -2091,8 +2115,9 @@ describe("POST /projects/:id/clarify", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
-				await new Promise((resolve) => setTimeout(resolve, 10000));
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
+				await abortableSleep(10000, req.signal);
 				return {
 					exitReason: "interrupted" as const,
 					output: "",
@@ -2150,7 +2175,7 @@ describe("POST /projects/:id/clarify", () => {
 		await localApp.request(`/projects/${project.id}/stop`, {
 			method: "POST",
 		});
-		await rm(localDataDir, { recursive: true });
+		await rm(localDataDir, { recursive: true, force: true });
 	});
 
 	test("routes clarify_response to child queue when taskId is a child agent", async () => {
@@ -2164,8 +2189,9 @@ describe("POST /projects/:id/clarify", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
-				await new Promise((resolve) => setTimeout(resolve, 10000));
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
+				await abortableSleep(10000, req.signal);
 				return {
 					exitReason: "interrupted" as const,
 					output: "",
@@ -2253,7 +2279,7 @@ describe("POST /projects/:id/clarify", () => {
 			await localApp.request(`/projects/${project.id}/stop`, {
 				method: "POST",
 			});
-			await rm(localDataDir, { recursive: true });
+			await rm(localDataDir, { recursive: true, force: true });
 		}
 	});
 
@@ -2268,8 +2294,9 @@ describe("POST /projects/:id/clarify", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
-				await new Promise((resolve) => setTimeout(resolve, 10000));
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
+				await abortableSleep(10000, req.signal);
 				return {
 					exitReason: "interrupted" as const,
 					output: "",
@@ -2345,7 +2372,7 @@ describe("POST /projects/:id/clarify", () => {
 			await localApp.request(`/projects/${project.id}/stop`, {
 				method: "POST",
 			});
-			await rm(localDataDir, { recursive: true });
+			await rm(localDataDir, { recursive: true, force: true });
 		}
 	});
 });
@@ -2406,8 +2433,8 @@ describe("task message API — agent launch", () => {
 		await new Promise((r) => setTimeout(r, 100));
 		expect(receivedMcpToolDefs).toBe(true);
 
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("POST /tasks/:nodeId/message requires content", async () => {
@@ -2435,8 +2462,8 @@ describe("task message API — agent launch", () => {
 		);
 		expect(res.status).toBe(400);
 
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("POST /tasks/:nodeId/message returns 404 for unknown project", async () => {
@@ -2455,7 +2482,7 @@ describe("task message API — agent launch", () => {
 		});
 		expect(res.status).toBe(404);
 
-		await rm(dataDir, { recursive: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 });
 
@@ -2469,7 +2496,7 @@ describe("create_task validation", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
 	});
 
 	/** Helper to invoke the create_task tool from the MCP tool definitions. */
@@ -2634,8 +2661,8 @@ describe("GET /projects/:id/agent", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("returns 404 for unknown project", async () => {
@@ -2675,8 +2702,8 @@ describe("POST /projects/:id/stop", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("returns 404 for unknown project", async () => {
@@ -2708,8 +2735,9 @@ describe("POST /projects/:id/stop", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
-				await new Promise((resolve) => setTimeout(resolve, 10000));
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
+				await abortableSleep(10000, req.signal);
 				return {
 					exitReason: "interrupted" as const,
 					output: "",
@@ -2802,7 +2830,7 @@ describe("POST /projects/:id/stop", () => {
 		expect(updatedChild?.status).toBe("in_progress");
 
 		// Clean up
-		await rm(localDataDir, { recursive: true });
+		await rm(localDataDir, { recursive: true, force: true });
 	});
 });
 
@@ -2828,8 +2856,8 @@ describe("POST /projects/:id/tasks/:nodeId/message — root agent", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("returns 404 for unknown project", async () => {
@@ -2889,8 +2917,8 @@ describe("POST /projects/:id/sessions/prune", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("returns 404 for unknown project", async () => {
@@ -3012,8 +3040,8 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("returns 404 for unknown project", async () => {
@@ -3462,7 +3490,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(receivedEmit).toBeDefined();
 		expect(typeof receivedEmit).toBe("function");
 
-		await rm(localDataDir, { recursive: true });
+		await rm(localDataDir, { recursive: true, force: true });
 	});
 });
 
@@ -3492,8 +3520,8 @@ describe("GET /projects/:id/clarifications", () => {
 	});
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("returns empty array initially", async () => {
@@ -3582,9 +3610,10 @@ describe("POST /projects/:id/restart", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
 				sessionCount++;
-				await new Promise((resolve) => setTimeout(resolve, 5000));
+				await abortableSleep(5000, req.signal);
 				return {
 					exitReason: "interrupted" as const,
 					output: "",
@@ -3646,9 +3675,10 @@ describe("POST /projects/:id/restart", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
 				sessionCount++;
-				await new Promise((resolve) => setTimeout(resolve, 5000));
+				await abortableSleep(5000, req.signal);
 				return {
 					exitReason: "interrupted" as const,
 					output: "",
@@ -3699,9 +3729,10 @@ describe("POST /projects/:id/restart", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
 				sessionCount++;
-				await new Promise((resolve) => setTimeout(resolve, 5000));
+				await abortableSleep(5000, req.signal);
 				return {
 					exitReason: "interrupted" as const,
 					output: "",
@@ -3760,11 +3791,12 @@ describe("POST /projects/:id/restart", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
 				sessionCount++;
 				const currentNum = sessionCount;
 				try {
-					await new Promise((resolve) => setTimeout(resolve, 5000));
+					await abortableSleep(5000, req.signal);
 				} catch {
 					// queue.close() rejects pending waits — session stopped
 				}
@@ -3836,10 +3868,11 @@ describe("POST /projects/:id/restart", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
 				sessionCount++;
 				const currentSessionId = `test-session-${sessionCount}`;
-				await new Promise((resolve) => setTimeout(resolve, 5000));
+				await abortableSleep(5000, req.signal);
 				return {
 					exitReason: "interrupted" as const,
 					output: "",
@@ -3925,8 +3958,9 @@ describe("lifecycle edge cases", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
-				await new Promise((resolve) => setTimeout(resolve, 10000));
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
+				await abortableSleep(10000, req.signal);
 				return {
 					exitReason: "interrupted" as const,
 					output: "",
@@ -3980,8 +4014,9 @@ describe("lifecycle edge cases", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
-				await new Promise((resolve) => setTimeout(resolve, 10000));
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
+				await abortableSleep(10000, req.signal);
 				return {
 					exitReason: "interrupted" as const,
 					output: "",
@@ -4032,8 +4067,9 @@ describe("lifecycle edge cases", () => {
 				turns: 0,
 				sessionId: "mock",
 			}),
-			stream: async function* () {
-				await new Promise((resolve) => setTimeout(resolve, 10000));
+			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
+			stream: async function* (req) {
+				await abortableSleep(10000, req.signal);
 				return {
 					exitReason: "interrupted" as const,
 					output: "",
