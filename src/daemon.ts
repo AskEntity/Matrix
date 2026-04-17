@@ -16,7 +16,7 @@
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { Hono } from "hono";
 import { hasJwtSecret, verifyJWT } from "./auth.ts";
 import {
@@ -437,11 +437,14 @@ export async function createDaemon(opts: {
 	}
 
 	// ── Build web assets (React vendor + shell + plugins) ──
-	const { buildWebAssets, generateIndexHTML } = await import(
-		"./web-builder.ts"
-	);
+	const { buildWebAssets, generateIndexHTML, generateBuildErrorHTML } =
+		await import("./web-builder.ts");
 	const buildDir = join(dataDir, "build");
-	const projectRoot = resolve(".");
+	// Stable regardless of daemon CWD — resolves to the repo root (parent of `src/`).
+	// Previously `resolve(".")` made the build silently broken whenever the daemon
+	// was launched from anywhere other than the repo root (e.g. `bun src/daemon.ts`
+	// from `/tmp`). Surfacing as H1/H2 in the web-build audit.
+	const projectRoot = new URL("..", import.meta.url).pathname;
 	const shellEntry = new URL("../web/main.tsx", import.meta.url).pathname;
 	const shellCssPath = new URL("../web/styles.css", import.meta.url).pathname;
 
@@ -449,6 +452,7 @@ export async function createDaemon(opts: {
 		.filter((p) => p.resolvedWebPath)
 		.map((p) => ({
 			name: p.name,
+			scope: p.scope,
 			webEntry: p.resolvedWebPath!,
 			cssPath: existsSync(join(p.pluginRoot, "web", "style.css"))
 				? join(p.pluginRoot, "web", "style.css")
@@ -456,7 +460,7 @@ export async function createDaemon(opts: {
 		}));
 
 	let webBuild: Awaited<ReturnType<typeof buildWebAssets>> | null = null;
-	let indexHTML = "<html><body>Web build failed</body></html>";
+	let indexHTML: string;
 	try {
 		webBuild = await buildWebAssets({
 			buildDir,
@@ -469,6 +473,7 @@ export async function createDaemon(opts: {
 		indexHTML = generateIndexHTML(webBuild);
 	} catch (e) {
 		console.error("[daemon] Web build failed:", e);
+		indexHTML = generateBuildErrorHTML(e);
 	}
 
 	// Start workers for global plugins
@@ -661,11 +666,17 @@ export async function createDaemon(opts: {
 	});
 
 	// Built web assets — vendor (React ESM) + app (shell + plugins)
+	// path.sep-terminator prevents the off-by-one prefix bug where
+	//   /Users/u/.mxd/build2/foo starts with /Users/u/.mxd/build
+	const buildDirPrefix = resolve(buildDir) + sep;
+	const isInsideBuildDir = (filePath: string): boolean => {
+		const abs = resolve(filePath);
+		return abs === resolve(buildDir) || abs.startsWith(buildDirPrefix);
+	};
 	app.get("/vendor/*", async (c) => {
 		const relativePath = c.req.path.slice("/vendor/".length);
 		const filePath = join(buildDir, "vendor", relativePath);
-		if (!resolve(filePath).startsWith(resolve(buildDir)))
-			return c.json({ error: "Forbidden" }, 403);
+		if (!isInsideBuildDir(filePath)) return c.json({ error: "Forbidden" }, 403);
 		const file = Bun.file(filePath);
 		if (!(await file.exists())) return c.json({ error: "Not found" }, 404);
 		return new Response(file, {
@@ -676,22 +687,27 @@ export async function createDaemon(opts: {
 	app.get("/app/*", async (c) => {
 		const relativePath = c.req.path.slice("/app/".length);
 		const filePath = join(buildDir, "app", relativePath);
-		if (!resolve(filePath).startsWith(resolve(buildDir)))
-			return c.json({ error: "Forbidden" }, 403);
+		if (!isInsideBuildDir(filePath)) return c.json({ error: "Forbidden" }, 403);
 		const file = Bun.file(filePath);
 		if (!(await file.exists())) return c.json({ error: "Not found" }, 404);
 		return new Response(file);
 	});
 
-	// Plugins
+	// Plugins — includes buildError so the UI can explicitly render "Plugin failed
+	// to build" instead of hanging on "Loading plugin…".
 	app.get("/plugins", (c) => {
 		return c.json(
-			registeredPlugins.map((p) => ({
-				name: p.name,
-				scope: p.scope,
-				webComponentPath: webBuild?.pluginEntryPaths.get(p.name),
-				projectId: p.projectId,
-			})),
+			registeredPlugins.map((p) => {
+				const output = webBuild?.pluginOutputs.get(p.name);
+				return {
+					name: p.name,
+					scope: p.scope,
+					webComponentPath: output?.jsPath,
+					cssPath: output?.cssPath,
+					buildError: output?.buildError,
+					projectId: p.projectId,
+				};
+			}),
 		);
 	});
 

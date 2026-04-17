@@ -9,10 +9,25 @@
  *
  * importmap in HTML makes shell + plugin resolve "react" to the same vendor URL
  * → single React instance → context sharing works.
+ *
+ * Failure policy:
+ * - Vendor / shared-module / shell build failures always throw (fatal — shell cannot render).
+ * - Plugin build failures throw when `scope === "global"` (the daemon has no other UI to fall
+ *   back on); for other plugins the failure is recorded on the per-plugin result so `/plugins`
+ *   can surface an error badge in the UI instead of showing "Loading plugin..." forever.
+ *
+ * Shim cleanup (`_vendor_shims/` inside `projectRoot`) is guaranteed via `try { ... } finally`
+ * regardless of which step throws.
  */
 
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
 
 const REACT_EXTERNALS = [
 	"react",
@@ -52,6 +67,23 @@ const IMPORTMAP_ENTRIES: Record<string, string> = {
 	"react/jsx-dev-runtime": "/vendor/react-jsx-dev-runtime.js",
 };
 
+export interface PluginBuildOutput {
+	/** URL path to compiled plugin JS (only if build succeeded) */
+	jsPath?: string;
+	/** URL path to plugin CSS (only if a css file was provided) */
+	cssPath?: string;
+	/** Error message from Bun.build logs (only if build failed non-fatally) */
+	buildError?: string;
+}
+
+export interface PluginBuildInput {
+	name: string;
+	webEntry: string;
+	cssPath?: string;
+	/** Scope of the owning plugin. `"global"` build failures throw. */
+	scope: "global" | "project";
+}
+
 export interface WebBuildResult {
 	/** Directory containing all built assets */
 	buildDir: string;
@@ -59,20 +91,20 @@ export interface WebBuildResult {
 	importmap: { imports: Record<string, string> };
 	/** URL path to shell entry JS */
 	shellEntryPath: string;
-	/** Map of plugin name → compiled JS URL path */
-	pluginEntryPaths: Map<string, string>;
-	/** URL paths to CSS files */
+	/** Per-plugin build output (JS url, optional CSS url, optional buildError) */
+	pluginOutputs: Map<string, PluginBuildOutput>;
+	/** URL paths to CSS files (shell + all successfully built plugins) */
 	cssPaths: string[];
 }
 
 /**
  * Build all web assets: vendor React ESM + shell + plugins.
- * Called at daemon startup. Results cached in buildDir.
+ * Called at daemon startup. Output is written fresh every time (no cache).
  */
 export async function buildWebAssets(opts: {
 	buildDir: string;
 	shellEntry: string;
-	plugins: Array<{ name: string; webEntry: string; cssPath?: string }>;
+	plugins: PluginBuildInput[];
 	shellCssPath?: string;
 	projectRoot: string;
 	minify?: boolean;
@@ -80,190 +112,234 @@ export async function buildWebAssets(opts: {
 	const { buildDir, shellEntry, plugins, projectRoot, minify } = opts;
 
 	// Clean previous build
-	try {
-		const { rmSync } = await import("node:fs");
-		rmSync(buildDir, { recursive: true, force: true });
-	} catch {}
+	rmSync(buildDir, { recursive: true, force: true });
 
 	const vendorDir = join(buildDir, "vendor");
 	const appDir = join(buildDir, "app");
 	mkdirSync(vendorDir, { recursive: true });
 	mkdirSync(appDir, { recursive: true });
 
-	// ── Step 1: Build React vendor ESM shims ──
-	// Generate shim source files that explicitly destructure named exports
-	// (Bun.build's CJS→ESM __reExport doesn't produce static ESM exports)
-	// Write shims in project root (not buildDir) so Bun.build can resolve
-	// "react" etc. from node_modules. Cleaned up after build.
-	const shimDir = join(opts.projectRoot, "_vendor_shims");
+	// Shim source files in project root so Bun.build can resolve "react" etc. from
+	// node_modules. Cleaned up in finally below regardless of build outcome.
+	const shimDir = join(projectRoot, "_vendor_shims");
 	mkdirSync(shimDir, { recursive: true });
 
-	// We need to know the actual export names from each React module
-	const reactExportNames = await getReactExportNames();
-
-	for (const [name, config] of Object.entries(VENDOR_SHIMS)) {
-		const exports = reactExportNames[config.importPath] ?? [];
-		const namedExports = exports.filter((e) => e !== "default");
-		let code = `import _M from "${config.importPath}";\n`;
-		if (namedExports.length > 0) {
-			code += `export const { ${namedExports.join(", ")} } = _M;\n`;
-		}
-		if (config.hasDefault) {
-			code += `export default _M;\n`;
-		}
-		writeFileSync(join(shimDir, `${name}.ts`), code);
-	}
-
-	const shimEntrypoints = Object.keys(VENDOR_SHIMS).map((name) =>
-		join(shimDir, `${name}.ts`),
-	);
-
-	const vendorResult = await Bun.build({
-		entrypoints: shimEntrypoints,
-		outdir: vendorDir,
-		target: "browser",
-		format: "esm",
-		splitting: true, // Share React core across all shims
-		root: shimDir,
-		minify,
-	});
-
-	if (!vendorResult.success) {
-		console.error("[web-builder] Vendor build failed:", vendorResult.logs);
-		throw new Error("Vendor build failed");
-	}
-
-	// ── Step 1b: Build shared modules (external React, importmap'd) ──
-	const sharedEntries = [
-		{
-			specifier: "@mxd/auth-context",
-			entry: join(opts.projectRoot, "web", "auth-context.ts"),
-			outName: "auth-context.js",
-		},
-		{
-			specifier: "@mxd/types",
-			entry: join(opts.projectRoot, "web", "runtime-types.ts"),
-			outName: "runtime-types.js",
-		},
-	];
-
-	for (const shared of sharedEntries) {
-		const result = await Bun.build({
-			entrypoints: [shared.entry],
-			outdir: join(vendorDir, "shared"),
-			target: "browser",
-			format: "esm",
-			external: REACT_EXTERNALS,
-			root: opts.projectRoot,
-			naming: shared.outName,
-			minify,
-		});
-		if (!result.success) {
-			console.error(
-				`[web-builder] Shared module ${shared.specifier} build failed:`,
-				result.logs,
-			);
-		}
-	}
-
-	// Add shared modules to importmap
-	const importmap = {
-		imports: { ...IMPORTMAP_ENTRIES } as Record<string, string>,
-	};
-	for (const shared of sharedEntries) {
-		importmap.imports[shared.specifier] = `/vendor/shared/${shared.outName}`;
-	}
-
-	const allExternals = [...REACT_EXTERNALS, ...SHARED_MODULES];
-
-	// ── Step 2: Build shell (external React + shared modules) ──
-	const shellResult = await Bun.build({
-		entrypoints: [shellEntry],
-		outdir: appDir,
-		target: "browser",
-		format: "esm",
-		external: allExternals,
-		root: projectRoot,
-		minify,
-	});
-
-	if (!shellResult.success) {
-		console.error("[web-builder] Shell build failed:", shellResult.logs);
-		throw new Error("Shell build failed");
-	}
-
-	// ── Step 3: Build each plugin (external React) ──
-	const pluginEntryPaths = new Map<string, string>();
-	for (const plugin of plugins) {
-		const pluginResult = await Bun.build({
-			entrypoints: [plugin.webEntry],
-			outdir: appDir,
-			target: "browser",
-			format: "esm",
-			external: allExternals,
-			root: projectRoot,
-			minify,
-		});
-
-		if (!pluginResult.success) {
-			console.error(
-				`[web-builder] Plugin "${plugin.name}" build failed:`,
-				pluginResult.logs,
-			);
-			continue;
-		}
-
-		// Compute the URL path for the compiled plugin JS
-		const relPath = plugin.webEntry
-			.replace(projectRoot + "/", "")
-			.replace(/\.tsx?$/, ".js");
-		pluginEntryPaths.set(plugin.name, `/app/${relPath}`);
-	}
-
-	// ── Step 4: Copy CSS files ──
-	const cssPaths: string[] = [];
-
-	if (opts.shellCssPath && existsSync(opts.shellCssPath)) {
-		const cssOutDir = join(appDir, "web");
-		mkdirSync(cssOutDir, { recursive: true });
-		copyFileSync(opts.shellCssPath, join(cssOutDir, "styles.css"));
-		cssPaths.push("/app/web/styles.css");
-	}
-
-	for (const plugin of plugins) {
-		if (plugin.cssPath && existsSync(plugin.cssPath)) {
-			const relDir = plugin.webEntry
-				.replace(projectRoot + "/", "")
-				.replace(/\/[^/]+$/, "");
-			const cssOutDir = join(appDir, relDir);
-			mkdirSync(cssOutDir, { recursive: true });
-			copyFileSync(plugin.cssPath, join(cssOutDir, "style.css"));
-			cssPaths.push(`/app/${relDir}/style.css`);
-		}
-	}
-
-	// Compute shell entry URL path
-	const shellRelPath = shellEntry
-		.replace(projectRoot + "/", "")
-		.replace(/\.tsx?$/, ".js");
-
-	// Clean up shim source files (always, even on error)
 	try {
-		const { rmSync } = await import("node:fs");
-		rmSync(shimDir, { recursive: true, force: true });
-	} catch {}
+		// ── Step 1: Build React vendor ESM shims ──
+		// Generate shim source files that explicitly destructure named exports
+		// (Bun.build's CJS→ESM __reExport doesn't produce static ESM exports)
+		const reactExportNames = await getReactExportNames();
 
-	const totalOutputs =
-		vendorResult.outputs.length + shellResult.outputs.length + plugins.length;
-	console.log(`[web-builder] Built ${totalOutputs} assets → ${buildDir}`);
+		for (const [name, config] of Object.entries(VENDOR_SHIMS)) {
+			const exports = reactExportNames[config.importPath] ?? [];
+			const namedExports = exports.filter((e) => e !== "default");
+			let code = `import _M from "${config.importPath}";\n`;
+			if (namedExports.length > 0) {
+				code += `export const { ${namedExports.join(", ")} } = _M;\n`;
+			}
+			if (config.hasDefault) {
+				code += `export default _M;\n`;
+			}
+			writeFileSync(join(shimDir, `${name}.ts`), code);
+		}
 
-	return {
-		buildDir,
-		importmap,
-		shellEntryPath: `/app/${shellRelPath}`,
-		pluginEntryPaths,
-		cssPaths,
-	};
+		const shimEntrypoints = Object.keys(VENDOR_SHIMS).map((name) =>
+			join(shimDir, `${name}.ts`),
+		);
+
+		const vendorResult = await runBuild(
+			{
+				entrypoints: shimEntrypoints,
+				outdir: vendorDir,
+				target: "browser",
+				format: "esm",
+				splitting: true, // Share React core across all shims
+				root: shimDir,
+				minify,
+			},
+			"Vendor build",
+		);
+
+		// ── Step 1b: Build shared modules (external React, importmap'd) ──
+		const sharedEntries = [
+			{
+				specifier: "@mxd/auth-context",
+				entry: join(projectRoot, "web", "auth-context.ts"),
+				outName: "auth-context.js",
+			},
+			{
+				specifier: "@mxd/types",
+				entry: join(projectRoot, "web", "runtime-types.ts"),
+				outName: "runtime-types.js",
+			},
+		];
+
+		for (const shared of sharedEntries) {
+			await runBuild(
+				{
+					entrypoints: [shared.entry],
+					outdir: join(vendorDir, "shared"),
+					target: "browser",
+					format: "esm",
+					external: REACT_EXTERNALS,
+					root: projectRoot,
+					naming: shared.outName,
+					minify,
+				},
+				`Shared module "${shared.specifier}" build`,
+			);
+		}
+
+		// Add shared modules to importmap
+		const importmap = {
+			imports: { ...IMPORTMAP_ENTRIES } as Record<string, string>,
+		};
+		for (const shared of sharedEntries) {
+			importmap.imports[shared.specifier] = `/vendor/shared/${shared.outName}`;
+		}
+
+		const allExternals = [...REACT_EXTERNALS, ...SHARED_MODULES];
+
+		// ── Step 2: Build shell (external React + shared modules) ──
+		const shellResult = await runBuild(
+			{
+				entrypoints: [shellEntry],
+				outdir: appDir,
+				target: "browser",
+				format: "esm",
+				external: allExternals,
+				root: projectRoot,
+				minify,
+			},
+			"Shell build",
+		);
+
+		// ── Step 3: Build each plugin into stable /app/plugin/<name>/ namespace ──
+		const pluginOutputs = new Map<string, PluginBuildOutput>();
+		for (const plugin of plugins) {
+			const pluginOutDir = join(appDir, "plugin", plugin.name);
+			const entryDir = dirname(plugin.webEntry);
+
+			try {
+				await runBuild(
+					{
+						entrypoints: [plugin.webEntry],
+						outdir: pluginOutDir,
+						target: "browser",
+						format: "esm",
+						external: allExternals,
+						// root=dirname keeps output flat in pluginOutDir regardless of
+						// where the plugin lives on disk — works for plugins outside
+						// `projectRoot` (future multi-project plugin support).
+						root: entryDir,
+						naming: "index.[ext]",
+						minify,
+					},
+					`Plugin "${plugin.name}" build`,
+				);
+				pluginOutputs.set(plugin.name, {
+					jsPath: `/app/plugin/${plugin.name}/index.js`,
+				});
+			} catch (e) {
+				const errorText = e instanceof Error ? e.message : String(e);
+				if (plugin.scope === "global") {
+					throw new Error(
+						`Plugin "${plugin.name}" (scope=global) build failed: ${errorText}`,
+					);
+				}
+				console.error(`[web-builder] Plugin "${plugin.name}" build failed:`, e);
+				pluginOutputs.set(plugin.name, { buildError: errorText });
+			}
+		}
+
+		// ── Step 4: Copy CSS files ──
+		const cssPaths: string[] = [];
+
+		if (opts.shellCssPath && existsSync(opts.shellCssPath)) {
+			const cssOutDir = join(appDir, "web");
+			mkdirSync(cssOutDir, { recursive: true });
+			copyFileSync(opts.shellCssPath, join(cssOutDir, "styles.css"));
+			cssPaths.push("/app/web/styles.css");
+		}
+
+		for (const plugin of plugins) {
+			if (!plugin.cssPath || !existsSync(plugin.cssPath)) continue;
+			const output = pluginOutputs.get(plugin.name);
+			// If JS build failed we skip CSS to avoid orphan stylesheets
+			if (!output?.jsPath) continue;
+			const pluginOutDir = join(appDir, "plugin", plugin.name);
+			mkdirSync(pluginOutDir, { recursive: true });
+			copyFileSync(plugin.cssPath, join(pluginOutDir, "style.css"));
+			const cssUrl = `/app/plugin/${plugin.name}/style.css`;
+			output.cssPath = cssUrl;
+			cssPaths.push(cssUrl);
+		}
+
+		// Use the shell's original location under `projectRoot` to compute its URL.
+		// The `path.relative` call handles absolute paths that are outside
+		// `projectRoot` by returning a path with `..` — we reject those (shell MUST
+		// live under projectRoot).
+		const shellRel = relative(projectRoot, shellEntry);
+		if (shellRel.startsWith("..") || shellRel.includes(`..${sep}`)) {
+			throw new Error(
+				`shellEntry must live under projectRoot, got ${shellEntry} (relative: ${shellRel})`,
+			);
+		}
+		const shellRelPath = shellRel.replace(/\.tsx?$/, ".js");
+
+		const totalOutputs =
+			vendorResult.outputs.length + shellResult.outputs.length + plugins.length;
+		console.log(`[web-builder] Built ${totalOutputs} assets → ${buildDir}`);
+
+		return {
+			buildDir,
+			importmap,
+			shellEntryPath: `/app/${shellRelPath.split(sep).join("/")}`,
+			pluginOutputs,
+			cssPaths,
+		};
+	} finally {
+		// Guaranteed cleanup — shim dir lives in projectRoot, we never want it to leak.
+		try {
+			rmSync(shimDir, { recursive: true, force: true });
+		} catch (e) {
+			console.error("[web-builder] Failed to clean up shim dir:", e);
+		}
+	}
+}
+
+/** Flatten Bun.build logs into a short human-readable string. */
+function formatBuildLogs(logs: readonly unknown[]): string {
+	if (!logs || logs.length === 0) return "(no build logs)";
+	return logs
+		.map((l) => {
+			if (typeof l === "string") return l;
+			const obj = l as { message?: string; toString?: () => string };
+			return obj.message ?? String(l);
+		})
+		.join("; ");
+}
+
+/**
+ * Wrap `Bun.build` so both failure shapes bubble up as a single loud error:
+ *   (a) Bun.build threw (e.g. unresolvable import) — rethrow with context prefix
+ *   (b) Bun.build returned `{ success: false, logs }` — throw with logs
+ */
+async function runBuild(
+	config: Parameters<typeof Bun.build>[0],
+	label: string,
+): Promise<Awaited<ReturnType<typeof Bun.build>>> {
+	let result: Awaited<ReturnType<typeof Bun.build>>;
+	try {
+		result = await Bun.build(config);
+	} catch (e) {
+		const message = e instanceof Error ? e.message : String(e);
+		throw new Error(`${label} failed: ${message}`);
+	}
+	if (!result.success) {
+		throw new Error(`${label} failed: ${formatBuildLogs(result.logs)}`);
+	}
+	return result;
 }
 
 /**
@@ -293,19 +369,53 @@ ${cssLinks}
 </html>`;
 }
 
-/** Get named export keys for each React module. */
+/**
+ * Generate a diagnostic fallback HTML page when the build itself fails.
+ *
+ * In non-production, shows the actual error so the developer doesn't have to
+ * tail daemon logs. In production, hides the error (may contain internal paths)
+ * but keeps enough context to indicate the daemon is up but the UI is broken.
+ */
+export function generateBuildErrorHTML(err: unknown): string {
+	const isProd = process.env.NODE_ENV === "production";
+	const message = err instanceof Error ? err.message : String(err);
+	const stack = err instanceof Error ? err.stack : undefined;
+	const body = isProd
+		? `<h1>Web build failed</h1><p>Check daemon logs for details.</p>`
+		: `<h1>Web build failed</h1><p><strong>${escapeHtml(message)}</strong></p>` +
+			(stack ? `<pre>${escapeHtml(stack)}</pre>` : "");
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Matrix — build failed</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2em auto; padding: 0 1em; color: #eee; background: #111; }
+    pre { background: #000; padding: 1em; overflow-x: auto; border: 1px solid #333; }
+    h1 { color: #f85149; }
+  </style>
+</head>
+<body>${body}</body>
+</html>`;
+}
+
+function escapeHtml(s: string): string {
+	return s
+		.replaceAll("&", "&amp;")
+		.replaceAll("<", "&lt;")
+		.replaceAll(">", "&gt;")
+		.replaceAll('"', "&quot;");
+}
+
+/** Get named export keys for each React module. Throws if a module cannot be required. */
 async function getReactExportNames(): Promise<Record<string, string[]>> {
 	const result: Record<string, string[]> = {};
 	for (const [, config] of Object.entries(VENDOR_SHIMS)) {
-		try {
-			// biome-ignore lint/suspicious/noExplicitAny: dynamic require
-			const mod = require(config.importPath) as any;
-			result[config.importPath] = Object.keys(mod).filter(
-				(k) => k !== "default" && /^[a-zA-Z_$]/.test(k),
-			);
-		} catch {
-			result[config.importPath] = [];
-		}
+		// biome-ignore lint/suspicious/noExplicitAny: dynamic require
+		const mod = require(config.importPath) as any;
+		result[config.importPath] = Object.keys(mod).filter(
+			(k) => k !== "default" && /^[a-zA-Z_$]/.test(k),
+		);
 	}
 	return result;
 }
