@@ -73,7 +73,7 @@ describe("daemon with Matrix plugin e2e", () => {
 
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		daemon = await createDaemon({ dataDir });
+		daemon = await createDaemon({ dataDir, autoInitAuth: false });
 
 		server = Bun.serve({ port: 0, fetch: daemon.fetch });
 		if (server.port === undefined)

@@ -18,8 +18,15 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Hono } from "hono";
-import { hasJwtSecret, verifyJWT } from "./auth.ts";
 import {
+	bumpSecretVersion,
+	ensureAuthInitialized,
+	hasJwtSecret,
+	signStreamToken,
+	verifyJWT,
+} from "./auth.ts";
+import {
+	type AuthGroup,
 	DEFAULT_CONFIG,
 	loadGlobalConfig,
 	type MatrixConfig,
@@ -29,6 +36,126 @@ import { checkDataRootCollisions, type PluginManifest } from "./plugin.ts";
 import { ProjectManager } from "./project-manager.ts";
 import type { SyncMap } from "./runtime/worker-api.ts";
 import { ulid } from "./ulid.ts";
+
+// ── Bearer / secret helpers (daemon-only) ──
+
+/**
+ * Extract a bearer token from an Authorization header OR a `?token=` query param.
+ *
+ * Bearer scheme is compared case-insensitively per RFC 7235 §2.1
+ * ("case-insensitive scheme"). The query-param path exists ONLY for SSE
+ * EventSource, which cannot set headers; see also `signStreamToken`.
+ */
+function extractBearerToken(
+	authHeader: string | undefined,
+	queryToken: string | undefined,
+): string | null {
+	if (authHeader) {
+		const match = /^Bearer[ \t]+(.+)$/i.exec(authHeader);
+		if (match) {
+			const t = match[1]?.trim();
+			if (t) return t;
+		}
+	}
+	return queryToken ?? null;
+}
+
+/** Mask a secret (API key, token) to `prefix…last4`. Returns `"****"` for short values. */
+function maskSecret(s: string | undefined): string | undefined {
+	if (!s) return s;
+	if (s.length <= 8) return "****";
+	return `${s.slice(0, 7)}…${s.slice(-4)}`;
+}
+
+/** Return an AuthGroup with every secret field masked. Does not mutate input. */
+function maskAuthGroup(group: AuthGroup): AuthGroup {
+	if (group.provider === "anthropic") {
+		return {
+			...group,
+			apiKey: maskSecret(group.apiKey),
+			oauthToken: maskSecret(group.oauthToken),
+		};
+	}
+	return {
+		...group,
+		apiKey: maskSecret(group.apiKey),
+		accessToken: maskSecret(group.accessToken),
+		refreshToken: maskSecret(group.refreshToken),
+	};
+}
+
+/**
+ * Return a config with every `authGroups.*` credential field masked.
+ * Used on GET /config/global etc. so a valid token can no longer be
+ * traded for raw API keys.
+ */
+function maskConfig(config: MatrixConfig): MatrixConfig {
+	const maskedGroups: Record<string, AuthGroup> = {};
+	for (const [name, group] of Object.entries(config.authGroups)) {
+		maskedGroups[name] = maskAuthGroup(group);
+	}
+	return { ...config, authGroups: maskedGroups };
+}
+
+/** `true` if `incoming` is the masked form of `existing`. */
+function isMaskedEcho(
+	existing: string | undefined,
+	incoming: string | undefined,
+): boolean {
+	if (!existing || !incoming) return false;
+	return incoming === maskSecret(existing);
+}
+
+/**
+ * For PATCH: if the client submitted a masked echo of an existing secret
+ * (i.e. didn't touch the field in the UI), preserve the stored plaintext.
+ * Otherwise accept whatever came in — including clearing via empty string.
+ * The UI writes `{ apiKey: maskedValue }` back when the user leaves the
+ * field untouched; without this we'd overwrite real keys with their mask.
+ */
+function mergeAuthGroup(
+	existing: AuthGroup | undefined,
+	incoming: AuthGroup,
+): AuthGroup {
+	if (!existing || existing.provider !== incoming.provider) return incoming;
+
+	// `keep(field)` : if `incoming[field]` is a masked echo of `existing[field]`,
+	// return the stored plaintext; else return incoming as-is.
+	const keep = (field: string): string | undefined => {
+		const inc = (incoming as unknown as Record<string, unknown>)[field];
+		const ex = (existing as unknown as Record<string, unknown>)[field];
+		const incStr = typeof inc === "string" ? inc : undefined;
+		const exStr = typeof ex === "string" ? ex : undefined;
+		if (isMaskedEcho(exStr, incStr)) return exStr;
+		return incStr;
+	};
+
+	if (incoming.provider === "anthropic") {
+		return {
+			...incoming,
+			apiKey: keep("apiKey"),
+			oauthToken: keep("oauthToken"),
+		};
+	}
+	return {
+		...incoming,
+		apiKey: keep("apiKey"),
+		accessToken: keep("accessToken"),
+		refreshToken: keep("refreshToken"),
+	};
+}
+
+/** Merge incoming authGroups record with existing — preserve masked echoes. */
+function mergeAuthGroups(
+	existing: Record<string, AuthGroup>,
+	incoming: Record<string, AuthGroup>,
+): Record<string, AuthGroup> {
+	const out: Record<string, AuthGroup> = {};
+	for (const [name, group] of Object.entries(incoming)) {
+		out[name] = mergeAuthGroup(existing[name], group);
+	}
+	return out;
+}
 
 // Read version
 const _pkg = JSON.parse(
@@ -92,10 +219,18 @@ export interface DaemonInstance {
 export async function createDaemon(opts: {
 	dataDir: string;
 	globalConfigPath?: string;
+	/**
+	 * Eagerly initialize `auth.json` with a jwtSecret + secretVersion.
+	 * Default true in production (closes the "no-secret" window between
+	 * daemon boot and `mxd auth`). Tests pass `false` so they don't
+	 * auto-enable auth and have to pass a token on every request.
+	 */
+	autoInitAuth?: boolean;
 }): Promise<DaemonInstance> {
 	const { dataDir } = opts;
 	const globalConfigPath =
 		opts.globalConfigPath ?? join(dataDir, "config.json");
+	const autoInitAuth = opts.autoInitAuth ?? true;
 
 	// Load global config
 	let globalConfig: MatrixConfig;
@@ -485,29 +620,54 @@ export async function createDaemon(opts: {
 		);
 	}
 
+	// ── Bootstrap auth eagerly ──
+	// Historically the daemon ran with no `auth.json` until the user ran
+	// `mxd auth`, opening a "no-secret" window where ANY LAN-reachable
+	// client could hit the daemon (Audit G H2). Close that window by
+	// creating `jwtSecret` + `secretVersion` on first boot.
+	const authPath = join(dataDir, "auth.json");
+	if (autoInitAuth) {
+		const { createdSecret } = await ensureAuthInitialized(authPath);
+		if (createdSecret) {
+			console.log(
+				"[auth] Initialized auth.json with a fresh jwtSecret. " +
+					"Run `mxd auth <public_key>` to authenticate a browser session.",
+			);
+		}
+	}
+
 	// ── Hono app with routes ──
 
 	const app = new Hono();
 
-	// Auth middleware
-	// Only skip auth for SPA root, shell static assets, and auth endpoints.
-	// NOT /.mxd/ (has config.json, tree.json, memory.md — sensitive).
-	// NOT file extensions (attackers can append .ts to bypass).
+	// Auth middleware.
+	//
+	// Paths skipped: SPA root (served anonymously so the login page can
+	// load), compiled shell/vendor bundles, and the two exact auth
+	// endpoints that must work pre-auth (status + logout).
+	// Previously `/auth/*` was prefix-matched — any future worker route
+	// under `/auth/*` would have been publicly reachable (Audit J H1).
+	const SKIP_EXACT = new Set(["/", "/auth/status", "/auth/logout"]);
 	app.use("*", async (c, next) => {
+		const path = c.req.path;
 		const skipAuth =
-			c.req.path === "/" ||
-			c.req.path.startsWith("/vendor/") ||
-			c.req.path.startsWith("/app/") ||
-			c.req.path.startsWith("/auth/");
+			SKIP_EXACT.has(path) ||
+			path.startsWith("/vendor/") ||
+			path.startsWith("/app/");
 
 		if (!skipAuth) {
-			const authPath = join(dataDir, "auth.json");
 			if (await hasJwtSecret(authPath)) {
-				const authHeader = c.req.header("authorization");
-				const token = authHeader?.startsWith("Bearer ")
-					? authHeader.slice(7)
-					: c.req.query("token");
-				if (!token || !(await verifyJWT(authPath, token))) {
+				const token = extractBearerToken(
+					c.req.header("authorization"),
+					c.req.query("token"),
+				);
+				// `/events` accepts only stream tokens so the long-lived
+				// session token never rides in the URL.
+				const allowed =
+					path === "/events"
+						? (["stream"] as const)
+						: (["cli", "session"] as const);
+				if (!token || !(await verifyJWT(authPath, token, allowed))) {
 					return c.json({ error: "Unauthorized" }, 401);
 				}
 			}
@@ -536,21 +696,47 @@ export async function createDaemon(opts: {
 
 	// Auth routes
 	app.get("/auth/status", async (c) => {
-		const authPath = join(dataDir, "auth.json");
 		const hasSecret = await hasJwtSecret(authPath);
-		const authHeader = c.req.header("authorization");
-		const token = authHeader?.startsWith("Bearer ")
-			? authHeader.slice(7)
-			: c.req.query("token");
+		const token = extractBearerToken(
+			c.req.header("authorization"),
+			c.req.query("token"),
+		);
 		const hasValidToken = token
-			? (await verifyJWT(authPath, token)) !== null
+			? (await verifyJWT(authPath, token, ["cli", "session"])) !== null
 			: false;
 		const authenticated = hasValidToken || !hasSecret;
 		return c.json({ enabled: hasSecret, authenticated });
 	});
 
-	app.post("/auth/logout", (c) => {
-		return c.json({ ok: true });
+	/**
+	 * Logout-all. Bumps `secretVersion` in auth.json → every outstanding
+	 * token (session, CLI, stream) becomes invalid on next verify.
+	 * Requires a valid session/CLI token — passes the auth middleware
+	 * before landing here, then hard-rotates the version.
+	 *
+	 * NOTE: not on SKIP_EXACT — calling this without a token returns 401,
+	 * which is intentional (an anonymous client cannot log anyone out).
+	 */
+	app.post("/auth/logout", async (c) => {
+		// If auth isn't set up, logout is meaningless but shouldn't 500.
+		if (!(await hasJwtSecret(authPath))) return c.json({ ok: true });
+		const newVersion = await bumpSecretVersion(authPath);
+		return c.json({ ok: true, secretVersion: newVersion });
+	});
+
+	/**
+	 * Issue a short-lived (5min) stream token for SSE. Requires a valid
+	 * session/CLI token. Browser swaps its long-lived session token for a
+	 * stream token each time it (re)opens `/events`, so the 30d token
+	 * never appears in URLs / proxy logs / browser history.
+	 */
+	app.post("/auth/stream-token", async (c) => {
+		// If auth isn't set up, no token is needed anywhere — return empty.
+		if (!(await hasJwtSecret(authPath))) {
+			return c.json({ token: null });
+		}
+		const token = await signStreamToken(authPath);
+		return c.json({ token });
 	});
 
 	// ── Project CRUD (daemon-owned) ──
@@ -696,15 +882,24 @@ export async function createDaemon(opts: {
 	});
 
 	// Global config
+	// GET: every authGroup credential is masked. A valid token can no
+	// longer be traded for raw API keys. PATCH still accepts raw values
+	// (that's how you rotate a key).
 	app.get("/config/global", (c) => {
-		return c.json(globalConfig);
+		return c.json(maskConfig(globalConfig));
 	});
 
 	app.patch("/config/global", async (c) => {
 		const partial = await c.req.json<Partial<MatrixConfig>>();
 		const next = { ...globalConfig } as MatrixConfig;
 		for (const [k, v] of Object.entries(partial)) {
-			if (v === null || v === undefined) {
+			if (k === "authGroups" && v && typeof v === "object") {
+				// Special-case: preserve secrets that came back as masked echoes
+				next.authGroups = mergeAuthGroups(
+					globalConfig.authGroups,
+					v as Record<string, AuthGroup>,
+				);
+			} else if (v === null || v === undefined) {
 				delete (next as unknown as Record<string, unknown>)[k];
 			} else {
 				(next as unknown as Record<string, unknown>)[k] = v;
@@ -713,7 +908,8 @@ export async function createDaemon(opts: {
 		globalConfig = next;
 		await saveGlobalConfig(globalConfig, globalConfigPath);
 		syncConfig();
-		return c.json(globalConfig);
+		// Re-mask on the way back so the client never sees plaintext.
+		return c.json(maskConfig(globalConfig));
 	});
 
 	// ── Project config (daemon-owned: per-project settings) ──
@@ -761,11 +957,14 @@ export async function createDaemon(opts: {
 			loadProjectLocalConfig(dataDir, project.id),
 		]);
 		const resolved = resolveConfig(globalConfig, repoConfig, localConfig);
+		// Only `global` actually carries credentials (AuthGroup record);
+		// project layers override non-auth fields only. Masking the
+		// `global` and `resolved` views is sufficient.
 		return c.json({
-			global: globalConfig,
+			global: maskConfig(globalConfig),
 			repo: repoConfig,
 			local: localConfig,
-			resolved,
+			resolved: maskConfig(resolved),
 		});
 	});
 
@@ -805,6 +1004,15 @@ export async function createDaemon(opts: {
 		}
 
 		const request = c.req.raw;
+		// Capture the token used to authorize this stream so we can
+		// periodically re-verify it. Short-lived "stream" tokens expire
+		// in 5min; re-verifying at every heartbeat also picks up global
+		// revocation (logout-all bumps secretVersion).
+		const streamToken = extractBearerToken(
+			c.req.header("authorization"),
+			c.req.query("token"),
+		);
+		const authEnabled = await hasJwtSecret(authPath);
 
 		// EventSource sends Last-Event-ID on reconnect
 		const lastEventIdHeader = request.headers.get("Last-Event-ID");
@@ -889,7 +1097,36 @@ export async function createDaemon(opts: {
 					} catch {}
 				}
 
-				const heartbeat = setInterval(() => {
+				const closeStream = (reason: string) => {
+					try {
+						controller.enqueue(
+							sseEncoder.encode(
+								`event: auth_expired\ndata: ${JSON.stringify({ reason })}\n\n`,
+							),
+						);
+						controller.close();
+					} catch {
+						/* already closed */
+					}
+					sseClients.delete(client);
+				};
+
+				const heartbeat = setInterval(async () => {
+					// Re-verify the stream token on every heartbeat. Closes
+					// the stream when the token has expired or been revoked
+					// (logout-all rotates secretVersion → every stream token
+					// becomes invalid on next verify). Frontend's watchdog
+					// then reconnects, requesting a fresh stream token.
+					if (authEnabled) {
+						if (
+							!streamToken ||
+							!(await verifyJWT(authPath, streamToken, ["stream"]))
+						) {
+							clearInterval(heartbeat);
+							closeStream("token_expired");
+							return;
+						}
+					}
 					try {
 						controller.enqueue(
 							sseEncoder.encode(
@@ -1007,6 +1244,10 @@ if (import.meta.main) {
 	const daemon = await createDaemon({ dataDir });
 
 	const port = daemon.globalConfig.port ?? 7433;
+	// Default to loopback so a fresh install isn't LAN-reachable before
+	// `mxd auth` has run. Opt-in to LAN/public exposure via MXD_BIND_HOST=0.0.0.0
+	// (or a specific interface IP). Matches `ssh -L` / container conventions.
+	const hostname = process.env.MXD_BIND_HOST ?? "127.0.0.1";
 
 	try {
 		const res = await fetch(`http://localhost:${port}/health`);
@@ -1019,12 +1260,18 @@ if (import.meta.main) {
 	Bun.serve({
 		fetch: daemon.fetch,
 		port,
+		hostname,
 		idleTimeout: 255,
 	});
 
 	console.log(
-		`Matrix daemon v${VERSION} (${GIT_HASH}) listening on http://localhost:${port}`,
+		`Matrix daemon v${VERSION} (${GIT_HASH}) listening on http://${hostname}:${port}`,
 	);
+	if (hostname !== "127.0.0.1" && hostname !== "localhost") {
+		console.log(
+			"[auth] Bound non-loopback — ensure a strong auth.json secret is set.",
+		);
+	}
 
 	const handleShutdown = async () => {
 		console.log("Shutting down...");
