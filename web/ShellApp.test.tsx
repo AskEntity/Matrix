@@ -489,4 +489,26 @@ describe("sidebar toggle — unified state model", () => {
 		expect(localStorage.getItem("mxd-sidebar-collapsed")).toBeNull();
 		unmount();
 	});
+
+	test("clicking a task on desktop does NOT auto-close the sidebar", async () => {
+		// On mobile the sidebar is an overlay that must dismiss when the user
+		// selects content — otherwise the drawer stays covering the view.
+		// On desktop the sidebar is a persistent sibling; selecting a task
+		// shouldn't collapse it. Regression: earlier code called
+		// `setSidebarOpen(false)` unconditionally in handleTaskSelect.
+		const { div, unmount } = await mountPlugin();
+		const sidebar = div.querySelector(".mxd-sidebar") as HTMLElement;
+		expect(sidebar.classList.contains("mxd-sidebar-open")).toBe(true);
+
+		// Click the orchestrator row — goes through handleTaskSelect(rootNodeId).
+		const orchButton = div.querySelector(".mxd-orch-node") as HTMLButtonElement;
+		expect(orchButton).toBeTruthy();
+		orchButton.click();
+		await new Promise((r) => setTimeout(r, 50));
+
+		// Sidebar must remain open on desktop.
+		expect(sidebar.classList.contains("mxd-sidebar-open")).toBe(true);
+		expect(sidebar.classList.contains("mxd-sidebar-collapsed")).toBe(false);
+		unmount();
+	});
 });
