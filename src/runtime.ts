@@ -1,9 +1,8 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
-import { serveStatic } from "hono/bun";
 import {
 	DEFAULT_CONFIG,
 	DEFAULT_MODEL,
@@ -19,10 +18,9 @@ import {
 	stopAgent,
 } from "./runtime/agent-lifecycle.ts";
 import type {
-	DaemonConfig,
 	PendingClarification,
+	RuntimeConfig,
 	RuntimeContext,
-	SSEClient,
 } from "./runtime/context.ts";
 import { broadcastTreeUpdate, emitEvent } from "./runtime/event-system.ts";
 import { getEventStore, getTracker } from "./runtime/helpers.ts";
@@ -42,29 +40,18 @@ import {
 	type VersionResponse,
 } from "./types.ts";
 
-// Re-export DaemonConfig so tests can import from runtime.ts
-export type { DaemonConfig } from "./runtime/context.ts";
+// Re-export RuntimeConfig so tests can import from runtime.ts.
+// Alias exported as DaemonConfig for backward compat with external imports.
+export type {
+	RuntimeConfig,
+	RuntimeConfig as DaemonConfig,
+} from "./runtime/context.ts";
 
-// Read version from package.json at startup.
-const _pkg = JSON.parse(
-	readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-) as { version: string };
-const VERSION = _pkg.version;
-
-// Capture git commit hash once at startup for traceability.
-let GIT_HASH = "unknown";
-try {
-	const result = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"]);
-	if (result.exitCode === 0) {
-		GIT_HASH = new TextDecoder().decode(result.stdout).trim();
-	}
-} catch {
-	// git not available or not a git repo — keep "unknown"
-}
+import { GIT_HASH, VERSION } from "./version.ts";
 
 const startTime = Date.now();
 
-const defaultConfig: DaemonConfig = {
+const defaultConfig: RuntimeConfig = {
 	dataDir: join(homedir(), ".mxd"),
 };
 
@@ -129,7 +116,7 @@ export function findInterruptedDonePhase2(events: Event[]):
 	return { type: "status_stale", status };
 }
 
-export function createApp(config: DaemonConfig = defaultConfig) {
+export function createApp(config: RuntimeConfig = defaultConfig) {
 	const app = new Hono();
 
 	// Build the shared context object
@@ -143,7 +130,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		trackers: new Map(),
 		restartingProjects: new Set(),
 		launchingNodes: new Set(),
-		sseClients: new Set<SSEClient>(),
 		eventSubscribers: new Map(),
 		pendingClarifications: new Map<string, PendingClarification[]>(),
 		eventStores: new Map(),
@@ -170,7 +156,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	/**
 	 * Get ScopeOpts for a project from the injected plugin builder.
-	 * No fallback — caller MUST provide buildScopeOpts in DaemonConfig.
+	 * No fallback — caller MUST provide buildScopeOpts in RuntimeConfig.
 	 */
 	// biome-ignore lint/suspicious/noExplicitAny: ScopeOpts generic varies by plugin
 	function getScopeOptsForProject(
@@ -178,7 +164,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	): import("./runtime/context.ts").ScopeOpts<any> {
 		if (!config.buildScopeOpts) {
 			throw new Error(
-				"buildScopeOpts not provided in DaemonConfig. " +
+				"buildScopeOpts not provided in RuntimeConfig. " +
 					"Runtime is plugin-agnostic — the caller must inject scope opts.",
 			);
 		}
@@ -321,26 +307,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	registerMcpEndpoint(app, ctx);
 	registerMockShowcaseRoute(app);
 
-	// Static file serving for the web UI (fallback for non-Bun environments)
-	app.use("/web/*", serveStatic({ root: ".mxd/plugin/" }));
-
-	/** Auto-resume agents that were running before daemon restart.
-	 *
-	 * Simply finds all in_progress nodes with JSONL sessions and launches them
-	 * via runAgentForNode. No resume messages, no root/child split, no
-	 * yielding/interrupted distinction.
-	 *
-	 * The three resume states handle themselves inside the provider loop:
-	 * - Explicit yield (JSONL ends with yield tool_call): pendingYieldToolCall
-	 *   bypasses initial drain → queue.wait → zero API call until message arrives
-	 * - Implicit yield (JSONL ends with assistant_text): pendingImplicitYieldResume
-	 *   bypasses initial drain → handleImplicitYield → zero API call until message
-	 * - Interrupted (JSONL has orphaned tool_calls): buildSessionRepair adds
-	 *   tool_results → messages end with user content → skip initial drain → API call
-	 */
 	/**
-	 * Resume a single project scope: crash recovery + launch in_progress agents.
-	 * Extracted so plugin scopes can reuse the same startup logic.
+	 * Resume a single project's in_progress agents: crash recovery +
+	 * relaunch via runAgentForNode. Factored out of autoResumeProjects so
+	 * project-lifecycle code (register, re-sync) can reuse it.
 	 */
 	async function resumeScope(
 		project: { id: string; name: string; path: string },
@@ -440,6 +410,21 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	}
 
+	/**
+	 * Auto-resume agents that were running before daemon restart.
+	 *
+	 * Simply finds all in_progress nodes with JSONL sessions and launches them
+	 * via runAgentForNode. No resume messages, no root/child split, no
+	 * yielding/interrupted distinction.
+	 *
+	 * The three resume states handle themselves inside the provider loop:
+	 * - Explicit yield (JSONL ends with yield tool_call): pendingYieldToolCall
+	 *   bypasses initial drain → queue.wait → zero API call until message arrives
+	 * - Implicit yield (JSONL ends with assistant_text): pendingImplicitYieldResume
+	 *   bypasses initial drain → handleImplicitYield → zero API call until message
+	 * - Interrupted (JSONL has orphaned tool_calls): buildSessionRepair adds
+	 *   tool_results → messages end with user content → skip initial drain → API call
+	 */
 	async function autoResumeProjects(): Promise<void> {
 		if (!config.buildScopeOpts) {
 			// No plugin runtime → no agent lifecycle. Worker serves routes only.
@@ -482,7 +467,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		ctx,
 		pm: ctx.pm,
 		dataDir: config.dataDir,
-		sseClients: ctx.sseClients,
 		autoResumeProjects,
 		shutdown,
 		getTracker: (projectId: string) => getTracker(ctx, projectId),

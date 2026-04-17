@@ -4,11 +4,11 @@
  * fall back to hardcoded Matrix import.
  */
 
-import type { DaemonConfig } from "../runtime/context.ts";
+import type { RuntimeConfig } from "../runtime/context.ts";
 import { createApp } from "../runtime.ts";
 import { matrixBuildScopeOpts } from "./matrix-scope.ts";
 
-export function createMatrixApp(config: DaemonConfig) {
+export function createMatrixApp(config: RuntimeConfig) {
 	return createApp({
 		...config,
 		buildScopeOpts: config.buildScopeOpts ?? matrixBuildScopeOpts,

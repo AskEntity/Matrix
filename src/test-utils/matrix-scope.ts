@@ -1,6 +1,6 @@
 /**
  * Matrix scope opts helper for tests.
- * Wraps buildMatrixScopeOpts to match DaemonConfig.buildScopeOpts signature.
+ * Wraps buildMatrixScopeOpts to match RuntimeConfig.buildScopeOpts signature.
  *
  * Tests that call createApp() should include this:
  *   createApp({ ..., buildScopeOpts: matrixBuildScopeOpts })

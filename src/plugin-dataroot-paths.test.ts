@@ -17,7 +17,7 @@ describe("dataRoot path resolution", () => {
 		scope: "global" as const,
 		dataRoot: "@",
 	};
-	const storyManifest = { name: "story1001", scope: "project" as const }; // default dataRoot
+	const storyManifest = { name: "story1001", scope: "global" as const }; // default dataRoot
 
 	test("matrix dataRoot '@' resolves to project root", () => {
 		expect(effectiveDataRoot(matrixManifest)).toBe("@");
@@ -80,7 +80,7 @@ describe("dataRoot integration: two plugins write to separate directories", () =
 			projectId,
 		);
 		const storyRoot = resolve(
-			{ name: "story1001", scope: "project" },
+			{ name: "story1001", scope: "global" },
 			dataDir,
 			projectId,
 		);

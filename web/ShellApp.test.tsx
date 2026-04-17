@@ -9,10 +9,16 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "../src/config.ts";
 import { createDaemon, type DaemonInstance } from "../src/daemon.ts";
+
+// Hermetic repo root: the matrix repo is the parent dir of this test file's dir
+// (web/ShellApp.test.tsx → matrix repo root). Do NOT use process.cwd() —
+// that breaks tests run from any other directory.
+const MATRIX_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // ── Part 1: HTTP build pipeline ──
 
@@ -30,7 +36,7 @@ describe("daemon web build pipeline", () => {
 				{
 					id: "m1",
 					name: "matrix",
-					path: resolve("."),
+					path: MATRIX_REPO_ROOT,
 					createdAt: "2026-01-01",
 				},
 			]),
@@ -92,7 +98,7 @@ describe("plugin component renders Matrix UI", () => {
 				{
 					id: "m1",
 					name: "matrix",
-					path: resolve("."),
+					path: MATRIX_REPO_ROOT,
 					createdAt: "2026-01-01",
 				},
 			]),
@@ -181,7 +187,6 @@ describe("plugin component renders Matrix UI", () => {
 		}
 
 		const text = div.textContent ?? "";
-		console.log("PLUGIN RENDER:", text.slice(0, 300));
 
 		// Real Matrix UI — not loading/empty states
 		expect(text.length).toBeGreaterThan(50);
@@ -240,7 +245,7 @@ describe("sidebar toggle — unified state model", () => {
 				{
 					id: "m1",
 					name: "matrix",
-					path: resolve("."),
+					path: MATRIX_REPO_ROOT,
 					createdAt: "2026-01-01",
 				},
 			]),

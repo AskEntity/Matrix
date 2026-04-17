@@ -48,7 +48,6 @@ export function mockRuntimeContext(opts: {
 		trackers,
 		restartingProjects: new Set(),
 		launchingNodes: new Set(),
-		sseClients: new Set(),
 		eventSubscribers: new Map(),
 		pendingClarifications: new Map(),
 		eventStores: new Map(),

@@ -33,22 +33,16 @@ self.onmessage = async (event: MessageEvent) => {
 			};
 
 		try {
-			// Load plugin's scope opts builder if provided
+			// Load plugin's scope opts builder if provided.
+			// Plugin contract: exports buildScopeOpts or default (projectId, ctx) → ScopeOpts.
+			// Plugin-specific config (e.g., selfBootstrap) is read from ctx.globalConfig inside the builder.
 			// biome-ignore lint/suspicious/noExplicitAny: plugin module shape varies
 			let buildScopeOpts: any;
 			if (pluginRuntimePath) {
 				const pluginMod = await import(pluginRuntimePath);
-				const builder =
-					pluginMod.buildMatrixScopeOpts ??
-					pluginMod.buildScopeOpts ??
-					pluginMod.default;
+				const builder = pluginMod.buildScopeOpts ?? pluginMod.default;
 				if (typeof builder === "function") {
-					// Plugin's builder receives (projectId, ctx) — generic interface.
-					// Plugin-specific args (like selfBootstrap) are read from ctx.globalConfig inside the builder.
-					buildScopeOpts = (
-						projectId: string,
-						ctx: import("./context.ts").RuntimeContext,
-					) => builder(projectId, ctx);
+					buildScopeOpts = builder;
 				}
 			}
 			appInstance = createApp({

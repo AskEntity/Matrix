@@ -7,13 +7,11 @@
  * tools from schema descriptions, and WHEN/WHY from these prompts.
  */
 
-/** Split system prompt for cache optimization. */
-export interface SystemPrompt {
-	/** SYSTEM_PROMPT pure text — shared by ALL agents, never changes. */
-	stable: string;
-	/** Date + selfBootstrap — per-agent, per-day. */
-	variable: string;
-}
+// The SystemPrompt shape is plugin-agnostic runtime core — lives in runtime/context.ts.
+// Re-exported here for convenience; existing imports continue to work.
+import type { SystemPrompt } from "./runtime/context.ts";
+
+export type { SystemPrompt };
 
 /**
  * System prompt — every agent gets this as a stable, cacheable prefix.
