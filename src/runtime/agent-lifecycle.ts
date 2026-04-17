@@ -585,49 +585,51 @@ export async function deliverMessage(
 			// target failed, and notify the sender (task-above) via task_complete —
 			// same channel as done("failed"). Without this notification a yielding
 			// parent would wait forever for a subtask that never started.
-			ensureChildAgentRunning(ctx, project, tracker, nodeId).catch(async (e) => {
-				const errorMsg = `Auto-launch failed: ${e instanceof Error ? e.message : String(e)}`;
+			ensureChildAgentRunning(ctx, project, tracker, nodeId).catch(
+				async (e) => {
+					const errorMsg = `Auto-launch failed: ${e instanceof Error ? e.message : String(e)}`;
 
-				// 1. Emit error event on target (preserves current UI behavior).
-				emitEvent(ctx, project.id, {
-					type: "error",
-					taskId: nodeId,
-					message: errorMsg,
-					ts: Date.now(),
-				});
-
-				// 2. Mark target failed in the tree so UI reconciles to red.
-				const failedNode = tracker.getTask(nodeId);
-				if (failedNode) {
-					tracker.updateStatus(nodeId, "failed");
-					await tracker.save();
-					broadcastTreeUpdate(ctx, project.id, tracker);
-				}
-
-				// 3. Notify the sender (task above) via task_complete.
-				// Launch failure IS a form of task completion — failed before starting.
-				// Reuses the same channel as done("failed"); sender handles identically.
-				const taskAbove = tracker.getTaskAbove(nodeId);
-				if (taskAbove && failedNode) {
-					const completionMsg = createTaskComplete(
-						nodeId,
-						failedNode.title ?? "unknown",
-						false,
-						errorMsg,
-					);
-					await deliverMessage(
-						ctx,
-						project,
-						taskAbove.id,
-						completionMsg,
-					).catch((e2) => {
-						console.warn(
-							`[launch-failure] Failed to deliver task_complete to parent ${taskAbove.id}:`,
-							e2 instanceof Error ? e2.message : String(e2),
-						);
+					// 1. Emit error event on target (preserves current UI behavior).
+					emitEvent(ctx, project.id, {
+						type: "error",
+						taskId: nodeId,
+						message: errorMsg,
+						ts: Date.now(),
 					});
-				}
-			});
+
+					// 2. Mark target failed in the tree so UI reconciles to red.
+					const failedNode = tracker.getTask(nodeId);
+					if (failedNode) {
+						tracker.updateStatus(nodeId, "failed");
+						await tracker.save();
+						broadcastTreeUpdate(ctx, project.id, tracker);
+					}
+
+					// 3. Notify the sender (task above) via task_complete.
+					// Launch failure IS a form of task completion — failed before starting.
+					// Reuses the same channel as done("failed"); sender handles identically.
+					const taskAbove = tracker.getTaskAbove(nodeId);
+					if (taskAbove && failedNode) {
+						const completionMsg = createTaskComplete(
+							nodeId,
+							failedNode.title ?? "unknown",
+							false,
+							errorMsg,
+						);
+						await deliverMessage(
+							ctx,
+							project,
+							taskAbove.id,
+							completionMsg,
+						).catch((e2) => {
+							console.warn(
+								`[launch-failure] Failed to deliver task_complete to parent ${taskAbove.id}:`,
+								e2 instanceof Error ? e2.message : String(e2),
+							);
+						});
+					}
+				},
+			);
 		} else if (
 			ctx.scopeOpts.has(project.id) &&
 			!ctx.restartingProjects.has(project.id) &&
