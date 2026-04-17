@@ -4,6 +4,9 @@
  * CLI is trust anchor — if you can read ~/.mxd/auth.json, you're authenticated.
  * Challenge-response: browser generates RSA-OAEP keypair, CLI encrypts session JWT with public key.
  * HMAC-SHA256 signing key auto-generated and persisted in auth.json.
+ *
+ * Revocation: tokens embed `sv` (secretVersion). Bumping `secretVersion` in
+ * auth.json invalidates every outstanding token in one atomic step.
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -14,11 +17,23 @@ import { dirname } from "node:path";
 interface AuthData {
 	/** HMAC-SHA256 key for JWT signing, base64-encoded. Auto-generated on first use. */
 	jwtSecret?: string;
+	/**
+	 * Monotonically-increasing counter embedded in every signed JWT as `sv`.
+	 * `verifyJWT` rejects tokens whose `sv` differs from the current value,
+	 * which lets `bumpSecretVersion` (logout-all) revoke everything atomically.
+	 */
+	secretVersion?: number;
 }
 
+/** JWT subject types. */
+export type JWTSubject = "cli" | "session" | "stream";
+
 interface JWTPayload {
-	/** Subject — "cli" for CLI auto-auth, "session" for web sessions */
-	sub: string;
+	/** Subject — "cli" (short-lived CLI token), "session" (web session),
+	 *  "stream" (short-lived SSE token used in query param). */
+	sub: JWTSubject;
+	/** Secret version at issue time. Rejected if current version is higher. */
+	sv?: number;
 	/** Issued-at (seconds since epoch) */
 	iat: number;
 	/** Expiry (seconds since epoch) */
@@ -27,40 +42,97 @@ interface JWTPayload {
 
 // ── Auth Data Storage ──────────────────────────────────────────────────────
 
-let authDataCache: AuthData | null = null;
+// Deliberately uncached. Prior `authDataCache` stayed stale across
+// `mxd auth` (daemon never re-read auth.json until restart); a running
+// daemon appeared secured but kept serving unauthenticated requests.
+// Local JSON reads are cheap (~tens of μs); correctness trumps the cache.
 
 async function readAuthData(path: string): Promise<AuthData> {
-	if (authDataCache) return authDataCache;
 	try {
 		const raw = JSON.parse(await readFile(path, "utf-8")) as Record<
 			string,
 			unknown
 		>;
-		// Only keep jwtSecret — ignore legacy fields like credentials
-		authDataCache = {
+		return {
 			jwtSecret: typeof raw.jwtSecret === "string" ? raw.jwtSecret : undefined,
+			secretVersion:
+				typeof raw.secretVersion === "number" ? raw.secretVersion : undefined,
 		};
 	} catch {
-		authDataCache = {};
+		return {};
 	}
-	return authDataCache;
 }
 
 async function writeAuthData(path: string, data: AuthData): Promise<void> {
-	authDataCache = data;
 	await mkdir(dirname(path), { recursive: true });
 	await writeFile(path, JSON.stringify(data, null, "\t"), "utf-8");
 }
 
-/** Reset the in-memory auth data cache (for testing). */
+/**
+ * Kept for test compatibility. The in-memory cache was removed, so this is
+ * now a no-op; tests may still call it freely.
+ * @deprecated no cache exists; call is unnecessary.
+ */
 export function resetAuthDataCache(): void {
-	authDataCache = null;
+	// no-op — cache removed to fix stale-auth bug
+}
+
+/**
+ * Read the current secret version (default 1).
+ * Exposed so startup can pre-create auth.json with a jwtSecret + initial
+ * secretVersion if absent, avoiding the "open window" during bootstrap.
+ */
+export async function getSecretVersion(authPath: string): Promise<number> {
+	const data = await readAuthData(authPath);
+	return data.secretVersion ?? 1;
+}
+
+/**
+ * Increment secretVersion, invalidating every previously-signed token.
+ * Used by POST /auth/logout for "logout-all".
+ */
+export async function bumpSecretVersion(authPath: string): Promise<number> {
+	const data = await readAuthData(authPath);
+	const next = (data.secretVersion ?? 1) + 1;
+	data.secretVersion = next;
+	await writeAuthData(authPath, data);
+	return next;
+}
+
+/**
+ * Ensure auth.json has a jwtSecret + secretVersion. Creates both if missing.
+ * Called at daemon boot so the "no secret yet" open window closes
+ * before the first HTTP request is accepted.
+ */
+export async function ensureAuthInitialized(
+	authPath: string,
+): Promise<{ createdSecret: boolean }> {
+	const data = await readAuthData(authPath);
+	if (data.jwtSecret && typeof data.secretVersion === "number") {
+		return { createdSecret: false };
+	}
+	// Generate key if missing
+	if (!data.jwtSecret) {
+		const key = await crypto.subtle.generateKey(
+			{ name: "HMAC", hash: "SHA-256" },
+			true,
+			["sign", "verify"],
+		);
+		const raw = await crypto.subtle.exportKey("raw", key);
+		data.jwtSecret = uint8ArrayToBase64(new Uint8Array(raw));
+	}
+	if (typeof data.secretVersion !== "number") {
+		data.secretVersion = 1;
+	}
+	await writeAuthData(authPath, data);
+	return { createdSecret: true };
 }
 
 // ── JWT Management ─────────────────────────────────────────────────────────
 
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const CLI_TTL_SECONDS = 5 * 60; // 5 minutes
+const STREAM_TTL_SECONDS = 5 * 60; // 5 minutes — SSE query-param token
 
 /** Check whether auth.json has a jwtSecret (i.e., auth is initialized). */
 export async function hasJwtSecret(authPath: string): Promise<boolean> {
@@ -99,16 +171,19 @@ export async function getSigningKey(authPath: string): Promise<CryptoKey> {
 /**
  * Sign a JWT token with the given claims.
  * Used internally by the specific token generation functions.
+ * Automatically stamps the current secretVersion so revoke-all works.
  */
 async function signJWTRaw(
 	authPath: string,
-	payload: JWTPayload,
+	payload: Omit<JWTPayload, "sv">,
 ): Promise<string> {
 	const key = await getSigningKey(authPath);
+	const sv = await getSecretVersion(authPath);
 
 	const header = { alg: "HS256", typ: "JWT" };
+	const fullPayload: JWTPayload = { ...payload, sv };
 	const headerB64 = toBase64Url(JSON.stringify(header));
-	const payloadB64 = toBase64Url(JSON.stringify(payload));
+	const payloadB64 = toBase64Url(JSON.stringify(fullPayload));
 	const signingInput = `${headerB64}.${payloadB64}`;
 
 	const signature = await crypto.subtle.sign(
@@ -147,10 +222,35 @@ export async function signSessionToken(authPath: string): Promise<string> {
 	});
 }
 
-/** Verify a JWT token. Returns the payload if valid, null otherwise. */
+/**
+ * Sign a short-lived stream token (5min TTL). Issued on demand to EventSource
+ * clients so the long-lived session token never rides in the URL (browser
+ * history, proxy logs, Referer). Shares the `sv` revocation channel.
+ */
+export async function signStreamToken(authPath: string): Promise<string> {
+	const now = Math.floor(Date.now() / 1000);
+	return signJWTRaw(authPath, {
+		sub: "stream",
+		iat: now,
+		exp: now + STREAM_TTL_SECONDS,
+	});
+}
+
+/**
+ * Verify a JWT token. Returns the payload if valid, null otherwise.
+ *
+ * Optionally restrict to a specific set of `sub` values (e.g. `/events` only
+ * accepts stream tokens). Rejects on:
+ *   - malformed token
+ *   - bad signature
+ *   - expired
+ *   - `sv` older than current secretVersion (revoked)
+ *   - `sub` not in `allowedSubjects`
+ */
 export async function verifyJWT(
 	authPath: string,
 	token: string,
+	allowedSubjects?: readonly JWTSubject[],
 ): Promise<JWTPayload | null> {
 	if (!token) return null;
 
@@ -199,6 +299,13 @@ export async function verifyJWT(
 	// Check expiry
 	const now = Math.floor(Date.now() / 1000);
 	if (payload.exp <= now) return null;
+
+	// Revocation check: tokens signed before a logout-all are rejected
+	const currentVersion = await getSecretVersion(authPath);
+	if ((payload.sv ?? 0) < currentVersion) return null;
+
+	// Subject restriction (e.g. stream tokens must not be used for REST)
+	if (allowedSubjects && !allowedSubjects.includes(payload.sub)) return null;
 
 	return payload;
 }

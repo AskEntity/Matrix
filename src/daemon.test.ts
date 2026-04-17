@@ -21,7 +21,7 @@ describe("daemon without plugins — bare daemon invariant", () => {
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
 		// No projects → no plugin directories → pure bare daemon
-		daemon = await createDaemon({ dataDir });
+		daemon = await createDaemon({ dataDir, autoInitAuth: false });
 	});
 
 	afterAll(async () => {
@@ -78,7 +78,7 @@ describe("daemon pipeline (legacy)", () => {
 		dataDir = join(tempDir, ".mxd");
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		daemon = await createDaemon({ dataDir });
+		daemon = await createDaemon({ dataDir, autoInitAuth: false });
 	});
 
 	afterAll(async () => {
@@ -175,7 +175,7 @@ describe("daemon with matrix plugin", () => {
 
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		daemon = await createDaemon({ dataDir });
+		daemon = await createDaemon({ dataDir, autoInitAuth: false });
 	});
 
 	afterAll(async () => {
