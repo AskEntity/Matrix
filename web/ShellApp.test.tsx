@@ -42,7 +42,7 @@ describe("daemon web build pipeline", () => {
 			]),
 		);
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
-		daemon = await createDaemon({ dataDir });
+		daemon = await createDaemon({ dataDir, autoInitAuth: false });
 	}, 15000);
 
 	afterAll(async () => {
@@ -104,7 +104,7 @@ describe("plugin component renders Matrix UI", () => {
 			]),
 		);
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
-		daemon = await createDaemon({ dataDir });
+		daemon = await createDaemon({ dataDir, autoInitAuth: false });
 
 		// Mock EventSource (happy-dom doesn't have it, plugin's SSE hook needs it)
 		if (!globalThis.EventSource) {
@@ -251,7 +251,7 @@ describe("sidebar toggle — unified state model", () => {
 			]),
 		);
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
-		daemon = await createDaemon({ dataDir });
+		daemon = await createDaemon({ dataDir, autoInitAuth: false });
 
 		if (!globalThis.EventSource) {
 			(globalThis as unknown as Record<string, unknown>).EventSource =

@@ -2,7 +2,9 @@
  * JWT token management for frontend authentication.
  *
  * Token stored in localStorage. All API calls attach it via Authorization: Bearer header.
- * SSE EventSource passes token as query param (can't set custom headers).
+ * SSE uses a short-lived (5min) stream token obtained from POST /auth/stream-token
+ * — the long-lived session token is never exposed in URLs, proxy logs, or
+ * browser history.
  */
 
 const TOKEN_KEY = "mxd-jwt";

@@ -29,6 +29,7 @@ import { slugify } from "../task-utils.ts";
 import { createAgentAuth } from "../tool-auth.ts";
 import { toToolDefinition } from "../tool-def.ts";
 import { buildJsonTools, type ToolDefinition } from "../tool-definition.ts";
+import { formatUpstreamError } from "../tool-execution.ts";
 import { MCP_SERVER_NAME } from "../tool-names.ts";
 import {
 	buildBuiltinToolDefs,
@@ -1053,11 +1054,12 @@ export async function runAgentForNode(
 			!catchNode?.session || catchNode.session !== ownSession;
 		if (!catchWasReplaced) {
 			// Error = interrupted. Status stays in_progress — agent is resumable.
-			const errorMsg = e instanceof Error ? e.message : String(e);
+			// Classify upstream errors (401 invalid key, 429, etc.) so users get
+			// a one-line curated reason instead of a raw provider JSON blob.
 			emitEvent(ctx, project.id, {
 				type: "error",
 				taskId: nodeId,
-				message: `Agent error: ${errorMsg}`,
+				message: formatUpstreamError(e, "Agent error"),
 				traceId: loopTraceId,
 				ts: Date.now(),
 			});

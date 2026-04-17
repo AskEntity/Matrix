@@ -55,6 +55,56 @@ async function isGitClean(projectPath: string): Promise<{
 	return { clean: output === "", files: output };
 }
 
+/** Error result that the tool-dispatch layer surfaces as isError:true. */
+type ToolErrorResult = {
+	content: { type: "text"; text: string }[];
+	isError: true;
+};
+
+/**
+ * Enforce `subtree` permission on a destructive operation.
+ *
+ * `subtree` lets an agent modify itself and its descendants. Applied to
+ * every destructive tool so one agent's bug/hallucination cannot delete
+ * a sibling or parent's worktree/JSONL (Audit G H1).
+ *
+ * For folders, permission resolves to the nearest task ancestor — folders
+ * have no ownership of their own, they inherit from the enclosing task.
+ *
+ * Returns a tool error result on denial, or `null` to proceed.
+ */
+function requireSubtreePermission(
+	auth: Auth,
+	projectId: string,
+	nodeId: string,
+	opName: string,
+): ToolErrorResult | null {
+	const tracker = R.getTracker(projectId);
+	if (!tracker) return null; // downstream handler will report "Project not found"
+
+	const node = tracker.get(nodeId);
+	// Folder → walk to its owning task; if none (root-level folder),
+	// keep the folder's own id and let checkPermission fail it
+	// (only root has authority over root-level folders).
+	let targetTaskId = nodeId;
+	if (node && isFolder(node)) {
+		const owner = tracker.getTaskAbove(nodeId);
+		if (owner) targetTaskId = owner.id;
+	}
+	if (!checkPermission(auth, "subtree", { taskId: targetTaskId })) {
+		return {
+			content: [
+				{
+					type: "text",
+					text: `${opName}: ${nodeId} is not your task or descendant`,
+				},
+			],
+			isError: true,
+		};
+	}
+	return null;
+}
+
 /** Get project path for a task (worktree path or repo root). */
 function getProjectPath(projectId: string, taskId: string | null): string {
 	const tracker = R.getTracker(projectId);
@@ -420,38 +470,27 @@ export function buildAllToolDefs() {
 							isError: true,
 						};
 
-					// Scope validation for reparent via auth
+					// Gate EVERY update_task against subtree permission (not just
+					// reparent). status/description/color/title edits on a sibling
+					// or parent are still destructive (e.g. status=closed triggers
+					// worktree+JSONL cleanup). Agents may still update themselves.
+					const permError = requireSubtreePermission(
+						auth,
+						args.projectId as string,
+						args.taskId as string,
+						"Cannot update_task",
+					);
+					if (permError) return permError;
+
+					// Reparent also requires permission on the NEW parent.
 					if (args.parentId !== undefined) {
-						if (
-							!checkPermission(auth, "subtree", {
-								taskId: args.taskId as string,
-							})
-						) {
-							return {
-								content: [
-									{
-										type: "text",
-										text: `Cannot reparent ${args.taskId}: not your task or descendant`,
-									},
-								],
-								isError: true,
-							};
-						}
-						if (
-							!checkPermission(auth, "subtree", {
-								taskId: args.parentId as string,
-							})
-						) {
-							return {
-								content: [
-									{
-										type: "text",
-										text: `Cannot reparent under ${args.parentId}: not your task or descendant`,
-									},
-								],
-								isError: true,
-							};
-						}
+						const newParentPermError = requireSubtreePermission(
+							auth,
+							args.projectId as string,
+							args.parentId as string,
+							"Cannot reparent — target parent",
+						);
+						if (newParentPermError) return newParentPermError;
 					}
 
 					// Surgical description edit
@@ -827,9 +866,17 @@ export function buildAllToolDefs() {
 					decl: { kind: "explicit" },
 				},
 			},
-			handler: async (args) => {
+			handler: async (args, auth) => {
 				try {
 					const projectId = args.projectId as string;
+					const permError = requireSubtreePermission(
+						auth,
+						projectId,
+						args.taskId as string,
+						"Cannot close_task",
+					);
+					if (permError) return permError;
+
 					const tracker = R.getTracker(projectId);
 					if (!tracker)
 						return {
@@ -880,9 +927,17 @@ export function buildAllToolDefs() {
 					decl: { kind: "explicit" },
 				},
 			},
-			handler: async (args) => {
+			handler: async (args, auth) => {
 				try {
 					const projectId = args.projectId as string;
+					const permError = requireSubtreePermission(
+						auth,
+						projectId,
+						args.taskId as string,
+						"Cannot delete_task",
+					);
+					if (permError) return permError;
+
 					const tracker = R.getTracker(projectId);
 					if (!tracker)
 						return {
@@ -937,9 +992,17 @@ export function buildAllToolDefs() {
 					decl: { kind: "explicit" },
 				},
 			},
-			handler: async (args) => {
+			handler: async (args, auth) => {
 				try {
 					const projectId = args.projectId as string;
+					const permError = requireSubtreePermission(
+						auth,
+						projectId,
+						args.taskId as string,
+						"Cannot reset_task",
+					);
+					if (permError) return permError;
+
 					const tracker = R.getTracker(projectId);
 					if (!tracker)
 						return {
@@ -1114,6 +1177,9 @@ export function buildAllToolDefs() {
 		}),
 
 		// ── Folder tools ──
+		// Permission: folders defer to their enclosing task (same rule as the
+		// rest of the destructive tool suite). Root-level folders resolve to
+		// the root task, so only a root agent can mutate them.
 		defineTool({
 			name: "create_folder",
 			availability: "internal",
@@ -1135,9 +1201,20 @@ export function buildAllToolDefs() {
 					decl: { kind: "explicit" },
 				},
 			},
-			handler: async (args) => {
+			handler: async (args, auth) => {
 				try {
-					const tracker = R.getTracker(args.projectId as string);
+					const projectId = args.projectId as string;
+					// Permission check against the parent — you can only create a
+					// folder somewhere you already have authority to mutate.
+					const permError = requireSubtreePermission(
+						auth,
+						projectId,
+						args.parentId as string,
+						"Cannot create_folder",
+					);
+					if (permError) return permError;
+
+					const tracker = R.getTracker(projectId);
 					if (!tracker)
 						return {
 							content: [{ type: "text", text: "Project not found" }],
@@ -1148,7 +1225,7 @@ export function buildAllToolDefs() {
 						args.parentId as string,
 					);
 					await tracker.save();
-					R.broadcastTree(args.projectId as string);
+					R.broadcastTree(projectId);
 					return {
 						content: [
 							{
@@ -1182,9 +1259,18 @@ export function buildAllToolDefs() {
 					decl: { kind: "explicit" },
 				},
 			},
-			handler: async (args) => {
+			handler: async (args, auth) => {
 				try {
-					const tracker = R.getTracker(args.projectId as string);
+					const projectId = args.projectId as string;
+					const permError = requireSubtreePermission(
+						auth,
+						projectId,
+						args.folderId as string,
+						"Cannot delete_folder",
+					);
+					if (permError) return permError;
+
+					const tracker = R.getTracker(projectId);
 					if (!tracker)
 						return {
 							content: [{ type: "text", text: "Project not found" }],
@@ -1218,7 +1304,7 @@ export function buildAllToolDefs() {
 						};
 					tracker.remove(args.folderId as string);
 					await tracker.save();
-					R.broadcastTree(args.projectId as string);
+					R.broadcastTree(projectId);
 					return {
 						content: [
 							{
@@ -1259,9 +1345,18 @@ export function buildAllToolDefs() {
 					decl: { kind: "explicit" },
 				},
 			},
-			handler: async (args) => {
+			handler: async (args, auth) => {
 				try {
-					const tracker = R.getTracker(args.projectId as string);
+					const projectId = args.projectId as string;
+					const permError = requireSubtreePermission(
+						auth,
+						projectId,
+						args.folderId as string,
+						"Cannot rename_folder",
+					);
+					if (permError) return permError;
+
+					const tracker = R.getTracker(projectId);
 					if (!tracker)
 						return {
 							content: [{ type: "text", text: "Project not found" }],
@@ -1285,7 +1380,7 @@ export function buildAllToolDefs() {
 						};
 					tracker.updateTitle(args.folderId as string, args.title as string);
 					await tracker.save();
-					R.broadcastTree(args.projectId as string);
+					R.broadcastTree(projectId);
 					return {
 						content: [
 							{

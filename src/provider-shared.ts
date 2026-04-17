@@ -38,6 +38,7 @@ import { buildJsonTools, type JsonTool } from "./tool-definition.ts";
 import {
 	defaultOuterRetryDelay,
 	executeTool,
+	formatUpstreamError,
 	isTransientAPIError,
 	MAX_OUTER_RETRIES,
 } from "./tool-execution.ts";
@@ -1414,10 +1415,15 @@ export async function* runProviderLoop(
 				const delay = adapter.getOuterRetryDelayMs
 					? adapter.getOuterRetryDelayMs(outerAttempt, e)
 					: defaultOuterRetryDelay(outerAttempt);
-				const errMsg = e instanceof Error ? e.message : String(e);
+				// Classify so the retry log shows a curated headline instead
+				// of a raw SDK blob. Raw is still appended for debugging.
+				const formatted = formatUpstreamError(
+					e,
+					`API call failed (outer retry ${outerAttempt + 1}/${MAX_OUTER_RETRIES}, waiting ${Math.round(delay / 1000)}s)`,
+				);
 				const retryEvt: EventSpec = {
 					type: "error",
-					message: `API call failed (outer retry ${outerAttempt + 1}/${MAX_OUTER_RETRIES}, waiting ${Math.round(delay / 1000)}s): ${errMsg}`,
+					message: formatted,
 					ts: Date.now(),
 				};
 				emit?.(retryEvt);

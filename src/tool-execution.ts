@@ -48,6 +48,127 @@ export function isTransientAPIError(e: unknown): boolean {
 }
 
 /**
+ * Turn a raw provider error into a user-facing string. Keeps the raw
+ * message as a suffix (for debugging) but surfaces a one-line curated
+ * explanation up front — previously the agent-lifecycle `catch` emitted
+ * raw JSON blobs straight from Anthropic / OpenAI to the activity log
+ * (Audit L H5).
+ *
+ * Examples:
+ *   401 `invalid x-api-key`       → "Invalid API key — update your auth group."
+ *   429                           → "Rate limited — retry shortly or switch auth group."
+ *   400 `credit_balance_too_low`  → "API account has no remaining credits."
+ *   400 other                     → "Request rejected (likely format/context length)."
+ *   5xx / 529 / connection reset  → "Upstream provider unavailable — will retry."
+ *
+ * Provider-agnostic: reads HTTP status + message keywords only.
+ */
+export function classifyUpstreamError(e: unknown): {
+	headline: string;
+	category:
+		| "auth"
+		| "rate_limit"
+		| "credits"
+		| "invalid_request"
+		| "upstream_down"
+		| "network"
+		| "other";
+	raw: string;
+} {
+	const raw = e instanceof Error ? e.message : String(e);
+	const status = (e as { status?: number } | undefined)?.status;
+	const lower = raw.toLowerCase();
+
+	if (
+		status === 401 ||
+		status === 403 ||
+		lower.includes("invalid x-api-key") ||
+		lower.includes("invalid_api_key") ||
+		lower.includes("authentication_error") ||
+		lower.includes("unauthorized")
+	) {
+		return {
+			headline:
+				"Invalid or missing API key. Update the credentials in Settings → Auth Groups, or switch defaultAuth.",
+			category: "auth",
+			raw,
+		};
+	}
+	if (
+		lower.includes("credit_balance_too_low") ||
+		lower.includes("insufficient_quota") ||
+		lower.includes("billing") ||
+		lower.includes("no credits")
+	) {
+		return {
+			headline:
+				"Provider account is out of credits / quota. Top up or switch auth group.",
+			category: "credits",
+			raw,
+		};
+	}
+	if (status === 429 || lower.includes("rate limit")) {
+		return {
+			headline:
+				"Rate limited by provider. Wait a minute and try again, or switch auth group.",
+			category: "rate_limit",
+			raw,
+		};
+	}
+	if (status === 400 || lower.includes("invalid_request_error")) {
+		return {
+			headline:
+				"Request rejected by provider (format or context length). Consider /compact and retry.",
+			category: "invalid_request",
+			raw,
+		};
+	}
+	if (
+		status === 500 ||
+		status === 502 ||
+		status === 503 ||
+		status === 529 ||
+		lower.includes("overloaded") ||
+		lower.includes("internal_server_error")
+	) {
+		return {
+			headline: "Upstream provider is unavailable. Retrying.",
+			category: "upstream_down",
+			raw,
+		};
+	}
+	if (
+		lower.includes("econnrefused") ||
+		lower.includes("econnreset") ||
+		lower.includes("fetch failed") ||
+		lower.includes("failed to get api response")
+	) {
+		return {
+			headline: "Network error talking to provider. Retrying.",
+			category: "network",
+			raw,
+		};
+	}
+	return {
+		headline: raw.split("\n", 1)[0] || "Agent error",
+		category: "other",
+		raw,
+	};
+}
+
+/** Format a classified error for the activity log (headline + details). */
+export function formatUpstreamError(
+	e: unknown,
+	prefix = "Agent error",
+): string {
+	const c = classifyUpstreamError(e);
+	// Trim the raw to 300 chars so 5KB JSON blobs don't bloat the log.
+	const trimmed = c.raw.length > 300 ? `${c.raw.slice(0, 300)}…` : c.raw;
+	if (c.category === "other") return `${prefix}: ${trimmed}`;
+	return `${prefix}: ${c.headline}\n(provider detail: ${trimmed})`;
+}
+
+/**
  * Execute a single tool via its handler.
  * ALL tools (built-in + orchestrator + external MCP) go through this single path.
  * Returns a unified ToolResult.

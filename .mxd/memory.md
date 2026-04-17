@@ -800,3 +800,70 @@ Net: ~880 lines deleted, 0 test failures, no functional behavior change.
 - `src/plugin.ts` — imports validators from data-paths.ts; delegates path resolution; keeps `effectiveDataRoot` (normalizes defaults) + `checkDataRootCollisions`.
 - `src/runtime/helpers.ts` — re-exports `projectTasksDir`/`projectDebugDir` from data-paths.ts for existing callers (convenience barrel).
 - `src/runtime/agent-lifecycle.ts:~984` — passes `ctx.config.dataRoot` to `projectDebugDir` (was missing, debug snapshots landed at Matrix's path regardless of plugin).
+
+## Auth Hardening (Audit FU4)
+
+### Defaults that close the "LAN-open window"
+- Fresh daemon auto-initializes `auth.json` with `jwtSecret` + `secretVersion=1`
+  during `createDaemon`. Production callers get this by default; tests opt out
+  via `createDaemon({ autoInitAuth: false })`.
+- Production entry binds `127.0.0.1` unless `MXD_BIND_HOST` is set. Previous
+  default `*:7433` was LAN-reachable during the bootstrap window.
+
+### JWT claims
+- `sub: "cli" | "session" | "stream"`. `/events` accepts only `stream`;
+  REST accepts only `cli`/`session`. Subject restriction lives in
+  `verifyJWT(authPath, token, allowedSubjects)`.
+- `sv`: secretVersion. `bumpSecretVersion` (POST /auth/logout) rotates it,
+  invalidating every outstanding token. Legacy `sv`-less tokens always fail.
+- Session 30d, CLI 5min, stream 5min.
+
+### No auth cache
+Prior `authDataCache` caused "user ran `mxd auth` but running daemon
+never re-read auth.json" (Audit L H3). Cache removed; `readAuthData`
+reads from disk on every call (local JSON, cost negligible).
+`resetAuthDataCache()` kept as deprecated no-op for test compat.
+
+### SSE stream tokens (Audit G M1 + M4)
+- Frontend calls `POST /auth/stream-token` (Authorization: Bearer session)
+  before every EventSource (re)connect → 5min stream token in `?token=`.
+- Heartbeat re-verifies the token; on expire/revoke, emits named event
+  `auth_expired` and closes the stream. Watchdog in `useSSE` bumps
+  reconnectKey → re-fetch stream token → fresh EventSource.
+- Long-lived session token never appears in URL / proxy logs / history.
+
+### Auth middleware exact-skip
+Skip set: `{ "/", "/auth/status", "/auth/logout" }` + static `/vendor/`
+`/app/` prefixes. Previously `startsWith("/auth/")` would silently allow
+any future `/auth/*` worker route past the middleware (Audit J H1).
+Regression guard: `GET /auth/bogus` with auth enabled → 401.
+
+### Case-insensitive Bearer
+`extractBearerToken` uses `/^Bearer[ \t]+(.+)$/i`. RFC 7235 mandates
+case-insensitive scheme. `bearer`, `BeArEr`, `Bearer` all accepted.
+
+### API-key masking
+- `maskConfig(config)` replaces every `authGroups.*.{apiKey, oauthToken,
+  accessToken, refreshToken}` with `prefix…last4`. Applied on:
+  GET /config/global, GET /projects/:id/config/all (global + resolved),
+  PATCH /config/global response.
+- `mergeAuthGroups` on PATCH preserves plaintext when client echoes a
+  masked value (UI didn't touch the field). Keeps the "save entire
+  authGroups object" pattern safe.
+
+### Destructive-tool permission (Audit G H1)
+`orchestrator-tools.ts` helper `requireSubtreePermission(auth, projectId,
+nodeId, opName)` applied at handler entry for:
+- update_task (ALL mutations, not just reparent)
+- close_task, delete_task, reset_task
+- create_folder (vs parent), delete_folder, rename_folder (vs owning task)
+Folders resolve to nearest task ancestor. reorder_tasks + fork_task_context
+had the check already — now consistent across the destructive suite.
+
+### Upstream error classification (Audit L H5)
+`classifyUpstreamError(e)` / `formatUpstreamError(e, prefix)` in
+`tool-execution.ts`: provider-agnostic mapping of {status, keyword} →
+{auth, rate_limit, credits, invalid_request, upstream_down, network,
+other} + one-line curated headline. Raw message preserved (trimmed to
+300 chars) for debugging. Used by `runAgentForNode` catch + provider
+outer-retry emit — users no longer see raw Anthropic JSON blobs.

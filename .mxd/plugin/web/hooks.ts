@@ -178,6 +178,7 @@ export function useSSE(
 	onReconnect?: () => void,
 ) {
 	const getToken = useGetToken();
+	const authFetch = useAuthFetch();
 	const [connected, setConnected] = useState(false);
 	// Bump to force EventSource re-creation when watchdog detects stale connection
 	const [reconnectKey, setReconnectKey] = useState(0);
@@ -187,64 +188,109 @@ export function useSSE(
 	useEffect(() => {
 		if (!projectId) return;
 
-		let url = `/events?projectId=${encodeURIComponent(projectId)}`;
-		const token = getToken();
-		if (token) url += `&token=${encodeURIComponent(token)}`;
-		const source = new EventSource(url);
-		lastMessageRef.current = Date.now();
+		let cancelled = false;
+		let source: EventSource | null = null;
+		let watchdog: ReturnType<typeof setInterval> | null = null;
 
-		// Track whether this is the first connect or a reconnect.
-		// reconnectKey > 0 means the watchdog forced re-creation — treat as reconnect.
-		let hasConnectedBefore = reconnectKey > 0;
-
-		source.onopen = () => {
-			setConnected(true);
-			lastMessageRef.current = Date.now();
-			if (hasConnectedBefore) {
-				// Reconnect — ring buffer may have caught up, but we also need
-				// to re-fetch events in case the gap was too large
-				onReconnect?.();
+		(async () => {
+			// If auth is enabled, fetch a short-lived stream token first so
+			// the long-lived session token never appears in URLs / proxy
+			// logs / browser history. Stream tokens expire in 5min; the
+			// daemon re-verifies them each heartbeat and closes the stream
+			// on expiry. The watchdog below notices and bumps reconnectKey,
+			// which re-runs this effect → new stream token.
+			let streamToken: string | null = null;
+			if (getToken()) {
+				try {
+					const resp = await authFetch("/auth/stream-token", {
+						method: "POST",
+					});
+					if (resp.ok) {
+						const data = (await resp.json()) as { token: string | null };
+						streamToken = data.token;
+					}
+				} catch {
+					/* network blip — fall through and try without token; server 401s */
+				}
 			}
-			hasConnectedBefore = true;
-			onConnect?.();
-		};
+			if (cancelled) return;
 
-		source.onmessage = (evt) => {
+			let url = `/events?projectId=${encodeURIComponent(projectId)}`;
+			if (streamToken) url += `&token=${encodeURIComponent(streamToken)}`;
+			source = new EventSource(url);
 			lastMessageRef.current = Date.now();
-			try {
-				const data = JSON.parse(evt.data) as IncomingEvent;
-				// Data heartbeats update lastMessageRef but aren't processed
-				if (data.type === "heartbeat") return;
-				onMessage(data);
-			} catch (e) {
-				console.warn("[SSE] Failed to parse message:", e);
-			}
-		};
 
-		source.onerror = () => {
-			setConnected(false);
-			// EventSource auto-reconnects — no manual retry logic needed
-		};
+			// Track whether this is the first connect or a reconnect.
+			// reconnectKey > 0 means the watchdog forced re-creation — treat as reconnect.
+			let hasConnectedBefore = reconnectKey > 0;
 
-		// Watchdog: detect silently dead connections and force reconnect.
-		// Two cases:
-		// 1. No data event (real or heartbeat) in 150s — connection silently died
-		// 2. EventSource entered CLOSED state (e.g. CF Tunnel clean close) — won't auto-reconnect
-		// In both cases, bump reconnectKey to tear down and re-create EventSource.
-		const watchdog = setInterval(() => {
-			const elapsed = Date.now() - lastMessageRef.current;
-			if (elapsed > WATCHDOG_TIMEOUT) {
-				source.close();
+			source.onopen = () => {
+				setConnected(true);
+				lastMessageRef.current = Date.now();
+				if (hasConnectedBefore) {
+					// Reconnect — ring buffer may have caught up, but we also need
+					// to re-fetch events in case the gap was too large
+					onReconnect?.();
+				}
+				hasConnectedBefore = true;
+				onConnect?.();
+			};
+
+			source.onmessage = (evt) => {
+				lastMessageRef.current = Date.now();
+				try {
+					const data = JSON.parse(evt.data) as IncomingEvent;
+					// Data heartbeats update lastMessageRef but aren't processed
+					if (data.type === "heartbeat") return;
+					onMessage(data);
+				} catch (e) {
+					console.warn("[SSE] Failed to parse message:", e);
+				}
+			};
+
+			source.onerror = () => {
+				setConnected(false);
+				// EventSource auto-reconnects — no manual retry logic needed
+			};
+
+			// Daemon signals token revocation/expiry via a named event.
+			// EventSource auto-reconnect would just resend the dead token,
+			// so tear down and bump reconnectKey to refetch a fresh one.
+			source.addEventListener("auth_expired", () => {
+				source?.close();
 				setConnected(false);
 				setReconnectKey((k) => k + 1);
-			}
-		}, WATCHDOG_CHECK_INTERVAL);
+			});
+
+			// Watchdog: detect silently dead connections and force reconnect.
+			// Two cases:
+			// 1. No data event (real or heartbeat) in 150s — connection silently died
+			// 2. EventSource entered CLOSED state (e.g. CF Tunnel clean close) — won't auto-reconnect
+			// In both cases, bump reconnectKey to tear down and re-create EventSource.
+			watchdog = setInterval(() => {
+				const elapsed = Date.now() - lastMessageRef.current;
+				if (elapsed > WATCHDOG_TIMEOUT) {
+					source?.close();
+					setConnected(false);
+					setReconnectKey((k) => k + 1);
+				}
+			}, WATCHDOG_CHECK_INTERVAL);
+		})();
 
 		return () => {
-			clearInterval(watchdog);
-			source.close();
+			cancelled = true;
+			if (watchdog) clearInterval(watchdog);
+			source?.close();
 		};
-	}, [getToken, projectId, reconnectKey, onMessage, onConnect, onReconnect]);
+	}, [
+		authFetch,
+		getToken,
+		projectId,
+		reconnectKey,
+		onMessage,
+		onConnect,
+		onReconnect,
+	]);
 
 	return { connected };
 }
