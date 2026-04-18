@@ -529,6 +529,24 @@ All bind params hidden from agent, auto-bound. `create_task`/`create_folder` par
 
 ## Integration Test Framework
 
+**This is the strongest verification framework in this codebase. Use it any time you make a claim about agent-observable behavior.**
+
+**Policy — MUST use integration tests when**:
+- A prompt, tool description, or user-facing string promises a specific shape ("output is bounded ~10KB", "stdout and stderr are labeled separately", "the file path appears at top and bottom", etc.)
+- A change affects what the LLM sees in a tool_result, system prompt, or message
+- A behavior crosses the agent-loop / tool-execution / JSONL / mock-reply boundary
+
+Unit tests verify internal logic (a formatter function returns X). Integration tests verify **what the LLM actually observes when driving the full stack**. Those are different contracts. A formatter unit test doesn't prove the LLM sees the promised shape through MCP wrapping + tool_result persistence + mock-reply path — the gap between them is where prompt/code drift silently lies. The LLM then builds strategy on a lie, and no unit test catches it.
+
+When a prompt says "X", there MUST be a test that:
+1. Constructs a mock instruction / real tool invocation trigger
+2. Runs the full agent loop with `ValidatingMockAPI`
+3. Observes the tool_result the mock receives
+4. Asserts the observed content matches the X claim literally
+
+Drift between prompt claims and tool reality is a **silent failure mode**. Integration tests are the only guard against it.
+
+**Framework components**:
 - `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation, **strict tool-error mode**.
 - Mock DSL: `{"blocks": [...]}` or `{"turns": [...]}` with assert/capture.
 - `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
