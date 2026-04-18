@@ -4,6 +4,7 @@ export interface Project {
 	name: string;
 	path: string;
 	pathExists?: boolean;
+	productionMode?: boolean;
 }
 
 /** Three-layer config (global + repo + local) */
