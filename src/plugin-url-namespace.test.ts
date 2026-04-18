@@ -232,14 +232,24 @@ describe("runtime-types.js bundle size (regression guard)", () => {
 	const RUNTIME_TYPES_SIZE_LIMIT = 500; // bytes
 
 	let buildDir: string;
+	let hashedRuntimeTypesPath: string;
 	beforeAll(async () => {
 		buildDir = await mkdtemp(join(tmpdir(), "runtime-types-size-"));
-		await buildWebAssets({
+		const build = await buildWebAssets({
 			buildDir,
 			shellEntry: SHELL_ENTRY,
 			plugins: [],
 			projectRoot: MATRIX_ROOT,
 		});
+		// Files are content-hashed; look up the hashed URL via the manifest,
+		// then map back to the on-disk path.
+		const hashedUrl = build.manifest["/vendor/shared/runtime-types.js"];
+		if (!hashedUrl) {
+			throw new Error(
+				"Manifest missing /vendor/shared/runtime-types.js entry — build pipeline changed?",
+			);
+		}
+		hashedRuntimeTypesPath = join(buildDir, hashedUrl.replace(/^\//, ""));
 	}, 30000);
 
 	afterAll(async () => {
@@ -247,8 +257,7 @@ describe("runtime-types.js bundle size (regression guard)", () => {
 	});
 
 	test(`runtime-types.js < ${RUNTIME_TYPES_SIZE_LIMIT} bytes`, () => {
-		const builtPath = join(buildDir, "vendor", "shared", "runtime-types.js");
-		const size = statSync(builtPath).size;
+		const size = statSync(hashedRuntimeTypesPath).size;
 		if (size >= RUNTIME_TYPES_SIZE_LIMIT) {
 			throw new Error(
 				`runtime-types.js is ${size} bytes (limit ${RUNTIME_TYPES_SIZE_LIMIT}). ` +

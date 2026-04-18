@@ -1169,8 +1169,15 @@ export async function createDaemon(opts: {
 		await next();
 	});
 
-	// Root page — generated HTML with importmap
+	// Root page — generated HTML with importmap. `no-cache` forces the
+	// browser to revalidate every time: the HTML carries content-hashed
+	// asset URLs, which change whenever any asset's content changes. Stale
+	// HTML would reference a stale (now-absent) hashed URL and fail to load.
+	// Immutable-cached assets live at `/vendor/*` and `/app/*` — they handle
+	// the actual cache win.
+	const HTML_CACHE_CONTROL = "no-cache, must-revalidate";
 	app.get("/", (c) => {
+		c.header("cache-control", HTML_CACHE_CONTROL);
 		return c.html(indexHTML);
 	});
 
@@ -1370,6 +1377,15 @@ export async function createDaemon(opts: {
 		const abs = resolve(filePath);
 		return abs === resolve(buildDir) || abs.startsWith(buildDirPrefix);
 	};
+	// Built assets under /vendor/ and /app/ are content-hashed (see
+	// web-builder.ts). Their URLs change whenever content changes, so we can
+	// tell browsers to cache them for a year and never revalidate —
+	// `public, max-age=31536000, immutable`. The HTML that references them
+	// is served with `no-cache` (see `/` and the SPA fallback), so a new
+	// build always reaches the browser's index fetch, which then learns the
+	// new hashed asset URLs.
+	const IMMUTABLE_ASSET_CACHE = "public, max-age=31536000, immutable";
+
 	app.get("/vendor/*", async (c) => {
 		const relativePath = c.req.path.slice("/vendor/".length);
 		const filePath = join(buildDir, "vendor", relativePath);
@@ -1377,7 +1393,10 @@ export async function createDaemon(opts: {
 		const file = Bun.file(filePath);
 		if (!(await file.exists())) return c.json({ error: "Not found" }, 404);
 		return new Response(file, {
-			headers: { "content-type": "application/javascript" },
+			headers: {
+				"content-type": "application/javascript",
+				"cache-control": IMMUTABLE_ASSET_CACHE,
+			},
 		});
 	});
 
@@ -1387,7 +1406,9 @@ export async function createDaemon(opts: {
 		if (!isInsideBuildDir(filePath)) return c.json({ error: "Forbidden" }, 403);
 		const file = Bun.file(filePath);
 		if (!(await file.exists())) return c.json({ error: "Not found" }, 404);
-		return new Response(file);
+		return new Response(file, {
+			headers: { "cache-control": IMMUTABLE_ASSET_CACHE },
+		});
 	});
 
 	// Plugins — includes buildError so the UI can explicitly render "Plugin failed
@@ -1774,6 +1795,7 @@ export async function createDaemon(opts: {
 		const path = new URL(c.req.url).pathname;
 		const firstSeg = path.match(/^\/([^/]+)/)?.[1];
 		if (firstSeg == null || !pm.has(firstSeg)) return c.notFound();
+		c.header("cache-control", HTML_CACHE_CONTROL);
 		return c.html(indexHTML);
 	});
 

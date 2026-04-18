@@ -57,8 +57,11 @@ describe("daemon web build pipeline", () => {
 		const res = await daemon.fetch(new Request("http://localhost/"));
 		const html = await res.text();
 		expect(html).toContain("importmap");
-		expect(html).toContain("/vendor/react.js");
-		expect(html).toContain("/app/web/main.js");
+		// Asset URLs are content-hashed (`<name>-<8chars>.<ext>`). Logical names
+		// like `react.js` / `main.js` never appear verbatim — HTML always carries
+		// the hashed URL so `Cache-Control: immutable` is safe on the asset side.
+		expect(html).toMatch(/\/vendor\/react-[a-z0-9]{8}\.js/);
+		expect(html).toMatch(/\/app\/web\/main-[a-z0-9]{8}\.js/);
 	});
 
 	test("plugins returns compiled JS path (auth required)", async () => {
@@ -73,15 +76,36 @@ describe("daemon web build pipeline", () => {
 		expect(matrix.webComponentPath).toMatch(/^\/app\/.*\.js$/);
 	});
 
-	test("vendor + app assets servable (anonymous — compiled bundles are public)", async () => {
-		expect(
-			(await daemon.fetch(new Request("http://localhost/vendor/react.js")))
-				.status,
-		).toBe(200);
-		expect(
-			(await daemon.fetch(new Request("http://localhost/app/web/main.js")))
-				.status,
-		).toBe(200);
+	test("vendor + app assets servable with immutable cache headers (anonymous — compiled bundles are public)", async () => {
+		// Extract the hashed asset URLs from the HTML — these are the only
+		// URLs the daemon can serve after content-hashing; the logical
+		// `/vendor/react.js` / `/app/web/main.js` no longer exist on disk.
+		const htmlRes = await daemon.fetch(new Request("http://localhost/"));
+		const html = await htmlRes.text();
+		// HTML is served with `no-cache, must-revalidate` — the browser must
+		// always revalidate so it picks up new hashed asset URLs after a rebuild.
+		expect(htmlRes.headers.get("cache-control")).toMatch(/no-cache/);
+
+		const reactMatch = html.match(/\/vendor\/react-[a-z0-9]{8}\.js/);
+		const mainMatch = html.match(/\/app\/web\/main-[a-z0-9]{8}\.js/);
+		if (!reactMatch || !mainMatch) {
+			throw new Error(
+				`Expected hashed /vendor/react-*.js and /app/web/main-*.js in HTML, got: ${html.slice(0, 500)}`,
+			);
+		}
+
+		const reactRes = await daemon.fetch(
+			new Request(`http://localhost${reactMatch[0]}`),
+		);
+		const mainRes = await daemon.fetch(
+			new Request(`http://localhost${mainMatch[0]}`),
+		);
+		expect(reactRes.status).toBe(200);
+		expect(mainRes.status).toBe(200);
+		// Hashed assets get `public, max-age=31536000, immutable`. The URL
+		// changes whenever the content changes → safe to cache forever.
+		expect(reactRes.headers.get("cache-control")).toMatch(/immutable/);
+		expect(mainRes.headers.get("cache-control")).toMatch(/immutable/);
 	});
 });
 

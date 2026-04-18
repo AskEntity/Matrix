@@ -10,6 +10,18 @@
  * importmap in HTML makes shell + plugin resolve "react" to the same vendor URL
  * → single React instance → context sharing works.
  *
+ * Content-hashed filenames:
+ *   Every built asset has its content hash in the filename
+ *   (`main-abc123.js`, `react-def456.js`, etc.). The HTML that references
+ *   them is re-generated every build so the URLs match. Browsers cache the
+ *   hashed URLs forever (`Cache-Control: public, max-age=31536000, immutable`);
+ *   when content changes, hash changes, URL changes, browser fetches fresh.
+ *   No `Cache-Control: no-store` band-aid anywhere.
+ *
+ *   `manifest` on the build result maps logical URL → hashed URL
+ *   (e.g. `/vendor/react.js` → `/vendor/react-abc123.js`) and is used by
+ *   `generateIndexHTML` to emit the correct `<script>`/`<link>` hrefs.
+ *
  * Failure policy:
  * - Vendor / shared-module / shell build failures always throw (fatal — shell cannot render).
  * - Plugin build failures throw when `scope === "global"` (the daemon has no other UI to fall
@@ -24,10 +36,11 @@ import {
 	copyFileSync,
 	existsSync,
 	mkdirSync,
+	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 
 const REACT_EXTERNALS = [
 	"react",
@@ -58,8 +71,12 @@ const VENDOR_SHIMS: Record<
 	},
 };
 
-/** Map from bare specifier → vendor URL path for importmap. */
-const IMPORTMAP_ENTRIES: Record<string, string> = {
+/**
+ * Logical bare-specifier → logical URL path (pre-hash). `generateIndexHTML`
+ * runs each entry through `manifest` to get the hashed URL that actually
+ * gets emitted into the importmap.
+ */
+const VENDOR_SHIM_LOGICAL_PATHS: Record<string, string> = {
 	react: "/vendor/react.js",
 	"react-dom": "/vendor/react-dom.js",
 	"react-dom/client": "/vendor/react-dom-client.js",
@@ -68,9 +85,9 @@ const IMPORTMAP_ENTRIES: Record<string, string> = {
 };
 
 export interface PluginBuildOutput {
-	/** URL path to compiled plugin JS (only if build succeeded) */
+	/** URL path to compiled plugin JS (hashed; only if build succeeded) */
 	jsPath?: string;
-	/** URL path to plugin CSS (only if a css file was provided) */
+	/** URL path to plugin CSS (hashed; only if a css file was provided) */
 	cssPath?: string;
 	/** Error message from Bun.build logs (only if build failed non-fatally) */
 	buildError?: string;
@@ -87,14 +104,21 @@ export interface PluginBuildInput {
 export interface WebBuildResult {
 	/** Directory containing all built assets */
 	buildDir: string;
-	/** importmap JSON for HTML injection */
+	/** importmap JSON for HTML injection (values are already hashed URLs) */
 	importmap: { imports: Record<string, string> };
-	/** URL path to shell entry JS */
+	/** URL path to shell entry JS (hashed) */
 	shellEntryPath: string;
-	/** Per-plugin build output (JS url, optional CSS url, optional buildError) */
+	/** Per-plugin build output (hashed JS url, optional hashed CSS url, optional buildError) */
 	pluginOutputs: Map<string, PluginBuildOutput>;
-	/** URL paths to CSS files (shell + all successfully built plugins) */
+	/** URL paths to CSS files (shell + all successfully built plugins; hashed) */
 	cssPaths: string[];
+	/**
+	 * Manifest: logical URL path → hashed URL path.
+	 * E.g. `/vendor/react.js` → `/vendor/react-abc123.js`.
+	 * Populated for every built asset (vendor shims, shared modules,
+	 * shell entry, shell CSS, plugin JS/CSS).
+	 */
+	manifest: Record<string, string>;
 }
 
 /**
@@ -118,6 +142,8 @@ export async function buildWebAssets(opts: {
 	const appDir = join(buildDir, "app");
 	mkdirSync(vendorDir, { recursive: true });
 	mkdirSync(appDir, { recursive: true });
+
+	const manifest: Record<string, string> = {};
 
 	// Shim source files in project root so Bun.build can resolve "react" etc. from
 	// node_modules. Cleaned up in finally below regardless of build outcome.
@@ -155,52 +181,97 @@ export async function buildWebAssets(opts: {
 				format: "esm",
 				splitting: true, // Share React core across all shims
 				root: shimDir,
+				naming: "[name]-[hash].[ext]",
 				minify,
 			},
 			"Vendor build",
 		);
+
+		// Map each shim logical path → hashed output path.
+		// Entry outputs are matched by stripping the "-<hash>.js" suffix to
+		// recover the original entrypoint name, which matches VENDOR_SHIMS keys.
+		for (const output of vendorResult.outputs) {
+			if (output.kind !== "entry-point") continue;
+			const file = basename(output.path);
+			const m = file.match(/^(.+)-[a-z0-9]+\.js$/);
+			if (!m) continue;
+			const shimName = m[1];
+			if (!shimName || !(shimName in VENDOR_SHIMS)) continue;
+			manifest[`/vendor/${shimName}.js`] = `/vendor/${file}`;
+		}
 
 		// ── Step 1b: Build shared modules (external React, importmap'd) ──
 		const sharedEntries = [
 			{
 				specifier: "@mxd/auth-context",
 				entry: join(projectRoot, "web", "auth-context.ts"),
-				outName: "auth-context.js",
+				// Logical output name; the actual file on disk will be
+				// `<name>-<hash>.js`. `manifest` carries the real URL.
+				logicalName: "auth-context.js",
 			},
 			{
 				specifier: "@mxd/types",
 				entry: join(projectRoot, "web", "runtime-types.ts"),
-				outName: "runtime-types.js",
+				logicalName: "runtime-types.js",
 			},
 		];
 
+		const sharedDir = join(vendorDir, "shared");
+		mkdirSync(sharedDir, { recursive: true });
+
 		for (const shared of sharedEntries) {
-			await runBuild(
+			const result = await runBuild(
 				{
 					entrypoints: [shared.entry],
-					outdir: join(vendorDir, "shared"),
+					outdir: sharedDir,
 					target: "browser",
 					format: "esm",
 					external: REACT_EXTERNALS,
 					root: projectRoot,
-					naming: shared.outName,
+					naming: "[name]-[hash].[ext]",
 					minify,
 				},
 				`Shared module "${shared.specifier}" build`,
 			);
+			const entryOutput = result.outputs.find((o) => o.kind === "entry-point");
+			if (!entryOutput) {
+				throw new Error(
+					`Shared module "${shared.specifier}" produced no entry output`,
+				);
+			}
+			const hashedFile = basename(entryOutput.path);
+			manifest[`/vendor/shared/${shared.logicalName}`] =
+				`/vendor/shared/${hashedFile}`;
 		}
 
-		// Add shared modules to importmap
-		const importmap = {
-			imports: { ...IMPORTMAP_ENTRIES } as Record<string, string>,
-		};
+		// Build importmap from manifest. All values already point at hashed URLs.
+		const importmap = { imports: {} as Record<string, string> };
+		for (const [specifier, logicalPath] of Object.entries(
+			VENDOR_SHIM_LOGICAL_PATHS,
+		)) {
+			const hashed = manifest[logicalPath];
+			if (!hashed) {
+				throw new Error(
+					`Vendor shim ${specifier} (${logicalPath}) missing from manifest`,
+				);
+			}
+			importmap.imports[specifier] = hashed;
+		}
 		for (const shared of sharedEntries) {
-			importmap.imports[shared.specifier] = `/vendor/shared/${shared.outName}`;
+			const logicalPath = `/vendor/shared/${shared.logicalName}`;
+			const hashed = manifest[logicalPath];
+			if (!hashed) {
+				throw new Error(
+					`Shared module ${shared.specifier} (${logicalPath}) missing from manifest`,
+				);
+			}
+			importmap.imports[shared.specifier] = hashed;
 		}
 
 		const allExternals = [...REACT_EXTERNALS, ...SHARED_MODULES];
 
 		// ── Step 2: Build shell (external React + shared modules) ──
+		// Preserve the `web/` subdir by including `[dir]` in the naming pattern.
 		const shellResult = await runBuild(
 			{
 				entrypoints: [shellEntry],
@@ -209,10 +280,35 @@ export async function buildWebAssets(opts: {
 				format: "esm",
 				external: allExternals,
 				root: projectRoot,
+				naming: "[dir]/[name]-[hash].[ext]",
 				minify,
 			},
 			"Shell build",
 		);
+
+		const shellEntryOutput = shellResult.outputs.find(
+			(o) => o.kind === "entry-point",
+		);
+		if (!shellEntryOutput) {
+			throw new Error("Shell build produced no entry output");
+		}
+		// shellEntryOutput.path is `<appDir>/web/main-<hash>.js`.
+		// Map logical `/app/web/main.js` → actual hashed URL.
+		const shellRel = relative(projectRoot, shellEntry);
+		if (shellRel.startsWith("..") || shellRel.includes(`..${sep}`)) {
+			throw new Error(
+				`shellEntry must live under projectRoot, got ${shellEntry} (relative: ${shellRel})`,
+			);
+		}
+		const shellLogicalPath = `/app/${shellRel
+			.replace(/\.tsx?$/, ".js")
+			.split(sep)
+			.join("/")}`;
+		const shellHashedRel = relative(appDir, shellEntryOutput.path)
+			.split(sep)
+			.join("/");
+		const shellHashedPath = `/app/${shellHashedRel}`;
+		manifest[shellLogicalPath] = shellHashedPath;
 
 		// ── Step 3: Build each plugin into stable /app/plugin/<name>/ namespace ──
 		const pluginOutputs = new Map<string, PluginBuildOutput>();
@@ -221,7 +317,7 @@ export async function buildWebAssets(opts: {
 			const entryDir = dirname(plugin.webEntry);
 
 			try {
-				await runBuild(
+				const pluginResult = await runBuild(
 					{
 						entrypoints: [plugin.webEntry],
 						outdir: pluginOutDir,
@@ -232,14 +328,22 @@ export async function buildWebAssets(opts: {
 						// where the plugin lives on disk — works for plugins outside
 						// `projectRoot` (future multi-project plugin support).
 						root: entryDir,
-						naming: "index.[ext]",
+						naming: "index-[hash].[ext]",
 						minify,
 					},
 					`Plugin "${plugin.name}" build`,
 				);
-				pluginOutputs.set(plugin.name, {
-					jsPath: `/app/plugin/${plugin.name}/index.js`,
-				});
+				const pluginEntry = pluginResult.outputs.find(
+					(o) => o.kind === "entry-point",
+				);
+				if (!pluginEntry) {
+					throw new Error(`Plugin "${plugin.name}" produced no entry output`);
+				}
+				const hashedJs = basename(pluginEntry.path);
+				const logicalJs = `/app/plugin/${plugin.name}/index.js`;
+				const hashedJsPath = `/app/plugin/${plugin.name}/${hashedJs}`;
+				manifest[logicalJs] = hashedJsPath;
+				pluginOutputs.set(plugin.name, { jsPath: hashedJsPath });
 			} catch (e) {
 				const errorText = e instanceof Error ? e.message : String(e);
 				if (plugin.scope === "global") {
@@ -252,14 +356,17 @@ export async function buildWebAssets(opts: {
 			}
 		}
 
-		// ── Step 4: Copy CSS files ──
+		// ── Step 4: Copy CSS files (with content hash on filename) ──
 		const cssPaths: string[] = [];
 
 		if (opts.shellCssPath && existsSync(opts.shellCssPath)) {
 			const cssOutDir = join(appDir, "web");
 			mkdirSync(cssOutDir, { recursive: true });
-			copyFileSync(opts.shellCssPath, join(cssOutDir, "styles.css"));
-			cssPaths.push("/app/web/styles.css");
+			const hashedName = hashRename(opts.shellCssPath, cssOutDir, "styles");
+			const logicalUrl = `/app/web/styles.css`;
+			const hashedUrl = `/app/web/${hashedName}`;
+			manifest[logicalUrl] = hashedUrl;
+			cssPaths.push(hashedUrl);
 		}
 
 		for (const plugin of plugins) {
@@ -269,23 +376,13 @@ export async function buildWebAssets(opts: {
 			if (!output?.jsPath) continue;
 			const pluginOutDir = join(appDir, "plugin", plugin.name);
 			mkdirSync(pluginOutDir, { recursive: true });
-			copyFileSync(plugin.cssPath, join(pluginOutDir, "style.css"));
-			const cssUrl = `/app/plugin/${plugin.name}/style.css`;
-			output.cssPath = cssUrl;
-			cssPaths.push(cssUrl);
+			const hashedName = hashRename(plugin.cssPath, pluginOutDir, "style");
+			const logicalUrl = `/app/plugin/${plugin.name}/style.css`;
+			const hashedUrl = `/app/plugin/${plugin.name}/${hashedName}`;
+			manifest[logicalUrl] = hashedUrl;
+			output.cssPath = hashedUrl;
+			cssPaths.push(hashedUrl);
 		}
-
-		// Use the shell's original location under `projectRoot` to compute its URL.
-		// The `path.relative` call handles absolute paths that are outside
-		// `projectRoot` by returning a path with `..` — we reject those (shell MUST
-		// live under projectRoot).
-		const shellRel = relative(projectRoot, shellEntry);
-		if (shellRel.startsWith("..") || shellRel.includes(`..${sep}`)) {
-			throw new Error(
-				`shellEntry must live under projectRoot, got ${shellEntry} (relative: ${shellRel})`,
-			);
-		}
-		const shellRelPath = shellRel.replace(/\.tsx?$/, ".js");
 
 		const totalOutputs =
 			vendorResult.outputs.length + shellResult.outputs.length + plugins.length;
@@ -294,9 +391,10 @@ export async function buildWebAssets(opts: {
 		return {
 			buildDir,
 			importmap,
-			shellEntryPath: `/app/${shellRelPath.split(sep).join("/")}`,
+			shellEntryPath: shellHashedPath,
 			pluginOutputs,
 			cssPaths,
+			manifest,
 		};
 	} finally {
 		// Guaranteed cleanup — shim dir lives in projectRoot, we never want it to leak.
@@ -306,6 +404,41 @@ export async function buildWebAssets(opts: {
 			console.error("[web-builder] Failed to clean up shim dir:", e);
 		}
 	}
+}
+
+/**
+ * Copy a source file into `outDir`, rename to include a content hash.
+ * Returns the new filename. The hash is derived from the source bytes —
+ * so identical sources yield identical filenames (deterministic build).
+ */
+function hashRename(
+	sourcePath: string,
+	outDir: string,
+	logicalBasename: string,
+): string {
+	const bytes = readFileSync(sourcePath);
+	const hash = shortContentHash(bytes);
+	const ext = sourcePath.match(/\.(\w+)$/)?.[1] ?? "";
+	const filename = ext
+		? `${logicalBasename}-${hash}.${ext}`
+		: `${logicalBasename}-${hash}`;
+	const dest = join(outDir, filename);
+	copyFileSync(sourcePath, dest);
+	return filename;
+}
+
+/**
+ * 8-char lowercase base36 content hash, matching the Bun.build `[hash]`
+ * shape so manifest entries look uniform whether they came from Bun.build
+ * or from our manual CSS copy path.
+ */
+function shortContentHash(bytes: Buffer | Uint8Array): string {
+	// Bun.hash returns a 64-bit bigint; take low 40 bits to get ~8 base36 chars.
+	const h = Bun.hash(bytes);
+	return (typeof h === "bigint" ? h : BigInt(h))
+		.toString(36)
+		.slice(-8)
+		.padStart(8, "0");
 }
 
 /** Flatten Bun.build logs into a short human-readable string. */
@@ -345,6 +478,8 @@ async function runBuild(
 /**
  * Generate the HTML string for the root page.
  * Includes importmap, CSS links, and shell entry script.
+ * All asset URLs are content-hashed via `build.manifest` / `build.importmap` /
+ * `build.shellEntryPath` / `build.cssPaths` — nothing bare escapes here.
  */
 export function generateIndexHTML(build: WebBuildResult): string {
 	const cssLinks = build.cssPaths
