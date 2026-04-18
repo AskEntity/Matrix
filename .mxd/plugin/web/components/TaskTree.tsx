@@ -679,8 +679,16 @@ function TreeNodeView({
 					style={{ marginLeft: `${12 + depth * 10}px` }}
 				/>
 			)}
-			<button
-				type="button"
+			{/* Was <button> — now <div role="button"> because children include
+			    <button className="mxd-tree-toggle"> and <button className="mxd-favorite-btn">.
+			    A button cannot contain another button per HTML spec; browsers
+			    un-nest them at parse time (Safari) or silently tolerate
+			    (Chrome), both producing UB for event routing and React
+			    hydration. Keep this as a non-button interactive element. */}
+			{/* biome-ignore lint/a11y/useSemanticElements: cannot use <button>, see comment above — nested button is UB */}
+			<div
+				role="button"
+				tabIndex={0}
 				className={`mxd-task-node${isSelected ? " selected" : ""}${isTask(node) && node.status === "draft" ? " mxd-task-draft" : ""}${isDragging ? " mxd-task-dragging" : ""}${isReparentTarget ? " mxd-reparent-target" : ""}${isTask(node) && node.status === "closed" ? " mxd-task-closed" : ""}${!isTask(node) ? " mxd-folder-node" : ""}`}
 				style={
 					isTask(node) && node.color
@@ -705,6 +713,18 @@ function TreeNodeView({
 					e.stopPropagation();
 					if (isFolder(node)) return;
 					onDoubleClick?.(node.id);
+				}}
+				onKeyDown={(e) => {
+					// Enter or Space activates — matches native <button> semantics.
+					if (e.key === "Enter" || e.key === " ") {
+						e.preventDefault();
+						e.stopPropagation();
+						if (isFolder(node)) {
+							toggleCollapse(node.id);
+							return;
+						}
+						onSelect(node.id);
+					}
 				}}
 			>
 				<div
@@ -753,7 +773,7 @@ function TreeNodeView({
 						</button>
 					)}
 				</div>
-			</button>
+			</div>
 			{showIndicatorAfter && (
 				<div
 					className="mxd-drop-indicator"
