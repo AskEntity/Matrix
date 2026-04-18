@@ -8,6 +8,7 @@
  * Mirrors AuthenticatedApp layout: AppHeader, sidebar with TaskTree, tab bar,
  */
 
+import { pluginApiPrefix } from "@mxd/types";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuthFetch } from "./auth.ts";
@@ -182,7 +183,10 @@ function MockShowcaseInner() {
 	// ── Fetch mock data ──
 	useEffect(() => {
 		let cancelled = false;
-		authFetch("/mock-showcase")
+		// `/mock-showcase` is a matrix-plugin-worker route; it lives under the
+		// plugin's API namespace. Daemon strips the `/api/matrix` prefix and
+		// forwards to the worker, which serves `/mock-showcase` at root.
+		authFetch(`${pluginApiPrefix("matrix")}/mock-showcase`)
 			.then((r) => {
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				return r.json();

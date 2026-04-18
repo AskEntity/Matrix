@@ -62,13 +62,30 @@ describe("daemon without plugins — bare daemon invariant", () => {
 		expect(body).toEqual([]);
 	});
 
-	test("unhandled routes return 503 with clear message (no worker)", async () => {
+	test("unhandled bare routes return 404 (no catch-all forwarding)", async () => {
+		// With the `/api/<plugin>/*` namespace, unprefixed routes that don't
+		// match a daemon handler are 404s — they no longer silently fall
+		// through to "whatever global worker happens to be first".
 		const res = await daemon.fetch(
 			new Request("http://localhost/some/worker/route"),
 		);
+		expect(res.status).toBe(404);
+	});
+
+	test("unknown plugin namespace returns 404", async () => {
+		const res = await daemon.fetch(
+			new Request("http://localhost/api/does-not-exist/anything"),
+		);
+		expect(res.status).toBe(404);
+		const body = await res.json();
+		expect(body.error).toContain("does-not-exist");
+	});
+
+	test("/version returns 503 when no global worker is running", async () => {
+		const res = await daemon.fetch(new Request("http://localhost/version"));
 		expect(res.status).toBe(503);
 		const body = await res.json();
-		expect(body.error).toContain("No global plugin");
+		expect(body.error).toContain("No global plugin worker");
 	});
 });
 
