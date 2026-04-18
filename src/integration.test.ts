@@ -2935,22 +2935,19 @@ describe("Integration: same-turn tool conflicts", () => {
 		expect(toolResults.length).toBe(2);
 
 		// Extract output file paths from the tool results
-		const paths0 = extractOutputPaths(
+		const path0 = extractOutputPath(
 			typeof toolResults[0]?.content === "string" ? toolResults[0].content : "",
 		);
-		const paths1 = extractOutputPaths(
+		const path1 = extractOutputPath(
 			typeof toolResults[1]?.content === "string" ? toolResults[1].content : "",
 		);
 
-		// Both should have paths
-		expect(paths0.stdout).toBeTruthy();
-		expect(paths0.stderr).toBeTruthy();
-		expect(paths1.stdout).toBeTruthy();
-		expect(paths1.stderr).toBeTruthy();
+		// Both should have a path
+		expect(path0).toBeTruthy();
+		expect(path1).toBeTruthy();
 
-		// Paths must be DIFFERENT between the two commands
-		expect(paths0.stdout).not.toBe(paths1.stdout);
-		expect(paths0.stderr).not.toBe(paths1.stderr);
+		// Paths must be DIFFERENT between the two commands (unique per execId)
+		expect(path0).not.toBe(path1);
 
 		// Also verify: bg IDs are different
 		const bgId0 = extractBgId(
@@ -2975,16 +2972,16 @@ describe("Integration: same-turn tool conflicts", () => {
 
 // ── Helpers for concurrent background test ──
 
-/** Extract stdout and stderr file paths from a background bash tool result. */
-function extractOutputPaths(content: string): {
-	stdout: string | null;
-	stderr: string | null;
-} {
-	const match = content.match(/Output files: ([^,]+), (\S+)/);
-	return {
-		stdout: match?.[1] ?? null,
-		stderr: match?.[2] ?? null,
-	};
+/**
+ * Extract the (single) output file path from a background bash tool result.
+ * Merged mode (default) → "Output file: <path>".
+ * Separate mode → "Output files: <stdout>, <stderr>" (we take the first).
+ */
+function extractOutputPath(content: string): string | null {
+	const mergedMatch = content.match(/Output file: (\S+)/);
+	if (mergedMatch?.[1]) return mergedMatch[1];
+	const sepMatch = content.match(/Output files: ([^,]+),/);
+	return sepMatch?.[1]?.trim() ?? null;
 }
 
 /** Extract background ID from a background bash tool result. */
@@ -11781,4 +11778,411 @@ describe("Integration: resetTask timing on yielding agent", () => {
 		expect(childNode?.status).toBe("pending");
 		expect(childNode?.session).toBeUndefined();
 	}, 45000);
+});
+
+// ── Integration: bash tiered output contract (end-to-end) ──
+
+/**
+ * These tests verify the CLAIMS the bash tool's description makes to the LLM.
+ * They drive the full stack: mock API → agent loop → bash tool handler → real
+ * shell execution → tool_result observed by mock. If the tool's behavior drifts
+ * from what the prompt promises, these tests fail.
+ *
+ * Unit-level coverage of tier structure lives in src/bash-output-format.test.ts.
+ * What these tests add: the agent actually SEES this content in the shape the
+ * description promises.
+ */
+describe("Integration: bash tiered output contract", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("PROMPT CLAIM: small (<1KB) output is inlined with no file path", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "echo small-output-xyz" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const toolResults = getToolResults(getLastUserMessage(ctx, 1));
+		const content =
+			typeof toolResults[0]?.content === "string"
+				? toolResults[0].content
+				: JSON.stringify(toolResults[0]?.content);
+
+		expect(content).toContain("small-output-xyz");
+		expect(content).toContain("exit code: 0");
+		// Small tier: no file banner, no read hint
+		expect(content).not.toContain("Full output:");
+		expect(content).not.toContain("Read:");
+		expect(content).not.toContain("truncated");
+	}, 20000);
+
+	test("PROMPT CLAIM: medium (≥1KB) output is shown in full AND saved to a file (path top+bottom)", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Produce ~2KB — squarely inside the medium tier.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: {
+								command: "python3 -c \"print('MEDIUM-MARKER-' * 100)\"",
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const toolResults = getToolResults(getLastUserMessage(ctx, 1));
+		const content =
+			typeof toolResults[0]?.content === "string"
+				? toolResults[0].content
+				: JSON.stringify(toolResults[0]?.content);
+
+		// Full content present (medium = show everything inline)
+		const markerCount = (content.match(/MEDIUM-MARKER-/g) ?? []).length;
+		expect(markerCount).toBe(100);
+
+		// No truncation in medium tier
+		expect(content).not.toContain("truncated");
+
+		// Banner announced at top and bottom
+		const bannerMatches = content.match(/Full output: /g) ?? [];
+		expect(bannerMatches.length).toBe(2);
+
+		// File exists on disk with the complete content
+		const match = content.match(/Full output: (\S+\.out)/);
+		const filePath = match?.[1];
+		expect(filePath).toBeTruthy();
+		if (filePath) {
+			expect(existsSync(filePath)).toBe(true);
+			const diskContent = await Bun.file(filePath).text();
+			expect(diskContent).toContain("MEDIUM-MARKER-");
+			const diskMarkerCount = (diskContent.match(/MEDIUM-MARKER-/g) ?? [])
+				.length;
+			expect(diskMarkerCount).toBe(100);
+			// Cleanup
+			rmSync(filePath, { force: true });
+		}
+	}, 20000);
+
+	test("PROMPT CLAIM: large output — display is bounded (~10KB) AND file has the complete output", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Produce ~500KB. Prompt promises display bounded ~10KB "regardless of
+		// whether the command produced 10KB or 10MB".
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: {
+								command:
+									"python3 -c \"[print(f'big-line-{i:06d}') for i in range(30000)]\"",
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const toolResults = getToolResults(getLastUserMessage(ctx, 1));
+		const content =
+			typeof toolResults[0]?.content === "string"
+				? toolResults[0].content
+				: JSON.stringify(toolResults[0]?.content);
+
+		// THE BOUND CLAIM: the prompt promises ~10KB max. Allow up to 12KB to
+		// cover banner overhead + read hint + exit code line.
+		expect(content.length).toBeLessThanOrEqual(12 * 1024);
+
+		// Truncation marker and read hint present
+		expect(content).toContain("truncated");
+		expect(content).toContain("Read:");
+
+		// Head and tail preserved; middle cut
+		expect(content).toContain("big-line-000000"); // head
+		expect(content).toContain("big-line-029999"); // tail
+		expect(content).not.toContain("big-line-015000"); // middle
+
+		// THE PRESERVATION CLAIM: the complete output is in the file.
+		const match = content.match(/Full output: (\S+\.out)/);
+		const filePath = match?.[1];
+		expect(filePath).toBeTruthy();
+		if (filePath) {
+			expect(existsSync(filePath)).toBe(true);
+			const diskContent = await Bun.file(filePath).text();
+			// All 30000 lines present on disk — including the middle ones absent
+			// from the display.
+			expect(diskContent).toContain("big-line-000000");
+			expect(diskContent).toContain("big-line-015000"); // middle PRESENT on disk
+			expect(diskContent).toContain("big-line-029999");
+			const lineCount = (diskContent.match(/big-line-/g) ?? []).length;
+			expect(lineCount).toBe(30000);
+			rmSync(filePath, { force: true });
+		}
+	}, 20000);
+
+	test("PROMPT CLAIM: piping destroys preservation — tool sees only the piped output, not the original stream", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// The agent pipes the 30000-line output through `head -3`. Prompt
+		// promises: "the tool only ever sees the 30 lines your pipe produced —
+		// the original full stream went through your pipe, not to us."
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: {
+								command:
+									"python3 -c \"[print(f'original-line-{i:06d}') for i in range(30000)]\" | head -3",
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const toolResults = getToolResults(getLastUserMessage(ctx, 1));
+		const content =
+			typeof toolResults[0]?.content === "string"
+				? toolResults[0].content
+				: JSON.stringify(toolResults[0]?.content);
+
+		// Tool_result only has the 3 lines that emerged from the pipe.
+		expect(content).toContain("original-line-000000");
+		expect(content).toContain("original-line-000001");
+		expect(content).toContain("original-line-000002");
+		// Lines 3..29999 don't exist in the tool's view — the pipe consumed them.
+		expect(content).not.toContain("original-line-000003");
+		expect(content).not.toContain("original-line-015000");
+		expect(content).not.toContain("original-line-029999");
+
+		// Since piped output is only ~60 bytes, it's the small tier: no file saved.
+		expect(content).not.toContain("Full output:");
+
+		// If there's NO file on disk for the full stream, there's nothing to
+		// recover. Any file the tool saved holds only the 3 post-pipe lines.
+		// This makes the prompt's claim ("not in memory, not on disk, not
+		// recoverable") empirically true for this run.
+		const match = content.match(/Full output: (\S+\.out)/);
+		if (match?.[1] && existsSync(match[1])) {
+			// If a file WAS saved (shouldn't happen at <1KB), it only has post-pipe.
+			const diskContent = await Bun.file(match[1]).text();
+			expect(diskContent).not.toContain("original-line-015000");
+			rmSync(match[1], { force: true });
+		}
+	}, 20000);
+
+	test("PROMPT CLAIM: separate: true shows two labeled sections with separate file paths", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: {
+								command:
+									"echo STDOUT-LINE-A; echo STDERR-LINE-B >&2; echo STDOUT-LINE-C",
+								separate: true,
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const toolResults = getToolResults(getLastUserMessage(ctx, 1));
+		const content =
+			typeof toolResults[0]?.content === "string"
+				? toolResults[0].content
+				: JSON.stringify(toolResults[0]?.content);
+
+		// Two labeled sections
+		expect(content).toContain("stdout:");
+		expect(content).toContain("stderr:");
+		// Stdout content on stdout side; stderr content on stderr side
+		const stdoutIdx = content.indexOf("stdout:");
+		const stderrIdx = content.indexOf("stderr:");
+		expect(stdoutIdx).toBeGreaterThanOrEqual(0);
+		expect(stderrIdx).toBeGreaterThan(stdoutIdx);
+		// STDOUT-LINE-A and -C appear in stdout region
+		expect(content.slice(stdoutIdx, stderrIdx)).toContain("STDOUT-LINE-A");
+		expect(content.slice(stdoutIdx, stderrIdx)).toContain("STDOUT-LINE-C");
+		// STDERR-LINE-B appears in stderr region
+		expect(content.slice(stderrIdx)).toContain("STDERR-LINE-B");
+	}, 20000);
+
+	test("PROMPT CLAIM: separate: true — same ~10KB inline bound applies, budget shared", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Produce ~300KB on each stream in separate mode. Prompt promises:
+		// "The same 10KB inline bound applies and they share the budget."
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: {
+								command:
+									"python3 -c \"import sys; [print(f'out-{i:06d}') for i in range(20000)]; [print(f'err-{i:06d}', file=sys.stderr) for i in range(20000)]\"",
+								separate: true,
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const toolResults = getToolResults(getLastUserMessage(ctx, 1));
+		const content =
+			typeof toolResults[0]?.content === "string"
+				? toolResults[0].content
+				: JSON.stringify(toolResults[0]?.content);
+
+		// THE BOUND CLAIM for separate mode: still ~10KB total.
+		expect(content.length).toBeLessThanOrEqual(12 * 1024);
+
+		// Both streams represented; both truncated.
+		expect(content).toContain("stdout:");
+		expect(content).toContain("stderr:");
+		expect(content).toContain("truncated");
+
+		// Heads of both streams present.
+		expect(content).toContain("out-000000");
+		expect(content).toContain("err-000000");
+
+		// Files for both streams saved with complete content.
+		const soMatch = content.match(/Full stdout: (\S+\.stdout)/);
+		const seMatch = content.match(/Full stderr: (\S+\.stderr)/);
+		const soPath = soMatch?.[1];
+		const sePath = seMatch?.[1];
+		expect(soPath).toBeTruthy();
+		expect(sePath).toBeTruthy();
+		if (soPath) {
+			expect(existsSync(soPath)).toBe(true);
+			const soDisk = await Bun.file(soPath).text();
+			expect(soDisk).toContain("out-000000");
+			expect(soDisk).toContain("out-010000"); // middle on disk
+			expect(soDisk).toContain("out-019999");
+			rmSync(soPath, { force: true });
+		}
+		if (sePath) {
+			expect(existsSync(sePath)).toBe(true);
+			const seDisk = await Bun.file(sePath).text();
+			expect(seDisk).toContain("err-010000");
+			rmSync(sePath, { force: true });
+		}
+	}, 20000);
 });

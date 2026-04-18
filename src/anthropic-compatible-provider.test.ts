@@ -1031,6 +1031,7 @@ describe("executeBashWithTimeout", () => {
 				{
 					id: "bg-1",
 					command: "test",
+					separate: false,
 					startTime: Date.now(),
 					stdout: "",
 					stderr: "",
@@ -1092,6 +1093,7 @@ describe("executeBashWithTimeout", () => {
 				{
 					id: "bg-done",
 					command: "echo done",
+					separate: false,
 					startTime: Date.now() - 1000,
 					stdout: "done\n",
 					stderr: "",
@@ -1138,7 +1140,8 @@ describe("executeBashWithTimeout", () => {
 		const status = getBackgroundStatus(bgMap, bgId);
 		expect(status).toContain("running");
 		expect(status).toContain("sleep 30");
-		expect(status).toContain("stdout file:");
+		// Merged mode (default): single "output file:" line; separate mode would show "stdout file:"
+		expect(status).toContain("output file:");
 		expect(status).toContain("read_file");
 
 		// Clean up: kill the process
@@ -1154,14 +1157,15 @@ describe("executeBashWithTimeout", () => {
 				{
 					id: "bg-fin",
 					command: "echo hello",
+					separate: true,
 					startTime: Date.now() - 2000,
 					stdout: "",
 					stderr: "",
 					exitCode: 0,
 					status: "completed",
 					kill: null,
-					stdoutPath: "/tmp/mxd-bg/exec-test.stdout",
-					stderrPath: "/tmp/mxd-bg/exec-test.stderr",
+					stdoutPath: "/tmp/mxd/exec-test.stdout",
+					stderrPath: "/tmp/mxd/exec-test.stderr",
 				},
 			],
 		]);
@@ -1223,6 +1227,7 @@ describe("executeBashWithTimeout", () => {
 				{
 					id: "bg-st",
 					command: "echo test",
+					separate: false,
 					startTime: Date.now() - 5000,
 					stdout: "test\n",
 					stderr: "",
