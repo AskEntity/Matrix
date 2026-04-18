@@ -438,15 +438,21 @@ Without shutdown, old app's agent stays alive. New app launches another agent fo
 
 ## Unified Storage Layout
 
-Each project is now a self-contained folder:
-```
-~/.mxd/
-  projects/<projectId>/
-    config.json
-    tree.json
-    tasks/<taskId>.jsonl     (formerly sessions/<projectId>/<taskId>.events.jsonl)
-    debug/                    (empty; drift snapshots etc.)
-```
+Per-project information lives in two places with different roles.
+
+**`<repo>/.mxd/`** — tracked in the project repo. Things the project's source owns:
+- `config.json` — repo-scope config (see three-layer config below)
+- `plugin/` — optional; present only if this project ships a Matrix plugin
+- `memory.md` — the project's durable memory
+
+**`~/.mxd/`** — daemon runtime state on this machine, never in git:
+- top-level: global-scope config + runtime artifacts (auth, lock file, web build cache, project registry)
+- `projects/<projectId>/`:
+  - `config.json` — local-scope config override
+  - `tree.json` — the project's task tree with all tasks. **Deliberately NOT in the repo** because the tree mutates constantly; committing would pollute history.
+  - `tasks/<taskId>.jsonl` — one file per task session; the complete agent conversation as JSONL.
+
+Three-layer config (merged at runtime, later overrides earlier): global `~/.mxd/config.json` < repo `<repo>/.mxd/config.json` < local `~/.mxd/projects/<id>/config.json`.
 
 ### Path helper
 - `projectTasksDir(dataDir, projectId)` in `daemon/helpers.ts` = `{dataDir}/projects/{projectId}/tasks/`.
