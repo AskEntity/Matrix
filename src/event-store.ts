@@ -6,7 +6,7 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { appendFile, mkdir, rm } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Event } from "./events.ts";
 import { TOOL_FORK_TASK_CONTEXT } from "./tool-names.ts";
@@ -372,16 +372,6 @@ export class EventStore {
 		const pending = Array.from(this.writeQueues.values());
 		if (pending.length > 0) {
 			await Promise.all(pending);
-		}
-	}
-
-	/** Delete all event files in the directory */
-	async clearAll(): Promise<void> {
-		try {
-			await rm(this.dir, { recursive: true, force: true });
-			await mkdir(this.dir, { recursive: true });
-		} catch {
-			/* ok */
 		}
 	}
 

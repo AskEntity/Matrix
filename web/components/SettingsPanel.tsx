@@ -1304,7 +1304,6 @@ export const SettingsPanel = memo(function SettingsPanel({
 	updateLocal,
 	onClose,
 	onDeleteProject,
-	onClearAllSessions,
 }: {
 	projectId: string;
 	layers: ThreeLayerConfig;
@@ -1316,7 +1315,6 @@ export const SettingsPanel = memo(function SettingsPanel({
 	updateLocal: (patch: Record<string, unknown>) => void;
 	onClose: () => void;
 	onDeleteProject?: () => void;
-	onClearAllSessions?: () => void;
 }) {
 	const { t } = useLocale();
 	const [activeTab, setActiveTab] = useState<ActiveTab>("global");
@@ -1511,39 +1509,21 @@ export const SettingsPanel = memo(function SettingsPanel({
 				/>
 			)}
 
-			{(onClearAllSessions || onDeleteProject) && (
+			{onDeleteProject && (
 				<div className="mxd-settings-danger-zone">
 					<div className="mxd-settings-section-title">
 						{t("settings.dangerZone")}
 					</div>
-					{onClearAllSessions && (
-						<>
-							<p className="mxd-settings-danger-description">
-								{t("settings.clearAllSessionsDescription")}
-							</p>
-							<button
-								type="button"
-								className="mxd-btn mxd-btn-danger"
-								onClick={onClearAllSessions}
-							>
-								<IconTrash size={12} /> {t("settings.clearAllSessions")}
-							</button>
-						</>
-					)}
-					{onDeleteProject && (
-						<>
-							<p className="mxd-settings-danger-description">
-								{t("settings.removeProjectDescription")}
-							</p>
-							<button
-								type="button"
-								className="mxd-btn mxd-btn-danger"
-								onClick={onDeleteProject}
-							>
-								<IconTrash size={12} /> {t("settings.removeProject")}
-							</button>
-						</>
-					)}
+					<p className="mxd-settings-danger-description">
+						{t("settings.removeProjectDescription")}
+					</p>
+					<button
+						type="button"
+						className="mxd-btn mxd-btn-danger"
+						onClick={onDeleteProject}
+					>
+						<IconTrash size={12} /> {t("settings.removeProject")}
+					</button>
 				</div>
 			)}
 		</div>

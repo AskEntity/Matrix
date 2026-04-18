@@ -194,13 +194,6 @@ function AuthenticatedShell() {
 		refresh();
 	}, [projectId, refresh]);
 
-	const handleClearSessions = useCallback(async () => {
-		if (!projectId) return;
-		await authFetch(`/projects/${projectId}/sessions/clear`, {
-			method: "POST",
-		});
-	}, [projectId]);
-
 	const updateConfig = useCallback(
 		async (layer: string, patch: Record<string, unknown>) => {
 			if (!projectId) return;
@@ -264,7 +257,6 @@ function AuthenticatedShell() {
 					updateLocal={(patch) => updateConfig("", patch)}
 					onClose={() => setShowSettings(false)}
 					onDeleteProject={handleDeleteProject}
-					onClearAllSessions={handleClearSessions}
 				/>
 			)}
 

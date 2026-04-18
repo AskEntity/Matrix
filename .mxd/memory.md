@@ -1094,3 +1094,21 @@ Without the chmod pass, any auth.json created by an older Matrix version stays a
 **Chmod mask**: `(mode & 0o077) !== 0` — fires only if any group/other permission bit is set. Deliberately preserves user-hardened 0o400 (read-only) files untouched.
 
 **Tests**: POSIX-only via `describe.skipIf(process.platform === "win32")`. Five tests cover fresh creation, legacy upgrade, mask coverage (0o640/604/660/666), idempotency, and 0o400 preservation. Mutation-tested: removing either the mode option or the chmod pass makes a test fail.
+
+## Audit R7: "Clear All Sessions" feature deleted
+
+The project-wide `POST /projects/:id/sessions/clear` endpoint, its CLI subcommand (`mxd sessions clear`), the SettingsPanel danger-zone button, the `/clear` slash command, and `EventStore.clearAll()` are GONE. `handleClearSessions` (shell + plugin), `api.sessionsClear`, and the i18n strings (`settings.clearAllSessions*`, `confirm.clearSessions`) are deleted.
+
+**Why deleted**: Audit 7F C3 found the feature returned 404 after FU8's `/api/<plugin>/*` namespace migration (shell called `/projects/:id/sessions/clear` without the prefix; daemon has no catch-all anymore). Repair would have required an architectural call on whether shell should know plugin URL prefixes. Discussion concluded the feature has no unique use case:
+- `reset_task` already handles per-task reset
+- Delete-project + re-add covers "fresh start for this project"
+- Per-task `POST /projects/:id/tasks/:nodeId/sessions/clear` (called from OrchestratorDetail / TaskDetail "Clear Session" buttons) remains and handles per-task reset
+
+**Kept (do NOT confuse with the deleted feature)**:
+- `EventStore.clear(sessionId)` — per-session JSONL delete (used by per-task clear route)
+- `POST /projects/:id/sessions/prune` — prunes oldest JSONL files (used by autoResumeProjects + `mxd sessions prune` CLI)
+- `POST /projects/:id/tasks/:nodeId/sessions/clear` — per-task clear, the `reset_task`-equivalent for the UI
+- `taskSessionsClear` in `.mxd/plugin/web/api.ts` — calls the per-task route
+- `clearSessionState` in `event-handler.ts` — frontend state cleanup helper, unrelated to the API
+
+Rule going forward: deletion is preferable to repair when a feature is duplicative AND broken. Don't reach for "fix the URL bug" when the feature itself doesn't justify its surface area.
