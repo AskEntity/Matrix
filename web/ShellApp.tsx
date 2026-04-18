@@ -7,13 +7,21 @@
  */
 
 import { AuthFetchProvider, GetTokenProvider } from "@mxd/auth-context";
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import {
+	lazy,
+	Suspense,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { authFetch, clearToken, getToken } from "./auth.ts";
 import { AppHeader } from "./components/AppHeader.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
 import type { Project, ThreeLayerConfig } from "./components/types.ts";
 import { LocaleProvider } from "./i18n.ts";
 import { LoginPage } from "./LoginPage.tsx";
+import { buildPath, type ParsedPath, parsePath } from "./path-routing.ts";
 
 /**
  * Renders the build-failure surface for a plugin whose web bundle failed to
@@ -111,9 +119,26 @@ export function ShellApp() {
 }
 
 function AuthenticatedShell() {
+	// ── Path-based routing ──
+	// URL format: `/<projectId>/<pluginScope>/<pluginPath>`. Shell owns
+	// the `/<projectId>` segment; everything after `<pluginScope>/` is
+	// the plugin's territory (passed down as `pluginPath` prop).
+	//
+	// State is seeded from `window.location.pathname` on mount, then kept
+	// in sync via (a) a `popstate` listener for browser back/forward, and
+	// (b) our own `pushState`/`replaceState` calls when the user changes
+	// project or the plugin navigates via `pushPluginPath`.
+	//
+	// Single source of truth = the URL. State mirrors URL, never
+	// disagrees. No `projects[0].id` default — the URL normalization
+	// effect below fills in a real projectId once projects load.
+	const [parsed, setParsed] = useState<ParsedPath>(() =>
+		parsePath(window.location.pathname),
+	);
+	const { projectId, pluginScope, pluginPath } = parsed;
+
 	// ── Project state (daemon-owned) ──
 	const [projects, setProjects] = useState<Project[]>([]);
-	const [projectId, setProjectId] = useState("");
 	const [connected, setConnected] = useState(false);
 
 	// ── Header state ──
@@ -128,30 +153,73 @@ function AuthenticatedShell() {
 
 	// ── Plugin state ──
 	const [plugins, setPlugins] = useState<PluginInfo[]>([]);
-	const [selectedScope, setSelectedScope] = useState("");
 	const [PluginUI, setPluginUI] = useState<ReturnType<
 		typeof loadPluginUI
 	> | null>(null);
+	// Selected scope follows the URL's pluginScope segment; falls back to
+	// first available plugin when the URL doesn't specify one. The URL
+	// normalization effect below will write the scope back into the URL.
+	const selectedScope = pluginScope ?? plugins[0]?.name ?? "";
+
+	// ── browser back/forward → re-parse URL → state ──
+	useEffect(() => {
+		const onPop = () => setParsed(parsePath(window.location.pathname));
+		window.addEventListener("popstate", onPop);
+		return () => window.removeEventListener("popstate", onPop);
+	}, []);
 
 	// ── Fetch projects + plugins ──
+	// Note: we do NOT default projectId to `projects[0].id` here. The URL
+	// normalization effect (below) handles picking a default when the URL
+	// has none, and it writes the choice back into the URL so state stays
+	// URL-derived.
 	const refresh = useCallback(async () => {
 		try {
 			const res = await authFetch("/projects");
 			const data = await res.json();
 			setProjects(data);
-			if (data.length > 0 && !projectId) setProjectId(data[0].id);
 		} catch {}
 		try {
 			const res = await authFetch("/plugins");
 			const data = await res.json();
 			setPlugins(data);
-			if (data.length > 0 && !selectedScope) setSelectedScope(data[0].name);
 		} catch {}
-	}, [projectId, selectedScope]);
+	}, []);
 
 	useEffect(() => {
 		refresh();
 	}, [refresh]);
+
+	// ── URL normalization ──
+	// "/" → "/<firstProjectId>/<firstPluginName>/" via replaceState.
+	// "/<projectId>" with no pluginScope → "/<projectId>/<firstPluginName>/".
+	//
+	// Wait until both projects AND plugins have loaded — we pick defaults
+	// from real data, never a hardcoded "matrix" string. That keeps the
+	// shell honest about the plugin contract: whatever's registered wins.
+	// If no plugins exist, we leave the URL alone and the render falls
+	// through to the "no plugin loaded" state.
+	useEffect(() => {
+		const firstPlugin = plugins[0];
+		if (!firstPlugin) return;
+		if (!projectId) {
+			const firstProj = projects[0];
+			if (!firstProj) return;
+			const scope = firstPlugin.name;
+			window.history.replaceState(null, "", buildPath(firstProj.id, scope, ""));
+			setParsed({
+				projectId: firstProj.id,
+				pluginScope: scope,
+				pluginPath: "",
+			});
+			return;
+		}
+		if (!pluginScope) {
+			const scope = firstPlugin.name;
+			window.history.replaceState(null, "", buildPath(projectId, scope, ""));
+			setParsed({ projectId, pluginScope: scope, pluginPath: "" });
+		}
+	}, [projectId, pluginScope, projects, plugins]);
 
 	// ── Connected check via health ──
 	useEffect(() => {
@@ -184,6 +252,40 @@ function AuthenticatedShell() {
 
 	const selectedPlugin = plugins.find((p) => p.name === selectedScope);
 
+	// ── `pushPluginPath`: callback the plugin uses to navigate within its
+	// own segment. Shell translates `path` (e.g. a taskId) into a full URL
+	// `/<projectId>/<selectedScope>/<path>` and updates history + state.
+	// `replace=true` uses replaceState (for normalization — empty → root
+	// taskId); default false uses pushState (user-initiated — task click).
+	//
+	// The ref reads are important: this callback shouldn't re-create on
+	// every projectId/selectedScope change, or plugin-side consumers
+	// depending on it would re-trigger effects needlessly.
+	const projectIdRef = useRef(projectId);
+	projectIdRef.current = projectId;
+	const selectedScopeRef = useRef(selectedScope);
+	selectedScopeRef.current = selectedScope;
+	const pushPluginPath = useCallback((path: string, replace = false) => {
+		const pid = projectIdRef.current;
+		const scope = selectedScopeRef.current;
+		if (!pid || !scope) return;
+		const url = buildPath(pid, scope, path);
+		if (replace) window.history.replaceState(null, "", url);
+		else window.history.pushState(null, "", url);
+		setParsed({ projectId: pid, pluginScope: scope, pluginPath: path });
+	}, []);
+
+	// Scope change handler (writes to URL, matches project switch pattern).
+	const handleScopeChange = useCallback(
+		(name: string) => {
+			if (!projectId || name === selectedScope) return;
+			const url = buildPath(projectId, name, "");
+			window.history.pushState(null, "", url);
+			setParsed({ projectId, pluginScope: name, pluginPath: "" });
+		},
+		[projectId, selectedScope],
+	);
+
 	// ── Config layers for settings ──
 	useEffect(() => {
 		if (!showSettings || !projectId) return;
@@ -198,10 +300,19 @@ function AuthenticatedShell() {
 	}, [showSettings, projectId]);
 
 	// ── Handlers ──
-	const handleProjectChange = useCallback((id: string) => {
-		setProjectId(id);
-		setShowSettings(false);
-	}, []);
+	// User-initiated project switch: pushState so back/forward works.
+	// Goes to "/<id>/<scope>/" with empty pluginPath; plugin will
+	// normalize the empty pluginPath to "<rootTaskId>" once it loads.
+	const handleProjectChange = useCallback(
+		(id: string) => {
+			if (id === projectId) return;
+			const scope = selectedScope || plugins[0]?.name || "matrix";
+			window.history.pushState(null, "", buildPath(id, scope, ""));
+			setParsed({ projectId: id, pluginScope: scope, pluginPath: "" });
+			setShowSettings(false);
+		},
+		[projectId, selectedScope, plugins],
+	);
 
 	const handleAddProject = useCallback(
 		async (e: React.FormEvent) => {
@@ -216,16 +327,23 @@ function AuthenticatedShell() {
 				});
 				if (res.ok) {
 					const proj = await res.json();
-					setProjectId(proj.id);
 					setNewProjectPath("");
 					setShowAddProject(false);
-					refresh();
+					// Refresh project list then navigate to the new project.
+					await refresh();
+					const scope = selectedScope || plugins[0]?.name || "matrix";
+					window.history.pushState(null, "", buildPath(proj.id, scope, ""));
+					setParsed({
+						projectId: proj.id,
+						pluginScope: scope,
+						pluginPath: "",
+					});
 				}
 			} finally {
 				setCreatingProject(false);
 			}
 		},
-		[newProjectPath, refresh],
+		[newProjectPath, refresh, selectedScope, plugins],
 	);
 
 	const handleLogout = useCallback(async () => {
@@ -250,7 +368,10 @@ function AuthenticatedShell() {
 	const handleDeleteProject = useCallback(async () => {
 		if (!projectId) return;
 		await authFetch(`/projects/${projectId}`, { method: "DELETE" });
-		setProjectId("");
+		// Navigate back to "/" so normalization picks a new default project
+		// (or shows empty state if no projects remain).
+		window.history.pushState(null, "", "/");
+		setParsed({ projectId: null, pluginScope: null, pluginPath: "" });
 		refresh();
 	}, [projectId, refresh]);
 
@@ -285,7 +406,7 @@ function AuthenticatedShell() {
 			<AppHeader
 				connected={connected}
 				projects={projects}
-				projectId={projectId}
+				projectId={projectId ?? ""}
 				showAddProject={showAddProject}
 				newProjectPath={newProjectPath}
 				creatingProject={creatingProject}
@@ -302,7 +423,7 @@ function AuthenticatedShell() {
 				onLogout={handleLogout}
 				scopes={plugins.map((p) => ({ name: p.name }))}
 				selectedScope={selectedScope}
-				onScopeChange={setSelectedScope}
+				onScopeChange={handleScopeChange}
 			/>
 
 			{showSettings && projectId && layers && (
@@ -334,7 +455,7 @@ function AuthenticatedShell() {
 						name={selectedPlugin.name}
 						error={selectedPlugin.buildError}
 					/>
-				) : PluginUI ? (
+				) : PluginUI && projectId ? (
 					<Suspense
 						fallback={
 							<div style={{ padding: 20, color: "#8b949e" }}>
@@ -342,11 +463,17 @@ function AuthenticatedShell() {
 							</div>
 						}
 					>
-						<PluginUI projectId={projectId} />
+						<PluginUI
+							projectId={projectId}
+							pluginPath={pluginPath}
+							pushPluginPath={pushPluginPath}
+						/>
 					</Suspense>
 				) : (
 					<div style={{ padding: 20, color: "#8b949e" }}>
-						Select a scope to load plugin UI
+						{projects.length === 0
+							? "No projects yet — add one to get started"
+							: "Loading..."}
 					</div>
 				)}
 			</div>

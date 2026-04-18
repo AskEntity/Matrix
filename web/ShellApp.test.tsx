@@ -181,7 +181,11 @@ describe("plugin component renders Matrix UI", () => {
 					createElement(
 						GetTokenProvider,
 						{ value: getToken },
-						createElement(Plugin, { projectId: "m1" }),
+						createElement(Plugin, {
+							projectId: "m1",
+							pluginPath: "",
+							pushPluginPath: () => {},
+						}),
 					),
 				),
 			);
@@ -334,7 +338,11 @@ describe("sidebar toggle — unified state model", () => {
 				createElement(
 					GetTokenProvider,
 					{ value: getToken },
-					createElement(Plugin, { projectId: "m1" }),
+					createElement(Plugin, {
+						projectId: "m1",
+						pluginPath: "",
+						pushPluginPath: () => {},
+					}),
 				),
 			),
 		);
@@ -618,7 +626,11 @@ describe("sidebar toggle — unified state model", () => {
 				createElement(
 					GetTokenProvider,
 					{ value: getToken },
-					createElement(Plugin, { projectId: prod.id }),
+					createElement(Plugin, {
+						projectId: prod.id,
+						pluginPath: "",
+						pushPluginPath: () => {},
+					}),
 				),
 			),
 		);

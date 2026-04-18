@@ -150,7 +150,7 @@ describe("Plugin — targetNodeId resolves to rootNodeId after useTasks", () => 
 
 	test("InputBar placeholder reflects root task title after useTasks resolves", async () => {
 		const { createRoot } = await import("react-dom/client");
-		const { createElement } = await import("react");
+		const { createElement, useState } = await import("react");
 		const { AuthFetchProvider, GetTokenProvider } = await import(
 			"./auth-context.ts"
 		);
@@ -161,6 +161,18 @@ describe("Plugin — targetNodeId resolves to rootNodeId after useTasks", () => 
 		document.body.appendChild(div);
 		const root = createRoot(div);
 
+		// Shell-like stateful wrapper: Plugin's pushPluginPath calls set a
+		// local state, which flows back down as pluginPath prop. Mimics
+		// shell's real behavior for the URL-normalization effect.
+		function TestShell() {
+			const [pluginPath, setPluginPath] = useState("");
+			return createElement(Plugin, {
+				projectId,
+				pluginPath,
+				pushPluginPath: (path: string) => setPluginPath(path),
+			});
+		}
+
 		root.render(
 			createElement(
 				AuthFetchProvider,
@@ -168,7 +180,7 @@ describe("Plugin — targetNodeId resolves to rootNodeId after useTasks", () => 
 				createElement(
 					GetTokenProvider,
 					{ value: getToken },
-					createElement(Plugin, { projectId }),
+					createElement(TestShell),
 				),
 			),
 		);

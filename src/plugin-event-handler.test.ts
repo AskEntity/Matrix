@@ -213,7 +213,6 @@ describe("event-handler queueEntry handling", () => {
 	it("processEventBatch: unconsumed user-typed user_message goes to pendingMessages", () => {
 		const { deps, pendingBox } = makeDeps();
 
-
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
@@ -291,7 +290,6 @@ describe("event-handler queueEntry handling", () => {
 			}
 		});
 
-
 		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
 		// 1. Receive user_message with queueEntry (non-user source)
@@ -349,7 +347,6 @@ describe("event-handler queueEntry handling", () => {
 				capturedLogs = updater;
 			}
 		});
-
 
 		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
@@ -443,7 +440,6 @@ describe("event-handler JSONL-driven pending state", () => {
 				capturedLogs = updater;
 			}
 		});
-
 
 		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
@@ -992,7 +988,6 @@ describe("event-handler live session clearing", () => {
 			}
 		});
 
-
 		let olderEvents = new Map<
 			string,
 			{ hasOlder: boolean; oldestTs: number }
@@ -1256,7 +1251,6 @@ describe("event-handler compact_marker clear ordering (Fix D)", () => {
 	it("processEventBatch: messages AFTER compact_marker survive the clear", () => {
 		const { deps, pendingBox } = makeDeps();
 
-
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
@@ -1304,7 +1298,6 @@ describe("event-handler compact_marker clear ordering (Fix D)", () => {
 	it("processEventBatch: compact_marker no longer clears pre-compact pending (Task X)", () => {
 		const { deps, pendingBox } = makeDeps();
 
-
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
@@ -1351,7 +1344,6 @@ describe("event-handler compact_marker clear ordering (Fix D)", () => {
 
 	it("processEventBatch: consumed pre-compact + post-compact → only post-compact pending", () => {
 		const { deps, pendingBox } = makeDeps();
-
 
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
@@ -1886,7 +1878,6 @@ describe("event-handler compaction display", () => {
 			}
 		});
 
-
 		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
 		// Compact message arrives (source: "compact", has id). Task X
@@ -2025,7 +2016,6 @@ describe("event-handler task switch (processEventBatch replaces logs)", () => {
 
 	it("processEventBatch clears deferred messages from previous session", () => {
 		const { deps, pendingBox } = makeDeps();
-
 
 		let capturedLogs: LogEntry[] = [];
 		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
@@ -3642,9 +3632,7 @@ describe("Task X: pendingReducer is pure", () => {
 describe("Task X: no 'clear pending' paths outside messages_consumed/RESET", () => {
 	it("processEventBatch: tree_updated with status=pending tasks does NOT touch pending (per Task X)", () => {
 		const { deps, pendingBox } = makeDeps();
-		const { processEventBatch } = createEventHandler(
-			deps as EventHandlerDeps,
-		);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
 			{
@@ -3696,9 +3684,7 @@ describe("Task X: no 'clear pending' paths outside messages_consumed/RESET", () 
 
 	it("processEventBatch: compact_marker in-batch does NOT clear pending (post Task X)", () => {
 		const { deps, pendingBox } = makeDeps();
-		const { processEventBatch } = createEventHandler(
-			deps as EventHandlerDeps,
-		);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
 			{
@@ -3740,9 +3726,7 @@ describe("Task X: no 'clear pending' paths outside messages_consumed/RESET", () 
 
 	it("messages_consumed remains the only path that removes pending entries", () => {
 		const { deps, pendingBox } = makeDeps();
-		const { processEventBatch } = createEventHandler(
-			deps as EventHandlerDeps,
-		);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
 			{
@@ -3779,9 +3763,7 @@ describe("Task X: mutation-proof regression for the four prior fixes", () => {
 
 	it("batch [compact, msg_A, msg_B] → both A and B pending (Fix D era bug)", () => {
 		const { deps, pendingBox } = makeDeps();
-		const { processEventBatch } = createEventHandler(
-			deps as EventHandlerDeps,
-		);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
 			{

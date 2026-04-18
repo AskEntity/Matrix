@@ -102,10 +102,7 @@ function MockShowcaseInner() {
 			action,
 		);
 	}, []);
-	const getPendingMessages = useCallback(
-		() => pendingMessagesRef.current,
-		[],
-	);
+	const getPendingMessages = useCallback(() => pendingMessagesRef.current, []);
 	const [, setPendingClarifications] = useState<
 		{
 			id: string;
@@ -190,7 +187,7 @@ function MockShowcaseInner() {
 			getViewedSessionId: () => viewedSessionRef.current,
 		};
 		return createEventHandler(deps);
-	}, [t]);
+	}, [t, getPendingMessages, dispatchPending]);
 
 	// ── Fetch mock data ──
 	useEffect(() => {
