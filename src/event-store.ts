@@ -1,4 +1,5 @@
 import {
+	appendFileSync,
 	existsSync,
 	mkdirSync,
 	readdirSync,
@@ -16,7 +17,13 @@ import { ulid } from "./ulid.ts";
  * JSONL-based event store for Event persistence.
  * Append-only: one JSON line per event. File path: `{dir}/{sessionId}.jsonl`
  *
- * Write operations (append/appendBatch) are async and non-blocking.
+ * append/appendBatch are serialized per session via a Promise queue and return
+ * a Promise for test callers that want to `await` visibility — but the
+ * underlying disk I/O is synchronous (`appendFileSync`). Sync I/O is load-
+ * bearing for the generation guard: the guard check and the filesystem write
+ * happen in the SAME microtask, so clear() cannot interleave between them.
+ * See the race notes in `enqueueWrite` below.
+ *
  * Read operations remain synchronous for simplicity (only called during resume).
  */
 export class EventStore {
@@ -43,19 +50,49 @@ export class EventStore {
 		return this.sessionGenerations.get(sessionId) ?? 0;
 	}
 
-	/** Serialize a write operation for a given session */
+	/**
+	 * Serialize a write operation for a given session, with a two-layer
+	 * generation guard defending against `clear()` racing the write:
+	 *
+	 *   Layer 1 — pre-check: before calling writeFn, verify clear() has
+	 *   not run since this write was enqueued. If the generation was bumped,
+	 *   silently drop the write.
+	 *
+	 *   Layer 2 — post-check: after writeFn returns, verify clear() did not
+	 *   run DURING writeFn's work. If it did, the writeFn may have created a
+	 *   zombie file (appendFile with O_CREAT recreates a just-unlinked file,
+	 *   which caused the 2026-04-18 flake). Remove the zombie.
+	 *
+	 * Why two layers. In production, writeFn is synchronous (`appendFileSync`
+	 * inside `append`/`appendBatch`), so there is no window for clear() to
+	 * interleave between pre-check and post-check — Layer 2 is strictly
+	 * decorative in the fast path. Layer 2 exists so that ANY future caller
+	 * (or test) passing an async writeFn cannot resurrect the race silently.
+	 *
+	 * Historical context: the previous implementation used `fs.promises.
+	 * appendFile` (async libuv) and had only Layer 1. Under CPU contention
+	 * the libuv thread pool would delay the `open(O_CREAT)` syscall, letting
+	 * clear() sneak in between pre-check and open, after which the open
+	 * recreated the file. Switching to `appendFileSync` closes that window.
+	 */
 	private enqueueWrite(
 		sessionId: string,
 		writeFn: () => Promise<void>,
 	): Promise<void> {
-		// Capture generation at enqueue time — if it changes before execution,
-		// clear() was called and this write should be silently dropped.
 		const generation = this.getGeneration(sessionId);
-		const guardedFn = () => {
+		const guardedFn = async () => {
+			// Layer 1 (pre-check): clear ran between enqueue and execution.
+			if (this.getGeneration(sessionId) !== generation) return;
+			await writeFn();
+			// Layer 2 (post-check): clear ran DURING writeFn's work. Any file
+			// writeFn created is a zombie — remove it.
 			if (this.getGeneration(sessionId) !== generation) {
-				return Promise.resolve(); // Session was cleared — drop write
+				try {
+					unlinkSync(this.path(sessionId));
+				} catch {
+					/* already gone — treat as success */
+				}
 			}
-			return writeFn();
 		};
 		const prev = this.writeQueues.get(sessionId) ?? Promise.resolve();
 		const next = prev.then(guardedFn, guardedFn); // run even if previous failed
@@ -69,28 +106,42 @@ export class EventStore {
 		return next;
 	}
 
-	/** Append a single event to the JSONL file (async, serialized per session) */
+	/**
+	 * Append a single event to the JSONL file.
+	 *
+	 * Uses `appendFileSync` intentionally: the filesystem write must complete
+	 * in the same microtask as the generation guard check (see `enqueueWrite`).
+	 * Writes are small (one JSON line), blocking the main thread for tens of
+	 * microseconds, which is negligible next to provider streaming latency.
+	 */
 	append(sessionId: string, event: Event): Promise<void> {
-		return this.enqueueWrite(sessionId, () =>
-			appendFile(this.path(sessionId), `${JSON.stringify(event)}\n`).catch(
-				() => {
-					/* non-fatal — don't break caller if write fails */
-				},
-			),
-		);
+		return this.enqueueWrite(sessionId, () => {
+			try {
+				appendFileSync(
+					this.path(sessionId),
+					`${JSON.stringify(event)}\n`,
+				);
+			} catch {
+				/* non-fatal — don't break caller if write fails */
+			}
+			return Promise.resolve();
+		});
 	}
 
-	/** Append multiple events (async, serialized per session) */
+	/** Append multiple events in one write. Sync I/O for the same reason as `append`. */
 	appendBatch(sessionId: string, events: Event[]): Promise<void> {
 		if (events.length === 0) return Promise.resolve();
 		return this.enqueueWrite(sessionId, () => {
 			const lines = `${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
-			return appendFile(this.path(sessionId), lines).catch((e) => {
+			try {
+				appendFileSync(this.path(sessionId), lines);
+			} catch (e) {
 				console.warn(
 					`[EventStore] Failed to append events for session ${sessionId}:`,
 					e,
 				);
-			});
+			}
+			return Promise.resolve();
 		});
 	}
 
