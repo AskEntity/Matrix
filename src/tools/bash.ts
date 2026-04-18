@@ -60,9 +60,6 @@ export interface BackgroundProcess {
 	startTime: number;
 	/** Set when process completes (status changes from "running"). */
 	endTime?: number;
-	/** Legacy in-memory strings, unused by formatter — kept for compat with existing test harnesses. */
-	stdout: string;
-	stderr: string;
 	exitCode: number | null;
 	status: "running" | "completed" | "failed";
 	/** Kill the underlying process. Only available while status is "running". */
@@ -719,8 +716,6 @@ export async function executeBashWithTimeout(
 			command,
 			separate,
 			startTime,
-			stdout: "",
-			stderr: "",
 			exitCode: null,
 			status: "running",
 			kill: () => proc.kill(),
