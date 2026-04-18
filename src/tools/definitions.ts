@@ -82,6 +82,12 @@ const bashTool = defineTool({
 			description:
 				"Maximum time in ms to run in foreground before backgrounding. 0 = immediate background. Default: 120000 (2 minutes).",
 		},
+		separate: {
+			schema: z.boolean().optional(),
+			decl: { kind: "optional" },
+			description:
+				"If true, capture stdout and stderr as two separate streams with labeled sections and separate file paths. Default (false) merges both streams into one output, so you don't need `2>&1`. Set to true only when you genuinely need to distinguish the two (rare).",
+		},
 	},
 	handler: async (args, _auth, toolCallId) => {
 		const projectId = args.projectId;
@@ -110,6 +116,7 @@ const bashTool = defineTool({
 				toolCallId,
 				session?.backgroundProcesses,
 				session?.foregroundExecutions,
+				args.separate ?? false,
 			);
 			// Update node.cwd if bash cd changed it — persisted on node, survives restart
 			if (result.cwd && taskId) {
