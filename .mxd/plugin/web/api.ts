@@ -2,10 +2,21 @@
  * Centralized API URL builder for frontend → backend calls.
  *
  * All API URLs go through these helpers so the prefix is a one-place change.
+ *
+ * Plugin-owned routes live under `/api/<plugin-name>/*` on the wire. The daemon
+ * strips the prefix and forwards to the matrix worker, which registers its
+ * routes as if at root. `pluginApiPrefix` is the single source of truth shared
+ * with `src/daemon.ts` (daemon-side strip) so format changes propagate atomically.
+ *
+ * Daemon-owned routes (`/auth/*`, `/global-context`, `/projects/:id` bare,
+ * `/projects/:id/config*`, etc.) are NOT in this builder — plugin code that
+ * hits those uses raw relative paths with `authFetch`, and the shell's base
+ * authFetch passes them through unchanged.
  */
+import { pluginApiPrefix } from "@mxd/types";
 
-/** Base prefix for all project API routes. */
-const PROJECT_PREFIX = "/projects";
+/** Base prefix for all matrix plugin project routes (e.g. `/api/matrix/projects`). */
+const PROJECT_PREFIX = `${pluginApiPrefix("matrix")}/projects`;
 
 // ── URL builders ──
 

@@ -109,8 +109,9 @@ describe("daemon with Matrix plugin e2e", () => {
 	});
 
 	test("task tree for project — has root node", async () => {
+		// Plugin-owned routes go through the `/api/<plugin>/*` namespace.
 		const res = await fetch(
-			`http://localhost:${TEST_PORT}/projects/proj1/tasks`,
+			`http://localhost:${TEST_PORT}/api/matrix/projects/proj1/tasks`,
 		);
 		expect(res.status).toBe(200);
 		const data = await res.json();
@@ -122,12 +123,12 @@ describe("daemon with Matrix plugin e2e", () => {
 	test("create task through daemon → worker", async () => {
 		// Get root node
 		const treeRes = await fetch(
-			`http://localhost:${TEST_PORT}/projects/proj1/tasks`,
+			`http://localhost:${TEST_PORT}/api/matrix/projects/proj1/tasks`,
 		);
 		const tree = await treeRes.json();
 
 		const res = await fetch(
-			`http://localhost:${TEST_PORT}/projects/proj1/tasks`,
+			`http://localhost:${TEST_PORT}/api/matrix/projects/proj1/tasks`,
 			{
 				method: "POST",
 				headers: { "content-type": "application/json" },
@@ -146,11 +147,21 @@ describe("daemon with Matrix plugin e2e", () => {
 
 	test("tree now has the created task", async () => {
 		const res = await fetch(
-			`http://localhost:${TEST_PORT}/projects/proj1/tasks`,
+			`http://localhost:${TEST_PORT}/api/matrix/projects/proj1/tasks`,
 		);
 		const data = (await res.json()) as { nodes: Array<{ title: string }> };
 		const titles = data.nodes.map((n) => n.title);
 		expect(titles).toContain("E2E Test Task");
+	});
+
+	test("bare (unprefixed) plugin path returns 404", async () => {
+		// Regression guard: the `/api/<plugin>/*` namespace is the ONLY way
+		// plugin routes are served. Unprefixed paths no longer fall through
+		// to a global worker.
+		const res = await fetch(
+			`http://localhost:${TEST_PORT}/projects/proj1/tasks`,
+		);
+		expect(res.status).toBe(404);
 	});
 
 	test("plugins endpoint returns Matrix with web path", async () => {
