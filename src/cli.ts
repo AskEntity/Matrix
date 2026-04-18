@@ -58,6 +58,39 @@ async function getCLIToken(): Promise<string | null> {
 	}
 }
 
+/**
+ * Exchange the long-lived CLI token for a short-lived (5min) stream
+ * token. Mirrors `web/.../hooks.ts` useSSE's pattern — the CLI token
+ * must never ride in the `/events` URL (proxy logs, shell history,
+ * `ps`-visible argv for subprocesses). After Audit R7 P1.3 the
+ * middleware accepts only `sub=stream` JWTs on `/events`, so the CLI's
+ * own `sub=cli` token would 401-loop.
+ *
+ * Returns null if:
+ *   - auth.json has no jwtSecret (shouldn't happen — P1.3 inits on daemon boot)
+ *   - the POST fails (network blip, daemon down, daemon rejected the CLI token)
+ * On null, the caller falls through to a tokenless GET /events: the
+ * server returns 401 and the existing reconnect backoff handles it.
+ * Reconnecting calls fetchStreamToken() again for a fresh token — never
+ * reuse across reconnects (token may have expired or been revoked by a
+ * logout-all bumpSecretVersion).
+ */
+async function fetchStreamToken(): Promise<string | null> {
+	const cliToken = await getCLIToken();
+	if (!cliToken) return null;
+	try {
+		const res = await fetch(`${DAEMON_URL}/auth/stream-token`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${cliToken}` },
+		});
+		if (!res.ok) return null;
+		const data = (await res.json()) as { token: string | null };
+		return data.token;
+	} catch {
+		return null;
+	}
+}
+
 async function api(path: string, options?: RequestInit): Promise<Response> {
 	const token = await getCLIToken();
 	const headers: Record<string, string> = {
@@ -593,7 +626,11 @@ async function watchProject(projectId: string): Promise<void> {
 
 		abortController = new AbortController();
 		try {
-			const token = await getCLIToken();
+			// Mint a fresh stream token on every (re)connect. `/events`
+			// accepts only sub=stream JWTs after Audit R7 P1.3; the CLI's
+			// own sub=cli token would 401-loop. Reconnect path naturally
+			// re-enters this block, so reconnect re-mints too.
+			const token = await fetchStreamToken();
 			const sseUrl = token
 				? `${DAEMON_URL}/events?projectId=${encodeURIComponent(projectId)}&token=${encodeURIComponent(token)}`
 				: `${DAEMON_URL}/events?projectId=${encodeURIComponent(projectId)}`;
@@ -1106,8 +1143,27 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 			// Default to global (auth groups are typically global)
 			const cfg = await loadGlobalConfig();
 			cfg.authGroups = { ...cfg.authGroups, [name]: group };
+			// Auto-promote the first auth group as defaultAuth. README implies
+			// `auth add` is sufficient to onboard — without this, fresh users
+			// hit "No auth group configured. Add an auth group in Settings >
+			// Global > Auth Groups and set defaultAuth." on their first agent
+			// call because provider resolution reads `cfg.defaultAuth`, which
+			// stays "" after a pure add. Second `auth add` leaves the user's
+			// existing pick alone — we only fill in the unset slot.
+			const priorDefault = cfg.defaultAuth;
+			const hadPriorDefault = Boolean(priorDefault);
+			if (!hadPriorDefault) {
+				cfg.defaultAuth = name;
+			}
 			await saveGlobalConfig(cfg);
-			console.log(`Added auth group "${name}" to global config.`);
+			if (!hadPriorDefault) {
+				console.log(`Added auth group "${name}". Set as default.`);
+			} else {
+				console.log(
+					`Added auth group "${name}". Current default is "${priorDefault}"; ` +
+						`run \`mxd config set defaultAuth ${name} --global\` to switch.`,
+				);
+			}
 		}
 	} else if (sub === "list") {
 		const resolved = await loadGlobalConfig();
