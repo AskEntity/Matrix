@@ -34,7 +34,6 @@ async function setup(): Promise<TestCtx> {
 	const sessionToken = await signSessionToken(authPath);
 	const daemon = await createDaemon({
 		dataDir,
-		autoInitAuth: true,
 		autoRegisterSelf: false,
 	});
 	return { daemon, tempDir, dataDir, authPath, sessionToken };
@@ -59,11 +58,34 @@ describe("daemon auth middleware: skip rules", () => {
 		expect(res.status).toBe(200);
 	});
 
-	test("exact skip: POST /auth/logout is public (no token = no-op)", async () => {
+	test("POST /auth/logout rejects anonymous callers (Audit R7 P1.1)", async () => {
+		// Previously `/auth/logout` was on SKIP_EXACT — a drive-by page could
+		// hit the endpoint without any auth and force a secretVersion bump,
+		// logging every active user out. Now the auth middleware rejects
+		// anonymous POSTs with 401 and the secretVersion stays put.
+		const beforeVersion = (
+			JSON.parse(
+				await (await import("node:fs/promises")).readFile(
+					ctx.authPath,
+					"utf-8",
+				),
+			) as { secretVersion: number }
+		).secretVersion;
+
 		const res = await ctx.daemon.fetch(
 			new Request("http://localhost/auth/logout", { method: "POST" }),
 		);
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(401);
+
+		const afterVersion = (
+			JSON.parse(
+				await (await import("node:fs/promises")).readFile(
+					ctx.authPath,
+					"utf-8",
+				),
+			) as { secretVersion: number }
+		).secretVersion;
+		expect(afterVersion).toBe(beforeVersion);
 	});
 
 	test("prefix-match is NOT accepted: /auth/bogus → 401", async () => {
@@ -283,7 +305,6 @@ describe("daemon: config masks API keys", () => {
 		await ctx.daemon.shutdown();
 		ctx.daemon = await createDaemon({
 			dataDir: ctx.dataDir,
-			autoInitAuth: false,
 		});
 	});
 	afterEach(() => teardown(ctx));
@@ -385,15 +406,15 @@ describe("daemon: config masks API keys", () => {
 	});
 });
 
-describe("daemon: auto-initialized auth", () => {
-	test("createDaemon with autoInitAuth:true creates auth.json if missing", async () => {
+describe("daemon: auto-initialized auth (Audit R7 P1.3 — always on)", () => {
+	test("createDaemon creates auth.json if missing, rejects anonymous", async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "daemon-init-test-"));
 		const dataDir = join(tempDir, ".mxd");
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
+		// After P1.3, `autoInitAuth` no longer exists — auth is ALWAYS on.
 		const daemon = await createDaemon({
 			dataDir,
-			autoInitAuth: true,
 			autoRegisterSelf: false,
 		});
 		try {
@@ -412,5 +433,265 @@ describe("daemon: auto-initialized auth", () => {
 			await daemon.shutdown();
 			await rm(tempDir, { recursive: true, force: true });
 		}
+	});
+
+	test("createDaemon with an already-initialized auth.json preserves it", async () => {
+		// Idempotency check — pre-existing auth.json is not overwritten.
+		const tempDir = await mkdtemp(join(tmpdir(), "daemon-init-existing-"));
+		const dataDir = join(tempDir, ".mxd");
+		const authPath = join(dataDir, "auth.json");
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
+		await ensureAuthInitialized(authPath);
+		const { readFile } = await import("node:fs/promises");
+		const before = await readFile(authPath, "utf-8");
+
+		const daemon = await createDaemon({ dataDir, autoRegisterSelf: false });
+		try {
+			const after = await readFile(authPath, "utf-8");
+			expect(after).toEqual(before);
+		} finally {
+			await daemon.shutdown();
+			await rm(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	test("corrupt auth.json → createDaemon fails to boot (loud, not silent)", async () => {
+		// Pre-P1.3, a corrupt auth.json would silently read as empty, and the
+		// middleware's `!hasJwtSecret` branch would serve every request
+		// unauthenticated. After P1.3 that fallback is gone; readAuthData
+		// throws, ensureAuthInitialized can't complete, daemon fails to boot.
+		const tempDir = await mkdtemp(join(tmpdir(), "daemon-corrupt-auth-"));
+		const dataDir = join(tempDir, ".mxd");
+		const authPath = join(dataDir, "auth.json");
+		const { mkdir: mk, writeFile: wf } = await import("node:fs/promises");
+		await mk(dataDir, { recursive: true });
+		await wf(authPath, "{not json", "utf-8");
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
+
+		try {
+			await expect(
+				createDaemon({ dataDir, autoRegisterSelf: false }),
+			).rejects.toThrow(/not valid JSON/);
+		} finally {
+			await rm(tempDir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7 P1.4)", () => {
+	let ctx: TestCtx;
+	let projectId: string;
+
+	beforeEach(async () => {
+		ctx = await setup();
+		// Register a project so PATCH /projects/:id/config has a target.
+		const { mkdir, writeFile: wf } = await import("node:fs/promises");
+		const projectPath = join(ctx.tempDir, "proj");
+		await mkdir(projectPath, { recursive: true });
+		await mkdir(join(ctx.dataDir, "projects"), { recursive: true });
+		projectId = "proj-1";
+		await wf(
+			join(ctx.dataDir, "projects.json"),
+			JSON.stringify([
+				{
+					id: projectId,
+					name: "proj",
+					path: projectPath,
+					createdAt: new Date().toISOString(),
+				},
+			]),
+		);
+		// Restart daemon so project is loaded.
+		await ctx.daemon.shutdown();
+		ctx.daemon = await createDaemon({
+			dataDir: ctx.dataDir,
+			autoRegisterSelf: false,
+		});
+	});
+	afterEach(() => teardown(ctx));
+
+	test("PATCH /projects/:id/config rejects authGroups with 400", async () => {
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				method: "PATCH",
+				headers: {
+					Authorization: `Bearer ${ctx.sessionToken}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					authGroups: {
+						evil: { provider: "anthropic", apiKey: "sk-ant-attacker" },
+					},
+				}),
+			}),
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("authGroups");
+		expect(body.error).toContain("global");
+	});
+
+	test("PATCH /projects/:id/config rejects defaultAuth with 400", async () => {
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				method: "PATCH",
+				headers: {
+					Authorization: `Bearer ${ctx.sessionToken}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ defaultAuth: "evil" }),
+			}),
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("defaultAuth");
+	});
+
+	test("PATCH /projects/:id/config/repo rejects authGroups with 400", async () => {
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config/repo`, {
+				method: "PATCH",
+				headers: {
+					Authorization: `Bearer ${ctx.sessionToken}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					authGroups: {
+						evil: { provider: "openai", apiKey: "sk-oai-attacker" },
+					},
+				}),
+			}),
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("authGroups");
+	});
+
+	test("PATCH /projects/:id/config/repo rejects defaultAuth with 400", async () => {
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config/repo`, {
+				method: "PATCH",
+				headers: {
+					Authorization: `Bearer ${ctx.sessionToken}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ defaultAuth: "evil" }),
+			}),
+		);
+		expect(res.status).toBe(400);
+	});
+
+	test("PATCH /projects/:id/config still accepts non-credential fields (regression guard)", async () => {
+		// Non-credential patches must keep working.
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				method: "PATCH",
+				headers: {
+					Authorization: `Bearer ${ctx.sessionToken}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ budgetUsd: 42 }),
+			}),
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { budgetUsd: number };
+		expect(body.budgetUsd).toBe(42);
+	});
+
+	test("GET /projects/:id/config/all masks authGroups in every layer (Audit R7 P1.4)", async () => {
+		// Simulate a malicious actor writing authGroups directly to the
+		// on-disk repo config file (bypassing our PATCH guard). The GET
+		// endpoint MUST still mask the value — defense in depth.
+		const { writeFile: wf } = await import("node:fs/promises");
+		const { mkdir: mk } = await import("node:fs/promises");
+		const repoConfigPath = join(ctx.tempDir, "proj", ".mxd", "config.json");
+		await mk(join(ctx.tempDir, "proj", ".mxd"), { recursive: true });
+		await wf(
+			repoConfigPath,
+			JSON.stringify({
+				authGroups: {
+					evil: {
+						provider: "anthropic",
+						apiKey: "sk-ant-injected-plaintext-0123456789",
+					},
+				},
+			}),
+		);
+		const localConfigPath = join(
+			ctx.dataDir,
+			"projects",
+			projectId,
+			"config.json",
+		);
+		await mk(join(ctx.dataDir, "projects", projectId), { recursive: true });
+		await wf(
+			localConfigPath,
+			JSON.stringify({
+				authGroups: {
+					evil2: {
+						provider: "openai",
+						apiKey: "sk-oai-injected-plaintext-0123456789",
+					},
+				},
+			}),
+		);
+
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config/all`, {
+				headers: { Authorization: `Bearer ${ctx.sessionToken}` },
+			}),
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			repo: { authGroups?: Record<string, { apiKey?: string }> };
+			local: { authGroups?: Record<string, { apiKey?: string }> };
+		};
+		// repo layer — injected plaintext is masked
+		const repoEvil = body.repo.authGroups?.evil;
+		expect(repoEvil?.apiKey).toBeDefined();
+		expect(repoEvil?.apiKey).not.toContain("injected");
+		expect(repoEvil?.apiKey).toContain("…");
+		// local layer — same
+		const localEvil2 = body.local.authGroups?.evil2;
+		expect(localEvil2?.apiKey).toBeDefined();
+		expect(localEvil2?.apiKey).not.toContain("injected");
+		expect(localEvil2?.apiKey).toContain("…");
+	});
+
+	test("GET /projects/:id/config masks authGroups if injected", async () => {
+		const { writeFile: wf } = await import("node:fs/promises");
+		const { mkdir: mk } = await import("node:fs/promises");
+		const localConfigPath = join(
+			ctx.dataDir,
+			"projects",
+			projectId,
+			"config.json",
+		);
+		await mk(join(ctx.dataDir, "projects", projectId), { recursive: true });
+		await wf(
+			localConfigPath,
+			JSON.stringify({
+				authGroups: {
+					evil: {
+						provider: "anthropic",
+						apiKey: "sk-ant-injected-plaintext-0123456789",
+					},
+				},
+			}),
+		);
+
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				headers: { Authorization: `Bearer ${ctx.sessionToken}` },
+			}),
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			authGroups?: Record<string, { apiKey?: string }>;
+		};
+		const evil = body.authGroups?.evil;
+		expect(evil?.apiKey).toBeDefined();
+		expect(evil?.apiKey).not.toContain("injected");
+		expect(evil?.apiKey).toContain("…");
 	});
 });

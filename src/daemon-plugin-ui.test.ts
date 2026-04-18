@@ -1,5 +1,8 @@
 /**
  * E2E test: daemon with Matrix plugin — full pipeline including task tree.
+ *
+ * Auth is always on (Audit R7 P1.3); the test server attaches a session
+ * token to every outgoing request via a patched global fetch.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -7,12 +10,21 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "./config.ts";
 import { createDaemon, type DaemonInstance } from "./daemon.ts";
+import { createTestToken } from "./test-utils/auth-helper.ts";
 
 describe("daemon with Matrix plugin e2e", () => {
 	let tempDir: string;
 	let daemon: DaemonInstance;
 	let server: ReturnType<typeof Bun.serve>;
 	let TEST_PORT: number;
+	let sessionToken: string;
+
+	// Thin fetch wrapper that attaches Bearer token automatically.
+	async function afetch(path: string, init?: RequestInit): Promise<Response> {
+		const headers = new Headers(init?.headers);
+		headers.set("Authorization", `Bearer ${sessionToken}`);
+		return fetch(`http://localhost:${TEST_PORT}${path}`, { ...init, headers });
+	}
 
 	beforeAll(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "daemon-matrix-e2e-"));
@@ -73,9 +85,9 @@ describe("daemon with Matrix plugin e2e", () => {
 
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
+		sessionToken = await createTestToken(join(dataDir, "auth.json"));
 		daemon = await createDaemon({
 			dataDir,
-			autoInitAuth: false,
 			autoRegisterSelf: false,
 		});
 
@@ -98,21 +110,19 @@ describe("daemon with Matrix plugin e2e", () => {
 	});
 
 	test("health through daemon → worker", async () => {
-		const res = await fetch(`http://localhost:${TEST_PORT}/health`);
+		const res = await afetch("/health");
 		expect(res.status).toBe(200);
 	});
 
 	test("projects list includes test project", async () => {
-		const res = await fetch(`http://localhost:${TEST_PORT}/projects`);
+		const res = await afetch("/projects");
 		const projects = (await res.json()) as Array<{ name: string }>;
 		expect(projects.some((p) => p.name === "test-project")).toBe(true);
 	});
 
 	test("task tree for project — has root node", async () => {
 		// Plugin-owned routes go through the `/api/<plugin>/*` namespace.
-		const res = await fetch(
-			`http://localhost:${TEST_PORT}/api/matrix/projects/proj1/tasks`,
-		);
+		const res = await afetch("/api/matrix/projects/proj1/tasks");
 		expect(res.status).toBe(200);
 		const data = await res.json();
 		expect(data.rootNodeId).toBeDefined();
@@ -122,23 +132,18 @@ describe("daemon with Matrix plugin e2e", () => {
 
 	test("create task through daemon → worker", async () => {
 		// Get root node
-		const treeRes = await fetch(
-			`http://localhost:${TEST_PORT}/api/matrix/projects/proj1/tasks`,
-		);
+		const treeRes = await afetch("/api/matrix/projects/proj1/tasks");
 		const tree = await treeRes.json();
 
-		const res = await fetch(
-			`http://localhost:${TEST_PORT}/api/matrix/projects/proj1/tasks`,
-			{
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					parentId: tree.rootNodeId,
-					title: "E2E Test Task",
-					description: "Created in daemon e2e test",
-				}),
-			},
-		);
+		const res = await afetch("/api/matrix/projects/proj1/tasks", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				parentId: tree.rootNodeId,
+				title: "E2E Test Task",
+				description: "Created in daemon e2e test",
+			}),
+		});
 		expect(res.status).toBe(201);
 		const task = await res.json();
 		expect(task.title).toBe("E2E Test Task");
@@ -146,9 +151,7 @@ describe("daemon with Matrix plugin e2e", () => {
 	});
 
 	test("tree now has the created task", async () => {
-		const res = await fetch(
-			`http://localhost:${TEST_PORT}/api/matrix/projects/proj1/tasks`,
-		);
+		const res = await afetch("/api/matrix/projects/proj1/tasks");
 		const data = (await res.json()) as { nodes: Array<{ title: string }> };
 		const titles = data.nodes.map((n) => n.title);
 		expect(titles).toContain("E2E Test Task");
@@ -158,14 +161,12 @@ describe("daemon with Matrix plugin e2e", () => {
 		// Regression guard: the `/api/<plugin>/*` namespace is the ONLY way
 		// plugin routes are served. Unprefixed paths no longer fall through
 		// to a global worker.
-		const res = await fetch(
-			`http://localhost:${TEST_PORT}/projects/proj1/tasks`,
-		);
+		const res = await afetch("/projects/proj1/tasks");
 		expect(res.status).toBe(404);
 	});
 
 	test("plugins endpoint returns Matrix with web path", async () => {
-		const res = await fetch(`http://localhost:${TEST_PORT}/plugins`);
+		const res = await afetch("/plugins");
 		const plugins = (await res.json()) as Array<{
 			name: string;
 			webComponentPath?: string;
@@ -173,5 +174,12 @@ describe("daemon with Matrix plugin e2e", () => {
 		const matrix = plugins.find((p) => p.name === "matrix");
 		expect(matrix).toBeDefined();
 		expect(matrix?.webComponentPath).toBeDefined();
+	});
+
+	test("anonymous REST request returns 401 (Audit R7 P1.3)", async () => {
+		// Same endpoint as above, but without the Authorization header —
+		// auth is ALWAYS on after P1.3, so this MUST reject.
+		const res = await fetch(`http://localhost:${TEST_PORT}/projects`);
+		expect(res.status).toBe(401);
 	});
 });
