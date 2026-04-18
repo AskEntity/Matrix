@@ -552,6 +552,31 @@ Drift between prompt claims and tool reality is a **silent failure mode**. Integ
 - `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
 - ~1976 tests (unit + integration). 4 skipped (E2E).
 
+## Merge review discipline — hook-pass ≠ reviewed
+
+**"Pre-commit hook passed + tests green" is necessary but NOT sufficient for merging.** Hook verifies syntax, types, test-pass count. It does NOT verify:
+- Is the diff addressing every point in the task description?
+- Are layer boundaries respected (no matrix-specific code leaking into daemon/shell)?
+- Does the commit message match what the code actually does?
+- Are edge cases the task called out actually handled?
+- Does the child's self-report align with the diff's actual content?
+
+**Required before every merge** (this session burned multiple times on skipping):
+1. `git diff main...<branch>` — read every line of diff, not just stat
+2. Cross-check against task description — did the child address the stated scope?
+3. Verify layer discipline — for each file changed, is this the right layer?
+4. Look for `autoRegisterSelf: false`-style catastrophic single-line oversights
+5. Flag anything ambiguous BEFORE pressing merge
+
+**Observed failure pattern** (session 2026-04-18):
+- Child done → run `git log --oneline` + `git diff --stat` → directly `git merge`
+- Skipped: actual diff content review
+- Result: multiple post-merge bugs that manual smoke caught (`autoRegisterSelf: false` in prod entry; layer violations in production-mode placement)
+
+**The anti-pattern**: trusting the child's summary as review. Child reports what they THINK they did; diff shows what they ACTUALLY did. These differ non-trivially.
+
+**Hook passing tempts you to skip review because it feels green.** Resist — hook is a floor, not a ceiling. User's framing: "给我八个胆子 我都不敢不看就merge这玩意" on 400+ line architecture refactors. If user wouldn't merge without reading, orchestrator definitely can't.
+
 ## Canonical user journey test is MANDATORY
 
 If the feature's name or description describes a user action — "fresh-install bootstrap", "sidebar toggle on desktop", "auto-save preserves output", "production mode blocks agent" — there MUST be a test that **performs that exact user action and asserts the user-observable result**. Testing subcomponents, supporting algorithms, and edge cases does not substitute.
