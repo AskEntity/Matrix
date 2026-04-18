@@ -511,4 +511,114 @@ describe("sidebar toggle — unified state model", () => {
 		expect(sidebar.classList.contains("mxd-sidebar-collapsed")).toBe(false);
 		unmount();
 	});
+
+	test("fresh-install bootstrap: no .git → auto-register → production mode E2E", async () => {
+		// Shut down the existing daemon from beforeAll (different setup needed)
+		globalThis.fetch = savedFetch;
+		await daemon?.shutdown();
+
+		// Create a FAKE install dir with .mxd/plugin/ but NO .git
+		const bootstrapDir = await mkdtemp(join(tmpdir(), "bootstrap-e2e-"));
+		const fakeInstall = join(bootstrapDir, "fake-install");
+		const fakeDataDir = join(bootstrapDir, ".mxd");
+		await mkdir(join(fakeInstall, ".mxd", "plugin"), { recursive: true });
+		await writeFile(
+			join(fakeInstall, ".mxd", "plugin", "index.ts"),
+			'export default { name: "matrix", scope: "global" };',
+		);
+		await saveGlobalConfig(
+			{ ...DEFAULT_CONFIG },
+			join(fakeDataDir, "config.json"),
+		);
+
+		// Start daemon: installRoot = fakeInstall, autoRegisterSelf defaults true
+		// This simulates production import.meta.main path
+		const { createDaemon: createDaemonFresh } = await import(
+			"../src/daemon.ts"
+		);
+		const freshDaemon = await createDaemonFresh({
+			dataDir: fakeDataDir,
+			autoInitAuth: false,
+			installRoot: fakeInstall,
+		});
+
+		// Patch fetch to route through fresh daemon
+		globalThis.fetch = (async (
+			input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
+			let url =
+				typeof input === "string"
+					? input
+					: input instanceof URL
+						? input.toString()
+						: input.url;
+			if (url.startsWith("/")) url = `http://localhost${url}`;
+			if (url.includes("/auth/status"))
+				return new Response(
+					JSON.stringify({ enabled: false, authenticated: true }),
+					{ headers: { "content-type": "application/json" } },
+				);
+			const res = await freshDaemon.fetch(new Request(url, init));
+			const body = await res.text();
+			return new Response(body, { status: res.status, headers: res.headers });
+		}) as typeof fetch;
+
+		// 1. Assert: GET /projects returns exactly 1 auto-registered project with productionMode: true
+		const projectsRes = await freshDaemon.fetch(
+			new Request("http://localhost/projects"),
+		);
+		const projects = await projectsRes.json();
+		expect(projects.length).toBe(1);
+		const prod = projects[0];
+		expect(prod.productionMode).toBe(true);
+
+		// 2. Render Plugin — let it see productionMode from the API chain
+		const { createRoot } = await import("react-dom/client");
+		const { createElement } = await import("react");
+		const { AuthFetchProvider, GetTokenProvider } = await import(
+			"./auth-context.ts"
+		);
+		const { authFetch, getToken } = await import("./auth.ts");
+		const { Plugin } = await import("../.mxd/plugin/web/Plugin.tsx");
+
+		const div = document.createElement("div");
+		document.body.appendChild(div);
+		const root = createRoot(div);
+
+		root.render(
+			createElement(
+				AuthFetchProvider,
+				{ value: authFetch },
+				createElement(
+					GetTokenProvider,
+					{ value: getToken },
+					createElement(Plugin, {
+						projectId: prod.id,
+						productionMode: prod.productionMode,
+					}),
+				),
+			),
+		);
+		await new Promise((r) => setTimeout(r, 200));
+
+		// 3. Assert: UI shows production mode page
+		const text = div.textContent ?? "";
+		expect(text).toContain("production mode");
+
+		// 4. Assert: backend blocks POST on production project (Bug 5)
+		const msgRes = await freshDaemon.fetch(
+			new Request(`http://localhost/projects/${prod.id}/tasks/root/message`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ content: "hello" }),
+			}),
+		);
+		expect(msgRes.status).toBe(403);
+
+		root.unmount();
+		div.remove();
+		await freshDaemon.shutdown();
+		await rm(bootstrapDir, { recursive: true, force: true });
+	}, 20000);
 });

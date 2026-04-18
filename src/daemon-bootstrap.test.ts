@@ -208,3 +208,99 @@ describe("4-step hook flow", () => {
 		expect(existsSync(join(projectA, ".mxd", "memory.md"))).toBe(true);
 	});
 });
+
+describe("production mode — backend guard (Bug 5)", () => {
+	let tempDir: string;
+	let daemon: DaemonInstance;
+
+	afterAll(async () => {
+		await daemon?.shutdown();
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("POST to production project returns 403", async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "prod-guard-"));
+		const dataDir = join(tempDir, ".mxd");
+		const fakeInstall = join(tempDir, "fake-install");
+
+		await mkdir(join(fakeInstall, ".mxd", "plugin"), { recursive: true });
+		await writeFile(
+			join(fakeInstall, ".mxd", "plugin", "index.ts"),
+			'export default { name: "test-plugin", scope: "global" };',
+		);
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
+
+		daemon = await createDaemon({
+			dataDir,
+			autoInitAuth: false,
+			installRoot: fakeInstall,
+		});
+
+		const listRes = await daemon.fetch(
+			new Request("http://localhost/projects"),
+		);
+		const projects = await listRes.json();
+		const prod = projects.find(
+			(p: { path: string }) => resolve(p.path) === resolve(fakeInstall),
+		);
+		expect(prod).toBeDefined();
+		expect(prod.productionMode).toBe(true);
+
+		// POST message → 403
+		const msgRes = await daemon.fetch(
+			new Request(`http://localhost/projects/${prod.id}/tasks/root/message`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ content: "hello" }),
+			}),
+		);
+		expect(msgRes.status).toBe(403);
+		const body = await msgRes.json();
+		expect(body.error).toContain("production mode");
+
+		// GET still works (read-only allowed)
+		const getRes = await daemon.fetch(
+			new Request(`http://localhost/projects/${prod.id}/tasks`),
+		);
+		expect(getRes.status).not.toBe(403);
+	});
+});
+
+describe("zero-plugin shell rendering (Bug 2+3)", () => {
+	let tempDir: string;
+	let daemon: DaemonInstance;
+
+	afterAll(async () => {
+		await daemon?.shutdown();
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("shell serves valid HTML with CSS when no plugins registered", async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "zero-plugin-"));
+		const dataDir = join(tempDir, ".mxd");
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
+
+		daemon = await createDaemon({
+			dataDir,
+			autoInitAuth: false,
+			autoRegisterSelf: false,
+		});
+
+		const res = await daemon.fetch(new Request("http://localhost/"));
+		expect(res.status).toBe(200);
+		const html = await res.text();
+		expect(html).toContain("<!DOCTYPE html>");
+		expect(html).toContain("stylesheet");
+		expect(html).toContain("/app/web/main.js");
+
+		const cssRes = await daemon.fetch(
+			new Request("http://localhost/app/web/styles.css"),
+		);
+		expect(cssRes.status).toBe(200);
+
+		const authRes = await daemon.fetch(
+			new Request("http://localhost/auth/status"),
+		);
+		expect(authRes.status).toBe(200);
+	});
+});
