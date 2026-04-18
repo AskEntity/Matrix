@@ -443,8 +443,9 @@ export const TaskTree = memo(function TaskTree({
 	);
 
 	const { t } = useLocale();
-	const isOrchestratorSelected =
-		!selectedTaskId || selectedTaskId === rootNodeId;
+	// Root is a regular task (Fix A + Fix C). selectedTaskId carries the
+	// actual root id when root is viewed — no `!selectedTaskId` sentinel.
+	const isOrchestratorSelected = selectedTaskId === rootNodeId;
 	const hasTextFilter = taskFilter.trim().length > 0;
 	// Force-expand tree when view is selective (text search or active+favorites mode)
 	const forceExpand = hasTextFilter || filterMode === "active-favorites";

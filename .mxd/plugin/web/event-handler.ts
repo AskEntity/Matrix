@@ -157,7 +157,7 @@ export interface EventHandlerDeps {
 		>
 	>;
 	t: (key: string, params?: Record<string, string>) => string;
-	/** Returns the currently viewed session ID (selectedTaskId ?? rootNodeId). Used to filter SSE events. */
+	/** Returns the currently viewed session ID (= selectedTaskId after Fix C; only during the brand-new-project transient does the rootNodeId fallback matter). Used to filter SSE events. */
 	getViewedSessionId?: () => string | null;
 }
 

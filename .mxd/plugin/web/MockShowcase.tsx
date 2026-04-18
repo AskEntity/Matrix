@@ -319,7 +319,9 @@ function MockShowcaseInner() {
 	}, []);
 
 	// ── Derived ──
-	const isOrchestratorNode = !selectedTaskId || selectedTaskId === rootNodeId;
+	// Root-view check: selectedTaskId carries the real root id; no null-as-root
+	// sentinel. (Mirrors Plugin.tsx — Fix A + Fix C consistency.)
+	const isOrchestratorNode = selectedTaskId === rootNodeId;
 	const selectedNode =
 		selectedTaskId && !isOrchestratorNode
 			? (nodeMap.get(selectedTaskId) ?? null)

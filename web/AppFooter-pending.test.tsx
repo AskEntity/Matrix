@@ -166,11 +166,15 @@ describe("AppFooter pending filter — root as regular task", () => {
 		unmount();
 	});
 
-	test("pre-useTasks transient: targetNodeId=null → nothing shows (acceptable flash)", async () => {
-		// Before useTasks completes, rootNodeId is null → targetNodeId is null.
-		// Filter is `m.taskId === null` so real-IDed messages drop. The task
-		// description accepts this ~100-500ms flash; a follow-up optimization
-		// (hash/props seeding) is out of scope.
+	test("targetNodeId=null → nothing shows (component-level invariant)", async () => {
+		// Component-level invariant: AppFooter with null targetNodeId must
+		// drop all messages. After Fix C ("URL always carries viewed task
+		// id"), the null case happens only during the brand-new-project
+		// transient (URL bare → useTasks resolves → URL-redirect normalizes
+		// → state catches up). During that ~50-200ms window, the right
+		// rendering IS empty — no fallback to root, no "default selection".
+		// This test pins that the filter does the right thing when null is
+		// truly the state.
 		const { div, unmount } = await renderAppFooter({
 			targetNodeId: null,
 			pendingMessages: [
