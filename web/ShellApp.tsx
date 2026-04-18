@@ -464,6 +464,7 @@ function AuthenticatedShell() {
 						}
 					>
 						<PluginUI
+							key={`${projectId}/${selectedScope}`}
 							projectId={projectId}
 							pluginPath={pluginPath}
 							pushPluginPath={pushPluginPath}
