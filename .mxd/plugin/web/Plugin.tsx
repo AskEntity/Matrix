@@ -130,11 +130,78 @@ function updateHash(
  * Plugin component — renders content for a single project.
  * NOT a SPA. Receives projectId from shell. No auth, no project selection, no settings.
  */
-export function Plugin({ projectId }: { projectId: string }) {
+function ProductionModePage() {
+	return (
+		<div
+			style={{
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
+				height: "100%",
+				background: "var(--bg-base, #0d1117)",
+				color: "var(--text-primary, #e6edf3)",
+				fontFamily: "var(--font-sans, system-ui)",
+			}}
+		>
+			<div
+				style={{
+					display: "flex",
+					gap: 48,
+					alignItems: "center",
+					maxWidth: 700,
+				}}
+			>
+				<div style={{ textAlign: "center" }}>
+					<div
+						style={{
+							width: 80,
+							height: 80,
+							borderRadius: 16,
+							background: "var(--accent, #388bfd)",
+							color: "#fff",
+							display: "flex",
+							alignItems: "center",
+							justifyContent: "center",
+							margin: "0 auto 16px",
+							boxShadow: "0 4px 16px rgba(56, 139, 253, 0.3)",
+						}}
+					>
+						<IconHexagon size={32} />
+					</div>
+					<div style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>
+						Matrix
+					</div>
+					<div style={{ color: "var(--text-muted, #8b949e)", fontSize: 14 }}>
+						Autonomous agent orchestration
+					</div>
+				</div>
+				<div
+					style={{
+						color: "var(--text-secondary, #b1bac4)",
+						fontSize: 15,
+						lineHeight: 1.6,
+					}}
+				>
+					Matrix is running in production mode. Please select a different
+					project
+				</div>
+			</div>
+		</div>
+	);
+}
+
+export function Plugin({
+	projectId,
+	productionMode,
+}: {
+	projectId: string;
+	productionMode?: boolean;
+}) {
 	if (!projectId)
 		return (
 			<div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>
 		);
+	if (productionMode) return <ProductionModePage />;
 	return (
 		<LocaleProvider>
 			<ErrorBoundary>
