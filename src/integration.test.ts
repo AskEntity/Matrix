@@ -2935,22 +2935,19 @@ describe("Integration: same-turn tool conflicts", () => {
 		expect(toolResults.length).toBe(2);
 
 		// Extract output file paths from the tool results
-		const paths0 = extractOutputPaths(
+		const path0 = extractOutputPath(
 			typeof toolResults[0]?.content === "string" ? toolResults[0].content : "",
 		);
-		const paths1 = extractOutputPaths(
+		const path1 = extractOutputPath(
 			typeof toolResults[1]?.content === "string" ? toolResults[1].content : "",
 		);
 
-		// Both should have paths
-		expect(paths0.stdout).toBeTruthy();
-		expect(paths0.stderr).toBeTruthy();
-		expect(paths1.stdout).toBeTruthy();
-		expect(paths1.stderr).toBeTruthy();
+		// Both should have a path
+		expect(path0).toBeTruthy();
+		expect(path1).toBeTruthy();
 
-		// Paths must be DIFFERENT between the two commands
-		expect(paths0.stdout).not.toBe(paths1.stdout);
-		expect(paths0.stderr).not.toBe(paths1.stderr);
+		// Paths must be DIFFERENT between the two commands (unique per execId)
+		expect(path0).not.toBe(path1);
 
 		// Also verify: bg IDs are different
 		const bgId0 = extractBgId(
@@ -2975,16 +2972,16 @@ describe("Integration: same-turn tool conflicts", () => {
 
 // ── Helpers for concurrent background test ──
 
-/** Extract stdout and stderr file paths from a background bash tool result. */
-function extractOutputPaths(content: string): {
-	stdout: string | null;
-	stderr: string | null;
-} {
-	const match = content.match(/Output files: ([^,]+), (\S+)/);
-	return {
-		stdout: match?.[1] ?? null,
-		stderr: match?.[2] ?? null,
-	};
+/**
+ * Extract the (single) output file path from a background bash tool result.
+ * Merged mode (default) → "Output file: <path>".
+ * Separate mode → "Output files: <stdout>, <stderr>" (we take the first).
+ */
+function extractOutputPath(content: string): string | null {
+	const mergedMatch = content.match(/Output file: (\S+)/);
+	if (mergedMatch?.[1]) return mergedMatch[1];
+	const sepMatch = content.match(/Output files: ([^,]+),/);
+	return sepMatch?.[1]?.trim() ?? null;
 }
 
 /** Extract background ID from a background bash tool result. */
