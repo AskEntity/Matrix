@@ -4004,59 +4004,6 @@ describe("lifecycle edge cases", () => {
 		expect(clars.clarifications).toEqual([]);
 	});
 
-	test("clearing sessions while agent is running stops agent and succeeds", async () => {
-		const provider: AgentProvider = {
-			name: "mock",
-			execute: async () => ({
-				exitReason: "interrupted" as const,
-				output: "",
-				costUsd: 0,
-				turns: 0,
-				sessionId: "mock",
-			}),
-			// biome-ignore lint/correctness/useYield: mock provider — sleeps until aborted
-			stream: async function* (req) {
-				await abortableSleep(10000, req.signal);
-				return {
-					exitReason: "interrupted" as const,
-					output: "",
-					costUsd: 0,
-					turns: 0,
-					sessionId: "mock",
-				};
-			},
-		};
-
-		const project = {
-			id: ulid(),
-			name: basename(projectDir),
-			path: projectDir,
-		};
-		const { app, markReady, getTracker } = createApp({
-			dataDir,
-			agentProvider: provider,
-			projects: [project],
-		});
-
-		markReady();
-
-		// Start agent
-		await startRootAgent(app, project.id, "test");
-		await new Promise((r) => setTimeout(r, 100));
-
-		// Clear sessions while running — should stop agent and succeed
-		const clearRes = await app.request(
-			`/projects/${project.id}/sessions/clear`,
-			{ method: "POST" },
-		);
-		expect(clearRes.status).toBe(200);
-
-		// Agent should have been stopped as a side effect
-		await new Promise((r) => setTimeout(r, 100));
-		const tracker = await getTracker(project.id);
-		expect(tracker.getTask(tracker.rootNodeId)?.session).toBeUndefined();
-	});
-
 	test.skip("deleting project stops running agent — MOVED to daemon tests (DELETE /projects is daemon-owned)", async () => {
 		const provider: AgentProvider = {
 			name: "mock",
@@ -4103,77 +4050,6 @@ describe("lifecycle edge cases", () => {
 		});
 		expect(delRes.status).toBe(200);
 		// Project deleted — agent was stopped (project no longer exists in tracker)
-	});
-
-	test("clearing sessions works when no agent is running", async () => {
-		const project = {
-			id: ulid(),
-			name: basename(projectDir),
-			path: projectDir,
-		};
-		const { app, markReady } = createApp({
-			dataDir,
-			agentProvider: mockProvider,
-			projects: [project],
-		});
-
-		markReady();
-
-		// Clear sessions without running agent — should succeed
-		const clearRes = await app.request(
-			`/projects/${project.id}/sessions/clear`,
-			{ method: "POST" },
-		);
-		expect(clearRes.status).toBe(200);
-		const body = (await clearRes.json()) as { cleared: boolean };
-		expect(body.cleared).toBe(true);
-	});
-
-	test("clearing sessions preserves task tree and rootNodeId in GET /tasks", async () => {
-		const project = {
-			id: ulid(),
-			name: basename(projectDir),
-			path: projectDir,
-		};
-		const { app, markReady } = createApp({
-			dataDir,
-			agentProvider: mockProvider,
-			projects: [project],
-		});
-
-		markReady();
-
-		// Start and stop agent to create root node + tasks
-		await startRootAgent(app, project.id, "test");
-		await new Promise((r) => setTimeout(r, 100));
-		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
-		await new Promise((r) => setTimeout(r, 100));
-
-		// Verify tasks exist before clearing
-		const beforeRes = await app.request(`/projects/${project.id}/tasks`);
-		const before = (await beforeRes.json()) as {
-			nodes: TaskNode[];
-			rootNodeId: string | null;
-		};
-		expect(before.rootNodeId).toBeTruthy();
-		const nodeCountBefore = before.nodes.length;
-		expect(nodeCountBefore).toBeGreaterThan(0);
-
-		// Clear sessions
-		const clearRes = await app.request(
-			`/projects/${project.id}/sessions/clear`,
-			{ method: "POST" },
-		);
-		expect(clearRes.status).toBe(200);
-
-		// Verify tasks are still there after clearing
-		const afterRes = await app.request(`/projects/${project.id}/tasks`);
-		const after = (await afterRes.json()) as {
-			nodes: TaskNode[];
-			rootNodeId: string | null;
-		};
-		expect(after.nodes.length).toBe(nodeCountBefore);
-		expect(after.rootNodeId).toBe(before.rootNodeId);
 	});
 });
 

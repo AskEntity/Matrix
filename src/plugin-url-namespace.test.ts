@@ -79,7 +79,6 @@ describe("matrix plugin api.ts builders apply the namespace prefix", () => {
 			api.clarify("p"),
 			api.agent("p"),
 			api.agentStatus("p"),
-			api.sessionsClear("p"),
 			api.sessionsPrune("p"),
 			api.clarifications("p"),
 			api.backgroundMove("p"),

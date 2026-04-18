@@ -385,21 +385,6 @@ async function handleStop(): Promise<void> {
 	);
 }
 
-async function handleSessionsClear(): Promise<void> {
-	const projectId = await resolveCurrentProject();
-	if (!projectId) return;
-
-	const res = await api(`${MATRIX_API}/projects/${projectId}/sessions/clear`, {
-		method: "POST",
-	});
-	if (!res.ok) {
-		const err = (await res.json()) as { error: string };
-		console.error(`Error: ${err.error}`);
-		process.exit(1);
-	}
-	console.log("Session history cleared. Next orchestration will start fresh.");
-}
-
 async function handleSessionsPrune(args: string[]): Promise<void> {
 	const keepIdx = args.indexOf("--keep");
 	const keepCount = keepIdx >= 0 ? parseInt(args[keepIdx + 1] ?? "10", 10) : 10;
@@ -1470,12 +1455,10 @@ switch (command) {
 		break;
 	case "sessions": {
 		const sub = args[0];
-		if (sub === "clear") {
-			await handleSessionsClear();
-		} else if (sub === "prune") {
+		if (sub === "prune") {
 			await handleSessionsPrune(args.slice(1));
 		} else {
-			console.error("Usage: mxd sessions clear|prune [--keep N]");
+			console.error("Usage: mxd sessions prune [--keep N]");
 			process.exit(1);
 		}
 		break;
@@ -1587,7 +1570,6 @@ switch (command) {
 			"    logs [-n N] [id]         Show event history (last N events)",
 		);
 		console.log("    watch                    Watch live agent activity");
-		console.log("    sessions clear           Clear session history");
 		console.log(
 			"    sessions prune [--keep N]  Prune old session files (default keep 10)",
 		);
