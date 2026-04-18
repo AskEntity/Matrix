@@ -4,7 +4,7 @@
  * These cover the full bootstrap path that daemon.test.ts skips
  * (all other tests use autoRegisterSelf: false).
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,9 +12,8 @@ import { join, resolve } from "node:path";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "./config.ts";
 import { createDaemon, type DaemonInstance } from "./daemon.ts";
 
-describe("auto-register + production mode", () => {
+describe("auto-register at startup", () => {
 	let tempDir: string;
-	let dataDir: string;
 	let daemon: DaemonInstance;
 
 	afterAll(async () => {
@@ -23,40 +22,75 @@ describe("auto-register + production mode", () => {
 	});
 
 	test("daemon auto-registers its own install root", async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "bootstrap-test-"));
-		dataDir = join(tempDir, ".mxd");
+		tempDir = await mkdtemp(join(tmpdir(), "bootstrap-"));
+		const dataDir = join(tempDir, ".mxd");
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		// autoRegisterSelf: true (default) — daemon should find its own repo
 		daemon = await createDaemon({ dataDir, autoInitAuth: false });
 
 		const res = await daemon.fetch(new Request("http://localhost/projects"));
 		const projects = await res.json();
-
-		// Should have auto-registered the matrix repo
-		expect(projects.length).toBeGreaterThanOrEqual(1);
-		const matrixProject = projects.find((p: { path: string }) =>
-			resolve(p.path) === resolve(join(__dirname, ".."))
+		const matrixRoot = resolve(join(__dirname, ".."));
+		const found = projects.find(
+			(p: { path: string }) => resolve(p.path) === matrixRoot,
 		);
-		expect(matrixProject).toBeDefined();
-	});
-
-	test("matrix repo with .git is NOT production mode", async () => {
-		const res = await daemon.fetch(new Request("http://localhost/projects"));
-		const projects = await res.json();
-		const matrixProject = projects.find((p: { path: string }) =>
-			resolve(p.path) === resolve(join(__dirname, ".."))
-		);
-
-		// This repo has .git — should NOT be production mode
-		expect(matrixProject.productionMode).toBe(false);
+		expect(found).toBeDefined();
+		// This repo has .git → NOT production
+		expect(found.productionMode).toBe(false);
 	});
 });
 
-describe("production mode — install root without git", () => {
+describe("production mode — positive path (end-to-end)", () => {
 	let tempDir: string;
+	let daemon: DaemonInstance;
+	let fakeInstall: string;
 	let dataDir: string;
-	let fakeInstallDir: string;
+
+	afterAll(async () => {
+		await daemon?.shutdown();
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("install root without .git → marker written + productionMode: true", async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "prod-positive-"));
+		dataDir = join(tempDir, ".mxd");
+		fakeInstall = join(tempDir, "fake-install");
+
+		// Create fake install dir with .mxd/ but NO .git
+		await mkdir(join(fakeInstall, ".mxd", "plugin"), { recursive: true });
+		await writeFile(
+			join(fakeInstall, ".mxd", "plugin", "index.ts"),
+			`export default { name: "test-plugin", scope: "global" };`,
+		);
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
+
+		// installRoot override → daemon treats fakeInstall as its own install
+		// autoRegisterSelf: true (default) → registers fakeInstall
+		daemon = await createDaemon({
+			dataDir,
+			autoInitAuth: false,
+			installRoot: fakeInstall,
+		});
+
+		// Assert: project was auto-registered
+		const res = await daemon.fetch(new Request("http://localhost/projects"));
+		const projects = await res.json();
+		const prod = projects.find(
+			(p: { path: string }) => resolve(p.path) === resolve(fakeInstall),
+		);
+		expect(prod).toBeDefined();
+
+		// Assert: .mxd.production marker written in daemon data dir
+		const marker = join(dataDir, "projects", prod.id, ".mxd.production");
+		expect(existsSync(marker)).toBe(true);
+
+		// Assert: GET /projects returns productionMode: true
+		expect(prod.productionMode).toBe(true);
+	});
+});
+
+describe("production mode — negative paths", () => {
+	let tempDir: string;
 	let daemon: DaemonInstance;
 
 	afterAll(async () => {
@@ -64,38 +98,39 @@ describe("production mode — install root without git", () => {
 		await rm(tempDir, { recursive: true, force: true });
 	});
 
-	test("project at installRoot without .git gets .mxd.production marker", async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "prod-mode-test-"));
-		dataDir = join(tempDir, ".mxd");
-		fakeInstallDir = join(tempDir, "fake-install");
+	test("project NOT at installRoot does NOT get .mxd.production marker", async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "prod-negative-"));
+		const dataDir = join(tempDir, ".mxd");
+		const otherProject = join(tempDir, "other-project");
 
-		// Create a fake install directory with .mxd/plugin/ but NO .git
-		await mkdir(join(fakeInstallDir, ".mxd", "plugin"), { recursive: true });
+		await mkdir(join(otherProject, ".mxd", "plugin"), { recursive: true });
 		await writeFile(
-			join(fakeInstallDir, ".mxd", "plugin", "index.ts"),
-			`export default { name: "test-plugin", scope: "global" };`,
+			join(otherProject, ".mxd", "plugin", "index.ts"),
+			`export default { name: "other", scope: "global" };`,
 		);
-
-		// Register it as a project
 		await mkdir(join(dataDir, "projects"), { recursive: true });
 		await writeFile(
 			join(dataDir, "projects.json"),
 			JSON.stringify([
-				{ id: "fake-install", name: "fake-install", path: fakeInstallDir, createdAt: new Date().toISOString() },
+				{
+					id: "other",
+					name: "other",
+					path: otherProject,
+					createdAt: new Date().toISOString(),
+				},
 			]),
 		);
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		// Don't auto-register (we manually set up the project), but DO run hooks
-		daemon = await createDaemon({ dataDir, autoInitAuth: false, autoRegisterSelf: false });
+		daemon = await createDaemon({
+			dataDir,
+			autoInitAuth: false,
+			autoRegisterSelf: false,
+		});
 
-		// Check: since fakeInstallDir is NOT the real installRoot (daemon binary path),
-		// it should NOT get production marker. Production mode is only for the actual
-		// daemon install root.
-		const marker = join(dataDir, "projects", "fake-install", ".mxd.production");
+		const marker = join(dataDir, "projects", "other", ".mxd.production");
 		expect(existsSync(marker)).toBe(false);
 
-		// GET /projects should show productionMode: false
 		const res = await daemon.fetch(new Request("http://localhost/projects"));
 		const projects = await res.json();
 		expect(projects[0].productionMode).toBe(false);
@@ -104,9 +139,7 @@ describe("production mode — install root without git", () => {
 
 describe("4-step hook flow", () => {
 	let tempDir: string;
-	let dataDir: string;
 	let daemon: DaemonInstance;
-	let projectPath: string;
 
 	afterAll(async () => {
 		await daemon?.shutdown();
@@ -114,33 +147,64 @@ describe("4-step hook flow", () => {
 	});
 
 	test("POST /projects runs global plugin hooks on new project", async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "hook-flow-test-"));
-		dataDir = join(tempDir, ".mxd");
-		projectPath = join(tempDir, "user-project");
-		await mkdir(projectPath, { recursive: true });
+		tempDir = await mkdtemp(join(tmpdir(), "hook-flow-"));
+		const dataDir = join(tempDir, ".mxd");
+		const userProject = join(tempDir, "user-project");
+		await mkdir(userProject, { recursive: true });
 
-		// Register the matrix repo so its global plugin is discovered
-		await mkdir(join(dataDir, "projects"), { recursive: true });
+		// Register matrix repo so its global plugin is discovered
 		const matrixRoot = resolve(join(__dirname, ".."));
+		await mkdir(join(dataDir, "projects"), { recursive: true });
 		await writeFile(
 			join(dataDir, "projects.json"),
 			JSON.stringify([
-				{ id: "matrix", name: "matrix", path: matrixRoot, createdAt: new Date().toISOString() },
+				{
+					id: "matrix",
+					name: "matrix",
+					path: matrixRoot,
+					createdAt: new Date().toISOString(),
+				},
 			]),
 		);
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
-		daemon = await createDaemon({ dataDir, autoInitAuth: false, autoRegisterSelf: false });
+		daemon = await createDaemon({
+			dataDir,
+			autoInitAuth: false,
+			autoRegisterSelf: false,
+		});
 
-		// POST /projects with a new user project
-		const res = await daemon.fetch(new Request("http://localhost/projects", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ path: projectPath }),
-		}));
+		// POST new user project
+		const res = await daemon.fetch(
+			new Request("http://localhost/projects", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ path: userProject }),
+			}),
+		);
 		expect(res.status).toBe(201);
 
-		// Matrix's global hook should have run on the new project
-		// → created .mxd/memory.md
-		expect(existsSync(join(projectPath, ".mxd", "memory.md"))).toBe(true);
+		// Matrix's global hook should have created .mxd/memory.md
+		expect(existsSync(join(userProject, ".mxd", "memory.md"))).toBe(true);
+	});
+
+	test("POST /projects with global plugin propagates hook to existing projects", async () => {
+		// Setup: existing project A (no plugin), then POST project B with global plugin
+		const projectA = join(tempDir, "project-a");
+		await mkdir(projectA, { recursive: true });
+
+		// Register project A (no plugin)
+		const resA = await daemon.fetch(
+			new Request("http://localhost/projects", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ path: projectA }),
+			}),
+		);
+		expect(resA.status).toBe(201);
+
+		// Matrix global plugin already registered at daemon startup
+		// → project A should already have memory.md from step 3 of POST /projects
+		// (POST /projects calls onProjectInit for all global plugins on the new project)
+		expect(existsSync(join(projectA, ".mxd", "memory.md"))).toBe(true);
 	});
 });

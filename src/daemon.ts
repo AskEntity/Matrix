@@ -370,6 +370,9 @@ export async function createDaemon(opts: {
 	/** Auto-register the matrix install directory as a project on startup.
 	 *  Default true. Tests pass false for clean state. */
 	autoRegisterSelf?: boolean;
+	/** Override computed install root. Default: auto-detect from binary path.
+	 *  Tests pass an explicit path to simulate production install. */
+	installRoot?: string;
 }): Promise<DaemonInstance> {
 	const { dataDir } = opts;
 	const releaseDataDirLock = opts.lockDataDir
@@ -887,7 +890,7 @@ export async function createDaemon(opts: {
 	// ── Global context — daemon-computed facts, not user config ──
 	const binaryPath = realpathSync(fileURLToPath(import.meta.url));
 	const globalContext = {
-		installRoot: resolve(join(binaryPath, "..", "..")),
+		installRoot: opts.installRoot ?? resolve(join(binaryPath, "..", "..")),
 		gitHash: GIT_HASH !== "unknown" ? GIT_HASH : null,
 		version: VERSION,
 	};
@@ -910,11 +913,9 @@ export async function createDaemon(opts: {
 
 	// ── Production mode detection (before hooks) ──
 	// Install root without git = production install. Mark it and skip hooks.
+	const installHasGit = existsSync(join(globalContext.installRoot, ".git"));
 	for (const project of pm.list()) {
-		if (
-			resolve(project.path) === globalContext.installRoot &&
-			!globalContext.gitHash
-		) {
+		if (resolve(project.path) === globalContext.installRoot && !installHasGit) {
 			const marker = join(dataDir, "projects", project.id, ".mxd.production");
 			if (!existsSync(marker)) {
 				mkdirSync(join(dataDir, "projects", project.id), { recursive: true });
