@@ -45,6 +45,7 @@ import {
 import {
 	checkDataRootCollisions,
 	type PluginManifest,
+	pluginApiPrefix,
 	validatePluginManifest,
 } from "./plugin.ts";
 import { ProjectManager } from "./project-manager.ts";
@@ -1573,15 +1574,68 @@ export async function createDaemon(opts: {
 		return c.json({ restarting: true });
 	});
 
-	// Fallthrough: forward to first available global worker
-	app.all("*", async (c) => {
-		const globalWorkerName = registeredPlugins.find(
+	/**
+	 * `/version` and `/stats` are declared daemon-root endpoints but the
+	 * interesting data (nodeCount, per-status task counts) lives in the
+	 * worker's trackers. Forward to the first ready global worker — same
+	 * pattern as `/health?check_model=true`. Returns 503 if no worker is
+	 * up (fresh daemon with zero plugins discovered).
+	 */
+	const forwardToFirstGlobalWorker = async (c: { req: { raw: Request } }) => {
+		const workerName = registeredPlugins.find(
 			(p) => p.scope === "global" && workers.has(p.name),
 		)?.name;
-		if (!globalWorkerName) {
-			return c.json({ error: "No global plugin worker available" }, 503);
+		if (!workerName) {
+			return new Response(
+				JSON.stringify({ error: "No global plugin worker available" }),
+				{ status: 503, headers: { "content-type": "application/json" } },
+			);
 		}
-		return forwardToWorker(globalWorkerName, c.req.raw);
+		return forwardToWorker(workerName, c.req.raw);
+	};
+	app.get("/version", forwardToFirstGlobalWorker);
+	app.get("/stats", forwardToFirstGlobalWorker);
+
+	/**
+	 * Plugin route namespace — `/api/<plugin-name>/*`.
+	 *
+	 * Daemon strips `/api/<plugin>` from the path and forwards the rewritten
+	 * request to that plugin's worker. Plugin code registers routes as if at
+	 * root (e.g., `/projects/:id/tasks`); the namespace is transparent on
+	 * both sides. See `pluginApiPrefix` in plugin.ts for the shared helper.
+	 *
+	 * Unknown plugin or crashed worker → 404 / 503. No fallback to "first
+	 * available global worker" — that was the old catch-all behavior and
+	 * the exact thing this namespace replaces.
+	 */
+	app.all("/api/:plugin/*", async (c) => {
+		const pluginName = c.req.param("plugin");
+		const plugin = registeredPlugins.find((p) => p.name === pluginName);
+		if (!plugin) {
+			return c.json({ error: `Plugin "${pluginName}" not found` }, 404);
+		}
+		if (!workers.has(pluginName)) {
+			return c.json({ error: `Plugin "${pluginName}" has no worker` }, 503);
+		}
+
+		// Strip the `/api/<plugin>` prefix from the URL path before forwarding.
+		// The worker's Hono app has routes registered at root (e.g. `/projects/...`).
+		const prefix = pluginApiPrefix(pluginName);
+		const url = new URL(c.req.url);
+		const stripped = url.pathname.slice(prefix.length) || "/";
+		url.pathname = stripped;
+
+		// Rebuild a Request with the rewritten URL. Body must be consumed from
+		// the original (c.req.raw) because `new Request(url, { ...request })`
+		// does not copy the body stream by itself.
+		const method = c.req.method;
+		const hasBody = method !== "GET" && method !== "HEAD";
+		const rewritten = new Request(url, {
+			method,
+			headers: c.req.raw.headers,
+			body: hasBody ? await c.req.raw.arrayBuffer() : undefined,
+		});
+		return forwardToWorker(pluginName, rewritten);
 	});
 
 	/**

@@ -21,6 +21,7 @@ import {
 	saveGlobalConfig,
 	saveProjectRepoConfig,
 } from "./config.ts";
+import { pluginApiPrefix } from "./plugin.ts";
 
 const _pkg = JSON.parse(
 	await Bun.file(new URL("../package.json", import.meta.url).pathname).text(),
@@ -33,6 +34,16 @@ const DAEMON_URL = process.env.MXD_DAEMON_URL ?? "http://localhost:7433";
 // otherwise the token is verified against the wrong secret and rejected.
 const DATA_DIR = process.env.MXD_DATA_DIR ?? join(homedir(), ".mxd");
 const AUTH_JSON_PATH = join(DATA_DIR, "auth.json");
+
+/**
+ * Plugin namespace prefix for matrix-worker routes.
+ *
+ * CLI is matrix-specific — it knows the plugin name at build time. Plugin-owned
+ * routes (tasks, agent, events, messages, sessions, etc.) live under
+ * `/api/matrix/*`; daemon-owned routes (`/projects` CRUD, `/projects/:id`,
+ * `/projects/:id/config*`, `/health`, `/events`) stay at root.
+ */
+const MATRIX_API = pluginApiPrefix("matrix");
 
 /**
  * Generate a short-lived CLI JWT for auto-auth.
@@ -141,7 +152,7 @@ async function handleStatus(args: string[]): Promise<void> {
 	const projectId = await resolveProject(args[0]);
 	if (!projectId) return;
 
-	const res = await api(`/projects/${projectId}/tasks`);
+	const res = await api(`${MATRIX_API}/projects/${projectId}/tasks`);
 	const body = (await res.json()) as {
 		root: { title: string; status: string } | null;
 		nodes: {
@@ -226,7 +237,7 @@ async function handleTasks(args: string[]): Promise<void> {
 	const projectId = await resolveProject(args[0]);
 	if (!projectId) return;
 
-	const res = await api(`/projects/${projectId}/tasks`);
+	const res = await api(`${MATRIX_API}/projects/${projectId}/tasks`);
 	const body = (await res.json()) as {
 		root: { title: string; status: string } | null;
 		nodes: {
@@ -297,7 +308,7 @@ async function handleDelete(args: string[]): Promise<void> {
 	const projectId = await resolveCurrentProject();
 	if (!projectId) return;
 
-	const res = await api(`/projects/${projectId}/tasks/${taskId}`, {
+	const res = await api(`${MATRIX_API}/projects/${projectId}/tasks/${taskId}`, {
 		method: "DELETE",
 	});
 
@@ -328,7 +339,7 @@ async function sendMessage(
 	let targetId = taskId;
 	if (!targetId) {
 		// Resolve root node ID from task tree
-		const tasksRes = await api(`/projects/${projectId}/tasks`);
+		const tasksRes = await api(`${MATRIX_API}/projects/${projectId}/tasks`);
 		if (!tasksRes.ok) {
 			console.error("Error: could not fetch task tree");
 			process.exit(1);
@@ -341,10 +352,13 @@ async function sendMessage(
 		}
 	}
 
-	const res = await api(`/projects/${projectId}/tasks/${targetId}/message`, {
-		method: "POST",
-		body: JSON.stringify({ content: message }),
-	});
+	const res = await api(
+		`${MATRIX_API}/projects/${projectId}/tasks/${targetId}/message`,
+		{
+			method: "POST",
+			body: JSON.stringify({ content: message }),
+		},
+	);
 
 	if (!res.ok) {
 		const err = (await res.json()) as { error: string };
@@ -357,7 +371,9 @@ async function handleStop(): Promise<void> {
 	const projectId = await resolveCurrentProject();
 	if (!projectId) return;
 
-	const res = await api(`/projects/${projectId}/stop`, { method: "POST" });
+	const res = await api(`${MATRIX_API}/projects/${projectId}/stop`, {
+		method: "POST",
+	});
 	if (!res.ok) {
 		const err = (await res.json()) as { error: string };
 		console.error(`Error: ${err.error}`);
@@ -373,7 +389,7 @@ async function handleSessionsClear(): Promise<void> {
 	const projectId = await resolveCurrentProject();
 	if (!projectId) return;
 
-	const res = await api(`/projects/${projectId}/sessions/clear`, {
+	const res = await api(`${MATRIX_API}/projects/${projectId}/sessions/clear`, {
 		method: "POST",
 	});
 	if (!res.ok) {
@@ -391,7 +407,7 @@ async function handleSessionsPrune(args: string[]): Promise<void> {
 	const projectId = await resolveCurrentProject();
 	if (!projectId) return;
 
-	const res = await api(`/projects/${projectId}/sessions/prune`, {
+	const res = await api(`${MATRIX_API}/projects/${projectId}/sessions/prune`, {
 		method: "POST",
 		body: JSON.stringify({ keepCount }),
 	});
@@ -420,7 +436,7 @@ async function handleLogs(args: string[]): Promise<void> {
 	const projectId = await resolveProject(filteredArgs[0]);
 	if (!projectId) return;
 
-	const res = await api(`/projects/${projectId}/events`);
+	const res = await api(`${MATRIX_API}/projects/${projectId}/events`);
 	if (!res.ok) {
 		const err = (await res.json()) as { error: string };
 		console.error(`Error: ${err.error}`);
@@ -697,8 +713,8 @@ async function handleCost(args: string[]): Promise<void> {
 	const projectId = await resolveProject(args[0]);
 	if (!projectId) return;
 
-	// Fetch task tree
-	const res = await api(`/projects/${projectId}/tasks`);
+	// Fetch task tree (plugin-owned route)
+	const res = await api(`${MATRIX_API}/projects/${projectId}/tasks`);
 	if (!res.ok) {
 		console.error("Error fetching tasks");
 		process.exit(1);
@@ -747,7 +763,7 @@ async function handleAgent(args: string[]): Promise<void> {
 	const projectId = await resolveProject(args[0]);
 	if (!projectId) return;
 
-	const res = await api(`/projects/${projectId}/agent`);
+	const res = await api(`${MATRIX_API}/projects/${projectId}/agent`);
 	if (!res.ok) {
 		console.error("Error checking agent status");
 		process.exit(1);

@@ -254,6 +254,9 @@ describe("daemon integration: project config", () => {
 describe("daemon integration: tasks through worker", () => {
 	let app: DaemonTestApp;
 	let projectId: string;
+	// Plugin-owned routes live under `/api/<plugin>/*`. The harness registers
+	// a plugin with name "test-matrix" (see createDaemonTestApp).
+	const PLUGIN_PREFIX = "/api/test-matrix";
 
 	beforeAll(async () => {
 		app = await createDaemonTestApp();
@@ -268,10 +271,12 @@ describe("daemon integration: tasks through worker", () => {
 		await app.cleanup();
 	});
 
-	test("GET /projects/:id/tasks returns tree", async () => {
+	test("GET /api/<plugin>/projects/:id/tasks returns tree", async () => {
 		expect(projectId).toBeTruthy();
 		const res = await app.fetch(
-			new Request(`http://localhost/projects/${projectId}/tasks`),
+			new Request(
+				`http://localhost${PLUGIN_PREFIX}/projects/${projectId}/tasks`,
+			),
 		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
@@ -282,30 +287,45 @@ describe("daemon integration: tasks through worker", () => {
 		expect(body.nodes[0].title).toBe("Orchestrator");
 	});
 
-	test("POST /projects/:id/tasks creates task through worker", async () => {
+	test("POST /api/<plugin>/projects/:id/tasks creates task through worker", async () => {
 		expect(projectId).toBeTruthy();
 
 		// Get root node ID first
 		const treeRes = await app.fetch(
-			new Request(`http://localhost/projects/${projectId}/tasks`),
+			new Request(
+				`http://localhost${PLUGIN_PREFIX}/projects/${projectId}/tasks`,
+			),
 		);
 		const tree = await treeRes.json();
 		const rootId = tree.rootNodeId;
 
 		const res = await app.fetch(
-			new Request(`http://localhost/projects/${projectId}/tasks`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					parentId: rootId,
-					title: "Test task via daemon",
-					description: "Created through daemon pipeline",
-				}),
-			}),
+			new Request(
+				`http://localhost${PLUGIN_PREFIX}/projects/${projectId}/tasks`,
+				{
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						parentId: rootId,
+						title: "Test task via daemon",
+						description: "Created through daemon pipeline",
+					}),
+				},
+			),
 		);
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.title).toBe("Test task via daemon");
+	});
+
+	test("unprefixed plugin path returns 404 (no fallback)", async () => {
+		// Regression guard: old behavior was to forward unprefixed paths to
+		// "the first available global worker". This is gone — plugin routes
+		// MUST go through the namespace now.
+		const res = await app.fetch(
+			new Request(`http://localhost/projects/${projectId}/tasks`),
+		);
+		expect(res.status).toBe(404);
 	});
 });
 
