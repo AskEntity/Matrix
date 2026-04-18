@@ -21,7 +21,7 @@ import {
 	saveGlobalConfig,
 	saveProjectRepoConfig,
 } from "./config.ts";
-import { pluginApiPrefix } from "./plugin.ts";
+import { pluginApiPrefix } from "./plugin-url.ts";
 
 const _pkg = JSON.parse(
 	await Bun.file(new URL("../package.json", import.meta.url).pathname).text(),
