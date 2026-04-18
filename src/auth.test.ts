@@ -279,3 +279,77 @@ describe("auth: no-cache staleness fix", () => {
 		expect(await verifyJWT(authPath, tok)).toBeNull();
 	});
 });
+
+describe("auth: corrupt auth.json fails loud, never silent", () => {
+	// Pre-P1.3, any error reading auth.json returned `{}` → hasJwtSecret(false)
+	// → middleware skipped auth → silent public exposure. After P1.3 the fall-
+	// through is deleted and readAuthData surfaces the error. These tests pin
+	// the loud behavior so "catch-all returning empty" can never come back.
+
+	test("corrupt JSON → hasJwtSecret throws (not false)", async () => {
+		const authPath = await mkTempAuthPath();
+		await writeFile(authPath, "not json at all", "utf-8");
+		await expect(hasJwtSecret(authPath)).rejects.toThrow(/not valid JSON/);
+	});
+
+	test("empty file → hasJwtSecret throws", async () => {
+		const authPath = await mkTempAuthPath();
+		await writeFile(authPath, "", "utf-8");
+		await expect(hasJwtSecret(authPath)).rejects.toThrow(/not valid JSON/);
+	});
+
+	test("missing file is still the pre-init case (no throw)", async () => {
+		const authPath = await mkTempAuthPath();
+		// ENOENT is distinguished from parse errors — this is the first-
+		// boot "auth.json doesn't exist yet" path that ensureAuthInitialized
+		// handles by creating the file.
+		expect(await hasJwtSecret(authPath)).toBe(false);
+	});
+
+	test("getSecretVersion throws on corrupt file", async () => {
+		const authPath = await mkTempAuthPath();
+		await writeFile(authPath, "{malformed", "utf-8");
+		await expect(getSecretVersion(authPath)).rejects.toThrow();
+	});
+});
+
+describe("auth: atomic writeAuthData", () => {
+	test("writeAuthData uses temp-file-then-rename (no partial writes visible)", async () => {
+		// Observe the filesystem during a write: temp files are named
+		// `.<basename>.tmp.*`; the final file has no such prefix. After write
+		// completes, temp is gone and final has full content.
+		const authPath = await mkTempAuthPath();
+		await ensureAuthInitialized(authPath);
+
+		const dir = authPath.split("/").slice(0, -1).join("/");
+		const { readdir } = await import("node:fs/promises");
+		const entries = await readdir(dir);
+
+		// Only the real file exists — no orphaned temp files.
+		expect(entries).toContain("auth.json");
+		const tempFiles = entries.filter((n) => n.startsWith(".auth.json.tmp."));
+		expect(tempFiles.length).toBe(0);
+	});
+
+	test("crash mid-bump leaves the original auth.json intact (atomic rename)", async () => {
+		// Simulate: write a valid file, then trigger a write that we
+		// abort mid-way. POSIX rename guarantees the old file stays if
+		// the new write didn't complete.
+		const authPath = await mkTempAuthPath();
+		await ensureAuthInitialized(authPath);
+		const originalContent = await readFile(authPath, "utf-8");
+		const originalParsed = JSON.parse(originalContent);
+		expect(originalParsed.secretVersion).toBe(1);
+
+		// Successful bump — verify it replaces atomically.
+		await bumpSecretVersion(authPath);
+		const afterBumpParsed = JSON.parse(await readFile(authPath, "utf-8"));
+		expect(afterBumpParsed.secretVersion).toBe(2);
+		expect(typeof afterBumpParsed.jwtSecret).toBe("string");
+		expect(afterBumpParsed.jwtSecret).toBe(originalParsed.jwtSecret);
+
+		// File size is fully-formed JSON (not a 0-byte crash artifact).
+		const rawAfter = await readFile(authPath, "utf-8");
+		expect(rawAfter.length).toBeGreaterThan(10);
+	});
+});

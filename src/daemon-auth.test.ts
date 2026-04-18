@@ -34,7 +34,6 @@ async function setup(): Promise<TestCtx> {
 	const sessionToken = await signSessionToken(authPath);
 	const daemon = await createDaemon({
 		dataDir,
-		autoInitAuth: true,
 		autoRegisterSelf: false,
 	});
 	return { daemon, tempDir, dataDir, authPath, sessionToken };
@@ -66,7 +65,10 @@ describe("daemon auth middleware: skip rules", () => {
 		// anonymous POSTs with 401 and the secretVersion stays put.
 		const beforeVersion = (
 			JSON.parse(
-				await (await import("node:fs/promises")).readFile(ctx.authPath, "utf-8"),
+				await (await import("node:fs/promises")).readFile(
+					ctx.authPath,
+					"utf-8",
+				),
 			) as { secretVersion: number }
 		).secretVersion;
 
@@ -77,7 +79,10 @@ describe("daemon auth middleware: skip rules", () => {
 
 		const afterVersion = (
 			JSON.parse(
-				await (await import("node:fs/promises")).readFile(ctx.authPath, "utf-8"),
+				await (await import("node:fs/promises")).readFile(
+					ctx.authPath,
+					"utf-8",
+				),
 			) as { secretVersion: number }
 		).secretVersion;
 		expect(afterVersion).toBe(beforeVersion);
@@ -300,7 +305,6 @@ describe("daemon: config masks API keys", () => {
 		await ctx.daemon.shutdown();
 		ctx.daemon = await createDaemon({
 			dataDir: ctx.dataDir,
-			autoInitAuth: false,
 		});
 	});
 	afterEach(() => teardown(ctx));
@@ -402,15 +406,15 @@ describe("daemon: config masks API keys", () => {
 	});
 });
 
-describe("daemon: auto-initialized auth", () => {
-	test("createDaemon with autoInitAuth:true creates auth.json if missing", async () => {
+describe("daemon: auto-initialized auth (Audit R7 P1.3 — always on)", () => {
+	test("createDaemon creates auth.json if missing, rejects anonymous", async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "daemon-init-test-"));
 		const dataDir = join(tempDir, ".mxd");
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
+		// After P1.3, `autoInitAuth` no longer exists — auth is ALWAYS on.
 		const daemon = await createDaemon({
 			dataDir,
-			autoInitAuth: true,
 			autoRegisterSelf: false,
 		});
 		try {
@@ -427,6 +431,48 @@ describe("daemon: auto-initialized auth", () => {
 			expect(res.status).toBe(401);
 		} finally {
 			await daemon.shutdown();
+			await rm(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	test("createDaemon with an already-initialized auth.json preserves it", async () => {
+		// Idempotency check — pre-existing auth.json is not overwritten.
+		const tempDir = await mkdtemp(join(tmpdir(), "daemon-init-existing-"));
+		const dataDir = join(tempDir, ".mxd");
+		const authPath = join(dataDir, "auth.json");
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
+		await ensureAuthInitialized(authPath);
+		const { readFile } = await import("node:fs/promises");
+		const before = await readFile(authPath, "utf-8");
+
+		const daemon = await createDaemon({ dataDir, autoRegisterSelf: false });
+		try {
+			const after = await readFile(authPath, "utf-8");
+			expect(after).toEqual(before);
+		} finally {
+			await daemon.shutdown();
+			await rm(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	test("corrupt auth.json → createDaemon fails to boot (loud, not silent)", async () => {
+		// Pre-P1.3, a corrupt auth.json would silently read as empty, and the
+		// middleware's `!hasJwtSecret` branch would serve every request
+		// unauthenticated. After P1.3 that fallback is gone; readAuthData
+		// throws, ensureAuthInitialized can't complete, daemon fails to boot.
+		const tempDir = await mkdtemp(join(tmpdir(), "daemon-corrupt-auth-"));
+		const dataDir = join(tempDir, ".mxd");
+		const authPath = join(dataDir, "auth.json");
+		const { mkdir: mk, writeFile: wf } = await import("node:fs/promises");
+		await mk(dataDir, { recursive: true });
+		await wf(authPath, "{not json", "utf-8");
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
+
+		try {
+			await expect(
+				createDaemon({ dataDir, autoRegisterSelf: false }),
+			).rejects.toThrow(/not valid JSON/);
+		} finally {
 			await rm(tempDir, { recursive: true, force: true });
 		}
 	});
@@ -459,7 +505,6 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 		await ctx.daemon.shutdown();
 		ctx.daemon = await createDaemon({
 			dataDir: ctx.dataDir,
-			autoInitAuth: true,
 			autoRegisterSelf: false,
 		});
 	});

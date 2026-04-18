@@ -1094,3 +1094,55 @@ Without the chmod pass, any auth.json created by an older Matrix version stays a
 **Chmod mask**: `(mode & 0o077) !== 0` — fires only if any group/other permission bit is set. Deliberately preserves user-hardened 0o400 (read-only) files untouched.
 
 **Tests**: POSIX-only via `describe.skipIf(process.platform === "win32")`. Five tests cover fresh creation, legacy upgrade, mask coverage (0o640/604/660/666), idempotency, and 0o400 preservation. Mutation-tested: removing either the mode option or the chmod pass makes a test fail.
+
+## Audit R7 P1 — critical security hardening (2026-04-18)
+
+Four items landed together. All fixed behaviors the audit verified live in session 01KPFE6HSZ2TWD3G034D5J0BNW.
+
+### P1.1 — `/auth/logout` requires a valid token
+- `src/daemon.ts` `SKIP_EXACT`: `/auth/logout` removed. Only `/`, `/auth/status`, `/vendor/`, `/app/` remain anonymous.
+- Previous behavior: any drive-by webpage could POST `/auth/logout` and force `bumpSecretVersion`, logging out every active user (CSRF DoS).
+- Handler's own JSDoc already documented the intended 401 behavior; code now agrees.
+- Regression test: `daemon-auth.test.ts` "POST /auth/logout rejects anonymous callers" — asserts 401 + `secretVersion` unchanged.
+
+### P1.3 — auth-disabled mode removed entirely (user: "never allow auth-disabled")
+- `createDaemon({ autoInitAuth })` parameter **deleted**. Every daemon boot unconditionally runs `ensureAuthInitialized`.
+- Middleware `if (!hasJwtSecret) skip` branch **deleted**. Anonymous request to a non-skip path is ALWAYS 401.
+- `hasJwtSecret` no longer imported in daemon.ts; remains exported for other callers (cli.ts).
+- `readAuthData` in `src/auth.ts` throws on parse failure / empty file / read error. ENOENT (first boot) still returns `{}` so `ensureAuthInitialized` can create the file.
+- `writeAuthData` now uses **atomic rename**: write to `.auth.json.tmp.<pid>.<ts>.<rand>` → POSIX rename over `auth.json`. Crash mid-write (bumpSecretVersion, ensureAuthInitialized) leaves the original file intact — never a truncated/empty auth.json that would have silently disabled auth pre-P1.3.
+- `/auth/status` always reports `enabled: true` (field preserved for backward compat with older browser bundles).
+- `/auth/logout` / `/auth/stream-token` handlers dropped their `!hasJwtSecret` no-op branches.
+- `/events` heartbeat unconditionally re-verifies the stream token.
+
+### P1.4 — server rejects credential fields on per-project PATCH
+- `PATCH /projects/:id/config` and `PATCH /projects/:id/config/repo` return 400 if body contains `authGroups` or `defaultAuth`. Helper: `rejectCredentialFields`.
+- Previously only the CLI (`src/cli.ts`) enforced `GLOBAL_ONLY_FIELDS`. A non-friendly HTTP client could PATCH a project's config with their own `authGroups` → next agent run uses attacker's credentials.
+- `maskConfig` generalized to `Partial<MatrixConfig>` so all three-layer views (global, repo, local, resolved) mask authGroups uniformly. Defense in depth: even if an attacker writes authGroups directly to on-disk config JSON, GET endpoints mask plaintext.
+- `GET /projects/:id/config` now also applies `maskConfig` to the local layer.
+
+### P1.5 — UI logout is a two-step server-side-first sequence
+- `web/ShellApp.tsx:handleLogout` is now async: `await authFetch('/auth/logout', {method:'POST'})` → `clearToken()` → reload.
+- Server-side `bumpSecretVersion` invalidates the token before local clear. Without this step a session JWT remains valid for up to 30d on the server; a stolen localStorage copy could be replayed from another browser.
+- POST failure (expired token, network down) still falls through to local clear + reload — user's intent to end the session is unconditional.
+- Regression test: `ShellApp.test.tsx` "handleLogout calls POST /auth/logout BEFORE clearing local token" — exercises the exact sequence: authFetch POST 200, secretVersion bumped, old token now rejected as 401.
+
+### Test migration (P1.3)
+After auth became always-on, every test that went through `daemon.fetch` against a protected endpoint had to mint a token. Pattern:
+
+```ts
+const token = await createTestToken(join(dataDir, "auth.json"));  // mints BEFORE createDaemon
+const daemon = await createDaemon({ dataDir });                    // secretVersion matches
+```
+
+Helper: `src/test-utils/auth-helper.ts` → `createTestToken(authPath, { sub?: "session" | "cli" | "stream" })`. Also `withAuth(token, extra?)` for building headers.
+
+Per-test pattern varies — a small `authed(daemon, token)` wrapper that attaches `Authorization: Bearer` is common. `src/test-utils/daemon-harness.ts` does this internally and exposes `fetch` pre-wrapped.
+
+Migrated files: `daemon.test.ts`, `daemon-auth.test.ts`, `daemon-bootstrap.test.ts`, `daemon-plugin-ui.test.ts`, `plugin-url-namespace.test.ts`, `daemon-harness.ts`, `web/ShellApp.test.tsx`. Lines migrated: ~200 across 7 files, within scope budget.
+
+### SKIP_EXACT rules (post-P1.1)
+- `/` — SPA root, login page renders pre-auth
+- `/auth/status` — login page needs to ask "are we authenticated?" before having a token
+- `/vendor/`, `/app/` (prefix match) — compiled bundles, no secrets
+- Everything else under `/auth/*` requires a token. Regression test: `/auth/bogus` → 401.
