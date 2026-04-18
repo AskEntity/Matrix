@@ -52,16 +52,25 @@ Agent reply language: follows the sender's language.
 
 ## How to Run Tests
 
+**The ONLY correct form is `bun test`. Nothing else.**
+
 ```bash
-bun test              # ALL tests (src/ + web/). Single command.
+bun test              # ALL tests (src/ + web/). Single command. Nothing appended.
 bun run typecheck     # tsc --noEmit
 bun run check         # biome lint + format
 ```
 
+Forms that are WRONG:
+- ❌ `bun test 2>&1` — bash tool already merges stderr+stdout (`(cmd) 2>&1` wrapper in FU9). Redundant and signals you didn't read the bash tool description.
+- ❌ `bun test | head` / `| tail` / `| grep` — bash tool already tiers large output (head 5KB + banner + tail 5KB + full file on disk, FU9). Piping **consumes the stream** and throws away the middle — the exact bytes the test failure is trying to show you. See `src/tools/bash.ts` + the flaky-test-at-line-47 framing in the tool description.
+- ❌ `bun test > /tmp/out.log` — redundant, the tool already saves to `/tmp/mxd/exec-<id>.out`.
+- ❌ `bun test src/some.test.ts 2>&1 | tail -100` — triple-wrong: tail consumes output, 2>&1 is redundant, and scoping to one file when you want the full picture hides regressions elsewhere.
+
+**Always just `bun test`**. The bash tool handles stream merging, tiered display, and file preservation. Decorating the command means you haven't trusted (or read) the tool.
+
 **Rules:**
-- Never pipe test output (`| grep`, `| head`, `| tail`). Run bare, read the saved output file afterward.
-- If tests are flaky, run multiple times without pipes and read each output file separately.
-- ~1834 tests pass, 4 skip.
+- If tests are flaky, run `bun test` multiple times without decoration. Each run saves a separate `/tmp/mxd/exec-<id>.out` file; read each as needed.
+- ~2119 tests pass, 4 skip, 12 todo (as of 2026-04-18 after Fix A/B/C).
 ```
 
 ## Architecture Overview
