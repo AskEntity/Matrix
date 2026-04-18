@@ -1667,3 +1667,52 @@ segment they each own and give each layer direct access to its own segment.
 If "they must agree" is the contract, the contract is wrong — sooner or
 later they disagree. Path segments + props+callbacks encode ownership at
 the type level; no synchronization protocol needed.
+
+## Task Y SPA fallback (2026-04-18) — `pm.has(firstSeg)` is the single predicate
+
+After Task Y, paths look like `/<projectId>/<scope>/<rest>` and are
+server-visible. Browser refresh on those paths must reach the shell HTML so
+the SPA can boot, parse the URL, and render. Pre-fix: 404 (no catch-all).
+Post-fix: 200 HTML iff first segment is a registered project id.
+
+**Single source of truth**: `pm.has(firstSegment)` decides BOTH whether the
+auth middleware bypasses (skipping the 401 wall on browser navigation) AND
+whether the wildcard `app.get("*")` serves HTML. Same predicate, same
+answer — no chance of "auth bypassed but wildcard 404'd" or vice versa.
+
+**`isFrontendPath(path)`** (auth middleware): returns true for `/` exact OR
+`pm.has(firstSeg)`. Bypass only on GET (POST/PATCH to `/<projectId>/...`
+stay auth-gated — those don't exist as legitimate SPA paths, 401 is more
+honest than accidental HTML).
+
+**`app.get("*", ...)`** (registered last): mirrors the same `pm.has` check.
+Stale / deleted / never-existed first segments → clean 404, not a fake SPA
+shell that immediately 404s on its own data fetches. Backend route names
+("api", "auth", "projects", "health", etc.) never collide with project ids
+(ULIDs are 26 chars of base32).
+
+**Why not regex on ULID?** Considered + rejected. `pm.has` is the actual
+correctness predicate — a project's existence decides validity, not its
+id format. ULID format could change; project registration semantics
+won't. Also: bogus / old-deleted ids 404 cleanly under `pm.has`,
+broken-SPA-pretending-to-load under regex.
+
+**Why GET-only?** The wildcard is `app.get("*")`, not `app.all("*")`.
+POST/PATCH/DELETE to unknown paths stay 404. Typo'd write endpoint can't
+silently 200-with-HTML.
+
+**Plumbing**: added `ProjectManager.has(id)` as a one-liner public method
+(was using internal `this.projects.has(id)` only). Tests live in
+`src/daemon-integration.test.ts → "daemon integration: SPA fallback (Task Y
+refresh)"` — 13 tests covering authenticated GET, unauthenticated browser-
+refresh GET (the actual UX scenario), byte-identical HTML between `/` and
+`/<projectId>/...`, plugin 404s not swallowed, `/auth/bogus` still 401,
+`/vendor/missing.js` still 404, POST/PATCH stay auth-gated, non-existent
+project id 404s.
+
+**Cache hygiene** (deferred to a separate task): browser caches old
+`/app/web/main.js` after daemon restart. Real fix is content-hashed
+filenames in the build pipeline (`naming: "[name]-[hash].[ext]"` +
+manifest), not a `Cache-Control: no-store` band-aid. Different layer
+(build, not server routing), different risk class — split out as its
+own ticket.

@@ -164,6 +164,12 @@ export class ProjectManager {
 		return this.projects.get(id);
 	}
 
+	/** Check whether a project with the given ID is registered. */
+	has(id: string): boolean {
+		this.ensureLoaded();
+		return this.projects.has(id);
+	}
+
 	/** Find a project by its path. */
 	getByPath(path: string): Project | undefined {
 		this.ensureLoaded();
