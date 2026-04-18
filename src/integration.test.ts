@@ -68,6 +68,11 @@ async function setupTestContext(): Promise<TestContext> {
 	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
 
 	const mockAPI = new ValidatingMockAPI();
+	// Strict tool-error mode: unexpected is_error tool_results fail the test.
+	// Tests that intentionally trigger errors must opt out via
+	// mockAPI.disableStrictToolErrors() or allowlist via
+	// mockAPI.enableStrictToolErrors([{ tool: "...", contains: "..." }]).
+	mockAPI.enableStrictToolErrors();
 	const provider = createMockedProviderWithMock(mockAPI);
 
 	await initTestProject(projectDir);

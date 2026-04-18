@@ -959,6 +959,20 @@ function makeInjectedError(errorType: InjectedErrorType): Error {
 	}
 }
 
+// ── Strict tool-error allowlist ──
+
+/**
+ * An entry in the strict-tool-errors allowlist. A tool_result with
+ * `is_error: true` is "allowed" if at least one allowlist entry matches both
+ * `tool` (empty / "*" matches any) AND `contains` (empty matches any content).
+ */
+export interface AllowedToolError {
+	/** Tool name (e.g. "mcp__mxd__bash"). Omit or "*" for any tool. */
+	tool?: string;
+	/** Substring the error content must contain. Omit to match any content. */
+	contains?: string;
+}
+
 // ── ValidatingMockAPI class ──
 
 export class ValidatingMockAPI {
@@ -970,6 +984,14 @@ export class ValidatingMockAPI {
 	private conversationQueues: Map<string, SingleTurnInstruction[]> = new Map();
 	/** When enabled, validates messages are strictly monotonically increasing across API calls. */
 	private prefixValidationEnabled = false;
+	/**
+	 * When enabled, every tool_result with `is_error: true` that appears in a
+	 * request's user message content must match an entry in `toolErrorAllowlist`.
+	 * Unsurfaced errors throw MockValidationError so tests fail loudly instead
+	 * of silently swallowing bugs in tool handlers.
+	 */
+	private strictToolErrorsEnabled = false;
+	private toolErrorAllowlist: AllowedToolError[] = [];
 	/** Variables captured from tool results via assert capture rules. */
 	private capturedVars: Map<string, string> = new Map();
 	/** Error injections — keyed by request number (1-based), value = remaining fail count. */
@@ -1347,6 +1369,9 @@ export class ValidatingMockAPI {
 
 		// Check for compaction request first
 		if (isCompactionRequest(messages)) {
+			// Compaction requests never trigger strict check — the mock synthesizes
+			// a summary response unconditionally. Any is_error on the agent side
+			// will be caught on the NEXT (post-compaction) request.
 			const { content, stopReason } = buildCompactionResponse();
 			return createMockAnthropicStream(content, stopReason, modelName);
 		}
@@ -1355,52 +1380,40 @@ export class ValidatingMockAPI {
 		// This allows parent and child agents to have independent turn queues.
 		const convKey = this.getConversationKey(messages, sessionId);
 
-		// 1. Try to dequeue from this conversation's turn queue
+		// Resolve the turn to respond with (dequeue or parse instruction).
+		// We compute this BEFORE the strict tool-error check so the turn's
+		// assert rules can pre-acknowledge expected errors (e.g. tests that
+		// explicitly assert `isError: true` on a specific block don't need
+		// a redundant allowlist entry).
+		let turn: SingleTurnInstruction | null = null;
 		const convQueue = this.conversationQueues.get(convKey);
 		if (convQueue && convQueue.length > 0) {
-			const turn = convQueue.shift() as SingleTurnInstruction;
+			turn = convQueue.shift() as SingleTurnInstruction;
 			if (convQueue.length === 0) this.conversationQueues.delete(convKey);
+		} else {
+			const instruction = extractInstruction(messages);
+			if (instruction) {
+				if (isMultiTurn(instruction)) {
+					const [first, ...rest] = instruction.turns;
+					if (rest.length > 0) this.conversationQueues.set(convKey, rest);
+					turn = first ?? null;
+				} else {
+					turn = instruction;
+				}
+			}
+		}
+
+		// Strict tool-error check: fail loudly on any tool_result with is_error
+		// that the test hasn't allowlisted or explicitly asserted. Runs AFTER
+		// turn resolution so per-turn assert rules can pre-acknowledge errors.
+		this.checkStrictToolErrors(messages, turn?.assert);
+
+		if (turn) {
 			const { content, stopReason, delayMs } = this.processTurn(turn, messages);
 			return createMockAnthropicStream(content, stopReason, modelName, delayMs);
 		}
 
-		// 2. Try to parse a new instruction from the last user message
-		const instruction = extractInstruction(messages);
-		if (instruction) {
-			if (isMultiTurn(instruction)) {
-				// Multi-turn: return first turn now, queue the rest under this conversation
-				const [first, ...rest] = instruction.turns;
-				if (rest.length > 0) {
-					this.conversationQueues.set(convKey, rest);
-				}
-				if (first) {
-					const { content, stopReason, delayMs } = this.processTurn(
-						first,
-						messages,
-					);
-					return createMockAnthropicStream(
-						content,
-						stopReason,
-						modelName,
-						delayMs,
-					);
-				}
-			} else {
-				// Single turn
-				const { content, stopReason, delayMs } = this.processTurn(
-					instruction,
-					messages,
-				);
-				return createMockAnthropicStream(
-					content,
-					stopReason,
-					modelName,
-					delayMs,
-				);
-			}
-		}
-
-		// 3. Default response — no instruction found, turn queue empty
+		// Default response — no instruction found, turn queue empty.
 		const { content, stopReason } = buildDefaultResponse();
 		return createMockAnthropicStream(content, stopReason, modelName);
 	}
@@ -1488,6 +1501,184 @@ export class ValidatingMockAPI {
 	 */
 	enablePrefixValidation(): void {
 		this.prefixValidationEnabled = true;
+	}
+
+	/**
+	 * Enable strict tool-error mode.
+	 *
+	 * When enabled, every tool_result block in a request's user messages is
+	 * inspected. If `is_error: true` AND no entry in the effective allowlist
+	 * matches (by tool name and/or content substring) → the mock throws
+	 * `MockValidationError("Unsurfaced tool error: ...")`. That error
+	 * propagates back through `client.messages.stream` and surfaces as a
+	 * test failure — agents can't silently swallow errors from tool handlers
+	 * while still ticking through the scripted turns.
+	 *
+	 * ## Default allowlist
+	 *
+	 * Called with no argument: the default allowlist covers **system-level
+	 * contracts** that are legitimately surfaced to agents as errors, not
+	 * bugs. Currently only one entry:
+	 *
+	 *   - `"Tool execution was interrupted by daemon restart"` — emitted by
+	 *     `buildSessionRepair` as a synthetic tool_result for orphaned
+	 *     tool_calls found on restart. This is the crash-recovery contract
+	 *     and every restart test legitimately triggers it.
+	 *
+	 * Called with an explicit allowlist: the caller takes FULL control.
+	 * No defaults are merged. Pass `[]` to mean "every error fails"; add
+	 * the orphan-repair entry yourself if you want it included.
+	 *
+	 * ## How tests opt out
+	 *
+	 * Test authors who intentionally invoke a failing tool must either:
+	 *   - add `{ tool: "...", contains: "..." }` to the allowlist,
+	 *   - or call `mockAPI.disableStrictToolErrors()` for that specific test.
+	 *
+	 * ## Motivation
+	 *
+	 * The stripSession regression (FU8 removed triple-JSON-serialize in the
+	 * broadcast path, `broadcastTreeUpdate` started leaking live session
+	 * objects) caused every `create_task` / `update_task` / `delete_task` /
+	 * `close_task` / `reset_task` / `reorder_tasks` call to return
+	 * `isError: true`. Dozens of integration tests hit these tools; none
+	 * failed because nothing asserted the error state. Strict mode plus the
+	 * structuredClone wrapper in create-matrix-app.ts now cover this class
+	 * of bug from two independent angles.
+	 */
+	enableStrictToolErrors(allowlist?: AllowedToolError[]): void {
+		this.strictToolErrorsEnabled = true;
+		this.toolErrorAllowlist = allowlist ?? [
+			...ValidatingMockAPI.DEFAULT_ERROR_ALLOWLIST,
+		];
+	}
+
+	/**
+	 * Default allowlist — covers system-level contracts (not tool-handler
+	 * bugs). Exposed as a static so tests that pass an explicit allowlist
+	 * can spread this in: `enableStrictToolErrors([...DEFAULT_ERROR_ALLOWLIST, ...])`.
+	 */
+	static readonly DEFAULT_ERROR_ALLOWLIST: readonly AllowedToolError[] = [
+		// buildSessionRepair's synthetic tool_result for orphaned tool_calls.
+		// See src/events.ts — this content string is the contract.
+		{ contains: "Tool execution was interrupted by daemon restart" },
+	];
+
+	/**
+	 * Disable strict tool-error mode. Use this in individual tests that
+	 * intentionally trigger tool errors and don't want to maintain an
+	 * allowlist; prefer `enableStrictToolErrors([...])` when the error is
+	 * specific enough to allowlist.
+	 */
+	disableStrictToolErrors(): void {
+		this.strictToolErrorsEnabled = false;
+		this.toolErrorAllowlist = [];
+	}
+
+	/**
+	 * Scan the last user message's content for tool_result blocks and throw
+	 * on any `is_error: true` block that isn't:
+	 *   1. Pre-acknowledged by a turn assert rule (`{ block: N, isError: true }`), OR
+	 *   2. Covered by `this.toolErrorAllowlist`.
+	 *
+	 * The assert-rule pre-acknowledgment means tests that already have
+	 * per-turn isError asserts get strict-mode coverage "for free" — no
+	 * redundant allowlist entry required.
+	 */
+	private checkStrictToolErrors(
+		messages: MessageParam[],
+		assertRules?: AssertRule[],
+	): void {
+		if (!this.strictToolErrorsEnabled) return;
+
+		const lastUser = [...messages].reverse().find((m) => m.role === "user");
+		if (!lastUser || !Array.isArray(lastUser.content)) return;
+
+		// Block indices the current turn's asserts explicitly expect to be
+		// errors. Strict mode treats these as pre-acknowledged.
+		const acknowledgedIndices = new Set<number>();
+		if (assertRules) {
+			for (const rule of assertRules) {
+				if ("length" in rule) continue;
+				if (rule.isError === true) acknowledgedIndices.add(rule.block);
+			}
+		}
+
+		for (let i = 0; i < lastUser.content.length; i++) {
+			const block = lastUser.content[i];
+			if (!block || typeof block !== "object" || !("type" in block)) continue;
+			if (block.type !== "tool_result") continue;
+
+			const tr = block as {
+				tool_use_id: string;
+				content?: string | unknown[];
+				is_error?: boolean;
+			};
+			if (tr.is_error !== true) continue;
+
+			// Test explicitly asserted this block is an error → acknowledged.
+			if (acknowledgedIndices.has(i)) continue;
+
+			// Normalize content to a single string for contains-matching and
+			// error-message rendering.
+			let contentStr = "";
+			if (typeof tr.content === "string") {
+				contentStr = tr.content;
+			} else if (Array.isArray(tr.content)) {
+				contentStr = tr.content
+					.map((c) =>
+						c && typeof c === "object" && "text" in c
+							? ((c as { text: string }).text ?? "")
+							: "",
+					)
+					.join("");
+			}
+
+			const toolName =
+				this.findToolNameForToolUseId(messages, tr.tool_use_id) ?? "<unknown>";
+
+			const allowed = this.toolErrorAllowlist.some((rule) => {
+				const toolMatches =
+					!rule.tool || rule.tool === "*" || rule.tool === toolName;
+				const contentMatches =
+					!rule.contains || contentStr.includes(rule.contains);
+				return toolMatches && contentMatches;
+			});
+
+			if (!allowed) {
+				throw new MockValidationError(
+					`Unsurfaced tool error: tool "${toolName}" returned is_error: true but test did not allowlist or assert it.\n` +
+						`  tool_use_id: ${tr.tool_use_id}\n` +
+						`  content: ${contentStr.slice(0, 500)}${contentStr.length > 500 ? ` ... (${contentStr.length} chars total)` : ""}\n` +
+						`Fix: either fix the underlying bug, add a turn assert ` +
+						`\`{ block: ${i}, type: "tool_result", isError: true }\`, or add ` +
+						`\`{ tool: "${toolName}" }\` to mockAPI.enableStrictToolErrors([...]).`,
+				);
+			}
+		}
+	}
+
+	/**
+	 * Walk the assistant messages backward looking for a tool_use with the
+	 * given id. Used to attach a tool name to an error message produced by
+	 * a tool_result block.
+	 */
+	private findToolNameForToolUseId(
+		messages: MessageParam[],
+		toolUseId: string,
+	): string | null {
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			if (!msg || msg.role !== "assistant") continue;
+			if (!Array.isArray(msg.content)) continue;
+			for (const block of msg.content) {
+				if (!block || typeof block !== "object" || !("type" in block)) continue;
+				if (block.type !== "tool_use") continue;
+				const tu = block as { id?: string; name?: string };
+				if (tu.id === toolUseId) return tu.name ?? null;
+			}
+		}
+		return null;
 	}
 
 	/**
@@ -1759,6 +1950,8 @@ export class ValidatingMockAPI {
 		this.requestHistory = [];
 		this.conversationQueues.clear();
 		this.prefixValidationEnabled = false;
+		this.strictToolErrorsEnabled = false;
+		this.toolErrorAllowlist = [];
 		this.capturedVars.clear();
 		this.errorInjections.clear();
 		toolUseCounter = 0;
