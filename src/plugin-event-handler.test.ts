@@ -2922,3 +2922,514 @@ describe("event-handler usage / cache info", () => {
 		expect(usageEntries.length).toBe(0);
 	});
 });
+
+describe("event-handler partial event monotonic extend", () => {
+	/**
+	 * Helper: drive a handler through a sequence of events (live path) and
+	 * return the final logs state. Uses handleEvent so each event goes
+	 * through the same code path as real SSE/REST arrivals. Filters SSE
+	 * events by taskId via getViewedSessionId.
+	 */
+	function runEvents(events: IncomingEvent[], viewedTaskId: string) {
+		const { deps } = makeDeps();
+		let currentLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				currentLogs = updater(currentLogs);
+			} else {
+				currentLogs = updater;
+			}
+		});
+		const depsWithViewed = {
+			...deps,
+			getViewedSessionId: () => viewedTaskId,
+		};
+		const handler = createEventHandler(
+			depsWithViewed as unknown as EventHandlerDeps,
+		);
+		for (const evt of events) handler.handleEvent(evt);
+		return currentLogs;
+	}
+
+	// ─── extend_thinking ───
+
+	it("thinking_delta stream accumulates; no partial yet → thinking content = sum of deltas", () => {
+		const logs = runEvents(
+			[
+				{
+					type: "thinking_delta",
+					thinking: "AB",
+					taskId: "t1",
+					ts: 1000,
+				} as IncomingEvent,
+				{
+					type: "thinking_delta",
+					thinking: "CD",
+					taskId: "t1",
+					ts: 1001,
+				} as IncomingEvent,
+			],
+			"t1",
+		);
+		const thinking = logs.find((e) => e.type === "thinking");
+		expect(thinking).toBeDefined();
+		expect((thinking as unknown as { thinking: string }).thinking).toBe("ABCD");
+	});
+
+	it("extend_thinking: partial snapshot LONGER with matching prefix → extends to snapshot", () => {
+		// Live deltas accumulated to "ABC", then a REST refetch returns partial
+		// snapshot "ABCDE" — it extends (startsWith match + strictly longer).
+		const logs = runEvents(
+			[
+				{ type: "thinking_delta", thinking: "ABC", taskId: "t1", ts: 1000 },
+				{
+					type: "thinking",
+					thinking: "ABCDE",
+					signature: "",
+					taskId: "t1",
+					ts: 1001,
+					partial: true,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const thinking = logs.find((e) => e.type === "thinking");
+		expect((thinking as unknown as { thinking: string }).thinking).toBe(
+			"ABCDE",
+		);
+	});
+
+	it("extend_thinking: partial snapshot SHORTER than existing → no-op (keep longer)", () => {
+		// Live deltas reached "ABCDEF", then a stale REST snapshot arrives with
+		// only "ABC". Extend must NOT shrink.
+		const logs = runEvents(
+			[
+				{ type: "thinking_delta", thinking: "ABCDEF", taskId: "t1", ts: 1000 },
+				{
+					type: "thinking",
+					thinking: "ABC",
+					signature: "",
+					taskId: "t1",
+					ts: 1001,
+					partial: true,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const thinking = logs.find((e) => e.type === "thinking");
+		expect((thinking as unknown as { thinking: string }).thinking).toBe(
+			"ABCDEF",
+		);
+	});
+
+	it("extend_thinking: partial snapshot EQUAL length → no-op", () => {
+		const logs = runEvents(
+			[
+				{ type: "thinking_delta", thinking: "ABCDEF", taskId: "t1", ts: 1000 },
+				{
+					type: "thinking",
+					thinking: "ABCDEF",
+					signature: "",
+					taskId: "t1",
+					ts: 1001,
+					partial: true,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const thinking = logs.find((e) => e.type === "thinking");
+		expect((thinking as unknown as { thinking: string }).thinking).toBe(
+			"ABCDEF",
+		);
+	});
+
+	it("extend_thinking: prefix mismatch + longer → prefers longer, warns (drift)", () => {
+		// Live deltas → "ABCDEF"; partial snapshot arrives "XYZABCDEF" (longer,
+		// but different prefix). We prefer the longer, and the handler warns.
+		const originalWarn = console.warn;
+		const warnCalls: unknown[][] = [];
+		console.warn = (...args: unknown[]) => warnCalls.push(args);
+		try {
+			const logs = runEvents(
+				[
+					{
+						type: "thinking_delta",
+						thinking: "ABCDEF",
+						taskId: "t1",
+						ts: 1000,
+					},
+					{
+						type: "thinking",
+						thinking: "XYZABCDEF",
+						signature: "",
+						taskId: "t1",
+						ts: 1001,
+						partial: true,
+					},
+				] as IncomingEvent[],
+				"t1",
+			);
+			const thinking = logs.find((e) => e.type === "thinking");
+			expect((thinking as unknown as { thinking: string }).thinking).toBe(
+				"XYZABCDEF",
+			);
+			expect(warnCalls.length).toBeGreaterThan(0);
+			expect(String(warnCalls[0]?.[0])).toContain("extend_thinking");
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	it("extend_thinking: no existing thinking entry → creates one with snapshot content", () => {
+		// First event for this task is a partial snapshot (e.g., page load, no
+		// prior deltas in view state). Handler creates a new thinking entry.
+		const logs = runEvents(
+			[
+				{
+					type: "thinking",
+					thinking: "snapshot content",
+					signature: "",
+					taskId: "t1",
+					ts: 1001,
+					partial: true,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const thinking = logs.find((e) => e.type === "thinking");
+		expect(thinking).toBeDefined();
+		expect((thinking as unknown as { thinking: string }).thinking).toBe(
+			"snapshot content",
+		);
+	});
+
+	it("extend_thinking: merge_thinking deltas after extend continue to append", () => {
+		// Sequence: deltas "AB" → partial snapshot "ABCD" → delta "EF"
+		// Final thinking = "ABCDEF" (extend → "ABCD", merge delta "EF")
+		const logs = runEvents(
+			[
+				{ type: "thinking_delta", thinking: "AB", taskId: "t1", ts: 1000 },
+				{
+					type: "thinking",
+					thinking: "ABCD",
+					signature: "",
+					taskId: "t1",
+					ts: 1001,
+					partial: true,
+				},
+				{ type: "thinking_delta", thinking: "EF", taskId: "t1", ts: 1002 },
+			] as IncomingEvent[],
+			"t1",
+		);
+		const thinking = logs.find((e) => e.type === "thinking");
+		expect((thinking as unknown as { thinking: string }).thinking).toBe(
+			"ABCDEF",
+		);
+	});
+
+	it("final thinking (non-partial) → replace semantics (not extend)", () => {
+		// Even if final is shorter than current (shouldn't happen in practice
+		// but mutation guard), replace_thinking still replaces. partial=false
+		// means authoritative.
+		const logs = runEvents(
+			[
+				{ type: "thinking_delta", thinking: "ABC", taskId: "t1", ts: 1000 },
+				{
+					type: "thinking",
+					thinking: "final",
+					signature: "sig-x",
+					taskId: "t1",
+					ts: 1001,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const thinking = logs.find((e) => e.type === "thinking");
+		expect((thinking as unknown as { thinking: string }).thinking).toBe(
+			"final",
+		);
+		expect((thinking as unknown as { signature: string }).signature).toBe(
+			"sig-x",
+		);
+	});
+
+	// ─── extend_text ───
+
+	it("text_delta stream accumulates; no partial yet → assistant_text content = sum", () => {
+		const logs = runEvents(
+			[
+				{ type: "text_delta", content: "AB", taskId: "t1", ts: 1000 },
+				{ type: "text_delta", content: "CD", taskId: "t1", ts: 1001 },
+			] as IncomingEvent[],
+			"t1",
+		);
+		const text = logs.find((e) => e.type === "assistant_text");
+		expect(text).toBeDefined();
+		expect((text as unknown as { content: string }).content).toBe("ABCD");
+	});
+
+	it("extend_text: partial snapshot longer with matching prefix → extends", () => {
+		const logs = runEvents(
+			[
+				{ type: "text_delta", content: "ABC", taskId: "t1", ts: 1000 },
+				{
+					type: "assistant_text",
+					content: "ABCDE",
+					taskId: "t1",
+					ts: 1001,
+					partial: true,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const text = logs.find((e) => e.type === "assistant_text");
+		expect((text as unknown as { content: string }).content).toBe("ABCDE");
+	});
+
+	it("extend_text: partial snapshot shorter → no-op (keep longer)", () => {
+		// The Part-1 scenario: live already ahead of stale REST snapshot.
+		const logs = runEvents(
+			[
+				{ type: "text_delta", content: "ABCDEF", taskId: "t1", ts: 1000 },
+				{
+					type: "assistant_text",
+					content: "ABCDE",
+					taskId: "t1",
+					ts: 1001,
+					partial: true,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const text = logs.find((e) => e.type === "assistant_text");
+		expect((text as unknown as { content: string }).content).toBe("ABCDEF");
+	});
+
+	it("extend_text: prefix mismatch + longer → prefers longer, warns", () => {
+		const originalWarn = console.warn;
+		const warnCalls: unknown[][] = [];
+		console.warn = (...args: unknown[]) => warnCalls.push(args);
+		try {
+			const logs = runEvents(
+				[
+					{ type: "text_delta", content: "ABCDEF", taskId: "t1", ts: 1000 },
+					{
+						type: "assistant_text",
+						content: "XYZABCDEF",
+						taskId: "t1",
+						ts: 1001,
+						partial: true,
+					},
+				] as IncomingEvent[],
+				"t1",
+			);
+			const text = logs.find((e) => e.type === "assistant_text");
+			expect((text as unknown as { content: string }).content).toBe(
+				"XYZABCDEF",
+			);
+			expect(warnCalls.length).toBeGreaterThan(0);
+			expect(String(warnCalls[0]?.[0])).toContain("extend_text");
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	it("extend_text: no existing text entry → creates one with snapshot content", () => {
+		const logs = runEvents(
+			[
+				{
+					type: "assistant_text",
+					content: "snapshot content",
+					taskId: "t1",
+					ts: 1001,
+					partial: true,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const text = logs.find((e) => e.type === "assistant_text");
+		expect(text).toBeDefined();
+		expect((text as unknown as { content: string }).content).toBe(
+			"snapshot content",
+		);
+	});
+
+	it("extend_text: deltas after extend continue to append", () => {
+		const logs = runEvents(
+			[
+				{ type: "text_delta", content: "AB", taskId: "t1", ts: 1000 },
+				{
+					type: "assistant_text",
+					content: "ABCD",
+					taskId: "t1",
+					ts: 1001,
+					partial: true,
+				},
+				{ type: "text_delta", content: "EF", taskId: "t1", ts: 1002 },
+			] as IncomingEvent[],
+			"t1",
+		);
+		const text = logs.find((e) => e.type === "assistant_text");
+		expect((text as unknown as { content: string }).content).toBe("ABCDEF");
+	});
+
+	it("final assistant_text (non-partial) → replace semantics", () => {
+		const logs = runEvents(
+			[
+				{ type: "text_delta", content: "ABC", taskId: "t1", ts: 1000 },
+				{
+					type: "assistant_text",
+					content: "final",
+					taskId: "t1",
+					ts: 1001,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const text = logs.find((e) => e.type === "assistant_text");
+		expect((text as unknown as { content: string }).content).toBe("final");
+	});
+
+	// ─── Scenario reproduction: SSE + REST race on reconnect ───
+
+	it("SSE deltas + REST partial + more SSE deltas → final content preserved", () => {
+		// Reproduces the race described in the task: live deltas → reconnect →
+		// batch REST response injects partial snapshot → more live deltas.
+		//
+		// Without monotonic extend semantics, either:
+		//   (a) REST snapshot replaces and clobbers live content → data loss, or
+		//   (b) SSE deltas appended to stale state → duplicated/malformed content.
+		const logs = runEvents(
+			[
+				// Stage 1: live deltas before reconnect
+				{ type: "thinking_delta", thinking: "AB", taskId: "t1", ts: 1000 },
+				{ type: "thinking_delta", thinking: "CD", taskId: "t1", ts: 1001 },
+				// Stage 2: REST refetch partial (server has accumulated "ABCDEF")
+				{
+					type: "thinking",
+					thinking: "ABCDEF",
+					signature: "",
+					taskId: "t1",
+					ts: 1002,
+					partial: true,
+				},
+				// Stage 3: more live deltas
+				{ type: "thinking_delta", thinking: "GH", taskId: "t1", ts: 1003 },
+			] as IncomingEvent[],
+			"t1",
+		);
+		const thinking = logs.find((e) => e.type === "thinking");
+		expect((thinking as unknown as { thinking: string }).thinking).toBe(
+			"ABCDEFGH",
+		);
+	});
+
+	it("SSE ahead of REST partial → REST partial is no-op (content from SSE preserved)", () => {
+		// Stage-1 deltas already past snapshot content by time snapshot arrives.
+		const logs = runEvents(
+			[
+				{ type: "thinking_delta", thinking: "AB", taskId: "t1", ts: 1000 },
+				{ type: "thinking_delta", thinking: "CD", taskId: "t1", ts: 1001 },
+				{ type: "thinking_delta", thinking: "EF", taskId: "t1", ts: 1002 },
+				{ type: "thinking_delta", thinking: "GH", taskId: "t1", ts: 1003 },
+				{
+					type: "thinking",
+					thinking: "ABCDE",
+					signature: "",
+					taskId: "t1",
+					ts: 1004,
+					partial: true,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const thinking = logs.find((e) => e.type === "thinking");
+		expect((thinking as unknown as { thinking: string }).thinking).toBe(
+			"ABCDEFGH",
+		);
+	});
+
+	it("final thinking after partial extends → replace wins (authoritative)", () => {
+		// Sequence: live deltas → partial → live deltas → final thinking event.
+		// Final is authoritative and must replace, not merge-or-extend.
+		const logs = runEvents(
+			[
+				{ type: "thinking_delta", thinking: "AB", taskId: "t1", ts: 1000 },
+				{
+					type: "thinking",
+					thinking: "ABCD",
+					signature: "",
+					taskId: "t1",
+					ts: 1001,
+					partial: true,
+				},
+				{ type: "thinking_delta", thinking: "EF", taskId: "t1", ts: 1002 },
+				{
+					type: "thinking",
+					thinking: "ABCDEF",
+					signature: "sig-final",
+					taskId: "t1",
+					ts: 1003,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const thinking = logs.find((e) => e.type === "thinking");
+		expect((thinking as unknown as { thinking: string }).thinking).toBe(
+			"ABCDEF",
+		);
+		expect((thinking as unknown as { signature: string }).signature).toBe(
+			"sig-final",
+		);
+	});
+
+	// ─── Interleave invariants: extend must respect the same turn-boundary
+	// scanning rules as merge/replace ───
+
+	it("extend_text scans past thinking entries in same turn", () => {
+		// Thinking arrives before text in same turn; partial text snapshot
+		// must extend the text entry, not create a new one after thinking.
+		const logs = runEvents(
+			[
+				{ type: "thinking_delta", thinking: "thinks", taskId: "t1", ts: 1000 },
+				{ type: "text_delta", content: "ABC", taskId: "t1", ts: 1001 },
+				{
+					type: "assistant_text",
+					content: "ABCDE",
+					taskId: "t1",
+					ts: 1002,
+					partial: true,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const textEntries = logs.filter((e) => e.type === "assistant_text");
+		expect(textEntries.length).toBe(1);
+		expect((textEntries[0] as unknown as { content: string }).content).toBe(
+			"ABCDE",
+		);
+	});
+
+	it("extend_thinking scans past assistant_text entries in same turn", () => {
+		const logs = runEvents(
+			[
+				{ type: "thinking_delta", thinking: "AB", taskId: "t1", ts: 1000 },
+				{ type: "text_delta", content: "text", taskId: "t1", ts: 1001 },
+				{
+					type: "thinking",
+					thinking: "ABCD",
+					signature: "",
+					taskId: "t1",
+					ts: 1002,
+					partial: true,
+				},
+			] as IncomingEvent[],
+			"t1",
+		);
+		const thinkingEntries = logs.filter((e) => e.type === "thinking");
+		expect(thinkingEntries.length).toBe(1);
+		expect(
+			(thinkingEntries[0] as unknown as { thinking: string }).thinking,
+		).toBe("ABCD");
+	});
+});
