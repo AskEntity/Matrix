@@ -1010,3 +1010,17 @@ The "don't pipe" guidance lives in the bash tool's `description` field (`src/too
 
 ### Architectural framing the task demonstrated
 When AI repeatedly does X (pipe/redirect/`| head`), ask: is the motivation legitimate? If yes (context protection IS legitimate), make the tool satisfy it naturally — don't enforce against it. Rule suppression leaks at edges; tool-level satisfaction closes the loop. If you find yourself adding parser/rejection/warning to the new tool, you drifted — the point is to make shortcuts unnecessary, not forbidden.
+
+## auth.json file mode — 0o600 + chmod-on-init (2026-04-18)
+
+`src/auth.ts:writeAuthData` now passes `{mode: 0o600}` to `writeFile`. Legacy files get a one-time upgrade via `ensureSecureFileMode` called at the top of `ensureAuthInitialized` (daemon boot).
+
+**Non-obvious POSIX detail**: Node's `fs.writeFile(path, data, {mode})` only honors `mode` on file CREATION (O_CREAT). Overwriting an existing file preserves whatever mode the inode already has — the `mode` option is silently ignored. This is why two paths are needed:
+- `{mode: 0o600}` on writeFile → secures NEW files
+- `chmod` on init for loose existing files → one-shot upgrade path
+
+Without the chmod pass, any auth.json created by an older Matrix version stays at 0o644 forever, even after every `bumpSecretVersion` rewrite. `jwtSecret` remains world-readable → any local user can forge CLI/session/stream tokens.
+
+**Chmod mask**: `(mode & 0o077) !== 0` — fires only if any group/other permission bit is set. Deliberately preserves user-hardened 0o400 (read-only) files untouched.
+
+**Tests**: POSIX-only via `describe.skipIf(process.platform === "win32")`. Five tests cover fresh creation, legacy upgrade, mask coverage (0o640/604/660/666), idempotency, and 0o400 preservation. Mutation-tested: removing either the mode option or the chmod pass makes a test fail.
