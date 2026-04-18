@@ -140,7 +140,9 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		const cmd = command.trim().toLowerCase();
 		if (cmd === "/compact") {
 			try {
-				// targetNodeId already resolves to selectedTaskId ?? rootNodeId.
+				// targetNodeId === selectedTaskId post-Fix-C (root carries its
+				// real id like any task). Undefined only during the brand-new
+				// transient before useTasks resolves.
 				const nodeId = targetNodeId ?? undefined;
 				await compact(nodeId);
 			} catch (err) {
@@ -169,7 +171,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		// /settings removed — settings is shell's responsibility (header gear icon)
 		if (cmd === "/dump-messages") {
 			try {
-				// targetNodeId already resolves to selectedTaskId ?? rootNodeId.
+				// targetNodeId === selectedTaskId post-Fix-C.
 				const nodeId = targetNodeId ?? undefined;
 				const res = await authFetch(api.debugDumpMessages(projectId), {
 					method: "POST",
@@ -215,9 +217,10 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		}
 
 		try {
-			// targetNodeId is the resolved destination — selectedTaskId ?? rootNodeId
-			// (set by Plugin.tsx's useEffect). If null (both selected and root
-			// unavailable → orchestrator not started yet), bootstrap via start().
+			// targetNodeId === selectedTaskId post-Fix-C. Null only during
+			// the brand-new-project transient where useTasks hasn't yet
+			// resolved root id. In that case bootstrap via start() — which
+			// fetches root id itself and posts to it cold.
 			if (targetNodeId) {
 				// Unified path: all messages go through the task message endpoint.
 				// For root nodes, the endpoint delegates to handleInjectMessage
