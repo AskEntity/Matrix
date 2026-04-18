@@ -52,6 +52,7 @@ export function mockRuntimeContext(opts: {
 		pendingClarifications: new Map(),
 		eventStores: new Map(),
 		streamingText: new Map(),
+		streamingThinking: new Map(),
 		agentLoopPromises: new Map(),
 		requestCount: 0,
 		startupReady: true,

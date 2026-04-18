@@ -38,14 +38,31 @@ export function registerProjectRoutes(app: Hono, ctx: RuntimeContext) {
 				}
 			}
 		}
-		// Inject partial streaming text for any actively streaming sessions
+		// Inject partial streaming thinking + text for any actively streaming
+		// sessions. These events carry `partial: true` so clients treat them as
+		// monotonic extends against the live text_delta / thinking_delta stream,
+		// not authoritative replacements — see extend_text / extend_thinking in
+		// the plugin event-handler.
+		const partialTs = Date.now();
+		for (const [nodeId, partialThinking] of ctx.streamingThinking) {
+			if (partialThinking) {
+				all.push({
+					type: "thinking",
+					thinking: partialThinking,
+					signature: "",
+					taskId: nodeId,
+					ts: partialTs,
+					partial: true,
+				});
+			}
+		}
 		for (const [nodeId, partialText] of ctx.streamingText) {
 			if (partialText) {
 				all.push({
 					type: "assistant_text",
 					content: partialText,
 					taskId: nodeId,
-					ts: Date.now(),
+					ts: partialTs,
 					partial: true,
 				});
 			}

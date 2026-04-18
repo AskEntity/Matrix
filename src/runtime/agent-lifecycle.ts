@@ -68,6 +68,45 @@ import {
  */
 const DEBUG_SNAPSHOT_KEEP_TRACE_DIRS = 10;
 
+// ── Streaming buffers ──
+
+/**
+ * Update per-session streaming accumulators in response to an emitted event.
+ *
+ * text_delta / thinking_delta ephemeral events aren't persisted to JSONL, but
+ * the batch-events REST endpoint injects them as synthetic `partial:true`
+ * events so a mid-stream refresh doesn't lose in-flight content. This
+ * function is the ONE place that updates those accumulators.
+ *
+ * Called from the registered emit side-effect in runAgentForNode. Extracted
+ * and exported so unit tests can exercise the state machine without
+ * constructing a full agent loop.
+ */
+export function updateStreamingBuffers(
+	ctx: Pick<RuntimeContext, "streamingText" | "streamingThinking">,
+	taskId: string,
+	spec: EventSpec,
+): void {
+	if (spec.type === "text_delta") {
+		const existing = ctx.streamingText.get(taskId) ?? "";
+		ctx.streamingText.set(taskId, existing + spec.content);
+	} else if (spec.type === "assistant_text") {
+		// Final authoritative text block — drop the partial accumulator.
+		ctx.streamingText.delete(taskId);
+	} else if (spec.type === "thinking_delta") {
+		// Mirror text_delta: accumulate so mid-stream refresh can synthesize
+		// a partial `thinking` event. thinking_delta events are ephemeral and
+		// never persisted, so without this buffer a refresh before the final
+		// `thinking` block arrives loses the entire thinking content.
+		const existing = ctx.streamingThinking.get(taskId) ?? "";
+		ctx.streamingThinking.set(taskId, existing + spec.thinking);
+	} else if (spec.type === "thinking") {
+		// Final authoritative thinking block — partial is no longer needed.
+		// Emitted once per turn when the provider flushes accumulated blocks.
+		ctx.streamingThinking.delete(taskId);
+	}
+}
+
 // ── Session config helpers ──
 
 /** Find the last session_config event in active events. */
@@ -260,13 +299,8 @@ async function createAgentContext(
 			// Auto-inject traceId from the target task's session.
 			const tracker = ctx.trackers.get(projectId);
 			const traceId = tracker?.getTask(taskId)?.session?.loopTraceId;
-			// Streaming text tracking (for partial injection into batch events API)
-			if (spec.type === "text_delta") {
-				const existing = ctx.streamingText.get(taskId) ?? "";
-				ctx.streamingText.set(taskId, existing + spec.content);
-			} else if (spec.type === "assistant_text") {
-				ctx.streamingText.delete(taskId);
-			}
+			// Streaming accumulator updates — exported for test coverage.
+			updateStreamingBuffers(ctx, taskId, spec);
 			const event = {
 				...spec,
 				taskId,
@@ -1112,8 +1146,9 @@ export async function runAgentForNode(
 	} finally {
 		// Ensure launch lock is released (covers error path before session established)
 		ctx.launchingNodes.delete(nodeId);
-		// Clean up streaming text accumulator
+		// Clean up streaming accumulators — a new turn/run starts with empty buffers
 		ctx.streamingText.delete(nodeId);
+		ctx.streamingThinking.delete(nodeId);
 		// Clean up session: background processes + detach from node.
 		// Only clear if this is still OUR session — a replacement agent
 		// may have already set a new session on the node.

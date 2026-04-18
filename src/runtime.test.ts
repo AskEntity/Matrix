@@ -1773,6 +1773,191 @@ describe("streaming text injection in batch events", () => {
 		expect(partials.length).toBe(1);
 		expect(partials[0]?.content).toBe("partial from project");
 	});
+
+	test("thinking streaming in progress → GET task events → synthetic partial thinking at end", async () => {
+		// Simulate accumulated thinking deltas with no final thinking event yet
+		ctx.streamingThinking.set(taskId, "Let me think about this");
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/events`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		expect(body.events.length).toBe(1);
+		expect(body.events[0]?.type).toBe("thinking");
+		expect(body.events[0]?.thinking).toBe("Let me think about this");
+		expect(body.events[0]?.partial).toBe(true);
+		// Signature empty — we don't know the real one until the final block arrives
+		expect(body.events[0]?.signature).toBe("");
+	});
+
+	test("thinking + text streaming together → both synthesized as partials", async () => {
+		ctx.streamingThinking.set(taskId, "Thinking text");
+		ctx.streamingText.set(taskId, "Response text");
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/events`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		// Thinking injected first, then text — matches the natural turn order
+		expect(body.events.length).toBe(2);
+		expect(body.events[0]?.type).toBe("thinking");
+		expect(body.events[0]?.partial).toBe(true);
+		expect(body.events[1]?.type).toBe("assistant_text");
+		expect(body.events[1]?.partial).toBe(true);
+	});
+
+	test("thinking streaming complete → GET task events → no synthetic thinking", async () => {
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
+		const events: Event[] = [
+			{
+				type: "thinking",
+				thinking: "final thinking content",
+				signature: "sig-abc",
+				taskId: taskId,
+				ts: 1000,
+			},
+		];
+		await eventStore.appendBatch(taskId, events);
+		// Streaming buffer empty — final emitted already cleared it
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/events`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		expect(body.events.length).toBe(1);
+		expect(body.events[0]?.type).toBe("thinking");
+		expect(body.events[0]?.partial).toBeUndefined();
+	});
+
+	test("thinking streaming with ?after=compact → partial thinking at end", async () => {
+		const eventStore = new EventStore(
+			join(dataDir, "projects", projectId, "tasks"),
+		);
+		const events: Event[] = [
+			{
+				type: "compact_marker",
+				savedTokens: 2000,
+				taskId: taskId,
+				ts: 500,
+			},
+		];
+		await eventStore.appendBatch(taskId, events);
+
+		ctx.streamingThinking.set(taskId, "Post-compact thinking");
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/events?after=compact`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		expect(body.events.length).toBe(2);
+		expect(body.events[0]?.type).toBe("compact_marker");
+		expect(body.events[1]?.type).toBe("thinking");
+		expect(body.events[1]?.thinking).toBe("Post-compact thinking");
+		expect(body.events[1]?.partial).toBe(true);
+	});
+
+	test("partial thinking appears in project-level events endpoint", async () => {
+		ctx.streamingThinking.set(taskId, "project-level thinking");
+
+		const res = await app.request(`/projects/${projectId}/events`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		const partials = body.events.filter((e) => e.partial === true);
+		// Exactly one partial thinking event, no text since none streaming
+		expect(partials.length).toBe(1);
+		expect(partials[0]?.type).toBe("thinking");
+		expect(partials[0]?.thinking).toBe("project-level thinking");
+	});
+
+	test("updateStreamingBuffers: thinking_delta accumulates into streamingThinking", async () => {
+		const { updateStreamingBuffers } = await import(
+			"./runtime/agent-lifecycle.ts"
+		);
+		updateStreamingBuffers(ctx, taskId, {
+			type: "thinking_delta",
+			thinking: "Let me ",
+			ts: 1000,
+		});
+		expect(ctx.streamingThinking.get(taskId)).toBe("Let me ");
+		updateStreamingBuffers(ctx, taskId, {
+			type: "thinking_delta",
+			thinking: "think...",
+			ts: 1001,
+		});
+		expect(ctx.streamingThinking.get(taskId)).toBe("Let me think...");
+	});
+
+	test("updateStreamingBuffers: final thinking event clears streamingThinking", async () => {
+		const { updateStreamingBuffers } = await import(
+			"./runtime/agent-lifecycle.ts"
+		);
+		ctx.streamingThinking.set(taskId, "partial buffer content");
+		updateStreamingBuffers(ctx, taskId, {
+			type: "thinking",
+			thinking: "final authoritative content",
+			signature: "sig-xyz",
+			provider: "anthropic",
+			ts: 2000,
+		});
+		expect(ctx.streamingThinking.has(taskId)).toBe(false);
+	});
+
+	test("updateStreamingBuffers: text_delta / thinking_delta buffers are independent", async () => {
+		const { updateStreamingBuffers } = await import(
+			"./runtime/agent-lifecycle.ts"
+		);
+		updateStreamingBuffers(ctx, taskId, {
+			type: "thinking_delta",
+			thinking: "thinking A",
+			ts: 1000,
+		});
+		updateStreamingBuffers(ctx, taskId, {
+			type: "text_delta",
+			content: "text A",
+			ts: 1001,
+		});
+		expect(ctx.streamingThinking.get(taskId)).toBe("thinking A");
+		expect(ctx.streamingText.get(taskId)).toBe("text A");
+
+		// Final text clears only text buffer; thinking survives
+		updateStreamingBuffers(ctx, taskId, {
+			type: "assistant_text",
+			content: "text A",
+			ts: 1002,
+		});
+		expect(ctx.streamingText.has(taskId)).toBe(false);
+		expect(ctx.streamingThinking.get(taskId)).toBe("thinking A");
+
+		// Final thinking clears only thinking buffer
+		updateStreamingBuffers(ctx, taskId, {
+			type: "thinking",
+			thinking: "thinking A",
+			signature: "s",
+			ts: 1003,
+		});
+		expect(ctx.streamingThinking.has(taskId)).toBe(false);
+	});
 });
 
 describe("POST /projects/:id/tasks/:nodeId/message", () => {
