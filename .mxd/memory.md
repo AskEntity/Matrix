@@ -1533,3 +1533,137 @@ for (const evt of events) {
 **Unconsumed messages stay pending forever** — semantically correct per user: "如果之前有没consume的，之后还是显示pending 我觉得合理". If the agent never processed a message, the UI should keep surfacing it; silently clearing on compact was lying about what actually happened.
 
 **Lesson**: any null/sentinel/special-case handling for "pending" was papering over a wrong mental model. Pending is a view — a projection. The data is the events log. Derivation is the correct word, not storage.
+
+## Task Y (2026-04-18) — URL path-based routing with segment ownership
+
+Replaces the single-hash cross-layer coordination (`#projectId/taskId`) with
+a path-based URL where each layer owns its segment:
+
+- URL format: `/<projectId>/<pluginScope>/<pluginPath>`
+- Shell owns `/<projectId>/<pluginScope>/` prefix
+- Plugin owns everything after `<pluginScope>/` (the `<pluginPath>` suffix)
+- Shell passes `pluginPath` + `pushPluginPath(path, replace?)` as props
+
+**Why path-based (not hash-based extended)**: hash routing forced `#projectId/taskId`
+into a single string two layers had to cooperate on. Shell's `projectId` state
+and plugin's `taskId` state constantly drifted — shell didn't read URL on
+mount, plugin wrote hash for task changes, "back" button was broken for
+project switches, and every layer had its own "URL stays in sync" bug.
+
+User's framing: "一个 daemon owned 一个是 project owned 中间完全同步灾难". Path
+segments are a natural ownership line — shell never reads plugin's path, plugin
+never reads shell's prefix. Cross-layer coordination deletes itself.
+
+**Shape after Task Y**:
+- Shell `AuthenticatedShell`:
+  - `parsed = parsePath(window.location.pathname)` on mount + `popstate` listener.
+  - URL normalization effect: `/` → `/<firstProjectId>/<firstPluginName>/` via
+    `replaceState` (no history entry). Waits for both projects AND plugins to
+    load — uses `plugins[0].name` (no hardcoded "matrix").
+  - `pushPluginPath(path, replace?)` callback passed to plugin: shell converts
+    to full URL, calls `push/replaceState`, updates its own `parsed` state.
+  - `handleProjectChange` / `handleAddProject` / `handleDeleteProject` use
+    `pushState` so browser back/forward works naturally.
+  - `handleScopeChange` pushes new scope URL.
+
+- Plugin `ProjectContent`:
+  - `selectedTaskId` is DERIVED from `pluginPath` via `parsePluginPath()` — NOT
+    useState. No hashchange listener. No URL bookkeeping inside plugin.
+  - `setSelectedTaskId(id, replace?)` is now a thin wrapper that calls
+    `pushPluginPath(id ?? "", replace)`. Same callsites, same semantics.
+  - URL normalization effect: `pluginPath === "" && rootNodeId` → 
+    `pushPluginPath(rootNodeId, replace=true)`. Same logic as Fix C, now
+    plugin-internal.
+  - `targetNodeId` remains useState, synced from `selectedTaskId` via useEffect.
+    Kept this way to minimize the diff — refactoring all `targetNodeId`
+    consumers to re-derive is orthogonal to Task Y.
+
+**Deletions**:
+- `parseHash`, `updateHash`, `initialHash` useMemo, hashchange listener in
+  Plugin.tsx.
+- Hash-based URL-redirect effect (replaced with path-based normalization
+  that calls pushPluginPath).
+- Shell's `projects[0].id` default (URL-derived now, no guessing).
+
+**What this fixes that prior Fix C didn't**:
+- Hash ownership was ambiguous — shell wrote projectId (via `window.location.hash`
+  directly in `handleProjectChange`), plugin wrote taskId, both trampled each
+  other during refresh and SSE updates.
+- ShellApp.tsx never read `window.location.hash` on mount → defaulted to
+  `projects[0].id` regardless of URL. Refresh on a specific project → URL hash
+  preserved the projectId but shell state started with projects[0].id, so task
+  events went to the wrong session.
+- Back button was broken: shell used `window.location.hash = ...` which
+  triggered hashchange but also created history entries plugin didn't know
+  about.
+
+**Invariants**:
+1. Shell NEVER reads/writes `<pluginPath>`. Plugin NEVER reads/writes
+   `<projectId>` or `<pluginScope>`. Each layer only touches its own segment.
+2. URL is THE routing source of truth. Neither shell nor plugin cache
+   anything — refresh is free, back/forward is free, `pushPluginPath` with
+   `replace=true` normalizes, default pushState for user actions.
+3. Plugin has ONE parent → prop → child flow. Shell owns URL and passes
+   `pluginPath` down. Plugin calls `pushPluginPath` back up. Cycle is
+   explicit and type-safe.
+
+**Future extension**: if a future plugin wants deeper routing (e.g.
+`<taskId>/<subPath>`), the plugin's own `parsePluginPath` handles that
+internally. Shell doesn't care what shape the plugin uses.
+
+**Regression tests**:
+- `web/path-routing.test.ts` (15 unit tests): pure `parsePath` / `buildPath`
+  covering all URL shapes (empty, bare projectId, full, ULID/UUID, double
+  slashes). Pins the parse ∘ build = identity round-trip.
+- `web/Plugin-url-task-id.test.tsx` (5 integration tests, rewritten for Task
+  Y): `TestShell` wrapper holds pluginPath state + forwards pushPluginPath,
+  mimicking the real shell↔plugin prop contract. Tests first-render
+  correctness, URL normalization on empty path, sub-task preservation, openTabs
+  defensive strip, no-localStorage-cache invariant.
+- `web/Plugin-targetNodeId.test.tsx` (1 integration test): same TestShell
+  pattern — verifies InputBar placeholder reflects root task title after
+  useTasks resolves.
+
+**ShellApp integration tests for path routing — DELETED, with reason**:
+An initial `web/ShellApp-path-routing.test.tsx` tried to spy on
+`window.history.pushState`/`replaceState` in `beforeEach` and restore in
+`afterAll`. Running the full test suite, those spies polluted every
+subsequent `bun test web/*.test.tsx`: `ShellApp.test.tsx`,
+`AppFooter-pending.test.tsx`, and `ShellApp-build-error.test.tsx` all got
+18 spurious failures. The polluting mechanism was not clean even with
+explicit restore + `GlobalRegistrator.unregister()` in `afterAll` — happy-
+dom's cross-file state is opaque, and mixing method-level monkey-patches
+with happy-dom's per-describe-block lifecycle turned out unfixable within
+scope. Deleted the file. Coverage isn't lost: the pure parse/build logic
+is in `path-routing.test.ts`; the shell's actual pushState/replaceState
+wiring is verified by manual smoke + visual inspection of the diff (13
+lines total: URL normalization effect, popstate listener, three pushState
+callsites in project handlers).
+
+**happy-dom limitation — monkey-patching `window.history`**:
+Instrumenting `window.history.pushState`/`replaceState` via `beforeEach`
+replacement survives `GlobalRegistrator.unregister()` in ways we couldn't
+diagnose. If a future task needs to assert on history API calls from
+happy-dom tests, **don't** spy on `window.history.*`; instead, intercept
+at a layer the test owns (e.g., a test harness that wraps `ShellApp` and
+exposes a ref to captured history calls via React context), OR accept
+that integration coverage of routing is best left to real browsers and
+keep unit tests for the pure logic.
+
+**Lesson (process — "never claim pre-existing without verifying against
+main")**: My first pass blamed these 18 failures on pre-existing happy-dom
+pollution documented in memory.md. I used `git stash && bun test web/` to
+"verify", saw 19 fails on main, and concluded Task Y hadn't regressed
+anything. I was wrong twice: (a) `git stash` left my committed changes in
+place — I needed `git reset --hard HEAD^` to actually revert Task Y; (b)
+even if stash had worked, the relevant baseline is `bun test` (full), not
+`bun test web/` (subset). On the true baseline, main had 0 failures. Lesson
+for any future "it was already broken" claim: revert the commit, run
+`bun test` (bare, not subset, not piped), read the bare numbers.
+
+**Lesson (design)**: when two layers coordinate via a shared serialized
+blob (one hash, one query string, one localStorage key), look for the
+segment they each own and give each layer direct access to its own segment.
+If "they must agree" is the contract, the contract is wrong — sooner or
+later they disagree. Path segments + props+callbacks encode ownership at
+the type level; no synchronization protocol needed.

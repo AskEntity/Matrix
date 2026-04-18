@@ -104,37 +104,21 @@ function readInitialSidebarWidth(): number {
 	return SIDEBAR_DEFAULT_WIDTH;
 }
 
-// ── Hash routing ───────────────────────────────────────────────────────────
+// ── Path routing ──────────────────────────────────────────────────────────
 //
-// URL hash IS the routing truth. Format: `#<projectId>/<taskId>`. Root is a
-// regular task — its id appears in the URL exactly like any sub-task id.
-// There is no "no task selected" URL form, no fallback chain, no client-side
-// cache. If the URL is missing the task component (legacy bookmark, fresh
-// visit), the URL-redirect effect normalizes it once useTasks resolves the
-// daemon-returned rootNodeId.
+// Task Y (2026-04-18): URL is `/<projectId>/<pluginScope>/<pluginPath>`.
+// Shell owns the `/<projectId>/<pluginScope>/` prefix; plugin owns the
+// suffix. Shell passes `pluginPath` (everything after `<pluginScope>/`)
+// as a prop; plugin calls `pushPluginPath(path, replace?)` to navigate.
 //
-// "Hash without id is an invalid state" — we redirect to make it valid.
-
-function parseHash(): { projectId?: string; taskId?: string } {
-	const raw = window.location.hash.replace(/^#/, "");
-	if (!raw) return {};
-	const slash = raw.indexOf("/");
-	if (slash === -1) return { projectId: raw };
-	return { projectId: raw.slice(0, slash), taskId: raw.slice(slash + 1) };
-}
-
-/**
- * Update URL hash to `#projectId/taskId`. Always carries the task id.
- * Direct `location.hash` assignment — adds one history entry per task
- * change (same semantic as pre-Fix-C sub-task switches, now uniform).
- * Initial URL normalization uses `history.replaceState` (separate code
- * path in the redirect effect) to avoid the one-time history entry on
- * page load.
- */
-function updateHash(projectId: string, taskId: string) {
-	const desired = `#${projectId}/${taskId}`;
-	if (window.location.hash === desired) return;
-	window.location.hash = desired;
+// The plugin's own path format is currently `<taskId>` (flat). Future
+// plugins could extend to `<taskId>/<subPath>`. Parse is first segment:
+function parsePluginPath(pluginPath: string): { taskId: string | null } {
+	if (!pluginPath) return { taskId: null };
+	const firstSlash = pluginPath.indexOf("/");
+	const taskId =
+		firstSlash === -1 ? pluginPath : pluginPath.slice(0, firstSlash);
+	return { taskId: taskId || null };
 }
 
 // ── Main Plugin ───────────────────────────────────────────────────────────────
@@ -203,7 +187,24 @@ function ProductionModePage() {
 	);
 }
 
-export function Plugin({ projectId }: { projectId: string }) {
+/**
+ * Props the shell passes to the plugin.
+ *
+ * Routing contract (Task Y, 2026-04-18): the shell owns `/<projectId>`
+ * and `/<projectId>/<pluginScope>/`; the plugin owns the path after
+ * `<pluginScope>/`. `pluginPath` is that suffix (empty on first visit,
+ * `<taskId>` once normalized, `<taskId>/<subPath>` if the plugin ever
+ * adds deeper routing). `pushPluginPath` lets the plugin navigate
+ * within its own segment — shell converts it into a full URL and
+ * updates `history.pushState` / `replaceState` accordingly.
+ */
+interface PluginProps {
+	projectId: string;
+	pluginPath: string;
+	pushPluginPath: (path: string, replace?: boolean) => void;
+}
+
+export function Plugin({ projectId, pluginPath, pushPluginPath }: PluginProps) {
 	if (!projectId)
 		return (
 			<div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>
@@ -211,7 +212,11 @@ export function Plugin({ projectId }: { projectId: string }) {
 	return (
 		<LocaleProvider>
 			<ErrorBoundary>
-				<PluginShell projectId={projectId} />
+				<PluginShell
+					projectId={projectId}
+					pluginPath={pluginPath}
+					pushPluginPath={pushPluginPath}
+				/>
 			</ErrorBoundary>
 		</LocaleProvider>
 	);
@@ -229,7 +234,7 @@ export function Plugin({ projectId }: { projectId: string }) {
  * users see the flash briefly, then the ProductionModePage — acceptable
  * tradeoff since dev-mode is the dominant case.
  */
-function PluginShell({ projectId }: { projectId: string }) {
+function PluginShell({ projectId, pluginPath, pushPluginPath }: PluginProps) {
 	const authFetch = useAuthFetch();
 	const [production, setProduction] = useState<boolean | null>(null);
 	useEffect(() => {
@@ -254,24 +259,53 @@ function PluginShell({ projectId }: { projectId: string }) {
 		};
 	}, [projectId, authFetch]);
 	if (production === true) return <ProductionModePage />;
-	return <ProjectContent projectId={projectId} />;
+	return (
+		<ProjectContent
+			projectId={projectId}
+			pluginPath={pluginPath}
+			pushPluginPath={pushPluginPath}
+		/>
+	);
 }
 
-function ProjectContent({ projectId }: { projectId: string }) {
+function ProjectContent({
+	projectId,
+	pluginPath,
+	pushPluginPath,
+}: PluginProps) {
 	const authFetch = useAuthFetch();
 	const { t } = useLocale();
-	const initialHash = useMemo(() => parseHash(), []);
 	const [isCreatingTask, setIsCreatingTask] = useState(false);
-	// All three seed from URL hash, nothing else. URL has the task id →
-	// first render is correct. URL doesn't have it → all three start null,
-	// the URL-redirect effect (below) fills the URL once useTasks resolves
-	// the daemon-returned rootNodeId, hashchange listener then sets state.
-	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
-		initialHash.taskId ?? null,
-	);
+	// URL is the routing truth (Task Y). `selectedTaskId` is DERIVED from
+	// `pluginPath` — no separate state, no hashchange listener, no
+	// redirect/replace bookkeeping. Navigation happens via
+	// `pushPluginPath(newTaskId, replace?)`; the new path flows down as a
+	// prop and `selectedTaskId` re-derives.
+	//
+	// Transient: during the brand-new-project window before `useTasks`
+	// resolves the daemon-returned rootNodeId, `pluginPath` is empty and
+	// `selectedTaskId` is null. The normalization effect below calls
+	// `pushPluginPath(rootNodeId, true)` once rootNodeId arrives, which
+	// moves the URL forward and the derived state catches up.
+	const { taskId: selectedTaskId } = parsePluginPath(pluginPath);
 	const [rootNodeId, setRootNodeId] = useState<string | null>(null);
+	// `targetNodeId` follows `selectedTaskId` (derivation identity) — the
+	// effect below keeps this in sync with the URL and avoids a wider
+	// refactor of the many places that still read `targetNodeId`.
 	const [targetNodeId, setTargetNodeId] = useState<string | null>(
-		initialHash.taskId ?? null,
+		selectedTaskId,
+	);
+
+	// Navigation helper. All existing `setSelectedTaskId(X)` call sites use
+	// this as their setter — behaviourally equivalent to the old useState
+	// setter, but routed through `pushPluginPath` so the URL is always
+	// updated. Use `replace=true` for URL normalization (e.g. empty →
+	// rootNodeId); default `false` adds a history entry (user-initiated).
+	const setSelectedTaskId = useCallback(
+		(id: string | null, replace = false) => {
+			pushPluginPath(id ?? "", replace);
+		},
+		[pushPluginPath],
 	);
 	const [lastTurns, setLastTurns] = useState<number | null>(null);
 	const [lastInputTokens, setLastInputTokens] = useState<number | null>(null);
@@ -299,15 +333,15 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		} catch {
 			/* ignore */
 		}
-		// Add hash task to tabs if not present. If the hash task happens to
-		// be the root id (URL deeplink to root), the post-mount defensive
-		// effect below strips it once useTasks resolves rootNodeId. We can't
-		// tell at init time without a cache (which we deliberately don't
-		// have); the brief window of "root in openTabs" is harmless because
-		// the tab bar only renders when openTabs.length > 0 anyway.
-		const hashTask = initialHash.taskId;
-		if (hashTask && !tabs.includes(hashTask)) {
-			tabs = [...tabs, hashTask];
+		// Add URL-derived task to tabs if not present. If the URL-derived
+		// task happens to be the root id (deeplink to root), the post-mount
+		// defensive effect below strips it once useTasks resolves rootNodeId.
+		// We can't tell at init time without a cache (which we deliberately
+		// don't have); the brief window of "root in openTabs" is harmless
+		// because the tab bar only renders when openTabs.length > 0 anyway.
+		const initialTask = parsePluginPath(pluginPath).taskId;
+		if (initialTask && !tabs.includes(initialTask)) {
+			tabs = [...tabs, initialTask];
 			localStorage.setItem("mxd-open-tabs", JSON.stringify(tabs));
 		}
 		return tabs;
@@ -353,10 +387,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		pendingMessagesRef.current = next;
 		setPendingMessages(next);
 	}, []);
-	const getPendingMessages = useCallback(
-		() => pendingMessagesRef.current,
-		[],
-	);
+	const getPendingMessages = useCallback(() => pendingMessagesRef.current, []);
 	const [pendingClarifications, setPendingClarifications] = useState<
 		{
 			id: string;
@@ -622,7 +653,12 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		};
 		document.addEventListener("keydown", handleKeyDown);
 		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [rootNodeId, fullscreen, handleToggleSidebar]);
+	}, [
+		rootNodeId,
+		fullscreen,
+		handleToggleSidebar, // targetNodeId updates via the effect on selectedTaskId/rootNodeId.
+		setSelectedTaskId,
+	]);
 
 	// ── SSE handler ──────────────────────────────────────────────────────────
 
@@ -757,79 +793,22 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		};
 	}, [projectId, viewedSessionId]);
 
-	// ── Hash routing sync ────────────────────────────────────────────────────
-
-	// Update hash when projectId or selectedTaskId changes. The URL invariant
-	// (always carries a task id) means subsequent refreshes hit `parseHash`
-	// and seed selectedTaskId from URL — no async wait. Don't write the hash
-	// until we have a non-null selectedTaskId, otherwise we'd briefly flicker
-	// to a malformed URL during the brand-new-project transient.
-	useEffect(() => {
-		if (projectId && selectedTaskId) updateHash(projectId, selectedTaskId);
-	}, [projectId, selectedTaskId]);
-
-	// Listen for browser back/forward (hashchange) and stay in sync with the
-	// URL the user navigated to.
-	useEffect(() => {
-		const onHashChange = () => {
-			const { projectId: hp, taskId: ht } = parseHash();
-			if (hp && hp !== projectId) {
-				// Project changed via URL. selectedTaskId from URL only; if
-				// URL has no taskId, the URL-redirect effect on the new
-				// project's rootNodeId will normalize once useTasks resolves.
-				setSelectedTaskId(ht ?? null);
-				setLogs([]);
-				setTokenUsage({});
-				dispatchPending({ type: "RESET" });
-				setPendingClarifications([]);
-				setBackgroundProcesses(new Map());
-				setActiveAgents(new Set());
-				setOlderEventsAvailable(new Map());
-				setLastTurns(null);
-				setLastInputTokens(null);
-				setLastCacheCreationTokens(null);
-				setLastCacheReadTokens(null);
-				setLastOutputTokens(null);
-			} else if (ht && ht !== selectedTaskId) {
-				setSelectedTaskId(ht);
-			} else if (!ht && rootNodeId && selectedTaskId !== rootNodeId) {
-				// URL stripped of task hash (manual edit / legacy bookmark).
-				// Snap back to root so the URL invariant re-establishes on
-				// the next render.
-				setSelectedTaskId(rootNodeId);
-			}
-		};
-		window.addEventListener("hashchange", onHashChange);
-		return () => window.removeEventListener("hashchange", onHashChange);
-	}, [projectId, selectedTaskId, rootNodeId, setActiveAgents]);
-
 	// ── URL normalization ──────────────────────────────────────────────────
 	//
-	// "Hash without a task id is an invalid state — fix it." When useTasks
-	// resolves the daemon-returned rootNodeId, if the URL is missing the
-	// task component, replaceState normalizes it to `#projectId/rootNodeId`.
-	// The hashchange listener above doesn't fire for replaceState (per spec),
-	// so we manually setSelectedTaskId in the same effect.
+	// Plugin's segment must always carry a taskId. On empty `pluginPath`
+	// (brand-new-project first load), wait for useTasks to resolve
+	// rootNodeId, then `pushPluginPath(rootNodeId, true)` — replaceState
+	// so no history entry for this auto-normalization.
 	//
-	// No cache, no localStorage, no fallback chain. The daemon's /tasks
-	// endpoint already returns rootNodeId — this effect just reflects it
-	// into the URL.
+	// Shell owns the `<projectId>/<pluginScope>/` prefix and the popstate
+	// listener; plugin doesn't touch `window.history`, only calls
+	// `pushPluginPath`.
 	useEffect(() => {
-		if (!projectId || !rootNodeId) return;
-		const hash = parseHash();
-		// Only block if URL belongs to a DIFFERENT project. Empty URL or
-		// matching projectId both proceed to normalization.
-		if (hash.projectId && hash.projectId !== projectId) return;
-		if (!hash.taskId) {
-			const desired = `#${projectId}/${rootNodeId}`;
-			window.history.replaceState(
-				null,
-				"",
-				window.location.pathname + window.location.search + desired,
-			);
-			setSelectedTaskId(rootNodeId);
+		if (!rootNodeId) return;
+		if (pluginPath === "") {
+			pushPluginPath(rootNodeId, true);
 		}
-	}, [projectId, rootNodeId]);
+	}, [rootNodeId, pluginPath, pushPluginPath]);
 
 	// Defensive: rootNodeId must NEVER appear in openTabs (it has its own
 	// dedicated tab button). At init time we can't tell if a URL deeplink is
@@ -872,12 +851,11 @@ function ProjectContent({ projectId }: { projectId: string }) {
 
 	// targetNodeId = the task that receives sends / owns pending messages.
 	// Root is treated as a regular task — its id appears in `selectedTaskId`
-	// exactly the same way a sub-task id does, no fallback needed. The
-	// useState initial value above seeds from `initialHash.taskId` so the
-	// first render is correct when URL already carries the task. The
-	// brand-new transient (URL bare → useTasks resolves → URL-redirect
-	// effect normalizes) sets selectedTaskId via the URL-redirect path,
-	// then this effect catches up.
+	// exactly the same way a sub-task id does, no fallback needed.
+	// `selectedTaskId` is DERIVED from `pluginPath` (prop from shell). The
+	// brand-new transient (pluginPath bare → useTasks resolves → URL
+	// normalization effect calls `pushPluginPath(rootNodeId, replace=true)`)
+	// updates the prop, which flows through, then this effect catches up.
 	useEffect(() => {
 		setTargetNodeId(selectedTaskId);
 	}, [selectedTaskId]);
@@ -1037,22 +1015,21 @@ function ProjectContent({ projectId }: { projectId: string }) {
 			t,
 			setActiveAgents,
 			authFetch,
+			setSelectedTaskId,
 		],
 	);
 
 	// ── Stabilized callbacks for memoized child components ───────────────────
 
 	// Reset all project state when projectId changes (shell controls project
-	// selection). selectedTaskId seeds from the new project's URL only;
-	// rootNodeId resets to null and the URL-redirect effect normalizes once
-	// useTasks resolves. Same flow as the initial mount, no special path.
+	// selection; it passes a new `pluginPath` prop too). rootNodeId resets
+	// to null; the URL normalization effect will call `pushPluginPath` with
+	// replace=true once the new project's useTasks resolves. Don't touch
+	// the URL here — the shell already did via pushState.
 	const prevProjectId = useRef(projectId);
 	useEffect(() => {
 		if (prevProjectId.current !== projectId) {
 			prevProjectId.current = projectId;
-			const hash = parseHash();
-			const urlTaskId = hash.projectId === projectId ? hash.taskId : null;
-			setSelectedTaskId(urlTaskId ?? null);
 			setRootNodeId(null);
 			setOpenTabs([]);
 			localStorage.setItem("mxd-open-tabs", "[]");
@@ -1069,7 +1046,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 			setLastCacheReadTokens(null);
 			setLastOutputTokens(null);
 		}
-	}, [projectId, setActiveAgents]);
+	}, [projectId, setActiveAgents, dispatchPending]);
 
 	// Use refs to read current preview/tabs without deps
 	const previewTabRef = useRef(previewTabId);
@@ -1105,7 +1082,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 			setPreviewTabId(id);
 			localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
 		},
-		[rootNodeId],
+		[rootNodeId, setSelectedTaskId],
 	);
 
 	const handleTaskPin = useCallback(
@@ -1125,12 +1102,15 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				return next;
 			});
 		},
-		[rootNodeId],
+		[rootNodeId, setSelectedTaskId],
 	);
 
-	const handleTabSelect = useCallback((id: string | null) => {
-		setSelectedTaskId(id);
-	}, []);
+	const handleTabSelect = useCallback(
+		(id: string | null) => {
+			setSelectedTaskId(id);
+		},
+		[setSelectedTaskId],
+	);
 
 	const handleTabDoubleClick = useCallback((id: string) => {
 		// Double-click pins the tab (removes from preview)
@@ -1195,7 +1175,10 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				return next;
 			});
 		},
-		[rootNodeId],
+		[
+			rootNodeId, // Open as pinned tab
+			setSelectedTaskId,
+		],
 	);
 
 	const handleTabClose = useCallback(
@@ -1215,7 +1198,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				return next;
 			});
 		},
-		[selectedTaskId, rootNodeId],
+		[selectedTaskId, rootNodeId, setSelectedTaskId],
 	);
 
 	const handleClarifyAnswerChange = useCallback(

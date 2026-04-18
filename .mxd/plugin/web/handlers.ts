@@ -32,7 +32,10 @@ interface ActionHandlerDeps {
 	setLastCacheReadTokens: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastOutputTokens: React.Dispatch<React.SetStateAction<number | null>>;
 	// setProjectId removed — shell manages project selection
-	setSelectedTaskId: React.Dispatch<React.SetStateAction<string | null>>;
+	// Task Y: `selectedTaskId` is URL-derived, not useState. The setter
+	// routes through `pushPluginPath` internally (see Plugin.tsx). Signature
+	// is just `(id, replace?) => void` — no updater-function form.
+	setSelectedTaskId: (id: string | null, replace?: boolean) => void;
 	setRootNodeId: React.Dispatch<React.SetStateAction<string | null>>;
 	setClarifyAnswers: React.Dispatch<
 		React.SetStateAction<Record<string, string>>
