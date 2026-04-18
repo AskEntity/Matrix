@@ -182,7 +182,21 @@ function AuthenticatedShell() {
 		[newProjectPath, refresh],
 	);
 
-	const handleLogout = useCallback(() => {
+	const handleLogout = useCallback(async () => {
+		// Server-side logout first — `POST /auth/logout` bumps secretVersion,
+		// invalidating EVERY token signed with the old version (session, CLI,
+		// stream). Without this step the local session JWT would still be
+		// valid for up to 30 days on the server; a stolen localStorage copy
+		// could be replayed from another browser (Audit R7 P1.5).
+		//
+		// If the POST fails (token already expired, network issue, daemon
+		// down, etc.) we STILL clear the local token and reload — the user's
+		// intent is to end this session unconditionally.
+		try {
+			await authFetch("/auth/logout", { method: "POST" });
+		} catch {
+			/* ignore — proceed with local clear anyway */
+		}
 		clearToken();
 		window.location.reload();
 	}, []);
