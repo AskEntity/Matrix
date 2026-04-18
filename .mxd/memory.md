@@ -52,7 +52,7 @@ Agent reply language: follows the sender's language.
 
 ## How to Run Tests
 
-**The ONLY correct form is `bun test`. Nothing else.**
+> **⚠️ THE ONLY CORRECT FORM IS `bun test`. NOTHING ELSE. NO PIPES, NO REDIRECTS, NO `2>&1`, NO FLAGS. JUST `bun test`. ⚠️**
 
 ```bash
 bun test              # ALL tests (src/ + web/). Single command. Nothing appended.
@@ -60,16 +60,54 @@ bun run typecheck     # tsc --noEmit
 bun run check         # biome lint + format
 ```
 
-Forms that are WRONG:
-- ❌ `bun test 2>&1` — bash tool already merges stderr+stdout (`(cmd) 2>&1` wrapper in FU9). Redundant and signals you didn't read the bash tool description.
-- ❌ `bun test | head` / `| tail` / `| grep` — bash tool already tiers large output (head 5KB + banner + tail 5KB + full file on disk, FU9). Piping **consumes the stream** and throws away the middle — the exact bytes the test failure is trying to show you. See `src/tools/bash.ts` + the flaky-test-at-line-47 framing in the tool description.
-- ❌ `bun test > /tmp/out.log` — redundant, the tool already saves to `/tmp/mxd/exec-<id>.out`.
-- ❌ `bun test src/some.test.ts 2>&1 | tail -100` — triple-wrong: tail consumes output, 2>&1 is redundant, and scoping to one file when you want the full picture hides regressions elsewhere.
+### Forms that are WRONG (every one of these has bitten us)
 
-**Always just `bun test`**. The bash tool handles stream merging, tiered display, and file preservation. Decorating the command means you haven't trusted (or read) the tool.
+- ❌ `bun test 2>&1`
+- ❌ `bun test | head` / `| tail` / `| grep`
+- ❌ `bun test > /tmp/out.log`
+- ❌ `bun test src/some.test.ts 2>&1 | tail -100`
+- ❌ `bun test --bail`, `--silent`, `--quiet`, any flag to "reduce noise"
+- ❌ `bun test && echo ok` (masks non-zero exit)
+- ❌ Any combination of the above
 
-**Rules:**
-- If tests are flaky, run `bun test` multiple times without decoration. Each run saves a separate `/tmp/mxd/exec-<id>.out` file; read each as needed.
+### Why, in detail
+
+The bash tool (FU9) already does everything decoration would do, and better:
+- Merges stdout+stderr via `(cmd) 2>&1` wrapper → `2>&1` is redundant.
+- Tiers large output: head 5KB + banner + tail 5KB + banner + **full file preserved** at `/tmp/mxd/exec-<id>.out` → `| head` / `| tail` are redundant AND destructive.
+- Output file persists across turns → `> /tmp/out.log` is redundant.
+
+**Piping is not "harmless size reduction". Piping is CATASTROPHIC DATA LOSS.** A pipe consumes the stream; bytes that go through your pipe never reach the bash tool. Whatever `head`/`tail`/`grep` didn't match is **gone from the Universe** — not in the output, not on disk, not recoverable. If the failure details are in the 50 lines you trimmed, you just burned them.
+
+### Concrete anti-pattern (happens every week)
+
+Real scenario:
+1. Agent runs `bun test 2>&1 | tail -8` to "save context".
+2. Output tail shows `2116 pass / 2 fail` summary in the last 8 lines.
+3. Which tests failed? In the 200 lines above. Gone.
+4. Agent re-runs `bun test 2>&1 | grep fail` hoping to see failures.
+5. Second run happens to be a DIFFERENT flaky combination (tests are non-deterministic at scheduling level). Grep matches different failures, or none.
+6. Agent is now chasing a test that wasn't failing in (1) — or worse, gaslit into thinking no failures exist at all.
+7. They re-run 5 more times. Each run flakes differently. Each `| grep` shows a different subset. Agent loses sense of reality.
+
+**Previous agents have gotten stuck in this loop for hours.** The fix is always the same: run `bun test` bare, read the saved output file, you see exactly what failed in that specific run.
+
+### Tests are independent
+
+Every test is its own isolated world. There is no guaranteed ordering between test files, and no expectation that "running just the one that failed" reproduces the failure — flakes are often scheduling-dependent (port conflicts, filesystem races, timer precision). So:
+
+- ❌ "Let me just run the failing file" — the failure may not reproduce in isolation.
+- ❌ "Let me `| grep fail`" — the grep is against a stale run, different from the current failure.
+- ✅ `bun test` → read the full saved file → see what failed → analyze → fix → `bun test` again → verify green.
+
+If a test is genuinely flaky, `bun test` it 5 times and read all 5 saved output files. Each time. No pipes. The bash tool's file preservation is your friend; the pipe is your enemy.
+
+### Rules summary
+
+- **Every test run is `bun test`, full stop.**
+- If the tool result shows `<test_output saved at /tmp/mxd/exec-…>`, that file has everything. Read it.
+- If you want to re-investigate, rerun `bun test` again. Both files persist; read either.
+- If you're tempted to pipe "for context reasons": the bash tool's tiered output has already protected your context. Piping doesn't help — it only destroys.
 - ~2119 tests pass, 4 skip, 12 todo (as of 2026-04-18 after Fix A/B/C).
 ```
 
