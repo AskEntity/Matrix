@@ -1106,8 +1106,27 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 			// Default to global (auth groups are typically global)
 			const cfg = await loadGlobalConfig();
 			cfg.authGroups = { ...cfg.authGroups, [name]: group };
+			// Auto-promote the first auth group as defaultAuth. README implies
+			// `auth add` is sufficient to onboard — without this, fresh users
+			// hit "No auth group configured. Add an auth group in Settings >
+			// Global > Auth Groups and set defaultAuth." on their first agent
+			// call because provider resolution reads `cfg.defaultAuth`, which
+			// stays "" after a pure add. Second `auth add` leaves the user's
+			// existing pick alone — we only fill in the unset slot.
+			const priorDefault = cfg.defaultAuth;
+			const hadPriorDefault = Boolean(priorDefault);
+			if (!hadPriorDefault) {
+				cfg.defaultAuth = name;
+			}
 			await saveGlobalConfig(cfg);
-			console.log(`Added auth group "${name}" to global config.`);
+			if (!hadPriorDefault) {
+				console.log(`Added auth group "${name}". Set as default.`);
+			} else {
+				console.log(
+					`Added auth group "${name}". Current default is "${priorDefault}"; ` +
+						`run \`mxd config set defaultAuth ${name} --global\` to switch.`,
+				);
+			}
 		}
 	} else if (sub === "list") {
 		const resolved = await loadGlobalConfig();
