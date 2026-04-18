@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "./config.ts";
 import { createDaemon, type DaemonInstance } from "./daemon.ts";
 import { pluginApiPrefix } from "./plugin-url.ts";
+import { createTestToken } from "./test-utils/auth-helper.ts";
 import { buildWebAssets } from "./web-builder.ts";
 
 // ── Pure helpers ──
@@ -98,6 +99,14 @@ describe("daemon /api/<plugin>/* forwarding", () => {
 	let daemon: DaemonInstance;
 	let tempDir: string;
 	let projectId: string;
+	let token: string;
+
+	/** Attach session token to a bare request. */
+	async function afetch(url: string, init?: RequestInit): Promise<Response> {
+		const headers = new Headers(init?.headers);
+		headers.set("Authorization", `Bearer ${token}`);
+		return daemon.fetch(new Request(url, { ...init, headers }));
+	}
 
 	beforeAll(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "plugin-url-ns-"));
@@ -125,9 +134,9 @@ describe("daemon /api/<plugin>/* forwarding", () => {
 			]),
 		);
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
+		token = await createTestToken(join(dataDir, "auth.json"));
 		daemon = await createDaemon({
 			dataDir,
-			autoInitAuth: false,
 			autoRegisterSelf: false,
 		});
 	}, 15000);
@@ -138,8 +147,8 @@ describe("daemon /api/<plugin>/* forwarding", () => {
 	});
 
 	test("prefixed plugin path reaches the matching worker (200)", async () => {
-		const res = await daemon.fetch(
-			new Request(`http://localhost/api/worker-a/projects/${projectId}/tasks`),
+		const res = await afetch(
+			`http://localhost/api/worker-a/projects/${projectId}/tasks`,
 		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
@@ -147,15 +156,13 @@ describe("daemon /api/<plugin>/* forwarding", () => {
 	});
 
 	test("bare (unprefixed) plugin path → 404 (no catch-all forwarding)", async () => {
-		const res = await daemon.fetch(
-			new Request(`http://localhost/projects/${projectId}/tasks`),
-		);
+		const res = await afetch(`http://localhost/projects/${projectId}/tasks`);
 		expect(res.status).toBe(404);
 	});
 
 	test("unknown plugin name → 404 with the name in the error", async () => {
-		const res = await daemon.fetch(
-			new Request(`http://localhost/api/not-registered/projects/foo/tasks`),
+		const res = await afetch(
+			`http://localhost/api/not-registered/projects/foo/tasks`,
 		);
 		expect(res.status).toBe(404);
 		const body = await res.json();
@@ -165,16 +172,15 @@ describe("daemon /api/<plugin>/* forwarding", () => {
 	test("POST body + query string survive the strip+forward", async () => {
 		// Build a task through the namespaced URL, with a query param to prove
 		// the daemon's URL rewriting preserves everything except the path prefix.
-		const treeRes = await daemon.fetch(
-			new Request(
-				`http://localhost/api/worker-a/projects/${projectId}/tasks?sort=status`,
-			),
+		const treeRes = await afetch(
+			`http://localhost/api/worker-a/projects/${projectId}/tasks?sort=status`,
 		);
 		expect(treeRes.status).toBe(200);
 		const tree = await treeRes.json();
 
-		const createRes = await daemon.fetch(
-			new Request(`http://localhost/api/worker-a/projects/${projectId}/tasks`, {
+		const createRes = await afetch(
+			`http://localhost/api/worker-a/projects/${projectId}/tasks`,
+			{
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({
@@ -182,7 +188,7 @@ describe("daemon /api/<plugin>/* forwarding", () => {
 					title: "namespaced task",
 					description: "proves body survives",
 				}),
-			}),
+			},
 		);
 		expect(createRes.status).toBe(201);
 		const created = await createRes.json();
@@ -190,9 +196,7 @@ describe("daemon /api/<plugin>/* forwarding", () => {
 	});
 
 	test("daemon-owned /global-context is NOT touched by the namespace", async () => {
-		const res = await daemon.fetch(
-			new Request("http://localhost/global-context"),
-		);
+		const res = await afetch("http://localhost/global-context");
 		expect(res.status).toBe(200);
 		const ctx = await res.json();
 		expect(typeof ctx.installRoot).toBe("string");
@@ -200,9 +204,7 @@ describe("daemon /api/<plugin>/* forwarding", () => {
 	});
 
 	test("daemon-owned /projects/:id (project info) is NOT touched", async () => {
-		const res = await daemon.fetch(
-			new Request(`http://localhost/projects/${projectId}`),
-		);
+		const res = await afetch(`http://localhost/projects/${projectId}`);
 		expect(res.status).toBe(200);
 		const p = await res.json();
 		expect(p.id).toBe(projectId);

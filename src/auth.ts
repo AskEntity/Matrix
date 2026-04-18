@@ -9,8 +9,15 @@
  * auth.json invalidates every outstanding token in one atomic step.
  */
 
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import {
+	chmod,
+	mkdir,
+	readFile,
+	rename,
+	stat,
+	writeFile,
+} from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -47,31 +54,70 @@ interface JWTPayload {
 // daemon appeared secured but kept serving unauthenticated requests.
 // Local JSON reads are cheap (~tens of μs); correctness trumps the cache.
 
+/**
+ * Read auth.json. ENOENT (first-boot) returns empty data so
+ * `ensureAuthInitialized` can create the file. Any OTHER error — parse
+ * failure, corrupt JSON, truncated file, permission denied — throws.
+ *
+ * Prior behavior: any error silently returned `{}` → `hasJwtSecret(…)`
+ * returned false → middleware treated the daemon as auth-disabled →
+ * every REST/SSE call served unauthenticated. After P1.3 (auth always on)
+ * that fallback no longer exists. Corrupt auth.json must surface as a
+ * loud 500, never as silent public access.
+ */
 async function readAuthData(path: string): Promise<AuthData> {
+	let text: string;
 	try {
-		const raw = JSON.parse(await readFile(path, "utf-8")) as Record<
-			string,
-			unknown
-		>;
-		return {
-			jwtSecret: typeof raw.jwtSecret === "string" ? raw.jwtSecret : undefined,
-			secretVersion:
-				typeof raw.secretVersion === "number" ? raw.secretVersion : undefined,
-		};
-	} catch {
-		return {};
+		text = await readFile(path, "utf-8");
+	} catch (e: unknown) {
+		const err = e as NodeJS.ErrnoException;
+		if (err.code === "ENOENT") return {};
+		throw new Error(`auth.json unreadable: ${err.message ?? String(e)}`);
 	}
+	let raw: Record<string, unknown>;
+	try {
+		raw = JSON.parse(text) as Record<string, unknown>;
+	} catch (e: unknown) {
+		const msg = e instanceof Error ? e.message : String(e);
+		throw new Error(`auth.json is not valid JSON: ${msg}`);
+	}
+	return {
+		jwtSecret: typeof raw.jwtSecret === "string" ? raw.jwtSecret : undefined,
+		secretVersion:
+			typeof raw.secretVersion === "number" ? raw.secretVersion : undefined,
+	};
 }
 
+/**
+ * Write auth.json atomically: temp file + POSIX rename.
+ *
+ * Prior behavior: crash mid-write (bumpSecretVersion, ensureAuthInitialized)
+ * left a truncated or zero-byte auth.json. With the old `readAuthData`
+ * catch-all, that looked like "no secret yet" → auth-disabled → silent
+ * public access. After P1.3 readAuthData throws on malformed JSON, so
+ * atomic write prevents surfacing a spurious 500 on the next boot too.
+ *
+ * Pattern mirrors `tracker.save()` from FU2. POSIX rename is atomic, so
+ * either the old auth.json stays intact or the new one replaces it —
+ * never a partial write visible to readers.
+ *
+ * mode 0o600 = owner rw-, group/others no access. Applies only on
+ * CREATION (writeFile over an existing file preserves its current mode);
+ * since we write to a fresh temp path every call, the mode always takes
+ * effect. Legacy files at 0o644 are tightened by `ensureSecureFileMode`.
+ */
 async function writeAuthData(path: string, data: AuthData): Promise<void> {
-	await mkdir(dirname(path), { recursive: true });
-	// mode 0o600 = owner rw-, group/others no access. Applies only on
-	// CREATION (writeFile over an existing file preserves its current mode).
-	// Legacy files at 0o644 are tightened by `ensureSecureFileMode` at boot.
-	await writeFile(path, JSON.stringify(data, null, "\t"), {
+	const dir = dirname(path);
+	await mkdir(dir, { recursive: true });
+	const tmpPath = join(
+		dir,
+		`.${basename(path)}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`,
+	);
+	await writeFile(tmpPath, JSON.stringify(data, null, "\t"), {
 		encoding: "utf-8",
 		mode: 0o600,
 	});
+	await rename(tmpPath, path);
 }
 
 /**

@@ -35,12 +35,11 @@ describe("P2.13: port-conflict probe endpoint invariants", () => {
 		await mkdir(dataDir, { recursive: true });
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		// autoInitAuth: true is the important bit — this writes jwtSecret
-		// into auth.json so the auth middleware is active. If we probed a
-		// production-flavored daemon, this is what we'd be up against.
+		// Auth is ALWAYS on after Audit R7 P1.3 — createDaemon unconditionally
+		// initializes auth.json. If we probed a production daemon, this is
+		// what we'd be up against.
 		daemon = await createDaemon({
 			dataDir,
-			autoInitAuth: true,
 			autoRegisterSelf: false,
 		});
 	});

@@ -17,11 +17,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "./config.ts";
 import { createDaemon, type DaemonInstance } from "./daemon.ts";
+import { createTestToken } from "./test-utils/auth-helper.ts";
 
 describe("P2.5: POST /projects rolls back registration on plugin init failure", () => {
 	let tempDir: string;
 	let dataDir: string;
 	let daemon: DaemonInstance;
+	let token: string;
+
+	function authedFetch(req: Request) {
+		const headers = new Headers(req.headers);
+		headers.set("Authorization", `Bearer ${token}`);
+		return daemon.fetch(
+			new Request(req.url, {
+				method: req.method,
+				headers,
+				body:
+					req.method === "GET" || req.method === "HEAD" ? undefined : req.body,
+			}),
+		);
+	}
 
 	beforeAll(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-r7-rollback-"));
@@ -64,9 +79,9 @@ describe("P2.5: POST /projects rolls back registration on plugin init failure", 
 			"utf-8",
 		);
 
+		token = await createTestToken(join(dataDir, "auth.json"));
 		daemon = await createDaemon({
 			dataDir,
-			autoInitAuth: false,
 			autoRegisterSelf: false,
 			installRoot,
 		});
@@ -84,11 +99,11 @@ describe("P2.5: POST /projects rolls back registration on plugin init failure", 
 		const targetPath = join(tempDir, "exists");
 		await mkdir(targetPath, { recursive: true });
 
-		const before = await daemon.fetch(new Request("http://localhost/projects"));
+		const before = await authedFetch(new Request("http://localhost/projects"));
 		const beforeList = (await before.json()) as Array<{ path: string }>;
 		expect(beforeList.find((p) => p.path === targetPath)).toBeUndefined();
 
-		const res = await daemon.fetch(
+		const res = await authedFetch(
 			new Request("http://localhost/projects", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
@@ -101,7 +116,7 @@ describe("P2.5: POST /projects rolls back registration on plugin init failure", 
 
 		// The key invariant: the registry is clean. If this test fails, the
 		// rollback was skipped and the user sees a ghost project.
-		const after = await daemon.fetch(new Request("http://localhost/projects"));
+		const after = await authedFetch(new Request("http://localhost/projects"));
 		const afterList = (await after.json()) as Array<{ path: string }>;
 		expect(afterList.find((p) => p.path === targetPath)).toBeUndefined();
 	});

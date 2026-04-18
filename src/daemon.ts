@@ -31,7 +31,6 @@ import { Hono } from "hono";
 import {
 	bumpSecretVersion,
 	ensureAuthInitialized,
-	hasJwtSecret,
 	signStreamToken,
 	verifyJWT,
 } from "./auth.ts";
@@ -150,15 +149,51 @@ function maskAuthGroup(group: AuthGroup): AuthGroup {
 
 /**
  * Return a config with every `authGroups.*` credential field masked.
- * Used on GET /config/global etc. so a valid token can no longer be
- * traded for raw API keys.
+ * Used on GET /config/global and on `repo`/`local`/`resolved` views of
+ * the three-layer config so a valid token can no longer be traded for
+ * raw API keys — even if a malicious actor wrote `authGroups` into a
+ * layer that's not supposed to carry credentials (Audit R7 P1.4).
+ *
+ * Accepts both `MatrixConfig` (full) and `Partial<MatrixConfig>` (project
+ * layers where `authGroups` is typed as absent but could exist on disk).
+ * When `authGroups` is not present on the input, returns a shallow clone
+ * unchanged.
  */
-function maskConfig(config: MatrixConfig): MatrixConfig {
+function maskConfig<T extends Partial<MatrixConfig>>(config: T): T {
+	if (!config.authGroups) return { ...config };
 	const maskedGroups: Record<string, AuthGroup> = {};
 	for (const [name, group] of Object.entries(config.authGroups)) {
 		maskedGroups[name] = maskAuthGroup(group);
 	}
 	return { ...config, authGroups: maskedGroups };
+}
+
+/**
+ * Reject any PATCH body that tries to set credential fields on a per-project
+ * config layer (repo or local). Returns an error message if a forbidden
+ * field is present, null otherwise.
+ *
+ * `authGroups` is marked global-only in `GLOBAL_ONLY_FIELDS` — allowing it
+ * through would be a credential-injection surface: an attacker who can PATCH
+ * a project's config with their own authGroups could have every subsequent
+ * agent run use their credentials (Audit R7 P1.4).
+ *
+ * `defaultAuth` is technically per-project legal (a project can pick which
+ * existing auth group to use) but is rejected here defensively — the CLI
+ * already refused it pre-server, and the audit report called it out
+ * alongside `authGroups` as part of the credential-layer attack surface.
+ *
+ * The CLI has the same check client-side (`src/cli.ts`), but defense of
+ * record must not rely on a friendly client.
+ */
+function rejectCredentialFields(body: Partial<MatrixConfig>): string | null {
+	if (body.authGroups != null) {
+		return "authGroups can only be set in global config (use PATCH /config/global)";
+	}
+	if (body.defaultAuth != null) {
+		return "defaultAuth can only be set in global config (use PATCH /config/global)";
+	}
+	return null;
 }
 
 /** `true` if `incoming` is the masked form of `existing`. */
@@ -397,13 +432,6 @@ export async function createDaemon(opts: {
 	dataDir: string;
 	globalConfigPath?: string;
 	/**
-	 * Eagerly initialize `auth.json` with a jwtSecret + secretVersion.
-	 * Default true in production (closes the "no-secret" window between
-	 * daemon boot and `mxd auth`). Tests pass `false` so they don't
-	 * auto-enable auth and have to pass a token on every request.
-	 */
-	autoInitAuth?: boolean;
-	/**
 	 * Acquire a filesystem lock at `<dataDir>/.mxd.lock` to prevent two
 	 * daemons from sharing the same dataDir. Enabled by default in production
 	 * (see `if (import.meta.main)`); tests disable it because they spin up
@@ -428,7 +456,6 @@ export async function createDaemon(opts: {
 		: () => {};
 	const globalConfigPath =
 		opts.globalConfigPath ?? join(dataDir, "config.json");
-	const autoInitAuth = opts.autoInitAuth ?? true;
 
 	// Load global config
 	let globalConfig: MatrixConfig;
@@ -1054,20 +1081,19 @@ export async function createDaemon(opts: {
 		);
 	}
 
-	// ── Bootstrap auth eagerly ──
-	// Historically the daemon ran with no `auth.json` until the user ran
-	// `mxd auth`, opening a "no-secret" window where ANY LAN-reachable
-	// client could hit the daemon (Audit G H2). Close that window by
-	// creating `jwtSecret` + `secretVersion` on first boot.
+	// ── Bootstrap auth ──
+	// Auth is ALWAYS on (Audit R7 P1.3). Every daemon boot initializes
+	// `auth.json` with a jwtSecret + secretVersion if absent; the "no
+	// secret yet" / "auth-disabled" middleware fallback no longer exists.
+	// An unauthenticated client cannot observe or mutate any protected
+	// endpoint regardless of installation state.
 	const authPath = join(dataDir, "auth.json");
-	if (autoInitAuth) {
-		const { createdSecret } = await ensureAuthInitialized(authPath);
-		if (createdSecret) {
-			console.log(
-				"[auth] Initialized auth.json with a fresh jwtSecret. " +
-					"Run `mxd auth <public_key>` to authenticate a browser session.",
-			);
-		}
+	const { createdSecret } = await ensureAuthInitialized(authPath);
+	if (createdSecret) {
+		console.log(
+			"[auth] Initialized auth.json with a fresh jwtSecret. " +
+				"Run `mxd auth <public_key>` to authenticate a browser session.",
+		);
 	}
 
 	// ── Hono app with routes ──
@@ -1077,11 +1103,13 @@ export async function createDaemon(opts: {
 	// Auth middleware.
 	//
 	// Paths skipped: SPA root (served anonymously so the login page can
-	// load), compiled shell/vendor bundles, and the two exact auth
-	// endpoints that must work pre-auth (status + logout).
+	// load), compiled shell/vendor bundles, and `/auth/status` (the only
+	// endpoint that must work pre-auth so the login page can render).
 	// Previously `/auth/*` was prefix-matched — any future worker route
 	// under `/auth/*` would have been publicly reachable (Audit J H1).
-	const SKIP_EXACT = new Set(["/", "/auth/status", "/auth/logout"]);
+	// `/auth/logout` was previously on this list — removed so an anonymous
+	// caller can no longer trigger a secretVersion bump (Audit R7 P1.1).
+	const SKIP_EXACT = new Set(["/", "/auth/status"]);
 	app.use("*", async (c, next) => {
 		const path = c.req.path;
 		const skipAuth =
@@ -1090,20 +1118,23 @@ export async function createDaemon(opts: {
 			path.startsWith("/app/");
 
 		if (!skipAuth) {
-			if (await hasJwtSecret(authPath)) {
-				const token = extractBearerToken(
-					c.req.header("authorization"),
-					c.req.query("token"),
-				);
-				// `/events` accepts only stream tokens so the long-lived
-				// session token never rides in the URL.
-				const allowed =
-					path === "/events"
-						? (["stream"] as const)
-						: (["cli", "session"] as const);
-				if (!token || !(await verifyJWT(authPath, token, allowed))) {
-					return c.json({ error: "Unauthorized" }, 401);
-				}
+			// Auth is ALWAYS on after Audit R7 P1.3 — no `hasJwtSecret`
+			// branch that silently serves unauthenticated when auth.json is
+			// missing/empty/corrupt. ensureAuthInitialized ran at boot; if
+			// auth.json later turns corrupt, readAuthData throws → this
+			// handler returns 500. Never 200-as-anonymous.
+			const token = extractBearerToken(
+				c.req.header("authorization"),
+				c.req.query("token"),
+			);
+			// `/events` accepts only stream tokens so the long-lived
+			// session token never rides in the URL.
+			const allowed =
+				path === "/events"
+					? (["stream"] as const)
+					: (["cli", "session"] as const);
+			if (!token || !(await verifyJWT(authPath, token, allowed))) {
+				return c.json({ error: "Unauthorized" }, 401);
 			}
 		}
 		await next();
@@ -1136,17 +1167,20 @@ export async function createDaemon(opts: {
 	});
 
 	// Auth routes
+	//
+	// `/auth/status` is on SKIP_EXACT so the login page can render before
+	// the browser has a token. After P1.3 auth is ALWAYS on, so `enabled`
+	// is always `true` — the field stays in the response shape for
+	// backward compatibility with older browser bundles still reading it.
 	app.get("/auth/status", async (c) => {
-		const hasSecret = await hasJwtSecret(authPath);
 		const token = extractBearerToken(
 			c.req.header("authorization"),
 			c.req.query("token"),
 		);
-		const hasValidToken = token
+		const authenticated = token
 			? (await verifyJWT(authPath, token, ["cli", "session"])) !== null
 			: false;
-		const authenticated = hasValidToken || !hasSecret;
-		return c.json({ enabled: hasSecret, authenticated });
+		return c.json({ enabled: true, authenticated });
 	});
 
 	/**
@@ -1155,12 +1189,10 @@ export async function createDaemon(opts: {
 	 * Requires a valid session/CLI token — passes the auth middleware
 	 * before landing here, then hard-rotates the version.
 	 *
-	 * NOTE: not on SKIP_EXACT — calling this without a token returns 401,
-	 * which is intentional (an anonymous client cannot log anyone out).
+	 * Not on SKIP_EXACT (Audit R7 P1.1): an anonymous caller is rejected
+	 * by the middleware with 401 before reaching this handler.
 	 */
 	app.post("/auth/logout", async (c) => {
-		// If auth isn't set up, logout is meaningless but shouldn't 500.
-		if (!(await hasJwtSecret(authPath))) return c.json({ ok: true });
 		const newVersion = await bumpSecretVersion(authPath);
 		return c.json({ ok: true, secretVersion: newVersion });
 	});
@@ -1172,10 +1204,6 @@ export async function createDaemon(opts: {
 	 * never appears in URLs / proxy logs / browser history.
 	 */
 	app.post("/auth/stream-token", async (c) => {
-		// If auth isn't set up, no token is needed anywhere — return empty.
-		if (!(await hasJwtSecret(authPath))) {
-			return c.json({ token: null });
-		}
 		const token = await signStreamToken(authPath);
 		return c.json({ token });
 	});
@@ -1404,6 +1432,8 @@ export async function createDaemon(opts: {
 			"./config.ts"
 		);
 		const partial = await c.req.json<Partial<MatrixConfig>>();
+		const rejection = rejectCredentialFields(partial);
+		if (rejection) return c.json({ error: rejection }, 400);
 		const existing = await loadProjectRepoConfig(project.path);
 		const merged = { ...existing };
 		for (const [k, v] of Object.entries(partial)) {
@@ -1427,13 +1457,15 @@ export async function createDaemon(opts: {
 			loadProjectLocalConfig(dataDir, project.id),
 		]);
 		const resolved = resolveConfig(globalConfig, repoConfig, localConfig);
-		// Only `global` actually carries credentials (AuthGroup record);
-		// project layers override non-auth fields only. Masking the
-		// `global` and `resolved` views is sufficient.
+		// Every layer is masked — project layers are TYPED as credential-free
+		// (`ProjectConfig` excludes `authGroups`), but the on-disk JSON is
+		// untyped and a malicious actor could have injected credentials into
+		// `.mxd/config.json` or `<dataDir>/projects/<id>/config.json` by hand.
+		// Masking unconditionally closes that leak (Audit R7 P1.4).
 		return c.json({
 			global: maskConfig(globalConfig),
-			repo: repoConfig,
-			local: localConfig,
+			repo: maskConfig(repoConfig),
+			local: maskConfig(localConfig),
 			resolved: maskConfig(resolved),
 		});
 	});
@@ -1443,7 +1475,7 @@ export async function createDaemon(opts: {
 		if (!project) return c.json({ error: "Project not found" }, 404);
 		const { loadProjectLocalConfig } = await import("./config.ts");
 		const cfg = await loadProjectLocalConfig(dataDir, project.id);
-		return c.json(cfg);
+		return c.json(maskConfig(cfg));
 	});
 
 	app.patch("/projects/:id/config", async (c) => {
@@ -1453,6 +1485,8 @@ export async function createDaemon(opts: {
 			"./config.ts"
 		);
 		const partial = await c.req.json<Partial<MatrixConfig>>();
+		const rejection = rejectCredentialFields(partial);
+		if (rejection) return c.json({ error: rejection }, 400);
 		const existing = await loadProjectLocalConfig(dataDir, project.id);
 		const merged = { ...existing };
 		for (const [k, v] of Object.entries(partial)) {
@@ -1482,7 +1516,6 @@ export async function createDaemon(opts: {
 			c.req.header("authorization"),
 			c.req.query("token"),
 		);
-		const authEnabled = await hasJwtSecret(authPath);
 
 		// EventSource sends Last-Event-ID on reconnect
 		const lastEventIdHeader = request.headers.get("Last-Event-ID");
@@ -1587,15 +1620,14 @@ export async function createDaemon(opts: {
 					// (logout-all rotates secretVersion → every stream token
 					// becomes invalid on next verify). Frontend's watchdog
 					// then reconnects, requesting a fresh stream token.
-					if (authEnabled) {
-						if (
-							!streamToken ||
-							!(await verifyJWT(authPath, streamToken, ["stream"]))
-						) {
-							clearInterval(heartbeat);
-							closeStream("token_expired");
-							return;
-						}
+					// Auth is always on (P1.3), so this runs unconditionally.
+					if (
+						!streamToken ||
+						!(await verifyJWT(authPath, streamToken, ["stream"]))
+					) {
+						clearInterval(heartbeat);
+						closeStream("token_expired");
+						return;
 					}
 					try {
 						controller.enqueue(

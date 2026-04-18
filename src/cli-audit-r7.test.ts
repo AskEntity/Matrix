@@ -246,7 +246,6 @@ describe("P2.6: `mxd init` rejects nonexistent path", () => {
 
 		const daemon = await createDaemon({
 			dataDir,
-			autoInitAuth: false,
 			autoRegisterSelf: false,
 			installRoot,
 		});

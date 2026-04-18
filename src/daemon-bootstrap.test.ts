@@ -9,6 +9,8 @@
  * Matrix's "production mode" semantic is fully plugin-owned. Daemon exposes
  * only plugin-agnostic facts via GET /global-context. These tests assert the
  * plugin-owned behavior end-to-end (daemon doesn't leak matrix concepts).
+ *
+ * Auth is always on (Audit R7 P1.3); tests mint a session token per daemon.
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
@@ -17,6 +19,24 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "./config.ts";
 import { createDaemon, type DaemonInstance } from "./daemon.ts";
+import { createTestToken } from "./test-utils/auth-helper.ts";
+
+function authed(daemon: DaemonInstance, token: string) {
+	return (req: Request) => {
+		const headers = new Headers(req.headers);
+		if (!headers.has("authorization")) {
+			headers.set("Authorization", `Bearer ${token}`);
+		}
+		return daemon.fetch(
+			new Request(req.url, {
+				method: req.method,
+				headers,
+				body:
+					req.method === "GET" || req.method === "HEAD" ? undefined : req.body,
+			}),
+		);
+	};
+}
 
 describe("auto-register at startup", () => {
 	let tempDir: string;
@@ -32,9 +52,11 @@ describe("auto-register at startup", () => {
 		const dataDir = join(tempDir, ".mxd");
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		daemon = await createDaemon({ dataDir, autoInitAuth: false });
+		const token = await createTestToken(join(dataDir, "auth.json"));
+		daemon = await createDaemon({ dataDir });
+		const fetch = authed(daemon, token);
 
-		const res = await daemon.fetch(new Request("http://localhost/projects"));
+		const res = await fetch(new Request("http://localhost/projects"));
 		const projects = await res.json();
 		const matrixRoot = resolve(join(__dirname, ".."));
 		const found = projects.find(
@@ -62,16 +84,15 @@ describe("global-context endpoint", () => {
 		await mkdir(fakeInstall, { recursive: true });
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
+		const token = await createTestToken(join(dataDir, "auth.json"));
 		daemon = await createDaemon({
 			dataDir,
-			autoInitAuth: false,
 			autoRegisterSelf: false,
 			installRoot: fakeInstall,
 		});
+		const fetch = authed(daemon, token);
 
-		const res = await daemon.fetch(
-			new Request("http://localhost/global-context"),
-		);
+		const res = await fetch(new Request("http://localhost/global-context"));
 		expect(res.status).toBe(200);
 		const ctx = await res.json();
 		expect(ctx.installRoot).toBe(fakeInstall);
@@ -111,14 +132,16 @@ describe("4-step hook flow", () => {
 			]),
 		);
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
+
+		const token = await createTestToken(join(dataDir, "auth.json"));
 		daemon = await createDaemon({
 			dataDir,
-			autoInitAuth: false,
 			autoRegisterSelf: false,
 		});
+		const fetch = authed(daemon, token);
 
 		// POST new user project
-		const res = await daemon.fetch(
+		const res = await fetch(
 			new Request("http://localhost/projects", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
@@ -210,16 +233,17 @@ describe("zero-plugin shell rendering", () => {
 
 		daemon = await createDaemon({
 			dataDir,
-			autoInitAuth: false,
 			autoRegisterSelf: false,
 		});
 
+		// SPA root is on SKIP_EXACT — anonymous access works.
 		const res = await daemon.fetch(new Request("http://localhost/"));
 		expect(res.status).toBe(200);
 		const html = await res.text();
 		expect(html).toContain("<!DOCTYPE html>");
 		expect(html).toContain("/app/web/main.js");
 
+		// /auth/status is on SKIP_EXACT too — login page needs it pre-auth.
 		const authRes = await daemon.fetch(
 			new Request("http://localhost/auth/status"),
 		);
