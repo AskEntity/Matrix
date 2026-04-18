@@ -1294,6 +1294,185 @@ describe("event-handler compact_marker savedTokens", () => {
 });
 
 // ============================================================
+// compact_marker clear ordering (Fix D, 2026-04-18)
+//
+// Invariant: deferredMessages mutations (set/delete/clear) must all happen
+// in the same phase — IMMEDIATELY inside processEvent, before return. If
+// compact_marker defers its clear() to sideEffects while the `message` case
+// continues to set() immediately, then a batch
+//   [compact_marker, message_A, message_B]
+// wipes A and B after they were correctly staged. Post-compact messages
+// silently disappear from the pending banner.
+// ============================================================
+
+describe("event-handler compact_marker clear ordering (Fix D)", () => {
+	it("processEventBatch: messages AFTER compact_marker survive the clear", () => {
+		const { deps } = makeDeps();
+
+		let capturedPending: Array<{ id: string; text: string }> = [];
+		(deps as Record<string, unknown>).setPendingMessages = mock(
+			(updater: React.SetStateAction<Array<{ id: string; text: string }>>) => {
+				capturedPending =
+					typeof updater === "function" ? updater(capturedPending) : updater;
+			},
+		);
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "compact_marker",
+				savedTokens: 10000,
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "message",
+				id: "msg-A",
+				body: {
+					source: "user",
+					id: "msg-A",
+					ts: 1100,
+					content: "message A (post-compact)",
+				},
+				taskId: "task-1",
+				ts: 1100,
+			},
+			{
+				type: "message",
+				id: "msg-B",
+				body: {
+					source: "user",
+					id: "msg-B",
+					ts: 1200,
+					content: "message B (post-compact)",
+				},
+				taskId: "task-1",
+				ts: 1200,
+			},
+			// No messages_consumed — both should stay in pending banner
+		] satisfies IncomingEvent[]);
+
+		// Both messages must appear in the pending banner. If clear() were still
+		// deferred to sideEffects, it would run AFTER the loop staged A and B,
+		// wiping them → capturedPending.length would be 0.
+		expect(capturedPending.length).toBe(2);
+		const ids = capturedPending.map((p) => p.id).sort();
+		expect(ids).toEqual(["msg-A", "msg-B"]);
+	});
+
+	it("processEventBatch: pre-compact messages are correctly cleared", () => {
+		const { deps } = makeDeps();
+
+		let capturedPending: Array<{ id: string; text: string }> = [];
+		(deps as Record<string, unknown>).setPendingMessages = mock(
+			(updater: React.SetStateAction<Array<{ id: string; text: string }>>) => {
+				capturedPending =
+					typeof updater === "function" ? updater(capturedPending) : updater;
+			},
+		);
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "message",
+				id: "msg-pre",
+				body: {
+					source: "user",
+					id: "msg-pre",
+					ts: 900,
+					content: "message BEFORE compact",
+				},
+				taskId: "task-1",
+				ts: 900,
+			},
+			{
+				type: "compact_marker",
+				savedTokens: 10000,
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "message",
+				id: "msg-post",
+				body: {
+					source: "user",
+					id: "msg-post",
+					ts: 1100,
+					content: "message AFTER compact",
+				},
+				taskId: "task-1",
+				ts: 1100,
+			},
+		] satisfies IncomingEvent[]);
+
+		// Only the post-compact message survives. The pre-compact one was
+		// cleared by compact_marker (legitimate — that's what compact means).
+		expect(capturedPending.length).toBe(1);
+		expect(capturedPending[0]?.id).toBe("msg-post");
+	});
+
+	it("processEventBatch: consumed pre-compact + post-compact → only post-compact pending", () => {
+		const { deps } = makeDeps();
+
+		let capturedPending: Array<{ id: string; text: string }> = [];
+		(deps as Record<string, unknown>).setPendingMessages = mock(
+			(updater: React.SetStateAction<Array<{ id: string; text: string }>>) => {
+				capturedPending =
+					typeof updater === "function" ? updater(capturedPending) : updater;
+			},
+		);
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "message",
+				id: "msg-pre",
+				body: {
+					source: "user",
+					id: "msg-pre",
+					ts: 900,
+					content: "pre-compact, consumed",
+				},
+				taskId: "task-1",
+				ts: 900,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-pre"],
+				taskId: "task-1",
+				ts: 950,
+			},
+			{
+				type: "compact_marker",
+				savedTokens: 10000,
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "message",
+				id: "msg-post",
+				body: {
+					source: "user",
+					id: "msg-post",
+					ts: 1100,
+					content: "post-compact, unconsumed",
+				},
+				taskId: "task-1",
+				ts: 1100,
+			},
+		] satisfies IncomingEvent[]);
+
+		// msg-pre was consumed (materialized as a log entry) before compact;
+		// msg-post is unconsumed → only it appears in pending.
+		expect(capturedPending.length).toBe(1);
+		expect(capturedPending[0]?.id).toBe("msg-post");
+	});
+});
+
+// ============================================================
 // Forked session / per-session event processing
 // ============================================================
 
