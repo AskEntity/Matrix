@@ -133,6 +133,7 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 		pendingClarifications: new Map<string, PendingClarification[]>(),
 		eventStores: new Map(),
 		streamingText: new Map(),
+		streamingThinking: new Map(),
 		agentLoopPromises: new Map(),
 		scopeOpts: new Map(),
 		requestCount: 0,

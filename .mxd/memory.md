@@ -1239,3 +1239,37 @@ That asymmetry coupled the root view's filter behavior to whether `rootNodeId` s
 - `web/Plugin-targetNodeId.test.tsx` — mounts real Plugin against a seeded `tree.json`, waits for `useTasks` to populate, asserts InputBar's textarea placeholder reads `Message to "Orchestrator"…`. Mutation-verified: reverting the `Plugin.tsx` effect to the old branching form makes this test fail (placeholder stays at generic "Send a message…").
 
 **Lesson**: "root is a special view that needs a sentinel" is a UI-level story with no data-model counterpart. Once the UI speaks the same id language as the data layer, both filter paths collapse to one and a whole class of state-timing races disappears.
+
+## Partial event monotonic extend (Fix B, 2026-04-18)
+
+Two bugs fixed together by one invariant: **partial events are monotonic snapshots of content that only grows; clients extend to the longer of {current state, snapshot} and never shrink**.
+
+### Bug 1 — thinking refresh-loss
+`text_delta` events have `ctx.streamingText` buffer + synthetic `assistant_text partial:true` injection in the batch-events endpoint. Thinking had nothing. Refresh mid-stream: text survived (partial snapshot brought it back), thinking didn't (thinking_delta events are ephemeral, only post-refresh deltas accumulated).
+
+**Fix**: mirror streamingText exactly. `ctx.streamingThinking: Map<taskId, string>` updated in `updateStreamingBuffers` (extracted from the emit side-effect to `src/runtime/agent-lifecycle.ts` as a standalone exported function for unit testability). `thinking_delta` appends; `thinking` (final) clears; `runAgentForNode` finally clears on session end. Routes (`tasks.ts` + `projects.ts`) inject synthetic `thinking partial:true` alongside existing `assistant_text partial:true`.
+
+### Bug 2 — partial + delta race on reconnect
+`handleReconnect` does BOTH Last-Event-ID SSE resume AND REST refetch. Two paths deliver via different semantics:
+- SSE deltas → `merge_thinking` / `merge_text` (append)
+- REST partial snapshot → `replace_thinking` / `replace_text` (clobber)
+
+Race cases: (a) live "ABCDEF" + stale REST "ABCDE" → replace overwrites → data loss. (b) REST "ABC" + SSE deltas append "DEF" → "ABCDEF" correct but if SSE already had "ABCDEF" then "ABCDEFDEF" duplicated.
+
+**Fix**: new update ops `extend_text` / `extend_thinking` in `.mxd/plugin/web/event-handler.ts`. For events marked `partial: true`, emit extend ops instead of replace ops. Extend semantics:
+- snapshot longer AND snapshot.startsWith(existing) → adopt snapshot
+- snapshot shorter or equal → no-op (existing is ahead)
+- snapshot longer BUT prefix mismatch → prefer longer + `console.warn` (content drift, shouldn't happen with strictly additive deltas)
+
+Final (non-partial) events still use `replace_text` / `replace_thinking` — they're authoritative, not snapshots.
+
+### Event type extension
+`Event.assistant_text` and `Event.thinking` both gained optional `partial?: boolean` field. Never persisted to JSONL (the synthetic events are route-only injections); never produced by provider.
+
+### Why "extend" not "replace" even for thinking
+Thinking needs `signature` for Anthropic prefix byte-identity on restart. But partial events have empty signature (we don't know the real signature until the final block arrives). Using replace semantics for partial thinking would overwrite the signature; extend only touches `thinking`. When the final thinking event arrives, `replace_thinking` installs both final text AND signature.
+
+### Test coverage
+- Server (`src/runtime.test.ts`): 6 new tests — partial thinking synthesized, cleared on final, per-task + project-level endpoints, thinking+text together, `updateStreamingBuffers` unit tests for each spec type.
+- Frontend (`src/plugin-event-handler.test.ts`): 20 new tests — every extend case (longer/shorter/equal/mismatch/no-existing/interleave), merge+extend+merge sequences, SSE+REST race scenarios, final-replaces-partial-replaces-extends.
+- **Mutation-verified**: flipping `partial` check in processEvent → 3 integration tests fail. Removing `length <=` guard in extend → 2 tests fail. Deleting `thinking_delta` branch in `updateStreamingBuffers` → 2 tests fail.

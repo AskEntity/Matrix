@@ -28,6 +28,26 @@ type UpdateOp =
 			ts?: number;
 	  }
 	| {
+			/**
+			 * Monotonic extend for partial assistant_text snapshots. Snapshot only
+			 * grows (deltas never retract). Semantics:
+			 *   - if snapshot extends existing content (prefix + longer): adopt
+			 *     snapshot
+			 *   - if snapshot is shorter or equal: no-op (existing is ahead)
+			 *   - if prefix mismatch and snapshot is longer: prefer snapshot + warn
+			 *     (content drift — live deltas diverged from REST snapshot, which
+			 *     shouldn't happen but we pick the longer to minimize data loss)
+			 *
+			 * Used for the REST batch-events path that injects partial events; the
+			 * live SSE path uses merge_text for incremental deltas. Both paths can
+			 * race: extend is the only shape that's safe in either direction.
+			 */
+			type: "extend_text";
+			taskId: string | undefined;
+			text: string;
+			ts?: number;
+	  }
+	| {
 			type: "merge_thinking";
 			taskId: string | undefined;
 			text: string;
@@ -38,6 +58,13 @@ type UpdateOp =
 			taskId: string | undefined;
 			text: string;
 			signature: string;
+			ts?: number;
+	  }
+	| {
+			/** Monotonic extend for partial thinking snapshots — see extend_text. */
+			type: "extend_thinking";
+			taskId: string | undefined;
+			text: string;
 			ts?: number;
 	  }
 	| {
@@ -527,7 +554,26 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			}
 
 			case "thinking": {
-				// Persisted thinking block — replace streaming thinking with final content
+				// Two shapes arrive at this case:
+				//   1) Final persisted thinking block → authoritative, replace_thinking
+				//   2) Synthetic `partial:true` snapshot from the batch-events REST
+				//      path while streaming is still in progress → monotonic
+				//      extend_thinking (never shrink state, tolerate races with live
+				//      thinking_delta deltas).
+				if ((msg as { partial?: boolean }).partial) {
+					return {
+						entries: [],
+						updates: [
+							{
+								type: "extend_thinking",
+								taskId: msg.taskId,
+								text: msg.thinking,
+								ts: msg.ts,
+							},
+						],
+						sideEffects: NO_SIDE_EFFECTS,
+					};
+				}
 				return {
 					entries: [],
 					updates: [
@@ -566,6 +612,23 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			case "assistant_text": {
 				if (!msg.content) {
 					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
+				}
+				// Parallel to case "thinking": partial:true snapshots from the
+				// batch-events REST path use monotonic extend semantics so they
+				// can't overwrite live text_delta content that's already ahead.
+				if ((msg as { partial?: boolean }).partial) {
+					return {
+						entries: [],
+						updates: [
+							{
+								type: "extend_text",
+								taskId: msg.taskId,
+								text: msg.content,
+								ts: msg.ts,
+							},
+						],
+						sideEffects: NO_SIDE_EFFECTS,
+					};
 				}
 				return {
 					entries: [],
@@ -987,6 +1050,85 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						type: "thinking",
 						thinking: op.text,
 						signature: op.signature,
+						taskId: op.taskId ?? "",
+						ts: op.ts ?? Date.now(),
+					}),
+				];
+			}
+			case "extend_text": {
+				// Monotonic extend: adopt snapshot only when it grows state; never
+				// shrink. Safe against live merge_text deltas that may have already
+				// advanced past the snapshot (SSE + REST-snapshot race on refresh).
+				for (let i = entries.length - 1; i >= 0; i--) {
+					const e = entries[i];
+					if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
+						const existing = e.content;
+						if (op.text.length <= existing.length) {
+							// Snapshot is stale or equal — existing is ahead, keep it.
+							return entries;
+						}
+						if (!op.text.startsWith(existing)) {
+							// Content drift — prefixes don't match. Prefer the longer
+							// string to minimize data loss, but warn because this
+							// shouldn't happen when deltas are strictly additive.
+							console.warn("[extend_text] content drift, preferring longer", {
+								existingLen: existing.length,
+								newLen: op.text.length,
+							});
+						}
+						const updated = [...entries];
+						updated[i] = { ...e, content: op.text };
+						return updated;
+					}
+					// Skip thinking entries — they interleave with text in the same turn
+					if (e && e.type === "thinking" && e.taskId === op.taskId) continue;
+					if (e && getLogTaskId(e) === op.taskId && e.type !== "assistant_text")
+						break;
+				}
+				return [
+					...entries,
+					createLogEntry({
+						type: "assistant_text",
+						content: op.text,
+						taskId: op.taskId ?? "",
+						ts: op.ts ?? Date.now(),
+					}),
+				];
+			}
+			case "extend_thinking": {
+				// Monotonic extend: see extend_text for semantics.
+				for (let i = entries.length - 1; i >= 0; i--) {
+					const e = entries[i];
+					if (e && e.type === "thinking" && e.taskId === op.taskId) {
+						const existing = (e as unknown as { thinking: string }).thinking;
+						if (op.text.length <= existing.length) {
+							return entries;
+						}
+						if (!op.text.startsWith(existing)) {
+							console.warn(
+								"[extend_thinking] content drift, preferring longer",
+								{
+									existingLen: existing.length,
+									newLen: op.text.length,
+								},
+							);
+						}
+						const updated = [...entries];
+						updated[i] = { ...e, thinking: op.text };
+						return updated;
+					}
+					// Skip assistant_text — it interleaves with thinking in the same turn
+					if (e && e.type === "assistant_text" && e.taskId === op.taskId)
+						continue;
+					if (e && getLogTaskId(e) === op.taskId && e.type !== "thinking")
+						break;
+				}
+				return [
+					...entries,
+					createLogEntry({
+						type: "thinking",
+						thinking: op.text,
+						signature: "",
 						taskId: op.taskId ?? "",
 						ts: op.ts ?? Date.now(),
 					}),
