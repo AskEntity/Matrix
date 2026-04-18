@@ -364,6 +364,9 @@ export async function createDaemon(opts: {
 	 * Tests use a short override so the "hung plugin" path exits quickly.
 	 */
 	workerInitTimeoutMs?: number;
+	/** Auto-register the matrix install directory as a project on startup.
+	 *  Default true. Tests pass false for clean state. */
+	autoRegisterSelf?: boolean;
 }): Promise<DaemonInstance> {
 	const { dataDir } = opts;
 	const releaseDataDirLock = opts.lockDataDir
@@ -735,6 +738,7 @@ export async function createDaemon(opts: {
 							.map((p) => ({ id: p.id, name: p.name, path: p.path })),
 						pluginRuntimePath,
 						dataRoot: pluginDataRoot,
+						globalContext,
 					});
 				}
 				if (msg.type === "ready") {
@@ -832,10 +836,12 @@ export async function createDaemon(opts: {
 		});
 	}
 
-	// ── Discover plugins ──
+	// ── Auto-register matrix (fresh install bootstrap) ──
 
 	const pm = new ProjectManager(dataDir);
 	await pm.load();
+
+	// ── Discover plugins ──
 
 	const registeredPlugins: RegisteredPlugin[] = [];
 
@@ -873,6 +879,61 @@ export async function createDaemon(opts: {
 	const collision = checkDataRootCollisions(registeredPlugins);
 	if (collision) {
 		throw new Error(collision);
+	}
+
+	// ── Global context — daemon-computed facts, not user config ──
+	const { realpathSync: rps } = require("node:fs") as typeof import("node:fs");
+	const binaryPath = rps(new URL(import.meta.url).pathname);
+	const globalContext = {
+		installRoot: resolve(join(binaryPath, "..", "..")),
+		gitHash: GIT_HASH !== "unknown" ? GIT_HASH : null,
+		version: VERSION,
+	};
+
+	// ── Auto-register matrix (fresh install bootstrap) ──
+	if (opts.autoRegisterSelf !== false) {
+		const { installRoot } = globalContext;
+		if (existsSync(join(installRoot, ".mxd")) && !pm.list().some((p) => resolve(p.path) === installRoot)) {
+			try {
+				await pm.init(installRoot);
+				console.log(`[daemon] Auto-registered: ${installRoot}`);
+			} catch (e) {
+				console.warn("[daemon] Auto-registration failed:", e);
+			}
+		}
+	}
+
+	// ── Production mode detection (before hooks) ──
+	// Install root without git = production install. Mark it and skip hooks.
+	for (const project of pm.list()) {
+		if (resolve(project.path) === globalContext.installRoot && !globalContext.gitHash) {
+			const marker = join(dataDir, "projects", project.id, ".mxd.production");
+			if (!existsSync(marker)) {
+				mkdirSync(join(dataDir, "projects", project.id), { recursive: true });
+				writeFileSync(marker, "");
+				console.log(`[daemon] Marked ${project.name} as production mode`);
+			}
+		}
+	}
+
+	// ── Run onProjectInit hooks (4-step flow) ──
+	for (const plugin of registeredPlugins) {
+		if (!plugin.onProjectInit) continue;
+		const targetProjects = plugin.scope === "global"
+			? pm.list()
+			: pm.list().filter((p) => p.id === plugin.projectId);
+		for (const project of targetProjects) {
+			// Skip hooks for production-mode projects
+			const productionMarker = join(dataDir, "projects", project.id, ".mxd.production");
+			if (existsSync(productionMarker)) continue;
+			try {
+				await plugin.onProjectInit(project.path, {
+					isNew: !existsSync(join(project.path, ".git")),
+				});
+			} catch (e) {
+				console.warn(`[daemon] onProjectInit failed for ${plugin.name} on ${project.name}:`, e);
+			}
+		}
 	}
 
 	// ── Build web assets (React vendor + shell + plugins) ──
@@ -1054,6 +1115,7 @@ export async function createDaemon(opts: {
 		const projects = pm.list().map((p) => ({
 			...p,
 			pathExists: pm.checkPathExists(p.id),
+			productionMode: existsSync(join(p.path, ".mxd", ".production")),
 		}));
 		return c.json(projects);
 	});
@@ -1564,7 +1626,7 @@ if (import.meta.main) {
 	const dataDir = process.env.MXD_DATA_DIR ?? join(homedir(), ".mxd");
 	let daemon: DaemonInstance;
 	try {
-		daemon = await createDaemon({ dataDir, lockDataDir: true });
+		daemon = await createDaemon({ dataDir, lockDataDir: true, autoRegisterSelf: false });
 	} catch (e) {
 		// Most common failure mode: another daemon owns this dataDir.
 		// Surface a clean error instead of a scary stack trace.

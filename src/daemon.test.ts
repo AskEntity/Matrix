@@ -21,7 +21,7 @@ describe("daemon without plugins — bare daemon invariant", () => {
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
 		// No projects → no plugin directories → pure bare daemon
-		daemon = await createDaemon({ dataDir, autoInitAuth: false });
+		daemon = await createDaemon({ dataDir, autoInitAuth: false, autoRegisterSelf: false });
 	});
 
 	afterAll(async () => {
@@ -78,7 +78,7 @@ describe("daemon pipeline (legacy)", () => {
 		dataDir = join(tempDir, ".mxd");
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		daemon = await createDaemon({ dataDir, autoInitAuth: false });
+		daemon = await createDaemon({ dataDir, autoInitAuth: false, autoRegisterSelf: false });
 	});
 
 	afterAll(async () => {
@@ -175,7 +175,7 @@ describe("daemon with matrix plugin", () => {
 
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		daemon = await createDaemon({ dataDir, autoInitAuth: false });
+		daemon = await createDaemon({ dataDir, autoInitAuth: false, autoRegisterSelf: false });
 	});
 
 	afterAll(async () => {
@@ -254,7 +254,7 @@ describe("daemon startup — dataRoot hardening (Audit FU5)", () => {
 			`export default { name: "evil", scope: "global", dataRoot: "@/../etc" };`,
 		);
 		try {
-			await expect(createDaemon({ dataDir: ctx.dataDir })).rejects.toThrow(
+			await expect(createDaemon({ dataDir: ctx.dataDir, autoRegisterSelf: false })).rejects.toThrow(
 				/Invalid dataRoot/,
 			);
 		} finally {
@@ -267,7 +267,7 @@ describe("daemon startup — dataRoot hardening (Audit FU5)", () => {
 			`export default { name: "bad", scope: "global", dataRoot: "foo" };`,
 		);
 		try {
-			await expect(createDaemon({ dataDir: ctx.dataDir })).rejects.toThrow(
+			await expect(createDaemon({ dataDir: ctx.dataDir, autoRegisterSelf: false })).rejects.toThrow(
 				/Invalid dataRoot/,
 			);
 		} finally {
@@ -280,7 +280,7 @@ describe("daemon startup — dataRoot hardening (Audit FU5)", () => {
 			`export default { name: "empty", scope: "global", dataRoot: "" };`,
 		);
 		try {
-			await expect(createDaemon({ dataDir: ctx.dataDir })).rejects.toThrow(
+			await expect(createDaemon({ dataDir: ctx.dataDir, autoRegisterSelf: false })).rejects.toThrow(
 				/Invalid dataRoot/,
 			);
 		} finally {
@@ -293,7 +293,7 @@ describe("daemon startup — dataRoot hardening (Audit FU5)", () => {
 			`export default { name: "abs", scope: "global", dataRoot: "/etc" };`,
 		);
 		try {
-			await expect(createDaemon({ dataDir: ctx.dataDir })).rejects.toThrow(
+			await expect(createDaemon({ dataDir: ctx.dataDir, autoRegisterSelf: false })).rejects.toThrow(
 				/Invalid dataRoot/,
 			);
 		} finally {
@@ -306,7 +306,7 @@ describe("daemon startup — dataRoot hardening (Audit FU5)", () => {
 			`export default { name: "ok", scope: "global", dataRoot: "@" };`,
 		);
 		try {
-			const daemon = await createDaemon({ dataDir: ctx.dataDir });
+			const daemon = await createDaemon({ dataDir: ctx.dataDir, autoRegisterSelf: false });
 			expect(daemon.plugins.length).toBe(1);
 			await daemon.shutdown();
 		} finally {

@@ -135,6 +135,12 @@ export interface RuntimeConfig {
 	 * "@" = project root (default for Matrix), "@/plugin/<name>" = plugin subdirectory.
 	 */
 	dataRoot?: string;
+	/** Daemon-computed global context — not user config. */
+	globalContext?: {
+		installRoot: string;
+		gitHash: string | null;
+		version: string;
+	};
 }
 
 /**
