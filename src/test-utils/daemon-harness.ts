@@ -62,7 +62,11 @@ export async function createDaemonTestApp(opts?: {
 
 	await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-	const daemon = await createDaemon({ dataDir, autoInitAuth: false, autoRegisterSelf: false });
+	const daemon = await createDaemon({
+		dataDir,
+		autoInitAuth: false,
+		autoRegisterSelf: false,
+	});
 
 	return {
 		daemon,

@@ -20,11 +20,14 @@ import {
 	mkdirSync,
 	openSync,
 	readFileSync,
+	realpathSync,
 	unlinkSync,
+	writeFileSync,
 	writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
 import {
 	bumpSecretVersion,
@@ -882,8 +885,7 @@ export async function createDaemon(opts: {
 	}
 
 	// ── Global context — daemon-computed facts, not user config ──
-	const { realpathSync: rps } = require("node:fs") as typeof import("node:fs");
-	const binaryPath = rps(new URL(import.meta.url).pathname);
+	const binaryPath = realpathSync(fileURLToPath(import.meta.url));
 	const globalContext = {
 		installRoot: resolve(join(binaryPath, "..", "..")),
 		gitHash: GIT_HASH !== "unknown" ? GIT_HASH : null,
@@ -893,7 +895,10 @@ export async function createDaemon(opts: {
 	// ── Auto-register matrix (fresh install bootstrap) ──
 	if (opts.autoRegisterSelf !== false) {
 		const { installRoot } = globalContext;
-		if (existsSync(join(installRoot, ".mxd")) && !pm.list().some((p) => resolve(p.path) === installRoot)) {
+		if (
+			existsSync(join(installRoot, ".mxd")) &&
+			!pm.list().some((p) => resolve(p.path) === installRoot)
+		) {
 			try {
 				await pm.init(installRoot);
 				console.log(`[daemon] Auto-registered: ${installRoot}`);
@@ -906,7 +911,10 @@ export async function createDaemon(opts: {
 	// ── Production mode detection (before hooks) ──
 	// Install root without git = production install. Mark it and skip hooks.
 	for (const project of pm.list()) {
-		if (resolve(project.path) === globalContext.installRoot && !globalContext.gitHash) {
+		if (
+			resolve(project.path) === globalContext.installRoot &&
+			!globalContext.gitHash
+		) {
 			const marker = join(dataDir, "projects", project.id, ".mxd.production");
 			if (!existsSync(marker)) {
 				mkdirSync(join(dataDir, "projects", project.id), { recursive: true });
@@ -919,19 +927,28 @@ export async function createDaemon(opts: {
 	// ── Run onProjectInit hooks (4-step flow) ──
 	for (const plugin of registeredPlugins) {
 		if (!plugin.onProjectInit) continue;
-		const targetProjects = plugin.scope === "global"
-			? pm.list()
-			: pm.list().filter((p) => p.id === plugin.projectId);
+		const targetProjects =
+			plugin.scope === "global"
+				? pm.list()
+				: pm.list().filter((p) => p.id === plugin.projectId);
 		for (const project of targetProjects) {
 			// Skip hooks for production-mode projects
-			const productionMarker = join(dataDir, "projects", project.id, ".mxd.production");
+			const productionMarker = join(
+				dataDir,
+				"projects",
+				project.id,
+				".mxd.production",
+			);
 			if (existsSync(productionMarker)) continue;
 			try {
 				await plugin.onProjectInit(project.path, {
 					isNew: !existsSync(join(project.path, ".git")),
 				});
 			} catch (e) {
-				console.warn(`[daemon] onProjectInit failed for ${plugin.name} on ${project.name}:`, e);
+				console.warn(
+					`[daemon] onProjectInit failed for ${plugin.name} on ${project.name}:`,
+					e,
+				);
 			}
 		}
 	}
@@ -1115,7 +1132,9 @@ export async function createDaemon(opts: {
 		const projects = pm.list().map((p) => ({
 			...p,
 			pathExists: pm.checkPathExists(p.id),
-			productionMode: existsSync(join(p.path, ".mxd", ".production")),
+			productionMode: existsSync(
+				join(dataDir, "projects", p.id, ".mxd.production"),
+			),
 		}));
 		return c.json(projects);
 	});
@@ -1626,7 +1645,11 @@ if (import.meta.main) {
 	const dataDir = process.env.MXD_DATA_DIR ?? join(homedir(), ".mxd");
 	let daemon: DaemonInstance;
 	try {
-		daemon = await createDaemon({ dataDir, lockDataDir: true, autoRegisterSelf: false });
+		daemon = await createDaemon({
+			dataDir,
+			lockDataDir: true,
+			autoRegisterSelf: false,
+		});
 	} catch (e) {
 		// Most common failure mode: another daemon owns this dataDir.
 		// Surface a clean error instead of a scary stack trace.
