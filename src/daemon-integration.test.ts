@@ -496,3 +496,177 @@ export default {
 		expect(memory).toContain("Project Memory");
 	});
 });
+
+/**
+ * SPA fallback (Task Y refresh fix).
+ *
+ * After Task Y, tasks live at `/<projectId>/<scope>/<taskId>` path-routed
+ * URLs. Browser refresh on those paths must reach the shell HTML so the
+ * SPA can boot, parse the URL, and render. Browsers don't carry the
+ * `Authorization` header on navigation, so the shell must be served
+ * anonymously — same posture as `/`.
+ *
+ * Predicate (single source of truth, both for the auth bypass and the
+ * SPA route handler): `pm.has(firstSegment)`. ULID project ids never
+ * collide with backend route names ("api", "auth", "projects", etc.).
+ *
+ * `app.daemon.fetch` (raw) is used for unauthenticated tests — `app.fetch`
+ * (harness) auto-attaches the session token and would mask the
+ * anonymous-access invariants we care about for browser refresh.
+ */
+describe("daemon integration: SPA fallback (Task Y refresh)", () => {
+	let app: DaemonTestApp;
+	const projectId = "test-project-id"; // hardcoded by daemon-harness.ts
+
+	beforeAll(async () => {
+		app = await createDaemonTestApp();
+	});
+
+	afterAll(async () => {
+		await app.cleanup();
+	});
+
+	test("GET / serves shell HTML (regression-free)", async () => {
+		const res = await app.daemon.fetch(new Request("http://localhost/"));
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toContain("text/html");
+		const html = await res.text();
+		expect(html).toContain("<!DOCTYPE html>");
+	});
+
+	test("GET /<projectId>/matrix/<taskId> serves shell HTML (authenticated)", async () => {
+		const res = await app.fetch(
+			new Request(`http://localhost/${projectId}/matrix/some-task-id`),
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toContain("text/html");
+		const html = await res.text();
+		expect(html).toContain("<!DOCTYPE html>");
+	});
+
+	test("GET /<projectId>/<anything> serves shell HTML — plugin owns 2nd+ segments", async () => {
+		const res = await app.fetch(
+			new Request(`http://localhost/${projectId}/whatever-the-plugin-wants`),
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toContain("text/html");
+	});
+
+	test("GET /<projectId> (no trailing path) serves shell HTML", async () => {
+		const res = await app.fetch(
+			new Request(`http://localhost/${projectId}`),
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toContain("text/html");
+	});
+
+	test("GET / and GET /<projectId>/... return BYTE-IDENTICAL HTML", async () => {
+		// The fallback must serve the same bytes as `/`, not a slightly
+		// different shell — otherwise the SPA boot diverges between fresh
+		// load and refresh, and cache stops working.
+		const rootRes = await app.daemon.fetch(new Request("http://localhost/"));
+		const spaRes = await app.daemon.fetch(
+			new Request(`http://localhost/${projectId}/matrix/x`),
+		);
+		const rootHtml = await rootRes.text();
+		const spaHtml = await spaRes.text();
+		expect(spaHtml).toBe(rootHtml);
+	});
+
+	test("UX scenario: browser refresh (NO Authorization) on real project URL serves HTML", async () => {
+		// The whole point of this fix. A user already authenticated (token
+		// in localStorage) hits F5 on `/abc123/matrix/xyz`. The browser
+		// reissues the request with NO custom headers — Authorization
+		// only rides on JS-issued requests. Without the auth bypass, the
+		// shell would 401 and the user sees raw JSON. With the bypass,
+		// the shell loads, JS reads the token, authFetch resumes work.
+		const res = await app.daemon.fetch(
+			new Request(`http://localhost/${projectId}/matrix/some-task`),
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toContain("text/html");
+	});
+
+	test("GET /<unregistered-project-id>/... returns 404 (no fake SPA on stale ids)", async () => {
+		// Deleted / never-existed project ids return 404 cleanly instead
+		// of pretending to load an SPA that will immediately 404 on its
+		// own data fetches.
+		const res = await app.fetch(
+			new Request(
+				"http://localhost/01ZZZZZZZZZZZZZZZZZZZZZZZZ/matrix/x",
+			),
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("GET /randomWord returns 404 (random first segment ≠ project id)", async () => {
+		const res = await app.fetch(
+			new Request("http://localhost/randomNotAProjectIdAtAll"),
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("GET /api/<plugin>/unknown-endpoint returns 404 from plugin worker (NOT HTML)", async () => {
+		// Plugin route handler runs and returns 404. Wildcard never sees
+		// it. This is the regression guard that the fallback doesn't
+		// swallow legitimate plugin 404s.
+		const res = await app.fetch(
+			new Request(
+				"http://localhost/api/test-matrix/this-endpoint-does-not-exist",
+			),
+		);
+		expect(res.status).toBe(404);
+		const body = await res.text();
+		expect(body).not.toContain("<!DOCTYPE html>");
+	});
+
+	test("GET /auth/bogus returns 401 from auth middleware (NOT HTML)", async () => {
+		// `/auth/*` is not a frontend path. Auth middleware blocks before
+		// any handler can serve HTML. Critical: stale `/auth/<typo>` must
+		// NOT pretend to be a valid SPA shell.
+		const res = await app.daemon.fetch(
+			new Request("http://localhost/auth/bogus"),
+		);
+		expect(res.status).toBe(401);
+		const body = await res.text();
+		expect(body).not.toContain("<!DOCTYPE html>");
+	});
+
+	test("GET /vendor/nonexistent.js returns 404 from static handler (NOT HTML)", async () => {
+		// Static asset handler matches `/vendor/*` and returns 404 for
+		// missing files. Wildcard never sees it. Important because /vendor
+		// IS in the auth-skip list — without the per-handler 404 check,
+		// the wildcard could fall through and serve HTML for a missing JS
+		// bundle, breaking script loading.
+		const res = await app.fetch(
+			new Request("http://localhost/vendor/this-bundle-does-not-exist.js"),
+		);
+		expect(res.status).toBe(404);
+		const body = await res.text();
+		expect(body).not.toContain("<!DOCTYPE html>");
+	});
+
+	test("POST /<projectId>/matrix/<taskId> stays auth-gated (no HTML for writes)", async () => {
+		// Frontend paths bypass auth ONLY for GET. A POST to the same path
+		// shape is either a typo or an attack — return 401, not silent HTML.
+		const res = await app.daemon.fetch(
+			new Request(`http://localhost/${projectId}/matrix/x`, {
+				method: "POST",
+			}),
+		);
+		expect(res.status).not.toBe(200);
+		const body = await res.text();
+		expect(body).not.toContain("<!DOCTYPE html>");
+	});
+
+	test("PATCH /<projectId>/anything stays auth-gated (no HTML for writes)", async () => {
+		const res = await app.daemon.fetch(
+			new Request(`http://localhost/${projectId}/some-resource`, {
+				method: "PATCH",
+			}),
+		);
+		expect(res.status).not.toBe(200);
+		const body = await res.text();
+		expect(body).not.toContain("<!DOCTYPE html>");
+	});
+});

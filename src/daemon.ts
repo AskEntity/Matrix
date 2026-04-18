@@ -1109,13 +1109,42 @@ export async function createDaemon(opts: {
 	// under `/auth/*` would have been publicly reachable (Audit J H1).
 	// `/auth/logout` was previously on this list — removed so an anonymous
 	// caller can no longer trigger a secretVersion bump (Audit R7 P1.1).
-	const SKIP_EXACT = new Set(["/", "/auth/status"]);
+	// `/auth/status` stays anonymous — login page must read it before
+	// it has a token. `/` and `/<projectId>/...` are frontend paths
+	// handled by `isFrontendPath` below.
+	const SKIP_EXACT = new Set(["/auth/status"]);
+
+	// Frontend paths — shell HTML served anonymously so the SPA can load +
+	// parse the URL + render. After Task Y, tasks live at `/<projectId>/...`
+	// path-routed URLs; browser refresh on such a URL must reach the shell.
+	// Browsers don't include the `Authorization` header on navigation, so
+	// any path that should serve HTML on direct hit must skip auth — same
+	// posture as `/`. The shell itself is auth-content-free; every API
+	// call the shell issues still carries the session token through
+	// `authFetch` and is gated by this same middleware on the API side.
+	//
+	// Predicate: `/` exact, OR first path segment is a *currently
+	// registered* project id. Backend route names ("api", "auth",
+	// "projects", "health", etc.) never collide because project ids are
+	// ULIDs (26 chars, base32). Stale / deleted / never-existed first
+	// segments fall through to a clean 404 (via the `app.get("*")` handler
+	// below) instead of pretending to load a broken SPA.
+	const isFrontendPath = (path: string): boolean => {
+		if (path === "/") return true;
+		const firstSeg = path.match(/^\/([^/]+)/)?.[1];
+		return firstSeg != null && pm.has(firstSeg);
+	};
+
 	app.use("*", async (c, next) => {
 		const path = c.req.path;
 		const skipAuth =
 			SKIP_EXACT.has(path) ||
 			path.startsWith("/vendor/") ||
-			path.startsWith("/app/");
+			path.startsWith("/app/") ||
+			// Non-GET frontend-shaped paths (POST/PATCH to `/<projectId>/...`)
+			// stay auth-gated — those don't exist as legitimate SPA paths,
+			// and a 401 is more honest than accidental HTML.
+			(c.req.method === "GET" && isFrontendPath(path));
 
 		if (!skipAuth) {
 			// Auth is ALWAYS on after Audit R7 P1.3 — no `hasJwtSecret`
@@ -1725,6 +1754,27 @@ export async function createDaemon(opts: {
 			body: hasBody ? await c.req.raw.arrayBuffer() : undefined,
 		});
 		return forwardToWorker(pluginName, rewritten);
+	});
+
+	/**
+	 * SPA fallback. After Task Y, paths look like `/<projectId>/<scope>/<rest>`
+	 * and are server-visible (no longer hash-only). Any GET that didn't match
+	 * a backend route above lands here. Serve the shell HTML iff the first
+	 * segment is a currently registered project id; otherwise 404 cleanly so
+	 * stray paths don't pretend to be SPA URLs.
+	 *
+	 * Deliberately GET-only — POST/PATCH/DELETE to unknown paths stay 404 so
+	 * a typo'd write endpoint doesn't silently succeed with HTML.
+	 *
+	 * Mirrors the `isFrontendPath` predicate used by the auth middleware.
+	 * Single source of truth: `pm.has(firstSeg)` — a project's existence
+	 * decides both auth bypass and HTML serving.
+	 */
+	app.get("*", (c) => {
+		const path = new URL(c.req.url).pathname;
+		const firstSeg = path.match(/^\/([^/]+)/)?.[1];
+		if (firstSeg == null || !pm.has(firstSeg)) return c.notFound();
+		return c.html(indexHTML);
 	});
 
 	/**
