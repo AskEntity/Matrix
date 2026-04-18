@@ -12,6 +12,130 @@ import {
 import { TOOL_YIELD } from "./tool-names.ts";
 import type { QueueMessage } from "./types.ts";
 
+// ── Pending messages: events-derived view, not mutable state ──
+//
+// Previous design had a `deferredMessages` Map, `syncPendingBanner` side
+// effect, and multiple imperative clear paths (compact_marker,
+// clearSessionState from tree_updated, processEventBatch reset). Fixes A/B/
+// C/D all tried to patch the imperative model by shifting *when* mutations
+// happen. Each fix closed one race, left others. Root cause was the
+// model itself — pending isn't a state, it's a view of the events log.
+//
+// New model:
+//   • pending = pure function of events log
+//   • messages_consumed in the log ⇒ matching entries are no longer pending
+//   • no "clear" action anywhere — compact_marker and tree_updated are
+//     no-ops for pending
+//   • reducer is O(1) per event (vs useMemo's O(N) per render)
+//
+// Unconsumed messages stay pending forever, which is semantically correct:
+// if the user's message was never processed, the UI should keep surfacing
+// it. Previously we "cleared" those on compact, which was lying about
+// what actually happened.
+
+/** Shape of one pending-message chip, matches the props consumers already use. */
+export type PendingMessage = {
+	id: string;
+	taskId: string | null;
+	text: string;
+	timestamp: number;
+	images?: Array<{ base64: string; mediaType: string }>;
+	// Data required to materialize into a log entry when consumed:
+	source: string | undefined;
+	content: string;
+	queueEntry: QueueMessage | undefined;
+};
+
+export type PendingAction =
+	| { type: "RESET" }
+	| { type: "APPLY"; event: IncomingEvent };
+
+/**
+ * Build the visible chip text for a pending message.
+ * Pure: only reads its arguments. Called from the reducer and from tests.
+ */
+export function pendingChipText(
+	source: string | undefined,
+	content: string,
+	queueEntry?: QueueMessage,
+): string {
+	if (!source || source === "user") return content;
+	if (!queueEntry) return content || `[${source}]`;
+	switch (queueEntry.source) {
+		case "task_message": {
+			if (queueEntry.title) return `↑ ${queueEntry.title}`;
+			return queueEntry.fromTitle
+				? `↑ ${queueEntry.fromTitle}: ${queueEntry.content}`
+				: `↑ ${queueEntry.content}`;
+		}
+		case "user_message_forwarded":
+			return `📨 ${queueEntry.fromTitle}: ${queueEntry.content}`;
+		case "task_complete":
+			return `${queueEntry.success ? "✓" : "✗"} ${queueEntry.title}`;
+		case "clarify_response":
+			return `💬 ${queueEntry.answer}`;
+		case "cross_project":
+			return `← ${queueEntry.fromProjectName}: ${queueEntry.content}`;
+		case "background_complete":
+			return `⚙ bg: ${queueEntry.command}`;
+		case "tree_change": {
+			const title = queueEntry.title ?? "";
+			return title
+				? `🌿 ${queueEntry.action}: ${title}`
+				: `🌿 tree ${queueEntry.action}`;
+		}
+		default:
+			return content || `[${source}]`;
+	}
+}
+
+/**
+ * Pure reducer: `(state, action) → nextState`. No closures, no I/O.
+ *
+ * - `RESET` → `[]` (used when processEventBatch starts over, e.g. on
+ *   refresh or project switch)
+ * - `APPLY(message event)` with id, non-compact source → append
+ * - `APPLY(messages_consumed)` → filter out consumed ids
+ * - all other events → state unchanged (pending is insensitive to
+ *   compact_marker, tree_updated, thinking/text streaming, etc.)
+ *
+ * Compact-source messages are never added to pending. They have their
+ * own display path via `compact_marker` → `complete_compact` update.
+ * Excluding them at add-time means no cleanup path is needed later.
+ */
+export function pendingReducer(
+	state: PendingMessage[],
+	action: PendingAction,
+): PendingMessage[] {
+	if (action.type === "RESET") return [];
+	const e = action.event;
+	if (e.type === "message") {
+		const body = e.body as QueueMessage | undefined;
+		const source = body?.source;
+		if (!e.id || source === "compact") return state;
+		const content = body?.source === "user" ? body.content : "";
+		const images = body?.source === "user" ? body.images : undefined;
+		return [
+			...state,
+			{
+				id: e.id,
+				taskId: e.taskId ?? null,
+				text: pendingChipText(source, content, body),
+				timestamp: e.ts,
+				images,
+				source,
+				content,
+				queueEntry: body,
+			},
+		];
+	}
+	if (e.type === "messages_consumed" && e.messageIds?.length) {
+		const consumed = new Set(e.messageIds);
+		return state.filter((m) => !consumed.has(m.id));
+	}
+	return state;
+}
+
 // --- Update operations for in-place entry mutations ---
 
 type UpdateOp =
@@ -120,17 +244,20 @@ export interface EventHandlerDeps {
 			Record<string, { inputTokens: number; contextWindow: number }>
 		>
 	>;
-	setPendingMessages: React.Dispatch<
-		React.SetStateAction<
-			{
-				id: string;
-				taskId: string | null;
-				text: string;
-				timestamp: number;
-				images?: Array<{ base64: string; mediaType: string }>;
-			}[]
-		>
-	>;
+	/**
+	 * Apply a pending-state action (RESET or APPLY-event). Updates a shared
+	 * ref synchronously so messages_consumed in the same batch can look up
+	 * what's currently pending, then triggers a React re-render so consumers
+	 * (AppFooter banner) see the new state.
+	 */
+	dispatchPending: (action: PendingAction) => void;
+	/**
+	 * Synchronous snapshot of the current pending messages (backed by a ref
+	 * on the consumer side, updated eagerly by dispatchPending). Used by
+	 * messages_consumed to materialize pending entries into activity-log
+	 * entries at the consumption position.
+	 */
+	getPendingMessages: () => PendingMessage[];
 	setPendingClarifications: React.Dispatch<
 		React.SetStateAction<
 			{ id: string; taskId: string; question: string; timestamp: number }[]
@@ -172,7 +299,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		setAgentModel,
 		setLogs,
 		setTokenUsage,
-		setPendingMessages,
+		dispatchPending,
+		getPendingMessages,
 		setPendingClarifications,
 		setLastTurns,
 		setLastInputTokens,
@@ -289,88 +417,35 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		}
 	}
 
-	/**
-	 * Build display text for the pending message chip.
-	 * User messages show their content; non-user sources show a descriptive label.
-	 */
-	function pendingChipText(
-		source: string | undefined,
-		content: string,
-		queueEntry?: QueueMessage,
-	): string {
-		if (!source || source === "user") return content;
-		if (!queueEntry) return content || `[${source}]`;
-		switch (queueEntry.source) {
-			case "task_message": {
-				if (queueEntry.title) return `↑ ${queueEntry.title}`;
-				return queueEntry.fromTitle
-					? `↑ ${queueEntry.fromTitle}: ${queueEntry.content}`
-					: `↑ ${queueEntry.content}`;
-			}
-			case "user_message_forwarded":
-				return `📨 ${queueEntry.fromTitle}: ${queueEntry.content}`;
-			case "task_complete":
-				return `${queueEntry.success ? "✓" : "✗"} ${queueEntry.title}`;
-			case "clarify_response":
-				return `💬 ${queueEntry.answer}`;
-			case "cross_project":
-				return `← ${queueEntry.fromProjectName}: ${queueEntry.content}`;
-			case "background_complete":
-				return `⚙ bg: ${queueEntry.command}`;
-			case "tree_change": {
-				const title = queueEntry.title ?? "";
-				return title
-					? `🌿 ${queueEntry.action}: ${title}`
-					: `🌿 tree ${queueEntry.action}`;
-			}
-			default:
-				return content || `[${source}]`;
-		}
-	}
-
-	// --- Deferred messages for two-phase lifecycle ---
-	// All message events with IDs are stored here. When messages_consumed arrives,
-	// they're materialized into activity log entries at the consumption position.
-	// This is the SINGLE store for all deferred messages (user and non-user).
-	const deferredMessages = new Map<
-		string,
-		{
-			content: string;
-			images?: Array<{ base64: string; mediaType: string }>;
-			taskId?: string | null;
-			ts: number;
-			source?: string;
-			queueEntry?: QueueMessage;
-		}
-	>();
-
 	// --- Unified event processing ---
 
 	interface ProcessResult {
 		entries: LogEntry[];
 		updates: UpdateOp[];
+		/**
+		 * Reducer actions to apply to the pending-messages view AFTER
+		 * `entries`/`updates` are processed. Driver (processEventBatch /
+		 * handleEvent) dispatches these synchronously so messages_consumed
+		 * later in the same batch can read the current pending state via
+		 * `deps.getPendingMessages()`. Optional — omit when the event doesn't
+		 * affect pending.
+		 */
+		pendingActions?: PendingAction[];
 		sideEffects: () => void;
 	}
 
 	const NO_SIDE_EFFECTS = () => {};
 
-	/** Materialize a deferred message as the appropriate LogEntry. */
-	function materialize(
-		msg: {
-			content: string;
-			images?: Array<{ base64: string; mediaType: string }>;
-			taskId?: string | null;
-			ts: number;
-			source?: string;
-			queueEntry?: QueueMessage;
-		},
+	/** Materialize a PendingMessage into a LogEntry at the given consumption ts. */
+	function materializeFromPending(
+		p: PendingMessage,
 		ts: number,
 	): LogEntry | null {
-		// Non-user sources: render as the appropriate card type from body
-		if (msg.queueEntry && msg.source && msg.source !== "user") {
+		// Non-user sources: render as the appropriate card type from the queueEntry
+		if (p.queueEntry && p.source && p.source !== "user") {
 			const uiEvent = queueEntryToUIEvent(
-				msg.queueEntry,
-				msg.taskId ?? undefined,
+				p.queueEntry,
+				p.taskId ?? undefined,
 				ts,
 			);
 			return uiEvent ? createLogEntry(uiEvent) : null;
@@ -383,52 +458,28 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				source: "user",
 				id: crypto.randomUUID(),
 				ts: Date.now(),
-				content: msg.content,
-				...(msg.images?.length ? { images: msg.images } : {}),
+				content: p.content,
+				...(p.images?.length ? { images: p.images } : {}),
 			},
-			taskId: msg.taskId ?? "",
+			taskId: p.taskId ?? "",
 			ts,
 		});
 	}
 
-	/** Sync pending banner state from the deferredMessages map. */
-	function syncPendingBanner(): void {
-		const pending: Array<{
-			id: string;
-			taskId: string | null;
-			text: string;
-			timestamp: number;
-			images?: Array<{ base64: string; mediaType: string }>;
-		}> = [];
-		for (const [id, m] of deferredMessages) {
-			pending.push({
-				id,
-				taskId: m.taskId ?? null,
-				text: pendingChipText(m.source, m.content, m.queueEntry),
-				timestamp: m.ts,
-				images: m.images,
-			});
-		}
-		setPendingMessages(pending);
-	}
-
+	/**
+	 * Filter out log entries and older-events state for sessions transitioning
+	 * to status=pending. This does NOT touch pending messages — pending is a
+	 * pure events-derived view (see module-level pendingReducer) and is not
+	 * tied to task lifecycle status. Log cleanup is a separate concern.
+	 */
 	function clearSessionState(clearedSessionIds: Set<string>): void {
 		if (clearedSessionIds.size === 0) return;
-
-		for (const [id, msg] of deferredMessages) {
-			if (msg.taskId && clearedSessionIds.has(msg.taskId)) {
-				deferredMessages.delete(id);
-			}
-		}
-		syncPendingBanner();
-
 		setLogs((prev) =>
 			prev.filter((entry) => {
 				const taskId = getLogTaskId(entry);
 				return !taskId || !clearedSessionIds.has(taskId);
 			}),
 		);
-
 		setOlderEventsAvailable?.((prev) => {
 			const next = new Map(prev);
 			for (const sessionId of clearedSessionIds) {
@@ -684,16 +735,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				};
 
 			case "compact_marker":
-				// Clear IMMEDIATELY, not in sideEffects. The `message` case sets
-				// deferredMessages synchronously inside processEvent (before its
-				// return), and messages_consumed deletes synchronously too. If
-				// compact_marker deferred its clear to the sideEffects phase, a
-				// batch like [compact_marker, message_A, message_B] would:
-				//   1) push clearSideEffect, 2) set(A), 3) set(B), 4) setLogs,
-				//   5) run deferred sideEffects → clear() wipes A and B.
-				// All deferredMessages mutations must happen in the same phase.
-				// Only syncPendingBanner (a React setState) stays deferred.
-				deferredMessages.clear();
+				// No-op for pending: in the events-derived model, compact is
+				// a reset boundary for log display but NOT for pending state.
+				// Unconsumed messages stay pending (semantically correct — if
+				// the agent never processed them, the UI should keep them
+				// visible). Compact-source messages never enter pending (see
+				// `case "message"` above), so there's nothing to "clean up".
 				return {
 					entries: [],
 					updates: [
@@ -705,7 +752,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							ts: msg.ts,
 						},
 					],
-					sideEffects: () => syncPendingBanner(),
+					sideEffects: NO_SIDE_EFFECTS,
 				};
 
 			case "fork_marker":
@@ -828,33 +875,40 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				const umImages = body?.source === "user" ? body.images : undefined;
 
 				if (umId) {
-					// message with id = deferred until messages_consumed.
-					deferredMessages.set(umId, {
-						content: umContent,
-						images: umImages,
-						taskId: msg.taskId,
-						ts: msg.ts,
-						source,
-						queueEntry: body,
-					});
+					// Compact-source messages have their own display path via
+					// compact_marker → complete_compact. Skip entirely: no
+					// pending entry, no log entry. (This is why the old code
+					// needed compact_marker.clear() — it was cleaning up the
+					// compact source message that got added to deferred. In
+					// the new model we just never add it.)
+					if (source === "compact") {
+						return {
+							entries: [],
+							updates: [],
+							sideEffects: NO_SIDE_EFFECTS,
+						};
+					}
 
 					// Remove completed background processes immediately on receipt
 					const bgCompleteId =
 						body?.source === "background_complete" ? body.commandId : undefined;
 
+					// message with id → appended to pending via reducer. Driver
+					// dispatches the APPLY action so the next messages_consumed in
+					// the same batch sees it via deps.getPendingMessages().
 					return {
 						entries: [],
 						updates: [],
-						sideEffects: () => {
-							syncPendingBanner();
-							if (bgCompleteId) {
-								setBackgroundProcesses((prev) => {
-									const next = new Map(prev);
-									next.delete(bgCompleteId);
-									return next;
-								});
-							}
-						},
+						pendingActions: [{ type: "APPLY", event: msg }],
+						sideEffects: bgCompleteId
+							? () => {
+									setBackgroundProcesses((prev) => {
+										const next = new Map(prev);
+										next.delete(bgCompleteId);
+										return next;
+									});
+								}
+							: NO_SIDE_EFFECTS,
 					};
 				}
 
@@ -899,28 +953,27 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			}
 
 			case "messages_consumed": {
-				// Move consumed messages from pending/deferred to activity log
+				// Move consumed messages from pending to activity log.
+				// Materialize by looking up the pending entry via the
+				// synchronous getPendingMessages snapshot, then emit a
+				// pending-action so the reducer filters the entry out on the
+				// driver's dispatch.
 				const consumedIds = new Set(msg.messageIds);
 				if (consumedIds.size === 0) {
 					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 				}
 				const newEntries: LogEntry[] = [];
-
-				// Materialize immediately (not as side effect) so batch mode works
-				for (const id of consumedIds) {
-					const deferred = deferredMessages.get(id);
-					if (deferred) {
-						const entry = materialize(deferred, msg.ts);
+				for (const p of getPendingMessages()) {
+					if (consumedIds.has(p.id)) {
+						const entry = materializeFromPending(p, msg.ts);
 						if (entry) newEntries.push(entry);
-						deferredMessages.delete(id);
 					}
 				}
-
 				return {
 					entries: newEntries,
 					updates: [],
-					// Pending banner sync is a side effect (React state update)
-					sideEffects: () => syncPendingBanner(),
+					pendingActions: [{ type: "APPLY", event: msg }],
+					sideEffects: NO_SIDE_EFFECTS,
 				};
 			}
 
@@ -1248,10 +1301,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	 * Resets all state and reprocesses from scratch through the unified processEvent path.
 	 */
 	function processEventBatch(events: IncomingEvent[]): void {
-		// Clear deferred state — reprocessing from scratch
-		deferredMessages.clear();
+		// Reset per-batch state — reprocessing from scratch. Pending reducer
+		// also resets to []; message events in the batch will re-populate it.
 		toolCallToolNames.clear();
 		setBackgroundProcesses(new Map());
+		dispatchPending({ type: "RESET" });
 
 		let entries: LogEntry[] = [];
 		const deferredSideEffects: (() => void)[] = [];
@@ -1271,9 +1325,15 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			const result = processEvent(evt);
 			for (const entry of result.entries) entries.push(entry);
 			for (const op of result.updates) entries = applyUpdate(entries, op);
-			// Collect side effects but DON'T execute them yet.
-			// For messages_consumed, processEvent puts entries directly in result.entries
-			// and syncPendingBanner in sideEffects.
+			// Pending actions MUST dispatch synchronously so the next event's
+			// processEvent (e.g. a subsequent messages_consumed) sees the
+			// already-applied message in getPendingMessages.
+			if (result.pendingActions) {
+				for (const action of result.pendingActions) dispatchPending(action);
+			}
+			// Collect side effects but DON'T execute them yet. These are the
+			// React state-update closures that don't need to interleave with
+			// processing (e.g. setBackgroundProcesses, checkAgentStatus).
 			if (result.sideEffects !== NO_SIDE_EFFECTS) {
 				deferredSideEffects.push(result.sideEffects);
 			}
@@ -1368,6 +1428,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		}
 		for (const op of result.updates) {
 			setLogs((prev) => applyUpdate(prev, op));
+		}
+		if (result.pendingActions) {
+			for (const action of result.pendingActions) dispatchPending(action);
 		}
 		result.sideEffects();
 	}

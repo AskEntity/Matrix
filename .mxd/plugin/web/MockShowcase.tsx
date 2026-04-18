@@ -31,7 +31,13 @@ import { statusDotClass } from "./components/StatusBadge.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
 import { TaskTree } from "./components/TaskTree.tsx";
 import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
-import { createEventHandler, type EventHandlerDeps } from "./event-handler.ts";
+import {
+	createEventHandler,
+	type EventHandlerDeps,
+	type PendingAction,
+	type PendingMessage,
+	pendingReducer,
+} from "./event-handler.ts";
 import {
 	type IncomingEvent,
 	isTask,
@@ -86,15 +92,20 @@ function MockShowcaseInner() {
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
-	const [, setPendingMessages] = useState<
-		{
-			id: string;
-			taskId: string | null;
-			text: string;
-			timestamp: number;
-			images?: Array<{ base64: string; mediaType: string }>;
-		}[]
-	>([]);
+	// Events-derived pending — same pattern as Plugin.tsx. MockShowcase
+	// doesn't render the pending banner itself, but it still needs to
+	// dispatch reducer actions so createEventHandler's deps contract holds.
+	const pendingMessagesRef = useRef<PendingMessage[]>([]);
+	const dispatchPending = useCallback((action: PendingAction) => {
+		pendingMessagesRef.current = pendingReducer(
+			pendingMessagesRef.current,
+			action,
+		);
+	}, []);
+	const getPendingMessages = useCallback(
+		() => pendingMessagesRef.current,
+		[],
+	);
 	const [, setPendingClarifications] = useState<
 		{
 			id: string;
@@ -166,7 +177,8 @@ function MockShowcaseInner() {
 			setAgentModel: () => {},
 			setLogs,
 			setTokenUsage: () => {},
-			setPendingMessages,
+			dispatchPending,
+			getPendingMessages,
 			setPendingClarifications: () => {},
 			setLastTurns: () => {},
 			setLastInputTokens: () => {},
