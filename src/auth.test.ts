@@ -3,7 +3,7 @@
  * revocation (secretVersion), subject restriction, cache semantics.
  */
 import { describe, expect, test } from "bun:test";
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	bumpSecretVersion,
@@ -50,6 +50,81 @@ describe("auth: initialization", () => {
 		expect(after).toEqual(before);
 	});
 });
+
+// POSIX-only: Windows file modes don't map to POSIX permission bits.
+const isPosix = process.platform !== "win32";
+
+describe.skipIf(!isPosix)(
+	"auth: file permissions (jwtSecret leak prevention)",
+	() => {
+		test("fresh auth.json is created with mode 0o600 (owner-only)", async () => {
+			const authPath = await mkTempAuthPath();
+			await ensureAuthInitialized(authPath);
+
+			const mode = (await stat(authPath)).mode & 0o777;
+			expect(mode).toBe(0o600);
+		});
+
+		test("pre-existing 0o644 auth.json is tightened to 0o600 on ensureAuthInitialized", async () => {
+			const authPath = await mkTempAuthPath();
+
+			// Simulate a legacy file written before the 0o600 default.
+			await writeFile(
+				authPath,
+				JSON.stringify({ jwtSecret: "x".repeat(44), secretVersion: 1 }),
+				"utf-8",
+			);
+			await chmod(authPath, 0o644);
+			expect((await stat(authPath)).mode & 0o777).toBe(0o644);
+
+			await ensureAuthInitialized(authPath);
+			expect((await stat(authPath)).mode & 0o777).toBe(0o600);
+		});
+
+		test("any group/other permission bit triggers chmod to 0o600", async () => {
+			// Spot-check additional loose modes so the mask check (`mode & 0o077`)
+			// isn't silently pinned to 0o644 only.
+			for (const looseMode of [0o640, 0o604, 0o660, 0o666] as const) {
+				const authPath = await mkTempAuthPath();
+				await writeFile(
+					authPath,
+					JSON.stringify({ jwtSecret: "x".repeat(44), secretVersion: 1 }),
+					"utf-8",
+				);
+				await chmod(authPath, looseMode);
+
+				await ensureAuthInitialized(authPath);
+				expect((await stat(authPath)).mode & 0o777).toBe(0o600);
+			}
+		});
+
+		test("already-0o600 auth.json is left untouched (idempotent)", async () => {
+			const authPath = await mkTempAuthPath();
+			await ensureAuthInitialized(authPath);
+			expect((await stat(authPath)).mode & 0o777).toBe(0o600);
+
+			await ensureAuthInitialized(authPath);
+			expect((await stat(authPath)).mode & 0o777).toBe(0o600);
+		});
+
+		test("0o400 (read-only, owner-only) is preserved — no group/other bits set", async () => {
+			// Paranoid users might pre-harden to 0o400. Our mask only reacts to
+			// group/other permissions, so 0o400 stays untouched.
+			const authPath = await mkTempAuthPath();
+			await writeFile(
+				authPath,
+				JSON.stringify({ jwtSecret: "x".repeat(44), secretVersion: 1 }),
+				"utf-8",
+			);
+			await chmod(authPath, 0o400);
+
+			await ensureAuthInitialized(authPath);
+			// Note: our chmod-on-init only fires if group/other bits are set.
+			// 0o400 has neither, so it passes through unchanged.
+			expect((await stat(authPath)).mode & 0o777).toBe(0o400);
+		});
+	},
+);
 
 describe("auth: JWT sign + verify round-trip", () => {
 	test("signSessionToken + verifyJWT returns payload with sub='session'", async () => {
