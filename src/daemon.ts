@@ -102,15 +102,51 @@ function maskAuthGroup(group: AuthGroup): AuthGroup {
 
 /**
  * Return a config with every `authGroups.*` credential field masked.
- * Used on GET /config/global etc. so a valid token can no longer be
- * traded for raw API keys.
+ * Used on GET /config/global and on `repo`/`local`/`resolved` views of
+ * the three-layer config so a valid token can no longer be traded for
+ * raw API keys — even if a malicious actor wrote `authGroups` into a
+ * layer that's not supposed to carry credentials (Audit R7 P1.4).
+ *
+ * Accepts both `MatrixConfig` (full) and `Partial<MatrixConfig>` (project
+ * layers where `authGroups` is typed as absent but could exist on disk).
+ * When `authGroups` is not present on the input, returns a shallow clone
+ * unchanged.
  */
-function maskConfig(config: MatrixConfig): MatrixConfig {
+function maskConfig<T extends Partial<MatrixConfig>>(config: T): T {
+	if (!config.authGroups) return { ...config };
 	const maskedGroups: Record<string, AuthGroup> = {};
 	for (const [name, group] of Object.entries(config.authGroups)) {
 		maskedGroups[name] = maskAuthGroup(group);
 	}
 	return { ...config, authGroups: maskedGroups };
+}
+
+/**
+ * Reject any PATCH body that tries to set credential fields on a per-project
+ * config layer (repo or local). Returns an error message if a forbidden
+ * field is present, null otherwise.
+ *
+ * `authGroups` is marked global-only in `GLOBAL_ONLY_FIELDS` — allowing it
+ * through would be a credential-injection surface: an attacker who can PATCH
+ * a project's config with their own authGroups could have every subsequent
+ * agent run use their credentials (Audit R7 P1.4).
+ *
+ * `defaultAuth` is technically per-project legal (a project can pick which
+ * existing auth group to use) but is rejected here defensively — the CLI
+ * already refused it pre-server, and the audit report called it out
+ * alongside `authGroups` as part of the credential-layer attack surface.
+ *
+ * The CLI has the same check client-side (`src/cli.ts`), but defense of
+ * record must not rely on a friendly client.
+ */
+function rejectCredentialFields(body: Partial<MatrixConfig>): string | null {
+	if (body.authGroups != null) {
+		return "authGroups can only be set in global config (use PATCH /config/global)";
+	}
+	if (body.defaultAuth != null) {
+		return "defaultAuth can only be set in global config (use PATCH /config/global)";
+	}
+	return null;
 }
 
 /** `true` if `incoming` is the masked form of `existing`. */
@@ -1039,11 +1075,13 @@ export async function createDaemon(opts: {
 	// Auth middleware.
 	//
 	// Paths skipped: SPA root (served anonymously so the login page can
-	// load), compiled shell/vendor bundles, and the two exact auth
-	// endpoints that must work pre-auth (status + logout).
+	// load), compiled shell/vendor bundles, and `/auth/status` (the only
+	// endpoint that must work pre-auth so the login page can render).
 	// Previously `/auth/*` was prefix-matched — any future worker route
 	// under `/auth/*` would have been publicly reachable (Audit J H1).
-	const SKIP_EXACT = new Set(["/", "/auth/status", "/auth/logout"]);
+	// `/auth/logout` was previously on this list — removed so an anonymous
+	// caller can no longer trigger a secretVersion bump (Audit R7 P1.1).
+	const SKIP_EXACT = new Set(["/", "/auth/status"]);
 	app.use("*", async (c, next) => {
 		const path = c.req.path;
 		const skipAuth =
@@ -1347,6 +1385,8 @@ export async function createDaemon(opts: {
 			"./config.ts"
 		);
 		const partial = await c.req.json<Partial<MatrixConfig>>();
+		const rejection = rejectCredentialFields(partial);
+		if (rejection) return c.json({ error: rejection }, 400);
 		const existing = await loadProjectRepoConfig(project.path);
 		const merged = { ...existing };
 		for (const [k, v] of Object.entries(partial)) {
@@ -1370,13 +1410,15 @@ export async function createDaemon(opts: {
 			loadProjectLocalConfig(dataDir, project.id),
 		]);
 		const resolved = resolveConfig(globalConfig, repoConfig, localConfig);
-		// Only `global` actually carries credentials (AuthGroup record);
-		// project layers override non-auth fields only. Masking the
-		// `global` and `resolved` views is sufficient.
+		// Every layer is masked — project layers are TYPED as credential-free
+		// (`ProjectConfig` excludes `authGroups`), but the on-disk JSON is
+		// untyped and a malicious actor could have injected credentials into
+		// `.mxd/config.json` or `<dataDir>/projects/<id>/config.json` by hand.
+		// Masking unconditionally closes that leak (Audit R7 P1.4).
 		return c.json({
 			global: maskConfig(globalConfig),
-			repo: repoConfig,
-			local: localConfig,
+			repo: maskConfig(repoConfig),
+			local: maskConfig(localConfig),
 			resolved: maskConfig(resolved),
 		});
 	});
@@ -1386,7 +1428,7 @@ export async function createDaemon(opts: {
 		if (!project) return c.json({ error: "Project not found" }, 404);
 		const { loadProjectLocalConfig } = await import("./config.ts");
 		const cfg = await loadProjectLocalConfig(dataDir, project.id);
-		return c.json(cfg);
+		return c.json(maskConfig(cfg));
 	});
 
 	app.patch("/projects/:id/config", async (c) => {
@@ -1396,6 +1438,8 @@ export async function createDaemon(opts: {
 			"./config.ts"
 		);
 		const partial = await c.req.json<Partial<MatrixConfig>>();
+		const rejection = rejectCredentialFields(partial);
+		if (rejection) return c.json({ error: rejection }, 400);
 		const existing = await loadProjectLocalConfig(dataDir, project.id);
 		const merged = { ...existing };
 		for (const [k, v] of Object.entries(partial)) {
