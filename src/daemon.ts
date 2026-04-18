@@ -53,6 +53,54 @@ import type { SyncMap } from "./runtime/worker-api.ts";
 import { ulid } from "./ulid.ts";
 import { GIT_HASH, VERSION } from "./version.ts";
 
+// ── SSE ring-buffer helpers (daemon-only) ──
+
+/**
+ * An SSE ring-buffer entry. Exported shape for tests; all consumers share
+ * `{ seqId, data }` so a generic `{ seqId: number }` is enough for the
+ * stale-ahead algorithm below.
+ */
+export interface SSERingEntry {
+	seqId: number;
+	data: string;
+}
+
+/**
+ * Return events the client missed, or `null` if the buffer can't serve
+ * the client's position (gap too large, or stale-ahead from a previous
+ * daemon epoch). Returning `null` tells the caller to send the full
+ * initial state; returning `[]` means the client is up to date.
+ *
+ * Stale-ahead: when a client's `lastSeqId` is greater than anything we
+ * currently hold (e.g. daemon restarted and `sseSeqCounters` reset to 0
+ * while the browser still has `Last-Event-ID: 5000`), `findIndex` can't
+ * find a matching entry and used to return `[]` — the UI would then
+ * believe it was caught up and never refresh. The explicit
+ * `lastSeqId > lastEntry.seqId` check forces the initial-state recovery
+ * path on every restart-ahead case.
+ *
+ * Pure function — exported so the stale-ahead invariant is unit-testable
+ * without spinning up a daemon.
+ */
+export function getEventsSinceFromBuffer<T extends { seqId: number }>(
+	buffer: T[] | undefined,
+	lastSeqId: number,
+): T[] | null {
+	if (!buffer || buffer.length === 0) return null;
+	const firstEntry = buffer[0];
+	const lastEntry = buffer[buffer.length - 1];
+	if (!firstEntry || !lastEntry) return null;
+	// Gap too large — can't guarantee no missed events.
+	if (lastSeqId < firstEntry.seqId - 1) return null;
+	// Stale-ahead: client is beyond our current epoch (daemon restart reset
+	// the seq counter). Force initial-state send instead of silently
+	// returning "up to date".
+	if (lastSeqId > lastEntry.seqId) return null;
+	const idx = buffer.findIndex((e) => e.seqId > lastSeqId);
+	if (idx === -1) return []; // Client is up to date
+	return buffer.slice(idx);
+}
+
 // ── Bearer / secret helpers (daemon-only) ──
 
 /**
@@ -394,12 +442,10 @@ export async function createDaemon(opts: {
 	const sseClients = new Set<ShellSSEClient>();
 	const sseEncoder = new TextEncoder();
 
-	// Per-project SSE sequencing + ring buffer for Last-Event-ID catch-up
+	// Per-project SSE sequencing + ring buffer for Last-Event-ID catch-up.
+	// SSERingEntry type declared at module scope so `getEventsSinceFromBuffer`
+	// can be exported without dragging closure types with it.
 	const sseSeqCounters = new Map<string, number>();
-	interface SSERingEntry {
-		seqId: number;
-		data: string;
-	}
 	const sseEventBuffers = new Map<string, SSERingEntry[]>();
 	const SSE_RING_BUFFER_SIZE = 2000;
 
@@ -430,15 +476,7 @@ export async function createDaemon(opts: {
 		projectId: string,
 		lastSeqId: number,
 	): SSERingEntry[] | null {
-		const buffer = sseEventBuffers.get(projectId);
-		if (!buffer || buffer.length === 0) return null;
-		const firstEntry = buffer[0];
-		if (!firstEntry) return null;
-		// Gap too large — can't guarantee no missed events
-		if (lastSeqId < firstEntry.seqId - 1) return null;
-		const idx = buffer.findIndex((e) => e.seqId > lastSeqId);
-		if (idx === -1) return []; // Client is up to date
-		return buffer.slice(idx);
+		return getEventsSinceFromBuffer(sseEventBuffers.get(projectId), lastSeqId);
 	}
 
 	// Worker state
