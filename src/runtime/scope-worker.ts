@@ -23,17 +23,25 @@ self.onmessage = async (event: MessageEvent) => {
 
 	if (msg.type === "init") {
 		const {
-			dataDir, globalConfigPath, projects, pluginRuntimePath, dataRoot,
+			dataDir,
+			globalConfigPath,
+			projects,
+			pluginRuntimePath,
+			dataRoot,
 			globalContext,
 		} = msg as {
-				type: "init";
-				dataDir: string;
-				globalConfigPath: string;
-				projects?: Array<{ id: string; name: string; path: string }>;
-				pluginRuntimePath?: string;
-				dataRoot?: string;
-				globalContext?: { installRoot: string; gitHash: string | null; version: string };
+			type: "init";
+			dataDir: string;
+			globalConfigPath: string;
+			projects?: Array<{ id: string; name: string; path: string }>;
+			pluginRuntimePath?: string;
+			dataRoot?: string;
+			globalContext?: {
+				installRoot: string;
+				gitHash: string | null;
+				version: string;
 			};
+		};
 
 		try {
 			// Load plugin's scope opts builder if provided.

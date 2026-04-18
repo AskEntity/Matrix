@@ -285,7 +285,12 @@ function AuthenticatedShell() {
 							</div>
 						}
 					>
-						<PluginUI projectId={projectId} productionMode={projects.find(p => p.id === projectId)?.productionMode} />
+						<PluginUI
+							projectId={projectId}
+							productionMode={
+								projects.find((p) => p.id === projectId)?.productionMode
+							}
+						/>
 					</Suspense>
 				) : (
 					<div style={{ padding: 20, color: "#8b949e" }}>
