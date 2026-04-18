@@ -131,6 +131,21 @@ export interface RuntimeConfig {
 	// biome-ignore lint/suspicious/noExplicitAny: ScopeOpts generic varies by plugin
 	buildScopeOpts?: (projectId: string, ctx: RuntimeContext) => ScopeOpts<any>;
 	/**
+	 * Plugin's optional route-registration hook. Plugins can register their
+	 * own HTTP routes + middleware directly on the runtime's Hono app. Runs
+	 * BEFORE built-in routes so plugin middleware can intercept matching paths.
+	 *
+	 * Use this for plugin-specific endpoints (e.g. matrix's /matrix-status) and
+	 * guard middleware (e.g. matrix's production-mode mutation-blocker).
+	 *
+	 * Exported from the plugin runtime module as `registerRoutes`; the worker
+	 * picks it up alongside `buildScopeOpts`.
+	 */
+	registerPluginRoutes?: (
+		app: import("hono").Hono,
+		ctx: RuntimeContext,
+	) => void;
+	/**
 	 * Plugin's effective dataRoot. Determines where tree.json and tasks/ live.
 	 * "@" = project root (default for Matrix), "@/plugin/<name>" = plugin subdirectory.
 	 */
@@ -193,6 +208,17 @@ export interface RuntimeContext {
 	 * for SSE relay. When running in-process (tests, standalone), leave undefined.
 	 */
 	onBroadcast?: (projectId: string, event: Record<string, unknown>) => void;
+
+	/**
+	 * Daemon-computed global context — installRoot, gitHash, version. Forwarded
+	 * from RuntimeConfig.globalContext for convenient access by runtime code and
+	 * plugin-registered routes/middleware.
+	 */
+	readonly globalContext?: {
+		installRoot: string;
+		gitHash: string | null;
+		version: string;
+	};
 
 	/** Mutable counters/flags */
 	requestCount: number;
