@@ -564,16 +564,27 @@ describe("sidebar toggle — unified state model", () => {
 			return new Response(body, { status: res.status, headers: res.headers });
 		}) as typeof fetch;
 
-		// 1. Assert: GET /projects returns exactly 1 auto-registered project with productionMode: true
+		// 1. Assert: GET /projects returns exactly 1 auto-registered project.
+		// productionMode is NO LONGER a daemon field (moved to plugin layer).
 		const projectsRes = await freshDaemon.fetch(
 			new Request("http://localhost/projects"),
 		);
 		const projects = await projectsRes.json();
 		expect(projects.length).toBe(1);
 		const prod = projects[0];
-		expect(prod.productionMode).toBe(true);
+		// Daemon response must NOT leak matrix's production semantic
+		expect("productionMode" in prod).toBe(false);
 
-		// 2. Render Plugin — let it see productionMode from the API chain
+		// 2. Assert: GET /global-context exposes plugin-agnostic facts.
+		const ctxRes = await freshDaemon.fetch(
+			new Request("http://localhost/global-context"),
+		);
+		const ctx = await ctxRes.json();
+		expect(ctx.installRoot).toBe(fakeInstall);
+		expect(ctx.gitHash).toBe(null);
+
+		// 3. Render Plugin — it fetches /global-context + /projects/:id internally
+		// and derives production locally via the pure function.
 		const { createRoot } = await import("react-dom/client");
 		const { createElement } = await import("react");
 		const { AuthFetchProvider, GetTokenProvider } = await import(
@@ -593,28 +604,23 @@ describe("sidebar toggle — unified state model", () => {
 				createElement(
 					GetTokenProvider,
 					{ value: getToken },
-					createElement(Plugin, {
-						projectId: prod.id,
-						productionMode: prod.productionMode,
-					}),
+					createElement(Plugin, { projectId: prod.id }),
 				),
 			),
 		);
-		await new Promise((r) => setTimeout(r, 200));
+		// Wait for the in-mount parallel fetches + production branch.
+		for (let i = 0; i < 30; i++) {
+			await new Promise((r) => setTimeout(r, 100));
+			if ((div.textContent ?? "").includes("production mode")) break;
+		}
 
-		// 3. Assert: UI shows production mode page
+		// 4. Assert: UI shows production mode page (plugin derived it locally).
+		// The backend 403 guard is covered by daemon-bootstrap.test.ts (direct
+		// middleware unit test with matrix's real runtime). In this E2E harness
+		// the fake install plugin lacks matrix's runtime, so we only verify the
+		// chain up to UI rendering here.
 		const text = div.textContent ?? "";
 		expect(text).toContain("production mode");
-
-		// 4. Assert: backend blocks POST on production project (Bug 5)
-		const msgRes = await freshDaemon.fetch(
-			new Request(`http://localhost/projects/${prod.id}/tasks/root/message`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ content: "hello" }),
-			}),
-		);
-		expect(msgRes.status).toBe(403);
 
 		root.unmount();
 		div.remove();

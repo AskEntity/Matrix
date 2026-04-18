@@ -44,16 +44,22 @@ self.onmessage = async (event: MessageEvent) => {
 		};
 
 		try {
-			// Load plugin's scope opts builder if provided.
-			// Plugin contract: exports buildScopeOpts or default (projectId, ctx) → ScopeOpts.
+			// Load plugin's runtime exports if provided.
+			// Plugin contract: exports `buildScopeOpts` (or default) — required.
+			// Optional: `registerRoutes` — mount plugin-specific HTTP routes + guards.
 			// Plugin-specific config (e.g., selfBootstrap) is read from ctx.globalConfig inside the builder.
 			// biome-ignore lint/suspicious/noExplicitAny: plugin module shape varies
 			let buildScopeOpts: any;
+			// biome-ignore lint/suspicious/noExplicitAny: plugin module shape varies
+			let registerPluginRoutes: any;
 			if (pluginRuntimePath) {
 				const pluginMod = await import(pluginRuntimePath);
 				const builder = pluginMod.buildScopeOpts ?? pluginMod.default;
 				if (typeof builder === "function") {
 					buildScopeOpts = builder;
+				}
+				if (typeof pluginMod.registerRoutes === "function") {
+					registerPluginRoutes = pluginMod.registerRoutes;
 				}
 			}
 			appInstance = createApp({
@@ -61,6 +67,7 @@ self.onmessage = async (event: MessageEvent) => {
 				globalConfigPath,
 				projects,
 				buildScopeOpts,
+				registerPluginRoutes,
 				dataRoot,
 				globalContext,
 			});

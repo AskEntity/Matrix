@@ -140,6 +140,8 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 		// Defensive clone: DEFAULT_CONFIG is frozen, and even if initialConfig is
 		// provided we don't want mutations leaking back to the caller's object.
 		globalConfig: { ...(config.initialConfig ?? DEFAULT_CONFIG) },
+		// Forward globalContext from config for convenient runtime/plugin access.
+		globalContext: config.globalContext,
 	};
 
 	// NOTE: tasks/ and debug/ directories are NOT eagerly created here.
@@ -292,6 +294,14 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 	// restart-daemon is daemon-owned (needs process.exit on the main thread)
 
 	// Project list served by daemon. Worker has it for internal routes that need project lookup.
+
+	// Plugin-registered routes run FIRST so plugin middleware (guards, etc.)
+	// can intercept matching routes before built-in handlers see them.
+	// The plugin contract: export `registerRoutes(app, ctx)` from the plugin
+	// runtime module. Plugin owns its own endpoints and guards.
+	if (config.registerPluginRoutes) {
+		config.registerPluginRoutes(app, ctx);
+	}
 
 	// Register all route groups
 	registerProjectRoutes(app, ctx);
