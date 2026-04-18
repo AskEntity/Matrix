@@ -8,6 +8,8 @@
  *   - Shim cleanup always happens (even on failure).
  *   - Importmap is stable and contains the keys the shell relies on.
  *   - Output is byte-deterministic for the same input.
+ *   - Every built asset is content-hashed and discoverable via the manifest
+ *     (`logical URL → hashed URL`).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -49,6 +51,11 @@ const MATRIX_PLUGIN_CSS = join(
 	"style.css",
 );
 
+// All built-asset filenames follow `<name>-<hash>.<ext>` where hash is
+// Bun.build's 8-char lowercase alphanumeric content hash (or our matching
+// manual hash for CSS). This regex locks the shape.
+const HASHED_URL = /^\/(?:vendor|app)\/.+-[a-z0-9]{8}\.(?:js|css)$/;
+
 describe("buildWebAssets — happy path", () => {
 	let buildDir: string;
 	beforeEach(async () => {
@@ -58,7 +65,7 @@ describe("buildWebAssets — happy path", () => {
 		rmSync(buildDir, { recursive: true, force: true });
 	});
 
-	test("importmap contains the keys the shell relies on", async () => {
+	test("importmap values are hashed URLs for every React shim + shared module", async () => {
 		const res = await buildWebAssets({
 			buildDir,
 			shellEntry: SHELL_ENTRY,
@@ -66,28 +73,62 @@ describe("buildWebAssets — happy path", () => {
 			plugins: [],
 			projectRoot: MATRIX_ROOT,
 		});
-		// React externals
-		expect(res.importmap.imports.react).toBe("/vendor/react.js");
-		expect(res.importmap.imports["react-dom"]).toBe("/vendor/react-dom.js");
-		expect(res.importmap.imports["react-dom/client"]).toBe(
-			"/vendor/react-dom-client.js",
-		);
-		expect(res.importmap.imports["react/jsx-runtime"]).toBe(
-			"/vendor/react-jsx-runtime.js",
-		);
-		expect(res.importmap.imports["react/jsx-dev-runtime"]).toBe(
-			"/vendor/react-jsx-dev-runtime.js",
-		);
-		// Shared modules
-		expect(res.importmap.imports["@mxd/auth-context"]).toBe(
-			"/vendor/shared/auth-context.js",
-		);
-		expect(res.importmap.imports["@mxd/types"]).toBe(
-			"/vendor/shared/runtime-types.js",
-		);
+		// Every importmap entry must be a hashed URL — never the bare logical path.
+		for (const [specifier, url] of Object.entries(res.importmap.imports)) {
+			expect(url).toMatch(HASHED_URL);
+			expect(url).not.toBe(specifier); // can't resolve to itself
+			// Regex pattern matches "react", "react-dom", etc., including the
+			// hash suffix. "vendor" prefix lives inside the regex.
+		}
+		// Specific specifiers we depend on
+		const keys = Object.keys(res.importmap.imports);
+		expect(keys).toContain("react");
+		expect(keys).toContain("react-dom");
+		expect(keys).toContain("react-dom/client");
+		expect(keys).toContain("react/jsx-runtime");
+		expect(keys).toContain("react/jsx-dev-runtime");
+		expect(keys).toContain("@mxd/auth-context");
+		expect(keys).toContain("@mxd/types");
 	});
 
-	test("plugin output goes to /app/plugin/<name>/ namespace, stable regardless of source path", async () => {
+	test("manifest maps every logical asset URL to a hashed output URL", async () => {
+		const res = await buildWebAssets({
+			buildDir,
+			shellEntry: SHELL_ENTRY,
+			shellCssPath: SHELL_CSS,
+			plugins: [
+				{
+					name: "matrix",
+					webEntry: MATRIX_PLUGIN_ENTRY,
+					cssPath: MATRIX_PLUGIN_CSS,
+					scope: "global",
+				},
+			],
+			projectRoot: MATRIX_ROOT,
+		});
+		// Every expected logical URL is present and maps to a hashed URL.
+		const expectedLogical = [
+			"/vendor/react.js",
+			"/vendor/react-dom.js",
+			"/vendor/react-dom-client.js",
+			"/vendor/react-jsx-runtime.js",
+			"/vendor/react-jsx-dev-runtime.js",
+			"/vendor/shared/auth-context.js",
+			"/vendor/shared/runtime-types.js",
+			"/app/web/main.js",
+			"/app/web/styles.css",
+			"/app/plugin/matrix/index.js",
+			"/app/plugin/matrix/style.css",
+		];
+		for (const logical of expectedLogical) {
+			const hashed = res.manifest[logical];
+			expect(hashed, `missing manifest entry for ${logical}`).toBeDefined();
+			expect(hashed).toMatch(HASHED_URL);
+			expect(hashed).not.toBe(logical); // must actually be different
+		}
+	});
+
+	test("plugin output is hashed; file exists on disk under hashed name", async () => {
 		const res = await buildWebAssets({
 			buildDir,
 			shellEntry: SHELL_ENTRY,
@@ -103,15 +144,20 @@ describe("buildWebAssets — happy path", () => {
 			projectRoot: MATRIX_ROOT,
 		});
 		const out = res.pluginOutputs.get("matrix");
-		expect(out?.jsPath).toBe("/app/plugin/matrix/index.js");
-		expect(out?.cssPath).toBe("/app/plugin/matrix/style.css");
-		expect(
-			existsSync(join(buildDir, "app", "plugin", "matrix", "index.js")),
-		).toBe(true);
-		expect(
-			existsSync(join(buildDir, "app", "plugin", "matrix", "style.css")),
-		).toBe(true);
-		expect(res.cssPaths).toContain("/app/plugin/matrix/style.css");
+		if (!out?.jsPath || !out?.cssPath) {
+			throw new Error(
+				`Expected plugin outputs with hashed JS+CSS, got ${JSON.stringify(out)}`,
+			);
+		}
+		expect(out.jsPath).toMatch(HASHED_URL);
+		expect(out.cssPath).toMatch(HASHED_URL);
+		// Strip `/app/` prefix to get the file path under buildDir/app
+		const jsFile = out.jsPath.replace(/^\/app\//, "");
+		const cssFile = out.cssPath.replace(/^\/app\//, "");
+		expect(existsSync(join(buildDir, "app", jsFile))).toBe(true);
+		expect(existsSync(join(buildDir, "app", cssFile))).toBe(true);
+		// cssPaths includes the hashed plugin css
+		expect(res.cssPaths).toContain(out.cssPath);
 	});
 
 	test("plugin without cssPath produces no cssPath in output", async () => {
@@ -131,16 +177,18 @@ describe("buildWebAssets — happy path", () => {
 		).toBeUndefined();
 	});
 
-	test("shellEntryPath is a URL path (forward slashes, not platform sep)", async () => {
+	test("shellEntryPath is a hashed URL (forward slashes, not platform sep)", async () => {
 		const res = await buildWebAssets({
 			buildDir,
 			shellEntry: SHELL_ENTRY,
 			plugins: [],
 			projectRoot: MATRIX_ROOT,
 		});
-		expect(res.shellEntryPath).toBe("/app/web/main.js");
+		expect(res.shellEntryPath).toMatch(/^\/app\/web\/main-[a-z0-9]{8}\.js$/);
 		// Must not leak backslashes on any OS
 		expect(res.shellEntryPath).not.toContain("\\");
+		// Matches manifest lookup
+		expect(res.manifest["/app/web/main.js"]).toBe(res.shellEntryPath);
 	});
 
 	test("cleans up _vendor_shims dir in projectRoot", async () => {
@@ -154,25 +202,94 @@ describe("buildWebAssets — happy path", () => {
 		expect(existsSync(shimDir)).toBe(false);
 	});
 
-	test("two builds of the same input produce byte-identical shell JS", async () => {
+	test("two builds of the same input produce identical hashes (determinism)", async () => {
 		const buildDir2 = await mkdtemp(join(tmpdir(), "webbuild-det-"));
 		try {
-			await buildWebAssets({
+			const res1 = await buildWebAssets({
 				buildDir,
 				shellEntry: SHELL_ENTRY,
 				plugins: [],
 				projectRoot: MATRIX_ROOT,
 			});
-			await buildWebAssets({
+			const res2 = await buildWebAssets({
 				buildDir: buildDir2,
 				shellEntry: SHELL_ENTRY,
 				plugins: [],
 				projectRoot: MATRIX_ROOT,
 			});
-			const shell1 = readFileSync(join(buildDir, "app", "web", "main.js"));
-			const shell2 = readFileSync(join(buildDir2, "app", "web", "main.js"));
+			// Shell entry hash must match byte-for-byte
+			expect(res1.shellEntryPath).toBe(res2.shellEntryPath);
+			// All importmap values must match
+			expect(res1.importmap).toEqual(res2.importmap);
+			// Resolve the actual on-disk files via manifest and byte-compare
+			const shellRel1 = res1.shellEntryPath.replace(/^\/app\//, "");
+			const shellRel2 = res2.shellEntryPath.replace(/^\/app\//, "");
+			const shell1 = readFileSync(join(buildDir, "app", shellRel1));
+			const shell2 = readFileSync(join(buildDir2, "app", shellRel2));
 			expect(shell1.equals(shell2)).toBe(true);
 		} finally {
+			rmSync(buildDir2, { recursive: true, force: true });
+		}
+	});
+
+	test("changed source produces a different shell hash (cache busts automatically)", async () => {
+		// Temporarily write a new file into web/, build against a different
+		// shell entry, observe the hash differs.
+		const altEntry = join(MATRIX_ROOT, "web", "main-alt-for-test.tsx");
+		// Make a minimal tsx that differs from main.tsx — importing the shared
+		// modules so the build succeeds end-to-end.
+		writeFileSync(altEntry, `export const _ALT_MARKER_${Date.now()} = true;\n`);
+		const buildDir2 = await mkdtemp(join(tmpdir(), "webbuild-change-"));
+		try {
+			const res1 = await buildWebAssets({
+				buildDir,
+				shellEntry: SHELL_ENTRY,
+				plugins: [],
+				projectRoot: MATRIX_ROOT,
+			});
+			const res2 = await buildWebAssets({
+				buildDir: buildDir2,
+				shellEntry: altEntry,
+				plugins: [],
+				projectRoot: MATRIX_ROOT,
+			});
+			// Different source → different shell hash
+			expect(res1.shellEntryPath).not.toBe(res2.shellEntryPath);
+		} finally {
+			rmSync(altEntry, { force: true });
+			rmSync(buildDir2, { recursive: true, force: true });
+		}
+	});
+
+	test("CSS content hash changes when CSS content changes", async () => {
+		const cssA = join(MATRIX_ROOT, "web", "_test-styles-a.css");
+		const cssB = join(MATRIX_ROOT, "web", "_test-styles-b.css");
+		const buildDir2 = await mkdtemp(join(tmpdir(), "webbuild-css-b-"));
+		try {
+			writeFileSync(cssA, `.a { color: red; }\n`);
+			writeFileSync(cssB, `.b { color: blue; }\n`);
+			const res1 = await buildWebAssets({
+				buildDir,
+				shellEntry: SHELL_ENTRY,
+				shellCssPath: cssA,
+				plugins: [],
+				projectRoot: MATRIX_ROOT,
+			});
+			const res2 = await buildWebAssets({
+				buildDir: buildDir2,
+				shellEntry: SHELL_ENTRY,
+				shellCssPath: cssB,
+				plugins: [],
+				projectRoot: MATRIX_ROOT,
+			});
+			const css1 = res1.manifest["/app/web/styles.css"];
+			const css2 = res2.manifest["/app/web/styles.css"];
+			expect(css1).toMatch(HASHED_URL);
+			expect(css2).toMatch(HASHED_URL);
+			expect(css1).not.toBe(css2); // different content → different URL
+		} finally {
+			rmSync(cssA, { force: true });
+			rmSync(cssB, { force: true });
 			rmSync(buildDir2, { recursive: true, force: true });
 		}
 	});
@@ -288,24 +405,28 @@ describe("buildWebAssets — failures are loud", () => {
 });
 
 describe("generateIndexHTML", () => {
-	test("emits importmap + shell script + CSS links", () => {
+	test("emits importmap + hashed shell script + hashed CSS links from build result", () => {
 		const html = generateIndexHTML({
 			buildDir: "/unused",
-			importmap: { imports: { react: "/vendor/react.js" } },
-			shellEntryPath: "/app/web/main.js",
+			importmap: { imports: { react: "/vendor/react-abc12345.js" } },
+			shellEntryPath: "/app/web/main-def67890.js",
 			pluginOutputs: new Map(),
-			cssPaths: ["/app/web/styles.css", "/app/plugin/matrix/style.css"],
+			cssPaths: [
+				"/app/web/styles-ghi12345.css",
+				"/app/plugin/matrix/style-jkl67890.css",
+			],
+			manifest: {},
 		});
 		expect(html).toContain(`<script type="importmap">`);
-		expect(html).toContain(`"react": "/vendor/react.js"`);
+		expect(html).toContain(`"react": "/vendor/react-abc12345.js"`);
 		expect(html).toContain(
-			`<link rel="stylesheet" href="/app/web/styles.css" />`,
+			`<link rel="stylesheet" href="/app/web/styles-ghi12345.css" />`,
 		);
 		expect(html).toContain(
-			`<link rel="stylesheet" href="/app/plugin/matrix/style.css" />`,
+			`<link rel="stylesheet" href="/app/plugin/matrix/style-jkl67890.css" />`,
 		);
 		expect(html).toContain(
-			`<script type="module" src="/app/web/main.js"></script>`,
+			`<script type="module" src="/app/web/main-def67890.js"></script>`,
 		);
 	});
 });

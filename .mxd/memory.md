@@ -1710,9 +1710,90 @@ refresh GET (the actual UX scenario), byte-identical HTML between `/` and
 `/vendor/missing.js` still 404, POST/PATCH stay auth-gated, non-existent
 project id 404s.
 
-**Cache hygiene** (deferred to a separate task): browser caches old
-`/app/web/main.js` after daemon restart. Real fix is content-hashed
-filenames in the build pipeline (`naming: "[name]-[hash].[ext]"` +
-manifest), not a `Cache-Control: no-store` band-aid. Different layer
-(build, not server routing), different risk class — split out as its
+**Cache hygiene** (SHIPPED — see "Content-hashed build pipeline" below):
+browser used to cache old `/app/web/main.js` after daemon restart. Fix was
+content-hashed filenames in the build pipeline (`naming: "[name]-[hash].[ext]"`
++ manifest), NOT a `Cache-Control: no-store` band-aid. Different layer
+(build, not server routing), different risk class — shipped as its
 own ticket.
+
+## Content-hashed build pipeline (2026-04-18) — `Cache-Control: immutable` replaces `no-store`
+
+**What shipped**: every asset `buildWebAssets` emits carries its content hash
+in the filename. `main-a1b2c3d4.js`, `react-7h8j9kml.js`, `styles-q2w3e4r5.css`.
+Served with `Cache-Control: public, max-age=31536000, immutable`. HTML that
+references them is served with `Cache-Control: no-cache, must-revalidate` so
+the browser always asks "is there a new index?" and never asks "is the
+hashed JS still fresh?".
+
+**Why**: Task Y SPA fallback memorized the deferred cache-hygiene problem —
+"browser caches old `/app/web/main.js` after daemon restart". Two
+options: `Cache-Control: no-store` (band-aid — works but every reload
+re-downloads the ~MB shell) vs content hash (standard web pattern —
+cache win is preserved, and stale content is impossible because stale
+URLs literally don't exist on disk). User ordered the second.
+
+**Mechanism**:
+- `Bun.build({ naming: "[name]-[hash].[ext]" })` for vendor shims,
+  shared modules, and plugins.
+- `Bun.build({ naming: "[dir]/[name]-[hash].[ext]" })` for the shell
+  entry — preserves the `web/` subdir.
+- CSS goes through `hashRename(sourcePath, outDir, logicalBasename)`
+  which reads bytes, computes `Bun.hash → base36 → low 8 chars`, copies
+  to `<logicalBasename>-<hash>.<ext>`. Same shape as Bun.build's own
+  hashes so URLs look uniform.
+- `manifest: Record<string, string>` — logical URL → hashed URL. Populated
+  for every asset. Used by `generateIndexHTML` to emit the correct
+  `<script>`/`<link>`/importmap hrefs.
+- `importmap.imports` is sourced from `manifest` — so every bare
+  specifier (`react`, `@mxd/auth-context`, etc.) resolves through the
+  importmap to a hashed URL. If the manifest is missing an entry, build
+  throws (`Vendor shim ${specifier} missing from manifest`) instead of
+  silently emitting a bare URL that would 404.
+
+**Cache header semantic**:
+- Hashed asset URL changes iff content changes → `immutable` is safe.
+- HTML URL (`/` and every SPA-fallback path) is stable → `no-cache`
+  forces revalidation on every navigation. Daemon rebuild → next index
+  fetch learns the new hashed asset URLs → browser downloads them
+  fresh. No orphan references, no band-aid.
+
+**Determinism**: `Bun.hash` on content bytes is pure. Two builds of the
+same source produce identical hashes → identical filenames → identical
+HTML → byte-identical deployments. Changed source → different hash →
+different filename → automatic cache bust.
+
+**Tests** (`src/web-builder.test.ts`, 18 tests, including):
+- Every importmap entry is a hashed URL
+- Every logical asset URL has a manifest entry pointing at a hashed URL
+- Two builds of same input produce identical hashes
+- Changed shell source produces a different shell hash
+- CSS content change produces a different CSS hash
+- Plugin output is hashed; hashed file exists on disk
+
+**Tests updated** (dropped hardcoded `/app/web/main.js` references):
+- `src/daemon-bootstrap.test.ts:244` → regex match against
+  `/app/web/main-[a-z0-9]{8}\.js`
+- `web/ShellApp.test.tsx:60,61,78,82` → extract hashed URLs from HTML,
+  fetch those; also assert `Cache-Control: immutable` on assets +
+  `no-cache` on HTML.
+- `src/plugin-url-namespace.test.ts` runtime-types.js size regression
+  → look up hashed path via manifest instead of `vendor/shared/runtime-types.js`.
+
+**What NOT to do**:
+- Don't add `Cache-Control: no-store` anywhere as a fallback. Either
+  the URL is content-addressable (immutable) or it's the index (no-cache).
+  `no-store` is the band-aid the hashing design replaced.
+- Don't hardcode logical asset URLs (`/app/web/main.js`) in production
+  code — only the manifest knows the real hashed URL.
+- Don't assume Bun.build hash width matches our manual CSS hash width
+  blindly; the test regex `[a-z0-9]{8}` pins the shape. Bun could widen
+  it in a future version — if so, update `shortContentHash` to match
+  and re-run the shape tests.
+
+**Anti-pattern avoided**: my first instinct was to write `no-store` +
+add a query-string cache buster `?v=abc123`. Both are cargo-cult. Query
+strings defeat CDN caching; `no-store` wastes bandwidth. Content-
+addressable URLs are the web-native answer to this class of problem —
+the browser's cache is already an infinite content-addressable store if
+you feed it content-addressable URLs.

@@ -241,7 +241,9 @@ describe("zero-plugin shell rendering", () => {
 		expect(res.status).toBe(200);
 		const html = await res.text();
 		expect(html).toContain("<!DOCTYPE html>");
-		expect(html).toContain("/app/web/main.js");
+		// Shell entry URL is content-hashed (`main-<8chars>.js`). The logical
+		// name `main.js` no longer appears in HTML after the hashed-URL build.
+		expect(html).toMatch(/\/app\/web\/main-[a-z0-9]{8}\.js/);
 
 		// /auth/status is on SKIP_EXACT too — login page needs it pre-auth.
 		const authRes = await daemon.fetch(
