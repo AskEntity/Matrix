@@ -957,3 +957,35 @@ Three tightly-coupled durability gaps closed so process exits + stops don't lose
 ### Test mock abort awareness
 
 - Integration test mocks using `setTimeout(resolve, 10000)` / `5000` now call `abortableSleep(ms, req.signal)` helper in `runtime.test.ts`. Without signal awareness, stopAgent's loop-settlement await would wait the full sleep window. Real providers (Anthropic, OpenAI SDKs) already respect abort; this brings mocks in line.
+
+## bash tool: tiered output + merged streams (FU9)
+
+Defensive-instinct-as-tool-design. AI piped/redirected because context was at risk; now context is bounded by the tool, so the instinct has nothing to act on.
+
+### Tiered display (merged mode, default)
+- `<1024 bytes` → inline only, no file saved
+- `1024..10240` → full inline + top/bottom banner + file kept at `/tmp/mxd/exec-<id>.out`
+- `>10240` → head 5KB + `... [N bytes / M lines truncated] ...` + tail 5KB + banner + read hint; file kept
+- Boundary: `head_budget + tail_budget >= total` naturally shows full (no special-case for size===10240)
+- Truncation: byte-aware + newline alignment via `Buffer.lastIndexOf(0x0a, budget-1)` / `Buffer.indexOf(0x0a, total-budget)`. No newline in window → hard byte cut + "mid-line cut" annotation.
+
+### Separate mode (opt-in `separate: true`)
+Two files: `/tmp/mxd/exec-<id>.stdout` + `.stderr`. Budget allocation in the large case: if one stream is trivial (≤5KB), show it in full and give the other `BUDGET - trivial_size` split head/tail; else each gets 2.5k+2.5k. Continuous at boundary (stderr=5120 → both 5KB; stderr=5121 → stdout 2.5k+2.5k).
+
+### Stream merging
+`bash -c "(cmd) 2>&1"` wrapping. AI-written `2>&1` inside `cmd` becomes a harmless redundant no-op. Bash's own stderr (pre-subshell syntax errors, rare) is `stderr: "ignore"` at Bun.spawn level — acceptable tradeoff for clean single-file output.
+
+### Foreground/background parity
+One `formatBashResult` function. The `content` field of `background_complete` queue messages is byte-identical to what `parseForegroundResult` returns when the same command runs foreground.
+
+### Directory rename
+`/tmp/mxd-bg/` → `/tmp/mxd/`. The dir is no longer bg-specific (foreground commands save there too). `BackgroundProcess.separate: boolean` is the new mode discriminator; `stdoutPath` holds the `.out` file in merged mode (misleading name, kept for API compat).
+
+### Pure-function exports for testing
+`formatMergedOutput(path, exitCode)`, `formatSeparateOutput(so, se, exitCode)`, `truncateMiddle(buf, headBudget, tailBudget)`, `allocateSeparateBudget(stdoutSize, stderrSize)` — all exported from `src/tools/bash.ts` so tests hit them directly without spawning subshells.
+
+### Tool description vs system prompt
+The "don't pipe" guidance lives in the bash tool's `description` field (`src/tools/definitions.ts`), NOT in `src/system-prompts.ts`. Tool description is per-tool, embedded in API tool schema. system-prompts.ts has one general line about piping during long commands that's still accurate.
+
+### Architectural framing the task demonstrated
+When AI repeatedly does X (pipe/redirect/`| head`), ask: is the motivation legitimate? If yes (context protection IS legitimate), make the tool satisfy it naturally — don't enforce against it. Rule suppression leaks at edges; tool-level satisfaction closes the loop. If you find yourself adding parser/rejection/warning to the new tool, you drifted — the point is to make shortcuts unnecessary, not forbidden.
