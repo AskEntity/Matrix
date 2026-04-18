@@ -1020,33 +1020,12 @@ function ProjectContent({
 	);
 
 	// ── Stabilized callbacks for memoized child components ───────────────────
-
-	// Reset all project state when projectId changes (shell controls project
-	// selection; it passes a new `pluginPath` prop too). rootNodeId resets
-	// to null; the URL normalization effect will call `pushPluginPath` with
-	// replace=true once the new project's useTasks resolves. Don't touch
-	// the URL here — the shell already did via pushState.
-	const prevProjectId = useRef(projectId);
-	useEffect(() => {
-		if (prevProjectId.current !== projectId) {
-			prevProjectId.current = projectId;
-			setRootNodeId(null);
-			setOpenTabs([]);
-			localStorage.setItem("mxd-open-tabs", "[]");
-			setLogs([]);
-			setTokenUsage({});
-			dispatchPending({ type: "RESET" });
-			setPendingClarifications([]);
-			setBackgroundProcesses(new Map());
-			setActiveAgents(new Set());
-			setOlderEventsAvailable(new Map());
-			setLastTurns(null);
-			setLastInputTokens(null);
-			setLastCacheCreationTokens(null);
-			setLastCacheReadTokens(null);
-			setLastOutputTokens(null);
-		}
-	}, [projectId, setActiveAgents, dispatchPending]);
+	//
+	// No manual project-switch reset needed: shell passes
+	// `key={${projectId}/${selectedScope}}` on `<PluginUI>`, so any project
+	// (or scope) change unmounts this component and remounts a fresh one.
+	// Every `useState` / `useRef` / `useAgent` reinitializes from scratch —
+	// no imperative clearing, no stale-ref hazard.
 
 	// Use refs to read current preview/tabs without deps
 	const previewTabRef = useRef(previewTabId);
