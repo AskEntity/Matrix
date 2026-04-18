@@ -684,6 +684,16 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				};
 
 			case "compact_marker":
+				// Clear IMMEDIATELY, not in sideEffects. The `message` case sets
+				// deferredMessages synchronously inside processEvent (before its
+				// return), and messages_consumed deletes synchronously too. If
+				// compact_marker deferred its clear to the sideEffects phase, a
+				// batch like [compact_marker, message_A, message_B] would:
+				//   1) push clearSideEffect, 2) set(A), 3) set(B), 4) setLogs,
+				//   5) run deferred sideEffects → clear() wipes A and B.
+				// All deferredMessages mutations must happen in the same phase.
+				// Only syncPendingBanner (a React setState) stays deferred.
+				deferredMessages.clear();
 				return {
 					entries: [],
 					updates: [
@@ -695,14 +705,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							ts: msg.ts,
 						},
 					],
-					sideEffects: () => {
-						// Compact is a reset boundary — clear all deferred messages.
-						// The compact message itself (source:"compact") has an ID and gets deferred,
-						// but it's filtered from nonCompact in the drain, so messages_consumed never
-						// includes it. Without this clear, "[compact]" stays in the pending area forever.
-						deferredMessages.clear();
-						syncPendingBanner();
-					},
+					sideEffects: () => syncPendingBanner(),
 				};
 
 			case "fork_marker":
