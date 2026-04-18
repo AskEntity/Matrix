@@ -75,6 +75,8 @@ async function setupTestContext(): Promise<TestContext> {
 	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
 
 	const mockAPI = new ValidatingMockAPI();
+	// Strict tool-error mode: fail on unexpected is_error tool_results.
+	mockAPI.enableStrictToolErrors();
 	const provider = createMockedProviderWithMock(mockAPI);
 
 	const projectId = ulid();
@@ -1430,6 +1432,10 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 	test("Single error tool_result (bash exit code non-zero)", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+		// This test intentionally runs a failing bash command to exercise the
+		// is_error round-trip through JSONL + reconstruction. Strict mode is
+		// orthogonal here.
+		ctx.mockAPI.disableStrictToolErrors();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -1469,6 +1475,8 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 	test("read_file on non-existent path (tool error)", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+		// Intentional read_file error for is_error round-trip coverage.
+		ctx.mockAPI.disableStrictToolErrors();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -1507,6 +1515,8 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 	test("Mixed success and error tools in same turn", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+		// Intentional error tools to test mixed success/error in one turn.
+		ctx.mockAPI.disableStrictToolErrors();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -1919,6 +1929,9 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 	test("Adversarial: image tool + error tool + queue messages (all at once)", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+		// Intentional error tool in the adversarial mix — it's a drift test,
+		// not an error-handling test.
+		ctx.mockAPI.disableStrictToolErrors();
 
 		const imgPath = await writeTestImage(ctx, "adversarial.png");
 

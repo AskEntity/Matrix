@@ -45,6 +45,11 @@ export async function setupEmissionTestContext(): Promise<EmissionTestContext> {
 	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
 
 	const mockAPI = new ValidatingMockAPI();
+	// Strict tool-error mode: unexpected is_error tool_results fail the test.
+	// Tests that intentionally exercise error paths can call
+	// mockAPI.enableStrictToolErrors([...]) with an allowlist, or
+	// mockAPI.disableStrictToolErrors() to opt out.
+	mockAPI.enableStrictToolErrors();
 	const provider = createMockedProviderWithMock(mockAPI);
 
 	const projectId = ulid();

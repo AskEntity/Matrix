@@ -476,6 +476,8 @@ async function setupTestContext(): Promise<TestContext> {
 	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
 
 	const mockAPI = new ValidatingMockAPI();
+	// Strict tool-error mode: fail on unexpected is_error tool_results.
+	mockAPI.enableStrictToolErrors();
 	const provider = createMockedProviderWithMock(mockAPI);
 	const projectId = ulid();
 	const appResult = createApp({
@@ -774,6 +776,10 @@ describe("Drift: thinking blocks round-trip across restart", () => {
 	test("multiple tool rounds with thinking each: drift-free across restart", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
+		// This scenario intentionally invokes read_file on a missing path — the
+		// is_error: true tool_result is incidental to exercising thinking drift,
+		// not the subject of the test.
+		ctx.mockAPI.disableStrictToolErrors();
 
 		const instruction = JSON.stringify({
 			turns: [
