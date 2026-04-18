@@ -15,6 +15,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import type { PluginManifest } from "../../src/plugin.ts";
+import { isProductionProject } from "./production.ts";
 
 const NEW_PROJECT_MEMORY = `# Project Memory
 
@@ -107,7 +108,14 @@ const manifest: PluginManifest = {
 	web: "./web/Plugin.tsx",
 	runtime: "./runtime.ts",
 
-	async onProjectInit(projectPath, { isNew }) {
+	async onProjectInit(projectPath, { isNew, globalContext }) {
+		// Production install (matrix bundled with globally-installed mxd, no
+		// git history). Skip all write-side init — we must not mutate the npm
+		// distribution directory. Read-only: memory.md, hooks, git remain absent.
+		if (isProductionProject(projectPath, globalContext)) {
+			return;
+		}
+
 		await mkdir(join(projectPath, ".mxd"), { recursive: true });
 
 		// Memory

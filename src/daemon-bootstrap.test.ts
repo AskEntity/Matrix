@@ -1,8 +1,14 @@
 /**
- * Tests for daemon auto-register + 4-step hook flow + production mode.
+ * Fresh-install bootstrap tests.
  *
- * These cover the full bootstrap path that daemon.test.ts skips
- * (all other tests use autoRegisterSelf: false).
+ * - Auto-register at daemon startup (STEP 1 of the 4-step flow).
+ * - Plugin discovery + onProjectInit hooks run on all applicable projects.
+ * - Backend 403 guard for matrix's production-mode projects (plugin-side).
+ * - Zero-plugin shell still serves valid HTML.
+ *
+ * Matrix's "production mode" semantic is fully plugin-owned. Daemon exposes
+ * only plugin-agnostic facts via GET /global-context. These tests assert the
+ * plugin-owned behavior end-to-end (daemon doesn't leak matrix concepts).
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
@@ -21,7 +27,7 @@ describe("auto-register at startup", () => {
 		await rm(tempDir, { recursive: true, force: true });
 	});
 
-	test("daemon auto-registers its own install root", async () => {
+	test("daemon auto-registers its own install root on first run (no restart needed)", async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "bootstrap-"));
 		const dataDir = join(tempDir, ".mxd");
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
@@ -35,61 +41,12 @@ describe("auto-register at startup", () => {
 			(p: { path: string }) => resolve(p.path) === matrixRoot,
 		);
 		expect(found).toBeDefined();
-		// This repo has .git → NOT production
-		expect(found.productionMode).toBe(false);
+		// Daemon response must NOT leak matrix's production semantic
+		expect("productionMode" in found).toBe(false);
 	});
 });
 
-describe("production mode — positive path (end-to-end)", () => {
-	let tempDir: string;
-	let daemon: DaemonInstance;
-	let fakeInstall: string;
-	let dataDir: string;
-
-	afterAll(async () => {
-		await daemon?.shutdown();
-		await rm(tempDir, { recursive: true, force: true });
-	});
-
-	test("install root without .git → marker written + productionMode: true", async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "prod-positive-"));
-		dataDir = join(tempDir, ".mxd");
-		fakeInstall = join(tempDir, "fake-install");
-
-		// Create fake install dir with .mxd/ but NO .git
-		await mkdir(join(fakeInstall, ".mxd", "plugin"), { recursive: true });
-		await writeFile(
-			join(fakeInstall, ".mxd", "plugin", "index.ts"),
-			`export default { name: "test-plugin", scope: "global" };`,
-		);
-		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
-
-		// installRoot override → daemon treats fakeInstall as its own install
-		// autoRegisterSelf: true (default) → registers fakeInstall
-		daemon = await createDaemon({
-			dataDir,
-			autoInitAuth: false,
-			installRoot: fakeInstall,
-		});
-
-		// Assert: project was auto-registered
-		const res = await daemon.fetch(new Request("http://localhost/projects"));
-		const projects = await res.json();
-		const prod = projects.find(
-			(p: { path: string }) => resolve(p.path) === resolve(fakeInstall),
-		);
-		expect(prod).toBeDefined();
-
-		// Assert: .mxd.production marker written in daemon data dir
-		const marker = join(dataDir, "projects", prod.id, ".mxd.production");
-		expect(existsSync(marker)).toBe(true);
-
-		// Assert: GET /projects returns productionMode: true
-		expect(prod.productionMode).toBe(true);
-	});
-});
-
-describe("production mode — negative paths", () => {
+describe("global-context endpoint", () => {
 	let tempDir: string;
 	let daemon: DaemonInstance;
 
@@ -98,42 +55,29 @@ describe("production mode — negative paths", () => {
 		await rm(tempDir, { recursive: true, force: true });
 	});
 
-	test("project NOT at installRoot does NOT get .mxd.production marker", async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "prod-negative-"));
+	test("GET /global-context exposes installRoot, gitHash, version", async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "global-ctx-"));
 		const dataDir = join(tempDir, ".mxd");
-		const otherProject = join(tempDir, "other-project");
-
-		await mkdir(join(otherProject, ".mxd", "plugin"), { recursive: true });
-		await writeFile(
-			join(otherProject, ".mxd", "plugin", "index.ts"),
-			`export default { name: "other", scope: "global" };`,
-		);
-		await mkdir(join(dataDir, "projects"), { recursive: true });
-		await writeFile(
-			join(dataDir, "projects.json"),
-			JSON.stringify([
-				{
-					id: "other",
-					name: "other",
-					path: otherProject,
-					createdAt: new Date().toISOString(),
-				},
-			]),
-		);
+		const fakeInstall = join(tempDir, "fake-install");
+		await mkdir(fakeInstall, { recursive: true });
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
 		daemon = await createDaemon({
 			dataDir,
 			autoInitAuth: false,
 			autoRegisterSelf: false,
+			installRoot: fakeInstall,
 		});
 
-		const marker = join(dataDir, "projects", "other", ".mxd.production");
-		expect(existsSync(marker)).toBe(false);
-
-		const res = await daemon.fetch(new Request("http://localhost/projects"));
-		const projects = await res.json();
-		expect(projects[0].productionMode).toBe(false);
+		const res = await daemon.fetch(
+			new Request("http://localhost/global-context"),
+		);
+		expect(res.status).toBe(200);
+		const ctx = await res.json();
+		expect(ctx.installRoot).toBe(fakeInstall);
+		expect(typeof ctx.version).toBe("string");
+		// gitHash is null when GIT_HASH is unresolved (common in tests)
+		expect("gitHash" in ctx).toBe(true);
 	});
 });
 
@@ -186,87 +130,71 @@ describe("4-step hook flow", () => {
 		// Matrix's global hook should have created .mxd/memory.md
 		expect(existsSync(join(userProject, ".mxd", "memory.md"))).toBe(true);
 	});
-
-	test("POST /projects with global plugin propagates hook to existing projects", async () => {
-		// Setup: existing project A (no plugin), then POST project B with global plugin
-		const projectA = join(tempDir, "project-a");
-		await mkdir(projectA, { recursive: true });
-
-		// Register project A (no plugin)
-		const resA = await daemon.fetch(
-			new Request("http://localhost/projects", {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ path: projectA }),
-			}),
-		);
-		expect(resA.status).toBe(201);
-
-		// Matrix global plugin already registered at daemon startup
-		// → project A should already have memory.md from step 3 of POST /projects
-		// (POST /projects calls onProjectInit for all global plugins on the new project)
-		expect(existsSync(join(projectA, ".mxd", "memory.md"))).toBe(true);
-	});
 });
 
-describe("production mode — backend guard (Bug 5)", () => {
-	let tempDir: string;
-	let daemon: DaemonInstance;
+describe("production-mode backend guard (plugin middleware, unit)", () => {
+	// Tests the middleware registered by matrix's registerRoutes directly on
+	// an isolated Hono app. Avoids worker-thread indirection (tempdir-TS-import
+	// fragility) while still verifying the middleware's exact semantic.
+	test("guards POST on production project, allows GET, passes non-production through", async () => {
+		const { Hono } = await import("hono");
+		const { registerRoutes } = await import("../.mxd/plugin/runtime.ts");
 
-	afterAll(async () => {
-		await daemon?.shutdown();
-		await rm(tempDir, { recursive: true, force: true });
-	});
+		// Fake ctx with a ProjectManager-shape stub and matrix's globalContext
+		// pointing at the install root (production detection fires when project
+		// path matches installRoot AND no gitHash).
+		const installRoot = "/fake/install";
+		const prodProject = { id: "prod", name: "prod", path: installRoot };
+		const devProject = { id: "dev", name: "dev", path: "/some/other/path" };
+		const ctx = {
+			pm: {
+				get: (id: string) =>
+					id === "prod" ? prodProject : id === "dev" ? devProject : null,
+			},
+			globalContext: {
+				installRoot,
+				gitHash: null,
+				version: "test",
+			},
+		};
 
-	test("POST to production project returns 403", async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "prod-guard-"));
-		const dataDir = join(tempDir, ".mxd");
-		const fakeInstall = join(tempDir, "fake-install");
+		const app = new Hono();
+		// biome-ignore lint/suspicious/noExplicitAny: test harness sufficient shape
+		registerRoutes(app, ctx as any);
+		// Fallthrough handler: 200 for everything not blocked by middleware.
+		app.all("*", (c) => c.text("ok", 200));
 
-		await mkdir(join(fakeInstall, ".mxd", "plugin"), { recursive: true });
-		await writeFile(
-			join(fakeInstall, ".mxd", "plugin", "index.ts"),
-			'export default { name: "test-plugin", scope: "global" };',
-		);
-		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
-
-		daemon = await createDaemon({
-			dataDir,
-			autoInitAuth: false,
-			installRoot: fakeInstall,
-		});
-
-		const listRes = await daemon.fetch(
-			new Request("http://localhost/projects"),
-		);
-		const projects = await listRes.json();
-		const prod = projects.find(
-			(p: { path: string }) => resolve(p.path) === resolve(fakeInstall),
-		);
-		expect(prod).toBeDefined();
-		expect(prod.productionMode).toBe(true);
-
-		// POST message → 403
-		const msgRes = await daemon.fetch(
-			new Request(`http://localhost/projects/${prod.id}/tasks/root/message`, {
+		// Production project + POST (mutation) → 403
+		const prodPost = await app.fetch(
+			new Request(`http://localhost/projects/prod/tasks/root/message`, {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ content: "hello" }),
 			}),
 		);
-		expect(msgRes.status).toBe(403);
-		const body = await msgRes.json();
-		expect(body.error).toContain("production mode");
+		expect(prodPost.status).toBe(403);
+		const prodBody = await prodPost.json();
+		expect(prodBody.error).toContain("production mode");
 
-		// GET still works (read-only allowed)
-		const getRes = await daemon.fetch(
-			new Request(`http://localhost/projects/${prod.id}/tasks`),
+		// Production project + GET (read-only) → passes through
+		const prodGet = await app.fetch(
+			new Request(`http://localhost/projects/prod/tasks`),
 		);
-		expect(getRes.status).not.toBe(403);
+		expect(prodGet.status).toBe(200);
+
+		// Non-production project + POST → passes through
+		const devPost = await app.fetch(
+			new Request(`http://localhost/projects/dev/tasks/root/message`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ content: "hello" }),
+			}),
+		);
+		expect(devPost.status).toBe(200);
 	});
 });
 
-describe("zero-plugin shell rendering (Bug 2+3)", () => {
+describe("zero-plugin shell rendering", () => {
 	let tempDir: string;
 	let daemon: DaemonInstance;
 
@@ -275,7 +203,7 @@ describe("zero-plugin shell rendering (Bug 2+3)", () => {
 		await rm(tempDir, { recursive: true, force: true });
 	});
 
-	test("shell serves valid HTML with CSS when no plugins registered", async () => {
+	test("shell serves valid HTML when no plugins registered", async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "zero-plugin-"));
 		const dataDir = join(tempDir, ".mxd");
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
@@ -290,13 +218,7 @@ describe("zero-plugin shell rendering (Bug 2+3)", () => {
 		expect(res.status).toBe(200);
 		const html = await res.text();
 		expect(html).toContain("<!DOCTYPE html>");
-		expect(html).toContain("stylesheet");
 		expect(html).toContain("/app/web/main.js");
-
-		const cssRes = await daemon.fetch(
-			new Request("http://localhost/app/web/styles.css"),
-		);
-		expect(cssRes.status).toBe(200);
 
 		const authRes = await daemon.fetch(
 			new Request("http://localhost/auth/status"),

@@ -22,7 +22,6 @@ import {
 	readFileSync,
 	realpathSync,
 	unlinkSync,
-	writeFileSync,
 	writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -842,12 +841,62 @@ export async function createDaemon(opts: {
 		});
 	}
 
-	// ── Auto-register matrix (fresh install bootstrap) ──
-
 	const pm = new ProjectManager(dataDir);
 	await pm.load();
 
-	// ── Discover plugins ──
+	// ── Global context — daemon-computed facts, not user config ──
+	// Exposed to workers (init message) and HTTP clients (GET /global-context).
+	// Plugins read installRoot/gitHash and form their own opinions (e.g., matrix's
+	// production-mode semantic). Daemon stays opinion-free.
+	// gitHash is derived from the installRoot's own .git (NOT from the daemon's
+	// build-time GIT_HASH). This is what plugins need: "does the install location
+	// have git history?" — a property of the path, not of the running binary.
+	const binaryPath = realpathSync(fileURLToPath(import.meta.url));
+	const computedInstallRoot =
+		opts.installRoot ?? resolve(join(binaryPath, "..", ".."));
+	function readGitHashAt(dir: string): string | null {
+		try {
+			const result = Bun.spawnSync({
+				cmd: ["git", "rev-parse", "--short", "HEAD"],
+				cwd: dir,
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			if (result.exitCode === 0) {
+				const hash = new TextDecoder().decode(result.stdout).trim();
+				return hash.length > 0 ? hash : null;
+			}
+		} catch {
+			// git not available / not a git repo
+		}
+		return null;
+	}
+	const globalContext = {
+		installRoot: computedInstallRoot,
+		gitHash: readGitHashAt(computedInstallRoot),
+		version: VERSION,
+	};
+
+	// ── Auto-register matrix (fresh install bootstrap) ──
+	// Must run BEFORE plugin discovery so the just-registered project is seen
+	// by the discovery loop (otherwise auto-register's effect only takes hold
+	// on the NEXT daemon start — two-startup bug).
+	if (opts.autoRegisterSelf !== false) {
+		const { installRoot } = globalContext;
+		if (
+			existsSync(join(installRoot, ".mxd")) &&
+			!pm.list().some((p) => resolve(p.path) === installRoot)
+		) {
+			try {
+				await pm.init(installRoot);
+				console.log(`[daemon] Auto-registered: ${installRoot}`);
+			} catch (e) {
+				console.warn("[daemon] Auto-registration failed:", e);
+			}
+		}
+	}
+
+	// ── Discover plugins (from all registered projects — now includes matrix if auto-registered) ──
 
 	const registeredPlugins: RegisteredPlugin[] = [];
 
@@ -887,45 +936,10 @@ export async function createDaemon(opts: {
 		throw new Error(collision);
 	}
 
-	// ── Global context — daemon-computed facts, not user config ──
-	const binaryPath = realpathSync(fileURLToPath(import.meta.url));
-	const globalContext = {
-		installRoot: opts.installRoot ?? resolve(join(binaryPath, "..", "..")),
-		gitHash: GIT_HASH !== "unknown" ? GIT_HASH : null,
-		version: VERSION,
-	};
-
-	// ── Auto-register matrix (fresh install bootstrap) ──
-	if (opts.autoRegisterSelf !== false) {
-		const { installRoot } = globalContext;
-		if (
-			existsSync(join(installRoot, ".mxd")) &&
-			!pm.list().some((p) => resolve(p.path) === installRoot)
-		) {
-			try {
-				await pm.init(installRoot);
-				console.log(`[daemon] Auto-registered: ${installRoot}`);
-			} catch (e) {
-				console.warn("[daemon] Auto-registration failed:", e);
-			}
-		}
-	}
-
-	// ── Production mode detection (before hooks) ──
-	// Install root without git = production install. Mark it and skip hooks.
-	const installHasGit = existsSync(join(globalContext.installRoot, ".git"));
-	for (const project of pm.list()) {
-		if (resolve(project.path) === globalContext.installRoot && !installHasGit) {
-			const marker = join(dataDir, "projects", project.id, ".mxd.production");
-			if (!existsSync(marker)) {
-				mkdirSync(join(dataDir, "projects", project.id), { recursive: true });
-				writeFileSync(marker, "");
-				console.log(`[daemon] Marked ${project.name} as production mode`);
-			}
-		}
-	}
-
-	// ── Run onProjectInit hooks (4-step flow) ──
+	// ── Run onProjectInit hooks (4-step flow, step 3+4) ──
+	// For each plugin, run its hook on all projects in its scope.
+	// Plugins own their own "should I skip this project?" logic — daemon passes
+	// globalContext so plugins can inspect installRoot/gitHash and decide.
 	for (const plugin of registeredPlugins) {
 		if (!plugin.onProjectInit) continue;
 		const targetProjects =
@@ -933,17 +947,10 @@ export async function createDaemon(opts: {
 				? pm.list()
 				: pm.list().filter((p) => p.id === plugin.projectId);
 		for (const project of targetProjects) {
-			// Skip hooks for production-mode projects
-			const productionMarker = join(
-				dataDir,
-				"projects",
-				project.id,
-				".mxd.production",
-			);
-			if (existsSync(productionMarker)) continue;
 			try {
 				await plugin.onProjectInit(project.path, {
 					isNew: !existsSync(join(project.path, ".git")),
+					globalContext,
 				});
 			} catch (e) {
 				console.warn(
@@ -1082,6 +1089,13 @@ export async function createDaemon(opts: {
 		return c.json({ status: "ok", version: VERSION });
 	});
 
+	// Global context — daemon-computed facts, not user config.
+	// Plugins (both runtime and web) read this to form their own opinions.
+	// Plugin-agnostic: installRoot, gitHash (presence), version.
+	app.get("/global-context", async (c) => {
+		return c.json(globalContext);
+	});
+
 	// Auth routes
 	app.get("/auth/status", async (c) => {
 		const hasSecret = await hasJwtSecret(authPath);
@@ -1133,9 +1147,6 @@ export async function createDaemon(opts: {
 		const projects = pm.list().map((p) => ({
 			...p,
 			pathExists: pm.checkPathExists(p.id),
-			productionMode: existsSync(
-				join(dataDir, "projects", p.id, ".mxd.production"),
-			),
 		}));
 		return c.json(projects);
 	});
@@ -1155,6 +1166,7 @@ export async function createDaemon(opts: {
 				if (plugin.onProjectInit) {
 					await plugin.onProjectInit(body.path, {
 						isNew: !existsSync(join(body.path, ".git")),
+						globalContext,
 					});
 				}
 			}
@@ -1181,9 +1193,6 @@ export async function createDaemon(opts: {
 		return c.json({
 			...project,
 			pathExists: pm.checkPathExists(project.id),
-			productionMode: existsSync(
-				join(dataDir, "projects", project.id, ".mxd.production"),
-			),
 		});
 	});
 
@@ -1566,28 +1575,6 @@ export async function createDaemon(opts: {
 
 	// Fallthrough: forward to first available global worker
 	app.all("*", async (c) => {
-		// Production mode guard: block agent-invoking operations on production projects
-		const projectMatch = c.req.path.match(/^\/projects\/([^/]+)\//);
-		if (projectMatch) {
-			const pid = projectMatch[1]!;
-			const isProduction = existsSync(
-				join(dataDir, "projects", pid, ".mxd.production"),
-			);
-			if (isProduction) {
-				// Allow read-only: GET (tasks, events, config)
-				// Block mutations: POST (messages, agent, stop, restart, compact, clear)
-				if (c.req.method !== "GET") {
-					return c.json(
-						{
-							error:
-								"Project is in production mode. No agent operations allowed.",
-						},
-						403,
-					);
-				}
-			}
-		}
-
 		const globalWorkerName = registeredPlugins.find(
 			(p) => p.scope === "global" && workers.has(p.name),
 		)?.name;

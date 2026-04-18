@@ -387,7 +387,11 @@ describe("FU2.3: worker init timeout", () => {
 			}`,
 			"utf-8",
 		);
-		daemon = await createDaemon({ dataDir, workerInitTimeoutMs: 10_000 });
+		daemon = await createDaemon({
+			dataDir,
+			workerInitTimeoutMs: 10_000,
+			autoRegisterSelf: false,
+		});
 		expect(daemon.plugins.length).toBe(1);
 	}, 15_000);
 });
