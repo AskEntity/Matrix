@@ -56,17 +56,6 @@ interface ActionHandlerDeps {
 			Record<string, { inputTokens: number; contextWindow: number }>
 		>
 	>;
-	setPendingMessages: React.Dispatch<
-		React.SetStateAction<
-			{
-				id: string;
-				taskId: string | null;
-				text: string;
-				timestamp: number;
-				images?: Array<{ base64: string; mediaType: string }>;
-			}[]
-		>
-	>;
 	setBackgroundProcesses: React.Dispatch<
 		React.SetStateAction<
 			Map<

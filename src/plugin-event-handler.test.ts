@@ -3,6 +3,9 @@ import type React from "react";
 import {
 	createEventHandler,
 	type EventHandlerDeps,
+	type PendingAction,
+	type PendingMessage,
+	pendingReducer,
 } from "../.mxd/plugin/web/event-handler.ts";
 import {
 	createLogEntry,
@@ -14,6 +17,12 @@ import {
 /** Minimal deps that satisfy the EventHandlerDeps interface */
 function makeDeps() {
 	const logs: LogEntry[][] = [];
+	// Real pending state driven by pendingReducer — tests can read
+	// `pendingBox.current` after any dispatch to assert. Previously the
+	// helper stubbed setPendingMessages, now it wires the real reducer so
+	// messages_consumed's materialize path (which reads via
+	// getPendingMessages) behaves identically to production.
+	const pendingBox = { current: [] as PendingMessage[] };
 	return {
 		deps: {
 			updateFromWS: mock(() => {}),
@@ -31,7 +40,10 @@ function makeDeps() {
 				}
 			}),
 			setTokenUsage: mock(() => {}),
-			setPendingMessages: mock(() => {}),
+			dispatchPending: mock((action: PendingAction) => {
+				pendingBox.current = pendingReducer(pendingBox.current, action);
+			}),
+			getPendingMessages: () => pendingBox.current,
 			setPendingClarifications: mock(() => {}),
 			setLastTurns: mock(() => {}),
 			setLastInputTokens: mock(() => {}),
@@ -42,6 +54,7 @@ function makeDeps() {
 			t: (key: string) => key,
 		},
 		logs,
+		pendingBox,
 	};
 }
 
@@ -170,14 +183,7 @@ describe("event-handler queueEntry handling", () => {
 	});
 
 	it("processEventBatch: unconsumed non-user user_message goes to pendingMessages with descriptive text", () => {
-		const { deps } = makeDeps();
-
-		let capturedPending: unknown[] = [];
-		(deps as Record<string, unknown>).setPendingMessages = mock(
-			(updater: React.SetStateAction<unknown[]>) => {
-				capturedPending = typeof updater === "function" ? updater([]) : updater;
-			},
-		);
+		const { deps, pendingBox } = makeDeps();
 
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
@@ -200,21 +206,13 @@ describe("event-handler queueEntry handling", () => {
 		] satisfies IncomingEvent[]);
 
 		// Non-user messages also appear in pending banner with descriptive text
-		expect(capturedPending.length).toBe(1);
-		expect((capturedPending[0] as { text: string }).text).toBe(
-			"↑ Worker: Phase 1 done",
-		);
+		expect(pendingBox.current.length).toBe(1);
+		expect(pendingBox.current[0]?.text).toBe("↑ Worker: Phase 1 done");
 	});
 
 	it("processEventBatch: unconsumed user-typed user_message goes to pendingMessages", () => {
-		const { deps } = makeDeps();
+		const { deps, pendingBox } = makeDeps();
 
-		let capturedPending: unknown[] = [];
-		(deps as Record<string, unknown>).setPendingMessages = mock(
-			(updater: React.SetStateAction<unknown[]>) => {
-				capturedPending = typeof updater === "function" ? updater([]) : updater;
-			},
-		);
 
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
@@ -234,8 +232,8 @@ describe("event-handler queueEntry handling", () => {
 			// No messages_consumed — message is unconsumed
 		] satisfies IncomingEvent[]);
 
-		expect(capturedPending.length).toBe(1);
-		expect((capturedPending[0] as { text: string }).text).toBe(
+		expect(pendingBox.current.length).toBe(1);
+		expect((pendingBox.current[0] as { text: string }).text).toBe(
 			"Please check this",
 		);
 	});
@@ -282,7 +280,7 @@ describe("event-handler queueEntry handling", () => {
 	});
 
 	it("handleEvent: live user_message with queueEntry.source=task_message deferred, then messages_consumed renders card", () => {
-		const { deps } = makeDeps();
+		const { deps, pendingBox } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
 		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
@@ -293,13 +291,6 @@ describe("event-handler queueEntry handling", () => {
 			}
 		});
 
-		let capturedPending: unknown[] = [];
-		(deps as Record<string, unknown>).setPendingMessages = mock(
-			(updater: React.SetStateAction<unknown[]>) => {
-				capturedPending =
-					typeof updater === "function" ? updater(capturedPending) : updater;
-			},
-		);
 
 		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
@@ -320,8 +311,8 @@ describe("event-handler queueEntry handling", () => {
 		} satisfies IncomingEvent);
 
 		// Should be in pending banner with descriptive text
-		expect(capturedPending.length).toBe(1);
-		expect((capturedPending[0] as { text: string }).text).toBe(
+		expect(pendingBox.current.length).toBe(1);
+		expect((pendingBox.current[0] as { text: string }).text).toBe(
 			"↑ Worker Task: I'm done with phase 1",
 		);
 		// Should NOT be in activity log yet
@@ -344,11 +335,11 @@ describe("event-handler queueEntry handling", () => {
 		// taskId should be the PARENT's (consuming agent), not the child's
 		expect(taskMessageEntry?.taskId).toBe("parent-1");
 		// Pending should be cleared
-		expect(capturedPending.length).toBe(0);
+		expect(pendingBox.current.length).toBe(0);
 	});
 
 	it("handleEvent: live user_message (actual user) goes to pending, then messages_consumed moves to log", () => {
-		const { deps } = makeDeps();
+		const { deps, pendingBox } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
 		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
@@ -359,13 +350,6 @@ describe("event-handler queueEntry handling", () => {
 			}
 		});
 
-		let capturedPending: Array<{ id: string; text: string }> = [];
-		(deps as Record<string, unknown>).setPendingMessages = mock(
-			(updater: React.SetStateAction<Array<{ id: string; text: string }>>) => {
-				capturedPending =
-					typeof updater === "function" ? updater(capturedPending) : updater;
-			},
-		);
 
 		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
@@ -384,8 +368,8 @@ describe("event-handler queueEntry handling", () => {
 		} satisfies IncomingEvent);
 
 		// Should be in pending banner
-		expect(capturedPending.length).toBe(1);
-		expect(capturedPending[0]?.text).toBe("Build a feature");
+		expect(pendingBox.current.length).toBe(1);
+		expect(pendingBox.current[0]?.text).toBe("Build a feature");
 
 		// 2. Receive messages_consumed
 		handleEvent({
@@ -405,7 +389,7 @@ describe("event-handler queueEntry handling", () => {
 		).toBe("Build a feature");
 
 		// Should be removed from pending
-		expect(capturedPending.length).toBe(0);
+		expect(pendingBox.current.length).toBe(0);
 	});
 
 	it("processEventBatch: user_message with queueEntry.source=clarify_response materializes correctly", () => {
@@ -449,7 +433,7 @@ describe("event-handler queueEntry handling", () => {
 
 describe("event-handler JSONL-driven pending state", () => {
 	it("pending state is derived from deferredMessages map — no race condition possible", () => {
-		const { deps } = makeDeps();
+		const { deps, pendingBox } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
 		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
@@ -460,27 +444,6 @@ describe("event-handler JSONL-driven pending state", () => {
 			}
 		});
 
-		let capturedPending: Array<{
-			id: string;
-			text: string;
-			taskId: string | null;
-			timestamp: number;
-		}> = [];
-		(deps as Record<string, unknown>).setPendingMessages = mock(
-			(
-				updater: React.SetStateAction<
-					Array<{
-						id: string;
-						text: string;
-						taskId: string | null;
-						timestamp: number;
-					}>
-				>,
-			) => {
-				capturedPending =
-					typeof updater === "function" ? updater(capturedPending) : updater;
-			},
-		);
 
 		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
@@ -492,8 +455,8 @@ describe("event-handler JSONL-driven pending state", () => {
 			taskId: "",
 			ts: 1000,
 		} satisfies IncomingEvent);
-		expect(capturedPending.length).toBe(1);
-		expect(capturedPending[0]?.id).toBe("msg-race");
+		expect(pendingBox.current.length).toBe(1);
+		expect(pendingBox.current[0]?.id).toBe("msg-race");
 		expect(capturedLogs.length).toBe(0);
 
 		// Step 2: messages_consumed arrives — materializes in log, clears from pending
@@ -514,7 +477,7 @@ describe("event-handler JSONL-driven pending state", () => {
 				: "",
 		).toBe("Hello world");
 		// Pending should be cleared
-		expect(capturedPending.length).toBe(0);
+		expect(pendingBox.current.length).toBe(0);
 	});
 });
 
@@ -1018,7 +981,7 @@ describe("event-handler tool_pair creation", () => {
 
 describe("event-handler live session clearing", () => {
 	it("handleEvent: tree_updated removes cleared task session records from logs, pending messages, and older-history state", () => {
-		const { deps } = makeDeps();
+		const { deps, pendingBox } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
 		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
@@ -1029,27 +992,6 @@ describe("event-handler live session clearing", () => {
 			}
 		});
 
-		let capturedPending: Array<{
-			id: string;
-			text: string;
-			taskId: string | null;
-			timestamp: number;
-		}> = [];
-		(deps as Record<string, unknown>).setPendingMessages = mock(
-			(
-				updater: React.SetStateAction<
-					Array<{
-						id: string;
-						text: string;
-						taskId: string | null;
-						timestamp: number;
-					}>
-				>,
-			) => {
-				capturedPending =
-					typeof updater === "function" ? updater(capturedPending) : updater;
-			},
-		);
 
 		let olderEvents = new Map<
 			string,
@@ -1152,9 +1094,14 @@ describe("event-handler live session clearing", () => {
 		expect(capturedLogs.some((entry) => entry.taskId === "task-reset")).toBe(
 			false,
 		);
-		expect(capturedPending.some((entry) => entry.taskId === "task-reset")).toBe(
-			false,
-		);
+		// Pending is events-derived (Task X refactor) — tree_updated is no
+		// longer allowed to mutate pending state. The "reset task" pending
+		// entry stays until an actual messages_consumed event clears it.
+		// This inverts the pre-refactor behavior that conflated lifecycle
+		// status "pending" with message state "pending".
+		expect(
+			pendingBox.current.some((entry) => entry.taskId === "task-reset"),
+		).toBe(true);
 		expect(olderEvents.has("task-reset")).toBe(false);
 		expect(olderEvents.has("other-task")).toBe(true);
 	});
@@ -1307,15 +1254,8 @@ describe("event-handler compact_marker savedTokens", () => {
 
 describe("event-handler compact_marker clear ordering (Fix D)", () => {
 	it("processEventBatch: messages AFTER compact_marker survive the clear", () => {
-		const { deps } = makeDeps();
+		const { deps, pendingBox } = makeDeps();
 
-		let capturedPending: Array<{ id: string; text: string }> = [];
-		(deps as Record<string, unknown>).setPendingMessages = mock(
-			(updater: React.SetStateAction<Array<{ id: string; text: string }>>) => {
-				capturedPending =
-					typeof updater === "function" ? updater(capturedPending) : updater;
-			},
-		);
 
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
@@ -1355,22 +1295,15 @@ describe("event-handler compact_marker clear ordering (Fix D)", () => {
 
 		// Both messages must appear in the pending banner. If clear() were still
 		// deferred to sideEffects, it would run AFTER the loop staged A and B,
-		// wiping them → capturedPending.length would be 0.
-		expect(capturedPending.length).toBe(2);
-		const ids = capturedPending.map((p) => p.id).sort();
+		// wiping them → pendingBox.current.length would be 0.
+		expect(pendingBox.current.length).toBe(2);
+		const ids = pendingBox.current.map((p) => p.id).sort();
 		expect(ids).toEqual(["msg-A", "msg-B"]);
 	});
 
-	it("processEventBatch: pre-compact messages are correctly cleared", () => {
-		const { deps } = makeDeps();
+	it("processEventBatch: compact_marker no longer clears pre-compact pending (Task X)", () => {
+		const { deps, pendingBox } = makeDeps();
 
-		let capturedPending: Array<{ id: string; text: string }> = [];
-		(deps as Record<string, unknown>).setPendingMessages = mock(
-			(updater: React.SetStateAction<Array<{ id: string; text: string }>>) => {
-				capturedPending =
-					typeof updater === "function" ? updater(capturedPending) : updater;
-			},
-		);
 
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
@@ -1407,22 +1340,18 @@ describe("event-handler compact_marker clear ordering (Fix D)", () => {
 			},
 		] satisfies IncomingEvent[]);
 
-		// Only the post-compact message survives. The pre-compact one was
-		// cleared by compact_marker (legitimate — that's what compact means).
-		expect(capturedPending.length).toBe(1);
-		expect(capturedPending[0]?.id).toBe("msg-post");
+		// Task X refactor: compact_marker is a no-op for pending. Both
+		// pre- and post-compact messages stay pending until an explicit
+		// messages_consumed event removes them. If the agent never
+		// processed `msg-pre`, it SHOULD remain visible — the old
+		// behavior of silently clearing on compact was lying.
+		const ids = pendingBox.current.map((p) => p.id).sort();
+		expect(ids).toEqual(["msg-post", "msg-pre"]);
 	});
 
 	it("processEventBatch: consumed pre-compact + post-compact → only post-compact pending", () => {
-		const { deps } = makeDeps();
+		const { deps, pendingBox } = makeDeps();
 
-		let capturedPending: Array<{ id: string; text: string }> = [];
-		(deps as Record<string, unknown>).setPendingMessages = mock(
-			(updater: React.SetStateAction<Array<{ id: string; text: string }>>) => {
-				capturedPending =
-					typeof updater === "function" ? updater(capturedPending) : updater;
-			},
-		);
 
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
@@ -1467,8 +1396,8 @@ describe("event-handler compact_marker clear ordering (Fix D)", () => {
 
 		// msg-pre was consumed (materialized as a log entry) before compact;
 		// msg-post is unconsumed → only it appears in pending.
-		expect(capturedPending.length).toBe(1);
-		expect(capturedPending[0]?.id).toBe("msg-post");
+		expect(pendingBox.current.length).toBe(1);
+		expect(pendingBox.current[0]?.id).toBe("msg-post");
 	});
 });
 
@@ -1945,8 +1874,8 @@ describe("event-handler compaction display", () => {
 		expect(marker?.savedTokens).toBe(50000);
 	});
 
-	it("handleEvent: compact_marker clears [compact] from pending messages (Bug: stuck pending)", () => {
-		const { deps } = makeDeps();
+	it("handleEvent: compact source messages are never added to pending (Task X)", () => {
+		const { deps, pendingBox } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
 		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
@@ -1957,31 +1886,14 @@ describe("event-handler compaction display", () => {
 			}
 		});
 
-		let capturedPending: Array<{
-			id: string;
-			text: string;
-			taskId: string | null;
-			timestamp: number;
-		}> = [];
-		(deps as Record<string, unknown>).setPendingMessages = mock(
-			(
-				updater: React.SetStateAction<
-					Array<{
-						id: string;
-						text: string;
-						taskId: string | null;
-						timestamp: number;
-					}>
-				>,
-			) => {
-				capturedPending =
-					typeof updater === "function" ? updater(capturedPending) : updater;
-			},
-		);
 
 		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
-		// Compact message arrives (source: "compact", has ID, gets deferred)
+		// Compact message arrives (source: "compact", has id). Task X
+		// pendingReducer excludes compact-source messages at add-time, so
+		// they never appear in the pending banner. This eliminates the
+		// previous bug where compact_marker had to run a cleanup pass —
+		// there's nothing to clean up now.
 		handleEvent({
 			type: "message",
 			id: "compact-msg-1",
@@ -1989,12 +1901,9 @@ describe("event-handler compaction display", () => {
 			taskId: "task-1",
 			ts: 1000,
 		} satisfies IncomingEvent);
+		expect(pendingBox.current.length).toBe(0);
 
-		// Should be in pending with "[compact]" text
-		expect(capturedPending.length).toBe(1);
-		expect(capturedPending[0]?.text).toBe("[compact]");
-
-		// Compact processes: compact_started → checkpoint → compact_marker
+		// compact_started + compact_marker don't touch pending either.
 		handleEvent({ type: "compact_started", taskId: "task-1", ts: 2000 });
 		handleEvent({
 			type: "compact_marker",
@@ -2002,9 +1911,18 @@ describe("event-handler compaction display", () => {
 			taskId: "task-1",
 			ts: 3000,
 		});
+		expect(pendingBox.current.length).toBe(0);
 
-		// [compact] must be cleared from pending
-		expect(capturedPending.length).toBe(0);
+		// But the log DOES show the compact sequence (via compact_started +
+		// complete_compact update applied against compact_started).
+		expect(
+			capturedLogs.some(
+				(e) =>
+					e.type === "compact_marker" ||
+					e.type === "compact_started" ||
+					e.type === "lifecycle",
+			),
+		).toBe(true);
 	});
 
 	it("handleEvent: content after compact_marker appends normally", () => {
@@ -2106,15 +2024,8 @@ describe("event-handler task switch (processEventBatch replaces logs)", () => {
 	});
 
 	it("processEventBatch clears deferred messages from previous session", () => {
-		const { deps } = makeDeps();
+		const { deps, pendingBox } = makeDeps();
 
-		let capturedPending: Array<{ id: string; text: string }> = [];
-		(deps as Record<string, unknown>).setPendingMessages = mock(
-			(updater: React.SetStateAction<Array<{ id: string; text: string }>>) => {
-				capturedPending =
-					typeof updater === "function" ? updater(capturedPending) : updater;
-			},
-		);
 
 		let capturedLogs: LogEntry[] = [];
 		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
@@ -2138,7 +2049,7 @@ describe("event-handler task switch (processEventBatch replaces logs)", () => {
 			taskId: "task-A",
 			ts: 1000,
 		} satisfies IncomingEvent);
-		expect(capturedPending.length).toBe(1);
+		expect(pendingBox.current.length).toBe(1);
 
 		// Switch to task-B via processEventBatch
 		processEventBatch([
@@ -3610,5 +3521,321 @@ describe("event-handler partial event monotonic extend", () => {
 		expect(
 			(thinkingEntries[0] as unknown as { thinking: string }).thinking,
 		).toBe("ABCD");
+	});
+});
+
+// ── Task X: pending-as-events-derived view ──────────────────────────────────
+//
+// Core invariants:
+//   1. pendingReducer is pure. Each action produces a deterministic nextState.
+//   2. Events-derived: no imperative "clear" paths outside RESET (refresh)
+//      and APPLY(messages_consumed).
+//   3. Compact-source messages are excluded at add-time.
+//   4. No race windows: dispatching actions via the driver is synchronous,
+//      so subsequent events in the batch see the already-applied state.
+
+describe("Task X: pendingReducer is pure", () => {
+	const sampleMsg = (id: string): IncomingEvent => ({
+		type: "message" as const,
+		id,
+		body: { source: "user" as const, id, ts: 100, content: `msg ${id}` },
+		taskId: "t1",
+		ts: 100,
+	});
+
+	it("RESET on empty → empty", () => {
+		expect(pendingReducer([], { type: "RESET" })).toEqual([]);
+	});
+
+	it("RESET on non-empty → empty", () => {
+		const initial: PendingMessage[] = [
+			{
+				id: "a",
+				taskId: "t1",
+				text: "a",
+				timestamp: 1,
+				source: "user",
+				content: "a",
+				queueEntry: undefined,
+			},
+		];
+		expect(pendingReducer(initial, { type: "RESET" })).toEqual([]);
+	});
+
+	it("APPLY(message with id, user source) → append to state", () => {
+		const result = pendingReducer([], {
+			type: "APPLY",
+			event: sampleMsg("a"),
+		});
+		expect(result.length).toBe(1);
+		expect(result[0]?.id).toBe("a");
+	});
+
+	it("APPLY(message with no id) → state unchanged", () => {
+		const result = pendingReducer([], {
+			type: "APPLY",
+			event: {
+				type: "message",
+				id: "",
+				body: { source: "user", id: "x", ts: 100, content: "hi" },
+				taskId: "t1",
+				ts: 100,
+			} satisfies IncomingEvent,
+		});
+		expect(result).toEqual([]);
+	});
+
+	it("APPLY(message with compact source) → state unchanged (Task X)", () => {
+		const result = pendingReducer([], {
+			type: "APPLY",
+			event: {
+				type: "message",
+				id: "cm1",
+				body: { source: "compact", id: "cm1", ts: 100 },
+				taskId: "t1",
+				ts: 100,
+			} satisfies IncomingEvent,
+		});
+		expect(result).toEqual([]);
+	});
+
+	it("APPLY(messages_consumed) removes only matching ids", () => {
+		const seed = pendingReducer([], {
+			type: "APPLY",
+			event: sampleMsg("a"),
+		});
+		const after_b = pendingReducer(seed, {
+			type: "APPLY",
+			event: sampleMsg("b"),
+		});
+		expect(after_b.length).toBe(2);
+		const after_consumed = pendingReducer(after_b, {
+			type: "APPLY",
+			event: {
+				type: "messages_consumed",
+				messageIds: ["a"],
+				taskId: "t1",
+				ts: 200,
+			} satisfies IncomingEvent,
+		});
+		expect(after_consumed.length).toBe(1);
+		expect(after_consumed[0]?.id).toBe("b");
+	});
+
+	it("APPLY(unrelated event type) → state unchanged", () => {
+		const seed = pendingReducer([], {
+			type: "APPLY",
+			event: sampleMsg("a"),
+		});
+		const after = pendingReducer(seed, {
+			type: "APPLY",
+			event: {
+				type: "tree_updated",
+				nodes: [],
+				rootNodeId: "r",
+			} satisfies IncomingEvent,
+		});
+		expect(after).toEqual(seed);
+	});
+});
+
+describe("Task X: no 'clear pending' paths outside messages_consumed/RESET", () => {
+	it("processEventBatch: tree_updated with status=pending tasks does NOT touch pending (per Task X)", () => {
+		const { deps, pendingBox } = makeDeps();
+		const { processEventBatch } = createEventHandler(
+			deps as EventHandlerDeps,
+		);
+
+		processEventBatch([
+			{
+				type: "message",
+				id: "m1",
+				body: {
+					source: "user",
+					id: "m1",
+					ts: 100,
+					content: "user's pending message",
+				},
+				taskId: "task-rootish",
+				ts: 100,
+			},
+		] satisfies IncomingEvent[]);
+
+		// Confirm the message is pending
+		expect(pendingBox.current.length).toBe(1);
+		// tree_updated is skipped in processEventBatch historical replay,
+		// so simulate via live handleEvent instead to verify no clear occurs.
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+		handleEvent({
+			type: "tree_updated",
+			nodes: [
+				{
+					id: "task-rootish",
+					title: "Root",
+					description: "",
+					status: "pending",
+					parentId: null,
+					children: [],
+					createdAt: "2026-04-01T00:00:00.000Z",
+					updatedAt: "2026-04-01T00:00:00.000Z",
+					costUsd: 0,
+					editedBy: "agent",
+					branch: null,
+					worktreePath: null,
+					cwd: null,
+					color: undefined,
+				},
+			],
+			rootNodeId: "task-rootish",
+		} satisfies IncomingEvent);
+
+		// Pending entry stays — tree_updated no longer clears message state.
+		expect(pendingBox.current.length).toBe(1);
+		expect(pendingBox.current[0]?.id).toBe("m1");
+	});
+
+	it("processEventBatch: compact_marker in-batch does NOT clear pending (post Task X)", () => {
+		const { deps, pendingBox } = makeDeps();
+		const { processEventBatch } = createEventHandler(
+			deps as EventHandlerDeps,
+		);
+
+		processEventBatch([
+			{
+				type: "message",
+				id: "pre",
+				body: {
+					source: "user",
+					id: "pre",
+					ts: 100,
+					content: "before compact",
+				},
+				taskId: "t1",
+				ts: 100,
+			},
+			{
+				type: "compact_marker",
+				savedTokens: 5000,
+				taskId: "t1",
+				ts: 200,
+			},
+			{
+				type: "message",
+				id: "post",
+				body: {
+					source: "user",
+					id: "post",
+					ts: 300,
+					content: "after compact",
+				},
+				taskId: "t1",
+				ts: 300,
+			},
+		] satisfies IncomingEvent[]);
+
+		// Both pre and post survive. Old model would have cleared `pre`.
+		const ids = pendingBox.current.map((p) => p.id).sort();
+		expect(ids).toEqual(["post", "pre"]);
+	});
+
+	it("messages_consumed remains the only path that removes pending entries", () => {
+		const { deps, pendingBox } = makeDeps();
+		const { processEventBatch } = createEventHandler(
+			deps as EventHandlerDeps,
+		);
+
+		processEventBatch([
+			{
+				type: "message",
+				id: "a",
+				body: { source: "user", id: "a", ts: 1, content: "a" },
+				taskId: "t1",
+				ts: 1,
+			},
+			{
+				type: "message",
+				id: "b",
+				body: { source: "user", id: "b", ts: 2, content: "b" },
+				taskId: "t1",
+				ts: 2,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["a"],
+				taskId: "t1",
+				ts: 3,
+			},
+		] satisfies IncomingEvent[]);
+
+		expect(pendingBox.current.length).toBe(1);
+		expect(pendingBox.current[0]?.id).toBe("b");
+	});
+});
+
+describe("Task X: mutation-proof regression for the four prior fixes", () => {
+	// These tests lock in the race-free invariant: regardless of the
+	// interleaving of message, messages_consumed, and compact_marker,
+	// the final pending state is exactly determined by the events log.
+
+	it("batch [compact, msg_A, msg_B] → both A and B pending (Fix D era bug)", () => {
+		const { deps, pendingBox } = makeDeps();
+		const { processEventBatch } = createEventHandler(
+			deps as EventHandlerDeps,
+		);
+
+		processEventBatch([
+			{
+				type: "compact_marker",
+				savedTokens: 1000,
+				taskId: "t1",
+				ts: 100,
+			},
+			{
+				type: "message",
+				id: "A",
+				body: { source: "user", id: "A", ts: 200, content: "A" },
+				taskId: "t1",
+				ts: 200,
+			},
+			{
+				type: "message",
+				id: "B",
+				body: { source: "user", id: "B", ts: 300, content: "B" },
+				taskId: "t1",
+				ts: 300,
+			},
+		] satisfies IncomingEvent[]);
+
+		// Pre-Task-X this would have been 0 (Fix D) or 2 (Fix D immediate).
+		// Now: 2, and we're sure of it because the reducer model is pure.
+		const ids = pendingBox.current.map((p) => p.id).sort();
+		expect(ids).toEqual(["A", "B"]);
+	});
+
+	it("live handleEvent: message → messages_consumed inline → pending empty", () => {
+		const { deps, pendingBox } = makeDeps();
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		handleEvent({
+			type: "message",
+			id: "live-1",
+			body: {
+				source: "user",
+				id: "live-1",
+				ts: 1000,
+				content: "hello",
+			},
+			taskId: "live-t",
+			ts: 1000,
+		} satisfies IncomingEvent);
+		expect(pendingBox.current.length).toBe(1);
+
+		handleEvent({
+			type: "messages_consumed",
+			messageIds: ["live-1"],
+			taskId: "live-t",
+			ts: 1100,
+		} satisfies IncomingEvent);
+		expect(pendingBox.current.length).toBe(0);
 	});
 });

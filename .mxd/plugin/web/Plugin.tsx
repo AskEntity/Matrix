@@ -26,7 +26,12 @@ import { statusDotClass } from "./components/StatusBadge.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
 import { TaskTree } from "./components/TaskTree.tsx";
 import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
-import { createEventHandler } from "./event-handler.ts";
+import {
+	createEventHandler,
+	type PendingAction,
+	type PendingMessage,
+	pendingReducer,
+} from "./event-handler.ts";
 import { createActionHandlers } from "./handlers.ts";
 import {
 	createLogEntry,
@@ -335,15 +340,23 @@ function ProjectContent({ projectId }: { projectId: string }) {
 	const [showCacheBadges, setShowCacheBadges] = useState(
 		() => localStorage.getItem("mxd-show-cache-badges") === "true",
 	);
-	const [pendingMessages, setPendingMessages] = useState<
-		{
-			id: string;
-			taskId: string | null;
-			text: string;
-			timestamp: number;
-			images?: Array<{ base64: string; mediaType: string }>;
-		}[]
-	>([]);
+	// Pending messages are a pure derivation of the events log (see
+	// `pendingReducer` in event-handler.ts). The `ref` is updated
+	// synchronously by `dispatchPending` so messages_consumed in the same
+	// batch can read the already-applied state. `setPendingMessages` is
+	// only used inside `dispatchPending` to trigger a re-render — it isn't
+	// exposed anywhere; no imperative "clear" paths are possible.
+	const pendingMessagesRef = useRef<PendingMessage[]>([]);
+	const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
+	const dispatchPending = useCallback((action: PendingAction) => {
+		const next = pendingReducer(pendingMessagesRef.current, action);
+		pendingMessagesRef.current = next;
+		setPendingMessages(next);
+	}, []);
+	const getPendingMessages = useCallback(
+		() => pendingMessagesRef.current,
+		[],
+	);
 	const [pendingClarifications, setPendingClarifications] = useState<
 		{
 			id: string;
@@ -625,7 +638,8 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				setAgentModel,
 				setLogs,
 				setTokenUsage,
-				setPendingMessages,
+				dispatchPending,
+				getPendingMessages,
 				setPendingClarifications,
 				setLastTurns,
 				setLastInputTokens,
@@ -642,6 +656,8 @@ function ProjectContent({ projectId }: { projectId: string }) {
 			checkStatus,
 			setAgentProvider,
 			setAgentModel,
+			dispatchPending,
+			getPendingMessages,
 			t,
 		],
 	);
@@ -764,7 +780,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				setSelectedTaskId(ht ?? null);
 				setLogs([]);
 				setTokenUsage({});
-				setPendingMessages([]);
+				dispatchPending({ type: "RESET" });
 				setPendingClarifications([]);
 				setBackgroundProcesses(new Map());
 				setActiveAgents(new Set());
@@ -831,13 +847,14 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		if (projectId) checkStatus();
 	}, [projectId, checkStatus]);
 
-	// Pending messages are derived from JSONL events by processEventBatch.
-	// Clear on project change — the event fetch will repopulate.
+	// Pending messages are derived from the events log by pendingReducer.
+	// Clear on project change — the next event fetch's RESET (in
+	// processEventBatch) will repopulate from the new project's events.
 	useEffect(() => {
 		if (!projectId) {
-			setPendingMessages([]);
+			dispatchPending({ type: "RESET" });
 		}
-	}, [projectId]);
+	}, [projectId, dispatchPending]);
 
 	useEffect(() => {
 		if (!projectId) {
@@ -986,7 +1003,6 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				setPendingClarifications,
 				setIsCreatingTask,
 				setTokenUsage,
-				setPendingMessages,
 				setBackgroundProcesses,
 				setActiveAgents,
 				setOlderEventsAvailable,
@@ -1042,7 +1058,7 @@ function ProjectContent({ projectId }: { projectId: string }) {
 			localStorage.setItem("mxd-open-tabs", "[]");
 			setLogs([]);
 			setTokenUsage({});
-			setPendingMessages([]);
+			dispatchPending({ type: "RESET" });
 			setPendingClarifications([]);
 			setBackgroundProcesses(new Map());
 			setActiveAgents(new Set());
