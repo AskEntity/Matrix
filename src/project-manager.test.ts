@@ -62,13 +62,16 @@ describe("ProjectManager", () => {
 			expect(existsSync(join(projectPath, ".git"))).toBe(false);
 		});
 
-		test("registers non-existent path (plugin creates it later)", async () => {
+		test("rejects non-existent path (Audit R7 P2.6)", async () => {
+			// Old contract: any path was accepted; matrix's onProjectInit
+			// did `mkdir({recursive: true})` + git init, silently creating
+			// a ghost project tree from a user typo.
+			//
+			// New contract: path must exist. Matches `updateProject`'s
+			// existing check. Two-layer defence: ProjectManager rejects
+			// here; matrix plugin also rejects inside onProjectInit.
 			const projectPath = join(tempDir, "not-yet");
-			const project = await pm.init(projectPath);
-
-			expect(project.name).toBe("not-yet");
-			expect(project.path).toBe(projectPath);
-			// Directory doesn't exist — plugin's onProjectInit will create it
+			expect(pm.init(projectPath)).rejects.toThrow(/does not exist/);
 			expect(existsSync(projectPath)).toBe(false);
 		});
 	});
