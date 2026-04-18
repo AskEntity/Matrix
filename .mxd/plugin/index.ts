@@ -116,6 +116,15 @@ const manifest: PluginManifest = {
 			return;
 		}
 
+		// Belt-and-braces path check: ProjectManager.init validates first,
+		// but an onProjectInit that's ever invoked in any other order (plugin
+		// reloads, future refactors) must not materialise arbitrary paths.
+		// Protects against `mkdir({recursive: true})` creating the entire
+		// ancestor chain from a user typo.
+		if (!existsSync(projectPath)) {
+			throw new Error(`Path does not exist: ${projectPath}`);
+		}
+
 		await mkdir(join(projectPath, ".mxd"), { recursive: true });
 
 		// Memory

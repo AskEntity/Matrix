@@ -15,6 +15,38 @@ import type { Project, ThreeLayerConfig } from "./components/types.ts";
 import { LocaleProvider } from "./i18n.ts";
 import { LoginPage } from "./LoginPage.tsx";
 
+/**
+ * Renders the build-failure surface for a plugin whose web bundle failed to
+ * compile. Replaces the old silent "Loading plugin…" hang so the user can
+ * see the underlying error (and take action — fix syntax, rebuild, etc.).
+ */
+function PluginBuildErrorPanel({
+	name,
+	error,
+}: {
+	name: string;
+	error: string;
+}) {
+	return (
+		<div
+			className="mxd-plugin-build-error"
+			role="alert"
+			style={{
+				padding: 20,
+				color: "#f85149",
+				fontFamily: "monospace",
+				whiteSpace: "pre-wrap",
+				overflow: "auto",
+			}}
+		>
+			<strong>Plugin "{name}" failed to build:</strong>
+			<br />
+			<br />
+			{error}
+		</div>
+	);
+}
+
 // Dynamic import of compiled plugin JS (served at URL from build pipeline)
 function loadPluginUI(
 	pluginPath: string,
@@ -30,7 +62,13 @@ function loadPluginUI(
 interface PluginInfo {
 	name: string;
 	scope: "global" | "project";
-	webComponentPath: string;
+	/** Undefined when the plugin failed to build — check `buildError` first. */
+	webComponentPath?: string;
+	cssPath?: string;
+	/** When set, the web build pipeline rejected this plugin. Rendering the
+	 *  component would produce a broken import — show the error instead so
+	 *  the user isn't stuck on "Loading plugin…" indefinitely. */
+	buildError?: string;
 }
 
 export function ShellApp() {
@@ -131,12 +169,20 @@ function AuthenticatedShell() {
 	}, []);
 
 	// ── Load plugin component when scope changes ──
+	// Explicit null when buildError is set so the render below switches to
+	// the error panel instead of hanging on the Suspense fallback.
 	useEffect(() => {
 		const plugin = plugins.find((p) => p.name === selectedScope);
-		if (plugin?.webComponentPath) {
-			setPluginUI(() => loadPluginUI(plugin.webComponentPath));
+		if (!plugin) return;
+		if (plugin.buildError || !plugin.webComponentPath) {
+			setPluginUI(null);
+			return;
 		}
+		const path = plugin.webComponentPath;
+		setPluginUI(() => loadPluginUI(path));
 	}, [selectedScope, plugins]);
+
+	const selectedPlugin = plugins.find((p) => p.name === selectedScope);
 
 	// ── Config layers for settings ──
 	useEffect(() => {
@@ -208,13 +254,6 @@ function AuthenticatedShell() {
 		refresh();
 	}, [projectId, refresh]);
 
-	const handleClearSessions = useCallback(async () => {
-		if (!projectId) return;
-		await authFetch(`/projects/${projectId}/sessions/clear`, {
-			method: "POST",
-		});
-	}, [projectId]);
-
 	const updateConfig = useCallback(
 		async (layer: string, patch: Record<string, unknown>) => {
 			if (!projectId) return;
@@ -278,7 +317,6 @@ function AuthenticatedShell() {
 					updateLocal={(patch) => updateConfig("", patch)}
 					onClose={() => setShowSettings(false)}
 					onDeleteProject={handleDeleteProject}
-					onClearAllSessions={handleClearSessions}
 				/>
 			)}
 
@@ -291,7 +329,12 @@ function AuthenticatedShell() {
 					overflow: "hidden",
 				}}
 			>
-				{PluginUI ? (
+				{selectedPlugin?.buildError ? (
+					<PluginBuildErrorPanel
+						name={selectedPlugin.name}
+						error={selectedPlugin.buildError}
+					/>
+				) : PluginUI ? (
 					<Suspense
 						fallback={
 							<div style={{ padding: 20, color: "#8b949e" }}>

@@ -1146,3 +1146,45 @@ Migrated files: `daemon.test.ts`, `daemon-auth.test.ts`, `daemon-bootstrap.test.
 - `/auth/status` — login page needs to ask "are we authenticated?" before having a token
 - `/vendor/`, `/app/` (prefix match) — compiled bundles, no secrets
 - Everything else under `/auth/*` requires a token. Regression test: `/auth/bogus` → 401.
+
+## Audit R7 [LOW] drift cleanup (2026-04-18)
+
+Four cosmetic items flagged by Audit R7 bundled in one commit:
+
+### pluginApiPrefix split: `src/plugin.ts` → `src/plugin-url.ts` (zero imports)
+
+`pluginApiPrefix(name)` moved to a standalone file with ZERO imports. Rationale:
+- `web/runtime-types.ts` (compiled to browser via `@mxd/types` importmap) re-exports `pluginApiPrefix` for plugin web code.
+- Before the split: `plugin.ts` imported `data-paths.ts` which imports `node:path`. Bun's `target: "browser"` polyfilled the entire `node:path` module (~10 KB of assertPath/normalize/resolve/join/...) into every plugin's first-load bundle.
+- Built `runtime-types.js` size: **10,293 B → 281 B (37× reduction)**.
+- Server callers (cli, daemon, tests) import from `./plugin-url.ts` directly — one canonical location, no re-export. **Corrects the earlier "Plugin URL Namespace" memory entry that listed `src/plugin.ts` as the home.**
+
+Regression guard: `src/plugin-url-namespace.test.ts` builds the shared module at test time and asserts `runtime-types.js < 500 bytes`. Any future re-introduction of a `node:*` transitive dep (or other server-only import) into `web/runtime-types.ts`'s graph will exceed the threshold and fail loud.
+
+JSDoc fix: the old `pluginApiPrefix` docstring claimed "shell wraps a plugin's authFetch so relative paths become prefixed automatically" — the opposite of the b42c9a2 design, which explicitly rejects a shell wrapper. New docstring reflects reality ("explicit prefix prepended by each call site; no shell wrapper, no hidden rewriting").
+
+### BackgroundProcess dead fields removed
+
+`stdout: string` and `stderr: string` on `BackgroundProcess` were zero-initialized and never read. Removed from `src/tools/bash.ts` (type + constructor) and from 4 test object literals in `src/anthropic-compatible-provider.test.ts`. The "kept for test harness compat" comment was stale — grep confirmed zero reads.
+
+### resetAuthDataCache deleted
+
+`resetAuthDataCache` in `src/auth.ts` became a deprecated no-op after FU4 removed the in-memory cache. Zero callers remained; deleted outright to prevent future code from importing it expecting cache-flush semantics.
+
+## Audit R7: "Clear All Sessions" feature deleted
+
+The project-wide `POST /projects/:id/sessions/clear` endpoint, its CLI subcommand (`mxd sessions clear`), the SettingsPanel danger-zone button, the `/clear` slash command, and `EventStore.clearAll()` are GONE. `handleClearSessions` (shell + plugin), `api.sessionsClear`, and the i18n strings (`settings.clearAllSessions*`, `confirm.clearSessions`) are deleted.
+
+**Why deleted**: User decided deletion over repair (post-audit-R7 discussion). Repair would have required an architectural call on whether shell should know plugin URL prefixes; the feature itself has no unique use case:
+- `reset_task` already handles per-task reset
+- Delete-project + re-add covers "fresh start for this project"
+- Per-task `POST /projects/:id/tasks/:nodeId/sessions/clear` (called from OrchestratorDetail / TaskDetail "Clear Session" buttons) remains and handles per-task reset
+
+**Kept (do NOT confuse with the deleted feature)**:
+- `EventStore.clear(sessionId)` — per-session JSONL delete (used by per-task clear route)
+- `POST /projects/:id/sessions/prune` — prunes oldest JSONL files (used by autoResumeProjects + `mxd sessions prune` CLI)
+- `POST /projects/:id/tasks/:nodeId/sessions/clear` — per-task clear, the `reset_task`-equivalent for the UI
+- `taskSessionsClear` in `.mxd/plugin/web/api.ts` — calls the per-task route
+- `clearSessionState` in `event-handler.ts` — frontend state cleanup helper, unrelated to the API
+
+Rule going forward: deletion is preferable to repair when a feature is duplicative AND the user explicitly wants it gone. Don't reach for "fix the URL bug" when the feature itself doesn't justify its surface area.
