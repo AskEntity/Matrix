@@ -45,9 +45,9 @@ import {
 import {
 	checkDataRootCollisions,
 	type PluginManifest,
-	pluginApiPrefix,
 	validatePluginManifest,
 } from "./plugin.ts";
+import { pluginApiPrefix } from "./plugin-url.ts";
 import { ProjectManager } from "./project-manager.ts";
 import type { SyncMap } from "./runtime/worker-api.ts";
 import { ulid } from "./ulid.ts";
@@ -1602,7 +1602,7 @@ export async function createDaemon(opts: {
 	 * Daemon strips `/api/<plugin>` from the path and forwards the rewritten
 	 * request to that plugin's worker. Plugin code registers routes as if at
 	 * root (e.g., `/projects/:id/tasks`); the namespace is transparent on
-	 * both sides. See `pluginApiPrefix` in plugin.ts for the shared helper.
+	 * both sides. See `pluginApiPrefix` in plugin-url.ts for the shared helper.
 	 *
 	 * Unknown plugin or crashed worker → 404 / 503. No fallback to "first
 	 * available global worker" — that was the old catch-all behavior and

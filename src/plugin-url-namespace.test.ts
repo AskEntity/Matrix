@@ -10,12 +10,14 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { statSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "./config.ts";
 import { createDaemon, type DaemonInstance } from "./daemon.ts";
-import { pluginApiPrefix } from "./plugin.ts";
+import { pluginApiPrefix } from "./plugin-url.ts";
+import { buildWebAssets } from "./web-builder.ts";
 
 // ── Pure helpers ──
 
@@ -205,5 +207,55 @@ describe("daemon /api/<plugin>/* forwarding", () => {
 		expect(res.status).toBe(200);
 		const p = await res.json();
 		expect(p.id).toBe(projectId);
+	});
+});
+
+// ── runtime-types.js bundle-size regression ──
+//
+// web/runtime-types.ts is compiled for the browser and shipped to every plugin
+// via the @mxd/types importmap entry. It must stay free of `node:*` transitive
+// dependencies — Bun's browser polyfill for `node:path` alone is ~10KB.
+//
+// Regression story: commit b42c9a2 (URL namespace) re-exported `pluginApiPrefix`
+// from `src/plugin.ts`, which imports `src/data-paths.ts`, which imports
+// `node:path`. The built runtime-types.js ballooned from 169 B to 10,293 B —
+// a 60× regression paid by every plugin's first load. The fix moved
+// `pluginApiPrefix` to a zero-import sibling (`src/plugin-url.ts`).
+//
+// This test is the guardrail. If a future change re-introduces a transitive
+// `node:*` or other server-only import into runtime-types' graph, the built
+// file's size jumps past the threshold and this test fails loud.
+describe("runtime-types.js bundle size (regression guard)", () => {
+	const MATRIX_ROOT = resolve(new URL("..", import.meta.url).pathname);
+	const SHELL_ENTRY = join(MATRIX_ROOT, "web", "main.tsx");
+	const RUNTIME_TYPES_SIZE_LIMIT = 500; // bytes
+
+	let buildDir: string;
+	beforeAll(async () => {
+		buildDir = await mkdtemp(join(tmpdir(), "runtime-types-size-"));
+		await buildWebAssets({
+			buildDir,
+			shellEntry: SHELL_ENTRY,
+			plugins: [],
+			projectRoot: MATRIX_ROOT,
+		});
+	}, 30000);
+
+	afterAll(async () => {
+		await rm(buildDir, { recursive: true, force: true });
+	});
+
+	test(`runtime-types.js < ${RUNTIME_TYPES_SIZE_LIMIT} bytes`, () => {
+		const builtPath = join(buildDir, "vendor", "shared", "runtime-types.js");
+		const size = statSync(builtPath).size;
+		if (size >= RUNTIME_TYPES_SIZE_LIMIT) {
+			throw new Error(
+				`runtime-types.js is ${size} bytes (limit ${RUNTIME_TYPES_SIZE_LIMIT}). ` +
+					`A recent change likely re-introduced a server-only import (node:*) into ` +
+					`its graph. Check web/runtime-types.ts imports — every re-export must come ` +
+					`from a module whose transitive graph is browser-safe.`,
+			);
+		}
+		expect(size).toBeLessThan(RUNTIME_TYPES_SIZE_LIMIT);
 	});
 });

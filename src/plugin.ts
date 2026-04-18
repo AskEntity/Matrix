@@ -14,21 +14,11 @@
 
 import { resolveDataRoot, validateDataRoot } from "./data-paths.ts";
 
-// ── URL namespace ──
-
-/**
- * URL prefix for routes owned by a plugin worker.
- *
- * The daemon matches `/api/<plugin>/*` and strips the prefix before forwarding
- * to the plugin's worker. The shell wraps a plugin's `authFetch` so relative
- * paths in plugin code become prefixed on the wire automatically.
- *
- * Single source of truth — both daemon (prefix strip) and shell (prefix prepend)
- * import this function so any format change propagates atomically.
- */
-export function pluginApiPrefix(pluginName: string): string {
-	return `/api/${pluginName}`;
-}
+// `pluginApiPrefix` lives in ./plugin-url.ts (zero-import file) so plugin
+// web bundles can re-export it via @mxd/types without dragging this module's
+// `node:path` transitive dependency into the browser. Server-side callers
+// (cli, daemon, tests) import from ./plugin-url.ts directly — one canonical
+// location, no re-export.
 
 export interface PluginManifest {
 	/** Unique plugin name (e.g., "matrix", "story1001") */
