@@ -21,7 +21,7 @@ import {
 	saveGlobalConfig,
 	saveProjectRepoConfig,
 } from "./config.ts";
-import { pluginApiPrefix } from "./plugin.ts";
+import { pluginApiPrefix } from "./plugin-url.ts";
 
 const _pkg = JSON.parse(
 	await Bun.file(new URL("../package.json", import.meta.url).pathname).text(),
@@ -66,13 +66,53 @@ async function api(path: string, options?: RequestInit): Promise<Response> {
 	if (token) {
 		headers.Authorization = `Bearer ${token}`;
 	}
-	return fetch(`${DAEMON_URL}${path}`, {
-		...options,
-		headers: {
-			...headers,
-			...(options?.headers as Record<string, string> | undefined),
-		},
-	});
+	try {
+		return await fetch(`${DAEMON_URL}${path}`, {
+			...options,
+			headers: {
+				...headers,
+				...(options?.headers as Record<string, string> | undefined),
+			},
+		});
+	} catch (e) {
+		// Daemon offline / wrong port / hostname unreachable. Without this
+		// handler the user sees a raw Bun stack trace on every CLI call
+		// except `mxd health`, which has its own try/catch.
+		if (isConnectionError(e)) {
+			console.error(
+				`Daemon is not reachable at ${DAEMON_URL}. Run \`mxd daemon start\`.`,
+			);
+			process.exit(1);
+		}
+		throw e;
+	}
+}
+
+/**
+ * Classify a `fetch` exception as a connection failure. Connection codes
+ * appear in three shapes depending on runtime:
+ *   - Bun directly: `{ code: "ConnectionRefused" | "ECONNREFUSED" }` on the
+ *     error object itself.
+ *   - Node/undici `TypeError: fetch failed` with `cause.code`.
+ *   - Plain message match (last resort).
+ * We accept any of them so the CLI emits the friendly message on every
+ * runtime the user might be on.
+ */
+function isConnectionError(e: unknown): boolean {
+	if (!(e instanceof Error)) return false;
+	const CODES = [
+		"ECONNREFUSED",
+		"ENOTFOUND",
+		"ConnectionRefused",
+		"ENETUNREACH",
+		"EHOSTUNREACH",
+	];
+	const topCode = (e as Error & { code?: string }).code;
+	if (typeof topCode === "string" && CODES.includes(topCode)) return true;
+	const cause = (e as Error & { cause?: { code?: string } }).cause;
+	if (cause && typeof cause.code === "string" && CODES.includes(cause.code))
+		return true;
+	return CODES.some((c) => e.message.includes(c));
 }
 
 async function handleInit(args: string[]): Promise<void> {
@@ -153,8 +193,12 @@ async function handleStatus(args: string[]): Promise<void> {
 	if (!projectId) return;
 
 	const res = await api(`${MATRIX_API}/projects/${projectId}/tasks`);
+	// Wire-format note: daemon returns `{ rootNodeId, nodes }`. Previously
+	// the CLI read `body.root` (an object that was never emitted), so
+	// `mxd status` and `mxd tasks` always printed "No task tree." even on
+	// populated projects. Look up the root node inside `nodes` by its id.
 	const body = (await res.json()) as {
-		root: { title: string; status: string } | null;
+		rootNodeId: string | null;
 		nodes: {
 			id: string;
 			title: string;
@@ -165,12 +209,16 @@ async function handleStatus(args: string[]): Promise<void> {
 		}[];
 	};
 
-	if (!body.root) {
+	const rootNode = body.rootNodeId
+		? body.nodes.find((n) => n.id === body.rootNodeId)
+		: null;
+
+	if (!rootNode) {
 		console.log("No task tree.");
 		return;
 	}
 
-	console.log(`Task tree: ${body.root.title} [${body.root.status}]`);
+	console.log(`Task tree: ${rootNode.title} [${rootNode.status}]`);
 	console.log("");
 
 	// Build tree display
@@ -238,8 +286,9 @@ async function handleTasks(args: string[]): Promise<void> {
 	if (!projectId) return;
 
 	const res = await api(`${MATRIX_API}/projects/${projectId}/tasks`);
+	// See handleStatus — daemon emits `rootNodeId`, not a `root` object.
 	const body = (await res.json()) as {
-		root: { title: string; status: string } | null;
+		rootNodeId: string | null;
 		nodes: {
 			id: string;
 			title: string;
@@ -251,7 +300,7 @@ async function handleTasks(args: string[]): Promise<void> {
 		}[];
 	};
 
-	if (!body.root || body.nodes.length === 0) {
+	if (!body.rootNodeId || body.nodes.length === 0) {
 		console.log("No tasks.");
 		return;
 	}
@@ -383,21 +432,6 @@ async function handleStop(): Promise<void> {
 	console.log(
 		"Tip: Session history is preserved on disk. Send a message to resume.",
 	);
-}
-
-async function handleSessionsClear(): Promise<void> {
-	const projectId = await resolveCurrentProject();
-	if (!projectId) return;
-
-	const res = await api(`${MATRIX_API}/projects/${projectId}/sessions/clear`, {
-		method: "POST",
-	});
-	if (!res.ok) {
-		const err = (await res.json()) as { error: string };
-		console.error(`Error: ${err.error}`);
-		process.exit(1);
-	}
-	console.log("Session history cleared. Next orchestration will start fresh.");
 }
 
 async function handleSessionsPrune(args: string[]): Promise<void> {
@@ -1470,12 +1504,10 @@ switch (command) {
 		break;
 	case "sessions": {
 		const sub = args[0];
-		if (sub === "clear") {
-			await handleSessionsClear();
-		} else if (sub === "prune") {
+		if (sub === "prune") {
 			await handleSessionsPrune(args.slice(1));
 		} else {
-			console.error("Usage: mxd sessions clear|prune [--keep N]");
+			console.error("Usage: mxd sessions prune [--keep N]");
 			process.exit(1);
 		}
 		break;
@@ -1587,7 +1619,6 @@ switch (command) {
 			"    logs [-n N] [id]         Show event history (last N events)",
 		);
 		console.log("    watch                    Watch live agent activity");
-		console.log("    sessions clear           Clear session history");
 		console.log(
 			"    sessions prune [--keep N]  Prune old session files (default keep 10)",
 		);

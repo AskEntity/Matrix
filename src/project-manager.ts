@@ -57,6 +57,16 @@ export class ProjectManager {
 		}
 		const projectPath = resolve(path);
 
+		// The path must exist. Without this check, a user typo like
+		// `mxd init /Users/me/my-proejct` (sic) would be silently accepted:
+		// Matrix's `onProjectInit` calls `mkdir({recursive: true})`, which
+		// materialises every missing ancestor and runs `git init` inside,
+		// producing a ghost project the user never intended.
+		// Matches the `updateProject` check below — init was the odd one out.
+		if (!existsSync(projectPath)) {
+			throw new Error(`Path does not exist: ${projectPath}`);
+		}
+
 		// Check if this path is already registered
 		for (const p of this.projects.values()) {
 			if (p.path === projectPath) {

@@ -137,15 +137,6 @@ async function ensureSecureFileMode(path: string): Promise<void> {
 }
 
 /**
- * Kept for test compatibility. The in-memory cache was removed, so this is
- * now a no-op; tests may still call it freely.
- * @deprecated no cache exists; call is unnecessary.
- */
-export function resetAuthDataCache(): void {
-	// no-op — cache removed to fix stale-auth bug
-}
-
-/**
  * Read the current secret version (default 1).
  * Exposed so startup can pre-create auth.json with a jwtSecret + initial
  * secretVersion if absent, avoiding the "open window" during bootstrap.
