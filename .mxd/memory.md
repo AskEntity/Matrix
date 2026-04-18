@@ -575,7 +575,7 @@ Drift between prompt claims and tool reality is a **silent failure mode**. Integ
 
 **The anti-pattern**: trusting the child's summary as review. Child reports what they THINK they did; diff shows what they ACTUALLY did. These differ non-trivially.
 
-**Hook passing tempts you to skip review because it feels green.** Resist — hook is a floor, not a ceiling. User's framing: "给我八个胆子 我都不敢不看就merge这玩意" on 400+ line architecture refactors. If user wouldn't merge without reading, orchestrator definitely can't.
+**Hook passing tempts you to skip review because it feels green.** Resist — hook is a floor, not a ceiling. For 400+ line architecture refactors, the user themselves wouldn't dare merge without reading the diff; orchestrator definitely can't.
 
 ## Canonical user journey test is MANDATORY
 
