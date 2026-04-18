@@ -22,14 +22,17 @@ self.onmessage = async (event: MessageEvent) => {
 	const msg = event.data;
 
 	if (msg.type === "init") {
-		const { dataDir, globalConfigPath, projects, pluginRuntimePath, dataRoot } =
-			msg as {
+		const {
+			dataDir, globalConfigPath, projects, pluginRuntimePath, dataRoot,
+			globalContext,
+		} = msg as {
 				type: "init";
 				dataDir: string;
 				globalConfigPath: string;
 				projects?: Array<{ id: string; name: string; path: string }>;
 				pluginRuntimePath?: string;
 				dataRoot?: string;
+				globalContext?: { installRoot: string; gitHash: string | null; version: string };
 			};
 
 		try {
@@ -51,6 +54,7 @@ self.onmessage = async (event: MessageEvent) => {
 				projects,
 				buildScopeOpts,
 				dataRoot,
+				globalContext,
 			});
 			await appInstance.loadConfig();
 

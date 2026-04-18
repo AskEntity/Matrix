@@ -32,7 +32,7 @@ async function setup(): Promise<TestCtx> {
 	await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 	await ensureAuthInitialized(authPath);
 	const sessionToken = await signSessionToken(authPath);
-	const daemon = await createDaemon({ dataDir, autoInitAuth: true });
+	const daemon = await createDaemon({ dataDir, autoInitAuth: true, autoRegisterSelf: false });
 	return { daemon, tempDir, dataDir, authPath, sessionToken };
 }
 
@@ -387,7 +387,7 @@ describe("daemon: auto-initialized auth", () => {
 		const dataDir = join(tempDir, ".mxd");
 		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
-		const daemon = await createDaemon({ dataDir, autoInitAuth: true });
+		const daemon = await createDaemon({ dataDir, autoInitAuth: true, autoRegisterSelf: false });
 		try {
 			// auth.json should exist now with a jwtSecret
 			const { readFile } = await import("node:fs/promises");
