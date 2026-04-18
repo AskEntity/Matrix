@@ -9,7 +9,7 @@
  * auth.json invalidates every outstanding token in one atomic step.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -65,7 +65,29 @@ async function readAuthData(path: string): Promise<AuthData> {
 
 async function writeAuthData(path: string, data: AuthData): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
-	await writeFile(path, JSON.stringify(data, null, "\t"), "utf-8");
+	// mode 0o600 = owner rw-, group/others no access. Applies only on
+	// CREATION (writeFile over an existing file preserves its current mode).
+	// Legacy files at 0o644 are tightened by `ensureSecureFileMode` at boot.
+	await writeFile(path, JSON.stringify(data, null, "\t"), {
+		encoding: "utf-8",
+		mode: 0o600,
+	});
+}
+
+/**
+ * Tighten auth.json to 0o600 if it exists with any group/other permissions.
+ * Legacy files predate the 0o600 default in `writeAuthData`. Without this
+ * chmod pass, `jwtSecret` remains world-readable on every boot — forever,
+ * because `writeFile`'s `mode` option is ignored when overwriting.
+ */
+async function ensureSecureFileMode(path: string): Promise<void> {
+	// File absence (ENOENT) is the normal first-boot case — bail out;
+	// writeAuthData will create the file at 0o600 in a moment.
+	const info = await stat(path).catch(() => null);
+	if (!info) return;
+	if ((info.mode & 0o077) !== 0) {
+		await chmod(path, 0o600);
+	}
 }
 
 /**
@@ -107,6 +129,10 @@ export async function bumpSecretVersion(authPath: string): Promise<number> {
 export async function ensureAuthInitialized(
 	authPath: string,
 ): Promise<{ createdSecret: boolean }> {
+	// Upgrade-path guard: legacy auth.json files created before the 0o600
+	// default in `writeAuthData` may still be 0o644 on disk. Tighten them
+	// before any token-signing code reads the secret.
+	await ensureSecureFileMode(authPath);
 	const data = await readAuthData(authPath);
 	if (data.jwtSecret && typeof data.secretVersion === "number") {
 		return { createdSecret: false };
