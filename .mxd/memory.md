@@ -1456,3 +1456,80 @@ User observation: root view's pending banner was empty for messages sent mid-str
 **Mutation-verified**: reverting `clear()` back into the sideEffects closure makes all 3 tests fail. Test 1 is the direct repro of the user's bug shape.
 
 **Lesson — mutation/setState phase discipline**: when multiple event types mutate the same data structure, they must all mutate in the same phase. Mixing "set/delete inside processEvent" with "clear inside sideEffects" is a silent correctness hazard: in single-event mode (handleEvent) there's no loop between processEvent and sideEffects so both phases look equivalent; in batch mode (processEventBatch) the phase gap yawns open and mutations interleave wrongly. Search any `sideEffects:` closure for non-React-state mutations — that's the smoke.
+
+## Task X (2026-04-18) — pending is a projection of the events log, not a state
+
+Deletes the entire "mutable deferredMessages map + imperative setPendingMessages + syncPendingBanner sideEffect + multiple clear paths" model in `.mxd/plugin/web/event-handler.ts`. Replaces it with a pure reducer.
+
+**Why**: Fixes A, B, C, D all tried to patch the imperative-state model by shifting *when* mutations happen. Each fix closed one race (Fix A: filter symmetry; Fix B: partial monotonic extend; Fix C: URL routing truth; Fix D: compact_marker mutation phase). Each left the underlying bad model in place. User's conclusion: the mutable state itself is the bug. Defining "which event clears pending" is still inside the wrong frame.
+
+**New model**:
+```ts
+// module scope, pure, exported
+type PendingMessage = { id, taskId, text, timestamp, images, source, content, queueEntry };
+type PendingAction = { type: "RESET" } | { type: "APPLY"; event: IncomingEvent };
+
+function pendingReducer(state, action) {
+  if (action.type === "RESET") return [];
+  const e = action.event;
+  if (e.type === "message" && e.id && e.body?.source !== "compact") {
+    return [...state, /* derived entry */];
+  }
+  if (e.type === "messages_consumed" && e.messageIds?.length) {
+    const consumed = new Set(e.messageIds);
+    return state.filter(m => !consumed.has(m.id));
+  }
+  return state;  // every other event: no-op for pending
+}
+```
+
+**Deletions** (all gone from event-handler.ts):
+- `const deferredMessages = new Map<...>()`
+- `function syncPendingBanner()`
+- `clearSessionState` deferredMessages manipulation (log filter + olderEvents cleanup retained)
+- `deferredMessages.clear()` in `compact_marker` case (Fix D's immediate version — now unnecessary)
+- `deferredMessages.clear()` in `processEventBatch` — replaced by `dispatchPending({type:"RESET"})`
+- `deferredMessages.set(id, ...)` in `message` case — replaced by `pendingActions: [{type:"APPLY", event}]`
+- `deferredMessages.delete(id)` in `messages_consumed` case — replaced by `pendingActions`
+- `setPendingMessages: React.Dispatch<...>` from `EventHandlerDeps`
+
+**Added** (all at module scope, all pure):
+- `PendingMessage` type (exported)
+- `PendingAction` type (exported)
+- `pendingReducer` function (exported, pure)
+- `pendingChipText` (hoisted from closure — used by reducer)
+
+**Plugin.tsx**: useState<Array> replaced with `useRef + useState + dispatchPending` sync-write-through pattern. Synchronous ref update → any messages_consumed in the same batch sees the just-applied message. setState triggers re-render, consumers (AppFooter) read the state as before.
+
+**Driver flow**:
+```ts
+for (const evt of events) {
+  const result = processEvent(evt);
+  entries.push(...result.entries);
+  applyUpdates(entries, result.updates);
+  for (const a of result.pendingActions ?? []) dispatchPending(a);  // SYNC
+  if (result.sideEffects !== NO_SIDE_EFFECTS) deferredSideEffects.push(result.sideEffects);
+}
+```
+
+**Invariants after Task X**:
+1. Pending is a pure function of the events log. `pendingReducer(prev, action)` is the only way pending changes.
+2. No imperative `clear` path. Events drive everything. `RESET` exists only for "replay from scratch" (processEventBatch at batch start or project switch).
+3. Compact-source messages never enter pending (predicate filter at reducer APPLY time). No subsequent cleanup needed — old Fix D world had to clear the "[compact]" chip; this world never adds it.
+4. tree_updated does NOT mutate pending. Task lifecycle status "pending" and message state "pending" are different concepts.
+
+**What Task X obsoletes from prior fixes**:
+- Fix A's AppFooter filter: still correct (`m.taskId === targetNodeId`), independent concern.
+- Fix B's partial monotonic extend: still correct (different code path — partial events don't affect pending).
+- Fix C's URL routing: orthogonal to pending.
+- Fix D's immediate `deferredMessages.clear()`: the clear itself is now deleted. Fix D's principle (mutations must happen in the same phase) is still valid — Task X eliminates the need by deleting the mutation entirely.
+
+**Regression tests**:
+- `src/plugin-event-handler.test.ts` "Task X: pendingReducer is pure" — 6 tests exercising the reducer directly (RESET, APPLY message/consumed/unrelated, compact-source exclusion).
+- `src/plugin-event-handler.test.ts` "Task X: no 'clear pending' paths outside messages_consumed/RESET" — 3 tests proving tree_updated and compact_marker no-op for pending.
+- `src/plugin-event-handler.test.ts` "Task X: mutation-proof regression for the four prior fixes" — 2 tests locking in the Fix-D-era batch shape and live handleEvent flow.
+- Three historical tests **inverted**: they previously encoded "clear pending on X" behaviors. Now they assert pending is PRESERVED — documenting the new invariant in-place.
+
+**Unconsumed messages stay pending forever** — semantically correct per user: "如果之前有没consume的，之后还是显示pending 我觉得合理". If the agent never processed a message, the UI should keep surfacing it; silently clearing on compact was lying about what actually happened.
+
+**Lesson**: any null/sentinel/special-case handling for "pending" was papering over a wrong mental model. Pending is a view — a projection. The data is the events log. Derivation is the correct word, not storage.
