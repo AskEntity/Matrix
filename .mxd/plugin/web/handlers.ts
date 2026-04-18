@@ -135,7 +135,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		t,
 	} = deps;
 
-	/** Handle slash commands like /compact and /clear. Returns true if handled. */
+	/** Handle slash commands like /compact. Returns true if handled. */
 	async function handleSlashCommand(command: string): Promise<boolean> {
 		const cmd = command.trim().toLowerCase();
 		if (cmd === "/compact") {
@@ -156,29 +156,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		if (cmd === "/stop") {
 			try {
 				await stop();
-			} catch (err) {
-				addLog({
-					type: "error",
-					message: (err as Error).message,
-					taskId: "",
-					ts: Date.now(),
-				});
-			}
-			return true;
-		}
-		if (cmd === "/clear") {
-			if (!confirm(t("confirm.clearSessions"))) return true;
-			try {
-				const res = await authFetch(api.sessionsClear(projectId), {
-					method: "POST",
-				});
-				if (!res.ok) throw new Error((await res.json()).error);
-				setLastTurns(null);
-				setLastInputTokens(null);
-				setLastCacheCreationTokens(null);
-				setLastCacheReadTokens(null);
-				setLastOutputTokens(null);
-				setLogs([]);
 			} catch (err) {
 				addLog({
 					type: "error",
@@ -321,29 +298,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		}
 	}
 
-	async function handleClearSessions() {
-		if (!confirm(t("confirm.clearSessions"))) return;
-		try {
-			const res = await authFetch(api.sessionsClear(projectId), {
-				method: "POST",
-			});
-			if (!res.ok) throw new Error((await res.json()).error);
-			setLastTurns(null);
-			setLastInputTokens(null);
-			setLastCacheCreationTokens(null);
-			setLastCacheReadTokens(null);
-			setLastOutputTokens(null);
-			setLogs([]);
-		} catch (err) {
-			addLog({
-				type: "error",
-				message: (err as Error).message,
-				taskId: "",
-				ts: Date.now(),
-			});
-		}
-	}
-
 	async function handleDeleteTask() {
 		if (!selectedTaskId || !selectedNode) return;
 		if (!confirm(t("confirm.deleteTask", { title: selectedNode.title })))
@@ -454,7 +408,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		handleSend,
 		handleStop,
 		handleClarifySubmit,
-		handleClearSessions,
 		handleClearRootSession,
 		handleDeleteTask,
 		handleStopTask,
