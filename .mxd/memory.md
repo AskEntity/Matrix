@@ -1273,3 +1273,108 @@ Thinking needs `signature` for Anthropic prefix byte-identity on restart. But pa
 - Server (`src/runtime.test.ts`): 6 new tests — partial thinking synthesized, cleared on final, per-task + project-level endpoints, thinking+text together, `updateStreamingBuffers` unit tests for each spec type.
 - Frontend (`src/plugin-event-handler.test.ts`): 20 new tests — every extend case (longer/shorter/equal/mismatch/no-existing/interleave), merge+extend+merge sequences, SSE+REST race scenarios, final-replaces-partial-replaces-extends.
 - **Mutation-verified**: flipping `partial` check in processEvent → 3 integration tests fail. Removing `length <=` guard in extend → 2 tests fail. Deleting `thinking_delta` branch in `updateStreamingBuffers` → 2 tests fail.
+
+## URL always carries viewed task id (Fix C, 2026-04-18)
+
+**Symmetry trio**: Fix A made root a regular task in the data model + AppFooter filter; Fix B made partial events monotonic-extend so refresh doesn't lose streamed content; Fix C makes the URL/routing layer treat root as a regular task too.
+
+### Anti-pattern: "root as default, null as sentinel"
+
+**Any code that treats root specially at the ROUTING / TARGETING / IDENTIFICATION level is wrong.** Root has an id like any task; use it. Only the TREE VISUALIZATION layer legitimately knows "root is root" (for drawing the tree hierarchy + dedicated orchestrator tab button). All other layers should be oblivious to which id happens to be root.
+
+Concrete failure shapes this anti-pattern produced over weeks:
+- `targetNodeId = selectedTaskId ?? rootNodeId` — pending banner filter coupled to a fallback chain → silent drop of root-destined messages during the useTasks transient
+- `isOrchestratorNode = !selectedTaskId || selectedTaskId === rootNodeId` — `!selectedTaskId` is the null sentinel meaning "treat as root", entangling routing logic with state initialization timing
+- `tabScrollStateRef.current.get(selectedTaskId ?? "root")` — literal string `"root"` as a Map key, asymmetric with the SET branch (which guarded on `if (prevTabId)` and skipped null), so root's scroll state was never persisted at all
+- `usageTaskId = targetNodeId ?? selectedTaskId ?? rootNodeId ?? nodes.find(...) ?? "orchestrator"` — 4-fallback chain that masks "no selection" rather than rendering empty
+- URL hash stripped task component when view matched root → on refresh, no task in URL, useTasks transient drops everything destined for root
+
+The fix everywhere: **selectedTaskId carries the actual root id when viewing root**. No sentinel. No fallback. If selectedTaskId is null, render nothing (it means "nothing selected yet"). The URL-redirect mechanism closes the null window; consumers stay simple.
+
+### Two truths, one effect
+
+Just two sources of truth:
+1. **URL hash** is the routing truth: `#<projectId>/<taskId>`, ALWAYS includes taskId
+2. **Daemon `/projects/:id/tasks`** is the rootId truth: returns `{nodes, rootNodeId}` (already exists, not new)
+
+One effect reconciles them — when useTasks resolves rootNodeId AND the URL is missing taskId, normalize the URL via `replaceState` and `setSelectedTaskId(rootNodeId)`:
+
+```ts
+useEffect(() => {
+  if (!projectId || !rootNodeId) return;
+  const hash = parseHash();
+  if (hash.projectId && hash.projectId !== projectId) return;
+  if (!hash.taskId) {
+    const desired = `#${projectId}/${rootNodeId}`;
+    window.history.replaceState(null, "", pathname + search + desired);
+    setSelectedTaskId(rootNodeId);
+  }
+}, [projectId, rootNodeId]);
+```
+
+That's the entire normalization mechanism. No localStorage cache, no SSE listener, no per-project state to invalidate. Hash without a task id is "an invalid state" → fix it once, naturally.
+
+### Initial state: URL only
+
+```ts
+const [selectedTaskId, setSelectedTaskId] = useState(initialHash.taskId ?? null);
+const [rootNodeId, setRootNodeId] = useState<string | null>(null);
+const [targetNodeId, setTargetNodeId] = useState(initialHash.taskId ?? null);
+```
+
+Common case (URL already normalized): three states populated on first render → first commit is correct.
+
+Brand-new visit (URL bare): all three null → empty state renders during ~50-200ms transient → URL-redirect fires → catches up.
+
+The transient is **a valid empty state, not a bug to paper over**. AppFooter shows no pending banner. ActivityLog shows no logs. InputBar placeholder is generic "Send a message…". This is exactly what "nothing selected yet" should look like. No fallback chain tries to make it "work" during null.
+
+### Sentinel sweep (parallel cleanup)
+
+- `Plugin.tsx isOrchestratorNode = selectedTaskId === rootNodeId` (was `!selectedTaskId || ...`)
+- `TaskTree.tsx isOrchestratorSelected = selectedTaskId === rootNodeId` (same)
+- `MockShowcase.tsx` same (mirrors prod for consistency)
+- `usageTaskId = selectedTaskId ?? ""` (was 4-fallback chain)
+- `viewedSessionId = selectedTaskId` (was `selectedTaskId ?? rootNodeId`)
+- `tabScrollStateRef.get(selectedTaskId)` (was `?? "root"` literal)
+- `targetNodeId` useEffect = `setTargetNodeId(selectedTaskId)` (no fallback)
+- `updateHash(projectId, taskId)` always writes `#proj/taskId` (no taskId-stripping branch)
+
+**Kept (legitimate, not the anti-pattern)**:
+- Tab close → navigate to root: `next[idx] ?? rootNodeId` — this is a navigation decision ("where to go after closing the last tab"), not a fallback that hides null state. The `??` resolves an array-out-of-bounds undefined.
+- `handlers.ts: if (!selectedTaskId) return` in destructive ops — guards "did the user actually click a sub-task?", not the routing sentinel.
+- `BackgroundProcessBar.tsx` / `LogEntryView.tsx`: `taskId ?? rootNodeId` for event-level session attribution — different concern (per-event routing).
+- `tabScrollState SET` skips on null prevTabId — symmetric with the GET cleanup; null prevTabId means we never had anywhere to save from.
+
+### Tests (web/Plugin-url-task-id.test.tsx, 5 tests, mutation-verified)
+
+1. **URL has root task id** → first render is correct (no async wait)
+2. **URL bare** → after useTasks resolves, URL normalized to `#proj/<rootId>` + state catches up
+3. **URL has sub-task id** → preserved verbatim, NOT rewritten to root
+4. **openTabs defensive strip** → root id stripped from openTabs after useTasks (no cache to consult at init time, post-mount effect handles it)
+5. **No localStorage `mxd-root:` keys are written or read** (regression guard: any future agent re-introducing a cache fails this)
+
+**Mutation proofs confirmed by reverting code one edit at a time**:
+- Drop `initialHash.taskId ??` from useState init → Test 1 fails (placeholder is generic "Send a message…", not "Message to …" — proves URL-as-source-of-truth)
+- Drop the URL-redirect effect → Test 2 fails (URL stays `#proj`, placeholder never resolves)
+
+### How I went wrong (and what to do differently)
+
+**The wrong goal led to a complex solution.** I framed the problem as "first render must be correct" — which forced me to find some way to know rootId synchronously at mount. That led to building a localStorage cache layer.
+
+**The right goal**: "URL is truth; if URL is missing the id, normalize it AS SOON AS we know the id". The "as soon as" is naturally async (useTasks resolves in 50-200ms), and that's fine — the brief empty state during normalization IS a valid state.
+
+**The pivot**: user pointed out that daemon's `/projects/:id/tasks` already returns rootNodeId. Once that fact lodged, the cache became obviously redundant — `useTasks` already provides what the cache was caching, just async instead of sync. The async response IS the truth source; cache is only useful if you reject async, which I had no reason to do.
+
+**Lesson**: when tempted to add cache to make something synchronous, ask "is there an existing async truth I can wait for instead?" If yes (and there usually is), the answer is "wait + redirect", not "cache". Caches add invalidation complexity for the optimization of skipping a 100ms fetch. Rarely worth it.
+
+**Anti-pattern in the wider sense**: I picked a goal that sounded stricter than necessary ("first render correct" vs "correct after first async settle"). The strict goal pulled in solution complexity. **Default to the loosest goal that satisfies the actual user need.** "Pending banner appears within 200ms of refresh" was the real goal; "appears synchronously on first render" was my over-strict invention.
+
+### Test infra limitation: happy-dom + history.replaceState
+
+`window.history.replaceState(null, "", url)` does NOT update `window.location.hash` in happy-dom (real browsers do). Confirmed via direct repro. The URL-redirect effect handles this with a manual `setSelectedTaskId(rootNodeId)` call alongside the replaceState — works in both env. Without that manual setState, happy-dom would leave selectedTaskId stale (replaceState wouldn't fire hashchange to trigger the listener; production would, but tests wouldn't catch it).
+
+### Test pollution gotcha (pre-existing, not Fix C)
+
+Running multiple `web/*.test.tsx` files together produces flaky failures (Plugin-targetNodeId may time out, AppFooter chips may not render). Caused by happy-dom state surviving GlobalRegistrator unregister/register cycles, and React's module-level state holding refs to old document instances. Pre-existing — confirmed by stashing changes and reproducing.
+
+Workaround: run `bun test web/` (whole dir, all 28 pass) or `bun test` (full, 2118 pass). Subset runs (`bun test web/A.tsx web/B.tsx`) are flaky depending on order. Real fix is a separate task — needs hard process-level isolation per file.
