@@ -564,8 +564,8 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				if (fullscreen) {
 					setFullscreen(false);
 				} else {
+					// targetNodeId updates via the effect on selectedTaskId/rootNodeId.
 					setSelectedTaskId(rootNodeId);
-					setTargetNodeId(null);
 				}
 			}
 			if (e.key === "/" && !isInput) {
@@ -775,14 +775,17 @@ function ProjectContent({ projectId }: { projectId: string }) {
 			.catch(() => setPendingClarifications([]));
 	}, [projectId, authFetch]);
 
+	// targetNodeId = the task that receives sends / owns pending messages.
+	// Root is treated as a regular task (it has a real id). No null sentinel:
+	// the filter and send path use direct id comparison, so the explicit id
+	// makes root-view behave exactly like sub-task view.
+	//
+	// Transient: on fresh mount both selectedTaskId and rootNodeId are null
+	// → targetNodeId is null until useTasks populates rootNodeId (~100-500ms).
+	// Acceptable; once rootNodeId arrives the effect re-runs and pending
+	// messages whose taskId === rootNodeId become visible.
 	useEffect(() => {
-		if (!selectedTaskId || selectedTaskId === rootNodeId) {
-			setTargetNodeId(null);
-			return;
-		}
-		// Always target the selected task regardless of status — the backend
-		// handles routing (auto-resume for non-running tasks).
-		setTargetNodeId(selectedTaskId);
+		setTargetNodeId(selectedTaskId ?? rootNodeId);
 	}, [selectedTaskId, rootNodeId]);
 
 	// Clean up stale tabs (nodes that were deleted).
@@ -1483,7 +1486,6 @@ function ProjectContent({ projectId }: { projectId: string }) {
 			<AppFooter
 				projectId={projectId}
 				targetNodeId={targetNodeId}
-				rootNodeId={rootNodeId}
 				nodeMap={nodeMap}
 				pendingMessages={pendingMessages}
 				pendingClarifications={pendingClarifications}
