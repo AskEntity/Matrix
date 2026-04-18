@@ -57,10 +57,22 @@ export interface PluginManifest {
 	 * Called when a project is registered.
 	 * Plugin sets up project-specific files (memory.md, hooks, git init, etc.).
 	 * Daemon handles registry only — plugin handles project initialization.
+	 *
+	 * `globalContext` (installRoot, gitHash, version) is passed so the plugin
+	 * can decide its own project-level semantics — e.g., matrix detects
+	 * "production install" (projectPath === installRoot && no gitHash) and
+	 * skips git init to avoid corrupting an npm-distributed install.
 	 */
 	onProjectInit?: (
 		projectPath: string,
-		opts: { isNew: boolean },
+		opts: {
+			isNew: boolean;
+			globalContext: {
+				installRoot: string;
+				gitHash: string | null;
+				version: string;
+			};
+		},
 	) => Promise<void>;
 }
 

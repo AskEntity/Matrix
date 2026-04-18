@@ -12,6 +12,17 @@ import { join } from "node:path";
 
 import manifest from "../.mxd/plugin/index.ts";
 
+/**
+ * Default globalContext for these tests — simulates dev mode (has gitHash,
+ * installRoot elsewhere). Never triggers production-mode skip so existing
+ * assertions about git init / memory.md / hooks keep holding.
+ */
+const CTX = {
+	installRoot: "/nonexistent/test-install",
+	gitHash: "test-git-hash",
+	version: "test",
+};
+
 let tmp: string;
 
 beforeEach(() => {
@@ -26,7 +37,7 @@ afterEach(() => {
 
 describe("memory.md", () => {
 	test("new project gets 'First Launch Checklist' content", async () => {
-		await manifest.onProjectInit!(tmp, { isNew: true });
+		await manifest.onProjectInit!(tmp, { isNew: true, globalContext: CTX });
 		const content = readFileSync(join(tmp, ".mxd", "memory.md"), "utf-8");
 		expect(content).toContain("First Launch Checklist");
 		expect(content).toContain("# Project Memory");
@@ -37,7 +48,7 @@ describe("memory.md", () => {
 	test("existing project gets 'Converted existing project' content", async () => {
 		// Pre-create .git so it looks like an existing git repo
 		mkdirSync(join(tmp, ".git"), { recursive: true });
-		await manifest.onProjectInit!(tmp, { isNew: false });
+		await manifest.onProjectInit!(tmp, { isNew: false, globalContext: CTX });
 		const content = readFileSync(join(tmp, ".mxd", "memory.md"), "utf-8");
 		expect(content).toContain("Converted existing project");
 		expect(content).toContain("setup_worktree.sh");
@@ -50,7 +61,7 @@ describe("memory.md", () => {
 		writeFileSync(join(tmp, ".mxd", "memory.md"), "custom content", "utf-8");
 		// Need .git so isNew: false doesn't git init
 		mkdirSync(join(tmp, ".git"), { recursive: true });
-		await manifest.onProjectInit!(tmp, { isNew: false });
+		await manifest.onProjectInit!(tmp, { isNew: false, globalContext: CTX });
 		const content = readFileSync(join(tmp, ".mxd", "memory.md"), "utf-8");
 		expect(content).toBe("custom content");
 	});
@@ -65,7 +76,7 @@ describe("setup_worktree.sh.example", () => {
 		if (lockfile) {
 			writeFileSync(join(tmp, lockfile), "", "utf-8");
 		}
-		await manifest.onProjectInit!(tmp, { isNew: false });
+		await manifest.onProjectInit!(tmp, { isNew: false, globalContext: CTX });
 		return readFileSync(
 			join(tmp, ".mxd", "hooks", "setup_worktree.sh.example"),
 			"utf-8",
@@ -121,7 +132,7 @@ describe("setup_worktree.sh.example", () => {
 			"my custom example",
 			"utf-8",
 		);
-		await manifest.onProjectInit!(tmp, { isNew: false });
+		await manifest.onProjectInit!(tmp, { isNew: false, globalContext: CTX });
 		const content = readFileSync(
 			join(tmp, ".mxd", "hooks", "setup_worktree.sh.example"),
 			"utf-8",
@@ -138,7 +149,7 @@ describe("setup_worktree.sh.example", () => {
 			"my real hook",
 			"utf-8",
 		);
-		await manifest.onProjectInit!(tmp, { isNew: false });
+		await manifest.onProjectInit!(tmp, { isNew: false, globalContext: CTX });
 		expect(
 			existsSync(join(tmp, ".mxd", "hooks", "setup_worktree.sh.example")),
 		).toBe(false);
@@ -156,7 +167,7 @@ describe("setup_worktree.sh.example", () => {
 describe("git init", () => {
 	// ── 12. New project: git init + .gitignore + initial commit ──
 	test("new project: git init, .gitignore, initial commit", async () => {
-		await manifest.onProjectInit!(tmp, { isNew: true });
+		await manifest.onProjectInit!(tmp, { isNew: true, globalContext: CTX });
 
 		// .git directory created
 		expect(existsSync(join(tmp, ".git"))).toBe(true);
@@ -183,7 +194,7 @@ describe("git init", () => {
 			cwd: tmp,
 		});
 
-		await manifest.onProjectInit!(tmp, { isNew: false });
+		await manifest.onProjectInit!(tmp, { isNew: false, globalContext: CTX });
 
 		// Verify the original commit is still the only one (no new commits added)
 		const proc = Bun.spawnSync(["git", "log", "--oneline"], { cwd: tmp });
@@ -195,7 +206,7 @@ describe("git init", () => {
 
 	// ── 14. Non-git existing project: git init but no .gitignore/commit ──
 	test("non-git existing project: git init but no .gitignore or commit", async () => {
-		await manifest.onProjectInit!(tmp, { isNew: false });
+		await manifest.onProjectInit!(tmp, { isNew: false, globalContext: CTX });
 
 		// .git created
 		expect(existsSync(join(tmp, ".git"))).toBe(true);
@@ -213,15 +224,15 @@ describe("git init", () => {
 
 describe(".git/info/exclude", () => {
 	test(".worktrees added to exclude", async () => {
-		await manifest.onProjectInit!(tmp, { isNew: true });
+		await manifest.onProjectInit!(tmp, { isNew: true, globalContext: CTX });
 		const exclude = readFileSync(join(tmp, ".git", "info", "exclude"), "utf-8");
 		expect(exclude).toContain(".worktrees");
 	});
 
 	test("idempotent — running twice does not duplicate .worktrees", async () => {
-		await manifest.onProjectInit!(tmp, { isNew: true });
+		await manifest.onProjectInit!(tmp, { isNew: true, globalContext: CTX });
 		// Run again
-		await manifest.onProjectInit!(tmp, { isNew: false });
+		await manifest.onProjectInit!(tmp, { isNew: false, globalContext: CTX });
 		const exclude = readFileSync(join(tmp, ".git", "info", "exclude"), "utf-8");
 		const matches = exclude
 			.split("\n")
@@ -233,7 +244,7 @@ describe(".git/info/exclude", () => {
 		// Create .git/info/exclude with existing content (no trailing newline)
 		mkdirSync(join(tmp, ".git", "info"), { recursive: true });
 		writeFileSync(join(tmp, ".git", "info", "exclude"), "some-dir", "utf-8");
-		await manifest.onProjectInit!(tmp, { isNew: false });
+		await manifest.onProjectInit!(tmp, { isNew: false, globalContext: CTX });
 		const exclude = readFileSync(join(tmp, ".git", "info", "exclude"), "utf-8");
 		expect(exclude).toContain("some-dir");
 		expect(exclude).toContain(".worktrees");

@@ -1,5 +1,6 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isProductionProject } from "../production.ts";
 import { api } from "./api.ts";
 import { useAuthFetch } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
@@ -190,25 +191,58 @@ function ProductionModePage() {
 	);
 }
 
-export function Plugin({
-	projectId,
-	productionMode,
-}: {
-	projectId: string;
-	productionMode?: boolean;
-}) {
+export function Plugin({ projectId }: { projectId: string }) {
 	if (!projectId)
 		return (
 			<div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>
 		);
-	if (productionMode) return <ProductionModePage />;
 	return (
 		<LocaleProvider>
 			<ErrorBoundary>
-				<ProjectContent projectId={projectId} />
+				<PluginShell projectId={projectId} />
 			</ErrorBoundary>
 		</LocaleProvider>
 	);
+}
+
+/**
+ * Production-aware shell — derives production state on the client.
+ * Fetches the plugin-agnostic `/global-context` (installRoot, gitHash) plus
+ * the current project's `/projects/:id` (for path) in parallel, and computes
+ * `isProductionProject` locally using the same pure function the runtime uses.
+ * No server round-trip just to branch on a derivable state.
+ *
+ * While unknown (pending fetch): render `ProjectContent` optimistically so
+ * the dev-mode user doesn't see a flash of "loading". Production-install
+ * users see the flash briefly, then the ProductionModePage — acceptable
+ * tradeoff since dev-mode is the dominant case.
+ */
+function PluginShell({ projectId }: { projectId: string }) {
+	const authFetch = useAuthFetch();
+	const [production, setProduction] = useState<boolean | null>(null);
+	useEffect(() => {
+		let cancelled = false;
+		Promise.all([
+			authFetch("/global-context").then((r) => (r.ok ? r.json() : null)),
+			authFetch(`/projects/${projectId}`).then((r) => (r.ok ? r.json() : null)),
+		])
+			.then(([ctx, project]) => {
+				if (cancelled) return;
+				if (!ctx || !project?.path) {
+					setProduction(false);
+					return;
+				}
+				setProduction(isProductionProject(project.path, ctx));
+			})
+			.catch(() => {
+				if (!cancelled) setProduction(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [projectId, authFetch]);
+	if (production === true) return <ProductionModePage />;
+	return <ProjectContent projectId={projectId} />;
 }
 
 function ProjectContent({ projectId }: { projectId: string }) {
