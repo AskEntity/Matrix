@@ -99,7 +99,16 @@ function readInitialSidebarWidth(): number {
 	return SIDEBAR_DEFAULT_WIDTH;
 }
 
-// ── Hash routing helpers ───────────────────────────────────────────────────
+// ── Hash routing ───────────────────────────────────────────────────────────
+//
+// URL hash IS the routing truth. Format: `#<projectId>/<taskId>`. Root is a
+// regular task — its id appears in the URL exactly like any sub-task id.
+// There is no "no task selected" URL form, no fallback chain, no client-side
+// cache. If the URL is missing the task component (legacy bookmark, fresh
+// visit), the URL-redirect effect normalizes it once useTasks resolves the
+// daemon-returned rootNodeId.
+//
+// "Hash without id is an invalid state" — we redirect to make it valid.
 
 function parseHash(): { projectId?: string; taskId?: string } {
 	const raw = window.location.hash.replace(/^#/, "");
@@ -109,20 +118,18 @@ function parseHash(): { projectId?: string; taskId?: string } {
 	return { projectId: raw.slice(0, slash), taskId: raw.slice(slash + 1) };
 }
 
-function updateHash(
-	projectId: string,
-	taskId: string | null,
-	rootNodeId: string | null,
-) {
-	const hash =
-		taskId && taskId !== rootNodeId
-			? `#${projectId}/${taskId}`
-			: projectId
-				? `#${projectId}`
-				: "";
-	if (window.location.hash !== hash) {
-		window.location.hash = hash;
-	}
+/**
+ * Update URL hash to `#projectId/taskId`. Always carries the task id.
+ * Direct `location.hash` assignment — adds one history entry per task
+ * change (same semantic as pre-Fix-C sub-task switches, now uniform).
+ * Initial URL normalization uses `history.replaceState` (separate code
+ * path in the redirect effect) to avoid the one-time history entry on
+ * page load.
+ */
+function updateHash(projectId: string, taskId: string) {
+	const desired = `#${projectId}/${taskId}`;
+	if (window.location.hash === desired) return;
+	window.location.hash = desired;
 }
 
 // ── Main Plugin ───────────────────────────────────────────────────────────────
@@ -250,11 +257,17 @@ function ProjectContent({ projectId }: { projectId: string }) {
 	const { t } = useLocale();
 	const initialHash = useMemo(() => parseHash(), []);
 	const [isCreatingTask, setIsCreatingTask] = useState(false);
+	// All three seed from URL hash, nothing else. URL has the task id →
+	// first render is correct. URL doesn't have it → all three start null,
+	// the URL-redirect effect (below) fills the URL once useTasks resolves
+	// the daemon-returned rootNodeId, hashchange listener then sets state.
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
 		initialHash.taskId ?? null,
 	);
 	const [rootNodeId, setRootNodeId] = useState<string | null>(null);
-	const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
+	const [targetNodeId, setTargetNodeId] = useState<string | null>(
+		initialHash.taskId ?? null,
+	);
 	const [lastTurns, setLastTurns] = useState<number | null>(null);
 	const [lastInputTokens, setLastInputTokens] = useState<number | null>(null);
 	const [lastCacheCreationTokens, setLastCacheCreationTokens] = useState<
@@ -281,7 +294,12 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		} catch {
 			/* ignore */
 		}
-		// Ensure the hash taskId is in the tab list
+		// Add hash task to tabs if not present. If the hash task happens to
+		// be the root id (URL deeplink to root), the post-mount defensive
+		// effect below strips it once useTasks resolves rootNodeId. We can't
+		// tell at init time without a cache (which we deliberately don't
+		// have); the brief window of "root in openTabs" is harmless because
+		// the tab bar only renders when openTabs.length > 0 anyway.
 		const hashTask = initialHash.taskId;
 		if (hashTask && !tabs.includes(hashTask)) {
 			tabs = [...tabs, hashTask];
@@ -356,10 +374,14 @@ function ProjectContent({ projectId }: { projectId: string }) {
 	>(() => new Map());
 	const [loadingOlderEvents, setLoadingOlderEvents] = useState(false);
 
-	// The currently viewed session = selectedTaskId ?? rootNodeId.
-	// Kept as a ref so callbacks (handleReconnect) don't need to re-create on every selection change.
+	// Currently viewed session id = selectedTaskId. URL is the routing truth;
+	// during the brand-new-project transient (URL has no taskId, useTasks
+	// hasn't resolved yet) selectedTaskId is null → no fetch fires (guard
+	// below). Once URL-redirect normalizes the hash, selectedTaskId catches
+	// up and fetches start. No rootNodeId fallback — `selectedTaskId` flows
+	// through everywhere, root is just a regular id.
 	const viewedSessionRef = useRef<string | null>(null);
-	const viewedSessionId = selectedTaskId ?? rootNodeId;
+	const viewedSessionId = selectedTaskId;
 	viewedSessionRef.current = viewedSessionId;
 
 	const {
@@ -422,7 +444,12 @@ function ProjectContent({ projectId }: { projectId: string }) {
 		return sum > 0 ? sum : null;
 	}, [nodes]);
 
-	const isOrchestratorNode = !selectedTaskId || selectedTaskId === rootNodeId;
+	// Root-view check: selectedTaskId is seeded from URL+cache on mount and
+	// kept in sync with the URL — so it equals rootNodeId iff we're viewing
+	// root. The brand-new-project transient (~50ms before useTasks resolves)
+	// has both null, and `null === null` correctly returns true (still root).
+	// No `!selectedTaskId` sentinel needed.
+	const isOrchestratorNode = selectedTaskId === rootNodeId;
 	const selectedNode =
 		selectedTaskId && !isOrchestratorNode
 			? (nodeMap.get(selectedTaskId) ?? null)
@@ -716,17 +743,25 @@ function ProjectContent({ projectId }: { projectId: string }) {
 
 	// ── Hash routing sync ────────────────────────────────────────────────────
 
-	// Update hash when projectId or selectedTaskId changes
+	// Update hash when projectId or selectedTaskId changes. The URL invariant
+	// (always carries a task id) means subsequent refreshes hit `parseHash`
+	// and seed selectedTaskId from URL — no async wait. Don't write the hash
+	// until we have a non-null selectedTaskId, otherwise we'd briefly flicker
+	// to a malformed URL during the brand-new-project transient.
 	useEffect(() => {
-		if (projectId) updateHash(projectId, selectedTaskId, rootNodeId);
-	}, [projectId, selectedTaskId, rootNodeId]);
+		if (projectId && selectedTaskId) updateHash(projectId, selectedTaskId);
+	}, [projectId, selectedTaskId]);
 
-	// Listen for browser back/forward (hashchange)
+	// Listen for browser back/forward (hashchange) and stay in sync with the
+	// URL the user navigated to.
 	useEffect(() => {
 		const onHashChange = () => {
 			const { projectId: hp, taskId: ht } = parseHash();
 			if (hp && hp !== projectId) {
-				setSelectedTaskId(ht ?? rootNodeId);
+				// Project changed via URL. selectedTaskId from URL only; if
+				// URL has no taskId, the URL-redirect effect on the new
+				// project's rootNodeId will normalize once useTasks resolves.
+				setSelectedTaskId(ht ?? null);
 				setLogs([]);
 				setTokenUsage({});
 				setPendingMessages([]);
@@ -741,13 +776,56 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				setLastOutputTokens(null);
 			} else if (ht && ht !== selectedTaskId) {
 				setSelectedTaskId(ht);
-			} else if (!ht && selectedTaskId !== rootNodeId) {
+			} else if (!ht && rootNodeId && selectedTaskId !== rootNodeId) {
+				// URL stripped of task hash (manual edit / legacy bookmark).
+				// Snap back to root so the URL invariant re-establishes on
+				// the next render.
 				setSelectedTaskId(rootNodeId);
 			}
 		};
 		window.addEventListener("hashchange", onHashChange);
 		return () => window.removeEventListener("hashchange", onHashChange);
 	}, [projectId, selectedTaskId, rootNodeId, setActiveAgents]);
+
+	// ── URL normalization ──────────────────────────────────────────────────
+	//
+	// "Hash without a task id is an invalid state — fix it." When useTasks
+	// resolves the daemon-returned rootNodeId, if the URL is missing the
+	// task component, replaceState normalizes it to `#projectId/rootNodeId`.
+	// The hashchange listener above doesn't fire for replaceState (per spec),
+	// so we manually setSelectedTaskId in the same effect.
+	//
+	// No cache, no localStorage, no fallback chain. The daemon's /tasks
+	// endpoint already returns rootNodeId — this effect just reflects it
+	// into the URL.
+	useEffect(() => {
+		if (!projectId || !rootNodeId) return;
+		const hash = parseHash();
+		// Only block if URL belongs to a DIFFERENT project. Empty URL or
+		// matching projectId both proceed to normalization.
+		if (hash.projectId && hash.projectId !== projectId) return;
+		if (!hash.taskId) {
+			const desired = `#${projectId}/${rootNodeId}`;
+			window.history.replaceState(
+				null,
+				"",
+				window.location.pathname + window.location.search + desired,
+			);
+			setSelectedTaskId(rootNodeId);
+		}
+	}, [projectId, rootNodeId]);
+
+	// Defensive: rootNodeId must NEVER appear in openTabs (it has its own
+	// dedicated tab button). At init time we can't tell if a URL deeplink is
+	// pointing at root (no cache → can't compare), so we strip it post-load.
+	useEffect(() => {
+		if (!rootNodeId || openTabs.length === 0) return;
+		if (openTabs.includes(rootNodeId)) {
+			const cleaned = openTabs.filter((id) => id !== rootNodeId);
+			setOpenTabs(cleaned);
+			localStorage.setItem("mxd-open-tabs", JSON.stringify(cleaned));
+		}
+	}, [rootNodeId, openTabs]);
 
 	useEffect(() => {
 		if (projectId) checkStatus();
@@ -776,17 +854,16 @@ function ProjectContent({ projectId }: { projectId: string }) {
 	}, [projectId, authFetch]);
 
 	// targetNodeId = the task that receives sends / owns pending messages.
-	// Root is treated as a regular task (it has a real id). No null sentinel:
-	// the filter and send path use direct id comparison, so the explicit id
-	// makes root-view behave exactly like sub-task view.
-	//
-	// Transient: on fresh mount both selectedTaskId and rootNodeId are null
-	// → targetNodeId is null until useTasks populates rootNodeId (~100-500ms).
-	// Acceptable; once rootNodeId arrives the effect re-runs and pending
-	// messages whose taskId === rootNodeId become visible.
+	// Root is treated as a regular task — its id appears in `selectedTaskId`
+	// exactly the same way a sub-task id does, no fallback needed. The
+	// useState initial value above seeds from `initialHash.taskId` so the
+	// first render is correct when URL already carries the task. The
+	// brand-new transient (URL bare → useTasks resolves → URL-redirect
+	// effect normalizes) sets selectedTaskId via the URL-redirect path,
+	// then this effect catches up.
 	useEffect(() => {
-		setTargetNodeId(selectedTaskId ?? rootNodeId);
-	}, [selectedTaskId, rootNodeId]);
+		setTargetNodeId(selectedTaskId);
+	}, [selectedTaskId]);
 
 	// Clean up stale tabs (nodes that were deleted).
 	// Guard: skip when nodeMap is empty (nodes not yet loaded from server).
@@ -840,9 +917,14 @@ function ProjectContent({ projectId }: { projectId: string }) {
 				}
 			}, 300);
 		} else {
-			// Normal tab switch: restore previous scroll state or follow
-			const tabId = selectedTaskId ?? "root";
-			const saved = tabScrollStateRef.current.get(tabId);
+			// Normal tab switch: restore previous scroll state or follow.
+			// selectedTaskId is the real id of the viewed task (root included);
+			// no "root" string sentinel needed. Pre-Fix-C this used `?? "root"`
+			// asymmetrically with the SET branch above (which skipped on null
+			// via `if (prevTabId)`), so root's scroll state never persisted at
+			// all — set under nothing, get from "root" → always missed.
+			const tabId = selectedTaskId;
+			const saved = tabId ? tabScrollStateRef.current.get(tabId) : undefined;
 			if (saved) {
 				setAutoScroll(saved.follow);
 				requestAnimationFrame(() => {
@@ -944,12 +1026,17 @@ function ProjectContent({ projectId }: { projectId: string }) {
 
 	// ── Stabilized callbacks for memoized child components ───────────────────
 
-	// Reset all project state when projectId changes (shell controls project selection)
+	// Reset all project state when projectId changes (shell controls project
+	// selection). selectedTaskId seeds from the new project's URL only;
+	// rootNodeId resets to null and the URL-redirect effect normalizes once
+	// useTasks resolves. Same flow as the initial mount, no special path.
 	const prevProjectId = useRef(projectId);
 	useEffect(() => {
 		if (prevProjectId.current !== projectId) {
 			prevProjectId.current = projectId;
-			setSelectedTaskId(null);
+			const hash = parseHash();
+			const urlTaskId = hash.projectId === projectId ? hash.taskId : null;
+			setSelectedTaskId(urlTaskId ?? null);
 			setRootNodeId(null);
 			setOpenTabs([]);
 			localStorage.setItem("mxd-open-tabs", "[]");
@@ -1356,15 +1443,9 @@ function ProjectContent({ projectId }: { projectId: string }) {
 						</div>
 						<div className="mxd-panel-actions">
 							{(() => {
-								const usageTaskId =
-									targetNodeId ??
-									selectedTaskId ??
-									rootNodeId ??
-									nodes.find(
-										(n) =>
-											!n.parentId && isTask(n) && n.status === "in_progress",
-									)?.id ??
-									"orchestrator";
+								// One source: selectedTaskId. Brand-new transient = null
+								// → tokenUsage[""] is undefined → no badge rendered (correct).
+								const usageTaskId = selectedTaskId ?? "";
 								const usage = tokenUsage[usageTaskId];
 								return usage ? (
 									<TokenUsageBadge
