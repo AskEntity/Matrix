@@ -54,7 +54,7 @@ Agent reply language: follows the sender's language.
 
 > **⚠️ WHEN YOU WANT TO RUN TESTS, THE ONLY COMMAND YOU ARE ALLOWED TO EXECUTE IS EXACTLY `bun test`. ⚠️**
 >
-> **Literally nine characters: `b u n (space) t e s t`. No prefix. No suffix. No pipes, no redirects, no flags, no arguments, no `&&`, no `2>&1`. Just `bun test`.**
+> **Literally 8 characters: `b u n (space) t e s t`. No prefix. No suffix. No pipes, no redirects, no flags, no arguments, no `&&`, no `2>&1`. Just `bun test`.**
 >
 > **If the command you are about to send to bash is not byte-identical to `bun test`, STOP. You are about to do the wrong thing.**
 
