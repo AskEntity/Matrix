@@ -70,6 +70,8 @@ async function setupTestContext(): Promise<TestContext> {
 	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
 
 	const mockAPI = new ValidatingMockAPI();
+	// Strict tool-error mode: fail on unexpected is_error tool_results.
+	mockAPI.enableStrictToolErrors();
 	const provider = createMockedProviderWithMock(mockAPI);
 
 	const projectId = ulid();
