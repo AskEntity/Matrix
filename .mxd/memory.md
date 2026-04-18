@@ -1716,3 +1716,35 @@ filenames in the build pipeline (`naming: "[name]-[hash].[ext]"` +
 manifest), not a `Cache-Control: no-store` band-aid. Different layer
 (build, not server routing), different risk class — split out as its
 own ticket.
+
+## Project-switch reset via remount key (2026-04-18)
+
+`web/ShellApp.tsx` passes `key={`${projectId}/${selectedScope}`}` on
+`<PluginUI>`. When either segment changes, React unmounts the plugin
+subtree and remounts a fresh instance — every `useState` / `useRef` /
+`useAgent` re-initialises from scratch. No imperative reset ceremony
+needed.
+
+Before: `.mxd/plugin/web/Plugin.tsx` kept a `prevProjectId` ref + a
+25-line useEffect that manually cleared 14 pieces of state
+(`rootNodeId`, `openTabs`, `logs`, `tokenUsage`, `pendingMessages`,
+`pendingClarifications`, `backgroundProcesses`, `activeAgents`,
+`olderEventsAvailable`, `lastTurns`, `lastInputTokens`,
+`lastCacheCreationTokens`, `lastCacheReadTokens`, `lastOutputTokens`)
+plus clobbered `mxd-open-tabs` in localStorage.
+
+After: the useEffect is gone. Remount handles all 14 resets implicitly.
+`mxd-open-tabs` localStorage now survives a project switch; the
+existing tab-cleanup effect
+(`validTabs = openTabs.filter((id) => nodeMap.has(id))`) filters
+cross-project stale ids once `nodeMap` loads, so no user-visible
+difference.
+
+Why this matters as a pattern: "detect prop X change and manually
+clear 14 pieces of local state" is a consistent smell. React's
+`key={X}` is the idiomatic equivalent and cannot drift — a new useState
+added anywhere inside the subtree is reset for free. The old approach
+required every new piece of state to be manually added to the reset
+list; forgetting → cross-project leaks.
+
+Net LOC: -20 (+7 / -27).
