@@ -16,7 +16,6 @@ import {
 import type { RuntimeContext } from "../context.ts";
 import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
 import {
-	getEventStore,
 	getProjectProvider,
 	getTracker,
 	pruneSessionFiles,
@@ -216,31 +215,6 @@ export function registerAgentRoutes(app: Hono, ctx: RuntimeContext) {
 			return c.json({ error: result.error }, result.status as 404);
 		}
 		return c.json({ ok: true });
-	});
-
-	// Clear session history for a project (useful when starting fresh after restart)
-	app.post("/projects/:id/sessions/clear", async (c) => {
-		const project = ctx.pm.get(c.req.param("id"));
-		if (!project) return c.json({ error: "Project not found" }, 404);
-		{
-			const clearTracker = ctx.trackers.get(project.id);
-			const rootRunning = clearTracker
-				? clearTracker.getTask(clearTracker.rootNodeId)?.session != null
-				: false;
-			if (rootRunning) {
-				await stopAgent(ctx, project.id);
-			}
-		}
-		const eventStore = getEventStore(ctx, project.id);
-		await eventStore.clearAll();
-		// Re-create the EventStore cache entry so it sees the cleaned directory
-		ctx.eventStores.delete(project.id);
-		const tracker = ctx.trackers.get(project.id);
-		if (tracker) {
-			// Broadcast tree so connected WS clients re-render with current nodes
-			broadcastTreeUpdate(ctx, project.id, tracker);
-		}
-		return c.json({ cleared: true });
 	});
 
 	// Prune old session files (keep only the most recent N)
