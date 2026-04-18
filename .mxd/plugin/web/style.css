@@ -2640,6 +2640,31 @@ button.mxd-tool-card-header:hover {
 	line-height: 1.55;
 }
 
+/*
+ * Compact summary card (rendered right after the compact_marker bar).
+ * Holds the post-compact primer text — the agent's memory of the erased
+ * conversation. Visually echoes .mxd-compact-bar's dashed purple borders
+ * but presents as a collapsible card (summaries are long narrative text).
+ */
+.mxd-compact-summary {
+	margin: 4px 0 8px;
+}
+.mxd-tool-card-compact-summary {
+	background: var(--bg-raised);
+	border: 1px dashed rgba(163, 113, 247, 0.35);
+}
+.mxd-compact-summary-content {
+	font-family: var(--font-mono);
+	font-size: 11.5px;
+	color: var(--text-secondary);
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 420px;
+	overflow-y: auto;
+	line-height: 1.55;
+	padding: 2px 0;
+}
+
 /* =========================================================
    Scroll Follow Button
    ========================================================= */

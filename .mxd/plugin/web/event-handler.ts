@@ -112,7 +112,13 @@ export function pendingReducer(
 	if (e.type === "message") {
 		const body = e.body as QueueMessage | undefined;
 		const source = body?.source;
-		if (!e.id || source === "compact") return state;
+		// compact & compacted_resume: server-internal messages, not
+		// user-pending. Both have their own display path via the
+		// compact-marker / compact-summary cards. Excluding them here
+		// means no "[compacted_resume]" chip flashes during the brief
+		// emit→consume window.
+		if (!e.id || source === "compact" || source === "compacted_resume")
+			return state;
 		const content = body?.source === "user" ? body.content : "";
 		const images = body?.source === "user" ? body.images : undefined;
 		return [
@@ -410,6 +416,24 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					type: "clarify_response",
 					answer: qe.answer,
 					taskId: parentTaskId,
+					ts: eventTs,
+				};
+			case "compacted_resume":
+				// Post-compact summary injected as a "message" event — the
+				// agent's memory of the erased conversation. Rendered as its
+				// own compact-summary card by LogEntryView (near the
+				// compact_marker bar). Without this case the summary would
+				// never reach the activity log.
+				return {
+					type: "message",
+					id: qe.id,
+					body: {
+						source: "compacted_resume",
+						id: qe.id,
+						ts: qe.ts ?? eventTs,
+						content: qe.content,
+					},
+					taskId: parentTaskId ?? "",
 					ts: eventTs,
 				};
 			default:
@@ -882,6 +906,32 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					// compact source message that got added to deferred. In
 					// the new model we just never add it.)
 					if (source === "compact") {
+						return {
+							entries: [],
+							updates: [],
+							sideEffects: NO_SIDE_EFFECTS,
+						};
+					}
+
+					// compacted_resume: server-injected post-compact summary.
+					// Render directly as its own log entry (compact summary
+					// card) rather than going through pending. Skipping
+					// pending mirrors `compact` above — compacted_resume is
+					// not a user-pending message; it's the agent's memory
+					// of the erased conversation.
+					if (source === "compacted_resume" && body) {
+						const uiEvent = queueEntryToUIEvent(
+							body,
+							msg.taskId ?? undefined,
+							msg.ts,
+						);
+						if (uiEvent) {
+							return {
+								entries: [createLogEntry(uiEvent)],
+								updates: [],
+								sideEffects: NO_SIDE_EFFECTS,
+							};
+						}
 						return {
 							entries: [],
 							updates: [],

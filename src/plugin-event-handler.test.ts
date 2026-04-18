@@ -1394,6 +1394,140 @@ describe("event-handler compact_marker clear ordering (Fix D)", () => {
 });
 
 // ============================================================
+// compacted_resume message plumbing (2026-04-18)
+// ============================================================
+// A compacted_resume message is the post-compact summary injected by the
+// provider loop. Before the fix: queueEntryToUIEvent fell through to its
+// `default: null` case → the message never materialized into a log entry,
+// so the UI silently dropped the summary. These tests lock in:
+//   1. processEvent("message", source=compacted_resume, with id) renders a
+//      log entry directly (skips pending).
+//   2. pendingReducer skips compacted_resume — no "[compacted_resume]"
+//      chip ever flashes in the footer.
+//   3. messages_consumed for the compacted_resume id is a no-op (nothing
+//      was in pending to materialize OR filter).
+// Mutation proofs noted per-test.
+
+describe("event-handler: compacted_resume message plumbing", () => {
+	it("processEvent: compacted_resume with id → LogEntry emitted, pending untouched", () => {
+		// Mutation proof: drop the `source === "compacted_resume"` branch in
+		// processEvent's message case → event falls through to the normal
+		// pending path, nothing is rendered at the `message` event time, and
+		// pendingBox grows by 1. Both assertions below flip.
+		const { deps, pendingBox } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		const SUMMARY = "Post-compact narrative summary body — token 3141.";
+		processEventBatch([
+			{
+				type: "message",
+				id: "cr-1",
+				body: {
+					source: "compacted_resume",
+					id: "cr-1",
+					ts: 1000,
+					content: SUMMARY,
+				},
+				taskId: "task-a",
+				ts: 1000,
+			},
+		] satisfies IncomingEvent[]);
+
+		// Log entry was produced synchronously from the message event itself
+		// (no wait for messages_consumed).
+		const entry = capturedLogs.find(
+			(e: LogEntry) =>
+				e.type === "message" && e.body.source === "compacted_resume",
+		);
+		expect(entry).toBeDefined();
+		if (entry?.type === "message" && entry.body.source === "compacted_resume") {
+			expect(entry.body.content).toBe(SUMMARY);
+		}
+
+		// Pending never grew — compacted_resume is server-internal, never
+		// a user-pending message. Chip would flash otherwise.
+		expect(pendingBox.current.length).toBe(0);
+	});
+
+	it("pendingReducer: compacted_resume APPLY is a no-op", () => {
+		// Direct reducer exercise — doesn't touch processEvent.
+		// Mutation proof: remove `source === "compacted_resume"` from the
+		// reducer's skip condition → state grows to length 1 with the
+		// compacted_resume entry (and its chip text).
+		const start: PendingMessage[] = [];
+		const after = pendingReducer(start, {
+			type: "APPLY",
+			event: {
+				type: "message",
+				id: "cr-2",
+				body: {
+					source: "compacted_resume",
+					id: "cr-2",
+					ts: 2000,
+					content: "irrelevant — should not appear in pending",
+				},
+				taskId: "task-a",
+				ts: 2000,
+			},
+		});
+		expect(after).toEqual([]);
+		expect(after).toBe(start); // same array reference (pure no-op)
+	});
+
+	it("processEvent: full cycle with messages_consumed → single log entry, no duplicate", () => {
+		// In production JSONL the compacted_resume message is immediately
+		// followed by messages_consumed. We must render EXACTLY ONE entry,
+		// not duplicate. processEvent renders at `message` time; on
+		// messages_consumed we look up in pending (empty) → materialize
+		// finds nothing → no new entry.
+		// Mutation proof: if someone routed compacted_resume through pending
+		// (removing the skip), messages_consumed would materialize a SECOND
+		// entry via queueEntryToUIEvent → assertion count === 1 flips.
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "message",
+				id: "cr-3",
+				body: {
+					source: "compacted_resume",
+					id: "cr-3",
+					ts: 3000,
+					content: "summary token 42",
+				},
+				taskId: "task-a",
+				ts: 3000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["cr-3"],
+				taskId: "task-a",
+				ts: 3001,
+			},
+		] satisfies IncomingEvent[]);
+
+		const compactedEntries = capturedLogs.filter(
+			(e: LogEntry) =>
+				e.type === "message" && e.body.source === "compacted_resume",
+		);
+		expect(compactedEntries.length).toBe(1);
+	});
+});
+
+// ============================================================
 // Forked session / per-session event processing
 // ============================================================
 
