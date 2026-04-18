@@ -140,8 +140,8 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		const cmd = command.trim().toLowerCase();
 		if (cmd === "/compact") {
 			try {
-				const nodeId =
-					targetNodeId ?? selectedTaskId ?? rootNodeId ?? undefined;
+				// targetNodeId already resolves to selectedTaskId ?? rootNodeId.
+				const nodeId = targetNodeId ?? undefined;
 				await compact(nodeId);
 			} catch (err) {
 				addLog({
@@ -169,8 +169,8 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		// /settings removed — settings is shell's responsibility (header gear icon)
 		if (cmd === "/dump-messages") {
 			try {
-				const nodeId =
-					targetNodeId ?? selectedTaskId ?? rootNodeId ?? undefined;
+				// targetNodeId already resolves to selectedTaskId ?? rootNodeId.
+				const nodeId = targetNodeId ?? undefined;
 				const res = await authFetch(api.debugDumpMessages(projectId), {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
@@ -215,15 +215,16 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		}
 
 		try {
-			// Determine target: explicit child target, or root node
-			const nodeId = targetNodeId ?? rootNodeId;
-			if (nodeId) {
+			// targetNodeId is the resolved destination — selectedTaskId ?? rootNodeId
+			// (set by Plugin.tsx's useEffect). If null (both selected and root
+			// unavailable → orchestrator not started yet), bootstrap via start().
+			if (targetNodeId) {
 				// Unified path: all messages go through the task message endpoint.
 				// For root nodes, the endpoint delegates to handleInjectMessage
 				// which handles auto-launch, cold-start headers, and resume.
-				await sendMessageToTask(nodeId, message.trim(), images);
+				await sendMessageToTask(targetNodeId, message.trim(), images);
 			} else {
-				// No root node yet — need to start the orchestrator first
+				// No target — start the orchestrator cold.
 				await start({ prompt: message.trim() });
 			}
 		} catch (err) {

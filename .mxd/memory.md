@@ -1214,3 +1214,28 @@ Stream token rides in `?token=` on `/events`; CLI Bearer rides as `Authorization
 **Test gotcha (macOS)**: `mkdtemp(tmpdir())` returns `/var/folders/...` but `process.cwd()` inside the spawned subprocess returns the resolved `/private/var/folders/...`. `resolveCurrentProject`'s string compare fails; CLI exits 1 with "No project found for current directory" before ever reaching the stream-token flow. Fix in test setup: `realpathSync(await mkdtemp(...))` for both dataDir and fakeHome, so the project is registered with the path the CLI's `cwd` actually resolves to.
 
 **Mutation-verified**: all 6 tests (3 per fix, in `src/cli-audit-r7-p2_1.test.ts` and `src/cli-audit-r7-p2_2.test.ts`) fail when the fix line is reverted. Test 3 of P2.2 especially — stdout shows `"Reconnecting in 2s... (attempt 1)"` without the fix, exactly the 401-loop symptom users reported.
+
+## Fix A (2026-04-18) — root is a regular task, not a null sentinel
+
+`Plugin.tsx` used to set `targetNodeId = null` whenever the user viewed the root. `AppFooter`'s pending-message filter then had two branches:
+```ts
+targetNodeId
+  ? m.taskId === targetNodeId            // sub-task view: direct id compare
+  : m.taskId === null || m.taskId === rootNodeId  // root view: sentinel + rootNodeId prop
+```
+
+That asymmetry coupled the root view's filter behavior to whether `rootNodeId` state had populated yet. On fresh mount (`useTasks` pending, `rootNodeId=null`), root-destined pending messages silently dropped. The sub-task view had no such race because it always used an explicit id.
+
+**Fix**: root has a real id like any other task. Use it directly.
+- `Plugin.tsx` effect collapses to `setTargetNodeId(selectedTaskId ?? rootNodeId)` — one-line, no branching.
+- `AppFooter` filter collapses to `m.taskId === targetNodeId` — single path, both views behave identically.
+- `rootNodeId` prop removed from `AppFooter` (dead after the filter simplification).
+- `handleSend` / `/compact` / `/dump-messages` stop chaining `?? rootNodeId` because `targetNodeId` already resolves through the same fallback.
+
+**Residual transient**: pre-`useTasks` both state values are null → `targetNodeId=null` → filter drops all messages. ~100-500ms flash, acceptable. Optional optimization (seed `rootNodeId` from URL hash on mount) is a separate task if it becomes user-visible.
+
+**Regression guards**:
+- `web/AppFooter-pending.test.tsx` (7 tests) — exercises the filter line directly with prop combinations. Catches mutations of the filter (e.g. accidental re-introduction of the two-branch form, accepting `taskId === null` without intent).
+- `web/Plugin-targetNodeId.test.tsx` — mounts real Plugin against a seeded `tree.json`, waits for `useTasks` to populate, asserts InputBar's textarea placeholder reads `Message to "Orchestrator"…`. Mutation-verified: reverting the `Plugin.tsx` effect to the old branching form makes this test fail (placeholder stays at generic "Send a message…").
+
+**Lesson**: "root is a special view that needs a sentinel" is a UI-level story with no data-model counterpart. Once the UI speaks the same id language as the data layer, both filter paths collapse to one and a whole class of state-timing races disappears.

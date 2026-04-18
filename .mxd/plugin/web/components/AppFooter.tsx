@@ -6,7 +6,6 @@ import { InputBar } from "./InputBar.tsx";
 export const AppFooter = memo(function AppFooter({
 	projectId,
 	targetNodeId,
-	rootNodeId,
 	nodeMap,
 	pendingMessages,
 	pendingClarifications,
@@ -17,7 +16,6 @@ export const AppFooter = memo(function AppFooter({
 }: {
 	projectId: string;
 	targetNodeId: string | null;
-	rootNodeId: string | null;
 	nodeMap: Map<string, TreeNode>;
 	pendingMessages: {
 		id: string;
@@ -97,10 +95,12 @@ export const AppFooter = memo(function AppFooter({
 				</div>
 			)}
 			{(() => {
-				const filtered = pendingMessages.filter((m) =>
-					targetNodeId
-						? m.taskId === targetNodeId
-						: m.taskId === null || m.taskId === rootNodeId,
+				// Root is a regular task — targetNodeId resolves to the root id in the
+				// root view, to the sub-task id in sub-task views. One filter path,
+				// direct id comparison. Null targetNodeId (pre-useTasks transient)
+				// matches no messages → banner empty until rootNodeId populates.
+				const filtered = pendingMessages.filter(
+					(m) => m.taskId === targetNodeId,
 				);
 				return (
 					filtered.length > 0 && (
