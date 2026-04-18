@@ -1181,6 +1181,9 @@ export async function createDaemon(opts: {
 		return c.json({
 			...project,
 			pathExists: pm.checkPathExists(project.id),
+			productionMode: existsSync(
+				join(dataDir, "projects", project.id, ".mxd.production"),
+			),
 		});
 	});
 
@@ -1563,6 +1566,28 @@ export async function createDaemon(opts: {
 
 	// Fallthrough: forward to first available global worker
 	app.all("*", async (c) => {
+		// Production mode guard: block agent-invoking operations on production projects
+		const projectMatch = c.req.path.match(/^\/projects\/([^/]+)\//);
+		if (projectMatch) {
+			const pid = projectMatch[1]!;
+			const isProduction = existsSync(
+				join(dataDir, "projects", pid, ".mxd.production"),
+			);
+			if (isProduction) {
+				// Allow read-only: GET (tasks, events, config)
+				// Block mutations: POST (messages, agent, stop, restart, compact, clear)
+				if (c.req.method !== "GET") {
+					return c.json(
+						{
+							error:
+								"Project is in production mode. No agent operations allowed.",
+						},
+						403,
+					);
+				}
+			}
+		}
+
 		const globalWorkerName = registeredPlugins.find(
 			(p) => p.scope === "global" && workers.has(p.name),
 		)?.name;
@@ -1649,7 +1674,6 @@ if (import.meta.main) {
 		daemon = await createDaemon({
 			dataDir,
 			lockDataDir: true,
-			autoRegisterSelf: false,
 		});
 	} catch (e) {
 		// Most common failure mode: another daemon owns this dataDir.
