@@ -110,11 +110,7 @@ function isConnectionError(e: unknown): boolean {
 	const topCode = (e as Error & { code?: string }).code;
 	if (typeof topCode === "string" && CODES.includes(topCode)) return true;
 	const cause = (e as Error & { cause?: { code?: string } }).cause;
-	if (
-		cause &&
-		typeof cause.code === "string" &&
-		CODES.includes(cause.code)
-	)
+	if (cause && typeof cause.code === "string" && CODES.includes(cause.code))
 		return true;
 	return CODES.some((c) => e.message.includes(c));
 }

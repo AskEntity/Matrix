@@ -233,10 +233,7 @@ describe("P2.6: `mxd init` rejects nonexistent path", () => {
 		const { DEFAULT_CONFIG, saveGlobalConfig } = await import("./config.ts");
 
 		await mkdir(dataDir, { recursive: true });
-		await saveGlobalConfig(
-			{ ...DEFAULT_CONFIG },
-			join(dataDir, "config.json"),
-		);
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
 		// Register a minimal plugin so worker boot doesn't need matrix runtime
 		const installRoot = join(workDir, "fake-install");

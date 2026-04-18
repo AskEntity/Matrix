@@ -1198,16 +1198,35 @@ export async function createDaemon(opts: {
 			}
 			const project = await pm.init(body.path);
 
-			// Call onProjectInit for all global plugins
-			for (const plugin of registeredPlugins.filter(
-				(p) => p.scope === "global",
-			)) {
-				if (plugin.onProjectInit) {
-					await plugin.onProjectInit(body.path, {
-						isNew: !existsSync(join(body.path, ".git")),
-						globalContext,
-					});
+			// Call onProjectInit for all global plugins. If any plugin throws
+			// (e.g. matrix's git init hits a broken worktree, worktree mkdir
+			// hits ENOTDIR), the project we just registered is a zombie —
+			// present in projects.json, visible in `mxd list`, but without
+			// the filesystem state the plugin promised to create. Roll back
+			// the registration before rethrowing so the user sees a clean
+			// 409 instead of a partially-initialised project they can't
+			// remove via CLI.
+			try {
+				for (const plugin of registeredPlugins.filter(
+					(p) => p.scope === "global",
+				)) {
+					if (plugin.onProjectInit) {
+						await plugin.onProjectInit(body.path, {
+							isNew: !existsSync(join(body.path, ".git")),
+							globalContext,
+						});
+					}
 				}
+			} catch (initErr) {
+				// Compensating rollback — on-disk state is the plugin's
+				// problem (best-effort; partial fs writes may survive), but
+				// the registry MUST be consistent with "init succeeded".
+				await pm.delete(project.id).catch(() => {
+					// If rollback itself fails we've hit double trouble;
+					// the original init error is more actionable than the
+					// delete error, so swallow the latter.
+				});
+				throw initErr;
 			}
 
 			// tasks/ and debug/ directories are NOT eagerly created here.
@@ -1767,9 +1786,16 @@ if (import.meta.main) {
 	// (or a specific interface IP). Matches `ssh -L` / container conventions.
 	const hostname = process.env.MXD_BIND_HOST ?? "127.0.0.1";
 
+	// Probe /auth/status instead of /health. /auth/status is on SKIP_EXACT
+	// (the auth middleware bypass list) and responds 200 with {enabled, ...}
+	// even when no token is presented. /health requires auth, so when a
+	// second daemon starts against an auth-enabled peer the old probe saw
+	// 401 → `res.ok === false` → fell through to Bun.serve → EADDRINUSE
+	// stack trace. Any 2xx/4xx response from /auth/status means "something
+	// IS listening" — good enough to surface the friendly message.
 	try {
-		const res = await fetch(`http://localhost:${port}/health`);
-		if (res.ok) {
+		const res = await fetch(`http://localhost:${port}/auth/status`);
+		if (res.status !== 0) {
 			console.error(`Error: daemon already running on port ${port}`);
 			await daemon.shutdown();
 			process.exit(1);
