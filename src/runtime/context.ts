@@ -189,6 +189,17 @@ export interface RuntimeContext {
 	readonly streamingText: Map<string, string>;
 
 	/**
+	 * Accumulated streaming thinking per session (nodeId → partial thinking buffer).
+	 * Updated on each thinking_delta, cleared when the final thinking event is
+	 * emitted (response complete). Used to inject partial `thinking` events into
+	 * batch events API responses so a refresh mid-stream doesn't lose thinking
+	 * content — thinking_delta events are ephemeral (never persisted).
+	 *
+	 * Parallel to `streamingText`; same lifecycle.
+	 */
+	readonly streamingThinking: Map<string, string>;
+
+	/**
 	 * Tracked agent loop promises per node ID.
 	 * Stored when runAgentForNode starts, removed when it completes.
 	 * Used by stopTask/resetTask to await loop exit before clearing JSONL.

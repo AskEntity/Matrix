@@ -79,7 +79,21 @@ export type EventSpec = DistributiveOmit<Event, "taskId">;
 export type Event = (
 	| MessageEvent
 	| SessionConfigEvent
-	| { type: "assistant_text"; content: string; taskId: string; ts: number }
+	| {
+			type: "assistant_text";
+			content: string;
+			taskId: string;
+			ts: number;
+			/**
+			 * Synthetic snapshot of in-flight streaming text, injected by the batch
+			 * events endpoint so that refresh mid-stream doesn't lose what's already
+			 * been deltaed. Never persisted to JSONL; never produced by the provider.
+			 *
+			 * Clients treat `partial` events as MONOTONIC extend (text only grows)
+			 * rather than replace — see `extend_text` in the plugin event-handler.
+			 */
+			partial?: boolean;
+	  }
 	| {
 			type: "tool_call";
 			tool: string;
@@ -117,6 +131,16 @@ export type Event = (
 			 *  Walker reconstructs as `{ type: "redacted_thinking", data: signature }`.
 			 *  Normal empty thinking (display:omitted) has redacted=undefined. */
 			redacted?: boolean;
+			/**
+			 * Synthetic snapshot of in-flight thinking deltas, injected by the batch
+			 * events endpoint so that refresh mid-stream doesn't lose thinking text
+			 * that has only arrived as `thinking_delta` events (those are ephemeral
+			 * and never persisted). Never written to JSONL; never produced by the
+			 * provider. Clients treat `partial` events as MONOTONIC extend
+			 * (thinking only grows) — see `extend_thinking` in the plugin
+			 * event-handler.
+			 */
+			partial?: boolean;
 			taskId: string;
 			ts: number;
 	  }

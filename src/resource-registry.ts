@@ -57,6 +57,7 @@ interface RuntimeContextLike {
 	readonly launchingNodes: Set<string>;
 	readonly agentLoopPromises: Map<string, Promise<void>>;
 	readonly streamingText: Map<string, string>;
+	readonly streamingThinking: Map<string, string>;
 	readonly pendingClarifications: Map<string, unknown[]>;
 }
 

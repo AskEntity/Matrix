@@ -504,15 +504,31 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		const eventStore = getEventStore(ctx, project.id);
 		const afterCompact = c.req.query("after") === "compact";
 
-		// Helper: append synthetic partial assistant_text if actively streaming
-		const appendPartialText = (events: Record<string, unknown>[]) => {
+		// Helper: append synthetic partial assistant_text / thinking if actively
+		// streaming. These carry `partial: true` so the client treats them as
+		// MONOTONIC extends (append-safe against live deltas) rather than
+		// authoritative replacements — see extend_text / extend_thinking in the
+		// plugin event-handler.
+		const appendPartial = (events: Record<string, unknown>[]) => {
+			const ts = Date.now();
+			const partialThinking = ctx.streamingThinking.get(nodeId);
+			if (partialThinking) {
+				events.push({
+					type: "thinking",
+					thinking: partialThinking,
+					signature: "",
+					taskId: nodeId,
+					ts,
+					partial: true,
+				});
+			}
 			const partialText = ctx.streamingText.get(nodeId);
 			if (partialText) {
 				events.push({
 					type: "assistant_text",
 					content: partialText,
 					taskId: nodeId,
-					ts: Date.now(),
+					ts,
 					partial: true,
 				});
 			}
@@ -525,7 +541,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 				stripEventForUI(e as unknown as Record<string, unknown>),
 			);
 			return c.json({
-				events: appendPartialText(events),
+				events: appendPartial(events),
 				hasOlderEvents: result.hasOlderEvents,
 			});
 		}
@@ -533,7 +549,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		const events = eventStore
 			.read(nodeId)
 			.map((e) => stripEventForUI(e as unknown as Record<string, unknown>));
-		return c.json({ events: appendPartialText(events), hasOlderEvents: false });
+		return c.json({ events: appendPartial(events), hasOlderEvents: false });
 	});
 
 	// THE single message endpoint for all tasks — root and child, one code path.
