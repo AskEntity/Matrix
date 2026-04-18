@@ -28,7 +28,11 @@ const _pkg = JSON.parse(
 const VERSION = _pkg.version;
 
 const DAEMON_URL = process.env.MXD_DAEMON_URL ?? "http://localhost:7433";
-const AUTH_JSON_PATH = join(homedir(), ".mxd", "auth.json");
+// Must stay in lockstep with daemon.ts's production entry block. If the daemon
+// runs with a custom MXD_DATA_DIR, the CLI must sign with the same jwtSecret —
+// otherwise the token is verified against the wrong secret and rejected.
+const DATA_DIR = process.env.MXD_DATA_DIR ?? join(homedir(), ".mxd");
+const AUTH_JSON_PATH = join(DATA_DIR, "auth.json");
 
 /**
  * Generate a short-lived CLI JWT for auto-auth.
