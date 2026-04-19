@@ -647,8 +647,9 @@ export function buildAllToolDefs() {
 			availability: "internal",
 			description:
 				"Send a message to another task. You can message any ancestor in your parent chain (not just direct parent), " +
-				"or any of your direct sub tasks. When messaging a sub task that isn't running yet, " +
-				"a worktree is auto-created and an agent is launched.",
+				"or any of your direct sub tasks. Valid target states: closed / verify / failed / in_progress / pending (not draft). " +
+				"For closed and pending targets, a worktree is auto-created off your current branch and the agent launches on message receipt — " +
+				"closed targets additionally resume with their full prior session memory.",
 			params: {
 				projectId: {
 					schema: z.string(),
@@ -871,9 +872,10 @@ export function buildAllToolDefs() {
 			availability: "internal",
 			description:
 				"Clean up a task's worktree and branch to reclaim disk space. " +
-				"Node and session are preserved — status set to 'closed'. " +
+				"Task record + session preserved — status set to 'closed'. " +
 				"Call this AFTER you have already merged the task's branch yourself. " +
-				"Use for merged tasks or deferred tasks where you want to free resources.",
+				"Use for merged tasks or deferred tasks where you want to free resources. " +
+				"`send_message` later reactivates the closed task — session resumes with full prior memory, worktree rebuilt fresh off your current branch.",
 			params: {
 				projectId: {
 					schema: z.string(),
