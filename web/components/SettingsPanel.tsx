@@ -763,7 +763,7 @@ function McpServersSection({
 
 // ---- Cache TTL Section ----
 
-function CacheTtlSection({
+export function CacheTtlSection({
 	tab,
 	layers,
 	draft,
@@ -827,7 +827,7 @@ function CacheTtlSection({
 				{t("settings.sectionCache")}
 			</div>
 
-			{/* Root Cache TTL */}
+			{/* Root Cache TTL — default is 1h */}
 			<div className="mxd-settings-field">
 				<span className="mxd-settings-label">{t("settings.cacheTtlRoot")}</span>
 				<select
@@ -839,16 +839,16 @@ function CacheTtlSection({
 						<option value="">
 							{t("settings.inheritOption")}
 							{inherited.root
-								? ` (${inherited.root === "1h" ? t("settings.cacheTtl1h") : t("settings.cacheTtl5mChild")})`
+								? ` (${inherited.root === "1h" ? t("settings.cacheTtl1h") : t("settings.cacheTtl5m")})`
 								: ""}
 						</option>
 					)}
-					<option value="1h">{t("settings.cacheTtl1hRoot")}</option>
+					<option value="1h">{t("settings.cacheTtl1hDefault")}</option>
 					<option value="5m">{t("settings.cacheTtl5m")}</option>
 				</select>
 			</div>
 
-			{/* Child Cache TTL */}
+			{/* Child Cache TTL — default is 5m */}
 			<div className="mxd-settings-field">
 				<span className="mxd-settings-label">
 					{t("settings.cacheTtlChild")}
@@ -862,11 +862,11 @@ function CacheTtlSection({
 						<option value="">
 							{t("settings.inheritOption")}
 							{inherited.child
-								? ` (${inherited.child === "1h" ? t("settings.cacheTtl1h") : t("settings.cacheTtl5mChild")})`
+								? ` (${inherited.child === "1h" ? t("settings.cacheTtl1h") : t("settings.cacheTtl5m")})`
 								: ""}
 						</option>
 					)}
-					<option value="5m">{t("settings.cacheTtl5m")}</option>
+					<option value="5m">{t("settings.cacheTtl5mDefault")}</option>
 					<option value="1h">{t("settings.cacheTtl1h")}</option>
 				</select>
 			</div>
