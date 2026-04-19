@@ -910,6 +910,23 @@ export async function createDaemon(opts: {
 	const pm = new ProjectManager(dataDir);
 	await pm.load();
 
+	// ── One-shot P3 type-normalization migration ──
+	// Pre-P3 TaskNode entries in tree.json have no `type` field (it was
+	// `type?: "task"`, optional). Post-P3 requires `type: "task"` explicit
+	// so the TaskNode|GeneralNode discriminator works without fallback.
+	// Idempotent: nodes already having `type` are skipped.
+	try {
+		const { migrateTreeNodeTypes } = await import("./tree-type-migration.ts");
+		const summary = await migrateTreeNodeTypes(dataDir);
+		if (summary.nodesFixed > 0) {
+			console.log(
+				`[migration] P3 tree-type normalize: scanned ${summary.projectsScanned} projects, modified ${summary.projectsModified}, fixed ${summary.nodesFixed} node(s)`,
+			);
+		}
+	} catch (e) {
+		console.warn("[migration] P3 tree-type normalize failed:", e);
+	}
+
 	// ── Global context — daemon-computed facts, not user config ──
 	// Exposed to workers (init message) and HTTP clients (GET /global-context).
 	// Plugins read installRoot/gitHash and form their own opinions (e.g., matrix's

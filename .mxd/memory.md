@@ -2051,3 +2051,95 @@ guards this).
   test that hardcodes old paths will break; use `projectTreeJsonPath` with
   `ctx.config.dataRoot` (as done in `src/integration.test.ts` root-branch
   persistence test).
+
+## P3: Tree is TaskNode | GeneralNode (folder becomes a GeneralNode variant)
+
+Runtime exposes exactly two node kinds. Discriminator is `type: string`,
+required on every node, no `undefined` fallback.
+
+- **TaskNode** (`type: "task"`): launchable, has session + git branch +
+  status + lifecycle. Matrix's actual work units.
+- **GeneralNode** (`type: string`, anything except `"task"`): pure metadata
+  + tree position, no session, no lifecycle, no agent. Optional
+  `metadata?: Record<string, unknown>` — opaque to runtime, plugin-owned.
+  NO `plugin` field — each tree.json belongs to exactly one plugin by
+  construction; plugin identity is implicit.
+
+Matrix uses `type: "folder"` as its only GeneralNode flavor today. A
+future plugin in its own project could define its own types
+(`"chapter"`, `"note"`, …) without touching runtime code.
+
+### Type guards
+
+`src/types.ts` exports:
+- `isTask(node)` — narrows to `TaskNode`, `node.type === "task"`.
+- `isGeneral(node)` — narrows to `GeneralNode`, `node.type !== "task"`.
+
+`isFolder` is **matrix-plugin-local**, not runtime-exported. Lives in two
+places:
+- `src/orchestrator-tools.ts` — backend (matrix's MCP tool handlers).
+- `.mxd/plugin/web/types.ts` — frontend (tree UI, drag/drop, icons).
+Both are `(node) => isGeneral(node) && node.type === "folder"`.
+
+### Tracker API
+
+`TaskTracker.addGeneralNode(title, parentId, type, metadata?)` — one
+method covers every non-task node. Rejects `type === "task"`. Matrix
+callers pass `"folder"`; tests for other plugins can pass any string.
+
+### MCP tools
+
+User-facing tool names unchanged: `create_folder`, `delete_folder`,
+`rename_folder`. Internals call `tracker.addGeneralNode(title, parent,
+"folder")`. This is matrix-specific syntactic sugar on top of the
+general-node API. Agents cannot create generic GeneralNodes via MCP;
+matrix-plugin decides what kinds its agents can create.
+
+### One-shot type-normalization migration
+
+`src/tree-type-migration.ts` → `migrateTreeNodeTypes(dataDir)` scans
+every `<dataDir>/projects/*/plugin/matrix/tree.json`, injects
+`type: "task"` on any node missing `type`, leaves folder nodes alone.
+Called from `createDaemon` after `pm.load()`, before worker startup.
+Idempotent. Runs once per daemon boot — zero-cost no-op once data is
+normalized. May be deleted in a later cleanup round.
+
+Same slot as the deleted P4 plugin-namespace migration. Identical
+semantic: read-once, write-if-changed, log summary, don't crash if
+tree.json is malformed.
+
+### Tree.json shape
+
+Every node in the file carries explicit `type`. Old installs without
+`type` on TaskNodes get normalized by the P3 migration on first boot.
+`task-tracker.ts` load() ALSO injects `type: "task"` as defense in depth
+(so an unmigrated tree still loads).
+
+### Invariants locked in
+
+- `TaskNode.type: "task"` — required, not optional (breaks `undefined`
+  fallback idioms).
+- `GeneralNode.type: string` — any string except `"task"`.
+- `TaskTracker.addGeneralNode` throws if called with `"task"`.
+- Runtime never reads `metadata` — it's opaque plugin data. No
+  runtime-level validation beyond serialization.
+
+### What did NOT change
+
+- tree.json serialization format (other than the `type` field on task
+  entries, which was previously absent).
+- MCP tool names (`create_folder` etc. preserved — matrix-plugin surface).
+- Folder UX / UI rendering / drag-and-drop / lifecycle rejection.
+- `getTaskAbove` / `getTasksBelow` / transparent ownership walks.
+
+### Tests added
+
+- `src/general-node.test.ts` — 10 tests exercising the probe-typed
+  GeneralNode ("probe", non-folder) through save/load, ownership walks,
+  tracker helpers. Proves the generalization works outside matrix's
+  folder-only world.
+- `src/tree-type-migration.test.ts` — 10 tests covering happy path,
+  idempotency, multi-project, folder preservation, malformed input,
+  dotfile skip.
+
+Total test count after P3: 2201 pass (was 2180 on main). No failures.

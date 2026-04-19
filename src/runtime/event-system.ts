@@ -1,6 +1,6 @@
 import { type Event, isPersistedByEmitEvent } from "../events.ts";
 import type { TaskTracker } from "../task-tracker.ts";
-import { isFolder, stripSession } from "../types.ts";
+import { isTask, stripSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
 import type {
 	EventSubscriber,
@@ -136,7 +136,7 @@ export function broadcastTreeUpdate(
 ) {
 	broadcast(ctx, projectId, {
 		type: "tree_updated",
-		nodes: tracker.allNodes().map((n) => (isFolder(n) ? n : stripSession(n))),
+		nodes: tracker.allNodes().map((n) => (isTask(n) ? stripSession(n) : n)),
 		rootNodeId: tracker.rootNodeId,
 	});
 }

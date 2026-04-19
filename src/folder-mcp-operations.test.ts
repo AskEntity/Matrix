@@ -51,22 +51,22 @@ describe("folder-aware: isDescendantOf", () => {
 	test("returns true for task inside a folder that is child of ancestor", () => {
 		// root → folder → task
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 		const task = tracker.addChild(folder.id, "task", "");
 		expect(isDescendantOf(tracker, task.id, root.id)).toBe(true);
 	});
 
 	test("returns true for folder itself as descendant of ancestor", () => {
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 		expect(isDescendantOf(tracker, folder.id, root.id)).toBe(true);
 	});
 
 	test("returns true for task nested in multiple folders", () => {
 		// root → folder1 → folder2 → task
 		const root = tracker.addTask("root", "");
-		const f1 = tracker.addFolder("F1", root.id);
-		const f2 = tracker.addFolder("F2", f1.id);
+		const f1 = tracker.addGeneralNode("F1", root.id, "folder");
+		const f2 = tracker.addGeneralNode("F2", f1.id, "folder");
 		const task = tracker.addChild(f2.id, "deep task", "");
 		expect(isDescendantOf(tracker, task.id, root.id)).toBe(true);
 	});
@@ -74,7 +74,7 @@ describe("folder-aware: isDescendantOf", () => {
 	test("returns true for task in folder when checking against folder's parent task", () => {
 		// agent → folder → child
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("My Folder", agent.id);
+		const folder = tracker.addGeneralNode("My Folder", agent.id, "folder");
 		const child = tracker.addChild(folder.id, "child", "");
 		expect(isDescendantOf(tracker, child.id, agent.id)).toBe(true);
 	});
@@ -84,7 +84,7 @@ describe("folder-aware: isDescendantOf", () => {
 		// agent2 (separate)
 		const agent1 = tracker.addTask("agent1", "");
 		const agent2 = tracker.addTask("agent2", "");
-		const folder = tracker.addFolder("Folder", agent1.id);
+		const folder = tracker.addGeneralNode("Folder", agent1.id, "folder");
 		const task = tracker.addChild(folder.id, "task", "");
 		expect(isDescendantOf(tracker, task.id, agent2.id)).toBe(false);
 	});
@@ -92,7 +92,7 @@ describe("folder-aware: isDescendantOf", () => {
 	test("returns false for folder not under ancestor", () => {
 		const a = tracker.addTask("a", "");
 		const b = tracker.addTask("b", "");
-		const folder = tracker.addFolder("Folder", a.id);
+		const folder = tracker.addGeneralNode("Folder", a.id, "folder");
 		expect(isDescendantOf(tracker, folder.id, b.id)).toBe(false);
 	});
 });
@@ -113,7 +113,7 @@ describe("folder-aware: getDescendantIds", () => {
 	test("collects task IDs through a folder", () => {
 		// root → folder → [task1, task2]
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 		const t1 = tracker.addChild(folder.id, "task1", "");
 		const t2 = tracker.addChild(folder.id, "task2", "");
 
@@ -127,8 +127,8 @@ describe("folder-aware: getDescendantIds", () => {
 	test("collects through nested folders", () => {
 		// root → f1 → f2 → task
 		const root = tracker.addTask("root", "");
-		const f1 = tracker.addFolder("F1", root.id);
-		const f2 = tracker.addFolder("F2", f1.id);
+		const f1 = tracker.addGeneralNode("F1", root.id, "folder");
+		const f2 = tracker.addGeneralNode("F2", f1.id, "folder");
 		const task = tracker.addChild(f2.id, "deep task", "");
 
 		const ids = getDescendantIds(tracker, root.id);
@@ -142,7 +142,7 @@ describe("folder-aware: getDescendantIds", () => {
 		// root → [task1, folder → task2, task3]
 		const root = tracker.addTask("root", "");
 		const t1 = tracker.addChild(root.id, "task1", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 		const t2 = tracker.addChild(folder.id, "task2", "");
 		const t3 = tracker.addChild(root.id, "task3", "");
 
@@ -156,14 +156,14 @@ describe("folder-aware: getDescendantIds", () => {
 
 	test("returns empty for folder with no children", () => {
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Empty", root.id);
+		const folder = tracker.addGeneralNode("Empty", root.id, "folder");
 		expect(getDescendantIds(tracker, folder.id)).toEqual([]);
 	});
 
 	test("returns descendants of a folder node", () => {
 		// folder → [task1, task2]
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 		const t1 = tracker.addChild(folder.id, "task1", "");
 		const t2 = tracker.addChild(folder.id, "task2", "");
 
@@ -189,7 +189,7 @@ describe("folder-aware: getTaskAbove / getTasksBelow", () => {
 
 	test("getTaskAbove skips folder to find owning task", () => {
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 		const child = tracker.addChild(folder.id, "child", "");
 
 		const above = tracker.getTaskAbove(child.id);
@@ -199,8 +199,8 @@ describe("folder-aware: getTaskAbove / getTasksBelow", () => {
 
 	test("getTaskAbove skips multiple folders", () => {
 		const root = tracker.addTask("root", "");
-		const f1 = tracker.addFolder("F1", root.id);
-		const f2 = tracker.addFolder("F2", f1.id);
+		const f1 = tracker.addGeneralNode("F1", root.id, "folder");
+		const f2 = tracker.addGeneralNode("F2", f1.id, "folder");
 		const child = tracker.addChild(f2.id, "child", "");
 
 		const above = tracker.getTaskAbove(child.id);
@@ -219,7 +219,7 @@ describe("folder-aware: getTaskAbove / getTasksBelow", () => {
 
 	test("getTasksBelow collects tasks through folders", () => {
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 		const t1 = tracker.addChild(folder.id, "task1", "");
 		const t2 = tracker.addChild(root.id, "task2", "");
 
@@ -232,8 +232,8 @@ describe("folder-aware: getTaskAbove / getTasksBelow", () => {
 
 	test("getTasksBelow recurses through nested folders", () => {
 		const root = tracker.addTask("root", "");
-		const f1 = tracker.addFolder("F1", root.id);
-		const f2 = tracker.addFolder("F2", f1.id);
+		const f1 = tracker.addGeneralNode("F1", root.id, "folder");
+		const f2 = tracker.addGeneralNode("F2", f1.id, "folder");
 		const task = tracker.addChild(f2.id, "deep task", "");
 
 		const below = tracker.getTasksBelow(root.id);
@@ -243,7 +243,7 @@ describe("folder-aware: getTaskAbove / getTasksBelow", () => {
 
 	test("getTasksBelow does not include folders themselves", () => {
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 		tracker.addChild(folder.id, "task", "");
 
 		const below = tracker.getTasksBelow(root.id);
@@ -290,7 +290,7 @@ describe("folder-aware: create_task scope validation", () => {
 	test("agent creates task inside a folder in its subtree → succeeds", async () => {
 		// agent → folder → (new task here)
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("My Folder", agent.id);
+		const folder = tracker.addGeneralNode("My Folder", agent.id, "folder");
 
 		const result = await invokeCreateTask(agent.id, {
 			title: "new task",
@@ -308,7 +308,11 @@ describe("folder-aware: create_task scope validation", () => {
 		const parent = tracker.addTask("parent", "");
 		const agent = tracker.addChild(parent.id, "agent", "");
 		const sibling = tracker.addChild(parent.id, "sibling", "");
-		const folder = tracker.addFolder("Sibling Folder", sibling.id);
+		const folder = tracker.addGeneralNode(
+			"Sibling Folder",
+			sibling.id,
+			"folder",
+		);
 
 		const result = await invokeCreateTask(agent.id, {
 			title: "cross-tree task",
@@ -322,7 +326,7 @@ describe("folder-aware: create_task scope validation", () => {
 
 	test("root orchestrator creates task inside any folder → succeeds", async () => {
 		const task = tracker.addTask("some task", "");
-		const folder = tracker.addFolder("Folder", task.id);
+		const folder = tracker.addGeneralNode("Folder", task.id, "folder");
 
 		const result = await invokeCreateTask(tracker.rootNodeId, {
 			title: "anywhere",
@@ -337,8 +341,8 @@ describe("folder-aware: create_task scope validation", () => {
 	test("agent creates task in deeply nested folder in its subtree → succeeds", async () => {
 		// agent → f1 → f2 → (new task)
 		const agent = tracker.addTask("agent", "");
-		const f1 = tracker.addFolder("F1", agent.id);
-		const f2 = tracker.addFolder("F2", f1.id);
+		const f1 = tracker.addGeneralNode("F1", agent.id, "folder");
+		const f2 = tracker.addGeneralNode("F2", f1.id, "folder");
 
 		const result = await invokeCreateTask(agent.id, {
 			title: "deep task",
@@ -352,7 +356,7 @@ describe("folder-aware: create_task scope validation", () => {
 
 	test("agent creates task in folder that is direct child of agent → succeeds", async () => {
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Direct Folder", agent.id);
+		const folder = tracker.addGeneralNode("Direct Folder", agent.id, "folder");
 
 		const result = await invokeCreateTask(agent.id, {
 			title: "task in folder",
@@ -402,7 +406,7 @@ describe("folder-aware: update_task reparent", () => {
 		// agent → [child, folder]
 		const agent = tracker.addTask("agent", "");
 		const child = tracker.addChild(agent.id, "child", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 
 		const result = await invokeUpdateTask(agent.id, {
 			taskId: child.id,
@@ -421,7 +425,11 @@ describe("folder-aware: update_task reparent", () => {
 		const agent = tracker.addChild(parent.id, "agent", "");
 		const child = tracker.addChild(agent.id, "child", "");
 		const sibling = tracker.addChild(parent.id, "sibling", "");
-		const folder = tracker.addFolder("Sibling Folder", sibling.id);
+		const folder = tracker.addGeneralNode(
+			"Sibling Folder",
+			sibling.id,
+			"folder",
+		);
 
 		const result = await invokeUpdateTask(agent.id, {
 			taskId: child.id,
@@ -434,8 +442,8 @@ describe("folder-aware: update_task reparent", () => {
 	test("agent reparents task from folder to another folder in subtree → succeeds", async () => {
 		// agent → [f1 → task, f2]
 		const agent = tracker.addTask("agent", "");
-		const f1 = tracker.addFolder("F1", agent.id);
-		const f2 = tracker.addFolder("F2", agent.id);
+		const f1 = tracker.addGeneralNode("F1", agent.id, "folder");
+		const f2 = tracker.addGeneralNode("F2", agent.id, "folder");
 		const task = tracker.addChild(f1.id, "task", "");
 
 		const result = await invokeUpdateTask(agent.id, {
@@ -449,7 +457,7 @@ describe("folder-aware: update_task reparent", () => {
 	test("scope check: task in folder is recognized as descendant for reparent", async () => {
 		// agent → folder → task (reparent task to agent directly)
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 		const task = tracker.addChild(folder.id, "task", "");
 
 		const result = await invokeUpdateTask(agent.id, {
@@ -498,7 +506,7 @@ describe("folder-aware: delete_task", () => {
 
 	test("delete task inside folder (no children) → succeeds", async () => {
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 		const task = tracker.addChild(folder.id, "leaf", "");
 
 		const result = await invokeDeleteTask(agent.id, {
@@ -510,7 +518,7 @@ describe("folder-aware: delete_task", () => {
 
 	test("delete empty folder → succeeds", async () => {
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Empty Folder", agent.id);
+		const folder = tracker.addGeneralNode("Empty Folder", agent.id, "folder");
 
 		const result = await invokeDeleteTask(agent.id, {
 			taskId: folder.id,
@@ -521,7 +529,7 @@ describe("folder-aware: delete_task", () => {
 
 	test("delete folder with children → fails", async () => {
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 		tracker.addChild(folder.id, "child", "");
 
 		const result = await invokeDeleteTask(agent.id, {
@@ -587,7 +595,7 @@ describe("folder-aware: close_task", () => {
 
 	test("close task inside folder (verify status) → succeeds", async () => {
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 		const task = tracker.addChild(folder.id, "task", "");
 		tracker.updateStatus(task.id, "verify");
 
@@ -600,7 +608,7 @@ describe("folder-aware: close_task", () => {
 
 	test("close folder → fails (folders cannot be closed)", async () => {
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 
 		const result = await invokeCloseTask(agent.id, {
 			taskId: folder.id,
@@ -662,7 +670,7 @@ describe("folder-aware: reset_task", () => {
 
 	test("reset task inside folder → succeeds", async () => {
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 		const task = tracker.addChild(folder.id, "task", "");
 		tracker.updateStatus(task.id, "in_progress");
 
@@ -675,7 +683,7 @@ describe("folder-aware: reset_task", () => {
 
 	test("reset folder → fails (folders cannot be reset)", async () => {
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 
 		const result = await invokeResetTask(agent.id, {
 			taskId: folder.id,
@@ -738,7 +746,7 @@ describe("folder-aware: send_message direction validation", () => {
 	test("upward message: task in folder sends to owning task (getTaskAbove) → succeeds", async () => {
 		// root → folder → agent (running)
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 		const agent = tracker.addChild(folder.id, "agent", "");
 
 		// Attach sessions so the queue exists
@@ -761,7 +769,7 @@ describe("folder-aware: send_message direction validation", () => {
 	test("downward message: owning task sends to task in folder (getTaskAbove check) → succeeds", async () => {
 		// root → folder → child
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 		const child = tracker.addChild(folder.id, "child", "");
 
 		// Child needs a branch + worktree for send_message to not try to create one
@@ -790,7 +798,7 @@ describe("folder-aware: send_message direction validation", () => {
 		const root = tracker.addTask("root", "");
 		const agent = tracker.addChild(root.id, "agent", "");
 		const other = tracker.addChild(root.id, "other", "");
-		const folder = tracker.addFolder("Folder", other.id);
+		const folder = tracker.addGeneralNode("Folder", other.id, "folder");
 		const task = tracker.addChild(folder.id, "task in folder", "");
 
 		const agentQueue = new MessageQueue();
@@ -810,7 +818,7 @@ describe("folder-aware: send_message direction validation", () => {
 		// We simulate root orchestrator (currentTaskId = root's actual ID)
 		await tracker.load("main");
 		const rootId = tracker.rootNodeId;
-		const folder = tracker.addFolder("Folder", rootId);
+		const folder = tracker.addGeneralNode("Folder", rootId, "folder");
 		const child = tracker.addChild(folder.id, "child", "");
 		child.branch = "mxd/child/test";
 		child.worktreePath = tempDir;
@@ -882,7 +890,7 @@ describe("folder-aware: send_message direction validation", () => {
 	test("grandchild sends upward to grandparent through folder → succeeds", async () => {
 		// root → folder → parent → child
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 		const parent = tracker.addChild(folder.id, "parent", "");
 		const child = tracker.addChild(parent.id, "child", "");
 
@@ -994,7 +1002,7 @@ describe("folder-aware: reorder_tasks", () => {
 	test("agent reorders children of a folder in its subtree → succeeds", async () => {
 		// agent → folder → [t1, t2, t3]
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 		const t1 = tracker.addChild(folder.id, "task1", "");
 		const t2 = tracker.addChild(folder.id, "task2", "");
 		const t3 = tracker.addChild(folder.id, "task3", "");
@@ -1014,7 +1022,7 @@ describe("folder-aware: reorder_tasks", () => {
 		const parent = tracker.addTask("parent", "");
 		const agent = tracker.addChild(parent.id, "agent", "");
 		const sibling = tracker.addChild(parent.id, "sibling", "");
-		const folder = tracker.addFolder("Folder", sibling.id);
+		const folder = tracker.addGeneralNode("Folder", sibling.id, "folder");
 		const t1 = tracker.addChild(folder.id, "task1", "");
 		const t2 = tracker.addChild(folder.id, "task2", "");
 
@@ -1029,9 +1037,9 @@ describe("folder-aware: reorder_tasks", () => {
 
 	test("reorder folder's own children (mix of tasks and sub-folders) → succeeds", async () => {
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 		const t1 = tracker.addChild(folder.id, "task1", "");
-		const subFolder = tracker.addFolder("SubFolder", folder.id);
+		const subFolder = tracker.addGeneralNode("SubFolder", folder.id, "folder");
 		const t2 = tracker.addChild(folder.id, "task2", "");
 
 		const result = await invokeReorder(agent.id, {
@@ -1086,7 +1094,7 @@ describe("folder-aware: done() descendant check", () => {
 	test("done() blocked when running child exists inside folder", async () => {
 		// agent → folder → child (with active session)
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 		const child = tracker.addChild(folder.id, "child", "");
 
 		// Give agent a queue so done() can close it
@@ -1112,7 +1120,7 @@ describe("folder-aware: done() descendant check", () => {
 	test("done() allowed when child inside folder has no session", async () => {
 		// agent → folder → child (no session = not running)
 		const agent = tracker.addTask("agent", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 		tracker.addChild(folder.id, "child", "");
 
 		const agentQueue = new MessageQueue();
@@ -1130,8 +1138,8 @@ describe("folder-aware: done() descendant check", () => {
 	test("done() blocked when deeply nested child (through folders) is running", async () => {
 		// agent → f1 → f2 → child (running)
 		const agent = tracker.addTask("agent", "");
-		const f1 = tracker.addFolder("F1", agent.id);
-		const f2 = tracker.addFolder("F2", f1.id);
+		const f1 = tracker.addGeneralNode("F1", agent.id, "folder");
+		const f2 = tracker.addGeneralNode("F2", f1.id, "folder");
 		const child = tracker.addChild(f2.id, "deep child", "");
 
 		const agentQueue = new MessageQueue();
@@ -1195,7 +1203,7 @@ describe("folder-aware: fork_task_context scope validation", () => {
 	test("fork into target inside folder in agent's subtree → succeeds", async () => {
 		const agent = tracker.addTask("agent", "");
 		const source = tracker.addChild(agent.id, "source", "");
-		const folder = tracker.addFolder("Folder", agent.id);
+		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");
 		const target = tracker.addChild(folder.id, "target", "");
 
 		const result = await invokeForkContext(agent.id, {
@@ -1212,7 +1220,7 @@ describe("folder-aware: fork_task_context scope validation", () => {
 		const agent = tracker.addChild(parent.id, "agent", "");
 		const source = tracker.addChild(agent.id, "source", "");
 		const sibling = tracker.addChild(parent.id, "sibling", "");
-		const folder = tracker.addFolder("Folder", sibling.id);
+		const folder = tracker.addGeneralNode("Folder", sibling.id, "folder");
 		const target = tracker.addChild(folder.id, "target", "");
 
 		const result = await invokeForkContext(agent.id, {
@@ -1243,7 +1251,7 @@ describe("folder-aware: TaskTracker persistence", () => {
 
 		const root = tracker1.getTask(tracker1.rootNodeId);
 		if (!root) throw new Error("root node not found");
-		const folder = tracker1.addFolder("My Folder", root.id);
+		const folder = tracker1.addGeneralNode("My Folder", root.id, "folder");
 		const task = tracker1.addChild(folder.id, "task in folder", "");
 		await tracker1.save();
 
@@ -1271,7 +1279,7 @@ describe("folder-aware: TaskTracker persistence", () => {
 	test("getTask returns undefined for folder (correct type filtering)", () => {
 		const tracker = new TaskTracker(join(tempDir, "tree.json"));
 		const root = tracker.addTask("root", "");
-		const folder = tracker.addFolder("Folder", root.id);
+		const folder = tracker.addGeneralNode("Folder", root.id, "folder");
 
 		expect(tracker.getTask(folder.id)).toBeUndefined();
 		expect(tracker.get(folder.id)).toBeDefined();
@@ -1292,7 +1300,7 @@ describe("folder-aware: buildTaskPrompt", () => {
 	test("task in folder shows owning task (not folder) in 'Your task is part of'", () => {
 		const tracker = new TaskTracker(join(tempDir, "tree.json"));
 		const root = tracker.addTask("Orchestrator", "");
-		const folder = tracker.addFolder("My Folder", root.id);
+		const folder = tracker.addGeneralNode("My Folder", root.id, "folder");
 		const child = tracker.addChild(folder.id, "Child Task", "Do the work");
 
 		const prompt = buildTaskPrompt(child, tracker, "");
@@ -1316,8 +1324,8 @@ describe("folder-aware: buildTaskPrompt", () => {
 	test("task in nested folders shows correct owning task", () => {
 		const tracker = new TaskTracker(join(tempDir, "tree.json"));
 		const root = tracker.addTask("Root Agent", "");
-		const f1 = tracker.addFolder("F1", root.id);
-		const f2 = tracker.addFolder("F2", f1.id);
+		const f1 = tracker.addGeneralNode("F1", root.id, "folder");
+		const f2 = tracker.addGeneralNode("F2", f1.id, "folder");
 		const task = tracker.addChild(f2.id, "Deep Task", "");
 
 		const prompt = buildTaskPrompt(task, tracker, "");

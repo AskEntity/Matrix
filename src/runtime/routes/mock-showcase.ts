@@ -34,7 +34,7 @@ const TOOL_CREATE_FOLDER = T("create_folder");
 const TOOL_DELETE_FOLDER = T("delete_folder");
 const TOOL_RENAME_FOLDER = T("rename_folder");
 
-import type { FolderNode, TaskNode, TaskStatus } from "../../types.ts";
+import type { GeneralNode, TaskNode, TaskStatus } from "../../types.ts";
 import { ulid } from "../../ulid.ts";
 
 /**
@@ -81,6 +81,7 @@ function mockTaskNode(
 		color: opts?.color,
 		createdAt: new Date(ts(120)).toISOString(),
 		updatedAt: new Date(ts(1)).toISOString(),
+		type: "task",
 	};
 }
 
@@ -199,7 +200,7 @@ function buildMockData() {
 		taskIds.inProgress,
 	];
 
-	const folder: FolderNode = {
+	const folder: GeneralNode = {
 		id: FOLDER_ID,
 		title: "Completed Work",
 		parentId: ROOT_ID,
@@ -212,7 +213,7 @@ function buildMockData() {
 		type: "folder",
 	};
 
-	const nestedFolder: FolderNode = {
+	const nestedFolder: GeneralNode = {
 		id: NESTED_FOLDER_ID,
 		title: "Archived Tasks",
 		parentId: FOLDER_ID,

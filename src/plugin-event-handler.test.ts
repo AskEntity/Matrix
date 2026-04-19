@@ -1047,6 +1047,7 @@ describe("event-handler live session clearing", () => {
 					cwd: null,
 
 					color: undefined,
+					type: "task",
 				},
 				{
 					id: "task-reset",
@@ -1064,6 +1065,7 @@ describe("event-handler live session clearing", () => {
 					cwd: null,
 
 					color: undefined,
+					type: "task",
 				},
 				{
 					id: "other-task",
@@ -1081,6 +1083,7 @@ describe("event-handler live session clearing", () => {
 					cwd: null,
 
 					color: undefined,
+					type: "task",
 				},
 			],
 			rootNodeId: "root",
@@ -3806,6 +3809,7 @@ describe("Task X: no 'clear pending' paths outside messages_consumed/RESET", () 
 					worktreePath: null,
 					cwd: null,
 					color: undefined,
+					type: "task",
 				},
 			],
 			rootNodeId: "task-rootish",

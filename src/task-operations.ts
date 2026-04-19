@@ -16,7 +16,7 @@
 
 import type { TaskTracker } from "./task-tracker.ts";
 import { cleanupTaskResources, resolveColor, slugify } from "./task-utils.ts";
-import { isFolder, type TaskNode, type TaskStatus } from "./types.ts";
+import { isTask, type TaskNode, type TaskStatus } from "./types.ts";
 
 // ── Shared types ──
 
@@ -125,8 +125,10 @@ export async function updateTaskOp(
 ): Promise<TaskNode> {
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
-	if (isFolder(node))
-		throw new TaskOperationError(`Cannot update folder as task: ${nodeId}`);
+	if (!isTask(node))
+		throw new TaskOperationError(
+			`Cannot update non-task node as task: ${nodeId}`,
+		);
 
 	if (updates.parentId !== undefined) {
 		tracker.reparent(nodeId, updates.parentId);
@@ -186,11 +188,11 @@ export async function deleteTaskOp(
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
 
-	if (isFolder(node)) {
-		// Folders can only be deleted when empty
+	if (!isTask(node)) {
+		// General nodes (folders etc.) can only be deleted when empty
 		if (node.children.length > 0) {
 			throw new TaskOperationError(
-				`Cannot delete folder with children. Move or delete children first.`,
+				`Cannot delete ${node.type} with children. Move or delete children first.`,
 			);
 		}
 		const title = node.title;
@@ -246,8 +248,8 @@ export async function closeTaskOp(
 ): Promise<CloseTaskResult> {
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
-	if (isFolder(node))
-		throw new TaskOperationError(`Cannot close a folder: ${nodeId}`);
+	if (!isTask(node))
+		throw new TaskOperationError(`Cannot close a ${node.type} node: ${nodeId}`);
 
 	if (node.status === "in_progress") {
 		throw new TaskOperationError(
@@ -312,8 +314,8 @@ export async function resetTaskOp(
 ): Promise<{ taskId: string; title: string }> {
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
-	if (isFolder(node))
-		throw new TaskOperationError(`Cannot reset a folder: ${nodeId}`);
+	if (!isTask(node))
+		throw new TaskOperationError(`Cannot reset a ${node.type} node: ${nodeId}`);
 
 	// Stop running agent and await loop exit BEFORE clearing JSONL.
 	// The agent loop's finally block may write events (agent_stopped, etc.).

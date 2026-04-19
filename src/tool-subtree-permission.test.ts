@@ -149,7 +149,11 @@ describe("subtree permission on destructive tools", () => {
 	// ── folder ops ──
 
 	test("agent cannot delete_folder owned by sibling", async () => {
-		const foreignFolder = tracker.addFolder("sibling-folder", siblingId);
+		const foreignFolder = tracker.addGeneralNode(
+			"sibling-folder",
+			siblingId,
+			"folder",
+		);
 		const r = await invokeAs(tracker, tempDir, agentId, "delete_folder", {
 			folderId: foreignFolder.id,
 		});
@@ -159,7 +163,11 @@ describe("subtree permission on destructive tools", () => {
 	});
 
 	test("agent cannot rename_folder owned by sibling", async () => {
-		const foreignFolder = tracker.addFolder("sibling-folder", siblingId);
+		const foreignFolder = tracker.addGeneralNode(
+			"sibling-folder",
+			siblingId,
+			"folder",
+		);
 		const r = await invokeAs(tracker, tempDir, agentId, "rename_folder", {
 			folderId: foreignFolder.id,
 			title: "hijacked",
