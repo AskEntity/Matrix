@@ -19,7 +19,7 @@
  * call returned `isError: true` to the agent from then on.
  *
  * Hot-fix (commit 84369e3): `broadcastTreeUpdate` now runs
- * `tracker.allNodes().map((n) => isFolder(n) ? n : stripSession(n))`
+ * `tracker.allNodes().map((n) => isTask(n) ? stripSession(n) : n)`
  * before broadcasting.
  *
  * ## What this test proves

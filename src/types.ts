@@ -39,17 +39,34 @@ export interface TaskSession {
 }
 
 /**
- * A folder node — pure visual grouping, zero behavior.
- * No status, no branch, no session, no worktree, no cost.
- * Transparent to ownership: getTaskAbove/getTasksBelow skip folders.
+ * A general (non-launchable) tree node — pure metadata + tree position.
+ *
+ * Runtime has no opinion on what a GeneralNode means. The plugin decides:
+ * Matrix uses `type: "folder"` for visual grouping; another plugin could
+ * use `type: "chapter"`, `type: "note"`, etc. The runtime guarantees only
+ * that general nodes have no session, no lifecycle, no agent.
+ *
+ * Ownership transparency: getTaskAbove/getTasksBelow walk through
+ * GeneralNodes to find the owning task ancestor/descendants.
+ *
+ * There is NO `plugin` field — each tree (tree.json) belongs to exactly
+ * one plugin by construction. The plugin identity is implicit.
  */
-export interface FolderNode {
+export interface GeneralNode {
 	id: string;
 	title: string;
 	parentId: string | null;
 	children: string[];
-	/** Discriminator: folder nodes are always "folder". */
-	type: "folder";
+	/**
+	 * Plugin-defined discriminator. Any string EXCEPT `"task"` (which is
+	 * reserved for TaskNode). Matrix's folder uses `"folder"`.
+	 */
+	type: string;
+	/**
+	 * Plugin-owned opaque data. Runtime never parses, never validates.
+	 * Plugins store their own semantic metadata here.
+	 */
+	metadata?: Record<string, unknown>;
 }
 
 /**
@@ -72,8 +89,8 @@ export interface BaseTaskNode {
 	 * NOT persisted to disk — stripped during save(), undefined on load().
 	 */
 	session?: TaskSession;
-	/** Discriminator: task nodes are always "task" (or undefined for backward compat on load). */
-	type?: "task";
+	/** Discriminator: task nodes are always `"task"`. Required — no fallback. */
+	type: "task";
 }
 
 /**
@@ -98,21 +115,21 @@ export interface TaskNode extends BaseTaskNode {
 	color?: string;
 }
 
-/** Any node in the task tree — either a task or a folder. */
-export type TreeNode = TaskNode | FolderNode;
+/** Any node in the task tree — either a launchable task or a plugin-defined general node. */
+export type TreeNode = TaskNode | GeneralNode;
 
-/** Type guard: is this a folder node? */
-export function isFolder(node: TreeNode): node is FolderNode {
-	return node.type === "folder";
+/** Type guard: is this a task node? Narrowing hinges on the required `type` discriminator. */
+export function isTask(node: TreeNode): node is TaskNode {
+	return node.type === "task";
 }
 
-/** Type guard: is this a task node? */
-export function isTask(node: TreeNode): node is TaskNode {
-	return node.type !== "folder";
+/** Type guard: is this a general (non-launchable) node? */
+export function isGeneral(node: TreeNode): node is GeneralNode {
+	return node.type !== "task";
 }
 
 /** Serialized form of a tree node in tree.json (session stripped). */
-export type SerializedTreeNode = FolderNode | Omit<TaskNode, "session">;
+export type SerializedTreeNode = GeneralNode | Omit<TaskNode, "session">;
 
 /** Strip runtime-only session from a TaskNode for serialization. */
 export function stripSession(node: TaskNode): Omit<TaskNode, "session"> {

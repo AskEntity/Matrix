@@ -35,10 +35,25 @@ import { checkPermission } from "./tool-auth.ts";
 import { defineTool, toToolDefinition } from "./tool-def.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
-import { isFolder, isTask, stripSession, type TaskStatus } from "./types.ts";
+import {
+	type GeneralNode,
+	isTask,
+	stripSession,
+	type TaskStatus,
+	type TreeNode,
+} from "./types.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 
-// ── Helper ──
+// ── Helpers ──
+
+/**
+ * Matrix-plugin-local helper. "Folder" is a matrix-specific concept —
+ * one flavor of `GeneralNode` used for visual grouping. Another plugin
+ * with its own `GeneralNode.type` strings would define its own predicates.
+ */
+function isFolder(node: TreeNode): node is GeneralNode & { type: "folder" } {
+	return !isTask(node) && node.type === "folder";
+}
 
 async function isGitClean(projectPath: string): Promise<{
 	clean: boolean;
@@ -82,11 +97,11 @@ function requireSubtreePermission(
 	if (!tracker) return null; // downstream handler will report "Project not found"
 
 	const node = tracker.get(nodeId);
-	// Folder → walk to its owning task; if none (root-level folder),
-	// keep the folder's own id and let checkPermission fail it
-	// (only root has authority over root-level folders).
+	// General node → walk to its owning task; if none (root-level general
+	// node), keep the general node's own id and let checkPermission fail it
+	// (only root has authority over root-level non-task nodes).
 	let targetTaskId = nodeId;
-	if (node && isFolder(node)) {
+	if (node && !isTask(node)) {
 		const owner = tracker.getTaskAbove(nodeId);
 		if (owner) targetTaskId = owner.id;
 	}
@@ -199,14 +214,14 @@ export function buildAllToolDefs() {
 							checkPermission(auth, "exact", { taskId: nodeId });
 				let nodes = tracker.allNodes();
 				if (!args.include_closed) {
-					nodes = nodes.filter((n) => isFolder(n) || n.status !== "closed");
+					nodes = nodes.filter((n) => !isTask(n) || n.status !== "closed");
 				}
 				const visibleIds = new Set(nodes.map((n) => n.id));
 				const filterChildren = (children: string[]) =>
 					children.filter((id) => visibleIds.has(id));
 				const result = args.include_details
 					? nodes.map((n) => {
-							if (isFolder(n))
+							if (!isTask(n))
 								return { ...n, children: filterChildren(n.children) };
 							const rest = stripSession(n);
 							return {
@@ -222,8 +237,13 @@ export function buildAllToolDefs() {
 								children: filterChildren(n.children),
 								parentId: n.parentId,
 							};
-							if (isTask(n)) node.status = n.status;
-							if (isFolder(n)) node.type = "folder";
+							if (isTask(n)) {
+								node.status = n.status;
+							} else {
+								// General nodes (folder, future plugin types) expose their
+								// discriminator so observers can distinguish kinds.
+								node.type = n.type;
+							}
 							return node;
 						});
 				return {
@@ -1218,9 +1238,10 @@ export function buildAllToolDefs() {
 							content: [{ type: "text", text: "Project not found" }],
 							isError: true,
 						};
-					const folder = tracker.addFolder(
+					const folder = tracker.addGeneralNode(
 						args.title as string,
 						args.parentId as string,
+						"folder",
 					);
 					await tracker.save();
 					R.broadcastTree(projectId);

@@ -23,6 +23,7 @@ function makeNode(overrides: Partial<TaskNode> & { id: string }): TaskNode {
 		editedBy: "agent",
 		createdAt: new Date().toISOString(),
 		updatedAt: new Date().toISOString(),
+		type: "task",
 		...overrides,
 	} as TaskNode;
 }

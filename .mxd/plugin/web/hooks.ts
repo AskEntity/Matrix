@@ -3,12 +3,12 @@ import { api } from "./api.ts";
 import { useAuthFetch, useGetToken } from "./auth.ts";
 
 export type {
-	FolderNode,
+	GeneralNode,
 	TaskNode,
 	TaskStatus,
 	TreeNode,
 } from "./types.ts";
-export { isFolder, isTask } from "./types.ts";
+export { isFolder, isGeneral, isTask } from "./types.ts";
 
 import type { Event, TreeNode } from "./types.ts";
 

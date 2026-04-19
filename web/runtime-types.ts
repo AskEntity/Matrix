@@ -14,8 +14,8 @@ export type { QueueMessage } from "../src/message-queue.ts";
 export { pluginApiPrefix } from "../src/plugin-url.ts";
 export {
 	type BaseTaskNode,
-	type FolderNode,
-	isFolder,
+	type GeneralNode,
+	isGeneral,
 	isTask,
 	type TaskNode,
 	type TaskStatus,

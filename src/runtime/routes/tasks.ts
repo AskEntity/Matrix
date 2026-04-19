@@ -148,7 +148,11 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 
 		// Folder creation — minimal node, zero lifecycle
 		if (body.folder) {
-			const folder = tracker.addFolder(body.title, body.parentId);
+			const folder = tracker.addGeneralNode(
+				body.title,
+				body.parentId,
+				"folder",
+			);
 			await tracker.save();
 			broadcastTreeUpdate(ctx, project.id, tracker);
 			return c.json(folder, 201);

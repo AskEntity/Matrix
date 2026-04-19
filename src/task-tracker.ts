@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
-	type FolderNode,
-	isFolder,
+	type GeneralNode,
+	isGeneral,
 	isTask,
 	type TaskNode,
 	type TaskStatus,
@@ -34,16 +34,28 @@ export class TaskTracker {
 				nodes: Array<Record<string, unknown>>;
 			};
 			for (const raw of data.nodes) {
-				if (raw.type === "folder") {
-					// Folder node — minimal fields only
-					const folder: FolderNode = {
+				// Discriminator: `type === "task"` is the only TaskNode marker.
+				// Any other string value → GeneralNode. Missing `type` would be a
+				// pre-P3 TaskNode (normalized to `"task"` by the startup migration
+				// in src/tree-type-migration.ts); this load-time fallback is defense
+				// in depth for trees loaded before the daemon ran that migration.
+				const typeField = raw.type;
+				const isGeneralNode =
+					typeof typeField === "string" && typeField !== "task";
+
+				if (isGeneralNode) {
+					// General node — minimal fields + optional metadata
+					const general: GeneralNode = {
 						id: raw.id as string,
 						title: raw.title as string,
 						parentId: raw.parentId as string | null,
 						children: raw.children as string[],
-						type: "folder",
+						type: typeField as string,
+						...(raw.metadata !== undefined
+							? { metadata: raw.metadata as Record<string, unknown> }
+							: {}),
 					};
-					this.nodes.set(folder.id, folder);
+					this.nodes.set(general.id, general);
 				} else {
 					// Task node — full fields with migrations
 					const node = raw as unknown as TaskNode & {
@@ -52,6 +64,7 @@ export class TaskTracker {
 					node.costUsd ??= 0;
 					node.editedBy ??= "agent";
 					node.cwd ??= null;
+					node.type = "task"; // normalize pre-P3 shapes missing `type`
 					// Migration: strip legacy persistent field
 					delete (node as unknown as Record<string, unknown>).persistent;
 					// Migrate: "passed" → "verify" (two-phase done() lifecycle)
@@ -92,7 +105,7 @@ export class TaskTracker {
 		const data = {
 			rootNodeId: this._rootNodeId,
 			nodes: Array.from(this.nodes.values()).map((node) => {
-				if (isFolder(node)) return node;
+				if (isGeneral(node)) return node;
 				const { session: _session, ...rest } = node;
 				return rest;
 			}),
@@ -163,7 +176,7 @@ export class TaskTracker {
 		return Array.from(this.nodes.values()).filter((n) => n.parentId === null);
 	}
 
-	/** Update the status of a task node. Rejects folders. */
+	/** Update the status of a task node. Rejects general nodes. */
 	updateStatus(
 		nodeId: string,
 		status: TaskStatus,
@@ -171,25 +184,25 @@ export class TaskTracker {
 	): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		if (isFolder(node))
-			throw new Error(`Cannot update status on folder: ${nodeId}`);
+		if (!isTask(node))
+			throw new Error(`Cannot update status on non-task node: ${nodeId}`);
 		node.status = status;
 		if (editedBy) node.editedBy = editedBy;
 		node.updatedAt = new Date().toISOString();
 	}
 
-	/** Assign session and worktree info to a task node. Rejects folders. */
+	/** Assign session and worktree info to a task node. Rejects general nodes. */
 	assignWorktree(nodeId: string, branch: string, worktreePath: string): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		if (isFolder(node))
-			throw new Error(`Cannot assign worktree to folder: ${nodeId}`);
+		if (!isTask(node))
+			throw new Error(`Cannot assign worktree to non-task node: ${nodeId}`);
 		node.branch = branch;
 		node.worktreePath = worktreePath;
 		node.updatedAt = new Date().toISOString();
 	}
 
-	/** Update the title of a node. Works for both tasks and folders. */
+	/** Update the title of a node. Works for both tasks and general nodes. */
 	updateTitle(
 		nodeId: string,
 		title: string,
@@ -204,7 +217,7 @@ export class TaskTracker {
 		}
 	}
 
-	/** Update the description of a task node. Rejects folders (they have no description). */
+	/** Update the description of a task node. Rejects general nodes (they have no description). */
 	updateDescription(
 		nodeId: string,
 		description: string,
@@ -212,19 +225,19 @@ export class TaskTracker {
 	): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		if (isFolder(node))
-			throw new Error(`Cannot update description on folder: ${nodeId}`);
+		if (!isTask(node))
+			throw new Error(`Cannot update description on non-task node: ${nodeId}`);
 		node.description = description;
 		if (editedBy) node.editedBy = editedBy;
 		node.updatedAt = new Date().toISOString();
 	}
 
-	/** Assign a branch to a task node (1:1 agent-branch binding). Rejects folders. */
+	/** Assign a branch to a task node (1:1 agent-branch binding). Rejects general nodes. */
 	assignBranch(nodeId: string, branch: string): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		if (isFolder(node))
-			throw new Error(`Cannot assign branch to folder: ${nodeId}`);
+		if (!isTask(node))
+			throw new Error(`Cannot assign branch to non-task node: ${nodeId}`);
 		node.branch = branch;
 		node.updatedAt = new Date().toISOString();
 	}
@@ -288,8 +301,8 @@ export class TaskTracker {
 	}
 
 	/**
-	 * Get "tasks below" — direct child tasks, skipping folders transparently.
-	 * If a child is a folder, recurse into it and collect its task children.
+	 * Get "tasks below" — direct child tasks, skipping general nodes transparently.
+	 * If a child is a general node, recurse into it and collect its task children.
 	 */
 	getTasksBelow(nodeId: string): TaskNode[] {
 		const node = this.get(nodeId);
@@ -300,33 +313,48 @@ export class TaskTracker {
 			if (!child) continue;
 			if (isTask(child)) {
 				tasks.push(child);
-			} else if (isFolder(child)) {
-				// Recurse through folder — its tasks are logically owned by us
+			} else {
+				// Recurse through general node — its tasks are logically owned by us
 				tasks.push(...this.getTasksBelow(childId));
 			}
 		}
 		return tasks;
 	}
 
-	/** Add a folder node. Folders are pure grouping — no status, no lifecycle. */
-	addFolder(title: string, parentId: string | null): FolderNode {
+	/**
+	 * Add a general (non-launchable) node. General nodes are pure
+	 * metadata — no status, no lifecycle, no agent. Runtime has no
+	 * opinion on the `type` string; that's the plugin's semantic.
+	 */
+	addGeneralNode(
+		title: string,
+		parentId: string | null,
+		type: string,
+		metadata?: Record<string, unknown>,
+	): GeneralNode {
+		if (type === "task") {
+			throw new Error(
+				"GeneralNode.type cannot be 'task' — that's reserved for TaskNode",
+			);
+		}
 		const now = new Date().toISOString();
-		const folder: FolderNode = {
+		const node: GeneralNode = {
 			id: ulid(),
 			title,
 			parentId,
 			children: [],
-			type: "folder",
+			type,
+			...(metadata !== undefined ? { metadata } : {}),
 		};
-		this.nodes.set(folder.id, folder);
+		this.nodes.set(node.id, node);
 		if (parentId) {
 			const parent = this.nodes.get(parentId);
 			if (parent) {
-				parent.children.push(folder.id);
+				parent.children.push(node.id);
 				if (isTask(parent)) parent.updatedAt = now;
 			}
 		}
-		return folder;
+		return node;
 	}
 
 	/** Reorder children of a parent node. orderedChildIds must be the same set as current children. */
@@ -419,22 +447,22 @@ export class TaskTracker {
 		this.nodes.delete(nodeId);
 	}
 
-	/** Accumulate cost on a task node. Silently ignores folders. */
+	/** Accumulate cost on a task node. Silently ignores general nodes. */
 	updateCost(nodeId: string, costUsd: number): void {
 		const node = this.get(nodeId);
-		if (!node || isFolder(node)) return;
+		if (!node || !isTask(node)) return;
 		node.costUsd += costUsd;
 		node.updatedAt = new Date().toISOString();
 	}
 
-	/** Get task nodes filtered by status (folders are excluded). */
+	/** Get task nodes filtered by status (general nodes are excluded). */
 	byStatus(status: TaskStatus): TaskNode[] {
 		return Array.from(this.nodes.values()).filter(
 			(n): n is TaskNode => isTask(n) && n.status === status,
 		);
 	}
 
-	/** Update the color label on a task node. Rejects folders. */
+	/** Update the color label on a task node. Rejects general nodes. */
 	updateColor(
 		nodeId: string,
 		color: string | null,
@@ -442,8 +470,8 @@ export class TaskTracker {
 	): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		if (isFolder(node))
-			throw new Error(`Cannot update color on folder: ${nodeId}`);
+		if (!isTask(node))
+			throw new Error(`Cannot update color on non-task node: ${nodeId}`);
 		if (color) {
 			node.color = color;
 		} else {
@@ -481,6 +509,7 @@ export class TaskTracker {
 			...(opts?.budgetUsd !== undefined ? { budgetUsd: opts.budgetUsd } : {}),
 			createdAt: now,
 			updatedAt: now,
+			type: "task",
 		};
 		this.nodes.set(node.id, node);
 		return node;
