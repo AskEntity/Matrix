@@ -250,6 +250,7 @@ const en: Translations = {
 	"compact.notVisible": "↑ Content above is not visible to the agent",
 	"compact.collapse": "▼ Collapse",
 	"compact.checkpoint": "▶ Checkpoint",
+	"compact.summaryTitle": "Compact Summary",
 
 	// Log
 	"log.youArrow": "You →",
@@ -553,6 +554,7 @@ const zh: Translations = {
 	"compact.notVisible": "↑ 以上内容对代理不可见",
 	"compact.collapse": "▼ 折叠",
 	"compact.checkpoint": "▶ 检查点",
+	"compact.summaryTitle": "压缩摘要",
 
 	// Log
 	"log.youArrow": "你 →",

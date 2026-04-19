@@ -621,7 +621,7 @@ function messageToDisplay(body: QueueMessage): MessageDisplay {
 			return {
 				kind: "message",
 				source: "compacted_resume",
-				text: "Session resumed from checkpoint",
+				text: body.content,
 				sender: null,
 				isError: false,
 			};

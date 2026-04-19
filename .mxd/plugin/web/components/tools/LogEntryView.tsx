@@ -181,6 +181,35 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
+	// Compact summary — post-compact primer shown to the agent as its memory
+	// of the erased conversation. Visual cousin of compact_marker: sits right
+	// after the "◈ Context compacted" bar in the activity log. Default-collapsed
+	// because summaries are long narrative text (hundreds of lines).
+	if (entry.type === "message" && entry.body.source === "compacted_resume") {
+		const summaryText = entry.body.content;
+		return (
+			<div
+				className="mxd-compact-boundary mxd-compact-summary"
+				data-entry-id={String(entry.id)}
+			>
+				<Card
+					title={
+						<span className="mxd-compact-label">
+							◈ {t("compact.summaryTitle")}
+						</span>
+					}
+					className="mxd-tool-card-compact-summary"
+					collapsible
+					defaultExpanded={false}
+				>
+					<div className="mxd-tool-card-body">
+						<div className="mxd-compact-summary-content">{summaryText}</div>
+					</div>
+				</Card>
+			</div>
+		);
+	}
+
 	// Standalone tool_use (not merged with result) — show as a card
 	if (entry.type === "tool_call") {
 		const toolName = getToolName(entry);

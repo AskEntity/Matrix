@@ -1829,3 +1829,73 @@ strings defeat CDN caching; `no-store` wastes bandwidth. Content-
 addressable URLs are the web-native answer to this class of problem —
 the browser's cache is already an infinite content-addressable store if
 you feed it content-addressable URLs.
+
+## compacted_resume UI card (2026-04-18) — queueEntryToUIEvent is the UI materialization gate
+
+Rendered post-compact summaries as a collapsible card in the activity log
+(visual cousin of the `◈ Context compacted` bar). Before the fix, the
+summary message existed in JSONL + went through the two-phase lifecycle,
+but the UI **silently dropped it** because `queueEntryToUIEvent` had no
+case for `source: "compacted_resume"` — fell through to `default: null`,
+so `materializeFromPending` produced null, so no log entry was ever
+created. The placeholder text "Session resumed from checkpoint" in
+`event-display.ts` was dead code (nothing imports `eventToDisplay` /
+`messageToDisplay`), so it wasn't even the visible artifact — the visible
+artifact was **nothing**.
+
+### Invariant (lock in mentally)
+
+Every `QueueMessage.source` that should be user-visible in the activity
+log MUST have a case in `queueEntryToUIEvent` (in
+`.mxd/plugin/web/event-handler.ts`). That switch is THE UI
+materialization gate for message-shaped events. A missing case → a
+silently-dropped event class. No error, no warning, nothing in DOM.
+
+Adding a new source type? Three places to touch, in order:
+1. `src/message-queue.ts` — union member definition
+2. `src/events.ts` — producer paths (usually via `queue.enqueue`)
+3. `.mxd/plugin/web/event-handler.ts:queueEntryToUIEvent` — UI
+   materialization case. If you forget this, nothing in the UI will
+   render despite perfect JSONL.
+
+### Pending routing decision
+
+compact & compacted_resume both skip `pendingReducer` (they're
+server-internal messages, not user-pending). That's an **intentional
+symmetry** — no chip flashes in the footer banner during the brief
+emit→consume window. If a new source should behave this way, add it to
+the same skip list.
+
+### Where the new card lives
+
+- Branch in `.mxd/plugin/web/components/tools/LogEntryView.tsx`
+  right after `fork_marker`, matching `entry.type === "message" &&
+  entry.body.source === "compacted_resume"`.
+- Uses `Card` component, default-collapsed (summaries are hundreds of
+  lines — expanding is opt-in).
+- Wrapper class `mxd-compact-boundary mxd-compact-summary` shares the
+  existing compact visual language.
+- Content renders in `<div className="mxd-compact-summary-content">`
+  with `white-space: pre-wrap` + scrollable `max-height: 420px`.
+- New i18n string `compact.summaryTitle` in both EN ("Compact Summary")
+  and ZH ("压缩摘要").
+
+### MockShowcase
+
+Added a sample `compacted_resume` event right after the
+`compact_marker` in `src/runtime/routes/mock-showcase.ts` so the
+mock-showcase page exercises the new card. Any future agent touching
+this flow can open `/mock-showcase` and visually confirm the card
+renders without running a real compaction.
+
+### Regression tests
+
+- `web/LogEntryView-compacted-resume.test.tsx` (3 tests) — full
+  LogEntryView render through LocaleProvider. Asserts i18n header,
+  default-collapsed, expand-click reveals real content, no placeholder
+  string ever appears, long bodies render verbatim (no truncation).
+- `src/plugin-event-handler.test.ts` "compacted_resume message plumbing"
+  (3 tests) — locks in: processEvent renders directly (skips pending),
+  pendingReducer treats compacted_resume as no-op, full cycle with
+  messages_consumed produces exactly ONE log entry (no duplicate).
+  Mutation proofs documented per-test.

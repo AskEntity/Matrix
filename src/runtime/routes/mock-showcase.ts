@@ -1058,6 +1058,38 @@ function buildMockData() {
 		ts: ts(m--),
 	});
 
+	// compacted_resume — post-compact summary card (visual cousin of compact_marker)
+	{
+		const crId = ulid();
+		const crTs = ts(m--);
+		events.push({
+			type: "message",
+			id: crId,
+			taskId: SESSION_ID,
+			body: {
+				source: "compacted_resume",
+				id: crId,
+				ts: crTs,
+				content: [
+					"Summary of pre-compact conversation:",
+					"",
+					"• Implemented JWT auth (login, refresh, session-token).",
+					"• Landed tests for the strict-error harness.",
+					"• Started the auth-group migration: schema + one provider wired.",
+					"",
+					"Where you stopped:",
+					"You were mid-refactor of the OpenAI provider's auth group lookup",
+					"and were about to write a validator for the 'defaultAuth' empty",
+					"string case when context filled up.",
+					"",
+					"Next step: finish `resolveAuthGroup()` in `src/providers/openai.ts`,",
+					"then run the drift-lifecycle suite.",
+				].join("\n"),
+			},
+			ts: crTs,
+		});
+	}
+
 	// fork_marker
 	events.push({
 		type: "fork_marker",
