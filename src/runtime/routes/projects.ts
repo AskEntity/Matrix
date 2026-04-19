@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import type { RuntimeContext } from "../context.ts";
 import { getPendingClarifications } from "../event-system.ts";
-import { getEventStore, stripEventForUI } from "../helpers.ts";
+import { getEventStore } from "../helpers.ts";
 
 /**
  * Project data routes — event history, clarifications.
@@ -26,15 +26,11 @@ export function registerProjectRoutes(app: Hono, ctx: RuntimeContext) {
 				const result = eventStore.readFromLastCompactMarker(sessionId);
 				if (result.hasOlderEvents) hasOlderEvents = true;
 				for (const event of result.events) {
-					all.push(
-						stripEventForUI(event as unknown as Record<string, unknown>),
-					);
+					all.push(event as unknown as Record<string, unknown>);
 				}
 			} else {
 				for (const event of eventStore.read(sessionId)) {
-					all.push(
-						stripEventForUI(event as unknown as Record<string, unknown>),
-					);
+					all.push(event as unknown as Record<string, unknown>);
 				}
 			}
 		}
@@ -93,10 +89,7 @@ export function registerProjectRoutes(app: Hono, ctx: RuntimeContext) {
 		}
 		const eventStore = getEventStore(ctx, project.id);
 		const result = eventStore.readBefore(session, before, limit);
-		const events = result.events.map((e) =>
-			stripEventForUI(e as unknown as Record<string, unknown>),
-		);
-		return c.json({ events, hasMore: result.hasMore });
+		return c.json({ events: result.events, hasMore: result.hasMore });
 	});
 
 	// Pending clarifications

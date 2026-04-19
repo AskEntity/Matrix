@@ -5,10 +5,6 @@
  *   projects/<id>/plugin/matrix/tree.json, projects/<id>/plugin/matrix/tasks/
  * story1001 (default @/plugin/story1001) →
  *   projects/<id>/plugin/story1001/tree.json, projects/<id>/plugin/story1001/tasks/
- *
- * Matrix's historical top-level layout (dataRoot: "@") was migrated into the
- * plugin namespace in P4 (2026-04-19). Pre-existing data is moved once at
- * daemon startup — see `src/migrations/plugin-namespace-migration.ts`.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";

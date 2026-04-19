@@ -118,7 +118,7 @@ describe("event-system: subscribeToEvents + broadcast", () => {
 		expect(received).toEqual(["second ran"]);
 	});
 
-	test("callback receives RAW event object (not stripped)", () => {
+	test("callback receives the broadcast event object", () => {
 		const ctx = makeCtx();
 		let got: Record<string, unknown> | undefined;
 		subscribeToEvents(ctx, "proj-A", (evt) => {
@@ -129,7 +129,6 @@ describe("event-system: subscribeToEvents + broadcast", () => {
 			type: "tool_result",
 			taskId: "t1",
 			content: "hello",
-			// stripEventForUI truncates large content — subscribers see the raw value
 		};
 		broadcast(ctx, "proj-A", evt);
 

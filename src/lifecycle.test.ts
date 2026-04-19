@@ -1957,8 +1957,6 @@ describe("lifecycle: child completion notification paths", () => {
 		});
 		const result1 = await runChildCore({
 			provider: createInstantProvider(),
-			tracker,
-			taskId: childNode.id,
 			sessionRequest: {
 				queue: firstQueue,
 				buildWorkContext: () => null,
@@ -2000,8 +1998,6 @@ describe("lifecycle: child completion notification paths", () => {
 		});
 		const result2 = await runChildCore({
 			provider: createInstantProvider(),
-			tracker,
-			taskId: childNode.id,
 			sessionRequest: {
 				queue: secondQueue,
 				buildWorkContext: () => null,
@@ -2107,8 +2103,6 @@ describe("lifecycle: child completion notification paths", () => {
 		});
 		const corePromise = runChildCore({
 			provider: doneYieldProvider,
-			tracker,
-			taskId: childId,
 			sessionRequest: {
 				queue: doneQueue,
 				emit,
@@ -2189,8 +2183,6 @@ describe("lifecycle: child completion notification paths", () => {
 		});
 		const corePromise = runChildCore({
 			provider: deadlockProvider,
-			tracker,
-			taskId: childId,
 			sessionRequest: {
 				queue: deadlockQueue,
 				buildWorkContext: () => null,

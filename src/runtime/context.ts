@@ -111,10 +111,9 @@ export interface PendingClarification {
  * Runtime worker configuration — passed to createApp().
  *
  * This lives inside the worker thread; the daemon (shell) constructs one
- * and ships it via postMessage or in-process test injection. Historically
- * named "DaemonConfig" — that was backwards. The daemon owns different
- * state (auth, projects on disk, SSE fanout); this object configures the
- * worker runtime.
+ * and ships it via postMessage or in-process test injection. The daemon
+ * owns different state (auth, projects on disk, SSE fanout); this object
+ * configures the worker runtime.
  */
 export interface RuntimeConfig {
 	dataDir: string;
