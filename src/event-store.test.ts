@@ -976,4 +976,138 @@ describe("EventStore", () => {
 		expect(store.has("s2")).toBe(true);
 		expect(store.read("s2")).toHaveLength(1);
 	});
+
+	// ── Flake 2026-04-18: guard + write must be atomic ──
+
+	test("race: clear during async writeFn delay → post-check unlinks zombie", async () => {
+		// Regression for the 2026-04-18 flake ("Integration: resetTask JSONL
+		// cleanup race > reset running agent during bash: JSONL stays deleted").
+		//
+		// The original bug: `enqueueWrite` only had a PRE-check — it verified
+		// generation before calling writeFn but not after. Production writeFn
+		// used `fs.promises.appendFile` (async libuv). Under CPU contention,
+		// libuv's open(O_CREAT) could be delayed long enough that clear()
+		// (running on the main thread as sync unlinkSync) would sneak in
+		// between the pre-check and the actual filesystem open. The open
+		// then recreated the file. JSONL "reappeared after clear".
+		//
+		// The production fix switches to `appendFileSync` — guard + write
+		// are one atomic microtask, no window. But the guard itself also
+		// gained a POST-check as defense in depth against any future caller
+		// that re-introduces an async writeFn.
+		//
+		// This test simulates the historical race by calling the private
+		// `enqueueWrite` with a deliberately slow async writeFn. The guard's
+		// post-check must remove the zombie even though the writeFn completed
+		// its file creation AFTER clear() ran.
+		const event: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "race",
+			ts: 1,
+		};
+		await store.append("race", event);
+		expect(store.has("race")).toBe(true);
+
+		// Access private enqueueWrite + path via reflection. This is the
+		// explicit simulation of "async writeFn with delay" — otherwise
+		// unreachable via the public API after the appendFileSync switch.
+		const privateStore = store as unknown as {
+			enqueueWrite(
+				sessionId: string,
+				fn: () => Promise<void>,
+			): Promise<void>;
+			path(sessionId: string): string;
+		};
+		const { appendFileSync: syncAppend } = await import("node:fs");
+
+		const slowAsyncWrite = privateStore.enqueueWrite("race", async () => {
+			// Simulate libuv thread pool contention: guard already passed,
+			// now we delay before touching disk.
+			await new Promise((r) => setTimeout(r, 30));
+			// Late write — without the post-check, this creates a zombie file.
+			syncAppend(privateStore.path("race"), "late write\n");
+		});
+
+		// Let guardedFn start so its pre-check runs and writeFn begins sleeping.
+		await new Promise((r) => setTimeout(r, 5));
+
+		// Clear during the sleep — file goes away, generation bumped.
+		store.clear("race");
+		expect(store.has("race")).toBe(false);
+
+		// Wait for the slow write to finish. Internally it will call
+		// syncAppend which (re)creates the file; the post-check must
+		// detect the generation mismatch and unlink the zombie.
+		await slowAsyncWrite;
+		await store.flush();
+
+		expect(store.has("race")).toBe(false);
+	});
+
+	test("race: new agent enqueues AFTER clear — new write survives post-check", async () => {
+		// Critical edge: post-check MUST NOT unlink legitimate writes from a
+		// NEW generation enqueued after clear. Serialization via writeQueues
+		// guarantees ordering — W1 (old gen) completes (+ post-check unlinks)
+		// BEFORE W2 (new gen) runs, so W2's write is not touched.
+		const event: Event = {
+			type: "agent_end",
+			reason: "stopped",
+			taskId: "g",
+			ts: 1,
+		};
+		await store.append("g", event);
+		expect(store.has("g")).toBe(true);
+
+		const privateStore = store as unknown as {
+			enqueueWrite(
+				sessionId: string,
+				fn: () => Promise<void>,
+			): Promise<void>;
+			path(sessionId: string): string;
+		};
+		const { appendFileSync: syncAppend } = await import("node:fs");
+
+		// W1 — slow async write, captures gen G0. The zombie event is VALID
+		// JSON so that, if the post-check fails to remove it, `read()` returns
+		// it as a real event (not silently skipped as malformed) — making the
+		// test's "only agent_start survives" assertion a true mutation guard.
+		const zombieEvent: Event = {
+			type: "error",
+			taskId: "g",
+			message: "zombie from slow-async-write",
+			ts: 999,
+		};
+		const w1 = privateStore.enqueueWrite("g", async () => {
+			await new Promise((r) => setTimeout(r, 30));
+			syncAppend(
+				privateStore.path("g"),
+				`${JSON.stringify(zombieEvent)}\n`,
+			);
+		});
+		await new Promise((r) => setTimeout(r, 5));
+
+		// Clear between W1's pre-check and W1's disk write.
+		store.clear("g");
+
+		// New agent enqueues W2 (captures gen G1). Serialized behind W1.
+		const newEvent: Event = {
+			type: "agent_start",
+			taskId: "g",
+			ts: 2,
+		} as Event;
+		const w2 = store.append("g", newEvent);
+
+		await Promise.all([w1, w2]);
+		await store.flush();
+
+		// W1 wrote the zombie event, post-check unlinked it. W2 then wrote
+		// agent_start. Final state: file exists, contains exactly W2's event,
+		// NO zombie.
+		expect(store.has("g")).toBe(true);
+		const events = store.read("g");
+		expect(events).toHaveLength(1);
+		expect(events[0]?.type).toBe("agent_start");
+		expect(events.find((e) => e.type === "error")).toBeUndefined();
+	});
 });

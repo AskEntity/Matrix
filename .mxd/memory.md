@@ -1899,3 +1899,90 @@ renders without running a real compaction.
   pendingReducer treats compacted_resume as no-op, full cycle with
   messages_consumed produces exactly ONE log entry (no duplicate).
   Mutation proofs documented per-test.
+
+## EventStore generation guard: sync writes + post-check (2026-04-18)
+
+`src/event-store.ts` `append`/`appendBatch` use `appendFileSync` (not
+`fs.promises.appendFile`). The guard check and the filesystem write
+must happen in the SAME microtask — anything async between them lets
+`clear()` interleave and recreate a just-unlinked file.
+
+### Race symptom (the flake)
+
+`Integration: resetTask JSONL cleanup race` tests, especially "reset
+running agent during bash: JSONL stays deleted", failed under CPU
+contention with "JSONL reappeared after Nms — async cleanup wrote
+after clear".
+
+### Root cause
+
+Old code in `enqueueWrite`:
+```ts
+const guardedFn = () => {
+  if (this.getGeneration(sessionId) !== generation) return Promise.resolve();
+  return writeFn();  // returns async appendFile Promise
+};
+```
+
+Sequence under contention:
+1. `guardedFn` microtask runs: guard passes (G0 == G0).
+2. `writeFn = () => appendFile(path, line)` called. libuv schedules
+   `open(path, O_APPEND | O_CREAT)` on the thread pool. `guardedFn`
+   returns the pending Promise.
+3. Main thread is free. Test's `eventStore.clear(rootId)` runs:
+   generation bumped to G1, `unlinkSync` removes the file.
+4. libuv thread pool finally wakes, calls `open(O_APPEND | O_CREAT)`.
+   `O_CREAT` creates a NEW file (directory entry was just removed).
+5. Writes the line. Closes. File has reappeared.
+
+The window is typically sub-ms and invisible. Under load (sibling tests
+saturating the libuv thread pool), it widens to tens of ms — wide enough
+to flake.
+
+### Fix (two layers)
+
+**Primary — sync writes**: `append`/`appendBatch` use `appendFileSync`
+inside the guardedFn. Guard check + write happen synchronously in one
+microtask; `clear()` cannot interleave by construction.
+
+**Defense — post-check**: after `await writeFn()` in `guardedFn`, check
+generation again. If `clear()` ran DURING writeFn, any file writeFn
+created is a zombie — `unlinkSync` it. Redundant in the fast path (sync
+writeFn leaves no window) but catches any future caller who passes an
+async writeFn.
+
+### Why sync I/O is fine
+
+- Per-write cost: one JSONL line (~100 bytes), microseconds on SSD.
+- Writes are already serialized per-session via `writeQueues` Promise
+  chain. Sync just means each link of the chain is itself atomic.
+- Main thread is usually idle between provider streaming ticks; blocking
+  it for microseconds is invisible.
+
+### Regression tests (mutation-proof)
+
+`src/event-store.test.ts`:
+- `race: clear during async writeFn delay → post-check unlinks zombie`:
+  uses reflection to call private `enqueueWrite` with a deliberately
+  slow async writeFn. After 5ms (guard passed, writeFn sleeping), test
+  calls `clear()`. When writeFn finally writes, post-check must remove
+  the zombie. Fails without Layer 2.
+- `race: new agent enqueues AFTER clear — new write survives post-check`:
+  exercises the edge where W1 (old gen, slow async) + clear + W2 (new
+  gen, fast sync) all chain on the same session. W1's zombie gets
+  unlinked; W2's legitimate write is preserved. Zombie content is valid
+  JSON so `read()` doesn't silently skip it — "only agent_start
+  survives" is a real mutation guard.
+
+Both tests verified by `git stash push src/event-store.ts` + re-running
+the file: both FAIL on main, both PASS with the fix.
+
+### What NOT to do
+
+- Don't revert `appendFileSync` to `fs.promises.appendFile` because it
+  "feels more idiomatic". The sync I/O is load-bearing for the guard.
+- Don't remove the post-check even though it's decorative in the
+  current fast path. It's the safety net for any future async writeFn.
+- Don't remove `appendFile` from the `node:fs/promises` import —
+  `copySessionFrom` still uses it (different path, no `clear()` race
+  because fork has structural exclusion with reset at the task level).
