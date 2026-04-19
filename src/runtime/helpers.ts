@@ -14,7 +14,7 @@ import {
 import {
 	projectDebugDir,
 	projectTasksDir,
-	resolveDataRoot,
+	projectTreeJsonPath,
 } from "../data-paths.ts";
 import { EventStore } from "../event-store.ts";
 import { OpenAIResponsesCompatibleProvider } from "../openai-responses-compatible-provider.ts";
@@ -24,7 +24,7 @@ import type { RuntimeContext } from "./context.ts";
 
 // Re-export so existing callers importing path builders from ./helpers keep working.
 // data-paths.ts is the single source of truth; helpers.ts is a convenience barrel.
-export { projectDebugDir, projectTasksDir };
+export { projectDebugDir, projectTasksDir, projectTreeJsonPath };
 
 /** Create an AgentProvider from an AuthGroup, model, and optional thinking effort. */
 function createProviderFromAuth(
@@ -106,12 +106,11 @@ export async function getTracker(
 ): Promise<TaskTracker> {
 	let tracker = ctx.trackers.get(projectId);
 	if (!tracker) {
-		const projectDir = resolveDataRoot(
+		const treePath = projectTreeJsonPath(
 			ctx.config.dataDir,
 			projectId,
 			ctx.config.dataRoot,
 		);
-		const treePath = join(projectDir, "tree.json");
 		tracker = new TaskTracker(treePath);
 		const project = ctx.pm.get(projectId);
 		const defaultBranch = project

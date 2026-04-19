@@ -16,6 +16,7 @@ import {
 	PROJECT_ID_PATTERN,
 	projectDebugDir,
 	projectTasksDir,
+	projectTreeJsonPath,
 	resolveDataRoot,
 	validateDataRoot,
 	validateProjectId,
@@ -201,6 +202,39 @@ describe("projectTasksDir + projectDebugDir — respect dataRoot", () => {
 			// Specifically: output must NOT contain ".."
 			expect(tasksOut).not.toMatch(/\/\.\.(\/|$)/);
 			expect(debugOut).not.toMatch(/\/\.\.(\/|$)/);
+		}
+	});
+});
+
+describe("projectTreeJsonPath — respects dataRoot (P4)", () => {
+	test("default layout (no dataRoot) → tree.json at project root", () => {
+		expect(projectTreeJsonPath("/data", "proj1")).toBe(
+			"/data/projects/proj1/tree.json",
+		);
+	});
+	test("matrix P4 layout — tree.json under plugin/matrix/", () => {
+		expect(projectTreeJsonPath("/data", "proj1", "@/plugin/matrix")).toBe(
+			"/data/projects/proj1/plugin/matrix/tree.json",
+		);
+	});
+	test("nested dataRoot — tree.json lives inside the resolved subdir", () => {
+		expect(projectTreeJsonPath("/data", "proj1", "@/plugin/story1001")).toBe(
+			"/data/projects/proj1/plugin/story1001/tree.json",
+		);
+	});
+	test("traversal in dataRoot — throws", () => {
+		expect(() => projectTreeJsonPath("/data", "proj1", "@/../etc")).toThrow(
+			/Invalid dataRoot/,
+		);
+	});
+	test("mutation guard: output ALWAYS lives under projects/<id>/", () => {
+		const projectRoot = "/data/projects/proj1";
+		for (const dr of [undefined, "@", "@/plugin/foo", "@/a/b/c"]) {
+			const out = projectTreeJsonPath("/data", "proj1", dr);
+			expect(out.startsWith(`${projectRoot}/`)).toBe(true);
+			expect(out).not.toMatch(/\/\.\.(\/|$)/);
+			// All variants end in "tree.json"
+			expect(out.endsWith("/tree.json")).toBe(true);
 		}
 	});
 });

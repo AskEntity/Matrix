@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { projectTasksDir } from "./data-paths.ts";
 
 /**
  * One cache miss row, ready for printing.
@@ -227,14 +228,20 @@ export function filterByMaxGap(
 
 /**
  * Resolve the JSONL path for a task.
- * `{dataDir}/projects/{projectId}/tasks/{taskId}.jsonl`
+ *
+ * Post-P4 Matrix layout: JSONL files live under
+ * `{dataDir}/projects/{projectId}/plugin/matrix/tasks/{taskId}.jsonl`.
+ * (Pre-P4 data has been migrated in-place by `migrateToPluginNamespace`.)
  */
 export function resolveTaskJsonlPath(
 	projectId: string,
 	taskId: string,
 	dataDir: string = join(homedir(), ".mxd"),
 ): string {
-	return join(dataDir, "projects", projectId, "tasks", `${taskId}.jsonl`);
+	return join(
+		projectTasksDir(dataDir, projectId, "@/plugin/matrix"),
+		`${taskId}.jsonl`,
+	);
 }
 
 /**

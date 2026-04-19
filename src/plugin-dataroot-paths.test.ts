@@ -1,9 +1,14 @@
 /**
  * TDD: dataRoot determines where each plugin's data lives.
  *
- * Matrix (dataRoot: "@") → projects/<id>/tree.json, projects/<id>/tasks/
+ * Matrix (dataRoot: "@/plugin/matrix") →
+ *   projects/<id>/plugin/matrix/tree.json, projects/<id>/plugin/matrix/tasks/
  * story1001 (default @/plugin/story1001) →
  *   projects/<id>/plugin/story1001/tree.json, projects/<id>/plugin/story1001/tasks/
+ *
+ * Matrix's historical top-level layout (dataRoot: "@") was migrated into the
+ * plugin namespace in P4 (2026-04-19). Pre-existing data is moved once at
+ * daemon startup — see `src/migrations/plugin-namespace-migration.ts`.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
@@ -38,14 +43,14 @@ describe("dataRoot path resolution", () => {
 	const matrixManifest = {
 		name: "matrix",
 		scope: "global" as const,
-		dataRoot: "@",
+		dataRoot: "@/plugin/matrix",
 	};
 	const storyManifest = { name: "story1001", scope: "global" as const }; // default dataRoot
 
-	test("matrix dataRoot '@' resolves to project root", () => {
-		expect(effectiveDataRoot(matrixManifest)).toBe("@");
+	test("matrix dataRoot '@/plugin/matrix' resolves to its plugin subdir", () => {
+		expect(effectiveDataRoot(matrixManifest)).toBe("@/plugin/matrix");
 		const resolved = resolveFromManifest(matrixManifest, "/data", "proj1");
-		expect(resolved).toBe("/data/projects/proj1");
+		expect(resolved).toBe("/data/projects/proj1/plugin/matrix");
 	});
 
 	test("story1001 default dataRoot resolves to plugin subdirectory", () => {
@@ -57,7 +62,7 @@ describe("dataRoot path resolution", () => {
 	test("tree.json path uses resolved dataRoot", () => {
 		const matrixRoot = resolveFromManifest(matrixManifest, "/data", "proj1");
 		expect(join(matrixRoot, "tree.json")).toBe(
-			"/data/projects/proj1/tree.json",
+			"/data/projects/proj1/plugin/matrix/tree.json",
 		);
 
 		const storyRoot = resolveFromManifest(storyManifest, "/data", "proj1");
@@ -68,12 +73,22 @@ describe("dataRoot path resolution", () => {
 
 	test("tasks dir uses resolved dataRoot", () => {
 		const matrixRoot = resolveFromManifest(matrixManifest, "/data", "proj1");
-		expect(join(matrixRoot, "tasks")).toBe("/data/projects/proj1/tasks");
+		expect(join(matrixRoot, "tasks")).toBe(
+			"/data/projects/proj1/plugin/matrix/tasks",
+		);
 
 		const storyRoot = resolveFromManifest(storyManifest, "/data", "proj1");
 		expect(join(storyRoot, "tasks")).toBe(
 			"/data/projects/proj1/plugin/story1001/tasks",
 		);
+	});
+
+	test("matrix and story1001 resolve to distinct, non-colliding paths", () => {
+		// Regression guard for P4: after moving matrix under plugin/matrix/,
+		// make sure it still doesn't collide with another plugin.
+		const matrixPath = resolveFromManifest(matrixManifest, "/data", "proj1");
+		const storyPath = resolveFromManifest(storyManifest, "/data", "proj1");
+		expect(matrixPath).not.toBe(storyPath);
 	});
 });
 
@@ -97,7 +112,7 @@ describe("dataRoot integration: two plugins write to separate directories", () =
 
 		// Resolve data roots
 		const matrixRoot = resolveFromManifest(
-			{ name: "matrix", scope: "global", dataRoot: "@" },
+			{ name: "matrix", scope: "global", dataRoot: "@/plugin/matrix" },
 			dataDir,
 			projectId,
 		);
@@ -148,12 +163,24 @@ describe("dataRoot integration: two plugins write to separate directories", () =
 		} as import("./events.ts").Event);
 
 		// Assert: files exist at correct paths
-		// Matrix
+		// Matrix — in its own plugin subdirectory (P4 layout)
+		expect(
+			existsSync(
+				join(dataDir, "projects", projectId, "plugin", "matrix", "tree.json"),
+			),
+		).toBe(true);
+		expect(
+			existsSync(
+				join(dataDir, "projects", projectId, "plugin", "matrix", "tasks"),
+			),
+		).toBe(true);
+
+		// Old top-level layout must NOT be used by Matrix anymore.
 		expect(existsSync(join(dataDir, "projects", projectId, "tree.json"))).toBe(
-			true,
+			false,
 		);
 		expect(existsSync(join(dataDir, "projects", projectId, "tasks"))).toBe(
-			true,
+			false,
 		);
 
 		// Story — in plugin subdirectory

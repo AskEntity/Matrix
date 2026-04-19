@@ -252,3 +252,65 @@ describe("zero-plugin shell rendering", () => {
 		expect(authRes.status).toBe(200);
 	});
 });
+
+describe("plugin-namespace storage migration (P4)", () => {
+	let tempDir: string;
+	let daemon: DaemonInstance;
+
+	afterAll(async () => {
+		await daemon?.shutdown();
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("createDaemon migrates pre-existing tree.json/tasks/debug into plugin/matrix/", async () => {
+		// Simulate a pre-P4 install: projects/<id>/{tree.json,tasks/,debug/}
+		// sitting at the top level. createDaemon should migrate them before
+		// spinning up any worker that would try to read them.
+		tempDir = await mkdtemp(join(tmpdir(), "p4-migration-"));
+		const dataDir = join(tempDir, ".mxd");
+		const projectId = "01LEGACY_PROJ";
+		const projectDir = join(dataDir, "projects", projectId);
+		await mkdir(join(projectDir, "tasks"), { recursive: true });
+		await mkdir(join(projectDir, "debug"), { recursive: true });
+		await writeFile(
+			join(projectDir, "tree.json"),
+			JSON.stringify({ rootNodeId: "root", nodes: [] }),
+		);
+		await writeFile(join(projectDir, "tasks", "root.jsonl"), "line1\n");
+		await writeFile(join(projectDir, "debug", "sample.json"), "{}");
+
+		// projects.json points at some external path so the project is
+		// discovered by pm.load() — but we don't need a real project on disk
+		// for the migration itself (it scans projects/ dirs directly).
+		const externalProjectPath = join(tempDir, "external");
+		await mkdir(externalProjectPath, { recursive: true });
+		await writeFile(
+			join(dataDir, "projects.json"),
+			JSON.stringify([
+				{
+					id: projectId,
+					name: "legacy",
+					path: externalProjectPath,
+					createdAt: new Date().toISOString(),
+				},
+			]),
+		);
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
+
+		daemon = await createDaemon({
+			dataDir,
+			autoRegisterSelf: false,
+		});
+
+		// Old layout should be GONE.
+		expect(existsSync(join(projectDir, "tree.json"))).toBe(false);
+		expect(existsSync(join(projectDir, "tasks"))).toBe(false);
+		expect(existsSync(join(projectDir, "debug"))).toBe(false);
+
+		// New layout exists with content preserved.
+		const matrixDir = join(projectDir, "plugin", "matrix");
+		expect(existsSync(join(matrixDir, "tree.json"))).toBe(true);
+		expect(existsSync(join(matrixDir, "tasks", "root.jsonl"))).toBe(true);
+		expect(existsSync(join(matrixDir, "debug", "sample.json"))).toBe(true);
+	});
+});

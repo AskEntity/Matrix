@@ -910,6 +910,29 @@ export async function createDaemon(opts: {
 	const pm = new ProjectManager(dataDir);
 	await pm.load();
 
+	// ── Plugin-namespace storage migration ──
+	// One-shot migration moving Matrix's per-project runtime data from the
+	// historical top-level layout (projects/<id>/{tree.json,tasks,debug})
+	// into the plugin-namespaced layout (projects/<id>/plugin/matrix/...).
+	// Idempotent — skips projects whose plugin/matrix/tree.json already exists.
+	//
+	// MUST run before any code opens tree.json or tasks/ files; concretely,
+	// before plugin workers spawn (scope-worker's autoResumeProjects() reads
+	// tree.json). Placed here to hold the dataDir lock throughout and to run
+	// before `autoRegisterSelf` creates any new project (a fresh project has
+	// no legacy data and is a no-op anyway — but the ordering keeps the
+	// migration's scope unambiguous).
+	const { migrateToPluginNamespace } = await import(
+		"./migrations/plugin-namespace-migration.ts"
+	);
+	const migrationSummary = await migrateToPluginNamespace(dataDir);
+	if (migrationSummary.migrated > 0 || migrationSummary.errors > 0) {
+		console.log(
+			`[migration] plugin-namespace: migrated ${migrationSummary.migrated}, ` +
+				`skipped ${migrationSummary.skipped}, errors ${migrationSummary.errors}`,
+		);
+	}
+
 	// ── Global context — daemon-computed facts, not user config ──
 	// Exposed to workers (init message) and HTTP clients (GET /global-context).
 	// Plugins read installRoot/gitHash and form their own opinions (e.g., matrix's
