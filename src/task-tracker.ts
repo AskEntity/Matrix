@@ -34,37 +34,19 @@ export class TaskTracker {
 				nodes: Array<Record<string, unknown>>;
 			};
 			for (const raw of data.nodes) {
-				// Discriminator: `type === "task"` is the only TaskNode marker.
-				// Any other string value → GeneralNode. Missing `type` would be a
-				// pre-P3 TaskNode (normalized to `"task"` by the startup migration
-				// in src/tree-type-migration.ts); this load-time fallback is defense
-				// in depth for trees loaded before the daemon ran that migration.
-				const typeField = raw.type;
-				const isGeneralNode =
-					typeof typeField === "string" && typeField !== "task";
-
-				if (isGeneralNode) {
-					// General node — minimal fields + optional metadata
-					const general: GeneralNode = {
-						id: raw.id as string,
-						title: raw.title as string,
-						parentId: raw.parentId as string | null,
-						children: raw.children as string[],
-						type: typeField as string,
-						...(raw.metadata !== undefined
-							? { metadata: raw.metadata as Record<string, unknown> }
-							: {}),
-					};
-					this.nodes.set(general.id, general);
-				} else {
-					// Task node — full fields with migrations
+				// Discriminator: `type === "task"` → TaskNode; any other string →
+				// GeneralNode. Every node must have an explicit `type` — saves
+				// always write it (see `createNode` / `addGeneralNode`). A missing
+				// `type` means the tree.json predates P3 and was never migrated,
+				// or a bug wrote a typeless node — fail loud rather than silently
+				// treat it as a general node with `type: undefined`.
+				if (raw.type === "task") {
 					const node = raw as unknown as TaskNode & {
 						persistent?: unknown;
 					};
 					node.costUsd ??= 0;
 					node.editedBy ??= "agent";
 					node.cwd ??= null;
-					node.type = "task"; // normalize pre-P3 shapes missing `type`
 					// Migration: strip legacy persistent field
 					delete (node as unknown as Record<string, unknown>).persistent;
 					// Migrate: "passed" → "verify" (two-phase done() lifecycle)
@@ -72,6 +54,22 @@ export class TaskTracker {
 						node.status = "verify";
 					}
 					this.nodes.set(node.id, node as TaskNode);
+				} else if (typeof raw.type === "string") {
+					const general: GeneralNode = {
+						id: raw.id as string,
+						title: raw.title as string,
+						parentId: raw.parentId as string | null,
+						children: raw.children as string[],
+						type: raw.type,
+						...(raw.metadata !== undefined
+							? { metadata: raw.metadata as Record<string, unknown> }
+							: {}),
+					};
+					this.nodes.set(general.id, general);
+				} else {
+					throw new Error(
+						`tree.json node ${String(raw.id)} is missing 'type' — every node must have an explicit discriminator (expected "task" or a plugin-defined string)`,
+					);
 				}
 			}
 			this._rootNodeId = data.rootNodeId;

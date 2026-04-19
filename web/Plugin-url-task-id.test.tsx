@@ -100,6 +100,7 @@ describe("Plugin — path-based routing (Task Y)", () => {
 						children: [],
 						status: "pending",
 						description: "",
+						type: "task",
 					},
 				],
 			}),
