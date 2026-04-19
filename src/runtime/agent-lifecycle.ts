@@ -368,10 +368,6 @@ async function createAgentContext(
 export interface RunChildCoreParams {
 	/** The agent provider to use for streaming. */
 	provider: AgentProvider;
-	/** @deprecated No longer used — done() is detected by the provider loop. Kept for caller compat. */
-	tracker?: TaskTracker;
-	/** @deprecated No longer used — done() is detected by the provider loop. Kept for caller compat. */
-	taskId?: string;
 	/** Pre-created MessageQueue for the child. If omitted, a new one is created. */
 	queue?: MessageQueue;
 	/** Full AgentRequest to pass to provider.stream(). Queue will be set on the request. */
@@ -1102,8 +1098,6 @@ export async function runAgentForNode(
 		} else {
 			agentResult = await runChildCore({
 				provider: agentCtx.provider,
-				tracker,
-				taskId: nodeId,
 				queue: childQueue,
 				sessionRequest,
 			});

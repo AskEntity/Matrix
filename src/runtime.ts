@@ -40,11 +40,7 @@ import {
 } from "./types.ts";
 
 // Re-export RuntimeConfig so tests can import from runtime.ts.
-// Alias exported as DaemonConfig for backward compat with external imports.
-export type {
-	RuntimeConfig,
-	RuntimeConfig as DaemonConfig,
-} from "./runtime/context.ts";
+export type { RuntimeConfig } from "./runtime/context.ts";
 
 import { GIT_HASH, VERSION } from "./version.ts";
 

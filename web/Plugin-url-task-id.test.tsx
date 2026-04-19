@@ -85,7 +85,8 @@ describe("Plugin — path-based routing (Task Y)", () => {
 			]),
 		);
 		// Write tree.json so useTasks resolves with a proper root.
-		const treeDir = join(dataDir, "projects", projectId);
+		// Matrix plugin dataRoot is `@/plugin/matrix` — tracker reads from there.
+		const treeDir = join(dataDir, "projects", projectId, "plugin", "matrix");
 		await mkdir(treeDir, { recursive: true });
 		await writeFile(
 			join(treeDir, "tree.json"),

@@ -34,7 +34,6 @@ function userMessageEvent(
 	opts?: {
 		ts?: number;
 		images?: Array<{ base64: string; mediaType: string }>;
-		header?: string;
 	},
 ): Event {
 	return {
@@ -48,7 +47,6 @@ function userMessageEvent(
 			ts: opts?.ts ?? 0,
 			content,
 			...(opts?.images?.length ? { images: opts.images } : {}),
-			...(opts?.header ? { header: opts.header } : {}),
 		},
 	};
 }
@@ -62,7 +60,6 @@ function taskMessageEvent(
 		ts?: number;
 		title?: string;
 		requestReply?: boolean;
-		header?: string;
 	},
 ): Event {
 	return {
@@ -81,7 +78,6 @@ function taskMessageEvent(
 			...(opts?.requestReply != null
 				? { requestReply: opts.requestReply }
 				: {}),
-			...(opts?.header ? { header: opts.header } : {}),
 		},
 	};
 }
@@ -161,15 +157,14 @@ const TINY_PNG =
 // Expected timestamp-prefixed text for a user message.
 // formatEventForAI: `[HH:MM:SS] ${formatBodyForAI(body)}`
 // ts=0 → [00:00:00] (UTC time, en-GB locale)
-function userText(ts: number, content: string, header?: string): string {
+function userText(ts: number, content: string): string {
 	const hh = new Date(ts).toLocaleTimeString("en-GB", {
 		hour: "2-digit",
 		minute: "2-digit",
 		second: "2-digit",
 		hour12: false,
 	});
-	const body = header ? `${header}\n\n${content}` : content;
-	return `[${hh}] ${body}`;
+	return `[${hh}] ${content}`;
 }
 
 function taskMessageText(
@@ -177,7 +172,7 @@ function taskMessageText(
 	fromTaskId: string,
 	fromTitle: string,
 	content: string,
-	opts?: { title?: string; requestReply?: boolean; header?: string },
+	opts?: { title?: string; requestReply?: boolean },
 ): string {
 	const hh = new Date(ts).toLocaleTimeString("en-GB", {
 		hour: "2-digit",
@@ -187,9 +182,7 @@ function taskMessageText(
 	});
 	const titleAttr = opts?.title ? ` title="${opts.title}"` : "";
 	const replyAttr = opts?.requestReply ? ' requestReply="true"' : "";
-	const tag = `<task_message from_task="${fromTaskId}" task_name="${fromTitle}"${titleAttr}${replyAttr}>${content}</task_message>`;
-	const body = opts?.header ? `${opts.header}\n\n${tag}` : tag;
-	return `[${hh}] ${body}`;
+	return `[${hh}] <task_message from_task="${fromTaskId}" task_name="${fromTitle}"${titleAttr}${replyAttr}>${content}</task_message>`;
 }
 
 function taskCompleteText(
@@ -978,9 +971,6 @@ describe("walker: onConsumedMessages — idle context (no tool_results)", () => 
 			},
 		]);
 	});
-
-	// "user message with header" test removed — header field deleted.
-	// Context is now delivered via separate work_context messages.
 });
 
 // ── Tests: end-to-end sequences (assistant turn + tool_result + queue) ──

@@ -229,9 +229,8 @@ export function filterByMaxGap(
 /**
  * Resolve the JSONL path for a task.
  *
- * Post-P4 Matrix layout: JSONL files live under
+ * Matrix layout: JSONL files live under
  * `{dataDir}/projects/{projectId}/plugin/matrix/tasks/{taskId}.jsonl`.
- * (Pre-P4 data has been migrated in-place by `migrateToPluginNamespace`.)
  */
 export function resolveTaskJsonlPath(
 	projectId: string,

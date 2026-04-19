@@ -7,7 +7,7 @@ import type {
 	PendingClarification,
 	RuntimeContext,
 } from "./context.ts";
-import { getEventStore, stripEventForUI } from "./helpers.ts";
+import { getEventStore } from "./helpers.ts";
 
 /**
  * Broadcast an event to all observers of a project:
@@ -17,9 +17,7 @@ import { getEventStore, stripEventForUI } from "./helpers.ts";
  * The event is ephemeral here — no persistence. Callers that need both
  * broadcast AND JSONL persistence should use emitEvent() instead.
  *
- * Subscribers receive the RAW event object (pre-strip). The daemon receives
- * the UI-stripped object for SSE fanout. A subscriber throwing is logged but
- * does not interrupt the broadcast.
+ * A subscriber throwing is logged but does not interrupt the broadcast.
  */
 export function broadcast(
 	ctx: RuntimeContext,
@@ -29,7 +27,7 @@ export function broadcast(
 	// 1. Relay to parent thread (shell) for SSE fanout. Daemon owns the SSE
 	//    protocol (seqId, ring buffer, client set). Worker just forwards.
 	if (ctx.onBroadcast) {
-		ctx.onBroadcast(projectId, stripEventForUI(event));
+		ctx.onBroadcast(projectId, event);
 	}
 
 	// 2. In-process subscribers for this project (O(subs_for_this_project),

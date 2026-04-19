@@ -30,7 +30,6 @@ import {
 	getEventStore,
 	getTracker,
 	// readProjectMemory removed — work_context hook handles context injection
-	stripEventForUI,
 } from "../helpers.ts";
 
 /** Notify each ancestor in the parent chain that the user sent a message to a child task. */
@@ -537,8 +536,8 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 
 		if (afterCompact) {
 			const result = eventStore.readFromLastCompactMarker(nodeId);
-			const events = result.events.map((e) =>
-				stripEventForUI(e as unknown as Record<string, unknown>),
+			const events = result.events.map(
+				(e) => e as unknown as Record<string, unknown>,
 			);
 			return c.json({
 				events: appendPartial(events),
@@ -548,7 +547,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 
 		const events = eventStore
 			.read(nodeId)
-			.map((e) => stripEventForUI(e as unknown as Record<string, unknown>));
+			.map((e) => e as unknown as Record<string, unknown>);
 		return c.json({ events: appendPartial(events), hasOlderEvents: false });
 	});
 

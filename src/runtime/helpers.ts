@@ -233,28 +233,3 @@ export async function pruneSessionFiles(
 		return { pruned: 0, remaining: 0 };
 	}
 }
-
-/**
- * Strip fields from an event that the UI doesn't need before SSE broadcast.
- *
- * Transitional: new events no longer carry `body.header` (the memory.md
- * prelude). But JSONL sessions created before the header-removal migration
- * can still replay events with the old shape; this defensively drops it so
- * the UI and cache layer never see 10-20 KB of redundant prelude text.
- *
- * Safe to remove once we're confident no pre-migration sessions remain.
- */
-export function stripEventForUI(
-	event: Record<string, unknown>,
-): Record<string, unknown> {
-	if (
-		event.type === "message" &&
-		event.body &&
-		typeof event.body === "object" &&
-		"header" in (event.body as Record<string, unknown>)
-	) {
-		const { header: _, ...bodyRest } = event.body as Record<string, unknown>;
-		return { ...event, body: bodyRest };
-	}
-	return event;
-}

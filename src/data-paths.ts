@@ -136,9 +136,7 @@ export function projectDebugDir(
  * Built on top of {@link resolveDataRoot}.
  *
  * For Matrix (dataRoot `"@/plugin/matrix"`) this returns
- * `<dataDir>/projects/<id>/plugin/matrix/tree.json`. The historical top-level
- * `projects/<id>/tree.json` layout is migrated once at daemon startup — see
- * `src/migrations/plugin-namespace-migration.ts`.
+ * `<dataDir>/projects/<id>/plugin/matrix/tree.json`.
  */
 export function projectTreeJsonPath(
 	dataDir: string,

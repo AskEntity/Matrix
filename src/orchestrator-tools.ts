@@ -21,7 +21,6 @@ import {
 	createTreeChange,
 } from "./queue-message-factory.ts";
 import * as R from "./resource-registry.ts";
-import { stripEventForUI } from "./runtime/helpers.ts";
 import {
 	closeTaskOp,
 	createTaskOp,
@@ -120,7 +119,6 @@ function getProjectPath(projectId: string, taskId: string | null): string {
  * - Strip thinking `signature` (base64 blobs external clients don't need)
  * - Filter out `usage` events (token counts not useful for observers)
  * - Optionally replace tool_result content with a short summary
- * - Strip message header (memory.md content) via stripEventForUI
  */
 function stripEventsForLogs(
 	events: unknown[],
@@ -132,7 +130,7 @@ function stripEventsForLogs(
 		// Drop usage events entirely
 		if (e.type === "usage") continue;
 
-		let processed = stripEventForUI(e);
+		let processed: Record<string, unknown> = e;
 
 		// Strip signature from thinking events
 		if (processed.type === "thinking") {
