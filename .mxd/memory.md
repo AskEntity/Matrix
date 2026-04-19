@@ -2091,29 +2091,9 @@ callers pass `"folder"`; tests for other plugins can pass any string.
 
 User-facing tool names unchanged: `create_folder`, `delete_folder`,
 `rename_folder`. Internals call `tracker.addGeneralNode(title, parent,
-"folder")`. This is matrix-specific syntactic sugar on top of the
-general-node API. Agents cannot create generic GeneralNodes via MCP;
-matrix-plugin decides what kinds its agents can create.
-
-### One-shot type-normalization migration
-
-`src/tree-type-migration.ts` → `migrateTreeNodeTypes(dataDir)` scans
-every `<dataDir>/projects/*/plugin/matrix/tree.json`, injects
-`type: "task"` on any node missing `type`, leaves folder nodes alone.
-Called from `createDaemon` after `pm.load()`, before worker startup.
-Idempotent. Runs once per daemon boot — zero-cost no-op once data is
-normalized. May be deleted in a later cleanup round.
-
-Same slot as the deleted P4 plugin-namespace migration. Identical
-semantic: read-once, write-if-changed, log summary, don't crash if
-tree.json is malformed.
-
-### Tree.json shape
-
-Every node in the file carries explicit `type`. Old installs without
-`type` on TaskNodes get normalized by the P3 migration on first boot.
-`task-tracker.ts` load() ALSO injects `type: "task"` as defense in depth
-(so an unmigrated tree still loads).
+"folder")`. Matrix-specific syntactic sugar on the general-node API.
+Agents cannot create generic GeneralNodes via MCP; matrix-plugin
+decides what kinds its agents can create.
 
 ### Invariants locked in
 
@@ -2121,25 +2101,22 @@ Every node in the file carries explicit `type`. Old installs without
   fallback idioms).
 - `GeneralNode.type: string` — any string except `"task"`.
 - `TaskTracker.addGeneralNode` throws if called with `"task"`.
-- Runtime never reads `metadata` — it's opaque plugin data. No
-  runtime-level validation beyond serialization.
+- `TaskTracker.load()` throws on a node with missing `type`. Every save
+  writes `type` explicitly — a typeless node means corrupted tree.json
+  or a bug, not "legacy data".
+- Runtime never reads `metadata` — it's opaque plugin data.
 
 ### What did NOT change
 
-- tree.json serialization format (other than the `type` field on task
+- tree.json serialization format (other than `type` now present on task
   entries, which was previously absent).
 - MCP tool names (`create_folder` etc. preserved — matrix-plugin surface).
 - Folder UX / UI rendering / drag-and-drop / lifecycle rejection.
 - `getTaskAbove` / `getTasksBelow` / transparent ownership walks.
 
-### Tests added
+### Tests
 
-- `src/general-node.test.ts` — 10 tests exercising the probe-typed
-  GeneralNode ("probe", non-folder) through save/load, ownership walks,
-  tracker helpers. Proves the generalization works outside matrix's
-  folder-only world.
-- `src/tree-type-migration.test.ts` — 10 tests covering happy path,
-  idempotency, multi-project, folder preservation, malformed input,
-  dotfile skip.
-
-Total test count after P3: 2201 pass (was 2180 on main). No failures.
+`src/general-node.test.ts` — 10 tests exercising a probe-typed
+GeneralNode (`type: "probe"`) through save/load, ownership walks,
+tracker helpers. Proves generalization works outside matrix's
+folder-only world.
