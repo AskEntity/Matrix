@@ -1999,3 +1999,100 @@ the file: both FAIL on main, both PASS with the fix.
 - Don't remove `appendFile` from the `node:fs/promises` import —
   `copySessionFrom` still uses it (different path, no `clear()` race
   because fork has structural exclusion with reset at the task level).
+
+## Plugin-namespace storage layout (P4, 2026-04-19)
+
+Matrix's per-project runtime data now lives in a plugin-namespaced subdirectory
+rather than at the project top-level. This completes the "matrix is just a
+plugin" framing started in P2 (dataRoot infrastructure): matrix's files share
+the same shape any future plugin already uses.
+
+### Layout
+
+**Before P4** (historical special-case from when matrix was the only plugin):
+```
+~/.mxd/projects/<projectId>/
+├── config.json      (daemon-owned)
+├── tree.json
+├── tasks/<taskId>.jsonl
+└── debug/<taskId>/<traceId>/last.json
+```
+
+**After P4**:
+```
+~/.mxd/projects/<projectId>/
+├── config.json      (unchanged — daemon-owned, not migrated)
+└── plugin/matrix/
+    ├── tree.json
+    ├── tasks/<taskId>.jsonl
+    └── debug/<taskId>/<traceId>/last.json
+```
+
+A future `story1001` plugin with `dataRoot` defaulting to `@/plugin/story1001`
+parks its own data at `projects/<id>/plugin/story1001/`, right next to matrix.
+No top-level collision possible.
+
+### Mechanism
+
+The move is driven by **matrix's manifest** in `.mxd/plugin/index.ts`:
+`dataRoot: "@/plugin/matrix"` (was `"@"`). All path construction — `getTracker`,
+`getEventStore`, `projectDebugDir`, the new `projectTreeJsonPath` — reads this
+through `ctx.config.dataRoot` and routes through `resolveDataRoot` in
+`src/data-paths.ts`. **The resolver stays the single source of truth** (the
+`data-paths.test.ts` "ONLY data-paths.ts performs .slice(2)" grep test still
+guards this).
+
+**New helper**: `projectTreeJsonPath(dataDir, projectId, dataRoot?)` in
+`data-paths.ts`, parallel to the existing `projectTasksDir` / `projectDebugDir`.
+Used by `runtime/helpers.ts:getTracker` — replaced the inline
+`join(projectDir, "tree.json")`.
+
+### One-shot migration
+
+`src/migrations/plugin-namespace-migration.ts` exports
+`migrateToPluginNamespace(dataDir)`. It:
+1. Lists `<dataDir>/projects/*/` directly from disk (no `pm.load` dependency —
+   handles hand-added or orphaned project dirs).
+2. For each project: if `plugin/matrix/tree.json` already exists, **skip**.
+   Otherwise `mkdir plugin/matrix/` and `renameSync` `tree.json` / `tasks/` /
+   `debug/` into it. `config.json` is never touched.
+3. Collects a per-project result (`migrated` / `skipped` / `error`) and returns
+   a summary.
+
+**Where it runs**: `src/daemon.ts` calls it right after `await pm.load()`. The
+timing constraint is that it MUST run before `startWorkerForPlugin` (worker's
+`autoResumeProjects` reads `tree.json`). `loadGlobalConfig` and `pm.load`
+both only read `~/.mxd/config.json` and `~/.mxd/projects.json` respectively —
+neither touches per-project data. Auth init, plugin discovery, and worker
+startup all happen strictly later, so the migration is safe to run here and
+every subsequent boot sees the new layout.
+
+**Properties**:
+- **Idempotent**: second run is a no-op (guarded by `plugin/matrix/tree.json`
+  existence check — NOT by a sentinel file).
+- **Per-project isolation**: an error on one project logs + continues. We
+  deliberately do NOT design for crash-mid-migration ("一次成功就好"). A
+  half-moved project is a genuine FS error, not something to recover from.
+- **No read-side fallback** for old paths. After one successful boot, only
+  the new paths are read. Deleting the fallback is the whole point.
+
+### Gotchas
+
+- **Don't add a back-compat read-path.** If `plugin/matrix/tree.json` doesn't
+  exist, it genuinely doesn't — fresh project or migration failure. Adding a
+  "check top-level as fallback" branch re-introduces the two-codepath trap
+  matrix spent years untangling.
+- **CLI tools that read JSONL directly** (e.g. `resolveTaskJsonlPath` in
+  `cli-analyze-cache.ts`) must call `projectTasksDir(dataDir, projectId,
+  "@/plugin/matrix")` — not hardcode the `projects/<id>/tasks/` path. Matrix
+  is the only consumer of that helper today, so embedding the dataRoot string
+  is fine; if more plugins need similar post-hoc tools, pass it as an arg.
+- **In-process test harnesses** (`createApp` called without `dataRoot`) use
+  the project-root layout by design. They exercise runtime semantics, not
+  the matrix-plugin manifest layout. Tests that hardcode `projects/<id>/
+  tree.json` in those harnesses stay correct.
+- **Daemon-level tests** go through `createDaemon` → plugin discovery reads
+  the manifest → matrix's `@/plugin/matrix` takes effect. A daemon-level
+  test that hardcodes old paths will break; use `projectTreeJsonPath` with
+  `ctx.config.dataRoot` (as done in `src/integration.test.ts` root-branch
+  persistence test).

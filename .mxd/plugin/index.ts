@@ -104,7 +104,13 @@ function exec(cmd: string[], cwd: string): Promise<void> {
 const manifest: PluginManifest = {
 	name: "matrix",
 	scope: "global",
-	dataRoot: "@",
+	// Matrix used to live at the project root (dataRoot: "@") — a historical
+	// special case from when matrix was the only plugin. With the "matrix is
+	// just a plugin" framing, its runtime data (tree.json, tasks/, debug/)
+	// lives in its own namespace alongside any future plugin.
+	// Pre-existing data is moved into this layout by
+	// `migrateToPluginNamespace` at daemon startup — one-shot, idempotent.
+	dataRoot: "@/plugin/matrix",
 	web: "./web/Plugin.tsx",
 	runtime: "./runtime.ts",
 

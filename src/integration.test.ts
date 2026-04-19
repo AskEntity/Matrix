@@ -8693,8 +8693,15 @@ describe("Default branch", () => {
 		await tracker.save();
 
 		// Verify the saved tree.json has the branch persisted.
+		// Matrix's runtime data lives under plugin/matrix/ (P4 layout) — the
+		// test context uses matrix's dataRoot so tree.json is inside it.
 		const { readFile } = await import("node:fs/promises");
-		const treePath = join(ctx.dataDir, "projects", ctx.projectId, "tree.json");
+		const { projectTreeJsonPath } = await import("./data-paths.ts");
+		const treePath = projectTreeJsonPath(
+			ctx.dataDir,
+			ctx.projectId,
+			ctx.app.ctx.config.dataRoot,
+		);
 		const raw = JSON.parse(await readFile(treePath, "utf-8"));
 		const rootInJson = raw.nodes.find(
 			(n: { id: string }) => n.id === tracker.rootNodeId,
