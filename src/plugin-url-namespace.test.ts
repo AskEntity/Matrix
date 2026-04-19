@@ -139,7 +139,18 @@ describe("daemon /api/<plugin>/* forwarding", () => {
 			dataDir,
 			autoRegisterSelf: false,
 		});
-	}, 15000);
+		// Timeout aligned with production WORKER_INIT_TIMEOUT_MS (30s).
+		// Measured beforeAll: ~130-220ms cold/warm, peak ~350ms under heavy
+		// CPU contention (24 stress workers + 4 parallel `bun test` instances).
+		// Worker startup is the dominant variable contributor (~110-210ms).
+		// The previous 15s budget had >40x headroom over normal but flaked
+		// on extreme-rare scheduler stalls. 30s matches the daemon's own
+		// WORKER_INIT_TIMEOUT_MS so the test's failure mode mirrors
+		// production's: if a worker truly hangs >30s, the daemon's reject
+		// fires first and the test surfaces the meaningful error
+		// "Worker init timed out: worker-a (>30000ms)" instead of a generic
+		// "beforeAll timed out".
+	}, 30000);
 
 	afterAll(async () => {
 		await daemon?.shutdown();
