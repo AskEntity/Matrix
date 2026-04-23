@@ -454,6 +454,18 @@ export class ValidatingMockResponsesAPI {
 						part: { type: "output_text", text: block.text },
 					},
 				});
+				// Emit the text delta — real Responses API streams the full output_text
+				// via one or more `response.output_text.delta` events between
+				// content_part.added and content_part.done. We emit a single delta
+				// carrying the whole text (tests don't need per-token granularity).
+				events.push({
+					event: "response.output_text.delta",
+					data: {
+						output_index: index,
+						item_id: `msg-${index}`,
+						delta: block.text,
+					},
+				});
 				outputItems.push(msgItem);
 			} else {
 				const args = JSON.stringify(block.input);

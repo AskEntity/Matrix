@@ -2120,3 +2120,142 @@ decides what kinds its agents can create.
 GeneralNode (`type: "probe"`) through save/load, ownership walks,
 tracker helpers. Proves generalization works outside matrix's
 folder-only world.
+
+## LLM Facility — stateless single-turn LLM for plugins (2026-04-23)
+
+`src/llm.ts` — a thin, provider-agnostic wrapper around the existing provider
+adapters. For plugins that need individual LLM calls outside the agent loop
+(pipelines, one-shot generation, classifiers). **Strictly single-turn, no
+tools, no session state.**
+
+### Surface
+
+```ts
+createLLM({ authGroup, model, defaultThinkingEffort? }): LLMClient
+runLLM(config, req): Promise<LLMResult>
+streamLLM(config, req): AsyncIterable<LLMChunk>
+```
+
+`LLMChunk`:
+```ts
+| { type: "text_delta"; delta: string }
+| { type: "thinking_delta"; delta: string }  // Anthropic only in v1
+| { type: "final"; text; thinking?; usage; stopReason }
+```
+
+`LLMRequest`: `{ system?, user? | messages?, maxTokens?, thinkingEffort?, signal? }`
+— exactly one of `user` / `messages`. No image input, no tool_use.
+
+### Plugin idiom
+
+```ts
+import { createLLM } from "matrix/src/llm.ts";
+import { resolveAuthGroup } from "matrix/src/config.ts";
+
+const authGroup = resolveAuthGroup(effectiveCfg);
+if (!authGroup) throw new Error("No auth group configured");
+const llm = createLLM({
+  authGroup,
+  model: effectiveCfg.model,
+  defaultThinkingEffort: effectiveCfg.thinkingEffort,  // plugin resolves once
+});
+const { text } = await llm.run({ system: "...", user: "..." });
+```
+
+**Plugin resolves from MatrixConfig itself**. The facility stays decoupled
+from `MatrixConfig`/`RuntimeContext` shape — it only knows `AuthGroup`, model
+string, and thinking effort number. Per-call `thinkingEffort` overrides the
+default; unset → uses `defaultThinkingEffort` → unset → 0 (no thinking).
+
+### Reuse strategy (audit-driven)
+
+Leverages existing runtime aggressively — the facility is ~180 LOC of wiring
+over existing adapter code:
+
+1. **`adapter.callAPI`** (reuse) — already yields `text_delta`/`thinking_delta`
+   and returns the raw SDK response. Facility drives it, normalizes chunks,
+   extracts `final`. Two factory functions exposed via `export`:
+   `createAnthropicAdapter`, `createOpenAIResponsesAdapter`.
+2. **`adapter.buildResponseEvents(response, false)`** (reuse for Anthropic
+   thinking extraction) — filter for `type: "thinking" && !redacted` events,
+   concat. Redacted blocks dropped silently.
+3. **`adapter.getTokenUsage` / `computeCost` / `getResponseText`** (reuse).
+4. **`requestToRoleList`** — single helper maps `LLMRequest` to
+   `[{role, content: string}]`. Both Anthropic's `MessageParam` and Matrix's
+   OpenAI `HistoryMessage` accept this shape natively — no
+   `buildAnthropicMessages`/`buildOpenAIMessages` wrappers needed.
+5. **OpenAI reasoning extraction** — NEW code (~15 lines). No existing
+   walker emits reasoning events for OpenAI Responses (only `message` and
+   `function_call` surface in `buildResponseEvents`). Walks
+   `response.output[].type === "reasoning"` items directly for `final.thinking`.
+6. **Stop reason mapping** — NEW (~20 lines total across both providers).
+   `adapter.getStopReason` returns `"end_turn" | "tool_use"` — too coarse
+   for facility (can't distinguish `max_tokens`). Facility maps explicitly.
+7. **SDK client construction** — DUPLICATED from provider class
+   constructors (~40 lines). Not extracted this round (scope). Beta headers
+   and timeout match `AnthropicCompatibleProvider` exactly. Note: any
+   future change to beta headers must update BOTH the class constructor
+   AND `createAnthropicClient` in `src/llm.ts`.
+
+### Error / retry / abort
+
+- Transient errors auto-retried by the SDK (5 attempts × exponential
+  backoff), inherited from `callAPI`. No outer retry — caller can layer
+  their own if they want more.
+- Non-transient errors (401, 400) throw immediately.
+- `signal.abort()` throws from the SDK; propagates as a thrown error from
+  `run()` / mid-iteration in `stream()`.
+- No `error` chunk in v1. Errors are exceptions.
+- `max_tokens` hit → text still returned; `stopReason: "max_tokens"`
+  signals truncation. Does NOT throw.
+
+### What's NOT pulled in (by design)
+
+Agent-loop concerns stay out: MessageQueue, JSONL EventStore, MCP tools,
+`runProviderLoop`, compaction, budget, work context, debug snapshot,
+session_config, session identity (fresh random sessionId per call — it's
+used only for mock test-conversation keying inside `adapter.callAPI`'s
+side channel, never visible to production).
+
+`cache_control` breakpoints still emitted by `callAPI` on every call. 
+Harmless for single-shot (nothing repeats to hit the cache), just a few
+extra bytes per request.
+
+### systemPreamble is honored
+
+`AnthropicAuthGroup.systemPreamble` is passed through to
+`createAnthropicAdapter` opts → prepended as first system block. A plugin
+using the facility sees the same preamble an agent-loop call would. OpenAI
+has no equivalent; `OpenAIAuthGroup` has no `systemPreamble` field.
+
+### Testing discipline
+
+Mocks must set `sessionId` for Anthropic (ValidatingMockAPI requires it
+for conversation keying). Facility generates a fresh ULID internally and
+passes it to `adapter.callAPI`, which writes it onto
+`client._currentSessionId` (side channel). Mock picks it up from there.
+
+OpenAI mock intercepts `globalThis.fetch` globally — facility has nothing
+to configure; construction via `createLLM` with the mock fetch installed
+just works.
+
+Anthropic test pattern uses `_createLLMFromAnthropicClient(mockClient, ...)`
+— test-only internal export that bypasses `createAnthropicClient`'s
+credential resolution. Do not import from production code.
+
+### OpenAI Responses mock: `response.output_text.delta`
+
+`ValidatingMockResponsesAPI.buildTurnResponse` now emits a single
+`response.output_text.delta` event per text block (between `content_part.added`
+and `response.completed`). Real Responses API streams the output_text via one
+or more delta events; the mock produces one delta carrying the whole text.
+This makes the mock more accurate without breaking existing tests (they check
+final content, not per-token granularity).
+
+### Files
+
+- `src/llm.ts` — ~560 LOC (incl. JSDoc)
+- `src/llm.test.ts` — 18 tests, all providers × run/stream × error/abort paths
+- `src/anthropic-compatible-provider.ts` — 1 line changed (`export function createAnthropicAdapter`)
+- `src/openai-responses-compatible-provider.ts` — 1 line changed (`export function createOpenAIResponsesAdapter`)
+- `src/test-utils/mock-openai-responses-api.ts` — +10 lines (delta emission)

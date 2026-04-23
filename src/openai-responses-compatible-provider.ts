@@ -535,7 +535,7 @@ export async function* streamResponsesAPI(params: {
 	throw new Error("Stream ended without response.completed event");
 }
 
-function createOpenAIResponsesAdapter(
+export function createOpenAIResponsesAdapter(
 	baseUrl: string,
 	authToken: string,
 	accountId?: string,
