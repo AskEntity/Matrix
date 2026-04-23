@@ -377,7 +377,7 @@ function mapThinkingEffort(
 	return { effort: "max" };
 }
 
-function createAnthropicAdapter(
+export function createAnthropicAdapter(
 	client: Anthropic,
 	useOAuth: boolean,
 	opts?: {
