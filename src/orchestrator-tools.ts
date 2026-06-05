@@ -29,7 +29,7 @@ import {
 	resetTaskOp,
 	updateTaskOp,
 } from "./task-operations.ts";
-import { getDescendantIds, slugify } from "./task-utils.ts";
+import { getDescendantIds } from "./task-utils.ts";
 import type { Auth } from "./tool-auth.ts";
 import { checkPermission } from "./tool-auth.ts";
 import { defineTool, toToolDefinition } from "./tool-def.ts";
@@ -793,7 +793,17 @@ export function buildAllToolDefs() {
 					};
 
 				try {
-					// Create worktree if needed
+					// Pre-flight gates for a fresh child (no worktree yet). The worktree
+					// itself is created by beforeChildLaunch (via deliverMessage →
+					// ensureChildAgentRunning) under the launch lock. This handler used to
+					// ALSO create the worktree inline here — a SECOND `git worktree add`
+					// path that raced the launch path for the same node (two quick UI POSTs,
+					// REST-vs-send_message, or two send_message calls in one turn) →
+					// duplicate `git worktree add` → bogus task_complete(failed) to the
+					// parent (B-H2). Worktree creation now has ONE owner (beforeChildLaunch,
+					// existsSync-guarded). We keep only the user-facing pre-flight gates that
+					// beforeChildLaunch doesn't perform (clean working tree) or reports less
+					// clearly (current task has a branch to fork from).
 					if (!node.worktreePath) {
 						const projPath = getProjectPath(projectId, senderTaskId);
 						const gitCheck = await isGitClean(projPath);
@@ -819,12 +829,6 @@ export function buildAllToolDefs() {
 								],
 								isError: true,
 							};
-						const repoPath = R.getProject(projectId)?.path ?? "";
-						const slug = slugify(node.title);
-						const wtRoot = join(repoPath, ".worktrees");
-						const wm = new WorktreeManager(repoPath, wtRoot);
-						const wt = await wm.create(node.id, slug, currentNode.branch);
-						tracker.assignWorktree(node.id, wt.branch, wt.path);
 					}
 
 					// No header needed — work_context injected by enqueue hook on fresh sessions
@@ -839,6 +843,11 @@ export function buildAllToolDefs() {
 						},
 					);
 
+					// deliverMessage auto-launches the child: ensureChildAgentRunning →
+					// beforeChildLaunch creates the worktree (under the launch lock) before
+					// the agent runs. The branch name isn't known synchronously here (it's
+					// derived during async creation), so the success string no longer reports
+					// it for a fresh task.
 					await R.deliverMessage(projectId, targetTaskId, queueMessage);
 
 					return {
@@ -847,7 +856,7 @@ export function buildAllToolDefs() {
 								type: "text",
 								text: hasPriorContext
 									? `Message sent to task "${node.title}" (${targetTaskId})`
-									: `Started task "${node.title}" (${targetTaskId}) on branch ${node.branch}`,
+									: `Started task "${node.title}" (${targetTaskId})`,
 							},
 						],
 					};

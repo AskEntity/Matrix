@@ -33,6 +33,8 @@ import { basename, join } from "node:path";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
+import { createCompactMessage } from "./queue-message-factory.ts";
+import { deliverMessage } from "./runtime/agent-lifecycle.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { initTestProject } from "./test-utils/init-test-project.ts";
 import {
@@ -3187,23 +3189,112 @@ describe("Drift: compaction lifecycle", () => {
 		// built instead of creating a separate user message.
 	});
 
-	// Sibling bug (not yet fixed, hard to reach via integration):
-	// pendingDoneToolCall + compactOnly has the same asymmetry. The pending-done
-	// path at provider-shared.ts line 842 does NOT check for compactOnly — it
-	// always pushes the done tool_result as a user message, then the compact path
-	// pushes summarization → consecutive user → API 400.
+	// B-L9 (FIXED): pendingDoneToolCall + compactOnly. The pending-done resume path
+	// did NOT check compactOnly — it always pushed the done tool_result as its own
+	// user message, then the compact path pushed the summarization instruction as a
+	// SECOND consecutive user message → API 400 ("messages must alternate roles").
 	//
-	// Hard to reach because: compact messages don't persist to JSONL, so after
-	// daemon restart the queue is empty on resume. The only reachable path is
-	// a narrow window between done() Phase 1 and Phase 2 session cleanup,
-	// which rejects /compact via a 404.
-	//
-	// Deferred with the bug #2 walker-drift fix (requires the same structural
-	// change: summarization_request should append to the user turn being built,
-	// not produce a separate user message).
-	test.todo("compact triggered while agent in pending-done (done resume) completes without API 400", () => {
-		// See comment above: very narrow window, hard to reach via integration.
-		// Fix bundled with the pending-yield+regular bug (both need structural
-		// change to summarization_request injection).
-	});
+	// Reaching it deterministically: drive the agent to done() (JSONL ends in a done
+	// tool_call orphan → pendingDoneToolCall on resume), then deliver a compact
+	// message via deliverMessage (which persists it to JSONL with an id, recoverable
+	// by findUnconsumedMessages on launch — unlike the /compact endpoint, which 404s
+	// for a non-running agent). The resume drains ONLY the compact → compactOnly=true
+	// → the fix defers the done tool_result via pendingCompactDoneToolCall so it and
+	// the summarization share ONE user turn. The mock's validateRequest rejects
+	// consecutive user roles, so the bug would surface as an error event + a missing
+	// compact_marker.
+	test("compact triggered while agent in pending-done (done resume) → single user turn, no API 400 (B-L9)", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// 3 yield cycles then done() → messages.length > 4 so the compact path takes
+		// the real summarization-injection branch (not "context too short to compact").
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 2." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 3." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "All done." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "done" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 1");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 2");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 3");
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Deliver a compact message directly: persisted to JSONL (recoverable) and
+		// auto-launches the root → resume into pendingDoneToolCall → drains ONLY the
+		// compact → compactOnly path.
+		await deliverMessage(
+			ctx.app.ctx,
+			{ id: ctx.projectId, path: ctx.projectDir },
+			rootNodeId,
+			createCompactMessage(),
+		);
+
+		// Wait for compaction to complete (compact_marker) — proves the compaction API
+		// call was well-formed (validateRequest did not throw on consecutive user roles).
+		const start = Date.now();
+		let sawCompactMarker = false;
+		let sawAlternateError = false;
+		while (Date.now() - start < 12000) {
+			const events = await readSessionEvents(ctx, rootNodeId);
+			sawCompactMarker = events.some((e: Event) => e.type === "compact_marker");
+			sawAlternateError = events.some(
+				(e: Event) =>
+					e.type === "error" &&
+					typeof e.message === "string" &&
+					/alternate roles|must alternate/i.test(e.message),
+			);
+			if (sawCompactMarker || sawAlternateError) break;
+			await new Promise((r) => setTimeout(r, 100));
+		}
+
+		// WITHOUT the fix: the compaction request has two consecutive user messages →
+		// MockValidationError ("messages must alternate roles") → error event, and
+		// compaction never completes (no compact_marker).
+		expect(sawAlternateError).toBe(false);
+		expect(sawCompactMarker).toBe(true);
+
+		// Explicit invariant over EVERY recorded request: no two consecutive same-role
+		// messages. validateRequest enforces this live (it's what would throw without
+		// the fix); asserting it over the history documents the bundling guarantee —
+		// the done tool_result and the summarization text share ONE user turn.
+		for (const rec of ctx.mockAPI.getRequestHistory()) {
+			for (let i = 1; i < rec.messages.length; i++) {
+				expect(rec.messages[i]?.role === rec.messages[i - 1]?.role).toBe(false);
+			}
+		}
+	}, 30000);
 });

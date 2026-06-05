@@ -64,6 +64,31 @@ export { executeTool, isTransientAPIError } from "./tool-execution.ts";
 
 const DEFAULT_MAX_TOKENS = 128000;
 
+/**
+ * Sleep for `ms`, resolving early if `signal` aborts. After it resolves, callers
+ * check `signal.aborted` to decide whether the timer elapsed normally or the wait
+ * was cut short by a stop/reset. The inner per-call retry already does this; the
+ * OUTER retry backoff (30/60/120s) did not — a transient error parked the loop in
+ * a plain setTimeout, so a stop/reset blocked for the full backoff (up to 120s),
+ * exceeding the daemon's 60s worker-forward timeout → 504 + a retry racing the
+ * still-running first reset. (B-M3) The abort listener is removed on both paths so
+ * a long-lived signal reused across retries doesn't accumulate listeners.
+ */
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) return Promise.resolve();
+	return new Promise<void>((resolve) => {
+		const onAbort = () => {
+			clearTimeout(timer);
+			resolve();
+		};
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
 // ── Implicit yield (end_turn with queue) ──
 
 /**
@@ -678,6 +703,14 @@ export async function* runProviderLoop(
 	// the agent called done() and the loop exited (done is an intended orphan).
 	// On wake, write a synthetic tool_result so the message history is well-formed.
 	let pendingDoneToolCall: { id: string; name: string } | null = null;
+	// Done tool_call whose tool_result must be bundled into the summarization user
+	// message (compactOnly done-resume). The done analog of pendingCompactYieldToolCall:
+	// when the ONLY wake message during a done-resume is /compact, pushing the done
+	// tool_result as its own user message AND letting the compact path push the
+	// summarization instruction yields two consecutive user messages → API 400. The
+	// tool_result is emitted to JSONL immediately (orphan prevention); its messages[]
+	// push is DEFERRED until the compact path builds the summarization turn. (B-L9)
+	let pendingCompactDoneToolCall: { id: string; name: string } | null = null;
 	// Detect pending implicit yield from JSONL: last provider content event is assistant_text
 	// (no tool_call after it). The model ended its turn naturally (end_turn) and the agent
 	// was in handleImplicitYield waiting for messages when it died. On resume, bypass to
@@ -880,6 +913,35 @@ export async function* runProviderLoop(
 
 			if (doneResult.manualCompactRequested) {
 				manualCompactRequested = true;
+			}
+
+			if (doneResult.compactOnly) {
+				// B-L9: the ONLY wake message was /compact. Emit the done tool_result
+				// (orphan prevention) with the same "Manual compaction requested" content
+				// the compact path bundles, then DEFER the messages[] push via
+				// pendingCompactDoneToolCall so the summarization instruction shares ONE
+				// user turn — pushing the done tool_result as its own user message here,
+				// then letting the compact block push the summarization, made two
+				// consecutive user messages → API 400. Mirrors the pendingCompactYieldToolCall
+				// fix on the yield path. Order matches JSONL: this tool_result event is
+				// emitted FIRST here; the summarization instruction is pushed by the
+				// compact block.
+				const compactDoneEvt: EventSpec = {
+					type: "tool_result",
+					tool: pendingDoneToolCall.name,
+					toolCallId: pendingDoneToolCall.id,
+					content: "Manual compaction requested",
+					isError: false,
+					ts: Date.now(),
+				};
+				emit?.(compactDoneEvt);
+				yield compactDoneEvt;
+				pendingCompactDoneToolCall = {
+					id: pendingDoneToolCall.id,
+					name: pendingDoneToolCall.name,
+				};
+				pendingDoneToolCall = null;
+				continue;
 			}
 
 			// Write done tool_result with wake context
@@ -1308,11 +1370,15 @@ export async function* runProviderLoop(
 				emit?.(cs2);
 				yield cs2;
 				// Inject summarization instruction as a user message.
-				// If a pending compactOnly-yield tool_call is carried forward, bundle
-				// its tool_result INTO THIS SAME user message — otherwise we'd emit
+				// If a pending compactOnly tool_call (yield OR done) is carried forward,
+				// bundle its tool_result INTO THIS SAME user message — otherwise we'd emit
 				// two consecutive user messages (tool_result + this one) → API 400.
+				// Yield and done are mutually exclusive (a resume ends in one orphan, not
+				// both), so at most one is set. (B-L9 adds the done case.)
 				const summarizationInstruction = request.buildSummarizationPrompt!();
-				if (pendingCompactYieldToolCall) {
+				const pendingCompactToolCall =
+					pendingCompactYieldToolCall ?? pendingCompactDoneToolCall;
+				if (pendingCompactToolCall) {
 					// Build a structured user message: [tool_result, text] via the
 					// walker-delegating buildUserTurn. Walker is the single source of
 					// truth for tool_result user messages → live and reconstruction
@@ -1320,8 +1386,8 @@ export async function* runProviderLoop(
 					const bundledMsgs = adapter.buildUserTurn({
 						toolUses: [
 							{
-								id: pendingCompactYieldToolCall.id,
-								name: pendingCompactYieldToolCall.name,
+								id: pendingCompactToolCall.id,
+								name: pendingCompactToolCall.name,
 								input: {},
 							},
 						],
@@ -1347,6 +1413,7 @@ export async function* runProviderLoop(
 						messages.push(m);
 					}
 					pendingCompactYieldToolCall = null;
+					pendingCompactDoneToolCall = null;
 				} else {
 					(messages as Array<{ role: string; content: string }>).push({
 						role: "user",
@@ -1428,7 +1495,14 @@ export async function* runProviderLoop(
 				};
 				emit?.(retryEvt);
 				yield retryEvt;
-				await new Promise((r) => setTimeout(r, delay));
+				// Abort-aware backoff: a stop/reset during this wait resolves it early
+				// (B-M3). If aborted, abandon the retry loop — the loop's normal abort
+				// handling / session replacement takes over instead of waiting out the
+				// full 120s backoff.
+				await abortableDelay(delay, request.signal);
+				if (request.signal?.aborted) {
+					throw e;
+				}
 			}
 		}
 
