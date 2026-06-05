@@ -128,9 +128,6 @@ export function isGeneral(node: TreeNode): node is GeneralNode {
 	return node.type !== "task";
 }
 
-/** Serialized form of a tree node in tree.json (session stripped). */
-export type SerializedTreeNode = GeneralNode | Omit<TaskNode, "session">;
-
 /** Strip runtime-only session from a TaskNode for serialization. */
 export function stripSession(node: TaskNode): Omit<TaskNode, "session"> {
 	const { session: _, ...rest } = node;

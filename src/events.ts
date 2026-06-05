@@ -402,27 +402,6 @@ export function formatEventForAI(event: Event): string {
 }
 
 /**
- * Format a structured pending section into text for AI consumption.
- * Converts the structured `pending` field on tool_result into the `## Pending` text format.
- */
-export function formatPendingSection(pending: PendingState): string {
-	const runningChildrenText =
-		pending.runningChildren.length > 0
-			? pending.runningChildren.map((c) => `"${c.title}" (${c.id})`).join(", ")
-			: "none";
-	const clarifyText =
-		pending.pendingClarifications > 0
-			? String(pending.pendingClarifications)
-			: "none";
-	return [
-		"",
-		"## Pending",
-		`- Running sub tasks: ${runningChildrenText}`,
-		`- Pending clarifications: ${clarifyText}`,
-	].join("\n");
-}
-
-/**
  * Reconstruct Anthropic-format messages from events.
  * Pure function — no side effects or external dependencies.
  *
@@ -462,27 +441,6 @@ export function findUnconsumedMessages(events: Event[]): QueueMessage[] {
 		}
 	}
 	return unconsumed;
-}
-
-/**
- * Check if the last tool_call in events is a yield with no matching tool_result.
- * This means the agent was in yield state when the daemon restarted.
- * When a yield is pending, NOTHING should be written to JSONL after the yield
- * tool_call — the provider loop handles yield resolution at resume time.
- * External events (bg_complete, etc.) should go to the queue instead.
- */
-export function hasPendingYield(events: Event[]): boolean {
-	const lastToolCall = [...events]
-		.reverse()
-		.find((e) => e.type === "tool_call");
-	if (lastToolCall?.type === "tool_call" && lastToolCall.tool === TOOL_YIELD) {
-		const hasResult = events.some(
-			(e) =>
-				e.type === "tool_result" && e.toolCallId === lastToolCall.toolCallId,
-		);
-		return !hasResult;
-	}
-	return false;
 }
 
 /**

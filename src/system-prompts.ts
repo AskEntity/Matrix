@@ -434,13 +434,3 @@ export function buildSystemPrompt(opts?: {
 	};
 }
 
-/**
- * Combine stable + variable into a single system prompt string.
- * Used when passing to the provider API which expects a single string.
- */
-export function combineSystemPrompt(parts: {
-	stable: string;
-	variable: string;
-}): string {
-	return `${parts.stable}\n\n${parts.variable}`;
-}
