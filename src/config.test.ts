@@ -4,12 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	DEFAULT_CONFIG,
+	loadGlobalConfig,
 	loadProjectLocalConfig,
 	loadProjectRepoConfig,
 	type MatrixConfig,
 	type ProjectConfig,
 	resolveAuthGroup,
 	resolveConfig,
+	saveGlobalConfig,
 	saveProjectLocalConfig,
 } from "./config.ts";
 
@@ -345,5 +347,56 @@ describe("file loading", () => {
 		const loaded = await loadProjectLocalConfig(tmpDir, projectId);
 		expect(loaded.model).toBe("claude-4");
 		expect(loaded.mcpServers?.test?.command).toBe("test-cmd");
+	});
+});
+
+// ── loadGlobalConfig: distinguish "fresh install" from "corrupt config" ──
+// (cc#4 defense-in-depth) A missing file is a fresh install → defaults. But a
+// file that exists yet is corrupt/incomplete must throw — silently returning
+// defaults would let the next save overwrite real credentials with nothing.
+
+describe("loadGlobalConfig", () => {
+	let tmpDir: string;
+
+	beforeEach(async () => {
+		tmpDir = await mkdtemp(join(tmpdir(), "mxd-gconfig-test-"));
+	});
+
+	afterEach(async () => {
+		await rm(tmpDir, { recursive: true, force: true });
+	});
+
+	test("missing file → returns DEFAULT_CONFIG (fresh install)", async () => {
+		const loaded = await loadGlobalConfig(join(tmpDir, "config.json"));
+		expect(loaded).toEqual(DEFAULT_CONFIG);
+	});
+
+	test("complete config → loaded as-is", async () => {
+		const path = join(tmpDir, "config.json");
+		await saveGlobalConfig({ ...DEFAULT_CONFIG, model: "custom-model" }, path);
+		const loaded = await loadGlobalConfig(path);
+		expect(loaded.model).toBe("custom-model");
+	});
+
+	test("config missing a required field → throws (does NOT return defaults)", async () => {
+		const path = join(tmpDir, "config.json");
+		// Has credentials but is missing required fields (e.g. `model`).
+		await writeFile(
+			path,
+			JSON.stringify({
+				authGroups: {
+					main: { provider: "anthropic", apiKey: "sk-secret-123" },
+				},
+			}),
+		);
+		await expect(loadGlobalConfig(path)).rejects.toThrow(
+			/missing required fields/i,
+		);
+	});
+
+	test("corrupt JSON → throws (does NOT silently return defaults)", async () => {
+		const path = join(tmpDir, "config.json");
+		await writeFile(path, "{ this is not valid json ");
+		await expect(loadGlobalConfig(path)).rejects.toThrow(/not valid JSON/i);
 	});
 });

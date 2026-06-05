@@ -101,10 +101,24 @@ export class WorktreeManager {
 	async remove(taskId: string, slug: string): Promise<void> {
 		const branch = this.branchName(taskId, slug);
 		const wtPath = resolve(this.worktreeRoot, `${taskId}-${slug}`);
+		await this.removeByPath(wtPath, branch);
+	}
 
+	/**
+	 * Remove a worktree by its EXACT stored path + branch — rename-proof.
+	 *
+	 * Unlike `remove(taskId, slug)`, this does NOT recompute the path/branch
+	 * from a slug. The slug is derived from the task title at call time, but
+	 * the title can change after the worktree was created (`mxd/<id>/<oldSlug>`),
+	 * so re-slugifying the CURRENT title yields a different path/branch and
+	 * orphans the real worktree. Callers pass the values stored on the node
+	 * (`node.worktreePath`, `node.branch`) which are the exact creation-time
+	 * values — immune to subsequent renames.
+	 */
+	async removeByPath(worktreePath: string, branch: string): Promise<void> {
 		// Remove worktree
-		if (existsSync(wtPath)) {
-			await this.git(["worktree", "remove", "--force", wtPath]).exited;
+		if (existsSync(worktreePath)) {
+			await this.git(["worktree", "remove", "--force", worktreePath]).exited;
 		}
 
 		// Delete the branch

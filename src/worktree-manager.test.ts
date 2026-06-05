@@ -125,6 +125,39 @@ describe("WorktreeManager", () => {
 		);
 	});
 
+	test("removeByPath removes the exact stored worktree path + branch", async () => {
+		const taskId = "abcd1234-1111-2222-3333-444444444444";
+		const info = await mgr.create(taskId, "feature", defaultBranch);
+		expect(existsSync(info.path)).toBe(true);
+
+		// Remove by the EXACT stored path + branch (no slug recomputation).
+		await mgr.removeByPath(info.path, info.branch);
+
+		expect(existsSync(info.path)).toBe(false);
+		const branches = await exec(["git", "branch"], repoDir);
+		expect(branches).not.toContain(info.branch);
+	});
+
+	test("cc#6: re-slugified remove orphans the worktree; removeByPath cleans it up", async () => {
+		const taskId = "deadbeef-1111-2222-3333-444444444444";
+		const info = await mgr.create(taskId, "original-slug", defaultBranch);
+		expect(existsSync(info.path)).toBe(true);
+
+		// Simulate the OLD bug: the task was renamed, so removal re-slugifies the
+		// NEW title and computes a different path/branch that doesn't exist.
+		await mgr.remove(taskId, "renamed-slug");
+		// The REAL worktree is still there — orphaned. This is exactly cc#6.
+		expect(existsSync(info.path)).toBe(true);
+		const stillThere = await exec(["git", "branch"], repoDir);
+		expect(stillThere).toContain(info.branch);
+
+		// removeByPath with the STORED path + branch cleans it up correctly.
+		await mgr.removeByPath(info.path, info.branch);
+		expect(existsSync(info.path)).toBe(false);
+		const gone = await exec(["git", "branch"], repoDir);
+		expect(gone).not.toContain(info.branch);
+	});
+
 	test("list returns managed worktrees", async () => {
 		const id1 = "aaaaaaaa-1111-2222-3333-444444444444";
 		const id2 = "cccccccc-1111-2222-3333-444444444444";

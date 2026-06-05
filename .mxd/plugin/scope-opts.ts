@@ -101,9 +101,13 @@ export function buildMatrixScopeOpts(
 			return { cwd: wt.path };
 		},
 		onTaskDelete: async (node, projectPath) => {
+			// Remove by the STORED worktreePath + branch (rename-proof) — NOT a
+			// re-slugified title, which would orphan the real worktree if the
+			// task was renamed after the worktree was created.
+			if (!node.worktreePath || !node.branch) return;
 			const wtRoot = join(projectPath, ".worktrees");
 			const wm = new WorktreeManager(projectPath, wtRoot);
-			await wm.remove(node.id, slugify(node.title));
+			await wm.removeByPath(node.worktreePath, node.branch);
 		},
 		buildWorkContext: (node, projectPath) =>
 			buildWorkContextContent(node.cwd ?? node.worktreePath ?? projectPath),

@@ -112,15 +112,29 @@ async function readJsonConfig(path: string): Promise<ProjectConfig> {
  */
 export async function loadGlobalConfig(path?: string): Promise<MatrixConfig> {
 	const resolvedPath = path ?? globalConfigPath();
+	let text: string;
+	try {
+		text = await readFile(resolvedPath, "utf-8");
+	} catch (e) {
+		// Only a MISSING file means "fresh install → return defaults". Any other
+		// read error (permission denied, IO error) is real and must surface —
+		// silently returning defaults here would let the next save overwrite a
+		// config that simply couldn't be read.
+		if ((e as NodeJS.ErrnoException)?.code === "ENOENT") {
+			return { ...DEFAULT_CONFIG };
+		}
+		throw e;
+	}
 	let raw: Record<string, unknown>;
 	try {
-		raw = JSON.parse(await readFile(resolvedPath, "utf-8")) as Record<
-			string,
-			unknown
-		>;
-	} catch {
-		// File doesn't exist — return defaults (caller creates the file)
-		return { ...DEFAULT_CONFIG };
+		raw = JSON.parse(text) as Record<string, unknown>;
+	} catch (e) {
+		// File exists but is not valid JSON — corrupt. Surface loudly; do NOT
+		// silently return defaults (that would wipe credentials on the next save).
+		const message = e instanceof Error ? e.message : String(e);
+		throw new Error(
+			`Global config at ${resolvedPath} is not valid JSON: ${message}`,
+		);
 	}
 	// Validate required fields
 	const missing: string[] = [];
