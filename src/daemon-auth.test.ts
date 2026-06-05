@@ -329,7 +329,12 @@ describe("daemon: config masks API keys", () => {
 		expect(oai.apiKey).toContain("…");
 		expect(oai.apiKey).not.toContain("secret");
 		expect(oai.accessToken).toContain("…");
+		// Mutation guard: the `…` ellipsis alone is theater — a mask that
+		// returns `${token}…` would leak the full plaintext yet still pass
+		// `toContain("…")`. Assert the plaintext token itself is absent.
+		expect(oai.accessToken).not.toContain("access-xyz-1234");
 		expect(oai.refreshToken).toContain("…");
+		expect(oai.refreshToken).not.toContain("refresh-xyz-1234");
 	});
 
 	test("PATCH /config/global preserves plaintext when client echoes masked value", async () => {
