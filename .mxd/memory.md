@@ -2259,3 +2259,41 @@ final content, not per-token granularity).
 - `src/anthropic-compatible-provider.ts` — 1 line changed (`export function createAnthropicAdapter`)
 - `src/openai-responses-compatible-provider.ts` — 1 line changed (`export function createOpenAIResponsesAdapter`)
 - `src/test-utils/mock-openai-responses-api.ts` — +10 lines (delta emission)
+
+## Plugin extraction — Chunk 1: buildMatrixScopeOpts → .mxd/plugin/, worktree via hooks (2026-06-05)
+
+First chunk of "matrix → plugin" physical extraction. Runtime (`src/runtime/*`) no longer
+CONTAINS matrix scope logic nor imports `WorktreeManager`.
+
+**Moved**: `buildMatrixScopeOpts` + `MatrixDoneData`/`MatrixPluginTypes` → `.mxd/plugin/scope-opts.ts`.
+The factory is self-contained; runtime only ever invokes it through the `ScopeOpts` hook
+interface, never by name. Leaf utilities (WorktreeManager, createOrchestratorTools,
+buildSystemPrompt, buildWorkContextContent, buildSummarizationInstruction, slugify,
+McpClientManager) stay in `src/` as neutral building blocks — the plugin imports them
+(plugin→src is the allowed direction). The LEAK was buildMatrixScopeOpts living in
+runtime/agent-lifecycle.ts, NOT the utils.
+
+**worktree-manager.ts stays in src/** (Option a — user-confirmed). Stateless git util, zero
+matrix domain knowledge; both the plugin scope-opts AND orchestrator-tools.ts (matrix code
+still in src/) import it. Re-evaluate its final home when orchestrator-tools moves (later chunk).
+
+**Worktree ops in runtime routes → hooks** (`src/runtime/routes/tasks.ts`):
+- Reactivation (verify/closed relaunch): now calls existing `scopeOpts.beforeChildLaunch(node,
+  tracker, projectPath)` — semantics matched the inline worktree-create exactly. Kept the
+  parent-no-branch 400 pre-check for behavior parity (hook throws → 500 otherwise).
+- DELETE route: new hook `ScopeOpts.onTaskDelete?(node, projectPath)`. Matrix implements via
+  `WorktreeManager.remove`. Route bridges the `removeWorktree(taskId, slug)` task-operations
+  callback contract by looking up the node (`tracker.getTask(id)` — still present: cleanup runs
+  before `tracker.remove`, and delete only works on leaf tasks). closeTaskOp/resetTaskOp worktree
+  removal stays in orchestrator-tools.ts (matrix code) — out of scope this chunk.
+
+**Hook naming rule (user)**: name lifecycle hooks by the EVENT, not the resource. `removeWorkspace`
+was REJECTED — "workspace" presupposes tasks HAVE workspaces, a plugin-specific assumption;
+runtime's BaseTaskNode is pure structure. Chose `onTaskDelete` (parallels onLaunch/onDone). Prose
+comments may use "workspace" as a generic concept; the constraint is only on the hook/API NAME —
+no "WorktreeManager"/"worktree" token in any runtime hook/API name.
+
+**Invariants held**: `grep WorktreeManager src/runtime/` → zero. Zero production (non-test) imports
+from `.mxd/plugin/` in src/ (test-utils + *.test.ts may import plugin — test infra). `bun test`
+green, `bun run typecheck` clean. test-utils/matrix-scope.ts only changed its import path to the
+new plugin location (test infra → plugin is allowed).
