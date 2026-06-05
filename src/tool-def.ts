@@ -16,9 +16,10 @@
  * Resources accessed via global functions from resource-registry.ts with handles from args.
  */
 
-import { type ZodRawShape, type ZodTypeAny, z } from "zod";
+import type { ZodRawShape, ZodTypeAny, z } from "zod";
 import { type Auth, resolveBindParam } from "./tool-auth.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
+import { shapeToJsonSchema } from "./zod-schema.ts";
 
 // ── ParamDecl ──
 
@@ -163,40 +164,11 @@ export function buildExternalShape(params: ParamDefs): ZodRawShape {
 	return shape;
 }
 
-/** Strip $schema and additionalProperties from Zod's toJSONSchema output. */
-function stripZodMeta(obj: unknown): unknown {
-	if (Array.isArray(obj)) return obj.map(stripZodMeta);
-	if (obj && typeof obj === "object") {
-		const result: Record<string, unknown> = {};
-		for (const [key, value] of Object.entries(obj)) {
-			if (key === "$schema" || key === "additionalProperties") continue;
-			result[key] = stripZodMeta(value);
-		}
-		return result;
-	}
-	return obj;
-}
-
-/** Convert a Zod raw shape to JSON Schema. */
-function shapeToJsonSchema(shape: ZodRawShape): Record<string, unknown> {
-	return stripZodMeta(z.toJSONSchema(z.object(shape))) as Record<
-		string,
-		unknown
-	>;
-}
-
 /** Build the agent-facing JSON Schema for a ToolDef. */
 export function buildAgentJsonSchema(
 	params: ParamDefs,
 ): Record<string, unknown> {
 	return shapeToJsonSchema(buildAgentShape(params));
-}
-
-/** Build the external-facing JSON Schema for a ToolDef. */
-export function buildExternalJsonSchema(
-	params: ParamDefs,
-): Record<string, unknown> {
-	return shapeToJsonSchema(buildExternalShape(params));
 }
 
 // ── Validation ──

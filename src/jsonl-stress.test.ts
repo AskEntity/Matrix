@@ -33,7 +33,6 @@ import {
 	findUnconsumedMessages,
 	formatEventForAI,
 	hasPendingImplicitYield,
-	hasPendingYield,
 } from "./events.ts";
 import { TOOL_DONE, TOOL_YIELD } from "./tool-names.ts";
 
@@ -222,8 +221,8 @@ function assertStructurallyValidApiMessages(msgs: unknown[]): void {
 describe("runtime vs recovery: done + other tool in same turn", () => {
 	// RUNTIME: the done tool handler closes the queue, the provider loop's
 	// post-turn machinery exits, NOTHING else can run in that turn. So at
-	// runtime, hasPendingYield + the done orphan together identify a clean
-	// state.
+	// runtime, the done orphan alone identifies a clean state — buildSessionRepair
+	// leaves it untouched.
 	test("runtime: done tool_call alone in a turn → valid `intended orphan`", () => {
 		const events: Event[] = [
 			userMsgEvent("u1", "start"),
@@ -231,8 +230,6 @@ describe("runtime vs recovery: done + other tool in same turn", () => {
 			assistantText("wrapping up"),
 			toolCall("tc-done", TOOL_DONE, { status: "passed", summary: "ok" }),
 		];
-		// hasPendingYield should be false (yield is the marker, not done)
-		expect(hasPendingYield(events)).toBe(false);
 		// buildSessionRepair should skip done-as-last-tool — no repair needed
 		expect(buildSessionRepair(events, "t1")).toBeNull();
 	});
@@ -324,13 +321,12 @@ describe("runtime vs recovery: done + other tool in same turn", () => {
 
 describe("runtime vs recovery: yield tool_call position", () => {
 	// RUNTIME: normal yield is followed by end-of-turn. On resume, it is the
-	// last tool_call with no tool_result → hasPendingYield returns true.
-	test("runtime: clean yield is detected by hasPendingYield", () => {
+	// last tool_call with no tool_result — buildSessionRepair leaves it alone.
+	test("runtime: clean yield is an intended orphan (no repair)", () => {
 		const events: Event[] = [
 			assistantText("before yield"),
 			toolCall("tc-y", TOOL_YIELD, {}),
 		];
-		expect(hasPendingYield(events)).toBe(true);
 		// buildSessionRepair leaves it alone — intended orphan
 		expect(buildSessionRepair(events, "t1")).toBeNull();
 	});
@@ -1062,26 +1058,6 @@ describe("recovery-path determinism", () => {
 			toolCall("tc", "mcp__mxd__bash", {}),
 		];
 		expect(hasPendingImplicitYield(events)).toBe(false);
-	});
-
-	// hasPendingYield and hasPendingImplicitYield must be mutually exclusive
-	// on any given JSONL. Attack: if a refactor breaks this, the resume
-	// logic's priority chain would pick the wrong path.
-	test("hasPendingYield and hasPendingImplicitYield are mutually exclusive", () => {
-		const testCases: Event[][] = [
-			[assistantText("a")], // implicit yield only
-			[assistantText("a"), toolCall("tc-y", TOOL_YIELD, {})], // explicit yield only
-			[
-				toolCall("tc", "mcp__mxd__bash", {}),
-				toolResult("tc", "mcp__mxd__bash", "ok"),
-			], // neither
-			[], // neither
-		];
-		for (const events of testCases) {
-			const yield1 = hasPendingYield(events);
-			const yield2 = hasPendingImplicitYield(events);
-			expect(yield1 && yield2).toBe(false);
-		}
 	});
 });
 

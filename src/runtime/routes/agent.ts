@@ -169,20 +169,16 @@ export function registerAgentRoutes(app: Hono, ctx: RuntimeContext) {
 			// Relaunch with resume to pick up new config — fire-and-forget
 			const restartTracker2 = await getTracker(ctx, project.id);
 			restartTracker2.updateStatus(restartTracker2.rootNodeId, "in_progress");
+			const restartScopeOpts = ctx.scopeOpts.get(project.id);
+			if (!restartScopeOpts) {
+				throw new Error(`No scope opts registered for project ${project.id}`);
+			}
 			runAgentForNode(
 				ctx,
 				project,
 				restartTracker2,
 				restartTracker2.rootNodeId,
-				{
-					...(ctx.scopeOpts.get(project.id) ?? {
-						buildTools: () => ({ tools: [] }),
-						buildPrompt: () => ({ stable: "", variable: "" }),
-						buildSummarizationPrompt: () => "Summarize the conversation.",
-						buildWorkContext: () => null,
-					}),
-					resume: true,
-				},
+				{ ...restartScopeOpts, resume: true },
 			).catch((e) => {
 				console.error(`[restart] Failed to relaunch:`, e);
 			});

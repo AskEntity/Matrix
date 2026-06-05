@@ -45,7 +45,6 @@ export interface MatrixConfig {
 	childModel: "parent" | string;
 	/** Budget per agent in USD. -1 = unlimited. */
 	budgetUsd: number;
-	clarifyTimeoutMs: number;
 	mcpServers: Record<string, McpServerConfig>;
 	port: number;
 	selfBootstrap: boolean;
@@ -84,7 +83,6 @@ export const DEFAULT_CONFIG: MatrixConfig = Object.freeze({
 	childAuth: "parent",
 	childModel: "parent",
 	budgetUsd: -1,
-	clarifyTimeoutMs: 30000,
 	mcpServers: Object.freeze({}),
 	port: 7433,
 	selfBootstrap: false,

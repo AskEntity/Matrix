@@ -1013,10 +1013,7 @@ describe("EventStore", () => {
 		// explicit simulation of "async writeFn with delay" — otherwise
 		// unreachable via the public API after the appendFileSync switch.
 		const privateStore = store as unknown as {
-			enqueueWrite(
-				sessionId: string,
-				fn: () => Promise<void>,
-			): Promise<void>;
+			enqueueWrite(sessionId: string, fn: () => Promise<void>): Promise<void>;
 			path(sessionId: string): string;
 		};
 		const { appendFileSync: syncAppend } = await import("node:fs");
@@ -1060,10 +1057,7 @@ describe("EventStore", () => {
 		expect(store.has("g")).toBe(true);
 
 		const privateStore = store as unknown as {
-			enqueueWrite(
-				sessionId: string,
-				fn: () => Promise<void>,
-			): Promise<void>;
+			enqueueWrite(sessionId: string, fn: () => Promise<void>): Promise<void>;
 			path(sessionId: string): string;
 		};
 		const { appendFileSync: syncAppend } = await import("node:fs");
@@ -1080,10 +1074,7 @@ describe("EventStore", () => {
 		};
 		const w1 = privateStore.enqueueWrite("g", async () => {
 			await new Promise((r) => setTimeout(r, 30));
-			syncAppend(
-				privateStore.path("g"),
-				`${JSON.stringify(zombieEvent)}\n`,
-			);
+			syncAppend(privateStore.path("g"), `${JSON.stringify(zombieEvent)}\n`);
 		});
 		await new Promise((r) => setTimeout(r, 5));
 

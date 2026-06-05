@@ -146,11 +146,8 @@ const en: Translations = {
 	"settings.useRootAuth": "Use Root Auth",
 	"settings.useRootModel": "Use Root Model",
 	"settings.budget": "Default Budget (USD)",
-	"settings.clarifyTimeout": "Clarify Timeout (ms)",
-
 	"settings.default": "Default",
 	"settings.unlimited": "Unlimited",
-	"settings.noTimeout": "No timeout",
 
 	"settings.selfBootstrap": "Self-Bootstrap Mode",
 	"settings.restartDaemonHint": "Restart the daemon process",
@@ -456,11 +453,8 @@ const zh: Translations = {
 	"settings.useRootAuth": "使用根认证",
 	"settings.useRootModel": "使用根模型",
 	"settings.budget": "默认预算 (USD)",
-	"settings.clarifyTimeout": "澄清超时 (ms)",
-
 	"settings.default": "默认",
 	"settings.unlimited": "无限制",
-	"settings.noTimeout": "无超时",
 
 	"settings.selfBootstrap": "自引导模式",
 	"settings.restartDaemonHint": "重启守护进程",

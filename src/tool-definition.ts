@@ -1,27 +1,9 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { type ZodRawShape, z } from "zod";
+import type { ZodRawShape, z } from "zod";
+import { shapeToJsonSchema } from "./zod-schema.ts";
 
 /** Infer the output type of a Zod raw shape (object of Zod types). */
 type InferShape<T extends ZodRawShape> = z.infer<z.ZodObject<T>>;
-
-/**
- * Strip $schema and additionalProperties from Zod's toJSONSchema output.
- * Provider APIs and MCP don't expect these in tool parameter schemas.
- */
-function stripZodMeta(obj: unknown): unknown {
-	if (Array.isArray(obj)) {
-		return obj.map(stripZodMeta);
-	}
-	if (obj && typeof obj === "object") {
-		const result: Record<string, unknown> = {};
-		for (const [key, value] of Object.entries(obj)) {
-			if (key === "$schema" || key === "additionalProperties") continue;
-			result[key] = stripZodMeta(value);
-		}
-		return result;
-	}
-	return obj;
-}
 
 /**
  * Definition for an MCP tool.
@@ -43,14 +25,6 @@ export interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 	 * about hidden tools from the system prompt, not from tool schemas.
 	 */
 	hidden?: boolean;
-}
-
-/** Convert a Zod raw shape to JSON Schema. */
-function shapeToJsonSchema(shape: ZodRawShape): Record<string, unknown> {
-	return stripZodMeta(z.toJSONSchema(z.object(shape))) as Record<
-		string,
-		unknown
-	>;
 }
 
 /**
