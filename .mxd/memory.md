@@ -813,7 +813,7 @@ Root node stores branch at init. `baseBranch` required on worktree create (no fa
 
 ## Known Bugs (unfixed)
 
-- Manual compaction during yield → consecutive user messages → API 400.
+- Manual compaction during yield → consecutive user messages → API 400. Scope: the deferred test.todo paths in "Compaction Asymmetry" (yield-side). The done-resume + compactOnly variant of this class is FIXED — see "FIX-3 … B-L9" (`pendingCompactDoneToolCall`); only the yield-side deferred paths remain.
 
 ## Vertical Dependency Boundaries
 
