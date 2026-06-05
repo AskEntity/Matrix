@@ -69,10 +69,15 @@ export function getModelPricing(model: string): {
 /**
  * Add cache_control breakpoints to the messages array for prompt caching.
  *
- * Strategy: Mark the second-to-last user message with a cache breakpoint.
- * This caches all accumulated history up to the previous turn, which is the
- * stable portion of the conversation. The very last user message is the new
- * input and must not be cached (it changes every turn).
+ * Strategy: Mark the LAST user message with a cache breakpoint. The last
+ * message sent to the API is always a user message (tool_results live in the
+ * user role), and Anthropic's lookback caches all preceding history from that
+ * breakpoint — so the entire accumulated conversation is cached.
+ *
+ * (An earlier strategy marked the *second-to-last* user message; it was buggy
+ * — when only one user message existed, e.g. post-compaction with no new input
+ * before restart, it produced a full cache miss. Do NOT revert to
+ * second-to-last. See memory.md "Message Cache Breakpoint".)
  *
  * Anthropic supports up to 4 cache breakpoints. We use 1 here to keep it
  * simple and predictable.
@@ -474,8 +479,9 @@ export function createAnthropicAdapter(
 						)
 					: tools;
 
-			// Cache control: add a cache breakpoint at the second-to-last user message.
-			// Uses same TTL as system/tools for consistency.
+			// Cache control: add a cache breakpoint at the last user message
+			// (NOT second-to-last — that was the old buggy strategy; see
+			// addMessagesCacheControl). Uses same TTL as system/tools.
 			const messagesWithCache = addMessagesCacheControl(
 				messages,
 				params.cacheTtl,

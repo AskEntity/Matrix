@@ -1,27 +1,27 @@
 /**
- * Drift tests targeting the THIRD codepath: initial queue drain in provider-shared.ts:~720.
+ * Drift tests targeting the THIRD codepath: initial queue drain in runProviderLoop.
  *
  * Matrix has three places that construct user messages from queue:
- *   1. `buildUserTurn` (now delegates to walker — no independent logic)
+ *   1. `buildUserTurn` (delegates to walker — no independent logic)
  *   2. `onConsumedMessages` (walker callback — the unified path)
- *   3. Initial drain in runProviderLoop (bypasses the walker entirely)
+ *   3. Initial drain in runProviderLoop (agent fresh-start / resume-without-yield)
  *
- * Path 3 runs on agent fresh-start / resume-without-yield. It:
- *   - Waits for first queue message(s)
- *   - Constructs a user message from text only (via formatQueueMessage)
- *   - Does NOT handle images — they are silently dropped
- *   - Does NOT append a caption text block
+ * Path 3 USED to bypass the walker and construct text-only user messages —
+ * images and captions were silently dropped. On restart the walker
+ * reconstructed [text, image, caption] from JSONL while the pre-restart live
+ * path had produced just [text], and the next API call's prefix validation
+ * caught the divergence.
  *
- * On restart, the walker reconstructs this user message from JSONL and WOULD
- * produce [text, image, caption]. But the pre-restart live path produced just
- * [text]. The next API call's prefix validation catches this divergence.
+ * That divergence is FIXED (commit 39e420b): initial drain now delegates to
+ * `adapter.appendQueueMessagesToMessages`, which routes through the same
+ * `applyXxxQueueContent` helpers the walker uses. One function, two call
+ * sites, zero drift possible.
  *
- * These tests are drift repros, not drift-prevention. A fix requires making
- * initial drain also delegate to the walker (or move construction into the
- * adapter). Until that fix lands, these tests document the known divergence.
- *
- * Each test is marked .todo if it exposes a known bug (so suite stays green),
- * or pass if the path does NOT diverge for that case.
+ * These tests are therefore drift-PREVENTION guards, not repros: each drives a
+ * fresh-start scenario (text, image+caption, etc.) across a restart with
+ * prefix validation enabled, and asserts the live path matches reconstruction.
+ * If anyone re-introduces an independent initial-drain construction path, they
+ * fail.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -269,16 +269,17 @@ describe("Drift exposure: initial queue drain (third codepath)", () => {
 		expect(status2).toBe("verify");
 	}, 30000);
 
-	// ── Known bug: fresh-start with IMAGES ──
+	// ── Drift prevention: fresh-start with IMAGES ──
 
-	// VERIFIED: this test DOES fail when run (removed .todo locally). Keeps as
-	// .todo so CI stays green until initial drain is unified with walker.
-	test("KNOWN BUG: fresh-start initial message with image drops image & caption", async () => {
-		// Initial drain calls `allMsgs.map(formatQueueMessage)` — text only.
-		// Images from user QueueMessage.images are NOT extracted into content
-		// blocks. On restart, walker reconstructs the SAME message from JSONL
-		// via onConsumedMessages idle-context path, which DOES include the
-		// image + caption. Result: prefix mismatch.
+	// Regression guard for the commit-39e420b fix. Pre-fix, initial drain
+	// dropped images + captions, so this diverged on restart and failed.
+	// Post-fix it passes: initial drain delegates to the walker's helpers.
+	test("fresh-start initial message with image preserves image & caption across restart", async () => {
+		// Initial drain now delegates to `adapter.appendQueueMessagesToMessages`,
+		// so user QueueMessage.images ARE extracted into content blocks. On
+		// restart the walker reconstructs the SAME message from JSONL via the
+		// onConsumedMessages idle-context path — identical [text, image,
+		// caption]. Prefix validation passes (no drift).
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
 
@@ -293,7 +294,7 @@ describe("Drift exposure: initial queue drain (third codepath)", () => {
 			],
 		});
 
-		// Fresh-start message WITH image — this exercises the buggy path
+		// Fresh-start message WITH image — exercises the unified drain path
 		await startAgentWithMessage(ctx, instruction, [
 			{ base64: TINY_PNG, mediaType: "image/png" },
 		]);
@@ -316,8 +317,8 @@ describe("Drift exposure: initial queue drain (third codepath)", () => {
 		});
 		await sendMessage(ctx, wakeInstruction);
 		const status2 = await waitForDone(ctx);
-		// FAILS: prefix mismatch at message index 0 — live had [text], walker
-		// produces [text, image, caption].
+		// No drift: live path and walker both produce [text, image, caption] at
+		// message index 0 — prefix validation passes.
 		expect(status2).toBe("verify");
 	}, 30000);
 

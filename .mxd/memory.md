@@ -166,7 +166,7 @@ Browser → Daemon (static assets + SSE) + Worker (API forwarding)
 ## Key Architectural Invariants
 
 ### JSONL Content Fidelity
-JSONL event content = exact content sent to API. Zero transformation. No `.slice()`, no truncation on persisted content. UI truncation only in `stripEventForUI` (SSE layer) and frontend rendering.
+JSONL event content = exact content sent to API. Zero transformation. No `.slice()`, no truncation on persisted content. UI truncation happens only at the frontend rendering layer — never on persisted events. (The former SSE-layer `stripEventForUI` helper was deleted in the FU8 sweep; the citation is kept here only as a tombstone so future readers don't go looking for it.)
 
 ### Tool Result Three-Part Invariant
 Every tool_result must: (1) emit to JSONL, (2) yield to SSE, (3) push to messages[]. Missing any = orphan, missing UI, or API 400.
@@ -398,9 +398,13 @@ Seven paths in `provider-shared.ts` have this shape. 3 are clean (`continue;` wi
 # Providers & API
 ---
 
-## Auto-Recovery from API 400
+## API 400 → crash → repair-on-next-launch
 
-Provider loop auto-recovers from 400 invalid_request_error. On 400, pops broken user message, replaces with safe synthetic tool_results + recovery text, retries once (`autoRecoveryAttempted` flag). Production: `enableAutoRecovery ?? true`. Tests: `enableAutoRecovery: false`.
+There is NO in-memory auto-recovery from a 400 invalid_request_error. The old mechanism (pop the broken user message, splice in synthetic tool_results + recovery text, retry once, gated by `enableAutoRecovery` / `autoRecoveryAttempted`) was REMOVED — those flags no longer exist anywhere in the codebase (grep confirms zero matches).
+
+Current behavior (`provider-shared.ts` outer-retry catch, ~line 1409): on a non-transient 400 the error propagates, the agent stops, status stays `in_progress` (resumable). On the NEXT launch, `buildSessionRepair` fixes the JSONL on disk *before* the provider loop starts (see events.ts ~line 583). The fix lives in persisted state, not volatile `messages[]` — consistent with the "recovery must touch JSONL, not just memory" invariant.
+
+Transient errors (429, 5xx, network) are still retried in-loop with backoff. Only the 400-class path is "crash + repair on next launch".
 
 ## OpenAI Provider
 
@@ -849,7 +853,9 @@ interface ScopeOpts<T extends PluginTypes> {
 
 ### BaseTaskNode / TaskNode Split
 
-Runtime uses `BaseTaskNode` (id, parentId, children, title, session). Matrix extends: `TaskNode extends BaseTaskNode` adds status, description, branch, worktreePath, cwd, color, costUsd, budgetUsd. `PluginTypes { node; done }` generic flows through all `ScopeOpts<T>` hooks — type-safe per plugin. `MatrixPluginTypes` binds `node: TaskNode, done: MatrixDoneData`.
+Runtime uses `BaseTaskNode` (id, parentId, children, title, session) **at the type level**: the `ScopeOpts<T>` hook interfaces and the `PluginTypes { node; done }` generic are parameterized over it. Matrix extends: `TaskNode extends BaseTaskNode` adds status, description, branch, worktreePath, cwd, color, costUsd, budgetUsd. `PluginTypes { node; done }` generic flows through all `ScopeOpts<T>` hooks — type-safe per plugin. `MatrixPluginTypes` binds `node: TaskNode, done: MatrixDoneData`.
+
+CAVEAT (Audit A): only the *hook interfaces* are generic. The concrete `TaskTracker` (`src/task-tracker.ts`) still stores Matrix's `TreeNode` (`TaskNode | GeneralNode`) directly — it is NOT generic over `BaseTaskNode`. "Runtime uses BaseTaskNode" is aspirational for the tracker; full tracker generalization is future work (plugin-extraction track).
 
 ### cwd / AgentRequest
 
