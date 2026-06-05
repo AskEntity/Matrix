@@ -1384,7 +1384,6 @@ function ProjectContent({
 							})}
 						</div>
 					)}
-					{/* RelocateBanner moved to shell */}
 
 					{/* Compact metadata header for task views */}
 					{!isOrchestratorNode && selectedNode && isTask(selectedNode) && (

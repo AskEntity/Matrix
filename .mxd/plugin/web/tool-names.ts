@@ -48,7 +48,6 @@ export const TOOL_GET_LOGS = mcpToolName("get_logs");
 export const TOOL_LIST_PROJECTS = mcpToolName("list_projects");
 export const TOOL_EVALUATE_SCRIPT = mcpToolName("evaluate_script");
 
-const MCP_TOOL_PREFIX = "mcp__mxd__";
 export function isBuiltinTool(toolName: string): boolean {
-	return toolName.startsWith(MCP_TOOL_PREFIX);
+	return toolName.startsWith(MCP_PREFIX);
 }
