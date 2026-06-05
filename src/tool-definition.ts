@@ -1,5 +1,5 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { type ZodRawShape, z } from "zod";
+import type { ZodRawShape, z } from "zod";
 import { shapeToJsonSchema } from "./zod-schema.ts";
 
 /** Infer the output type of a Zod raw shape (object of Zod types). */

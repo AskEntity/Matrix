@@ -553,9 +553,7 @@ describe("daemon integration: SPA fallback (Task Y refresh)", () => {
 	});
 
 	test("GET /<projectId> (no trailing path) serves shell HTML", async () => {
-		const res = await app.fetch(
-			new Request(`http://localhost/${projectId}`),
-		);
+		const res = await app.fetch(new Request(`http://localhost/${projectId}`));
 		expect(res.status).toBe(200);
 		expect(res.headers.get("content-type")).toContain("text/html");
 	});
@@ -592,9 +590,7 @@ describe("daemon integration: SPA fallback (Task Y refresh)", () => {
 		// of pretending to load an SPA that will immediately 404 on its
 		// own data fetches.
 		const res = await app.fetch(
-			new Request(
-				"http://localhost/01ZZZZZZZZZZZZZZZZZZZZZZZZ/matrix/x",
-			),
+			new Request("http://localhost/01ZZZZZZZZZZZZZZZZZZZZZZZZ/matrix/x"),
 		);
 		expect(res.status).toBe(404);
 	});

@@ -16,7 +16,7 @@
  * Resources accessed via global functions from resource-registry.ts with handles from args.
  */
 
-import { type ZodRawShape, type ZodTypeAny, z } from "zod";
+import type { ZodRawShape, ZodTypeAny, z } from "zod";
 import { type Auth, resolveBindParam } from "./tool-auth.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import { shapeToJsonSchema } from "./zod-schema.ts";

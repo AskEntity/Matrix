@@ -1001,7 +1001,6 @@ describe("isPersistedByEmitEvent — thinking events", () => {
 	});
 });
 
-
 // ── Bug fix regression tests ──
 
 describe("eventsToAnthropicMessages — converter bug fixes", () => {
@@ -1488,8 +1487,6 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		});
 	});
 
-
-
 	test("Anthropic: messages_consumed skips unknown IDs gracefully", () => {
 		const events: Event[] = [
 			{
@@ -1571,7 +1568,6 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		});
 	});
 
-
 	test("user_message without id works as direct message", () => {
 		const events: Event[] = [
 			{
@@ -1626,7 +1622,6 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 		// Should produce messages for user_message and assistant_text only
 		expect(messages.length).toBe(2);
 	});
-
 });
 
 describe("structured JSONL — queueEntry on user_message", () => {
@@ -1753,7 +1748,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		);
 	});
 
-
 	test("Anthropic: tool_result with pending section formats correctly", () => {
 		const events: Event[] = [
 			{
@@ -1822,7 +1816,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		).filter((b) => b.type === "text");
 		expect(textBlocks.some((b) => b.text?.includes("50% done"))).toBe(true);
 	});
-
 
 	test("Anthropic: user_message with body.images gets image blocks", () => {
 		const events: Event[] = [
@@ -1939,7 +1932,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		expect(allText).toContain("Fix bug");
 		expect(allText).toContain("Also do this");
 	});
-
 
 	test("Anthropic: yield/done tool_result with structured body events from JSONL", () => {
 		// This simulates what JSONL looks like after yield/done tool execution:
@@ -2186,9 +2178,6 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			expect(msg.role).toBe("user");
 			expect(msg.content).toBe("(empty)");
 		});
-
-
-
 	});
 
 	describe("empty assistant content blocks", () => {
@@ -2224,7 +2213,6 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			// Content should always be a non-empty array
 			expect(assistantMsg.content[0]?.type).toBe("text");
 		});
-
 	});
 
 	describe("empty tool_result blocks", () => {
@@ -2276,7 +2264,6 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			expect(resultBlock.type).toBe("tool_result");
 			expect(resultBlock.content).toBe("(empty)");
 		});
-
 
 		test("Anthropic: resultBlocks fallback when tool_result section collects nothing", () => {
 			// Edge case: tool_result case is entered but the while loop skips

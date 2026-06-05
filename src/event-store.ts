@@ -117,10 +117,7 @@ export class EventStore {
 	append(sessionId: string, event: Event): Promise<void> {
 		return this.enqueueWrite(sessionId, () => {
 			try {
-				appendFileSync(
-					this.path(sessionId),
-					`${JSON.stringify(event)}\n`,
-				);
+				appendFileSync(this.path(sessionId), `${JSON.stringify(event)}\n`);
 			} catch {
 				/* non-fatal — don't break caller if write fails */
 			}

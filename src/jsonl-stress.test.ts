@@ -1059,7 +1059,6 @@ describe("recovery-path determinism", () => {
 		];
 		expect(hasPendingImplicitYield(events)).toBe(false);
 	});
-
 });
 
 // ══════════════════════════════════════════════════════════════════════════

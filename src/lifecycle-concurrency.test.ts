@@ -363,7 +363,10 @@ describe("B-M4: task_complete is durable before done_notified", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const start = Date.now();
 		while (Date.now() - start < 10000) {
-			if (probe.durable !== null && tracker.getTask(childId)?.status === "verify")
+			if (
+				probe.durable !== null &&
+				tracker.getTask(childId)?.status === "verify"
+			)
 				break;
 			await delay(30);
 		}
