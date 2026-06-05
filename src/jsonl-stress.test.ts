@@ -31,6 +31,7 @@ import {
 	type Event,
 	findOrphanedBackgroundProcesses,
 	findUnconsumedMessages,
+	formatEventForAI,
 	hasPendingImplicitYield,
 	hasPendingYield,
 } from "./events.ts";
@@ -1264,4 +1265,272 @@ describe("TODO — infra-blocked adversarial scenarios", () => {
 	// stopTask while a tool handler is mid-R.emit. Tests that emit's
 	// traceId lookup handles session=null gracefully (no throw).
 	test.todo("tool handler calls R.emit AFTER session is nullified → no throw, event still emits without traceId", () => {});
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// FIX-1: buildSessionRepair compact-boundary safety + orphan-result removal.
+//
+// Both audits (matrix F-H2 + cc#1) independently hit a class of bugs that
+// PERMANENTLY corrupts a compacted session (recoverable only by reset_task).
+// Every prior repair test lacked a preceding compact_marker — that's why the
+// index-space bug went undetected. These seed sessions WITH a compact_marker
+// and prove:
+//   - cc#1: analysis + truncation are scoped to the active region; the
+//     marker / post-compact session_config / summary always survive; the
+//     returned index is a PHYSICAL line.
+//   - F-H2: no orphan tool_results are produced from the truncated region; a
+//     second repair pass is a no-op (no crash loop).
+//   - B-L8: a kept-region done() orphan is not given a spurious tool_result.
+//   - D#1: the repair status message is a real (visible) user message, not an
+//     empty-string "system"-source body.
+// ══════════════════════════════════════════════════════════════════════════
+
+describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
+	const compactMarker = (ts = 0): Event =>
+		({ type: "compact_marker", savedTokens: 0, taskId: "t1", ts }) as Event;
+	const sessionConfig = (ts = 0): Event =>
+		({
+			type: "session_config",
+			tools: [],
+			systemStable: "s",
+			systemVariable: "v",
+			taskId: "t1",
+			ts,
+		}) as Event;
+	const compactedResume = (content = "summary", ts = 0): Event =>
+		({
+			type: "message",
+			id: "summary-1",
+			taskId: "t1",
+			ts,
+			body: { source: "compacted_resume", id: "summary-1", ts, content },
+		}) as Event;
+
+	/** Count tool_results per callId — detects duplicates. */
+	function resultCounts(events: Event[]): Map<string, number> {
+		const m = new Map<string, number>();
+		for (const e of events)
+			if (e.type === "tool_result")
+				m.set(e.toolCallId, (m.get(e.toolCallId) ?? 0) + 1);
+		return m;
+	}
+	/** True if any tool_result has no matching tool_call (the F-H2 poison). */
+	function hasOrphanResult(events: Event[]): boolean {
+		const callIds = new Set<string>();
+		for (const e of events)
+			if (e.type === "tool_call") callIds.add(e.toolCallId);
+		for (const e of events)
+			if (e.type === "tool_result" && !callIds.has(e.toolCallId)) return true;
+		return false;
+	}
+	/** Apply a repair the way EventStore does: keep physical lines 0..idx, then append. */
+	function applyRepair(
+		events: Event[],
+		repair: { truncateAfterIndex: number; appendEvents: Event[] },
+	): Event[] {
+		return [
+			...events.slice(0, repair.truncateAfterIndex + 1),
+			...repair.appendEvents,
+		];
+	}
+	/** Reconstruction over the post-marker (active) region only. */
+	function activeOf(events: Event[]): Event[] {
+		return events.slice(
+			events.findLastIndex((e) => e.type === "compact_marker") + 1,
+		);
+	}
+
+	// ── cc#1: index-space mismatch ──
+
+	// A duplicate that lives BEFORE the last compact_marker is compacted away.
+	// The active region is clean → repair MUST be null. If repair scanned the
+	// whole file it would target the pre-compact duplicate and truncate across
+	// the boundary, destroying the marker / post-compact config / summary.
+	// Mutation-proof: revert the active-region scoping → this returns a repair.
+	test("cc#1: corruption BEFORE compact_marker is ignored — active region clean → no repair", () => {
+		const events: Event[] = [
+			toolCall("tc-old", "mcp__mxd__bash", {}, 0),
+			toolResult("tc-old", "mcp__mxd__bash", "ok", { ts: 1 }),
+			toolResult("tc-old", "mcp__mxd__bash", "PRE-COMPACT DUP", {
+				ts: 2,
+				isError: true,
+			}),
+			compactMarker(3),
+			sessionConfig(4),
+			compactedResume("summary", 5),
+			assistantText("post-compact work", 6),
+			toolCall("tc-A", "mcp__mxd__bash", {}, 7),
+			toolResult("tc-A", "mcp__mxd__bash", "ok", { ts: 8 }),
+		];
+		expect(buildSessionRepair(events, "t1")).toBeNull();
+	});
+
+	// A genuine duplicate AFTER the marker truncates ONLY the poison; the index
+	// is a PHYSICAL line that keeps the boundary, post-compact config + summary.
+	test("cc#1: duplicate AFTER compact_marker — physical index lands on the good result, marker/config/summary survive", () => {
+		const events: Event[] = [
+			sessionConfig(0), // 0 pre-compact config
+			assistantText("old turn", 1), // 1
+			compactMarker(2), // 2 boundary
+			sessionConfig(3), // 3 post-compact config
+			compactedResume("summary", 4), // 4 summary
+			messagesConsumedEvent(["summary-1"], 5), // 5 summary consumed
+			assistantText("work", 6), // 6
+			toolCall("tc-A", "mcp__mxd__bash", {}, 7), // 7
+			toolResult("tc-A", "mcp__mxd__bash", "ok", { ts: 8 }), // 8 good
+			toolResult("tc-A", "mcp__mxd__bash", "DUP POISON", {
+				ts: 9,
+				isError: true,
+			}), // 9 poison
+		];
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).not.toBeNull();
+		if (!repair) return;
+		// Physical index lands exactly on tc-A's GOOD result (line 8) — NOT an
+		// active-relative index (which would have been ~4 and sliced the marker).
+		const keptLast = events[repair.truncateAfterIndex];
+		expect(keptLast?.type).toBe("tool_result");
+		expect((keptLast as { toolCallId: string }).toolCallId).toBe("tc-A");
+		expect((keptLast as { content: string }).content).toBe("ok");
+
+		const final = applyRepair(events, repair);
+		expect(final.some((e) => e.type === "compact_marker")).toBe(true);
+		expect(final.filter((e) => e.type === "session_config").length).toBe(2);
+		expect(
+			final.some(
+				(e) =>
+					e.type === "message" &&
+					(e.body as { source?: string }).source === "compacted_resume",
+			),
+		).toBe(true);
+		// Poison gone, no orphan, reconstruction valid.
+		expect(resultCounts(final).get("tc-A")).toBe(1);
+		expect(hasOrphanResult(final)).toBe(false);
+		assertStructurallyValidApiMessages(
+			eventsToAnthropicMessages(activeOf(final)),
+		);
+	});
+
+	// ── F-H2: orphan tool_results from the truncated region ──
+
+	// tc-A poisoned; AFTER the poison a whole tc-B turn was written. Truncation
+	// removes tc-B. The OLD code appended an interrupted result for tc-B (now
+	// gone) → orphan tool_result → API 400 → next launch repair returns null →
+	// crash loop. The fix must produce NO orphan result, and re-running repair
+	// on the repaired log must be a no-op.
+	test("F-H2: poison followed by a complete tool turn → no orphan result, second pass is a no-op", () => {
+		const events: Event[] = [
+			compactMarker(0),
+			sessionConfig(1),
+			compactedResume("summary", 2),
+			messagesConsumedEvent(["summary-1"], 3),
+			assistantText("turn A", 4),
+			toolCall("tc-A", "mcp__mxd__bash", {}, 5),
+			toolResult("tc-A", "mcp__mxd__bash", "ok", { ts: 6 }),
+			toolResult("tc-A", "mcp__mxd__bash", "DUP POISON", {
+				ts: 7,
+				isError: true,
+			}), // poison
+			assistantText("turn B", 8),
+			toolCall("tc-B", "mcp__mxd__bash", {}, 9),
+			toolResult("tc-B", "mcp__mxd__bash", "ok", { ts: 10 }),
+		];
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).not.toBeNull();
+		if (!repair) return;
+		const final = applyRepair(events, repair);
+		// tc-B (truncated) gets NO interrupted result → no orphan result.
+		expect(hasOrphanResult(final)).toBe(false);
+		expect(
+			final.some((e) => e.type === "tool_call" && e.toolCallId === "tc-B"),
+		).toBe(false);
+		expect(
+			final.some((e) => e.type === "tool_result" && e.toolCallId === "tc-B"),
+		).toBe(false);
+		assertStructurallyValidApiMessages(
+			eventsToAnthropicMessages(activeOf(final)),
+		);
+		// Idempotent: a second repair pass over the repaired log is null.
+		expect(buildSessionRepair(final, "t1")).toBeNull();
+	});
+
+	// ── B-L8: kept-region done() orphan must not get a spurious result ──
+
+	// A done() orphan is the last tool_call in the kept region; the poison sits
+	// after it. The kept-region loop must treat done as the intended orphan (no
+	// interrupted result) AND skip the trailing status user message (which would
+	// break assistant→tool_result alternation + the pending-done resume).
+	test("B-L8: kept-region done() orphan keeps no result and no trailing user message", () => {
+		const events: Event[] = [
+			compactMarker(0),
+			sessionConfig(1),
+			compactedResume("summary", 2),
+			messagesConsumedEvent(["summary-1"], 3),
+			toolCall("tc-bash", "mcp__mxd__bash", {}, 4),
+			toolResult("tc-bash", "mcp__mxd__bash", "ok", { ts: 5 }),
+			toolCall("tc-done", TOOL_DONE, { status: "passed", summary: "ok" }, 6),
+			toolResult("tc-bash", "mcp__mxd__bash", "DUP POISON", {
+				ts: 7,
+				isError: true,
+			}), // poison after done
+		];
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).not.toBeNull();
+		if (!repair) return;
+		// No interrupted result appended for the intended-orphan done().
+		expect(
+			repair.appendEvents.some(
+				(e) => e.type === "tool_result" && e.toolCallId === "tc-done",
+			),
+		).toBe(false);
+		// No trailing status user message (would follow the bare done orphan).
+		expect(repair.appendEvents.some((e) => e.type === "message")).toBe(false);
+		const final = applyRepair(events, repair);
+		expect(resultCounts(final).get("tc-done") ?? 0).toBe(0);
+		expect(hasOrphanResult(final)).toBe(false);
+		// Pending-done shape: assistant turn ends the log (valid alternation).
+		assertStructurallyValidApiMessages(
+			eventsToAnthropicMessages(activeOf(final)),
+		);
+		// Idempotent: the repaired session is in pending-done state → no-op.
+		expect(buildSessionRepair(final, "t1")).toBeNull();
+	});
+
+	// ── D#1: repair status message reaches the agent (not an empty string) ──
+
+	// Out-of-order tool_result triggers Strategy 0 with a reason. The status
+	// message must format to NON-empty text for the agent — the old
+	// `source: "system" as never` body rendered to "" via formatBodyForAI's
+	// default branch, silently dropping the repair reason.
+	test("D#1: repair status message is a visible user message, not an empty system body", () => {
+		const events: Event[] = [
+			toolCall("tc-A", "mcp__mxd__bash", {}, 0),
+			toolResult("tc-A", "mcp__mxd__bash", "ok", { ts: 1 }), // clean turn first
+			toolCall("y1", TOOL_YIELD, {}, 2),
+			toolCall("y2", TOOL_YIELD, {}, 3),
+			toolResult("y2", TOOL_YIELD, "resumed.", { ts: 4 }),
+			assistantText("new turn", 5),
+			toolCall("y3", TOOL_YIELD, {}, 6),
+			toolResult("y1", TOOL_YIELD, "resumed.", { ts: 7 }), // out of order
+		];
+		const repair = buildSessionRepair(events, "t1", {
+			reason: "test-reason-42",
+		});
+		expect(repair).not.toBeNull();
+		if (!repair) return;
+		const statusEvents = repair.appendEvents.filter(
+			(e) => e.type === "message",
+		);
+		expect(statusEvents.length).toBeGreaterThanOrEqual(1);
+		const statusEvt = statusEvents[statusEvents.length - 1] as Event;
+		// formatEventForAI delegates to formatBodyForAI; "system" source → "".
+		const rendered = formatEventForAI(statusEvt);
+		expect(rendered).not.toBe("");
+		expect(rendered).toContain("test-reason-42");
+		// And it is a real "user"-source body (surfaced by AI + UI), no `as never`.
+		expect(
+			statusEvt.type === "message" &&
+				(statusEvt.body as { source?: string }).source,
+		).toBe("user");
+	});
 });

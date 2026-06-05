@@ -2673,6 +2673,190 @@ describe("Integration: auto-recovery from API 400", () => {
 	}, 20000);
 });
 
+// ── FIX-1 cc#1: repair pipeline on a COMPACTED session ──
+// Every prior repair integration test (incl. the poison test above) seeded a
+// NON-compacted session, so the index-space bug (repair index computed against
+// readActive but consumed by physical-line truncateAfterLine) was invisible.
+// This seeds a genuine compacted session — pre-compact turn + compact_marker +
+// post-compact session_config + summary + a post-compact tool turn + a
+// duplicate poison — drives the REAL runAgentForNode repair path, and asserts
+// the post-compact content survives. With the old call site the truncation
+// index was active-relative, slicing the post-compact turn (and possibly the
+// summary) clean off.
+describe("Integration: repair on compacted session (FIX-1 cc#1)", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("compacted session: duplicate after marker truncates only the poison, post-compact turn survives", async () => {
+		ctx = await setupTestContext();
+		const rootNodeId = await getRootNodeId(ctx);
+
+		// Seed a full compacted JSONL with a post-compact tool turn + poison.
+		// The post-compact bash turn carries a unique marker so we can prove it
+		// survived repair (the buggy path truncated it away).
+		const POST_MARKER = "POST_COMPACT_SURVIVES_a1b2c3";
+		const seeded: Event[] = [
+			// ── pre-compact (compacted away) ──
+			{
+				type: "session_config",
+				tools: [],
+				systemStable: "pre-stable",
+				systemVariable: "pre-var",
+				taskId: rootNodeId,
+				ts: 1,
+			} as Event,
+			{
+				type: "assistant_text",
+				content: "pre work",
+				taskId: rootNodeId,
+				ts: 2,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-old",
+				input: { command: "echo old" },
+				taskId: rootNodeId,
+				ts: 3,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-old",
+				content: "old ok",
+				isError: false,
+				taskId: rootNodeId,
+				ts: 4,
+			},
+			// ── compact boundary ──
+			{ type: "compact_marker", savedTokens: 0, taskId: rootNodeId, ts: 5 },
+			{
+				type: "session_config",
+				tools: [],
+				systemStable: "post-stable",
+				systemVariable: "post-var",
+				taskId: rootNodeId,
+				ts: 6,
+			} as Event,
+			{
+				type: "message",
+				id: "summary-1",
+				taskId: rootNodeId,
+				ts: 7,
+				body: {
+					source: "compacted_resume",
+					id: "summary-1",
+					ts: 7,
+					content: "COMPACT_SUMMARY_xyz789",
+				},
+			} as Event,
+			{
+				type: "messages_consumed",
+				messageIds: ["summary-1"],
+				taskId: rootNodeId,
+				ts: 8,
+			},
+			// ── post-compact tool turn (must survive) ──
+			{
+				type: "assistant_text",
+				content: POST_MARKER,
+				taskId: rootNodeId,
+				ts: 9,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-postcompact",
+				input: { command: "echo post" },
+				taskId: rootNodeId,
+				ts: 10,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-postcompact",
+				content: "post ok",
+				isError: false,
+				taskId: rootNodeId,
+				ts: 11,
+			},
+			// ── poison: duplicate result for the post-compact bash call ──
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-postcompact",
+				content: "DUPLICATE POISON",
+				isError: true,
+				taskId: rootNodeId,
+				ts: 12,
+			},
+		];
+
+		const store = new EventStore(
+			join(ctx.dataDir, "projects", ctx.projectId, "tasks"),
+		);
+		await store.appendBatch(rootNodeId, seeded);
+		await store.flushSession(rootNodeId);
+
+		// Sanity: poison really is on disk (2 results for tc-postcompact).
+		const pre = await readSessionEvents(ctx, rootNodeId);
+		expect(
+			pre.filter(
+				(e) => e.type === "tool_result" && e.toolCallId === "tc-postcompact",
+			).length,
+		).toBe(2);
+
+		// Wake the agent: repair fires inside runAgentForNode, then the agent
+		// drains this message (working-context append onto the tc-postcompact
+		// result) and calls done.
+		const wake = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "resumed after repair" },
+				},
+			],
+		});
+		const resp = await startAgent(ctx, wake);
+		expect(resp.status).toBe(200);
+		const status = await waitForDone(ctx, 15000);
+		expect(status).toBe("verify");
+
+		const after = await readSessionEvents(ctx, rootNodeId);
+
+		// The compact boundary + post-compact summary survive the repair.
+		expect(after.some((e) => e.type === "compact_marker")).toBe(true);
+		expect(
+			after.some(
+				(e) =>
+					e.type === "message" &&
+					(e.body as { content?: string }).content === "COMPACT_SUMMARY_xyz789",
+			),
+		).toBe(true);
+		// The post-compact tool turn survives (the bug truncated it away).
+		expect(
+			after.some(
+				(e) => e.type === "assistant_text" && e.content === POST_MARKER,
+			),
+		).toBe(true);
+		expect(
+			after.some(
+				(e) => e.type === "tool_call" && e.toolCallId === "tc-postcompact",
+			),
+		).toBe(true);
+		// The poison is gone: at most one result for the post-compact bash call.
+		expect(
+			after.filter(
+				(e) => e.type === "tool_result" && e.toolCallId === "tc-postcompact",
+			).length,
+		).toBeLessThanOrEqual(1);
+	}, 20000);
+});
+
 // ── Same-turn tool conflict tests ──
 
 describe("Integration: same-turn tool conflicts", () => {

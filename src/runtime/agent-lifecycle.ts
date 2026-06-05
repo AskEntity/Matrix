@@ -798,12 +798,21 @@ export async function runAgentForNode(
 			// (duplicate tool_results, orphaned tool_calls, etc.)
 			// Handles both daemon restart orphans and accumulated poison
 			// from previous sessions where auto-recovery only fixed memory.
-			const repair = buildSessionRepair(activeEvents, nodeId);
+			//
+			// Pass the FULL event log: buildSessionRepair returns a PHYSICAL line
+			// index (scoped internally to the active region) so truncateAfterLine
+			// — which slices by physical file line — keeps the compact_marker,
+			// post-compact session_config, and summary intact. Passing the
+			// post-compact slice here produced active-relative indices that, fed
+			// to truncateAfterLine, sliced off the compact boundary and corrupted
+			// the session.
+			const allEvents = eventStore.read(nodeId);
+			const repair = buildSessionRepair(allEvents, nodeId);
 			if (repair) {
 				const needsTruncation =
-					repair.truncateAfterIndex < activeEvents.length - 1;
+					repair.truncateAfterIndex < allEvents.length - 1;
 				console.warn(
-					`[runAgentForNode] Repairing session ${nodeId}: ${needsTruncation ? `truncate after index ${repair.truncateAfterIndex}` : "append only"}, ${repair.appendEvents.length} events to add`,
+					`[runAgentForNode] Repairing session ${nodeId}: ${needsTruncation ? `truncate after physical line ${repair.truncateAfterIndex}` : "append only"}, ${repair.appendEvents.length} events to add`,
 				);
 				if (needsTruncation) {
 					await eventStore.truncateAfterLine(nodeId, repair.truncateAfterIndex);
