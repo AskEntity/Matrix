@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import type { Hono } from "hono";
 import type { QueueImage } from "../../message-queue.ts";
 import {
@@ -15,10 +14,8 @@ import {
 	TaskOperationError,
 	updateTaskOp,
 } from "../../task-operations.ts";
-import { slugify } from "../../task-utils.ts";
 import { cleanupSessionBackgroundProcesses } from "../../tools/index.ts";
 import { isTask } from "../../types.ts";
-import { WorktreeManager } from "../../worktree-manager.ts";
 import {
 	deliverMessage,
 	runAgentForNode,
@@ -372,10 +369,12 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 						400,
 					);
 				}
-				const wtRoot = join(project.path, ".worktrees");
-				const wm = new WorktreeManager(project.path, wtRoot);
-				const wt = await wm.create(nodeId, slugify(node.title), baseBranch);
-				tracker.assignWorktree(nodeId, wt.branch, wt.path);
+				// Workspace creation is a plugin concern — route through the scope
+				// hook (Matrix creates a git worktree + assigns it on the tracker)
+				// instead of managing worktrees directly. Same hook the runtime
+				// uses when launching a fresh child.
+				const scopeOpts2 = ctx.scopeOpts.get(project.id);
+				await scopeOpts2?.beforeChildLaunch?.(node, tracker, project.path);
 				tracker.updateStatus(nodeId, "in_progress");
 				await tracker.save();
 
@@ -397,7 +396,6 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 					ts: continueMsg2.ts,
 				});
 
-				const scopeOpts2 = ctx.scopeOpts.get(project.id);
 				if (scopeOpts2) {
 					runAgentForNode(ctx, project, tracker, nodeId, {
 						...scopeOpts2,
@@ -431,13 +429,21 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 
 		try {
 			const eventStore = getEventStore(ctx, project.id);
-			const wtRoot = join(project.path, ".worktrees");
-			const wm = new WorktreeManager(project.path, wtRoot);
+			// Task deletion cleanup is a plugin concern — route through the scope
+			// hook (Matrix removes the git worktree + branch). Runtime never
+			// manages worktrees directly. The node is still present in the
+			// tracker when this fires (removal happens after cleanup).
+			const scopeOpts = ctx.scopeOpts.get(project.id);
 			await deleteTaskOp(tracker, nodeId, "user", {
 				broadcastTree: () => broadcastTreeUpdate(ctx, project.id, tracker),
 				notifyTreeChange: (action, nId, title) =>
 					notifyTreeChange(ctx, project, action, nId, title),
-				removeWorktree: (id, slug) => wm.remove(id, slug),
+				removeWorktree: (id) => {
+					const n = tracker.getTask(id);
+					return n && scopeOpts?.onTaskDelete
+						? scopeOpts.onTaskDelete(n, project.path)
+						: Promise.resolve();
+				},
 				clearEventStore: (id) => eventStore.clear(id),
 			});
 			return c.json({ ok: true });

@@ -5,7 +5,7 @@
  * Tests that call createApp() should include this:
  *   createApp({ ..., buildScopeOpts: matrixBuildScopeOpts })
  */
-import { buildMatrixScopeOpts } from "../runtime/agent-lifecycle.ts";
+import { buildMatrixScopeOpts } from "../../.mxd/plugin/scope-opts.ts";
 import type { RuntimeContext, ScopeOpts } from "../runtime/context.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: ScopeOpts generic varies
