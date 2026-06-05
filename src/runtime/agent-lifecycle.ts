@@ -1,7 +1,5 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
-import { buildSummarizationInstruction } from "../compaction.ts";
 import { DEFAULT_MODEL } from "../config.ts";
 import { rollOldTraceIdDirs } from "../debug-snapshot.ts";
 import {
@@ -15,7 +13,6 @@ import {
 import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { MessageQueue } from "../message-queue.ts";
-import { createOrchestratorTools } from "../orchestrator-tools.ts";
 import {
 	createClarifyResponse,
 	createTaskComplete,
@@ -23,22 +20,14 @@ import {
 	createWorkContext,
 } from "../queue-message-factory.ts";
 import * as R from "../resource-registry.ts";
-import { buildSystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
-import { slugify } from "../task-utils.ts";
 import { createAgentAuth } from "../tool-auth.ts";
-import { toToolDefinition } from "../tool-def.ts";
 import { buildJsonTools, type ToolDefinition } from "../tool-definition.ts";
 import { formatUpstreamError } from "../tool-execution.ts";
 import { MCP_SERVER_NAME } from "../tool-names.ts";
-import {
-	buildBuiltinToolDefs,
-	cleanupSessionBackgroundProcesses,
-} from "../tools/index.ts";
+import { cleanupSessionBackgroundProcesses } from "../tools/index.ts";
 import { type AgentResult, isTask, type TaskSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
-import { buildWorkContextContent } from "../work-context.ts";
-import { WorktreeManager } from "../worktree-manager.ts";
 import type { RuntimeContext, ScopeOpts } from "./context.ts";
 import {
 	broadcast,
@@ -128,110 +117,9 @@ function findSessionConfig(events: Event[]): SessionConfigEvent | undefined {
 
 // prepareAgentMessage removed — context header replaced by work_context hook on enqueue.
 
-/**
- * Build the Matrix-default scope options (tools + prompt).
- * All callers that want standard Matrix behavior pass these to runAgentForNode.
- * This is the ONLY place that knows about orchestrator tools + builtin tools + Matrix system prompt.
- */
-
-/** Matrix's done() result — status + summary. */
-export type MatrixDoneData = {
-	status: "verify" | "failed";
-	summary: string;
-};
-
-/** Matrix's plugin type bundle. */
-export type MatrixPluginTypes = {
-	node: import("../types.ts").TaskNode;
-	done: MatrixDoneData;
-};
-
-export function buildMatrixScopeOpts(
-	projectId: string,
-	selfBootstrap: boolean,
-	ctx?: RuntimeContext,
-): ScopeOpts<MatrixPluginTypes> {
-	return {
-		buildTools: (auth, taskId) => {
-			const { toolDefs, hasRunningChildren, setMessages, setAllTools } =
-				createOrchestratorTools(auth, projectId, taskId, selfBootstrap);
-			const builtinTools = buildBuiltinToolDefs().map((def) =>
-				toToolDefinition(def, auth),
-			);
-			return {
-				tools: [...builtinTools, ...toolDefs],
-				hasRunningChildren,
-				setMessages,
-				setAllTools,
-			};
-		},
-		buildPrompt: () =>
-			selfBootstrap
-				? buildSystemPrompt({ selfBootstrap: true })
-				: buildSystemPrompt(),
-		connectMcp: ctx
-			? async (projectPath) => {
-					const mgr = new McpClientManager();
-					const cfg = await resolveProjectConfig(ctx, projectPath, projectId);
-					if (cfg.mcpServers && Object.keys(cfg.mcpServers).length > 0) {
-						await mgr.connectAll(cfg.mcpServers, projectPath);
-					}
-					return mgr;
-				}
-			: undefined,
-		beforeChildLaunch: async (node, tracker, projectPath) => {
-			// Already has a valid worktree — ensure cwd is set, return
-			if (node.worktreePath && existsSync(node.worktreePath)) {
-				if (!node.cwd) node.cwd = node.worktreePath;
-				return { cwd: node.cwd };
-			}
-			// Stale worktreePath — directory was deleted outside close_task
-			if (node.worktreePath && !existsSync(node.worktreePath)) {
-				node.worktreePath = null;
-				node.branch = null;
-			}
-			const parentNode = tracker.getTaskAbove(node.id);
-			const baseBranch = parentNode?.branch;
-			if (!baseBranch) {
-				throw new Error(
-					`Cannot create worktree — current task has no branch assigned.`,
-				);
-			}
-			const wtRoot = join(projectPath, ".worktrees");
-			const wm = new WorktreeManager(projectPath, wtRoot);
-			const wt = await wm.create(node.id, slugify(node.title), baseBranch);
-			tracker.assignWorktree(node.id, wt.branch, wt.path);
-			node.cwd = wt.path;
-			return { cwd: wt.path };
-		},
-		buildWorkContext: (node, projectPath) =>
-			buildWorkContextContent(node.cwd ?? node.worktreePath ?? projectPath),
-		buildSummarizationPrompt: (node, projectPath) =>
-			buildSummarizationInstruction(
-				node.cwd ?? node.worktreePath ?? projectPath,
-			),
-		buildDoneResumeContext: (node, projectPath) => {
-			const cwdLine =
-				(node.cwd ?? node.worktreePath ?? projectPath)
-					? `\n\n## Working Directory\n${node.cwd ?? node.worktreePath ?? projectPath}`
-					: "";
-			return `You previously called done(). New messages woke you up:${cwdLine}`;
-		},
-		shouldResume: (node) => node.status === "in_progress",
-		onLaunch: (node, tracker) => {
-			tracker.updateStatus(node.id, "in_progress");
-		},
-		onDone: (node, tracker, doneArgs) => {
-			const newStatus = doneArgs.status === "passed" ? "verify" : "failed";
-			const summary = (doneArgs.summary as string) ?? "";
-			tracker.updateStatus(
-				node.id,
-				newStatus as import("../types.ts").TaskStatus,
-			);
-			return { status: newStatus, summary };
-		},
-	};
-}
+// buildMatrixScopeOpts + MatrixDoneData/MatrixPluginTypes moved to the matrix
+// plugin (.mxd/plugin/scope-opts.ts). The runtime stays plugin-agnostic — it
+// only invokes scope opts through the ScopeOpts hook interface, never by name.
 
 /** Config + tools bundle produced by createAgentContext(). */
 interface AgentContextResult {

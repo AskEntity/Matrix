@@ -60,6 +60,13 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 		tracker: import("../task-tracker.ts").TaskTracker,
 		projectPath: string,
 	) => Promise<{ cwd: string } | void>;
+	/**
+	 * A task is being deleted — the plugin performs whatever cleanup that
+	 * implies. Matrix removes the task's git worktree + branch; a plugin with
+	 * no per-task resource omits this hook. Runtime delete routes call this and
+	 * never manage worktrees (or any resource type) directly.
+	 */
+	onTaskDelete?: (node: T["node"], projectPath: string) => Promise<void>;
 
 	// ── Context injection at lifecycle moments ──
 	/** Fresh start / post-compact: inject work context. Required — runtime needs context for agents. */

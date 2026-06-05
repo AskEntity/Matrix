@@ -6,9 +6,9 @@
  * Matrix-specific args (selfBootstrap) read from ctx.globalConfig.
  */
 import type { Hono } from "hono";
-import { buildMatrixScopeOpts } from "../../src/runtime/agent-lifecycle.ts";
 import type { RuntimeContext } from "../../src/runtime/context.ts";
 import { isProductionProject } from "./production.ts";
+import { buildMatrixScopeOpts } from "./scope-opts.ts";
 
 export function buildScopeOpts(projectId: string, ctx: RuntimeContext) {
 	return buildMatrixScopeOpts(
