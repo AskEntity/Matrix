@@ -374,20 +374,34 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 			(node.status === "verify" || node.status === "closed") &&
 			!node.worktreePath
 		) {
+			// Use getTaskAbove to skip folders — folders have no branch
+			const taskAboveForBranch = tracker.getTaskAbove(nodeId);
+			const baseBranch = taskAboveForBranch?.branch;
+			if (!baseBranch) {
+				return c.json(
+					{ error: "Cannot create worktree — parent has no branch assigned" },
+					400,
+				);
+			}
+
+			// Acquire the launch lock ATOMICALLY before the side-effectful
+			// beforeChildLaunch (`git worktree add`). FIX-2 routed this reactivation
+			// through beforeChildLaunch directly — a third worktree-create path that,
+			// like ensureChildAgentRunning before B-H2, ran creation OUTSIDE the lock.
+			// Two concurrent reactivations (or a reactivation racing a deliverMessage
+			// launch) for the same node would both pass `!node.worktreePath` and both
+			// create → one throws → 500. Mirror the ensureChildAgentRunning fix here.
+			if (node.session != null || ctx.launchingNodes.has(nodeId)) {
+				// Already running or mid-launch — idempotent: return current node.
+				return c.json(serializeNode(node));
+			}
+			ctx.launchingNodes.add(nodeId);
+
 			try {
-				// Use getTaskAbove to skip folders — folders have no branch
-				const taskAboveForBranch = tracker.getTaskAbove(nodeId);
-				const baseBranch = taskAboveForBranch?.branch;
-				if (!baseBranch) {
-					return c.json(
-						{ error: "Cannot create worktree — parent has no branch assigned" },
-						400,
-					);
-				}
 				// Workspace creation is a plugin concern — route through the scope
 				// hook (Matrix creates a git worktree + assigns it on the tracker)
 				// instead of managing worktrees directly. Same hook the runtime
-				// uses when launching a fresh child.
+				// uses when launching a fresh child — now under the launch lock.
 				const scopeOpts2 = ctx.scopeOpts.get(project.id);
 				await scopeOpts2?.beforeChildLaunch?.(node, tracker, project.path);
 				tracker.updateStatus(nodeId, "in_progress");
@@ -412,14 +426,21 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 				});
 
 				if (scopeOpts2) {
+					// runAgentForNode takes over the lock (launchLockHeld) and releases it.
 					runAgentForNode(ctx, project, tracker, nodeId, {
 						...scopeOpts2,
 						model: body.model,
+						launchLockHeld: true,
 					});
+				} else {
+					// No scope opts → runAgentForNode never runs → release the held lock.
+					ctx.launchingNodes.delete(nodeId);
 				}
 
 				return c.json(serializeNode(node));
 			} catch (e) {
+				// Prep failed before runAgentForNode took over the lock — release it.
+				ctx.launchingNodes.delete(nodeId);
 				const message = e instanceof Error ? e.message : String(e);
 				return c.json(
 					{ error: `Failed to re-create worktree: ${message}` },

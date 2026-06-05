@@ -638,24 +638,42 @@ export async function ensureChildAgentRunning(
 		throw new Error(`No scope opts registered for project ${project.id}`);
 	}
 
-	// Guard: if agent is already running or being launched, do nothing.
+	// Acquire the launch lock ATOMICALLY (the has-check and add() run in the same
+	// synchronous tick — no await between them) BEFORE beforeChildLaunch. Workspace
+	// prep (Matrix runs `git worktree add` + bun install) takes seconds; the old code
+	// added the lock only later, inside runAgentForNode, so two concurrent
+	// deliverMessage calls for the same fresh child both passed this guard and both
+	// ran beforeChildLaunch → duplicate `git worktree add` → the loser threw →
+	// deliverMessage.catch marked the node `failed` and sent a bogus
+	// task_complete(failed) to the parent WHILE the winner's agent ran. (B-H2)
 	if (node.session != null || ctx.launchingNodes.has(nodeId)) {
 		return;
 	}
+	ctx.launchingNodes.add(nodeId);
 
-	// Prepare child workspace via scope hook (Matrix creates worktrees, plugins may differ)
-	// Hook decides if preparation is needed — runtime doesn't check workspace state.
-	if (scopeOpts.beforeChildLaunch) {
-		await scopeOpts.beforeChildLaunch(node, tracker, project.path);
+	// Phase A — workspace prep under the lock. If this throws, runAgentForNode never
+	// runs and so never releases the lock; release it here so the node can be retried.
+	try {
+		// Prepare child workspace via scope hook (Matrix creates worktrees, plugins may differ).
+		// Hook decides if preparation is needed — runtime doesn't check workspace state.
+		if (scopeOpts.beforeChildLaunch) {
+			await scopeOpts.beforeChildLaunch(node, tracker, project.path);
+		}
+		if (scopeOpts.onLaunch) scopeOpts.onLaunch(node, tracker);
+		await tracker.save();
+		broadcastTreeUpdate(ctx, project.id, tracker);
+	} catch (e) {
+		ctx.launchingNodes.delete(nodeId);
+		throw e;
 	}
 
-	if (scopeOpts.onLaunch) scopeOpts.onLaunch(node, tracker);
-	await tracker.save();
-
-	broadcastTreeUpdate(ctx, project.id, tracker);
+	// Phase B — hand off to runAgentForNode, which now OWNS the lock and releases it
+	// (once the session is established, and again in its finally). launchLockHeld tells
+	// it not to treat its own already-held lock as a competing launcher.
 	await runAgentForNode(ctx, project, tracker, nodeId, {
 		...scopeOpts,
 		model,
+		launchLockHeld: true,
 	});
 }
 
@@ -684,6 +702,16 @@ export interface RunAgentOpts extends ScopeOpts {
 	resume?: boolean;
 	/** Agent working directory. Set by beforeChildLaunch return value. Default: project root. */
 	cwd?: string;
+	/**
+	 * The caller already acquired the launch lock (ctx.launchingNodes) BEFORE
+	 * doing side-effectful workspace prep (ensureChildAgentRunning acquires it
+	 * around beforeChildLaunch to serialize `git worktree add`). When set, the
+	 * entry guard does NOT treat the already-held lock as a competing launcher,
+	 * and runAgentForNode takes over the lock's release on EVERY exit path
+	 * (including the early session-already-running bail) so the caller can't leak
+	 * it. (B-H2)
+	 */
+	launchLockHeld?: boolean;
 }
 
 /** Run an agent for any node (root or child). Shared launch path. */
@@ -699,14 +727,24 @@ export async function runAgentForNode(
 	const isRoot = !node.parentId;
 	const agentCwd = project.path; // project root — tools read cwd from node data
 
-	// Launch lock: prevent duplicate launches when messages arrive before session is established.
-	if (node.session != null || ctx.launchingNodes.has(nodeId)) {
+	// Launch lock: prevent duplicate launches when messages arrive before session
+	// is established. When opts.launchLockHeld, the caller (ensureChildAgentRunning)
+	// already acquired the lock around its workspace prep — don't treat our own lock
+	// as a competing launcher, and take over its release on the early-bail path below
+	// so the caller never leaks it.
+	if (node.session != null) {
+		if (opts.launchLockHeld) ctx.launchingNodes.delete(nodeId);
+		return;
+	}
+	if (ctx.launchingNodes.has(nodeId) && !opts.launchLockHeld) {
 		return;
 	}
 	ctx.launchingNodes.add(nodeId);
 
-	// Track loop promise so stopTask/resetTask can await loop exit.
-	// Resolved in finally block after ALL cleanup (including Phase 2) completes.
+	// Track loop promise so stopTask/resetTask can await loop exit. Resolved in the
+	// Phase-2 finally at the very end of this function — AFTER session cleanup AND
+	// Phase 2 — so awaiters observe a fully-settled run. That finally guarantees it
+	// settles even if Phase 2 throws (cc#3).
 	let resolveLoopPromise: (() => void) | undefined;
 	const loopPromise = new Promise<void>((resolve) => {
 		resolveLoopPromise = resolve;
@@ -983,8 +1021,11 @@ export async function runAgentForNode(
 				: undefined,
 		};
 
-		// Root agents: stream directly — done() enters idle-yield, session stays alive.
-		// Child agents: runChildCore adds done() detection — queue close on done.
+		// Root agents: stream directly. done() exits the stream loop (just like a
+		// child) → Phase 2 marks the task verify/failed → the `finally` below tears
+		// the session down. The session does NOT "stay alive" past done — it is
+		// cleared like any other run's. (F-C2)
+		// Child agents: runChildCore wraps the same stream with done()/queue-close detection.
 		if (isRoot) {
 			const stream = agentCtx.provider.stream(sessionRequest);
 			let result = await stream.next();
@@ -1065,77 +1106,106 @@ export async function runAgentForNode(
 
 	// ── Phase 2 of two-phase done() ──
 	// Runs AFTER session cleanup (finally block). Session is now null.
-	const isDoneExit =
-		agentResult != null &&
-		(agentResult.exitReason === "done_passed" ||
-			agentResult.exitReason === "done_failed");
-	if (isDoneExit && agentResult) {
-		const currentNode = tracker.getTask(nodeId);
-		if (currentNode) {
-			const eventStore = getEventStore(ctx, project.id);
-			let hasLateMessages = false;
-			if (!isRoot && eventStore.has(nodeId)) {
-				await eventStore.flushSession(nodeId);
-				const events = eventStore.readActive(nodeId);
-				const unconsumed = findUnconsumedMessages(events);
-				if (unconsumed.length > 0) {
-					hasLateMessages = true;
+	//
+	// Wrapped in try/catch/finally so the loop promise ALWAYS settles. Before this
+	// guard, Phase 2 + the loop-promise resolution sat OUTSIDE any try/finally: if
+	// any step here (save/flush/onDone/deliverMessage) threw, agentLoopPromise was
+	// stranded forever and stopTask — which awaits loopPromise with NO timeout —
+	// hung indefinitely. (cc#3)
+	try {
+		const isDoneExit =
+			agentResult != null &&
+			(agentResult.exitReason === "done_passed" ||
+				agentResult.exitReason === "done_failed");
+		if (isDoneExit && agentResult) {
+			const currentNode = tracker.getTask(nodeId);
+			if (currentNode) {
+				const eventStore = getEventStore(ctx, project.id);
+				let hasLateMessages = false;
+				if (!isRoot && eventStore.has(nodeId)) {
+					await eventStore.flushSession(nodeId);
+					const events = eventStore.readActive(nodeId);
+					const unconsumed = findUnconsumedMessages(events);
+					if (unconsumed.length > 0) {
+						hasLateMessages = true;
+					}
 				}
-			}
 
-			if (hasLateMessages) {
-				ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
-					console.warn(
-						`[Phase 2] Re-launching ${nodeId} for late messages:`,
-						e instanceof Error ? e.message : String(e),
-					);
-				});
-			} else {
-				// Let plugin update node state on done — returns data for crash-safe marker
-				const doneArgs = {
-					status:
-						agentResult.exitReason === "done_passed" ? "passed" : "failed",
-					summary: agentResult.doneSummary ?? "",
-				};
-				const doneData = opts.onDone
-					? (opts.onDone(currentNode, tracker, doneArgs) ?? doneArgs)
-					: doneArgs;
-				await tracker.save();
-				broadcastTreeUpdate(ctx, project.id, tracker);
+				if (hasLateMessages) {
+					ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
+						console.warn(
+							`[Phase 2] Re-launching ${nodeId} for late messages:`,
+							e instanceof Error ? e.message : String(e),
+						);
+					});
+				} else {
+					// Let plugin update node state on done — returns data for crash-safe marker
+					const doneArgs = {
+						status:
+							agentResult.exitReason === "done_passed" ? "passed" : "failed",
+						summary: agentResult.doneSummary ?? "",
+					};
+					const doneData = opts.onDone
+						? (opts.onDone(currentNode, tracker, doneArgs) ?? doneArgs)
+						: doneArgs;
+					await tracker.save();
+					broadcastTreeUpdate(ctx, project.id, tracker);
 
-				const taskAbove = tracker.getTaskAbove(nodeId);
-				if (taskAbove && !isRoot) {
-					const completionMsg = createTaskComplete(
-						nodeId,
-						currentNode.title ?? "unknown",
-						agentResult.exitReason === "done_passed",
-						agentResult.doneSummary ?? "",
-					);
-					deliverMessage(ctx, project, taskAbove.id, completionMsg).catch(
-						(e) => {
+					const taskAbove = tracker.getTaskAbove(nodeId);
+					if (taskAbove && !isRoot) {
+						const completionMsg = createTaskComplete(
+							nodeId,
+							currentNode.title ?? "unknown",
+							agentResult.exitReason === "done_passed",
+							agentResult.doneSummary ?? "",
+						);
+						// B-M4: task_complete MUST be durable BEFORE done_notified. If the
+						// marker persisted while task_complete did not, restart's
+						// findInterruptedDonePhase2 returns status_stale (marker present) and
+						// does NOT re-deliver → the parent waits forever. AWAIT delivery and
+						// FLUSH the parent's JSONL so the marker only ever follows a durable
+						// notice. (Was fire-and-forget .catch() before — the marker could
+						// land first.)
+						try {
+							await deliverMessage(ctx, project, taskAbove.id, completionMsg);
+							await eventStore.flushSession(taskAbove.id);
+						} catch (e) {
 							console.warn(
 								`[Phase 2] Failed to deliver task_complete to parent ${taskAbove.id}:`,
 								e,
 							);
-						},
-					);
-				}
+						}
+					}
 
-				// Crash-safe marker: plugin fields spread directly onto event
-				emitEvent(ctx, project.id, {
-					type: "done_notified",
-					taskId: nodeId,
-					...doneData,
-					traceId: loopTraceId,
-					ts: Date.now(),
-				});
+					// Crash-safe marker — emitted only AFTER task_complete is durable.
+					// Reverse case (crash after this, before the marker flushes): restart
+					// re-delivers task_complete (at-least-once). A duplicate completion is
+					// recoverable; a lost one hangs the parent — we prefer the duplicate.
+					emitEvent(ctx, project.id, {
+						type: "done_notified",
+						taskId: nodeId,
+						...doneData,
+						traceId: loopTraceId,
+						ts: Date.now(),
+					});
+					await eventStore.flushSession(nodeId);
+				}
 			}
 		}
+	} catch (e) {
+		// Phase 2 failure must NOT strand the loop promise (see cc#3). Log and fall
+		// through to the finally, which resolves it. The task already finished its
+		// work; a Phase-2 hiccup shouldn't be treated as an agent failure.
+		console.warn(
+			`[Phase 2] Unexpected error for ${nodeId} (loop promise will still settle):`,
+			e instanceof Error ? e.message : String(e),
+		);
+	} finally {
+		// Resolve loop promise so stopTask/resetTask can detect loop exit. MUST run
+		// even if Phase 2 threw above — this is the cc#3 guarantee.
+		ctx.agentLoopPromises.delete(nodeId);
+		resolveLoopPromise?.();
 	}
-
-	// Resolve loop promise so stopTask/resetTask can detect loop exit.
-	ctx.agentLoopPromises.delete(nodeId);
-	resolveLoopPromise?.();
 }
 
 // --- Shared handlers (used by REST routes) ---

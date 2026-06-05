@@ -2439,3 +2439,100 @@ by `endsInPendingControl`.
   repair; re-adding the truncated-region loop makes F-H2 see an orphan result; restoring the
   `!== TOOL_YIELD`-only filter gives the done orphan a spurious result; restoring the `as never`
   source makes the D#1 status render empty.
+
+## FIX-3 (2026-06-05) — lifecycle + provider concurrency: Phase-2 leak, done ordering, launch race, abort-sleep, done+compact
+
+Five concurrency bugs in `agent-lifecycle.ts` + `provider-shared.ts`. Each is a "the loop/parent
+silently hangs or corrupts" failure, NOT a crash. Files: `runtime/agent-lifecycle.ts`,
+`provider-shared.ts`, `orchestrator-tools.ts`, `runtime/routes/tasks.ts`.
+
+### cc#3 — Phase 2 + loop-promise resolution MUST be inside try/finally
+`runAgentForNode`. Phase 2 (save/flushSession/onDone/deliverMessage) + the `resolveLoopPromise()` +
+`agentLoopPromises.delete(nodeId)` sat AFTER the agent-loop try/finally, OUTSIDE any guard. A throw in
+ANY Phase 2 step skipped the resolution → `agentLoopPromise` leaked forever. `stopTask` awaits that
+promise with NO timeout (unlike `stopAgent`'s bounded 1s race) → it hung indefinitely. Fix: wrap
+Phase 2 in `try { … } catch (log) { … } finally { delete + resolve }`. The loop promise now settles on
+EVERY path. The old comment claiming resolution happened "in finally block" was a lie — now true.
+Phase 2 errors are logged, not rethrown (the task already finished its work; a Phase-2 hiccup is not
+an agent failure). **This corrects the "Two-Phase done() Lifecycle" section: resolution is now genuinely
+in a finally.**
+
+### B-M4 — task_complete MUST be durable BEFORE done_notified
+`runAgentForNode` Phase 2 done branch used fire-and-forget `deliverMessage(parent,
+task_complete).catch()` then immediately `emitEvent(done_notified)`. done_notified lands on THIS node's
+write queue synchronously; task_complete goes through deliverMessage's `await getTracker` first → lands
+later. So "done_notified durable ⟹ task_complete durable" did NOT hold. Crash with done_notified
+persisted but task_complete not → restart's `findInterruptedDonePhase2` returns `status_stale` (marker
+present, runtime.ts:~376) → does NOT re-deliver → parent hangs forever. Fix: `await deliverMessage(parent,
+task_complete)` then `await eventStore.flushSession(parentId)` BEFORE `emitEvent(done_notified)` (+ flush
+the marker too). Reverse case (crash after marker, before its flush) → restart re-delivers (needs_phase2)
+→ at-least-once duplicate task_complete. A duplicate completion is recoverable; a lost one hangs the
+parent — we deliberately prefer the duplicate (the needs_phase2 branch already accepts at-least-once).
+
+### B-H2 — worktree-creation launch race (close the CLASS, not one instance)
+The launch lock (`ctx.launchingNodes`) was added INSIDE runAgentForNode, AFTER the seconds-long
+`beforeChildLaunch` (`git worktree add`). Two concurrent launches for the same fresh child both passed
+the pre-lock guard → two `git worktree add` → the loser threw → `deliverMessage.catch` marked the node
+`failed` + sent a bogus task_complete(failed) to the parent WHILE the winner ran. THREE create paths
+existed post-FIX-2 — all three fixed:
+1. `ensureChildAgentRunning → beforeChildLaunch`: acquire `launchingNodes` ATOMICALLY at the top
+   (has-check + add in one synchronous tick, no await between), BEFORE beforeChildLaunch. Phase A (prep)
+   releases the lock on throw; Phase B hands it to runAgentForNode.
+2. `orchestrator-tools.ts send_message` inline `wm.create`: **DELETED**. send_message now delegates to
+   deliverMessage → ensureChildAgentRunning (the single locked creator). Kept the git-clean + branch
+   pre-flight gates; dropped the now-async "on branch X" suffix from the success string (the branch
+   isn't known synchronously anymore — no test asserted that string). "Delete until ONE remains":
+   beforeChildLaunch (existsSync-guarded) is the SOLE creator. (`slugify` import dropped from the file.)
+3. `runtime/routes/tasks.ts` REST `/continue` reactivation (verify/closed, no worktree): FIX-2 wired
+   this to call `beforeChildLaunch` directly, OUTSIDE the lock — same race (milder blast: a duplicate
+   POST 500s, no parent corruption). Acquire the lock around it with the same launchLockHeld handoff.
+- New `RunAgentOpts.launchLockHeld?: boolean`: when set, runAgentForNode's entry guard does NOT treat
+  its own already-held lock as a competing launcher, and TAKES OVER the lock's release on EVERY exit
+  path (incl. the early session-already-running bail) so the caller can't leak it. Entry guard split:
+  `if (node.session != null) { if (launchLockHeld) delete; return; }` then `if (has(nodeId) &&
+  !launchLockHeld) return;` then `add`.
+
+### B-M3 — outer-retry backoff MUST be abort-aware
+`provider-shared.ts` outer retry used `await new Promise(r => setTimeout(r, delay))` (30/60/120s). The
+inner per-call retry was already abort-aware; this one was not. A transient error parked the loop in
+this sleep; a stop/reset then blocked for the full backoff (up to 120s), exceeding the daemon's 60s
+worker-forward timeout → 504 + a retry racing the still-running first reset. Fix: module-level
+`abortableDelay(ms, signal)` (setTimeout raced against an `abort` listener, listener removed on both
+paths so a long-lived signal doesn't accumulate listeners) + after it `if (signal.aborted) throw e` to
+abandon the retry loop. **Test with stopTask (no timeout), NOT stopAgent (its 1s race masks the block).**
+
+### B-L9 — done-resume + compactOnly → consecutive user messages → API 400 (FIXED)
+`provider-shared.ts` pendingDoneToolCall handler did NOT check `compactOnly` (the yield path already did
+via `pendingCompactYieldToolCall`). When the ONLY wake message during a done-resume was /compact, it
+pushed the done tool_result as its own user message, then the compact block pushed the summarization as
+a SECOND consecutive user message → 400. NOTE: the in-memory auto-recovery (`enableAutoRecovery`) is
+GONE — this 400 is NOT masked; it crashes → buildSessionRepair on next launch. Fix: new
+`pendingCompactDoneToolCall` mirroring the yield path — on compactOnly, emit the done tool_result
+("Manual compaction requested") for orphan-prevention but DEFER its messages[] push; the compact block
+bundles it + the summarization into ONE user turn. The compact-block bundling now unifies yield AND done
+(`pendingCompactYieldToolCall ?? pendingCompactDoneToolCall` — mutually exclusive: a resume ends in one
+orphan, not both). The compact-with-OTHER-messages (compactOnly=false) done case stays an analog of the
+known-unfixed yield bug (still a test.todo). **Updates "Known Bugs": the done+compactOnly variant is
+now fixed; only the +other-messages variants (yield AND done) remain.**
+
+### Reachability trick for the B-L9 test
+`/compact` endpoint 404s for a non-running (done/verify) agent, so it can't wake a pending-done agent.
+Instead: `deliverMessage(node, createCompactMessage())` — a compact QueueMessage HAS an id, so
+deliverMessage persists it to JSONL and findUnconsumedMessages recovers it on the auto-launched resume.
+The resume drains ONLY the compact → compactOnly=true. The mock's `validateRequest` throws on
+consecutive user roles, so the bug surfaces as an "alternate roles" error event + a missing
+compact_marker.
+
+### Regression tests (all mutation-proofed — each fails when its fix is reverted)
+- `src/lifecycle-concurrency.test.ts` (new): cc#3 (throwing onDone → loop promise still settles +
+  agentLoopPromises cleared), B-M4 (at the moment the child's done_notified is appended, the spy
+  reads the parent JSONL from disk and asserts task_complete is ALREADY there — directly tests the
+  durability ordering), B-H2 (counting beforeChildLaunch: two concurrent deliverMessage → ONE create +
+  no bogus task_complete(success=false); two concurrent REST /continue → ONE create), B-M3 (stopTask
+  during a 4s backoff returns <3s). Test gotchas: task_complete message has `source:"task_complete"`,
+  field `success` (not "child_complete"/"passed"); a holder OBJECT (not a bare `let`) avoids TS
+  narrowing the closure-assigned probe back to its `null` initializer; awaiting `ensureChildAgentRunning`
+  directly HANGS (it awaits the whole agent loop) — drive launches via deliverMessage/REST instead.
+- `src/drift-lifecycle.test.ts` "compact triggered while agent in pending-done (done resume)" — was a
+  test.todo, now a real B-L9 test (compact_marker written, no alternate-roles error, every recorded
+  request alternates roles).
