@@ -569,14 +569,38 @@ export function findOrphanedBackgroundProcesses(
 
 // ── JSONL Repair: truncate-and-rebuild ──
 
+type ToolCallEvent = Extract<Event, { type: "tool_call" }>;
+
+/** The last tool_call event in a slice (intended-orphan detection), or null. */
+function lastToolCallEvent(events: Event[]): ToolCallEvent | null {
+	for (let i = events.length - 1; i >= 0; i--) {
+		const e = events[i];
+		if (e?.type === "tool_call") return e;
+	}
+	return null;
+}
+
 /**
  * Inspect a session's events and determine if repair is needed.
  * Finds the last complete assistant turn (all tool_calls have exactly one
  * valid tool_result, no duplicates). Everything after it is the "tail"
  * that may contain poison (duplicate tool_results, orphaned calls, etc.).
  *
+ * COMPACT-BOUNDARY SAFETY (the index-space bug): analysis AND truncation are
+ * scoped to the ACTIVE region — events after the last `compact_marker`. The
+ * returned `truncateAfterIndex` is a PHYSICAL line index into the full `events`
+ * array, so a caller can hand it straight to `EventStore.truncateAfterLine`
+ * (which slices by physical file line). The previous version computed indices
+ * against the post-compact slice (`readActive`) but truncated by physical line
+ * — for a compacted session that sliced off the compact_marker, the
+ * post-compact session_config, and the summary, then appended interrupted
+ * results referencing tool_calls that had just been truncated away. The result
+ * was an unrecoverable session (orphan tool_results → API 400 → repair returns
+ * null → crash loop). Pass the FULL event log (`EventStore.read`), NOT
+ * `readActive`: this function finds the boundary itself.
+ *
  * Returns null if no repair needed, otherwise returns:
- * - truncateAfterIndex: line index to truncate after (keep lines 0..index inclusive)
+ * - truncateAfterIndex: PHYSICAL line index to truncate after (keep lines 0..index inclusive)
  * - appendEvents: events to append after truncation (interrupted tool_results + status message)
  *
  * This replaces findOrphanedToolCalls, findOrphanedBackgroundProcesses, and
@@ -584,6 +608,37 @@ export function findOrphanedBackgroundProcesses(
  * ALL JSONL repair scenarios (daemon restart, API 400, duplicate results).
  */
 export function buildSessionRepair(
+	events: Event[],
+	taskId: string,
+	opts?: { reason?: string },
+): {
+	truncateAfterIndex: number;
+	appendEvents: Event[];
+} | null {
+	if (events.length === 0) return null;
+	// Scope to the active region (after the last compact_marker). Truncation
+	// must NEVER cross the boundary — the marker, post-compact session_config,
+	// and summary are load-bearing for a compacted session's resume.
+	const lastCompactMarker = events.findLastIndex(
+		(e) => e.type === "compact_marker",
+	);
+	const offset = lastCompactMarker < 0 ? 0 : lastCompactMarker + 1;
+	const active = offset === 0 ? events : events.slice(offset);
+	const repair = repairActiveRegion(active, taskId, opts);
+	if (!repair) return null;
+	// Translate the active-relative truncation index back to a physical line.
+	return {
+		truncateAfterIndex: repair.truncateAfterIndex + offset,
+		appendEvents: repair.appendEvents,
+	};
+}
+
+/**
+ * Core repair analysis over a single active region (no compact_marker inside).
+ * Indices returned are relative to the passed `events` array; the
+ * `buildSessionRepair` wrapper translates them to physical line space.
+ */
+function repairActiveRegion(
 	events: Event[],
 	taskId: string,
 	opts?: { reason?: string },
@@ -722,18 +777,29 @@ export function buildSessionRepair(
 			} as Event);
 		}
 
-		if (opts?.reason) {
+		// Status message — a synthetic USER-role message (createUserMessage),
+		// so formatBodyForAI + UI materialization actually surface its content.
+		// (The old `source: "system" as never` cast produced a body that
+		// formatBodyForAI's `default` branch rendered to an empty string — the
+		// repair reason silently vanished.) Only appended when the session does
+		// NOT resume in a pending control state: a trailing unresolved
+		// yield/done orphan must stay the last block, so appending a user
+		// message after it would break assistant→tool_result alternation.
+		const lastKept = lastToolCallEvent(keptEvents);
+		const endsInPendingControl =
+			!!lastKept &&
+			(lastKept.tool === TOOL_YIELD || lastKept.tool === TOOL_DONE) &&
+			!keptResults.has(lastKept.toolCallId);
+		if (opts?.reason && !endsInPendingControl) {
+			const statusMsg = createUserMessage(
+				`Session repaired: ${opts.reason}. Out-of-order events truncated.`,
+			);
 			appendEvents.push({
 				type: "message",
-				id: `repair-${now}`,
+				id: statusMsg.id,
 				taskId,
-				body: {
-					source: "system" as never,
-					id: `repair-${now}`,
-					ts: now,
-					content: `Session repaired: ${opts.reason}. Out-of-order events truncated.`,
-				},
-				ts: now,
+				body: statusMsg,
+				ts: statusMsg.ts,
 			} as Event);
 		}
 
@@ -812,50 +878,51 @@ export function buildSessionRepair(
 	}
 
 	// Build interrupted tool_results for orphaned tool_calls.
-	// Two sources of orphans:
-	// 1. Tool_calls in the KEPT region whose results were in the truncated region
-	//    (e.g., tool_call at index 8, result was at index 9 = the poison)
-	// 2. Tool_calls in the truncated region (later turns that got removed)
+	// The ONLY legitimate orphans are tool_calls in the KEPT region whose
+	// results lived in the truncated region (e.g. tool_call at index 8, result
+	// at index 9 = the poison). Each gets a synthetic interrupted result so its
+	// assistant turn resolves.
+	//
+	// We deliberately do NOT append results for tool_calls located in the
+	// TRUNCATED region: those tool_calls are removed by truncation, so a result
+	// referencing them would be an ORPHAN tool_result (a result with no matching
+	// tool_call in the kept JSONL). The walker reconstructs that into an invalid
+	// user message → API 400 → next launch's buildSessionRepair returns null (it
+	// detects orphan CALLS and duplicates, not orphan RESULTS) → permanent crash
+	// loop. The old "truncated region also need interrupted results" loop did
+	// exactly this; it is gone.
 	const appendEvents: Event[] = [];
 	const now = Date.now();
 
-	// Scan kept region for tool_calls whose results are being truncated
+	// Scan kept region for tool_calls whose results are being truncated.
 	const keptEvents = events.slice(0, lastGoodIndex + 1);
 	const keptResultIds = new Set<string>();
 	for (const e of keptEvents) {
 		if (e.type === "tool_result") keptResultIds.add(e.toolCallId);
 	}
+	// The intended orphan is the LAST tool_call in the kept region IF it's a
+	// yield/done — it stays unresolved so the session resumes in its pending
+	// control state. Every OTHER orphan (earlier yield/done, or any other tool)
+	// gets an interrupted result. Skipping only TOOL_YIELD (and not TOOL_DONE)
+	// was asymmetric: a kept-region done() orphan got a spurious tool_result.
+	const intendedOrphan = lastToolCallEvent(keptEvents);
+	const intendedOrphanId =
+		intendedOrphan &&
+		(intendedOrphan.tool === TOOL_YIELD || intendedOrphan.tool === TOOL_DONE)
+			? intendedOrphan.toolCallId
+			: null;
 	for (const e of keptEvents) {
-		if (
-			e.type === "tool_call" &&
-			e.tool !== TOOL_YIELD &&
-			!keptResultIds.has(e.toolCallId)
-		) {
-			appendEvents.push({
-				type: "tool_result" as const,
-				tool: e.tool,
-				toolCallId: e.toolCallId,
-				content: "interrupted, results unknown",
-				isError: true,
-				taskId,
-				ts: now,
-			} as Event);
-		}
-	}
-
-	// Tool_calls in the truncated region also need interrupted results
-	for (const e of truncatedRegion) {
-		if (e.type === "tool_call" && e.tool !== TOOL_YIELD) {
-			appendEvents.push({
-				type: "tool_result" as const,
-				tool: e.tool,
-				toolCallId: e.toolCallId,
-				content: "interrupted, results unknown",
-				isError: true,
-				taskId,
-				ts: now,
-			} as Event);
-		}
+		if (e.type !== "tool_call" || keptResultIds.has(e.toolCallId)) continue;
+		if (e.toolCallId === intendedOrphanId) continue; // intended orphan stays
+		appendEvents.push({
+			type: "tool_result" as const,
+			tool: e.tool,
+			toolCallId: e.toolCallId,
+			content: "interrupted, results unknown",
+			isError: true,
+			taskId,
+			ts: now,
+		} as Event);
 	}
 
 	// Preserve unconsumed messages from the truncated region.
@@ -869,25 +936,35 @@ export function buildSessionRepair(
 		}
 	}
 
-	// Status message
-	let statusText: string;
-	if (errorMessages.length > 0) {
-		const uniqueErrors = [...new Set(errorMessages)].slice(0, 3);
-		statusText = `Session repaired. Tool execution encountered errors:\n${uniqueErrors.join("\n")}\n\nAffected tool results have been removed. Continue from where you left off.`;
-	} else {
-		statusText =
-			opts?.reason ??
-			"Session repaired. Duplicate tool results were removed. Continue from where you left off.";
-	}
+	// Status message — a synthetic USER-role message that resumes the session
+	// with an API call. Skip it when the repaired session ends in an unresolved
+	// intended-orphan yield/done: that turn must stay last (assistant→tool_result
+	// alternation), and the session correctly resumes in its pending-yield /
+	// pending-done state instead of forcing an API call. Without this guard the
+	// intended-orphan skip above would be followed by a user message → invalid
+	// structure → API 400.
+	const endsInPendingControl =
+		intendedOrphanId !== null && !keptResultIds.has(intendedOrphanId);
+	if (!endsInPendingControl) {
+		let statusText: string;
+		if (errorMessages.length > 0) {
+			const uniqueErrors = [...new Set(errorMessages)].slice(0, 3);
+			statusText = `Session repaired. Tool execution encountered errors:\n${uniqueErrors.join("\n")}\n\nAffected tool results have been removed. Continue from where you left off.`;
+		} else {
+			statusText =
+				opts?.reason ??
+				"Session repaired. Duplicate tool results were removed. Continue from where you left off.";
+		}
 
-	const statusMsg = createUserMessage(statusText);
-	appendEvents.push({
-		type: "message" as const,
-		id: statusMsg.id,
-		taskId,
-		body: statusMsg,
-		ts: statusMsg.ts,
-	} as Event);
+		const statusMsg = createUserMessage(statusText);
+		appendEvents.push({
+			type: "message" as const,
+			id: statusMsg.id,
+			taskId,
+			body: statusMsg,
+			ts: statusMsg.ts,
+		} as Event);
+	}
 
 	return {
 		truncateAfterIndex: lastGoodIndex,

@@ -2372,3 +2372,70 @@ different path/branch → the real worktree is orphaned forever. Fix:
 - `src/config.test.ts`: loadGlobalConfig ENOENT→defaults, missing-field→throw, corrupt-JSON→throw.
 - `src/daemon.test.ts`: PATCH null-delete → 400 (credentials preserved); createDaemon on
   corrupt/incomplete config → throws, on-disk config untouched.
+
+## FIX-1 (2026-06-05) — buildSessionRepair corrupted COMPACTED sessions (index-space + orphan results)
+
+CRITICAL data-corruption fix. Both audits (matrix F-H2 + cc#1) independently hit it. The repair
+path could permanently brick any *compacted* session (recoverable only by `reset_task`). Four
+facets, one subsystem (`src/events.ts buildSessionRepair`, call site `agent-lifecycle.ts:~801`).
+
+**This SUPERSEDES the "JSONL Repair" and "buildSessionRepair Scope Boundary" sections above.** The
+key claim that changed: `buildSessionRepair` now takes the **FULL** event log and returns a
+**PHYSICAL** line index. Read those older sections with this correction in mind.
+
+### cc#1 — index-space mismatch (root cause)
+`buildSessionRepair` computed `truncateAfterIndex` against `readActive()` (post-`compact_marker`
+slice), but `EventStore.truncateAfterLine` slices by **physical file line**. For a compacted
+session, an active-relative index fed to physical truncation sliced off the `compact_marker`,
+post-compact `session_config`, and `compacted_resume` summary, AND appended interrupted results
+referencing tool_calls that had just been truncated away → unrecoverable.
+- **Fix**: `buildSessionRepair(events)` is now a thin boundary-aware wrapper. It finds the last
+  `compact_marker`, scopes analysis to the active region via an internal `repairActiveRegion(active)`
+  (the old body, unchanged), then translates the returned index back to physical by adding the
+  active offset. **Callers MUST pass the FULL log (`EventStore.read`), NOT `readActive`.** The call
+  site in `agent-lifecycle.ts` now reads `read(nodeId)` and compares against `allEvents.length`.
+- Truncation can never cross the compact boundary by construction (analysis is on the active slice;
+  the floor is the boundary). Corruption that lives *before* the last marker is compacted away and
+  is correctly ignored.
+
+### F-H2 — Strategy 2 appended results for TRUNCATED-region tool_calls → orphan tool_results
+The duplicate-repair branch had a second loop appending interrupted results for tool_calls located
+in the region being truncated away. Those calls are removed → the results become **orphan
+tool_results** (result with no matching call) → walker builds an invalid user message → API 400 →
+next launch `buildSessionRepair` returns null (it detects orphan CALLS + duplicates, NOT orphan
+RESULTS) → permanent crash loop. **Fix: that loop is DELETED.** Only the kept-region orphan loop is
+correct (kept tool_calls whose results were truncated).
+
+### B-L8 — kept-region orphan loop skipped TOOL_YIELD but not TOOL_DONE
+A kept-region `done()` orphan got a spurious tool_result. Replaced the `!== TOOL_YIELD` filter with
+the intended-orphan rule used by Strategy 0: skip yield/done **only when it is the last tool_call in
+the kept region** (the resume's pending control state). Earlier yield/done orphans correctly get
+interrupted results. New helper `lastToolCallEvent(events)`.
+
+### Status-message structural guard (required once B-L8 lands)
+Strategy 2's status message is a synthetic **user** message. If the kept region ends in an
+unresolved intended-orphan yield/done (now skipped, not given a result), appending a user message
+after it breaks assistant→tool_result alternation → API 400. Guard: append the status message only
+when `!endsInPendingControl`. When the session ends in pending yield/done, it correctly resumes in
+that state (no API-forcing user message).
+
+### D#1 — `source: "system" as never` rendered to an EMPTY string
+Strategy 0's reason message forced an illegal `source: "system"`; `formatBodyForAI`'s `default`
+branch returned `""` (and the UI `queueEntryToUIEvent` had no "system" case) → the repair reason
+silently vanished. **Fix: use `createUserMessage` (source "user")** — surfaced by both AI formatter
+and UI materialization. No new source variant added; reuse the existing visible one. Same guarded
+by `endsInPendingControl`.
+
+### Regression tests (mutation-proof)
+- `src/jsonl-stress.test.ts` → `describe("FIX-1: buildSessionRepair compact-boundary safety")`:
+  5 unit tests (cc#1 pre-compact-ignored + physical-index survival, F-H2 orphan + idempotent second
+  pass, B-L8 done orphan, D#1 visible status). Each seeds a session WITH a `compact_marker` — the
+  gap every prior repair test had.
+- `src/integration.test.ts` → `describe("Integration: repair on compacted session (FIX-1 cc#1)")`:
+  drives the REAL `runAgentForNode` repair pipeline on a seeded compacted session; asserts the
+  post-compact tool turn + summary + marker survive and the poison is gone. Catches the call-site
+  `readActive`→`read` change (unit tests on `buildSessionRepair` alone can't).
+- Mutation-checked: reverting the active-region scoping makes the pre-compact-ignored test return a
+  repair; re-adding the truncated-region loop makes F-H2 see an orphan result; restoring the
+  `!== TOOL_YIELD`-only filter gives the done orphan a spurious result; restoring the `as never`
+  source makes the D#1 status render empty.
