@@ -2303,3 +2303,72 @@ no "WorktreeManager"/"worktree" token in any runtime hook/API name.
 from `.mxd/plugin/` in src/ (test-utils + *.test.ts may import plugin — test infra). `bun test`
 green, `bun run typecheck` clean. test-utils/matrix-scope.ts only changed its import path to the
 new plugin location (test infra → plugin is allowed).
+
+## FIX-2 (2026-06-05) — REST boundary must use the same shared-op discipline as MCP
+
+Five bugs, one theme: REST/HTTP routes bypassed fixes the MCP/shared ops already had. Failure
+mode is silent data loss/leak, not a crash. Rule going forward: **a REST route that touches a
+task lifecycle resource (session, JSONL, worktree, config) MUST route through the same shared op
+the MCP path uses, or replicate its guard exactly.** Where they drift, the REST side silently
+re-introduces a solved bug.
+
+### cc#2 — `/sessions/clear` must await loop exit before clearing JSONL
+`runtime/routes/tasks.ts` sessions/clear inlined a stop that closed the queue but did NOT await
+the agent loop's exit (unlike `resetTaskOp`/`stopTask`). The loop's `finally` (agent_end, orphan
+repair, Phase 2) then re-polluted the JSONL right after the clear — the "clear-race" the project's
+own `integration.test.ts` documents as a BUG PATH. Fix: `if (node.session) await stopTask(...)`
+else `await ctx.agentLoopPromises.get(nodeId)` (launchingNodes gap), THEN clear. The EventStore
+generation guard handles stopTask's own fire-and-forget agent_end append racing the clear.
+
+### cc#5 — REST node responses MUST stripSession
+`c.json` does NOT throw on the live `session` (unlike SSE's `structuredClone`, which is FORCED to
+strip). So every REST route returning a node serialized the whole queue/conversation/AbortController
+over the wire. One shared `serializeNode(node)` helper in tasks.ts (`isTask(n) ? stripSession(n) : n`)
+now wraps ALL node responses: GET /tasks (`.map`), POST /tasks (task + folder), PATCH, and all 3
+continue returns. Mirrors the existing MCP `stripSession` discipline (get_tree/get_task/etc.).
+
+### cc#4 — config null-delete + corrupt config must never wipe credentials (two layers)
+- **PATCH /config/global** now rejects null/undefined for ANY top-level field (400). Global config
+  is a COMPLETE MatrixConfig — no optional fields — so `delete next[k]` on null wrote an incomplete
+  config. Per-auth-group deletion still goes through `{ authGroups: { name: ... } }` (object value,
+  not rejected).
+- **`createDaemon`** no longer catches a load failure into `{ ...DEFAULT_CONFIG }` — it RETHROWS.
+  Silent DEFAULT_CONFIG booted with empty authGroups, and the next `saveGlobalConfig` overwrote the
+  on-disk credentials with nothing. Fail boot loudly → on-disk config preserved.
+- **`loadGlobalConfig`** now distinguishes ENOENT (fresh install → defaults) from read-error /
+  invalid-JSON (throw). The old single catch returned defaults for a CORRUPT file too — same
+  credential-wipe path. ENOENT-only return keeps fresh install working.
+
+### B-H1 — delete_task must stop+await the live loop before cleanup (reset-style)
+`deleteTaskOp` did NEITHER close's "reject in_progress" NOR reset's "await loop exit" — it called
+`cleanupTaskResources` (close queue, `git worktree remove --force`, clearEventStore) WITHOUT
+aborting/awaiting the loop. Destroyed unmerged work, removed a worktree under a running process,
+and a pending done() then read getTask=undefined in Phase 2 → parent hangs forever. Fix: added
+optional `stopTask`/`awaitLoopExit` callbacks to `deleteTaskOp` (mirroring resetTaskOp) + wired
+them in BOTH the MCP (orchestrator-tools) and REST (tasks.ts) delete handlers. Semantic chosen:
+reset-style ("delete a running task = stop it, then delete"), not close-style (reject).
+
+### cc#6 — worktree removal must use STORED path+branch, never a re-slugified title
+close/reset/delete removed worktrees via `wm.remove(node.id, slugify(node.title))`. The title can
+change after creation (`mxd/<id>/<oldSlug>`), so re-slugifying the CURRENT title computes a
+different path/branch → the real worktree is orphaned forever. Fix:
+- New `WorktreeManager.removeByPath(worktreePath, branch)` — removes the EXACT stored values, no
+  recomputation. (`remove(taskId, slug)` kept, now delegates to it; still used by its own test.)
+- `removeWorktree` callback signature changed `(taskId, slug)` → `(taskId, worktreePath, branch)`.
+  Ops pass `node.worktreePath`/`node.branch` (already inside the `if (worktreePath && branch)`
+  guard, so type-clean). MCP wirings call `removeByPath(worktreePath, branch)`; the REST delete
+  callback still uses param-1 (taskId) to look up the node for `onTaskDelete`.
+- `.mxd/plugin/scope-opts.ts onTaskDelete` (the REST worktree hook) likewise uses
+  `node.worktreePath`/`node.branch` instead of `slugify(node.title)`.
+
+### Tests (all mutation-verified)
+- `src/rest-boundary.test.ts` (new): session leak (GET/PATCH strip), clear-race (session +
+  launchingNodes-gap), delete-race (loop awaited before cleanup), delete stops queue+session.
+  The race tests use a 50ms-delayed simulated loop write — reverting the await makes JSONL reappear.
+- `src/task-operations.test.ts`: close/reset/delete removeWorktree gets the STORED path+branch
+  after a rename (cc#6).
+- `src/worktree-manager.test.ts`: removeByPath removes exact path+branch; re-slugified remove
+  orphans the worktree (demonstrates cc#6 directly).
+- `src/config.test.ts`: loadGlobalConfig ENOENT→defaults, missing-field→throw, corrupt-JSON→throw.
+- `src/daemon.test.ts`: PATCH null-delete → 400 (credentials preserved); createDaemon on
+  corrupt/incomplete config → throws, on-disk config untouched.

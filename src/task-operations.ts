@@ -15,7 +15,7 @@
  */
 
 import type { TaskTracker } from "./task-tracker.ts";
-import { cleanupTaskResources, resolveColor, slugify } from "./task-utils.ts";
+import { cleanupTaskResources, resolveColor } from "./task-utils.ts";
 import { isTask, type TaskNode, type TaskStatus } from "./types.ts";
 
 // ── Shared types ──
@@ -181,8 +181,29 @@ export async function deleteTaskOp(
 	editedBy: "agent" | "user",
 	callbacks: TreeChangeCallbacks & {
 		broadcastTree: () => void;
-		removeWorktree: (taskId: string, slug: string) => Promise<void>;
+		/** Remove the worktree by its STORED path + branch (rename-proof). */
+		removeWorktree: (
+			taskId: string,
+			worktreePath: string,
+			branch: string,
+		) => Promise<void>;
 		clearEventStore: (nodeId: string) => void;
+		/**
+		 * Stop a running agent and await its loop exit BEFORE cleanup.
+		 * Without this, `git worktree remove --force` + clearEventStore race
+		 * the live agent loop (mid-bash / mid-API-call): the loop's finally
+		 * writes to the JSONL we just cleared, the worktree vanishes under a
+		 * running process, and if the agent was about to done(), Phase 2 reads
+		 * getTask=undefined → the parent is never notified and hangs forever.
+		 * Mirrors resetTaskOp. Test/fallback path (no callback) closes the
+		 * queue directly without awaiting.
+		 */
+		stopTask?: (nodeId: string) => Promise<void>;
+		/**
+		 * Await agent loop exit when no session is set yet — the launchingNodes
+		 * gap (worktree creation / MCP connect in flight). Mirrors resetTaskOp.
+		 */
+		awaitLoopExit?: (nodeId: string) => Promise<void>;
 	},
 ): Promise<{ taskId: string; title: string }> {
 	const node = tracker.get(nodeId);
@@ -213,6 +234,23 @@ export async function deleteTaskOp(
 
 	const title = node.title;
 
+	// Stop a running agent + await loop exit BEFORE removing the worktree /
+	// clearing JSONL. delete used to skip this (close rejects in_progress,
+	// reset awaits — delete did neither) and would destroy unmerged work and
+	// race the live loop. reset-style is the right semantic: deleting a
+	// running task means "stop it, then delete".
+	if (node.session?.queue) {
+		if (callbacks.stopTask) {
+			await callbacks.stopTask(node.id);
+		} else {
+			const queue = node.session.queue;
+			node.session = undefined;
+			queue.close();
+		}
+	} else if (callbacks.awaitLoopExit) {
+		await callbacks.awaitLoopExit(node.id);
+	}
+
 	await cleanupTaskResources(tracker, nodeId, {
 		removeWorktree: callbacks.removeWorktree,
 		clearEventStore: callbacks.clearEventStore,
@@ -242,7 +280,12 @@ export async function closeTaskOp(
 	nodeId: string,
 	callbacks: {
 		broadcastTree: () => void;
-		removeWorktree: (taskId: string, slug: string) => Promise<void>;
+		/** Remove the worktree by its STORED path + branch (rename-proof). */
+		removeWorktree: (
+			taskId: string,
+			worktreePath: string,
+			branch: string,
+		) => Promise<void>;
 		clearEventStore: (nodeId: string) => void;
 	},
 ): Promise<CloseTaskResult> {
@@ -265,10 +308,12 @@ export async function closeTaskOp(
 
 	const targetStatus = "closed";
 
-	// Clean up worktree + branch if they exist
+	// Clean up worktree + branch if they exist. Remove by the STORED path +
+	// branch — NOT a re-slugified title (the title may have changed since the
+	// worktree was created, which would orphan the real worktree).
 	if (node.worktreePath && node.branch) {
 		try {
-			await callbacks.removeWorktree(node.id, slugify(node.title));
+			await callbacks.removeWorktree(node.id, node.worktreePath, node.branch);
 		} catch {
 			/* worktree may already be gone */
 		}
@@ -295,7 +340,12 @@ export async function resetTaskOp(
 	nodeId: string,
 	callbacks: {
 		broadcastTree: () => void;
-		removeWorktree: (taskId: string, slug: string) => Promise<void>;
+		/** Remove the worktree by its STORED path + branch (rename-proof). */
+		removeWorktree: (
+			taskId: string,
+			worktreePath: string,
+			branch: string,
+		) => Promise<void>;
 		clearEventStore: (nodeId: string) => void;
 		/**
 		 * Stop a running agent and await its loop exit.
@@ -337,10 +387,12 @@ export async function resetTaskOp(
 		await callbacks.awaitLoopExit(node.id);
 	}
 
-	// Clean up worktree + branch if they exist
+	// Clean up worktree + branch if they exist. Remove by the STORED path +
+	// branch — NOT a re-slugified title (rename-proof; the title may have
+	// changed since the worktree was created).
 	if (node.worktreePath && node.branch) {
 		try {
-			await callbacks.removeWorktree(node.id, slugify(node.title));
+			await callbacks.removeWorktree(node.id, node.worktreePath, node.branch);
 		} catch {
 			/* worktree may already be gone */
 		}

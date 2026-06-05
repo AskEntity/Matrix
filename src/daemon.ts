@@ -36,7 +36,6 @@ import {
 } from "./auth.ts";
 import {
 	type AuthGroup,
-	DEFAULT_CONFIG,
 	loadGlobalConfig,
 	type MatrixConfig,
 	saveGlobalConfig,
@@ -457,12 +456,24 @@ export async function createDaemon(opts: {
 	const globalConfigPath =
 		opts.globalConfigPath ?? join(dataDir, "config.json");
 
-	// Load global config
+	// Load global config.
+	//
+	// A missing file is fine — loadGlobalConfig returns DEFAULT_CONFIG (fresh
+	// install). But a config that EXISTS yet is corrupt / incomplete must NOT
+	// be silently replaced with DEFAULT_CONFIG: that boots with empty
+	// authGroups, and the next saveGlobalConfig would overwrite the on-disk
+	// credentials with nothing. Fail boot loudly instead — the on-disk config
+	// (with credentials) is left untouched for the operator to fix.
 	let globalConfig: MatrixConfig;
 	try {
 		globalConfig = await loadGlobalConfig(globalConfigPath);
-	} catch {
-		globalConfig = { ...DEFAULT_CONFIG };
+	} catch (e) {
+		const message = e instanceof Error ? e.message : String(e);
+		throw new Error(
+			`Failed to load global config at ${globalConfigPath}: ${message}\n` +
+				"Refusing to boot with an empty config — that would overwrite saved " +
+				"credentials. Fix or remove the config file and restart.",
+		);
 	}
 
 	// SSE state
@@ -1439,6 +1450,26 @@ export async function createDaemon(opts: {
 
 	app.patch("/config/global", async (c) => {
 		const partial = await c.req.json<Partial<MatrixConfig>>();
+		// Reject null/undefined for any top-level field. The global config is a
+		// COMPLETE MatrixConfig — it has no optional fields, so deleting one
+		// writes an incomplete config that throws on next boot. Pre-fix, that
+		// throw was silently swallowed into an empty DEFAULT_CONFIG, wiping
+		// every authGroup/credential on restart. Per-field deletion of an auth
+		// group still goes through `{ authGroups: { name: ... } }` (the object
+		// value is non-null, so it's not rejected here).
+		const nulledFields = Object.entries(partial)
+			.filter(([, v]) => v === null || v === undefined)
+			.map(([k]) => k);
+		if (nulledFields.length > 0) {
+			return c.json(
+				{
+					error:
+						`Cannot delete required global config field(s): ${nulledFields.join(", ")}. ` +
+						"Global config fields are all required — set a value instead of null.",
+				},
+				400,
+			);
+		}
 		const next = { ...globalConfig } as MatrixConfig;
 		for (const [k, v] of Object.entries(partial)) {
 			if (k === "authGroups" && v && typeof v === "object") {
@@ -1447,8 +1478,6 @@ export async function createDaemon(opts: {
 					globalConfig.authGroups,
 					v as Record<string, AuthGroup>,
 				);
-			} else if (v === null || v === undefined) {
-				delete (next as unknown as Record<string, unknown>)[k];
 			} else {
 				(next as unknown as Record<string, unknown>)[k] = v;
 			}

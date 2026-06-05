@@ -7,7 +7,7 @@
  * without a token.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "./config.ts";
@@ -184,6 +184,46 @@ describe("daemon pipeline (legacy)", () => {
 		expect(patchRes.status).toBe(200);
 		const updated = await patchRes.json();
 		expect(updated.budgetUsd).toBe(50);
+	});
+
+	test("PATCH /config/global rejects null-delete of required fields (cc#4)", async () => {
+		// Seed an auth group so we can prove credentials survive the rejected PATCH.
+		const seed = await fetch(
+			new Request("http://localhost/config/global", {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					authGroups: {
+						main: { provider: "anthropic", apiKey: "sk-secret-xyz" },
+					},
+					defaultAuth: "main",
+				}),
+			}),
+		);
+		expect(seed.status).toBe(200);
+
+		// Attempt to delete a required field by sending null — must be rejected.
+		// (Pre-fix this wrote an incomplete config that wiped ALL credentials on
+		// the next restart.)
+		const res = await fetch(
+			new Request("http://localhost/config/global", {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ model: null }),
+			}),
+		);
+		expect(res.status).toBe(400);
+		const err = (await res.json()) as { error: string };
+		expect(err.error).toContain("model");
+
+		// Config is untouched: model still present, credentials preserved.
+		const getRes = await fetch(new Request("http://localhost/config/global"));
+		const cfg = (await getRes.json()) as {
+			model: string;
+			authGroups: Record<string, unknown>;
+		};
+		expect(cfg.model).toBeTruthy();
+		expect(cfg.authGroups.main).toBeDefined();
 	});
 
 	test("POST /projects handled by daemon (not forwarded to worker)", async () => {
@@ -384,5 +424,45 @@ describe("daemon startup — dataRoot hardening (Audit FU5)", () => {
 		} finally {
 			await ctx.cleanup();
 		}
+	});
+});
+
+describe("createDaemon — corrupt global config never wipes credentials (cc#4)", () => {
+	test("incomplete config (missing required field) → createDaemon throws, on-disk config preserved", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "mxd-corrupt-cfg-"));
+		const dataDir = join(tempDir, ".mxd");
+		await mkdir(dataDir, { recursive: true });
+		// A config that EXISTS, carries credentials, but is missing required
+		// fields (the exact shape PATCH null-delete used to produce).
+		const corrupt = JSON.stringify({
+			authGroups: { main: { provider: "anthropic", apiKey: "sk-secret-abc" } },
+		});
+		await writeFile(join(dataDir, "config.json"), corrupt, "utf-8");
+
+		// Must FAIL boot — not silently boot with empty DEFAULT_CONFIG.
+		await expect(
+			createDaemon({ dataDir, autoRegisterSelf: false }),
+		).rejects.toThrow(/global config/i);
+
+		// On-disk config is untouched — credentials preserved for the operator.
+		const onDisk = JSON.parse(
+			await readFile(join(dataDir, "config.json"), "utf-8"),
+		) as { authGroups: { main: { apiKey: string } } };
+		expect(onDisk.authGroups.main.apiKey).toBe("sk-secret-abc");
+
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("corrupt JSON config → createDaemon throws", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "mxd-corrupt-json-"));
+		const dataDir = join(tempDir, ".mxd");
+		await mkdir(dataDir, { recursive: true });
+		await writeFile(join(dataDir, "config.json"), "{ not valid json", "utf-8");
+
+		await expect(
+			createDaemon({ dataDir, autoRegisterSelf: false }),
+		).rejects.toThrow(/global config/i);
+
+		await rm(tempDir, { recursive: true, force: true });
 	});
 });

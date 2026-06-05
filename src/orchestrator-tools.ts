@@ -908,7 +908,8 @@ export function buildAllToolDefs() {
 					const wm = new WorktreeManager(repoPath, wtRoot);
 					const result = await closeTaskOp(tracker, args.taskId as string, {
 						broadcastTree: () => R.broadcastTree(projectId),
-						removeWorktree: (id, slug) => wm.remove(id, slug),
+						removeWorktree: (_id, worktreePath, branch) =>
+							wm.removeByPath(worktreePath, branch),
 						clearEventStore: (sid) => R.clearEventStore(projectId, sid),
 					});
 					return {
@@ -973,8 +974,15 @@ export function buildAllToolDefs() {
 						"agent",
 						{
 							broadcastTree: () => R.broadcastTree(projectId),
-							removeWorktree: (id, slug) => wm.remove(id, slug),
+							removeWorktree: (_id, worktreePath, branch) =>
+								wm.removeByPath(worktreePath, branch),
 							clearEventStore: (sid) => R.clearEventStore(projectId, sid),
+							// Stop a running agent + await loop exit before cleanup —
+							// deleting a running task must not race its live loop.
+							stopTask: async (nodeId) => {
+								await R.stopTask(projectId, nodeId);
+							},
+							awaitLoopExit: (nodeId) => R.awaitLoopExit(nodeId),
 						},
 					);
 					return {
@@ -1034,7 +1042,8 @@ export function buildAllToolDefs() {
 					const wm = new WorktreeManager(repoPath, wtRoot);
 					const result = await resetTaskOp(tracker, args.taskId as string, {
 						broadcastTree: () => R.broadcastTree(projectId),
-						removeWorktree: (id, slug) => wm.remove(id, slug),
+						removeWorktree: (_id, worktreePath, branch) =>
+							wm.removeByPath(worktreePath, branch),
 						clearEventStore: (sid) => R.clearEventStore(projectId, sid),
 						stopTask: async (nodeId) => {
 							await R.stopTask(projectId, nodeId);

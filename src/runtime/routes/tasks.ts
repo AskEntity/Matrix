@@ -14,8 +14,7 @@ import {
 	TaskOperationError,
 	updateTaskOp,
 } from "../../task-operations.ts";
-import { cleanupSessionBackgroundProcesses } from "../../tools/index.ts";
-import { isTask } from "../../types.ts";
+import { isTask, stripSession, type TreeNode } from "../../types.ts";
 import {
 	deliverMessage,
 	runAgentForNode,
@@ -28,6 +27,22 @@ import {
 	getTracker,
 	// readProjectMemory removed — work_context hook handles context injection
 } from "../helpers.ts";
+
+/**
+ * Strip the runtime-only `session` before sending a node over HTTP.
+ *
+ * `session` holds live, non-serializable state — the message queue, the
+ * in-memory conversation history, the AbortController, background processes.
+ * The SSE broadcast path is FORCED to strip it (structuredClone throws a
+ * DataCloneError on those references), but `c.json` does NOT throw — it would
+ * happily serialize the entire conversation history + tool defs into the HTTP
+ * response. Every REST route that returns a node MUST route through here so
+ * the leak can't silently reappear. Folders (general nodes) have no session
+ * and pass through unchanged.
+ */
+function serializeNode(node: TreeNode) {
+	return isTask(node) ? stripSession(node) : node;
+}
 
 /** Notify each ancestor in the parent chain that the user sent a message to a child task. */
 async function notifyParentChain(
@@ -117,7 +132,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		}
 		const tracker = await getTracker(ctx, project.id);
 		return c.json({
-			nodes: tracker.allNodes(),
+			nodes: tracker.allNodes().map(serializeNode),
 			rootNodeId: tracker.rootNodeId,
 		});
 	});
@@ -152,7 +167,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 			);
 			await tracker.save();
 			broadcastTreeUpdate(ctx, project.id, tracker);
-			return c.json(folder, 201);
+			return c.json(serializeNode(folder), 201);
 		}
 
 		try {
@@ -172,7 +187,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 					projectPath: project.path,
 				},
 			);
-			return c.json(node, 201);
+			return c.json(serializeNode(node), 201);
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
 			return c.json({ error: message }, 409);
@@ -238,7 +253,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 				},
 			);
 
-			return c.json(node);
+			return c.json(serializeNode(node));
 		} catch (e) {
 			if (e instanceof TaskOperationError) {
 				return c.json({ error: e.message }, 400);
@@ -351,7 +366,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 				});
 			}
 
-			return c.json(tracker.getTask(nodeId));
+			return c.json(serializeNode(node));
 		}
 
 		// Verify/closed task with no worktree: re-create worktree and launch agent
@@ -403,7 +418,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 					});
 				}
 
-				return c.json(tracker.getTask(nodeId));
+				return c.json(serializeNode(node));
 			} catch (e) {
 				const message = e instanceof Error ? e.message : String(e);
 				return c.json(
@@ -416,7 +431,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		// No worktree — just reset to pending
 		tracker.updateStatus(nodeId, "pending");
 		await tracker.save();
-		return c.json(tracker.getTask(nodeId));
+		return c.json(serializeNode(node));
 	});
 
 	app.delete("/projects/:id/tasks/:nodeId", async (c) => {
@@ -445,6 +460,17 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 						: Promise.resolve();
 				},
 				clearEventStore: (id) => eventStore.clear(id),
+				// Stop a running agent + await loop exit before cleanup — deleting
+				// a running task must not race its live loop (worktree removed
+				// under a running process, finally writes to cleared JSONL, or a
+				// pending done() whose Phase 2 then can't find the node).
+				stopTask: async (id) => {
+					await stopTask(ctx, project.id, id);
+				},
+				awaitLoopExit: async (id) => {
+					const loopPromise = ctx.agentLoopPromises.get(id);
+					if (loopPromise) await loopPromise;
+				},
 			});
 			return c.json({ ok: true });
 		} catch (e) {
@@ -639,12 +665,20 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 			return c.json({ error: "Task not found" }, 404);
 		}
 
-		// Stop the agent if running for this task
+		// Stop the agent AND await its loop exit BEFORE clearing JSONL.
+		// resetTaskOp/stopTask were fixed to await the loop's finally block so
+		// its writes (agent_end, orphan repair, Phase 2) land BEFORE the clear.
+		// This route inlined a stop that did NOT await — so the loop could
+		// re-pollute the JSONL right after we cleared it (the "clear-race" the
+		// project's own integration tests document as a BUG PATH). Mirror
+		// resetTaskOp: stop+await when a session exists, else await the loop
+		// promise to cover the launchingNodes gap (loop running, session not
+		// yet set).
 		if (node.session) {
-			node.session.queue.close();
-			node.session.abortController.abort();
-			cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
-			node.session = undefined;
+			await stopTask(ctx, project.id, nodeId);
+		} else {
+			const loopPromise = ctx.agentLoopPromises.get(nodeId);
+			if (loopPromise) await loopPromise;
 		}
 
 		// Clear the JSONL events file for this task

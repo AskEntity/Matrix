@@ -601,6 +601,99 @@ describe("resetTaskOp", () => {
 	});
 });
 
+// ── worktree removal is rename-proof (cc#6) ──
+// close/reset/delete must remove the worktree by its STORED path + branch,
+// NOT by re-slugifying the CURRENT title. A title change after the worktree
+// was created would otherwise compute a different path/branch and orphan the
+// real worktree forever.
+
+describe("worktree removal is rename-proof (cc#6)", () => {
+	function captureRemoveWorktree() {
+		const calls: Array<{
+			taskId: string;
+			worktreePath: string;
+			branch: string;
+		}> = [];
+		return {
+			calls,
+			removeWorktree: async (
+				taskId: string,
+				worktreePath: string,
+				branch: string,
+			) => {
+				calls.push({ taskId, worktreePath, branch });
+			},
+		};
+	}
+
+	test("closeTaskOp removes the STORED path+branch, not a re-slugified title", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Original Title", "", {
+			editedBy: "agent",
+		});
+		const branch = `mxd/${task.id}/original-title`;
+		const wtPath = `/tmp/wt/${task.id}-original-title`;
+		tracker.assignWorktree(task.id, branch, wtPath);
+		tracker.updateStatus(task.id, "verify");
+		// Rename AFTER the worktree was created.
+		tracker.updateTitle(task.id, "Completely Renamed Now");
+
+		const cap = captureRemoveWorktree();
+		await closeTaskOp(tracker, task.id, {
+			...makeCallbacks(),
+			removeWorktree: cap.removeWorktree,
+		});
+
+		expect(cap.calls).toHaveLength(1);
+		expect(cap.calls[0]?.worktreePath).toBe(wtPath);
+		expect(cap.calls[0]?.branch).toBe(branch);
+		// The new title must NOT leak into the removal target.
+		expect(cap.calls[0]?.branch).not.toContain("completely-renamed");
+		expect(cap.calls[0]?.worktreePath).not.toContain("completely-renamed");
+	});
+
+	test("resetTaskOp removes the STORED path+branch, not a re-slugified title", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Original Title", "", {
+			editedBy: "agent",
+		});
+		const branch = `mxd/${task.id}/original-title`;
+		const wtPath = `/tmp/wt/${task.id}-original-title`;
+		tracker.assignWorktree(task.id, branch, wtPath);
+		tracker.updateTitle(task.id, "Renamed During Work");
+
+		const cap = captureRemoveWorktree();
+		await resetTaskOp(tracker, task.id, {
+			...makeCallbacks(),
+			removeWorktree: cap.removeWorktree,
+		});
+
+		expect(cap.calls).toHaveLength(1);
+		expect(cap.calls[0]?.worktreePath).toBe(wtPath);
+		expect(cap.calls[0]?.branch).toBe(branch);
+		expect(cap.calls[0]?.branch).not.toContain("renamed-during");
+	});
+
+	test("deleteTaskOp removes the STORED path+branch, not a re-slugified title", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Original Title", "", {
+			editedBy: "agent",
+		});
+		const branch = `mxd/${task.id}/original-title`;
+		const wtPath = `/tmp/wt/${task.id}-original-title`;
+		tracker.assignWorktree(task.id, branch, wtPath);
+		tracker.updateTitle(task.id, "Renamed Before Delete");
+
+		const cap = captureRemoveWorktree();
+		await deleteTaskOp(tracker, task.id, "user", {
+			...makeCallbacks(),
+			removeWorktree: cap.removeWorktree,
+		});
+
+		expect(cap.calls).toHaveLength(1);
+		expect(cap.calls[0]?.worktreePath).toBe(wtPath);
+		expect(cap.calls[0]?.branch).toBe(branch);
+		expect(cap.calls[0]?.branch).not.toContain("renamed-before");
+	});
+});
+
 // ── reorderTasksOp ──
 
 describe("reorderTasksOp", () => {

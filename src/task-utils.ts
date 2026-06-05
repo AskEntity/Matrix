@@ -202,7 +202,12 @@ export async function cleanupTaskResources(
 	tracker: TaskTracker,
 	nodeId: string,
 	deps: {
-		removeWorktree: (taskId: string, slug: string) => Promise<void>;
+		/** Remove the worktree by its STORED path + branch (rename-proof). */
+		removeWorktree: (
+			taskId: string,
+			worktreePath: string,
+			branch: string,
+		) => Promise<void>;
 		clearEventStore: (nodeId: string) => void;
 	},
 ): Promise<void> {
@@ -219,10 +224,12 @@ export async function cleanupTaskResources(
 			n.session = undefined;
 		}
 
-		// Remove worktree + branch
+		// Remove worktree + branch by the STORED path + branch — NOT a
+		// re-slugified title (rename-proof; the title may have changed since
+		// the worktree was created, which would orphan the real worktree).
 		if (n.worktreePath && n.branch) {
 			try {
-				await deps.removeWorktree(n.id, slugify(n.title));
+				await deps.removeWorktree(n.id, n.worktreePath, n.branch);
 			} catch {
 				/* worktree may already be gone */
 			}
