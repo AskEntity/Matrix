@@ -855,7 +855,6 @@ const KNOWN_CONFIG_KEYS = [
 	"defaultAuth",
 	"childAuth",
 	"budgetUsd",
-	"clarifyTimeoutMs",
 ] as const;
 
 type KnownConfigKey = (typeof KNOWN_CONFIG_KEYS)[number];
@@ -867,10 +866,6 @@ function printResolvedConfig(cfg: MatrixConfig): void {
 		["defaultAuth", cfg.defaultAuth ?? "(not set)"],
 		["childAuth", cfg.childAuth ?? "(not set)"],
 		["budgetUsd", cfg.budgetUsd != null ? `${cfg.budgetUsd}` : "(not set)"],
-		[
-			"clarifyTimeoutMs",
-			cfg.clarifyTimeoutMs != null ? `${cfg.clarifyTimeoutMs}ms` : "(not set)",
-		],
 	];
 
 	const keyWidth = Math.max(...rows.map(([k]) => k.length));

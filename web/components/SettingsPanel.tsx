@@ -1220,17 +1220,6 @@ function ProjectTab({
 					onDraftChange={onDraftChange}
 				/>
 
-				<SettingNumberField
-					label={t("settings.clarifyTimeout")}
-					field="clarifyTimeoutMs"
-					placeholder={t("settings.noTimeout")}
-					min={0}
-					step={1000}
-					tab={tab}
-					layers={layers}
-					draft={draft}
-					onDraftChange={onDraftChange}
-				/>
 				<SettingBoolField
 					label={t("settings.selfBootstrap")}
 					field="selfBootstrap"

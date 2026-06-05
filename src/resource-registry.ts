@@ -50,7 +50,6 @@ interface RuntimeContextLike {
 	readonly eventStores: Map<string, EventStore>;
 	readonly config: { dataDir: string };
 	readonly globalConfig: {
-		clarifyTimeoutMs: number;
 		budgetUsd: number;
 	};
 	readonly eventSubscribers: Map<string, Set<unknown>>;
@@ -87,10 +86,6 @@ export function getProject(
 	projectId: string,
 ): { id: string; name: string; path: string } | undefined {
 	return ctx().pm.get(projectId);
-}
-
-export function getClarifyTimeoutMs(): number {
-	return ctx().globalConfig.clarifyTimeoutMs;
 }
 
 export function getDefaultBudgetUsd(): number {

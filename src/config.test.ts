@@ -88,7 +88,6 @@ describe("resolveConfig", () => {
 	test("partial overlays merge correctly across all layers", () => {
 		const base: MatrixConfig = {
 			...DEFAULT_CONFIG,
-			clarifyTimeoutMs: 30000,
 		};
 		const repo: ProjectConfig = {
 			childModel: "sonnet",
@@ -100,7 +99,6 @@ describe("resolveConfig", () => {
 		};
 
 		const result = resolveConfig(base, repo, local);
-		expect(result.clarifyTimeoutMs).toBe(30000);
 		expect(result.childModel).toBe("sonnet");
 		expect(result.defaultAuth).toBe("team");
 		expect(result.childAuth).toBe("team");
