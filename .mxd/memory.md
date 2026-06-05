@@ -2536,3 +2536,71 @@ compact_marker.
 - `src/drift-lifecycle.test.ts` "compact triggered while agent in pending-done (done resume)" — was a
   test.todo, now a real B-L9 test (compact_marker written, no alternate-roles error, every recorded
   request alternates roles).
+
+## FIX-4b (2026-06-05) — dead-code sweep + biome gate restored
+
+Wave-3 audit cleanup. ~78 dead tests removed, net ~−4250 LOC across 22 files (+ new
+`src/zod-schema.ts`). `bun test` 2163 pass / 0 fail; `bun run check:ci` exits 0 (gate
+restored — `--no-verify` can be dropped on main). Committed as 3 deletion commits (grouped by
+non-overlapping file sets) + 1 format-only commit + this memory note.
+
+**C1 — Chat Completions provider deleted**: `openai-compatible-provider.ts` (893 LOC) +
+`.test.ts` (1624 LOC, 41 tests). Production-dead — `createProviderFromAuth`
+(runtime/helpers.ts) only builds Anthropic + OpenAIResponses. `eventsToOpenAIMessages` (the
+Chat-Completions event→message converter) lived ONLY there; `events.test.ts` exercised it in
+~36 tests (`describe("eventsToOpenAIMessages")` block + scattered `OpenAI:`-prefixed tests +
+dual Anthropic/OpenAI assertions) — all removed, Anthropic assertions preserved. Its
+pricing/context utils (getModelPricing/getContextWindow/clearContextWindowCache) were
+near-verbatim dups of the LIVE copies in anthropic-/openai-responses-compatible-provider.ts;
+anthropic-compatible-provider.test.ts imports resolve to the Anthropic copy. Closes draft
+01KN496YTW6HQNDWEKV0W99NQQ.
+
+**F-L1 — hasPendingYield deleted** (events.ts): zero production callers (re-verified post
+FIX-1/FIX-3 — FIX-1's repair rewrite uses its own `lastToolCallEvent`, not hasPendingYield).
+`hasPendingImplicitYield` is the LIVE sibling (provider-shared.ts:759) — kept. Removed its
+tests from events.test.ts + jsonl-stress.test.ts; the jsonl-stress tests that ALSO asserted
+`buildSessionRepair` kept those assertions (renamed to drop the dead-fn reference).
+
+**Tier-2 dead exports** (declaration-only, zero refs): formatPendingSection (events.ts),
+combineSystemPrompt (system-prompts.ts), buildExternalJsonSchema (tool-def.ts — the
+`buildExternalShape` it wrapped stays live in mcp-endpoint.ts), SerializedTreeNode (types.ts).
+
+**C6 — clarifyTimeoutMs vertical deleted**: a user-settable setting that did NOTHING.
+`getClarifyTimeoutMs` (resource-registry.ts) was never called, no clarify-timeout mechanism
+exists, and the SettingsPanel "Clarify Timeout (ms)" input lied. Removed config field+default,
+cli row + KNOWN_CONFIG_KEYS, resource-registry type + getter, SettingsPanel field, and i18n
+keys `settings.clarifyTimeout` + the now-orphaned `settings.noTimeout` (only the clarify field
+used it) in BOTH web/ and plugin i18n copies.
+
+**C3** — RelocateBanner.tsx deleted (orphan; only ref a stale "moved to shell" comment — it was
+NOT moved, relocate survives via CLI). **C9** — collapsed duplicate MCP_TOOL_PREFIX into
+MCP_PREFIX (plugin tool-names.ts). **A-F7** — deleted the unreachable `scopeOpts.get(id) ??
+{stubs}` fallback in routes/agent.ts `/restart` (createApp throws if buildScopeOpts missing) →
+explicit guard-throw. **C4** — deleted `_cache_audit.ts` + `_token_audit.ts` (standalone
+investigation scripts, zero importers, made real Anthropic API calls — a liability; recoverable
+from git history).
+
+**C8 — NARROWED (audit's "dead" was WRONG)**: the audit called `tool()` (tool-definition.ts)
+"production-dead (test-only)" and asked to delete it. `tool()` IS test-only but NOT dead — it's
+live test infrastructure with 23 call sites (anthropic/openai-responses provider tests,
+evaluate-script, tool-execution). Its `tool(name, desc, zodRawShape, handler)` signature is
+intentionally lightweight; the production builder `toToolDefinition(defineTool({params:
+ParamDefs}), auth)` is a heavier, different shape. Deleting `tool()` = a risky 23-site migration
+pulling auth/ParamDefs into unit tests that specifically test executeTool's Zod validation on the
+raw inputSchema — that changes what's tested, NOT reclamation. KEPT `tool()`. The REAL violation
+was the genuine duplication: `stripZodMeta` + `shapeToJsonSchema` existed verbatim in BOTH
+tool-def.ts and tool-definition.ts → extracted both to a new leaf `src/zod-schema.ts` (depends
+only on zod, no import cycle); both files import `shapeToJsonSchema` from it.
+**Lesson: "test-only" ≠ "dead." A test helper with N call sites is live infra; deleting it is
+test refactoring, not reclamation. Verify the actual violation (here: duplication) and fix THAT.**
+
+**biome gate**: main was failing `check:ci` with 4 format ERRORS (incl. event-store.ts K8
+`appendFileSync`) — the pre-commit hook had been bypassed via `--no-verify`. Ran `bun run check`
+(write, NO `--unsafe`) → auto-fixed format only → committed as a SEPARATE commit from the
+deletions. `check:ci` now exits 0. 35 lint WARNINGS remain (noNonNullAssertion + noExplicitAny —
+pre-existing, not auto-fixable, out of scope); warnings don't fail check:ci, only the format
+errors did. NOTE: the worktree pre-commit hook is /dev/null (hooksPath), so these commits skipped
+the hook locally — verify on main's gate after merge.
+
+**NOT touched**: mock-showcase (C2) — excluded, becoming a local plugin (draft
+01KTBZRFXD3A9J3JTKK38FH3WA).
