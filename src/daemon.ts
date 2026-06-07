@@ -1084,10 +1084,12 @@ export async function createDaemon(opts: {
 	// globalContext so plugins can inspect installRoot/gitHash and decide.
 	for (const plugin of registeredPlugins) {
 		if (!plugin.onProjectInit) continue;
-		const targetProjects =
-			plugin.scope === "global"
-				? pm.list()
-				: pm.list().filter((p) => p.id === plugin.projectId);
+		// A plugin only initializes the projects it OWNS (projectsForPlugin) —
+		// the same exclusive-ownership rule that governs routing. A global
+		// plugin must NOT scaffold a project served by its own project-scoped
+		// plugin (e.g. matrix writing a stray memory.md / hooks into dchat's
+		// repo); that project's own plugin provides whatever init it needs.
+		const targetProjects = projectsForPlugin(plugin);
 		for (const project of targetProjects) {
 			try {
 				await plugin.onProjectInit(project.path, {

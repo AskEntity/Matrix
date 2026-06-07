@@ -23,8 +23,8 @@
  *   - p1, p2  (ship group-chat) → project plugin (same name, distinct workers)
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { realpathSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync, realpathSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "./config.ts";
@@ -46,7 +46,8 @@ async function makePlainProject(root: string): Promise<void> {
 	await mkdir(join(root, ".mxd"), { recursive: true });
 	gitInit(root);
 	await writeFile(join(root, ".gitignore"), "node_modules/\n");
-	await writeFile(join(root, ".mxd", "memory.md"), "# Test\n");
+	// Deliberately NO .mxd/memory.md — so matrix's onProjectInit writing one is
+	// an OBSERVABLE side effect (used by the onProjectInit-ownership test).
 	Bun.spawnSync(["git", "add", "."], { cwd: root });
 	Bun.spawnSync(["git", "commit", "-m", "init"], { cwd: root });
 }
@@ -188,6 +189,23 @@ describe("daemon: project-scoped plugin loading + routing", () => {
 		expect(tree.rootNodeId).toBeDefined();
 		// matrix's root node is the "Orchestrator".
 		expect(tree.nodes.some((n) => n.title === "Orchestrator")).toBe(true);
+	});
+
+	test("a global plugin runs onProjectInit ONLY on projects it owns", async () => {
+		// onProjectInit obeys the same exclusive-ownership rule as routing.
+		// pglobal is matrix-owned → matrix's hook ran during createDaemon and
+		// scaffolded its memory.md.
+		const pglobalMemory = join(tempDir, "pglobal", ".mxd", "memory.md");
+		expect(existsSync(pglobalMemory)).toBe(true);
+		expect(await readFile(pglobalMemory, "utf-8")).toContain(
+			"# Project Memory",
+		);
+
+		// pown ships its own (story) plugin → matrix is gated OUT, and the story
+		// plugin defines no onProjectInit → NO stray matrix memory.md is written
+		// into pown's repo. (The setup deliberately pre-writes no memory.md.)
+		const pownMemory = join(tempDir, "pown", ".mxd", "memory.md");
+		expect(existsSync(pownMemory)).toBe(false);
 	});
 
 	test("story-plugin worker does NOT serve P_global", async () => {
