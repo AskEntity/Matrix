@@ -2604,3 +2604,104 @@ the hook locally — verify on main's gate after merge.
 
 **NOT touched**: mock-showcase (C2) — excluded, becoming a local plugin (draft
 01KTBZRFXD3A9J3JTKK38FH3WA).
+
+## Project-scoped plugins — `scope:"project"` loading + routing (2026-06-07)
+
+Re-introduced the `scope:"project"` plugin variant (dropped in FU8). A project
+that ships its OWN `.mxd/plugin/` (manifest `scope:"project"`) gets its OWN
+worker running ITS scope; EVERY routing decision for that project resolves to
+ITS plugin — not the global matrix plugin. Projects without their own plugin
+keep using the global matrix plugin exactly as before. Unblocks dchat running
+as its own group-chat plugin. Daemon-side ONLY — `scope-worker.ts` already
+loads an arbitrary plugin's ScopeOpts, so no worker-layer change.
+
+### Exclusive ownership (this is the model — NOT dual-mode)
+`pluginForProject(projectId)` (in `daemon.ts`, the ONE ownership decision) =
+the project-scoped plugin shipped under that project if one exists, else the
+(first) global plugin. A project is owned by EXACTLY ONE plugin. The
+"run pown ALSO under matrix dev-mode" dual-mode from the runtime-kit vision is
+FUTURE — today matrix does not serve a project that has its own plugin.
+
+### Worker keying — `workerKeyForPlugin(plugin)`
+- global → bare `name` (`"matrix"`) — one worker serves every project it owns.
+- project → `<projectId>:<name>` — two DIFFERENT projects can each ship a
+  same-named plugin (e.g. both `group-chat`) and get DISTINCT workers. The key
+  is also the `scopeName` for restart/backoff state and `workers.get/has`.
+`startWorkerForPlugin(plugin)` / `scheduleWorkerRestart(plugin, reason)` now
+take the RegisteredPlugin and derive scopeName/runtimePath/dataRoot/projects
+from it (was 3 loose params). Project workers ride the SAME restart machinery.
+
+### Per-worker project filtering (autoResume isolation — CRITICAL)
+`autoResumeProjects` iterates `ctx.pm.list()` and resumes in_progress agents.
+If the global worker were told about a project owned by its own plugin, BOTH
+workers would resume — double-launch. So each worker is told ONLY the projects
+it owns: `projectsForPlugin(plugin)` = `pm.list().filter(p =>
+pluginForProject(p.id) === plugin)`. Applied at BOTH the init message
+(`startWorkerForPlugin`) AND `syncProjects` (rewritten to per-plugin filtered
+postMessage; `config`/`project_deleted` syncs stay broadcast — harmless to
+non-owners). NB: even WITHOUT filtering the trees wouldn't actually collide
+(dataRoot namespacing gives each plugin its own `tree.json` per project), but
+double-resume + wrong-scope would still occur — filtering is required.
+
+### Routing helpers (every project-specific site funnels through these)
+- `pluginForProject(projectId)` → owning plugin.
+- `workerKeyForProject(projectId)` → ready worker key for the owner, or
+  undefined. Deliberately does NOT fall back project→global: if P_own's worker
+  is down its requests 503, never silently route to matrix.
+- `firstGlobalWorkerKey()` → first global with a ready worker (project-agnostic
+  daemon-level: `/health?check_model`, `/version`, `/stats`).
+Sites converted from the old `registeredPlugins.find(p => p.scope==="global" &&
+workers.has(p.name))`: DELETE `/projects/:id` agent-stop and SSE `/events`
+initial-state (tree + clarifications) now use `workerKeyForProject(projectId)`;
+the project-agnostic sites use `firstGlobalWorkerKey()`.
+
+### `/api/:plugin/*` disambiguation
+Strip `/api/<plugin>` FIRST (the projectId in the stripped `/projects/<id>/...`
+path is the disambiguator). If a GLOBAL plugin has that name → its worker
+(matrix dev-mode serves any project). Else candidates are project-scoped → pick
+by `projectId` in the path (`<projectId>:<name>` key); a lone candidate with no
+projectId in path falls back to itself. Unknown name → 404, no ready worker →
+503 (preserves the existing namespace semantics + `daemon-plugin-ui.test.ts`).
+
+### `checkDataRootCollisions` is now projectId-aware (`src/plugin.ts`)
+Two project-scoped plugins with the SAME dataRoot but DIFFERENT projectId do
+NOT collide — they land under distinct `projects/<id>/` roots. Collision iff
+same canonical dataRoot AND overlapping project domains (global = universe,
+project = {projectId}): global∩global, global∩project always; project∩project
+iff same projectId. `scope` defaults to `"global"` when omitted (preserves the
+old "any two same-dataRoot plugins collide" behavior for `{name,dataRoot}`
+callers in `plugin-dataroot.test.ts` / `data-paths.test.ts`).
+
+### Shell UI — per-project scope (`web/ShellApp.tsx` + `web/plugin-scope.ts`)
+WITHOUT this, the shell defaulted a project to `plugins[0]` (the global matrix)
+→ `/api/matrix/projects/<pown>/...` → 404 (matrix worker doesn't own pown).
+`pluginsForProject(plugins, projectId)` (pure, in `web/plugin-scope.ts`, unit-
+tested) mirrors the daemon rule: a project with its own plugin sees ONLY its
+scope; else the globals. The scope selector, default scope, and URL
+normalization all use it. URL normalization now corrects a STALE scope too
+(`/<id>/matrix/` for a project that ships its own plugin → rewritten to the
+owner). `resolvePlugin` matches by name AND project so two same-named project
+plugins load the right web bundle. `PluginInfo.projectId` added (the `/plugins`
+endpoint already returned it).
+
+### Known limitations (out of scope, documented)
+- A project added at RUNTIME (POST /projects) that ships its own plugin is NOT
+  discovered until the next daemon start (discovery is boot-time). Until then
+  it's served by the global matrix plugin. `onProjectInit` runs global plugins
+  on new projects — unchanged, task-author confirmed "already correct".
+- Web build keys plugin outputs by NAME, so two same-named project plugins WITH
+  a web component would collide in the build outputs map. The worker-keying
+  test uses no-web plugins; dchat is uniquely named. Fix when a real same-named
+  + web case appears.
+
+### Canonical test — `src/plugin-project-scope.test.ts` (daemon-level, hermetic)
+One daemon, 5 projects: matrix(global), pglobal(plain→matrix),
+pown(story-plugin), p1+p2(both `group-chat`). Proves: P_own runs the story
+scope (matrix tools ABSENT, via the diagnostic `/projects/:id/scope-info` route
+in `src/test-utils/story-scope.ts` — enumerates a scope's tools/prompt with a
+stub auth, no live provider), matrix still serves P_global (404 for pown =
+exclusive ownership), story-plugin 503s for pglobal, and two same-named project
+plugins get distinct isolated workers (task in p1 never appears in p2's tree).
+`story-scope.ts` is re-exported by absolute path from each tmpdir plugin's
+`runtime.ts` so the on-disk plugin needs no `node_modules` (bare `zod`/`./tool-
+def.ts` imports resolve inside matrix `src/`, not the tmpdir).
