@@ -12,6 +12,7 @@ import {
 	Suspense,
 	useCallback,
 	useEffect,
+	useMemo,
 	useRef,
 	useState,
 } from "react";
@@ -22,6 +23,7 @@ import type { Project, ThreeLayerConfig } from "./components/types.ts";
 import { LocaleProvider } from "./i18n.ts";
 import { LoginPage } from "./LoginPage.tsx";
 import { buildPath, type ParsedPath, parsePath } from "./path-routing.ts";
+import { pluginsForProject } from "./plugin-scope.ts";
 
 /**
  * Renders the build-failure surface for a plugin whose web bundle failed to
@@ -70,6 +72,12 @@ function loadPluginUI(
 interface PluginInfo {
 	name: string;
 	scope: "global" | "project";
+	/**
+	 * The project this plugin was discovered under. For a `scope:"project"`
+	 * plugin it identifies the project the plugin exclusively serves; the shell
+	 * uses it to show that plugin's scope only for its own project.
+	 */
+	projectId?: string;
 	/** Undefined when the plugin failed to build — check `buildError` first. */
 	webComponentPath?: string;
 	cssPath?: string;
@@ -156,10 +164,31 @@ function AuthenticatedShell() {
 	const [PluginUI, setPluginUI] = useState<ReturnType<
 		typeof loadPluginUI
 	> | null>(null);
-	// Selected scope follows the URL's pluginScope segment; falls back to
-	// first available plugin when the URL doesn't specify one. The URL
-	// normalization effect below will write the scope back into the URL.
-	const selectedScope = pluginScope ?? plugins[0]?.name ?? "";
+	// Plugins available for the CURRENT project. A project that ships its own
+	// project-scoped plugin is served exclusively by it (matches the daemon's
+	// `pluginForProject` — routing to the global matrix worker would 404). Every
+	// other project sees the global plugins. `pluginsFor` is also used by the
+	// project-switch handlers to pick the right default scope for a target
+	// project before the URL normalization effect runs.
+	const pluginsFor = useCallback(
+		(pid: string | null): PluginInfo[] => pluginsForProject(plugins, pid),
+		[plugins],
+	);
+	const availablePlugins = useMemo(
+		() => pluginsFor(projectId),
+		[pluginsFor, projectId],
+	);
+
+	// Selected scope follows the URL's pluginScope segment IFF that scope is
+	// valid for the current project; otherwise it falls back to the project's
+	// owning plugin. The URL normalization effect below writes the resolved
+	// scope back into the URL (correcting a missing OR stale scope segment —
+	// e.g. `/<projectId>/matrix/` for a project owned by its own plugin).
+	const scopeIsValid =
+		pluginScope != null && availablePlugins.some((p) => p.name === pluginScope);
+	const selectedScope = scopeIsValid
+		? (pluginScope as string)
+		: (availablePlugins[0]?.name ?? "");
 
 	// ── browser back/forward → re-parse URL → state ──
 	useEffect(() => {
@@ -191,21 +220,22 @@ function AuthenticatedShell() {
 	}, [refresh]);
 
 	// ── URL normalization ──
-	// "/" → "/<firstProjectId>/<firstPluginName>/" via replaceState.
-	// "/<projectId>" with no pluginScope → "/<projectId>/<firstPluginName>/".
+	// "/" → "/<firstProjectId>/<ownerScope>/" via replaceState.
+	// "/<projectId>" with missing OR stale scope → "/<projectId>/<ownerScope>/".
 	//
-	// Wait until both projects AND plugins have loaded — we pick defaults
-	// from real data, never a hardcoded "matrix" string. That keeps the
-	// shell honest about the plugin contract: whatever's registered wins.
-	// If no plugins exist, we leave the URL alone and the render falls
-	// through to the "no plugin loaded" state.
+	// The default scope is the project's OWNING plugin (its own project-scoped
+	// plugin, else the first global). We never hardcode "matrix" — whatever the
+	// daemon resolves as the owner wins. A stale scope segment is corrected too:
+	// `/<id>/matrix/` for a project that ships its own plugin would 404 against
+	// the matrix worker, so it's rewritten to the owner scope. If no plugins
+	// exist, the URL is left alone and the render falls through to "no plugin".
 	useEffect(() => {
-		const firstPlugin = plugins[0];
-		if (!firstPlugin) return;
+		if (plugins.length === 0) return;
 		if (!projectId) {
 			const firstProj = projects[0];
 			if (!firstProj) return;
-			const scope = firstPlugin.name;
+			const scope = pluginsFor(firstProj.id)[0]?.name;
+			if (!scope) return;
 			window.history.replaceState(null, "", buildPath(firstProj.id, scope, ""));
 			setParsed({
 				projectId: firstProj.id,
@@ -214,12 +244,20 @@ function AuthenticatedShell() {
 			});
 			return;
 		}
-		if (!pluginScope) {
-			const scope = firstPlugin.name;
+		if (!scopeIsValid) {
+			const scope = availablePlugins[0]?.name;
+			if (!scope) return;
 			window.history.replaceState(null, "", buildPath(projectId, scope, ""));
 			setParsed({ projectId, pluginScope: scope, pluginPath: "" });
 		}
-	}, [projectId, pluginScope, projects, plugins]);
+	}, [
+		projectId,
+		scopeIsValid,
+		availablePlugins,
+		projects,
+		plugins,
+		pluginsFor,
+	]);
 
 	// ── Connected check via health ──
 	useEffect(() => {
@@ -236,11 +274,25 @@ function AuthenticatedShell() {
 		return () => clearInterval(interval);
 	}, []);
 
+	// Resolve the active plugin by scope name AND project ownership. The project
+	// match disambiguates two projects that ship a same-named project plugin —
+	// without it `find(name)` would pick the first one and load the wrong web
+	// bundle. Global plugins match any project.
+	const resolvePlugin = useCallback(
+		(scope: string): PluginInfo | undefined =>
+			plugins.find(
+				(p) =>
+					p.name === scope &&
+					(p.scope === "global" || p.projectId === projectId),
+			),
+		[plugins, projectId],
+	);
+
 	// ── Load plugin component when scope changes ──
 	// Explicit null when buildError is set so the render below switches to
 	// the error panel instead of hanging on the Suspense fallback.
 	useEffect(() => {
-		const plugin = plugins.find((p) => p.name === selectedScope);
+		const plugin = resolvePlugin(selectedScope);
 		if (!plugin) return;
 		if (plugin.buildError || !plugin.webComponentPath) {
 			setPluginUI(null);
@@ -248,9 +300,9 @@ function AuthenticatedShell() {
 		}
 		const path = plugin.webComponentPath;
 		setPluginUI(() => loadPluginUI(path));
-	}, [selectedScope, plugins]);
+	}, [selectedScope, resolvePlugin]);
 
-	const selectedPlugin = plugins.find((p) => p.name === selectedScope);
+	const selectedPlugin = resolvePlugin(selectedScope);
 
 	// ── `pushPluginPath`: callback the plugin uses to navigate within its
 	// own segment. Shell translates `path` (e.g. a taskId) into a full URL
@@ -306,12 +358,15 @@ function AuthenticatedShell() {
 	const handleProjectChange = useCallback(
 		(id: string) => {
 			if (id === projectId) return;
-			const scope = selectedScope || plugins[0]?.name || "matrix";
+			// Default to the TARGET project's owning plugin (not the current
+			// scope) — a stale scope is corrected by URL normalization anyway,
+			// but starting on the owner avoids a flash of the wrong scope.
+			const scope = pluginsFor(id)[0]?.name ?? selectedScope;
 			window.history.pushState(null, "", buildPath(id, scope, ""));
 			setParsed({ projectId: id, pluginScope: scope, pluginPath: "" });
 			setShowSettings(false);
 		},
-		[projectId, selectedScope, plugins],
+		[projectId, selectedScope, pluginsFor],
 	);
 
 	const handleAddProject = useCallback(
@@ -329,9 +384,12 @@ function AuthenticatedShell() {
 					const proj = await res.json();
 					setNewProjectPath("");
 					setShowAddProject(false);
-					// Refresh project list then navigate to the new project.
+					// Refresh project list then navigate to the new project. A newly
+					// added project's own plugin (if any) isn't discovered until the
+					// next daemon start, so it defaults to a global plugin for now —
+					// pluginsFor reflects exactly what's currently registered.
 					await refresh();
-					const scope = selectedScope || plugins[0]?.name || "matrix";
+					const scope = pluginsFor(proj.id)[0]?.name ?? selectedScope;
 					window.history.pushState(null, "", buildPath(proj.id, scope, ""));
 					setParsed({
 						projectId: proj.id,
@@ -343,7 +401,7 @@ function AuthenticatedShell() {
 				setCreatingProject(false);
 			}
 		},
-		[newProjectPath, refresh, selectedScope, plugins],
+		[newProjectPath, refresh, selectedScope, pluginsFor],
 	);
 
 	const handleLogout = useCallback(async () => {
@@ -421,7 +479,7 @@ function AuthenticatedShell() {
 				}}
 				onToggleSettings={() => setShowSettings((s) => !s)}
 				onLogout={handleLogout}
-				scopes={plugins.map((p) => ({ name: p.name }))}
+				scopes={availablePlugins.map((p) => ({ name: p.name }))}
 				selectedScope={selectedScope}
 				onScopeChange={handleScopeChange}
 			/>
