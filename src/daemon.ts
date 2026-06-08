@@ -261,6 +261,10 @@ function mergeAuthGroups(
 interface ShellSSEClient {
 	controller: ReadableStreamDefaultController;
 	projectId: string;
+	/** The lens this stream is bound to — the plugin NAME (URL `<pluginScope>`).
+	 * Live events are filtered by (projectId, scope) so a product-lens viewer
+	 * never receives the dev lens's tree updates and vice versa. */
+	scope: string;
 }
 
 interface ScopeWorker {
@@ -501,29 +505,36 @@ export async function createDaemon(opts: {
 	const sseClients = new Set<ShellSSEClient>();
 	const sseEncoder = new TextEncoder();
 
-	// Per-project SSE sequencing + ring buffer for Last-Event-ID catch-up.
+	// Per-LENS SSE sequencing + ring buffer for Last-Event-ID catch-up.
+	// A "lens" is a (projectId, scope) pair — `scope` is the plugin NAME (the
+	// URL `<pluginScope>` segment). Under additive routing a project has a
+	// DISTINCT tree per lens (matrix dev vs its own product), so each lens has
+	// its own seqId stream + ring buffer; an EventSource is bound to one lens.
 	// SSERingEntry type declared at module scope so `getEventsSinceFromBuffer`
 	// can be exported without dragging closure types with it.
 	const sseSeqCounters = new Map<string, number>();
 	const sseEventBuffers = new Map<string, SSERingEntry[]>();
 	const SSE_RING_BUFFER_SIZE = 2000;
 
-	function nextSseSeqId(projectId: string): number {
-		const current = sseSeqCounters.get(projectId) ?? 0;
+	/** Composite key for the (projectId, scope) lens. `\u0000` can't appear in
+	 * a ULID projectId or a `[A-Za-z0-9_-]` plugin name, so it's an unambiguous
+	 * separator (and distinct from worker keys, which use `:`). */
+	function lensKey(projectId: string, scope: string): string {
+		return `${projectId}\u0000${scope}`;
+	}
+
+	function nextSseSeqId(key: string): number {
+		const current = sseSeqCounters.get(key) ?? 0;
 		const next = current + 1;
-		sseSeqCounters.set(projectId, next);
+		sseSeqCounters.set(key, next);
 		return next;
 	}
 
-	function bufferSseEvent(
-		projectId: string,
-		seqId: number,
-		data: string,
-	): void {
-		let buffer = sseEventBuffers.get(projectId);
+	function bufferSseEvent(key: string, seqId: number, data: string): void {
+		let buffer = sseEventBuffers.get(key);
 		if (!buffer) {
 			buffer = [];
-			sseEventBuffers.set(projectId, buffer);
+			sseEventBuffers.set(key, buffer);
 		}
 		buffer.push({ seqId, data });
 		if (buffer.length > SSE_RING_BUFFER_SIZE) {
@@ -532,10 +543,10 @@ export async function createDaemon(opts: {
 	}
 
 	function getEventsSince(
-		projectId: string,
+		key: string,
 		lastSeqId: number,
 	): SSERingEntry[] | null {
-		return getEventsSinceFromBuffer(sseEventBuffers.get(projectId), lastSeqId);
+		return getEventsSinceFromBuffer(sseEventBuffers.get(key), lastSeqId);
 	}
 
 	// Worker state
@@ -658,7 +669,7 @@ export async function createDaemon(opts: {
 	}
 
 	function setupWorkerMessageHandler(
-		_scopeName: string,
+		pluginName: string,
 		scopeWorker: ScopeWorker,
 	) {
 		scopeWorker.worker.onmessage = (event: MessageEvent) => {
@@ -731,12 +742,18 @@ export async function createDaemon(opts: {
 
 			if (msg.type === "sse_event") {
 				const { projectId, event: evt } = msg;
-				const seqId = nextSseSeqId(projectId);
+				// The emitting worker IS the lens: this worker serves `pluginName`,
+				// so every event it emits belongs to the (projectId, pluginName)
+				// lens. seqId + ring buffer are per-lens, and only clients viewing
+				// THIS lens receive it — a product-lens viewer never sees the dev
+				// lens's tree, and vice versa.
+				const key = lensKey(projectId, pluginName);
+				const seqId = nextSseSeqId(key);
 				const data = JSON.stringify(evt);
-				bufferSseEvent(projectId, seqId, data);
+				bufferSseEvent(key, seqId, data);
 				const sseMessage = sseEncoder.encode(`id: ${seqId}\ndata: ${data}\n\n`);
 				for (const client of sseClients) {
-					if (client.projectId === projectId) {
+					if (client.projectId === projectId && client.scope === pluginName) {
 						try {
 							client.controller.enqueue(sseMessage);
 						} catch {
@@ -853,7 +870,10 @@ export async function createDaemon(opts: {
 					}
 					scopeWorker.ready = true;
 					getRestartState(scopeName).lastReadyAt = Date.now();
-					setupWorkerMessageHandler(scopeName, scopeWorker);
+					// Pass the plugin NAME (the lens/scope), not the worker key, so
+					// the sse_event relay can tag events with the (projectId, scope)
+					// lens the viewing UI subscribes to.
+					setupWorkerMessageHandler(plugin.name, scopeWorker);
 					resolve();
 				}
 				if (msg.type === "error") {
@@ -1045,17 +1065,21 @@ export async function createDaemon(opts: {
 	// project can have more than one lens. Do NOT collapse this to single-owner.
 
 	/**
-	 * Every plugin serving `projectId`: the project's own `scope:"project"`
-	 * plugin (if it ships one) ∪ all global plugins. Own-first so a project that
-	 * ships its own plugin defaults to its product lens, with matrix dev lens
-	 * still selectable. Used for DELETE fan-out + (Phase 2) shell scope selector.
+	 * Every plugin serving `projectId`: all global plugins ∪ the project's own
+	 * `scope:"project"` plugin (if it ships one). GLOBALS-FIRST so a project that
+	 * ships its own plugin DEFAULTS to the matrix dev lens, with its product lens
+	 * offered (one click) in the selector. Dev-first is the additive-consistent
+	 * default: matrix is the foundation lens every project always has; the
+	 * product lens is the ADDITION. Defaulting to product would make first-load
+	 * byte-identical to the (reverted) exclusive model and hide the addition.
+	 * Used for DELETE fan-out + the shell scope selector.
 	 */
 	function scopesForProject(projectId: string): RegisteredPlugin[] {
 		const globals = registeredPlugins.filter((p) => p.scope === "global");
 		const own = registeredPlugins.find(
 			(p) => p.scope === "project" && p.projectId === projectId,
 		);
-		return own ? [own, ...globals] : globals;
+		return own ? [...globals, own] : globals;
 	}
 
 	/**
@@ -1076,6 +1100,32 @@ export async function createDaemon(opts: {
 		return registeredPlugins.find(
 			(p) => p.scope === "global" && workers.has(p.name),
 		)?.name;
+	}
+
+	/** Name of the first global plugin (the default SSE lens when a client
+	 * doesn't specify `scope`). Name only — readiness is checked separately. */
+	function firstGlobalPluginName(): string | undefined {
+		return registeredPlugins.find((p) => p.scope === "global")?.name;
+	}
+
+	/**
+	 * The ready worker key serving the (projectId, scope) lens — used to fetch
+	 * the VIEWED lens's initial tree/clarifications for an SSE stream. `scope` is
+	 * a plugin NAME: a global named `scope` serves any project; a project-scoped
+	 * plugin named `scope` serves only the project that ships it. Returns
+	 * undefined if no such plugin or its worker isn't ready.
+	 */
+	function workerKeyForProjectScope(
+		projectId: string,
+		scope: string,
+	): string | undefined {
+		const plugin = registeredPlugins.find(
+			(p) =>
+				p.name === scope && (p.scope === "global" || p.projectId === projectId),
+		);
+		if (!plugin) return undefined;
+		const key = workerKeyForPlugin(plugin);
+		return workers.has(key) ? key : undefined;
 	}
 
 	// ── Run onProjectInit hooks (4-step flow, step 3+4) ──
@@ -1408,9 +1458,16 @@ export async function createDaemon(opts: {
 			await pm.delete(projectId);
 			syncToWorkers("project_deleted", { projectId });
 			syncProjects();
-			// Clean up SSE ring buffers for deleted project
-			sseSeqCounters.delete(projectId);
-			sseEventBuffers.delete(projectId);
+			// Clean up SSE ring buffers for the deleted project — ACROSS EVERY
+			// lens (keys are `${projectId}\u0000${scope}`), since the project may
+			// have had a dev lens AND a product lens, each with its own buffer.
+			const lensPrefix = `${projectId}\u0000`;
+			for (const k of [...sseSeqCounters.keys()]) {
+				if (k.startsWith(lensPrefix)) sseSeqCounters.delete(k);
+			}
+			for (const k of [...sseEventBuffers.keys()]) {
+				if (k.startsWith(lensPrefix)) sseEventBuffers.delete(k);
+			}
 			return c.json({ ok: true });
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -1646,6 +1703,15 @@ export async function createDaemon(opts: {
 		if (!projectId) {
 			return c.text("projectId required", 400);
 		}
+		// The lens this stream subscribes to. `scope` is a plugin NAME (the URL
+		// `<pluginScope>` segment). Defaults to the first global plugin (matrix)
+		// so a scope-less client gets the dev lens — backward compatible with
+		// single-lens projects. A project's product lens MUST pass `scope=<name>`.
+		// Falls back to "" when no plugin is registered at all (e.g. an auth-only
+		// test daemon): the stream still opens (auth is what matters there), it
+		// just carries no lens worker → no initial tree, same as the old behavior.
+		const scope = c.req.query("scope") ?? firstGlobalPluginName() ?? "";
+		const lens = lensKey(projectId, scope);
 
 		const request = c.req.raw;
 		// Capture the token used to authorize this stream so we can
@@ -1665,14 +1731,15 @@ export async function createDaemon(opts: {
 
 		const stream = new ReadableStream({
 			async start(controller) {
-				const client: ShellSSEClient = { controller, projectId };
+				const client: ShellSSEClient = { controller, projectId, scope };
 				sseClients.add(client);
 
 				let catchUpDone = false;
 
 				// If reconnecting with Last-Event-ID, try ring buffer catch-up
+				// (per-lens: seqIds belong to THIS (projectId, scope) stream).
 				if (lastSeqId != null && !Number.isNaN(lastSeqId)) {
-					const missed = getEventsSince(projectId, lastSeqId);
+					const missed = getEventsSince(lens, lastSeqId);
 					if (missed !== null) {
 						catchUpDone = true;
 						for (const entry of missed) {
@@ -1691,12 +1758,12 @@ export async function createDaemon(opts: {
 				}
 
 				// If no Last-Event-ID or catch-up failed (gap too large),
-				// send full initial state
+				// send full initial state — from the worker serving THIS lens
+				// (the viewed scope), so a product-lens stream gets the product
+				// tree and a dev-lens stream gets the matrix tree.
 				if (!catchUpDone) {
 					try {
-						const workerName = registeredPlugins.find(
-							(p) => p.scope === "global" && workers.has(p.name),
-						)?.name;
+						const workerName = workerKeyForProjectScope(projectId, scope);
 						const treeResp = workerName
 							? await forwardToWorker(
 									workerName,

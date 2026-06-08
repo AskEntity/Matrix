@@ -2746,3 +2746,115 @@ fires deterministically on the first explicit `getTracker`.)
   `projectId` at the initial-inject call site (~907) fails the integration test.
   (Mutating the AgentRequest-closure site ~1017 instead did NOT fail it — that path
   only fires on compaction; the integration test covers the fresh-inject path.)
+
+## Additive project-scoped plugin routing — dual lenses (2026-06-08)
+
+A project that ships its own `.mxd/plugin/` is served by BOTH its own scope AND
+the global matrix scope, **ADDITIVELY**. `matrix:<id>` (dev lens — coding/
+orchestration) and `<own>:<id>` (product lens — its own worker) **coexist**, on
+separate per-scope dataRoots. Shipping a plugin ADDS a lens; it NEVER removes the
+matrix dev lens.
+
+### Why additive, NOT exclusive (the lesson — don't re-pollute)
+The first attempt (commit `171a3bf`, **REVERTED by `7b17a43`**) made ownership
+EXCLUSIVE: `pluginForProject = own ?? global` (single owner) — matrix STOPPED
+serving a project that shipped its own plugin. That was WRONG:
+- **`<scope>:<project>` is a TWO-PART address — its existence PROVES dual.** If a
+  project mapped to one scope, the prefix would be redundant. Exclusive collapsed
+  it to `scope = f(project)`.
+- The original design is **"Parallel Run Loops — alongside, NOT override."**
+  Exclusive turned alongside into override.
+- Self-bootstrap REQUIRES coexistence (matrix is its own product; "product is a
+  dev tool" only holds if a project opens in both lenses at once).
+- per-plugin dataRoot (`projects/<id>/plugin/<plugin>/`) was built for multiple
+  plugins coexisting on one project — wasted under exclusive.
+
+If any routing decision tempts you toward "a project belongs to ONE plugin",
+that's the bug returning. Additive, never exclusive.
+
+### Daemon-core routing (`src/daemon.ts`)
+- `workerKeyForPlugin(plugin)`: global → `name`; project → `<projectId>:<name>`
+  (two projects can ship a same-named plugin → distinct workers). This worker KEY
+  uses `:`; it is NOT the URL scope segment (which is the bare plugin NAME).
+- `scopesForProject(id)` = all globals ∪ the project's own plugin (if any).
+  **GLOBALS-FIRST** ordering → default lens is matrix/dev. REPLACES the reverted
+  exclusive `pluginForProject` single-owner. Used by DELETE fan-out + shell.
+- `projectsForPlugin(plugin)`: **global → ALL projects** (matrix is every
+  project's dev lens, MUST know them all to resume/build scope opts); project →
+  its own project only. No double-resume: the lenses live in DISTINCT dataRoots,
+  so each worker only resumes the tree under its own dataRoot. (The reverted
+  version filtered globals to "only-owned" — dropped; that was a patch for a
+  non-problem, dataRoot already isolates.)
+- One worker per plugin (spawn loop over ALL plugins, not globals-only).
+- `onProjectInit` (startup) runs per `projectsForPlugin` → matrix scaffolds EVERY
+  project's dev lens (memory.md, hooks) — restores pre-exclusive behavior.
+- DELETE `/projects/:id` **FANS OUT** a `/stop` to every scope serving the
+  project (a running agent in ANY lens must stop before data removal).
+- `/api/:plugin/*` resolution (reused verbatim from the reverted infra, correct
+  for additive): a GLOBAL candidate named `<plugin>` is used directly → matrix
+  serves any project; else the projectId in the stripped `/projects/<id>/...`
+  path selects the project-scoped worker.
+- `firstGlobalWorkerKey()` (ready-checked) for project-agnostic routes
+  (health, /version, /stats). `firstGlobalPluginName()` = default SSE scope.
+
+### SSE is scope-aware — a "lens" = (projectId, scope)
+`scope` = the plugin NAME (URL `<pluginScope>`). A project has a DISTINCT tree
+per lens, so each lens has its own SSE stream:
+- `ShellSSEClient` carries `scope`; `/events?projectId=&scope=` (scope defaults
+  to `firstGlobalPluginName()` ?? `""` — `""` keeps an auth-only/plugin-less
+  daemon's `/events` opening 200 with no initial tree, the old behavior).
+- seqId counter + ring buffer keyed by `lensKey(projectId, scope)` =
+  `${projectId}\u0000${scope}` (`\u0000` can't appear in a ULID id or a
+  `[A-Za-z0-9_-]` name; distinct from the worker key's `:`).
+- The `sse_event` relay derives the lens from the EMITTING worker: the worker
+  serving `pluginName` → events belong to `(projectId, pluginName)`. Only clients
+  matching `(projectId, scope)` receive them → a product viewer never sees the
+  dev tree and vice versa. `setupWorkerMessageHandler` gets the plugin NAME.
+- Initial tree/clarifications come from `workerKeyForProjectScope(projectId,
+  scope)` (the VIEWED lens's worker), not "first global".
+- DELETE cleans every `${projectId}\u0000*` lens buffer.
+- Single-lens projects (no own plugin) → one worker emits scope=matrix → one
+  stream → **identical to pre-additive behavior** (the regression bar).
+
+### Shell multi-lens (`web/`)
+- `web/plugin-scope.ts → pluginsForProject(plugins, projectId)` = all globals ∪
+  the project's own plugin, **globals-first** (default = dev/matrix). Mirrors the
+  daemon `scopesForProject`.
+- `ShellApp.tsx`: `availablePlugins = pluginsFor(projectId)` feeds the scope
+  SELECTOR (lists BOTH lenses for a project with its own plugin); `scopeIsValid`
+  + URL normalization rewrite a missing/stale `<pluginScope>` to a valid lens;
+  `resolvePlugin(scope)` disambiguates same-named project plugins by projectId
+  (loads the right web bundle). `<PluginUI key={projectId/scope}>` gets a new
+  `scope` prop.
+- Plugin web: `PluginProps += scope`; threaded Plugin → PluginShell →
+  ProjectContent → `useSSE(projectId, scope, ...)` → `/events?...&scope=`.
+  `useSSE` guards `if (!projectId || !scope) return` and includes `scope` in deps
+  (lens switch → reconnect).
+
+### DEFAULT LENS = dev-first (matrix), decided
+Globals-first ordering. Rationale (orchestrator, 2026-06-08): additive
+consistency (matrix is the foundation lens every project always has, the product
+lens is the ADDITION — defaulting to product would make first-load identical to
+the reverted exclusive model and HIDE the addition; the default should TEACH the
+model), robustness (matrix dev lens always works; product workers are mid-build),
+dev-workflow fit. A FUTURE per-project configurable default (for finished,
+end-user-facing products) is draft `01KTJZ07MC0VWM923SBDZHDRP8` — do NOT bake
+product-first globally while products are under development.
+
+### Tests
+- `src/plugin-project-scope.test.ts` (additive): INVERTS the reverted "matrix
+  404s P_own" → "matrix STILL serves P_own (dev lens, 200 + Orchestrator)";
+  dual-lens coexist + ISOLATION (task in `matrix:pown` absent from `story:pown`
+  and vice-versa); DELETE fan-out (project gone from BOTH lenses); + onProjectInit
+  runs on P_own too. Keeps regression + same-named-distinct-workers + scope-info.
+- `web/plugin-scope.test.ts` (additive): a project with its own plugin sees BOTH
+  scopes, default (first) = matrix; globals-first ordering pinned.
+- `src/test-utils/story-scope.ts`: generic non-matrix test scope (reused verbatim
+  from the reverted infra — it has no exclusive/additive logic).
+
+### Pre-existing worktree noise (NOT a regression)
+Daemon tests that run `createDaemon` with the matrix repo (a git WORKTREE, where
+`.git` is a FILE) log `onProjectInit failed for matrix on matrix: ENOTDIR …
+.git/info` from `excludeWorktrees`'s `mkdir(.git/info)`. Caught + logged, tests
+pass. Predates this work (matrix's onProjectInit ran on the matrix project under
+the old code too). On a normal checkout (`.git` is a dir) it succeeds.

@@ -168,6 +168,7 @@ describe("Plugin — targetNodeId resolves to rootNodeId after useTasks", () => 
 			const [pluginPath, setPluginPath] = useState("");
 			return createElement(Plugin, {
 				projectId,
+				scope: "matrix",
 				pluginPath,
 				pushPluginPath: (path: string) => setPluginPath(path),
 			});

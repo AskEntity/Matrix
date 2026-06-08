@@ -200,11 +200,20 @@ function ProductionModePage() {
  */
 interface PluginProps {
 	projectId: string;
+	/** The lens (plugin NAME / URL `<pluginScope>`) the shell is showing. Passed
+	 * to the SSE stream so it subscribes to THIS lens's events — under additive
+	 * routing a project has a distinct tree per lens (matrix dev vs product). */
+	scope: string;
 	pluginPath: string;
 	pushPluginPath: (path: string, replace?: boolean) => void;
 }
 
-export function Plugin({ projectId, pluginPath, pushPluginPath }: PluginProps) {
+export function Plugin({
+	projectId,
+	scope,
+	pluginPath,
+	pushPluginPath,
+}: PluginProps) {
 	if (!projectId)
 		return (
 			<div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>
@@ -214,6 +223,7 @@ export function Plugin({ projectId, pluginPath, pushPluginPath }: PluginProps) {
 			<ErrorBoundary>
 				<PluginShell
 					projectId={projectId}
+					scope={scope}
 					pluginPath={pluginPath}
 					pushPluginPath={pushPluginPath}
 				/>
@@ -234,7 +244,12 @@ export function Plugin({ projectId, pluginPath, pushPluginPath }: PluginProps) {
  * users see the flash briefly, then the ProductionModePage — acceptable
  * tradeoff since dev-mode is the dominant case.
  */
-function PluginShell({ projectId, pluginPath, pushPluginPath }: PluginProps) {
+function PluginShell({
+	projectId,
+	scope,
+	pluginPath,
+	pushPluginPath,
+}: PluginProps) {
 	const authFetch = useAuthFetch();
 	const [production, setProduction] = useState<boolean | null>(null);
 	useEffect(() => {
@@ -262,6 +277,7 @@ function PluginShell({ projectId, pluginPath, pushPluginPath }: PluginProps) {
 	return (
 		<ProjectContent
 			projectId={projectId}
+			scope={scope}
 			pluginPath={pluginPath}
 			pushPluginPath={pushPluginPath}
 		/>
@@ -270,6 +286,7 @@ function PluginShell({ projectId, pluginPath, pushPluginPath }: PluginProps) {
 
 function ProjectContent({
 	projectId,
+	scope,
 	pluginPath,
 	pushPluginPath,
 }: PluginProps) {
@@ -768,7 +785,7 @@ function ProjectContent({
 			);
 	}, [projectId, processEventResponse, authFetch]);
 
-	useSSE(projectId, handleEvent, checkStatus, handleReconnect);
+	useSSE(projectId, scope, handleEvent, checkStatus, handleReconnect);
 
 	// Project selection is managed by shell — plugin receives projectId as prop
 

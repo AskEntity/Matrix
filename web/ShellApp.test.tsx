@@ -207,6 +207,7 @@ describe("plugin component renders Matrix UI", () => {
 						{ value: getToken },
 						createElement(Plugin, {
 							projectId: "m1",
+							scope: "matrix",
 							pluginPath: "",
 							pushPluginPath: () => {},
 						}),
@@ -364,6 +365,7 @@ describe("sidebar toggle — unified state model", () => {
 					{ value: getToken },
 					createElement(Plugin, {
 						projectId: "m1",
+						scope: "matrix",
 						pluginPath: "",
 						pushPluginPath: () => {},
 					}),
@@ -652,6 +654,7 @@ describe("sidebar toggle — unified state model", () => {
 					{ value: getToken },
 					createElement(Plugin, {
 						projectId: prod.id,
+						scope: "matrix",
 						pluginPath: "",
 						pushPluginPath: () => {},
 					}),
