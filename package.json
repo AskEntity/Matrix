@@ -6,6 +6,10 @@
 	"bin": {
 		"mxd": "src/cli.ts"
 	},
+	"exports": {
+		"./plugin-sdk": "./src/plugin-sdk.ts",
+		"./package.json": "./package.json"
+	},
 	"scripts": {
 		"dev": "bun run --watch src/daemon.ts",
 		"test": "bun test",
@@ -32,6 +36,6 @@
 		"pinyin-pro": "^3.28.0",
 		"react": "^19.2.4",
 		"react-dom": "^19.2.4",
-		"zod": "^4.3.6"
+		"zod": "4.3.6"
 	}
 }

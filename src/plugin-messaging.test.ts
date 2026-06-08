@@ -20,22 +20,32 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { z } from "zod";
 import type { Event } from "./events.ts";
-import { createUserMessage } from "./queue-message-factory.ts";
+// The dummy plugin below consumes matrix's PUBLIC SDK surface (the realistic
+// out-of-tree shape): deliverToNode / listNodes / createUserMessage / defineTool
+// / toToolDefinition / createYieldTool / createDoneTool / z all come from
+// "./plugin-sdk.ts" — the very module the bare specifier `mxd/plugin-sdk`
+// resolves to. So these real-agent-loop tests double as the literal proof that
+// the SDK's deliverToNode actually delivers + wakes an idle peer on the shared
+// tracker. `registryGetTracker` stays the INTERNAL accessor (intentionally NOT
+// on the SDK surface), used only to ASSERT singleton identity.
 import {
+	createDoneTool,
+	createUserMessage,
+	createYieldTool,
+	defineTool,
 	deliverToNode,
 	listNodes,
-	getTracker as registryGetTracker,
-} from "./resource-registry.ts";
+	toToolDefinition,
+	z,
+} from "./plugin-sdk.ts";
+import { getTracker as registryGetTracker } from "./resource-registry.ts";
 import type { ScopeOpts } from "./runtime/context.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
-import { defineTool, toToolDefinition } from "./tool-def.ts";
-import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
 import type { BaseTaskNode, TaskNode } from "./types.ts";
 import { ulid } from "./ulid.ts";
 

@@ -2858,3 +2858,97 @@ Daemon tests that run `createDaemon` with the matrix repo (a git WORKTREE, where
 .git/info` from `excludeWorktrees`'s `mkdir(.git/info)`. Caught + logged, tests
 pass. Predates this work (matrix's onProjectInit ran on the matrix project under
 the old code too). On a normal checkout (`.git` is a dir) it succeeds.
+
+## Plugin SDK — `mxd/plugin-sdk` bare specifier + re-exported zod (the "bun add mxd" dependency story) (2026-06-08)
+
+An out-of-tree plugin (dchat) depends on matrix's public API via a STABLE,
+depth-independent bare specifier instead of counting `../`s, with exactly ONE
+zod identity shared between matrix and the plugin. Closes the two
+dependency-boundary gaps the dchat 试水 surfaced (both had fragile workarounds:
+a dev symlink + an exact zod pin on dchat's side).
+
+### Mechanism — `exports`-map SUBPATH of the real `mxd` package (NOT `@mxd/plugin-sdk`)
+- `package.json` gains `"exports": { "./plugin-sdk": "./src/plugin-sdk.ts", "./package.json": "./package.json" }`.
+- Plugin imports `import { defineTool, type ScopeOpts, z, ... } from "mxd/plugin-sdk"`.
+- A plugin installs matrix ONCE (`bun add <matrix>` / `bun link mxd` → a
+  `node_modules/mxd` entry, typically a symlink). Bare-specifier resolution walks
+  UP node_modules → depth-independent, so it works inside the plugin's own git
+  worktree with NO `../` counting and NO dev-symlink hack (Gap A closed).
+- Chose `mxd/plugin-sdk` over `@mxd/plugin-sdk`: the `@mxd/*` names
+  (`@mxd/types`, `@mxd/auth-context`) are BROWSER virtual modules (tsconfig
+  paths + importmap), a different mechanism. A server node_modules package reusing
+  `@mxd/*` would falsely imply kinship. `mxd/plugin-sdk` is the honest subpath of
+  the real `mxd` package — the literal "bun add mxd → import its subpath" story,
+  zero extra publishing. (This overrides the `@mxd/plugin-sdk` example that
+  appeared in the original task description; orchestrator approved the deviation.)
+
+### ⭐ Singleton: thin re-export, never a vendored copy (realpath dedup — EMPIRICALLY PROVEN)
+`src/plugin-sdk.ts` re-exports matrix's own modules via RELATIVE paths. Bun/Node
+dedupe modules by REALPATH, so a plugin importing `mxd/plugin-sdk` through its
+`node_modules/mxd` symlink resolves to the SAME physical files → the SAME process
+singletons matrix's agent loop uses (the module-level `_ctx` in
+resource-registry.ts). So `deliverToNode`/`listNodes` hit the ONE in-process
+tracker — a delivered peer message ARRIVES (enqueued / auto-launched), never
+silently dropped against a different `_ctx`. A vendored copy = different realpath
+= different `_ctx` = silent no-op. Proven: a probe outside matrix with a
+`node_modules/mxd` symlink shares matrix's `_ctx` (and `listNodes` returns the
+EXACT same node object the app's tracker holds — reference identity).
+
+### ⭐ One zod identity (Gap B closed) + exact pin (DO NOT re-add the caret)
+- The SDK does `export { z } from "zod"`. A plugin imports `z` from the SDK →
+  matrix's exact zod instance → a plugin's `z.string()` passes matrix's
+  `shapeToJsonSchema` (`z.toJSONSchema(z.object(pluginShape))` — matrix's z
+  wrapping the plugin's schema; only works when both are the same ZodString
+  class). The plugin need not depend on zod at all.
+- `package.json` pins `"zod": "4.3.6"` EXACT — the caret (`^4.3.6`) was the drift
+  root cause on BOTH sides (dchat drifted to 4.4.3 → two distinct ZodString types
+  → `defineTool` stopped typechecking). package.json is strict JSON (no inline
+  comment possible) — this memory entry IS the "why no caret"; a future agent
+  must NOT re-loosen it without re-reading the zod-identity requirement.
+
+### Surface — EXACTLY the finalized manifest, never widened (anti-pattern #6)
+Type-only: `ScopeOpts`, `PluginTypes`, `BaseDoneData`, `RuntimeContext`
+(runtime/context.ts); `BaseTaskNode`, `TaskStatus` (types.ts); `Auth`
+(tool-auth.ts); `PluginManifest` (plugin.ts).
+Runtime values: `defineTool`, `toToolDefinition` (tool-def.ts); `createYieldTool`,
+`createDoneTool` (tools/prefab.ts); `createUserMessage` (queue-message-factory.ts);
+`isTask` (types.ts); `deliverToNode`, `listNodes` (resource-registry.ts — the
+NARROWED messaging API, NOT raw getTracker/deliverMessage which stay internal);
+`z` (zod). NO `checkPermission` (only `Auth` as a type), NO LLM facility — no
+plugin imports them today.
+
+### Exports map narrows the surface (gating is load-bearing)
+Adding `exports` GATES deep imports: `import "mxd/src/resource-registry.ts"` now
+FAILS to resolve — so `getTracker`/`deliverMessage` are un-importable; only the
+narrowed `deliverToNode`/`listNodes` reach a plugin. Verified safe to add: ZERO
+bare `mxd/`/`matrix/` self-imports exist in the tree (matrix uses relative
+imports; the worker `import()`s plugins by ABSOLUTE path — both bypass package
+resolution, so gating breaks nothing internal). The aspirational
+`import "matrix/src/llm.ts"` docstring in src/llm.ts was wrong (wrong name +
+non-resolving) and is unrelated — left as-is (not in scope).
+
+### Tests
+- `src/plugin-sdk.test.ts` (NEW, 7 tests): (1) thin re-export reference identity
+  (every value === its origin symbol; `z` === zod's z); (2) zod identity
+  end-to-end (SDK's z through toToolDefinition); (3) bare-specifier-through-symlink
+  singleton — `listNodes` reads the app's own tracker, and the returned node is
+  REFERENTIALLY the app's tracker node (the headline "same live tracker" proof);
+  (4) zod through the bare specifier; (5) deep-import gating (exports map blocks
+  `mxd/src/...`).
+- `src/plugin-messaging.test.ts` (REROUTED): its dummy plugin now consumes the
+  PUBLIC SDK surface (`./plugin-sdk.ts`) instead of resource-registry directly —
+  so its real-agent-loop tests ("deliverToNode wakes an idle peer on the SAME
+  tracker", listNodes snapshot, broadcast) double as the LITERAL proof that the
+  SDK's deliverToNode delivers + wakes in a loop. `registryGetTracker` stays the
+  internal accessor (used only to ASSERT identity, intentionally off-surface).
+  Reference identity + this reroute = airtight arrival coverage WITHOUT
+  duplicating the agent-loop harness.
+
+### Gotcha — `deliverToNode` needs `registerSideEffects` (wired at AGENT LAUNCH, not createApp)
+`_ctx` is set by `initResourceRegistry` (createApp path), but `_deliverMessage`
+(backing `deliverMessage`/`deliverToNode`) is registered by `registerSideEffects`
+which runs inside `buildAgentContext` at agent launch (agent-lifecycle.ts:184).
+So `deliverToNode` THROWS "deliverMessage not registered" if called outside any
+agent loop (e.g. a fresh createMatrixApp with no launch). `listNodes` works
+without a launch (only needs `_ctx`). This is why the SDK's deliverToNode arrival
+is tested via a real loop (plugin-messaging) not a bare createApp.
