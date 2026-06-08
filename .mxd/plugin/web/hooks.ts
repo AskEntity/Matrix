@@ -173,6 +173,7 @@ const WATCHDOG_TIMEOUT = 45_000;
 
 export function useSSE(
 	projectId: string,
+	scope: string,
 	onMessage: (msg: IncomingEvent) => void,
 	onConnect?: () => void,
 	onReconnect?: () => void,
@@ -186,7 +187,10 @@ export function useSSE(
 	const lastMessageRef = useRef<number>(Date.now());
 
 	useEffect(() => {
-		if (!projectId) return;
+		// `scope` is the lens (plugin name) this stream subscribes to. Both are
+		// required — without scope the daemon can't tell which lens's tree to
+		// stream (matrix dev vs this project's product).
+		if (!projectId || !scope) return;
 
 		let cancelled = false;
 		let source: EventSource | null = null;
@@ -215,7 +219,7 @@ export function useSSE(
 			}
 			if (cancelled) return;
 
-			let url = `/events?projectId=${encodeURIComponent(projectId)}`;
+			let url = `/events?projectId=${encodeURIComponent(projectId)}&scope=${encodeURIComponent(scope)}`;
 			if (streamToken) url += `&token=${encodeURIComponent(streamToken)}`;
 			source = new EventSource(url);
 			lastMessageRef.current = Date.now();
@@ -286,6 +290,7 @@ export function useSSE(
 		authFetch,
 		getToken,
 		projectId,
+		scope,
 		reconnectKey,
 		onMessage,
 		onConnect,

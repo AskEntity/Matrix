@@ -192,6 +192,7 @@ describe("Plugin — path-based routing (Task Y)", () => {
 			const [pluginPath, setPluginPath] = useState(initialPluginPath);
 			return createElement(Plugin, {
 				projectId,
+				scope: "matrix",
 				pluginPath,
 				pushPluginPath: (path: string, replace?: boolean) => {
 					pushes.push({ path, replace });
