@@ -94,12 +94,10 @@ describe("resolveConfig", () => {
 		};
 		const local: ProjectConfig = {
 			defaultAuth: "team",
-			childAuth: "team",
 		};
 
 		const result = resolveConfig(base, repo, local);
 		expect(result.defaultAuth).toBe("team");
-		expect(result.childAuth).toBe("team");
 		expect(result.mcpServers).toEqual({ git: { command: "mcp-git" } });
 	});
 
@@ -152,16 +150,6 @@ describe("resolveConfig", () => {
 		};
 		const result3 = resolveConfig(base, partial);
 		expect(result3.cacheTtl).toEqual({ root: "1h", child: "5m" });
-	});
-
-	test("childAuth 'parent' is a valid value", () => {
-		const base = { ...DEFAULT_CONFIG, childAuth: "parent" as const };
-		const result = resolveConfig(base);
-		expect(result.childAuth).toBe("parent");
-
-		// Override with specific auth group
-		const result2 = resolveConfig(base, { childAuth: "team-auth" });
-		expect(result2.childAuth).toBe("team-auth");
 	});
 
 	test("budgetUsd -1 means unlimited", () => {

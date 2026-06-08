@@ -176,8 +176,6 @@ function ModelsAuthSection({
 
 	const defaultAuth = (draft.defaultAuth as string | undefined) ?? "";
 	const model = (draft.model as string | undefined) ?? "";
-	const childAuth = (draft.childAuth as string | undefined) ?? "";
-
 	// Build Root Auth options
 	const rootAuthOptions: { value: string; label: string }[] = [];
 	if (!isGlobal) {
@@ -188,34 +186,6 @@ function ModelsAuthSection({
 	for (const name of authGroupNames) {
 		rootAuthOptions.push({ value: name, label: name });
 	}
-
-	// Build Child Auth options
-	const childAuthOptions: { value: string; label: string }[] = [];
-	if (!isGlobal) {
-		childAuthOptions.push({ value: "", label: t("settings.inheritOption") });
-	}
-	childAuthOptions.push({
-		value: "__use_root_auth__",
-		label: t("settings.useRootAuth"),
-	});
-	for (const name of authGroupNames) {
-		childAuthOptions.push({ value: name, label: name });
-	}
-
-	// For childAuth, empty string means "use root auth" on global,
-	// and "__use_root_auth__" is a sentinel we map to empty/undefined
-	const childAuthValue = isGlobal
-		? childAuth || "__use_root_auth__"
-		: childAuth;
-
-	const handleChildAuthChange = (val: string) => {
-		if (val === "__use_root_auth__") {
-			// Clear childAuth so it falls back to defaultAuth
-			onDraftChange({ childAuth: "" });
-		} else {
-			onDraftChange({ childAuth: val });
-		}
-	};
 
 	return (
 		<div className="mxd-settings-section">
@@ -253,22 +223,6 @@ function ModelsAuthSection({
 					value={model}
 					onChange={(e) => onDraftChange({ model: e.target.value })}
 				/>
-			</div>
-
-			{/* Child Auth */}
-			<div className="mxd-settings-field">
-				<span className="mxd-settings-label">{t("settings.childAuth")}</span>
-				<select
-					className="mxd-select mxd-settings-input"
-					value={childAuthValue}
-					onChange={(e) => handleChildAuthChange(e.target.value)}
-				>
-					{childAuthOptions.map((opt) => (
-						<option key={opt.value} value={opt.value}>
-							{opt.label}
-						</option>
-					))}
-				</select>
 			</div>
 		</div>
 	);

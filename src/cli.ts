@@ -849,12 +849,7 @@ async function handleAgent(args: string[]): Promise<void> {
 	}
 }
 
-const KNOWN_CONFIG_KEYS = [
-	"model",
-	"defaultAuth",
-	"childAuth",
-	"budgetUsd",
-] as const;
+const KNOWN_CONFIG_KEYS = ["model", "defaultAuth", "budgetUsd"] as const;
 
 type KnownConfigKey = (typeof KNOWN_CONFIG_KEYS)[number];
 
@@ -862,7 +857,6 @@ function printResolvedConfig(cfg: MatrixConfig): void {
 	const rows: [string, string][] = [
 		["model", cfg.model ?? "(not set)"],
 		["defaultAuth", cfg.defaultAuth ?? "(not set)"],
-		["childAuth", cfg.childAuth ?? "(not set)"],
 		["budgetUsd", cfg.budgetUsd != null ? `${cfg.budgetUsd}` : "(not set)"],
 	];
 
