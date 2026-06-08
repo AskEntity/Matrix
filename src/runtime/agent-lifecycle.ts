@@ -904,14 +904,14 @@ export async function runAgentForNode(
 				(e.body as { source: string }).source === "work_context",
 		);
 		if (!hasWorkContext) {
-			const content = opts.buildWorkContext(node, project.path);
+			const content = opts.buildWorkContext(node, project.path, project.id);
 			if (content) {
 				childQueue.enqueue(createWorkContext(content));
 			}
 		}
 		// Set hook for future compact re-arm (resetBeforeFirstMessage in compact flow)
 		childQueue.setBeforeFirstMessage(() => {
-			const content = opts.buildWorkContext(node, project.path);
+			const content = opts.buildWorkContext(node, project.path, project.id);
 			if (!content) return [];
 			return [createWorkContext(content)];
 		});
@@ -1013,11 +1013,12 @@ export async function runAgentForNode(
 			signal: abortController.signal,
 			queue: childQueue,
 			// Lifecycle hooks bound to this node — plugin provides content, runtime calls at right time
-			buildWorkContext: () => opts.buildWorkContext(node, project.path),
+			buildWorkContext: () =>
+				opts.buildWorkContext(node, project.path, project.id),
 			buildSummarizationPrompt: () =>
-				opts.buildSummarizationPrompt(node, project.path),
+				opts.buildSummarizationPrompt(node, project.path, project.id),
 			buildDoneResumeContext: opts.buildDoneResumeContext
-				? () => opts.buildDoneResumeContext!(node, project.path)
+				? () => opts.buildDoneResumeContext!(node, project.path, project.id)
 				: undefined,
 		};
 

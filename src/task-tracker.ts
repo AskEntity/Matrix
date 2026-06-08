@@ -3,13 +3,25 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
 	type GeneralNode,
-	isGeneral,
 	isTask,
 	type TaskNode,
 	type TaskStatus,
 	type TreeNode,
 } from "./types.ts";
 import { ulid } from "./ulid.ts";
+
+/** Options for creating a launchable task node (addTask / addChild / createNode). */
+export interface CreateNodeOpts {
+	budgetUsd?: number;
+	draft?: boolean;
+	editedBy?: "user" | "agent";
+	id?: string;
+	/**
+	 * Plugin-owned opaque metadata to attach at creation. Runtime never reads
+	 * it — it only round-trips through save()/load(). See BaseTaskNode.metadata.
+	 */
+	metadata?: Record<string, unknown>;
+}
 
 /**
  * Manages the task tree for a project.
@@ -24,9 +36,11 @@ export class TaskTracker {
 
 	/** Load task tree from disk. Creates root node for fresh projects.
 	 * @param defaultBranch — branch name for root node (fresh projects, or backfill for old ones).
-	 * @param defaultBranch — branch name for root node (fresh projects, or backfill for old ones).
+	 * @returns `true` if this was a fresh project (root node created, no tree.json
+	 *   existed) — the caller may seed initial nodes; `false` if an existing
+	 *   tree was loaded.
 	 */
-	async load(defaultBranch?: string): Promise<void> {
+	async load(defaultBranch?: string): Promise<boolean> {
 		if (existsSync(this.treePath)) {
 			const raw = await readFile(this.treePath, "utf-8");
 			const data = JSON.parse(raw) as {
@@ -78,10 +92,11 @@ export class TaskTracker {
 			if (root && isTask(root) && !root.branch && defaultBranch) {
 				root.branch = defaultBranch;
 			}
-		} else {
-			// Fresh project — create root node
-			this.createRootNode(defaultBranch);
+			return false;
 		}
+		// Fresh project — create root node
+		this.createRootNode(defaultBranch);
+		return true;
 	}
 
 	/** Persist task tree to disk. Strips runtime-only `session` field.
@@ -103,7 +118,7 @@ export class TaskTracker {
 		const data = {
 			rootNodeId: this._rootNodeId,
 			nodes: Array.from(this.nodes.values()).map((node) => {
-				if (isGeneral(node)) return node;
+				if (!isTask(node)) return node;
 				const { session: _session, ...rest } = node;
 				return rest;
 			}),
@@ -134,30 +149,21 @@ export class TaskTracker {
 	}
 
 	/** Create a top-level task (direct child of the project). */
-	addTask(
-		title: string,
-		description: string,
-		opts?: {
-			budgetUsd?: number;
-			draft?: boolean;
-			editedBy?: "user" | "agent";
-			id?: string;
-		},
-	): TaskNode {
+	addTask(title: string, description: string, opts?: CreateNodeOpts): TaskNode {
 		return this.createNode(title, description, null, opts);
 	}
 
-	/** Add a child task under a parent node. */
+	/**
+	 * Add a child task under a parent node.
+	 *
+	 * `opts.metadata` lets a plugin attach per-node opaque config at creation
+	 * (e.g. a chat plugin's character profile). Runtime never reads it.
+	 */
 	addChild(
 		parentId: string,
 		title: string,
 		description: string,
-		opts?: {
-			budgetUsd?: number;
-			draft?: boolean;
-			editedBy?: "user" | "agent";
-			id?: string;
-		},
+		opts?: CreateNodeOpts,
 	): TaskNode {
 		const parent = this.nodes.get(parentId);
 		if (!parent) {
@@ -479,16 +485,25 @@ export class TaskTracker {
 		node.updatedAt = new Date().toISOString();
 	}
 
+	/**
+	 * Replace a node's plugin-owned opaque metadata. Works for both task nodes
+	 * and general nodes (both carry `metadata`). This is the plugin-safe SET
+	 * path — plugins call this instead of mutating tracker-managed nodes
+	 * directly. Replaces the entire object; to update a single key, read the
+	 * current metadata and spread it. Bumps updatedAt for task nodes.
+	 */
+	setMetadata(nodeId: string, metadata: Record<string, unknown>): void {
+		const node = this.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		node.metadata = metadata;
+		if (isTask(node)) node.updatedAt = new Date().toISOString();
+	}
+
 	private createNode(
 		title: string,
 		description: string,
 		parentId: string | null,
-		opts?: {
-			budgetUsd?: number;
-			draft?: boolean;
-			editedBy?: "user" | "agent";
-			id?: string;
-		},
+		opts?: CreateNodeOpts,
 	): TaskNode {
 		const now = new Date().toISOString();
 		const status = opts?.draft ? "draft" : "pending";
@@ -505,6 +520,7 @@ export class TaskTracker {
 			costUsd: 0,
 			editedBy: opts?.editedBy ?? "agent",
 			...(opts?.budgetUsd !== undefined ? { budgetUsd: opts.budgetUsd } : {}),
+			...(opts?.metadata !== undefined ? { metadata: opts.metadata } : {}),
 			createdAt: now,
 			updatedAt: now,
 			type: "task",

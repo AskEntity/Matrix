@@ -334,6 +334,7 @@ describe("Plugin messaging API: deliverToNode + listNodes", () => {
 			children: [],
 			createdAt: "",
 			updatedAt: "",
+			status: "pending",
 			type: "task",
 		});
 		const snap2 = listNodes(ctx.projectId);

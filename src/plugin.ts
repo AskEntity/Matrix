@@ -60,8 +60,13 @@ export interface PluginManifest {
 	runtime?: string;
 
 	/**
-	 * Called when a project is registered.
-	 * Plugin sets up project-specific files (memory.md, hooks, git init, etc.).
+	 * Called when a project is registered. Runs DAEMON-SIDE, where there is no
+	 * TaskTracker — so this hook can create project FILES (memory.md, hooks, git
+	 * init, etc.) but CANNOT seed initial tree NODES. To seed starting nodes a
+	 * plugin uses the worker-side `ScopeOpts.seedTree` hook (which runs the first
+	 * time the worker builds the project's tree). The two are complementary:
+	 * onProjectInit = files, seedTree = tree nodes.
+	 *
 	 * Daemon handles registry only — plugin handles project initialization.
 	 *
 	 * `globalContext` (installRoot, gitHash, version) is passed so the plugin

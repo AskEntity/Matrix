@@ -32,7 +32,10 @@ interface TestContext {
 	projectId: string;
 }
 
-async function setupTestContext(): Promise<TestContext> {
+async function setupTestContext(opts?: {
+	// biome-ignore lint/suspicious/noExplicitAny: erased plugin generic, as elsewhere
+	buildScopeOpts?: (projectId: string, ctx: any) => ScopeOpts<any>;
+}): Promise<TestContext> {
 	const dataDir = await mkdtemp(join(tmpdir(), "mxd-custom-scope-data-"));
 	const projectDir = await mkdtemp(join(tmpdir(), "mxd-custom-scope-project-"));
 
@@ -59,6 +62,7 @@ async function setupTestContext(): Promise<TestContext> {
 		dataDir,
 		agentProvider: provider,
 		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
+		...(opts?.buildScopeOpts ? { buildScopeOpts: opts.buildScopeOpts } : {}),
 	});
 
 	appResult.markReady();
@@ -391,4 +395,180 @@ describe("Custom scope: non-Matrix agent on Matrix runtime", () => {
 		expect(doneNotified?.status).toBe("published");
 		expect(doneNotified?.wordCount).toBe(42);
 	}, 30000);
+});
+
+// ── Node-model generalization (plugin integration) ──
+// Proves a plugin with launchable nodes can: attach per-node metadata at
+// creation, update it via setMetadata, read it from a lifecycle hook that
+// also receives projectId, seed a fresh tree, and round-trip metadata+status.
+
+function findWorkContext(events: Event[]): string | undefined {
+	const e = events.find(
+		(ev) =>
+			ev.type === "message" &&
+			typeof ev.body === "object" &&
+			ev.body !== null &&
+			"source" in ev.body &&
+			(ev.body as { source: string }).source === "work_context",
+	) as (Event & { body?: { content?: string } }) | undefined;
+	return e?.body?.content;
+}
+
+describe("Node-model generalization (plugin integration)", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("buildWorkContext receives projectId + reads node.metadata (addChild + setMetadata + round-trip)", async () => {
+		ctx = await setupTestContext();
+
+		// Work context DERIVED from the node's plugin metadata + the projectId
+		// passed to the hook — the exact thing dchat needs and couldn't do before.
+		const scope: ScopeOpts<any> = {
+			buildTools: (auth) => ({
+				tools: [
+					createYieldTool(),
+					createDoneTool({
+						extraParams: {
+							status: {
+								schema: z.enum(["passed", "failed"]),
+								decl: { kind: "explicit" },
+							},
+							summary: { schema: z.string(), decl: { kind: "explicit" } },
+						},
+					}),
+				].map((def) => toToolDefinition(def, auth)),
+			}),
+			buildPrompt: () => ({ stable: "You are a character.", variable: "" }),
+			buildWorkContext: (node: TaskNode, _projectPath, projectId) => {
+				const character = node.metadata?.character as
+					| { displayName?: string }
+					| undefined;
+				return `project=${projectId} character=${character?.displayName ?? "none"}`;
+			},
+			buildSummarizationPrompt: () => "summarize",
+			shouldResume: (node: TaskNode) => node.status === "in_progress",
+			onLaunch: (node: TaskNode, tracker) =>
+				tracker.updateStatus(node.id, "in_progress"),
+			onDone: (node: TaskNode, tracker, doneArgs) => {
+				tracker.updateStatus(
+					node.id,
+					doneArgs.status === "passed" ? "verify" : "failed",
+				);
+				return { status: "done" };
+			},
+		};
+		ctx.app.ctx.scopeOpts.set(ctx.projectId, scope);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		// Launchable node created WITH metadata...
+		const child = tracker.addChild(tracker.rootNodeId, "Aria", "a character", {
+			metadata: { character: { displayName: "Aria" } },
+		});
+		// ...then updated via the plugin-safe SET path (replaces).
+		tracker.setMetadata(child.id, {
+			character: { displayName: "Aria-Updated" },
+		});
+		await tracker.save();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "ok" },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "done" },
+				},
+			],
+		});
+		const resp = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${child.id}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: instruction }),
+			},
+		);
+		expect(resp.status).toBe(200);
+
+		const start = Date.now();
+		while (Date.now() - start < 15000) {
+			const node = tracker.getTask(child.id);
+			if (node?.status === "verify" || node?.status === "failed") break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+
+		const content = findWorkContext(await readSessionEvents(ctx, child.id));
+		expect(content).toBeDefined();
+		// projectId reached the hook...
+		expect(content).toContain(`project=${ctx.projectId}`);
+		// ...and the hook read the LATEST metadata (setMetadata value, NOT the
+		// addChild value) — proves both the SET path and metadata read end-to-end.
+		expect(content).toContain("character=Aria-Updated");
+
+		// Round-trip: reload from disk; metadata + status survived save/load.
+		ctx.app.ctx.trackers.delete(ctx.projectId);
+		const reloaded = await ctx.app.getTracker(ctx.projectId);
+		const loaded = reloaded.getTask(child.id);
+		expect(loaded?.metadata).toEqual({
+			character: { displayName: "Aria-Updated" },
+		});
+		expect(loaded?.status === "verify" || loaded?.status === "failed").toBe(
+			true,
+		);
+	}, 20000);
+
+	test("seedTree seeds initial nodes with metadata on a fresh tree, exactly once", async () => {
+		let seedCalls = 0;
+		let capturedProjectId: string | undefined;
+
+		const buildScopeOpts = (_projectId: string): ScopeOpts<any> => ({
+			buildTools: (auth) => ({
+				tools: [createYieldTool()].map((def) => toToolDefinition(def, auth)),
+			}),
+			buildPrompt: () => ({ stable: "s", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "summarize",
+			seedTree: (tracker, seedProjectId) => {
+				seedCalls++;
+				capturedProjectId = seedProjectId;
+				tracker.addChild(tracker.rootNodeId, "Alice", "character", {
+					metadata: { character: { displayName: "Alice" } },
+				});
+				tracker.addChild(tracker.rootNodeId, "Bob", "character", {
+					metadata: { character: { displayName: "Bob" } },
+				});
+			},
+		});
+
+		ctx = await setupTestContext({ buildScopeOpts });
+
+		// First access creates the fresh tree → seedTree fires once.
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		expect(seedCalls).toBe(1);
+		expect(capturedProjectId).toBe(ctx.projectId);
+
+		const below = tracker.getTasksBelow(tracker.rootNodeId);
+		expect(below.map((n) => n.title).sort()).toEqual(["Alice", "Bob"]);
+		const alice = below.find((n) => n.title === "Alice");
+		expect(
+			(alice?.metadata?.character as { displayName?: string } | undefined)
+				?.displayName,
+		).toBe("Alice");
+
+		// Reload from disk: seed persisted AND does not re-run (tree.json exists).
+		ctx.app.ctx.trackers.delete(ctx.projectId);
+		const reloaded = await ctx.app.getTracker(ctx.projectId);
+		expect(seedCalls).toBe(1);
+		expect(reloaded.getTasksBelow(reloaded.rootNodeId)).toHaveLength(2);
+		const reAlice = reloaded
+			.getTasksBelow(reloaded.rootNodeId)
+			.find((n) => n.title === "Alice");
+		expect(
+			(reAlice?.metadata?.character as { displayName?: string } | undefined)
+				?.displayName,
+		).toBe("Alice");
+	}, 20000);
 });

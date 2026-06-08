@@ -85,6 +85,22 @@ export interface BaseTaskNode {
 	createdAt: string;
 	updatedAt: string;
 	/**
+	 * Lifecycle status. Runtime-generic, NOT a matrix-only concept: createNode
+	 * inits it, updateStatus mutates it, load() migrates it, and the default
+	 * shouldResume keys on `status === "in_progress"`. A plugin whose nodes are
+	 * launchable inherits this field — it must NOT re-declare it. The runtime
+	 * attaches no domain meaning to any particular status value beyond the
+	 * lifecycle the tracker enforces.
+	 */
+	status: TaskStatus;
+	/**
+	 * Plugin-owned opaque data. Runtime never parses, never validates — it only
+	 * round-trips this through save()/load(). Plugins store per-node config here
+	 * (e.g. a chat plugin's character profile). Parallel to GeneralNode.metadata:
+	 * the launchable node is exactly the one that needs per-node plugin config.
+	 */
+	metadata?: Record<string, unknown>;
+	/**
 	 * Runtime-only session state. Present while the agent is running.
 	 * NOT persisted to disk — stripped during save(), undefined on load().
 	 */
@@ -99,7 +115,6 @@ export interface BaseTaskNode {
  */
 export interface TaskNode extends BaseTaskNode {
 	description: string;
-	status: TaskStatus;
 	branch: string | null;
 	/** Absolute path to the git worktree for this task. */
 	worktreePath: string | null;

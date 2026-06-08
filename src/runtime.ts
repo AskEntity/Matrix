@@ -322,7 +322,9 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 	): Promise<void> {
 		const shouldResumeFn =
 			scopeOpts.shouldResume ??
-			((n: import("./types.ts").TaskNode) => n.status === "in_progress");
+			// `status` lives on BaseTaskNode (runtime-generic) — the default
+			// resume rule is node-agnostic, not matrix-specific.
+			((n: import("./types.ts").BaseTaskNode) => n.status === "in_progress");
 
 		// ── Phase 2 crash recovery ──
 		const allNodes = tracker.allNodes();

@@ -69,14 +69,45 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 	onTaskDelete?: (node: T["node"], projectPath: string) => Promise<void>;
 
 	// ── Context injection at lifecycle moments ──
+	// These receive BOTH `projectPath` (the git/filesystem path) AND `projectId`
+	// (the registry id). A plugin whose per-project data lives at its dataRoot
+	// (`~/.mxd/projects/<projectId>/...`) needs `projectId` to locate it —
+	// `projectPath` alone (the git checkout) is not enough. Matrix uses
+	// `projectPath`; a data-driven plugin uses `projectId`.
 	/** Fresh start / post-compact: inject work context. Required — runtime needs context for agents. */
-	buildWorkContext: (node: T["node"], projectPath: string) => string | null;
+	buildWorkContext: (
+		node: T["node"],
+		projectPath: string,
+		projectId: string,
+	) => string | null;
 	/** Compaction: build the summarization instruction. */
-	buildSummarizationPrompt: (node: T["node"], projectPath: string) => string;
+	buildSummarizationPrompt: (
+		node: T["node"],
+		projectPath: string,
+		projectId: string,
+	) => string;
 	/** Done resume: build the wake-up context text. */
-	buildDoneResumeContext?: (node: T["node"], projectPath: string) => string;
+	buildDoneResumeContext?: (
+		node: T["node"],
+		projectPath: string,
+		projectId: string,
+	) => string;
 
 	// ── Lifecycle (typed with T) ──
+	/**
+	 * Seed a freshly-created project tree. Runs ONCE, in the worker, right
+	 * after the tracker creates the root node for a project that had no
+	 * tree.json yet — i.e. the worker-side counterpart to PluginManifest's
+	 * daemon-side `onProjectInit` (which can create files but has no tracker).
+	 * The plugin creates its starting nodes via tracker methods (addChild,
+	 * addGeneralNode, setMetadata); the runtime saves the tree afterwards.
+	 * Matrix has no seed nodes beyond the root, so it omits this hook.
+	 * `projectId` lets the plugin locate its per-project data.
+	 */
+	seedTree?: (
+		tracker: import("../task-tracker.ts").TaskTracker,
+		projectId: string,
+	) => void | Promise<void>;
 	shouldResume?: (node: T["node"]) => boolean;
 	onLaunch?: (
 		node: T["node"],

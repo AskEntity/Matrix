@@ -105,6 +105,7 @@ export async function getTracker(
 	projectId: string,
 ): Promise<TaskTracker> {
 	let tracker = ctx.trackers.get(projectId);
+	let freshTree = false;
 	if (!tracker) {
 		const treePath = projectTreeJsonPath(
 			ctx.config.dataDir,
@@ -116,7 +117,7 @@ export async function getTracker(
 		const defaultBranch = project
 			? await detectBranch(project.path)
 			: undefined;
-		await tracker.load(defaultBranch);
+		freshTree = await tracker.load(defaultBranch);
 		// Backfill root worktreePath = project root
 		const root = tracker.getTask(tracker.rootNodeId);
 		if (root && !root.worktreePath && project) {
@@ -132,6 +133,19 @@ export async function getTracker(
 	// — only agent lifecycle paths need scope opts.
 	if (!ctx.scopeOpts.has(projectId) && ctx.config.buildScopeOpts) {
 		ctx.scopeOpts.set(projectId, ctx.config.buildScopeOpts(projectId, ctx));
+	}
+
+	// Seed a freshly-created tree once. This is the worker-side init path that
+	// PluginManifest.onProjectInit (daemon-side, no tracker) cannot provide:
+	// the plugin's seedTree creates its initial tree nodes. We persist them so
+	// the seed never re-runs (tree.json now exists on the next load). Matrix
+	// has no seedTree → no-op.
+	if (freshTree) {
+		const seed = ctx.scopeOpts.get(projectId)?.seedTree;
+		if (seed) {
+			await seed(tracker, projectId);
+			await tracker.save();
+		}
 	}
 	return tracker;
 }

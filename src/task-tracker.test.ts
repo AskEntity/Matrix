@@ -704,3 +704,99 @@ describe("TaskTracker", () => {
 		expect(tracker.getTaskAbove(childTask.id)?.id).toBe(parentTask.id);
 	});
 });
+
+// ── Node-model generalization: status + metadata on BaseTaskNode ──
+// These pin the changes that let a plugin's launchable node carry per-node
+// config (metadata) and inherit the lifecycle field (status) without
+// re-declaring runtime-generic fields.
+describe("TaskTracker: node-model generalization", () => {
+	let tempDir: string;
+	let tracker: TaskTracker;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-tracker-meta-"));
+		tracker = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker.load();
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("addChild attaches metadata at creation", () => {
+		const meta = { character: { displayName: "Alice", groups: ["lobby"] } };
+		const child = tracker.addChild(tracker.rootNodeId, "Alice", "desc", {
+			metadata: meta,
+		});
+		expect(child.metadata).toEqual(meta);
+	});
+
+	test("addTask attaches metadata at creation", () => {
+		const task = tracker.addTask("Top", "desc", {
+			metadata: { kind: "probe" },
+		});
+		expect(task.metadata).toEqual({ kind: "probe" });
+	});
+
+	test("metadata is undefined (not {}) when not provided", () => {
+		const task = tracker.addTask("No meta", "desc");
+		// Important: absent, not an empty object — keeps tree.json clean and
+		// lets `metadata !== undefined` checks be meaningful.
+		expect(task.metadata).toBeUndefined();
+		expect("metadata" in task).toBe(false);
+	});
+
+	test("setMetadata REPLACES metadata (not merge) on task nodes", () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Bob", "desc", {
+			metadata: { character: { displayName: "Bob" }, extra: 1 },
+		});
+		tracker.setMetadata(task.id, { character: { displayName: "Bobby" } });
+		const after = tracker.getTask(task.id);
+		// Replace, not merge — the `extra` key is gone. (A merge impl keeps it.)
+		expect(after?.metadata).toEqual({ character: { displayName: "Bobby" } });
+	});
+
+	test("setMetadata works on general nodes too", () => {
+		const folder = tracker.addGeneralNode(
+			"Group",
+			tracker.rootNodeId,
+			"folder",
+		);
+		tracker.setMetadata(folder.id, { color: "blue" });
+		expect(tracker.get(folder.id)?.metadata).toEqual({ color: "blue" });
+	});
+
+	test("setMetadata throws on unknown node", () => {
+		expect(() => tracker.setMetadata("nonexistent-12345678", {})).toThrow(
+			"Node not found",
+		);
+	});
+
+	test("metadata + status round-trip through save/load", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Aria", "desc", {
+			metadata: { character: { displayName: "Aria", personality: "calm" } },
+		});
+		tracker.updateStatus(task.id, "in_progress");
+		await tracker.save();
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+		const loaded = tracker2.getTask(task.id);
+		expect(loaded?.status).toBe("in_progress");
+		expect(loaded?.metadata).toEqual({
+			character: { displayName: "Aria", personality: "calm" },
+		});
+	});
+
+	test("load() returns true for a fresh tree, false for an existing one", async () => {
+		const path = join(tempDir, "fresh.json");
+		const fresh = new TaskTracker(path);
+		const wasFresh = await fresh.load();
+		expect(wasFresh).toBe(true);
+		await fresh.save();
+
+		const reopened = new TaskTracker(path);
+		const wasFresh2 = await reopened.load();
+		expect(wasFresh2).toBe(false);
+	});
+});

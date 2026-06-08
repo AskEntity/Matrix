@@ -2670,3 +2670,79 @@ later task_complete enqueues instead of relaunching it.
 A plugin still can't define how its own messages render (`formatQueueMessage`
 hardcodes an XML wrapper per built-in source). Tracked as low-pri draft
 01KTJ5F5XTM32YNS6RSPW7R5PF; dchat smuggles via `source:"user"` until then.
+## Node-model generalization for plugins (status↑ + metadata↑, SET methods, hook projectId, seedTree) — 2026-06-07
+
+Pushes the genuinely runtime-generic node fields UP to `BaseTaskNode` and gives
+plugins the SET path + project context they need to drive launchable nodes —
+without re-declaring runtime fields or mutating the live tracker. Surfaced by the
+dchat out-of-tree 试水 (Wall #2 + interface-gap D). Matrix's own `TaskNode` +
+every status-driven path is byte-for-byte unchanged (regression bar held: full
+`bun test` green, 2179→2189 with the new tests).
+
+### `status` + `metadata` moved to `BaseTaskNode` (`src/types.ts`)
+- `status: TaskStatus` is now on `BaseTaskNode`, NOT only on matrix's `TaskNode`.
+  It IS runtime-generic: `createNode` inits it, `updateStatus` mutates it, `load()`
+  migrates it, and the default `shouldResume` keys on `status === "in_progress"`.
+  A plugin whose nodes are launchable inherits it — it must not re-declare it.
+- `metadata?: Record<string, unknown>` added to `BaseTaskNode` (parallel to the
+  one `GeneralNode` already had — it's exactly the LAUNCHABLE node that needs
+  per-node plugin config). Runtime NEVER reads it; only round-trips via save/load.
+- Persistence is automatic: `save()` spreads all non-session task fields, `load()`
+  casts the raw task object through untouched — so `metadata` round-trips with zero
+  new code. The status-node load branch already migrated `status` ("passed"→"verify").
+
+### TaskTracker SET methods (`src/task-tracker.ts`)
+- `CreateNodeOpts` type now carries `metadata?`; `addChild`/`addTask`/`createNode`
+  thread it into the node literal (`...(opts?.metadata !== undefined ? {metadata} : {})`
+  — absent, not `{}`, when unset).
+- `setMetadata(nodeId, metadata)` — plugin-safe SET path; **REPLACES** the whole
+  metadata object (to update one key, read+spread), bumps `updatedAt` for tasks,
+  works for general nodes too. This replaces "mutate the live tracker directly".
+- `load()` now returns `boolean` (`true` = fresh tree just created, `false` =
+  loaded existing). Backward-compatible — every existing caller ignores the return.
+
+### Gotcha: moving status/metadata up tightened TaskNode⊆GeneralNode structural overlap
+`save()`'s `if (isGeneral(node)) return node; const {session, ...rest} = node;`
+started failing TS2700 ("Rest types may only be created from object types") because
+the negative `isGeneral` narrowing collapsed `TaskNode` to `never`. Fix: use the
+POSITIVE guard — `if (!isTask(node)) return node;` — so the narrowed type is
+concretely `TaskNode`. Same runtime behavior. (Lesson: prefer positive type-guard
+narrowing for destructure-after-guard when the union members overlap structurally.)
+
+### Hooks get `projectId` (gap D-C) — `src/runtime/context.ts` + `agent-lifecycle.ts`
+`buildWorkContext` / `buildSummarizationPrompt` / `buildDoneResumeContext` now
+receive `(node, projectPath, projectId)`. `projectPath` is the git checkout;
+`projectId` is the registry id a data-driven plugin needs to locate its per-project
+dataRoot (`~/.mxd/projects/<projectId>/...`) — matrix uses projectPath, dchat needs
+projectId. Adding a TRAILING param is type-backward-compatible: existing impls that
+take fewer args (matrix's, the story-scope tests') stay assignable. Three call sites
+in `agent-lifecycle.ts` pass `project.id` (initial work-context inject ~907, the
+compact re-arm `setBeforeFirstMessage` ~914, the AgentRequest closure ~1017).
+The default `shouldResume` in `runtime.ts resumeScope` retyped `(n: TaskNode)` →
+`(n: BaseTaskNode)` to reflect the now-generic `status`.
+
+### `seedTree` — worker-side tree-init hook (gap D-B) — `ScopeOpts` + `getTracker`
+`onProjectInit` (PluginManifest, `src/plugin.ts`) runs DAEMON-side where there is
+NO tracker → it can create FILES but not initial tree NODES. The complement is
+`ScopeOpts.seedTree?(tracker, projectId)`, called once from `getTracker`
+(`runtime/helpers.ts`) the first time a project's tree is created (`load()` returned
+`true`), AFTER scope-opts registration, then `tracker.save()`. The plugin seeds its
+starting nodes via `addChild`/`addGeneralNode`/`setMetadata`. Fires exactly once —
+tree.json then exists, so reloads return `false` and never re-seed. Matrix has no
+seedTree → no-op. (`markReady()` does NOT auto-run autoResume, so in tests the seed
+fires deterministically on the first explicit `getTracker`.)
+
+### Tests
+- `src/task-tracker.test.ts` "node-model generalization" (8 unit): addChild/addTask
+  metadata, metadata-absent-not-`{}`, setMetadata REPLACE (the `extra` key
+  disappearing proves replace≠merge), setMetadata on general nodes + throws-on-missing,
+  metadata+status save/load round-trip, `load()` fresh→true / existing→false.
+- `src/plugin-custom-scope.test.ts` "Node-model generalization (plugin integration)"
+  (2 integration): (a) a non-matrix scope's `buildWorkContext` reads `node.metadata`
+  + receives `projectId`, exercising addChild-metadata + setMetadata + round-trip
+  end-to-end through a real agent run; (b) `seedTree` seeds 2 nodes with metadata on
+  a fresh tree exactly once (custom `buildScopeOpts` passed via `setupTestContext`).
+- **Mutation-verified**: setMetadata replace→merge fails the REPLACE test; dropping
+  `projectId` at the initial-inject call site (~907) fails the integration test.
+  (Mutating the AgentRequest-closure site ~1017 instead did NOT fail it — that path
+  only fires on compaction; the integration test covers the fresh-inject path.)
