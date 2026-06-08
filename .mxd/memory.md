@@ -2952,3 +2952,52 @@ So `deliverToNode` THROWS "deliverMessage not registered" if called outside any
 agent loop (e.g. a fresh createMatrixApp with no launch). `listNodes` works
 without a launch (only needs `_ctx`). This is why the SDK's deliverToNode arrival
 is tested via a real loop (plugin-messaging) not a bare createApp.
+
+## Node metadata write-path over REST — create + update (2026-06-08)
+
+Exposed plugin-owned `metadata` editing over REST on BOTH paths. The tracker
+primitives existed since the node-model task (`addChild` opts.metadata +
+`setMetadata`) but NO REST/MCP path reached them — nodes could neither be born
+with metadata nor have it edited:
+- POST  `/projects/:id/tasks`          body `metadata?` → `createTaskOp` → `addChild(parent, title, desc, { metadata })`
+- PATCH `/projects/:id/tasks/:nodeId`  body `metadata?` → `updateTaskOp` → `tracker.setMetadata(nodeId, metadata)`
+
+### REPLACE, never deep-merge
+`tracker.setMetadata` replaces the WHOLE object; `updateTaskOp` does NOT merge —
+the caller (plugin UI) reads current metadata and sends the complete merged
+object. PATCH with `metadata` absent (`undefined`) = "leave existing untouched"
+(guarded by `if (updates.metadata !== undefined)`); PATCH `metadata: {...}` with
+a key omitted = that key DISAPPEARS. Mirrors the color/status/title handlers in
+the one shared `updateTaskOp` (and `createOpts.metadata` mirrors budgetUsd/draft).
+
+### No new auth, no MCP
+- REST relies on the daemon-level auth middleware (Bearer). The MCP path's
+  `requireSubtreePermission` is a different layer — no new guard added.
+- MCP `create_task`/`update_task` deliberately NOT given a `metadata` param: the
+  only consumer is dchat's REST UI; an agent-facing opaque-metadata param is an
+  imagined need (anti-pattern #6). REST is the whole requirement.
+
+### Serialization is free
+`serializeNode` (stripSession) keeps `metadata` — it's on BaseTaskNode,
+round-trips via save/load. So POST/PATCH responses + GET /tasks + the SSE tree
+broadcast all carry updated metadata with no extra code. `updateTaskOp`'s
+existing `broadcastTree()` pushes it to the UI. Metadata changes do NOT fire
+`notifyTargetNode`/`notifyTreeChange` (those stay title/description-only — a
+metadata edit is config, not a message to the node).
+
+### Driver + effect timing
+dchat's roster UI: "add a character" = POST a node with personality metadata;
+"edit a character's prompt" = PATCH its metadata. Editing a RUNNING character's
+metadata takes effect on its next launch/compact (system prompt is built at
+launch), not mid-session — dchat's UX concern, NOT this write-path's scope.
+
+### Tests
+- `src/task-operations.test.ts`: createTaskOp "applies metadata" + "persists
+  across reload"; updateTaskOp "sets metadata" + "REPLACES — removed key
+  disappears" + "metadata undefined leaves existing untouched".
+- `src/rest-metadata.test.ts` (NEW, createMatrixApp harness): the canonical dchat
+  journey — POST/PATCH metadata → GET /tasks reflects it; PATCH replace; PATCH
+  title-only preserves metadata; POST without metadata → no metadata field.
+- Mutation-verified: commenting out BOTH `createOpts.metadata = …` and
+  `tracker.setMetadata(…)` → exactly the 9 metadata-asserting tests fail; the 1
+  absence-asserting test (POST without metadata) correctly stays green.
