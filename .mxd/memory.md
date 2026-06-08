@@ -2705,3 +2705,69 @@ plugins get distinct isolated workers (task in p1 never appears in p2's tree).
 `story-scope.ts` is re-exported by absolute path from each tmpdir plugin's
 `runtime.ts` so the on-disk plugin needs no `node_modules` (bare `zod`/`./tool-
 def.ts` imports resolve inside matrix `src/`, not the tmpdir).
+
+## Narrowed plugin messaging API — deliverToNode + listNodes (2026-06-07)
+
+Two stable, named primitives in `src/resource-registry.ts` that a plugin's
+tools compose for intra-project peer messaging WITHOUT importing the internal
+singleton accessors (`getTracker` / `deliverMessage`) directly. The SDK
+(task 01KTJ4EW8T3B1YWNV9JKGGZJW2) re-exports exactly these two;
+`getTracker`/`deliverMessage` stay internal to matrix.
+
+- `deliverToNode(projectId, nodeId, msg, opts?): Promise<void>` — a thin
+  stable-named wrapper over the ONE existing `deliverMessage` (the
+  projectId-handle side-effect). NOT a fork — it calls the single delivery
+  path verbatim (JSONL persist → enqueue to a live peer's queue → auto-launch
+  an idle peer unless `opts.quiet`). The "wake an idle recipient" semantic is
+  exactly what a plugin wants. NO permission policy baked in (unlike matrix's
+  `send_message` ancestor/sub-task restriction — that's matrix policy);
+  intra-project delivery is unrestricted, the plugin's tools own routing.
+- `listNodes(projectId): ReadonlyArray<BaseTaskNode>` — fresh read-only
+  snapshot of the project's LAUNCHABLE nodes (`tracker.allNodes().filter(isTask)`).
+  General (non-launchable) nodes — matrix folders, a plugin's grouping nodes —
+  are excluded: you can only deliver to a launchable node, and `BaseTaskNode`
+  is the runtime-generic launchable shape every plugin's node type extends.
+  Returns a FRESH array each call (filter creates a new array): mutating the
+  returned array does not affect the tracker. The plugin resolves group
+  membership + name→node from each node's plugin-owned `metadata` (added to
+  `BaseTaskNode` by the node-model generalization task).
+
+### ⭐ Singleton constraint — the whole point
+Both operate on the SAME in-process tracker/session registry the agent loop
+uses (the module-level `_ctx` in resource-registry, initialized once at first
+agent launch via `R.initResourceRegistry(ctx)` in agent-lifecycle.ts:183).
+That shared singleton is the only reason a delivered message ARRIVES at a live
+peer (enqueued / auto-launched) instead of being silently dropped. A plugin
+that vendored its OWN copy of resource-registry would get a DIFFERENT `_ctx` →
+a different tracker → delivery would no-op with no error. So the SDK MUST
+re-export from this single live module, never bundle a copy. This is the same
+finding the SDK task encodes ("thin re-export of the live install, never a
+standalone bundle").
+
+### Why narrow (not just expose getTracker/deliverMessage)
+dchat was forced to import `getTracker` + `deliverMessage` (resource-registry's
+own header declares it matrix-tool-handler INTERNAL). The narrowing is
+SEMANTIC: `deliverToNode` exposes only delivery (can't be misused);
+`listNodes` exposes a read-only snapshot (can't mutate the tracker). Versus
+`getTracker` = full mutable tracker access, `deliverMessage` = raw path. The
+SDK re-exports the narrow two; the plugin never touches resource-registry.
+
+### Tests — `src/plugin-messaging.test.ts` (integration, mock provider)
+Real agent loop (createMatrixApp + lightweight non-matrix "peer" scope, no
+worktrees) so the registry is wired exactly as in production. (1) A dummy
+plugin tool `send_to_peer` (invoked from inside a running root agent) calls
+`deliverToNode` to an idle peer child → the peer AUTO-LAUNCHES, reads the
+delivered instruction, done()s → verify; asserts the delivered user message is
+in the peer's JSONL AND `registryGetTracker(projectId) === app.ctx.trackers.get(projectId)`
+(same singleton). (2) `listNodes` returns root + task children, excludes a
+folder; pushing to the returned array leaves a later call + the tracker
+unchanged. (3) broadcast: loop `listNodes` → `deliverToNode` to each OTHER
+member (exclude root + self) → both peers verify, self stays pending with no
+JSONL ("none to self"). NB: in test 1 the sender root YIELDS after the tool
+(single-turn instruction → mock end_turn) so it stays alive and the peer's
+later task_complete enqueues instead of relaunching it.
+
+### Rendering gap NOT solved here
+A plugin still can't define how its own messages render (`formatQueueMessage`
+hardcodes an XML wrapper per built-in source). Tracked as low-pri draft
+01KTJ5F5XTM32YNS6RSPW7R5PF; dchat smuggles via `source:"user"` until then.
