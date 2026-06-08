@@ -13,7 +13,8 @@ import type { EventStore } from "./event-store.ts";
 import type { EventSpec } from "./events.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import type { TaskTracker } from "./task-tracker.ts";
-import type { TaskSession } from "./types.ts";
+import type { BaseTaskNode, TaskSession } from "./types.ts";
+import { isTask } from "./types.ts";
 
 // ── Registry state (module-level singleton) ──
 
@@ -225,6 +226,66 @@ export function injectMessageToProject(
 	if (!_injectMessageToProject)
 		throw new Error("injectMessageToProject not registered");
 	return _injectMessageToProject(projectId, message);
+}
+
+// ── Narrowed plugin messaging API (deliverToNode + listNodes) ──
+//
+// These two are the NARROW, named, stable surface a plugin's tools use for
+// intra-project peer messaging. A plugin composes its own routing policy
+// (broadcast to a group / private to one) on top of them — WITHOUT importing
+// the internal singleton accessors (`getTracker` exposes the whole mutable
+// tracker; `deliverMessage` is the raw delivery path). The SDK re-exports
+// exactly these two; `getTracker`/`deliverMessage` stay internal to matrix.
+//
+// ⭐ SINGLETON: both operate on the SAME in-process tracker/session registry
+// the agent loop uses (the module-level `_ctx`). That shared singleton is the
+// whole reason a delivered message ARRIVES at a live peer (enqueued to its
+// running queue, or auto-launched if idle) instead of being silently dropped.
+// A plugin that vendored its own copy of this module would get a DIFFERENT
+// `_ctx` → a different tracker → delivery would no-op. So the SDK MUST re-export
+// from this single live module, never bundle a copy.
+
+/**
+ * Deliver a {@link QueueMessage} to ANY node in a project — the stable-named
+ * plugin API over the ONE existing delivery path (`deliverMessage`).
+ *
+ * Reuses that single path verbatim: JSONL persist → enqueue to the peer's live
+ * queue if it is running → auto-launch the peer if it is idle (and not quiet).
+ * The "wake an idle recipient" semantic is exactly what a plugin wants when
+ * routing a message to a peer that isn't currently active.
+ *
+ * No permission policy is applied. Unlike matrix's `send_message` (ancestor /
+ * sub-task restricted — a matrix policy), this primitive is UNRESTRICTED
+ * intra-project; the calling plugin's tools own the routing policy.
+ *
+ * @param opts.quiet - skip auto-launch (notification semantics — don't wake an
+ *   idle peer; the message is persisted and recovered on its next launch).
+ */
+export function deliverToNode(
+	projectId: string,
+	nodeId: string,
+	message: QueueMessage,
+	opts?: { quiet?: boolean },
+): Promise<void> {
+	return deliverMessage(projectId, nodeId, message, opts);
+}
+
+/**
+ * Read-only snapshot of a project's launchable nodes — the stable-named plugin
+ * API for enumerating peers. A plugin resolves group membership and
+ * name→node from each node's plugin-owned `metadata`; routing (broadcast vs
+ * private) stays 100% in the plugin's tools.
+ *
+ * Returns a FRESH array each call: mutating the array (push/splice) does not
+ * affect the tracker, and a later call returns a new snapshot. General
+ * (non-launchable) nodes — matrix folders, a plugin's grouping nodes — are
+ * excluded: you can only deliver to a launchable node, and `BaseTaskNode` is
+ * the runtime-generic launchable shape every plugin's node type extends.
+ */
+export function listNodes(projectId: string): ReadonlyArray<BaseTaskNode> {
+	const tracker = getTracker(projectId);
+	if (!tracker) return [];
+	return tracker.allNodes().filter(isTask);
 }
 
 /**
