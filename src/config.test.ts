@@ -90,7 +90,6 @@ describe("resolveConfig", () => {
 			...DEFAULT_CONFIG,
 		};
 		const repo: ProjectConfig = {
-			childModel: "sonnet",
 			mcpServers: { git: { command: "mcp-git" } },
 		};
 		const local: ProjectConfig = {
@@ -99,7 +98,6 @@ describe("resolveConfig", () => {
 		};
 
 		const result = resolveConfig(base, repo, local);
-		expect(result.childModel).toBe("sonnet");
 		expect(result.defaultAuth).toBe("team");
 		expect(result.childAuth).toBe("team");
 		expect(result.mcpServers).toEqual({ git: { command: "mcp-git" } });

@@ -137,7 +137,7 @@ const en: Translations = {
 	"settings.rootModelPlaceholder":
 		"e.g. gpt-4o, claude-opus-4-6 (leave empty for default)",
 	"settings.childAuth": "Child Auth",
-	"settings.childModel": "Child Model",
+
 	"settings.taskAgentModel": "Task Agent Model",
 	"settings.taskAgentModelPlaceholder":
 		"Model for child agents (leave empty to use root model)",
@@ -445,7 +445,7 @@ const zh: Translations = {
 	"settings.rootModel": "根模型",
 	"settings.rootModelPlaceholder": "如 gpt-4o, claude-opus-4-6（留空使用默认）",
 	"settings.childAuth": "子代理认证",
-	"settings.childModel": "子代理模型",
+
 	"settings.taskAgentModel": "任务代理模型",
 	"settings.taskAgentModelPlaceholder": "子代理使用的模型（留空使用根模型）",
 	"settings.authGroupNone": "— 无 —",

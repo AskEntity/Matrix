@@ -177,7 +177,6 @@ function ModelsAuthSection({
 	const defaultAuth = (draft.defaultAuth as string | undefined) ?? "";
 	const model = (draft.model as string | undefined) ?? "";
 	const childAuth = (draft.childAuth as string | undefined) ?? "";
-	const childModel = (draft.childModel as string | undefined) ?? "";
 
 	// Build Root Auth options
 	const rootAuthOptions: { value: string; label: string }[] = [];
@@ -270,20 +269,6 @@ function ModelsAuthSection({
 						</option>
 					))}
 				</select>
-			</div>
-
-			{/* Child Model */}
-			<div className="mxd-settings-field">
-				<span className="mxd-settings-label">{t("settings.childModel")}</span>
-				<input
-					type="text"
-					className="mxd-settings-input"
-					placeholder={
-						isGlobal ? t("settings.useRootModel") : t("settings.inheritOption")
-					}
-					value={childModel}
-					onChange={(e) => onDraftChange({ childModel: e.target.value })}
-				/>
 			</div>
 		</div>
 	);

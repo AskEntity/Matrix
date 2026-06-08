@@ -41,8 +41,7 @@ export interface MatrixConfig {
 	model: string;
 	/** Auth group for child agents. "parent" = use defaultAuth. */
 	childAuth: "parent" | string;
-	/** Model for child agents. "parent" = use model. */
-	childModel: "parent" | string;
+
 	/** Budget per agent in USD. -1 = unlimited. */
 	budgetUsd: number;
 	mcpServers: Record<string, McpServerConfig>;
@@ -81,7 +80,7 @@ export const DEFAULT_CONFIG: MatrixConfig = Object.freeze({
 	defaultAuth: "",
 	model: DEFAULT_MODEL,
 	childAuth: "parent",
-	childModel: "parent",
+
 	budgetUsd: -1,
 	mcpServers: Object.freeze({}),
 	port: 7433,
