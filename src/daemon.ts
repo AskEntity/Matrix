@@ -42,7 +42,6 @@ import {
 } from "./config.ts";
 import {
 	checkDataRootCollisions,
-	effectiveDataRoot,
 	type PluginManifest,
 	validatePluginManifest,
 } from "./plugin.ts";
@@ -284,25 +283,6 @@ interface RegisteredPlugin extends PluginManifest {
 	pluginRoot: string;
 	projectId: string;
 	resolvedWebPath?: string;
-}
-
-/**
- * The `workers` Map key for a plugin.
- *
- * - global plugin → bare `name` (one worker serves every project it owns;
- *   matrix dev-mode is reachable for any project under `/api/matrix/...`).
- * - project plugin → `<projectId>:<name>` so two different projects can each
- *   ship a plugin with the same `name` without their workers colliding.
- *
- * This key is also the `scopeName` used for restart/backoff state and for
- * `forwardToWorker`/`workers.get`/`workers.has`.
- */
-function workerKeyForPlugin(
-	plugin: Pick<RegisteredPlugin, "scope" | "name" | "projectId">,
-): string {
-	return plugin.scope === "project"
-		? `${plugin.projectId}:${plugin.name}`
-		: plugin.name;
 }
 
 export interface DaemonInstance {
@@ -591,10 +571,11 @@ export async function createDaemon(opts: {
 	}
 
 	function scheduleWorkerRestart(
-		plugin: RegisteredPlugin,
+		scopeName: string,
+		pluginRuntimePath: string | undefined,
+		pluginDataRoot: string | undefined,
 		reason: string,
 	): void {
-		const scopeName = workerKeyForPlugin(plugin);
 		const state = getRestartState(scopeName);
 
 		// If the worker stayed healthy for STABLE_RESET_MS since its last ready,
@@ -645,14 +626,18 @@ export async function createDaemon(opts: {
 			console.log(
 				`[daemon] Restarting worker "${scopeName}" (attempt ${state.attempts}/${MAX_RESTARTS_BEFORE_CIRCUIT_BREAK})...`,
 			);
-			startWorkerForPlugin(plugin).catch((e) => {
-				console.error(`[daemon] Worker "${scopeName}" restart failed:`, e);
-				// Restart failed (e.g. init timeout) — schedule another attempt.
-				scheduleWorkerRestart(
-					plugin,
-					`restart error: ${e instanceof Error ? e.message : String(e)}`,
-				);
-			});
+			startWorkerForPlugin(scopeName, pluginRuntimePath, pluginDataRoot).catch(
+				(e) => {
+					console.error(`[daemon] Worker "${scopeName}" restart failed:`, e);
+					// Restart failed (e.g. init timeout) — schedule another attempt.
+					scheduleWorkerRestart(
+						scopeName,
+						pluginRuntimePath,
+						pluginDataRoot,
+						`restart error: ${e instanceof Error ? e.message : String(e)}`,
+					);
+				},
+			);
 		}, delayMs);
 	}
 
@@ -747,15 +732,11 @@ export async function createDaemon(opts: {
 		};
 	}
 
-	async function startWorkerForPlugin(plugin: RegisteredPlugin): Promise<void> {
-		// Derive worker identity + module/data paths from the plugin. Computed
-		// here (outside the Promise body) so `resolve` still refers to node:path
-		// — inside `new Promise` it's shadowed by the promise's resolver.
-		const scopeName = workerKeyForPlugin(plugin);
-		const pluginRuntimePath = plugin.runtime
-			? resolve(plugin.pluginRoot, plugin.runtime)
-			: undefined;
-		const pluginDataRoot = effectiveDataRoot(plugin);
+	async function startWorkerForPlugin(
+		scopeName: string,
+		pluginRuntimePath?: string,
+		pluginDataRoot?: string,
+	): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const worker = new Worker(
 				new URL("./runtime/scope-worker.ts", import.meta.url).href,
@@ -818,7 +799,12 @@ export async function createDaemon(opts: {
 				}
 				scopeWorker.pending.clear();
 				// Exponential backoff + circuit-break (handled by scheduleWorkerRestart).
-				scheduleWorkerRestart(plugin, `crash: ${event.message || "unknown"}`);
+				scheduleWorkerRestart(
+					scopeName,
+					pluginRuntimePath,
+					pluginDataRoot,
+					`crash: ${event.message || "unknown"}`,
+				);
 			};
 
 			// Temporary handler for init sequence
@@ -829,16 +815,9 @@ export async function createDaemon(opts: {
 						type: "init",
 						dataDir,
 						globalConfigPath,
-						// Only the projects THIS plugin owns. The global worker must
-						// not autoResume (or build scope opts for) a project that has
-						// its own project-scoped plugin — that project's agents live in
-						// a separate dataRoot tree owned by its own worker. Sending the
-						// full list here would double-resume those agents.
-						projects: projectsForPlugin(plugin).map((p) => ({
-							id: p.id,
-							name: p.name,
-							path: p.path,
-						})),
+						projects: pm
+							.list()
+							.map((p) => ({ id: p.id, name: p.name, path: p.path })),
 						pluginRuntimePath,
 						dataRoot: pluginDataRoot,
 						globalContext,
@@ -1034,62 +1013,16 @@ export async function createDaemon(opts: {
 		throw new Error(collision);
 	}
 
-	// ── Project ↔ plugin routing (the project-scoped plugin mechanism) ──
-	//
-	// `pluginForProject` is the ONE place that decides which plugin owns a
-	// project: the project-scoped plugin shipped under that project if one
-	// exists, otherwise the (first) global plugin. EVERY project-specific
-	// routing decision — worker spawn, request forwarding, project sync,
-	// agent-stop on delete — funnels through this so a project with its own
-	// plugin is served exclusively by ITS worker, and every project without
-	// one keeps using the global matrix plugin exactly as before.
-
-	/** The plugin that owns `projectId` (project-scoped ?? first global). */
-	function pluginForProject(projectId: string): RegisteredPlugin | undefined {
-		const own = registeredPlugins.find(
-			(p) => p.scope === "project" && p.projectId === projectId,
-		);
-		if (own) return own;
-		return registeredPlugins.find((p) => p.scope === "global");
-	}
-
-	/** Projects this plugin owns (i.e. for which `pluginForProject` is it). */
-	function projectsForPlugin(plugin: RegisteredPlugin) {
-		return pm.list().filter((p) => pluginForProject(p.id) === plugin);
-	}
-
-	/**
-	 * The ready worker key serving `projectId`, or undefined if its owning
-	 * plugin has no ready worker. Deliberately does NOT fall back from a
-	 * project-scoped owner to the global worker — if P_own's worker is down,
-	 * its requests must surface a 503, never silently route to matrix.
-	 */
-	function workerKeyForProject(projectId: string): string | undefined {
-		const plugin = pluginForProject(projectId);
-		if (!plugin) return undefined;
-		const key = workerKeyForPlugin(plugin);
-		return workers.has(key) ? key : undefined;
-	}
-
-	/** First global plugin with a ready worker (daemon-level, project-agnostic). */
-	function firstGlobalWorkerKey(): string | undefined {
-		return registeredPlugins.find(
-			(p) => p.scope === "global" && workers.has(p.name),
-		)?.name;
-	}
-
 	// ── Run onProjectInit hooks (4-step flow, step 3+4) ──
 	// For each plugin, run its hook on all projects in its scope.
 	// Plugins own their own "should I skip this project?" logic — daemon passes
 	// globalContext so plugins can inspect installRoot/gitHash and decide.
 	for (const plugin of registeredPlugins) {
 		if (!plugin.onProjectInit) continue;
-		// A plugin only initializes the projects it OWNS (projectsForPlugin) —
-		// the same exclusive-ownership rule that governs routing. A global
-		// plugin must NOT scaffold a project served by its own project-scoped
-		// plugin (e.g. matrix writing a stray memory.md / hooks into dchat's
-		// repo); that project's own plugin provides whatever init it needs.
-		const targetProjects = projectsForPlugin(plugin);
+		const targetProjects =
+			plugin.scope === "global"
+				? pm.list()
+				: pm.list().filter((p) => p.id === plugin.projectId);
 		for (const project of targetProjects) {
 			try {
 				await plugin.onProjectInit(project.path, {
@@ -1145,12 +1078,18 @@ export async function createDaemon(opts: {
 		indexHTML = generateBuildErrorHTML(e);
 	}
 
-	// Start a worker for EVERY plugin — global AND project-scoped. Each worker
-	// is keyed via workerKeyForPlugin (global by name, project by
-	// `<projectId>:<name>`); startWorkerForPlugin derives the runtime module
-	// path, dataRoot, and its owned-project subset from the plugin itself.
-	for (const plugin of registeredPlugins) {
-		await startWorkerForPlugin(plugin);
+	// Start workers for global plugins
+	for (const plugin of registeredPlugins.filter((p) => p.scope === "global")) {
+		// Resolve plugin's runtime module path for the worker
+		const runtimePath = plugin.runtime
+			? resolve(plugin.pluginRoot, plugin.runtime)
+			: undefined;
+		const { effectiveDataRoot } = await import("./plugin.ts");
+		await startWorkerForPlugin(
+			plugin.name,
+			runtimePath,
+			effectiveDataRoot(plugin),
+		);
 	}
 
 	// ── Bootstrap auth ──
@@ -1256,9 +1195,10 @@ export async function createDaemon(opts: {
 	// Health — daemon-owned, not worker-forwarded
 	app.get("/health", async (c) => {
 		if (c.req.query("check_model")) {
-			// Forward to a global worker for full health check (Anthropic API
-			// ping). Project-agnostic — any global worker can answer.
-			const workerName = firstGlobalWorkerKey();
+			// Forward to worker for full health check (includes Anthropic API ping)
+			const workerName = registeredPlugins.find(
+				(p) => p.scope === "global" && workers.has(p.name),
+			)?.name;
 			if (workerName) {
 				return forwardToWorker(workerName, c.req.raw);
 			}
@@ -1392,12 +1332,13 @@ export async function createDaemon(opts: {
 	app.delete("/projects/:id", async (c) => {
 		const projectId = c.req.param("id");
 		try {
-			// Stop agents first — in the worker that OWNS this project (its own
-			// project-scoped plugin if it ships one, else the global matrix worker).
-			const ownerWorker = workerKeyForProject(projectId);
-			if (ownerWorker) {
+			// Stop worker agents first
+			const globalWorkerName = registeredPlugins.find(
+				(p) => p.scope === "global" && workers.has(p.name),
+			)?.name;
+			if (globalWorkerName) {
 				await forwardToWorker(
-					ownerWorker,
+					globalWorkerName,
 					new Request(`http://localhost/projects/${projectId}/stop`, {
 						method: "POST",
 					}),
@@ -1689,12 +1630,12 @@ export async function createDaemon(opts: {
 				}
 
 				// If no Last-Event-ID or catch-up failed (gap too large),
-				// send full initial state. The tree + clarifications live in the
-				// worker that owns this project (its project-scoped plugin if any,
-				// else the global matrix worker).
+				// send full initial state
 				if (!catchUpDone) {
 					try {
-						const workerName = workerKeyForProject(projectId);
+						const workerName = registeredPlugins.find(
+							(p) => p.scope === "global" && workers.has(p.name),
+						)?.name;
 						const treeResp = workerName
 							? await forwardToWorker(
 									workerName,
@@ -1809,7 +1750,9 @@ export async function createDaemon(opts: {
 	 * up (fresh daemon with zero plugins discovered).
 	 */
 	const forwardToFirstGlobalWorker = async (c: { req: { raw: Request } }) => {
-		const workerName = firstGlobalWorkerKey();
+		const workerName = registeredPlugins.find(
+			(p) => p.scope === "global" && workers.has(p.name),
+		)?.name;
 		if (!workerName) {
 			return new Response(
 				JSON.stringify({ error: "No global plugin worker available" }),
@@ -1835,42 +1778,20 @@ export async function createDaemon(opts: {
 	 */
 	app.all("/api/:plugin/*", async (c) => {
 		const pluginName = c.req.param("plugin");
+		const plugin = registeredPlugins.find((p) => p.name === pluginName);
+		if (!plugin) {
+			return c.json({ error: `Plugin "${pluginName}" not found` }, 404);
+		}
+		if (!workers.has(pluginName)) {
+			return c.json({ error: `Plugin "${pluginName}" has no worker` }, 503);
+		}
 
 		// Strip the `/api/<plugin>` prefix from the URL path before forwarding.
 		// The worker's Hono app has routes registered at root (e.g. `/projects/...`).
-		// Strip FIRST: the projectId embedded in the stripped path
-		// (`/projects/<id>/...`) is what disambiguates same-named project-scoped
-		// plugins from two different projects.
 		const prefix = pluginApiPrefix(pluginName);
 		const url = new URL(c.req.url);
 		const stripped = url.pathname.slice(prefix.length) || "/";
 		url.pathname = stripped;
-
-		// Resolve which worker serves this request:
-		// - a GLOBAL plugin named `pluginName` is keyed by bare name and serves
-		//   any project (matrix dev-mode) → use it directly.
-		// - otherwise the candidates are all project-scoped; the projectId in the
-		//   stripped path selects the right one (keyed `<projectId>:<name>`). A
-		//   lone candidate with no projectId in the path falls back to itself.
-		const candidates = registeredPlugins.filter((p) => p.name === pluginName);
-		if (candidates.length === 0) {
-			return c.json({ error: `Plugin "${pluginName}" not found` }, 404);
-		}
-		let target: RegisteredPlugin | undefined = candidates.find(
-			(p) => p.scope === "global",
-		);
-		if (!target) {
-			const pid = stripped.match(/^\/projects\/([^/]+)/)?.[1];
-			target = pid
-				? candidates.find((p) => p.projectId === pid)
-				: candidates.length === 1
-					? candidates[0]
-					: undefined;
-		}
-		const workerKey = target ? workerKeyForPlugin(target) : undefined;
-		if (!workerKey || !workers.has(workerKey)) {
-			return c.json({ error: `Plugin "${pluginName}" has no worker` }, 503);
-		}
 
 		// Rebuild a Request with the rewritten URL. Body must be consumed from
 		// the original (c.req.raw) because `new Request(url, { ...request })`
@@ -1882,7 +1803,7 @@ export async function createDaemon(opts: {
 			headers: c.req.raw.headers,
 			body: hasBody ? await c.req.raw.arrayBuffer() : undefined,
 		});
-		return forwardToWorker(workerKey, rewritten);
+		return forwardToWorker(pluginName, rewritten);
 	});
 
 	/**
@@ -1923,25 +1844,10 @@ export async function createDaemon(opts: {
 	}
 
 	function syncProjects(): void {
-		// Each worker receives ONLY the projects it owns (projectsForPlugin).
-		// A global worker must never be told about a project that ships its own
-		// project-scoped plugin — otherwise it would resume that project's agents
-		// (living in a separate dataRoot tree) alongside the project's own worker.
-		// `config` / `project_deleted` syncs stay broadcast (harmless to non-owners).
-		for (const plugin of registeredPlugins) {
-			const key = workerKeyForPlugin(plugin);
-			const sw = workers.get(key);
-			if (!sw?.ready) continue;
-			sw.worker.postMessage({
-				type: "sync",
-				key: "projects",
-				data: projectsForPlugin(plugin).map((p) => ({
-					id: p.id,
-					name: p.name,
-					path: p.path,
-				})),
-			});
-		}
+		syncToWorkers(
+			"projects",
+			pm.list().map((p) => ({ id: p.id, name: p.name, path: p.path })),
+		);
 	}
 
 	function syncConfig(): void {
