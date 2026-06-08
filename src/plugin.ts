@@ -25,12 +25,25 @@ export interface PluginManifest {
 	name: string;
 
 	/**
-	 * Scope. Only "global" is implemented — every global plugin is available
-	 * in every project. "project" (per-project plugin variant) was declared
-	 * during design; no code path handles it. Re-introduce when the variant
-	 * is genuinely needed.
+	 * Plugin scope — additive, never exclusive. A project can be served by
+	 * MULTIPLE plugins at once; each plugin ADDS a lens, it never replaces
+	 * another. The `<scope>:<project>` address space exists precisely because
+	 * one project can have more than one lens.
+	 *
+	 * - `"global"`: available in EVERY project (e.g. matrix — the coding/dev
+	 *   lens). Keyed by plugin name; one worker serves every project, reachable
+	 *   for any project under `/api/<name>/...`.
+	 * - `"project"`: shipped by the single project that contains it (the
+	 *   `.mxd/plugin/` discovered under that project — its product lens). Gets
+	 *   its OWN worker, keyed `<projectId>:<name>` so two different projects can
+	 *   each ship a same-named plugin without colliding.
+	 *
+	 * A project that ships its own `scope:"project"` plugin is served by BOTH
+	 * its own scope AND every global scope (e.g. `matrix:dchat` dev lens +
+	 * `group-chat:dchat` product lens coexist). Shipping a plugin NEVER removes
+	 * the matrix dev lens — see `scopesForProject` in daemon.ts.
 	 */
-	scope: "global";
+	scope: "global" | "project";
 
 	/**
 	 * Where this plugin's data lives, relative to `~/.mxd/projects/<projectId>/`.
@@ -125,24 +138,53 @@ export function validatePluginManifest(manifest: PluginManifest): void {
 /**
  * Check for dataRoot collisions among plugins.
  *
- * Two plugins with the same *resolved* dataRoot path would write to the same
- * directory — compare canonical paths, not raw strings, so that `"@"` and a
- * hypothetical `"@/foo/.."` (were it to slip past validation) would be caught.
+ * Two plugins collide only when they would write to the same on-disk
+ * directory. The resolved data dir is `~/.mxd/projects/<projectId>/<dataRoot>`,
+ * so a collision requires BOTH the same resolved dataRoot AND overlapping
+ * "project domains":
  *
- * In practice {@link validateDataRoot} is run before this (at daemon startup),
- * so inputs here are already canonical strings. The canonical-path compare is
- * the belt to the validator's braces.
+ * - a `global` plugin writes into EVERY project's dir → universe domain
+ * - a `project` plugin writes only into its own project's dir → {projectId}
  *
- * Returns null if no collision, or an error message string if collision detected.
+ * global∩global and global∩project domains always overlap. project(P)∩project(Q)
+ * overlaps iff P === Q. So two project-scoped plugins that share a dataRoot but
+ * live in DIFFERENT projects (e.g. two projects each shipping a `group-chat`
+ * plugin with the default `@/plugin/group-chat`) do NOT collide — their data
+ * lands under distinct `projects/<id>/` roots.
+ *
+ * NOTE this is independent of the additive routing model: even though matrix
+ * (global) and a project's own plugin BOTH serve that project, their dataRoots
+ * differ (`@/plugin/matrix` vs `@/plugin/<own>`), so the two lenses never write
+ * to the same directory. The check guards genuine same-directory clashes only.
+ *
+ * `scope` defaults to `"global"` when omitted, preserving the original
+ * "any two same-dataRoot plugins collide" behavior for callers that don't
+ * supply scope/projectId.
+ *
+ * Compares canonical resolved paths, not raw strings, so `"@"` and a
+ * hypothetical `"@/foo/.."` (were it to slip past {@link validateDataRoot})
+ * would be caught. Returns null if no collision, else an error message.
  */
 export function checkDataRootCollisions(
-	plugins: ReadonlyArray<Pick<PluginManifest, "name" | "dataRoot">>,
+	plugins: ReadonlyArray<
+		Pick<PluginManifest, "name" | "dataRoot"> & {
+			scope?: PluginManifest["scope"];
+			projectId?: string;
+		}
+	>,
 ): string | null {
-	const seen = new Map<string, string>(); // canonical resolved path → plugin name
-	// Placeholder dataDir + projectId — values only need to be consistent, the
-	// relative subpath is what determines collision.
+	// Placeholder dataDir + projectId — values only need to be consistent; the
+	// relative subpath is what determines whether two dataRoots collide.
 	const CANON_DATA_DIR = "/_mxd_collision_check";
 	const CANON_PROJECT_ID = "_canon_project_";
+	interface Entry {
+		name: string;
+		effective: string;
+		scope: "global" | "project";
+		projectId?: string;
+	}
+	// canonical resolved dataRoot → plugins that resolve there
+	const byRoot = new Map<string, Entry[]>();
 	for (const plugin of plugins) {
 		const effective = effectiveDataRoot(plugin as PluginManifest);
 		const canonical = resolveDataRoot(
@@ -150,11 +192,36 @@ export function checkDataRootCollisions(
 			CANON_PROJECT_ID,
 			effective,
 		);
-		const existing = seen.get(canonical);
-		if (existing) {
-			return `Plugin dataRoot collision: "${existing}" and "${plugin.name}" both resolve to "${effective}"`;
+		const entry: Entry = {
+			name: plugin.name,
+			effective,
+			scope: plugin.scope ?? "global",
+			projectId: plugin.projectId,
+		};
+		const group = byRoot.get(canonical);
+		if (group) group.push(entry);
+		else byRoot.set(canonical, [entry]);
+	}
+
+	const collision = (a: Entry, b: Entry): string =>
+		`Plugin dataRoot collision: "${a.name}" and "${b.name}" both resolve to "${a.effective}"`;
+
+	for (const [, group] of byRoot) {
+		if (group.length < 2) continue;
+		// A global plugin shares its dir with every other plugin in the group.
+		const firstGlobal = group.find((g) => g.scope === "global");
+		if (firstGlobal) {
+			const other = group.find((g) => g !== firstGlobal);
+			if (other) return collision(firstGlobal, other);
 		}
-		seen.set(canonical, plugin.name);
+		// No globals: all project-scoped → collide only if two share a projectId.
+		const seenPid = new Map<string, Entry>();
+		for (const g of group) {
+			if (g.projectId === undefined) continue;
+			const existing = seenPid.get(g.projectId);
+			if (existing) return collision(existing, g);
+			seenPid.set(g.projectId, g);
+		}
 	}
 	return null;
 }
