@@ -61,6 +61,11 @@ export interface CreateTaskOpts {
 	draft?: boolean;
 	color?: string;
 	budgetUsd?: number;
+	/**
+	 * Plugin-owned opaque metadata to attach at creation (e.g. a chat plugin's
+	 * character profile). Runtime never reads it — round-trips via save/load.
+	 */
+	metadata?: Record<string, unknown>;
 }
 
 export async function createTaskOp(
@@ -76,11 +81,15 @@ export async function createTaskOp(
 		budgetUsd?: number;
 		draft?: boolean;
 		editedBy: "user" | "agent";
+		metadata?: Record<string, unknown>;
 	} = { editedBy };
 	if (opts.budgetUsd !== undefined) {
 		createOpts.budgetUsd = opts.budgetUsd;
 	}
 	if (opts.draft) createOpts.draft = true;
+	if (opts.metadata !== undefined) {
+		createOpts.metadata = opts.metadata;
+	}
 
 	const node = opts.parentId
 		? tracker.addChild(opts.parentId, opts.title, opts.description, createOpts)
@@ -111,6 +120,13 @@ export interface UpdateTaskOpts {
 	draft?: boolean;
 	parentId?: string;
 	color?: string | null;
+	/**
+	 * Plugin-owned opaque metadata. REPLACE semantics — the whole object is
+	 * replaced (mirrors tracker.setMetadata), never deep-merged. To update a
+	 * single key, the caller reads current metadata and sends the merged object.
+	 * `undefined` means "leave existing metadata untouched".
+	 */
+	metadata?: Record<string, unknown>;
 }
 
 export async function updateTaskOp(
@@ -151,6 +167,11 @@ export async function updateTaskOp(
 			updates.color ? resolveColor(updates.color) : null,
 			editedBy,
 		);
+	}
+	if (updates.metadata !== undefined) {
+		// REPLACE the whole object — never deep-merge. The caller (e.g. a
+		// plugin UI) reads current metadata and sends the complete merged object.
+		tracker.setMetadata(nodeId, updates.metadata);
 	}
 
 	await tracker.save();

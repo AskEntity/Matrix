@@ -206,6 +206,41 @@ describe("createTaskOp", () => {
 		const nodes = tracker2.allNodes();
 		expect(nodes.some((n) => n.title === "Saved")).toBe(true);
 	});
+
+	test("applies metadata", async () => {
+		const node = await createTaskOp(
+			tracker,
+			{
+				title: "Character",
+				description: "",
+				parentId: tracker.rootNodeId,
+				metadata: { prompt: "You are a bard", mood: "merry" },
+			},
+			"user",
+			makeCallbacks(),
+		);
+
+		expect(node.metadata).toEqual({ prompt: "You are a bard", mood: "merry" });
+	});
+
+	test("metadata persists across reload", async () => {
+		const node = await createTaskOp(
+			tracker,
+			{
+				title: "Durable",
+				description: "",
+				parentId: tracker.rootNodeId,
+				metadata: { prompt: "keep me" },
+			},
+			"user",
+			makeCallbacks(),
+		);
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load("main");
+		const reloaded = tracker2.getTask(node.id);
+		expect(reloaded?.metadata).toEqual({ prompt: "keep me" });
+	});
 });
 
 // ── updateTaskOp ──
@@ -375,6 +410,76 @@ describe("updateTaskOp", () => {
 		expect(notifyTreeChangeCalls).toHaveLength(0);
 		// But broadcastTree is still called
 		expect(broadcastCount).toBe(1);
+	});
+
+	test("sets metadata", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Character", "", {
+			editedBy: "agent",
+		});
+
+		const updated = await updateTaskOp(
+			tracker,
+			task.id,
+			{ metadata: { prompt: "You are a wizard", mood: "wise" } },
+			"user",
+			makeCallbacks(),
+		);
+
+		expect(updated.metadata).toEqual({
+			prompt: "You are a wizard",
+			mood: "wise",
+		});
+	});
+
+	test("metadata REPLACES — a removed key disappears", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Character", "", {
+			editedBy: "agent",
+		});
+
+		await updateTaskOp(
+			tracker,
+			task.id,
+			{ metadata: { prompt: "v1", legacy: "remove me" } },
+			"user",
+			makeCallbacks(),
+		);
+
+		// New object WITHOUT `legacy` → it must vanish (replace, not merge).
+		const updated = await updateTaskOp(
+			tracker,
+			task.id,
+			{ metadata: { prompt: "v2" } },
+			"user",
+			makeCallbacks(),
+		);
+
+		expect(updated.metadata).toEqual({ prompt: "v2" });
+		expect(updated.metadata?.legacy).toBeUndefined();
+	});
+
+	test("metadata undefined leaves existing metadata untouched", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Character", "", {
+			editedBy: "agent",
+		});
+		await updateTaskOp(
+			tracker,
+			task.id,
+			{ metadata: { prompt: "keep" } },
+			"user",
+			makeCallbacks(),
+		);
+
+		// A title-only update must NOT wipe metadata (undefined = no change).
+		const updated = await updateTaskOp(
+			tracker,
+			task.id,
+			{ title: "Renamed" },
+			"user",
+			makeCallbacks(),
+		);
+
+		expect(updated.title).toBe("Renamed");
+		expect(updated.metadata).toEqual({ prompt: "keep" });
 	});
 });
 

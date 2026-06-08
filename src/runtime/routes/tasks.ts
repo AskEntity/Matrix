@@ -148,6 +148,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 			parentId?: string;
 			budgetUsd?: number;
 			folder?: boolean;
+			metadata?: Record<string, unknown>;
 		}>();
 		if (!body.title) {
 			return c.json({ error: "title is required" }, 400);
@@ -178,6 +179,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 					description: body.description ?? "",
 					parentId: body.parentId,
 					budgetUsd: body.budgetUsd,
+					metadata: body.metadata,
 				},
 				"user",
 				{
@@ -209,6 +211,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 			draft?: boolean;
 			parentId?: string;
 			color?: string | null;
+			metadata?: Record<string, unknown>;
 		}>();
 
 		const node = tracker.getTask(nodeId);
@@ -239,6 +242,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 					draft: body.draft,
 					parentId: body.parentId,
 					color: body.color,
+					metadata: body.metadata,
 				},
 				"user",
 				{
