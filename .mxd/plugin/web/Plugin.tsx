@@ -1567,6 +1567,9 @@ function ProjectContent({
 								onLoadOlderEvents={handleLoadOlderEvents}
 								onTaskNavigate={handleTaskNavigate}
 								projectMap={projectMap}
+								onProjectNavigate={(pid) => {
+									window.location.pathname = `/${pid}/matrix/`;
+								}}
 								showCacheBadges={showCacheBadges}
 							/>
 						</div>
