@@ -624,7 +624,7 @@ export const LogEntryView = memo(function LogEntryView({
 		const titleNode =
 			fromProjectId && onProjectNavigate && projectName ? (
 				<>
-					{"← from "}
+					{"← "}
 					{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate */}
 					{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable project name */}
 					<span
@@ -638,7 +638,7 @@ export const LogEntryView = memo(function LogEntryView({
 					</span>
 				</>
 			) : projectName ? (
-				`← from ${projectName}`
+				`← ${projectName}`
 			) : (
 				"← Cross-Project"
 			);

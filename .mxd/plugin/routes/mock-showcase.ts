@@ -704,11 +704,11 @@ function buildMockData() {
 		events,
 		TOOL_SEND_MESSAGE_TO_PROJECT,
 		{
-			projectId: "other-project-id",
+			targetProjectId: "other-project-id",
 			message:
 				"Auth middleware v2 is ready. Please test against your API gateway.",
 		},
-		"Message sent to project API Gateway.",
+		'Message sent to project "API Gateway" (other-project-id).',
 		m,
 	);
 

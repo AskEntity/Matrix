@@ -341,9 +341,9 @@ export function getToolTitle(
 			if (targetProjectId) {
 				const projectName =
 					opts?.projectMap?.get(targetProjectId) ?? targetProjectId;
-				return `Cross-project → ${projectName}`;
+				return `→ ${projectName}`;
 			}
-			return "Cross-project";
+			return "→ Cross-project";
 		}
 		case TOOL_REPORT_TO_PARENT: {
 			const title = getArg(toolArgs, "title");
@@ -469,8 +469,11 @@ export function summarizeToolResult(
 			return "Reordered tasks";
 		case "list_projects":
 			return "Listed projects";
-		case "send_message_to_project":
-			return "Message sent to project";
+		case "send_message_to_project": {
+			// Result text is like: 'Message sent to project "API Gateway" (id).'
+			const nameMatch = content.match(/^Message sent to project "([^"]+)"/);
+			return nameMatch ? `Sent → ${nameMatch[1]}` : "Sent to project";
+		}
 		case "clarify":
 			return "Question sent";
 		case "yield":
