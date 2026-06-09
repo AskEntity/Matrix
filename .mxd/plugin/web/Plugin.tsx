@@ -526,11 +526,22 @@ function ProjectContent({
 			.then(setCurrentProject)
 			.catch(() => setCurrentProject(null));
 	}, [projectId, authFetch]);
+	// All registered projects — needed for cross-project tool cards to resolve
+	// targetProjectId → project name (not just the current project).
+	const [allProjects, setAllProjects] = useState<
+		{ id: string; name: string }[]
+	>([]);
+	useEffect(() => {
+		authFetch("/projects")
+			.then((r) => (r.ok ? r.json() : []))
+			.then(setAllProjects)
+			.catch(() => {});
+	}, [authFetch]);
 	const projectMap = useMemo(() => {
 		const map = new Map<string, string>();
-		if (currentProject) map.set(currentProject.id, currentProject.name);
+		for (const p of allProjects) map.set(p.id, p.name);
 		return map;
-	}, [currentProject]);
+	}, [allProjects]);
 	const totalCost = useMemo(() => {
 		const sum = nodes.reduce(
 			(acc, n) => (isTask(n) ? acc + n.costUsd : acc),
