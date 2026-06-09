@@ -345,9 +345,16 @@ function MockShowcaseInner() {
 	}, [nodes]);
 	const viewedTaskId = isOrchestratorNode ? rootNodeId : selectedTaskId;
 	const mockProjectMap = useMemo(
-		() => new Map([["mock", "Mock Showcase"]]),
+		() =>
+			new Map([
+				["mock", "Mock Showcase"],
+				["other-project-id", "API Gateway"],
+			]),
 		[],
 	);
+	const handleProjectNavigate = useCallback((projectId: string) => {
+		console.log("Navigate to project:", projectId);
+	}, []);
 
 	// ── Render ──
 
@@ -592,6 +599,7 @@ function MockShowcaseInner() {
 								projectId=""
 								onTaskNavigate={handleTaskNavigate}
 								projectMap={mockProjectMap}
+								onProjectNavigate={handleProjectNavigate}
 								showCacheBadges={showCacheBadges}
 							/>
 						</div>

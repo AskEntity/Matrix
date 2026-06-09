@@ -185,9 +185,12 @@ export const ToolCard = memo(function ToolCard({
 		isOk && !mcpBody ? summarizeToolResult(toolName, resultContent) : null;
 
 	const statusClass = isErr ? "mxd-tool-card-err" : "mxd-tool-card-ok";
-	const accentClass = isBuiltin
-		? "mxd-tool-card-mcp"
-		: "mxd-tool-card-external";
+	const isCrossProject = toolName === TOOL_SEND_MESSAGE_TO_PROJECT;
+	const accentClass = isCrossProject
+		? "mxd-tool-card-cross-project"
+		: isBuiltin
+			? "mxd-tool-card-mcp"
+			: "mxd-tool-card-external";
 
 	const hasImages = entry.images && entry.images.length > 0;
 
@@ -229,7 +232,7 @@ export const ToolCard = memo(function ToolCard({
 			const targetName = projectMap?.get(targetProjectId) ?? targetProjectId;
 			cardTitle = (
 				<>
-					{"Cross-project → "}
+					{"→ "}
 					{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate */}
 					{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable project name */}
 					<span
