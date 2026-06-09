@@ -1,5 +1,13 @@
 import type React from "react";
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	lazy,
+	Suspense,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { isProductionProject } from "../production.ts";
 import { api } from "./api.ts";
 import { useAuthFetch } from "./auth.ts";

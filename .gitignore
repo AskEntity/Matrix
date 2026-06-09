@@ -50,3 +50,4 @@ test-project-*
 *.pem
 *.key
 .mxd/artifacts/
+data/
