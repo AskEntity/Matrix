@@ -27,7 +27,6 @@ import { registerAgentRoutes } from "./runtime/routes/agent.ts";
 // Auth handled by daemon shell — runtime has no auth.
 // Config routes handled by daemon shell — worker has no config CRUD.
 import { registerMcpEndpoint } from "./runtime/routes/mcp-endpoint.ts";
-import { registerMockShowcaseRoute } from "./runtime/routes/mock-showcase.ts";
 import { registerProjectRoutes } from "./runtime/routes/projects.ts";
 import { registerTaskRoutes } from "./runtime/routes/tasks.ts";
 
@@ -306,7 +305,6 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 	// Config routes removed — daemon shell owns config CRUD.
 	registerAgentRoutes(app, ctx);
 	registerMcpEndpoint(app, ctx);
-	registerMockShowcaseRoute(app);
 
 	/**
 	 * Resume a single project's in_progress agents: crash recovery +

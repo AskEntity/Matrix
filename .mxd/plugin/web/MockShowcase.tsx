@@ -1,7 +1,8 @@
 /**
  * MockShowcase — standalone page for rendering all card types + task states.
  *
- * Activated by `?mock=true` in the URL. Fetches static data from `/mock-showcase`
+ * Activated by navigating to `/<projectId>/matrix/mock-showcase`.
+ * Fetches static data from `/api/matrix/mock-showcase` (matrix plugin route)
  * and renders it using the same components as the real app.
  * No SSE connection — pure static render with all UI elements visible.
  *
