@@ -3001,3 +3001,28 @@ launch), not mid-session — dchat's UX concern, NOT this write-path's scope.
 - Mutation-verified: commenting out BOTH `createOpts.metadata = …` and
   `tracker.setMetadata(…)` → exactly the 9 metadata-asserting tests fail; the 1
   absence-asserting test (POST without metadata) correctly stays green.
+
+## Mock-showcase extraction — unconditional → matrix-plugin-only (2026-06-09)
+
+Mock-showcase (static data endpoint + standalone UI page for component development)
+extracted from unconditional runtime registration into the matrix plugin.
+
+### What moved
+- `src/runtime/routes/mock-showcase.ts` → `.mxd/plugin/routes/mock-showcase.ts`
+- `src/runtime/routes/mock-showcase-image.png` → `.mxd/plugin/routes/mock-showcase-image.png`
+- Route registered in `.mxd/plugin/runtime.ts` `registerRoutes`, not `src/runtime.ts`
+
+### Leak fixed
+Previously `registerMockShowcaseRoute(app)` was called unconditionally in
+`src/runtime.ts` for EVERY plugin worker. Now only the matrix plugin worker serves it.
+
+### UI activation path
+Old: `?mock=true` query param — dead since Task Y.
+New: `/<projectId>/matrix/mock-showcase` — Plugin.tsx lazy-loads MockShowcase when
+`pluginPath === "mock-showcase"`.
+
+### Key details
+- MockShowcase.tsx stays at `.mxd/plugin/web/MockShowcase.tsx` (unchanged location)
+- Data endpoint URL unchanged: `GET /api/matrix/mock-showcase`
+- No new plugin entity — mock-showcase is a FEATURE of the matrix plugin
+- Moved route file uses `../../../src/` relative paths (same pattern as scope-opts.ts)

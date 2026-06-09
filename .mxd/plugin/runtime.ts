@@ -8,6 +8,7 @@
 import type { Hono } from "hono";
 import type { RuntimeContext } from "../../src/runtime/context.ts";
 import { isProductionProject } from "./production.ts";
+import { registerMockShowcaseRoute } from "./routes/mock-showcase.ts";
 import { buildMatrixScopeOpts } from "./scope-opts.ts";
 
 export function buildScopeOpts(projectId: string, ctx: RuntimeContext) {
@@ -46,4 +47,9 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 		}
 		return next();
 	});
+
+	// Mock showcase — static data endpoint for UI development/testing.
+	// Previously registered unconditionally in runtime.ts for every plugin
+	// worker. Now matrix-specific: only the matrix worker serves it.
+	registerMockShowcaseRoute(app);
 }

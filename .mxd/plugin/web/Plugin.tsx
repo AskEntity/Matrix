@@ -1,5 +1,5 @@
 import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isProductionProject } from "../production.ts";
 import { api } from "./api.ts";
 import { useAuthFetch } from "./auth.ts";
@@ -103,6 +103,14 @@ function readInitialSidebarWidth(): number {
 	}
 	return SIDEBAR_DEFAULT_WIDTH;
 }
+
+// ── Mock-showcase lazy load ──────────────────────────────────────────────
+// MockShowcase is a standalone dev page — lazy-loaded only when the user
+// navigates to `/<projectId>/matrix/mock-showcase`. Keeps the main bundle
+// clean for normal usage.
+const LazyMockShowcase = lazy(() =>
+	import("./MockShowcase.tsx").then((m) => ({ default: m.MockShowcase })),
+);
 
 // ── Path routing ──────────────────────────────────────────────────────────
 //
@@ -218,6 +226,24 @@ export function Plugin({
 		return (
 			<div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>
 		);
+
+	// Mock-showcase: standalone dev page at /<projectId>/matrix/mock-showcase
+	if (pluginPath === "mock-showcase") {
+		return (
+			<LocaleProvider>
+				<ErrorBoundary>
+					<Suspense
+						fallback={
+							<div style={{ padding: 20, color: "#8b949e" }}>Loading…</div>
+						}
+					>
+						<LazyMockShowcase />
+					</Suspense>
+				</ErrorBoundary>
+			</LocaleProvider>
+		);
+	}
+
 	return (
 		<LocaleProvider>
 			<ErrorBoundary>

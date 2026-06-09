@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Hono } from "hono";
-import type { Event } from "../../events.ts";
-import { mcpToolName } from "../../tool-names.ts";
+import type { Event } from "../../../src/events.ts";
+import { mcpToolName } from "../../../src/tool-names.ts";
 
 // Matrix tool constants — local to this demo file
 const T = mcpToolName;
@@ -34,8 +34,8 @@ const TOOL_CREATE_FOLDER = T("create_folder");
 const TOOL_DELETE_FOLDER = T("delete_folder");
 const TOOL_RENAME_FOLDER = T("rename_folder");
 
-import type { GeneralNode, TaskNode, TaskStatus } from "../../types.ts";
-import { ulid } from "../../ulid.ts";
+import type { GeneralNode, TaskNode, TaskStatus } from "../../../src/types.ts";
+import { ulid } from "../../../src/ulid.ts";
 
 /**
  * Mock showcase endpoint — returns a complete dataset for UI development.
