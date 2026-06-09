@@ -3042,9 +3042,17 @@ the only block type old clients reliably round-trip with signatures. SDK accumul
 faithfully reproduce server blocks; verified via debug `last-response.json` (raw finalMessage):
 the "second thinking" was a 135-char compressed paraphrase of a ~300-char actual reply.
 
-**Fix**: @anthropic-ai/sdk 0.78.0 → 0.104.0 (commit a61d341). Verified post-restart: same turn
-shape now returns `[thinking, text, tool_use]` with verbatim text. Historical JSONL keeps the
-summarized-thinking turns (accurate record of what the server sent) — no retroactive repair.
+**Fix attempt**: @anthropic-ai/sdk 0.78.0 → 0.104.0 (commit a61d341). One-sample post-restart
+verification passed, then the pattern RECURRED (23:17+, multiple sessions incl. the verifying
+turn itself) — SDK version is NOT the discriminator. Update kept (new model types, harmless).
+
+**CORRECTED diagnosis (2026-06-09 23:35)**: signature field length is content-proportional
+(364..14756 chars, ~2-4x displayed text; opus-era thinking already did this) → signature carries
+an ENCRYPTED payload of the original content. fable-5 intermittently applies the same protection
+to the VISIBLE REPLY: displayed text = server-rewritten paraphrase in a second thinking block,
+original never leaves Anthropic in readable form. User's read: anti-distillation. Client-side
+unfixable; options = tolerate / report upstream / switch back to opus-4-8. Historical JSONL keeps
+the summarized turns (accurate record of what the server sent) — no retroactive repair.
 
 **Diagnosis pattern (reusable)**: when block types look wrong, read the per-traceId
 `debug/<taskId>/<traceId>/last-response.json` (raw server response, written before tool exec —
