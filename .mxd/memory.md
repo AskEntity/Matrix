@@ -3067,3 +3067,28 @@ in one step.
    getStopReason maps all non-end_turn to "tool_use".
 3. SDK pin is caret (`^0.104.0`) — fine for now; fable-era servers change behavior by SDK
    version, so future "weird block" bugs should check SDK gap FIRST.
+
+## fable-5 hidden-channel CONFIRMED: model context ≠ client-visible messages (2026-06-09 canary experiment)
+
+Two-sided experimental proof (this session, ~23:50):
+1. **Setup turn**: a 12-digit random canary written ONLY in visible reply text (kept out of
+   all tool inputs). Turn got downgraded: client-side JSONL stored a 132-char paraphrase that
+   mentions "这串随机数" but DROPS the digits. Canary existed NOWHERE client-side.
+2. **Recall turn**: next-turn agent recalled the full canary verbatim from its context, recall
+   claim recorded in the tool input (timestamped before any read). All 4 JSONL occurrences of
+   the canary are from post-recall commands.
+
+**Conclusion**: the signature field's encrypted payload is decrypted server-side on echo-back
+and the ORIGINAL content is reconstituted into the model's effective context. The model sees
+its own originals; the client/user only ever has the server-rewritten summaries. Implications:
+- "context = messages[]" is FALSE on fable-5 — the model cannot detect the divergence from
+  inside; only comparison against client-side records (JSONL/debug snapshots) reveals it.
+- The thinking-block packaging for old SDKs is the compat envelope that guarantees ciphertext
+  round-trip (old clients faithfully echo thinking+signature) — model continuity survives.
+- Anti-distillation reading (user's): full-fidelity outputs never exist client-side.
+- **Agent-side caveat**: an agent's "memory" of its own past replies is NOT evidence of what
+  the user saw. When verifying user-visible behavior, check JSONL/debug snapshots, never trust
+  introspection of own context.
+- Experiment protocol (reusable): canary in visible-text-only → next-turn recall recorded in
+  tool input BEFORE any read → grep client records. Tool inputs are the only generation-time
+  verbatim side channel (must be executed as written).
