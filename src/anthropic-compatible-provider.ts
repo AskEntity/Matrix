@@ -40,7 +40,13 @@ import { ulid } from "./ulid.ts";
  */
 export function getContextWindow(model: string): number {
 	// Opus 4.6+ and Sonnet 4.6+ support 1M context natively
-	if (model.includes("opus") || model.includes("sonnet-4")) return 1_000_000;
+	if (
+		model.includes("mythos") ||
+		model.includes("fable") ||
+		model.includes("opus") ||
+		model.includes("sonnet-4")
+	)
+		return 1_000_000;
 	return 200_000;
 }
 
