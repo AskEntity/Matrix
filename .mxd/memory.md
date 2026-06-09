@@ -3026,3 +3026,36 @@ New: `/<projectId>/matrix/mock-showcase` — Plugin.tsx lazy-loads MockShowcase 
 - Data endpoint URL unchanged: `GET /api/matrix/mock-showcase`
 - No new plugin entity — mock-showcase is a FEATURE of the matrix plugin
 - Moved route file uses `../../../src/` relative paths (same pattern as scope-opts.ts)
+
+## fable-5/mythos-5: old SDK gets replies downgraded to signed thinking blocks (2026-06-09)
+
+**Symptom**: assistant turns WITH thinking stored as `[thinking, thinking, tool_use]` — the
+second "thinking" block is a server-generated SUMMARY of the visible reply (sometimes English
+paraphrase of a Chinese reply), WITH signature. User-visible replies vanish into the thinking
+fold in UI. Reported by story1001, reproduced in root's own session.
+
+**Root cause — NOT a matrix bug**: claude-fable-5's visible output passes through a server-side
+filter/summarizer model and carries a signature ("thinking verification hash chains", see new
+SDK BetaFallbackBlock docs). The server sniffs client SDK version (x-stainless headers); old
+SDKs (0.78) are served a COMPAT format where signed content is downgraded to thinking blocks —
+the only block type old clients reliably round-trip with signatures. SDK accumulator and walker
+faithfully reproduce server blocks; verified via debug `last-response.json` (raw finalMessage):
+the "second thinking" was a 135-char compressed paraphrase of a ~300-char actual reply.
+
+**Fix**: @anthropic-ai/sdk 0.78.0 → 0.104.0 (commit a61d341). Verified post-restart: same turn
+shape now returns `[thinking, text, tool_use]` with verbatim text. Historical JSONL keeps the
+summarized-thinking turns (accurate record of what the server sent) — no retroactive repair.
+
+**Diagnosis pattern (reusable)**: when block types look wrong, read the per-traceId
+`debug/<taskId>/<traceId>/last-response.json` (raw server response, written before tool exec —
+a bash call can read its OWN turn's response). That separates server-sent vs client-corrupted
+in one step.
+
+**Known follow-up gaps (untouched, wait for real data — anti-pattern #6)**:
+1. `fallback` block (server-side model fallback on refusal): buildResponseEvents has no branch →
+   not persisted to JSONL → post-restart walker omits it → per SDK docs the thinking hash chains
+   flanking the boundary can't verify → request rejected. Only fires when a fallback hop occurs.
+2. New stop_reasons (`refusal`, `pause_turn`, `compaction`, `model_context_window_exceeded`):
+   getStopReason maps all non-end_turn to "tool_use".
+3. SDK pin is caret (`^0.104.0`) — fine for now; fable-era servers change behavior by SDK
+   version, so future "weird block" bugs should check SDK gap FIRST.
