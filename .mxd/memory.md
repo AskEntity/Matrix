@@ -3092,3 +3092,26 @@ its own originals; the client/user only ever has the server-rewritten summaries.
 - Experiment protocol (reusable): canary in visible-text-only → next-turn recall recorded in
   tool input BEFORE any read → grep client records. Tool inputs are the only generation-time
   verbatim side channel (must be executed as written).
+
+## fable-5 FINAL: "Connector text summarization (beta)" — official doc found (2026-06-10)
+
+AWS Bedrock doc (claude-messages-adaptive-thinking.html) documents the whole phenomenon:
+- Text emitted BETWEEN tool calls ("connector text") on Fable 5 is **summarized server-side
+  and returned as a thinking block** (standard thinking shape, signature carries encrypted
+  original). "No new content block type." **"No customer opt-in or opt-out"** — SDK version
+  irrelevant, exactly as measured.
+- Scope rules explain the intermittency: applies only AFTER a tool_result exists in the
+  conversation; SHORT text segments may pass through unsummarized; **final assistant answers
+  (after all tool use is complete, i.e. end_turn text) are UNAFFECTED and remain plain text**.
+- Echo-back: pass the thinking blocks back unchanged (signature validated; stripped if sent
+  to a different model). Model-side context gets decrypted originals (canary-proven).
+
+**Operational mitigation for matrix agents**: reply-then-yield() in one turn makes the reply
+connector text (text followed by tool_use) → summarized away. Matrix already treats
+**end_turn as implicit yield** — identical pause semantics. Agents whose last action is a
+user-facing reply should END TURN instead of calling yield(); the reply then survives as
+plain text. Explicit yield() still fine when no user-facing prose precedes it.
+
+Supersedes the uncertainty in the two entries above. Fable 5 launched 2026-06-09 (public
+Mythos-class with safeguard layer; classifiers route cybersecurity/bio-chem/distillation
+requests to a guarded path — the anti-distillation reading was correct as motive).
