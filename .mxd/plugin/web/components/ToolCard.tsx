@@ -226,7 +226,7 @@ export const ToolCard = memo(function ToolCard({
 			);
 		}
 	}
-	if (onProjectNavigate && toolName === TOOL_SEND_MESSAGE_TO_PROJECT) {
+	if (toolName === TOOL_SEND_MESSAGE_TO_PROJECT) {
 		const targetProjectId = getArg(toolArgs, "targetProjectId");
 		if (targetProjectId) {
 			const targetName = projectMap?.get(targetProjectId) ?? targetProjectId;
@@ -239,7 +239,7 @@ export const ToolCard = memo(function ToolCard({
 						className="mxd-clickable-task-name"
 						onClick={(e) => {
 							e.stopPropagation();
-							onProjectNavigate(targetProjectId);
+							onProjectNavigate?.(targetProjectId);
 						}}
 					>
 						{targetName}

@@ -622,7 +622,7 @@ export const LogEntryView = memo(function LogEntryView({
 				: (text.split("\n")[0] ?? text);
 
 		const titleNode =
-			fromProjectId && onProjectNavigate && projectName ? (
+			fromProjectId && projectName ? (
 				<>
 					{"Cross-project ← "}
 					{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate */}
@@ -631,16 +631,16 @@ export const LogEntryView = memo(function LogEntryView({
 						className="mxd-clickable-task-name"
 						onClick={(e) => {
 							e.stopPropagation();
-							onProjectNavigate(fromProjectId);
+							onProjectNavigate?.(fromProjectId);
 						}}
 					>
 						{projectName}
 					</span>
 				</>
 			) : projectName ? (
-				`← ${projectName}`
+				`Cross-project ← ${projectName}`
 			) : (
-				"← Cross-Project"
+				"Cross-project ←"
 			);
 
 		return (
