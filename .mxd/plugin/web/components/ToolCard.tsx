@@ -232,7 +232,7 @@ export const ToolCard = memo(function ToolCard({
 			const targetName = projectMap?.get(targetProjectId) ?? targetProjectId;
 			cardTitle = (
 				<>
-					{"→ "}
+					{"Cross-project → "}
 					{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate */}
 					{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable project name */}
 					<span
