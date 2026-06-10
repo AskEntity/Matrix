@@ -3298,3 +3298,325 @@ describe("Drift: compaction lifecycle", () => {
 		}
 	}, 30000);
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// FIX-5: too-short compact brick + duplicate-done brick
+// ══════════════════════════════════════════════════════════════════════
+
+describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
+	let ctx: TestContext;
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	// ── R8-B#1(a): too-short compact → must NOT emit compact_marker ──
+	// The old messages.length<=4 branch emitted a bare compact_marker WITHOUT
+	// rebuilding context (no session_config, no compacted_resume). On restart,
+	// readActive() returns only post-marker events → starts with assistant →
+	// 400 "first message must be role user" → permanent brick.
+	//
+	// Test: yield → /compact (too short, compactOnly) → the too-short branch
+	// consumes the deferred yield result and does NOT emit compact_marker → the
+	// agent makes the next API call normally → done.
+	test("R8-B#1(a): too-short compact must NOT emit compact_marker", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Turn 1: yield. Turn 2 (after /compact wake): done.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Short context." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Finished." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "too-short compact ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		// Send /compact during yield → compactOnly → too-short branch
+		// → agent processes, makes API call (turn 2: done) → exits
+		await deliverMessage(
+			ctx.app.ctx,
+			{ id: ctx.projectId, path: ctx.projectDir },
+			rootNodeId,
+			createCompactMessage(),
+		);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Key assertion: NO compact_marker in the JSONL
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const compactMarkers = events.filter(
+			(e: Event) => e.type === "compact_marker",
+		);
+		expect(compactMarkers.length).toBe(0);
+
+		// Verify the deferred yield tool_result was consumed (proves the
+		// too-short branch handled it correctly)
+		const yieldResults = events.filter(
+			(e: Event) =>
+				e.type === "tool_result" &&
+				e.tool === "mcp__mxd__yield" &&
+				typeof e.content === "string" &&
+				e.content.includes("Manual compaction requested"),
+		);
+		expect(yieldResults.length).toBe(1);
+
+		// No role alternation errors
+		for (const rec of ctx.mockAPI.getRequestHistory()) {
+			for (let i = 1; i < rec.messages.length; i++) {
+				expect(rec.messages[i]?.role === rec.messages[i - 1]?.role).toBe(false);
+			}
+		}
+	}, 30000);
+
+	// ── R8-B#1(b): too-short compact with pending yield tool_result ──
+	// When /compact arrives during yield (compactOnly=true), the yield handler
+	// defers the tool_result to pendingCompactYieldToolCall. If the too-short
+	// branch fires next, it must consume the deferred tool_result — otherwise
+	// the assistant's yield tool_use has no result → API 400.
+	test("R8-B#1(b): too-short compact must consume pendingCompactYieldToolCall", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Single yield → short conversation
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Yielding." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// After consuming the deferred yield result + too-short status, done
+				{
+					blocks: [
+						{ type: "text", text: "After compact attempt." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "deferred yield consumed" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		// Send ONLY /compact (compactOnly=true) → yield handler defers tool_result
+		// → too-short branch must consume it
+		await deliverMessage(
+			ctx.app.ctx,
+			{ id: ctx.projectId, path: ctx.projectDir },
+			rootNodeId,
+			createCompactMessage(),
+		);
+
+		// If the fix works, agent processes the deferred tool_result and continues
+		// to done. If not, the API call fails with 400 (dangling tool_use).
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Verify no error events about role alternation
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const roleErrors = events.filter(
+			(e: Event) =>
+				e.type === "error" &&
+				typeof e.message === "string" &&
+				/alternate roles|must alternate/i.test(e.message),
+		);
+		expect(roleErrors.length).toBe(0);
+	}, 30000);
+
+	// ── R8-B#2: duplicate done() calls → permanent brick ──
+	// API returns 2 done tool_uses. Without fix, both exit as orphans → on resume,
+	// repair gives first an interrupted result, skips the last → second done has no
+	// result → API 400 on next wake → unrecoverable.
+	test("R8-B#2: duplicate done() calls — extras get tool_results, restart survives", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Turn 1: API returns 2 done tool_uses.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Double done." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "first done" },
+						},
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "second done" },
+						},
+					],
+				},
+				// After wake (if restarted), done
+				{
+					blocks: [
+						{ type: "text", text: "Woken after dup done." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "dup done restart ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Verify: extra done(s) have tool_results in JSONL (orphan prevention)
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const doneToolResults = events.filter(
+			(e: Event) =>
+				e.type === "tool_result" &&
+				e.tool === "mcp__mxd__done" &&
+				typeof e.content === "string" &&
+				e.content.includes("duplicate"),
+		);
+		// At least 1 extra done should have a "duplicate" tool_result
+		expect(doneToolResults.length).toBeGreaterThanOrEqual(1);
+
+		// Restart and wake — must not brick
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+		await sendMessage(ctx, wakeDoneInstruction("dup done restart ok"));
+		const status2 = await waitForDone(ctx);
+		expect(status2).toBe("verify");
+	}, 30000);
+
+	// ── R8-B#11: duplicate-yield extras dropped on compactOnly wake ──
+	// When API returns 2 yields and /compact is the ONLY wake message,
+	// pendingDuplicateYieldExtras must be included in the compact bundling.
+	// Without fix, extras' tool_results are dangling → API 400.
+	test("R8-B#11: duplicate-yield extras bundled into compactOnly compact path", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// 3 yield cycles to build up messages, then duplicate yield in turn 4,
+		// followed by /compact (compactOnly) then done.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Turn 1." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 2." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Turn 3." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// Turn 4: duplicate yield
+				{
+					blocks: [
+						{ type: "text", text: "Double yielding before compact." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				// Turn 5: after compact, done
+				{
+					blocks: [
+						{ type: "text", text: "Post compact." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "dup yield compact ok" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 1");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 2");
+		await waitForIdle(ctx);
+		await sendMessage(ctx, "wake 3");
+		await waitForIdle(ctx);
+
+		// Now agent is idle with duplicate yields in the last turn.
+		// Send ONLY /compact → compactOnly=true with pendingDuplicateYieldExtras set
+		await deliverMessage(
+			ctx.app.ctx,
+			{ id: ctx.projectId, path: ctx.projectDir },
+			rootNodeId,
+			createCompactMessage(),
+		);
+
+		// Wait for compaction to complete
+		const start = Date.now();
+		let sawCompactMarker = false;
+		let sawAlternateError = false;
+		while (Date.now() - start < 12000) {
+			const events = await readSessionEvents(ctx, rootNodeId);
+			sawCompactMarker = events.some((e: Event) => e.type === "compact_marker");
+			sawAlternateError = events.some(
+				(e: Event) =>
+					e.type === "error" &&
+					typeof e.message === "string" &&
+					/alternate roles|must alternate/i.test(e.message),
+			);
+			if (sawCompactMarker || sawAlternateError) break;
+			await new Promise((r) => setTimeout(r, 100));
+		}
+
+		expect(sawAlternateError).toBe(false);
+		expect(sawCompactMarker).toBe(true);
+
+		// After compaction, wake the agent and verify it can finish.
+		// Use wakeDoneInstruction so the mock has a valid instruction for
+		// the post-compact API call (the original instruction's turns are consumed).
+		await sendMessage(ctx, wakeDoneInstruction("dup yield compact ok"));
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Verify all requests alternate roles
+		for (const rec of ctx.mockAPI.getRequestHistory()) {
+			for (let i = 1; i < rec.messages.length; i++) {
+				expect(rec.messages[i]?.role === rec.messages[i - 1]?.role).toBe(false);
+			}
+		}
+	}, 30000);
+});

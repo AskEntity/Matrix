@@ -3183,3 +3183,38 @@ Both routes now validate: node must exist (404) and be a task node, not folder (
 
 ### R8-C#5 — draft guard on REST /message
 REST `/message` rejects `status === "draft"` with 400, matching MCP `send_message` behavior.
+
+## FIX-5 (2026-06-10) — too-short compact brick + duplicate-done brick + dup-yield compact extras
+
+Three bugs in `provider-shared.ts`, all causing permanent session bricks.
+
+### R8-B#1 — too-short compact must NOT emit compact_marker
+`messages.length <= 4` branch emitted `compact_started` + `compact_marker` without
+rebuilding context (no session_config, no compacted_resume). On restart,
+`readActive()` returns only post-marker events → starts with assistant → 400
+"first message must be role user" → permanent brick. Fix: emit only a status
+"Context is too short to compact", reset `manualCompactRequested`, and consume any
+`pendingCompactYieldToolCall` / `pendingCompactDoneToolCall` + `pendingDuplicateYieldExtras`
+so the assistant tool_use has a matching result.
+
+### R8-B#2 — duplicate done() → emit results for ALL dones
+Two done tool_calls both exited as orphans. On resume, repair placed the interrupted
+result AFTER lifecycle events (agent_end, done_notified). The walker tool_result
+collection loop broke at those lifecycle events → two separate user messages → API 400
+→ permanent brick. Fix: for duplicates, emit tool_results for ALL dones (extras get
+"duplicate done", winner gets "processed successfully"). No orphans → no repair →
+no walker issue. Trade-off: resume detects `isInterruptedResume` instead of
+`pendingDoneToolCall`, so agent gets normal interrupted resume instead of special
+done-resume context.
+
+### R8-B#11 — duplicate-yield extras must be bundled in compactOnly compact path
+`pendingDuplicateYieldExtras` was only consumed in the normal yield-wake path. The
+compactOnly compact path ignored them → extras tool_results were dangling → API 400.
+Fix: compact summarization path and too-short path both include extras in the bundled
+user turn.
+
+### Pre-existing issue found (not fixed here): compact messages never get messages_consumed
+`handleImplicitYield` filters compact messages from `nonCompact` and `recordQueueEvents`
+only records nonCompact. On restart, `findUnconsumedMessages` re-enqueues the compact →
+spurious `manualCompactRequested` on next session. Usually benign but can cause
+consecutive user messages during done-resume with compact.
