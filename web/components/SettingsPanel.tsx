@@ -918,7 +918,7 @@ function TabActions({
 				onClick={onSave}
 				disabled={!dirty}
 			>
-				{t("settings.save")}
+				{dirty ? t("settings.save") : t("settings.saved")}
 			</button>
 			<button
 				type="button"
@@ -1355,6 +1355,12 @@ export const SettingsPanel = memo(function SettingsPanel({
 	// Save handlers — compute diff patch and send
 	const saveGlobal = async () => {
 		setSaveError(null);
+		// Required field validation — model must be set on the global tab
+		const model = (draftGlobal.model as string | undefined) ?? "";
+		if (!model.trim()) {
+			window.alert(t("settings.modelRequired"));
+			return;
+		}
 		// Global config requires all fields — never send null (allowNull=false).
 		const patch = buildPatch(draftGlobal, layers.global, false);
 		if (Object.keys(patch).length > 0) {
