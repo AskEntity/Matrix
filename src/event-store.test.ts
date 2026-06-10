@@ -1101,4 +1101,242 @@ describe("EventStore", () => {
 		expect(events[0]?.type).toBe("agent_start");
 		expect(events.find((e) => e.type === "error")).toBeUndefined();
 	});
+
+	// ── R8-B#4: malformed lines shift truncation index ──
+	// read() skips malformed JSONL lines, so parsed-event indices don't match
+	// physical file lines. truncateAfterLine operates on physical lines.
+	// buildSessionRepair returns event-array-relative indices. With malformed
+	// lines before the cut point, the physical cut lands N lines early (one
+	// per malformed line) → silently destroys valid events.
+	describe("R8-B#4: malformed lines shift truncation index", () => {
+		test("readWithLineMap returns events with their physical line numbers", async () => {
+			const { appendFileSync } = await import("node:fs");
+			const e0: Event = {
+				type: "assistant_text",
+				content: "event zero",
+				taskId: "t",
+				ts: 1000,
+			};
+			const e1: Event = {
+				type: "assistant_text",
+				content: "event one",
+				taskId: "t",
+				ts: 2000,
+			};
+			const e2: Event = {
+				type: "assistant_text",
+				content: "event two",
+				taskId: "t",
+				ts: 3000,
+			};
+
+			// Seed file: [e0, GARBAGE, e1, GARBAGE2, e2]
+			// Physical lines: 0=e0, 1=GARBAGE, 2=e1, 3=GARBAGE2, 4=e2
+			await store.append("m", e0);
+			appendFileSync(join(TEST_DIR, "m.jsonl"), "this is not valid json\n");
+			await store.append("m", e1);
+			appendFileSync(join(TEST_DIR, "m.jsonl"), "another broken line\n");
+			await store.append("m", e2);
+
+			const { events, physicalLines } = store.readWithLineMap("m");
+			expect(events).toHaveLength(3);
+			const texts = events
+				.filter((e): e is Event & { content: string } => e.type === "assistant_text")
+				.map((e) => e.content);
+			expect(texts).toEqual(["event zero", "event one", "event two"]);
+
+			// Physical lines: e0=0, e1=2, e2=4 (malformed at 1 and 3)
+			expect(physicalLines).toEqual([0, 2, 4]);
+		});
+
+		test("truncation after event index 2 with malformed lines preserves all 3 valid events", async () => {
+			const { appendFileSync } = await import("node:fs");
+
+			const e0: Event = {
+				type: "assistant_text",
+				content: "event zero",
+				taskId: "t",
+				ts: 1000,
+			};
+			const e1: Event = {
+				type: "assistant_text",
+				content: "event one",
+				taskId: "t",
+				ts: 2000,
+			};
+			const e2: Event = {
+				type: "assistant_text",
+				content: "event two",
+				taskId: "t",
+				ts: 3000,
+			};
+
+			// File: [e0, GARBAGE, e1, e2] — 4 physical lines
+			// read() → [e0, e1, e2] — 3 events
+			// physicalLines → [0, 2, 3]
+			await store.append("m2", e0);
+			appendFileSync(join(TEST_DIR, "m2.jsonl"), "GARBAGE\n");
+			await store.append("m2", e1);
+			await store.append("m2", e2);
+
+			// To keep all 3 events, truncation must use physical line 3, not event-index 2.
+			// Use readWithLineMap to get the correct physical line.
+			const { events, physicalLines } = store.readWithLineMap("m2");
+			expect(events).toHaveLength(3);
+
+			// "Keep everything" = truncate after physical line of last event
+			const keepAllPhysicalLine = physicalLines[events.length - 1]!;
+			expect(keepAllPhysicalLine).toBe(3); // physical line 3, not event-index 2
+
+			await store.truncateAfterLine("m2", keepAllPhysicalLine);
+
+			// All 3 valid events survive
+			const after = store.read("m2");
+			expect(after).toHaveLength(3);
+			const afterTexts = after
+				.filter((e): e is Event & { content: string } => e.type === "assistant_text")
+				.map((e) => e.content);
+			expect(afterTexts).toEqual(["event zero", "event one", "event two"]);
+		});
+
+		test("BUG REPRO: using event-array index as physical line destroys the last event", async () => {
+			const { appendFileSync } = await import("node:fs");
+
+			const e0: Event = {
+				type: "assistant_text",
+				content: "event zero",
+				taskId: "t",
+				ts: 1000,
+			};
+			const e1: Event = {
+				type: "assistant_text",
+				content: "event one",
+				taskId: "t",
+				ts: 2000,
+			};
+			const e2: Event = {
+				type: "assistant_text",
+				content: "event two",
+				taskId: "t",
+				ts: 3000,
+			};
+
+			// File: [e0, GARBAGE, e1, e2] — 4 physical lines, 3 valid events
+			await store.append("bug", e0);
+			appendFileSync(join(TEST_DIR, "bug.jsonl"), "GARBAGE\n");
+			await store.append("bug", e1);
+			await store.append("bug", e2);
+
+			// Bug: event-array index 2 (last event) used as physical line → keeps lines 0,1,2
+			// Physical line 2 = e1, so e2 (physical line 3) is destroyed
+			await store.truncateAfterLine("bug", 2);
+			const after = store.read("bug");
+
+			// With the bug: only 2 events survive (e0, e1). e2 at physical line 3 is gone.
+			// After fix: callers would use readWithLineMap and pass physical line 3 instead.
+			// This test documents the BUG behavior to prove it exists before the fix.
+			expect(after).toHaveLength(2);
+			const bugTexts = after
+				.filter((e): e is Event & { content: string } => e.type === "assistant_text")
+				.map((e) => e.content);
+			expect(bugTexts).toEqual(["event zero", "event one"]);
+			// e2 was destroyed — this IS the bug
+		});
+	});
+
+	// ── R8-B#5: truncateAfterLine must serialize with write queue ──
+	// truncateAfterLine bypasses enqueueWrite. A message persisted by
+	// deliverMessage in the flush-to-truncate window lands physically then
+	// gets cut by writeFileSync.
+	describe("R8-B#5: truncateAfterLine serialization with write queue", () => {
+		test("truncation waits for pending writes before executing", async () => {
+			// Seed 2 events synchronously
+			const e0: Event = {
+				type: "assistant_text",
+				content: "base",
+				taskId: "t",
+				ts: 1000,
+			};
+			const e1: Event = {
+				type: "assistant_text",
+				content: "second",
+				taskId: "t",
+				ts: 2000,
+			};
+			await store.append("q", e0);
+			await store.append("q", e1);
+
+			// Enqueue a slow write (simulating a concurrent deliverMessage)
+			const e2: Event = {
+				type: "assistant_text",
+				content: "slow write",
+				taskId: "t",
+				ts: 3000,
+			};
+			// Use private enqueueWrite with a delay to simulate slow I/O
+			const privateStore = store as unknown as {
+				enqueueWrite(sessionId: string, fn: () => Promise<void>): Promise<void>;
+				path(sessionId: string): string;
+			};
+			const { appendFileSync: syncAppend } = await import("node:fs");
+			const slowWrite = privateStore.enqueueWrite("q", async () => {
+				await new Promise((r) => setTimeout(r, 30));
+				syncAppend(
+					privateStore.path("q"),
+					`${JSON.stringify(e2)}\n`,
+				);
+			});
+
+			// Call truncateAfterLine immediately — should wait for the slow write
+			// to complete FIRST, then truncate (keeping lines 0..2 = all 3 events)
+			const truncation = store.truncateAfterLine("q", 2);
+
+			await Promise.all([slowWrite, truncation]);
+
+			// After fix: all 3 events present (slow write landed, truncation kept all)
+			const readEvents = store.read("q");
+			expect(readEvents).toHaveLength(3);
+			const qTexts = readEvents
+				.filter((e): e is Event & { content: string } => e.type === "assistant_text")
+				.map((e) => e.content);
+			expect(qTexts).toEqual(["base", "second", "slow write"]);
+		});
+
+		test("writes enqueued after truncation wait for truncation to complete", async () => {
+			// Seed 4 events
+			const events: Event[] = [];
+			for (let i = 0; i < 4; i++) {
+				const e: Event = {
+					type: "assistant_text",
+					content: `event-${i}`,
+					taskId: "t",
+					ts: 1000 + i,
+				};
+				events.push(e);
+				await store.append("q2", e);
+			}
+
+			// Truncate to keep first 2 events (lines 0,1)
+			const truncation = store.truncateAfterLine("q2", 1);
+
+			// Immediately enqueue a new write — should execute AFTER truncation
+			const newEvent: Event = {
+				type: "assistant_text",
+				content: "post-truncation",
+				taskId: "t",
+				ts: 5000,
+			};
+			const write = store.append("q2", newEvent);
+
+			await Promise.all([truncation, write]);
+
+			// After fix: [event-0, event-1, post-truncation]
+			const result = store.read("q2");
+			expect(result).toHaveLength(3);
+			const q2Texts = result
+				.filter((e): e is Event & { content: string } => e.type === "assistant_text")
+				.map((e) => e.content);
+			expect(q2Texts).toEqual(["event-0", "event-1", "post-truncation"]);
+		});
+	});
 });
