@@ -276,7 +276,7 @@ interface ScopeWorker {
 			resolve: (response: {
 				status: number;
 				headers: Record<string, string>;
-				body: string;
+				body: string | ArrayBuffer;
 				_isStream?: boolean;
 			}) => void;
 			reject: (error: Error) => void;
