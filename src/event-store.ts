@@ -144,21 +144,41 @@ export class EventStore {
 
 	/** Read all events for a session */
 	read(sessionId: string): Event[] {
+		return this.readWithLineMap(sessionId).events;
+	}
+
+	/**
+	 * Read all events for a session, returning both parsed events AND their
+	 * physical 0-based line numbers in the JSONL file. Malformed and blank
+	 * lines are skipped but their physical positions are consumed — so
+	 * `physicalLines[i]` gives the exact file line of `events[i]`.
+	 *
+	 * Use this when the physical line number matters (e.g., before calling
+	 * `truncateAfterLine`, which operates on raw file lines).
+	 */
+	readWithLineMap(sessionId: string): {
+		events: Event[];
+		physicalLines: number[];
+	} {
 		const p = this.path(sessionId);
-		if (!existsSync(p)) return [];
+		if (!existsSync(p)) return { events: [], physicalLines: [] };
 		const text = readFileSync(p, "utf-8");
 		const events: Event[] = [];
-		for (const line of text.trim().split("\n")) {
+		const physicalLines: number[] = [];
+		const rawLines = text.split("\n");
+		for (let i = 0; i < rawLines.length; i++) {
+			const line = rawLines[i];
 			if (!line) continue;
 			try {
 				events.push(JSON.parse(line) as Event);
+				physicalLines.push(i);
 			} catch {
 				console.warn(
-					`[EventStore] Skipping malformed JSONL line in session ${sessionId}`,
+					`[EventStore] Skipping malformed JSONL line ${i} in session ${sessionId}`,
 				);
 			}
 		}
-		return events;
+		return { events, physicalLines };
 	}
 
 	/** Read events after the last compact_marker (for provider message reconstruction) */
@@ -224,27 +244,31 @@ export class EventStore {
 
 	/**
 	 * Truncate a session's JSONL file, keeping only lines 0..lineIndex (inclusive).
-	 * Everything after lineIndex is removed. Serialized per-session to prevent interleaving.
-	 * Flushes pending writes before truncating to ensure consistency.
+	 * Everything after lineIndex is removed.
+	 *
+	 * Serialized through the per-session write queue: any pending writes complete
+	 * before truncation, and any writes enqueued after truncation wait for it.
+	 * The generation guard also applies — if clear() runs while truncation is
+	 * queued, the truncation is silently dropped (correct: nothing to truncate).
 	 */
-	async truncateAfterLine(sessionId: string, lineIndex: number): Promise<void> {
-		// Flush first so we read the complete file
-		await this.flushSession(sessionId);
+	truncateAfterLine(sessionId: string, lineIndex: number): Promise<void> {
+		return this.enqueueWrite(sessionId, () => {
+			const p = this.path(sessionId);
+			if (!existsSync(p)) return Promise.resolve();
 
-		const p = this.path(sessionId);
-		if (!existsSync(p)) return;
+			const text = readFileSync(p, "utf-8");
+			const lines = text.split("\n");
+			// Remove trailing empty line from split
+			if (lines.length > 0 && lines[lines.length - 1] === "") {
+				lines.pop();
+			}
 
-		const text = readFileSync(p, "utf-8");
-		const lines = text.split("\n");
-		// Remove trailing empty line from split
-		if (lines.length > 0 && lines[lines.length - 1] === "") {
-			lines.pop();
-		}
+			if (lineIndex >= lines.length - 1) return Promise.resolve(); // nothing to truncate
 
-		if (lineIndex >= lines.length - 1) return; // nothing to truncate
-
-		const kept = lines.slice(0, lineIndex + 1);
-		writeFileSync(p, `${kept.join("\n")}\n`);
+			const kept = lines.slice(0, lineIndex + 1);
+			writeFileSync(p, `${kept.join("\n")}\n`);
+			return Promise.resolve();
+		});
 	}
 
 	/**

@@ -837,23 +837,24 @@ export async function runAgentForNode(
 			// Handles both daemon restart orphans and accumulated poison
 			// from previous sessions where auto-recovery only fixed memory.
 			//
-			// Pass the FULL event log: buildSessionRepair returns a PHYSICAL line
-			// index (scoped internally to the active region) so truncateAfterLine
-			// — which slices by physical file line — keeps the compact_marker,
-			// post-compact session_config, and summary intact. Passing the
-			// post-compact slice here produced active-relative indices that, fed
-			// to truncateAfterLine, sliced off the compact boundary and corrupted
-			// the session.
-			const allEvents = eventStore.read(nodeId);
+			// readWithLineMap returns both parsed events AND their physical line
+			// numbers. buildSessionRepair returns an event-array-relative index;
+			// we translate it to a physical line via the map before calling
+			// truncateAfterLine (which operates on raw file lines). Without this
+			// translation, malformed JSONL lines (from crash-mid-append) shift
+			// the cut point and silently destroy valid events (R8-B#4).
+			const { events: allEvents, physicalLines } =
+				eventStore.readWithLineMap(nodeId);
 			const repair = buildSessionRepair(allEvents, nodeId);
 			if (repair) {
 				const needsTruncation =
 					repair.truncateAfterIndex < allEvents.length - 1;
+				const physicalLine = physicalLines[repair.truncateAfterIndex];
 				console.warn(
-					`[runAgentForNode] Repairing session ${nodeId}: ${needsTruncation ? `truncate after physical line ${repair.truncateAfterIndex}` : "append only"}, ${repair.appendEvents.length} events to add`,
+					`[runAgentForNode] Repairing session ${nodeId}: ${needsTruncation ? `truncate after physical line ${physicalLine} (event index ${repair.truncateAfterIndex})` : "append only"}, ${repair.appendEvents.length} events to add`,
 				);
-				if (needsTruncation) {
-					await eventStore.truncateAfterLine(nodeId, repair.truncateAfterIndex);
+				if (needsTruncation && physicalLine !== undefined) {
+					await eventStore.truncateAfterLine(nodeId, physicalLine);
 				}
 				if (repair.appendEvents.length > 0) {
 					await eventStore.appendBatch(nodeId, repair.appendEvents);

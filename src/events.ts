@@ -546,19 +546,24 @@ function lastToolCallEvent(events: Event[]): ToolCallEvent | null {
  *
  * COMPACT-BOUNDARY SAFETY (the index-space bug): analysis AND truncation are
  * scoped to the ACTIVE region — events after the last `compact_marker`. The
- * returned `truncateAfterIndex` is a PHYSICAL line index into the full `events`
- * array, so a caller can hand it straight to `EventStore.truncateAfterLine`
- * (which slices by physical file line). The previous version computed indices
- * against the post-compact slice (`readActive`) but truncated by physical line
- * — for a compacted session that sliced off the compact_marker, the
- * post-compact session_config, and the summary, then appended interrupted
+ * returned `truncateAfterIndex` is an EVENT-ARRAY index into the passed
+ * `events` array. Callers must translate this to a PHYSICAL JSONL line number
+ * (via `EventStore.readWithLineMap()`) before calling `truncateAfterLine`,
+ * because malformed lines (from crash-mid-append) shift the mapping between
+ * event-array indices and physical file lines (R8-B#4). The previous version
+ * computed indices against the post-compact slice (`readActive`) but truncated
+ * by physical line — for a compacted session that sliced off the compact_marker,
+ * the post-compact session_config, and the summary, then appended interrupted
  * results referencing tool_calls that had just been truncated away. The result
  * was an unrecoverable session (orphan tool_results → API 400 → repair returns
  * null → crash loop). Pass the FULL event log (`EventStore.read`), NOT
  * `readActive`: this function finds the boundary itself.
  *
  * Returns null if no repair needed, otherwise returns:
- * - truncateAfterIndex: PHYSICAL line index to truncate after (keep lines 0..index inclusive)
+ * - truncateAfterIndex: event-array index to truncate after (keep events 0..index inclusive).
+ *   This is relative to the `events` array passed in — NOT a physical JSONL line number.
+ *   Callers that need a physical line (for truncateAfterLine) must translate via the
+ *   physical-line map from EventStore.readWithLineMap().
  * - appendEvents: events to append after truncation (interrupted tool_results + status message)
  *
  * This replaces findOrphanedToolCalls, findOrphanedBackgroundProcesses, and
