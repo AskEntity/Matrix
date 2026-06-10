@@ -1179,6 +1179,101 @@ describe("walker: skipped events", () => {
 	});
 });
 
+// ── Tests: cross-provider thinking → text conversion ──
+
+describe("walker: cross-provider thinking conversion (Anthropic)", () => {
+	test("thinking from another provider → text block with <thinking> wrapper", () => {
+		const events: Event[] = [
+			{
+				type: "thinking",
+				thinking: "Reasoning about the problem",
+				signature: "sig-openai",
+				provider: "openai",
+				taskId: "",
+				ts: 0,
+			},
+			assistantTextEvent("Here is my answer."),
+		];
+		const msgs = eventsToAnthropicMessages(events);
+		expect(msgs.length).toBe(1);
+		expect(msgs[0]).toEqual({
+			role: "assistant",
+			content: [
+				{
+					type: "text",
+					text: "<thinking>\nReasoning about the problem\n</thinking>",
+				},
+				{ type: "text", text: "Here is my answer." },
+			],
+		});
+	});
+
+	test("redacted thinking from another provider → skipped", () => {
+		const events: Event[] = [
+			{
+				type: "thinking",
+				thinking: "",
+				signature: "encrypted-sig",
+				provider: "openai",
+				redacted: true,
+				taskId: "",
+				ts: 0,
+			},
+			assistantTextEvent("Answer text."),
+		];
+		const msgs = eventsToAnthropicMessages(events);
+		expect(msgs.length).toBe(1);
+		expect(msgs[0]).toEqual({
+			role: "assistant",
+			content: [{ type: "text", text: "Answer text." }],
+		});
+	});
+
+	test("same-provider thinking → unchanged (normal thinking block)", () => {
+		const events: Event[] = [
+			{
+				type: "thinking",
+				thinking: "My reasoning",
+				signature: "sig-anthropic",
+				provider: "anthropic",
+				taskId: "",
+				ts: 0,
+			},
+			assistantTextEvent("Done."),
+		];
+		const msgs = eventsToAnthropicMessages(events);
+		expect(msgs.length).toBe(1);
+		expect(msgs[0]).toEqual({
+			role: "assistant",
+			content: [
+				{
+					type: "thinking",
+					thinking: "My reasoning",
+					signature: "sig-anthropic",
+				},
+				{ type: "text", text: "Done." },
+			],
+		});
+	});
+
+	test("legacy thinking (no provider) → unchanged (assume anthropic)", () => {
+		// provider=undefined means pre-provider-field event → treat as anthropic
+		const events: Event[] = [thinkingEvent("Legacy thought", "sig-legacy")];
+		const msgs = eventsToAnthropicMessages(events);
+		expect(msgs.length).toBe(1);
+		expect(msgs[0]).toEqual({
+			role: "assistant",
+			content: [
+				{
+					type: "thinking",
+					thinking: "Legacy thought",
+					signature: "sig-legacy",
+				},
+			],
+		});
+	});
+});
+
 // ── Tests: empty/defensive cases ──
 
 describe("walker: empty and defensive cases", () => {

@@ -257,9 +257,16 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 			// Use ordered items to preserve interleaved thinking/text/tool_call sequence
 			for (const item of content.items) {
 				if (item.type === "thinking") {
-					// Filter out thinking blocks from other providers.
+					// Cross-provider thinking: convert to text with <thinking> wrapper.
 					// undefined = legacy events before provider field was added → assume anthropic.
 					if (item.provider !== undefined && item.provider !== "anthropic") {
+						// Redacted cross-provider thinking: skip (content is empty,
+						// encrypted signature has no value for a different provider)
+						if (item.redacted) continue;
+						blocks.push({
+							type: "text",
+							text: `<thinking>\n${item.thinking}\n</thinking>`,
+						});
 						continue;
 					}
 					if (item.redacted) {

@@ -289,12 +289,23 @@ export function eventsToOpenAIResponsesMessages(events: Event[]): unknown[] {
 		},
 
 		onAssistantContent(content: AssistantContent): unknown {
-			const texts = content.items
-				.filter((i): i is { type: "text"; text: string } => i.type === "text")
-				.map((i) => i.text);
+			// Collect text segments: plain text + cross-provider thinking wrapped in tags
+			const textSegments: string[] = [];
+			for (const item of content.items) {
+				if (item.type === "text") {
+					textSegments.push(item.text);
+				} else if (item.type === "thinking") {
+					// OpenAI doesn't produce thinking events; all thinking is cross-provider.
+					// Redacted: skip (content empty, encrypted signature useless for OpenAI).
+					if (item.redacted) continue;
+					textSegments.push(
+						`<thinking>\n${item.thinking}\n</thinking>`,
+					);
+				}
+			}
 			let textContent: string | null = null;
-			if (texts.length > 0) {
-				textContent = texts.join("\n");
+			if (textSegments.length > 0) {
+				textContent = textSegments.join("\n");
 			}
 
 			const toolCalls = content.items
