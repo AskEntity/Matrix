@@ -3115,3 +3115,43 @@ plain text. Explicit yield() still fine when no user-facing prose precedes it.
 Supersedes the uncertainty in the two entries above. Fable 5 launched 2026-06-09 (public
 Mythos-class with safeguard layer; classifiers route cybersecurity/bio-chem/distillation
 requests to a guarded path — the anti-distillation reading was correct as motive).
+
+## FIX-8 (2026-06-10) — EventStore truncation safety: malformed-line index + write-queue serialization
+
+Two EventStore bugs that amplify corruption during crash recovery.
+
+### R8-B#4 — Malformed lines shift truncation index
+`read()` skips malformed JSONL lines (crash artifacts) while `truncateAfterLine` slices raw
+physical lines. `buildSessionRepair` returns event-array-relative indices. With N malformed lines
+before the cut point, the physical cut lands N lines early → silently destroys valid events. Same
+index-space-mismatch class as FIX-1 cc#1 (compact boundary), but at the individual-line level.
+
+**Fix**: `EventStore.readWithLineMap()` returns `{ events, physicalLines }` where `physicalLines[i]`
+is the 0-based physical file line of `events[i]`. The call site in `agent-lifecycle.ts` reads via
+`readWithLineMap`, passes events to `buildSessionRepair` (which returns event-array-relative
+indices), then translates via the map before calling `truncateAfterLine`. `read()` now delegates to
+`readWithLineMap().events` — single parsing implementation.
+
+**Docstring correction**: `buildSessionRepair` previously claimed to return "PHYSICAL line index" —
+it actually returns event-array indices. Fixed in both the function-level and compact-boundary-safety
+docstrings.
+
+### R8-B#5 — truncateAfterLine not serialized with write queue
+`truncateAfterLine` bypassed `enqueueWrite` (did its own `flushSession` + direct sync I/O). A
+message persisted by `deliverMessage` in the flush-to-truncate window could land physically then get
+cut by the truncation's `writeFileSync`.
+
+**Fix**: route `truncateAfterLine` through `enqueueWrite`. Now fully serialized — pending writes
+complete before truncation, and writes enqueued after truncation wait for it. The generation guard
+also applies (if `clear()` runs while truncation is queued, truncation is silently dropped).
+
+### Tests (5 new, all TDD — written before fix)
+- `readWithLineMap returns events with their physical line numbers` — 2 malformed lines, verifies
+  physical line mapping [0, 2, 4]
+- `truncation after event index 2 with malformed lines preserves all 3 valid events` — end-to-end
+  proof the fix works (uses readWithLineMap → physical line → truncateAfterLine)
+- `BUG REPRO: using event-array index as physical line destroys the last event` — proves B#4 bug
+  exists (passing event-index 2 as physical line cuts physical line 3)
+- `truncation waits for pending writes before executing` — slow write completes before truncation
+- `writes enqueued after truncation wait for truncation to complete` — truncation then append, order
+  preserved
