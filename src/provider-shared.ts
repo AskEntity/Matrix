@@ -1300,6 +1300,11 @@ export async function* runProviderLoop(
 
 		// ── Pre-call compression: count tokens, inject summarization instruction if over threshold ──
 		if (manualCompactRequested && messages.length <= 4) {
+			// Context too short to compact. Do NOT emit compact_marker — a bare marker
+			// without session_config + compacted_resume after it would brick the session
+			// on restart (readActive() returns only post-marker events → starts with
+			// assistant → API 400 "first message must be role user" → permanent brick).
+			// Just emit a status and skip. (R8-B#1)
 			const s1: EventSpec = {
 				type: "status",
 				message: "Context is too short to compact",
@@ -1307,17 +1312,57 @@ export async function* runProviderLoop(
 			};
 			emit?.(s1);
 			yield s1;
-			const s2: EventSpec = { type: "compact_started", ts: Date.now() };
-			emit?.(s2);
-			yield s2;
-			const s3: EventSpec = {
-				type: "compact_marker",
-				savedTokens: 0,
-				ts: Date.now(),
-			};
-			emit?.(s3);
-			yield s3;
 			manualCompactRequested = false;
+
+			// If a yield/done tool_result was deferred for the compaction path
+			// (pendingCompactYieldToolCall / pendingCompactDoneToolCall), we must
+			// consume it now. The tool_result was already emitted to JSONL (orphan
+			// prevention); we need to push it to messages[] so the next API call
+			// has a complete user turn. Without this, the assistant's tool_use has
+			// no matching result → API 400 "has tool_use but no following user
+			// message with tool_results". (R8-B#1b)
+			const pendingCompactToolCall =
+				pendingCompactYieldToolCall ?? pendingCompactDoneToolCall;
+			if (pendingCompactToolCall) {
+				// Include duplicate-yield extras if any (R8-B#11 overlap with B#1b)
+				const extraYieldToolUses: ProviderToolUse[] =
+					pendingDuplicateYieldExtras.map((e) => ({
+						id: e.id,
+						name: e.name,
+						input: {},
+					}));
+				const extraYieldExecs: ToolResult[] =
+					pendingDuplicateYieldExtras.map(() => ({
+						content:
+							"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
+						isError: false,
+					}));
+
+				const toolResultMsgs = adapter.buildUserTurn({
+					toolUses: [
+						...extraYieldToolUses,
+						{
+							id: pendingCompactToolCall.id,
+							name: pendingCompactToolCall.name,
+							input: {},
+						},
+					],
+					execResults: [
+						...extraYieldExecs,
+						{
+							content: "Manual compaction requested",
+							isError: false,
+						},
+					],
+					queueMessages: [],
+				});
+				for (const msg of toolResultMsgs) {
+					messages.push(msg);
+				}
+				pendingCompactYieldToolCall = null;
+				pendingCompactDoneToolCall = null;
+				pendingDuplicateYieldExtras = [];
+			}
 			continue;
 		}
 		if (messages.length > 4) {
@@ -1383,8 +1428,29 @@ export async function* runProviderLoop(
 					// walker-delegating buildUserTurn. Walker is the single source of
 					// truth for tool_result user messages → live and reconstruction
 					// produce byte-identical output.
+					//
+					// If duplicate-yield extras are pending (R8-B#11), bundle their
+					// tool_results into the SAME user turn. The extras' tool_result
+					// events were already emitted to JSONL (orphan prevention at
+					// yield-detection time); without bundling here, the assistant's
+					// extra tool_uses have no matching result in the user turn →
+					// API 400 during the compaction call.
+					const extraYieldToolUses: ProviderToolUse[] =
+						pendingDuplicateYieldExtras.map((e) => ({
+							id: e.id,
+							name: e.name,
+							input: {},
+						}));
+					const extraYieldExecs: ToolResult[] =
+						pendingDuplicateYieldExtras.map(() => ({
+							content:
+								"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
+							isError: false,
+						}));
+
 					const bundledMsgs = adapter.buildUserTurn({
 						toolUses: [
+							...extraYieldToolUses,
 							{
 								id: pendingCompactToolCall.id,
 								name: pendingCompactToolCall.name,
@@ -1392,6 +1458,7 @@ export async function* runProviderLoop(
 							},
 						],
 						execResults: [
+							...extraYieldExecs,
 							{
 								content: "Manual compaction requested",
 								isError: false,
@@ -1399,9 +1466,9 @@ export async function* runProviderLoop(
 						],
 						queueMessages: [],
 					});
-					// The buildUserTurn output is a single user message with ONE
-					// tool_result block. Extend its content array with the
-					// summarization text so both blocks share the same user turn.
+					// The buildUserTurn output is a single user message with
+					// tool_result blocks. Extend its content array with the
+					// summarization text so all blocks share the same user turn.
 					for (const msg of bundledMsgs) {
 						const m = msg as { role: string; content: unknown };
 						if (m.role === "user" && Array.isArray(m.content)) {
@@ -1414,6 +1481,7 @@ export async function* runProviderLoop(
 					}
 					pendingCompactYieldToolCall = null;
 					pendingCompactDoneToolCall = null;
+					pendingDuplicateYieldExtras = [];
 				} else {
 					(messages as Array<{ role: string; content: string }>).push({
 						role: "user",
@@ -1775,6 +1843,49 @@ export async function* runProviderLoop(
 			const doneIndex = toolUses.indexOf(doneToolUse);
 			const doneResult = execResults[doneIndex] as ToolResult | undefined;
 			if (doneResult && !doneResult.isError) {
+				// Handle duplicate done calls in the same turn (R8-B#2).
+				// Emit tool_results for ALL dones (extras AND the winner) so that
+				// NO orphans remain in JSONL. Without this, the winner exits as an
+				// intended orphan → on resume, repair adds an interrupted result
+				// AFTER lifecycle events (agent_end, done_notified) → the walker's
+				// tool_result collection loop breaks at those lifecycle events →
+				// two separate user messages → API 400 "consecutive user" → permanent
+				// brick. Emitting ALL results avoids repair entirely.
+				//
+				// Trade-off: with all results emitted, resume detects
+				// isInterruptedResume (not pendingDoneToolCall), so the agent gets
+				// a normal interrupted resume instead of the special done-resume
+				// context. This is acceptable — correctness over ideal UX.
+				const extraDones = toolUses.filter(
+					(tu) => tu.name === TOOL_DONE && tu.id !== doneToolUse.id,
+				);
+				if (extraDones.length > 0) {
+					// Emit extras' results first
+					for (const tu of extraDones) {
+						const evt: EventSpec = {
+							type: "tool_result" as const,
+							tool: tu.name,
+							toolCallId: tu.id,
+							content:
+								"done() ignored — duplicate done in same turn. Only the first done is used.",
+							isError: false,
+							ts: Date.now(),
+						};
+						if (emit) emit(evt);
+					}
+					// Emit winner's result too — prevents it from being an orphan
+					// that repair would place after lifecycle events
+					const winnerResultEvt: EventSpec = {
+						type: "tool_result" as const,
+						tool: doneToolUse.name,
+						toolCallId: doneToolUse.id,
+						content: "done() processed successfully.",
+						isError: false,
+						ts: Date.now(),
+					};
+					if (emit) emit(winnerResultEvt);
+				}
+
 				const doneInput = doneToolUse.input as
 					| { status?: string; summary?: string }
 					| undefined;
