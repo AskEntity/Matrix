@@ -536,6 +536,87 @@ describe("eventsToOpenAIResponsesMessages", () => {
 	});
 });
 
+describe("eventsToOpenAIResponsesMessages: cross-provider thinking", () => {
+	test("thinking from another provider → text content with <thinking> wrapper", () => {
+		const events: Event[] = [
+			{
+				type: "thinking",
+				thinking: "Anthropic reasoning here",
+				signature: "sig-anthro",
+				provider: "anthropic",
+				taskId: "t1",
+				ts: 1,
+			},
+			{
+				type: "assistant_text",
+				content: "Visible answer",
+				taskId: "t1",
+				ts: 2,
+			},
+		];
+		const msgs = eventsToOpenAIResponsesMessages(events) as Array<
+			Record<string, unknown>
+		>;
+		expect(msgs).toHaveLength(1);
+		// OpenAI format: text content is a string (not blocks)
+		// Thinking converted to text should be prepended
+		expect(msgs[0]).toEqual({
+			role: "assistant",
+			content:
+				"<thinking>\nAnthropic reasoning here\n</thinking>\nVisible answer",
+		});
+	});
+
+	test("redacted thinking from another provider → skipped", () => {
+		const events: Event[] = [
+			{
+				type: "thinking",
+				thinking: "",
+				signature: "encrypted-sig",
+				provider: "anthropic",
+				redacted: true,
+				taskId: "t1",
+				ts: 1,
+			},
+			{
+				type: "assistant_text",
+				content: "Just the answer",
+				taskId: "t1",
+				ts: 2,
+			},
+		];
+		const msgs = eventsToOpenAIResponsesMessages(events) as Array<
+			Record<string, unknown>
+		>;
+		expect(msgs).toHaveLength(1);
+		expect(msgs[0]).toEqual({
+			role: "assistant",
+			content: "Just the answer",
+		});
+	});
+
+	test("thinking-only turn (no text, no tool_call) → text content from thinking", () => {
+		const events: Event[] = [
+			{
+				type: "thinking",
+				thinking: "Just thinking, no output",
+				signature: "sig-1",
+				provider: "anthropic",
+				taskId: "t1",
+				ts: 1,
+			},
+		];
+		const msgs = eventsToOpenAIResponsesMessages(events) as Array<
+			Record<string, unknown>
+		>;
+		expect(msgs).toHaveLength(1);
+		expect(msgs[0]).toEqual({
+			role: "assistant",
+			content: "<thinking>\nJust thinking, no output\n</thinking>",
+		});
+	});
+});
+
 describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 	let tmpDir: string;
 

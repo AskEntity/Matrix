@@ -174,7 +174,7 @@ describe("Golden: thinking blocks in walker output", () => {
 		]);
 	});
 
-	test("thinking from different provider — filtered out", () => {
+	test("thinking from different provider — converted to text with <thinking> tags", () => {
 		const events: Event[] = [
 			thinkingEvent("OpenAI thinking content.", "openai-sig-xyz", {
 				provider: "openai",
@@ -185,12 +185,18 @@ describe("Golden: thinking blocks in walker output", () => {
 		expect(msgs).toEqual([
 			{
 				role: "assistant",
-				content: [{ type: "text", text: "Response after filtered thinking." }],
+				content: [
+					{
+						type: "text",
+						text: "<thinking>\nOpenAI thinking content.\n</thinking>",
+					},
+					{ type: "text", text: "Response after filtered thinking." },
+				],
 			},
 		]);
 	});
 
-	test("mixed providers — only anthropic thinking blocks survive", () => {
+	test("mixed providers — anthropic thinking stays native, other converted to text", () => {
 		const events: Event[] = [
 			thinkingEvent("Anthropic thinking.", MOCK_SIGNATURE_1, {
 				provider: "anthropic",
@@ -209,6 +215,10 @@ describe("Golden: thinking blocks in walker output", () => {
 						thinking: "Anthropic thinking.",
 						signature: MOCK_SIGNATURE_1,
 					},
+					{
+						type: "text",
+						text: "<thinking>\nOpenAI thinking.\n</thinking>",
+					},
 					{ type: "text", text: "Mixed response." },
 					{
 						type: "tool_use",
@@ -222,15 +232,21 @@ describe("Golden: thinking blocks in walker output", () => {
 		]);
 	});
 
-	test("all thinking blocks filtered → text-only assistant turn", () => {
+	test("all cross-provider thinking → converted to text, no native thinking blocks", () => {
 		const events: Event[] = [
 			thinkingEvent("Filtered thinking.", "sig-x", { provider: "openai" }),
 			assistantTextEvent("Just the text remains."),
 		];
 		const msgs = eventsToAnthropicMessages(events);
 		const content = (msgs[0] as { content: unknown[] }).content;
-		expect(content).toEqual([{ type: "text", text: "Just the text remains." }]);
-		// No thinking block in output
+		expect(content).toEqual([
+			{
+				type: "text",
+				text: "<thinking>\nFiltered thinking.\n</thinking>",
+			},
+			{ type: "text", text: "Just the text remains." },
+		]);
+		// No native thinking block in output
 		expect(
 			content.every(
 				(b: unknown) => (b as { type: string }).type !== "thinking",
@@ -238,17 +254,21 @@ describe("Golden: thinking blocks in walker output", () => {
 		).toBe(true);
 	});
 
-	test("thinking-only turn from wrong provider → empty assistant fallback", () => {
-		// If ALL blocks are thinking from wrong provider, walker pushes empty fallback
+	test("thinking-only turn from wrong provider → text with <thinking> tags", () => {
+		// Cross-provider thinking converted to text — no empty fallback needed
 		const events: Event[] = [
 			thinkingEvent("Filtered.", "sig-x", { provider: "deepseek" }),
 		];
 		const msgs = eventsToAnthropicMessages(events);
-		// Defensive (empty) fallback
 		expect(msgs).toEqual([
 			{
 				role: "assistant",
-				content: [{ type: "text", text: "(empty)" }],
+				content: [
+					{
+						type: "text",
+						text: "<thinking>\nFiltered.\n</thinking>",
+					},
+				],
 			},
 		]);
 	});
@@ -378,7 +398,7 @@ describe("Golden: interleaved thinking across multiple tool calls", () => {
 		).toBe(3);
 	});
 
-	test("interleaved providers across turns — only current provider's thinking survives", () => {
+	test("interleaved providers across turns — native thinking preserved, cross-provider converted to text", () => {
 		const events: Event[] = [
 			// Turn 1: anthropic thinking
 			thinkingEvent("Anthropic turn 1.", MOCK_SIGNATURE_1, {
@@ -387,7 +407,7 @@ describe("Golden: interleaved thinking across multiple tool calls", () => {
 			assistantTextEvent("Text 1."),
 			toolCallEvent("tc_01", "mcp__mxd__bash", { command: "echo 1" }),
 			toolResultEvent("tc_01", "mcp__mxd__bash", "1"),
-			// Turn 2: openai thinking (should be filtered)
+			// Turn 2: openai thinking (converted to text)
 			thinkingEvent("OpenAI turn 2.", "openai-sig-2", { provider: "openai" }),
 			assistantTextEvent("Text 2."),
 			toolCallEvent("tc_02", "mcp__mxd__bash", { command: "echo 2" }),
@@ -400,16 +420,17 @@ describe("Golden: interleaved thinking across multiple tool calls", () => {
 		];
 		const msgs = eventsToAnthropicMessages(events);
 
-		// Turn 1: has thinking
+		// Turn 1: has native thinking
 		const t1 = (msgs[0] as { content: Array<{ type: string }> }).content;
 		expect(t1[0]?.type).toBe("thinking");
 
-		// Turn 2: no thinking (filtered)
-		const t2 = (msgs[2] as { content: Array<{ type: string }> }).content;
+		// Turn 2: no native thinking, but has converted text with <thinking> tags
+		const t2 = (msgs[2] as { content: Array<{ type: string; text?: string }> }).content;
 		expect(t2.every((b) => b.type !== "thinking")).toBe(true);
 		expect(t2[0]?.type).toBe("text");
+		expect(t2[0]?.text).toBe("<thinking>\nOpenAI turn 2.\n</thinking>");
 
-		// Turn 3: has thinking
+		// Turn 3: has native thinking
 		const t3 = (msgs[4] as { content: Array<{ type: string }> }).content;
 		expect(t3[0]?.type).toBe("thinking");
 	});
@@ -437,10 +458,16 @@ describe("Golden: thinking event provider field preserved through walker", () =>
 			msgs[0] as { content: Array<{ type: string; thinking?: string }> }
 		).content;
 
-		// Only anthropic thinking survives
+		// Only anthropic thinking stays as native thinking block
 		const thinkingBlocks = content.filter((b) => b.type === "thinking");
 		expect(thinkingBlocks).toHaveLength(1);
 		expect(thinkingBlocks[0]?.thinking).toBe("A thinking.");
+
+		// OpenAI thinking converted to text with <thinking> tags
+		const textBlocks = content.filter(
+			(b) => b.type === "text" && (b as { text?: string }).text?.includes("<thinking>"),
+		);
+		expect(textBlocks).toHaveLength(1);
 	});
 });
 
