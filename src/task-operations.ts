@@ -150,6 +150,20 @@ export async function updateTaskOp(
 		tracker.reparent(nodeId, updates.parentId);
 	}
 	if (updates.status !== undefined) {
+		// "closed" and "failed" are lifecycle-terminal states that require
+		// cleanup (worktree removal, JSONL clear, task_complete delivery).
+		// Allowing them via a plain PATCH bypasses closeTaskOp / done() and
+		// leaks worktrees + branches. Force callers through the proper ops.
+		if (updates.status === "closed") {
+			throw new TaskOperationError(
+				'Cannot set status to "closed" via update. Use close_task instead.',
+			);
+		}
+		if (updates.status === "failed") {
+			throw new TaskOperationError(
+				'Cannot set status to "failed" via update. Status "failed" is set by done("failed") or lifecycle operations.',
+			);
+		}
 		tracker.updateStatus(nodeId, updates.status, editedBy);
 	}
 	if (updates.title !== undefined) {
@@ -229,6 +243,13 @@ export async function deleteTaskOp(
 ): Promise<{ taskId: string; title: string }> {
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
+
+	// Root node cannot be deleted — it would orphan the entire tree.
+	if (isTask(node) && node.id === tracker.rootNodeId) {
+		throw new TaskOperationError(
+			"Cannot delete the root node. The root orchestrator is the tree anchor.",
+		);
+	}
 
 	if (!isTask(node)) {
 		// General nodes (folders etc.) can only be deleted when empty
@@ -315,6 +336,13 @@ export async function closeTaskOp(
 	if (!isTask(node))
 		throw new TaskOperationError(`Cannot close a ${node.type} node: ${nodeId}`);
 
+	// Root node cannot be closed — it is the tree anchor.
+	if (node.id === tracker.rootNodeId) {
+		throw new TaskOperationError(
+			"Cannot close the root node. The root orchestrator is the tree anchor.",
+		);
+	}
+
 	if (node.status === "in_progress") {
 		throw new TaskOperationError(
 			"Cannot close a running task. Stop it first or wait for done().",
@@ -387,6 +415,13 @@ export async function resetTaskOp(
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
 	if (!isTask(node))
 		throw new TaskOperationError(`Cannot reset a ${node.type} node: ${nodeId}`);
+
+	// Root node cannot be reset — it is the tree anchor.
+	if (node.id === tracker.rootNodeId) {
+		throw new TaskOperationError(
+			"Cannot reset the root node. The root orchestrator is the tree anchor.",
+		);
+	}
 
 	// Stop running agent and await loop exit BEFORE clearing JSONL.
 	// The agent loop's finally block may write events (agent_stopped, etc.).

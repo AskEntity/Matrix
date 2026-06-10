@@ -780,12 +780,10 @@ describe("daemon tasks API", () => {
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
-		// Mark as failed
-		await app.request(`/projects/${projectId}/tasks/${root.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "failed" }),
-		});
+		// Mark as failed — use tracker directly (updateTaskOp rejects "failed" since FIX-7 C#2)
+		const daemonTrkr = await getTracker(projectId);
+		daemonTrkr.updateStatus(root.id, "failed");
+		await daemonTrkr.save();
 
 		// Continue with a message
 		const contRes = await app.request(
@@ -882,16 +880,13 @@ describe("daemon tasks API", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		// Manually patch to failed
-		await localApp.request(`/projects/${project.id}/tasks/${task.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "failed" }),
-		});
+		// Mark as failed — use tracker directly (updateTaskOp rejects "failed" since FIX-7 C#2)
+		const daemonTracker = await localGetTracker(project.id);
+		daemonTracker.updateStatus(task.id, "failed");
+		await daemonTracker.save();
 
 		// Inject worktreePath directly into the daemon's in-memory tracker.
 		// We use the project path itself as a fake worktree path (it exists as a dir).
-		const daemonTracker = await localGetTracker(project.id);
 		// assignWorktree(nodeId, branch, worktreePath)
 		daemonTracker.assignWorktree(
 			task.id,
@@ -2226,6 +2221,7 @@ describe("POST /projects/:id/clarify", () => {
 	let dataDir: string;
 	let app: ReturnType<typeof createApp>["app"];
 	let projectId: string;
+	let rootNodeId: string;
 
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-clarify-"));
@@ -2238,6 +2234,8 @@ describe("POST /projects/:id/clarify", () => {
 		});
 		app = result.app;
 		projectId = project.id;
+		const tracker = await result.getTracker(projectId);
+		rootNodeId = tracker.rootNodeId;
 	});
 
 	afterEach(async () => {
@@ -2268,10 +2266,11 @@ describe("POST /projects/:id/clarify", () => {
 	});
 
 	test("persists clarify_response when no active session", async () => {
+		// Use a real task ID — handleClarifyResponse now validates the node exists (FIX-7 C#4)
 		const res = await app.request(`/projects/${projectId}/clarify`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ taskId: "some-task-id", answer: "yes" }),
+			body: JSON.stringify({ taskId: rootNodeId, answer: "yes" }),
 		});
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { ok: boolean };
@@ -3337,11 +3336,10 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "failed" }),
-		});
+		// Set failed via tracker directly (updateTaskOp rejects "failed" since FIX-7 C#2)
+		const t1 = await getTracker(projectId);
+		t1.updateStatus(task.id, "failed");
+		await t1.save();
 
 		const res = await app.request(
 			`/projects/${projectId}/tasks/${task.id}/continue`,
@@ -3364,11 +3362,10 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "failed" }),
-		});
+		// Set failed via tracker directly (updateTaskOp rejects "failed" since FIX-7 C#2)
+		const t2 = await getTracker(projectId);
+		t2.updateStatus(task.id, "failed");
+		await t2.save();
 
 		const res = await app.request(
 			`/projects/${projectId}/tasks/${task.id}/continue`,
@@ -3391,11 +3388,10 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "failed" }),
-		});
+		// Set failed via tracker directly (updateTaskOp rejects "failed" since FIX-7 C#2)
+		const t3 = await getTracker(projectId);
+		t3.updateStatus(task.id, "failed");
+		await t3.save();
 
 		const res = await app.request(
 			`/projects/${projectId}/tasks/${task.id}/continue`,
@@ -3422,11 +3418,10 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "failed" }),
-		});
+		// Set failed via tracker directly (updateTaskOp rejects "failed" since FIX-7 C#2)
+		const t4 = await getTracker(projectId);
+		t4.updateStatus(task.id, "failed");
+		await t4.save();
 
 		// Inject worktreePath directly into the tracker
 		const tracker = await getTracker(projectId);
@@ -3465,11 +3460,10 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "failed" }),
-		});
+		// Set failed via tracker directly (updateTaskOp rejects "failed" since FIX-7 C#2)
+		const t5 = await getTracker(projectId);
+		t5.updateStatus(task.id, "failed");
+		await t5.save();
 
 		// POST with no body at all — the .catch() in the handler should handle it
 		const res = await app.request(
@@ -3493,13 +3487,9 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "failed" }),
-		});
-
+		// Set failed via tracker directly (updateTaskOp rejects "failed" since FIX-7 C#2)
 		const tracker = await getTracker(projectId);
+		tracker.updateStatus(task.id, "failed");
 		tracker.assignWorktree(
 			task.id,
 			"mxd/fake/branch2",
@@ -3646,13 +3636,9 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		await localApp.request(`/projects/${project.id}/tasks/${task.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "failed" }),
-		});
-
+		// Set failed via tracker directly (updateTaskOp rejects "failed" since FIX-7 C#2)
 		const daemonTracker = await localGetTracker(project.id);
+		daemonTracker.updateStatus(task.id, "failed");
 		daemonTracker.assignWorktree(
 			task.id,
 			"mxd/fake/child-branch",
