@@ -900,41 +900,11 @@ function TabActions({
 	error,
 }: {
 	dirty: boolean;
-	onSave: () => Promise<void> | void;
+	onSave: () => void;
 	onRevert: () => void;
 	error?: string | null;
 }) {
 	const { t } = useLocale();
-	const [saved, setSaved] = useState(false);
-	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	useEffect(() => {
-		return () => {
-			if (timerRef.current) clearTimeout(timerRef.current);
-		};
-	}, []);
-
-	// Reset saved state when draft becomes dirty again
-	useEffect(() => {
-		if (dirty) setSaved(false);
-	}, [dirty]);
-
-	const handleSave = async () => {
-		await onSave();
-		// If no error surfaced (error prop is set by parent after save),
-		// we can't check it synchronously — but parent sets error before
-		// re-render, so we schedule the "saved" feedback on next tick.
-		// The error prop clearing logic handles the rest.
-		if (timerRef.current) clearTimeout(timerRef.current);
-		setSaved(true);
-		timerRef.current = setTimeout(() => setSaved(false), 5000);
-	};
-
-	// Clear saved indicator when error appears
-	useEffect(() => {
-		if (error) setSaved(false);
-	}, [error]);
-
 	return (
 		<div className="mxd-settings-tab-actions">
 			{error && (
@@ -945,10 +915,10 @@ function TabActions({
 			<button
 				type="button"
 				className="mxd-btn mxd-btn-sm mxd-btn-primary"
-				onClick={handleSave}
-				disabled={!dirty && !saved}
+				onClick={onSave}
+				disabled={!dirty}
 			>
-				{saved && !dirty ? t("settings.saved") : t("settings.save")}
+				{t("settings.save")}
 			</button>
 			<button
 				type="button"
@@ -978,7 +948,7 @@ function GlobalTab({
 	layers: ThreeLayerConfig;
 	draft: Record<string, unknown>;
 	onDraftChange: (patch: Record<string, unknown>) => void;
-	onSave: () => Promise<void> | void;
+	onSave: () => void;
 	onRevert: () => void;
 	dirty: boolean;
 	theme: string;
@@ -1164,7 +1134,7 @@ function ProjectTab({
 	layers: ThreeLayerConfig;
 	draft: Record<string, unknown>;
 	onDraftChange: (patch: Record<string, unknown>) => void;
-	onSave: () => Promise<void> | void;
+	onSave: () => void;
 	onRevert: () => void;
 	dirty: boolean;
 	error?: string | null;
