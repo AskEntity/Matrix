@@ -28,10 +28,17 @@ async function workerFetch(
 			if (event.data.type === "http_response" && event.data.id === id) {
 				clearTimeout(timeout);
 				worker.removeEventListener("message", handler);
+				// Worker now sends ArrayBuffer bodies (FIX-9). Decode to string
+				// for test convenience — callers expect JSON-parseable strings.
+				const raw = event.data.body;
+				const body =
+					raw instanceof ArrayBuffer
+						? new TextDecoder().decode(raw)
+						: String(raw);
 				resolve({
 					status: event.data.status,
 					headers: event.data.headers,
-					body: event.data.body,
+					body,
 				});
 			}
 		};

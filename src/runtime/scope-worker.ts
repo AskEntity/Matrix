@@ -146,14 +146,21 @@ self.onmessage = async (event: MessageEvent) => {
 				}
 			} else {
 				// Buffered response (normal HTTP)
-				const responseBody = await response.text();
-				self.postMessage({
-					type: "http_response",
-					id,
-					status: response.status,
-					headers: responseHeaders,
-					body: responseBody,
-				});
+				// Use arrayBuffer() — NOT text() — to preserve binary content.
+				// text() decodes bytes as UTF-8, replacing every byte >0x7F with
+				// U+FFFD (EF BF BD), corrupting images, audio, PDFs, etc.
+				const responseBody = await response.arrayBuffer();
+				self.postMessage(
+					{
+						type: "http_response",
+						id,
+						status: response.status,
+						headers: responseHeaders,
+						body: responseBody,
+					},
+					// Transfer the ArrayBuffer to avoid copying
+					[responseBody],
+				);
 			}
 		} catch (e) {
 			self.postMessage({
