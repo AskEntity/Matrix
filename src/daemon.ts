@@ -551,6 +551,8 @@ export async function createDaemon(opts: {
 
 	// Worker state
 	const workers = new Map<string, ScopeWorker>();
+	// Pending restart timers — tracked so shutdown() can clear them (R8-A#9b).
+	const pendingRestartTimers = new Set<ReturnType<typeof setTimeout>>();
 
 	// ── Worker init/restart durability knobs ──
 	//
@@ -653,7 +655,8 @@ export async function createDaemon(opts: {
 			reason,
 		});
 
-		setTimeout(() => {
+		const timer = setTimeout(() => {
+			pendingRestartTimers.delete(timer);
 			console.log(
 				`[daemon] Restarting worker "${scopeName}" (attempt ${state.attempts}/${MAX_RESTARTS_BEFORE_CIRCUIT_BREAK})...`,
 			);
@@ -666,6 +669,7 @@ export async function createDaemon(opts: {
 				);
 			});
 		}, delayMs);
+		pendingRestartTimers.add(timer);
 	}
 
 	function setupWorkerMessageHandler(
@@ -785,6 +789,10 @@ export async function createDaemon(opts: {
 				pending: new Map(),
 			};
 
+			// Tracks whether init succeeded (resolve called). Used by onerror
+			// to distinguish init-phase crashes from runtime crashes.
+			let initResolved = false;
+
 			// Init timeout — guards against hung `runtime.ts` top-level await.
 			// Without this, a blocking plugin module hangs `createDaemon()` forever:
 			// no log, no 503, no diagnostic — operators see an idle daemon with
@@ -798,8 +806,8 @@ export async function createDaemon(opts: {
 					try {
 						worker.terminate();
 					} catch {}
-					// Don't remove from workers map here — onerror handler below may
-					// also fire; either path causes a single cleanup via the reject.
+					// FIX R8-A#9c: remove dead entry from workers map.
+					workers.delete(scopeName);
 					reject(
 						new Error(
 							`Worker init timed out: ${scopeName} (>${WORKER_INIT_TIMEOUT_MS}ms)`,
@@ -809,7 +817,7 @@ export async function createDaemon(opts: {
 				WORKER_INIT_TIMEOUT_MS,
 			);
 
-			// Handle worker crash — reject all pending requests + schedule restart.
+			// Handle worker crash — reject pending requests + restart (if post-init).
 			worker.onerror = (event: ErrorEvent) => {
 				console.error(`[daemon] Worker "${scopeName}" crashed:`, event.message);
 				scopeWorker.ready = false;
@@ -817,6 +825,8 @@ export async function createDaemon(opts: {
 					clearTimeout(initTimer);
 					initTimer = undefined;
 				}
+				// FIX R8-A#9c: remove dead entry from workers map.
+				workers.delete(scopeName);
 				// Reject pending HTTP requests + close zombie stream controllers
 				for (const [, pending] of scopeWorker.pending) {
 					const streamCtrl = (
@@ -835,8 +845,24 @@ export async function createDaemon(opts: {
 					}
 				}
 				scopeWorker.pending.clear();
-				// Exponential backoff + circuit-break (handled by scheduleWorkerRestart).
-				scheduleWorkerRestart(plugin, `crash: ${event.message || "unknown"}`);
+
+				if (!initResolved) {
+					// Init-phase crash: reject the init promise so createDaemon
+					// doesn't hang. FIX R8-A#1: without reject(), the cleared
+					// initTimer means no timeout fires → permanent hang.
+					// Don't schedule restart — daemon boot failed; the restart
+					// path's .catch handler manages its own retry chain.
+					reject(
+						new Error(`Worker "${scopeName}" crashed: ${event.message}`),
+					);
+				} else {
+					// Runtime crash (worker was healthy): schedule restart with
+					// exponential backoff + circuit-break.
+					scheduleWorkerRestart(
+						plugin,
+						`crash: ${event.message || "unknown"}`,
+					);
+				}
 			};
 
 			// Temporary handler for init sequence
@@ -868,6 +894,7 @@ export async function createDaemon(opts: {
 						clearTimeout(initTimer);
 						initTimer = undefined;
 					}
+					initResolved = true;
 					scopeWorker.ready = true;
 					getRestartState(scopeName).lastReadyAt = Date.now();
 					// Pass the plugin NAME (the lens/scope), not the worker key, so
@@ -881,6 +908,13 @@ export async function createDaemon(opts: {
 						clearTimeout(initTimer);
 						initTimer = undefined;
 					}
+					// FIX R8-A#9a: terminate the worker thread. Without this, the
+					// worker stays alive consuming resources after posting "error".
+					try {
+						worker.terminate();
+					} catch {}
+					// FIX R8-A#9c: remove dead entry from workers map.
+					workers.delete(scopeName);
 					reject(
 						new Error(`Worker "${scopeName}" init failed: ${msg.message}`),
 					);
@@ -2023,8 +2057,29 @@ export async function createDaemon(opts: {
 	// ── Shutdown ──
 
 	async function shutdown(): Promise<void> {
+		// FIX R8-A#9b: clear all pending restart timers FIRST, before touching
+		// workers. Without this, a timer fires post-shutdown and spawns a
+		// zombie worker on a daemon whose lock is already released.
+		for (const timer of pendingRestartTimers) {
+			clearTimeout(timer);
+		}
+		pendingRestartTimers.clear();
+
 		for (const [name, sw] of workers) {
-			sw.worker.postMessage({ type: "shutdown" });
+			// FIX R8-A#2: postMessage on a terminated Bun Worker throws
+			// InvalidStateError synchronously. Without try/catch, the throw
+			// skips remaining workers + releaseDataDirLock → unflushed JSONL
+			// + held lock.
+			try {
+				sw.worker.postMessage({ type: "shutdown" });
+			} catch {
+				// Worker already terminated (crashed before shutdown).
+				// Skip graceful-shutdown wait — go straight to terminate.
+				try {
+					sw.worker.terminate();
+				} catch {}
+				continue;
+			}
 			// Wait for graceful shutdown (agent stop, JSONL flush) before terminating
 			await new Promise<void>((resolve) => {
 				const timeout = setTimeout(() => {
@@ -2042,7 +2097,9 @@ export async function createDaemon(opts: {
 				};
 				sw.worker.addEventListener("message", handler);
 			});
-			sw.worker.terminate();
+			try {
+				sw.worker.terminate();
+			} catch {}
 		}
 		workers.clear();
 		// Release filesystem lock LAST — after all workers are gone, so a
