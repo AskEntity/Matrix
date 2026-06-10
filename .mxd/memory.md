@@ -3115,3 +3115,45 @@ plain text. Explicit yield() still fine when no user-facing prose precedes it.
 Supersedes the uncertainty in the two entries above. Fable 5 launched 2026-06-09 (public
 Mythos-class with safeguard layer; classifiers route cybersecurity/bio-chem/distillation
 requests to a guarded path — the anti-distillation reading was correct as motive).
+
+## FIX-6 (2026-06-10) — worker init crash hang + shutdown throw (daemon.ts)
+
+Five worker-lifecycle bugs in `src/daemon.ts`. Together they form the self-bootstrap death
+chain: agent commits bad code → daemon restarts → worker crashes → permanent hang + lock.
+
+### R8-A#1 — onerror rejects init promise (was: permanent hang)
+`worker.onerror` cleared `initTimer` but never called `reject()`. Bun fires onerror AND
+terminates the worker on unhandled errors. With the timer cleared and no reject, the
+`startWorkerForPlugin` promise hung forever — no timeout fallback, no rejection.
+Fix: `initResolved` boolean tracks whether init succeeded. onerror during init → reject
+(daemon boot failed, no restart scheduled). onerror after init → schedule restart with
+backoff (normal runtime crash recovery).
+
+### R8-A#2 — shutdown() tolerates dead workers (was: thrown InvalidStateError)
+`sw.worker.postMessage({ type: "shutdown" })` throws `InvalidStateError` on a terminated
+Bun Worker. The throw skipped remaining workers + `releaseDataDirLock`. Fix: try/catch
+per worker. Dead workers skip graceful-shutdown wait, go straight to terminate.
+
+### R8-A#9a — {type:"error"} terminates worker (was: thread leak)
+scope-worker catches init errors and posts `{type:"error"}`. Daemon rejected the init
+promise but never called `worker.terminate()` — the worker thread stayed alive consuming
+resources. Fix: terminate + delete from workers map.
+
+### R8-A#9b — restart timers cleared on shutdown (was: zombie workers)
+`scheduleWorkerRestart` used bare `setTimeout` without storing the timer ID. After shutdown
+released the lock, pending restart timers fired and spawned zombie workers. Fix:
+`pendingRestartTimers: Set<Timer>` tracks all restart timers. `shutdown()` clears them
+before touching workers.
+
+### R8-A#9c — dead workers cleaned from workers map
+Timeout, onerror, and {type:"error"} all left dead `ScopeWorker` entries in the `workers`
+map. Fix: `workers.delete(scopeName)` in all three failure paths.
+
+### Test technique: triggering onerror during init
+A plugin runtime with `setTimeout(() => { throw ... }, 0)` + `await new Promise(r =>
+setTimeout(r, 50))` fires an unhandled throw DURING scope-worker's init phase (before
+"ready" is sent). The top-level await gives the event loop a chance to process the 0ms
+timer, which crashes the worker and fires `worker.onerror` on the parent. This is the
+only reliable way to trigger onerror during init in tests — `process.exit(1)` does NOT
+fire onerror (silent death, caught by timeout), and module-level `throw` is caught by
+scope-worker's try/catch (posts `{type:"error"}`, not onerror).
