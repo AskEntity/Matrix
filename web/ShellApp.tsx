@@ -435,20 +435,33 @@ function AuthenticatedShell() {
 	}, [projectId, refresh]);
 
 	const updateConfig = useCallback(
-		async (layer: string, patch: Record<string, unknown>) => {
-			if (!projectId) return;
+		async (
+			layer: string,
+			patch: Record<string, unknown>,
+		): Promise<string | null> => {
+			if (!projectId) return null;
 			const url =
 				layer === "global"
 					? "/config/global"
 					: `/projects/${projectId}/config${layer === "repo" ? "/repo" : ""}`;
-			await authFetch(url, {
+			const patchRes = await authFetch(url, {
 				method: "PATCH",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(patch),
 			});
-			// Refresh config
+			if (!patchRes.ok) {
+				// Surface the error — don't silently swallow and refetch.
+				try {
+					const body = await patchRes.json();
+					return body.error ?? `Save failed (${patchRes.status})`;
+				} catch {
+					return `Save failed (${patchRes.status})`;
+				}
+			}
+			// Refresh config only on success
 			const res = await authFetch(`/projects/${projectId}/config/all`);
 			setLayers(await res.json());
+			return null;
 		},
 		[projectId],
 	);

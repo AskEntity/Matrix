@@ -3281,3 +3281,33 @@ needed (file upload via plugin route), that's a separate fix (`request.arrayBuff
 Tests: `src/binary-proxy.test.ts` (3 tests) — full byte range 0x00–0xFF, PNG header, text
 passthrough. Daemon integration: plugin registers routes serving binary, request goes through
 daemon→worker→plugin route→worker→daemon pipeline.
+
+## FIX-10 (2026-06-10) — Settings save: silent failure + null-in-global-patch
+
+Two frontend bugs caused "save then restart, changes gone":
+
+### Root cause chain
+1. `updateDraftGlobal` deletes keys when value is `""` / `null` / `undefined`
+2. `buildPatch` sends `null` for keys in saved but missing from draft (second loop)
+3. Server PATCH `/config/global` rejects null on required fields -> 400
+4. `updateConfig` in ShellApp.tsx didn't check `res.ok` -> silent swallow
+5. Refetch after silent failure reverts UI -> user sees changes "disappear"
+
+**Backend persistence is fine** -- PATCH -> disk write -> restart -> GET all works. Bug was
+purely frontend.
+
+### Fix 1 -- `buildPatch(draft, saved, allowNull)`
+New third parameter. `saveGlobal` passes `allowNull=false` -> null values omitted from
+patch. `saveRepo`/`saveLocal` keep `allowNull=true` (null = "remove override"). A model
+change + cleared field no longer poisons the entire PATCH body.
+
+### Fix 2 -- `updateConfig` checks `res.ok`
+Returns `Promise<string | null>` (error message or null). SettingsPanel shows inline
+red error banner in `TabActions`. Draft stays dirty on failure. Error clears on revert
+or next save attempt. i18n: `settings.saveError` (EN: "Save failed", ZH: "保存失败").
+
+### Interaction with server-side null rejection (cc#4)
+The server's null rejection for global config (added in FIX-2 cc#4) is CORRECT -- it
+prevents writing incomplete configs that would brick the next boot. The frontend was
+producing the null values that triggered the rejection. Both sides are now correct:
+server rejects null, frontend never sends it for global.

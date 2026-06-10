@@ -3734,10 +3734,23 @@ button.mxd-tool-card-header:hover {
 /* Settings tab-level Save/Revert actions */
 .mxd-settings-tab-actions {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 8px;
 	margin-top: 12px;
 	padding-top: 10px;
 	border-top: 1px solid var(--border-subtle);
+}
+
+/* Save error banner inside tab actions */
+.mxd-settings-save-error {
+	width: 100%;
+	font-size: 11px;
+	color: var(--color-stuck);
+	background: rgba(248, 81, 73, 0.08);
+	border: 1px solid rgba(248, 81, 73, 0.25);
+	border-radius: var(--radius-sm);
+	padding: 6px 8px;
+	line-height: 1.4;
 }
 
 /* Dirty indicator in tab label */

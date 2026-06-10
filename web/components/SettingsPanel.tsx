@@ -897,14 +897,21 @@ function TabActions({
 	dirty,
 	onSave,
 	onRevert,
+	error,
 }: {
 	dirty: boolean;
 	onSave: () => void;
 	onRevert: () => void;
+	error?: string | null;
 }) {
 	const { t } = useLocale();
 	return (
 		<div className="mxd-settings-tab-actions">
+			{error && (
+				<div className="mxd-settings-save-error" role="alert">
+					{t("settings.saveError")}: {error}
+				</div>
+			)}
 			<button
 				type="button"
 				className="mxd-btn mxd-btn-sm mxd-btn-primary"
@@ -936,16 +943,17 @@ function GlobalTab({
 	dirty,
 	theme,
 	onThemeChange,
+	error,
 }: {
 	layers: ThreeLayerConfig;
 	draft: Record<string, unknown>;
 	onDraftChange: (patch: Record<string, unknown>) => void;
 	onSave: () => void;
 	onRevert: () => void;
-	// authFetch obtained via hook inside component
 	dirty: boolean;
 	theme: string;
 	onThemeChange: (theme: string) => void;
+	error?: string | null;
 }) {
 	const authFetch = useAuthFetch();
 	const { locale, setLocale, t } = useLocale();
@@ -1107,7 +1115,7 @@ function GlobalTab({
 				</div>
 			</div>
 
-			<TabActions dirty={dirty} onSave={onSave} onRevert={onRevert} />
+			<TabActions dirty={dirty} onSave={onSave} onRevert={onRevert} error={error} />
 		</div>
 	);
 }
@@ -1120,6 +1128,7 @@ function ProjectTab({
 	onSave,
 	onRevert,
 	dirty,
+	error,
 }: {
 	tab: "project" | "local";
 	layers: ThreeLayerConfig;
@@ -1128,6 +1137,7 @@ function ProjectTab({
 	onSave: () => void;
 	onRevert: () => void;
 	dirty: boolean;
+	error?: string | null;
 }) {
 	const { t } = useLocale();
 	const authGroupNames = Object.keys(
@@ -1190,16 +1200,27 @@ function ProjectTab({
 				onDraftChange={onDraftChange}
 			/>
 
-			<TabActions dirty={dirty} onSave={onSave} onRevert={onRevert} />
+			<TabActions dirty={dirty} onSave={onSave} onRevert={onRevert} error={error} />
 		</div>
 	);
 }
 
 // ---- Build diff patch: only send fields that changed ----
 
+/**
+ * Build a PATCH body from draft vs saved config.
+ *
+ * @param allowNull - When true (default, for project/local layers), sends null
+ *   for fields in saved but missing from draft (meaning "remove this override").
+ *   When false (for global layer), omits such fields — global config requires all
+ *   fields, and null is rejected by the server. FIX-10: this flag closes the
+ *   "save then restart, changes gone" bug where buildPatch sent null for fields
+ *   the user didn't touch, causing a 400 that updateConfig silently swallowed.
+ */
 function buildPatch(
 	draft: Record<string, unknown>,
 	saved: Record<string, unknown>,
+	allowNull = true,
 ): Record<string, unknown> {
 	const patch: Record<string, unknown> = {};
 	// Fields in draft that differ from saved
@@ -1207,14 +1228,23 @@ function buildPatch(
 		const dv = draft[key];
 		const sv = saved[key];
 		if (JSON.stringify(dv) !== JSON.stringify(sv)) {
-			// Send undefined as null to explicitly clear the field
-			patch[key] = dv === undefined ? null : dv;
+			if (dv === undefined) {
+				// Draft has the key but value is undefined — for global, omit;
+				// for project/local, send null to clear the override.
+				if (allowNull) patch[key] = null;
+			} else {
+				patch[key] = dv;
+			}
 		}
 	}
-	// Fields in saved but missing/removed from draft — send null to clear
-	for (const key of Object.keys(saved)) {
-		if (!(key in draft) && saved[key] !== undefined) {
-			patch[key] = null;
+	// Fields in saved but missing/removed from draft — send null to clear override.
+	// Only for project/local layers (allowNull=true). For global, omit entirely —
+	// the server rejects null on required global fields.
+	if (allowNull) {
+		for (const key of Object.keys(saved)) {
+			if (!(key in draft) && saved[key] !== undefined) {
+				patch[key] = null;
+			}
 		}
 	}
 	return patch;
@@ -1238,9 +1268,9 @@ export const SettingsPanel = memo(function SettingsPanel({
 	loading: boolean;
 	theme: string;
 	onThemeChange: (theme: string) => void;
-	updateGlobal: (patch: Record<string, unknown>) => void;
-	updateRepo: (patch: Record<string, unknown>) => void;
-	updateLocal: (patch: Record<string, unknown>) => void;
+	updateGlobal: (patch: Record<string, unknown>) => Promise<string | null>;
+	updateRepo: (patch: Record<string, unknown>) => Promise<string | null>;
+	updateLocal: (patch: Record<string, unknown>) => Promise<string | null>;
 	onClose: () => void;
 	onDeleteProject?: () => void;
 }) {
@@ -1319,26 +1349,51 @@ export const SettingsPanel = memo(function SettingsPanel({
 	const dirtyRepo = isDirty(draftRepo, layers.repo);
 	const dirtyLocal = isDirty(draftLocal, layers.local);
 
+	// Save error state — surfaced inline when PATCH fails
+	const [saveError, setSaveError] = useState<string | null>(null);
+
 	// Save handlers — compute diff patch and send
-	const saveGlobal = () => {
-		const patch = buildPatch(draftGlobal, layers.global);
-		if (Object.keys(patch).length > 0) updateGlobal(patch);
+	const saveGlobal = async () => {
+		setSaveError(null);
+		// Global config requires all fields — never send null (allowNull=false).
+		const patch = buildPatch(draftGlobal, layers.global, false);
+		if (Object.keys(patch).length > 0) {
+			const err = await updateGlobal(patch);
+			if (err) setSaveError(err);
+		}
 	};
 
-	const saveRepo = () => {
+	const saveRepo = async () => {
+		setSaveError(null);
 		const patch = buildPatch(draftRepo, layers.repo);
-		if (Object.keys(patch).length > 0) updateRepo(patch);
+		if (Object.keys(patch).length > 0) {
+			const err = await updateRepo(patch);
+			if (err) setSaveError(err);
+		}
 	};
 
-	const saveLocal = () => {
+	const saveLocal = async () => {
+		setSaveError(null);
 		const patch = buildPatch(draftLocal, layers.local);
-		if (Object.keys(patch).length > 0) updateLocal(patch);
+		if (Object.keys(patch).length > 0) {
+			const err = await updateLocal(patch);
+			if (err) setSaveError(err);
+		}
 	};
 
-	// Revert handlers — reset draft to current saved state
-	const revertGlobal = () => setDraftGlobal({ ...layers.global });
-	const revertRepo = () => setDraftRepo({ ...layers.repo });
-	const revertLocal = () => setDraftLocal({ ...layers.local });
+	// Revert handlers — reset draft to current saved state + clear error
+	const revertGlobal = () => {
+		setDraftGlobal({ ...layers.global });
+		setSaveError(null);
+	};
+	const revertRepo = () => {
+		setDraftRepo({ ...layers.repo });
+		setSaveError(null);
+	};
+	const revertLocal = () => {
+		setDraftLocal({ ...layers.local });
+		setSaveError(null);
+	};
 
 	const tabTitleKey = {
 		global: "settings.titleGlobal",
@@ -1412,6 +1467,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 					dirty={dirtyGlobal}
 					theme={theme}
 					onThemeChange={onThemeChange}
+					error={saveError}
 				/>
 			)}
 			{activeTab === "project" && (
@@ -1423,6 +1479,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 					onSave={saveRepo}
 					onRevert={revertRepo}
 					dirty={dirtyRepo}
+					error={saveError}
 				/>
 			)}
 			{activeTab === "local" && (
@@ -1434,6 +1491,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 					onSave={saveLocal}
 					onRevert={revertLocal}
 					dirty={dirtyLocal}
+					error={saveError}
 				/>
 			)}
 

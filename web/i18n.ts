@@ -197,6 +197,7 @@ const en: Translations = {
 	"settings.port": "Port",
 
 	"settings.save": "Save",
+	"settings.saveError": "Save failed",
 	"settings.revert": "Revert",
 	"settings.cancel": "Cancel",
 	"settings.delete": "Delete",
@@ -503,6 +504,7 @@ const zh: Translations = {
 	"settings.port": "端口",
 
 	"settings.save": "保存",
+	"settings.saveError": "保存失败",
 	"settings.revert": "还原",
 	"settings.cancel": "取消",
 	"settings.delete": "删除",
