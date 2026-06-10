@@ -3261,3 +3261,23 @@ timer, which crashes the worker and fires `worker.onerror` on the parent. This i
 only reliable way to trigger onerror during init in tests — `process.exit(1)` does NOT
 fire onerror (silent death, caught by timeout), and module-level `throw` is caught by
 scope-worker's try/catch (posts `{type:"error"}`, not onerror).
+
+## FIX-9 (2026-06-10) — binary response proxy: scope-worker .text() corrupts bytes >0x7F
+
+`scope-worker.ts` used `response.text()` for buffered HTTP responses forwarded back to the
+daemon. `text()` decodes bytes as UTF-8 — every byte >0x7F becomes U+FFFD (EF BF BD). A 256-byte
+binary payload inflated to 512 bytes; PNG headers (0x89 first byte) became garbage.
+
+**Fix**: `response.arrayBuffer()` + postMessage with transferable `[responseBody]` (zero-copy).
+`daemon.ts` `ScopeWorker.pending` type widened from `body: string` to `body: string | ArrayBuffer`
+— `new Response()` constructor handles both natively. `scope-worker.test.ts` `workerFetch` helper
+decodes ArrayBuffer→string for JSON test convenience.
+
+**Request bodies are NOT affected** — `forwardToWorker` already uses `request.text()` for the
+outgoing request, but request bodies in practice are JSON (text). If binary request bodies are ever
+needed (file upload via plugin route), that's a separate fix (`request.arrayBuffer()` in
+`forwardToWorker` + `ArrayBuffer` in the worker's `new Request(url, { body })`).
+
+Tests: `src/binary-proxy.test.ts` (3 tests) — full byte range 0x00–0xFF, PNG header, text
+passthrough. Daemon integration: plugin registers routes serving binary, request goes through
+daemon→worker→plugin route→worker→daemon pipeline.
