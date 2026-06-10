@@ -3155,3 +3155,31 @@ also applies (if `clear()` runs while truncation is queued, truncation is silent
 - `truncation waits for pending writes before executing` — slow write completes before truncation
 - `writes enqueued after truncation wait for truncation to complete` — truncation then append, order
   preserved
+
+## FIX-7 (2026-06-10) — lifecycle guards: root delete, status validation, prefix canonicalization
+
+Five guard bugs at the task-operations + routes layer, each TDD with failing tests first.
+
+### R8-C#1 — root node protection (delete/close/reset)
+`deleteTaskOp`, `closeTaskOp`, `resetTaskOp` now reject `tracker.rootNodeId` with
+`TaskOperationError("Cannot {delete,close,reset} the root node")`. The root orchestrator
+is the tree anchor — destroying it orphans the tree.
+
+### R8-C#2 — status transition validation
+`updateTaskOp` rejects `status: "closed"` and `status: "failed"`. Both are lifecycle-terminal
+states requiring cleanup (worktree removal for close, Phase 2 done delivery for failed). A
+plain PATCH bypasses those ops and leaks worktrees / orphans state. Callers must use
+`closeTaskOp` or let `done("failed")` set it (which goes through `tracker.updateStatus`
+directly, NOT through `updateTaskOp`). Tests that need "failed" as setup now use
+`tracker.updateStatus` directly instead of PATCH.
+
+### R8-C#3 — prefix canonicalization in REST /message
+REST `/message` route resolves `tracker.get(rawNodeId)` and uses `resolved.id` (canonical
+full ID) for all downstream ops. Response also returns the canonical `taskId`.
+
+### R8-C#4 — REST /message + /clarify node validation
+Both routes now validate: node must exist (404) and be a task node, not folder (400).
+`handleClarifyResponse` in agent-lifecycle.ts also got canonicalization + validation.
+
+### R8-C#5 — draft guard on REST /message
+REST `/message` rejects `status === "draft"` with 400, matching MCP `send_message` behavior.

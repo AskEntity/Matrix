@@ -621,7 +621,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		const nodeId = c.req.param("nodeId");
+		const rawNodeId = c.req.param("nodeId");
 		const body = await c.req.json<{
 			content?: string;
 			message?: string;
@@ -633,8 +633,30 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		}
 
 		const tracker = await getTracker(ctx, project.id);
-		const node = tracker.getTask(nodeId);
-		const statusBeforeDelivery = node?.status;
+
+		// Canonicalize: resolve prefix to full ID (C#3), validate existence (C#4).
+		const resolved = tracker.get(rawNodeId);
+		if (!resolved) {
+			return c.json({ error: `Task not found: ${rawNodeId}` }, 404);
+		}
+		if (!isTask(resolved)) {
+			return c.json(
+				{ error: `Cannot send message to a ${resolved.type} node. Only task nodes accept messages.` },
+				400,
+			);
+		}
+		// Use the canonical full ID for all downstream operations.
+		const nodeId = resolved.id;
+
+		// Draft tasks cannot receive messages (C#5) — matches MCP send_message behavior.
+		if (resolved.status === "draft") {
+			return c.json(
+				{ error: `Cannot send message to draft task "${resolved.title}". Remove draft status first.` },
+				400,
+			);
+		}
+
+		const statusBeforeDelivery = resolved.status;
 
 		// No header needed — work_context is injected by enqueue hook on fresh sessions.
 		const msg = createUserMessage(content, { images: body.images });
@@ -644,12 +666,12 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		await deliverMessage(ctx, project, nodeId, msg);
 
 		// Notify parent chain for non-root nodes (user sending to child task)
-		if (node?.parentId) {
+		if (resolved.parentId) {
 			await notifyParentChain(
 				ctx,
 				project,
 				nodeId,
-				node.title ?? nodeId,
+				resolved.title ?? nodeId,
 				content,
 				statusBeforeDelivery,
 			);

@@ -1255,14 +1255,30 @@ export async function handleClarifyResponse(
 		return { ok: false, error: "Project not found", status: 404 };
 	}
 
+	// Canonicalize + validate: resolve prefix to full ID, reject non-tasks.
+	const tracker = await getTracker(ctx, projectId);
+	const resolved = tracker.get(taskId);
+	if (!resolved) {
+		return { ok: false, error: `Task not found: ${taskId}`, status: 404 };
+	}
+	if (!isTask(resolved)) {
+		return {
+			ok: false,
+			error: `Cannot send clarification to a ${resolved.type} node.`,
+			status: 400,
+		};
+	}
+	// Use canonical full ID for all downstream operations.
+	const canonicalId = resolved.id;
+
 	// Single delivery path — handles JSONL + queue + auto-launch
 	const clarifyMsg = createClarifyResponse(answer);
-	await deliverMessage(ctx, project, taskId, clarifyMsg);
+	await deliverMessage(ctx, project, canonicalId, clarifyMsg);
 
-	removePendingClarification(ctx, projectId, taskId, clarificationId);
+	removePendingClarification(ctx, projectId, canonicalId, clarificationId);
 	emitEvent(ctx, projectId, {
 		type: "clarification_answered",
-		taskId,
+		taskId: canonicalId,
 		answer,
 		ts: Date.now(),
 	});

@@ -443,7 +443,7 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect(body.ok).toBe(true);
 	});
 
-	test("message to draft task still delivers (draft status does not block REST endpoint)", async () => {
+	test("message to draft task is rejected (FIX-7 C#5)", async () => {
 		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
@@ -462,13 +462,13 @@ describe("lifecycle: task state vs message delivery", () => {
 		const draftNode = nodes.find((n) => n.id === task.id);
 		expect(draftNode?.status).toBe("draft");
 
-		// REST endpoint does not reject draft tasks — it persists the message
+		// REST endpoint rejects messages to draft tasks — matches MCP send_message
 		const res = await sendTaskMessage(app, project.id, task.id, "work on this");
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(400);
 		const body = (await res.json()) as {
-			ok: boolean;
+			error: string;
 		};
-		expect(body.ok).toBe(true);
+		expect(body.error).toMatch(/draft/i);
 	});
 
 	test("message to closed queue falls through to persist (graceful handling)", async () => {
@@ -1564,7 +1564,7 @@ describe("lifecycle: edge cases and error handling", () => {
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	test("message to nonexistent task returns 400 or 200 with persisted", async () => {
+	test("message to nonexistent task returns 404 (FIX-7 C#4)", async () => {
 		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
@@ -1574,15 +1574,14 @@ describe("lifecycle: edge cases and error handling", () => {
 
 		const project = createProject(pm, projectDir);
 
-		// Send message to a task ID that doesn't exist
+		// Send message to a task ID that doesn't exist — must be rejected
 		const res = await sendTaskMessage(
 			app,
 			project.id,
 			"nonexistent-task-id",
 			"hello",
 		);
-		// The endpoint should still respond (it persists even for unknown tasks)
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(404);
 	});
 
 	test("message with missing content returns 400", async () => {
