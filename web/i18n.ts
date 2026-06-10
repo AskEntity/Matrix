@@ -134,8 +134,7 @@ const en: Translations = {
 	"settings.titleLocal": "Local Settings",
 	"settings.rootAuth": "Root Auth",
 	"settings.rootModel": "Root Model",
-	"settings.rootModelPlaceholder":
-		"e.g. gpt-4o, claude-opus-4-6 (leave empty for default)",
+	"settings.rootModelPlaceholder": "e.g. claude-opus-4-6 (required)",
 
 	"settings.taskAgentModel": "Task Agent Model",
 	"settings.taskAgentModelPlaceholder":
@@ -197,7 +196,9 @@ const en: Translations = {
 	"settings.port": "Port",
 
 	"settings.save": "Save",
+	"settings.saved": "Saved",
 	"settings.saveError": "Save failed",
+	"settings.modelRequired": "Model is a required field on the Global tab.",
 	"settings.revert": "Revert",
 	"settings.cancel": "Cancel",
 	"settings.delete": "Delete",
@@ -443,7 +444,7 @@ const zh: Translations = {
 	"settings.titleLocal": "本地设置",
 	"settings.rootAuth": "根认证",
 	"settings.rootModel": "根模型",
-	"settings.rootModelPlaceholder": "如 gpt-4o, claude-opus-4-6（留空使用默认）",
+	"settings.rootModelPlaceholder": "如 claude-opus-4-6（必填）",
 
 	"settings.taskAgentModel": "任务代理模型",
 	"settings.taskAgentModelPlaceholder": "子代理使用的模型（留空使用根模型）",
@@ -504,7 +505,9 @@ const zh: Translations = {
 	"settings.port": "端口",
 
 	"settings.save": "保存",
+	"settings.saved": "已保存",
 	"settings.saveError": "保存失败",
+	"settings.modelRequired": "模型是全局设置中的必填项。",
 	"settings.revert": "还原",
 	"settings.cancel": "取消",
 	"settings.delete": "删除",
