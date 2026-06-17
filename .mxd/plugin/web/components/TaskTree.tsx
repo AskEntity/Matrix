@@ -1,14 +1,15 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { isFolder, isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import type { TaskStatus } from "../types.ts";
-import {
-	IconChevron,
-	IconEyeOff,
-	IconHexagon,
-	IconPlus,
-	IconStar,
-} from "./icons.tsx";
+import { IconChevron, IconEyeOff, IconHexagon, IconStar } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
 
 /** Three sidebar filter modes */
@@ -132,6 +133,8 @@ export const TaskTree = memo(function TaskTree({
 	onCreateTask,
 	onCancelCreate,
 	onCreateChildTask,
+	onDeleteNode,
+	onRenameNode,
 }: {
 	nodes: TreeNode[];
 	selectedTaskId: string | null;
@@ -146,6 +149,10 @@ export const TaskTree = memo(function TaskTree({
 	onCancelCreate?: () => void;
 	/** Called when the user confirms the inline child-create row inside a node */
 	onCreateChildTask?: (title: string, parentId: string) => void;
+	/** Called when context menu "Delete" is chosen */
+	onDeleteNode?: (id: string, title: string) => void;
+	/** Called when context menu "Rename" is chosen (folders) */
+	onRenameNode?: (id: string, newTitle: string) => void;
 }) {
 	// Root node's children are the visible top-level tasks
 	const rootNode = useMemo(
@@ -479,6 +486,35 @@ export const TaskTree = memo(function TaskTree({
 		],
 	);
 
+	// ── Context menu state ──
+	const [contextMenu, setContextMenu] = useState<{
+		x: number;
+		y: number;
+		nodeId: string;
+	} | null>(null);
+
+	const handleContextMenu = useCallback(
+		(nodeId: string, x: number, y: number) => {
+			setContextMenu({ x, y, nodeId });
+		},
+		[],
+	);
+
+	// Close context menu on click outside or Escape
+	useEffect(() => {
+		if (!contextMenu) return;
+		const handleClose = () => setContextMenu(null);
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setContextMenu(null);
+		};
+		document.addEventListener("click", handleClose);
+		document.addEventListener("keydown", handleKeyDown);
+		return () => {
+			document.removeEventListener("click", handleClose);
+			document.removeEventListener("keydown", handleKeyDown);
+		};
+	}, [contextMenu]);
+
 	const { t } = useLocale();
 	// Root is a regular task (Fix A + Fix C). selectedTaskId carries the
 	// actual root id when root is viewed — no `!selectedTaskId` sentinel.
@@ -590,6 +626,7 @@ export const TaskTree = memo(function TaskTree({
 						onStartChildCreate={handleStartChildCreate}
 						onChildCreateConfirm={handleChildCreateConfirm}
 						onChildCreateCancel={handleChildCreateCancel}
+						onContextMenu={handleContextMenu}
 					/>
 				))}
 
@@ -621,6 +658,65 @@ export const TaskTree = memo(function TaskTree({
 
 				{/* Trash zone removed — too dangerous for drag-and-drop deletion */}
 			</div>
+
+			{/* Context menu */}
+			{contextMenu && (() => {
+				const node = nodeMap.get(contextMenu.nodeId);
+				if (!node) return null;
+				const isTaskNode = isTask(node);
+				const isFav = favorites.has(node.id);
+				const isAtRoot = node.parentId === rootNodeId;
+				return (
+					<ContextMenu
+						x={contextMenu.x}
+						y={contextMenu.y}
+						items={[
+							{
+								label: t("context.newChildTask"),
+								action: () => handleStartChildCreate(node.id),
+							},
+							...(isTaskNode
+								? [
+										{
+											label: isFav
+												? t("context.unfavorite")
+												: t("context.favorite"),
+											action: () => toggleFavorite(node.id),
+										},
+									]
+								: [
+										{
+											label: t("context.rename"),
+											action: () => {
+												const newTitle = prompt(
+													t("context.rename"),
+													node.title,
+												);
+												if (newTitle && newTitle.trim() && onRenameNode) {
+													onRenameNode(node.id, newTitle.trim());
+												}
+											},
+										},
+									]),
+							...(!isAtRoot && onReparent && rootNodeId
+								? [
+										{
+											label: t("context.moveToRoot"),
+											action: () => onReparent(node.id, rootNodeId),
+										},
+									]
+								: []),
+							{ separator: true as const },
+							{
+								label: t("context.delete"),
+								danger: true,
+								action: () => onDeleteNode?.(node.id, node.title),
+							},
+						]}
+						onClose={() => setContextMenu(null)}
+					/>
+				);
+			})()}
 		</div>
 	);
 });
@@ -654,6 +750,7 @@ function TreeNodeView({
 	onStartChildCreate,
 	onChildCreateConfirm,
 	onChildCreateCancel,
+	onContextMenu,
 }: {
 	node: TreeNode;
 	childMap: Map<string, TreeNode[]>;
@@ -693,6 +790,7 @@ function TreeNodeView({
 	onStartChildCreate: (parentId: string) => void;
 	onChildCreateConfirm: (title: string) => void;
 	onChildCreateCancel: () => void;
+	onContextMenu: (nodeId: string, x: number, y: number) => void;
 }) {
 	const isSelected = node.id === selectedTaskId;
 	const allChildren = childMap.get(node.id) ?? [];
@@ -729,17 +827,13 @@ function TreeNodeView({
 					style={{ marginLeft: `${12 + depth * 10}px` }}
 				/>
 			)}
-			{/* Was <button> — now <div role="button"> because children include
-			    <button className="mxd-tree-toggle"> and <button className="mxd-favorite-btn">.
-			    A button cannot contain another button per HTML spec; browsers
-			    un-nest them at parse time (Safari) or silently tolerate
-			    (Chrome), both producing UB for event routing and React
-			    hydration. Keep this as a non-button interactive element. */}
-			{/* biome-ignore lint/a11y/useSemanticElements: cannot use <button>, see comment above — nested button is UB */}
+			{/* div role="button" instead of <button> — the tree toggle child is a
+			    <button> and HTML spec forbids nesting buttons. */}
+			{/* biome-ignore lint/a11y/useSemanticElements: cannot use <button> — nested button is UB */}
 			<div
 				role="button"
 				tabIndex={0}
-				className={`mxd-task-node${isSelected ? " selected" : ""}${isTask(node) && node.status === "draft" ? " mxd-task-draft" : ""}${isDragging ? " mxd-task-dragging" : ""}${isReparentTarget ? " mxd-reparent-target" : ""}${isTask(node) && node.status === "closed" ? " mxd-task-closed" : ""}${!isTask(node) ? " mxd-folder-node" : ""}`}
+				className={`mxd-task-node${isSelected ? " selected" : ""}${isTask(node) && node.status === "draft" ? " mxd-task-draft" : ""}${isDragging ? " mxd-task-dragging" : ""}${isReparentTarget ? " mxd-reparent-target" : ""}${isTask(node) && node.status === "closed" ? " mxd-task-closed" : ""}${!isTask(node) ? " mxd-folder-node" : ""}${isTask(node) && favorites.has(node.id) ? " mxd-task-favorited" : ""}`}
 				style={
 					isTask(node) && node.color
 						? { borderLeftColor: node.color }
@@ -753,7 +847,6 @@ function TreeNodeView({
 				onClick={(e) => {
 					e.stopPropagation();
 					if (isFolder(node)) {
-						// Folders only toggle collapse, never select
 						toggleCollapse(node.id);
 						return;
 					}
@@ -764,8 +857,12 @@ function TreeNodeView({
 					if (isFolder(node)) return;
 					onDoubleClick?.(node.id);
 				}}
+				onContextMenu={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					onContextMenu(node.id, e.clientX, e.clientY);
+				}}
 				onKeyDown={(e) => {
-					// Enter or Space activates — matches native <button> semantics.
 					if (e.key === "Enter" || e.key === " ") {
 						e.preventDefault();
 						e.stopPropagation();
@@ -809,30 +906,11 @@ function TreeNodeView({
 					{isTask(node) && node.status === "draft" && (
 						<span className="mxd-task-draft-badge">draft</span>
 					)}
-					{isTask(node) && (
-						<button
-							type="button"
-							className={`mxd-favorite-btn${favorites.has(node.id) ? " active" : ""}`}
-							onClick={(e) => {
-								e.stopPropagation();
-								toggleFavorite(node.id);
-							}}
-							tabIndex={-1}
-						>
-							<IconStar size={11} filled={favorites.has(node.id)} />
-						</button>
+					{isTask(node) && favorites.has(node.id) && (
+						<span className="mxd-favorite-indicator">
+							<IconStar size={10} filled />
+						</span>
 					)}
-					<button
-						type="button"
-						className="mxd-add-child-btn"
-						onClick={(e) => {
-							e.stopPropagation();
-							onStartChildCreate(node.id);
-						}}
-						tabIndex={-1}
-					>
-						<IconPlus size={10} />
-					</button>
 				</div>
 			</div>
 			{showIndicatorAfter && (
@@ -873,6 +951,7 @@ function TreeNodeView({
 						onStartChildCreate={onStartChildCreate}
 						onChildCreateConfirm={onChildCreateConfirm}
 						onChildCreateCancel={onChildCreateCancel}
+						onContextMenu={onContextMenu}
 					/>
 				))}
 			{/* Inline child creation row — shown nested under this node */}
@@ -991,6 +1070,84 @@ function RootDropZone({
 			}}
 		>
 			<span className="mxd-root-drop-label">{t("tasks.moveToRoot")}</span>
+		</div>
+	);
+}
+
+// ── Context menu ─────────────────────────────────────────────────────────
+
+type ContextMenuItem =
+	| { label: string; action: () => void; danger?: boolean; separator?: never }
+	| { separator: true; label?: never; action?: never; danger?: never };
+
+function ContextMenu({
+	x,
+	y,
+	items,
+	onClose,
+}: {
+	x: number;
+	y: number;
+	items: ContextMenuItem[];
+	onClose: () => void;
+}) {
+	const menuRef = useRef<HTMLDivElement>(null);
+
+	// Adjust position to avoid viewport overflow
+	useEffect(() => {
+		const el = menuRef.current;
+		if (!el) return;
+		const rect = el.getBoundingClientRect();
+		if (rect.right > window.innerWidth) {
+			el.style.left = `${Math.max(0, x - rect.width)}px`;
+		}
+		if (rect.bottom > window.innerHeight) {
+			el.style.top = `${Math.max(0, y - rect.height)}px`;
+		}
+	}, [x, y]);
+
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: context menu overlay
+		<div
+			className="mxd-context-menu-overlay"
+			onClick={(e) => {
+				e.stopPropagation();
+				onClose();
+			}}
+			onContextMenu={(e) => {
+				e.preventDefault();
+				onClose();
+			}}
+		>
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: menu items handle clicks */}
+			<div
+				ref={menuRef}
+				className="mxd-context-menu"
+				style={{ left: x, top: y }}
+				onClick={(e) => e.stopPropagation()}
+			>
+				{items.map((item, i) =>
+					item.separator ? (
+						<div
+							key={`sep-${i}`}
+							className="mxd-context-menu-separator"
+						/>
+					) : (
+						<button
+							key={item.label}
+							type="button"
+							className={`mxd-context-menu-item${item.danger ? " danger" : ""}`}
+							onClick={(e) => {
+								e.stopPropagation();
+								onClose();
+								item.action();
+							}}
+						>
+							{item.label}
+						</button>
+					),
+				)}
+			</div>
 		</div>
 	);
 }

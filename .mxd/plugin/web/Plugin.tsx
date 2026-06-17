@@ -1213,6 +1213,38 @@ function ProjectContent({
 		[rootNodeId, setSelectedTaskId],
 	);
 
+	const handleDeleteNode = useCallback(
+		async (id: string, title: string) => {
+			if (!confirm(t("confirm.deleteTask", { title }))) return;
+			try {
+				await deleteTask(id);
+				// Navigate away if the deleted node was selected
+				if (selectedTaskId === id) setSelectedTaskId(rootNodeId);
+				await refreshTasks();
+			} catch (err) {
+				console.error("Delete failed:", err);
+			}
+		},
+		[deleteTask, refreshTasks, selectedTaskId, rootNodeId, setSelectedTaskId, t],
+	);
+
+	const handleRenameNode = useCallback(
+		async (id: string, newTitle: string) => {
+			try {
+				const res = await authFetch(api.task(projectId, id), {
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title: newTitle }),
+				});
+				if (!res.ok) throw new Error("Rename failed");
+				await refreshTasks();
+			} catch (err) {
+				console.error("Rename failed:", err);
+			}
+		},
+		[authFetch, projectId, refreshTasks],
+	);
+
 	const handleTabSelect = useCallback(
 		(id: string | null) => {
 			setSelectedTaskId(id);
@@ -1443,6 +1475,8 @@ function ProjectContent({
 						onCreateTask={handleCreateTask}
 						onCancelCreate={handleCancelCreate}
 						onCreateChildTask={handleCreateTask}
+						onDeleteNode={handleDeleteNode}
+						onRenameNode={handleRenameNode}
 					/>
 				</aside>
 
