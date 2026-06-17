@@ -118,11 +118,36 @@ export async function getTracker(
 			? await detectBranch(project.path)
 			: undefined;
 		freshTree = await tracker.load(defaultBranch);
-		// Sync root worktreePath = project root (always, not just on first load —
-		// project path may change if the repo directory is moved/renamed).
-		const root = tracker.getTask(tracker.rootNodeId);
-		if (root && project) {
-			root.worktreePath = project.path;
+		// Sync worktreePaths when project directory moves.
+		// Root = project root. Children = paths under .worktrees/ that reference
+		// the old project root prefix. On directory move, projects.json is updated
+		// but tree.json still holds absolute paths from the old location.
+		if (project) {
+			const root = tracker.getTask(tracker.rootNodeId);
+			if (root) {
+				const oldRoot = root.worktreePath;
+				root.worktreePath = project.path;
+				// Rebase child worktreePaths if root moved
+				if (oldRoot && oldRoot !== project.path) {
+					let rebased = 0;
+					for (const node of tracker.allNodes()) {
+						if (node.type !== "task" || node.id === tracker.rootNodeId)
+							continue;
+						const t = node as { worktreePath?: string | null };
+						if (t.worktreePath?.startsWith(oldRoot)) {
+							t.worktreePath =
+								project.path + t.worktreePath.slice(oldRoot.length);
+							rebased++;
+						}
+					}
+					if (rebased > 0) {
+						console.log(
+							`[getTracker] Rebased ${rebased} worktreePaths from ${oldRoot} → ${project.path}`,
+						);
+						await tracker.save();
+					}
+				}
+			}
 		}
 		ctx.trackers.set(projectId, tracker);
 	}
