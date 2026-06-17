@@ -376,10 +376,10 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		setIsCreatingTask(false);
 		const body: Record<string, string> = { title };
 		// Use explicit parentId if provided (from inline child create),
-		// otherwise fall back to selected non-root node.
+		// otherwise fall back to selected node (root included — root IS a valid parent).
 		if (parentId) {
 			body.parentId = parentId;
-		} else if (selectedTaskId && !isOrchestratorNode) {
+		} else if (selectedTaskId) {
 			body.parentId = selectedTaskId;
 		}
 		try {
@@ -406,7 +406,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 	async function handleCreateFolder(title: string) {
 		if (!projectId) return;
 		const body: Record<string, unknown> = { title, folder: true };
-		if (selectedTaskId && !isOrchestratorNode) body.parentId = selectedTaskId;
+		if (selectedTaskId) body.parentId = selectedTaskId;
 		try {
 			const res = await authFetch(api.tasks(projectId), {
 				method: "POST",
