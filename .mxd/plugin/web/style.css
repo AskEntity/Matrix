@@ -398,49 +398,48 @@ select {
 	padding: 6px 0;
 }
 
+/* Collapsible search bar — hidden by default, shown via --open modifier */
 .mxd-tree-search-bar {
-	padding: 6px 8px;
-	border-bottom: 1px solid var(--border-subtle);
-	flex-shrink: 0;
 	display: flex;
 	gap: 4px;
 	align-items: center;
+	flex-shrink: 0;
+	overflow: hidden;
+	max-height: 0;
+	padding: 0 8px;
+	border-bottom: none;
+	opacity: 0;
+	transition:
+		max-height 0.2s ease,
+		padding 0.2s ease,
+		opacity 0.15s ease,
+		border-bottom-color 0.2s ease;
 }
 
+.mxd-tree-search-bar--open {
+	max-height: 36px;
+	padding: 6px 8px;
+	border-bottom: 1px solid var(--border-subtle);
+	opacity: 1;
+}
+
+/* Filter mode button — used in sidebar panel-header */
 .mxd-filter-mode-btn {
+	/* When used as mxd-btn-icon in the header, inherit icon button size.
+	   When used standalone, fallback to explicit size. */
 	flex-shrink: 0;
-	width: 24px;
-	height: 24px;
-	padding: 0;
-	border: 1px solid var(--border);
-	border-radius: var(--radius-sm);
-	background: var(--bg-surface);
-	color: var(--text-faint);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
 	transition:
 		color 0.15s,
 		border-color 0.15s,
 		background 0.15s;
 }
 
-.mxd-filter-mode-btn:hover {
-	color: var(--text-secondary);
-	border-color: var(--text-faint);
-}
-
 .mxd-filter-mode-btn.active {
 	color: var(--accent);
-	border-color: var(--accent);
-	background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .mxd-filter-mode-btn.favorites {
 	color: #e8a630;
-	border-color: #e8a630;
-	background: color-mix(in srgb, #e8a630 10%, transparent);
 }
 
 .mxd-tree-search {

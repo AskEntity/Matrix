@@ -21,18 +21,26 @@ import {
 	IconArrowDown,
 	IconClose,
 	IconExpand,
+	IconEyeOff,
 	IconHexagon,
 	IconMinimize,
 	IconPlus,
 	IconRefresh,
+	IconSearch,
 	IconSidebarLeft,
+	IconStar,
 } from "./components/icons.tsx";
 // LoginPage removed — auth handled by daemon shell
 import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
 // SettingsPanel moved to daemon shell (web/components/SettingsPanel.tsx)
 import { statusDotClass } from "./components/StatusBadge.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
-import { TaskTree } from "./components/TaskTree.tsx";
+import {
+	type FilterMode,
+	FILTER_MODES,
+	readFilterMode,
+	TaskTree,
+} from "./components/TaskTree.tsx";
 import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
 import {
 	createEventHandler,
@@ -393,6 +401,23 @@ function ProjectContent({
 	const authFetch = useAuthFetch();
 	const { t } = useLocale();
 	const [isCreatingTask, setIsCreatingTask] = useState(false);
+	// Sidebar filter controls (lifted from TaskTree for compact header)
+	const [filterOpen, setFilterOpen] = useState(false);
+	const [filterMode, setFilterMode] = useState<FilterMode>(readFilterMode);
+	const cycleFilterMode = useCallback(() => {
+		setFilterMode((prev) => {
+			const idx = FILTER_MODES.indexOf(prev);
+			const next = FILTER_MODES[
+				(idx + 1) % FILTER_MODES.length
+			] as FilterMode;
+			try {
+				localStorage.setItem("mxd-filter-mode", next);
+			} catch {
+				/* ignore */
+			}
+			return next;
+		});
+	}, []);
 	// URL is the routing truth (Task Y). `selectedTaskId` is DERIVED from
 	// `pluginPath` — no separate state, no hashchange listener, no
 	// redirect/replace bookkeeping. Navigation happens via
@@ -1452,14 +1477,37 @@ function ProjectContent({
 							<button
 								type="button"
 								className="mxd-btn-icon"
-								onClick={() => {
-									refreshTasks();
-								}}
+								onClick={() => refreshTasks()}
 								data-tip={t("tasks.refresh")}
 							>
 								<IconRefresh size={13} />
 							</button>
-							{/* Settings button moved to shell header */}
+							<button
+								type="button"
+								className={`mxd-btn-icon${filterOpen ? " active" : ""}`}
+								onClick={() => setFilterOpen((p) => !p)}
+								data-tip={t("tasks.filterToggle")}
+							>
+								<IconSearch size={13} />
+							</button>
+							<button
+								type="button"
+								className={`mxd-btn-icon mxd-filter-mode-btn${filterMode !== "all" ? " active" : ""}${filterMode === "active-favorites" ? " favorites" : ""}`}
+								onClick={cycleFilterMode}
+								data-tip={
+									filterMode === "all"
+										? t("tasks.filterAll")
+										: filterMode === "hide-closed"
+											? t("tasks.filterHideClosed")
+											: t("tasks.filterActiveFavorites")
+								}
+							>
+								{filterMode === "active-favorites" ? (
+									<IconStar size={12} filled />
+								) : (
+									<IconEyeOff size={12} />
+								)}
+							</button>
 						</div>
 					</div>
 					<TaskTree
@@ -1477,6 +1525,9 @@ function ProjectContent({
 						onCreateChildTask={handleCreateTask}
 						onDeleteNode={handleDeleteNode}
 						onRenameNode={handleRenameNode}
+						filterOpen={filterOpen}
+						onFilterOpenChange={setFilterOpen}
+						filterMode={filterMode}
 					/>
 				</aside>
 

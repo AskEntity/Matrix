@@ -111,6 +111,9 @@ describe("TaskTree color rendering", () => {
 					selectedTaskId: null,
 					rootNodeId: "root-1",
 					onSelect: () => {},
+					filterOpen: false,
+					onFilterOpenChange: () => {},
+					filterMode: "all" as const,
 				}),
 			),
 		);
@@ -159,6 +162,9 @@ describe("TaskTree color rendering", () => {
 					selectedTaskId: null,
 					rootNodeId: "root-1",
 					onSelect: () => {},
+					filterOpen: false,
+					onFilterOpenChange: () => {},
+					filterMode: "all" as const,
 				}),
 			),
 		);
@@ -211,6 +217,9 @@ describe("TaskTree color rendering", () => {
 					selectedTaskId: null,
 					rootNodeId: "root-1",
 					onSelect: () => {},
+					filterOpen: false,
+					onFilterOpenChange: () => {},
+					filterMode: "all" as const,
 				}),
 			),
 		);
@@ -237,6 +246,9 @@ describe("TaskTree color rendering", () => {
 					selectedTaskId: null,
 					rootNodeId: "root-1",
 					onSelect: () => {},
+					filterOpen: false,
+					onFilterOpenChange: () => {},
+					filterMode: "all" as const,
 				}),
 			),
 		);
@@ -288,6 +300,9 @@ describe("TaskTree color rendering", () => {
 					selectedTaskId: "child-1", // selected!
 					rootNodeId: "root-1",
 					onSelect: () => {},
+					filterOpen: false,
+					onFilterOpenChange: () => {},
+					filterMode: "all" as const,
 				}),
 			),
 		);
@@ -341,6 +356,9 @@ describe("TaskTree color rendering", () => {
 					selectedTaskId: null,
 					rootNodeId: "root-1",
 					onSelect: () => {},
+					filterOpen: false,
+					onFilterOpenChange: () => {},
+					filterMode: "all" as const,
 				}),
 			),
 		);
@@ -365,6 +383,9 @@ describe("TaskTree color rendering", () => {
 					selectedTaskId: null,
 					rootNodeId: "root-1",
 					onSelect: () => {},
+					filterOpen: false,
+					onFilterOpenChange: () => {},
+					filterMode: "all" as const,
 				}),
 			),
 		);

@@ -54,6 +54,7 @@ const en: Translations = {
 	"tasks.newTask": "New Task",
 	"tasks.newFolder": "New Folder",
 	"tasks.refresh": "Refresh",
+	"tasks.filterToggle": "Filter tasks",
 	"tasks.clearFilter": "Clear filter",
 
 	"tasks.moveToRoot": "↑ Move to root level",
@@ -368,6 +369,7 @@ const zh: Translations = {
 	"tasks.newTask": "新建任务",
 	"tasks.newFolder": "新建文件夹",
 	"tasks.refresh": "刷新",
+	"tasks.filterToggle": "筛选任务",
 	"tasks.clearFilter": "清除筛选",
 
 	"tasks.moveToRoot": "↑ 移至顶层",
