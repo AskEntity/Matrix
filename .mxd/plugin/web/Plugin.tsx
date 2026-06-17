@@ -120,6 +120,72 @@ const LazyMockShowcase = lazy(() =>
 	import("./MockShowcase.tsx").then((m) => ({ default: m.MockShowcase })),
 );
 
+// ── Add dropdown (top + button) ───────────────────────────────────────────
+// Replaces the single `+` icon button with a dropdown offering "New Task"
+// and "New Folder". Uses a minimal popover pattern — click opens, click
+// outside or selection closes.
+
+function AddDropdown({
+	onNewTask,
+	onNewFolder,
+}: {
+	onNewTask: () => void;
+	onNewFolder: () => void;
+}) {
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+	const { t } = useLocale();
+
+	// Close on outside click
+	useEffect(() => {
+		if (!open) return;
+		const handler = (e: MouseEvent) => {
+			if (ref.current && !ref.current.contains(e.target as Node)) {
+				setOpen(false);
+			}
+		};
+		document.addEventListener("mousedown", handler);
+		return () => document.removeEventListener("mousedown", handler);
+	}, [open]);
+
+	return (
+		<div className="mxd-add-dropdown" ref={ref}>
+			<button
+				type="button"
+				className="mxd-btn-icon"
+				onClick={() => setOpen((p) => !p)}
+				data-tip={t("tasks.addTask")}
+			>
+				<IconPlus size={13} />
+			</button>
+			{open && (
+				<div className="mxd-add-dropdown-menu">
+					<button
+						type="button"
+						className="mxd-add-dropdown-item"
+						onClick={() => {
+							setOpen(false);
+							onNewTask();
+						}}
+					>
+						{t("tasks.newTask")}
+					</button>
+					<button
+						type="button"
+						className="mxd-add-dropdown-item"
+						onClick={() => {
+							setOpen(false);
+							onNewFolder();
+						}}
+					>
+						📁 {t("tasks.newFolder")}
+					</button>
+				</div>
+			)}
+		</div>
+	);
+}
+
 // ── Path routing ──────────────────────────────────────────────────────────
 //
 // Task Y (2026-04-18): URL is `/<projectId>/<pluginScope>/<pluginPath>`.
@@ -1017,6 +1083,7 @@ function ProjectContent({
 		handleClearTaskSession,
 		handleAddTask,
 		handleCreateTask,
+		handleCreateFolder,
 		handleCancelCreate,
 	} = useMemo(
 		() =>
@@ -1343,14 +1410,13 @@ function ProjectContent({
 					<div className="mxd-panel-header">
 						<span className="mxd-panel-title">{t("tasks.title")}</span>
 						<div className="mxd-panel-actions">
-							<button
-								type="button"
-								className="mxd-btn-icon"
-								onClick={handleAddTask}
-								data-tip={t("tasks.addTask")}
-							>
-								<IconPlus size={13} />
-							</button>
+							<AddDropdown
+								onNewTask={handleAddTask}
+								onNewFolder={() => {
+									const title = prompt(t("prompt.taskTitle"));
+									if (title?.trim()) handleCreateFolder(title.trim());
+								}}
+							/>
 							<button
 								type="button"
 								className="mxd-btn-icon"
@@ -1376,6 +1442,7 @@ function ProjectContent({
 						isCreating={isCreatingTask}
 						onCreateTask={handleCreateTask}
 						onCancelCreate={handleCancelCreate}
+						onCreateChildTask={handleCreateTask}
 					/>
 				</aside>
 

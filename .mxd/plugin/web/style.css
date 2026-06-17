@@ -777,6 +777,80 @@ select {
 	opacity: 1;
 }
 
+/* Hover + button for child task creation */
+.mxd-add-child-btn {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	margin-left: auto;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-faint);
+	cursor: pointer;
+	opacity: 0;
+	transition:
+		opacity var(--t-fast),
+		background var(--t-fast),
+		color var(--t-fast);
+}
+
+.mxd-task-node:hover .mxd-add-child-btn,
+.mxd-task-node.selected .mxd-add-child-btn {
+	opacity: 0.5;
+}
+
+.mxd-task-node:hover .mxd-add-child-btn:hover,
+.mxd-task-node.selected .mxd-add-child-btn:hover {
+	opacity: 1;
+	background: var(--bg-overlay);
+	color: var(--accent);
+}
+
+/* Add dropdown (top + button) */
+.mxd-add-dropdown {
+	position: relative;
+}
+
+.mxd-add-dropdown-menu {
+	position: absolute;
+	top: 100%;
+	right: 0;
+	z-index: 100;
+	min-width: 140px;
+	margin-top: 2px;
+	padding: 4px 0;
+	background: var(--bg-surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.mxd-add-dropdown-item {
+	display: block;
+	width: 100%;
+	padding: 6px 12px;
+	border: none;
+	background: none;
+	color: var(--text-secondary);
+	font-size: 12px;
+	font-family: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition:
+		background var(--t-fast),
+		color var(--t-fast);
+}
+
+.mxd-add-dropdown-item:hover {
+	background: var(--bg-overlay);
+	color: var(--text-primary);
+}
+
 .mxd-color-picker {
 	display: flex;
 	align-items: center;

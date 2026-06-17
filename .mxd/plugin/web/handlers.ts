@@ -370,11 +370,17 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		setIsCreatingTask(true);
 	}
 
-	async function handleCreateTask(title: string) {
+	async function handleCreateTask(title: string, parentId?: string) {
 		if (!projectId) return;
 		setIsCreatingTask(false);
 		const body: Record<string, string> = { title };
-		if (selectedTaskId && !isOrchestratorNode) body.parentId = selectedTaskId;
+		// Use explicit parentId if provided (from inline child create),
+		// otherwise fall back to selected non-root node.
+		if (parentId) {
+			body.parentId = parentId;
+		} else if (selectedTaskId && !isOrchestratorNode) {
+			body.parentId = selectedTaskId;
+		}
 		try {
 			const res = await authFetch(api.tasks(projectId), {
 				method: "POST",
@@ -385,6 +391,29 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				throw new Error(((await res.json()) as { error: string }).error);
 			const newNode = (await res.json()) as { id: string };
 			setSelectedTaskId(newNode.id);
+			await refreshTasks();
+		} catch (err) {
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				taskId: "",
+				ts: Date.now(),
+			});
+		}
+	}
+
+	async function handleCreateFolder(title: string) {
+		if (!projectId) return;
+		const body: Record<string, unknown> = { title, folder: true };
+		if (selectedTaskId && !isOrchestratorNode) body.parentId = selectedTaskId;
+		try {
+			const res = await authFetch(api.tasks(projectId), {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
+			if (!res.ok)
+				throw new Error(((await res.json()) as { error: string }).error);
 			await refreshTasks();
 		} catch (err) {
 			addLog({
@@ -410,6 +439,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		handleClearTaskSession,
 		handleAddTask,
 		handleCreateTask,
+		handleCreateFolder,
 		handleCancelCreate,
 	};
 }

@@ -2,7 +2,13 @@ import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { isFolder, isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import type { TaskStatus } from "../types.ts";
-import { IconChevron, IconEyeOff, IconHexagon, IconStar } from "./icons.tsx";
+import {
+	IconChevron,
+	IconEyeOff,
+	IconHexagon,
+	IconPlus,
+	IconStar,
+} from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
 
 /** Three sidebar filter modes */
@@ -125,6 +131,7 @@ export const TaskTree = memo(function TaskTree({
 	isCreating,
 	onCreateTask,
 	onCancelCreate,
+	onCreateChildTask,
 }: {
 	nodes: TreeNode[];
 	selectedTaskId: string | null;
@@ -137,6 +144,8 @@ export const TaskTree = memo(function TaskTree({
 	isCreating?: boolean;
 	onCreateTask?: (title: string) => void;
 	onCancelCreate?: () => void;
+	/** Called when the user confirms the inline child-create row inside a node */
+	onCreateChildTask?: (title: string, parentId: string) => void;
 }) {
 	// Root node's children are the visible top-level tasks
 	const rootNode = useMemo(
@@ -191,6 +200,34 @@ export const TaskTree = memo(function TaskTree({
 			else next.add(id);
 			return next;
 		});
+	}, []);
+
+	// Which node has the inline child-create row open (null = none)
+	const [creatingChildOf, setCreatingChildOf] = useState<string | null>(null);
+
+	const handleStartChildCreate = useCallback((parentId: string) => {
+		setCreatingChildOf(parentId);
+		// Expand the parent so the inline row is visible
+		setCollapsed((prev) => {
+			if (!prev.has(parentId)) return prev;
+			const next = new Set(prev);
+			next.delete(parentId);
+			return next;
+		});
+	}, []);
+
+	const handleChildCreateConfirm = useCallback(
+		(title: string) => {
+			if (creatingChildOf && onCreateChildTask) {
+				onCreateChildTask(title, creatingChildOf);
+			}
+			setCreatingChildOf(null);
+		},
+		[creatingChildOf, onCreateChildTask],
+	);
+
+	const handleChildCreateCancel = useCallback(() => {
+		setCreatingChildOf(null);
 	}, []);
 
 	const [taskFilter, setTaskFilter] = useState("");
@@ -549,6 +586,10 @@ export const TaskTree = memo(function TaskTree({
 						onDragOver={handleDragOver}
 						onDragEnd={handleDragEnd}
 						onDrop={handleDrop}
+						creatingChildOf={creatingChildOf}
+						onStartChildCreate={handleStartChildCreate}
+						onChildCreateConfirm={handleChildCreateConfirm}
+						onChildCreateCancel={handleChildCreateCancel}
 					/>
 				))}
 
@@ -609,6 +650,10 @@ function TreeNodeView({
 	onDragOver,
 	onDragEnd,
 	onDrop,
+	creatingChildOf,
+	onStartChildCreate,
+	onChildCreateConfirm,
+	onChildCreateCancel,
 }: {
 	node: TreeNode;
 	childMap: Map<string, TreeNode[]>;
@@ -644,6 +689,10 @@ function TreeNodeView({
 		siblingIds: string[],
 		e: React.DragEvent,
 	) => void;
+	creatingChildOf: string | null;
+	onStartChildCreate: (parentId: string) => void;
+	onChildCreateConfirm: (title: string) => void;
+	onChildCreateCancel: () => void;
 }) {
 	const isSelected = node.id === selectedTaskId;
 	const allChildren = childMap.get(node.id) ?? [];
@@ -773,6 +822,17 @@ function TreeNodeView({
 							<IconStar size={11} filled={favorites.has(node.id)} />
 						</button>
 					)}
+					<button
+						type="button"
+						className="mxd-add-child-btn"
+						onClick={(e) => {
+							e.stopPropagation();
+							onStartChildCreate(node.id);
+						}}
+						tabIndex={-1}
+					>
+						<IconPlus size={10} />
+					</button>
 				</div>
 			</div>
 			{showIndicatorAfter && (
@@ -809,8 +869,20 @@ function TreeNodeView({
 						onDragOver={onDragOver}
 						onDragEnd={onDragEnd}
 						onDrop={onDrop}
+						creatingChildOf={creatingChildOf}
+						onStartChildCreate={onStartChildCreate}
+						onChildCreateConfirm={onChildCreateConfirm}
+						onChildCreateCancel={onChildCreateCancel}
 					/>
 				))}
+			{/* Inline child creation row — shown nested under this node */}
+			{!isCollapsed && creatingChildOf === node.id && (
+				<InlineCreateRow
+					onConfirm={onChildCreateConfirm}
+					onCancel={onChildCreateCancel}
+					depth={depth + 1}
+				/>
+			)}
 		</>
 	);
 }
@@ -820,9 +892,11 @@ function TreeNodeView({
 function InlineCreateRow({
 	onConfirm,
 	onCancel,
+	depth = 0,
 }: {
 	onConfirm: (title: string) => void;
 	onCancel: () => void;
+	depth?: number;
 }) {
 	const [value, setValue] = useState("");
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -837,7 +911,10 @@ function InlineCreateRow({
 
 	return (
 		<div className="mxd-task-node mxd-inline-create">
-			<div className="mxd-task-row" style={{ paddingLeft: "22px" }}>
+			<div
+				className="mxd-task-row"
+				style={{ paddingLeft: `${12 + depth * 10}px` }}
+			>
 				<span className="mxd-tree-toggle-placeholder" />
 				<span className="mxd-task-status-dot dot-pending" />
 				<input
