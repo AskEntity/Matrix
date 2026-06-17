@@ -62,6 +62,14 @@ const en: Translations = {
 	"tasks.filterHideClosed": "Hide closed/failed",
 	"tasks.filterActiveFavorites": "Active + Favorites",
 
+	// Context menu
+	"context.newChildTask": "New Child Task",
+	"context.favorite": "Favorite",
+	"context.unfavorite": "Unfavorite",
+	"context.moveToRoot": "Move to Root",
+	"context.delete": "Delete",
+	"context.rename": "Rename",
+
 	// Sidebar
 	"sidebar.collapse": "Collapse sidebar",
 	"sidebar.expand": "Expand sidebar",
@@ -367,6 +375,14 @@ const zh: Translations = {
 	"tasks.filterAll": "显示全部",
 	"tasks.filterHideClosed": "隐藏已关闭",
 	"tasks.filterActiveFavorites": "活跃 + 收藏",
+
+	// Context menu
+	"context.newChildTask": "新建子任务",
+	"context.favorite": "收藏",
+	"context.unfavorite": "取消收藏",
+	"context.moveToRoot": "移至顶层",
+	"context.delete": "删除",
+	"context.rename": "重命名",
 
 	// Sidebar
 	"sidebar.collapse": "折叠侧边栏",
