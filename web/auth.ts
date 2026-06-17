@@ -38,8 +38,18 @@ export async function authFetch(
 		headers.set("Authorization", `Bearer ${token}`);
 	}
 	const res = await fetch(input, { ...init, headers });
+	// Only clear the session token when the daemon's OWN auth middleware
+	// rejects it (expired, revoked, bad signature). Plugin-worker 401s
+	// (e.g. a project-scoped worker not ready, or a plugin route that
+	// requires its own auth) must NOT wipe the session — otherwise
+	// switching back to another scope forces a full re-login.
+	// Daemon auth paths: anything NOT under /api/<plugin>/*.
 	if (res.status === 401) {
-		clearToken();
+		const url = typeof input === "string" ? input : input.toString();
+		const isPluginRoute = url.startsWith("/api/");
+		if (!isPluginRoute) {
+			clearToken();
+		}
 	}
 	return res;
 }
