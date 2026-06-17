@@ -443,6 +443,9 @@ function MockShowcaseInner() {
 						activeAgents={activeAgents}
 						onSelect={handleTaskSelect}
 						onDoubleClick={handleTaskPin}
+						filterOpen={false}
+						onFilterOpenChange={() => {}}
+						filterMode="all"
 					/>
 				</aside>
 

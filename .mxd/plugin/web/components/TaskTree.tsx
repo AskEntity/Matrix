@@ -9,13 +9,17 @@ import {
 import { isFolder, isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import type { TaskStatus } from "../types.ts";
-import { IconChevron, IconEyeOff, IconHexagon, IconStar } from "./icons.tsx";
+import { IconChevron, IconHexagon, IconStar } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
 
 /** Three sidebar filter modes */
-type FilterMode = "all" | "hide-closed" | "active-favorites";
+export type FilterMode = "all" | "hide-closed" | "active-favorites";
 
-const FILTER_MODES: FilterMode[] = ["all", "hide-closed", "active-favorites"];
+export const FILTER_MODES: FilterMode[] = [
+	"all",
+	"hide-closed",
+	"active-favorites",
+];
 
 /** Read favorites from localStorage */
 function readFavorites(): Set<string> {
@@ -42,7 +46,7 @@ function writeFavorites(favorites: Set<string>) {
 }
 
 /** Read stored filter mode, migrating from old boolean format */
-function readFilterMode(): FilterMode {
+export function readFilterMode(): FilterMode {
 	try {
 		const stored = localStorage.getItem("mxd-filter-mode");
 		if (
@@ -135,6 +139,9 @@ export const TaskTree = memo(function TaskTree({
 	onCreateChildTask,
 	onDeleteNode,
 	onRenameNode,
+	filterOpen,
+	onFilterOpenChange,
+	filterMode,
 }: {
 	nodes: TreeNode[];
 	selectedTaskId: string | null;
@@ -153,6 +160,12 @@ export const TaskTree = memo(function TaskTree({
 	onDeleteNode?: (id: string, title: string) => void;
 	/** Called when context menu "Rename" is chosen (folders) */
 	onRenameNode?: (id: string, newTitle: string) => void;
+	/** Whether the filter input is expanded */
+	filterOpen: boolean;
+	/** Callback to toggle filter input visibility */
+	onFilterOpenChange: (open: boolean) => void;
+	/** Current filter mode (controlled by parent) */
+	filterMode: FilterMode;
 }) {
 	// Root node's children are the visible top-level tasks
 	const rootNode = useMemo(
@@ -238,8 +251,17 @@ export const TaskTree = memo(function TaskTree({
 	}, []);
 
 	const [taskFilter, setTaskFilter] = useState("");
-	const [filterMode, setFilterMode] = useState<FilterMode>(readFilterMode);
+	const filterInputRef = useRef<HTMLInputElement>(null);
 	const [favorites, setFavorites] = useState<Set<string>>(readFavorites);
+
+	// Auto-focus the filter input when it opens
+	useEffect(() => {
+		if (filterOpen) {
+			// Small delay so the CSS transition can start before focus
+			const timer = setTimeout(() => filterInputRef.current?.focus(), 50);
+			return () => clearTimeout(timer);
+		}
+	}, [filterOpen]);
 
 	const toggleFavorite = useCallback((id: string) => {
 		setFavorites((prev) => {
@@ -247,19 +269,6 @@ export const TaskTree = memo(function TaskTree({
 			if (next.has(id)) next.delete(id);
 			else next.add(id);
 			writeFavorites(next);
-			return next;
-		});
-	}, []);
-
-	const cycleFilterMode = useCallback(() => {
-		setFilterMode((prev) => {
-			const idx = FILTER_MODES.indexOf(prev);
-			const next = FILTER_MODES[(idx + 1) % FILTER_MODES.length] as FilterMode;
-			try {
-				localStorage.setItem("mxd-filter-mode", next);
-			} catch {
-				/* ignore */
-			}
 			return next;
 		});
 	}, []);
@@ -526,13 +535,6 @@ export const TaskTree = memo(function TaskTree({
 		? roots.filter((r) => matchingIds.has(r.id))
 		: roots;
 
-	const filterModeTitle =
-		filterMode === "all"
-			? t("tasks.filterAll")
-			: filterMode === "hide-closed"
-				? t("tasks.filterHideClosed")
-				: t("tasks.filterActiveFavorites");
-
 	// Parent ID for top-level tasks (roots)
 	const topLevelParentId = rootNodeId ?? "";
 	const topLevelSiblingIds = roots.map((r) => r.id);
@@ -541,27 +543,30 @@ export const TaskTree = memo(function TaskTree({
 		<div className="mxd-task-tree">
 			{/* Non-scrolling header area */}
 			<div className="mxd-tree-header">
-				{/* Search bar */}
-				<div className="mxd-tree-search-bar">
+				{/* Collapsible search bar — shown when filterOpen */}
+				<div
+					className={`mxd-tree-search-bar${filterOpen ? " mxd-tree-search-bar--open" : ""}`}
+				>
 					<input
+						ref={filterInputRef}
 						type="text"
 						className="mxd-tree-search"
 						placeholder={t("tasks.filter")}
 						value={taskFilter}
 						onChange={(e) => setTaskFilter(e.target.value)}
+						onBlur={() => {
+							// Auto-close when empty and unfocused
+							if (!taskFilter.trim()) {
+								onFilterOpenChange(false);
+							}
+						}}
+						onKeyDown={(e) => {
+							if (e.key === "Escape") {
+								setTaskFilter("");
+								onFilterOpenChange(false);
+							}
+						}}
 					/>
-					<button
-						type="button"
-						className={`mxd-filter-mode-btn${filterMode !== "all" ? " active" : ""}${filterMode === "active-favorites" ? " favorites" : ""}`}
-						onClick={cycleFilterMode}
-						title={filterModeTitle}
-					>
-						{filterMode === "active-favorites" ? (
-							<IconStar size={12} filled />
-						) : (
-							<IconEyeOff size={12} />
-						)}
-					</button>
 				</div>
 
 				{/* Orchestrator row */}

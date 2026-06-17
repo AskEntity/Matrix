@@ -3311,3 +3311,19 @@ The server's null rejection for global config (added in FIX-2 cc#4) is CORRECT -
 prevents writing incomplete configs that would brick the next boot. The frontend was
 producing the null values that triggered the rejection. Both sides are now correct:
 server rejects null, frontend never sends it for global.
+
+## Compact sidebar header (2026-06-17)
+
+Sidebar header consolidated from 3 rows (TASKS+buttons / filter input / hide-completed)
+into one: `[TASKS] [+] [Refresh] [🔍 Filter] [👁 Hide completed]`.
+
+- `filterMode` state + `cycleFilterMode` lifted from TaskTree.tsx to Plugin.tsx.
+  TaskTree accepts `filterOpen`, `onFilterOpenChange`, `filterMode` as props.
+- `FilterMode`, `FILTER_MODES`, `readFilterMode` exported from TaskTree.tsx.
+- Search bar is collapsible via CSS `max-height` + `opacity` transition.
+  Class `mxd-tree-search-bar--open` toggles visibility. Auto-focus on open,
+  auto-close on blur when empty, Escape clears and closes.
+- Filter mode button uses `mxd-btn-icon mxd-filter-mode-btn` dual-class pattern
+  in the header (inherits icon button sizing, overrides color for active/favorites).
+- `IconSearch` added to icons.tsx (magnifying glass SVG).
+- `tasks.filterToggle` i18n key added (EN + ZH).
