@@ -51,6 +51,8 @@ const en: Translations = {
 	"tasks.sendMessage": "Send a message to get started",
 	"tasks.noMatch": "No tasks match",
 	"tasks.addTask": "Add task",
+	"tasks.newTask": "New Task",
+	"tasks.newFolder": "New Folder",
 	"tasks.refresh": "Refresh",
 	"tasks.clearFilter": "Clear filter",
 
@@ -355,6 +357,8 @@ const zh: Translations = {
 	"tasks.sendMessage": "发送消息以开始",
 	"tasks.noMatch": "没有匹配的任务",
 	"tasks.addTask": "添加任务",
+	"tasks.newTask": "新建任务",
+	"tasks.newFolder": "新建文件夹",
 	"tasks.refresh": "刷新",
 	"tasks.clearFilter": "清除筛选",
 
