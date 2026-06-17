@@ -16,6 +16,7 @@ import {
 	TOOL_YIELD,
 } from "../../tool-names.ts";
 import { Card } from "../Card.tsx";
+import { ImageLightbox } from "../ImageLightbox.tsx";
 import { ToolResultImages } from "./ToolResultImages.tsx";
 import {
 	bashBgExcludeKeys,
@@ -119,6 +120,7 @@ export const LogEntryView = memo(function LogEntryView({
 }) {
 	const authFetch = useAuthFetch();
 	const [movingToBg, setMovingToBg] = useState(false);
+	const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 	const taskLabel = null;
 
 	const { t } = useLocale();
@@ -668,39 +670,45 @@ export const LogEntryView = memo(function LogEntryView({
 	// User message — special bubble rendering, not a card
 	if (entry.type === "message" && entry.body.source === "user") {
 		return (
-			<div className="mxd-lmxd-entry mxd-event-user_message">
-				<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
-				<div className="mxd-user-prompt-bubble">
-					<span className="mxd-user-prompt-text">{entry.body.content}</span>
-					{entry.body.images && entry.body.images.length > 0 && (
-						<div className="mxd-user-images">
-							{entry.body.images.map(
-								(img: { base64: string; mediaType: string }) => (
-									<img
-										key={img.base64.slice(-32)}
-										src={`data:${img.mediaType};base64,${img.base64}`}
-										alt="attached"
-										className="mxd-user-image-thumb"
-										onClick={() =>
-											window.open(
-												`data:${img.mediaType};base64,${img.base64}`,
-												"_blank",
-											)
-										}
-										onKeyDown={(e) => {
-											if (e.key === "Enter" || e.key === " ")
-												window.open(
-													`data:${img.mediaType};base64,${img.base64}`,
-													"_blank",
-												);
-										}}
-									/>
-								),
-							)}
-						</div>
-					)}
+			<>
+				<div className="mxd-lmxd-entry mxd-event-user_message">
+					<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
+					<div className="mxd-user-prompt-bubble">
+						<span className="mxd-user-prompt-text">
+							{entry.body.content}
+						</span>
+						{entry.body.images && entry.body.images.length > 0 && (
+							<div className="mxd-user-images">
+								{entry.body.images.map(
+									(img: { base64: string; mediaType: string }) => {
+										const src = `data:${img.mediaType};base64,${img.base64}`;
+										return (
+											<img
+												key={img.base64.slice(-32)}
+												src={src}
+												alt="attached"
+												className="mxd-user-image-thumb"
+												onClick={() => setLightboxSrc(src)}
+												onKeyDown={(e) => {
+													if (e.key === "Enter" || e.key === " ")
+														setLightboxSrc(src);
+												}}
+											/>
+										);
+									},
+								)}
+							</div>
+						)}
+					</div>
 				</div>
-			</div>
+				{lightboxSrc && (
+					<ImageLightbox
+						src={lightboxSrc}
+						alt="attached image"
+						onClose={() => setLightboxSrc(null)}
+					/>
+				)}
+			</>
 		);
 	}
 

@@ -42,6 +42,7 @@ export const InputBar = memo(function InputBar({
 	const [attachedImages, setAttachedImages] = useState<
 		{ base64: string; mediaType: string }[]
 	>([]);
+	const [isDragOver, setIsDragOver] = useState(false);
 
 	// Keep promptRef in sync with every prompt change
 	const setPromptAndRef = useCallback(
@@ -136,7 +137,7 @@ export const InputBar = memo(function InputBar({
 		adjustTextareaHeight();
 	}, [prompt]);
 
-	function handleFileToBase64(file: File) {
+	const handleFileToBase64 = useCallback((file: File) => {
 		if (file.size > MAX_IMAGE_SIZE_BYTES) return;
 		const reader = new FileReader();
 		reader.onload = () => {
@@ -149,7 +150,7 @@ export const InputBar = memo(function InputBar({
 			}
 		};
 		reader.readAsDataURL(file);
-	}
+	}, []);
 
 	const handleSlashSelect = useCallback(
 		(cmd: { name: string }) => {
@@ -160,10 +161,13 @@ export const InputBar = memo(function InputBar({
 		[setPromptAndRef],
 	);
 
+	const canSend = projectId && (prompt.trim() || attachedImages.length > 0);
+
 	const handleSubmit = useCallback(
 		(e: React.FormEvent | React.KeyboardEvent) => {
 			e.preventDefault();
-			if (!prompt.trim() || !projectId) return;
+			if (!projectId) return;
+			if (!prompt.trim() && attachedImages.length === 0) return;
 			const images = attachedImages.length > 0 ? attachedImages : undefined;
 			onSend(prompt.trim(), images);
 			setPromptAndRef("");
@@ -173,8 +177,44 @@ export const InputBar = memo(function InputBar({
 		[prompt, attachedImages, projectId, onSend, setPromptAndRef],
 	);
 
+	const handleDragOver = useCallback((e: React.DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (e.dataTransfer.types.includes("Files")) {
+			setIsDragOver(true);
+		}
+	}, []);
+
+	const handleDragLeave = useCallback((e: React.DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setIsDragOver(false);
+	}, []);
+
+	const handleDrop = useCallback(
+		(e: React.DragEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			setIsDragOver(false);
+			const files = e.dataTransfer.files;
+			if (!files) return;
+			for (const file of files) {
+				if (file.type.startsWith("image/")) {
+					handleFileToBase64(file);
+				}
+			}
+		},
+		[handleFileToBase64],
+	);
+
 	return (
-		<form className="mxd-footer-form" onSubmit={handleSubmit}>
+		<form
+			className={`mxd-footer-form${isDragOver ? " mxd-drag-over" : ""}`}
+			onSubmit={handleSubmit}
+			onDragOver={handleDragOver}
+			onDragLeave={handleDragLeave}
+			onDrop={handleDrop}
+		>
 			{/* Image preview thumbnails */}
 			{attachedImages.length > 0 && (
 				<div className="mxd-image-previews">
@@ -319,7 +359,7 @@ export const InputBar = memo(function InputBar({
 				<button
 					type="submit"
 					className="mxd-btn-run"
-					disabled={!projectId || !prompt.trim()}
+					disabled={!canSend}
 				>
 					<IconSend size={13} />
 					<span className="mxd-btn-run-label">{t("footer.send")}</span>
