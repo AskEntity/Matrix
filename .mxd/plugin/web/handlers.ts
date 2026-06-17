@@ -200,7 +200,8 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		message: string,
 		images?: { base64: string; mediaType: string }[],
 	) {
-		if (!message.trim() || !projectId) return;
+		if (!projectId) return;
+		if (!message.trim() && (!images || images.length === 0)) return;
 
 		// Check for slash commands before sending as a chat message
 		if (message.trim().startsWith("/")) {
