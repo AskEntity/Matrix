@@ -178,7 +178,7 @@ function AddDropdown({
 							onNewFolder();
 						}}
 					>
-						📁 {t("tasks.newFolder")}
+						{t("tasks.newFolder")}
 					</button>
 				</div>
 			)}
