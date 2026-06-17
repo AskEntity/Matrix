@@ -118,9 +118,10 @@ export async function getTracker(
 			? await detectBranch(project.path)
 			: undefined;
 		freshTree = await tracker.load(defaultBranch);
-		// Backfill root worktreePath = project root
+		// Sync root worktreePath = project root (always, not just on first load —
+		// project path may change if the repo directory is moved/renamed).
 		const root = tracker.getTask(tracker.rootNodeId);
-		if (root && !root.worktreePath && project) {
+		if (root && project) {
 			root.worktreePath = project.path;
 		}
 		ctx.trackers.set(projectId, tracker);
