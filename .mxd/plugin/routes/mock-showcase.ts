@@ -372,6 +372,23 @@ function buildMockData() {
 		ts: ts(m--),
 	});
 
+	// assistant_text with a markdown table — rendered as a real <table> with a
+	// copy button (see components/MarkdownText.tsx). Exercises mixed prose +
+	// table + alignment markers.
+	events.push({
+		type: "assistant_text",
+		content:
+			"Here's a comparison of the three approaches:\n\n" +
+			"| Approach | Speed | Complexity | Notes |\n" +
+			"| :--- | ---: | :---: | :--- |\n" +
+			"| Full markdown lib | slow | high | pulls a heavy dependency |\n" +
+			"| Hand-written table parser | fast | low | tables only, no inline md |\n" +
+			"| Leave as raw text | n/a | none | unreadable when misaligned |\n\n" +
+			"I recommend the **hand-written table parser** — it stays minimal and covers the actual need.",
+		taskId: SESSION_ID,
+		ts: ts(m--),
+	});
+
 	// ═══════════════════════════════════════════════════════════════════════
 	// SECTION 2: Resolved tool pairs (tool_call + tool_result)
 	// ═══════════════════════════════════════════════════════════════════════
