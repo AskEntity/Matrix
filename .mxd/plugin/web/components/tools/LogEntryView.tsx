@@ -17,6 +17,7 @@ import {
 } from "../../tool-names.ts";
 import { Card } from "../Card.tsx";
 import { ImageLightbox } from "../ImageLightbox.tsx";
+import { MarkdownText } from "../MarkdownText.tsx";
 import { ToolResultImages } from "./ToolResultImages.tsx";
 import {
 	bashBgExcludeKeys,
@@ -781,7 +782,7 @@ export const LogEntryView = memo(function LogEntryView({
 					</span>
 				)}
 				<div className="mxd-lmxd-body">
-					<span className="mxd-lmxd-text">{text}</span>
+					<MarkdownText text={text} className="mxd-lmxd-text" />
 					{ci && showCacheBadges && <CacheInfoBadge cacheInfo={ci} />}
 				</div>
 			</div>

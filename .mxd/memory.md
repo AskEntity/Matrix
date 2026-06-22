@@ -3327,3 +3327,70 @@ into one: `[TASKS] [+] [Refresh] [🔍 Filter] [👁 Hide completed]`.
   in the header (inherits icon button sizing, overrides color for active/favorites).
 - `IconSearch` added to icons.tsx (magnifying glass SVG).
 - `tasks.filterToggle` i18n key added (EN + ZH).
+
+## Markdown TABLE rendering in activity log + copy button (2026-06-22)
+
+Agent replies frequently use markdown tables to compare options; they rendered
+as misaligned pipe text in the proportional/mono font. Now rendered as real
+aligned `<table>` with a hover copy button.
+
+### Scope: TABLES ONLY (not full markdown — deliberate)
+No markdown library pulled in. A focused hand-written GFM-table parser. Inline
+markdown (`**bold**`, `` `code` ``) inside cells is NOT parsed — cells render as
+plain text. If full markdown is ever wanted, that's a separate decision.
+
+### Files
+- `.mxd/plugin/web/markdown-table.ts` — pure parser (no DOM, fully unit-tested):
+  `parseTextSegments(text)` → ordered `{type:"text"} | {type:"table"}` segments;
+  `splitRow`, `isDelimiterRow`, `hasTable` exported for tests.
+- `.mxd/plugin/web/components/MarkdownText.tsx` — `<MarkdownText text className>`.
+  Renders tables as `<table class="mxd-md-table">` + a `MarkdownTable` subcomponent
+  with the copy button. Reusable — currently wired ONLY into `assistant_text`.
+- `LogEntryView.tsx` — assistant_text path: `<span class=mxd-lmxd-text>{text}</span>`
+  → `<MarkdownText text={text} className="mxd-lmxd-text" />`. Two-line diff.
+- `style.css` — `.mxd-md*` block (after `.mxd-event-assistant_text .mxd-lmxd-text`).
+- `i18n.ts` — `table.copy`/`table.copied` (EN + ZH).
+- `routes/mock-showcase.ts` — added an assistant_text-with-table sample (same
+  precedent as the compacted_resume card) → visually verifiable at `/mock-showcase`.
+
+### Parser grammar (strict — false positives are the danger)
+A table requires a HEADER line containing `|` IMMEDIATELY followed by a DELIMITER
+row whose cells are all `:?-+:?`, AND header/delimiter must have the SAME cell
+count (GFM rule). The column-count match is what stops a thematic break (`---`)
+or a piped prose line from being misread as a table. Body rows continue until a
+blank/non-pipe/delimiter line; padded or truncated to header width. Escaped pipes
+(`\|`) inside cells are unescaped and don't split. Alignment from delimiter colons.
+
+### Key invariants
+- **Zero regression for the no-table case**: `MarkdownText` fast-paths to the
+  SAME `<span className={className}>{text}</span>` when no table is present.
+  `.mxd-md` wrapper only appears when a table exists.
+- **XSS-safe**: cells render as React text children (escaped), never
+  `dangerouslySetInnerHTML`. Test asserts `<img>`/`<b>` in a cell stay literal text.
+- **Copy = original markdown source** (the captured `raw` block), so it re-pastes
+  into another markdown surface verbatim. `navigator.clipboard?.writeText` guarded
+  (insecure-context / denied → no-op).
+- Copy button is hover/focus-reveal (`opacity 0 → 1`), styled like
+  `mxd-bash-background-btn`. Non-scrolling `.mxd-md-table-wrap` holds the absolute
+  button; inner `.mxd-md-table-scroll` does `overflow-x:auto` so the button stays
+  fixed while a wide table scrolls.
+
+### Tests (mutation-verified)
+- `web/markdown-table.test.ts` (26) — parser grammar, heavy on "this is NOT a
+  table" (thematic break, no-delimiter, column mismatch). Mutation: removing the
+  column-count guard fails the mismatch test.
+- `web/MarkdownText.test.tsx` (6) — full render through LogEntryView: no-table
+  plain span, real `<table>` headers/cells, alignment styles, copy-button copies
+  the markdown, mixed prose+table, XSS guard. Mutations (force plain path / copy
+  wrong content) fail the right tests.
+- TS gotcha hit + fixed: clipboard capture used a holder object `{value}` (not a
+  bare `let`) so TS doesn't narrow the closure-assigned probe back to `null` (same
+  pattern noted in lifecycle-concurrency tests).
+
+### Pre-existing base-branch issues observed (NOT introduced here; flagged to root)
+At fork point the branch already had: 5 `tsc` TS6133 unused-symbol errors
+(`handlers.ts` isOrchestratorNode, `lifecycle-guards.test.ts` x3,
+`worker-lifecycle.test.ts`) + 1 biome format drift (`mxd-user-prompt-text` span in
+LogEntryView). Verified identical with my changes stashed. `bun test` is green
+(2305 pass); these only affect `tsc`/`check:ci`. Root should clean before the
+final main commit (worktree hooks are /dev/null so they don't gate here).

@@ -2043,6 +2043,86 @@ select {
 	color: var(--text-primary);
 }
 
+/* Markdown table rendering (agent replies) — see components/MarkdownText.tsx.
+   When text has no table, MarkdownText renders the plain .mxd-lmxd-text span
+   above; the .mxd-md wrapper only appears when at least one table is present. */
+.mxd-md {
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.6;
+	color: var(--text-primary);
+	min-width: 0;
+}
+.mxd-md-text {
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+.mxd-md-text:not(:last-child) {
+	margin-bottom: 6px;
+}
+.mxd-md-table-wrap {
+	position: relative;
+	margin: 6px 0;
+}
+.mxd-md-table-scroll {
+	overflow-x: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+}
+.mxd-md-table {
+	border-collapse: collapse;
+	width: 100%;
+	font-family: var(--font-sans);
+	font-size: 12px;
+}
+.mxd-md-table th,
+.mxd-md-table td {
+	border: 1px solid var(--border);
+	padding: 4px 10px;
+	text-align: left;
+	vertical-align: top;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+.mxd-md-table thead th {
+	background: var(--bg-overlay);
+	color: var(--text-primary);
+	font-weight: 600;
+}
+.mxd-md-table tbody td {
+	color: var(--text-secondary);
+}
+.mxd-md-table tbody tr:nth-child(even) td {
+	background: var(--bg-surface);
+}
+.mxd-md-table-copy {
+	position: absolute;
+	top: 4px;
+	right: 4px;
+	z-index: 1;
+	background: rgba(99, 179, 237, 0.12);
+	border: 1px solid rgba(99, 179, 237, 0.3);
+	border-radius: var(--radius-sm);
+	color: rgba(99, 179, 237, 0.85);
+	cursor: pointer;
+	font-size: 10px;
+	font-family: var(--font-mono);
+	padding: 1px 6px;
+	opacity: 0;
+	transition:
+		opacity var(--t-fast),
+		background var(--t-fast),
+		color var(--t-fast);
+}
+.mxd-md-table-wrap:hover .mxd-md-table-copy,
+.mxd-md-table-copy:focus-visible {
+	opacity: 1;
+}
+.mxd-md-table-copy:hover {
+	background: rgba(99, 179, 237, 0.22);
+	color: rgba(99, 179, 237, 1);
+}
+
 .mxd-cache-badge {
 	display: inline-block;
 	margin-left: 6px;

@@ -259,6 +259,10 @@ const en: Translations = {
 	"compact.checkpoint": "▶ Checkpoint",
 	"compact.summaryTitle": "Compact Summary",
 
+	// Markdown table rendering
+	"table.copy": "Copy",
+	"table.copied": "Copied",
+
 	// Log
 	"log.youArrow": "You →",
 
@@ -569,6 +573,10 @@ const zh: Translations = {
 	"compact.collapse": "▼ 折叠",
 	"compact.checkpoint": "▶ 检查点",
 	"compact.summaryTitle": "压缩摘要",
+
+	// Markdown table rendering
+	"table.copy": "复制",
+	"table.copied": "已复制",
 
 	// Log
 	"log.youArrow": "你 →",
