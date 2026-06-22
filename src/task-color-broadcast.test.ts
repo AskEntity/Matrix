@@ -21,8 +21,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { broadcastTreeUpdate } from "./runtime/event-system.ts";
 import type { RuntimeContext } from "./runtime/context.ts";
+import { broadcastTreeUpdate } from "./runtime/event-system.ts";
 import { createTaskOp, updateTaskOp } from "./task-operations.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { isTask, type TaskNode } from "./types.ts";
@@ -42,7 +42,11 @@ afterEach(async () => {
 
 /** Capture the last broadcast payload from broadcastTreeUpdate. */
 function captureBroadcast(tracker: TaskTracker) {
-	let lastPayload: { type: string; nodes: unknown[]; rootNodeId: string } | null = null;
+	let lastPayload: {
+		type: string;
+		nodes: unknown[];
+		rootNodeId: string;
+	} | null = null;
 
 	const ctx: RuntimeContext = {
 		onBroadcast: (_projectId: string, event: Record<string, unknown>) => {

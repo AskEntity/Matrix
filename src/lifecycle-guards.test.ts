@@ -15,13 +15,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentProvider } from "./agent-provider.ts";
-import { MessageQueue } from "./message-queue.ts";
 import { getEventStore } from "./runtime/helpers.ts";
 import {
 	closeTaskOp,
 	deleteTaskOp,
 	resetTaskOp,
-	TaskOperationError,
 	updateTaskOp,
 } from "./task-operations.ts";
 import { TaskTracker } from "./task-tracker.ts";
@@ -142,10 +140,9 @@ describe("R8-C#1: root node protection", () => {
 			const rootId = t.rootNodeId;
 
 			const res = await result.app.fetch(
-				new Request(
-					`http://localhost/projects/${project.id}/tasks/${rootId}`,
-					{ method: "DELETE" },
-				),
+				new Request(`http://localhost/projects/${project.id}/tasks/${rootId}`, {
+					method: "DELETE",
+				}),
 			);
 			expect(res.status).toBe(400);
 			const body = await res.json();
@@ -175,11 +172,7 @@ describe("R8-C#2: status transition validation", () => {
 	});
 
 	test("updateTaskOp rejects status change to 'closed' (must use closeTaskOp)", async () => {
-		const node = tracker.addChild(
-			tracker.rootNodeId,
-			"test-task",
-			"desc",
-		);
+		const node = tracker.addChild(tracker.rootNodeId, "test-task", "desc");
 		tracker.updateStatus(node.id, "in_progress");
 		tracker.updateStatus(node.id, "verify");
 
@@ -198,11 +191,7 @@ describe("R8-C#2: status transition validation", () => {
 	});
 
 	test("updateTaskOp rejects status change to 'failed' (must use lifecycle ops)", async () => {
-		const node = tracker.addChild(
-			tracker.rootNodeId,
-			"test-task",
-			"desc",
-		);
+		const node = tracker.addChild(tracker.rootNodeId, "test-task", "desc");
 
 		await expect(
 			updateTaskOp(
@@ -255,11 +244,7 @@ describe("R8-C#2: status transition validation", () => {
 	});
 
 	test("updateTaskOp allows valid status transitions (pending → in_progress)", async () => {
-		const node = tracker.addChild(
-			tracker.rootNodeId,
-			"test-task",
-			"desc",
-		);
+		const node = tracker.addChild(tracker.rootNodeId, "test-task", "desc");
 		// pending → in_progress should be fine
 		const result = await updateTaskOp(
 			tracker,
@@ -297,7 +282,7 @@ describe("R8-C#3: prefix canonicalization", () => {
 			});
 			result.markReady();
 			const tracker = await result.getTracker(project.id);
-			const child = tracker.addChild(tracker.rootNodeId, "child", "desc", {
+			tracker.addChild(tracker.rootNodeId, "child", "desc", {
 				id: CHILD_FULL_ID,
 			});
 			await tracker.save();
@@ -450,17 +435,14 @@ describe("R8-C#4: REST message validation", () => {
 
 	test("POST /clarify to nonexistent nodeId returns 404", async () => {
 		const res = await app.fetch(
-			new Request(
-				`http://localhost/projects/${projectId}/clarify`,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						taskId: "NONEXISTENT_ID_12345678",
-						answer: "yes",
-					}),
-				},
-			),
+			new Request(`http://localhost/projects/${projectId}/clarify`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					taskId: "NONEXISTENT_ID_12345678",
+					answer: "yes",
+				}),
+			}),
 		);
 		// handleClarifyResponse should return 404 for bogus task
 		expect(res.status).toBe(404);
@@ -476,17 +458,14 @@ describe("R8-C#4: REST message validation", () => {
 		await tracker.save();
 
 		const res = await app.fetch(
-			new Request(
-				`http://localhost/projects/${projectId}/clarify`,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						taskId: folder.id,
-						answer: "yes",
-					}),
-				},
-			),
+			new Request(`http://localhost/projects/${projectId}/clarify`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					taskId: folder.id,
+					answer: "yes",
+				}),
+			}),
 		);
 		expect(res.status).toBe(400);
 	});

@@ -356,11 +356,7 @@ export const InputBar = memo(function InputBar({
 				>
 					<IconImage size={14} />
 				</button>
-				<button
-					type="submit"
-					className="mxd-btn-run"
-					disabled={!canSend}
-				>
+				<button type="submit" className="mxd-btn-run" disabled={!canSend}>
 					<IconSend size={13} />
 					<span className="mxd-btn-run-label">{t("footer.send")}</span>
 				</button>

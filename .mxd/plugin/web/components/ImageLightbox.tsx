@@ -26,13 +26,9 @@ export const ImageLightbox = memo(function ImageLightbox({
 	}, [handleKeyDown]);
 
 	return (
-		<div
-			className="mxd-lightbox-overlay"
-			onClick={onClose}
-			onKeyDown={(e) => {
-				if (e.key === "Escape") onClose();
-			}}
-		>
+		// biome-ignore lint/a11y/noStaticElementInteractions: full-screen dismiss overlay
+		// biome-ignore lint/a11y/useKeyWithClickEvents: Escape handled at document level in useEffect
+		<div className="mxd-lightbox-overlay" onClick={onClose}>
 			<img
 				className="mxd-lightbox-image"
 				src={src}

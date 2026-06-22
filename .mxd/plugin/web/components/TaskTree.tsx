@@ -1,11 +1,4 @@
-import {
-	memo,
-	useCallback,
-	useEffect,
-	useMemo,
-	useRef,
-	useState,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isFolder, isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import type { TaskStatus } from "../types.ts";
@@ -665,63 +658,64 @@ export const TaskTree = memo(function TaskTree({
 			</div>
 
 			{/* Context menu */}
-			{contextMenu && (() => {
-				const node = nodeMap.get(contextMenu.nodeId);
-				if (!node) return null;
-				const isTaskNode = isTask(node);
-				const isFav = favorites.has(node.id);
-				const isAtRoot = node.parentId === rootNodeId;
-				return (
-					<ContextMenu
-						x={contextMenu.x}
-						y={contextMenu.y}
-						items={[
-							{
-								label: t("context.newChildTask"),
-								action: () => handleStartChildCreate(node.id),
-							},
-							...(isTaskNode
-								? [
-										{
-											label: isFav
-												? t("context.unfavorite")
-												: t("context.favorite"),
-											action: () => toggleFavorite(node.id),
-										},
-									]
-								: [
-										{
-											label: t("context.rename"),
-											action: () => {
-												const newTitle = prompt(
-													t("context.rename"),
-													node.title,
-												);
-												if (newTitle && newTitle.trim() && onRenameNode) {
-													onRenameNode(node.id, newTitle.trim());
-												}
+			{contextMenu &&
+				(() => {
+					const node = nodeMap.get(contextMenu.nodeId);
+					if (!node) return null;
+					const isTaskNode = isTask(node);
+					const isFav = favorites.has(node.id);
+					const isAtRoot = node.parentId === rootNodeId;
+					return (
+						<ContextMenu
+							x={contextMenu.x}
+							y={contextMenu.y}
+							items={[
+								{
+									label: t("context.newChildTask"),
+									action: () => handleStartChildCreate(node.id),
+								},
+								...(isTaskNode
+									? [
+											{
+												label: isFav
+													? t("context.unfavorite")
+													: t("context.favorite"),
+												action: () => toggleFavorite(node.id),
 											},
-										},
-									]),
-							...(!isAtRoot && onReparent && rootNodeId
-								? [
-										{
-											label: t("context.moveToRoot"),
-											action: () => onReparent(node.id, rootNodeId),
-										},
-									]
-								: []),
-							{ separator: true as const },
-							{
-								label: t("context.delete"),
-								danger: true,
-								action: () => onDeleteNode?.(node.id, node.title),
-							},
-						]}
-						onClose={() => setContextMenu(null)}
-					/>
-				);
-			})()}
+										]
+									: [
+											{
+												label: t("context.rename"),
+												action: () => {
+													const newTitle = prompt(
+														t("context.rename"),
+														node.title,
+													);
+													if (newTitle?.trim() && onRenameNode) {
+														onRenameNode(node.id, newTitle.trim());
+													}
+												},
+											},
+										]),
+								...(!isAtRoot && onReparent && rootNodeId
+									? [
+											{
+												label: t("context.moveToRoot"),
+												action: () => onReparent(node.id, rootNodeId),
+											},
+										]
+									: []),
+								{ separator: true as const },
+								{
+									label: t("context.delete"),
+									danger: true,
+									action: () => onDeleteNode?.(node.id, node.title),
+								},
+							]}
+							onClose={() => setContextMenu(null)}
+						/>
+					);
+				})()}
 		</div>
 	);
 });
@@ -1112,7 +1106,8 @@ function ContextMenu({
 	}, [x, y]);
 
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: context menu overlay
+		// biome-ignore lint/a11y/noStaticElementInteractions: click-away dismiss overlay
+		// biome-ignore lint/a11y/useKeyWithClickEvents: Escape handled at document level
 		<div
 			className="mxd-context-menu-overlay"
 			onClick={(e) => {
@@ -1125,6 +1120,7 @@ function ContextMenu({
 			}}
 		>
 			{/* biome-ignore lint/a11y/noStaticElementInteractions: menu items handle clicks */}
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, items are buttons */}
 			<div
 				ref={menuRef}
 				className="mxd-context-menu"
@@ -1133,10 +1129,8 @@ function ContextMenu({
 			>
 				{items.map((item, i) =>
 					item.separator ? (
-						<div
-							key={`sep-${i}`}
-							className="mxd-context-menu-separator"
-						/>
+						// biome-ignore lint/suspicious/noArrayIndexKey: separators have no id and never reorder
+						<div key={`sep-${i}`} className="mxd-context-menu-separator" />
 					) : (
 						<button
 							key={item.label}

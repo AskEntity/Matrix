@@ -1115,7 +1115,12 @@ function GlobalTab({
 				</div>
 			</div>
 
-			<TabActions dirty={dirty} onSave={onSave} onRevert={onRevert} error={error} />
+			<TabActions
+				dirty={dirty}
+				onSave={onSave}
+				onRevert={onRevert}
+				error={error}
+			/>
 		</div>
 	);
 }
@@ -1200,7 +1205,12 @@ function ProjectTab({
 				onDraftChange={onDraftChange}
 			/>
 
-			<TabActions dirty={dirty} onSave={onSave} onRevert={onRevert} error={error} />
+			<TabActions
+				dirty={dirty}
+				onSave={onSave}
+				onRevert={onRevert}
+				error={error}
+			/>
 		</div>
 	);
 }

@@ -36,8 +36,8 @@ import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
 import { statusDotClass } from "./components/StatusBadge.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
 import {
-	type FilterMode,
 	FILTER_MODES,
+	type FilterMode,
 	readFilterMode,
 	TaskTree,
 } from "./components/TaskTree.tsx";
@@ -407,9 +407,7 @@ function ProjectContent({
 	const cycleFilterMode = useCallback(() => {
 		setFilterMode((prev) => {
 			const idx = FILTER_MODES.indexOf(prev);
-			const next = FILTER_MODES[
-				(idx + 1) % FILTER_MODES.length
-			] as FilterMode;
+			const next = FILTER_MODES[(idx + 1) % FILTER_MODES.length] as FilterMode;
 			try {
 				localStorage.setItem("mxd-filter-mode", next);
 			} catch {
@@ -1250,7 +1248,14 @@ function ProjectContent({
 				console.error("Delete failed:", err);
 			}
 		},
-		[deleteTask, refreshTasks, selectedTaskId, rootNodeId, setSelectedTaskId, t],
+		[
+			deleteTask,
+			refreshTasks,
+			selectedTaskId,
+			rootNodeId,
+			setSelectedTaskId,
+			t,
+		],
 	);
 
 	const handleRenameNode = useCallback(

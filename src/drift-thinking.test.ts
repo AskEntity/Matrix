@@ -425,7 +425,8 @@ describe("Golden: interleaved thinking across multiple tool calls", () => {
 		expect(t1[0]?.type).toBe("thinking");
 
 		// Turn 2: no native thinking, but has converted text with <thinking> tags
-		const t2 = (msgs[2] as { content: Array<{ type: string; text?: string }> }).content;
+		const t2 = (msgs[2] as { content: Array<{ type: string; text?: string }> })
+			.content;
 		expect(t2.every((b) => b.type !== "thinking")).toBe(true);
 		expect(t2[0]?.type).toBe("text");
 		expect(t2[0]?.text).toBe("<thinking>\nOpenAI turn 2.\n</thinking>");
@@ -465,7 +466,9 @@ describe("Golden: thinking event provider field preserved through walker", () =>
 
 		// OpenAI thinking converted to text with <thinking> tags
 		const textBlocks = content.filter(
-			(b) => b.type === "text" && (b as { text?: string }).text?.includes("<thinking>"),
+			(b) =>
+				b.type === "text" &&
+				(b as { text?: string }).text?.includes("<thinking>"),
 		);
 		expect(textBlocks).toHaveLength(1);
 	});

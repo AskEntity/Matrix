@@ -215,9 +215,13 @@ describe("parseTextSegments — mixed text + tables (segment order)", () => {
 	});
 
 	test("table at the very start (no preceding text)", () => {
-		const text = ["| A | B |", "| --- | --- |", "| 1 | 2 |", "", "trailing"].join(
-			"\n",
-		);
+		const text = [
+			"| A | B |",
+			"| --- | --- |",
+			"| 1 | 2 |",
+			"",
+			"trailing",
+		].join("\n");
 		const segs = parseTextSegments(text);
 		expect(segs[0]?.type).toBe("table");
 	});

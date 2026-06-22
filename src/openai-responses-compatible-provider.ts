@@ -298,9 +298,7 @@ export function eventsToOpenAIResponsesMessages(events: Event[]): unknown[] {
 					// OpenAI doesn't produce thinking events; all thinking is cross-provider.
 					// Redacted: skip (content empty, encrypted signature useless for OpenAI).
 					if (item.redacted) continue;
-					textSegments.push(
-						`<thinking>\n${item.thinking}\n</thinking>`,
-					);
+					textSegments.push(`<thinking>\n${item.thinking}\n</thinking>`);
 				}
 			}
 			let textContent: string | null = null;

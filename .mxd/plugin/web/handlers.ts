@@ -101,7 +101,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		selectedTaskId,
 		rootNodeId,
 		selectedNode,
-		isOrchestratorNode,
 		targetNodeId,
 		clarifyAnswers,
 		pendingClarifications,

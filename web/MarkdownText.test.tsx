@@ -156,9 +156,7 @@ describe("markdown table rendering in activity log", () => {
 			},
 		});
 
-		const { div, unmount } = await renderAssistantText(
-			`See:\n\n${TABLE_MD}`,
-		);
+		const { div, unmount } = await renderAssistantText(`See:\n\n${TABLE_MD}`);
 
 		const btn = div.querySelector(
 			".mxd-md-table-copy",

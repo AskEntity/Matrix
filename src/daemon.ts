@@ -852,16 +852,11 @@ export async function createDaemon(opts: {
 					// initTimer means no timeout fires → permanent hang.
 					// Don't schedule restart — daemon boot failed; the restart
 					// path's .catch handler manages its own retry chain.
-					reject(
-						new Error(`Worker "${scopeName}" crashed: ${event.message}`),
-					);
+					reject(new Error(`Worker "${scopeName}" crashed: ${event.message}`));
 				} else {
 					// Runtime crash (worker was healthy): schedule restart with
 					// exponential backoff + circuit-break.
-					scheduleWorkerRestart(
-						plugin,
-						`crash: ${event.message || "unknown"}`,
-					);
+					scheduleWorkerRestart(plugin, `crash: ${event.message || "unknown"}`);
 				}
 			};
 

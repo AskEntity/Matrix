@@ -36,13 +36,7 @@ type TaskNode = {
 	title: string;
 	parentId: string | null;
 	children: string[];
-	status:
-		| "pending"
-		| "in_progress"
-		| "verify"
-		| "failed"
-		| "closed"
-		| "draft";
+	status: "pending" | "in_progress" | "verify" | "failed" | "closed" | "draft";
 	description: string;
 	editedBy: "user" | "agent";
 	createdAt: string;

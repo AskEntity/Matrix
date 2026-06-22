@@ -23,8 +23,7 @@ export function ToolResultImages({
 							className="mxd-tool-result-image"
 							onClick={() => setLightboxSrc(src)}
 							onKeyDown={(e) => {
-								if (e.key === "Enter" || e.key === " ")
-									setLightboxSrc(src);
+								if (e.key === "Enter" || e.key === " ") setLightboxSrc(src);
 							}}
 						/>
 					);

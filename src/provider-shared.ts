@@ -1331,12 +1331,13 @@ export async function* runProviderLoop(
 						name: e.name,
 						input: {},
 					}));
-				const extraYieldExecs: ToolResult[] =
-					pendingDuplicateYieldExtras.map(() => ({
+				const extraYieldExecs: ToolResult[] = pendingDuplicateYieldExtras.map(
+					() => ({
 						content:
 							"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
 						isError: false,
-					}));
+					}),
+				);
 
 				const toolResultMsgs = adapter.buildUserTurn({
 					toolUses: [
@@ -1441,12 +1442,13 @@ export async function* runProviderLoop(
 							name: e.name,
 							input: {},
 						}));
-					const extraYieldExecs: ToolResult[] =
-						pendingDuplicateYieldExtras.map(() => ({
+					const extraYieldExecs: ToolResult[] = pendingDuplicateYieldExtras.map(
+						() => ({
 							content:
 								"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
 							isError: false,
-						}));
+						}),
+					);
 
 					const bundledMsgs = adapter.buildUserTurn({
 						toolUses: [

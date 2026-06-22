@@ -7,10 +7,10 @@
  * Priority 2 — Frontend: buildPatch edge cases that silently produce bad patches.
  */
 
-import { mkdtemp, rm, mkdir, readFile } from "node:fs/promises";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { DEFAULT_CONFIG, saveGlobalConfig } from "./config.ts";
 import { createDaemon, type DaemonInstance } from "./daemon.ts";
 import { createTestToken } from "./test-utils/auth-helper.ts";
@@ -236,7 +236,9 @@ describe("FIX-10: buildPatch — old behavior (allowNull=true, the bug) vs fixed
 	test("changing model only → patch has only model (same for both modes)", () => {
 		const draft = { ...savedGlobal, model: "claude-fable-5" };
 		expect(buildPatch(draft, savedGlobal)).toEqual({ model: "claude-fable-5" });
-		expect(buildPatch(draft, savedGlobal, false)).toEqual({ model: "claude-fable-5" });
+		expect(buildPatch(draft, savedGlobal, false)).toEqual({
+			model: "claude-fable-5",
+		});
 	});
 
 	test("clearing field → allowNull=true sends null (project/local)", () => {

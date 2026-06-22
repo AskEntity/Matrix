@@ -641,7 +641,9 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		}
 		if (!isTask(resolved)) {
 			return c.json(
-				{ error: `Cannot send message to a ${resolved.type} node. Only task nodes accept messages.` },
+				{
+					error: `Cannot send message to a ${resolved.type} node. Only task nodes accept messages.`,
+				},
 				400,
 			);
 		}
@@ -651,7 +653,9 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		// Draft tasks cannot receive messages (C#5) — matches MCP send_message behavior.
 		if (resolved.status === "draft") {
 			return c.json(
-				{ error: `Cannot send message to draft task "${resolved.title}". Remove draft status first.` },
+				{
+					error: `Cannot send message to draft task "${resolved.title}". Remove draft status first.`,
+				},
 				400,
 			);
 		}

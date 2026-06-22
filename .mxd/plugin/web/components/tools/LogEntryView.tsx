@@ -675,9 +675,7 @@ export const LogEntryView = memo(function LogEntryView({
 				<div className="mxd-lmxd-entry mxd-event-user_message">
 					<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
 					<div className="mxd-user-prompt-bubble">
-						<span className="mxd-user-prompt-text">
-							{entry.body.content}
-						</span>
+						<span className="mxd-user-prompt-text">{entry.body.content}</span>
 						{entry.body.images && entry.body.images.length > 0 && (
 							<div className="mxd-user-images">
 								{entry.body.images.map(

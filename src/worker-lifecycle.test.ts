@@ -84,15 +84,6 @@ export function buildScopeOpts() {
 }
 `;
 
-const HEALTHY_RUNTIME = `
-export function buildScopeOpts() {
-	return {
-		buildTools: () => ({ tools: [] }),
-		buildPrompt: () => ({ stable: "", variable: "" }),
-	};
-}
-`;
-
 // ============================================================================
 // R8-A#1: onerror must reject init promise (not hang forever)
 // ============================================================================

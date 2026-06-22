@@ -99,10 +99,7 @@ export function registerRoutes(app, ctx) {
 			"utf-8",
 		);
 
-		await saveGlobalConfig(
-			{ ...DEFAULT_CONFIG },
-			join(dataDir, "config.json"),
-		);
+		await saveGlobalConfig({ ...DEFAULT_CONFIG }, join(dataDir, "config.json"));
 
 		sessionToken = await createTestToken(authPath);
 

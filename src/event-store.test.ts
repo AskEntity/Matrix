@@ -1141,7 +1141,9 @@ describe("EventStore", () => {
 			const { events, physicalLines } = store.readWithLineMap("m");
 			expect(events).toHaveLength(3);
 			const texts = events
-				.filter((e): e is Event & { content: string } => e.type === "assistant_text")
+				.filter(
+					(e): e is Event & { content: string } => e.type === "assistant_text",
+				)
 				.map((e) => e.content);
 			expect(texts).toEqual(["event zero", "event one", "event two"]);
 
@@ -1194,7 +1196,9 @@ describe("EventStore", () => {
 			const after = store.read("m2");
 			expect(after).toHaveLength(3);
 			const afterTexts = after
-				.filter((e): e is Event & { content: string } => e.type === "assistant_text")
+				.filter(
+					(e): e is Event & { content: string } => e.type === "assistant_text",
+				)
 				.map((e) => e.content);
 			expect(afterTexts).toEqual(["event zero", "event one", "event two"]);
 		});
@@ -1237,7 +1241,9 @@ describe("EventStore", () => {
 			// This test documents the BUG behavior to prove it exists before the fix.
 			expect(after).toHaveLength(2);
 			const bugTexts = after
-				.filter((e): e is Event & { content: string } => e.type === "assistant_text")
+				.filter(
+					(e): e is Event & { content: string } => e.type === "assistant_text",
+				)
 				.map((e) => e.content);
 			expect(bugTexts).toEqual(["event zero", "event one"]);
 			// e2 was destroyed — this IS the bug
@@ -1281,10 +1287,7 @@ describe("EventStore", () => {
 			const { appendFileSync: syncAppend } = await import("node:fs");
 			const slowWrite = privateStore.enqueueWrite("q", async () => {
 				await new Promise((r) => setTimeout(r, 30));
-				syncAppend(
-					privateStore.path("q"),
-					`${JSON.stringify(e2)}\n`,
-				);
+				syncAppend(privateStore.path("q"), `${JSON.stringify(e2)}\n`);
 			});
 
 			// Call truncateAfterLine immediately — should wait for the slow write
@@ -1297,7 +1300,9 @@ describe("EventStore", () => {
 			const readEvents = store.read("q");
 			expect(readEvents).toHaveLength(3);
 			const qTexts = readEvents
-				.filter((e): e is Event & { content: string } => e.type === "assistant_text")
+				.filter(
+					(e): e is Event & { content: string } => e.type === "assistant_text",
+				)
 				.map((e) => e.content);
 			expect(qTexts).toEqual(["base", "second", "slow write"]);
 		});
@@ -1334,7 +1339,9 @@ describe("EventStore", () => {
 			const result = store.read("q2");
 			expect(result).toHaveLength(3);
 			const q2Texts = result
-				.filter((e): e is Event & { content: string } => e.type === "assistant_text")
+				.filter(
+					(e): e is Event & { content: string } => e.type === "assistant_text",
+				)
 				.map((e) => e.content);
 			expect(q2Texts).toEqual(["event-0", "event-1", "post-truncation"]);
 		});
