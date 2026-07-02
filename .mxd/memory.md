@@ -3394,3 +3394,10 @@ At fork point the branch already had: 5 `tsc` TS6133 unused-symbol errors
 LogEntryView). Verified identical with my changes stashed. `bun test` is green
 (2305 pass); these only affect `tsc`/`check:ci`. Root should clean before the
 final main commit (worktree hooks are /dev/null so they don't gate here).
+
+## Toolchain: bun 1.3.7–1.3.8 SIGTRAP on ANY Worker terminate (2026-07-02)
+- Symptom: `bun test` dies ~1s in with SIGTRAP/exit 133 at the first worker-terminating test file; minimal 7-line repro = spawn Worker → terminate → crash (libmalloc TSD double-free in pthread teardown; .ips logs in ~/Library/Logs/DiagnosticReports).
+- Versions: 1.3.0 OK · 1.3.7 BAD · 1.3.8 BAD · **1.3.14 (latest) FIXED** — verified with minimal repro + web/ShellApp.test.tsx (13/13).
+- Production exposure: daemon terminates scope workers on project restart/shutdown → do NOT (re)start the daemon on 1.3.7/1.3.8; upgrade global bun to ≥1.3.14 first.
+- Until global bun is upgraded, run tests with the isolated pin: `$HOME/.bun-latest/bin/bun test` (also installed: ~/.bun-pin=1.3.7 bad, ~/.bun-130=1.3.0 ok — can be deleted later).
+- Discovered by markdown-rendering task 01KWHXMB (its done() gate switched to scoped tests + typecheck + check:ci for this reason).
