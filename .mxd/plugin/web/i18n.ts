@@ -263,6 +263,10 @@ const en: Translations = {
 	"table.copy": "Copy",
 	"table.copied": "Copied",
 
+	// Markdown code block rendering
+	"code.copy": "Copy",
+	"code.copied": "Copied",
+
 	// Log
 	"log.youArrow": "You →",
 
@@ -577,6 +581,10 @@ const zh: Translations = {
 	// Markdown table rendering
 	"table.copy": "复制",
 	"table.copied": "已复制",
+
+	// Markdown code block rendering
+	"code.copy": "复制",
+	"code.copied": "已复制",
 
 	// Log
 	"log.youArrow": "你 →",

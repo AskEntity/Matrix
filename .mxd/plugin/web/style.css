@@ -2043,9 +2043,10 @@ select {
 	color: var(--text-primary);
 }
 
-/* Markdown table rendering (agent replies) — see components/MarkdownText.tsx.
-   When text has no table, MarkdownText renders the plain .mxd-lmxd-text span
-   above; the .mxd-md wrapper only appears when at least one table is present. */
+/* Lightweight markdown rendering (agent replies) — see markdown.ts +
+   components/MarkdownText.tsx. When text has no markdown construct at all,
+   MarkdownText renders the plain .mxd-lmxd-text span above; the .mxd-md
+   wrapper only appears when at least one construct is present. */
 .mxd-md {
 	font-family: var(--font-mono);
 	font-size: 12px;
@@ -2095,7 +2096,8 @@ select {
 .mxd-md-table tbody tr:nth-child(even) td {
 	background: var(--bg-surface);
 }
-.mxd-md-table-copy {
+.mxd-md-table-copy,
+.mxd-md-code-copy {
 	position: absolute;
 	top: 4px;
 	right: 4px;
@@ -2115,12 +2117,119 @@ select {
 		color var(--t-fast);
 }
 .mxd-md-table-wrap:hover .mxd-md-table-copy,
-.mxd-md-table-copy:focus-visible {
+.mxd-md-table-copy:focus-visible,
+.mxd-md-code-wrap:hover .mxd-md-code-copy,
+.mxd-md-code-copy:focus-visible {
 	opacity: 1;
 }
-.mxd-md-table-copy:hover {
+.mxd-md-table-copy:hover,
+.mxd-md-code-copy:hover {
 	background: rgba(99, 179, 237, 0.22);
 	color: rgba(99, 179, 237, 1);
+}
+
+/* Headings — modest sizes: this is a chat log, not a document. */
+.mxd-md-h {
+	margin: 10px 0 4px;
+	font-weight: 600;
+	line-height: 1.4;
+	color: var(--text-primary);
+}
+.mxd-md-h:first-child {
+	margin-top: 2px;
+}
+h1.mxd-md-h,
+h2.mxd-md-h {
+	border-bottom: 1px solid var(--border);
+	padding-bottom: 3px;
+}
+h1.mxd-md-h {
+	font-size: 15px;
+}
+h2.mxd-md-h {
+	font-size: 14px;
+}
+h3.mxd-md-h {
+	font-size: 13px;
+}
+h4.mxd-md-h,
+h5.mxd-md-h,
+h6.mxd-md-h {
+	font-size: 12px;
+}
+h6.mxd-md-h {
+	color: var(--text-secondary);
+}
+
+/* Inline code */
+.mxd-md-code-inline {
+	background: var(--bg-overlay);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	padding: 0 4px;
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+/* Fenced code blocks */
+.mxd-md-code-wrap {
+	position: relative;
+	margin: 6px 0;
+}
+.mxd-md-code-block {
+	margin: 0;
+	padding: 8px 10px;
+	background: var(--bg-surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	overflow-x: auto;
+	font-family: var(--font-mono);
+	font-size: 11.5px;
+	line-height: 1.55;
+}
+.mxd-md-code-block code {
+	font-family: inherit;
+	font-size: inherit;
+}
+
+/* Blockquotes */
+.mxd-md-quote {
+	margin: 6px 0;
+	padding: 2px 0 2px 10px;
+	border-left: 3px solid var(--border);
+	color: var(--text-secondary);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+/* Lists */
+.mxd-md-list {
+	margin: 4px 0;
+	padding-left: 22px;
+}
+.mxd-md-list li {
+	margin: 1px 0;
+	word-break: break-word;
+}
+.mxd-md-list .mxd-md-list {
+	margin: 1px 0;
+}
+
+/* Horizontal rule */
+.mxd-md-hr {
+	border: none;
+	border-top: 1px solid var(--border);
+	margin: 10px 0;
+}
+
+/* Links — only http(s) hrefs ever reach the DOM (see markdown.ts) */
+.mxd-md-link {
+	color: var(--accent-hover);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+.mxd-md-link:hover {
+	color: var(--accent);
 }
 
 .mxd-cache-badge {
