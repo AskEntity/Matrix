@@ -389,6 +389,43 @@ function buildMockData() {
 		ts: ts(m--),
 	});
 
+	// assistant_text with full lightweight markdown — headings, inline styles,
+	// lists (incl. one nesting level), blockquote, hr, links (safe + unsafe),
+	// and a fenced code block whose table-shaped content must stay verbatim
+	// (see markdown.ts + components/MarkdownText.tsx).
+	events.push({
+		type: "assistant_text",
+		content: [
+			"## Findings",
+			"",
+			"The parser handles **bold**, *italic*, ~~strikethrough~~ and `inline code` — CJK adjacency works too: 周围**中文**相邻.",
+			"",
+			"### Next steps",
+			"",
+			"1. Ship the parser",
+			"2. Watch for regressions",
+			"",
+			"- safe link: [example](https://example.com)",
+			"- unsafe link stays literal: [x](javascript:alert(1))",
+			"- nested:",
+			"  - one level deep",
+			"",
+			"> Fences protect their content — the block below must NOT render as a table.",
+			"",
+			"```ts",
+			"| a | b |",
+			"| --- | --- |",
+			"const table = false;",
+			"```",
+			"",
+			"---",
+			"",
+			"Unclosed markers degrade gracefully: **dangling and `open span.",
+		].join("\n"),
+		taskId: SESSION_ID,
+		ts: ts(m--),
+	});
+
 	// ═══════════════════════════════════════════════════════════════════════
 	// SECTION 2: Resolved tool pairs (tool_call + tool_result)
 	// ═══════════════════════════════════════════════════════════════════════

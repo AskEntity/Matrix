@@ -3395,9 +3395,93 @@ LogEntryView). Verified identical with my changes stashed. `bun test` is green
 (2305 pass); these only affect `tsc`/`check:ci`. Root should clean before the
 final main commit (worktree hooks are /dev/null so they don't gate here).
 
-## Toolchain: bun 1.3.7–1.3.8 SIGTRAP on ANY Worker terminate (2026-07-02)
-- Symptom: `bun test` dies ~1s in with SIGTRAP/exit 133 at the first worker-terminating test file; minimal 7-line repro = spawn Worker → terminate → crash (libmalloc TSD double-free in pthread teardown; .ips logs in ~/Library/Logs/DiagnosticReports).
-- Versions: 1.3.0 OK · 1.3.7 BAD · 1.3.8 BAD · **1.3.14 (latest) FIXED** — verified with minimal repro + web/ShellApp.test.tsx (13/13).
-- Production exposure: daemon terminates scope workers on project restart/shutdown → do NOT (re)start the daemon on 1.3.7/1.3.8; upgrade global bun to ≥1.3.14 first.
-- Until global bun is upgraded, run tests with the isolated pin: `$HOME/.bun-latest/bin/bun test` (also installed: ~/.bun-pin=1.3.7 bad, ~/.bun-130=1.3.0 ok — can be deleted later).
-- Discovered by markdown-rendering task 01KWHXMB (its done() gate switched to scoped tests + typecheck + check:ci for this reason).
+## bun 1.3.7–1.3.8 SIGTRAP on worker teardown — RESOLVED 2026-07-02: global bun upgraded to 1.3.14
+
+RESOLUTION (root, same day): minimal 7-line repro (spawn Worker → terminate → exit 133) confirmed
+the crash class independent of tests. Version matrix via isolated installs: 1.3.0 OK · 1.3.7 BAD ·
+1.3.8 BAD · **1.3.14 (latest) FIXED**. Global `bun upgrade` run (user-blessed) → 1.3.14; repro
+survives; full suite on main under 1.3.14 = **2305 pass / 0 fail** (baseline restored). The running
+daemon (started Jun 17, pre-upgrade image) was never exposed; next restart boots 1.3.14 = safe.
+Isolated pins ~/.bun-pin (1.3.7), ~/.bun-130, ~/.bun-latest are deletable. The interim scoped-gate
+below is no longer needed — kept for the record of the era.
+
+### Original diagnosis (markdown task 01KWHXMB, before resolution)
+
+**Any test file that terminates a Bun Worker crashes the whole `bun test` process** with
+SIGTRAP (exit 133) on bun v1.3.8. Native bug inside bun, NOT repo code: macOS crash report
+shows libmalloc abort `BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED_WAS_NOT_ALLOCATED`
+in `_pthread_tsd_cleanup` → `pthread_exit` (TSD double-free on worker-thread exit). Crash
+logs: `~/Library/Logs/DiagnosticReports/bun-2026-07-02-*.ips`.
+
+- Reproduced on the markdown branch, its clean base commit (stash), AND the main checkout —
+  identical crash, so no branch's code is the cause. User presumably upgraded bun since the
+  last green run (package.json pins no engines; only ~/.bun/bin/bun 1.3.8 on machine).
+- Confirmed on `web/ShellApp.test.tsx` AND `src/daemon-integration.test.ts` (no happy-dom
+  involved) — the trigger is worker terminate, i.e. every daemon/worker test file.
+- The crashing file runs FIRST in a full `bun test`, so the full suite verifies ~3 tests
+  before dying. **"bun test passed" claims from this era are meaningless — check exit code.**
+- Production daemon runs the same bun 1.3.8 and terminates workers on restart/shutdown —
+  same crash class may hit the live daemon.
+- Same environment refresh also drifted node_modules: 5 pre-existing `tsc` errors in
+  `_vendor_shims/*` (@types/react caret bump exposes missing internal props) + 2 biome
+  format errors on `_vendor_shims/react{,-dom}.ts` + 61 lint warnings. All verified
+  identical on clean base — NOT from any branch's diff.
+- Orchestrator owns the fix (isolated older-bun pin to restore the gate, then user decision
+  on downgrade). Interim per-task gate: typecheck + check:ci with zero NEW diagnostics vs
+  base, plus scoped `bun test ./<files>` on non-worker test files.
+
+## Full lightweight markdown rendering in agent replies (2026-07-02)
+
+Extends the tables-only pipeline to the full lightweight set: fenced code, headings,
+blockquotes, lists (one nesting level), hr + inline `code` / **strong** / *em* /
+~~strike~~ / [text](http(s)-only url). Same philosophy as the table parser: strict
+grammar, false positives worse than missing features, no md library, React elements
+only (no dangerouslySetInnerHTML).
+
+### Files
+- `.mxd/plugin/web/markdown.ts` — NEW pure parser. `parseMarkdown(text): MarkdownBlock[]`,
+  `parseInline(line): InlineNode[]`, `isPlainText(blocks)`, `isSafeLinkHref(href)`.
+  Composes WITH `markdown-table.ts` (tables delegated to `parseTextSegments`, untouched).
+- `components/MarkdownText.tsx` — renders the block tree; `MarkdownTable` component kept
+  verbatim; new `CodeBlock` (copy button, mirrors table pattern), `ListView`, heading via
+  `createElement("h"+level)`.
+- `style.css` `.mxd-md-*` family extended (modest heading sizes — chat log, not document);
+  copy-button selectors comma-joined table+code. `i18n.ts`: `code.copy`/`code.copied`.
+- Tests: `web/markdown.test.ts` (72, pure) + `web/MarkdownText.test.tsx` (+6 DOM
+  integration). Mock-showcase got a full-markdown sample event (visual verification).
+
+### Parse order (load-bearing, tested)
+1. Fences FIRST — content verbatim, no table/block/inline parsing inside. Unclosed fence
+   runs to EOF (`closed:false`). Backtick-fence info string may not contain backticks
+   (keeps "```x``` y" lines inline).
+2. Tables via existing `parseTextSegments` on non-fence text.
+3. Per-line blocks: heading (`#{1..6} + space`), hr (also `- - -` style; checked BEFORE
+   list), quote, list. Everything else = verbatim text runs (interior blank lines
+   preserved; edges trimmed next to blocks).
+4. Inline per line: code spans bind tightest (N-backtick runs, protect content — even in
+   emphasis-closer search), then links, then emphasis.
+
+### Key invariants
+- **Plain fallback**: `isPlainText(blocks)` (all blocks = text runs of only-text nodes) →
+  render ORIGINAL string in single `<span className>` — byte-identical to pre-markdown
+  rendering. Unsafe-link-only text stays "plain" (renders raw source).
+- **Link safety**: only `^https?://` (case-insens.) becomes `<a target=_blank
+  rel="noopener noreferrer">`; javascript:/data:/file:/relative → raw literal TEXT.
+  Enforced in parser (single gate), tested at parser + DOM layers.
+- **Emphasis = whitespace-adjacency rules, NOT \b** (CJK-safe: `周围**中文**相邻` works).
+  Opener must be followed by non-WS; closer preceded by non-WS; single-`*` closer must be
+  a LONE star (enables `*a **b** c*` nesting). Runs of 3+ markers = literal (predictable).
+  No `_underscore_` emphasis (snake_case), no setext headings, no backslash escapes
+  (Windows paths), no images (`![` skipped), no raw HTML — deliberate.
+- Mutation-verified: scheme-gate → 5 tests fail; opener-WS / closer-WS rules each pinned
+  by a dedicated asymmetric test (`** x**` literal / `**a ** b**` full-span strong) —
+  the symmetric math case alone did NOT pin them individually (defense-in-depth masking;
+  gap found by mutation #2 surviving, then closed).
+
+### Gotchas for future editors
+- biome `noArrayIndexKey` suppression on MULTILINE JSX must sit directly above the
+  `key={i}` attribute line, not above the element. `useIterableCallbackReturn` requires
+  every switch path to return — merged `default:` onto the last case (TS still narrows).
+- Verification ran under the broken-gate interim rules above (scoped bun test + zero new
+  typecheck/biome diagnostics); full-suite re-verification owed once the bun gate is
+  restored.

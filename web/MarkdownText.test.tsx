@@ -216,3 +216,133 @@ describe("markdown table rendering in activity log", () => {
 		unmount();
 	});
 });
+
+describe("full lightweight markdown rendering in activity log", () => {
+	test("a composite reply renders headings, emphasis, list, quote, link, hr", async () => {
+		const MD = [
+			"## Plan",
+			"",
+			"We need **bold**, *italic*, ~~strike~~ and `inline code`.",
+			"",
+			"- first item",
+			"- second item",
+			"",
+			"1. step one",
+			"2. step two",
+			"",
+			"> a **quoted** note",
+			"",
+			"---",
+			"",
+			"See [the docs](https://example.com/x) for details.",
+		].join("\n");
+		const { div, unmount } = await renderAssistantText(MD);
+
+		// Heading, modest tag + class.
+		const h2 = div.querySelector("h2.mxd-md-h");
+		expect(h2?.textContent).toBe("Plan");
+
+		// Inline styles.
+		expect(div.querySelector("strong")?.textContent).toBe("bold");
+		expect(div.querySelector("em")?.textContent).toBe("italic");
+		expect(div.querySelector("del")?.textContent).toBe("strike");
+		expect(div.querySelector("code.mxd-md-code-inline")?.textContent).toBe(
+			"inline code",
+		);
+
+		// Lists.
+		const ulItems = Array.from(div.querySelectorAll("ul.mxd-md-list li")).map(
+			(li) => li.textContent,
+		);
+		expect(ulItems).toEqual(["first item", "second item"]);
+		const olItems = Array.from(div.querySelectorAll("ol.mxd-md-list li")).map(
+			(li) => li.textContent,
+		);
+		expect(olItems).toEqual(["step one", "step two"]);
+
+		// Blockquote with nested inline parsing.
+		const quote = div.querySelector("blockquote.mxd-md-quote");
+		expect(quote?.textContent).toBe("a quoted note");
+		expect(quote?.querySelector("strong")?.textContent).toBe("quoted");
+
+		// Horizontal rule.
+		expect(div.querySelector("hr.mxd-md-hr")).toBeTruthy();
+
+		// Safe link with hardened rel/target.
+		const a = div.querySelector("a.mxd-md-link") as HTMLAnchorElement | null;
+		expect(a?.getAttribute("href")).toBe("https://example.com/x");
+		expect(a?.getAttribute("target")).toBe("_blank");
+		expect(a?.getAttribute("rel")).toBe("noopener noreferrer");
+		expect(a?.textContent).toBe("the docs");
+
+		unmount();
+	});
+
+	test("javascript: link renders as literal text — no anchor in the DOM", async () => {
+		const { div, unmount } = await renderAssistantText(
+			"Click [here](javascript:alert(1)) — also **bold** so markdown mode is on.",
+		);
+		expect(div.querySelector("a")).toBeNull();
+		expect(div.textContent).toContain("[here](javascript:alert(1))");
+		// Sanity: markdown mode really was active (not the plain fallback).
+		expect(div.querySelector("strong")).toBeTruthy();
+		unmount();
+	});
+
+	test("fenced code protects table-shaped text — <pre> yes, <table> no", async () => {
+		const MD = ["```", "| a | b |", "| --- | --- |", "| 1 | 2 |", "```"].join(
+			"\n",
+		);
+		const { div, unmount } = await renderAssistantText(MD);
+
+		expect(div.querySelector("table")).toBeNull();
+		const pre = div.querySelector("pre.mxd-md-code-block");
+		expect(pre?.textContent).toBe("| a | b |\n| --- | --- |\n| 1 | 2 |");
+		unmount();
+	});
+
+	test("code block copy button copies the verbatim content", async () => {
+		const clip: { value: string | null } = { value: null };
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: {
+				writeText: async (s: string) => {
+					clip.value = s;
+				},
+			},
+		});
+
+		const { div, unmount } = await renderAssistantText(
+			"```ts\nconst x = 1;\nconsole.log(x);\n```",
+		);
+		const btn = div.querySelector(
+			".mxd-md-code-copy",
+		) as HTMLButtonElement | null;
+		expect(btn).toBeTruthy();
+		btn?.click();
+		await new Promise((r) => setTimeout(r, 10));
+		expect(clip.value).toBe("const x = 1;\nconsole.log(x);");
+		expect(btn?.textContent).toBe("Copied");
+		unmount();
+	});
+
+	test("markdown-symbol-free reply with * math stays a plain single span", async () => {
+		const TEXT = "Compute 2 * 3 * 4 and 5 ** 2 (see item #3).";
+		const { div, unmount } = await renderAssistantText(TEXT);
+		expect(div.querySelector(".mxd-md")).toBeNull();
+		const span = div.querySelector(".mxd-lmxd-text");
+		expect(span?.tagName.toLowerCase()).toBe("span");
+		expect(span?.textContent).toBe(TEXT);
+		unmount();
+	});
+
+	test("HTML in markdown text renders escaped (XSS guard for inline path)", async () => {
+		const { div, unmount } = await renderAssistantText(
+			"**bold** then <script>alert(1)</script> and <img src=x onerror=alert(2)>",
+		);
+		expect(div.querySelector("script")).toBeNull();
+		expect(div.querySelector("img")).toBeNull();
+		expect(div.textContent).toContain("<script>alert(1)</script>");
+		unmount();
+	});
+});
