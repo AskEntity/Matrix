@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getLogTaskId, type LogEntry, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
+import { quoteButtonPosition, selectionQuoteText } from "../quote.ts";
 import { LogEntryView, ToolCard } from "./ToolCard.tsx";
 import { getEntryText } from "./tools/utils.ts";
 
@@ -38,6 +39,7 @@ export const ActivityLog = memo(function ActivityLog({
 	projectMap,
 	onProjectNavigate,
 	showCacheBadges,
+	onQuoteText,
 }: {
 	entries: LogEntry[];
 	filterTaskId: string | null;
@@ -54,6 +56,8 @@ export const ActivityLog = memo(function ActivityLog({
 	projectMap?: Map<string, string>;
 	onProjectNavigate?: (projectId: string) => void;
 	showCacheBadges?: boolean;
+	/** Select-to-quote: called with the selected log text when the user clicks "Ask Matrix". */
+	onQuoteText?: (text: string) => void;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 
@@ -65,6 +69,65 @@ export const ActivityLog = memo(function ActivityLog({
 	autoScrollRef.current = autoScroll;
 	const [showThinking, setShowThinking] = useState(false);
 
+	// Select-to-quote: floating "Ask Matrix" button near the current selection.
+	// Set on mouseup with a valid selection inside the log container; dismissed
+	// on selection collapse, Escape, container scroll, or after clicking.
+	const [selectionAction, setSelectionAction] = useState<{
+		left: number;
+		top: number;
+		text: string;
+	} | null>(null);
+
+	useEffect(() => {
+		if (!onQuoteText) return;
+
+		const handleMouseUp = () => {
+			const container = logRef.current;
+			if (!container) return;
+			const sel = window.getSelection();
+			const text = selectionQuoteText(sel, container);
+			if (!text || !sel || sel.rangeCount === 0) {
+				setSelectionAction(null);
+				return;
+			}
+			const rect = sel.getRangeAt(0).getBoundingClientRect();
+			const pos = quoteButtonPosition(rect, {
+				width: window.innerWidth,
+				height: window.innerHeight,
+			});
+			setSelectionAction({ ...pos, text });
+		};
+
+		// Dismiss when the selection collapses/clears (click elsewhere, new
+		// selection outside, programmatic clear). Showing is mouseup-only.
+		const handleSelectionChange = () => {
+			const sel = window.getSelection();
+			if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+				setSelectionAction(null);
+			}
+		};
+
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setSelectionAction(null);
+		};
+
+		document.addEventListener("mouseup", handleMouseUp);
+		document.addEventListener("selectionchange", handleSelectionChange);
+		document.addEventListener("keydown", handleKeyDown);
+		return () => {
+			document.removeEventListener("mouseup", handleMouseUp);
+			document.removeEventListener("selectionchange", handleSelectionChange);
+			document.removeEventListener("keydown", handleKeyDown);
+		};
+	}, [onQuoteText]);
+
+	const handleQuoteClick = useCallback(() => {
+		if (!selectionAction || !onQuoteText) return;
+		onQuoteText(selectionAction.text);
+		setSelectionAction(null);
+		window.getSelection()?.removeAllRanges();
+	}, [selectionAction, onQuoteText]);
+
 	// Lazy rendering: only render the last `renderCount` entries from `visible`.
 	// Increases when user scrolls near the top (via IntersectionObserver).
 	const [renderCount, setRenderCount] = useState(RENDER_BATCH);
@@ -74,6 +137,7 @@ export const ActivityLog = memo(function ActivityLog({
 	useEffect(() => {
 		setSearchText("");
 		setRenderCount(RENDER_BATCH);
+		setSelectionAction(null);
 	}, [filterTaskId]);
 
 	const isRootFilter = !filterTaskId || filterTaskId === rootNodeId;
@@ -198,6 +262,9 @@ export const ActivityLog = memo(function ActivityLog({
 		if (!el) return;
 		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
 		onAutoScrollChange(atBottom);
+		// The quote button is fixed-positioned; scrolling moves the selected
+		// text away from it. Dismiss instead of tracking.
+		setSelectionAction(null);
 	}, [onAutoScrollChange]);
 
 	// Determine if "Load earlier history" should be shown for the current view
@@ -301,6 +368,22 @@ export const ActivityLog = memo(function ActivityLog({
 					</div>
 				)}
 			</div>
+			{selectionAction && onQuoteText && (
+				<button
+					type="button"
+					className="mxd-selection-quote-btn"
+					style={{ left: selectionAction.left, top: selectionAction.top }}
+					// preventDefault so pressing the button doesn't collapse the
+					// selection (which would dismiss this button before click fires)
+					onMouseDown={(e) => e.preventDefault()}
+					onClick={handleQuoteClick}
+				>
+					<span className="mxd-selection-quote-glyph" aria-hidden="true">
+						❝
+					</span>
+					{t("activity.askMatrix")}
+				</button>
+			)}
 		</>
 	);
 });

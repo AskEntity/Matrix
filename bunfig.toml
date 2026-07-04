@@ -1,3 +1,7 @@
 [test]
 # All tests (src/ + web/) run with a single `bun test`.
 # Web render tests manage happy-dom lifecycle internally (beforeAll/afterAll).
+# Preload binds react-dom's scheduler to bun-native timers BEFORE any test
+# file can register happy-dom — otherwise the whole web suite's fate depends
+# on bun's filesystem-dependent file order. See src/test-utils/preload.ts.
+preload = ["./src/test-utils/preload.ts"]

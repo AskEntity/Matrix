@@ -267,6 +267,9 @@ const en: Translations = {
 	"code.copy": "Copy",
 	"code.copied": "Copied",
 
+	// Select-to-quote floating button
+	"activity.askMatrix": "Ask Matrix",
+
 	// Log
 	"log.youArrow": "You →",
 
@@ -585,6 +588,9 @@ const zh: Translations = {
 	// Markdown code block rendering
 	"code.copy": "复制",
 	"code.copied": "已复制",
+
+	// Select-to-quote floating button
+	"activity.askMatrix": "问 Matrix",
 
 	// Log
 	"log.youArrow": "你 →",

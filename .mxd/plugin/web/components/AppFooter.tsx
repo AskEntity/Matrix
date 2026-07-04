@@ -1,7 +1,7 @@
 import { memo } from "react";
 import type { TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { InputBar } from "./InputBar.tsx";
+import { InputBar, type QuoteRequest } from "./InputBar.tsx";
 
 export const AppFooter = memo(function AppFooter({
 	projectId,
@@ -13,6 +13,7 @@ export const AppFooter = memo(function AppFooter({
 	onSend,
 	onClarifySubmit,
 	onClarifyAnswerChange,
+	quoteRequest,
 }: {
 	projectId: string;
 	targetNodeId: string | null;
@@ -39,6 +40,7 @@ export const AppFooter = memo(function AppFooter({
 	) => void;
 	onClarifySubmit: (clarificationId: string) => void;
 	onClarifyAnswerChange: (clarificationId: string, value: string) => void;
+	quoteRequest?: QuoteRequest | null;
 }) {
 	const { t } = useLocale();
 
@@ -120,6 +122,7 @@ export const AppFooter = memo(function AppFooter({
 				targetNodeId={targetNodeId}
 				nodeMap={nodeMap}
 				onSend={onSend}
+				quoteRequest={quoteRequest}
 			/>
 		</footer>
 	);

@@ -3485,3 +3485,98 @@ only (no dangerouslySetInnerHTML).
 - Verification ran under the broken-gate interim rules above (scoped bun test + zero new
   typecheck/biome diagnostics); full-suite re-verification owed once the bun gate is
   restored.
+
+## Select-to-quote "Ask Matrix" in activity log (2026-07-02)
+
+Select text in the activity log → floating "Ask Matrix" button near the selection →
+click → text lands in the InputBar draft as a markdown blockquote (`> …\n\n` prepended
+before any existing draft), textarea focused with cursor at end.
+
+### Shape
+- `.mxd/plugin/web/quote.ts` — ALL pure logic, unit-tested directly: `selectionQuoteText`
+  (generic over node type — validates Selection against container: non-collapsed,
+  non-whitespace, BOTH endpoints inside), `toBlockquote` (outer-trim, `\r\n?`→`\n`,
+  interior empty lines become bare `>` so the blockquote stays one block),
+  `insertQuote(draft, selected)` (prepend + blank line; whitespace-only → draft unchanged),
+  `quoteButtonPosition` (below-right of selection end, viewport-clamped, flips above
+  when no room below).
+- `ActivityLog.tsx` — document-level mouseup (show), selectionchange (dismiss on
+  collapse), keydown Escape (dismiss); container scroll + filterTaskId change also
+  dismiss. Button is `position: fixed` (no ancestor transforms — verified), rendered
+  only when `onQuoteText` prop present. `onMouseDown={e => e.preventDefault()}` on the
+  button is LOAD-BEARING: without it, mousedown collapses the selection → selectionchange
+  unmounts the button before click fires.
+- Wiring: Plugin.tsx `quoteRequest: { text, seq } | null` state — `seq` increments per
+  request so quoting the SAME text twice re-fires InputBar's effect. ActivityLog
+  `onQuoteText` → Plugin → AppFooter passthrough → InputBar applies via
+  `insertQuote(promptRef.current, …)` + rAF focus/cursor-to-end. `QuoteRequest` type
+  exported from InputBar.tsx.
+- i18n: `activity.askMatrix` (EN "Ask Matrix" / ZH "问 Matrix"). CSS:
+  `.mxd-selection-quote-btn` at end of style.css.
+
+### Tests (mutation-verified at the seams)
+- `web/quote.test.ts` (24) — pure functions, no DOM.
+- `web/ActivityLog-quote.test.tsx` (7) — happy-dom Selection/Range work well enough for
+  the real flow (addRange + document mouseup dispatch + selectionchange). Only
+  `range.getBoundingClientRect()` returns zeros — position math is covered by the pure
+  tests instead. Poll-based `waitFor` (NonNullable<T> return), never fixed sleeps —
+  fixed 20ms waits flaked on cold first-file module compile.
+- `web/InputBar-quote.test.tsx` (4) — prop-driven rerender path, draft preservation,
+  seq-bump reapplication.
+- `web/Plugin-quote-journey.test.tsx` (1) — CANONICAL JOURNEY, full stack: real daemon,
+  real Plugin, seeded tree.json + session JSONL at matrix dataRoot
+  (`projects/<id>/plugin/matrix/{tree.json,tasks/<rootId>.jsonl}` — nodes need explicit
+  `type: "task"` since P3). Mutation-proof: dropping `onQuoteText={handleQuoteText}` or
+  `quoteRequest={quoteRequest}` in Plugin.tsx fails ONLY this test (component tests stay
+  green) — the seam is exactly what it guards.
+- NOTE: `web/Plugin-targetNodeId.test.tsx` seeds tree.json at `projects/<id>/tree.json` —
+  the WRONG path since the dataRoot move (silently ignored; test passes because a fresh
+  tree's default root title is also "Orchestrator"). Harmless but misleading; fix when
+  next touching that file.
+
+## bun test cross-file React breakage: root cause is react-dom scheduler binding — FIXED via preload (2026-07-02)
+
+**Supersedes the "Test pollution gotcha (pre-existing, not Fix C)" entry and the Task Y
+"ShellApp integration tests — DELETED" workaround rationale.** The "happy-dom state
+surviving GlobalRegistrator cycles" theory was wrong, and the class is now FIXED, not
+worked around.
+
+### Actual mechanism (probe-bisected, 2-file repros)
+react-dom is a process-wide singleton; its scheduler picks timer machinery
+(MessageChannel etc.) at FIRST IMPORT. If the first `import("react-dom/client")` in a
+`bun test` process happens INSIDE a registered happy-dom environment, the scheduler
+binds that window's machinery; when that file's afterAll runs
+`GlobalRegistrator.unregister()`, scheduled render work stops flushing → EVERY
+subsequent test file's React renders produce nothing (fast assertion fails + 5s render
+timeouts). If the first import happens under plain bun globals, the binding is
+bun-native and immortal — all later register/unregister cycles are harmless.
+
+- bun's test-file order is filesystem-dependent (NOT alphabetical, NOT mtime). Baseline
+  was green only because web/ShellApp.test.tsx happened to run first (its react-dom
+  import path was benign); adding 4 new web test files reshuffled the order, put a new
+  file in pole position, and 52 tests across 11 web files failed. Any file addition
+  could have re-rolled this dice — the landmine was latent, not caused by any file's
+  content.
+- Red herrings eliminated by probes: matchMedia mocks (assign OR call), happy-dom
+  register options (width/height), IS_REACT_ACT_ENVIRONMENT — none of them matter. A
+  minimal register→import-react-dom→render→unregister file poisons; the identical file
+  with a TOP-LEVEL react-dom import stays benign.
+- Bisect trap to remember: a sed-mangled probe whose beforeAll THROWS never registers
+  happy-dom → the paired victim file runs clean → looks like "mutation fixed it".
+  Validate probe files pass on their own before trusting a bisect step.
+
+### Fix (the ONE mechanism)
+`bunfig.toml [test] preload = ["./src/test-utils/preload.ts"]` — the preload just does
+`import "react-dom/client"` once per process, before any test file, guaranteeing the
+native binding regardless of file order. Verified: previously-poisonous orders
+(journey-first, targetNodeId-first, url-task-id-first) all green; full suite 2419/0.
+
+### Consequences
+- happy-dom + GlobalRegistrator register/unregister per file is SAFE now. Subset runs
+  (`bun test web/A.tsx web/B.tsx`) are no longer order-flaky for this reason.
+- matchMedia mocks in test files are innocent; keep them if a test needs desktop
+  viewport (or use `GlobalRegistrator.register({ width, height })` — happy-dom's real
+  matchMedia evaluates min/max-width correctly against it).
+- Do NOT remove the preload "because tests pass without it locally" — passing depends
+  on file order, which depends on the filesystem. The preload is what makes order
+  irrelevant.
