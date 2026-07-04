@@ -4914,3 +4914,35 @@ button.mxd-tool-card-header:hover {
 	color: var(--color-failed);
 	margin-top: 4px;
 }
+
+/* ---------- Select-to-quote: floating "Ask Matrix" button ---------- */
+
+.mxd-selection-quote-btn {
+	position: fixed;
+	z-index: 300;
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	padding: 4px 10px;
+	background: var(--bg-overlay);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	color: var(--text-primary);
+	font-size: 11px;
+	font-family: var(--font-sans);
+	cursor: pointer;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+	user-select: none;
+	white-space: nowrap;
+}
+
+.mxd-selection-quote-btn:hover {
+	border-color: var(--accent);
+	color: var(--accent-hover);
+}
+
+.mxd-selection-quote-glyph {
+	color: var(--accent);
+	font-size: 12px;
+	line-height: 1;
+}

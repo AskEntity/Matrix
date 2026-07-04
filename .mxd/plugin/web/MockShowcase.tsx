@@ -604,6 +604,7 @@ function MockShowcaseInner() {
 								projectMap={mockProjectMap}
 								onProjectNavigate={handleProjectNavigate}
 								showCacheBadges={showCacheBadges}
+								onQuoteText={(text) => console.log("Quote to input:", text)}
 							/>
 						</div>
 					) : isOrchestratorNode ? (

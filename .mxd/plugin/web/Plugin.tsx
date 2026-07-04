@@ -541,6 +541,16 @@ function ProjectContent({
 	const [clarifyAnswers, setClarifyAnswers] = useState<Record<string, string>>(
 		{},
 	);
+	// Select-to-quote ("Ask Matrix"): one-shot request routed from the
+	// ActivityLog selection to the InputBar draft. seq increments per request
+	// so quoting the same text twice still applies.
+	const [quoteRequest, setQuoteRequest] = useState<{
+		text: string;
+		seq: number;
+	} | null>(null);
+	const handleQuoteText = useCallback((text: string) => {
+		setQuoteRequest((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
+	}, []);
 	const [backgroundProcesses, setBackgroundProcesses] = useState<
 		Map<
 			string,
@@ -1728,6 +1738,7 @@ function ProjectContent({
 									window.location.pathname = `/${pid}/matrix/`;
 								}}
 								showCacheBadges={showCacheBadges}
+								onQuoteText={handleQuoteText}
 							/>
 						</div>
 					) : isOrchestratorNode ? (
@@ -1773,6 +1784,7 @@ function ProjectContent({
 				onSend={handleSend}
 				onClarifySubmit={handleClarifySubmit}
 				onClarifyAnswerChange={handleClarifyAnswerChange}
+				quoteRequest={quoteRequest}
 			/>
 
 			{themes[theme]?.hasCat && <CuteCat />}

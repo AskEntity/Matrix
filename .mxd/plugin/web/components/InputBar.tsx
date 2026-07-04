@@ -2,10 +2,20 @@ import type React from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
+import { insertQuote } from "../quote.ts";
 import { IconClose, IconImage, IconSend } from "./icons.tsx";
 import { SLASH_COMMANDS, SlashCommandMenu } from "./SlashCommandMenu.tsx";
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
+
+/**
+ * One-shot request to insert quoted text into the draft (select-to-quote).
+ * `seq` increments per request so the same text can be quoted twice.
+ */
+export interface QuoteRequest {
+	text: string;
+	seq: number;
+}
 
 function draftKey(nodeId: string | null) {
 	return nodeId ? `mxd-prompt-draft:${nodeId}` : "mxd-prompt-draft";
@@ -16,6 +26,7 @@ export const InputBar = memo(function InputBar({
 	targetNodeId,
 	nodeMap,
 	onSend,
+	quoteRequest,
 }: {
 	projectId: string;
 	targetNodeId: string | null;
@@ -24,6 +35,7 @@ export const InputBar = memo(function InputBar({
 		message: string,
 		images?: { base64: string; mediaType: string }[],
 	) => void;
+	quoteRequest?: QuoteRequest | null;
 }) {
 	const { t } = useLocale();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -69,6 +81,22 @@ export const InputBar = memo(function InputBar({
 		setPrompt(newDraft);
 		targetRef.current = targetNodeId;
 	}, [targetNodeId]);
+
+	// Select-to-quote: prepend the quoted selection to the draft and focus the
+	// textarea with the cursor at the end so the user types their question
+	// after the quote. Each request has a fresh seq, so quoting the same text
+	// twice still fires.
+	useEffect(() => {
+		if (!quoteRequest) return;
+		const next = insertQuote(promptRef.current, quoteRequest.text);
+		setPromptAndRef(next);
+		requestAnimationFrame(() => {
+			const el = textareaRef.current;
+			if (!el) return;
+			el.focus();
+			el.setSelectionRange(next.length, next.length);
+		});
+	}, [quoteRequest, setPromptAndRef]);
 
 	// Slash command autocomplete state
 	const [slashMenuOpen, setSlashMenuOpen] = useState(false);
