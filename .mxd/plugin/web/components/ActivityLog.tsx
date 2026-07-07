@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getLogTaskId, type LogEntry, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { quoteButtonPosition, selectionQuoteText } from "../quote.ts";
+import { isNearBottom } from "../scroll.ts";
 import { LogEntryView, ToolCard } from "./ToolCard.tsx";
 import { getEntryText } from "./tools/utils.ts";
 
@@ -30,6 +31,7 @@ export const ActivityLog = memo(function ActivityLog({
 	nodeMap,
 	autoScroll,
 	onAutoScrollChange,
+	onAtBottomChange,
 	isActive,
 	projectId,
 	olderEventsAvailable,
@@ -47,6 +49,12 @@ export const ActivityLog = memo(function ActivityLog({
 	nodeMap: Map<string, TreeNode>;
 	autoScroll: boolean;
 	onAutoScrollChange: (locked: boolean) => void;
+	/**
+	 * Reports whether the log is scrolled near its bottom (isNearBottom).
+	 * Drives the scroll-to-bottom button's visibility in the panel header.
+	 * Fired on scroll, on content growth, and after auto-follow scrolls.
+	 */
+	onAtBottomChange?: (atBottom: boolean) => void;
 	isActive: boolean;
 	projectId: string;
 	olderEventsAvailable?: Map<string, { hasOlder: boolean; oldestTs: number }>;
@@ -67,6 +75,10 @@ export const ActivityLog = memo(function ActivityLog({
 	entriesRef.current = entries;
 	const autoScrollRef = useRef(autoScroll);
 	autoScrollRef.current = autoScroll;
+	// Ref-mirrored so scrollToBottom / observers don't need it in their deps
+	// (an unstable parent callback must not churn the MutationObserver).
+	const onAtBottomChangeRef = useRef(onAtBottomChange);
+	onAtBottomChangeRef.current = onAtBottomChange;
 	const [showThinking, setShowThinking] = useState(false);
 
 	// Select-to-quote: floating "Ask Matrix" button near the current selection.
@@ -214,7 +226,23 @@ export const ActivityLog = memo(function ActivityLog({
 	// pushing the input bar out of view.
 	const scrollToBottom = useCallback(() => {
 		const el = logRef.current;
-		if (el) el.scrollTop = el.scrollHeight;
+		if (el) {
+			el.scrollTop = el.scrollHeight;
+			// scrollTop clamps to the max scroll offset, so we are at the
+			// bottom by construction — report without a forced layout read.
+			onAtBottomChangeRef.current?.(true);
+		}
+	}, []);
+
+	// Re-evaluate the distance from the bottom and report it upward.
+	// Callback identity is stable ([]) — safe in effect deps.
+	const reportAtBottom = useCallback(() => {
+		const el = logRef.current;
+		if (el) {
+			onAtBottomChangeRef.current?.(
+				isNearBottom(el.scrollTop, el.scrollHeight, el.clientHeight),
+			);
+		}
 	}, []);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new visible entries
@@ -222,8 +250,13 @@ export const ActivityLog = memo(function ActivityLog({
 		lastEventTimeRef.current = Date.now();
 		if (autoScroll) {
 			requestAnimationFrame(scrollToBottom);
+		} else {
+			// New entries while the user is scrolled up: the distance from
+			// the bottom grew, so the scroll-to-bottom button's visibility
+			// must be re-evaluated without any scroll event.
+			reportAtBottom();
 		}
-	}, [visible.length, autoScroll, scrollToBottom]);
+	}, [visible.length, autoScroll, scrollToBottom, reportAtBottom]);
 
 	// Show "Thinking..." when agent is active but no events for 1.5s
 	useEffect(() => {
@@ -247,6 +280,16 @@ export const ActivityLog = memo(function ActivityLog({
 		const observer = new MutationObserver(() => {
 			if (autoScrollRef.current) {
 				requestAnimationFrame(scrollToBottom);
+			} else {
+				// Finer-grained complement to the visible.length effect above:
+				// catches streaming text growth (characterData) that changes
+				// the scroll distance without adding an entry. Real browsers
+				// only — happy-dom v20 stores MutationObserver callbacks in a
+				// WeakRef (MutationObserverListener.js: `new WeakRef((record) =>
+				// this.report(record))` with no strong ref), so under GC
+				// pressure delivery silently stops; tests cover the effect
+				// path instead.
+				reportAtBottom();
 			}
 		});
 		observer.observe(el, {
@@ -255,13 +298,18 @@ export const ActivityLog = memo(function ActivityLog({
 			characterData: true,
 		});
 		return () => observer.disconnect();
-	}, [scrollToBottom]);
+	}, [scrollToBottom, reportAtBottom]);
 
 	const handleScroll = useCallback(() => {
 		const el = logRef.current;
 		if (!el) return;
-		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+		const atBottom = isNearBottom(
+			el.scrollTop,
+			el.scrollHeight,
+			el.clientHeight,
+		);
 		onAutoScrollChange(atBottom);
+		onAtBottomChangeRef.current?.(atBottom);
 		// The quote button is fixed-positioned; scrolling moves the selected
 		// text away from it. Dismiss instead of tracking.
 		setSelectionAction(null);
