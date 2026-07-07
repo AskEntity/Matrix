@@ -536,6 +536,16 @@ function MockShowcaseInner() {
 							</button>
 						</div>
 						<div className="mxd-panel-actions">
+							{viewMode === "activity" && !autoScroll && (
+								<button
+									type="button"
+									className="mxd-scroll-bottom-btn"
+									onClick={() => setAutoScroll(true)}
+									title={t("activity.scrollToBottom")}
+								>
+									<IconArrowDown size={11} />
+								</button>
+							)}
 							{tokenUsage && (
 								<TokenUsageBadge
 									inputTokens={tokenUsage.inputTokens}

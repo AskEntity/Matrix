@@ -3580,3 +3580,46 @@ native binding regardless of file order. Verified: previously-poisonous orders
 - Do NOT remove the preload "because tests pass without it locally" — passing depends
   on file order, which depends on the filesystem. The preload is what makes order
   irrelevant.
+
+## Scroll-to-bottom button + happy-dom v20 MutationObserver WeakRef GC hazard (2026-07-07)
+
+Scroll-to-bottom button (↓, `.mxd-scroll-bottom-btn`) in `.mxd-panel-actions`, rendered
+immediately LEFT of the Compact ⌘ button (which lives inside TokenUsageBadge — NOT in
+AppFooter/InputBar). Shown when the activity log is scrolled >40px from the bottom.
+
+### Shape
+- `.mxd/plugin/web/scroll.ts` — pure `isNearBottom(scrollTop, scrollHeight, clientHeight,
+  threshold=NEAR_BOTTOM_THRESHOLD)`; the ONE predicate for both auto-follow re-engagement
+  (ActivityLog handleScroll, formerly inline `< 40`) and button visibility.
+- ActivityLog: new optional `onAtBottomChange?: (atBottom: boolean) => void` prop, ref-mirrored
+  (observer effects don't churn on unstable parent callbacks). Report sites: handleScroll (with
+  onAutoScrollChange, same value), `visible.length` effect else-branch (entry growth while
+  scrolled up — the DETERMINISTIC growth trigger), MutationObserver else-branch (streaming
+  characterData growth, real-browsers-only complement), scrollToBottom (reports true by
+  construction). One shared `reportAtBottom` callback.
+- Plugin.tsx: `logAtBottom` state ← onAtBottomChange; click = querySelector scrollTop=scrollHeight
+  (precedent: tab scroll save) + setAutoScroll(true) + optimistic setLogAtBottom(true).
+- Existing Follow pill (`!autoScroll`, right of badge) untouched — overlaps ~95% with the new
+  button (both show when scrolled up, both end in follow+bottom). Dedup is a user/UX call, not made here.
+
+### ⚠️ happy-dom v20 MutationObserver delivery dies under GC pressure
+`MutationObserverListener` stores its report callback as `new WeakRef((record) => this.report(record))`
+with NO strong reference to the arrow anywhere; Node dispatch does `mutationListener.callback.deref()`
+— after any GC pass the deref returns undefined and mutations are SILENTLY dropped (no error).
+Consequence: a test relying on MO callbacks passes in isolation (no GC between observe and mutation)
+and flakes in the full 250s suite (GC runs constantly). Real browsers hold strong refs per spec —
+production code using MO is fine; only happy-dom TESTS of MO paths are inherently flaky.
+**Rule: never let a happy-dom test depend on MutationObserver delivery.** Route the tested behavior
+through a React effect (deterministic) and treat the MO path as a real-browser-only complement
+(document, don't test). The scroll-report content-growth test additionally stubs a no-op
+MutationObserver so its mutation-proof targets exactly the effect branch.
+
+### Tests
+`web/scroll.test.ts` (10 pure), `web/ActivityLog-scroll-report.test.tsx` (5 — every report path +
+auto-follow-preserved + optional-prop), `web/Plugin-scroll-bottom-journey.test.tsx` (canonical
+journey: real daemon, seeded assistant_text + `usage` event so TokenUsageBadge/⌘ renders → DOM-order
+assertion "↓ before ⌘ in panel-actions"; scroll up → appears → click → bottom + hidden + Follow pill
+gone). Seeding a `usage` JSONL event (`{type:"usage", taskId, inputTokens, contextWindow, ts}`) is
+the trick to make the Compact button exist in harness tests. Mutation-verified: prop-wire drop →
+journey fails; handleScroll report drop → 2 scroll tests fail; effect else drop → content-growth
+test fails (exact, thanks to the MO stub).

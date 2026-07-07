@@ -495,6 +495,9 @@ function ProjectContent({
 		Map<string, { scrollTop: number; follow: boolean }>
 	>(new Map());
 	const [autoScroll, setAutoScroll] = useState(true);
+	// Whether the activity log is scrolled near its bottom (reported by
+	// ActivityLog). Drives the scroll-to-bottom button next to Compact.
+	const [logAtBottom, setLogAtBottom] = useState(true);
 	const [fullscreen, setFullscreen] = useState(false);
 	const [theme] = useState<"dark" | "light" | "cute-light" | "cute-dark">(
 		() => {
@@ -550,6 +553,15 @@ function ProjectContent({
 	} | null>(null);
 	const handleQuoteText = useCallback((text: string) => {
 		setQuoteRequest((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
+	}, []);
+	// Scroll-to-bottom button: jump the activity log to "now" and resume
+	// follow mode. Optimistically hides the button; ActivityLog's scroll
+	// reporting confirms (and would re-show it if scrolling ever failed).
+	const handleScrollLogToBottom = useCallback(() => {
+		const logEl = document.querySelector<HTMLElement>(".mxd-activity-log");
+		if (logEl) logEl.scrollTop = logEl.scrollHeight;
+		setAutoScroll(true);
+		setLogAtBottom(true);
 	}, []);
 	const [backgroundProcesses, setBackgroundProcesses] = useState<
 		Map<
@@ -1648,6 +1660,16 @@ function ProjectContent({
 							</button>
 						</div>
 						<div className="mxd-panel-actions">
+							{viewMode === "activity" && !logAtBottom && (
+								<button
+									type="button"
+									className="mxd-scroll-bottom-btn"
+									onClick={handleScrollLogToBottom}
+									title={t("activity.scrollToBottom")}
+								>
+									<IconArrowDown size={11} />
+								</button>
+							)}
 							{(() => {
 								// One source: selectedTaskId. Brand-new transient = null
 								// → tokenUsage[""] is undefined → no badge rendered (correct).
@@ -1727,6 +1749,7 @@ function ProjectContent({
 								nodeMap={nodeMap}
 								autoScroll={autoScroll}
 								onAutoScrollChange={setAutoScroll}
+								onAtBottomChange={setLogAtBottom}
 								isActive={isSelectedTaskActive}
 								projectId={projectId}
 								olderEventsAvailable={olderEventsAvailable}
