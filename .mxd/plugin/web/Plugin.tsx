@@ -5,6 +5,7 @@ import {
 	useCallback,
 	useEffect,
 	useMemo,
+	useReducer,
 	useRef,
 	useState,
 } from "react";
@@ -48,6 +49,7 @@ import {
 	type PendingMessage,
 	pendingReducer,
 } from "./event-handler.ts";
+import { filterReducer, INITIAL_FILTER_STATE } from "./filter-state.ts";
 import { createActionHandlers } from "./handlers.ts";
 import {
 	createLogEntry,
@@ -401,8 +403,15 @@ function ProjectContent({
 	const authFetch = useAuthFetch();
 	const { t } = useLocale();
 	const [isCreatingTask, setIsCreatingTask] = useState(false);
-	// Sidebar filter controls (lifted from TaskTree for compact header)
-	const [filterOpen, setFilterOpen] = useState(false);
+	// Sidebar filter controls (lifted from TaskTree for compact header).
+	// open+query live in one reducer so the toggle is race-free and closing
+	// atomically clears the query (see filter-state.ts).
+	const [filterState, filterDispatch] = useReducer(
+		filterReducer,
+		INITIAL_FILTER_STATE,
+	);
+	const filterOpen = filterState.open;
+	const filterQuery = filterState.query;
 	const [filterMode, setFilterMode] = useState<FilterMode>(readFilterMode);
 	const cycleFilterMode = useCallback(() => {
 		setFilterMode((prev) => {
@@ -1512,7 +1521,7 @@ function ProjectContent({
 							<button
 								type="button"
 								className={`mxd-btn-icon${filterOpen ? " active" : ""}`}
-								onClick={() => setFilterOpen((p) => !p)}
+								onClick={() => filterDispatch({ type: "toggle" })}
 								data-tip={t("tasks.filterToggle")}
 							>
 								<IconSearch size={13} />
@@ -1553,7 +1562,11 @@ function ProjectContent({
 						onDeleteNode={handleDeleteNode}
 						onRenameNode={handleRenameNode}
 						filterOpen={filterOpen}
-						onFilterOpenChange={setFilterOpen}
+						filterQuery={filterQuery}
+						onFilterQueryChange={(q) =>
+							filterDispatch({ type: "setQuery", query: q })
+						}
+						onFilterClose={() => filterDispatch({ type: "close" })}
 						filterMode={filterMode}
 					/>
 				</aside>

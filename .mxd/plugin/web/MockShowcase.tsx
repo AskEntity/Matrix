@@ -444,7 +444,9 @@ function MockShowcaseInner() {
 						onSelect={handleTaskSelect}
 						onDoubleClick={handleTaskPin}
 						filterOpen={false}
-						onFilterOpenChange={() => {}}
+						filterQuery=""
+						onFilterQueryChange={() => {}}
+						onFilterClose={() => {}}
 						filterMode="all"
 					/>
 				</aside>

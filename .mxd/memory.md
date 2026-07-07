@@ -3691,3 +3691,56 @@ asserts arrival "within 3s". Ready worker resolves on first check, zero delay.
 `web/markdown-table.test.ts` (from markdown commit 32b4f440, ancestor of this branch). My files
 are `.ts` (no JSX). typecheck + check:ci pass with my changes; root should clean i18n before the
 final main commit.
+
+## Sidebar search/filter toggle — pure reducer, blur-close removed (2026-07-07)
+
+The sidebar filter button ([TASKS][+][refresh][🔍][👁] header row) now cleanly TOGGLES its
+search input: click open→focus, click again/Escape→close, and **closing clears the query** so
+the tree is never left silently narrowed by a hidden input.
+
+### Root cause of the "又弹出来" (reopen) bug
+open state lived in Plugin.tsx (`useState`), query lived in TaskTree.tsx (`useState`), and the
+input had `onBlur` that auto-closed when empty. Clicking the toggle button while the input was
+focused+empty fired the input's `blur` on **mousedown** (→ `onFilterOpenChange(false)`, state
+now false) BEFORE the button's `onClick` `setFilterOpen(p=>!p)` ran → the toggle read `false` and
+flipped back to `true` → the box **re-opened**. Classic blur-vs-click race across a split state.
+
+### Fix — one atomic reducer, no blur-close
+- **New `.mxd/plugin/web/filter-state.ts`**: pure `filterReducer(state,{toggle|close|setQuery})`
+  over `{open, query}`. `toggle` opens (query stays "") / closes-and-clears; `close` clears+closes;
+  `setQuery` ignored while closed. Invariant: **closed ⟹ query===""**. Race-free by construction —
+  the button dispatches `toggle`, Escape dispatches `close`, there is NO competing blur mutation.
+- **Plugin.tsx**: `useReducer(filterReducer, INITIAL_FILTER_STATE)`; button `onClick` →
+  `dispatch({type:"toggle"})`; passes `filterQuery` + `onFilterQueryChange`(setQuery) +
+  `onFilterClose`(close) to TaskTree. Button active-state styling (`.mxd-btn-icon.active`, already
+  in CSS) unchanged.
+- **TaskTree.tsx**: filter is now a CONTROLLED prop (`filterQuery`) — removed internal
+  `taskFilter` useState. **Removed the input's `onBlur` handler entirely** (the race source).
+  Escape → `onFilterClose()`. Auto-focus-on-open effect kept. Props type extracted to exported
+  `TaskTreeProps`. Filtering behavior (substring match on title/description/id) unchanged.
+- MockShowcase.tsx + web/TaskTree-color.test.tsx updated for the new props.
+
+### Behavior change worth knowing (surfaced to root)
+The old **auto-close-on-blur-when-empty** is GONE. An empty open search no longer collapses when
+you click elsewhere; it closes only via the toggle button or Escape. This matches the task's
+enumerated close triggers ("click again/Escape") and is what makes the toggle race-free without a
+`preventDefault` hack. If click-away-collapse is ever wanted back, do it via a document-level
+outside-click listener (NOT input.onBlur) to avoid re-introducing the race.
+
+### Why lift to a reducer instead of a minimal in-place patch
+happy-dom + React controlled-input change tracking is unreliable: simulating typing (native `input`
+event AND the `Object.getOwnPropertyDescriptor(...).value` setter trick) both FAILED to fire React's
+`onChange` in probes. So a query-in-TaskTree design would need fragile typing simulation to test.
+Lifting the query to a controlled prop makes filtering testable by **passing a prop** (no typing),
+and the pure reducer makes the toggle logic testable with **zero DOM**. `.blur()` and keydown DO
+fire in happy-dom (probed) — used for the component-level guards.
+
+### Tests (mutation-verified)
+- `web/filter-state.test.ts` (11): reducer purity — open→type→close→open (reopened input empty),
+  toggle strict alternation, close clears, setQuery-ignored-while-closed, closed⟹empty invariant.
+- `web/TaskTree-filter.test.tsx` (7): filterQuery prop filters; search bar reflects filterOpen;
+  Escape→onFilterClose; **blur does NOT close** (guard); auto-focus on open; and a faithful
+  **"又弹出来" reproduction** — a Harness wiring a real button + the real reducer + TaskTree, does
+  open→blur input→click toggle, asserts it stays CLOSED. Mutation proof: re-adding `onBlur`→close
+  fails BOTH the blur guard AND the reproduction (reproduction shows `Received: true` = reopened).
+- Full `bun test` 2465 pass / 0 fail (baseline 2447 + 18). typecheck + check:ci + i18n clean.
