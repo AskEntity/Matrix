@@ -14,11 +14,19 @@
  * so a future refactor that drops the check (e.g. "clean up the
  * redundant branch") will trip this test.
  *
- * The proper fix (epoch ULID in every SSE id) is out of scope. This test
- * pins the minimum guarantee we shipped under P2.9.
+ * Audit FU3 later shipped the proper fix on top: every SSE id carries a
+ * per-daemon-incarnation epoch prefix (`<epoch>-<seq>`, see
+ * `formatSseEventId` / `parseSseLastEventId` below). The seq-level checks
+ * here remain the same-epoch guarantees; the epoch layer catches the case
+ * these checks structurally cannot — an old-epoch cursor whose seq falls
+ * INSIDE the new epoch's buffered range.
  */
 import { describe, expect, test } from "bun:test";
-import { getEventsSinceFromBuffer } from "./daemon.ts";
+import {
+	formatSseEventId,
+	getEventsSinceFromBuffer,
+	parseSseLastEventId,
+} from "./daemon.ts";
 
 describe("getEventsSinceFromBuffer: stale-ahead recovery", () => {
 	test("lastSeqId past the buffer tail returns null (post-restart Last-Event-ID)", () => {
@@ -91,5 +99,50 @@ describe("getEventsSinceFromBuffer: stale-ahead recovery", () => {
 			{ seqId: 1, data: "a" },
 			{ seqId: 2, data: "b" },
 		]);
+	});
+});
+
+describe("SSE epoch ids: formatSseEventId / parseSseLastEventId (Audit FU3)", () => {
+	test("format emits <epoch>-<seq>", () => {
+		expect(formatSseEventId("1780000000000", 42)).toBe("1780000000000-42");
+	});
+
+	test("parse ∘ format is identity", () => {
+		const id = formatSseEventId("1780000000000", 7);
+		expect(parseSseLastEventId(id)).toEqual({
+			epoch: "1780000000000",
+			seq: 7,
+		});
+	});
+
+	test("legacy bare-numeric id parses with a null epoch (pre-epoch daemon cursor)", () => {
+		// A client whose cursor was minted by a pre-FU3 daemon sends a bare
+		// number. epoch:null never equals a real epoch → the caller treats it
+		// as foreign and sends full initial state. That is the safe behavior.
+		expect(parseSseLastEventId("123")).toEqual({ epoch: null, seq: 123 });
+	});
+
+	test("whitespace-padded header still parses", () => {
+		expect(parseSseLastEventId(" 1780000000000-3 ")).toEqual({
+			epoch: "1780000000000",
+			seq: 3,
+		});
+	});
+
+	test("epoch containing dashes splits on the LAST dash", () => {
+		expect(parseSseLastEventId("epoch-with-dash-42")).toEqual({
+			epoch: "epoch-with-dash",
+			seq: 42,
+		});
+	});
+
+	test("garbage headers parse to null", () => {
+		expect(parseSseLastEventId(null)).toBeNull();
+		expect(parseSseLastEventId("")).toBeNull();
+		expect(parseSseLastEventId("abc")).toBeNull(); // no dash, not numeric
+		expect(parseSseLastEventId("12-")).toBeNull(); // empty seq part
+		expect(parseSseLastEventId("-5")).toBeNull(); // empty epoch part
+		expect(parseSseLastEventId("12-3.5")).toBeNull(); // non-integer seq
+		expect(parseSseLastEventId("12-abc")).toBeNull(); // non-numeric seq
 	});
 });
