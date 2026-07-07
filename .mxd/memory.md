@@ -3623,3 +3623,71 @@ gone). Seeding a `usage` JSONL event (`{type:"usage", taskId, inputTokens, conte
 the trick to make the Compact button exist in harness tests. Mutation-verified: prop-wire drop →
 journey fails; handleScroll report drop → 2 scroll tests fail; effect else drop → content-growth
 test fails (exact, thanks to the MO stub).
+
+## Audit FU3 [CRITICAL] — SSE catch-up correct across daemon/worker restarts (2026-07-07)
+
+The LIVE "daemon restart → open page blank until F5" bug + two adjacent restart-window
+holes. All in `src/daemon.ts`. Three findings, one class: after a restart the UI silently
+diverges from server state.
+
+### Finding 1 — epoch-prefix every SSE id (the live blank-until-F5 bug)
+Per-lens seq counters restart at 0 on every daemon boot. Audit R7 P2.9 added a stale-ahead
+check (`getEventsSinceFromBuffer`: `lastSeqId > lastEntry.seqId → null`) that catches a
+pre-restart cursor BEYOND the new tail — but NOT a cursor whose seq falls INSIDE the new
+incarnation's refilled range. After a real restart agents auto-resume + stream, so the buffer
+refills PAST the browser's low pre-restart cursor before it reconnects → `getEventsSince`
+returns a wrong-epoch slice → `catchUpDone=true` → full initial state skipped → stale UI until F5.
+P2.9's own comment called epoch ids "the proper fix, out of scope"; FU3 shipped it.
+
+- Every SSE `id:` is now `<epoch>-<seq>`, epoch = `String(Date.now())` minted once per
+  `createDaemon` (const `sseEpoch`). Two pure exported helpers at module scope:
+  `formatSseEventId(epoch, seqId)` and `parseSseLastEventId(header)`.
+- `parseSseLastEventId`: `<epoch>-<seq>` → `{epoch, seq}` (split on the LAST dash — epoch may
+  contain dashes); bare numeric (pre-epoch daemon cursor) → `{epoch: null, seq}`; garbage → null.
+- `/events` catch-up runs ONLY when `lastCursor.epoch === sseEpoch`. `epoch:null` (legacy),
+  foreign epoch (previous incarnation), and null (garbage) all fall through to full initial state.
+- `getEventsSinceFromBuffer` is unchanged + still reasons WITHIN one incarnation; the epoch
+  layer sits above it. Both `id:` emit sites (live relay ~837, catch-up replay ~1886) use
+  `formatSseEventId` — a bare-seq emit would poison the client's NEXT reconnect cursor.
+- Client needs ZERO changes: EventSource echoes `Last-Event-ID` opaquely; only the server parses.
+
+### Finding 2 — ONE unified worker.onmessage, installed before init
+The old code used a temp init-only handler (loaded/ready/error) and swapped in the runtime
+handler AFTER `ready`. But the worker posts `sse_event`s DURING init (autoResumeProjects crash
+recovery, `onBroadcast` wired before `autoResumeProjects` in scope-worker.ts) → dropped silently.
+Harmless on first boot (no clients), HIGH impact on worker auto-restart (SSE clients still
+connected daemon-side miss every recovery event). Fix: `setupWorkerMessageHandler` →
+`handleWorkerRuntimeMessage(pluginName, scopeWorker, msg)`, called from the SINGLE
+`worker.onmessage` for any non-init-protocol message (`else` branch after loaded/ready/error).
+`shutdown_complete` is unaffected — it uses `addEventListener`, not `onmessage`.
+
+### Finding 3 — /events initial-state polls worker readiness (restart-gap reconnect)
+`workerKeyForProjectScope` (one-shot `workers.has → undefined`) → `awaitLensWorkerReady(projectId,
+scope, signal)`: no plugin for the lens → undefined immediately (permanent; auth-only `scope=""`);
+plugin exists but worker not ready → poll `SSE_INITIAL_STATE_RETRY_ATTEMPTS(15) ×
+SSE_INITIAL_STATE_RETRY_MS(200)` = 3s, aborts on client disconnect. A client connecting during
+the ~2s worker-restart backoff+init previously got a live stream with NO tree until the next
+unrelated event. Budget is 3s not the spec's 2s ON PURPOSE: the 2s backoff expires exactly as the
+restarted worker BEGINS init, so a 2s poll guarantees a miss for early-gap clients; spec Test 4
+asserts arrival "within 3s". Ready worker resolves on first check, zero delay.
+
+### Tests
+- `src/sse-catchup.test.ts` (7 integration, REAL daemon+worker via in-process `daemon.fetch`):
+  spec Tests 1-4 + the live old-epoch-cursor-INSIDE-new-range regression + same-epoch replay
+  still works + same-epoch-ahead-cursor. Test plugin emits an `init_probe` sse_event at MODULE
+  IMPORT time (fires inside the worker's init sequence, before `ready` — models
+  autoResumeProjects timing) and exposes `/test-emit` (emit via ctx.onBroadcast) + `/test-crash`
+  (unhandled throw → onerror → auto-restart, the FIX-6 technique). An `SseReader` parses `id:`/
+  `data:` frames from the stream body with a `waitFor(pred, timeout)`.
+- `src/sse-ring-buffer.test.ts` (+6 unit): formatSseEventId/parseSseLastEventId incl. legacy
+  bare-numeric → epoch:null, last-dash split, garbage → null.
+- Full suite 2447 pass / 0 fail (baseline 2435 + 12). typecheck + check:ci clean.
+- Verified the LIVE correspondence first: pre-fix `getEventsSinceFromBuffer(buf 1..10, oldLEI=5)`
+  returned a 5-event wrong-epoch slice (bug); the spec's literal repro (LEI=100) was already
+  null via P2.9. So the epoch variant — NOT the literal one — is today's blank-until-F5 symptom.
+
+### Pre-existing base-branch gate failures (NOT from this work — flagged to root)
+`bash scripts/check-i18n.sh` fails on 3 bare strings in `web/MarkdownText.test.tsx` /
+`web/markdown-table.test.ts` (from markdown commit 32b4f440, ancestor of this branch). My files
+are `.ts` (no JSX). typecheck + check:ci pass with my changes; root should clean i18n before the
+final main commit.
