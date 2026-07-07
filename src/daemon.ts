@@ -78,6 +78,13 @@ export interface SSERingEntry {
  * `lastSeqId > lastEntry.seqId` check forces the initial-state recovery
  * path on every restart-ahead case.
  *
+ * NOTE: this function reasons about seqs WITHIN one daemon incarnation.
+ * Cross-incarnation confusion (an old cursor whose seq falls INSIDE the new
+ * buffer's range — the case the stale-ahead check structurally cannot see)
+ * is handled a level above by the epoch prefix on every SSE id: /events
+ * only calls this for cursors carrying the current epoch. See
+ * `formatSseEventId` / `parseSseLastEventId` below.
+ *
  * Pure function — exported so the stale-ahead invariant is unit-testable
  * without spinning up a daemon.
  */
@@ -98,6 +105,52 @@ export function getEventsSinceFromBuffer<T extends { seqId: number }>(
 	const idx = buffer.findIndex((e) => e.seqId > lastSeqId);
 	if (idx === -1) return []; // Client is up to date
 	return buffer.slice(idx);
+}
+
+// ── SSE epoch ids (Audit FU3 Finding 1) ──
+//
+// Seq counters restart at 0 on every daemon boot, so a bare seq is
+// meaningless across restarts. The stale-ahead check above only catches a
+// pre-restart cursor that is BEYOND the new buffer's tail; a cursor whose
+// seq happens to fall INSIDE the new incarnation's range (common under
+// frequent restarts — agents auto-resume and quickly re-fill the buffer)
+// would be served a wrong-epoch "catch-up" slice, marking the client caught
+// up and skipping the full-initial-state send. The UI then sits on stale
+// state until a manual refresh.
+//
+// Fix: every SSE id is `<epoch>-<seq>` where the epoch is minted once per
+// daemon incarnation. Catch-up runs only when the client's cursor carries
+// the CURRENT epoch; foreign epochs (previous incarnation), legacy bare
+// numerics (pre-epoch daemon), and garbage all force the initial-state path.
+
+/** Format an SSE event id as `<epoch>-<seq>`. */
+export function formatSseEventId(epoch: string, seqId: number): string {
+	return `${epoch}-${seqId}`;
+}
+
+/**
+ * Parse a `Last-Event-ID` header.
+ *
+ * - `<epoch>-<seq>` → `{ epoch, seq }` (split on the LAST dash, so an epoch
+ *   containing dashes still parses)
+ * - bare numeric (pre-epoch daemon cursor) → `{ epoch: null, seq }` — a null
+ *   epoch never equals a real one, so callers treat it as foreign
+ * - absent / malformed → `null`
+ */
+export function parseSseLastEventId(
+	header: string | null,
+): { epoch: string | null; seq: number } | null {
+	if (!header) return null;
+	const trimmed = header.trim();
+	if (!trimmed) return null;
+	if (/^\d+$/.test(trimmed)) {
+		return { epoch: null, seq: Number.parseInt(trimmed, 10) };
+	}
+	const dash = trimmed.lastIndexOf("-");
+	if (dash <= 0) return null;
+	const seqPart = trimmed.slice(dash + 1);
+	if (!/^\d+$/.test(seqPart)) return null;
+	return { epoch: trimmed.slice(0, dash), seq: Number.parseInt(seqPart, 10) };
 }
 
 // ── Bearer / secret helpers (daemon-only) ──
@@ -515,6 +568,19 @@ export async function createDaemon(opts: {
 	const sseSeqCounters = new Map<string, number>();
 	const sseEventBuffers = new Map<string, SSERingEntry[]>();
 	const SSE_RING_BUFFER_SIZE = 2000;
+	// Minted once per daemon incarnation; prefixes every SSE id so a
+	// reconnecting client's cursor identifies which incarnation minted it
+	// (see formatSseEventId / parseSseLastEventId at module scope).
+	const sseEpoch = String(Date.now());
+	// /events initial-state fetch: poll worker readiness before giving up
+	// (Audit FU3 Finding 3). A client connecting during a worker-restart gap
+	// would otherwise get a live stream with no tree until the next event.
+	// 15 × 200ms = 3s — covers the FIRST restart backoff (2s) plus worker
+	// init; the spec's 2s budget expires exactly as the restarted worker
+	// begins init, guaranteeing a miss for clients that connect early in
+	// the gap.
+	const SSE_INITIAL_STATE_RETRY_MS = 200;
+	const SSE_INITIAL_STATE_RETRY_ATTEMPTS = 15;
 
 	/** Composite key for the (projectId, scope) lens. `\u0000` can't appear in
 	 * a ULID projectId or a `[A-Za-z0-9_-]` plugin name, so it's an unambiguous
@@ -672,101 +738,114 @@ export async function createDaemon(opts: {
 		pendingRestartTimers.add(timer);
 	}
 
-	function setupWorkerMessageHandler(
+	/**
+	 * Handle a runtime message from a worker: HTTP responses (buffered +
+	 * streaming) and `sse_event` relay.
+	 *
+	 * Called for EVERY worker message that isn't part of the init protocol
+	 * (loaded/ready/error) — including messages posted BEFORE `ready`. The
+	 * worker emits `sse_event`s during init (autoResumeProjects crash
+	 * recovery); a previous version installed this handler only after
+	 * `ready`, silently dropping those events. Harmless on first boot (no
+	 * SSE clients exist yet), but on worker auto-restart the daemon-side
+	 * clients are still connected and missed every recovery event
+	 * (Audit FU3 Finding 2).
+	 */
+	function handleWorkerRuntimeMessage(
 		pluginName: string,
 		scopeWorker: ScopeWorker,
+		// biome-ignore lint/suspicious/noExplicitAny: postMessage payloads are structurally typed per branch
+		msg: any,
 	) {
-		scopeWorker.worker.onmessage = (event: MessageEvent) => {
-			const msg = event.data;
+		if (msg.type === "http_response") {
+			const pending = scopeWorker.pending.get(msg.id);
+			if (pending) {
+				scopeWorker.pending.delete(msg.id);
+				pending.resolve({
+					status: msg.status,
+					headers: msg.headers,
+					body: msg.body,
+				});
+			}
+		}
 
-			if (msg.type === "http_response") {
-				const pending = scopeWorker.pending.get(msg.id);
-				if (pending) {
-					scopeWorker.pending.delete(msg.id);
-					pending.resolve({
-						status: msg.status,
-						headers: msg.headers,
-						body: msg.body,
-					});
+		// Streaming response support (SSE/MCP)
+		if (msg.type === "http_response_stream_start") {
+			const pending = scopeWorker.pending.get(msg.id);
+			if (pending) {
+				scopeWorker.pending.delete(msg.id);
+				const stream = new ReadableStream({
+					start(controller) {
+						// Store controller for subsequent chunks
+						scopeWorker.pending.set(`stream:${msg.id}`, {
+							resolve: () => {},
+							reject: () => {},
+							_streamController: controller,
+						} as unknown as typeof pending);
+					},
+				});
+				pending.resolve({
+					status: msg.status,
+					headers: msg.headers,
+					body: stream as unknown as string, // will be used as Response body
+					_isStream: true,
+				});
+			}
+		}
+		if (msg.type === "http_response_stream_chunk") {
+			const streamPending = scopeWorker.pending.get(
+				`stream:${msg.id}`,
+			) as unknown as
+				| { _streamController?: ReadableStreamDefaultController }
+				| undefined;
+			if (streamPending?._streamController) {
+				try {
+					streamPending._streamController.enqueue(
+						new TextEncoder().encode(msg.chunk),
+					);
+				} catch {
+					/* client disconnected */
 				}
 			}
-
-			// Streaming response support (SSE/MCP)
-			if (msg.type === "http_response_stream_start") {
-				const pending = scopeWorker.pending.get(msg.id);
-				if (pending) {
-					scopeWorker.pending.delete(msg.id);
-					const stream = new ReadableStream({
-						start(controller) {
-							// Store controller for subsequent chunks
-							scopeWorker.pending.set(`stream:${msg.id}`, {
-								resolve: () => {},
-								reject: () => {},
-								_streamController: controller,
-							} as unknown as typeof pending);
-						},
-					});
-					pending.resolve({
-						status: msg.status,
-						headers: msg.headers,
-						body: stream as unknown as string, // will be used as Response body
-						_isStream: true,
-					});
-				}
+		}
+		if (msg.type === "http_response_stream_end") {
+			const streamPending = scopeWorker.pending.get(
+				`stream:${msg.id}`,
+			) as unknown as
+				| { _streamController?: ReadableStreamDefaultController }
+				| undefined;
+			if (streamPending?._streamController) {
+				try {
+					streamPending._streamController.close();
+				} catch {}
 			}
-			if (msg.type === "http_response_stream_chunk") {
-				const streamPending = scopeWorker.pending.get(
-					`stream:${msg.id}`,
-				) as unknown as
-					| { _streamController?: ReadableStreamDefaultController }
-					| undefined;
-				if (streamPending?._streamController) {
+			scopeWorker.pending.delete(`stream:${msg.id}`);
+		}
+
+		if (msg.type === "sse_event") {
+			const { projectId, event: evt } = msg;
+			// The emitting worker IS the lens: this worker serves `pluginName`,
+			// so every event it emits belongs to the (projectId, pluginName)
+			// lens. seqId + ring buffer are per-lens, and only clients viewing
+			// THIS lens receive it — a product-lens viewer never sees the dev
+			// lens's tree, and vice versa.
+			const key = lensKey(projectId, pluginName);
+			const seqId = nextSseSeqId(key);
+			const data = JSON.stringify(evt);
+			bufferSseEvent(key, seqId, data);
+			const sseMessage = sseEncoder.encode(
+				`id: ${formatSseEventId(sseEpoch, seqId)}\ndata: ${data}\n\n`,
+			);
+			for (const client of sseClients) {
+				if (client.projectId === projectId && client.scope === pluginName) {
 					try {
-						streamPending._streamController.enqueue(
-							new TextEncoder().encode(msg.chunk),
-						);
+						client.controller.enqueue(sseMessage);
 					} catch {
-						/* client disconnected */
+						sseClients.delete(client);
 					}
 				}
 			}
-			if (msg.type === "http_response_stream_end") {
-				const streamPending = scopeWorker.pending.get(
-					`stream:${msg.id}`,
-				) as unknown as
-					| { _streamController?: ReadableStreamDefaultController }
-					| undefined;
-				if (streamPending?._streamController) {
-					try {
-						streamPending._streamController.close();
-					} catch {}
-				}
-				scopeWorker.pending.delete(`stream:${msg.id}`);
-			}
-
-			if (msg.type === "sse_event") {
-				const { projectId, event: evt } = msg;
-				// The emitting worker IS the lens: this worker serves `pluginName`,
-				// so every event it emits belongs to the (projectId, pluginName)
-				// lens. seqId + ring buffer are per-lens, and only clients viewing
-				// THIS lens receive it — a product-lens viewer never sees the dev
-				// lens's tree, and vice versa.
-				const key = lensKey(projectId, pluginName);
-				const seqId = nextSseSeqId(key);
-				const data = JSON.stringify(evt);
-				bufferSseEvent(key, seqId, data);
-				const sseMessage = sseEncoder.encode(`id: ${seqId}\ndata: ${data}\n\n`);
-				for (const client of sseClients) {
-					if (client.projectId === projectId && client.scope === pluginName) {
-						try {
-							client.controller.enqueue(sseMessage);
-						} catch {
-							sseClients.delete(client);
-						}
-					}
-				}
-			}
-		};
+		}
 	}
 
 	async function startWorkerForPlugin(plugin: RegisteredPlugin): Promise<void> {
@@ -860,7 +939,14 @@ export async function createDaemon(opts: {
 				}
 			};
 
-			// Temporary handler for init sequence
+			// ONE unified handler, installed BEFORE init begins. Init-protocol
+			// messages (loaded/ready/error) are handled here; everything else
+			// goes to handleWorkerRuntimeMessage — including `sse_event`s the
+			// worker posts DURING init (autoResumeProjects crash recovery).
+			// A previous version used a temporary init-only handler and swapped
+			// in the runtime handler after `ready`, silently dropping every
+			// pre-ready sse_event (Audit FU3 Finding 2). On worker auto-restart
+			// SSE clients are still connected — they must see recovery events.
 			worker.onmessage = (event: MessageEvent) => {
 				const msg = event.data;
 				if (msg.type === "loaded") {
@@ -883,8 +969,7 @@ export async function createDaemon(opts: {
 						dataRoot: pluginDataRoot,
 						globalContext,
 					});
-				}
-				if (msg.type === "ready") {
+				} else if (msg.type === "ready") {
 					if (initTimer) {
 						clearTimeout(initTimer);
 						initTimer = undefined;
@@ -892,13 +977,8 @@ export async function createDaemon(opts: {
 					initResolved = true;
 					scopeWorker.ready = true;
 					getRestartState(scopeName).lastReadyAt = Date.now();
-					// Pass the plugin NAME (the lens/scope), not the worker key, so
-					// the sse_event relay can tag events with the (projectId, scope)
-					// lens the viewing UI subscribes to.
-					setupWorkerMessageHandler(plugin.name, scopeWorker);
 					resolve();
-				}
-				if (msg.type === "error") {
+				} else if (msg.type === "error") {
 					if (initTimer) {
 						clearTimeout(initTimer);
 						initTimer = undefined;
@@ -913,6 +993,11 @@ export async function createDaemon(opts: {
 					reject(
 						new Error(`Worker "${scopeName}" init failed: ${msg.message}`),
 					);
+				} else {
+					// Pass the plugin NAME (the lens/scope), not the worker key, so
+					// the sse_event relay can tag events with the (projectId, scope)
+					// lens the viewing UI subscribes to.
+					handleWorkerRuntimeMessage(plugin.name, scopeWorker, msg);
 				}
 			};
 
@@ -1141,20 +1226,37 @@ export async function createDaemon(opts: {
 	 * The ready worker key serving the (projectId, scope) lens — used to fetch
 	 * the VIEWED lens's initial tree/clarifications for an SSE stream. `scope` is
 	 * a plugin NAME: a global named `scope` serves any project; a project-scoped
-	 * plugin named `scope` serves only the project that ships it. Returns
-	 * undefined if no such plugin or its worker isn't ready.
+	 * plugin named `scope` serves only the project that ships it.
+	 *
+	 * No plugin for the lens → resolves undefined IMMEDIATELY (permanent: the
+	 * lens doesn't exist; auth-only daemons with `scope=""` land here).
+	 *
+	 * Plugin exists but its worker isn't ready → poll up to
+	 * SSE_INITIAL_STATE_RETRY_ATTEMPTS × SSE_INITIAL_STATE_RETRY_MS. This is
+	 * the worker-restart gap (Audit FU3 Finding 3): the crashed worker was
+	 * deleted from the map and its replacement is 2s of backoff + init away.
+	 * A client connecting in that gap previously got a live stream with no
+	 * initial tree — blank UI until the next unrelated event. A ready worker
+	 * resolves on the first check with zero delay.
 	 */
-	function workerKeyForProjectScope(
+	async function awaitLensWorkerReady(
 		projectId: string,
 		scope: string,
-	): string | undefined {
+		signal: AbortSignal,
+	): Promise<string | undefined> {
 		const plugin = registeredPlugins.find(
 			(p) =>
 				p.name === scope && (p.scope === "global" || p.projectId === projectId),
 		);
 		if (!plugin) return undefined;
 		const key = workerKeyForPlugin(plugin);
-		return workers.has(key) ? key : undefined;
+		for (let attempt = 0; ; attempt++) {
+			if (workers.get(key)?.ready) return key;
+			if (attempt >= SSE_INITIAL_STATE_RETRY_ATTEMPTS || signal.aborted) {
+				return undefined;
+			}
+			await new Promise((r) => setTimeout(r, SSE_INITIAL_STATE_RETRY_MS));
+		}
 	}
 
 	// ── Run onProjectInit hooks (4-step flow, step 3+4) ──
@@ -1752,11 +1854,16 @@ export async function createDaemon(opts: {
 			c.req.query("token"),
 		);
 
-		// EventSource sends Last-Event-ID on reconnect
-		const lastEventIdHeader = request.headers.get("Last-Event-ID");
-		const lastSeqId = lastEventIdHeader
-			? Number.parseInt(lastEventIdHeader, 10)
-			: null;
+		// EventSource sends Last-Event-ID on reconnect. Ids are epoch-prefixed
+		// (`<epoch>-<seq>`): a cursor is only meaningful when it was minted by
+		// THIS daemon incarnation. Foreign epochs (pre-restart cursor), legacy
+		// bare numerics, and garbage all force the initial-state path — the
+		// per-incarnation seq spaces overlap, so serving a foreign cursor from
+		// the current buffer would hand out a wrong-epoch slice and mark the
+		// client "caught up" (Audit FU3 Finding 1: stale UI until manual F5).
+		const lastCursor = parseSseLastEventId(
+			request.headers.get("Last-Event-ID"),
+		);
 
 		const stream = new ReadableStream({
 			async start(controller) {
@@ -1765,17 +1872,18 @@ export async function createDaemon(opts: {
 
 				let catchUpDone = false;
 
-				// If reconnecting with Last-Event-ID, try ring buffer catch-up
-				// (per-lens: seqIds belong to THIS (projectId, scope) stream).
-				if (lastSeqId != null && !Number.isNaN(lastSeqId)) {
-					const missed = getEventsSince(lens, lastSeqId);
+				// If reconnecting with a same-epoch cursor, try ring buffer
+				// catch-up (per-lens: seqIds belong to THIS (projectId, scope)
+				// stream).
+				if (lastCursor && lastCursor.epoch === sseEpoch) {
+					const missed = getEventsSince(lens, lastCursor.seq);
 					if (missed !== null) {
 						catchUpDone = true;
 						for (const entry of missed) {
 							try {
 								controller.enqueue(
 									sseEncoder.encode(
-										`id: ${entry.seqId}\ndata: ${entry.data}\n\n`,
+										`id: ${formatSseEventId(sseEpoch, entry.seqId)}\ndata: ${entry.data}\n\n`,
 									),
 								);
 							} catch {
@@ -1786,13 +1894,19 @@ export async function createDaemon(opts: {
 					}
 				}
 
-				// If no Last-Event-ID or catch-up failed (gap too large),
-				// send full initial state — from the worker serving THIS lens
-				// (the viewed scope), so a product-lens stream gets the product
-				// tree and a dev-lens stream gets the matrix tree.
+				// If no usable cursor (absent, foreign epoch, garbage) or
+				// catch-up failed (gap too large), send full initial state —
+				// from the worker serving THIS lens (the viewed scope), so a
+				// product-lens stream gets the product tree and a dev-lens
+				// stream gets the matrix tree. awaitLensWorkerReady polls
+				// briefly when the worker is mid-restart (Finding 3).
 				if (!catchUpDone) {
 					try {
-						const workerName = workerKeyForProjectScope(projectId, scope);
+						const workerName = await awaitLensWorkerReady(
+							projectId,
+							scope,
+							request.signal,
+						);
 						const treeResp = workerName
 							? await forwardToWorker(
 									workerName,
