@@ -25,5 +25,9 @@
 			"@mxd/auth-context": ["./web/auth-context.ts"],
 			"@mxd/types": ["./web/runtime-types.ts"]
 		}
-	}
+	},
+	// scripts/retrieval-exp is a self-contained experiment spike with its own
+	// package.json (deps not installed in fresh checkouts/worktrees) — exclude
+	// it from the product typecheck gate.
+	"exclude": [".worktrees", "scripts/retrieval-exp"]
 }

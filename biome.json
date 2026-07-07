@@ -1,7 +1,13 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.4.10/schema.json",
 	"files": {
-		"includes": ["**", "!.worktrees", "!.claude", "!data"]
+		"includes": [
+			"**",
+			"!.worktrees",
+			"!.claude",
+			"!data",
+			"!scripts/retrieval-exp"
+		]
 	},
 	"assist": {
 		"actions": {
