@@ -117,25 +117,7 @@ interface DropIndicator {
 
 type DropZone = "before" | "center" | "after";
 
-export const TaskTree = memo(function TaskTree({
-	nodes,
-	selectedTaskId,
-	rootNodeId,
-	activeAgents,
-	onSelect,
-	onDoubleClick,
-	onReorder,
-	onReparent,
-	isCreating,
-	onCreateTask,
-	onCancelCreate,
-	onCreateChildTask,
-	onDeleteNode,
-	onRenameNode,
-	filterOpen,
-	onFilterOpenChange,
-	filterMode,
-}: {
+export interface TaskTreeProps {
 	nodes: TreeNode[];
 	selectedTaskId: string | null;
 	rootNodeId: string | null;
@@ -153,13 +135,39 @@ export const TaskTree = memo(function TaskTree({
 	onDeleteNode?: (id: string, title: string) => void;
 	/** Called when context menu "Rename" is chosen (folders) */
 	onRenameNode?: (id: string, newTitle: string) => void;
-	/** Whether the filter input is expanded */
+	/** Whether the filter input is expanded (controlled by parent) */
 	filterOpen: boolean;
-	/** Callback to toggle filter input visibility */
-	onFilterOpenChange: (open: boolean) => void;
+	/** Current substring filter query (controlled by parent) */
+	filterQuery: string;
+	/** Called when the user edits the filter query */
+	onFilterQueryChange: (query: string) => void;
+	/** Called when the user closes the filter (Escape) */
+	onFilterClose: () => void;
 	/** Current filter mode (controlled by parent) */
 	filterMode: FilterMode;
-}) {
+}
+
+export const TaskTree = memo(function TaskTree({
+	nodes,
+	selectedTaskId,
+	rootNodeId,
+	activeAgents,
+	onSelect,
+	onDoubleClick,
+	onReorder,
+	onReparent,
+	isCreating,
+	onCreateTask,
+	onCancelCreate,
+	onCreateChildTask,
+	onDeleteNode,
+	onRenameNode,
+	filterOpen,
+	filterQuery,
+	onFilterQueryChange,
+	onFilterClose,
+	filterMode,
+}: TaskTreeProps) {
 	// Root node's children are the visible top-level tasks
 	const rootNode = useMemo(
 		() => (rootNodeId ? nodes.find((n) => n.id === rootNodeId) : undefined),
@@ -243,7 +251,6 @@ export const TaskTree = memo(function TaskTree({
 		setCreatingChildOf(null);
 	}, []);
 
-	const [taskFilter, setTaskFilter] = useState("");
 	const filterInputRef = useRef<HTMLInputElement>(null);
 	const [favorites, setFavorites] = useState<Set<string>>(readFavorites);
 
@@ -267,7 +274,7 @@ export const TaskTree = memo(function TaskTree({
 	}, []);
 
 	const matchingIds = useMemo((): Set<string> | null => {
-		const trimmed = taskFilter.trim();
+		const trimmed = filterQuery.trim();
 		// "all" mode with no text filter = show everything
 		if (!trimmed && filterMode === "all") return null;
 
@@ -329,7 +336,7 @@ export const TaskTree = memo(function TaskTree({
 			addWithAncestors(node);
 		}
 		return matched;
-	}, [nodes, taskFilter, nodeMap, filterMode, favorites]);
+	}, [nodes, filterQuery, nodeMap, filterMode, favorites]);
 
 	// --- Drag-and-drop state ---
 	const [dragState, setDragState] = useState<DragState | null>(null);
@@ -521,7 +528,7 @@ export const TaskTree = memo(function TaskTree({
 	// Root is a regular task (Fix A + Fix C). selectedTaskId carries the
 	// actual root id when root is viewed — no `!selectedTaskId` sentinel.
 	const isOrchestratorSelected = selectedTaskId === rootNodeId;
-	const hasTextFilter = taskFilter.trim().length > 0;
+	const hasTextFilter = filterQuery.trim().length > 0;
 	// Force-expand tree when view is selective (text search or active+favorites mode)
 	const forceExpand = hasTextFilter || filterMode === "active-favorites";
 	const filteredRoots = matchingIds
@@ -545,18 +552,11 @@ export const TaskTree = memo(function TaskTree({
 						type="text"
 						className="mxd-tree-search"
 						placeholder={t("tasks.filter")}
-						value={taskFilter}
-						onChange={(e) => setTaskFilter(e.target.value)}
-						onBlur={() => {
-							// Auto-close when empty and unfocused
-							if (!taskFilter.trim()) {
-								onFilterOpenChange(false);
-							}
-						}}
+						value={filterQuery}
+						onChange={(e) => onFilterQueryChange(e.target.value)}
 						onKeyDown={(e) => {
 							if (e.key === "Escape") {
-								setTaskFilter("");
-								onFilterOpenChange(false);
+								onFilterClose();
 							}
 						}}
 					/>
@@ -640,9 +640,9 @@ export const TaskTree = memo(function TaskTree({
 					</div>
 				)}
 
-				{roots.length > 0 && filteredRoots.length === 0 && taskFilter && (
+				{roots.length > 0 && filteredRoots.length === 0 && filterQuery && (
 					<div className="mxd-tree-empty">
-						{t("tasks.noMatch")} "{taskFilter}"
+						{t("tasks.noMatch")} "{filterQuery}"
 					</div>
 				)}
 
