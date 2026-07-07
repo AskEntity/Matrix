@@ -18,14 +18,16 @@ while IFS= read -r line; do
     if echo "$line" | grep -qE '(viewBox|strokeWidth|strokeLinecap|strokeLinejoin|fill=|stroke=|points=|<svg|</svg|<path|<line|<circle|<rect|<polygon|<polyline|<title|aria-label=)'; then
         continue
     fi
-    
+
     # Look for bare English text between > and { or > and <
     # Pattern: > followed by text with 2+ alphabetic chars not inside braces
     if echo "$line" | grep -qE '>\s*[A-Za-z][A-Za-z ]{1,}\s*<'; then
         echo "BARE STRING: $line"
         ERRORS=$((ERRORS + 1))
     fi
-done < <(cat web/*.tsx 2>/dev/null)
+# Test files (*.test.tsx) hold assertion literals and parser fixtures, not
+# user-facing UI — exclude them from the bare-string heuristic.
+done < <(find web -maxdepth 1 -name '*.tsx' ! -name '*.test.tsx' -exec cat {} + 2>/dev/null)
 
 if [ $ERRORS -gt 0 ]; then
     echo ""
