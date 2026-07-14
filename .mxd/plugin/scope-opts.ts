@@ -13,6 +13,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { buildSummarizationInstruction } from "../../src/compaction.ts";
+import { parseDonePayload } from "../../src/done-payload.ts";
 import { McpClientManager } from "../../src/mcp-client.ts";
 import { createOrchestratorTools } from "../../src/orchestrator-tools.ts";
 import type { RuntimeContext, ScopeOpts } from "../../src/runtime/context.ts";
@@ -21,20 +22,13 @@ import { buildSystemPrompt } from "../../src/system-prompts.ts";
 import { slugify } from "../../src/task-utils.ts";
 import { toToolDefinition } from "../../src/tool-def.ts";
 import { buildBuiltinToolDefs } from "../../src/tools/index.ts";
-import type { TaskNode, TaskStatus } from "../../src/types.ts";
+import type { TaskNode } from "../../src/types.ts";
 import { buildWorkContextContent } from "../../src/work-context.ts";
 import { WorktreeManager } from "../../src/worktree-manager.ts";
-
-/** Matrix's done() result — status + summary. */
-export type MatrixDoneData = {
-	status: "verify" | "failed";
-	summary: string;
-};
 
 /** Matrix's plugin type bundle. */
 export type MatrixPluginTypes = {
 	node: TaskNode;
-	done: MatrixDoneData;
 };
 
 /**
@@ -126,24 +120,13 @@ export function buildMatrixScopeOpts(
 		onLaunch: (node, tracker) => {
 			tracker.updateStatus(node.id, "in_progress");
 		},
-		onDone: (node, tracker, doneArgs) => {
-			const newStatus = doneArgs.status === "passed" ? "verify" : "failed";
-			// `doneArgs.result` is the round's outcome ("what this round did") — the
-			// SAME string sent to the parent as the completion notice: one value,
-			// both destinations. lessons is independent and pre-normalized. (The
-			// returned MatrixDoneData keeps the internal field name `summary`, which
-			// feeds the persisted done_notified marker.)
-			const result = typeof doneArgs.result === "string" ? doneArgs.result : "";
-			const lessons = Array.isArray(doneArgs.lessons)
-				? (doneArgs.lessons as unknown[]).filter(
-						(l): l is string => typeof l === "string",
-					)
-				: [];
-			// Capture the round BEFORE the status flip becomes observable — one
-			// block per done(), append-only, never overwritten.
-			tracker.appendResultRound(node.id, { result, lessons });
-			tracker.updateStatus(node.id, newStatus as TaskStatus);
-			return { status: newStatus, summary: result };
+		onDone: (node, tracker, doneInput) => {
+			// Content-only: rebuild this round's DonePayload (result + lessons) from
+			// the opaque done() input and append it — one block per done(),
+			// append-only, never overwritten. Status routing (→ verify/failed), the
+			// parent notice, and the crash-safe marker are the RUNTIME's job; the
+			// runtime never reads {result, lessons} — only Matrix does, right here.
+			tracker.appendResultRound(node.id, parseDonePayload(doneInput));
 		},
 	};
 }

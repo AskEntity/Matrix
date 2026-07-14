@@ -2353,7 +2353,7 @@ describe("isPersistedByEmitEvent", () => {
 	test("done_notified event is persisted", () => {
 		const event: Event = {
 			type: "done_notified",
-			doneData: { status: "verify", summary: "Task completed successfully" },
+			doneData: { status: "verify", result: "Task completed successfully" },
 			taskId: "test",
 			ts: 1000,
 		};
@@ -3214,7 +3214,7 @@ describe("findInterruptedDonePhase2", () => {
 		expect(result).toEqual({
 			type: "needs_phase2",
 			status: "verify",
-			summary: "tests pass",
+			result: "tests pass",
 		});
 	});
 
@@ -3233,7 +3233,38 @@ describe("findInterruptedDonePhase2", () => {
 		expect(result).toEqual({
 			type: "needs_phase2",
 			status: "failed",
-			summary: "couldn't fix it",
+			result: "couldn't fix it",
+		});
+	});
+
+	test("crash recovery reads only status + completion-output — plugin-custom fields ignored (boundary)", () => {
+		// A plugin's done() carries custom content fields (wordCount, mood) the
+		// runtime knows nothing about. Crash recovery is plugin-agnostic: it must
+		// read ONLY the contract fields (status → routing, result →
+		// completion-output for the parent notice) and NEVER carry the custom
+		// fields. If a mutation makes it read e.g. `input.wordCount`, the recovered
+		// `result` changes and this fails.
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_DONE,
+				toolCallId: "done1",
+				input: {
+					status: "passed",
+					result: "the ending",
+					wordCount: 1200,
+					mood: "triumphant",
+				},
+				taskId: "t1",
+				ts: 100,
+			},
+		];
+		const result = findInterruptedDonePhase2(events);
+		// EXACT shape — no wordCount/mood carried into the recovery payload.
+		expect(result).toEqual({
+			type: "needs_phase2",
+			status: "verify",
+			result: "the ending",
 		});
 	});
 
@@ -3249,7 +3280,7 @@ describe("findInterruptedDonePhase2", () => {
 			},
 			{
 				type: "done_notified",
-				doneData: { status: "verify", summary: "done" },
+				doneData: { status: "verify", result: "done" },
 				taskId: "t1",
 				ts: 200,
 			},
@@ -3274,7 +3305,7 @@ describe("findInterruptedDonePhase2", () => {
 			},
 			{
 				type: "done_notified",
-				doneData: { status: "verify", summary: "first attempt" },
+				doneData: { status: "verify", result: "first attempt" },
 				taskId: "t1",
 				ts: 150,
 			},
@@ -3301,7 +3332,7 @@ describe("findInterruptedDonePhase2", () => {
 		expect(result).toEqual({
 			type: "needs_phase2",
 			status: "failed",
-			summary: "second attempt failed",
+			result: "second attempt failed",
 		});
 	});
 
@@ -3320,7 +3351,7 @@ describe("findInterruptedDonePhase2", () => {
 		expect(result).toEqual({
 			type: "needs_phase2",
 			status: "failed",
-			summary: "",
+			result: "",
 		});
 	});
 });

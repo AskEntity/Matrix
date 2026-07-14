@@ -249,10 +249,10 @@ export function getToolTitle(
 		}
 		case TOOL_DONE: {
 			const status = getArg(toolArgs, "status");
-			const summary = getArg(toolArgs, "summary");
+			const result = getArg(toolArgs, "result");
 			const isPassed = status === "passed";
 			const label = isPassed ? "Task Passed" : "Task Failed";
-			return summary ? `${label}: ${summary}` : label;
+			return result ? `${label}: ${result}` : label;
 		}
 		case TOOL_YIELD: {
 			if (resultContent) return "Resume from yield";

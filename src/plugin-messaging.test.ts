@@ -231,13 +231,8 @@ function buildPeerScopeOpts(): ScopeOpts<any> {
 		onLaunch: (node: TaskNode, tracker) => {
 			tracker.updateStatus(node.id, "in_progress");
 		},
-		onDone: (node: TaskNode, tracker, doneArgs) => {
-			tracker.updateStatus(
-				node.id,
-				doneArgs.status === "passed" ? "verify" : "failed",
-			);
-			return {};
-		},
+		// No onDone — the runtime routes done → verify/failed universally; this
+		// scope has no done CONTENT of its own to persist.
 	};
 }
 

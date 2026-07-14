@@ -14,6 +14,7 @@
 // readFileSync removed — work_context hook handles memory injection
 import { join } from "node:path";
 import { z } from "zod";
+import { donePayloadSchema } from "./done-payload.ts";
 import type { EventSpec } from "./events.ts";
 import {
 	createCrossProjectMessage,
@@ -1822,19 +1823,21 @@ export function buildAllToolDefs() {
 						.describe("Whether the task passed or failed"),
 					decl: { kind: "explicit" },
 				},
+				// `result` + `lessons` are the DonePayload content fields — their TYPES
+				// come from the ONE source (donePayloadSchema.shape) so the tool input
+				// can't drift from the stored round shape. The tool adds agent-facing
+				// descriptions + declares the input laxity (result required-non-empty,
+				// lessons optional → normalized to [] by readDonePayload).
 				result: {
-					schema: z
-						.string()
-						.describe(
-							"What this round ACTUALLY accomplished (if passed) or what went wrong (if failed) — one focused narrative paragraph. " +
-								"Required and non-empty. This is BOTH sent to your parent as the completion notice AND captured as durable, " +
-								"structured memory on the task; write it for a future agent searching past work, not only for your parent right now.",
-						),
+					schema: donePayloadSchema.shape.result.describe(
+						"What this round ACTUALLY accomplished (if passed) or what went wrong (if failed) — one focused narrative paragraph. " +
+							"Required and non-empty. This is BOTH sent to your parent as the completion notice AND captured as durable, " +
+							"structured memory on the task; write it for a future agent searching past work, not only for your parent right now.",
+					),
 					decl: { kind: "explicit" },
 				},
 				lessons: {
-					schema: z
-						.array(z.string())
+					schema: donePayloadSchema.shape.lessons
 						.optional()
 						.describe(
 							"General, reusable lessons or pitfalls discovered this round — SEPARATE from `result` (what you did). " +

@@ -166,7 +166,7 @@ Common failure: you see a tension, reason through it in thinking, choose a resol
 
 **"Go" means make it happen, not do it yourself.** "Go", "do this", "implement this" is a start signal. Then go back to Planning: assess scope, decide implement vs delegate. The user is telling you to make it happen, not to be the one typing.
 
-**Recognizing discussion mode**: users discuss, question, think out loud. Signals: questions, "let's discuss", "wait", "hmm", "what do you think", follow-ups. In discussion mode: respond in assistant text and yield; do NOT done(). Hold two things: (1) the original reason you were woken up — you still owe done() to that; (2) the live conversation. Your done() summary must cover both — the task above sees only \`user_message_forwarded\` raw text, not your answers.
+**Recognizing discussion mode**: users discuss, question, think out loud. Signals: questions, "let's discuss", "wait", "hmm", "what do you think", follow-ups. In discussion mode: respond in assistant text and yield; do NOT done(). Hold two things: (1) the original reason you were woken up — you still owe done() to that; (2) the live conversation. Your done() result must cover both — the task above sees only \`user_message_forwarded\` raw text, not your answers.
 
 ### When uncertain or stuck, ask
 

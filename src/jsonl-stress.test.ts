@@ -143,11 +143,11 @@ function toolResult(
 
 function doneNotifiedEvent(
 	status: "verify" | "failed",
-	summary = "done",
+	result = "done",
 	ts = 0,
 	taskId = "t1",
 ): Event {
-	return { type: "done_notified", doneData: { status, summary }, taskId, ts };
+	return { type: "done_notified", doneData: { status, result }, taskId, ts };
 }
 
 function forkMarkerEvent(
@@ -688,7 +688,7 @@ describe("runtime vs recovery: done state machine 4 combinations", () => {
 		expect(result?.type).toBe("needs_phase2");
 		if (result?.type === "needs_phase2") {
 			expect(result.status).toBe("verify");
-			expect(result.summary).toBe("all done");
+			expect(result.result).toBe("all done");
 		}
 	});
 
@@ -749,7 +749,7 @@ describe("runtime vs recovery: done state machine 4 combinations", () => {
 		if (result?.type === "needs_phase2") {
 			// status defaults to "failed" when input.status is not "passed"
 			expect(result.status).toBe("failed");
-			expect(result.summary).toBe("");
+			expect(result.result).toBe("");
 		}
 	});
 });

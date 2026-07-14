@@ -159,7 +159,7 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 	test("uses accessToken when apiKey is absent", async () => {
 		let authHeader: string | undefined;
 		const originalFetch = globalThis.fetch;
-		const doneArgs = JSON.stringify({ status: "passed", summary: "ok" });
+		const doneArgs = JSON.stringify({ status: "passed", result: "ok" });
 		globalThis.fetch = mock(
 			async (_url: string | URL | Request, init?: RequestInit) => {
 				authHeader =
@@ -664,7 +664,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				});
 				const doneArgs = JSON.stringify({
 					status: "passed",
-					summary: "Task completed",
+					result: "Task completed",
 				});
 				return sseResponse([
 					{
@@ -732,7 +732,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 							"Signal completion",
 							{
 								status: z.string(),
-								summary: z.string().optional(),
+								result: z.string().optional(),
 							},
 							async (input) => ({
 								content: [
@@ -771,7 +771,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 						type: "object",
 						properties: {
 							status: { type: "string" },
-							summary: { type: "string" },
+							result: { type: "string" },
 						},
 						required: ["status"],
 					},
@@ -1085,7 +1085,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 			}
 			const doneArgs = JSON.stringify({
 				status: "passed",
-				summary: "All good",
+				result: "All good",
 			});
 			return sseResponse([
 				{
@@ -1163,7 +1163,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 							"Signal completion",
 							{
 								status: z.string(),
-								summary: z.string().optional(),
+								result: z.string().optional(),
 							},
 							async (input) => ({
 								content: [
@@ -1197,7 +1197,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				expect(toolCallEvent.tool).toBe("mcp__mxd__done");
 				expect(toolCallEvent.input).toEqual({
 					status: "passed",
-					summary: "All good",
+					result: "All good",
 				});
 			}
 		} finally {

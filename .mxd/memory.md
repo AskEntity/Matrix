@@ -3839,16 +3839,16 @@ primary param `summary` while the field/concept is `result` re-seeds the exact "
 thing" confusion this change kills. The alias makes the clean name zero-cost on back-compat.
 
 ### Coalesce sites (both read the done tool_call input for the "what I did" value)
-- `provider-shared.ts` (~1896, live done): `doneSummary = doneInput?.result ?? doneInput?.summary ?? ""`.
-  `doneInput` type gained `result?`. `doneSummary` is the LEGACY internal carrier name — it now holds
+- `provider-shared.ts` (~1896, live done): `doneResult = doneInput?.result ?? doneInput?.summary ?? ""`.
+  `doneInput` type gained `result?`. `doneResult` is the LEGACY internal carrier name — it now holds
   the coalesced result (NOT renamed to doneResult; that's a ~9-buildResult-site churn, deferred —
   flagged to orchestrator).
 - `runtime.ts findInterruptedDonePhase2` (crash-recovery): same coalesce, so a crash-recovered done
   carries the same outcome string the live path would have delivered.
 
 ### How resultRounds.result gets the value (one value, both destinations)
-`doneSummary` (coalesced) → `AgentResult.doneSummary` → agent-lifecycle Phase 2 `doneArgs.summary`
-→ (a) `createTaskComplete(..., agentResult.doneSummary)` = parent notification, AND (b) Matrix
+`doneResult` (coalesced) → `AgentResult.doneResult` → agent-lifecycle Phase 2 `doneArgs.summary`
+→ (a) `createTaskComplete(..., agentResult.doneResult)` = parent notification, AND (b) Matrix
 `onDone` sets `resultRounds.result = doneArgs.summary`. SAME variable → byte-identical.
 `lessons` still read from JSONL via `readDoneLessons(events)` (renamed from Step-1 `readDoneRound`,
 now returns just `string[]` — result no longer needs a JSONL read since it reuses the plumbed summary).
@@ -3890,20 +3890,20 @@ did), `lessons` (independent). There is NO `summary` param on the done tool anyw
   continues. So a barren done() never lands an empty `{result:""}` round.
 
 ### Coalesce → just `result` (summary read deleted)
-- `provider-shared.ts` (live done): `doneSummary = doneInput?.result ?? ""` (was `result ?? summary`).
+- `provider-shared.ts` (live done): `doneResult = doneInput?.result ?? ""` (was `result ?? summary`).
 - `runtime.ts findInterruptedDonePhase2` (crash recovery): `summary = doneInput?.result ?? ""`.
-- `agent-lifecycle.ts` doneArgs: `result: agentResult.doneSummary ?? ""` (bridge field renamed
+- `agent-lifecycle.ts` doneArgs: `result: agentResult.doneResult ?? ""` (bridge field renamed
   summary→result); `scope-opts.ts onDone` reads `doneArgs.result` → `resultRounds.result`.
 
 ### Internal carriers KEPT (invisible to agents, some persisted — renaming = JSONL migration, out of scope)
-`AgentResult.doneSummary`, `MatrixDoneData.summary`, the `done_notified` event's `summary` field,
+`AgentResult.doneResult`, `MatrixDoneData.summary`, the `done_notified` event's `summary` field,
 `createTaskComplete(output=…)`, and `findInterruptedDonePhase2`'s return `.summary` field all keep
 their names. They now hold the `result` value. So `expect(result.summary).toBe(...)` in
 findInterrupted tests is correct: INPUT uses `result` (runtime reads it), RETURN field is still
 `summary` (the internal marker field).
 
 ### Byte-identical: one value → both destinations
-`result` → doneSummary → task_complete `output` (parent notification) AND resultRounds.result — the
+`result` → doneResult → task_complete `output` (parent notification) AND resultRounds.result — the
 SAME string. Test "ONE value → BOTH parent notification and resultRounds.result (byte-identical)"
 (parent-child) pins it.
 
@@ -3935,3 +3935,165 @@ tool desc). Tiny, one-time, self-correcting.
 `integration.test.ts` "done() result/lessons capture (resultRounds)" (7): result+lessons, result-no-lessons,
 **NO-result→REJECTED (no empty round)**, **whitespace-result→REJECTED (steering msg)**, two-round order,
 failed, byte-identical parent-child. Tracker unit tests unchanged.
+
+## Memory-index Step 1.3: COMPLETE summary→result rename — no `summary` anywhere in the done-outcome concept (2026-07-14)
+
+SUPERSEDES the "internal carriers kept as summary" decisions in Step 1.1/1.2 (the earlier notes'
+`doneSummary` mentions were auto-updated to `doneResult` by this rename; read them as historical).
+User directive: "把summary在所有地方完整重命名成result" — no legacy tail, internal or not.
+
+The done-outcome concept is now `result`/`doneResult` EVERYWHERE it's the done payload/carrier:
+- done() param `result` (required-non-empty) — the single agent-facing name.
+- `AgentResult.doneSummary` → `doneResult` (types.ts + provider-shared ~14 sites + agent-lifecycle
+  + anthropic-compatible-provider buildResult).
+- `MatrixDoneData.summary` → `result` (scope-opts onDone return → done_notified marker).
+- `findInterruptedDonePhase2` return field `summary` → `result` (runtime.ts + crash-recovery emit).
+- `done_notified` event field `summary` → `result` (events.ts:196). CONFIRMED write-only: nothing
+  reads the marker's own field — crash recovery reads `input.result` from the done tool_call
+  (runtime.ts), not the marker. So renaming it is zero-back-compat, NOT a JSONL migration. Step 1.2's
+  "migration risk" reasoning was wrong.
+- `agent_end.result?` (events.ts) — the done-outcome field on agent_end (was summary, unused/optional).
+- Frontend done-card consumers (all read the done tool_call `result` now): `event-display.ts`
+  getToolTitle TOOL_DONE, `McpToolCard.tsx`, `LogEntryView.tsx`, `ToolCard.tsx`, and the
+  `mock-showcase.ts` done fixtures. THESE WERE A SILENT UI REGRESSION — they read `getArg(.., "summary")`
+  / `toolArgs?.summary`, which typecheck can't catch (index/any access) and integration tests don't
+  render, so only a manual grep found them. Lesson: after renaming a tool param, grep the FRONTEND
+  (`getArg(.., "<param>")`, `toolArgs?.<param>`, event-display/ToolCard/LogEntryView/McpToolCard) — the
+  done cards would silently lose their text otherwise.
+- system-prompts.ts prose "your done() summary" → "your done() result".
+- All test call sites/assertions (done_notified `.result` asserts in plugin-hooks + integration;
+  findInterrupted return `.result` in events/jsonl-stress; helper params; the two standalone provider
+  tests' own mock done tools).
+
+GOTCHA — naming collision: a blanket `doneSummary→doneResult` collided with TWO pre-existing local
+`doneResult` vars in provider-shared (the done ToolResult `execResults[doneIndex]`, and the
+`handleImplicitYield` resume result). Renamed those to `doneToolResult` / `doneResumeResult`. When
+renaming an identifier to a generic name, grep for pre-existing uses of the target name first.
+
+LEFT ON `summary` (different concepts — renaming would break): compaction `<summary>` tags /
+SUMMARIZATION_INSTRUCTION; llm.ts OpenAI Responses reasoning `summary[]`/`summary_text` (API field);
+cli.ts cost/tree display; get_logs "short summary" + send_message title "Short summary of the message";
+generic ToolDisplay.summary (dead display abstraction); compactedResume `"summary-1"` ids.
+
+OPEN (user-driven, NOT yet done): the done-payload SHAPE architecture. There are 3 shapes
+(done params {status,result,lessons} / ResultRound {result,lessons} / MatrixDoneData {status,result})
+whose fields are hand-picked → adding/removing a done param needs edits in 3 places (fan-out). User
+wants a single source of truth: ResultRound = the done payload (derived), so it's 1:1 with done() by
+construction. Proposed but NOT implemented — awaiting the user's call on ResultRound={status,result,lessons}
+(or =DoneData derived from the schema) + whether to collapse the runtime's doneResult carrier.
+
+## Memory-index Step 1.4: DonePayload = ONE struct (zod source of truth) + strict runtime/plugin boundary (2026-07-14)
+
+RESOLVES the "OPEN done-payload SHAPE architecture" item above. The 3 hand-picked shapes are gone;
+there is now ONE done-content struct + a hard runtime↔plugin boundary. SUPERSEDES the field-picking
+framing of the Step 1.1/1.2/1.3 notes (which renamed summary→result but still had 3 shapes).
+
+### The ONE struct — `src/done-payload.ts` (imports ONLY zod, no cycles)
+- `donePayloadSchema = z.object({ result: z.string(), lessons: z.array(z.string()) })` — the SINGLE
+  source of the done CONTENT shape. `DonePayload = z.infer<typeof donePayloadSchema>`.
+- `parseDonePayload(input: Record<string,unknown>|undefined): DonePayload` — the ONE raw-input →
+  round normalizer (result:string|"" , lessons:string[]|[]). Manual (schema requires lessons; raw
+  input may omit it — safeParse would reject, so normalize by hand). Add a content field → edit THIS
+  schema; the tool params (`donePayloadSchema.shape`), the type, the stored round, and the normalizer
+  all follow. No fan-out.
+- Imports ONLY zod so BOTH `types.ts` (type layer) and `orchestrator-tools.ts` (tool layer) can import
+  it without an import cycle.
+
+`DonePayload` is 1:1 with a `resultRounds` element: `TaskNode.resultRounds?: DonePayload[]` (types.ts),
+`tracker.appendResultRound(nodeId, round: DonePayload)` (task-tracker.ts). done() ↔ round by construction.
+DELETED: `ResultRound` interface, `MatrixDoneData` type, `AgentResult.doneResult` field, `readDonePayload`,
+`readDoneLessons`, `PluginTypes.done`, `MatrixPluginTypes.done`, all `doneResult` provider-loop carrying.
+
+### ⭐ The boundary (root's review criterion — hold this line)
+`status` is NOT in the struct — it's a RUNTIME control bit. The runtime↔plugin split for done():
+- **Runtime MAY read**: `status` (routes → verify/failed) + ONE completion-output string
+  (`doneCompletionOutput(input)` = `input.result` — the universal "what happened" summary sent to the
+  parent via task_complete AND recorded on the done_notified marker; every plugin has one, calling it
+  `result` is fine).
+- **Runtime MUST NOT carry**: `lessons` or the round structure. Those are read ONLY inside Matrix's
+  `onDone`, via `parseDonePayload(doneInput)`. The runtime hands the raw done tool_call input to onDone
+  as an OPAQUE `Record` (`BaseDoneData`) and never destructures round content itself.
+- Enforcement check (grep): `lessons`/`resultRounds`/`appendResultRound`/`parseDonePayload`/`DonePayload`
+  appear in `src/runtime/*`, `src/runtime.ts`, `src/provider-shared.ts`, `src/events.ts` ONLY in
+  boundary-explaining COMMENTS, never in code. If a future change reads `input.lessons` in the runtime,
+  the boundary is broken.
+
+### Flow (live + crash recovery)
+- **provider-shared.ts** (loop): reads only `doneInput.status` → `doneExitReason`. Does NOT carry the
+  result out (removed `let doneResult` + `doneResult` from `buildResult` type/defaultBuildResult/anthropic
+  buildResult + 8 call sites + `AgentResult.doneResult`).
+- **agent-lifecycle.ts Phase 2**: `readDoneInput(events)` → raw `doneInput` (generic: last done
+  tool_call's input, in events.ts). `doneCompletionOutput(doneInput)` → the parent-notice/marker string.
+  Runtime does the status flip (`updateStatus(passed?"verify":"failed")` — ONE mapping) + `opts.onDone?.
+  (node, tracker, doneInput ?? {})` (opaque) + `createTaskComplete(..., completionOutput)` + marker
+  `{status, result: completionOutput}`.
+- **scope-opts.ts onDone** (Matrix): `tracker.appendResultRound(node.id, parseDonePayload(doneInput))`.
+  Content-only, returns void. No status flip (runtime's job now — removed the old duplicate mapping).
+- **runtime.ts findInterruptedDonePhase2** (crash recovery): reads `status` + `doneCompletionOutput
+  (lastDoneCall.input)`. Plugin-agnostic → does NOT append a resultRound (KNOWN LIMITATION, unchanged
+  from Step 1: a done() whose Phase 2 was crash-interrupted loses its round; the normal path is the
+  overwhelming majority).
+
+### onDone → void; done_notified marker-injection capability DELETED (root-blessed)
+Old `onDone` returned `MatrixDoneData` which was spread into `done_notified`, letting a plugin inject
+arbitrary marker fields (`plugin-custom-scope.test.ts` asserted a story plugin's `{status:"published",
+wordCount:42}` in the marker). REMOVED — onDone returns void; `done_notified` is RUNTIME-standard
+`{status, result}` always. Rationale (root): the marker is write-only (nothing reads its fields;
+findInterruptedDonePhase2 recomputes from the tool_call), only a synthetic test used the channel →
+anti-pattern #6 (imagined use). Did NOT keep a `T["done"]|void` "just in case" shape. The story test
+was rewritten to verify the REAL generic contract: onDone runs + mutates the tracker via a side-effect
+(`setMetadata`), and `done_notified` is runtime-standard.
+
+### done() tool params derive from the schema (no drift)
+orchestrator-tools.ts: `result` param `schema: donePayloadSchema.shape.result.describe(...)` (explicit,
+required-non-empty via beforeDone); `lessons` param `donePayloadSchema.shape.lessons.optional().describe
+(...)`. The tool adds agent-facing descriptions + input laxity (lessons optional → normalized to [] by
+parseDonePayload); the TYPES come from the one schema so tool input can't drift from the stored round.
+
+### Test contract changes
+- Test scope opts whose onDone ONLY flipped status (plugin-messaging, lifecycle-concurrency default)
+  → onDone REMOVED (runtime flips status universally now). The throwing-onDone Phase-2 test overrides
+  onDone via `overrides` — `() => {throw}` is compatible with the void signature.
+- `anthropic-compatible-provider.test.ts`: the standalone provider test can't assert `agentResult.
+  doneResult` anymore (removed) — re-pointed to assert the emitted done() tool_call's `input.result`
+  (the value Phase 2 reads back). This is the honest new assertion: the result lives in JSONL, not on
+  AgentResult.
+- integration `resultRounds` + `done_notified` tests + task-tracker `appendResultRound` tests UNCHANGED
+  in expectation ({result, lessons} rounds; {status, result} marker) — the flow produces the same data.
+
+### Gotchas
+- `parseDonePayload` must NOT use `donePayloadSchema.safeParse` — the schema REQUIRES lessons, raw done
+  input may omit it → reject. Manual normalization only.
+- Removing `PluginTypes.done` is safe: test scopes use `ScopeOpts<any>` (erased); `BaseDoneData` is KEPT
+  (now documents "the opaque raw done input" — still exported from `plugin-sdk.ts`, SDK unchanged).
+- `donePayloadSchema.shape.result` is a `ZodString`; `.describe()` on it works; `.shape.lessons` is a
+  `ZodArray<ZodString>`; `.optional().describe()` works. The tool's `decl:{kind:"explicit"}` (result) /
+  `{kind:"optional"}` (lessons) drive required-ness independent of the schema.
+
+### Robustness test — "a plugin evolves its done fields without touching the runtime" (mutation-proof)
+User + root ask: adding/removing a done field must NOT ripple into runtime code. The runtime IS already
+field-agnostic (opaque passthrough); the deliverable is the test that PROVES + PROTECTS it. Target = a
+plugin's OWN extended fields (the opaque part) — NOT `status`/completion-output, which ARE the runtime
+contract (every plugin has them; changing them affecting the runtime is expected, not a leak).
+
+- `src/plugin-custom-scope.test.ts` "Boundary: done() custom fields are opaque to the runtime": a
+  non-matrix scope whose done() carries `wordCount` + `mood` (fields the runtime never heard of). onDone
+  reads them off the opaque `doneInput` and setMetadata's them. Asserts: (1) `node.metadata ==
+  {wordCount, mood}` → runtime handed the raw input through untouched (no reshape to a fixed content
+  struct); (2) `done_notified` marker = `{status, result}` ONLY, `wordCount`/`mood` undefined → runtime
+  never spreads plugin content into its artifacts; (3) status routed to verify.
+- `src/events.test.ts`: `findInterruptedDonePhase2` with a custom-field input returns EXACTLY
+  `{needs_phase2, status, result}` — crash recovery carries no custom fields.
+- `src/done-payload.test.ts` (NEW): `parseDonePayload` unit robustness — extra fields dropped, missing/
+  malformed defaulted, never throws.
+
+**EMPIRICALLY mutation-proofed** (full `bun test`, not reasoning): mutating agent-lifecycle to reshape
+`doneInput` → `{result, lessons}` before onDone (exactly the earlier-reverted wrong version) → the ONLY
+failure across 2508 tests is this boundary test; ALL matrix resultRounds/done_notified tests PASS. That's
+the proof it catches a real gap the matrix tests miss: matrix is happy with `{result,lessons}` (that's its
+shape), so only a test using a NON-matrix custom field exposes the runtime reshaping the payload. Clean:
+2493 pass / 0 fail (2481 baseline + 12 new).
+
+**Lesson**: to test "layer X is opaque to layer Y's data", the test MUST use data that ONLY layer Y
+understands (a custom field). Testing with the DEFAULT plugin's (matrix's) fields can't distinguish
+"passed through opaque" from "reconstructed to matrix's shape" — both produce the same matrix round.

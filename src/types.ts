@@ -1,3 +1,4 @@
+import type { DonePayload } from "./done-payload.ts";
 import type { MessageQueue } from "./message-queue.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
 
@@ -110,19 +111,6 @@ export interface BaseTaskNode {
 }
 
 /**
- * One done()-round's structured outcome, captured for the memory index.
- * `result` is this round's outcome narrative (what was actually accomplished,
- * or what went wrong on a failed done). `lessons` are general, reusable
- * lessons/pitfalls discovered this round — each written to stand alone.
- */
-export interface ResultRound {
-	/** What was accomplished this round (passed) or what went wrong (failed). */
-	result: string;
-	/** General, reusable lessons/pitfalls from this round. Empty when none. */
-	lessons: string[];
-}
-
-/**
  * Matrix-specific task node — extends base with coding-IDE fields.
  * This is what Matrix's plugin operates on. Other plugins define their own extends.
  */
@@ -142,13 +130,15 @@ export interface TaskNode extends BaseTaskNode {
 	/** Optional color label for visual categorization. */
 	color?: string;
 	/**
-	 * Structured result + lessons captured at each done() call. ONE block is
-	 * appended per done() (never overwritten) — a single-done task has one entry,
+	 * Structured done() content captured at each done() call, one `DonePayload`
+	 * appended per round (never overwritten) — a single-done task has one entry,
 	 * a task done()'d N times (reawaken → re-done) has N entries in call order.
 	 * Absent until the first done(). Foundation for the memory index (search over
-	 * past decisions/lessons); kept independent of the `summary` shown to parents.
+	 * past decisions/lessons). This is the SAME `DonePayload` shape done() accepts
+	 * — done() ↔ round is 1:1 by construction (see done-payload.ts); the round's
+	 * `result` is the same string sent to the parent as the completion notice.
 	 */
-	resultRounds?: ResultRound[];
+	resultRounds?: DonePayload[];
 }
 
 /** Any node in the task tree — either a launchable task or a plugin-defined general node. */
@@ -182,8 +172,6 @@ export interface AgentResult {
 	/** Why the provider loop exited. */
 	exitReason: ExitReason;
 	output: string;
-	/** The agent's done() summary text, carried from tool handler to Phase 2 in runAgentForNode. */
-	doneSummary?: string;
 	/** Cost in USD for this execution. */
 	costUsd: number;
 	/** Number of agentic turns (tool-use round trips). */

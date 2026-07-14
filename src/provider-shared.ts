@@ -563,7 +563,6 @@ export interface ProviderAdapter {
 		totalOutputTokens: number;
 		totalCacheCreationTokens: number;
 		totalCacheReadTokens: number;
-		doneSummary?: string;
 	}): AgentResult;
 }
 
@@ -581,7 +580,6 @@ function defaultBuildResult(params: {
 	totalOutputTokens: number;
 	totalCacheCreationTokens: number;
 	totalCacheReadTokens: number;
-	doneSummary?: string;
 }): AgentResult {
 	return {
 		exitReason: params.exitReason,
@@ -591,7 +589,6 @@ function defaultBuildResult(params: {
 		sessionId: params.sessionId,
 		inputTokens: params.totalInputTokens,
 		outputTokens: params.totalOutputTokens,
-		doneSummary: params.doneSummary,
 	};
 }
 
@@ -868,7 +865,6 @@ export async function* runProviderLoop(
 	// Set when doneToolUse is detected in the current turn's tool batch.
 	// Used to determine exitReason on loop exit.
 	let doneExitReason: ExitReason | null = null;
-	let doneSummary = "";
 	{
 		const evt: EventSpec = {
 			type: "status",
@@ -885,9 +881,9 @@ export async function* runProviderLoop(
 		// synthetic tool_result for the done tool_call, then continue to next API call.
 		// This is like yield resume but with done context instead of yield messages.
 		if (pendingDoneToolCall && queue) {
-			const doneResult = await handleImplicitYield(queue, emit);
+			const doneResumeResult = await handleImplicitYield(queue, emit);
 
-			if (doneResult === null) {
+			if (doneResumeResult === null) {
 				// Queue closed — exit
 				const cost = adapter.computeCost(
 					model,
@@ -907,15 +903,14 @@ export async function* runProviderLoop(
 					totalOutputTokens,
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
-					doneSummary,
 				});
 			}
 
-			if (doneResult.manualCompactRequested) {
+			if (doneResumeResult.manualCompactRequested) {
 				manualCompactRequested = true;
 			}
 
-			if (doneResult.compactOnly) {
+			if (doneResumeResult.compactOnly) {
 				// B-L9: the ONLY wake message was /compact. Emit the done tool_result
 				// (orphan prevention) with the same "Manual compaction requested" content
 				// the compact path bundles, then DEFER the messages[] push via
@@ -974,7 +969,7 @@ export async function* runProviderLoop(
 						isError: false,
 					},
 				],
-				queueMessages: doneResult.nonCompact,
+				queueMessages: doneResumeResult.nonCompact,
 			});
 			for (const msg of doneToolResultMsgs) {
 				messages.push(msg);
@@ -983,7 +978,7 @@ export async function* runProviderLoop(
 			// Emit queue events (messages_consumed, etc.) — the tool_result itself
 			// is already emitted via yield above, don't double-emit
 			if (emit) {
-				recordQueueEvents(emit, doneResult.nonCompact);
+				recordQueueEvents(emit, doneResumeResult.nonCompact);
 			}
 
 			pendingDoneToolCall = null;
@@ -1020,7 +1015,6 @@ export async function* runProviderLoop(
 					totalOutputTokens,
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
-					doneSummary,
 				});
 			}
 
@@ -1080,7 +1074,6 @@ export async function* runProviderLoop(
 					totalOutputTokens,
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
-					doneSummary,
 				});
 			}
 
@@ -1676,7 +1669,6 @@ export async function* runProviderLoop(
 					totalOutputTokens,
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
-					doneSummary,
 				});
 			}
 
@@ -1712,7 +1704,6 @@ export async function* runProviderLoop(
 					totalOutputTokens,
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
-					doneSummary,
 				});
 			}
 
@@ -1843,8 +1834,8 @@ export async function* runProviderLoop(
 		// handles status update, parent notification, and done_notified.
 		if (doneToolUse && !hasOtherTools) {
 			const doneIndex = toolUses.indexOf(doneToolUse);
-			const doneResult = execResults[doneIndex] as ToolResult | undefined;
-			if (doneResult && !doneResult.isError) {
+			const doneToolResult = execResults[doneIndex] as ToolResult | undefined;
+			if (doneToolResult && !doneToolResult.isError) {
 				// Handle duplicate done calls in the same turn (R8-B#2).
 				// Emit tool_results for ALL dones (extras AND the winner) so that
 				// NO orphans remain in JSONL. Without this, the winner exits as an
@@ -1888,15 +1879,13 @@ export async function* runProviderLoop(
 					if (emit) emit(winnerResultEvt);
 				}
 
-				const doneInput = doneToolUse.input as
-					| { status?: string; result?: string }
-					| undefined;
+				const doneInput = doneToolUse.input as { status?: string } | undefined;
 				doneExitReason =
 					doneInput?.status === "passed" ? "done_passed" : "done_failed";
-				// `result` is the round's outcome — it flows to BOTH the parent
-				// notification (task_complete + done_notified) AND resultRounds.result.
-				// `doneSummary` is the legacy internal carrier name; it holds `result`.
-				doneSummary = doneInput?.result ?? "";
+				// The done CONTENT (result + lessons) is NOT carried out of the loop —
+				// it is read back from the persisted done() tool_call at Phase 2 (JSONL
+				// = single source of truth). The provider loop reads only `status`
+				// here, to route the exit (done_passed/done_failed).
 				const cost = adapter.computeCost(
 					model,
 					totalInputTokens,
@@ -1915,7 +1904,6 @@ export async function* runProviderLoop(
 					totalOutputTokens,
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
-					doneSummary,
 				});
 			}
 		}
@@ -2003,7 +1991,6 @@ export async function* runProviderLoop(
 				totalOutputTokens,
 				totalCacheCreationTokens,
 				totalCacheReadTokens,
-				doneSummary,
 			});
 		}
 
@@ -2055,6 +2042,5 @@ export async function* runProviderLoop(
 		totalOutputTokens,
 		totalCacheCreationTokens,
 		totalCacheReadTokens,
-		doneSummary,
 	});
 }
