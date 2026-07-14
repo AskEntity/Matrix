@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import {
 	type GeneralNode,
 	isTask,
+	type ResultRound,
 	type TaskNode,
 	type TaskStatus,
 	type TreeNode,
@@ -497,6 +498,25 @@ export class TaskTracker {
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
 		node.metadata = metadata;
 		if (isTask(node)) node.updatedAt = new Date().toISOString();
+	}
+
+	/**
+	 * Append one done()-round's structured result + lessons to a task node.
+	 * APPEND-only — never overwrites prior rounds. Called once per done()
+	 * (a reawaken → re-done task accumulates multiple rounds in call order).
+	 * Creates the `resultRounds` array on first append. Rejects general nodes
+	 * (only launchable tasks reach done()). Bumps updatedAt.
+	 */
+	appendResultRound(nodeId: string, round: ResultRound): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		if (!isTask(node))
+			throw new Error(
+				`Cannot append a result round to a non-task node: ${nodeId}`,
+			);
+		if (!node.resultRounds) node.resultRounds = [];
+		node.resultRounds.push(round);
+		node.updatedAt = new Date().toISOString();
 	}
 
 	private createNode(

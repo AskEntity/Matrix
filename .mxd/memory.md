@@ -3744,3 +3744,74 @@ fire in happy-dom (probed) — used for the component-level guards.
   open→blur input→click toggle, asserts it stays CLOSED. Mutation proof: re-adding `onBlur`→close
   fails BOTH the blur guard AND the reproduction (reproduction shows `Received: true` = reopened).
 - Full `bun test` 2465 pass / 0 fail (baseline 2447 + 18). typecheck + check:ci + i18n clean.
+
+## Memory-index Step 1: done() captures structured result/lessons → TaskNode.resultRounds (2026-07-14)
+
+First brick of the memory index (draft 01KWCQEB). WRITE side only — structured
+result/lessons land on the node as a FIRST-CLASS field. NO FTS/sqlite/embedding/search
+here (that's Step 2+).
+
+### Shape (locked with user)
+`TaskNode.resultRounds?: Array<{ result: string; lessons: string[] }>` (`ResultRound` in
+`src/types.ts`). ONE block APPENDED per done() — never overwritten. Single-done task → one
+block; reawaken→re-done task → N blocks in call order. Absent until first done(). Per-round
+structure (not a big string) so Step 2 indexes per-round-per-field with no text-splitting.
+
+### Data flow (read from JSONL, persist via plugin hook)
+1. **done() tool params** (`orchestrator-tools.ts` createDoneTool config): added `result`
+   (optional string) + `lessons` (optional string[]) alongside existing `status`+`summary`.
+   Both OPTIONAL — making them required would break every existing done() caller/test.
+   `summary` kept working unchanged (additive, not folded into result).
+2. **Read at Phase 2** (`runtime/agent-lifecycle.ts` ~1123): `readDoneRound(events)` (new
+   helper in `events.ts`) finds the LAST `tool_call` with `tool === TOOL_DONE` and reads
+   `input.result`/`input.lessons` straight from the persisted tool_call — the 01KN8D1M
+   "JSONL is the source of truth" pattern, NOT AgentResult plumbing (avoids threading two
+   fields through ~8 buildResult call sites in the hot provider loop). Defaults: absent
+   result→"", absent/dirty lessons→[] (drops non-string entries). Flush gating changed from
+   `!isRoot && has` to `has` so ROOT done()s are captured too; the late-message check stays
+   non-root-only. result/lessons ride into `doneArgs` (typed `Record<string,unknown>`, so no
+   ScopeOpts signature change).
+3. **Persist via onDone** (`.mxd/plugin/scope-opts.ts`): the Matrix onDone appends
+   `{result, lessons}` via `tracker.appendResultRound(node.id, ...)` BEFORE the status flip
+   (append then updateStatus). Keeping persistence in onDone (not runtime) respects the
+   plugin-agnostic boundary — `resultRounds` is on `TaskNode` (matrix), not `BaseTaskNode`;
+   runtime never touches it. onDone's RETURN stays `MatrixDoneData {status, summary}` — the
+   round is a side-effect, NOT spread into the `done_notified` marker.
+4. **Tracker** (`task-tracker.ts`): `appendResultRound(nodeId, round)` — append-only, creates
+   the array on first call, rejects general nodes, bumps updatedAt. Round-trips through
+   save()/load() FREE (save spreads `...rest`, load casts raw→TaskNode) — zero extra
+   serialization code. Surfaces via get_task/get_tree FREE (stripSession spreads all fields).
+
+### Decisions surfaced (the summary/result overlap "awkwardness")
+- `result` and `summary` overlap semantically (both "what happened"). Kept BOTH additively
+  per user directive (don't break callers). `summary` = brief note for parent + done_notified;
+  `result` = durable outcome narrative for the memory index. NO fallback result→summary — an
+  omitted result yields an EMPTY round (`{result:"", lessons:[]}`), one-block-per-done()
+  invariant stays clean and literal. Step 2 (indexing) owns any distill/fallback policy, not
+  the write path. `result` optional means existing agents produce empty rounds until they
+  learn to fill it (tool description strongly steers them).
+
+### KNOWN LIMITATION (documented, in-scope call)
+The **crash-recovery Phase 2** path (`runtime.ts` autoResume `findInterruptedDonePhase2` →
+`needs_phase2`) does NOT append a resultRound: it's plugin-agnostic runtime code that updates
+status directly via `tracker.updateStatus`, never calling the Matrix onDone. So a done() whose
+Phase 2 was interrupted by a daemon crash (rare) loses its round. Wiring it in would either
+break the plugin-agnostic boundary (runtime knowing about resultRounds) or change crash-recovery
+behavior (route through onDone) — both out of Step-1 scope. The normal Phase 2 path (the
+overwhelming majority) captures correctly.
+
+### Tests
+- `task-tracker.test.ts` "resultRounds (memory-index capture)" (9 unit): append, empty-lessons,
+  **append-twice-never-overwrites**, updatedAt bump, non-task throws (asserts /non-task node/),
+  unknown-node throws, **save/load round-trip**, stripSession preserves (get_task surfacing).
+- `integration.test.ts` "done() captures structured result/lessons (resultRounds)" (4 full-flow):
+  done with result+lessons → node.resultRounds; done WITHOUT (back-compat) → one empty round;
+  **two done() rounds (reawaken via sendMessage) → two blocks in order, first preserved**;
+  failed done() also appends. Full stack: tool param → JSONL tool_call → Phase 2 readDoneRound
+  → onDone → node.
+
+### Gotchas
+- `readDoneRound` compares `e.tool === TOOL_DONE` (the full `mcp__mxd__done` name — tool_call
+  events store the mcp-prefixed name, same as `findInterruptedDonePhase2`).
+- `appendResultRound` must NOT use `(node.resultRounds ??= []).push(x)` — biome
+  `noAssignInExpressions` errors. Use `if (!node.resultRounds) node.resultRounds = []; ...push`.
