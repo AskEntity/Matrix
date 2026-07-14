@@ -366,7 +366,7 @@ describe("Integration: full stack with mock API", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "executed echo successfully",
+								result: "executed echo successfully",
 							},
 						},
 					],
@@ -463,7 +463,7 @@ describe("Integration: full stack with mock API", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "multi-tool ok" },
+							input: { status: "passed", result: "multi-tool ok" },
 						},
 					],
 				},
@@ -512,7 +512,7 @@ describe("Integration: full stack with mock API", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "woke from yield" },
+					input: { status: "passed", result: "woke from yield" },
 				},
 			],
 		});
@@ -557,7 +557,7 @@ describe("Integration: full stack with mock API", () => {
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "woke from implicit yield",
+						result: "woke from implicit yield",
 					},
 				},
 			],
@@ -593,7 +593,7 @@ describe("Integration: full stack with mock API", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "jsonl verified" },
+							input: { status: "passed", result: "jsonl verified" },
 						},
 					],
 				},
@@ -682,7 +682,7 @@ describe("Integration: full stack with mock API", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "message received during tool",
+								result: "message received during tool",
 							},
 						},
 					],
@@ -833,7 +833,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "survived yield restart" },
+					input: { status: "passed", result: "survived yield restart" },
 				},
 			],
 		});
@@ -876,7 +876,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "handled bash interruption",
+								result: "handled bash interruption",
 							},
 						},
 					],
@@ -917,7 +917,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "recovered from bash crash" },
+					input: { status: "passed", result: "recovered from bash crash" },
 				},
 			],
 		});
@@ -984,7 +984,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "survived implicit yield restart",
+						result: "survived implicit yield restart",
 					},
 				},
 			],
@@ -1010,7 +1010,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "quick done" },
+					input: { status: "passed", result: "quick done" },
 				},
 			],
 		});
@@ -1043,7 +1043,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "second pass after restart" },
+					input: { status: "passed", result: "second pass after restart" },
 				},
 			],
 		});
@@ -1437,7 +1437,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 								type: "tool_use",
 								id: "t2",
 								name: "mcp__mxd__done",
-								input: { status: "passed", summary: "done" },
+								input: { status: "passed", result: "done" },
 							},
 						],
 					},
@@ -1647,7 +1647,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "both messages received after restart",
+								result: "both messages received after restart",
 							},
 						},
 					],
@@ -1719,7 +1719,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "quick done" },
+					input: { status: "passed", result: "quick done" },
 				},
 			],
 		});
@@ -1747,7 +1747,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "no duplicates" },
+					input: { status: "passed", result: "no duplicates" },
 				},
 			],
 		});
@@ -1829,7 +1829,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "survived bg + yield restart",
+								result: "survived bg + yield restart",
 							},
 						},
 					],
@@ -1900,7 +1900,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "survived bg + yield restart",
+						result: "survived bg + yield restart",
 					},
 				},
 			],
@@ -1964,7 +1964,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "concurrent bash + crash handled",
+								result: "concurrent bash + crash handled",
 							},
 						},
 					],
@@ -2041,7 +2041,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "inject + crash ok" },
+							input: { status: "passed", result: "inject + crash ok" },
 						},
 					],
 				},
@@ -2116,7 +2116,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "double restart survived" },
+							input: { status: "passed", result: "double restart survived" },
 						},
 					],
 				},
@@ -2217,7 +2217,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "end_turn crash recovered" },
+					input: { status: "passed", result: "end_turn crash recovered" },
 				},
 			],
 		});
@@ -2290,7 +2290,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "bg orphan handled on restart",
+								result: "bg orphan handled on restart",
 							},
 						},
 					],
@@ -2304,7 +2304,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "handled wake after bg orphan",
+								result: "handled wake after bg orphan",
 							},
 						},
 					],
@@ -2470,7 +2470,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "multiline restart" },
+					input: { status: "passed", result: "multiline restart" },
 				},
 			],
 		});
@@ -2519,7 +2519,7 @@ describe("Integration: auto-recovery from API 400", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "done" },
+							input: { status: "passed", result: "done" },
 						},
 					],
 				},
@@ -2577,7 +2577,7 @@ describe("Integration: auto-recovery from API 400", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "phase 1" },
+							input: { status: "passed", result: "phase 1" },
 						},
 					],
 				},
@@ -2641,7 +2641,7 @@ describe("Integration: auto-recovery from API 400", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "clean after repair" },
+					input: { status: "passed", result: "clean after repair" },
 				},
 			],
 		});
@@ -2817,7 +2817,7 @@ describe("Integration: repair on compacted session (FIX-1 cc#1)", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "resumed after repair" },
+					input: { status: "passed", result: "resumed after repair" },
 				},
 			],
 		});
@@ -2913,7 +2913,7 @@ describe("Integration: same-turn tool conflicts", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "yield + bash same turn ok",
+								result: "yield + bash same turn ok",
 							},
 						},
 					],
@@ -2972,7 +2972,7 @@ describe("Integration: same-turn tool conflicts", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "reverse order ok",
+								result: "reverse order ok",
 							},
 						},
 					],
@@ -3007,7 +3007,7 @@ describe("Integration: same-turn tool conflicts", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "premature done" },
+							input: { status: "passed", result: "premature done" },
 						},
 					],
 				},
@@ -3034,7 +3034,7 @@ describe("Integration: same-turn tool conflicts", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "done after seeing error",
+								result: "done after seeing error",
 							},
 						},
 					],
@@ -3096,7 +3096,7 @@ describe("Integration: same-turn tool conflicts", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "bg commands done" },
+							input: { status: "passed", result: "bg commands done" },
 						},
 					],
 				},
@@ -3223,7 +3223,7 @@ describe("Integration: yield wakeup assertions", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "yield resume structure verified",
+								result: "yield resume structure verified",
 							},
 						},
 					],
@@ -3278,7 +3278,7 @@ describe("Integration: yield wakeup assertions", () => {
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "implicit yield wake verified",
+						result: "implicit yield wake verified",
 					},
 				},
 			],
@@ -3372,7 +3372,7 @@ describe("Integration: yield wakeup assertions", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "multiple yield messages verified",
+								result: "multiple yield messages verified",
 							},
 						},
 					],
@@ -3443,7 +3443,7 @@ describe("Integration: yield wakeup assertions", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "message format verified",
+								result: "message format verified",
 							},
 						},
 					],
@@ -3505,7 +3505,7 @@ describe("Integration: parent-child lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "child completed work" },
+							input: { status: "passed", result: "child completed work" },
 						},
 					],
 				},
@@ -3598,7 +3598,7 @@ describe("Integration: parent-child lifecycle", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "parent-child lifecycle complete",
+								result: "parent-child lifecycle complete",
 							},
 						},
 					],
@@ -3641,7 +3641,7 @@ describe("Integration: parent-child lifecycle", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "failed", summary: "child encountered an error" },
+					input: { status: "failed", result: "child encountered an error" },
 				},
 			],
 		});
@@ -3720,7 +3720,7 @@ describe("Integration: parent-child lifecycle", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "handled child failure",
+								result: "handled child failure",
 							},
 						},
 					],
@@ -3855,7 +3855,7 @@ describe("Integration: parent-child lifecycle", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "handled launch failure",
+								result: "handled launch failure",
 							},
 						},
 					],
@@ -3917,7 +3917,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "all good" },
+					input: { status: "passed", result: "all good" },
 				},
 			],
 		});
@@ -3940,7 +3940,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "failed", summary: "something went wrong" },
+					input: { status: "failed", result: "something went wrong" },
 				},
 			],
 		});
@@ -3971,7 +3971,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "recovered" },
+							input: { status: "passed", result: "recovered" },
 						},
 					],
 				},
@@ -4156,7 +4156,7 @@ describe("Integration: yield bypass on restart", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "survived restart" },
+					input: { status: "passed", result: "survived restart" },
 				},
 			],
 		});
@@ -4192,7 +4192,7 @@ describe("Integration: yield bypass on restart", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "handled interruption" },
+							input: { status: "passed", result: "handled interruption" },
 						},
 					],
 				},
@@ -4238,7 +4238,7 @@ describe("Integration: yield bypass on restart", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "woke from end_turn" },
+							input: { status: "passed", result: "woke from end_turn" },
 						},
 					],
 				},
@@ -4263,7 +4263,7 @@ describe("Integration: yield bypass on restart", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "continued after end_turn" },
+					input: { status: "passed", result: "continued after end_turn" },
 				},
 			],
 		});
@@ -4316,7 +4316,7 @@ describe("Integration: autoResume with mixed agent states", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "after restart" },
+					input: { status: "passed", result: "after restart" },
 				},
 			],
 		});
@@ -4354,7 +4354,7 @@ describe("Integration: implicit yield restart", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "survived implicit yield restart",
+								result: "survived implicit yield restart",
 							},
 						},
 					],
@@ -4387,7 +4387,7 @@ describe("Integration: implicit yield restart", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "implicit yield restart ok" },
+					input: { status: "passed", result: "implicit yield restart ok" },
 				},
 			],
 		});
@@ -4450,7 +4450,7 @@ describe("Integration: background process lifecycle", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "foreground timeout triggered background",
+								result: "foreground timeout triggered background",
 							},
 						},
 					],
@@ -4561,7 +4561,7 @@ describe("Integration: background process lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "bg list + status ok" },
+							input: { status: "passed", result: "bg list + status ok" },
 						},
 					],
 				},
@@ -4628,7 +4628,7 @@ describe("Integration: background process lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "bg kill ok" },
+							input: { status: "passed", result: "bg kill ok" },
 						},
 					],
 				},
@@ -4689,7 +4689,7 @@ describe("Integration: background process lifecycle", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "bg complete during fg tool",
+								result: "bg complete during fg tool",
 							},
 						},
 					],
@@ -4812,7 +4812,7 @@ describe("Integration: background process lifecycle", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "multiple bg completions received via yield",
+								result: "multiple bg completions received via yield",
 							},
 						},
 					],
@@ -4911,7 +4911,7 @@ describe("Integration: background process lifecycle", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "REST move-to-background worked",
+								result: "REST move-to-background worked",
 							},
 						},
 					],
@@ -5070,7 +5070,7 @@ describe("Integration: tree operations", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "tree CRUD chain complete",
+								result: "tree CRUD chain complete",
 							},
 						},
 					],
@@ -5204,7 +5204,7 @@ describe("Integration: tree operations", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "reorder ok" },
+							input: { status: "passed", result: "reorder ok" },
 						},
 					],
 				},
@@ -5278,7 +5278,7 @@ describe("Integration: tree operations", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "tree reflects task" },
+							input: { status: "passed", result: "tree reflects task" },
 						},
 					],
 				},
@@ -5345,7 +5345,7 @@ describe("Integration: tree operations", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "session leak check done" },
+							input: { status: "passed", result: "session leak check done" },
 						},
 					],
 				},
@@ -5414,7 +5414,7 @@ describe("Integration: tree operations", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "create_task leak check" },
+							input: { status: "passed", result: "create_task leak check" },
 						},
 					],
 				},
@@ -5514,7 +5514,7 @@ describe("Integration: file operations", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "write+read ok" },
+							input: { status: "passed", result: "write+read ok" },
 						},
 					],
 				},
@@ -5611,7 +5611,7 @@ describe("Integration: file operations", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "edit ok" },
+							input: { status: "passed", result: "edit ok" },
 						},
 					],
 				},
@@ -5691,7 +5691,7 @@ describe("Integration: file operations", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "search ok" },
+							input: { status: "passed", result: "search ok" },
 						},
 					],
 				},
@@ -5761,7 +5761,7 @@ describe("Integration: file operations", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "list_files ok" },
+							input: { status: "passed", result: "list_files ok" },
 						},
 					],
 				},
@@ -5805,7 +5805,7 @@ describe("Integration: file operations", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "survived rate limit" },
+							input: { status: "passed", result: "survived rate limit" },
 						},
 					],
 				},
@@ -5864,7 +5864,7 @@ describe("Integration: file operations", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},
@@ -5956,7 +5956,7 @@ describe("Integration: fork prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "forked child done" },
+					input: { status: "passed", result: "forked child done" },
 				},
 			],
 		});
@@ -6049,7 +6049,7 @@ describe("Integration: fork prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "fork prefix test done" },
+							input: { status: "passed", result: "fork prefix test done" },
 						},
 					],
 				},
@@ -6136,7 +6136,7 @@ describe("Integration: fork prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "child done" },
+					input: { status: "passed", result: "child done" },
 				},
 			],
 		});
@@ -6226,7 +6226,7 @@ describe("Integration: fork prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "done" },
+							input: { status: "passed", result: "done" },
 						},
 					],
 				},
@@ -6325,7 +6325,7 @@ describe("Integration: fork prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "A done" },
+							input: { status: "passed", result: "A done" },
 						},
 					],
 				},
@@ -6337,7 +6337,7 @@ describe("Integration: fork prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "child B done" },
+					input: { status: "passed", result: "child B done" },
 				},
 			],
 		});
@@ -6461,7 +6461,7 @@ describe("Integration: fork prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "all done" },
+							input: { status: "passed", result: "all done" },
 						},
 					],
 				},
@@ -6579,7 +6579,7 @@ describe("Integration: fork prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "fork rejected as expected" },
+							input: { status: "passed", result: "fork rejected as expected" },
 						},
 					],
 				},
@@ -6605,7 +6605,7 @@ describe("Integration: fork prefix consistency", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "child done" },
+					input: { status: "passed", result: "child done" },
 				},
 			],
 		});
@@ -6683,7 +6683,7 @@ describe("Integration: fork prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "fork prefix validated" },
+							input: { status: "passed", result: "fork prefix validated" },
 						},
 					],
 				},
@@ -6735,7 +6735,7 @@ describe("Integration: message near done() race condition", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "initial work done" },
+					input: { status: "passed", result: "initial work done" },
 				},
 			],
 		});
@@ -6796,7 +6796,7 @@ describe("Integration: message near done() race condition", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "parent done after child passed",
+								result: "parent done after child passed",
 							},
 						},
 					],
@@ -6828,7 +6828,7 @@ describe("Integration: message near done() race condition", () => {
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "resumed and saw messages",
+						result: "resumed and saw messages",
 					},
 				},
 			],
@@ -6901,7 +6901,7 @@ describe("Integration: session_config in JSONL", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "done" },
+					input: { status: "passed", result: "done" },
 				},
 			],
 		});
@@ -6966,7 +6966,7 @@ describe("Integration: session_config in JSONL", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "first done" },
+							input: { status: "passed", result: "first done" },
 						},
 					],
 				},
@@ -6995,7 +6995,7 @@ describe("Integration: session_config in JSONL", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "resumed done" },
+					input: { status: "passed", result: "resumed done" },
 				},
 			],
 		});
@@ -7037,7 +7037,7 @@ describe("Integration: session_config in JSONL", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "first" },
+							input: { status: "passed", result: "first" },
 						},
 					],
 				},
@@ -7075,7 +7075,7 @@ describe("Integration: session_config in JSONL", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "resumed" },
+					input: { status: "passed", result: "resumed" },
 				},
 			],
 		});
@@ -7101,7 +7101,7 @@ describe("Integration: session_config in JSONL", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "forked child done" },
+					input: { status: "passed", result: "forked child done" },
 				},
 			],
 		});
@@ -7169,7 +7169,7 @@ describe("Integration: session_config in JSONL", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "fork config test done",
+								result: "fork config test done",
 							},
 						},
 					],
@@ -7210,7 +7210,7 @@ describe("Integration: session_config in JSONL", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "done" },
+					input: { status: "passed", result: "done" },
 				},
 			],
 		});
@@ -7242,7 +7242,7 @@ describe("Integration: session_config in JSONL", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "child done" },
+					input: { status: "passed", result: "child done" },
 				},
 			],
 		});
@@ -7299,7 +7299,7 @@ describe("Integration: session_config in JSONL", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "parent done" },
+							input: { status: "passed", result: "parent done" },
 						},
 					],
 				},
@@ -7333,7 +7333,7 @@ describe("Integration: session_config in JSONL", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "done" },
+					input: { status: "passed", result: "done" },
 				},
 			],
 		});
@@ -7399,7 +7399,7 @@ describe("Integration: session_config in JSONL", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "tree test done" },
+							input: { status: "passed", result: "tree test done" },
 						},
 					],
 				},
@@ -7451,7 +7451,7 @@ describe("Integration: root done then resume", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "first pass complete" },
+							input: { status: "passed", result: "first pass complete" },
 						},
 					],
 				},
@@ -7463,7 +7463,7 @@ describe("Integration: root done then resume", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "second pass after resume",
+								result: "second pass after resume",
 							},
 						},
 					],
@@ -7525,7 +7525,7 @@ describe("Integration: root done then resume", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "first pass complete" },
+					input: { status: "passed", result: "first pass complete" },
 				},
 			],
 		});
@@ -7557,7 +7557,7 @@ describe("Integration: root done then resume", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "second pass after resume" },
+					input: { status: "passed", result: "second pass after resume" },
 				},
 			],
 		});
@@ -7595,7 +7595,7 @@ describe("Integration: root done then resume", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "first pass" },
+					input: { status: "passed", result: "first pass" },
 				},
 			],
 		});
@@ -7630,7 +7630,7 @@ describe("Integration: root done then resume", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "resumed ok" },
+					input: { status: "passed", result: "resumed ok" },
 				},
 			],
 		});
@@ -7681,7 +7681,7 @@ describe("Integration: root done then resume", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "first pass" },
+							input: { status: "passed", result: "first pass" },
 						},
 					],
 				},
@@ -7703,7 +7703,7 @@ describe("Integration: root done then resume", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "second pass" },
+							input: { status: "passed", result: "second pass" },
 						},
 					],
 				},
@@ -7714,7 +7714,7 @@ describe("Integration: root done then resume", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "post-restart pass" },
+							input: { status: "passed", result: "post-restart pass" },
 						},
 					],
 				},
@@ -7757,7 +7757,7 @@ describe("Integration: root done then resume", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "post-restart pass" },
+					input: { status: "passed", result: "post-restart pass" },
 				},
 			],
 		});
@@ -7790,7 +7790,7 @@ describe("Integration: root done then resume", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "first pass" },
+							input: { status: "passed", result: "first pass" },
 						},
 					],
 				},
@@ -7800,7 +7800,7 @@ describe("Integration: root done then resume", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "second pass" },
+							input: { status: "passed", result: "second pass" },
 						},
 					],
 				},
@@ -7887,7 +7887,7 @@ describe("Integration: nested parent-child", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "grandchild done" },
+							input: { status: "passed", result: "grandchild done" },
 						},
 					],
 				},
@@ -7958,7 +7958,7 @@ describe("Integration: nested parent-child", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "child done, grandchild passed",
+								result: "child done, grandchild passed",
 							},
 						},
 					],
@@ -8028,7 +8028,7 @@ describe("Integration: nested parent-child", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "full tree done" },
+							input: { status: "passed", result: "full tree done" },
 						},
 					],
 				},
@@ -8078,7 +8078,7 @@ describe("Integration: nested parent-child", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "failed", summary: "grandchild error" },
+					input: { status: "failed", result: "grandchild error" },
 				},
 			],
 		});
@@ -8144,7 +8144,7 @@ describe("Integration: nested parent-child", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "handled failure" },
+							input: { status: "passed", result: "handled failure" },
 						},
 					],
 				},
@@ -8212,7 +8212,7 @@ describe("Integration: nested parent-child", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "failure handled" },
+							input: { status: "passed", result: "failure handled" },
 						},
 					],
 				},
@@ -8275,7 +8275,7 @@ describe("Integration: child restart scenarios", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "child survived restart" },
+							input: { status: "passed", result: "child survived restart" },
 						},
 					],
 				},
@@ -8337,7 +8337,7 @@ describe("Integration: child restart scenarios", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "parent done" },
+							input: { status: "passed", result: "parent done" },
 						},
 					],
 				},
@@ -8412,7 +8412,7 @@ describe("Integration: child restart scenarios", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "child survived" },
+							input: { status: "passed", result: "child survived" },
 						},
 					],
 				},
@@ -8473,7 +8473,7 @@ describe("Integration: child restart scenarios", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "both resumed" },
+							input: { status: "passed", result: "both resumed" },
 						},
 					],
 				},
@@ -8563,7 +8563,7 @@ describe("Integration: child restart scenarios", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "completed multi-step after restart",
+								result: "completed multi-step after restart",
 							},
 						},
 					],
@@ -8628,7 +8628,7 @@ describe("Integration: child restart scenarios", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "parent received task_complete post-restart",
+								result: "parent received task_complete post-restart",
 							},
 						},
 					],
@@ -8774,7 +8774,7 @@ describe("Integration: multiple restarts with accumulated state", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "survived triple restart" },
+							input: { status: "passed", result: "survived triple restart" },
 						},
 					],
 				},
@@ -8916,7 +8916,7 @@ describe("Default branch", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "checked branch" },
+							input: { status: "passed", result: "checked branch" },
 						},
 					],
 				},
@@ -8978,7 +8978,7 @@ describe("Default branch", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "done" },
+							input: { status: "passed", result: "done" },
 						},
 					],
 				},
@@ -9180,7 +9180,7 @@ describe("Default branch", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "verified develop content" },
+							input: { status: "passed", result: "verified develop content" },
 						},
 					],
 				},
@@ -9233,7 +9233,7 @@ describe("Default branch", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "done" },
+							input: { status: "passed", result: "done" },
 						},
 					],
 				},
@@ -9325,7 +9325,7 @@ describe("Integration: stopTask lifecycle", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "handled stop during bash",
+								result: "handled stop during bash",
 							},
 						},
 					],
@@ -9393,7 +9393,7 @@ describe("Integration: stopTask lifecycle", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "recovered from stop" },
+					input: { status: "passed", result: "recovered from stop" },
 				},
 			],
 		});
@@ -9464,7 +9464,7 @@ describe("Integration: stopTask lifecycle", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "resumed after yield stop" },
+					input: { status: "passed", result: "resumed after yield stop" },
 				},
 			],
 		});
@@ -9517,7 +9517,7 @@ describe("Integration: stopTask lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "child survived fork+crash" },
+							input: { status: "passed", result: "child survived fork+crash" },
 						},
 					],
 				},
@@ -9612,7 +9612,7 @@ describe("Integration: stopTask lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "fork+crash recovery done" },
+							input: { status: "passed", result: "fork+crash recovery done" },
 						},
 					],
 				},
@@ -9725,7 +9725,7 @@ describe("Integration: stopTask lifecycle", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "survived stop and restart",
+								result: "survived stop and restart",
 							},
 						},
 					],
@@ -9763,7 +9763,7 @@ describe("Integration: stopTask lifecycle", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "recovered from stop" },
+					input: { status: "passed", result: "recovered from stop" },
 				},
 			],
 		});
@@ -9915,7 +9915,7 @@ describe("Integration: child done + shutdown no deadlock", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "child done" },
+					input: { status: "passed", result: "child done" },
 				},
 			],
 		});
@@ -9972,7 +9972,7 @@ describe("Integration: child done + shutdown no deadlock", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "parent done after child" },
+							input: { status: "passed", result: "parent done after child" },
 						},
 					],
 				},
@@ -10018,7 +10018,7 @@ describe("deliverMessage: shouldResume ordering invariant", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "first run complete" },
+					input: { status: "passed", result: "first run complete" },
 				},
 			],
 		});
@@ -10048,7 +10048,7 @@ describe("deliverMessage: shouldResume ordering invariant", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "second run complete" },
+					input: { status: "passed", result: "second run complete" },
 				},
 			],
 		});
@@ -10090,7 +10090,7 @@ describe("Integration: Phase 2 done_notified", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "everything works" },
+					input: { status: "passed", result: "everything works" },
 				},
 			],
 		});
@@ -10122,7 +10122,7 @@ describe("Integration: Phase 2 done_notified", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "failed", summary: "stuck on a problem" },
+					input: { status: "failed", result: "stuck on a problem" },
 				},
 			],
 		});
@@ -10162,7 +10162,7 @@ describe("Integration: Phase 2 crash recovery", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "task complete" },
+					input: { status: "passed", result: "task complete" },
 				},
 			],
 		});
@@ -10246,7 +10246,7 @@ describe("Integration: Phase 2 crash recovery", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "done correctly" },
+					input: { status: "passed", result: "done correctly" },
 				},
 			],
 		});
@@ -10295,7 +10295,7 @@ describe("Integration: two-phase done() gap tests", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "orphan test" },
+					input: { status: "passed", result: "orphan test" },
 				},
 			],
 		});
@@ -10567,7 +10567,7 @@ describe("Integration: traceId injection", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "done" },
+					input: { status: "passed", result: "done" },
 				},
 			],
 		});
@@ -10620,7 +10620,7 @@ describe("Integration: traceId injection", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "first" },
+					input: { status: "passed", result: "first" },
 				},
 			],
 		});
@@ -10639,7 +10639,7 @@ describe("Integration: traceId injection", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "second" },
+					input: { status: "passed", result: "second" },
 				},
 			],
 		});
@@ -10791,7 +10791,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "trivial" },
+					input: { status: "passed", result: "trivial" },
 				},
 			],
 		});
@@ -10824,7 +10824,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "cleanup test" },
+					input: { status: "passed", result: "cleanup test" },
 				},
 			],
 		});
@@ -10950,7 +10950,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "second run" },
+					input: { status: "passed", result: "second run" },
 				},
 			],
 		});
@@ -11077,7 +11077,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "reset child successfully" },
+							input: { status: "passed", result: "reset child successfully" },
 						},
 					],
 				},
@@ -11154,7 +11154,7 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "parent done" },
+							input: { status: "passed", result: "parent done" },
 						},
 					],
 				},
@@ -11376,7 +11376,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "image idle restart ok" },
+							input: { status: "passed", result: "image idle restart ok" },
 						},
 					],
 				},
@@ -11408,7 +11408,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "image idle restart survived" },
+					input: { status: "passed", result: "image idle restart survived" },
 				},
 			],
 		});
@@ -11449,7 +11449,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "image yield restart ok" },
+							input: { status: "passed", result: "image yield restart ok" },
 						},
 					],
 				},
@@ -11476,7 +11476,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "image yield restart survived" },
+					input: { status: "passed", result: "image yield restart survived" },
 				},
 			],
 		});
@@ -11606,7 +11606,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "image tool_result ok" },
+							input: { status: "passed", result: "image tool_result ok" },
 						},
 					],
 				},
@@ -11643,7 +11643,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "image tool_result restart survived",
+						result: "image tool_result restart survived",
 					},
 				},
 			],
@@ -11677,7 +11677,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "multi-image ok" },
+							input: { status: "passed", result: "multi-image ok" },
 						},
 					],
 				},
@@ -11711,7 +11711,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "multi-image restart ok" },
+					input: { status: "passed", result: "multi-image restart ok" },
 				},
 			],
 		});
@@ -11740,7 +11740,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "interleave ok" },
+							input: { status: "passed", result: "interleave ok" },
 						},
 					],
 				},
@@ -11767,7 +11767,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "interleave restart ok" },
+					input: { status: "passed", result: "interleave restart ok" },
 				},
 			],
 		});
@@ -11804,7 +11804,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "initial image ok" },
+							input: { status: "passed", result: "initial image ok" },
 						},
 					],
 				},
@@ -11838,7 +11838,7 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "initial image restart ok" },
+					input: { status: "passed", result: "initial image restart ok" },
 				},
 			],
 		});
@@ -11940,7 +11940,7 @@ describe("Integration: resetTask timing on yielding agent", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "reset timing ok" },
+							input: { status: "passed", result: "reset timing ok" },
 						},
 					],
 				},
@@ -12010,7 +12010,7 @@ describe("Integration: bash tiered output contract", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},
@@ -12058,7 +12058,7 @@ describe("Integration: bash tiered output contract", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},
@@ -12127,7 +12127,7 @@ describe("Integration: bash tiered output contract", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},
@@ -12201,7 +12201,7 @@ describe("Integration: bash tiered output contract", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},
@@ -12267,7 +12267,7 @@ describe("Integration: bash tiered output contract", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},
@@ -12325,7 +12325,7 @@ describe("Integration: bash tiered output contract", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},
@@ -12378,16 +12378,15 @@ describe("Integration: bash tiered output contract", () => {
 	}, 20000);
 });
 
-describe("Integration: done() captures structured result/lessons (resultRounds)", () => {
+describe("Integration: done() result/lessons capture (resultRounds)", () => {
 	let ctx: TestContext;
 
 	afterEach(async () => {
 		if (ctx) await teardownTestContext(ctx);
 	});
 
-	test("done() with result + lessons lands them on node.resultRounds", async () => {
+	test("done(result + lessons) lands them on node.resultRounds", async () => {
 		ctx = await setupTestContext();
-
 		const instruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Finishing." },
@@ -12396,7 +12395,6 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "did the thing",
 						result: "Implemented X via A, B, C. All tests green.",
 						lessons: [
 							"Foo's bar option only applies on create, not overwrite",
@@ -12406,14 +12404,11 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 				},
 			],
 		});
-
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
 		expect(await waitForDone(ctx)).toBe("verify");
-
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const root = tracker.getTask(tracker.rootNodeId);
-		expect(root?.resultRounds).toEqual([
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
 			{
 				result: "Implemented X via A, B, C. All tests green.",
 				lessons: [
@@ -12424,34 +12419,120 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 		]);
 	}, 20000);
 
-	test("done() without result/lessons still appends one (empty) round — back-compat", async () => {
+	test("done(result) with no lessons → one block, empty lessons", async () => {
 		ctx = await setupTestContext();
-
-		// Legacy-shaped done(): only status + summary, no result/lessons.
 		const instruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Done." },
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "legacy-style done" },
+					input: { status: "passed", result: "shipped the widget" },
 				},
 			],
 		});
-
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
 		expect(await waitForDone(ctx)).toBe("verify");
-
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const root = tracker.getTask(tracker.rootNodeId);
-		// One block per done(), even when result/lessons are omitted.
-		expect(root?.resultRounds).toEqual([{ result: "", lessons: [] }]);
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
+			{ result: "shipped the widget", lessons: [] },
+		]);
 	}, 20000);
 
-	test("two done() rounds append two blocks in order — first is never overwritten", async () => {
+	test("done() with NO result is REJECTED (required) — no empty round appended", async () => {
 		ctx = await setupTestContext();
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					// Turn 1: barren done (no result) → rejected by the required schema.
+					blocks: [
+						{ type: "text", text: "Trying to finish silently." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed" },
+						},
+					],
+				},
+				{
+					// The rejected done surfaces as an error tool_result mentioning `result`.
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: true,
+							contains: "result",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "OK, here is what I did." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", result: "actually did the work" },
+						},
+					],
+				},
+			],
+		});
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		// Only the SUCCESSFUL done appended a round — the barren one was rejected,
+		// so there is NO empty {result:""} block.
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
+			{ result: "actually did the work", lessons: [] },
+		]);
+	}, 20000);
 
+	test("done() with whitespace-only result is REJECTED with a steering message", async () => {
+		ctx = await setupTestContext();
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Blank result." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", result: "   " },
+						},
+					],
+				},
+				{
+					// beforeDone rejects blank result with a "non-empty" steering hint.
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: true,
+							contains: "non-empty",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Fixed." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", result: "did it properly" },
+						},
+					],
+				},
+			],
+		});
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
+			{ result: "did it properly", lessons: [] },
+		]);
+	}, 20000);
+
+	test("two done(result) rounds append two blocks in order — first never overwritten", async () => {
+		ctx = await setupTestContext();
 		const round1 = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Round one." },
@@ -12460,7 +12541,6 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "s1",
 						result: "round 1 result",
 						lessons: ["l1"],
 					},
@@ -12469,11 +12549,8 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 		});
 		expect((await startAgent(ctx, round1)).status).toBe(200);
 		expect(await waitForDone(ctx)).toBe("verify");
-
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-
-		// Reawaken the done root with a new message → it runs again → done() again.
 		const round2 = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Round two." },
@@ -12482,7 +12559,6 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "s2",
 						result: "round 2 result",
 						lessons: ["l2a", "l2b"],
 					},
@@ -12490,26 +12566,20 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 			],
 		});
 		expect((await sendMessage(ctx, round2)).status).toBe(200);
-
-		// Root was "verify"; the message relaunches it: verify → in_progress → verify.
-		// Poll for in_progress first so waitForDone doesn't return the stale first verify.
 		const start = Date.now();
 		while (Date.now() - start < 5000) {
 			if (tracker.getTask(rootNodeId)?.status === "in_progress") break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
 		expect(await waitForDone(ctx, 20000)).toBe("verify");
-
-		// Both rounds present, in order — round 1 survived the second done().
 		expect(tracker.getTask(rootNodeId)?.resultRounds).toEqual([
 			{ result: "round 1 result", lessons: ["l1"] },
 			{ result: "round 2 result", lessons: ["l2a", "l2b"] },
 		]);
 	}, 30000);
 
-	test("failed done() also appends its round", async () => {
+	test("failed done(result) also appends its round", async () => {
 		ctx = await setupTestContext();
-
 		const instruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Giving up." },
@@ -12518,25 +12588,120 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 					name: "mcp__mxd__done",
 					input: {
 						status: "failed",
-						summary: "blocked",
 						result: "Could not resolve the upstream 500s.",
 						lessons: ["The retry budget is exhausted after 5 attempts"],
 					},
 				},
 			],
 		});
-
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
 		expect(await waitForDone(ctx)).toBe("failed");
-
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const root = tracker.getTask(tracker.rootNodeId);
-		expect(root?.resultRounds).toEqual([
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
 			{
 				result: "Could not resolve the upstream 500s.",
 				lessons: ["The retry budget is exhausted after 5 attempts"],
 			},
 		]);
 	}, 20000);
+
+	test("ONE value → BOTH parent notification and resultRounds.result (byte-identical)", async () => {
+		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
+
+		const MARKER = "MARKER_child_did_XYZ_789";
+		// The child's `result` must reach BOTH the parent's task_complete AND the
+		// child's own resultRounds.result — the same string in both places.
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: {
+						status: "passed",
+						result: MARKER,
+						lessons: ["child lesson"],
+					},
+				},
+			],
+		});
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Creating child." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								parentId: "$rootId",
+								title: "Byte-Identical Child",
+								description: "child for the one-value-both test",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: { childId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Sending to child." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{ type: "text", text: "Waiting." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					// The parent's yield resume carries the child's task_complete, whose
+					// output IS the child's `result` — assert the MARKER is present.
+					assert: [
+						{ block: 1, type: "text", contains: "task_complete" },
+						{ block: 1, type: "text", contains: MARKER },
+					],
+					blocks: [
+						{ type: "text", text: "Child done. Finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", result: "parent wrapped up" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx, 30000)).toBe("verify");
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
+		const childId = rootNode?.children?.[0] as string;
+		const childNode = tracker.getTask(childId);
+		// resultRounds.result is BYTE-IDENTICAL to the value the parent received.
+		expect(childNode?.resultRounds).toEqual([
+			{ result: MARKER, lessons: ["child lesson"] },
+		]);
+	}, 45000);
 });

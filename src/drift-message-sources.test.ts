@@ -252,7 +252,7 @@ function twoTurnInstruction(summary: string): string {
 					{
 						type: "tool_use",
 						name: "mcp__mxd__done",
-						input: { status: "passed", summary },
+						input: { status: "passed", result: summary },
 					},
 				],
 			},
@@ -273,7 +273,7 @@ function wakeInstruction(summary: string): string {
 			{
 				type: "tool_use",
 				name: "mcp__mxd__done",
-				input: { status: "passed", summary },
+				input: { status: "passed", result: summary },
 			},
 		],
 	});

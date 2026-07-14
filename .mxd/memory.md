@@ -3815,3 +3815,123 @@ overwhelming majority) captures correctly.
   events store the mcp-prefixed name, same as `findInterruptedDonePhase2`).
 - `appendResultRound` must NOT use `(node.resultRounds ??= []).push(x)` — biome
   `noAssignInExpressions` errors. Use `if (!node.resultRounds) node.resultRounds = []; ...push`.
+
+## Memory-index Step 1.1: unify done() summary+result into ONE concept `result` (summary=deprecated alias) (2026-07-14)
+
+SUPERSEDES the Step-1 entry's "kept BOTH summary and result additively / NO fallback" decision.
+The user identified that `summary` and `result` said the SAME thing ("成果 / what this round did") —
+only `lessons` was genuinely new. So Step 1 left a redundancy. This collapses them into ONE concept.
+
+### End state — two concepts on done(): `result` + `lessons`
+- **`result`** (optional, PRIMARY): "what this round accomplished (passed) / went wrong (failed)".
+  ONE value that flows to BOTH (a) the parent notification (task_complete `output` + done_notified
+  marker) AND (b) `resultRounds.result`. Byte-identical in both places (same string).
+- **`summary`** (optional, DEPRECATED ALIAS): coalesced `result ?? summary`. Kept so every
+  existing/frozen `done(summary=...)` caller + test is 100% untouched (zero regression). Declared
+  in the schema (not just tolerated) so it's robust even if tool schemas ever become strict; marked
+  deprecated in its description so new agents use `result`.
+- **`lessons`** (optional): unchanged, independent → `resultRounds.lessons`.
+
+### Why PRIMARY=`result` (not keep param named `summary`)
+The tool description is agent-facing on every done(); it must name the real concept (`result`,
+matching the field `resultRounds.result`), not the legacy `summary` we're retiring. Leaving the
+primary param `summary` while the field/concept is `result` re-seeds the exact "two names for one
+thing" confusion this change kills. The alias makes the clean name zero-cost on back-compat.
+
+### Coalesce sites (both read the done tool_call input for the "what I did" value)
+- `provider-shared.ts` (~1896, live done): `doneSummary = doneInput?.result ?? doneInput?.summary ?? ""`.
+  `doneInput` type gained `result?`. `doneSummary` is the LEGACY internal carrier name — it now holds
+  the coalesced result (NOT renamed to doneResult; that's a ~9-buildResult-site churn, deferred —
+  flagged to orchestrator).
+- `runtime.ts findInterruptedDonePhase2` (crash-recovery): same coalesce, so a crash-recovered done
+  carries the same outcome string the live path would have delivered.
+
+### How resultRounds.result gets the value (one value, both destinations)
+`doneSummary` (coalesced) → `AgentResult.doneSummary` → agent-lifecycle Phase 2 `doneArgs.summary`
+→ (a) `createTaskComplete(..., agentResult.doneSummary)` = parent notification, AND (b) Matrix
+`onDone` sets `resultRounds.result = doneArgs.summary`. SAME variable → byte-identical.
+`lessons` still read from JSONL via `readDoneLessons(events)` (renamed from Step-1 `readDoneRound`,
+now returns just `string[]` — result no longer needs a JSONL read since it reuses the plumbed summary).
+
+### Enforcement note (forced relaxation)
+Step 1 had `summary` REQUIRED. For the alias to work through Zod, `result` MUST be optional (a frozen
+summary-only call must pass validation), and `summary` is also optional — so a `done()` with NEITHER
+now passes Zod → empty round `{result:"", lessons:[]}` (previously summary-required blocked this).
+This relaxation is FORCED by "primary=result + summary-alias + zero-regression-on-frozen". No beforeDone
+"at least one required" check added (kept minimal; flagged to orchestrator).
+
+### Zod strips unknown keys (why frozen callers are safe)
+`z.object(inputSchema).safeParse` (tool-execution.ts) has NO `.strict()` → unknown keys are STRIPPED,
+not rejected. So even a caller passing an undeclared key is fine. Declaring `summary` is belt-and-braces.
+
+### Tests
+- `integration.test.ts` "done() result/lessons capture — unified result concept" (8): result+lessons,
+  result-no-lessons, **deprecated summary alias → result (coalesce)**, **result-wins-when-both**,
+  barren-done→empty-round, two-round-append-order, failed, and **ONE value → BOTH parent-notification
+  AND resultRounds.result byte-identical (parent-child, via the summary alias)**.
+- `task-tracker.test.ts` resultRounds unit tests UNCHANGED (appendResultRound is agnostic to where
+  result comes from).
+
+## Memory-index Step 1.2: DELETE done() `summary` entirely — `result` is required-non-empty (2026-07-14)
+
+SUPERSEDES Step 1.1 (the "keep summary as a deprecated alias / coalesce result ?? summary" entry).
+User decided: go all the way — no alias, no legacy tail. done()'s agent-facing params are now
+exactly: `status` (control signal), `result` (成果, REQUIRED-non-empty — absorbs everything summary
+did), `lessons` (independent). There is NO `summary` param on the done tool anywhere.
+
+### Enforcement — `result` required-non-empty (two layers)
+- Zod `explicit` (required) → an ABSENT result is rejected at executeTool's safeParse with
+  "Tool input validation error (mcp__mxd__done): result: …" (mentions `result`).
+- `beforeDone` (orchestrator-tools.ts) checks `!args.result?.trim()` FIRST (before the git-clean
+  check) → an EMPTY/whitespace-only result is rejected with a steering message ("done() needs a
+  non-empty `result`: state what this round ACTUALLY accomplished…"). A rejected done returns
+  isError → the provider-loop done-exit block (`if (doneResult && !doneResult.isError)`) is skipped
+  → the loop does NOT exit, no Phase 2, no resultRound appended → the agent sees the error and
+  continues. So a barren done() never lands an empty `{result:""}` round.
+
+### Coalesce → just `result` (summary read deleted)
+- `provider-shared.ts` (live done): `doneSummary = doneInput?.result ?? ""` (was `result ?? summary`).
+- `runtime.ts findInterruptedDonePhase2` (crash recovery): `summary = doneInput?.result ?? ""`.
+- `agent-lifecycle.ts` doneArgs: `result: agentResult.doneSummary ?? ""` (bridge field renamed
+  summary→result); `scope-opts.ts onDone` reads `doneArgs.result` → `resultRounds.result`.
+
+### Internal carriers KEPT (invisible to agents, some persisted — renaming = JSONL migration, out of scope)
+`AgentResult.doneSummary`, `MatrixDoneData.summary`, the `done_notified` event's `summary` field,
+`createTaskComplete(output=…)`, and `findInterruptedDonePhase2`'s return `.summary` field all keep
+their names. They now hold the `result` value. So `expect(result.summary).toBe(...)` in
+findInterrupted tests is correct: INPUT uses `result` (runtime reads it), RETURN field is still
+`summary` (the internal marker field).
+
+### Byte-identical: one value → both destinations
+`result` → doneSummary → task_complete `output` (parent notification) AND resultRounds.result — the
+SAME string. Test "ONE value → BOTH parent notification and resultRounds.result (byte-identical)"
+(parent-child) pins it.
+
+### Migration of ALL call sites (the accepted churn)
+Every `done(summary=…)` test/fixture/helper → `result`. z.object() strips unknown keys (no
+`.strict()`), so a MISSED site is NOT silently stripped-to-empty — it's LOUD: `result` required →
+Zod rejects → the done never completes → the test fails/times out. That enforcement WAS the safety
+net. **GOTCHA that bit once**: the bulk `summary: "` replace missed a BACKTICK template literal
+(`summary: \`child ${label}…\``) in integration-stress MULTI1 → the child's done was rejected →
+parent hung → 48s timeout that looked like a flake but was the regression. Always grep BOTH
+`summary: "` AND `summary: \`` (and shorthand `summary }`).
+
+### Two test files that are NOT Matrix's done (left on `summary`, correct)
+- `openai-responses-compatible-provider.test.ts` — standalone PROVIDER unit test (uses `provider.stream()`
+  directly, defines its OWN `done` tool with a `summary` schema, never runs the runtime loop nor asserts
+  the value). Reverted my changes to it — it's independent of Matrix's rename.
+- `anthropic-compatible-provider.test.ts` ~2560 — a provider-level test whose mock `done` tool declares a
+  `summary` schema but whose mock RESPONSE input uses `result`; provider-shared reads the raw input's
+  `result`, the schema `summary` is cosmetic (unknown `result` stripped by Zod, value read from raw input).
+  Works as-is.
+
+### FROZEN-AGENT transition window (accepted, self-correcting)
+A mid-flight agent whose session_config froze the OLD done schema and emits `done(summary=…)` right after
+the daemon restarts loses that ONE round's result (unknown `summary` stripped → `result` absent → done
+REJECTED with the required-result error; the agent retries with `result` next turn after reading the new
+tool desc). Tiny, one-time, self-correcting.
+
+### Tests
+`integration.test.ts` "done() result/lessons capture (resultRounds)" (7): result+lessons, result-no-lessons,
+**NO-result→REJECTED (no empty round)**, **whitespace-result→REJECTED (steering msg)**, two-round order,
+failed, byte-identical parent-child. Tracker unit tests unchanged.

@@ -255,7 +255,7 @@ function wakeDoneInstruction(summary: string) {
 			{
 				type: "tool_use",
 				name: "mcp__mxd__done",
-				input: { status: "passed", summary },
+				input: { status: "passed", result: summary },
 			},
 		],
 	});
@@ -637,7 +637,7 @@ describe("Golden: walker output for done resume lifecycle", () => {
 				type: "tool_call",
 				tool: TOOL_DONE,
 				toolCallId: "tc-done",
-				input: { status: "passed", summary: "first done" },
+				input: { status: "passed", result: "first done" },
 				taskId: "t1",
 				ts: 1000,
 			},
@@ -680,7 +680,7 @@ describe("Golden: walker output for done resume lifecycle", () => {
 					type: "tool_use",
 					id: "tc-done",
 					name: TOOL_DONE,
-					input: { status: "passed", summary: "first done" },
+					input: { status: "passed", result: "first done" },
 					caller: { type: "direct" },
 				},
 			],
@@ -1127,7 +1127,7 @@ describe("Drift: explicit yield lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "yield+single msg ok" },
+							input: { status: "passed", result: "yield+single msg ok" },
 						},
 					],
 				},
@@ -1167,7 +1167,7 @@ describe("Drift: explicit yield lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "multi msg ok" },
+							input: { status: "passed", result: "multi msg ok" },
 						},
 					],
 				},
@@ -1210,7 +1210,7 @@ describe("Drift: explicit yield lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "yield+image ok" },
+							input: { status: "passed", result: "yield+image ok" },
 						},
 					],
 				},
@@ -1251,7 +1251,7 @@ describe("Drift: explicit yield lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "3 images ok" },
+							input: { status: "passed", result: "3 images ok" },
 						},
 					],
 				},
@@ -1324,7 +1324,7 @@ describe("Drift: duplicate yield in same turn", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "dup yield ok" },
+							input: { status: "passed", result: "dup yield ok" },
 						},
 					],
 				},
@@ -1379,7 +1379,7 @@ describe("Drift: duplicate yield in same turn", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "triple yield ok" },
+							input: { status: "passed", result: "triple yield ok" },
 						},
 					],
 				},
@@ -1423,7 +1423,7 @@ describe("Drift: done resume from crash", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "first done" },
+							input: { status: "passed", result: "first done" },
 						},
 					],
 				},
@@ -1433,7 +1433,7 @@ describe("Drift: done resume from crash", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "second done" },
+							input: { status: "passed", result: "second done" },
 						},
 					],
 				},
@@ -1484,7 +1484,7 @@ describe("Drift: done resume from crash", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "first" },
+							input: { status: "passed", result: "first" },
 						},
 					],
 				},
@@ -1494,7 +1494,7 @@ describe("Drift: done resume from crash", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "second" },
+							input: { status: "passed", result: "second" },
 						},
 					],
 				},
@@ -1560,7 +1560,7 @@ describe("Drift: multi-cycle yield/wake", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "multi-cycle ok" },
+							input: { status: "passed", result: "multi-cycle ok" },
 						},
 					],
 				},
@@ -1600,7 +1600,7 @@ describe("Drift: multi-cycle yield/wake", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "implicit cycles ok" },
+							input: { status: "passed", result: "implicit cycles ok" },
 						},
 					],
 				},
@@ -1646,7 +1646,7 @@ describe("Drift: child → parent task_complete lifecycle", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "child finished" },
+					input: { status: "passed", result: "child finished" },
 				},
 			],
 		});
@@ -1705,7 +1705,7 @@ describe("Drift: child → parent task_complete lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "parent+child ok" },
+							input: { status: "passed", result: "parent+child ok" },
 						},
 					],
 				},
@@ -1737,7 +1737,7 @@ describe("Drift: child → parent task_complete lifecycle", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "failed", summary: "child gave up" },
+					input: { status: "failed", result: "child gave up" },
 				},
 			],
 		});
@@ -1789,7 +1789,7 @@ describe("Drift: child → parent task_complete lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "handled child failure" },
+							input: { status: "passed", result: "handled child failure" },
 						},
 					],
 				},
@@ -1854,7 +1854,7 @@ describe("Drift: yield + other tool same turn", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "yield+bash ok" },
+							input: { status: "passed", result: "yield+bash ok" },
 						},
 					],
 				},
@@ -1897,7 +1897,7 @@ describe("Drift: fork lifecycle", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "fork child ok" },
+					input: { status: "passed", result: "fork child ok" },
 				},
 			],
 		});
@@ -1964,7 +1964,7 @@ describe("Drift: fork lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "parent+fork ok" },
+							input: { status: "passed", result: "parent+fork ok" },
 						},
 					],
 				},
@@ -2025,7 +2025,7 @@ describe("Drift: interrupted tool_call repair", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "recovered bash" },
+							input: { status: "passed", result: "recovered bash" },
 						},
 					],
 				},
@@ -2100,7 +2100,7 @@ describe("Drift: queue messages at cancellation point", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "cancel point ok" },
+							input: { status: "passed", result: "cancel point ok" },
 						},
 					],
 				},
@@ -2161,7 +2161,7 @@ describe("Drift: crash immediately after wake", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "survived interrupt" },
+							input: { status: "passed", result: "survived interrupt" },
 						},
 					],
 				},
@@ -2217,7 +2217,7 @@ describe("Drift: special character content in messages", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "xml content ok" },
+							input: { status: "passed", result: "xml content ok" },
 						},
 					],
 				},
@@ -2259,7 +2259,7 @@ describe("Drift: special character content in messages", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "whitespace ok" },
+							input: { status: "passed", result: "whitespace ok" },
 						},
 					],
 				},
@@ -2329,7 +2329,7 @@ describe("Drift: mixed drain paths in one session", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "2 drain paths ok" },
+							input: { status: "passed", result: "2 drain paths ok" },
 						},
 					],
 				},
@@ -2399,7 +2399,7 @@ describe("Drift: high-pressure lifecycle chains", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "5 cycles ok" },
+							input: { status: "passed", result: "5 cycles ok" },
 						},
 					],
 				},
@@ -2511,7 +2511,7 @@ describe("Drift: compaction lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},
@@ -2625,7 +2625,7 @@ describe("Drift: compaction lifecycle", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "ok" },
+					input: { status: "passed", result: "ok" },
 				},
 			],
 		});
@@ -2685,7 +2685,7 @@ describe("Drift: compaction lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},
@@ -2811,7 +2811,7 @@ describe("Drift: compaction lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "full compact lifecycle ok" },
+							input: { status: "passed", result: "full compact lifecycle ok" },
 						},
 					],
 				},
@@ -2914,7 +2914,7 @@ describe("Drift: compaction lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "session_config match ok" },
+							input: { status: "passed", result: "session_config match ok" },
 						},
 					],
 				},
@@ -3054,7 +3054,7 @@ describe("Drift: compaction lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "compacted_resume match ok" },
+							input: { status: "passed", result: "compacted_resume match ok" },
 						},
 					],
 				},
@@ -3236,7 +3236,7 @@ describe("Drift: compaction lifecycle", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "done" },
+							input: { status: "passed", result: "done" },
 						},
 					],
 				},
@@ -3339,7 +3339,7 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "too-short compact ok" },
+							input: { status: "passed", result: "too-short compact ok" },
 						},
 					],
 				},
@@ -3413,7 +3413,7 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "deferred yield consumed" },
+							input: { status: "passed", result: "deferred yield consumed" },
 						},
 					],
 				},
@@ -3466,12 +3466,12 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "first done" },
+							input: { status: "passed", result: "first done" },
 						},
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "second done" },
+							input: { status: "passed", result: "second done" },
 						},
 					],
 				},
@@ -3482,7 +3482,7 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "dup done restart ok" },
+							input: { status: "passed", result: "dup done restart ok" },
 						},
 					],
 				},
@@ -3560,7 +3560,7 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "dup yield compact ok" },
+							input: { status: "passed", result: "dup yield compact ok" },
 						},
 					],
 				},

@@ -240,7 +240,7 @@ describe("ValidatingMockAPI", () => {
 							{
 								type: "tool_use",
 								name: "mcp__mxd__done",
-								input: { status: "passed", summary: "ok" },
+								input: { status: "passed", result: "ok" },
 							},
 						],
 					},

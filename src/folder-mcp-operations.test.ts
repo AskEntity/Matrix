@@ -1071,7 +1071,7 @@ describe("folder-aware: done() descendant check", () => {
 
 	async function invokeDone(
 		currentTaskId: string,
-		args: { status: string; summary: string },
+		args: { status: string; result: string },
 	) {
 		resetResourceRegistry();
 		const { auth } = initMockResourceRegistry({
@@ -1107,7 +1107,7 @@ describe("folder-aware: done() descendant check", () => {
 
 		const result = await invokeDone(agent.id, {
 			status: "passed",
-			summary: "Done",
+			result: "Done",
 		});
 
 		expect(result.isError).toBe(true);
@@ -1128,7 +1128,7 @@ describe("folder-aware: done() descendant check", () => {
 
 		const result = await invokeDone(agent.id, {
 			status: "passed",
-			summary: "Done",
+			result: "Done",
 		});
 
 		// Should succeed — child is not running
@@ -1149,7 +1149,7 @@ describe("folder-aware: done() descendant check", () => {
 
 		const result = await invokeDone(agent.id, {
 			status: "passed",
-			summary: "Done",
+			result: "Done",
 		});
 
 		expect(result.isError).toBe(true);

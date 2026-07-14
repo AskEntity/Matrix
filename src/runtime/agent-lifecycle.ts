@@ -8,7 +8,7 @@ import {
 	type EventSpec,
 	findOrphanedBackgroundProcesses,
 	findUnconsumedMessages,
-	readDoneRound,
+	readDoneLessons,
 	type SessionConfigEvent,
 } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
@@ -1125,19 +1125,17 @@ export async function runAgentForNode(
 			if (currentNode) {
 				const eventStore = getEventStore(ctx, project.id);
 				let hasLateMessages = false;
-				// This round's structured result/lessons, read from the persisted
-				// done() tool_call input (see readDoneRound). Flush first so the
-				// tool_call is durable, then read — done for root too (root done()s
-				// are captured), not only children. The plugin's onDone hook persists
-				// it via doneArgs. Absent fields → empty round (one block per done()).
-				let doneRound: { result: string; lessons: string[] } = {
-					result: "",
-					lessons: [],
-				};
+				// This round's `lessons`, read from the persisted done() tool_call
+				// input (see readDoneLessons). Flush first so the tool_call is durable,
+				// then read — done for root too (root done()s are captured), not only
+				// children. The round's `result` is NOT read here: it is the SAME value
+				// as `summary` (one concept), passed through doneArgs below. The plugin's
+				// onDone hook appends {result: summary, lessons} as a resultRound.
+				let doneLessons: string[] = [];
 				if (eventStore.has(nodeId)) {
 					await eventStore.flushSession(nodeId);
 					const events = eventStore.readActive(nodeId);
-					doneRound = readDoneRound(events);
+					doneLessons = readDoneLessons(events);
 					if (!isRoot) {
 						const unconsumed = findUnconsumedMessages(events);
 						if (unconsumed.length > 0) {
@@ -1155,14 +1153,16 @@ export async function runAgentForNode(
 					});
 				} else {
 					// Let plugin update node state on done — returns data for crash-safe
-					// marker. result/lessons ride along in doneArgs for the plugin's
-					// onDone to append as a resultRound (memory-index capture).
+					// marker. result + lessons ride along in doneArgs for the plugin's
+					// onDone to append as a resultRound (memory-index capture). result
+					// ALSO flows to task_complete + done_notified below — one value,
+					// both destinations. (`agentResult.doneSummary` is the legacy carrier
+					// field name; it holds the done `result`.)
 					const doneArgs = {
 						status:
 							agentResult.exitReason === "done_passed" ? "passed" : "failed",
-						summary: agentResult.doneSummary ?? "",
-						result: doneRound.result,
-						lessons: doneRound.lessons,
+						result: agentResult.doneSummary ?? "",
+						lessons: doneLessons,
 					};
 					const doneData = opts.onDone
 						? (opts.onDone(currentNode, tracker, doneArgs) ?? doneArgs)

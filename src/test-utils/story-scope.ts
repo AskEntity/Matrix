@@ -69,7 +69,7 @@ export function buildStoryScopeOpts(_projectId: string): ScopeOpts<any> {
 								schema: z.enum(["passed", "failed"]),
 								decl: { kind: "explicit" },
 							},
-							summary: { schema: z.string(), decl: { kind: "explicit" } },
+							result: { schema: z.string(), decl: { kind: "explicit" } },
 						},
 					}),
 				].map((def) => toToolDefinition(def, auth)),

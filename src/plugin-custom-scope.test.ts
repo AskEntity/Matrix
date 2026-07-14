@@ -139,7 +139,7 @@ function buildStoryScopeOpts(_projectId: string): ScopeOpts<any> {
 								schema: z.enum(["passed", "failed"]),
 								decl: { kind: "explicit" },
 							},
-							summary: { schema: z.string(), decl: { kind: "explicit" } },
+							result: { schema: z.string(), decl: { kind: "explicit" } },
 						},
 					}),
 				].map((def) => toToolDefinition(def, auth)),
@@ -192,7 +192,7 @@ describe("Custom scope: non-Matrix agent on Matrix runtime", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "story complete" },
+					input: { status: "passed", result: "story complete" },
 				},
 			],
 		});
@@ -246,7 +246,7 @@ describe("Custom scope: non-Matrix agent on Matrix runtime", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "tool check" },
+					input: { status: "passed", result: "tool check" },
 				},
 			],
 		});
@@ -301,7 +301,7 @@ describe("Custom scope: non-Matrix agent on Matrix runtime", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "work ctx check" },
+					input: { status: "passed", result: "work ctx check" },
 				},
 			],
 		});
@@ -362,7 +362,7 @@ describe("Custom scope: non-Matrix agent on Matrix runtime", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "chapter complete" },
+					input: { status: "passed", result: "chapter complete" },
 				},
 			],
 		});
@@ -436,7 +436,7 @@ describe("Node-model generalization (plugin integration)", () => {
 								schema: z.enum(["passed", "failed"]),
 								decl: { kind: "explicit" },
 							},
-							summary: { schema: z.string(), decl: { kind: "explicit" } },
+							result: { schema: z.string(), decl: { kind: "explicit" } },
 						},
 					}),
 				].map((def) => toToolDefinition(def, auth)),
@@ -479,7 +479,7 @@ describe("Node-model generalization (plugin integration)", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "done" },
+					input: { status: "passed", result: "done" },
 				},
 			],
 		});

@@ -1889,11 +1889,14 @@ export async function* runProviderLoop(
 				}
 
 				const doneInput = doneToolUse.input as
-					| { status?: string; summary?: string }
+					| { status?: string; result?: string }
 					| undefined;
 				doneExitReason =
 					doneInput?.status === "passed" ? "done_passed" : "done_failed";
-				doneSummary = doneInput?.summary ?? "";
+				// `result` is the round's outcome — it flows to BOTH the parent
+				// notification (task_complete + done_notified) AND resultRounds.result.
+				// `doneSummary` is the legacy internal carrier name; it holds `result`.
+				doneSummary = doneInput?.result ?? "";
 				const cost = adapter.computeCost(
 					model,
 					totalInputTokens,

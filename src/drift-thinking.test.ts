@@ -370,7 +370,7 @@ describe("Golden: interleaved thinking across multiple tool calls", () => {
 			assistantTextEvent("Turn 3 text."),
 			toolCallEvent("tc_03", "mcp__mxd__done", {
 				status: "passed",
-				summary: "done",
+				result: "done",
 			}),
 		];
 		const msgs = eventsToAnthropicMessages(events);
@@ -656,14 +656,14 @@ async function recreateApp(
 	return newApp;
 }
 
-function wakeDoneInstruction(summary: string) {
+function wakeDoneInstruction(result: string) {
 	return JSON.stringify({
 		blocks: [
 			{ type: "text", text: "Woke up, finishing." },
 			{
 				type: "tool_use",
 				name: "mcp__mxd__done",
-				input: { status: "passed", summary },
+				input: { status: "passed", result },
 			},
 		],
 	});
@@ -709,7 +709,7 @@ describe("Drift: thinking blocks round-trip across restart", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "thinking round-trip ok" },
+							input: { status: "passed", result: "thinking round-trip ok" },
 						},
 					],
 				},
@@ -781,7 +781,7 @@ describe("Drift: thinking blocks round-trip across restart", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "yield+thinking ok" },
+							input: { status: "passed", result: "yield+thinking ok" },
 						},
 					],
 				},
@@ -859,7 +859,7 @@ describe("Drift: thinking blocks round-trip across restart", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "multi-round thinking ok",
+								result: "multi-round thinking ok",
 							},
 						},
 					],
@@ -914,7 +914,7 @@ describe("Drift: thinking blocks round-trip across restart", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "special chars ok" },
+							input: { status: "passed", result: "special chars ok" },
 						},
 					],
 				},

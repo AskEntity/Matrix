@@ -227,7 +227,7 @@ describe("Responses integration: isolated harness", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "shape ok" },
+							input: { status: "passed", result: "shape ok" },
 						},
 					],
 				},
@@ -276,7 +276,7 @@ describe("Responses integration: isolated harness", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "responses restart ok" },
+					input: { status: "passed", result: "responses restart ok" },
 				},
 			],
 		});

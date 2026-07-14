@@ -127,23 +127,23 @@ export function buildMatrixScopeOpts(
 			tracker.updateStatus(node.id, "in_progress");
 		},
 		onDone: (node, tracker, doneArgs) => {
-			// Capture this round's structured result + lessons as a first-class
-			// resultRound (memory-index foundation) BEFORE the status flip becomes
-			// observable — one block per done(), append-only, never overwritten.
-			// doneArgs.result/lessons are pre-normalized by the runtime (readDoneRound);
-			// narrow defensively so a raw doneArgs can never mistype the round.
+			const newStatus = doneArgs.status === "passed" ? "verify" : "failed";
+			// `doneArgs.result` is the round's outcome ("what this round did") — the
+			// SAME string sent to the parent as the completion notice: one value,
+			// both destinations. lessons is independent and pre-normalized. (The
+			// returned MatrixDoneData keeps the internal field name `summary`, which
+			// feeds the persisted done_notified marker.)
 			const result = typeof doneArgs.result === "string" ? doneArgs.result : "";
 			const lessons = Array.isArray(doneArgs.lessons)
 				? (doneArgs.lessons as unknown[]).filter(
 						(l): l is string => typeof l === "string",
 					)
 				: [];
+			// Capture the round BEFORE the status flip becomes observable — one
+			// block per done(), append-only, never overwritten.
 			tracker.appendResultRound(node.id, { result, lessons });
-
-			const newStatus = doneArgs.status === "passed" ? "verify" : "failed";
-			const summary = (doneArgs.summary as string) ?? "";
 			tracker.updateStatus(node.id, newStatus as TaskStatus);
-			return { status: newStatus, summary };
+			return { status: newStatus, summary: result };
 		},
 	};
 }
