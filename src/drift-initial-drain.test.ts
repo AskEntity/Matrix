@@ -240,7 +240,7 @@ describe("Drift exposure: initial queue drain (third codepath)", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "plain text ok" },
+					input: { status: "passed", result: "plain text ok" },
 				},
 			],
 		});
@@ -260,7 +260,7 @@ describe("Drift exposure: initial queue drain (third codepath)", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "restart ok" },
+					input: { status: "passed", result: "restart ok" },
 				},
 			],
 		});
@@ -289,7 +289,7 @@ describe("Drift exposure: initial queue drain (third codepath)", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "image initial ok" },
+					input: { status: "passed", result: "image initial ok" },
 				},
 			],
 		});
@@ -311,7 +311,7 @@ describe("Drift exposure: initial queue drain (third codepath)", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "image restart ok" },
+					input: { status: "passed", result: "image restart ok" },
 				},
 			],
 		});

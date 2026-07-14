@@ -37,7 +37,7 @@ describe("JSONL structural invariants (walker safety)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "yield wake order ok" },
+							input: { status: "passed", result: "yield wake order ok" },
 						},
 					],
 				},

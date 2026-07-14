@@ -139,7 +139,7 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "ok" },
+					input: { status: "passed", result: "ok" },
 				},
 			],
 			stop_reason: "tool_use",
@@ -204,7 +204,7 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},
@@ -297,7 +297,7 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "ok" },
+					input: { status: "passed", result: "ok" },
 				},
 			],
 			stop_reason: "tool_use",
@@ -349,7 +349,7 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "run 1 ok" },
+					input: { status: "passed", result: "run 1 ok" },
 				},
 			],
 			stop_reason: "tool_use",
@@ -380,7 +380,7 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "run 2 ok" },
+					input: { status: "passed", result: "run 2 ok" },
 				},
 			],
 			stop_reason: "tool_use",
@@ -426,7 +426,7 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "ok" },
+					input: { status: "passed", result: "ok" },
 				},
 			],
 			stop_reason: "tool_use",
@@ -487,7 +487,7 @@ describe("Debug snapshot: pre-API-call messages[] persisted to debug/", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},

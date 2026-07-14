@@ -37,7 +37,7 @@ export function createYieldTool() {
  * Configurable done tool factory.
  * Plugin specifies extra params + optional pre-done validation hook.
  *
- * @param opts.extraParams — Additional params (e.g., Matrix adds status + summary)
+ * @param opts.extraParams — Additional params (e.g., Matrix adds status + result)
  * @param opts.description — Custom description (optional)
  * @param opts.beforeDone — Pre-done validation hook. Return error string to reject, null to proceed.
  *   Matrix uses this for: check running children, check git clean.

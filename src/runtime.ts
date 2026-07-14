@@ -94,14 +94,15 @@ export function findInterruptedDonePhase2(events: Event[]):
 	);
 
 	const doneInput = lastDoneCall.input as
-		| { status?: string; result?: string; summary?: string }
+		| { status?: string; result?: string }
 		| undefined;
 	const status =
 		doneInput?.status === "passed" ? ("verify" as const) : ("failed" as const);
-	// `result` is the primary param; `summary` is a deprecated alias. Coalesce
-	// result ?? summary so a crash-recovered done() carries the same outcome
-	// string the live path would have delivered to the parent.
-	const summary = doneInput?.result ?? doneInput?.summary ?? "";
+	// `result` is the round's outcome. `summary` here is the internal
+	// carrier/return-field name (feeds the done_notified marker) — it holds
+	// `result` so a crash-recovered done carries the same string the live path
+	// would have delivered to the parent.
+	const summary = doneInput?.result ?? "";
 
 	if (!hasDoneNotified) {
 		// Phase 2 never completed — need to run it now

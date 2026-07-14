@@ -1825,22 +1825,12 @@ export function buildAllToolDefs() {
 				result: {
 					schema: z
 						.string()
-						.optional()
 						.describe(
 							"What this round ACTUALLY accomplished (if passed) or what went wrong (if failed) — one focused narrative paragraph. " +
-								"This is BOTH sent to your parent as the completion notice AND captured as durable, structured memory on the task; " +
-								"write it for a future agent searching past work, not only for your parent right now.",
+								"Required and non-empty. This is BOTH sent to your parent as the completion notice AND captured as durable, " +
+								"structured memory on the task; write it for a future agent searching past work, not only for your parent right now.",
 						),
-					decl: { kind: "optional" },
-				},
-				summary: {
-					schema: z
-						.string()
-						.optional()
-						.describe(
-							"Deprecated alias for `result` — prefer `result`. Accepted for backward compatibility; if both are given, `result` wins.",
-						),
-					decl: { kind: "optional" },
+					decl: { kind: "explicit" },
 				},
 				lessons: {
 					schema: z
@@ -1855,6 +1845,15 @@ export function buildAllToolDefs() {
 				},
 			},
 			beforeDone: async (args) => {
+				// `result` is required-non-empty: reject a blank/whitespace-only outcome
+				// so the memory index never captures an empty round. (An ABSENT result
+				// is already rejected by the Zod schema before we reach here.)
+				if (!args.result?.trim()) {
+					return (
+						"done() needs a non-empty `result`: state what this round ACTUALLY " +
+						"accomplished (if passed) or what went wrong (if failed)."
+					);
+				}
 				// Matrix-specific: reject done() if worktree has uncommitted changes
 				const projPath = getProjectPath(args.projectId, args.taskId);
 				const gitCheck = await isGitClean(projPath);

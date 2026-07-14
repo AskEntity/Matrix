@@ -408,7 +408,7 @@ describe("Stress: compaction + restart", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "ok" },
+							input: { status: "passed", result: "ok" },
 						},
 					],
 				},
@@ -476,7 +476,7 @@ describe("Stress: multi-child coordination", () => {
 								name: "mcp__mxd__done",
 								input: {
 									status: "passed",
-									summary: `child ${label} survived restart`,
+									result: `child ${label} survived restart`,
 								},
 							},
 						],
@@ -633,7 +633,7 @@ describe("Stress: multi-child coordination", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "all 3 children completed after restart",
+								result: "all 3 children completed after restart",
 							},
 						},
 					],
@@ -766,7 +766,7 @@ describe("Stress: multiple messages during yield", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "all 3 messages consumed sequentially",
+								result: "all 3 messages consumed sequentially",
 							},
 						},
 					],
@@ -857,7 +857,7 @@ describe("Stress: multiple messages during yield", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "message survived",
+								result: "message survived",
 							},
 						},
 					],
@@ -952,7 +952,7 @@ describe("Stress: fork + restart", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "forked child survived restart",
+								result: "forked child survived restart",
 							},
 						},
 					],
@@ -1054,7 +1054,7 @@ describe("Stress: fork + restart", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "fork + restart lifecycle complete",
+								result: "fork + restart lifecycle complete",
 							},
 						},
 					],
@@ -1277,7 +1277,7 @@ describe("Stress: session lifecycle edge cases", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "first done" },
+							input: { status: "passed", result: "first done" },
 						},
 					],
 				},
@@ -1304,7 +1304,7 @@ describe("Stress: session lifecycle edge cases", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "second done" },
+							input: { status: "passed", result: "second done" },
 						},
 					],
 				},
@@ -1315,7 +1315,7 @@ describe("Stress: session lifecycle edge cases", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "third done" },
+							input: { status: "passed", result: "third done" },
 						},
 					],
 				},
@@ -1357,7 +1357,7 @@ describe("Stress: session lifecycle edge cases", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "third done" },
+					input: { status: "passed", result: "third done" },
 				},
 			],
 		});
@@ -1443,7 +1443,7 @@ describe("Stress: session lifecycle edge cases", () => {
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "survived many steps + restart",
+						result: "survived many steps + restart",
 					},
 				},
 			],
@@ -1524,7 +1524,7 @@ describe("Stress: concurrent message delivery", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "all concurrent messages received",
+								result: "all concurrent messages received",
 							},
 						},
 					],
@@ -1616,7 +1616,7 @@ describe("Stress: child restart edge cases", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "child yield restart ok",
+								result: "child yield restart ok",
 							},
 						},
 					],
@@ -1710,7 +1710,7 @@ describe("Stress: child restart edge cases", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "parent done, child yield restart handled",
+								result: "parent done, child yield restart handled",
 							},
 						},
 					],

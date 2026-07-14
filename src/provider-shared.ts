@@ -1889,16 +1889,14 @@ export async function* runProviderLoop(
 				}
 
 				const doneInput = doneToolUse.input as
-					| { status?: string; result?: string; summary?: string }
+					| { status?: string; result?: string }
 					| undefined;
 				doneExitReason =
 					doneInput?.status === "passed" ? "done_passed" : "done_failed";
-				// `result` is the primary param; `summary` is a deprecated alias.
-				// Coalesce result ?? summary — this single value is the round's
-				// outcome: it flows to the parent notification (task_complete +
-				// done_notified) AND to resultRounds.result. `doneSummary` is the
-				// legacy internal carrier name; it now holds the coalesced result.
-				doneSummary = doneInput?.result ?? doneInput?.summary ?? "";
+				// `result` is the round's outcome — it flows to BOTH the parent
+				// notification (task_complete + done_notified) AND resultRounds.result.
+				// `doneSummary` is the legacy internal carrier name; it holds `result`.
+				doneSummary = doneInput?.result ?? "";
 				const cost = adapter.computeCost(
 					model,
 					totalInputTokens,

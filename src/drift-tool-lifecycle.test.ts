@@ -252,7 +252,7 @@ const WAKE_DONE = JSON.stringify({
 		{
 			type: "tool_use",
 			name: "mcp__mxd__done",
-			input: { status: "passed", summary: "prefix validated after restart" },
+			input: { status: "passed", result: "prefix validated after restart" },
 		},
 	],
 });
@@ -1225,7 +1225,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "two tools ok" },
+							input: { status: "passed", result: "two tools ok" },
 						},
 					],
 				},
@@ -1264,7 +1264,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "five tools ok" },
+							input: { status: "passed", result: "five tools ok" },
 						},
 					],
 				},
@@ -1306,7 +1306,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "single image ok" },
+							input: { status: "passed", result: "single image ok" },
 						},
 					],
 				},
@@ -1359,7 +1359,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "3 images ok" },
+							input: { status: "passed", result: "3 images ok" },
 						},
 					],
 				},
@@ -1410,7 +1410,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "mixed ok" },
+							input: { status: "passed", result: "mixed ok" },
 						},
 					],
 				},
@@ -1455,7 +1455,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "error ok" },
+							input: { status: "passed", result: "error ok" },
 						},
 					],
 				},
@@ -1495,7 +1495,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "read_file error ok" },
+							input: { status: "passed", result: "read_file error ok" },
 						},
 					],
 				},
@@ -1546,7 +1546,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "mixed ok" },
+							input: { status: "passed", result: "mixed ok" },
 						},
 					],
 				},
@@ -1588,7 +1588,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "empty ok" },
+							input: { status: "passed", result: "empty ok" },
 						},
 					],
 				},
@@ -1632,7 +1632,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
-								summary: "cancellation queue ok",
+								result: "cancellation queue ok",
 							},
 						},
 					],
@@ -1683,7 +1683,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "queue image ok" },
+							input: { status: "passed", result: "queue image ok" },
 						},
 					],
 				},
@@ -1733,7 +1733,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "multi queue img ok" },
+							input: { status: "passed", result: "multi queue img ok" },
 						},
 					],
 				},
@@ -1795,7 +1795,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "multi+queue ok" },
+							input: { status: "passed", result: "multi+queue ok" },
 						},
 					],
 				},
@@ -1846,7 +1846,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "special chars ok" },
+							input: { status: "passed", result: "special chars ok" },
 						},
 					],
 				},
@@ -1907,7 +1907,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "3 rounds ok" },
+							input: { status: "passed", result: "3 rounds ok" },
 						},
 					],
 				},
@@ -1963,7 +1963,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "kitchen sink ok" },
+							input: { status: "passed", result: "kitchen sink ok" },
 						},
 					],
 				},
@@ -2024,7 +2024,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "restart mid-flow ok" },
+							input: { status: "passed", result: "restart mid-flow ok" },
 						},
 					],
 				},
@@ -2070,7 +2070,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "large output ok" },
+							input: { status: "passed", result: "large output ok" },
 						},
 					],
 				},
@@ -2114,7 +2114,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "protocol content ok" },
+							input: { status: "passed", result: "protocol content ok" },
 						},
 					],
 				},
@@ -2157,7 +2157,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 				{
 					type: "tool_use" as const,
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "10 rounds ok" },
+					input: { status: "passed", result: "10 rounds ok" },
 				},
 			],
 		});
@@ -2223,7 +2223,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "interleaved ok" },
+							input: { status: "passed", result: "interleaved ok" },
 						},
 					],
 				},
@@ -2270,7 +2270,7 @@ describe("Drift: tool lifecycle (tool_use → tool_result)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "tool+idle+wake ok" },
+							input: { status: "passed", result: "tool+idle+wake ok" },
 						},
 					],
 				},

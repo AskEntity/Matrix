@@ -237,7 +237,7 @@ describe("Bug 3: traceId semantics — run-bound vs external", () => {
 						name: "mcp__mxd__done",
 						input: {
 							status: "passed",
-							summary: "trace consistency ok",
+							result: "trace consistency ok",
 						},
 					},
 				],
@@ -284,7 +284,7 @@ describe("Bug 3: R.emit traceId auto-injection from tool handlers", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "clarify trace ok" },
+							input: { status: "passed", result: "clarify trace ok" },
 						},
 					],
 				},

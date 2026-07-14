@@ -984,7 +984,7 @@ describe("walker: full turn sequences", () => {
 			assistantTextEvent("Found files."),
 			toolCallEvent("t2", "mcp__mxd__done", {
 				status: "passed",
-				summary: "found",
+				result: "found",
 			}),
 		];
 		const msgs = eventsToAnthropicMessages(events);
@@ -1024,7 +1024,7 @@ describe("walker: full turn sequences", () => {
 					type: "tool_use",
 					id: "t2",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "found" },
+					input: { status: "passed", result: "found" },
 					caller: { type: "direct" },
 				},
 			],

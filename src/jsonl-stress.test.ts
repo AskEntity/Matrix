@@ -228,7 +228,7 @@ describe("runtime vs recovery: done + other tool in same turn", () => {
 			userMsgEvent("u1", "start"),
 			messagesConsumedEvent(["u1"]),
 			assistantText("wrapping up"),
-			toolCall("tc-done", TOOL_DONE, { status: "passed", summary: "ok" }),
+			toolCall("tc-done", TOOL_DONE, { status: "passed", result: "ok" }),
 		];
 		// buildSessionRepair should skip done-as-last-tool — no repair needed
 		expect(buildSessionRepair(events, "t1")).toBeNull();
@@ -248,7 +248,7 @@ describe("runtime vs recovery: done + other tool in same turn", () => {
 			userMsgEvent("u1", "start"),
 			messagesConsumedEvent(["u1"]),
 			assistantText("wrapping up"),
-			toolCall("tc-done", TOOL_DONE, { status: "passed", summary: "ok" }),
+			toolCall("tc-done", TOOL_DONE, { status: "passed", result: "ok" }),
 			toolCall("tc-bash", "mcp__mxd__bash", { command: "ls" }),
 		];
 		const msgs = eventsToAnthropicMessages(events);
@@ -290,8 +290,8 @@ describe("runtime vs recovery: done + other tool in same turn", () => {
 	test("recovery: 2 done calls same turn → last is intended orphan, first repaired", () => {
 		const events: Event[] = [
 			assistantText("t1"),
-			toolCall("tc-done1", TOOL_DONE, { status: "passed", summary: "a" }),
-			toolCall("tc-done2", TOOL_DONE, { status: "passed", summary: "b" }),
+			toolCall("tc-done1", TOOL_DONE, { status: "passed", result: "a" }),
+			toolCall("tc-done2", TOOL_DONE, { status: "passed", result: "b" }),
 		];
 		const repair = buildSessionRepair(events, "t1");
 		expect(repair).not.toBeNull();
@@ -681,7 +681,7 @@ describe("runtime vs recovery: done state machine 4 combinations", () => {
 			assistantText("finishing"),
 			toolCall("tc-done", TOOL_DONE, {
 				status: "passed",
-				summary: "all done",
+				result: "all done",
 			}),
 		];
 		const result = findInterruptedDonePhase2(events);
@@ -696,7 +696,7 @@ describe("runtime vs recovery: done state machine 4 combinations", () => {
 		const { findInterruptedDonePhase2 } = await import("./runtime.ts");
 		const events: Event[] = [
 			assistantText("finishing"),
-			toolCall("tc-done", TOOL_DONE, { status: "passed", summary: "ok" }),
+			toolCall("tc-done", TOOL_DONE, { status: "passed", result: "ok" }),
 			doneNotifiedEvent("verify", "ok", 1),
 		];
 		const result = findInterruptedDonePhase2(events);
@@ -721,7 +721,7 @@ describe("runtime vs recovery: done state machine 4 combinations", () => {
 		const events: Event[] = [
 			toolCall("tc-done", TOOL_DONE, {
 				status: "failed",
-				summary: "gave up",
+				result: "gave up",
 			}),
 		];
 		const result = findInterruptedDonePhase2(events);
@@ -1444,7 +1444,7 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 			messagesConsumedEvent(["summary-1"], 3),
 			toolCall("tc-bash", "mcp__mxd__bash", {}, 4),
 			toolResult("tc-bash", "mcp__mxd__bash", "ok", { ts: 5 }),
-			toolCall("tc-done", TOOL_DONE, { status: "passed", summary: "ok" }, 6),
+			toolCall("tc-done", TOOL_DONE, { status: "passed", result: "ok" }, 6),
 			toolResult("tc-bash", "mcp__mxd__bash", "DUP POISON", {
 				ts: 7,
 				isError: true,

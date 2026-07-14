@@ -182,7 +182,7 @@ export function twoTurnInstruction(summary: string): string {
 					{
 						type: "tool_use",
 						name: "mcp__mxd__done",
-						input: { status: "passed", summary },
+						input: { status: "passed", result: summary },
 					},
 				],
 			},
@@ -190,14 +190,14 @@ export function twoTurnInstruction(summary: string): string {
 	});
 }
 
-export function singleTurnDoneInstruction(summary: string): string {
+export function singleTurnDoneInstruction(result: string): string {
 	return JSON.stringify({
 		blocks: [
 			{ type: "text", text: "Doing it." },
 			{
 				type: "tool_use",
 				name: "mcp__mxd__done",
-				input: { status: "passed", summary },
+				input: { status: "passed", result },
 			},
 		],
 	});

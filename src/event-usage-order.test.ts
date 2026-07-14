@@ -88,7 +88,7 @@ describe("Bug 2: usage emission order", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "tool-only ok" },
+					input: { status: "passed", result: "tool-only ok" },
 				},
 			],
 		});

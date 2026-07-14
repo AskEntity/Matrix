@@ -128,12 +128,12 @@ export function buildMatrixScopeOpts(
 		},
 		onDone: (node, tracker, doneArgs) => {
 			const newStatus = doneArgs.status === "passed" ? "verify" : "failed";
-			// `doneArgs.summary` is the legacy carrier name; it holds the coalesced
-			// result ?? summary — ONE concept ("what this round did"). This is the
+			// `doneArgs.result` is the round's outcome ("what this round did") — the
 			// SAME string sent to the parent as the completion notice: one value,
-			// both destinations. lessons is independent and pre-normalized.
-			const result =
-				typeof doneArgs.summary === "string" ? doneArgs.summary : "";
+			// both destinations. lessons is independent and pre-normalized. (The
+			// returned MatrixDoneData keeps the internal field name `summary`, which
+			// feeds the persisted done_notified marker.)
+			const result = typeof doneArgs.result === "string" ? doneArgs.result : "";
 			const lessons = Array.isArray(doneArgs.lessons)
 				? (doneArgs.lessons as unknown[]).filter(
 						(l): l is string => typeof l === "string",

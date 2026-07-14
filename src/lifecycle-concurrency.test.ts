@@ -129,7 +129,7 @@ function buildScopeOpts(
 							schema: z.enum(["passed", "failed"]),
 							decl: { kind: "explicit" },
 						},
-						summary: { schema: z.string(), decl: { kind: "explicit" } },
+						result: { schema: z.string(), decl: { kind: "explicit" } },
 					},
 				}),
 			].map((def) => toToolDefinition(def, auth)),
@@ -159,7 +159,7 @@ function doneInstruction(summary = "ok"): string {
 			{
 				type: "tool_use",
 				name: "mcp__mxd__done",
-				input: { status: "passed", summary },
+				input: { status: "passed", result: summary },
 			},
 		],
 	});
@@ -175,7 +175,7 @@ function yieldThenDoneInstruction(): string {
 					{
 						type: "tool_use",
 						name: "mcp__mxd__done",
-						input: { status: "passed", summary: "ok" },
+						input: { status: "passed", result: "ok" },
 					},
 				],
 			},

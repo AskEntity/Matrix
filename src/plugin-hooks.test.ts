@@ -166,7 +166,7 @@ describe("Plugin hooks: cwd persistence", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "cd test" },
+							input: { status: "passed", result: "cd test" },
 						},
 					],
 				},
@@ -262,7 +262,7 @@ describe("Plugin hooks: done_notified spread", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "spread test" },
+					input: { status: "passed", result: "spread test" },
 				},
 			],
 		});
@@ -298,7 +298,7 @@ describe("Plugin hooks: buildSystemPrompt", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "prompt test" },
+					input: { status: "passed", result: "prompt test" },
 				},
 			],
 		});

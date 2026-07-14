@@ -1153,14 +1153,15 @@ export async function runAgentForNode(
 					});
 				} else {
 					// Let plugin update node state on done — returns data for crash-safe
-					// marker. summary (the round's result) + lessons ride along in
-					// doneArgs for the plugin's onDone to append as a resultRound
-					// (memory-index capture). summary ALSO flows to task_complete +
-					// done_notified below — one value, both destinations.
+					// marker. result + lessons ride along in doneArgs for the plugin's
+					// onDone to append as a resultRound (memory-index capture). result
+					// ALSO flows to task_complete + done_notified below — one value,
+					// both destinations. (`agentResult.doneSummary` is the legacy carrier
+					// field name; it holds the done `result`.)
 					const doneArgs = {
 						status:
 							agentResult.exitReason === "done_passed" ? "passed" : "failed",
-						summary: agentResult.doneSummary ?? "",
+						result: agentResult.doneSummary ?? "",
 						lessons: doneLessons,
 					};
 					const doneData = opts.onDone

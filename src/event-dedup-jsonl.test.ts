@@ -381,7 +381,7 @@ describe("Bug 1: direct-enqueue bash bg_complete persisted exactly once", () => 
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "bg one-shot ok" },
+							input: { status: "passed", result: "bg one-shot ok" },
 						},
 					],
 				},
@@ -448,7 +448,7 @@ describe("Bug 1: yield wake bgOrphans persisted exactly once", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "yield bg orphan ok" },
+							input: { status: "passed", result: "yield bg orphan ok" },
 						},
 					],
 				},

@@ -1844,7 +1844,7 @@ describe("done tool", () => {
 
 	async function invokeDoneTool(
 		taskId: string,
-		args: { status: "passed" | "failed"; summary: string },
+		args: { status: "passed" | "failed"; result: string },
 	) {
 		resetResourceRegistry();
 		const { auth } = initMockResourceRegistry({
@@ -1865,7 +1865,7 @@ describe("done tool", () => {
 		tracker.updateStatus(node.id, "in_progress");
 		await invokeDoneTool(node.id, {
 			status: "passed",
-			summary: "All tests pass",
+			result: "All tests pass",
 		});
 		// Phase 1: done() no longer updates status (Phase 2 does that in runAgentForNode)
 		const updated = tracker.getTask(node.id);
@@ -1877,7 +1877,7 @@ describe("done tool", () => {
 		tracker.updateStatus(node.id, "in_progress");
 		await invokeDoneTool(node.id, {
 			status: "failed",
-			summary: "Cannot resolve type errors",
+			result: "Cannot resolve type errors",
 		});
 		// Phase 1: done() no longer updates status (Phase 2 does that in runAgentForNode)
 		const updated = tracker.getTask(node.id);
@@ -1991,7 +1991,7 @@ describe("done tool", () => {
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
 		await (doneTool as any).handler({
 			status: "passed",
-			summary: "All tests pass",
+			result: "All tests pass",
 		});
 
 		// Queue should be closed
@@ -2009,7 +2009,7 @@ describe("done tool", () => {
 
 		const result = await invokeDoneTool(parent.id, {
 			status: "passed",
-			summary: "All done",
+			result: "All done",
 		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain("Cannot call done()");
@@ -2030,7 +2030,7 @@ describe("done tool", () => {
 
 		const result = await invokeDoneTool(parent.id, {
 			status: "passed",
-			summary: "All done",
+			result: "All done",
 		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain("Cannot call done()");
@@ -2049,7 +2049,7 @@ describe("done tool", () => {
 
 		const result = await invokeDoneTool(parent.id, {
 			status: "passed",
-			summary: "All done",
+			result: "All done",
 		});
 		expect(result.isError).toBeFalsy();
 	});
@@ -2066,7 +2066,7 @@ describe("done tool", () => {
 
 		const result = await invokeDoneTool(parent.id, {
 			status: "passed",
-			summary: "All done",
+			result: "All done",
 		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain("Worker A");
@@ -2093,7 +2093,7 @@ describe("done tool", () => {
 
 		const result = await invokeDoneTool(node.id, {
 			status: "passed",
-			summary: "done",
+			result: "done",
 		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain("uncommitted changes");
@@ -2112,7 +2112,7 @@ describe("done tool", () => {
 
 		const result = await invokeDoneTool(node.id, {
 			status: "passed",
-			summary: "done",
+			result: "done",
 		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain("uncommitted changes");
@@ -2131,7 +2131,7 @@ describe("done tool", () => {
 
 		const result = await invokeDoneTool(node.id, {
 			status: "passed",
-			summary: "done",
+			result: "done",
 		});
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain("README.md");
@@ -2148,7 +2148,7 @@ describe("done tool", () => {
 
 		const result = await invokeDoneTool(node.id, {
 			status: "failed",
-			summary: "failed with wip",
+			result: "failed with wip",
 		});
 		// failed with dirty worktree is STILL rejected — failed ≠ abandon state.
 		// agent must explicitly decide: commit, discard, or yield for direction.
@@ -2166,7 +2166,7 @@ describe("done tool", () => {
 
 		const result = await invokeDoneTool(node.id, {
 			status: "passed",
-			summary: "ok",
+			result: "ok",
 		});
 		expect(result.isError).toBeFalsy();
 	});
@@ -2182,7 +2182,7 @@ describe("done tool", () => {
 		// First call: should reject
 		const rejected = await invokeDoneTool(node.id, {
 			status: "passed",
-			summary: "ok",
+			result: "ok",
 		});
 		expect(rejected.isError).toBe(true);
 
@@ -2193,7 +2193,7 @@ describe("done tool", () => {
 		// Second call: should accept
 		const accepted = await invokeDoneTool(node.id, {
 			status: "passed",
-			summary: "ok",
+			result: "ok",
 		});
 		expect(accepted.isError).toBeFalsy();
 		await cleanWorktree();
@@ -2208,7 +2208,7 @@ describe("done tool", () => {
 
 		const result = await invokeDoneTool(node.id, {
 			status: "passed",
-			summary: "x",
+			result: "x",
 		});
 		expect(result.isError).toBe(true);
 		const text = result.content[0].text as string;
@@ -2568,7 +2568,7 @@ describe("Event deterministic verification", () => {
 						{
 							id: "tu_1",
 							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "All done" },
+							input: { status: "passed", result: "All done" },
 						},
 					],
 				}),
@@ -2648,7 +2648,7 @@ describe("Event deterministic verification", () => {
 							{
 								id: "tu_err",
 								name: "mcp__mxd__done",
-								input: { status: "failed", summary: "Error" },
+								input: { status: "failed", result: "Error" },
 							},
 						],
 					}),

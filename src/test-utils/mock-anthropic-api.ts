@@ -19,7 +19,7 @@
  * ```json
  * {"turns": [
  *   {"blocks": [{"type": "text", "text": "Let me check."}, {"type": "tool_use", "name": "mcp__mxd__bash", "input": {"command": "echo hi"}}]},
- *   {"blocks": [{"type": "text", "text": "Done!"}, {"type": "tool_use", "name": "mcp__mxd__done", "input": {"status": "passed", "summary": "ok"}}]}
+ *   {"blocks": [{"type": "text", "text": "Done!"}, {"type": "tool_use", "name": "mcp__mxd__done", "input": {"status": "passed", "result": "ok"}}]}
  * ]}
  * ```
  *
