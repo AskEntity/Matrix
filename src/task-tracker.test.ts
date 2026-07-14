@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskTracker } from "./task-tracker.ts";
-import type { TaskNode } from "./types.ts";
+import { stripSession, type TaskNode } from "./types.ts";
 
 describe("TaskTracker", () => {
 	let tempDir: string;
@@ -798,5 +798,117 @@ describe("TaskTracker: node-model generalization", () => {
 		const reopened = new TaskTracker(path);
 		const wasFresh2 = await reopened.load();
 		expect(wasFresh2).toBe(false);
+	});
+});
+
+describe("TaskTracker: resultRounds (memory-index capture)", () => {
+	let tempDir: string;
+	let tracker: TaskTracker;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-tracker-rounds-"));
+		tracker = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker.load();
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("resultRounds is undefined until the first append", () => {
+		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
+		expect(task.resultRounds).toBeUndefined();
+		expect("resultRounds" in task).toBe(false);
+	});
+
+	test("appendResultRound appends one block", () => {
+		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
+		tracker.appendResultRound(task.id, {
+			result: "did X",
+			lessons: ["L1", "L2"],
+		});
+		expect(tracker.getTask(task.id)?.resultRounds).toEqual([
+			{ result: "did X", lessons: ["L1", "L2"] },
+		]);
+	});
+
+	test("appendResultRound accepts an empty lessons list", () => {
+		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
+		tracker.appendResultRound(task.id, { result: "outcome", lessons: [] });
+		expect(tracker.getTask(task.id)?.resultRounds).toEqual([
+			{ result: "outcome", lessons: [] },
+		]);
+	});
+
+	test("appendResultRound APPENDS across rounds — never overwrites the first", () => {
+		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
+		// Simulate two done() rounds (e.g. reawaken → re-done).
+		tracker.appendResultRound(task.id, { result: "round 1", lessons: ["a"] });
+		tracker.appendResultRound(task.id, {
+			result: "round 2",
+			lessons: ["b", "c"],
+		});
+		// BOTH blocks present, in order — round 1 was NOT overwritten.
+		expect(tracker.getTask(task.id)?.resultRounds).toEqual([
+			{ result: "round 1", lessons: ["a"] },
+			{ result: "round 2", lessons: ["b", "c"] },
+		]);
+	});
+
+	test("appendResultRound bumps updatedAt", () => {
+		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
+		const before = task.updatedAt;
+		// Ensure the clock advances at least 1ms.
+		const t0 = Date.now();
+		while (Date.now() === t0) {
+			/* spin */
+		}
+		tracker.appendResultRound(task.id, { result: "r", lessons: [] });
+		expect(tracker.getTask(task.id)?.updatedAt).not.toBe(before);
+	});
+
+	test("appendResultRound throws on a general (non-task) node", () => {
+		const folder = tracker.addGeneralNode(
+			"Group",
+			tracker.rootNodeId,
+			"folder",
+		);
+		expect(() =>
+			tracker.appendResultRound(folder.id, { result: "x", lessons: [] }),
+		).toThrow(/non-task node/);
+	});
+
+	test("appendResultRound throws on an unknown node", () => {
+		expect(() =>
+			tracker.appendResultRound("nonexistent-12345678", {
+				result: "x",
+				lessons: [],
+			}),
+		).toThrow("Node not found");
+	});
+
+	test("resultRounds round-trip through save/load", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
+		tracker.appendResultRound(task.id, { result: "r1", lessons: ["x"] });
+		tracker.appendResultRound(task.id, { result: "r2", lessons: [] });
+		await tracker.save();
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+		expect(tracker2.getTask(task.id)?.resultRounds).toEqual([
+			{ result: "r1", lessons: ["x"] },
+			{ result: "r2", lessons: [] },
+		]);
+	});
+
+	test("stripSession (the serialization get_task/get_tree use) preserves resultRounds", () => {
+		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
+		tracker.appendResultRound(task.id, { result: "r", lessons: ["l"] });
+		const node = tracker.getTask(task.id);
+		if (!node) throw new Error("node missing");
+		// get_task / get_tree return stripSession(node) — resultRounds must survive.
+		expect(stripSession(node).resultRounds).toEqual([
+			{ result: "r", lessons: ["l"] },
+		]);
 	});
 });

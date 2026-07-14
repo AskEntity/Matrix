@@ -110,6 +110,19 @@ export interface BaseTaskNode {
 }
 
 /**
+ * One done()-round's structured outcome, captured for the memory index.
+ * `result` is this round's outcome narrative (what was actually accomplished,
+ * or what went wrong on a failed done). `lessons` are general, reusable
+ * lessons/pitfalls discovered this round — each written to stand alone.
+ */
+export interface ResultRound {
+	/** What was accomplished this round (passed) or what went wrong (failed). */
+	result: string;
+	/** General, reusable lessons/pitfalls from this round. Empty when none. */
+	lessons: string[];
+}
+
+/**
  * Matrix-specific task node — extends base with coding-IDE fields.
  * This is what Matrix's plugin operates on. Other plugins define their own extends.
  */
@@ -128,6 +141,14 @@ export interface TaskNode extends BaseTaskNode {
 	editedBy: "user" | "agent";
 	/** Optional color label for visual categorization. */
 	color?: string;
+	/**
+	 * Structured result + lessons captured at each done() call. ONE block is
+	 * appended per done() (never overwritten) — a single-done task has one entry,
+	 * a task done()'d N times (reawaken → re-done) has N entries in call order.
+	 * Absent until the first done(). Foundation for the memory index (search over
+	 * past decisions/lessons); kept independent of the `summary` shown to parents.
+	 */
+	resultRounds?: ResultRound[];
 }
 
 /** Any node in the task tree — either a launchable task or a plugin-defined general node. */

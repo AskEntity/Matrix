@@ -12377,3 +12377,166 @@ describe("Integration: bash tiered output contract", () => {
 		}
 	}, 20000);
 });
+
+describe("Integration: done() captures structured result/lessons (resultRounds)", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("done() with result + lessons lands them on node.resultRounds", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Finishing." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: {
+						status: "passed",
+						summary: "did the thing",
+						result: "Implemented X via A, B, C. All tests green.",
+						lessons: [
+							"Foo's bar option only applies on create, not overwrite",
+							"Baz needs an explicit flush before read",
+						],
+					},
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const root = tracker.getTask(tracker.rootNodeId);
+		expect(root?.resultRounds).toEqual([
+			{
+				result: "Implemented X via A, B, C. All tests green.",
+				lessons: [
+					"Foo's bar option only applies on create, not overwrite",
+					"Baz needs an explicit flush before read",
+				],
+			},
+		]);
+	}, 20000);
+
+	test("done() without result/lessons still appends one (empty) round — back-compat", async () => {
+		ctx = await setupTestContext();
+
+		// Legacy-shaped done(): only status + summary, no result/lessons.
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Done." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "legacy-style done" },
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const root = tracker.getTask(tracker.rootNodeId);
+		// One block per done(), even when result/lessons are omitted.
+		expect(root?.resultRounds).toEqual([{ result: "", lessons: [] }]);
+	}, 20000);
+
+	test("two done() rounds append two blocks in order — first is never overwritten", async () => {
+		ctx = await setupTestContext();
+
+		const round1 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Round one." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: {
+						status: "passed",
+						summary: "s1",
+						result: "round 1 result",
+						lessons: ["l1"],
+					},
+				},
+			],
+		});
+		expect((await startAgent(ctx, round1)).status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Reawaken the done root with a new message → it runs again → done() again.
+		const round2 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Round two." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: {
+						status: "passed",
+						summary: "s2",
+						result: "round 2 result",
+						lessons: ["l2a", "l2b"],
+					},
+				},
+			],
+		});
+		expect((await sendMessage(ctx, round2)).status).toBe(200);
+
+		// Root was "verify"; the message relaunches it: verify → in_progress → verify.
+		// Poll for in_progress first so waitForDone doesn't return the stale first verify.
+		const start = Date.now();
+		while (Date.now() - start < 5000) {
+			if (tracker.getTask(rootNodeId)?.status === "in_progress") break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(await waitForDone(ctx, 20000)).toBe("verify");
+
+		// Both rounds present, in order — round 1 survived the second done().
+		expect(tracker.getTask(rootNodeId)?.resultRounds).toEqual([
+			{ result: "round 1 result", lessons: ["l1"] },
+			{ result: "round 2 result", lessons: ["l2a", "l2b"] },
+		]);
+	}, 30000);
+
+	test("failed done() also appends its round", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Giving up." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: {
+						status: "failed",
+						summary: "blocked",
+						result: "Could not resolve the upstream 500s.",
+						lessons: ["The retry budget is exhausted after 5 attempts"],
+					},
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("failed");
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const root = tracker.getTask(tracker.rootNodeId);
+		expect(root?.resultRounds).toEqual([
+			{
+				result: "Could not resolve the upstream 500s.",
+				lessons: ["The retry budget is exhausted after 5 attempts"],
+			},
+		]);
+	}, 20000);
+});

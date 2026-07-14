@@ -8,6 +8,7 @@ import {
 	type EventSpec,
 	findOrphanedBackgroundProcesses,
 	findUnconsumedMessages,
+	readDoneRound,
 	type SessionConfigEvent,
 } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
@@ -1124,12 +1125,24 @@ export async function runAgentForNode(
 			if (currentNode) {
 				const eventStore = getEventStore(ctx, project.id);
 				let hasLateMessages = false;
-				if (!isRoot && eventStore.has(nodeId)) {
+				// This round's structured result/lessons, read from the persisted
+				// done() tool_call input (see readDoneRound). Flush first so the
+				// tool_call is durable, then read — done for root too (root done()s
+				// are captured), not only children. The plugin's onDone hook persists
+				// it via doneArgs. Absent fields → empty round (one block per done()).
+				let doneRound: { result: string; lessons: string[] } = {
+					result: "",
+					lessons: [],
+				};
+				if (eventStore.has(nodeId)) {
 					await eventStore.flushSession(nodeId);
 					const events = eventStore.readActive(nodeId);
-					const unconsumed = findUnconsumedMessages(events);
-					if (unconsumed.length > 0) {
-						hasLateMessages = true;
+					doneRound = readDoneRound(events);
+					if (!isRoot) {
+						const unconsumed = findUnconsumedMessages(events);
+						if (unconsumed.length > 0) {
+							hasLateMessages = true;
+						}
 					}
 				}
 
@@ -1141,11 +1154,15 @@ export async function runAgentForNode(
 						);
 					});
 				} else {
-					// Let plugin update node state on done — returns data for crash-safe marker
+					// Let plugin update node state on done — returns data for crash-safe
+					// marker. result/lessons ride along in doneArgs for the plugin's
+					// onDone to append as a resultRound (memory-index capture).
 					const doneArgs = {
 						status:
 							agentResult.exitReason === "done_passed" ? "passed" : "failed",
 						summary: agentResult.doneSummary ?? "",
+						result: doneRound.result,
+						lessons: doneRound.lessons,
 					};
 					const doneData = opts.onDone
 						? (opts.onDone(currentNode, tracker, doneArgs) ?? doneArgs)

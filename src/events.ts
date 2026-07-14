@@ -525,6 +525,37 @@ export function findOrphanedBackgroundProcesses(
 	return orphans;
 }
 
+/**
+ * Extract this round's structured result + lessons from the LAST done()
+ * tool_call in a slice of events, reading directly from the persisted tool_call
+ * `input` (the exact object the agent passed to done()). No AgentResult plumbing
+ * — the memory-index capture reads from the JSONL, the single source of truth.
+ *
+ * Defaults keep the round well-formed when the agent omitted a field:
+ * `result` → "" when absent/non-string; `lessons` → [] when absent, dropping any
+ * non-string entries. A done() with no result/lessons still yields an (empty)
+ * round so the invariant "one block per done()" holds.
+ *
+ * Returns the empty round when there is no done() tool_call at all.
+ */
+export function readDoneRound(events: Event[]): {
+	result: string;
+	lessons: string[];
+} {
+	let lastDoneInput: Record<string, unknown> | undefined;
+	for (const e of events) {
+		if (e.type === "tool_call" && e.tool === TOOL_DONE) {
+			lastDoneInput = e.input;
+		}
+	}
+	const result =
+		typeof lastDoneInput?.result === "string" ? lastDoneInput.result : "";
+	const lessons = Array.isArray(lastDoneInput?.lessons)
+		? lastDoneInput.lessons.filter((l): l is string => typeof l === "string")
+		: [];
+	return { result, lessons };
+}
+
 // ── JSONL Repair: truncate-and-rebuild ──
 
 type ToolCallEvent = Extract<Event, { type: "tool_call" }>;

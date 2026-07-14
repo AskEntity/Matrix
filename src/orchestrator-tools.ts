@@ -1830,6 +1830,26 @@ export function buildAllToolDefs() {
 						),
 					decl: { kind: "explicit" },
 				},
+				result: {
+					schema: z
+						.string()
+						.optional()
+						.describe(
+							"What you ACTUALLY accomplished this round (if passed) or what went wrong (if failed) — one focused narrative paragraph. " +
+								"This is captured as durable, structured memory ON the task; write it for a future agent searching past work, not just for your parent right now.",
+						),
+					decl: { kind: "optional" },
+				},
+				lessons: {
+					schema: z
+						.array(z.string())
+						.optional()
+						.describe(
+							"General, reusable lessons or pitfalls discovered this round. Write each to stand ALONE without the task's name " +
+								'(e.g. "X\'s Y option only applies on file CREATE, not overwrite"). Omit or pass [] if there are none.',
+						),
+					decl: { kind: "optional" },
+				},
 			},
 			beforeDone: async (args) => {
 				// Matrix-specific: reject done() if worktree has uncommitted changes
