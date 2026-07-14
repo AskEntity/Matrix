@@ -3116,7 +3116,6 @@ Supersedes the uncertainty in the two entries above. Fable 5 launched 2026-06-09
 Mythos-class with safeguard layer; classifiers route cybersecurity/bio-chem/distillation
 requests to a guarded path — the anti-distillation reading was correct as motive).
 
-<<<<<<< HEAD
 ## FIX-8 (2026-06-10) — EventStore truncation safety: malformed-line index + write-queue serialization
 
 Two EventStore bugs that amplify corruption during crash recovery.
@@ -3935,3 +3934,40 @@ tool desc). Tiny, one-time, self-correcting.
 `integration.test.ts` "done() result/lessons capture (resultRounds)" (7): result+lessons, result-no-lessons,
 **NO-result→REJECTED (no empty round)**, **whitespace-result→REJECTED (steering msg)**, two-round order,
 failed, byte-identical parent-child. Tracker unit tests unchanged.
+
+## InputBar quote-insert scroll-to-caret + textarea height/scroll rAF ordering (2026-07-14)
+
+Bug: after "Ask Matrix" select-to-quote prepends a markdown blockquote into the
+InputBar and moves the caret to the END, a LONG quote overflowed the textarea's
+`max-height: 120px; overflow-y: auto` cap — the visible region showed the quote
+(top), the caret line (bottom) stayed below the fold → user typed blind.
+
+Fix (`.mxd/plugin/web/components/InputBar.tsx`, the quote-apply effect's rAF ONLY —
+`quote.ts insertQuote` is pure + correct, untouched): after caret-to-end, scroll to
+the caret via `el.scrollTop = el.scrollHeight` (browser clamps to the max offset →
+bottom, which is where the caret sits after a quote insert).
+
+⚠️ ORDER IS LOAD-BEARING: the capped auto-grow height recompute (`adjustTextareaHeight`)
+MUST run BEFORE reading `scrollHeight`/setting `scrollTop`, and BOTH inside the SAME
+rAF. Reading scrollHeight before the new height applies yields a stale value → wrong
+scroll. Do NOT rely on the separate `[prompt]` resize effect having run before the
+rAF — React 18 flushes passive effects asynchronously; rAF-vs-passive-effect ordering
+is NOT guaranteed. rAF body = applyHeight() → focus() → setSelectionRange(end) →
+scrollTop=scrollHeight.
+
+Seam: `focusCaretAndScrollToEnd(el, caret, applyHeight)` (exported from InputBar.tsx)
+encapsulates that exact order; unit-testable against a fake element (no live layout).
+
+Tests (`web/InputBar-quote.test.tsx`): 3 pure seam tests (scroll-to-bottom; the
+stale-height guard = applyHeight mutates scrollHeight and we assert the POST value;
+fits-the-cap) + 1 component test (mock `scrollHeight` via Object.defineProperty=500,
+fire quoteRequest, assert `scrollTop===500` after rAF — happy-dom stores scrollTop
+unclamped, same pattern as the existing ActivityLog/Plugin scroll tests).
+Mutation-verified: removing `scrollTop=scrollHeight` fails exactly the 4 scroll
+tests; the 4 insertion tests stay green.
+
+biome gotcha: referencing the hoisted `adjustTextareaHeight` inside the effect's rAF
+trips `useExhaustiveDependencies` (ERROR-level, not warning). Adding it to deps would
+re-fire the insert every render (new fn identity each render) — a `biome-ignore` on
+the effect is the correct fix, matching the codebase convention. No CSS/i18n change
+(textarea was already capped+scrollable; fix is purely JS scroll).

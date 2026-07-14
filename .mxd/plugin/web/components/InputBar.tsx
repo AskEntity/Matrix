@@ -17,6 +17,41 @@ export interface QuoteRequest {
 	seq: number;
 }
 
+/**
+ * Minimal textarea surface the caret-scroll seam touches. `HTMLTextAreaElement`
+ * satisfies it structurally; tests pass a fake that supplies `scrollHeight`
+ * without a real layout engine (happy-dom does no layout).
+ */
+export interface CaretScrollTarget {
+	focus(): void;
+	setSelectionRange(start: number, end: number): void;
+	readonly scrollHeight: number;
+	scrollTop: number;
+}
+
+/**
+ * After a programmatic insert (select-to-quote), place the caret at `caret` and
+ * scroll a capped-height, scrollable textarea so the caret stays visible. A
+ * quote insert leaves the caret at the END of the draft, so we scroll to the
+ * bottom (`scrollTop = scrollHeight`; the browser clamps to the max offset).
+ *
+ * ORDER IS LOAD-BEARING: `applyHeight()` — which recomputes and applies the
+ * textarea's capped auto-grow height — MUST run first. Reading `scrollHeight`
+ * before the new height is applied yields a stale value and the scroll lands
+ * wrong: a long quote overflows the cap and the typing line stays below the
+ * fold (the reported bug).
+ */
+export function focusCaretAndScrollToEnd(
+	el: CaretScrollTarget,
+	caret: number,
+	applyHeight: () => void,
+): void {
+	applyHeight();
+	el.focus();
+	el.setSelectionRange(caret, caret);
+	el.scrollTop = el.scrollHeight;
+}
+
 function draftKey(nodeId: string | null) {
 	return nodeId ? `mxd-prompt-draft:${nodeId}` : "mxd-prompt-draft";
 }
@@ -85,7 +120,10 @@ export const InputBar = memo(function InputBar({
 	// Select-to-quote: prepend the quoted selection to the draft and focus the
 	// textarea with the cursor at the end so the user types their question
 	// after the quote. Each request has a fresh seq, so quoting the same text
-	// twice still fires.
+	// twice still fires. After the caret is placed at the end, scroll the
+	// (120px-capped, scrollable) textarea to the caret so a long quote doesn't
+	// hide the typing line below the fold.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: adjustTextareaHeight is a hoisted non-reactive local; keying on quoteRequest is intentional (listing it would re-fire the insert every render)
 	useEffect(() => {
 		if (!quoteRequest) return;
 		const next = insertQuote(promptRef.current, quoteRequest.text);
@@ -93,8 +131,9 @@ export const InputBar = memo(function InputBar({
 		requestAnimationFrame(() => {
 			const el = textareaRef.current;
 			if (!el) return;
-			el.focus();
-			el.setSelectionRange(next.length, next.length);
+			// Apply the capped height FIRST so scrollHeight is fresh, then
+			// caret-to-end + scroll-to-caret (see focusCaretAndScrollToEnd).
+			focusCaretAndScrollToEnd(el, next.length, adjustTextareaHeight);
 		});
 	}, [quoteRequest, setPromptAndRef]);
 
