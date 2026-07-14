@@ -5,9 +5,11 @@
  *
  * Covers:
  *   - quote into an empty draft (+ focus, cursor at end)
+ *   - a long quote scrolls the textarea to the caret (not stuck at the top)
  *   - quote PREPENDED to an existing draft (draft preserved)
  *   - same text quoted twice (seq bump) applies twice
  *   - no quoteRequest → draft untouched
+ *   - focusCaretAndScrollToEnd seam: order (apply height → caret → scroll)
  */
 
 import {
@@ -113,6 +115,27 @@ describe("InputBar quote insertion", () => {
 		expect(textarea.selectionStart).toBe(textarea.value.length);
 	});
 
+	test("a long quote scrolls the textarea to the caret (bottom), not stuck at the top", async () => {
+		const { textarea, rerender } = await renderInputBar();
+		// happy-dom does no layout; emulate a quote that overflows the 120px
+		// cap so the caret (below the quote) would otherwise be off-screen.
+		Object.defineProperty(textarea, "scrollHeight", {
+			configurable: true,
+			value: 500,
+		});
+
+		rerender({
+			quoteRequest: { text: "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8", seq: 1 },
+		});
+		await waitFor(() => textarea.value !== "");
+		await waitFor(() => document.activeElement === textarea);
+		// rAF ran: caret at the end AND scrolled to the bottom so the typing
+		// line is visible (scrollTop = scrollHeight). Without the fix scrollTop
+		// stays 0 and this times out.
+		await waitFor(() => textarea.scrollTop === 500);
+		expect(textarea.selectionStart).toBe(textarea.value.length);
+	});
+
 	test("quote is prepended to an existing draft, draft preserved below", async () => {
 		// Pre-seed the draft the way InputBar restores it (localStorage)
 		localStorage.setItem("mxd-prompt-draft:node-quote-test", "my question");
@@ -142,5 +165,65 @@ describe("InputBar quote insertion", () => {
 		const { textarea } = await renderInputBar();
 		await new Promise((r) => setTimeout(r, 30));
 		expect(textarea.value).toBe("typed draft");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// focusCaretAndScrollToEnd — the caret-scroll seam (no live layout needed;
+// the fake supplies scrollHeight). happy-dom can't exercise real scroll, so
+// the ORDER (apply height → caret → scroll) is asserted against a fake.
+// ---------------------------------------------------------------------------
+
+describe("focusCaretAndScrollToEnd (caret-scroll seam)", () => {
+	function makeFake(scrollHeight: number) {
+		const calls: string[] = [];
+		const el = {
+			scrollHeight,
+			scrollTop: 0,
+			focus() {
+				calls.push("focus");
+			},
+			setSelectionRange(start: number, end: number) {
+				calls.push(`caret:${start}-${end}`);
+			},
+		};
+		return { el, calls };
+	}
+
+	test("scrolls to the bottom and places the caret at the given end", async () => {
+		const { focusCaretAndScrollToEnd } = await import(
+			"../.mxd/plugin/web/components/InputBar.tsx"
+		);
+		const { el, calls } = makeFake(500);
+		focusCaretAndScrollToEnd(el, 42, () => {});
+		// scrollTop = scrollHeight → the caret-at-end is scrolled into view.
+		expect(el.scrollTop).toBe(500);
+		// focus happens before the caret is set; scroll is last.
+		expect(calls).toEqual(["focus", "caret:42-42"]);
+	});
+
+	test("applyHeight runs BEFORE scrollHeight is read (stale-height guard)", async () => {
+		const { focusCaretAndScrollToEnd } = await import(
+			"../.mxd/plugin/web/components/InputBar.tsx"
+		);
+		// The capped-height recompute changes layout: applyHeight grows
+		// scrollHeight 0 → 500. If we scrolled before applyHeight, scrollTop
+		// would stay 0 (stale) and the caret would sit below the fold — the bug.
+		const fake = makeFake(0);
+		focusCaretAndScrollToEnd(fake.el, 10, () => {
+			fake.el.scrollHeight = 500;
+		});
+		expect(fake.el.scrollTop).toBe(500);
+	});
+
+	test("content that fits the cap: scrollTop follows scrollHeight (browser clamps)", async () => {
+		const { focusCaretAndScrollToEnd } = await import(
+			"../.mxd/plugin/web/components/InputBar.tsx"
+		);
+		const { el } = makeFake(20);
+		focusCaretAndScrollToEnd(el, 5, () => {});
+		// Helper always assigns scrollHeight; a real browser clamps a
+		// non-overflowing textarea to 0. Here the fake stores the raw value.
+		expect(el.scrollTop).toBe(20);
 	});
 });
