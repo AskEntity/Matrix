@@ -1822,21 +1822,23 @@ export function buildAllToolDefs() {
 						.describe("Whether the task passed or failed"),
 					decl: { kind: "explicit" },
 				},
-				summary: {
-					schema: z
-						.string()
-						.describe(
-							"Brief summary of what was accomplished (if passed) or what went wrong (if failed)",
-						),
-					decl: { kind: "explicit" },
-				},
 				result: {
 					schema: z
 						.string()
 						.optional()
 						.describe(
-							"What you ACTUALLY accomplished this round (if passed) or what went wrong (if failed) — one focused narrative paragraph. " +
-								"This is captured as durable, structured memory ON the task; write it for a future agent searching past work, not just for your parent right now.",
+							"What this round ACTUALLY accomplished (if passed) or what went wrong (if failed) — one focused narrative paragraph. " +
+								"This is BOTH sent to your parent as the completion notice AND captured as durable, structured memory on the task; " +
+								"write it for a future agent searching past work, not only for your parent right now.",
+						),
+					decl: { kind: "optional" },
+				},
+				summary: {
+					schema: z
+						.string()
+						.optional()
+						.describe(
+							"Deprecated alias for `result` — prefer `result`. Accepted for backward compatibility; if both are given, `result` wins.",
 						),
 					decl: { kind: "optional" },
 				},
@@ -1845,7 +1847,8 @@ export function buildAllToolDefs() {
 						.array(z.string())
 						.optional()
 						.describe(
-							"General, reusable lessons or pitfalls discovered this round. Write each to stand ALONE without the task's name " +
+							"General, reusable lessons or pitfalls discovered this round — SEPARATE from `result` (what you did). " +
+								"Write each to stand ALONE without the task's name " +
 								'(e.g. "X\'s Y option only applies on file CREATE, not overwrite"). Omit or pass [] if there are none.',
 						),
 					decl: { kind: "optional" },

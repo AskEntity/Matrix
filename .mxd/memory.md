@@ -3815,3 +3815,59 @@ overwhelming majority) captures correctly.
   events store the mcp-prefixed name, same as `findInterruptedDonePhase2`).
 - `appendResultRound` must NOT use `(node.resultRounds ??= []).push(x)` — biome
   `noAssignInExpressions` errors. Use `if (!node.resultRounds) node.resultRounds = []; ...push`.
+
+## Memory-index Step 1.1: unify done() summary+result into ONE concept `result` (summary=deprecated alias) (2026-07-14)
+
+SUPERSEDES the Step-1 entry's "kept BOTH summary and result additively / NO fallback" decision.
+The user identified that `summary` and `result` said the SAME thing ("成果 / what this round did") —
+only `lessons` was genuinely new. So Step 1 left a redundancy. This collapses them into ONE concept.
+
+### End state — two concepts on done(): `result` + `lessons`
+- **`result`** (optional, PRIMARY): "what this round accomplished (passed) / went wrong (failed)".
+  ONE value that flows to BOTH (a) the parent notification (task_complete `output` + done_notified
+  marker) AND (b) `resultRounds.result`. Byte-identical in both places (same string).
+- **`summary`** (optional, DEPRECATED ALIAS): coalesced `result ?? summary`. Kept so every
+  existing/frozen `done(summary=...)` caller + test is 100% untouched (zero regression). Declared
+  in the schema (not just tolerated) so it's robust even if tool schemas ever become strict; marked
+  deprecated in its description so new agents use `result`.
+- **`lessons`** (optional): unchanged, independent → `resultRounds.lessons`.
+
+### Why PRIMARY=`result` (not keep param named `summary`)
+The tool description is agent-facing on every done(); it must name the real concept (`result`,
+matching the field `resultRounds.result`), not the legacy `summary` we're retiring. Leaving the
+primary param `summary` while the field/concept is `result` re-seeds the exact "two names for one
+thing" confusion this change kills. The alias makes the clean name zero-cost on back-compat.
+
+### Coalesce sites (both read the done tool_call input for the "what I did" value)
+- `provider-shared.ts` (~1896, live done): `doneSummary = doneInput?.result ?? doneInput?.summary ?? ""`.
+  `doneInput` type gained `result?`. `doneSummary` is the LEGACY internal carrier name — it now holds
+  the coalesced result (NOT renamed to doneResult; that's a ~9-buildResult-site churn, deferred —
+  flagged to orchestrator).
+- `runtime.ts findInterruptedDonePhase2` (crash-recovery): same coalesce, so a crash-recovered done
+  carries the same outcome string the live path would have delivered.
+
+### How resultRounds.result gets the value (one value, both destinations)
+`doneSummary` (coalesced) → `AgentResult.doneSummary` → agent-lifecycle Phase 2 `doneArgs.summary`
+→ (a) `createTaskComplete(..., agentResult.doneSummary)` = parent notification, AND (b) Matrix
+`onDone` sets `resultRounds.result = doneArgs.summary`. SAME variable → byte-identical.
+`lessons` still read from JSONL via `readDoneLessons(events)` (renamed from Step-1 `readDoneRound`,
+now returns just `string[]` — result no longer needs a JSONL read since it reuses the plumbed summary).
+
+### Enforcement note (forced relaxation)
+Step 1 had `summary` REQUIRED. For the alias to work through Zod, `result` MUST be optional (a frozen
+summary-only call must pass validation), and `summary` is also optional — so a `done()` with NEITHER
+now passes Zod → empty round `{result:"", lessons:[]}` (previously summary-required blocked this).
+This relaxation is FORCED by "primary=result + summary-alias + zero-regression-on-frozen". No beforeDone
+"at least one required" check added (kept minimal; flagged to orchestrator).
+
+### Zod strips unknown keys (why frozen callers are safe)
+`z.object(inputSchema).safeParse` (tool-execution.ts) has NO `.strict()` → unknown keys are STRIPPED,
+not rejected. So even a caller passing an undeclared key is fine. Declaring `summary` is belt-and-braces.
+
+### Tests
+- `integration.test.ts` "done() result/lessons capture — unified result concept" (8): result+lessons,
+  result-no-lessons, **deprecated summary alias → result (coalesce)**, **result-wins-when-both**,
+  barren-done→empty-round, two-round-append-order, failed, and **ONE value → BOTH parent-notification
+  AND resultRounds.result byte-identical (parent-child, via the summary alias)**.
+- `task-tracker.test.ts` resultRounds unit tests UNCHANGED (appendResultRound is agnostic to where
+  result comes from).

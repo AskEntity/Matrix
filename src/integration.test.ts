@@ -12378,16 +12378,15 @@ describe("Integration: bash tiered output contract", () => {
 	}, 20000);
 });
 
-describe("Integration: done() captures structured result/lessons (resultRounds)", () => {
+describe("Integration: done() result/lessons capture — unified result concept (resultRounds)", () => {
 	let ctx: TestContext;
 
 	afterEach(async () => {
 		if (ctx) await teardownTestContext(ctx);
 	});
 
-	test("done() with result + lessons lands them on node.resultRounds", async () => {
+	test("done(result + lessons) lands them on node.resultRounds", async () => {
 		ctx = await setupTestContext();
-
 		const instruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Finishing." },
@@ -12396,7 +12395,6 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "did the thing",
 						result: "Implemented X via A, B, C. All tests green.",
 						lessons: [
 							"Foo's bar option only applies on create, not overwrite",
@@ -12406,14 +12404,11 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 				},
 			],
 		});
-
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
 		expect(await waitForDone(ctx)).toBe("verify");
-
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const root = tracker.getTask(tracker.rootNodeId);
-		expect(root?.resultRounds).toEqual([
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
 			{
 				result: "Implemented X via A, B, C. All tests green.",
 				lessons: [
@@ -12424,34 +12419,100 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 		]);
 	}, 20000);
 
-	test("done() without result/lessons still appends one (empty) round — back-compat", async () => {
+	test("done(result) with no lessons → one block, empty lessons", async () => {
 		ctx = await setupTestContext();
-
-		// Legacy-shaped done(): only status + summary, no result/lessons.
 		const instruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Done." },
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "legacy-style done" },
+					input: { status: "passed", result: "shipped the widget" },
 				},
 			],
 		});
-
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
 		expect(await waitForDone(ctx)).toBe("verify");
-
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const root = tracker.getTask(tracker.rootNodeId);
-		// One block per done(), even when result/lessons are omitted.
-		expect(root?.resultRounds).toEqual([{ result: "", lessons: [] }]);
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
+			{ result: "shipped the widget", lessons: [] },
+		]);
 	}, 20000);
 
-	test("two done() rounds append two blocks in order — first is never overwritten", async () => {
+	test("deprecated `summary` alias still populates resultRounds.result (coalesce)", async () => {
 		ctx = await setupTestContext();
+		// Frozen/legacy callers pass `summary` (deprecated alias) instead of `result`.
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Legacy done." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "legacy-style outcome" },
+				},
+			],
+		});
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		// summary coalesces into result — legacy callers lose no data.
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
+			{ result: "legacy-style outcome", lessons: [] },
+		]);
+	}, 20000);
 
+	test("`result` wins when both result and the summary alias are given", async () => {
+		ctx = await setupTestContext();
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Both." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: {
+						status: "passed",
+						result: "the real result",
+						summary: "the deprecated alias value",
+						lessons: ["a lesson"],
+					},
+				},
+			],
+		});
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
+			{ result: "the real result", lessons: ["a lesson"] },
+		]);
+	}, 20000);
+
+	test("barren done() (neither result nor summary) → one empty round", async () => {
+		ctx = await setupTestContext();
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Nothing to say." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed" },
+				},
+			],
+		});
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		// One block per done() holds even when the agent says nothing.
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
+			{ result: "", lessons: [] },
+		]);
+	}, 20000);
+
+	test("two done(result) rounds append two blocks in order — first never overwritten", async () => {
+		ctx = await setupTestContext();
 		const round1 = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Round one." },
@@ -12460,7 +12521,6 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "s1",
 						result: "round 1 result",
 						lessons: ["l1"],
 					},
@@ -12469,11 +12529,8 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 		});
 		expect((await startAgent(ctx, round1)).status).toBe(200);
 		expect(await waitForDone(ctx)).toBe("verify");
-
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-
-		// Reawaken the done root with a new message → it runs again → done() again.
 		const round2 = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Round two." },
@@ -12482,7 +12539,6 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
-						summary: "s2",
 						result: "round 2 result",
 						lessons: ["l2a", "l2b"],
 					},
@@ -12490,26 +12546,20 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 			],
 		});
 		expect((await sendMessage(ctx, round2)).status).toBe(200);
-
-		// Root was "verify"; the message relaunches it: verify → in_progress → verify.
-		// Poll for in_progress first so waitForDone doesn't return the stale first verify.
 		const start = Date.now();
 		while (Date.now() - start < 5000) {
 			if (tracker.getTask(rootNodeId)?.status === "in_progress") break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
 		expect(await waitForDone(ctx, 20000)).toBe("verify");
-
-		// Both rounds present, in order — round 1 survived the second done().
 		expect(tracker.getTask(rootNodeId)?.resultRounds).toEqual([
 			{ result: "round 1 result", lessons: ["l1"] },
 			{ result: "round 2 result", lessons: ["l2a", "l2b"] },
 		]);
 	}, 30000);
 
-	test("failed done() also appends its round", async () => {
+	test("failed done(result) also appends its round", async () => {
 		ctx = await setupTestContext();
-
 		const instruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Giving up." },
@@ -12518,25 +12568,120 @@ describe("Integration: done() captures structured result/lessons (resultRounds)"
 					name: "mcp__mxd__done",
 					input: {
 						status: "failed",
-						summary: "blocked",
 						result: "Could not resolve the upstream 500s.",
 						lessons: ["The retry budget is exhausted after 5 attempts"],
 					},
 				},
 			],
 		});
-
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
 		expect(await waitForDone(ctx)).toBe("failed");
-
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const root = tracker.getTask(tracker.rootNodeId);
-		expect(root?.resultRounds).toEqual([
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
 			{
 				result: "Could not resolve the upstream 500s.",
 				lessons: ["The retry budget is exhausted after 5 attempts"],
 			},
 		]);
 	}, 20000);
+
+	test("ONE value → BOTH parent notification and resultRounds.result (byte-identical), via the summary alias", async () => {
+		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
+
+		const MARKER = "MARKER_child_did_XYZ_789";
+		// Child uses the DEPRECATED summary alias — proves the same string reaches
+		// BOTH the parent's task_complete AND the child's resultRounds.result.
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: {
+						status: "passed",
+						summary: MARKER,
+						lessons: ["child lesson"],
+					},
+				},
+			],
+		});
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Creating child." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								parentId: "$rootId",
+								title: "Byte-Identical Child",
+								description: "child for the one-value-both test",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: { childId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Sending to child." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{ type: "text", text: "Waiting." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					// The parent's yield resume carries the child's task_complete, whose
+					// output IS the child's done value — assert the MARKER is present.
+					assert: [
+						{ block: 1, type: "text", contains: "task_complete" },
+						{ block: 1, type: "text", contains: MARKER },
+					],
+					blocks: [
+						{ type: "text", text: "Child done. Finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", result: "parent wrapped up" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+		expect(await waitForDone(ctx, 30000)).toBe("verify");
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
+		const childId = rootNode?.children?.[0] as string;
+		const childNode = tracker.getTask(childId);
+		// resultRounds.result is BYTE-IDENTICAL to the value the parent received.
+		expect(childNode?.resultRounds).toEqual([
+			{ result: MARKER, lessons: ["child lesson"] },
+		]);
+	}, 45000);
 });
