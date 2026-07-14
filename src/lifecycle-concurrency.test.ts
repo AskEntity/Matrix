@@ -141,25 +141,21 @@ function buildScopeOpts(
 		onLaunch: (node: TaskNode, tracker) => {
 			tracker.updateStatus(node.id, "in_progress");
 		},
-		onDone: (node: TaskNode, tracker, doneArgs) => {
-			tracker.updateStatus(
-				node.id,
-				doneArgs.status === "passed" ? "verify" : "failed",
-			);
-			return doneArgs;
-		},
+		// Runtime routes done → verify/failed; no default onDone content. Tests
+		// that need to exercise onDone (e.g. the throwing-onDone Phase-2 case)
+		// supply their own via `overrides`.
 		...overrides,
 	};
 }
 
-function doneInstruction(summary = "ok"): string {
+function doneInstruction(result = "ok"): string {
 	return JSON.stringify({
 		blocks: [
 			{ type: "text", text: "Working." },
 			{
 				type: "tool_use",
 				name: "mcp__mxd__done",
-				input: { status: "passed", result: summary },
+				input: { status: "passed", result },
 			},
 		],
 	});

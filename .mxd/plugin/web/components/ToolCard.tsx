@@ -136,7 +136,7 @@ export const ToolCard = memo(function ToolCard({
 	// done() merged card — render like standalone done() tool_call card
 	if (isDone) {
 		const doneStatus = toolArgs?.status as string | undefined;
-		const doneSummary = toolArgs?.summary as string | undefined;
+		const doneResult = toolArgs?.result as string | undefined;
 		const donePassed = doneStatus === "passed";
 		const borderClass = donePassed
 			? "mxd-tool-card-done-passed"
@@ -156,9 +156,9 @@ export const ToolCard = memo(function ToolCard({
 					title={`${donePassed ? "✓" : "✗"} ${doneTitle}`}
 					className={borderClass}
 				>
-					{doneSummary ? (
+					{doneResult ? (
 						<div className="mxd-tool-card-body">
-							<div className="mxd-tool-card-result">{doneSummary}</div>
+							<div className="mxd-tool-card-result">{doneResult}</div>
 						</div>
 					) : null}
 				</Card>

@@ -786,7 +786,7 @@ function buildMockData() {
 		TOOL_DONE,
 		{
 			status: "passed",
-			summary:
+			result:
 				"Built the mock showcase page with all card types. Backend endpoint returns mock task tree and events.",
 		},
 		"",
@@ -1329,7 +1329,7 @@ function buildMockData() {
 		TOOL_DONE,
 		{
 			status: "passed",
-			summary:
+			result:
 				"Successfully implemented the mock showcase with all card types and task states.",
 		},
 		m,
@@ -1341,7 +1341,7 @@ function buildMockData() {
 		TOOL_DONE,
 		{
 			status: "failed",
-			summary:
+			result:
 				"Could not complete the Docker build — missing native dependencies for ARM64.",
 		},
 		m,

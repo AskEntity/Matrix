@@ -172,7 +172,7 @@ export function messageIdOccurrences(events: Event[], id: string): Event[] {
 	);
 }
 
-export function twoTurnInstruction(summary: string): string {
+export function twoTurnInstruction(result: string): string {
 	return JSON.stringify({
 		turns: [
 			{ blocks: [{ type: "text", text: "Waiting for next message." }] },
@@ -182,7 +182,7 @@ export function twoTurnInstruction(summary: string): string {
 					{
 						type: "tool_use",
 						name: "mcp__mxd__done",
-						input: { status: "passed", result: summary },
+						input: { status: "passed", result },
 					},
 				],
 			},

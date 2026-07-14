@@ -159,12 +159,13 @@ function buildStoryScopeOpts(_projectId: string): ScopeOpts<any> {
 		onLaunch: (node: TaskNode, tracker) => {
 			tracker.updateStatus(node.id, "in_progress");
 		},
-		onDone: (node: TaskNode, tracker, doneArgs) => {
-			tracker.updateStatus(
-				node.id,
-				doneArgs.status === "passed" ? "verify" : "failed",
-			);
-			return { status: "published", wordCount: 42 };
+		// Content-only hook: the story plugin records its own metadata on done —
+		// its analogue of Matrix appending a resultRound. Status routing (→
+		// verify/failed) and the done_notified marker are the runtime's job; this
+		// hook returns void. Proves a custom plugin's onDone runs + mutates the
+		// tracker.
+		onDone: (node: TaskNode, tracker) => {
+			tracker.setMetadata(node.id, { published: true, wordCount: 42 });
 		},
 	};
 }
@@ -341,7 +342,7 @@ describe("Custom scope: non-Matrix agent on Matrix runtime", () => {
 		);
 	}, 20000);
 
-	test("custom onDone: child done_notified has plugin fields (no worktree, runs in project root)", async () => {
+	test("custom onDone: side-effect runs + done_notified is runtime-standard (no worktree, runs in project root)", async () => {
 		ctx = await setupTestContext();
 
 		const storyOpts = buildStoryScopeOpts(ctx.projectId);
@@ -387,13 +388,157 @@ describe("Custom scope: non-Matrix agent on Matrix runtime", () => {
 			await new Promise((r) => setTimeout(r, 100));
 		}
 		const doneNotified = events.find((e) => e.type === "done_notified") as
-			| (Event & { status?: string; wordCount?: number })
+			| (Event & { status?: string; result?: string; wordCount?: number })
 			| undefined;
 
 		expect(doneNotified).toBeDefined();
-		// Story plugin onDone returns { status: "published", wordCount: 42 }
-		expect(doneNotified?.status).toBe("published");
-		expect(doneNotified?.wordCount).toBe(42);
+		// done_notified is RUNTIME-standard {status, result} — no plugin fields.
+		// onDone returns void; there is no marker-annotation channel.
+		expect(doneNotified?.status).toBe("verify");
+		expect(doneNotified?.result).toBe("chapter complete");
+		expect(doneNotified?.wordCount).toBeUndefined();
+
+		// The plugin's content-only onDone DID run: it mutated the tracker
+		// (setMetadata) — the generic "onDone is a working lifecycle hook" contract.
+		const doneChild = tracker.getTask(child.id);
+		expect(doneChild?.metadata).toEqual({ published: true, wordCount: 42 });
+		// Runtime still routed the node status to verify.
+		expect(doneChild?.status).toBe("verify");
+	}, 30000);
+});
+
+// ── Boundary: done() plugin-custom fields are OPAQUE to the runtime ──
+// The whole point of the DonePayload boundary: a plugin can freely add/remove
+// its OWN done fields (the content the runtime treats as opaque) and the
+// runtime + Phase 2 + marker never change or break. The runtime is entitled to
+// read exactly TWO things — `status` (routing) and the completion-output string
+// (`result`, sent to the parent + recorded on the marker) — because those are
+// the runtime CONTRACT every plugin has. Everything else flows straight to
+// onDone untouched.
+//
+// Mutation-proof: if any runtime/Phase-2/marker code stops passing the raw done
+// input through (reshapes it to a fixed {result,...}) OR spreads plugin-custom
+// fields into its own artifacts, this test fails.
+describe("Boundary: done() custom fields are opaque to the runtime", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	// A plugin whose done() carries fields the runtime has NEVER heard of
+	// (wordCount, mood). onDone reads its OWN fields from the opaque input and
+	// stores them; the runtime never mentions them.
+	// biome-ignore lint/suspicious/noExplicitAny: erased plugin generic, as elsewhere
+	function buildCustomDoneScope(): ScopeOpts<any> {
+		return {
+			buildTools: (auth) => ({
+				tools: [
+					createYieldTool(),
+					createDoneTool({
+						extraParams: {
+							status: {
+								schema: z.enum(["passed", "failed"]),
+								decl: { kind: "explicit" },
+							},
+							result: { schema: z.string(), decl: { kind: "explicit" } },
+							// Plugin-custom content fields — the runtime knows nothing of
+							// these; only this plugin's onDone reads them.
+							wordCount: { schema: z.number(), decl: { kind: "explicit" } },
+							mood: {
+								schema: z.string().optional(),
+								decl: { kind: "optional" },
+							},
+						},
+					}),
+				].map((def) => toToolDefinition(def, auth)),
+			}),
+			buildPrompt: () => ({ stable: "You are a storyteller.", variable: "" }),
+			buildWorkContext: () => "Write.",
+			buildSummarizationPrompt: () => "Summarize.",
+			shouldResume: (node: TaskNode) => node.status === "in_progress",
+			onLaunch: (node: TaskNode, tracker) =>
+				tracker.updateStatus(node.id, "in_progress"),
+			onDone: (node: TaskNode, tracker, doneInput) => {
+				// Reads the plugin's OWN custom fields straight off the opaque input.
+				// The runtime never told this plugin these fields exist — proof it
+				// handed the raw done input through untouched.
+				tracker.setMetadata(node.id, {
+					wordCount: doneInput.wordCount,
+					mood: doneInput.mood,
+				});
+			},
+		};
+	}
+
+	test("custom fields reach onDone; runtime routes on status + carries only completion-output", async () => {
+		ctx = await setupTestContext();
+		ctx.app.ctx.scopeOpts.set(ctx.projectId, buildCustomDoneScope());
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Story done." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: {
+						status: "passed",
+						result: "the ending",
+						wordCount: 1200,
+						mood: "triumphant",
+					},
+				},
+			],
+		});
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: instruction }),
+			},
+		);
+
+		const start = Date.now();
+		while (Date.now() - start < 15000) {
+			const node = tracker.getTask(rootNodeId);
+			if (node?.status === "verify" || node?.status === "failed") break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		await new Promise((r) => setTimeout(r, 200));
+
+		const node = tracker.getTask(rootNodeId);
+
+		// 1. onDone READ the plugin's own custom fields → the runtime handed the
+		//    raw done input through OPAQUE (no reshaping to a fixed content struct).
+		//    A runtime that rebuilt a {result, lessons}-style payload would drop
+		//    wordCount/mood and this fails.
+		expect(node?.metadata).toEqual({ wordCount: 1200, mood: "triumphant" });
+
+		// 2. Runtime routed the node status via the CONTRACT `status` field.
+		expect(node?.status).toBe("verify");
+
+		// 3. done_notified marker is RUNTIME-standard: `status` + completion-output
+		//    `result` ONLY. The runtime must NOT carry the plugin's custom content
+		//    fields into its own artifacts. A `...doneInput` spread would leak them.
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const dn = events.find((e) => e.type === "done_notified") as
+			| (Event & {
+					status?: string;
+					result?: string;
+					wordCount?: unknown;
+					mood?: unknown;
+			  })
+			| undefined;
+		expect(dn).toBeDefined();
+		expect(dn?.status).toBe("verify");
+		expect(dn?.result).toBe("the ending"); // completion-output = contract `result`
+		expect(dn?.wordCount).toBeUndefined(); // custom field NOT leaked into marker
+		expect(dn?.mood).toBeUndefined();
 	}, 30000);
 });
 
@@ -452,13 +597,7 @@ describe("Node-model generalization (plugin integration)", () => {
 			shouldResume: (node: TaskNode) => node.status === "in_progress",
 			onLaunch: (node: TaskNode, tracker) =>
 				tracker.updateStatus(node.id, "in_progress"),
-			onDone: (node: TaskNode, tracker, doneArgs) => {
-				tracker.updateStatus(
-					node.id,
-					doneArgs.status === "passed" ? "verify" : "failed",
-				);
-				return { status: "done" };
-			},
+			// Runtime routes done → verify/failed; this scope has no done content.
 		};
 		ctx.app.ctx.scopeOpts.set(ctx.projectId, scope);
 

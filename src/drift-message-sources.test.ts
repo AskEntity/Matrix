@@ -242,7 +242,7 @@ void injectMessage;
  * The TEXT in turn 1 is what mock API uses to drive streaming; without it
  * mock API has nothing to say (empty text → confused).
  */
-function twoTurnInstruction(summary: string): string {
+function twoTurnInstruction(result: string): string {
 	return JSON.stringify({
 		turns: [
 			{ blocks: [{ type: "text", text: "Waiting for next message." }] },
@@ -252,7 +252,7 @@ function twoTurnInstruction(summary: string): string {
 					{
 						type: "tool_use",
 						name: "mcp__mxd__done",
-						input: { status: "passed", result: summary },
+						input: { status: "passed", result },
 					},
 				],
 			},
@@ -266,14 +266,14 @@ function twoTurnInstruction(summary: string): string {
  * to match a conversation key. The simplest approach: a single-turn instruction
  * that calls done() directly.
  */
-function wakeInstruction(summary: string): string {
+function wakeInstruction(result: string): string {
 	return JSON.stringify({
 		blocks: [
 			{ type: "text", text: "After restart." },
 			{
 				type: "tool_use",
 				name: "mcp__mxd__done",
-				input: { status: "passed", result: summary },
+				input: { status: "passed", result },
 			},
 		],
 	});
@@ -290,11 +290,11 @@ function wakeInstruction(summary: string): string {
  */
 async function runDriftCycle(
 	ctx: TestContext,
-	summary: string,
+	result: string,
 	injector: (ctx: TestContext) => Promise<void>,
 ): Promise<void> {
 	ctx.mockAPI.enablePrefixValidation();
-	await startAgent(ctx, twoTurnInstruction(summary));
+	await startAgent(ctx, twoTurnInstruction(result));
 	await waitForIdle(ctx);
 	await injector(ctx);
 	const status = await waitForDone(ctx);
@@ -306,7 +306,7 @@ async function runDriftCycle(
 	ctx.app = await recreateApp(ctx);
 
 	// Wake again
-	await sendMessage(ctx, wakeInstruction(`${summary} restart ok`));
+	await sendMessage(ctx, wakeInstruction(`${result} restart ok`));
 	const status2 = await waitForDone(ctx);
 	expect(status2).toBe("verify");
 }

@@ -3817,7 +3817,7 @@ describe("Integration: parent-child lifecycle", () => {
 				},
 				{
 					// Yield wake: the whole point of the fix — parent must see
-					// task_complete(failed) with the launch-failure error as summary.
+					// task_complete(failed) with the launch-failure error as its result.
 					assert: [
 						{
 							block: 0,
@@ -8524,7 +8524,7 @@ describe("Integration: child restart scenarios", () => {
 		// Child: 3-turn workflow
 		// Turn 1: bash echo (will be interrupted by crash)
 		// Turn 2 (after restart): second bash producing output
-		// Turn 3: done(passed) with summary referencing earlier work
+		// Turn 3: done(passed) with result referencing earlier work
 		const childInstruction = JSON.stringify({
 			turns: [
 				{
@@ -10109,7 +10109,7 @@ describe("Integration: Phase 2 done_notified", () => {
 
 		const dn = doneNotified as Event & { type: "done_notified" };
 		expect((dn as any).status).toBe("verify");
-		expect((dn as any).summary).toBe("everything works");
+		expect((dn as any).result).toBe("everything works");
 		expect(dn.taskId).toBe(rootNodeId);
 	}, 30000);
 
@@ -10140,7 +10140,7 @@ describe("Integration: Phase 2 done_notified", () => {
 
 		const dn = doneNotified as Event & { type: "done_notified" };
 		expect((dn as any).status).toBe("failed");
-		expect((dn as any).summary).toBe("stuck on a problem");
+		expect((dn as any).result).toBe("stuck on a problem");
 	}, 30000);
 });
 
@@ -10232,7 +10232,7 @@ describe("Integration: Phase 2 crash recovery", () => {
 		expect(recoveredDoneNotified).toHaveLength(1);
 		const dn = recoveredDoneNotified[0] as Event & { type: "done_notified" };
 		expect((dn as any).status).toBe("verify");
-		expect((dn as any).summary).toBe("task complete");
+		expect((dn as any).result).toBe("task complete");
 	}, 30000);
 
 	test("crash after done_notified but before status save → autoResume fixes status", async () => {

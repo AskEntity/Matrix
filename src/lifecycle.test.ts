@@ -2083,7 +2083,6 @@ describe("lifecycle: child completion notification paths", () => {
 					costUsd: 0,
 					turns: 0,
 					sessionId: "mock",
-					doneSummary: "All tests pass",
 				} as AgentResult;
 			},
 		};

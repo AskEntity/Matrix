@@ -252,7 +252,7 @@ describe("Plugin hooks: done_notified spread", () => {
 		if (ctx) await teardownTestContext(ctx);
 	});
 
-	test("done_notified event has status and summary as top-level fields", async () => {
+	test("done_notified event has status and result as top-level fields", async () => {
 		ctx = await setupTestContext();
 		const rootNodeId = await getRootNodeId(ctx);
 
@@ -276,7 +276,7 @@ describe("Plugin hooks: done_notified spread", () => {
 		// Fields should be directly on event (spread), not in a doneData bag
 		const dn = doneNotified as unknown as Record<string, unknown>;
 		expect(dn.status).toBe("verify");
-		expect(dn.summary).toBe("spread test");
+		expect(dn.result).toBe("spread test");
 		expect(dn.doneData).toBeUndefined(); // no bag
 	}, 15000);
 });

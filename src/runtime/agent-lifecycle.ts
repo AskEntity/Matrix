@@ -4,11 +4,12 @@ import { DEFAULT_MODEL } from "../config.ts";
 import { rollOldTraceIdDirs } from "../debug-snapshot.ts";
 import {
 	buildSessionRepair,
+	doneCompletionOutput,
 	type Event,
 	type EventSpec,
 	findOrphanedBackgroundProcesses,
 	findUnconsumedMessages,
-	readDoneLessons,
+	readDoneInput,
 	type SessionConfigEvent,
 } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
@@ -1125,17 +1126,17 @@ export async function runAgentForNode(
 			if (currentNode) {
 				const eventStore = getEventStore(ctx, project.id);
 				let hasLateMessages = false;
-				// This round's `lessons`, read from the persisted done() tool_call
-				// input (see readDoneLessons). Flush first so the tool_call is durable,
-				// then read — done for root too (root done()s are captured), not only
-				// children. The round's `result` is NOT read here: it is the SAME value
-				// as `summary` (one concept), passed through doneArgs below. The plugin's
-				// onDone hook appends {result: summary, lessons} as a resultRound.
-				let doneLessons: string[] = [];
+				// The RAW done() tool_call input, read from the persisted JSONL (single
+				// source of truth). Flush first so the tool_call is durable, then read —
+				// done for root too (root done()s are captured), not only children. The
+				// runtime keeps this OPAQUE: it derives only the universal completion
+				// output (below) and hands the record to onDone, which alone reads round
+				// content (lessons). It never holds {result, lessons} itself.
+				let doneInput: Record<string, unknown> | undefined;
 				if (eventStore.has(nodeId)) {
 					await eventStore.flushSession(nodeId);
 					const events = eventStore.readActive(nodeId);
-					doneLessons = readDoneLessons(events);
+					doneInput = readDoneInput(events);
 					if (!isRoot) {
 						const unconsumed = findUnconsumedMessages(events);
 						if (unconsumed.length > 0) {
@@ -1152,31 +1153,29 @@ export async function runAgentForNode(
 						);
 					});
 				} else {
-					// Let plugin update node state on done — returns data for crash-safe
-					// marker. result + lessons ride along in doneArgs for the plugin's
-					// onDone to append as a resultRound (memory-index capture). result
-					// ALSO flows to task_complete + done_notified below — one value,
-					// both destinations. (`agentResult.doneSummary` is the legacy carrier
-					// field name; it holds the done `result`.)
-					const doneArgs = {
-						status:
-							agentResult.exitReason === "done_passed" ? "passed" : "failed",
-						result: agentResult.doneSummary ?? "",
-						lessons: doneLessons,
-					};
-					const doneData = opts.onDone
-						? (opts.onDone(currentNode, tracker, doneArgs) ?? doneArgs)
-						: doneArgs;
+					const passed = agentResult.exitReason === "done_passed";
+					// status is the RUNTIME's control bit: route done → verify/failed
+					// here (one mapping, shared with the marker below + crash recovery).
+					const newStatus = passed ? "verify" : "failed";
+					// The universal completion-output string (parent notice + marker) —
+					// the ONE done field the runtime reads. Round content stays in onDone.
+					const completionOutput = doneCompletionOutput(doneInput);
+					// Plugin persists its own done CONTENT from the opaque input (Matrix
+					// parses {result, lessons} and appends a resultRound). Returns void.
+					opts.onDone?.(currentNode, tracker, doneInput ?? {});
+					tracker.updateStatus(nodeId, newStatus);
 					await tracker.save();
 					broadcastTreeUpdate(ctx, project.id, tracker);
 
 					const taskAbove = tracker.getTaskAbove(nodeId);
 					if (taskAbove && !isRoot) {
+						// Parent notice takes the completion-output string at the boundary
+						// — one value, same as the marker below.
 						const completionMsg = createTaskComplete(
 							nodeId,
 							currentNode.title ?? "unknown",
-							agentResult.exitReason === "done_passed",
-							agentResult.doneSummary ?? "",
+							passed,
+							completionOutput,
 						);
 						// B-M4: task_complete MUST be durable BEFORE done_notified. If the
 						// marker persisted while task_complete did not, restart's
@@ -1203,7 +1202,8 @@ export async function runAgentForNode(
 					emitEvent(ctx, project.id, {
 						type: "done_notified",
 						taskId: nodeId,
-						...doneData,
+						status: newStatus,
+						result: completionOutput,
 						traceId: loopTraceId,
 						ts: Date.now(),
 					});

@@ -2590,7 +2590,7 @@ describe("Event deterministic verification", () => {
 						"Signal completion",
 						{
 							status: z.string(),
-							summary: z.string().optional(),
+							result: z.string().optional(),
 						},
 						async () => ({
 							content: [
@@ -2614,7 +2614,9 @@ describe("Event deterministic verification", () => {
 
 		// done() exits with done_passed
 		expect(agentResult.exitReason).toBe("done_passed");
-		expect(agentResult.doneSummary).toBe("All done");
+		// done exit is reported via exitReason only — the done CONTENT is no longer
+		// carried on AgentResult; it lives in the emitted done() tool_call (JSONL),
+		// which Phase 2 reads back via readDonePayload (single source of truth).
 
 		const types = emittedEvents.map((e) => e.type);
 		expect(types).toContain("assistant_text");
@@ -2622,11 +2624,13 @@ describe("Event deterministic verification", () => {
 		// done() is an intended orphan — NO tool_result emitted
 		expect(types).not.toContain("tool_result");
 
-		// Verify tool_call details
+		// Verify tool_call details — incl. the result the provider persisted into
+		// the done() tool_call input (the value Phase 2's readDonePayload consumes).
 		const toolCall = emittedEvents.find((e) => e.type === "tool_call");
 		if (toolCall?.type === "tool_call") {
 			expect(toolCall.tool).toBe("mcp__mxd__done");
 			expect(toolCall.toolCallId).toBe("tu_1");
+			expect((toolCall.input as { result?: string }).result).toBe("All done");
 		}
 	});
 

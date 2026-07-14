@@ -193,7 +193,7 @@ export type Event = (
 				| "stopped"
 				| "error"
 				| "budget_exceeded";
-			summary?: string;
+			result?: string;
 			stats?: {
 				costUsd?: number;
 				turns?: number;
@@ -526,30 +526,40 @@ export function findOrphanedBackgroundProcesses(
 }
 
 /**
- * Extract this round's `lessons` from the LAST done() tool_call in a slice of
- * events, reading directly from the persisted tool_call `input` (the exact
- * object the agent passed to done()). No AgentResult plumbing — read from the
- * JSONL, the single source of truth.
+ * The raw `input` object of the LAST done() tool_call in a slice of events
+ * (the exact object the agent passed to done(), read from the JSONL — the
+ * single source of truth), or undefined when there is no done() tool_call.
  *
- * `lessons` is the ONLY memory-index field read here: the round's `result` is
- * the SAME value as the done `summary` (one concept — "what this round did"),
- * which is already plumbed via AgentResult.doneSummary and flows unchanged to
- * the parent notification. Only `lessons` is genuinely new, so only it needs a
- * JSONL read.
- *
- * Returns [] when absent (or the entry isn't an array), dropping any non-string
- * entries, and [] when there is no done() tool_call at all.
+ * GENERIC — no field knowledge beyond "which tool is done". The runtime hands
+ * this record OPAQUELY to the plugin's onDone hook; only the plugin reads its
+ * content fields (Matrix: {result, lessons} via parseDonePayload). Keeping the
+ * runtime on the raw record is what prevents round structure (lessons) from
+ * leaking into the plugin-agnostic layer.
  */
-export function readDoneLessons(events: Event[]): string[] {
-	let lastDoneInput: Record<string, unknown> | undefined;
+export function readDoneInput(
+	events: Event[],
+): Record<string, unknown> | undefined {
+	let last: Record<string, unknown> | undefined;
 	for (const e of events) {
 		if (e.type === "tool_call" && e.tool === TOOL_DONE) {
-			lastDoneInput = e.input;
+			last = e.input;
 		}
 	}
-	return Array.isArray(lastDoneInput?.lessons)
-		? lastDoneInput.lessons.filter((l): l is string => typeof l === "string")
-		: [];
+	return last;
+}
+
+/**
+ * The completion-output string of a done() input — the universal "what
+ * happened" summary the runtime sends to the parent (task_complete) and records
+ * on the done_notified marker. This is the ONE done field the runtime is allowed
+ * to read: a completion output every plugin has, conventionally named `result`.
+ * NOT round content (lessons / structure) — that stays inside the plugin's
+ * onDone. Empty string when absent / non-string.
+ */
+export function doneCompletionOutput(
+	input: Record<string, unknown> | undefined,
+): string {
+	return typeof input?.result === "string" ? input.result : "";
 }
 
 // ── JSONL Repair: truncate-and-rebuild ──

@@ -8,7 +8,7 @@ import {
 	loadGlobalConfig,
 	resolveAuthGroup,
 } from "./config.ts";
-import type { Event } from "./events.ts";
+import { doneCompletionOutput, type Event } from "./events.ts";
 import { ProjectStore } from "./project-store.ts";
 import { createTaskComplete } from "./queue-message-factory.ts";
 import {
@@ -53,14 +53,14 @@ const defaultConfig: RuntimeConfig = {
  * Detect interrupted Phase 2 of two-phase done() from JSONL events.
  *
  * Returns null if no recovery needed.
- * Returns { type: "needs_phase2", status, summary } if done tool_call exists without done_notified.
+ * Returns { type: "needs_phase2", status, result } if done tool_call exists without done_notified.
  * Returns { type: "status_stale", status } if done_notified exists but node status wasn't saved.
  */
 export function findInterruptedDonePhase2(events: Event[]):
 	| {
 			type: "needs_phase2";
 			status: "verify" | "failed";
-			summary: string;
+			result: string;
 	  }
 	| {
 			type: "status_stale";
@@ -93,20 +93,19 @@ export function findInterruptedDonePhase2(events: Event[]):
 		(e) => e.type === "done_notified" && e.ts >= lastDoneCallTs,
 	);
 
-	const doneInput = lastDoneCall.input as
-		| { status?: string; result?: string }
-		| undefined;
+	const doneInput = lastDoneCall.input as { status?: string } | undefined;
+	// status is the runtime control bit (routes verify/failed); `result` is the
+	// universal completion-output string (parent notice), read from the SAME done
+	// tool_call so a crash-recovered done carries the exact string the live path
+	// would have delivered. Crash recovery is plugin-agnostic: it never reads
+	// round content (lessons) and can't append a resultRound.
 	const status =
 		doneInput?.status === "passed" ? ("verify" as const) : ("failed" as const);
-	// `result` is the round's outcome. `summary` here is the internal
-	// carrier/return-field name (feeds the done_notified marker) — it holds
-	// `result` so a crash-recovered done carries the same string the live path
-	// would have delivered to the parent.
-	const summary = doneInput?.result ?? "";
+	const result = doneCompletionOutput(lastDoneCall.input);
 
 	if (!hasDoneNotified) {
 		// Phase 2 never completed — need to run it now
-		return { type: "needs_phase2", status, summary };
+		return { type: "needs_phase2", status, result };
 	}
 
 	// done_notified exists — check if the node still has stale status.
@@ -341,7 +340,7 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 			if (!crashRecovery) continue;
 
 			if (crashRecovery.type === "needs_phase2") {
-				const { status, summary } = crashRecovery;
+				const { status, result } = crashRecovery;
 				console.log(
 					`[autoResume] Completing interrupted Phase 2 for ${node.id} (status=${status})`,
 				);
@@ -354,7 +353,7 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 						node.id,
 						node.title ?? "unknown",
 						status === "verify",
-						summary,
+						result,
 					);
 					await deliverMessage(ctx, project, taskAbove.id, completionMsg, {
 						quiet: true,
@@ -370,7 +369,7 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 					type: "done_notified",
 					taskId: node.id,
 					status,
-					summary,
+					result,
 					ts: Date.now(),
 				});
 				await eventStore.flushSession(node.id);

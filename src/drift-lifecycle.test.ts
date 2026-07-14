@@ -248,14 +248,14 @@ const TINY_PNG =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 /** Build a wake+done instruction (single turn). */
-function wakeDoneInstruction(summary: string) {
+function wakeDoneInstruction(result: string) {
 	return JSON.stringify({
 		blocks: [
 			{ type: "text", text: "Woke up, finishing." },
 			{
 				type: "tool_use",
 				name: "mcp__mxd__done",
-				input: { status: "passed", result: summary },
+				input: { status: "passed", result },
 			},
 		],
 	});

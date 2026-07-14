@@ -114,7 +114,7 @@ export function McpToolCardBody({
 		}
 		case "done": {
 			const status = getArg(toolArgs, "status");
-			const summary = getArg(toolArgs, "summary");
+			const result = getArg(toolArgs, "result");
 			const isPassed =
 				status === "passed" || (isOk && resultContent?.includes("passed"));
 			const taskTitle = taskId ? nodeMap?.get(taskId)?.title : undefined;
@@ -126,7 +126,7 @@ export function McpToolCardBody({
 					>
 						{isPassed ? t("tool.passed") : t("tool.failed")}
 					</div>
-					{summary && <div className="mxd-mcp-task-desc">{summary}</div>}
+					{result && <div className="mxd-mcp-task-desc">{result}</div>}
 				</div>
 			);
 		}

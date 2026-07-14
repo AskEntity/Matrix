@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import type { DonePayload } from "./done-payload.ts";
 import {
 	type GeneralNode,
 	isTask,
-	type ResultRound,
 	type TaskNode,
 	type TaskStatus,
 	type TreeNode,
@@ -501,13 +501,13 @@ export class TaskTracker {
 	}
 
 	/**
-	 * Append one done()-round's structured result + lessons to a task node.
+	 * Append one done()-round's `DonePayload` (result + lessons) to a task node.
 	 * APPEND-only — never overwrites prior rounds. Called once per done()
 	 * (a reawaken → re-done task accumulates multiple rounds in call order).
 	 * Creates the `resultRounds` array on first append. Rejects general nodes
 	 * (only launchable tasks reach done()). Bumps updatedAt.
 	 */
-	appendResultRound(nodeId: string, round: ResultRound): void {
+	appendResultRound(nodeId: string, round: DonePayload): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
 		if (!isTask(node))

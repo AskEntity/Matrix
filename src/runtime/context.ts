@@ -18,18 +18,22 @@ export interface SystemPrompt {
 	variable: string;
 }
 
-/** Base done data — runtime only knows the agent finished. Plugins extend with fields. */
+/**
+ * The raw, opaque done() input — the exact object the agent passed to done(),
+ * read back from the JSONL and handed to onDone. The runtime never interprets
+ * its content fields (beyond the universal completion-output string it reads
+ * separately); the plugin's onDone parses whatever shape it declared.
+ */
 export interface BaseDoneData {
 	[key: string]: unknown;
 }
 
 /**
  * Plugin type bundle — ties together all type extensions.
- * ONE generic parameter on ScopeOpts distributes node + done types everywhere.
+ * ONE generic parameter on ScopeOpts distributes the node type everywhere.
  */
 export interface PluginTypes {
 	node: BaseTaskNode;
-	done: BaseDoneData;
 }
 
 /**
@@ -113,11 +117,21 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 		node: T["node"],
 		tracker: import("../task-tracker.ts").TaskTracker,
 	) => void;
+	/**
+	 * The agent called done(). The RUNTIME owns the universal lifecycle around
+	 * this — status routing (→ verify/failed), the parent completion notice, and
+	 * the crash-safe marker. This hook is only where the plugin persists its own
+	 * done CONTENT, reading it from the OPAQUE `doneInput` (the raw done()
+	 * tool_call input): Matrix parses `{result, lessons}` and appends a
+	 * resultRound. The runtime hands the record through untouched — it never
+	 * reads round structure (lessons) itself, only the universal completion
+	 * output. `status` is absent from the plugin's job: it's a runtime control bit.
+	 */
 	onDone?: (
 		node: T["node"],
 		tracker: import("../task-tracker.ts").TaskTracker,
-		doneArgs: Record<string, unknown>,
-	) => T["done"];
+		doneInput: BaseDoneData,
+	) => void;
 }
 
 /**
