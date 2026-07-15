@@ -14,6 +14,7 @@
 // readFileSync removed — work_context hook handles memory injection
 import { join } from "node:path";
 import { z } from "zod";
+import { projectIndexDbPath } from "./data-paths.ts";
 import { donePayloadSchema } from "./done-payload.ts";
 import type { EventSpec } from "./events.ts";
 import {
@@ -22,6 +23,7 @@ import {
 	createTreeChange,
 } from "./queue-message-factory.ts";
 import * as R from "./resource-registry.ts";
+import { searchIndex } from "./task-index.ts";
 import {
 	closeTaskOp,
 	createTaskOp,
@@ -294,6 +296,93 @@ export function buildAllToolDefs() {
 						{
 							type: "text",
 							text: JSON.stringify(stripSession(node), null, 2),
+						},
+					],
+				};
+			},
+		}),
+
+		// ── search_tasks ──
+		defineTool({
+			name: "search_tasks",
+			availability: "both",
+			description:
+				"Keyword-search the task tree — every task's title, description, and " +
+				"each done() round's result + lessons — via full-text search. " +
+				"Returns the best-matching LOCATIONS: for each hit, the task, WHICH " +
+				"field matched (title / description / result / lessons), the round " +
+				"index (for result/lessons), a highlighted snippet, and a BM25 score " +
+				"(lower = more relevant; results are pre-sorted best-first). Use it " +
+				"to find whether a problem was solved before, or where a decision or " +
+				"lesson lives, instead of scanning the whole tree. Matches ALL " +
+				"whitespace-separated terms (implicit AND).",
+			params: {
+				projectId: {
+					schema: z.string(),
+					decl: { kind: "bind", from: "projectId" },
+				},
+				query: {
+					schema: z
+						.string()
+						.describe("Keywords to search for (all terms must match)."),
+					decl: { kind: "explicit" },
+				},
+				limit: {
+					schema: z.number().int().positive().max(100).optional(),
+					decl: { kind: "optional" },
+					description: "Max hits to return (default 20, max 100).",
+				},
+			},
+			handler: async (args) => {
+				const projectId = args.projectId as string;
+				const tracker = R.getTracker(projectId);
+				if (!tracker)
+					return {
+						content: [{ type: "text", text: "Project not found" }],
+						isError: true,
+					};
+				const { dataDir, dataRoot } = R.getDataPaths();
+				const dbPath = projectIndexDbPath(dataDir, projectId, dataRoot);
+				const limit = (args.limit as number | undefined) ?? 20;
+				let hits: ReturnType<typeof searchIndex>;
+				try {
+					hits = searchIndex(dbPath, args.query as string, limit);
+				} catch (e) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Search failed: ${e instanceof Error ? e.message : String(e)}`,
+							},
+						],
+						isError: true,
+					};
+				}
+				// Enrich each hit with the task's CURRENT title (fresh from the
+				// tree) and drop hits whose task was deleted since indexing.
+				const results = hits.flatMap((h) => {
+					const task = tracker.getTask(h.taskId);
+					if (!task) return [];
+					return [
+						{
+							taskId: h.taskId,
+							title: task.title,
+							field: h.field,
+							...(h.roundIndex !== undefined ? { round: h.roundIndex } : {}),
+							snippet: h.snippet,
+							score: h.score,
+						},
+					];
+				});
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{ query: args.query, count: results.length, results },
+								null,
+								2,
+							),
 						},
 					],
 				};

@@ -442,6 +442,13 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 			// Register scope opts so internal paths (deliverMessage, ensureChildAgentRunning)
 			// can look up the project's tools + prompt without passing them through every call.
 			ctx.scopeOpts.set(project.id, scopeOpts);
+			// Generic per-project startup hook — the plugin does its own bring-up
+			// work here. Best-effort: never block agent resume on it.
+			try {
+				await scopeOpts.onScopeResume?.(tracker, project.id);
+			} catch (e) {
+				console.warn(`[autoResume] onScopeResume failed for ${project.id}:`, e);
+			}
 			await resumeScope(project, tracker, eventStore, scopeOpts);
 		}
 	}

@@ -145,3 +145,17 @@ export function projectTreeJsonPath(
 ): string {
 	return join(resolveDataRoot(dataDir, projectId, dataRoot), "tree.json");
 }
+
+/**
+ * Absolute path to a project's search index (`index.db`), respecting the
+ * plugin's dataRoot. Built on top of {@link resolveDataRoot}, so it sits in the
+ * SAME directory as `tree.json` — for Matrix (dataRoot `"@/plugin/matrix"`)
+ * this returns `<dataDir>/projects/<id>/plugin/matrix/index.db`.
+ */
+export function projectIndexDbPath(
+	dataDir: string,
+	projectId: string,
+	dataRoot?: string,
+): string {
+	return join(resolveDataRoot(dataDir, projectId, dataRoot), "index.db");
+}

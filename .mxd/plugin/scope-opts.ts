@@ -13,12 +13,14 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { buildSummarizationInstruction } from "../../src/compaction.ts";
+import { projectIndexDbPath } from "../../src/data-paths.ts";
 import { parseDonePayload } from "../../src/done-payload.ts";
 import { McpClientManager } from "../../src/mcp-client.ts";
 import { createOrchestratorTools } from "../../src/orchestrator-tools.ts";
 import type { RuntimeContext, ScopeOpts } from "../../src/runtime/context.ts";
 import { resolveProjectConfig } from "../../src/runtime/helpers.ts";
 import { buildSystemPrompt } from "../../src/system-prompts.ts";
+import { indexTask, reconcileIndex } from "../../src/task-index.ts";
 import { slugify } from "../../src/task-utils.ts";
 import { toToolDefinition } from "../../src/tool-def.ts";
 import { buildBuiltinToolDefs } from "../../src/tools/index.ts";
@@ -120,6 +122,31 @@ export function buildMatrixScopeOpts(
 		onLaunch: (node, tracker) => {
 			tracker.updateStatus(node.id, "in_progress");
 		},
+		// Startup: reconcile the search index (backfill on first run, incremental
+		// after) — the fallback for anything index-on-done missed (crash between
+		// done and index write, or title/description edits via update_task that
+		// never fire onDone). Best-effort: swallow + log so a bad index write can
+		// never block agent resume. Needs ctx for the dataRoot; without it (some
+		// test harnesses) the index simply isn't maintained here.
+		onScopeResume: ctx
+			? (tracker, projId) => {
+					try {
+						reconcileIndex(
+							projectIndexDbPath(
+								ctx.config.dataDir,
+								projId,
+								ctx.config.dataRoot,
+							),
+							tracker,
+						);
+					} catch (e) {
+						console.warn(
+							`[task-index] startup reconcile failed for ${projId}:`,
+							e,
+						);
+					}
+				}
+			: undefined,
 		onDone: (node, tracker, doneInput) => {
 			// Content-only: rebuild this round's DonePayload (result + lessons) from
 			// the opaque done() input and append it — one block per done(),
@@ -127,6 +154,25 @@ export function buildMatrixScopeOpts(
 			// parent notice, and the crash-safe marker are the RUNTIME's job; the
 			// runtime never reads {result, lessons} — only Matrix does, right here.
 			tracker.appendResultRound(node.id, parseDonePayload(doneInput));
+			// Index-on-done: keep the search index fresh on the common path. Read
+			// the canonical post-append node so the just-added round is included.
+			// Best-effort — an index write must NEVER break the done lifecycle;
+			// the startup reconcile retries any miss.
+			if (ctx) {
+				try {
+					const fresh = tracker.getTask(node.id) ?? node;
+					indexTask(
+						projectIndexDbPath(
+							ctx.config.dataDir,
+							projectId,
+							ctx.config.dataRoot,
+						),
+						fresh,
+					);
+				} catch (e) {
+					console.warn(`[task-index] index-on-done failed for ${node.id}:`, e);
+				}
+			}
 		},
 	};
 }
