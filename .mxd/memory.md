@@ -4133,3 +4133,19 @@ shape), so only a test using a NON-matrix custom field exposes the runtime resha
 **Lesson**: to test "layer X is opaque to layer Y's data", the test MUST use data that ONLY layer Y
 understands (a custom field). Testing with the DEFAULT plugin's (matrix's) fields can't distinguish
 "passed through opaque" from "reconstructed to matrix's shape" — both produce the same matrix round.
+
+## fable silent-turn → silent idle + agent date-blindness (2026-07-15, from closed task 01KWYCYA)
+
+Two durable lessons from the fable-stall investigation (01KWYCYA, closed — fable now moot on opus-4-8, but these OUTLIVE fable). Generic fix drafted: **01KXK69KKKGG4XHPH7EWGNY5AC**. Date-blind fix drafted: **01KXK5QH2BDQSZB1H1CQV8X470**.
+
+### Silent-idle on a no-text-no-tool turn (durable failure MODE)
+An assistant turn returning **thinking-only** (no text block, no tool_call) makes the provider loop see `toolUses.length === 0` → treat it as end-of-turn → **implicit yield → idle, with NO user-visible signal**. The agent then waits for a message **indefinitely**; daemon restarts just RE-IDLE an implicit-yield agent (they don't self-continue it). Benign for a root-in-conversation (a human eventually pokes it); an **indefinite hang for an autonomous sub-agent nobody is watching** — the parent's yield never wakes. 01KWYCYA was the live repro: interrupted 7/7 14:56, idle 8 days until poked 7/15.
+- Trigger was fable (server-side turn termination). Our gap: `getStopReason()` collapses all non-`end_turn` (incl. `refusal` / `pause_turn` / `model_context_window_exceeded` / `compaction`) to `tool_use`, and the loop idles without persisting/surfacing the anomalous stop.
+- GUARD (deferred → draft 01KXK69K): any `stop_reason ∉ {end_turn, tool_use}` → emit a **persisted, user-visible error event BEFORE idling** (Part A observability); + bounded `pause_turn` continue (~3) (Part B). Generic, zero fable coupling.
+
+### Forensics (durable, model-agnostic debugging tools)
+- **Which model ACTUALLY served a turn**: base64-decode a thinking block's `signature` — it embeds the serving model name (e.g. `claude-fable-5`), **independent of `response.model`** (which can lie under silent routing). Root's full history: 8/8 silent turns were fable, 0/9800 opus.
+- **Mid-stream/hardware cut vs upstream turn-completion**: a **clean `usage` event present** ⟹ the API turn completed and our loop processed it → RULES OUT a mid-stream process suspension (which would orphan the turn + trigger `buildSessionRepair` on resume). So `clean usage + thinking-only shape` = upstream silent turn, NOT a laptop-close/suspend.
+
+### Agent time-perception is DATE-BLIND (ground truth = epoch ts)
+Context message timestamps are `[HH:MM:SS]` with **no date**. 01KWYCYA was interrupted 7/7 14:56 and idle until 7/15 16:13 — **8 days** — but on wake it confidently reported "~80 minutes" because 14:56→16:13 looks same-day. **Ground truth is the epoch `ts` in the JSONL (encodes the date); the display stamps do NOT.** Rule for ANY "how long was I stalled / when did this happen / is this stale" reasoning: **read the epoch `ts`, never trust the `[HH:MM]` display for elapsed wall-clock.** Root hit the same thing this session: an overnight `bun test` `[22:06]` → user `[11:04]` next-day gap was invisible in the stamps (inferred only from anomalous test durations). Surfacing-fix design in draft 01KXK5QH.
