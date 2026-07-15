@@ -2357,6 +2357,35 @@ h6.mxd-md-h {
 	background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+/* Page-wide image drop overlay — shown while an external image file is dragged
+   anywhere over the window. pointer-events:none so the underlying element still
+   receives the drop (which bubbles to the window handler). */
+.mxd-global-drop-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+	background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.mxd-global-drop-inner {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 10px;
+	padding: 28px 44px;
+	border: 2px dashed var(--accent);
+	border-radius: var(--radius-lg);
+	background: var(--bg-base);
+	color: var(--accent);
+	font-size: 14px;
+	font-weight: 600;
+	box-shadow: var(--shadow-lg);
+}
+
 /* =========================================================
    Tool Cards
    ========================================================= */

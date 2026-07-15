@@ -227,6 +227,7 @@ const en: Translations = {
 	"footer.messageToTask": 'Message to "{task}"…',
 	"footer.send": "Send",
 	"footer.attachImage": "Attach image",
+	"footer.dropImage": "Drop image to attach",
 	"footer.contextWindow": "Context",
 
 	"footer.compactAt": "Compact at",
@@ -552,6 +553,7 @@ const zh: Translations = {
 	"footer.messageToTask": '发送消息给 "{task}"…',
 	"footer.send": "发送",
 	"footer.attachImage": "附加图片",
+	"footer.dropImage": "拖放图片以添加",
 	"footer.contextWindow": "上下文",
 
 	"footer.compactAt": "压缩阈值",

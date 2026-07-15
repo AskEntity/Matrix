@@ -24,6 +24,7 @@ import {
 	IconExpand,
 	IconEyeOff,
 	IconHexagon,
+	IconImage,
 	IconMinimize,
 	IconPlus,
 	IconRefresh,
@@ -49,6 +50,7 @@ import {
 	type PendingMessage,
 	pendingReducer,
 } from "./event-handler.ts";
+import { useWindowFileDrop } from "./file-drop.ts";
 import { filterReducer, INITIAL_FILTER_STATE } from "./filter-state.ts";
 import { createActionHandlers } from "./handlers.ts";
 import {
@@ -563,6 +565,19 @@ function ProjectContent({
 	const handleQuoteText = useCallback((text: string) => {
 		setQuoteRequest((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
 	}, []);
+	// Page-wide image drop: an image dropped ANYWHERE on the page is routed
+	// into the composer's existing attachment state as a one-shot request
+	// (seq bump per drop), mirroring the quoteRequest hop. The window handler
+	// gates strictly on external file drags, so task-tree/tab reorder (internal
+	// HTML5 drags) are never intercepted. `isDraggingFile` drives the overlay.
+	const [imageDropRequest, setImageDropRequest] = useState<{
+		files: File[];
+		seq: number;
+	} | null>(null);
+	const handleImageFiles = useCallback((files: File[]) => {
+		setImageDropRequest((prev) => ({ files, seq: (prev?.seq ?? 0) + 1 }));
+	}, []);
+	const isDraggingFile = useWindowFileDrop(handleImageFiles);
 	// Scroll-to-bottom button: jump the activity log to "now" and resume
 	// follow mode. Optimistically hides the button; ActivityLog's scroll
 	// reporting confirms (and would re-show it if scrolling ever failed).
@@ -1821,7 +1836,17 @@ function ProjectContent({
 				onClarifySubmit={handleClarifySubmit}
 				onClarifyAnswerChange={handleClarifyAnswerChange}
 				quoteRequest={quoteRequest}
+				imageDropRequest={imageDropRequest}
 			/>
+
+			{isDraggingFile && (
+				<div className="mxd-global-drop-overlay" aria-hidden="true">
+					<div className="mxd-global-drop-inner">
+						<IconImage size={40} />
+						<span>{t("footer.dropImage")}</span>
+					</div>
+				</div>
+			)}
 
 			{themes[theme]?.hasCat && <CuteCat />}
 		</>
