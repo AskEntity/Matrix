@@ -4149,3 +4149,75 @@ An assistant turn returning **thinking-only** (no text block, no tool_call) make
 
 ### Agent time-perception is DATE-BLIND (ground truth = epoch ts)
 Context message timestamps are `[HH:MM:SS]` with **no date**. 01KWYCYA was interrupted 7/7 14:56 and idle until 7/15 16:13 — **8 days** — but on wake it confidently reported "~80 minutes" because 14:56→16:13 looks same-day. **Ground truth is the epoch `ts` in the JSONL (encodes the date); the display stamps do NOT.** Rule for ANY "how long was I stalled / when did this happen / is this stale" reasoning: **read the epoch `ts`, never trust the `[HH:MM]` display for elapsed wall-clock.** Root hit the same thing this session: an overnight `bun test` `[22:06]` → user `[11:04]` next-day gap was invisible in the stamps (inferred only from anomalous test durations). Surfacing-fix design in draft 01KXK5QH.
+
+## Global image drag-drop → composer attachment (2026-07-15)
+
+Drop an image ANYWHERE on the plugin web page → it attaches to the composer's existing
+attachment state, instead of the browser navigating to / opening the file. The composer's
+own footer-form drop (`.mxd-footer-form`) is UNTOUCHED (additive) — this ADDS page-wide
+coverage.
+
+### Files
+- `.mxd/plugin/web/file-drop.ts` — NEW. Pure helpers `isFileDrag(dt)` / `extractImageFiles(dt)`
+  (no DOM, unit-tested) + the `useWindowFileDrop(onImageFiles): isDragging` hook.
+- `InputBar.tsx` — new `ImageDropRequest = { files: File[]; seq: number }` type + `imageDropRequest`
+  prop + a one-shot `useEffect` that runs each file through the EXISTING `handleFileToBase64`
+  (the reuse point — no duplicated validation; paste / click-upload / composer-drop all share it).
+- `AppFooter.tsx` — threads `imageDropRequest` Plugin → InputBar.
+- `Plugin.tsx` (ProjectContent) — `useWindowFileDrop(handleImageFiles)` → bumps a one-shot
+  `imageDropRequest` state (mirrors the `quoteRequest` seq-hop) → AppFooter; renders the
+  `.mxd-global-drop-overlay` when `isDraggingFile`.
+- `style.css` — `.mxd-global-drop-overlay` (fixed, full-viewport, `pointer-events:none`) +
+  `.mxd-global-drop-inner`. i18n `footer.dropImage` (EN "Drop image to attach" / ZH "拖放图片以添加").
+
+### ⭐ RED LINE — never intercept internal HTML5 drags
+The task-tree reorder/reparent (TaskTree.tsx) and tab-bar reorder are native HTML5 drags that
+set `dataTransfer.setData("text/plain", …)` → `dataTransfer.types === ["text/plain"]`, NEVER
+"Files". EVERY global handler gates on `isFileDrag` (= `types.includes("Files")`), so internal
+drags pass through completely untouched. Verified: TaskTree `handleDragOver` early-returns (no
+`preventDefault`) when its internal `dragState` is null (external drag), and `handleDrop` calls
+`preventDefault` but NEVER `stopPropagation` — so a FILE dropped on a task node is preventDefaulted
+(no browser open) AND bubbles to the window handler (attaches). Live-smoke confirmed
+`internalDragPrevented === false` for a text/plain dragover.
+
+### Design: window listeners, CAPTURE (visual) vs BUBBLE (functional) split
+`useWindowFileDrop` attaches to `window` (covers the whole viewport regardless of DOM — sidebar,
+activity, footer — without a wrapping div / layout change). Two concerns, two phases:
+- FUNCTIONAL (bubble): `dragover` (preventDefault + `dropEffect="copy"`) + `drop` (preventDefault +
+  attach image files). BUBBLE phase is load-bearing: InputBar's own composer `onDrop` calls
+  `stopPropagation`, so a drop landing ON the composer is handled there and this window `drop`
+  does NOT also fire → NO double-attach. Drops elsewhere aren't stopped → bubble to window → attach.
+- VISUAL (capture): `dragenter`/`dragleave` depth counter + `drop` reset drive the overlay.
+  CAPTURE phase is load-bearing: it fires before any inner bubble-phase handler, so InputBar's
+  `stopPropagation` on the composer's drag/drop can't desync the counter or leave the overlay
+  stuck (a composer drop still triggers the capture `drop` reset). This is why the overlay needs
+  NO timer/flicker heuristic — the counter is deterministic.
+
+### Consumer wiring — one-shot request (mirrors quoteRequest)
+Window handler collects `File[]` and bumps `imageDropRequest = { files, seq }`; InputBar's effect
+(keyed on the object; `handleFileToBase64` is a stable useCallback, listed in deps → no re-fire)
+runs each file through `handleFileToBase64`. Passing File objects (not base64) down keeps the
+one converter (size guard + FileReader + mediaType) in InputBar — zero duplication.
+
+### Tests (mutation-verified)
+- `web/file-drop.test.ts` (pure helpers), `web/file-drop-hook.test.tsx` (hook: overlay show/hide,
+  attach, dropEffect, enter/leave counter, unmount cleanup, + RED LINE text/plain not intercepted),
+  `web/InputBar-image-drop.test.tsx` (imageDropRequest → preview via handleFileToBase64),
+  `web/Plugin-image-drop-journey.test.tsx` (CANONICAL: real daemon + Plugin, drop image on the
+  sidebar → composer preview; internal text/plain dragover not prevented — guards the
+  Plugin→AppFooter→InputBar seam + the hook wiring).
+- Mutation-proofed: dropping `imageDropRequest={imageDropRequest}` in AppFooter → journey FAILS
+  (15s timeout, no preview) while component tests stay green; removing the `isFileDrag` gate in
+  the hook's `onDragOver` → RED-LINE hook test FAILS.
+- Live browser smoke on the branch build (isolated daemon :7434): overlay renders w/ correct
+  text + `pointer-events:none`; file dragover/drop `defaultPrevented`; text/plain drag NOT
+  prevented; drop image on sidebar → `data:image/png;base64,…` preview in composer; paste image
+  still works. happy-dom + Bun support `File`/`FileReader.readAsDataURL` and synthetic DragEvents
+  (attach `dataTransfer` via `Object.defineProperty`).
+
+### Gotcha — CDP can't synthesize an OS-file drag
+chrome-devtools `drag` is element-to-element only; a REAL external-file drop (the one that
+triggers the browser's open-the-file default) can't be synthesized via available tools. Both the
+tests and the live smoke inject SYNTHETIC drops (dataTransfer stub). "Browser doesn't open the
+file" rests on standard `preventDefault(dragover+drop)` semantics (verified prevented) + a human's
+eventual real-file drag. Everything else is covered end-to-end.

@@ -1,7 +1,11 @@
 import { memo } from "react";
 import type { TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { InputBar, type QuoteRequest } from "./InputBar.tsx";
+import {
+	type ImageDropRequest,
+	InputBar,
+	type QuoteRequest,
+} from "./InputBar.tsx";
 
 export const AppFooter = memo(function AppFooter({
 	projectId,
@@ -14,6 +18,7 @@ export const AppFooter = memo(function AppFooter({
 	onClarifySubmit,
 	onClarifyAnswerChange,
 	quoteRequest,
+	imageDropRequest,
 }: {
 	projectId: string;
 	targetNodeId: string | null;
@@ -41,6 +46,7 @@ export const AppFooter = memo(function AppFooter({
 	onClarifySubmit: (clarificationId: string) => void;
 	onClarifyAnswerChange: (clarificationId: string, value: string) => void;
 	quoteRequest?: QuoteRequest | null;
+	imageDropRequest?: ImageDropRequest | null;
 }) {
 	const { t } = useLocale();
 
@@ -123,6 +129,7 @@ export const AppFooter = memo(function AppFooter({
 				nodeMap={nodeMap}
 				onSend={onSend}
 				quoteRequest={quoteRequest}
+				imageDropRequest={imageDropRequest}
 			/>
 		</footer>
 	);

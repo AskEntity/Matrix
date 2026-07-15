@@ -18,6 +18,18 @@ export interface QuoteRequest {
 }
 
 /**
+ * One-shot request to attach image files dropped ANYWHERE on the page (routed
+ * from the window-level handler in Plugin.tsx). `seq` increments per drop so
+ * re-dropping the same files still applies. The files run through the same
+ * `handleFileToBase64` path as paste / click-upload / composer-local drop —
+ * no duplicated validation.
+ */
+export interface ImageDropRequest {
+	files: File[];
+	seq: number;
+}
+
+/**
  * Minimal textarea surface the caret-scroll seam touches. `HTMLTextAreaElement`
  * satisfies it structurally; tests pass a fake that supplies `scrollHeight`
  * without a real layout engine (happy-dom does no layout).
@@ -62,6 +74,7 @@ export const InputBar = memo(function InputBar({
 	nodeMap,
 	onSend,
 	quoteRequest,
+	imageDropRequest,
 }: {
 	projectId: string;
 	targetNodeId: string | null;
@@ -71,6 +84,7 @@ export const InputBar = memo(function InputBar({
 		images?: { base64: string; mediaType: string }[],
 	) => void;
 	quoteRequest?: QuoteRequest | null;
+	imageDropRequest?: ImageDropRequest | null;
 }) {
 	const { t } = useLocale();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -218,6 +232,16 @@ export const InputBar = memo(function InputBar({
 		};
 		reader.readAsDataURL(file);
 	}, []);
+
+	// Page-wide image drop: files dropped anywhere on the page (captured by the
+	// window handler in Plugin.tsx) arrive as a one-shot request and go through
+	// the SAME handleFileToBase64 path as paste / click-upload / composer drop.
+	// Keyed on the request object (seq bump per drop); handleFileToBase64 is a
+	// stable useCallback so listing it doesn't re-fire on every render.
+	useEffect(() => {
+		if (!imageDropRequest) return;
+		for (const file of imageDropRequest.files) handleFileToBase64(file);
+	}, [imageDropRequest, handleFileToBase64]);
 
 	const handleSlashSelect = useCallback(
 		(cmd: { name: string }) => {
