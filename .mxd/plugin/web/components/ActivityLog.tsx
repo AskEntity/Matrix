@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { getLogTaskId, type LogEntry, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { quoteButtonPosition, selectionQuoteText } from "../quote.ts";
@@ -80,6 +88,13 @@ export const ActivityLog = memo(function ActivityLog({
 	const onAtBottomChangeRef = useRef(onAtBottomChange);
 	onAtBottomChangeRef.current = onAtBottomChange;
 	const [showThinking, setShowThinking] = useState(false);
+
+	// ── Load-earlier scroll anchor ────────────────────────────────────────
+	// Bottom-relative distance captured before the load starts. After the
+	// fetch completes and React commits the new entries, useLayoutEffect
+	// restores scrollTop so the user stays at the same content.
+	const scrollAnchorRef = useRef<number | null>(null);
+	const prevLoadingOlderRef = useRef(!!loadingOlderEvents);
 
 	// Select-to-quote: floating "Ask Matrix" button near the current selection.
 	// Set on mouseup with a valid selection inside the log container; dismissed
@@ -331,9 +346,35 @@ export const ActivityLog = memo(function ActivityLog({
 
 	const handleLoadOlder = useCallback(() => {
 		if (olderSessionId && onLoadOlderEvents) {
+			// Capture bottom-relative scroll position BEFORE the async load
+			// starts. After the fetch completes and entries rebuild, the
+			// useLayoutEffect below restores this anchor so the user stays
+			// at the same content (older events appear above, out of view).
+			const el = logRef.current;
+			if (el) {
+				scrollAnchorRef.current = el.scrollHeight - el.scrollTop;
+			}
 			onLoadOlderEvents(olderSessionId);
 		}
 	}, [olderSessionId, onLoadOlderEvents]);
+
+	// Restore scroll position after load-older completes.
+	// useLayoutEffect runs after DOM mutation but BEFORE paint — no visual jump.
+	// Trigger: loadingOlderEvents transitions true → false (entries already
+	// committed by React in this same render, thanks to React 18 batching).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: entries in deps ensures the effect fires when entries change in the same render as loadingOlderEvents
+	useLayoutEffect(() => {
+		const wasLoading = prevLoadingOlderRef.current;
+		prevLoadingOlderRef.current = !!loadingOlderEvents;
+
+		if (wasLoading && !loadingOlderEvents && scrollAnchorRef.current !== null) {
+			const el = logRef.current;
+			if (el) {
+				el.scrollTop = el.scrollHeight - scrollAnchorRef.current;
+			}
+			scrollAnchorRef.current = null;
+		}
+	}, [loadingOlderEvents, entries]);
 
 	const { t } = useLocale();
 
