@@ -148,9 +148,13 @@ const en: Translations = {
 	"settings.unlimited": "Unlimited",
 
 	"settings.selfBootstrap": "Self-Bootstrap Mode",
-	"settings.restartDaemonHint": "Restart the daemon process",
-	"settings.restartDaemon": "Restart Daemon",
+	"settings.restartDaemonLabel": "Load new code",
+	"settings.restartDaemonHint":
+		"Only reloads the daemon to pick up newly deployed code. Config changes do NOT need a restart — Save applies them on the next run.",
+	"settings.restartDaemon": "Restart backend (load new code)",
 	"settings.restartDaemonRestarting": "Restarting…",
+	"settings.restartConfirmUnsaved":
+		"Restarting reloads the code — it does NOT apply your config changes. To apply config, click Save first.\n\nYou have unsaved changes that will be lost on restart. Restart anyway?",
 	"settings.loading": "Loading…",
 	"settings.inherit": "Inherit from lower layer",
 	"settings.layerGlobal": "Global",
@@ -197,8 +201,11 @@ const en: Translations = {
 
 	"settings.save": "Save",
 	"settings.saved": "Saved",
+	"settings.saveEffectHint":
+		"Saved changes take effect on the next run — no restart needed.",
 	"settings.saveError": "Save failed",
 	"settings.modelRequired": "Model is a required field on the Global tab.",
+	"settings.closeConfirmUnsaved": "You have unsaved changes. Discard them?",
 	"settings.revert": "Revert",
 	"settings.cancel": "Cancel",
 	"settings.delete": "Delete",
@@ -457,9 +464,13 @@ const zh: Translations = {
 	"settings.unlimited": "无限制",
 
 	"settings.selfBootstrap": "自引导模式",
-	"settings.restartDaemonHint": "重启守护进程",
-	"settings.restartDaemon": "重启守护进程",
+	"settings.restartDaemonLabel": "加载新代码",
+	"settings.restartDaemonHint":
+		"仅用于重启后台以加载新部署的代码。修改配置无需重启 —— 保存后下次运行即生效。",
+	"settings.restartDaemon": "重启后台(加载新代码)",
 	"settings.restartDaemonRestarting": "重启中…",
+	"settings.restartConfirmUnsaved":
+		"重启只会重新加载代码,不会应用你的配置改动。要应用配置,请先点保存。\n\n你有未保存的改动,重启会丢失。仍要重启吗?",
 	"settings.loading": "加载中…",
 	"settings.inherit": "继承下层配置",
 	"settings.layerGlobal": "全局",
@@ -506,8 +517,10 @@ const zh: Translations = {
 
 	"settings.save": "保存",
 	"settings.saved": "已保存",
+	"settings.saveEffectHint": "保存后下次运行即生效,无需重启。",
 	"settings.saveError": "保存失败",
 	"settings.modelRequired": "模型是全局设置中的必填项。",
+	"settings.closeConfirmUnsaved": "你有未保存的改动,放弃吗?",
 	"settings.revert": "还原",
 	"settings.cancel": "取消",
 	"settings.delete": "删除",
