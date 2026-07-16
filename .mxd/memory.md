@@ -4221,3 +4221,47 @@ triggers the browser's open-the-file default) can't be synthesized via available
 tests and the live smoke inject SYNTHETIC drops (dataTransfer stub). "Browser doesn't open the
 file" rests on standard `preventDefault(dragover+drop)` semantics (verified prevented) + a human's
 eventual real-file drag. Everything else is covered end-to-end.
+
+## Settings restart-vs-Save UX decouple (2026-07-16)
+
+Three UX fixes to `web/components/SettingsPanel.tsx` that stop users from conflating
+"restart daemon (loads code)" with "apply config changes (Save → next run)". Root cause
+was layout: restart button appeared inside the Global tab near Save/Revert, giving the
+impression that restart = apply config.
+
+**Verified mechanism (write into copy)**: config Save → daemon `syncToWorkers("config",
+globalConfig)` (daemon.ts:2163) → worker `ctx.globalConfig` updates instantly
+(scope-worker.ts:184-188) → next `resolveProjectConfig` → `resolveConfig(ctx.globalConfig,...)`
+uses new values. **Restart is only for loading newly deployed code.**
+
+### Fix ①: Restart button relabel + decouple
+- `settings.restartDaemon` = "Restart backend (load new code)" / "重启后台(加载新代码)"
+- `settings.restartDaemonLabel` = "Load new code" (left label, replaces old misleading hint)
+- `settings.restartDaemonHint` = description below button: "Only reloads daemon to pick up
+  newly deployed code. Config changes do NOT need a restart — Save applies on the next run."
+  
+### Fix ②: Save-takes-effect hint
+- `settings.saveEffectHint` in TabActions (shared across all three config tabs):
+  "Saved changes take effect on the next run — no restart needed."
+
+### Fix ③: Unsaved-changes protection (option A — guard real loss points only)
+- **Restart** with any-tab unsaved → `window.confirm` with misconception-correcting text:
+  "Restarting reloads code, does NOT apply config changes. Save first." If cancelled, no POST.
+- **Close panel** (X or click-outside) with any-tab unsaved → standard "You have unsaved
+  changes. Discard them?" confirm.
+- **Tab-switch** (global↔project↔local): NO guard — each tab keeps independent persistent
+  draft state; no data lost on switch. A confirm here = crying-wolf (trains users to ignore
+  the real confirms on restart/close).
+
+### CSS
+`.mxd-settings-hint` (muted 11px helper text). Inside `.mxd-settings-tab-actions` takes
+full-width row via `flex-basis: 100%`.
+
+### Tests (`web/SettingsPanel-restart.test.tsx`, 13 tests)
+- `isDirty` pure-function unit tests (6) — detection algorithm.
+- Fix ①: button text, description text, left label. Fix ②: hint presence. Fix ③: clean-path
+  restart (no confirm, POST fires), close (no confirm, onClose fires), tab-switch (no confirm).
+- happy-dom limitation: React controlled `<input>` onChange doesn't fire from native value
+  setter + dispatchEvent ("input"). Dirty-path component tests can't make the internal draft
+  diverge from saved state. Dirty detection is unit-tested via exported `isDirty`; the wiring
+  (`if (hasUnsavedChanges && !window.confirm(...)) return;`) is ~4 lines verified by code review.

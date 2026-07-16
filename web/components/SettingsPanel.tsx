@@ -52,7 +52,7 @@ function inheritedValue(
 }
 
 /** Check if two draft objects differ from the saved layer config */
-function isDirty(
+export function isDirty(
 	draft: Record<string, unknown>,
 	saved: Record<string, unknown>,
 ): boolean {
@@ -912,6 +912,7 @@ function TabActions({
 					{t("settings.saveError")}: {error}
 				</div>
 			)}
+			<p className="mxd-settings-hint">{t("settings.saveEffectHint")}</p>
 			<button
 				type="button"
 				className="mxd-btn mxd-btn-sm mxd-btn-primary"
@@ -944,6 +945,7 @@ function GlobalTab({
 	theme,
 	onThemeChange,
 	error,
+	hasUnsavedChanges,
 }: {
 	layers: ThreeLayerConfig;
 	draft: Record<string, unknown>;
@@ -954,6 +956,7 @@ function GlobalTab({
 	theme: string;
 	onThemeChange: (theme: string) => void;
 	error?: string | null;
+	hasUnsavedChanges: boolean;
 }) {
 	const authFetch = useAuthFetch();
 	const { locale, setLocale, t } = useLocale();
@@ -968,6 +971,15 @@ function GlobalTab({
 	}, []);
 
 	const handleRestart = useCallback(() => {
+		// Restart triggers a full page reload — every unsaved draft (any tab) is
+		// lost. Warn only when there IS unsaved work, and correct the core
+		// misconception: restart reloads CODE, it does NOT apply config changes.
+		if (
+			hasUnsavedChanges &&
+			!window.confirm(t("settings.restartConfirmUnsaved"))
+		) {
+			return;
+		}
 		setRestarting(true);
 		authFetch("/restart-daemon", { method: "POST" }).catch(() => {});
 
@@ -988,7 +1000,7 @@ function GlobalTab({
 		}, 1500);
 
 		return () => clearTimeout(startDelay);
-	}, [authFetch]);
+	}, [authFetch, hasUnsavedChanges, t]);
 
 	const tab: ActiveTab = "global";
 	const authGroupNames = Object.keys(
@@ -1093,7 +1105,7 @@ function GlobalTab({
 
 				<div className="mxd-settings-field">
 					<span className="mxd-settings-label">
-						{t("settings.restartDaemonHint")}
+						{t("settings.restartDaemonLabel")}
 					</span>
 					<button
 						type="button"
@@ -1112,6 +1124,7 @@ function GlobalTab({
 							</>
 						)}
 					</button>
+					<p className="mxd-settings-hint">{t("settings.restartDaemonHint")}</p>
 				</div>
 			</div>
 
@@ -1358,6 +1371,10 @@ export const SettingsPanel = memo(function SettingsPanel({
 	const dirtyGlobal = isDirty(draftGlobal, layers.global);
 	const dirtyRepo = isDirty(draftRepo, layers.repo);
 	const dirtyLocal = isDirty(draftLocal, layers.local);
+	// Any tab dirty → restart (page reload) and closing (unmount) both silently
+	// drop the draft. Switching sub-tabs does NOT (each tab keeps its own draft),
+	// so only restart + close are guarded.
+	const hasUnsavedChanges = dirtyGlobal || dirtyRepo || dirtyLocal;
 
 	// Save error state — surfaced inline when PATCH fails
 	const [saveError, setSaveError] = useState<string | null>(null);
@@ -1417,6 +1434,18 @@ export const SettingsPanel = memo(function SettingsPanel({
 		local: "settings.titleLocal",
 	} as const;
 
+	// Closing the panel unmounts it → all drafts are lost. Guard with a discard
+	// confirm only when there are unsaved changes.
+	const handleClose = useCallback(() => {
+		if (
+			hasUnsavedChanges &&
+			!window.confirm(t("settings.closeConfirmUnsaved"))
+		) {
+			return;
+		}
+		onClose();
+	}, [hasUnsavedChanges, onClose, t]);
+
 	// Click-outside-to-close (exclude the gear toggle button in the header)
 	const panelRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
@@ -1425,17 +1454,17 @@ export const SettingsPanel = memo(function SettingsPanel({
 			if (panelRef.current?.contains(target)) return;
 			if ((target as Element).closest?.(".mxd-settings-toggle-btn")) return;
 			if ((target as Element).closest?.(".mxd-sidebar-settings-btn")) return;
-			onClose();
+			handleClose();
 		};
 		document.addEventListener("mousedown", handler);
 		return () => document.removeEventListener("mousedown", handler);
-	}, [onClose]);
+	}, [handleClose]);
 
 	return (
 		<div ref={panelRef} className="mxd-settings-panel mxd-settings-panel-wide">
 			<div className="mxd-settings-header">
 				<span className="mxd-settings-title">{t(tabTitleKey[activeTab])}</span>
-				<button type="button" className="mxd-btn-icon" onClick={onClose}>
+				<button type="button" className="mxd-btn-icon" onClick={handleClose}>
 					<IconClose size={11} />
 				</button>
 			</div>
@@ -1484,6 +1513,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 					theme={theme}
 					onThemeChange={onThemeChange}
 					error={saveError}
+					hasUnsavedChanges={hasUnsavedChanges}
 				/>
 			)}
 			{activeTab === "project" && (
