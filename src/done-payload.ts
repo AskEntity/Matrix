@@ -17,13 +17,12 @@
 import { z } from "zod";
 
 /**
- * The stored/round shape: every content field present (lessons defaulted to []).
- * The done() tool declares `result` required-non-empty and `lessons` optional;
- * `readDonePayload` normalizes a raw done input into this always-present shape.
+ * The stored/round shape. The done() tool declares `result` required-non-empty;
+ * `parseDonePayload` normalizes a raw done input into this always-present shape.
+ * Agents fold lessons/pitfalls into the `result` narrative directly.
  */
 export const donePayloadSchema = z.object({
 	result: z.string(),
-	lessons: z.array(z.string()),
 });
 
 /** Matrix's done content == a resultRounds element. Derived from the schema. */
@@ -36,18 +35,14 @@ export type DonePayload = z.infer<typeof donePayloadSchema>;
  * `donePayloadSchema` and normalize it here (only).
  *
  * ONLY Matrix calls this, from its `onDone` hook: the runtime hands the done
- * input to onDone as an opaque record and never itself reads `lessons` / the
- * round shape (that would leak round structure into the plugin-agnostic layer).
- * Missing / malformed fields normalize to their empty form (`result: ""`,
- * `lessons: []`).
+ * input to onDone as an opaque record and never itself reads the round shape
+ * (that would leak round structure into the plugin-agnostic layer).
+ * Missing / malformed `result` normalizes to `""`.
  */
 export function parseDonePayload(
 	input: Record<string, unknown> | undefined,
 ): DonePayload {
 	return {
 		result: typeof input?.result === "string" ? input.result : "",
-		lessons: Array.isArray(input?.lessons)
-			? input.lessons.filter((l): l is string => typeof l === "string")
-			: [],
 	};
 }

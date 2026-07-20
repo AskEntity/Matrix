@@ -1882,7 +1882,7 @@ export async function* runProviderLoop(
 				const doneInput = doneToolUse.input as { status?: string } | undefined;
 				doneExitReason =
 					doneInput?.status === "passed" ? "done_passed" : "done_failed";
-				// The done CONTENT (result + lessons) is NOT carried out of the loop —
+				// The done CONTENT (result) is NOT carried out of the loop —
 				// it is read back from the persisted done() tool_call at Phase 2 (JSONL
 				// = single source of truth). The provider loop reads only `status`
 				// here, to route the exit (done_passed/done_failed).

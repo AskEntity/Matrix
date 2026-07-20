@@ -1131,7 +1131,7 @@ export async function runAgentForNode(
 				// done for root too (root done()s are captured), not only children. The
 				// runtime keeps this OPAQUE: it derives only the universal completion
 				// output (below) and hands the record to onDone, which alone reads round
-				// content (lessons). It never holds {result, lessons} itself.
+				// content. It never holds the round shape itself.
 				let doneInput: Record<string, unknown> | undefined;
 				if (eventStore.has(nodeId)) {
 					await eventStore.flushSession(nodeId);
@@ -1161,7 +1161,7 @@ export async function runAgentForNode(
 					// the ONE done field the runtime reads. Round content stays in onDone.
 					const completionOutput = doneCompletionOutput(doneInput);
 					// Plugin persists its own done CONTENT from the opaque input (Matrix
-					// parses {result, lessons} and appends a resultRound). Returns void.
+					// parses {result} and appends a resultRound). Returns void.
 					opts.onDone?.(currentNode, tracker, doneInput ?? {});
 					tracker.updateStatus(nodeId, newStatus);
 					await tracker.save();

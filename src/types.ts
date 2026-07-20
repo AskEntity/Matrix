@@ -134,7 +134,7 @@ export interface TaskNode extends BaseTaskNode {
 	 * appended per round (never overwritten) — a single-done task has one entry,
 	 * a task done()'d N times (reawaken → re-done) has N entries in call order.
 	 * Absent until the first done(). Foundation for the memory index (search over
-	 * past decisions/lessons). This is the SAME `DonePayload` shape done() accepts
+	 * past decisions). This is the SAME `DonePayload` shape done() accepts
 	 * — done() ↔ round is 1:1 by construction (see done-payload.ts); the round's
 	 * `result` is the same string sent to the parent as the completion notice.
 	 */

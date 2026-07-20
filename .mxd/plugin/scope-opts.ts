@@ -121,11 +121,11 @@ export function buildMatrixScopeOpts(
 			tracker.updateStatus(node.id, "in_progress");
 		},
 		onDone: (node, tracker, doneInput) => {
-			// Content-only: rebuild this round's DonePayload (result + lessons) from
-			// the opaque done() input and append it — one block per done(),
-			// append-only, never overwritten. Status routing (→ verify/failed), the
-			// parent notice, and the crash-safe marker are the RUNTIME's job; the
-			// runtime never reads {result, lessons} — only Matrix does, right here.
+			// Content-only: rebuild this round's DonePayload (result) from the opaque
+			// done() input and append it — one block per done(), append-only, never
+			// overwritten. Status routing (→ verify/failed), the parent notice, and
+			// the crash-safe marker are the RUNTIME's job; the runtime never reads
+			// the round content — only Matrix does, right here.
 			tracker.appendResultRound(node.id, parseDonePayload(doneInput));
 		},
 	};
