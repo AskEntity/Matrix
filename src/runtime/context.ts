@@ -112,6 +112,19 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 		tracker: import("../task-tracker.ts").TaskTracker,
 		projectId: string,
 	) => void | Promise<void>;
+	/**
+	 * A project's scope is being brought up at worker/daemon start (resumed).
+	 * The runtime calls this ONCE per project during autoResumeProjects, after
+	 * the tracker is loaded. Counterpart to `seedTree` (which runs only on a
+	 * fresh tree); this runs on every startup. Generic per-project startup
+	 * work — the runtime attaches no meaning to what the plugin does inside.
+	 * Best-effort — a throw is caught and logged by the runtime, never blocking
+	 * agent resume.
+	 */
+	onScopeResume?: (
+		tracker: import("../task-tracker.ts").TaskTracker,
+		projectId: string,
+	) => void | Promise<void>;
 	shouldResume?: (node: T["node"]) => boolean;
 	onLaunch?: (
 		node: T["node"],

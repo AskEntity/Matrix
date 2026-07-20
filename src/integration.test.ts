@@ -11,12 +11,14 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { projectIndexDbPath } from "./data-paths.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
+import { reconcileIndex, searchIndex } from "./task-index.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { initTestProject } from "./test-utils/init-test-project.ts";
 import {
@@ -12375,6 +12377,149 @@ describe("Integration: bash tiered output contract", () => {
 			expect(seDisk).toContain("err-010000");
 			rmSync(sePath, { force: true });
 		}
+	}, 20000);
+});
+
+describe("Integration: memory index (Step 2 FTS keyword search)", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	// Index DB path the plugin (onDone / onScopeResume) and the search_tasks
+	// tool ALL resolve from ctx.config — reading it the same way keeps the test
+	// pointed at exactly the file production uses.
+	const indexDbPath = (c: TestContext) =>
+		projectIndexDbPath(c.dataDir, c.projectId, c.app.ctx.config.dataRoot);
+
+	test("index-on-done: done(result) is immediately searchable", async () => {
+		ctx = await setupTestContext();
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Wrapping up." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: {
+						status: "passed",
+						result: "Implemented the frobnicator cache via a ring buffer.",
+					},
+				},
+			],
+		});
+		expect((await startAgent(ctx, instruction)).status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+		const dbPath = indexDbPath(ctx);
+
+		const resultHit = searchIndex(dbPath, "frobnicator").find(
+			(h) => h.taskId === rootId && h.field === "result",
+		);
+		expect(resultHit).toBeDefined();
+		expect(resultHit?.roundIndex).toBe(0);
+		expect(resultHit?.snippet).toContain("frobnicator");
+	}, 20000);
+
+	test("startup reconcile (autoResumeProjects → onScopeResume) backfills the tree", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const child = tracker.addChild(
+			tracker.rootNodeId,
+			"Zephyr subsystem",
+			"handles the widgetronic pipeline",
+		);
+		await tracker.save();
+
+		const dbPath = indexDbPath(ctx);
+		// Not indexed until the startup hook runs.
+		expect(searchIndex(dbPath, "widgetronic")).toHaveLength(0);
+
+		await ctx.app.autoResumeProjects();
+
+		expect(
+			searchIndex(dbPath, "widgetronic").some(
+				(h) => h.taskId === child.id && h.field === "description",
+			),
+		).toBe(true);
+		expect(
+			searchIndex(dbPath, "Zephyr").some(
+				(h) => h.taskId === child.id && h.field === "title",
+			),
+		).toBe(true);
+	}, 20000);
+
+	test("search_tasks tool returns ranked hits with field/round provenance", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const child = tracker.addChild(
+			tracker.rootNodeId,
+			"Auth rewrite",
+			"migrate the loginflow to passkeys",
+		);
+		await tracker.save();
+		// Populate the index the way startup reconcile would.
+		reconcileIndex(indexDbPath(ctx), tracker);
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Checking prior work." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__search_tasks",
+							input: { query: "loginflow" },
+						},
+					],
+				},
+				{
+					// The search_tasks tool_result (block 0 of this turn's input)
+					// carries the matching task's id + the highlighted snippet.
+					assert: [
+						{ block: 0, type: "tool_result", contains: "loginflow" },
+						{ block: 0, type: "tool_result", contains: child.id },
+						{ block: 0, type: "tool_result", contains: "description" },
+					],
+					blocks: [
+						{ type: "text", text: "Found it." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", result: "reviewed prior auth work" },
+						},
+					],
+				},
+			],
+		});
+		expect((await startAgent(ctx, instruction)).status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+	}, 20000);
+
+	test("index-on-done is best-effort: an index-write failure never breaks done()", async () => {
+		ctx = await setupTestContext();
+		// Sabotage the index by making its PATH a directory — opening it throws.
+		mkdirSync(indexDbPath(ctx), { recursive: true });
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Done despite a broken index." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", result: "shipped anyway" },
+				},
+			],
+		});
+		expect((await startAgent(ctx, instruction)).status).toBe(200);
+		// done() still completes → verify, and the round still lands on the node.
+		expect(await waitForDone(ctx)).toBe("verify");
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
+			{ result: "shipped anyway" },
+		]);
 	}, 20000);
 });
 

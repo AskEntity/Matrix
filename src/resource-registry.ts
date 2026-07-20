@@ -49,7 +49,7 @@ interface RuntimeContextLike {
 	};
 	readonly trackers: Map<string, TaskTracker>;
 	readonly eventStores: Map<string, EventStore>;
-	readonly config: { dataDir: string };
+	readonly config: { dataDir: string; dataRoot?: string };
 	readonly globalConfig: {
 		budgetUsd: number;
 	};
@@ -91,6 +91,17 @@ export function getProject(
 
 export function getDefaultBudgetUsd(): number {
 	return ctx().globalConfig.budgetUsd;
+}
+
+/**
+ * The runtime's data-path inputs (dataDir + the active plugin's dataRoot), for
+ * callers that build a dataRoot-relative path via data-paths.ts (e.g. the
+ * search_tasks tool resolving `index.db`). Generic — no knowledge of what the
+ * path is used for.
+ */
+export function getDataPaths(): { dataDir: string; dataRoot?: string } {
+	const c = ctx();
+	return { dataDir: c.config.dataDir, dataRoot: c.config.dataRoot };
 }
 
 // ── Project-level functions (need projectId handle) ──

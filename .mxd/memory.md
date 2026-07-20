@@ -4134,6 +4134,7 @@ shape), so only a test using a NON-matrix custom field exposes the runtime resha
 understands (a custom field). Testing with the DEFAULT plugin's (matrix's) fields can't distinguish
 "passed through opaque" from "reconstructed to matrix's shape" — both produce the same matrix round.
 
+<<<<<<< HEAD
 ## fable silent-turn → silent idle + agent date-blindness (2026-07-15, from closed task 01KWYCYA)
 
 Two durable lessons from the fable-stall investigation (01KWYCYA, closed — fable now moot on opus-4-8, but these OUTLIVE fable). Generic fix drafted: **01KXK69KKKGG4XHPH7EWGNY5AC**. Date-blind fix drafted: **01KXK5QH2BDQSZB1H1CQV8X470**.
@@ -4307,3 +4308,106 @@ users undo mistakes themselves — no need for system to block close.
 
 **Current SettingsPanel action model**: Save & Restart (saves all dirty + restarts daemon) +
 Revert (undo all edits) + close (just closes, discards unsaved). No confirm dialogs anywhere.
+
+## Memory-index Step 2: FTS keyword-search vertical — `src/task-index.ts` + search_tasks tool (2026-07-15)
+
+First usable slice of the memory index (design draft 01KWCQEB). Explicit keyword search (mode b),
+FTS-only, precise-location results. Builds on Step 1's `resultRounds` (structured done() content).
+
+### What shipped
+- **`src/task-index.ts`** (NEW src/ leaf) — per-project SQLite (bun:sqlite, zero deps) FTS5 index over
+  every task's title, description, and each done() round's result, at **per-field +
+  per-round granularity** (each row = one (task_id, field, round) unit → every hit traces to an exact
+  location). Public API: `openIndexDb`, `indexTask(dbPath,node)`, `reconcileIndex(dbPath,tracker)`,
+  `searchIndex(dbPath,query,limit)`, `toMatchQuery`, `SCHEMA_VERSION`, `SearchHit`.
+- **`search_tasks` tool** (orchestrator-tools.ts `buildAllToolDefs`, `availability:"both"`) — agent +
+  external-MCP keyword search. Returns `{taskId,title,field,round?,snippet,score}[]` (BM25 best-first).
+- **`projectIndexDbPath(dataDir,projectId,dataRoot?)`** in data-paths.ts (sibling of tree.json →
+  matrix: `projects/<id>/plugin/matrix/index.db`).
+- **Sync**: index-on-done (matrix onDone in `.mxd/plugin/scope-opts.ts`) + startup reconcile
+  (new generic `onScopeResume` hook).
+
+### ⭐ Boundary (identical to the DonePayload boundary — the ACTUAL invariant)
+The red line is NOT "index code physically only in `.mxd/plugin/`" (that was a loose wording in the
+task description — src/ is the neutral building-block layer, like done-payload.ts / worktree-manager.ts).
+The REAL invariant: **`src/runtime/*` + runtime.ts + provider-shared.ts have ZERO occurrences of
+index/FTS/resultRounds** (grep-verified — even comments; I had to genericize two hook comments that
+said "search index"). The index engine is a `src/` leaf imported by BOTH the plugin (onDone +
+onScopeResume) AND orchestrator-tools (search_tasks) — plugin→src and src(non-runtime)→leaf are both
+fine. **Why the engine MUST be in src/ not `.mxd/plugin/`**: `search_tasks` needs `availability:"both"`,
+and the external-MCP tool list is built by `mcp-endpoint.ts:305` from `buildAllToolDefs()`
+(orchestrator-tools.ts, src/); src cannot import `.mxd/plugin/` (forbidden direction). So the tool must
+be in buildAllToolDefs → the search fn must be src-importable → engine lives in src/. This decisively
+resolved the layout.
+
+### Generic `onScopeResume(tracker, projectId)` hook (runtime touch, boundary-clean)
+New ScopeOpts hook (`src/runtime/context.ts`), called once per project in `autoResumeProjects`
+(runtime.ts) after the tracker loads, BEFORE resumeScope. Counterpart to `seedTree` (fresh tree only);
+this runs every startup. Named by EVENT not resource (hook-naming rule) — no index/fts word, grep-clean.
+Matrix's impl reconciles the index; the runtime attaches no meaning. Best-effort (runtime try/catch).
+`createApp` does NOT call autoResumeProjects → tests trigger reconcile via `app.autoResumeProjects()`
+or by calling `reconcileIndex` directly (so index work doesn't fire in every createMatrixApp test).
+
+### Schema (versioned, forward-compatible for Phase C)
+`schema_meta(key,value)` (schema_version=1) · `task_fts` FTS5 `(task_id UNINDEXED, field UNINDEXED,
+round UNINDEXED, text, tokenize='porter unicode61')` · `task_index_meta(task_id PK, indexed_at)` ·
+`task_vec(task_id,field,round,embedding BLOB,dim)` **reserved placeholder, NOT populated** (Phase C).
+
+### Sync model
+- **Staleness marker = per-task `indexed_at` stored IN index.db** = the node's `updatedAt` string at
+  index time. reconcile reindexes a task iff `stored.indexed_at !== node.updatedAt` (string compare, no
+  clock math). This SUBSUMES backfill (never-indexed task has no indexed_at → stale → indexed) — no
+  separate "already backfilled" marker needed. reconcile also PRUNES rows for tasks gone from the tree.
+- **index-on-done**: matrix onDone appends the round THEN best-effort `indexTask(canonical node)`
+  wrapped in try/catch — an index write must NEVER break the done lifecycle; reconcile retries misses.
+  Verified sync-safe: agent-lifecycle Phase 2 calls `opts.onDone?()` (sync) BEFORE
+  `updateStatus(verify)`, so when a test observes "verify" the index is already written (no race).
+- **Reconcile catches** title/description edits via update_task (no onDone) + crash-between-done-and-index.
+  Accepted edge: a same-millisecond edit-after-index yields an equal `updatedAt` string → skipped until
+  the next (different-ms) edit or restart. Practically never (edits happen at live-work time, indexing at
+  startup/done — different ms).
+- **KNOWN LIMITATION (inherited from Step 1)**: crash-recovery Phase 2 (`findInterruptedDonePhase2`,
+  runtime.ts) updates status via the runtime, never calls onDone → a crash-interrupted done's round is
+  lost from BOTH the node and the index. Normal path (overwhelming majority) is fine.
+
+### Connection model — open-per-operation, NO module cache
+Each op opens a fresh `Database`, closes in `finally`. Chose this over a cached-connection Map because
+onDone now runs in ~100 integration tests (each a fresh temp dataDir) → a module-level cache would leak
+one handle per test pointing at removed dirs. bun:sqlite is sync + single-threaded so ops never overlap;
+a per-op open on a small local file is sub-ms; reconcile opens ONCE and loops internally (`indexTaskInDb`
+on the shared handle). Default rollback journal (no WAL) → no `-wal/-shm` files left behind.
+
+### Query safety (NOT query rewriting — anti-pattern #6)
+`toMatchQuery`: split on whitespace, quote each term (doubling embedded `"`), join (implicit AND). This
+is INPUT SAFETY (prevents FTS5 syntax errors from stray `()`/operators), not semantic rewriting. Empty →
+"" → searchIndex returns []. Built ONLY raw FTS5 + BM25 + snippet — no field weighting, no ranking
+heuristics, no filters. Add those only when real use exposes a need.
+
+### ⚠️ Phase C de-risk — bun:sqlite CANNOT loadExtension (sqlite-vec blocker)
+Smoke-tested: `new Database(":memory:").loadExtension("x")` → **"This build of sqlite3 does not support
+dynamic extension loading"**. So Phase C's sqlite-vec CANNOT load into the default bun:sqlite build.
+Phase C options: (a) `Database.setCustomSQLite(path)` pointing at an extension-enabled libsqlite3
+(e.g. `brew install sqlite`), or (b) store embeddings as BLOB in `task_vec` + compute cosine in JS.
+FTS5 itself is fully built-in and works perfectly (MATCH/bm25/snippet/DELETE-by-column all verified,
+bun 1.3.14). Step 2 only reserves the vec table + schema_version.
+
+### Tests
+- `src/task-index.test.ts` (15 unit): schema/vec-reservation, title/description/result provenance,
+  re-index replaces stale rows, reconcile backfill/incremental-noop/prune/skip-folders, empty+punctuation
+  query safety, multi-term AND, BM25 ordering, limit, toMatchQuery.
+- `src/integration.test.ts` "memory index (Step 2 FTS...)" (4, full agent loop): index-on-done searchable,
+  startup reconcile via `autoResumeProjects`→onScopeResume, `search_tasks` tool end-to-end (asserts the
+  tool_result carries taskId+snippet+field), best-effort (index path made a DIRECTORY → open throws →
+  done() still verifies + round still on node).
+- Full suite 2516 pass / 0 fail; typecheck + check:ci clean (matches baseline 66 pre-existing warnings).
+
+### Gotchas
+- FTS5 standalone (own-content) table supports `DELETE FROM task_fts WHERE task_id=?` (re-index = delete
+  + reinsert). Verified — no external-content quirks.
+- `snippet(task_fts, 3, '[', ']', '…', 16)` — column index 3 = `text` (0-based: task_id=0,field=1,round=2,text=3).
+- The `search_tasks` handler enriches each hit with the task's CURRENT title (fresh `tracker.getTask`)
+  and drops hits whose task was deleted since indexing.
+- Generic `R.getDataPaths()` added to resource-registry (returns `{dataDir, dataRoot?}`) so the src/ tool
+  can resolve the index path without src→plugin coupling; minimal config interface gained `dataRoot?`.
+- **Post-merge cleanup (lessons-drop)**: `lessons` field removed from DonePayload after Step 2 was written.
+  task-index.ts lessons rows removed; integration tests cleaned. Index now covers title/description/result only.
