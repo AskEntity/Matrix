@@ -129,9 +129,9 @@ export function buildMatrixScopeOpts(
 		// never block agent resume. Needs ctx for the dataRoot; without it (some
 		// test harnesses) the index simply isn't maintained here.
 		onScopeResume: ctx
-			? (tracker, projId) => {
+			? async (tracker, projId) => {
 					try {
-						reconcileIndex(
+						await reconcileIndex(
 							projectIndexDbPath(
 								ctx.config.dataDir,
 								projId,
@@ -157,21 +157,21 @@ export function buildMatrixScopeOpts(
 			// Index-on-done: keep the search index fresh on the common path. Read
 			// the canonical post-append node so the just-added round is included.
 			// Best-effort — an index write must NEVER break the done lifecycle;
-			// the startup reconcile retries any miss.
+			// the startup reconcile retries any miss. Fire-and-forget — onDone is
+			// sync in the runtime contract, but the async indexTask runs in the
+			// background. Errors are caught + logged; the promise is not awaited.
 			if (ctx) {
-				try {
-					const fresh = tracker.getTask(node.id) ?? node;
-					indexTask(
-						projectIndexDbPath(
-							ctx.config.dataDir,
-							projectId,
-							ctx.config.dataRoot,
-						),
-						fresh,
-					);
-				} catch (e) {
+				const fresh = tracker.getTask(node.id) ?? node;
+				indexTask(
+					projectIndexDbPath(
+						ctx.config.dataDir,
+						projectId,
+						ctx.config.dataRoot,
+					),
+					fresh,
+				).catch((e) => {
 					console.warn(`[task-index] index-on-done failed for ${node.id}:`, e);
-				}
+				});
 			}
 		},
 	};

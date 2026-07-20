@@ -147,15 +147,17 @@ export function projectTreeJsonPath(
 }
 
 /**
- * Absolute path to a project's search index (`index.db`), respecting the
+ * Absolute path to a project's search index (`index.msp`), respecting the
  * plugin's dataRoot. Built on top of {@link resolveDataRoot}, so it sits in the
  * SAME directory as `tree.json` — for Matrix (dataRoot `"@/plugin/matrix"`)
- * this returns `<dataDir>/projects/<id>/plugin/matrix/index.db`.
+ * this returns `<dataDir>/projects/<id>/plugin/matrix/index.msp`.
+ *
+ * The `.msp` extension reflects the Orama binary (msgpack) persistence format.
  */
 export function projectIndexDbPath(
 	dataDir: string,
 	projectId: string,
 	dataRoot?: string,
 ): string {
-	return join(resolveDataRoot(dataDir, projectId, dataRoot), "index.db");
+	return join(resolveDataRoot(dataDir, projectId, dataRoot), "index.msp");
 }

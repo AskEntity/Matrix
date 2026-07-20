@@ -10,7 +10,7 @@
  * node's status (changes from "in_progress" to "verify"/"failed"), then call shutdown().
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,7 +18,12 @@ import { basename, join } from "node:path";
 import { projectIndexDbPath } from "./data-paths.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
-import { reconcileIndex, searchIndex } from "./task-index.ts";
+import {
+	_clearDbCache,
+	_setEmbeddingPipeline,
+	reconcileIndex,
+	searchIndex,
+} from "./task-index.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { initTestProject } from "./test-utils/init-test-project.ts";
 import {
@@ -12380,10 +12385,17 @@ describe("Integration: bash tiered output contract", () => {
 	}, 20000);
 });
 
-describe("Integration: memory index (Step 2 FTS keyword search)", () => {
+describe("Integration: memory index (Orama hybrid search)", () => {
 	let ctx: TestContext;
 
+	beforeEach(() => {
+		// Disable real embedding pipeline in integration tests — pure BM25 mode.
+		_setEmbeddingPipeline(null);
+	});
+
 	afterEach(async () => {
+		_clearDbCache();
+		_setEmbeddingPipeline(null);
 		if (ctx) await teardownTestContext(ctx);
 	});
 
@@ -12415,7 +12427,8 @@ describe("Integration: memory index (Step 2 FTS keyword search)", () => {
 		const rootId = tracker.rootNodeId;
 		const dbPath = indexDbPath(ctx);
 
-		const resultHit = searchIndex(dbPath, "frobnicator").find(
+		const frobHits = await searchIndex(dbPath, "frobnicator");
+		const resultHit = frobHits.find(
 			(h) => h.taskId === rootId && h.field === "result",
 		);
 		expect(resultHit).toBeDefined();
@@ -12435,17 +12448,17 @@ describe("Integration: memory index (Step 2 FTS keyword search)", () => {
 
 		const dbPath = indexDbPath(ctx);
 		// Not indexed until the startup hook runs.
-		expect(searchIndex(dbPath, "widgetronic")).toHaveLength(0);
+		expect(await searchIndex(dbPath, "widgetronic")).toHaveLength(0);
 
 		await ctx.app.autoResumeProjects();
 
 		expect(
-			searchIndex(dbPath, "widgetronic").some(
+			(await searchIndex(dbPath, "widgetronic")).some(
 				(h) => h.taskId === child.id && h.field === "description",
 			),
 		).toBe(true);
 		expect(
-			searchIndex(dbPath, "Zephyr").some(
+			(await searchIndex(dbPath, "Zephyr")).some(
 				(h) => h.taskId === child.id && h.field === "title",
 			),
 		).toBe(true);
@@ -12461,7 +12474,7 @@ describe("Integration: memory index (Step 2 FTS keyword search)", () => {
 		);
 		await tracker.save();
 		// Populate the index the way startup reconcile would.
-		reconcileIndex(indexDbPath(ctx), tracker);
+		await reconcileIndex(indexDbPath(ctx), tracker);
 
 		const instruction = JSON.stringify({
 			turns: [
