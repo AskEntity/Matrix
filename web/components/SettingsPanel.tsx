@@ -933,7 +933,7 @@ function RestartBar({
 			</button>
 			<button
 				type="button"
-				className="mxd-btn mxd-btn-sm mxd-btn-ghost"
+				className={`mxd-btn mxd-btn-sm ${hasUnsavedChanges ? "mxd-btn-warning" : "mxd-btn-ghost"}`}
 				disabled={!hasUnsavedChanges || restarting}
 				onClick={onRevertAll}
 			>
