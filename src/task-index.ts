@@ -1,11 +1,23 @@
 /**
- * task-index.ts — Matrix's keyword-search index (FTS5 over the task tree).
+ * task-index.ts — Matrix's hybrid-search index (Orama BM25 + vector semantic).
  *
- * Memory-index Step 2 (mode b: explicit keyword search). A per-project SQLite
- * database (bun:sqlite, zero external deps) holds an FTS5 table indexing every
- * task's title, description, and each done() round's result — at
- * per-field + per-round granularity, so every hit carries an exact location
- * (which task, which field, which round).
+ * Per-project Orama database indexing every task's title, description, and each
+ * done() round's result — at per-field + per-round granularity, so every hit
+ * carries an exact location (which task, which field, which round).
+ *
+ * ── Hybrid search ──
+ * When the embedding pipeline is available, searches use `mode: "hybrid"` —
+ * simultaneous BM25 keyword match + cosine-similarity vector match, with
+ * Orama's built-in fusion ranking. Supports cross-lingual semantic matching
+ * (e.g. "fix session recovery" finds "修复会话恢复的 bug").
+ *
+ * If the embedding model fails to load (missing, network error, OOM), the index
+ * gracefully degrades to pure BM25 fulltext search (`mode: "fulltext"`). The
+ * daemon is never blocked by a model failure.
+ *
+ * ── Chinese + English ──
+ * Uses `@orama/tokenizers/mandarin` (jieba WASM) for CJK-aware tokenization.
+ * Both Chinese and English queries work natively.
  *
  * ── Boundary (mirrors done-payload.ts) ──
  * This is Matrix-specific: it reads `resultRounds` (Matrix's data model). It
@@ -15,32 +27,43 @@
  *   - the `search_tasks` tool (`orchestrator-tools.ts`, which must be in
  *     `buildAllToolDefs` for external-MCP `availability: "both"`).
  * The plugin-agnostic runtime (`src/runtime/*`, `runtime.ts`,
- * `provider-shared.ts`) has ZERO knowledge of it — those files never import
- * this module and never mention the index / FTS / resultRounds.
+ * `provider-shared.ts`) has ZERO knowledge of it.
  *
- * ── Connection model ──
- * Each public operation opens a fresh connection and closes it in a `finally`.
- * bun:sqlite is synchronous + single-threaded, so operations never overlap;
- * a per-op open on a small local file is sub-millisecond, and closing every
- * time keeps things leak-free (no long-lived handles to clean up).
+ * ── Persistence ──
+ * Two files per project:
+ *   - `index.msp` — Orama binary (msgpack), the searchable data.
+ *   - `index-meta.json` — sidecar: per-task `{ indexedAt, docIds }` for
+ *     staleness tracking and targeted document removal.
+ * Both live in the plugin's dataRoot directory (same as tree.json).
  *
- * ── Scope discipline (anti-pattern #6) ──
- * Raw FTS5 + BM25 only. No ranking heuristics, field weighting, category
- * filters, or query rewriting — add those only when real use exposes a need.
- * Phase C (embeddings / semantic search) is out of scope; the schema reserves a
- * placeholder `task_vec` table + a `schema_version` so Phase C can migrate.
- * (bun:sqlite cannot `loadExtension`, so Phase C picks the concrete vector
- * mechanism later — a custom libsqlite3 vec0 table, or BLOB + JS cosine.)
+ * ── Embedding pipeline ──
+ * Lazily loaded on first use via `@huggingface/transformers` with the
+ * `onnx-community/embeddinggemma-300m-ONNX` model (q8 quantization, 768-dim).
+ * Module-level singleton — loaded once, reused across all projects.
  */
 
-import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { AnyOrama, Results } from "@orama/orama";
+import { create, insert, remove, search } from "@orama/orama";
+import {
+	persistToFile,
+	restoreFromFile,
+} from "@orama/plugin-data-persistence/server";
+import { createTokenizer } from "@orama/tokenizers/mandarin";
 import type { TaskTracker } from "./task-tracker.ts";
 import { isTask, type TaskNode } from "./types.ts";
 
-/** Current index schema version. Bump + migrate when the schema changes. */
-export const SCHEMA_VERSION = 1;
+// ── Constants ──
+
+const EMBEDDING_MODEL = "onnx-community/embeddinggemma-300m-ONNX";
+const EMBEDDING_DTYPE = "q8";
+const EMBEDDING_DIM = 768;
+
+/** Minimum cosine similarity for vector results in hybrid mode. */
+const SIMILARITY_THRESHOLD = 0.5;
+
+// ── Types ──
 
 /** One search hit — an exact location in the index. */
 export interface SearchHit {
@@ -49,69 +72,145 @@ export interface SearchHit {
 	field: string;
 	/** Round index for result hits; undefined for title/description. */
 	roundIndex?: number;
-	/** Highlighted excerpt of the matched text (match wrapped in `[ ]`). */
+	/** Excerpt of the matched text. */
 	snippet: string;
-	/** BM25 relevance score (lower = better; rows are returned best-first). */
+	/** Relevance score (higher = better; results are returned best-first). */
 	score: number;
 }
 
-function initSchema(db: Database): void {
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT);
-		CREATE VIRTUAL TABLE IF NOT EXISTS task_fts USING fts5(
-			task_id UNINDEXED,
-			field UNINDEXED,
-			round UNINDEXED,
-			text,
-			tokenize = 'porter unicode61'
-		);
-		CREATE TABLE IF NOT EXISTS task_index_meta (
-			task_id TEXT PRIMARY KEY,
-			indexed_at TEXT NOT NULL
-		);
-		-- Reserved for Phase C (semantic/vector search). NOT populated in Step 2.
-		-- Placeholder only — reserves the name so the schema is forward-versioned.
-		-- Phase C decides the real shape (custom libsqlite3 vec0 table, or BLOB +
-		-- JS cosine), since bun:sqlite cannot dynamically load sqlite-vec.
-		CREATE TABLE IF NOT EXISTS task_vec (
-			task_id TEXT NOT NULL,
-			field TEXT NOT NULL,
-			round INTEGER,
-			embedding BLOB,
-			dim INTEGER
-		);
-	`);
-	db.run(
-		`INSERT INTO schema_meta(key, value) VALUES ('schema_version', ?)
-		 ON CONFLICT(key) DO NOTHING`,
-		[String(SCHEMA_VERSION)],
-	);
+/** Sidecar metadata per task: tracks staleness + document IDs for removal. */
+interface TaskMeta {
+	indexedAt: string;
+	docIds: string[];
 }
 
+/** Full sidecar structure. */
+type IndexMeta = Record<string, TaskMeta>;
+
+/** The Orama schema for our index documents. */
+const INDEX_SCHEMA = {
+	taskId: "string",
+	field: "string",
+	round: "string",
+	text: "string",
+	embedding: `vector[${EMBEDDING_DIM}]`,
+} as const;
+
+type IndexDb = ReturnType<typeof createDb>;
+
+// ── Embedding pipeline (lazy singleton) ──
+
+type EmbeddingPipeline = {
+	embed: (text: string) => Promise<number[]>;
+};
+
+let embeddingPipelinePromise: Promise<EmbeddingPipeline | null> | null = null;
+let embeddingPipeline: EmbeddingPipeline | null | undefined; // undefined = not attempted
+
 /**
- * Open the index DB at `dbPath` (creating the parent directory + schema on
- * first open) and return the connection. The CALLER owns closing it. Prefer
- * the higher-level ops below, which open + close for you; this is exposed for
- * tests that inspect the raw DB.
+ * Get or lazily initialize the embedding pipeline. Returns null if the model
+ * cannot be loaded (graceful degradation to BM25-only). The promise is cached
+ * so concurrent callers share the same load attempt.
  */
-export function openIndexDb(dbPath: string): Database {
-	mkdirSync(dirname(dbPath), { recursive: true });
-	const db = new Database(dbPath, { create: true });
-	initSchema(db);
+async function getEmbeddingPipeline(): Promise<EmbeddingPipeline | null> {
+	if (embeddingPipeline !== undefined) return embeddingPipeline;
+	if (embeddingPipelinePromise) return embeddingPipelinePromise;
+
+	embeddingPipelinePromise = (async () => {
+		try {
+			const { pipeline } = await import("@huggingface/transformers");
+			const extractor = await pipeline("feature-extraction", EMBEDDING_MODEL, {
+				dtype: EMBEDDING_DTYPE,
+			} as Record<string, unknown>);
+			const result: EmbeddingPipeline = {
+				embed: async (text: string) => {
+					const output = await extractor(text, {
+						pooling: "mean",
+						normalize: true,
+					});
+					return Array.from(
+						(output as { data: Float32Array }).data as Float32Array,
+					);
+				},
+			};
+			embeddingPipeline = result;
+			return result;
+		} catch (e) {
+			console.warn(
+				`[task-index] Embedding pipeline failed to load (degrading to BM25-only):`,
+				e instanceof Error ? e.message : String(e),
+			);
+			embeddingPipeline = null;
+			return null;
+		}
+	})();
+	return embeddingPipelinePromise;
+}
+
+// ── Orama database management ──
+
+const dbCache = new Map<string, IndexDb>();
+
+function createDb(): AnyOrama {
+	return create({
+		schema: INDEX_SCHEMA,
+		components: { tokenizer: createTokenizer() },
+	});
+}
+
+async function getDb(dbPath: string): Promise<IndexDb> {
+	const cached = dbCache.get(dbPath);
+	if (cached) return cached;
+
+	let db: IndexDb;
+	if (existsSync(dbPath)) {
+		try {
+			db = (await restoreFromFile("binary", dbPath)) as IndexDb;
+		} catch {
+			db = createDb();
+		}
+	} else {
+		db = createDb();
+	}
+	dbCache.set(dbPath, db);
 	return db;
 }
 
-/** Open, run `fn`, always close. */
-function withDb<T>(dbPath: string, fn: (db: Database) => T): T {
-	const db = openIndexDb(dbPath);
+async function persistDb(dbPath: string, db: IndexDb): Promise<void> {
+	mkdirSync(dirname(dbPath), { recursive: true });
+	await persistToFile(db, "binary", dbPath);
+}
+
+// ── Sidecar metadata ──
+
+function metaPath(dbPath: string): string {
+	return dbPath.replace(/\.msp$/, "-meta.json");
+}
+
+function readMeta(dbPath: string): IndexMeta {
+	const p = metaPath(dbPath);
+	if (!existsSync(p)) return {};
 	try {
-		return fn(db);
-	} finally {
-		db.close();
+		return JSON.parse(readFileSync(p, "utf-8"));
+	} catch {
+		return {};
 	}
 }
 
-/** The FTS rows a single task contributes (empty text is skipped). */
+function writeMeta(dbPath: string, meta: IndexMeta): void {
+	const p = metaPath(dbPath);
+	mkdirSync(dirname(p), { recursive: true });
+	writeFileSync(p, JSON.stringify(meta));
+}
+
+// ── Document ID convention ──
+// `${taskId}:${field}:${round}` — deterministic, targeted removal by ID.
+
+function docId(taskId: string, field: string, round: string): string {
+	return `${taskId}:${field}:${round}`;
+}
+
+/** The index rows a single task contributes (empty text is skipped). */
 function taskRows(
 	node: TaskNode,
 ): Array<{ field: string; round: string; text: string }> {
@@ -122,136 +221,248 @@ function taskRows(
 	if (node.description?.trim()) {
 		rows.push({ field: "description", round: "", text: node.description });
 	}
-	// One row per round per non-empty field — preserves exact provenance.
 	(node.resultRounds ?? []).forEach((r, i) => {
 		if (r.result?.trim()) {
 			rows.push({ field: "result", round: String(i), text: r.result });
 		}
-
 	});
 	return rows;
 }
 
-/** (Re)index one task on an OPEN db: delete old rows, insert fresh, stamp indexed_at. */
-function indexTaskInDb(db: Database, node: TaskNode): void {
-	db.transaction(() => {
-		db.run(`DELETE FROM task_fts WHERE task_id = ?`, [node.id]);
-		const ins = db.prepare(
-			`INSERT INTO task_fts(task_id, field, round, text) VALUES (?, ?, ?, ?)`,
-		);
-		for (const row of taskRows(node)) {
-			ins.run(node.id, row.field, row.round, row.text);
+/** Remove all docs for a task from the DB using stored doc IDs from meta. */
+function removeTaskDocs(db: IndexDb, docIds: string[]): void {
+	for (const id of docIds) {
+		try {
+			remove(db, id);
+		} catch {
+			// Already removed or doesn't exist — fine.
 		}
-		db.run(
-			`INSERT INTO task_index_meta(task_id, indexed_at) VALUES (?, ?)
-			 ON CONFLICT(task_id) DO UPDATE SET indexed_at = excluded.indexed_at`,
-			[node.id, node.updatedAt],
-		);
-	})();
+	}
 }
 
+/** A zero vector of the correct dimension (used when embeddings unavailable). */
+const ZERO_EMBEDDING = new Array(EMBEDDING_DIM).fill(0);
+
 /**
- * (Re)index one task: delete its old rows, insert fresh ones, stamp
- * `indexed_at = node.updatedAt`. Atomic (single transaction).
+ * (Re)index one task: delete its old documents, insert fresh ones with
+ * embeddings (if the pipeline is available), update the sidecar metadata,
+ * and persist to disk.
  *
  * Callers on the lifecycle path (onDone) wrap this in try/catch — an index
  * write must NEVER break the task lifecycle. The startup reconcile retries any
- * miss (a task whose `updatedAt` no longer matches its stored `indexed_at`).
+ * miss (a task whose `updatedAt` no longer matches its stored `indexedAt`).
  */
-export function indexTask(dbPath: string, node: TaskNode): void {
-	withDb(dbPath, (db) => indexTaskInDb(db, node));
+export async function indexTask(dbPath: string, node: TaskNode): Promise<void> {
+	const db = await getDb(dbPath);
+	const pipe = await getEmbeddingPipeline();
+	const meta = readMeta(dbPath);
+
+	// Remove old docs.
+	const oldMeta = meta[node.id];
+	if (oldMeta) {
+		removeTaskDocs(db, oldMeta.docIds);
+	}
+
+	// Insert new docs.
+	const rows = taskRows(node);
+	const newDocIds: string[] = [];
+	for (const row of rows) {
+		const id = docId(node.id, row.field, row.round);
+		let embedding: number[] | undefined;
+		if (pipe) {
+			try {
+				embedding = await pipe.embed(row.text);
+			} catch {
+				// Embedding failed for this row — use zero vector.
+			}
+		}
+		insert(db, {
+			id,
+			taskId: node.id,
+			field: row.field,
+			round: row.round,
+			text: row.text,
+			embedding: embedding ?? ZERO_EMBEDDING,
+		});
+		newDocIds.push(id);
+	}
+
+	// Update sidecar.
+	meta[node.id] = {
+		indexedAt: node.updatedAt ?? "",
+		docIds: newDocIds,
+	};
+	writeMeta(dbPath, meta);
+
+	await persistDb(dbPath, db);
 }
 
 /**
  * Reconcile the whole project index against the current tree:
- *  - (re)index every task whose `updatedAt` differs from its stored
- *    `indexed_at` — this SUBSUMES the one-time backfill (a never-indexed task
- *    has no `indexed_at`, so it is stale and gets indexed);
+ *  - (re)index every task whose `updatedAt` differs from its stored marker;
  *  - prune index rows for tasks that no longer exist in the tree.
  *
- * Idempotent + incremental: after the first (backfill) pass, later passes only
- * touch changed tasks. Best-effort — callers may swallow errors.
+ * Idempotent + incremental. Best-effort — callers may swallow errors.
  */
-export function reconcileIndex(
+export async function reconcileIndex(
 	dbPath: string,
 	tracker: TaskTracker,
-): { indexed: number; pruned: number } {
-	return withDb(dbPath, (db) => {
-		const tasks = tracker.allNodes().filter(isTask);
-		const liveIds = new Set(tasks.map((t) => t.id));
+): Promise<{ indexed: number; pruned: number }> {
+	const db = await getDb(dbPath);
+	const tasks = tracker.allNodes().filter(isTask);
+	const liveIds = new Set(tasks.map((t) => t.id));
+	const pipe = await getEmbeddingPipeline();
+	const meta = readMeta(dbPath);
 
-		const stored = new Map<string, string>();
-		const metaRows = db
-			.prepare(`SELECT task_id, indexed_at FROM task_index_meta`)
-			.all() as Array<{ task_id: string; indexed_at: string }>;
-		for (const row of metaRows) stored.set(row.task_id, row.indexed_at);
+	let indexed = 0;
+	for (const node of tasks) {
+		const stored = meta[node.id];
+		if (stored?.indexedAt === node.updatedAt) continue;
 
-		let indexed = 0;
-		for (const node of tasks) {
-			if (stored.get(node.id) === node.updatedAt) continue; // up to date
-			indexTaskInDb(db, node);
-			indexed++;
+		// Remove old docs.
+		if (stored) {
+			removeTaskDocs(db, stored.docIds);
 		}
 
-		// Prune tasks removed from the tree since they were last indexed.
-		let pruned = 0;
-		for (const taskId of stored.keys()) {
-			if (liveIds.has(taskId)) continue;
-			db.run(`DELETE FROM task_fts WHERE task_id = ?`, [taskId]);
-			db.run(`DELETE FROM task_index_meta WHERE task_id = ?`, [taskId]);
-			pruned++;
+		// Insert new docs.
+		const rows = taskRows(node);
+		const newDocIds: string[] = [];
+		for (const row of rows) {
+			const id = docId(node.id, row.field, row.round);
+			let embedding: number[] | undefined;
+			if (pipe) {
+				try {
+					embedding = await pipe.embed(row.text);
+				} catch {
+					// skip
+				}
+			}
+			insert(db, {
+				id,
+				taskId: node.id,
+				field: row.field,
+				round: row.round,
+				text: row.text,
+				embedding: embedding ?? ZERO_EMBEDDING,
+			});
+			newDocIds.push(id);
 		}
-		return { indexed, pruned };
-	});
+
+		meta[node.id] = {
+			indexedAt: node.updatedAt ?? "",
+			docIds: newDocIds,
+		};
+		indexed++;
+	}
+
+	// Prune tasks removed from the tree.
+	let pruned = 0;
+	for (const taskId of Object.keys(meta)) {
+		if (liveIds.has(taskId)) continue;
+		const stored = meta[taskId];
+		if (stored) {
+			removeTaskDocs(db, stored.docIds);
+		}
+		delete meta[taskId];
+		pruned++;
+	}
+
+	writeMeta(dbPath, meta);
+	if (indexed > 0 || pruned > 0) {
+		await persistDb(dbPath, db);
+	}
+	return { indexed, pruned };
 }
 
 /**
- * Turn a raw query into a safe FTS5 MATCH expression: split on whitespace,
- * quote each term (doubling embedded quotes), join with spaces (implicit AND).
- * This prevents FTS5 syntax errors from stray punctuation — it is input
- * safety, NOT semantic query rewriting. Empty/whitespace → "".
+ * Hybrid-search (or fulltext-search as fallback) the index. Returns ranked
+ * hits (best first), each with the matched text, field provenance, and score.
+ * An empty/whitespace query returns []. Never throws on punctuation.
  */
-export function toMatchQuery(raw: string): string {
-	const terms = raw.match(/\S+/g) ?? [];
-	return terms.map((t) => `"${t.replace(/"/g, '""')}"`).join(" ");
-}
-
-/**
- * Keyword-search the index. Returns BM25-ranked hits (best first), each with a
- * highlighted snippet and exact location (taskId, field, roundIndex). An
- * empty/whitespace query returns []. Never throws on punctuation.
- */
-export function searchIndex(
+export async function searchIndex(
 	dbPath: string,
 	query: string,
 	limit = 20,
-): SearchHit[] {
-	const match = toMatchQuery(query);
-	if (!match) return [];
-	return withDb(dbPath, (db) => {
-		const rows = db
-			.prepare(
-				`SELECT task_id, field, round,
-				        snippet(task_fts, 3, '[', ']', '…', 16) AS snippet,
-				        bm25(task_fts) AS score
-				 FROM task_fts
-				 WHERE task_fts MATCH ?
-				 ORDER BY bm25(task_fts)
-				 LIMIT ?`,
-			)
-			.all(match, limit) as Array<{
-			task_id: string;
-			field: string;
-			round: string;
-			snippet: string;
-			score: number;
-		}>;
-		return rows.map((r) => ({
-			taskId: r.task_id,
-			field: r.field,
-			...(r.round !== "" ? { roundIndex: Number(r.round) } : {}),
-			snippet: r.snippet,
-			score: r.score,
-		}));
-	});
+): Promise<SearchHit[]> {
+	const trimmed = query.trim();
+	if (!trimmed) return [];
+
+	const db = await getDb(dbPath);
+	const pipe = await getEmbeddingPipeline();
+
+	type HitDoc = {
+		taskId: string;
+		field: string;
+		round: string;
+		text: string;
+	};
+
+	let results: Results<HitDoc>;
+
+	if (pipe) {
+		try {
+			const queryEmbedding = await pipe.embed(trimmed);
+			results = search(db, {
+				mode: "hybrid",
+				term: trimmed,
+				vector: { value: queryEmbedding, property: "embedding" },
+				similarity: SIMILARITY_THRESHOLD,
+				properties: ["text"],
+				limit,
+			}) as Results<HitDoc>;
+		} catch {
+			results = search(db, {
+				mode: "fulltext",
+				term: trimmed,
+				properties: ["text"],
+				limit,
+			}) as Results<HitDoc>;
+		}
+	} else {
+		results = search(db, {
+			mode: "fulltext",
+			term: trimmed,
+			properties: ["text"],
+			limit,
+		}) as Results<HitDoc>;
+	}
+
+	return results.hits.map((h) => ({
+		taskId: h.document.taskId,
+		field: h.document.field,
+		...(h.document.round !== ""
+			? { roundIndex: Number(h.document.round) }
+			: {}),
+		snippet: h.document.text.slice(0, 200),
+		score: h.score,
+	}));
+}
+
+// ── Test helpers ──
+
+/**
+ * Reset the embedding pipeline state. Test-only.
+ */
+export function _resetEmbeddingPipeline(): void {
+	embeddingPipeline = undefined;
+	embeddingPipelinePromise = null;
+}
+
+/**
+ * Set a mock embedding pipeline. Test-only.
+ */
+export function _setEmbeddingPipeline(pipe: EmbeddingPipeline | null): void {
+	embeddingPipeline = pipe;
+	embeddingPipelinePromise = null;
+}
+
+/**
+ * Clear the in-memory DB cache for a given path (or all). Test-only.
+ */
+export function _clearDbCache(dbPath?: string): void {
+	if (dbPath) {
+		dbCache.delete(dbPath);
+	} else {
+		dbCache.clear();
+	}
 }

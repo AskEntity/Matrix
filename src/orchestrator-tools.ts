@@ -307,15 +307,15 @@ export function buildAllToolDefs() {
 			name: "search_tasks",
 			availability: "both",
 			description:
-				"Keyword-search the task tree — every task's title, description, and " +
-				"each done() round's result + lessons — via full-text search. " +
-				"Returns the best-matching LOCATIONS: for each hit, the task, WHICH " +
-				"field matched (title / description / result / lessons), the round " +
-				"index (for result/lessons), a highlighted snippet, and a BM25 score " +
-				"(lower = more relevant; results are pre-sorted best-first). Use it " +
+				"Hybrid-search the task tree — every task's title, description, and " +
+				"each done() round's result — via BM25 keyword match + semantic " +
+				"vector search (cross-lingual: Chinese queries find English results " +
+				"and vice versa). Returns the best-matching LOCATIONS: for each hit, " +
+				"the task, WHICH field matched (title / description / result), the " +
+				"round index (for result), a text snippet, and a relevance score " +
+				"(higher = more relevant; results are pre-sorted best-first). Use it " +
 				"to find whether a problem was solved before, or where a decision or " +
-				"lesson lives, instead of scanning the whole tree. Matches ALL " +
-				"whitespace-separated terms (implicit AND).",
+				"lesson lives, instead of scanning the whole tree.",
 			params: {
 				projectId: {
 					schema: z.string(),
@@ -324,7 +324,9 @@ export function buildAllToolDefs() {
 				query: {
 					schema: z
 						.string()
-						.describe("Keywords to search for (all terms must match)."),
+						.describe(
+							"Search query — keywords and/or natural language (supports Chinese and English).",
+						),
 					decl: { kind: "explicit" },
 				},
 				limit: {
@@ -344,9 +346,9 @@ export function buildAllToolDefs() {
 				const { dataDir, dataRoot } = R.getDataPaths();
 				const dbPath = projectIndexDbPath(dataDir, projectId, dataRoot);
 				const limit = (args.limit as number | undefined) ?? 20;
-				let hits: ReturnType<typeof searchIndex>;
+				let hits: Awaited<ReturnType<typeof searchIndex>>;
 				try {
-					hits = searchIndex(dbPath, args.query as string, limit);
+					hits = await searchIndex(dbPath, args.query as string, limit);
 				} catch (e) {
 					return {
 						content: [

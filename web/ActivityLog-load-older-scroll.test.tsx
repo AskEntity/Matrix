@@ -112,7 +112,10 @@ async function renderLogWithOlder(opts: { entryCount: number }) {
 	}) => {
 		const olderEventsAvailable = props.hasOlder
 			? new Map([
-					[rootTaskId, { hasOlder: true, oldestTs: 1000 + (props.entryOffset ?? 0) }],
+					[
+						rootTaskId,
+						{ hasOlder: true, oldestTs: 1000 + (props.entryOffset ?? 0) },
+					],
 				])
 			: new Map<string, { hasOlder: boolean; oldestTs: number }>();
 
@@ -195,7 +198,10 @@ describe("ActivityLog load-older scroll anchor", () => {
 		// Now simulate the load completing: more entries (prepended) + loadingOlderEvents=false.
 		// The new scrollHeight is larger because there are more entries above.
 		const newScrollHeight = 3500;
-		mockGeometry(container, { scrollHeight: newScrollHeight, clientHeight: 400 });
+		mockGeometry(container, {
+			scrollHeight: newScrollHeight,
+			clientHeight: 400,
+		});
 
 		render({
 			entryCount: 30, // 20 older + 10 original
@@ -240,7 +246,10 @@ describe("ActivityLog load-older scroll anchor", () => {
 
 		// Complete with new entries + new geometry
 		const newScrollHeight = 3500;
-		mockGeometry(container, { scrollHeight: newScrollHeight, clientHeight: 400 });
+		mockGeometry(container, {
+			scrollHeight: newScrollHeight,
+			clientHeight: 400,
+		});
 		render({
 			entryCount: 30,
 			entryOffset: -20,

@@ -859,9 +859,9 @@ describe("TaskTracker: resultRounds (memory-index capture)", () => {
 			tracker.rootNodeId,
 			"folder",
 		);
-		expect(() =>
-			tracker.appendResultRound(folder.id, { result: "x" }),
-		).toThrow(/non-task node/);
+		expect(() => tracker.appendResultRound(folder.id, { result: "x" })).toThrow(
+			/non-task node/,
+		);
 	});
 
 	test("appendResultRound throws on an unknown node", () => {
