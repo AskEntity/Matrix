@@ -891,17 +891,15 @@ function ThinkingEffortSection({
 	);
 }
 
-// ---- Tab-level Save/Revert bar ----
+// ---- Shared Save & Restart bar (replaces per-tab Save/Revert) ----
 
-function TabActions({
-	dirty,
-	onSave,
-	onRevert,
+function RestartBar({
+	onSaveAndRestart,
+	restarting,
 	error,
 }: {
-	dirty: boolean;
-	onSave: () => void;
-	onRevert: () => void;
+	onSaveAndRestart: () => void;
+	restarting: boolean;
 	error?: string | null;
 }) {
 	const { t } = useLocale();
@@ -912,22 +910,22 @@ function TabActions({
 					{t("settings.saveError")}: {error}
 				</div>
 			)}
-			<p className="mxd-settings-hint">{t("settings.saveEffectHint")}</p>
 			<button
 				type="button"
 				className="mxd-btn mxd-btn-sm mxd-btn-primary"
-				onClick={onSave}
-				disabled={!dirty}
+				disabled={restarting}
+				onClick={onSaveAndRestart}
 			>
-				{dirty ? t("settings.save") : t("settings.saved")}
-			</button>
-			<button
-				type="button"
-				className="mxd-btn mxd-btn-sm mxd-btn-ghost"
-				onClick={onRevert}
-				disabled={!dirty}
-			>
-				{t("settings.revert")}
+				{restarting ? (
+					<>
+						<span className="mxd-spinner" />{" "}
+						{t("settings.restartDaemonRestarting")}
+					</>
+				) : (
+					<>
+						<IconRefresh size={12} /> {t("settings.restartDaemon")}
+					</>
+				)}
 			</button>
 		</div>
 	);
@@ -939,68 +937,16 @@ function GlobalTab({
 	layers,
 	draft,
 	onDraftChange,
-	onSave,
-	onRevert,
-	dirty,
 	theme,
 	onThemeChange,
-	error,
-	hasUnsavedChanges,
 }: {
 	layers: ThreeLayerConfig;
 	draft: Record<string, unknown>;
 	onDraftChange: (patch: Record<string, unknown>) => void;
-	onSave: () => void;
-	onRevert: () => void;
-	dirty: boolean;
 	theme: string;
 	onThemeChange: (theme: string) => void;
-	error?: string | null;
-	hasUnsavedChanges: boolean;
 }) {
-	const authFetch = useAuthFetch();
 	const { locale, setLocale, t } = useLocale();
-	const [restarting, setRestarting] = useState(false);
-	const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-	// Cleanup polling on unmount
-	useEffect(() => {
-		return () => {
-			if (pollingRef.current) clearInterval(pollingRef.current);
-		};
-	}, []);
-
-	const handleRestart = useCallback(() => {
-		// Restart triggers a full page reload — every unsaved draft (any tab) is
-		// lost. Warn only when there IS unsaved work, and correct the core
-		// misconception: restart reloads CODE, it does NOT apply config changes.
-		if (
-			hasUnsavedChanges &&
-			!window.confirm(t("settings.restartConfirmUnsaved"))
-		) {
-			return;
-		}
-		setRestarting(true);
-		authFetch("/restart-daemon", { method: "POST" }).catch(() => {});
-
-		// Poll every 1s until daemon is back, then reload
-		const startDelay = setTimeout(() => {
-			pollingRef.current = setInterval(async () => {
-				try {
-					const res = await authFetch("/health");
-					if (res.ok) {
-						if (pollingRef.current) clearInterval(pollingRef.current);
-						pollingRef.current = null;
-						window.location.reload();
-					}
-				} catch {
-					// Expected while daemon is down
-				}
-			}, 1000);
-		}, 1500);
-
-		return () => clearTimeout(startDelay);
-	}, [authFetch, hasUnsavedChanges, t]);
 
 	const tab: ActiveTab = "global";
 	const authGroupNames = Object.keys(
@@ -1102,38 +1048,7 @@ function GlobalTab({
 					draft={draft}
 					onDraftChange={onDraftChange}
 				/>
-
-				<div className="mxd-settings-field">
-					<span className="mxd-settings-label">
-						{t("settings.restartDaemonLabel")}
-					</span>
-					<button
-						type="button"
-						className="mxd-btn mxd-btn-warning mxd-btn-sm"
-						disabled={restarting}
-						onClick={handleRestart}
-					>
-						{restarting ? (
-							<>
-								<span className="mxd-spinner" />{" "}
-								{t("settings.restartDaemonRestarting")}
-							</>
-						) : (
-							<>
-								<IconRefresh size={12} /> {t("settings.restartDaemon")}
-							</>
-						)}
-					</button>
-					<p className="mxd-settings-hint">{t("settings.restartDaemonHint")}</p>
-				</div>
 			</div>
-
-			<TabActions
-				dirty={dirty}
-				onSave={onSave}
-				onRevert={onRevert}
-				error={error}
-			/>
 		</div>
 	);
 }
@@ -1143,19 +1058,11 @@ function ProjectTab({
 	layers,
 	draft,
 	onDraftChange,
-	onSave,
-	onRevert,
-	dirty,
-	error,
 }: {
 	tab: "project" | "local";
 	layers: ThreeLayerConfig;
 	draft: Record<string, unknown>;
 	onDraftChange: (patch: Record<string, unknown>) => void;
-	onSave: () => void;
-	onRevert: () => void;
-	dirty: boolean;
-	error?: string | null;
 }) {
 	const { t } = useLocale();
 	const authGroupNames = Object.keys(
@@ -1216,13 +1123,6 @@ function ProjectTab({
 				layers={layers}
 				draft={draft}
 				onDraftChange={onDraftChange}
-			/>
-
-			<TabActions
-				dirty={dirty}
-				onSave={onSave}
-				onRevert={onRevert}
-				error={error}
 			/>
 		</div>
 	);
@@ -1298,6 +1198,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 	onDeleteProject?: () => void;
 }) {
 	const { t } = useLocale();
+	const authFetch = useAuthFetch();
 	const [activeTab, setActiveTab] = useState<ActiveTab>("global");
 
 	// Draft state per tab — initialized from layers, reset when layers changes
@@ -1379,54 +1280,90 @@ export const SettingsPanel = memo(function SettingsPanel({
 	// Save error state — surfaced inline when PATCH fails
 	const [saveError, setSaveError] = useState<string | null>(null);
 
-	// Save handlers — compute diff patch and send
-	const saveGlobal = async () => {
-		setSaveError(null);
-		// Required field validation — model must be set on the global tab
-		const model = (draftGlobal.model as string | undefined) ?? "";
-		if (!model.trim()) {
-			window.alert(t("settings.modelRequired"));
-			return;
-		}
-		// Global config requires all fields — never send null (allowNull=false).
-		const patch = buildPatch(draftGlobal, layers.global, false);
-		if (Object.keys(patch).length > 0) {
-			const err = await updateGlobal(patch);
-			if (err) setSaveError(err);
-		}
-	};
+	// ---- Save & Restart: save ALL dirty tabs then restart daemon ----
+	const [restarting, setRestarting] = useState(false);
+	const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-	const saveRepo = async () => {
-		setSaveError(null);
-		const patch = buildPatch(draftRepo, layers.repo);
-		if (Object.keys(patch).length > 0) {
-			const err = await updateRepo(patch);
-			if (err) setSaveError(err);
-		}
-	};
+	// Cleanup polling on unmount
+	useEffect(() => {
+		return () => {
+			if (pollingRef.current) clearInterval(pollingRef.current);
+		};
+	}, []);
 
-	const saveLocal = async () => {
+	const handleSaveAndRestart = useCallback(async () => {
 		setSaveError(null);
-		const patch = buildPatch(draftLocal, layers.local);
-		if (Object.keys(patch).length > 0) {
-			const err = await updateLocal(patch);
-			if (err) setSaveError(err);
-		}
-	};
 
-	// Revert handlers — reset draft to current saved state + clear error
-	const revertGlobal = () => {
-		setDraftGlobal({ ...layers.global });
-		setSaveError(null);
-	};
-	const revertRepo = () => {
-		setDraftRepo({ ...layers.repo });
-		setSaveError(null);
-	};
-	const revertLocal = () => {
-		setDraftLocal({ ...layers.local });
-		setSaveError(null);
-	};
+		// Save each dirty tab; stop on first error
+		if (dirtyGlobal) {
+			const model = (draftGlobal.model as string | undefined) ?? "";
+			if (!model.trim()) {
+				window.alert(t("settings.modelRequired"));
+				return;
+			}
+			const patch = buildPatch(draftGlobal, layers.global, false);
+			if (Object.keys(patch).length > 0) {
+				const err = await updateGlobal(patch);
+				if (err) {
+					setSaveError(err);
+					return;
+				}
+			}
+		}
+		if (dirtyRepo) {
+			const patch = buildPatch(draftRepo, layers.repo);
+			if (Object.keys(patch).length > 0) {
+				const err = await updateRepo(patch);
+				if (err) {
+					setSaveError(err);
+					return;
+				}
+			}
+		}
+		if (dirtyLocal) {
+			const patch = buildPatch(draftLocal, layers.local);
+			if (Object.keys(patch).length > 0) {
+				const err = await updateLocal(patch);
+				if (err) {
+					setSaveError(err);
+					return;
+				}
+			}
+		}
+
+		// All saves succeeded (or nothing to save) — restart daemon
+		setRestarting(true);
+		authFetch("/restart-daemon", { method: "POST" }).catch(() => {});
+
+		// Poll every 1s until daemon is back, then reload
+		setTimeout(() => {
+			pollingRef.current = setInterval(async () => {
+				try {
+					const res = await authFetch("/health");
+					if (res.ok) {
+						if (pollingRef.current) clearInterval(pollingRef.current);
+						pollingRef.current = null;
+						window.location.reload();
+					}
+				} catch {
+					// Expected while daemon is down
+				}
+			}, 1000);
+		}, 1500);
+	}, [
+		dirtyGlobal,
+		dirtyRepo,
+		dirtyLocal,
+		draftGlobal,
+		draftRepo,
+		draftLocal,
+		layers,
+		updateGlobal,
+		updateRepo,
+		updateLocal,
+		authFetch,
+		t,
+	]);
 
 	const tabTitleKey = {
 		global: "settings.titleGlobal",
@@ -1507,13 +1444,8 @@ export const SettingsPanel = memo(function SettingsPanel({
 					layers={layers}
 					draft={draftGlobal}
 					onDraftChange={updateDraftGlobal}
-					onSave={saveGlobal}
-					onRevert={revertGlobal}
-					dirty={dirtyGlobal}
 					theme={theme}
 					onThemeChange={onThemeChange}
-					error={saveError}
-					hasUnsavedChanges={hasUnsavedChanges}
 				/>
 			)}
 			{activeTab === "project" && (
@@ -1522,10 +1454,6 @@ export const SettingsPanel = memo(function SettingsPanel({
 					layers={layers}
 					draft={draftRepo}
 					onDraftChange={updateDraftRepo}
-					onSave={saveRepo}
-					onRevert={revertRepo}
-					dirty={dirtyRepo}
-					error={saveError}
 				/>
 			)}
 			{activeTab === "local" && (
@@ -1534,12 +1462,14 @@ export const SettingsPanel = memo(function SettingsPanel({
 					layers={layers}
 					draft={draftLocal}
 					onDraftChange={updateDraftLocal}
-					onSave={saveLocal}
-					onRevert={revertLocal}
-					dirty={dirtyLocal}
-					error={saveError}
 				/>
 			)}
+
+			<RestartBar
+				onSaveAndRestart={handleSaveAndRestart}
+				restarting={restarting}
+				error={saveError}
+			/>
 
 			{onDeleteProject && (
 				<div className="mxd-settings-danger-zone">

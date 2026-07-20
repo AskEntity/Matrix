@@ -4071,20 +4071,6 @@ button.mxd-tool-card-header:hover {
 	font-weight: 700;
 }
 
-/* Muted helper text: restart decoupling note + Save-takes-effect hint */
-.mxd-settings-hint {
-	font-size: 11px;
-	color: var(--text-muted);
-	line-height: 1.4;
-	margin: 4px 0 0;
-}
-
-/* Inside the flex Save/Revert bar the hint takes its own full-width row */
-.mxd-settings-tab-actions .mxd-settings-hint {
-	flex-basis: 100%;
-	margin: 0;
-}
-
 /* MCP Servers section */
 .mxd-mcp-server-row {
 	display: flex;

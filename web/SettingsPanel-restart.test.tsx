@@ -1,30 +1,17 @@
 /// <reference lib="dom" />
 /**
- * Tests for the three UX fixes to SettingsPanel:
+ * Tests for the unified "Save & Restart" SettingsPanel UX:
  *
- * Fix ①: Restart button relabeled "Restart backend (load new code)"
- *         + decoupling description that says config does NOT need restart.
- * Fix ②: TabActions shows "Saved changes take effect on the next run —
- *         no restart needed." hint.
- * Fix ③: Unsaved-changes protection:
- *         - Restart with unsaved → confirm dialog (with the misconception-
- *           correcting text); user cancels → no /restart-daemon POST.
- *         - Close panel (X / click-outside) with unsaved → confirm; user
- *           cancels → onClose NOT called.
- *         - Tab-switch with unsaved → NO confirm (drafts persist, not a
- *           loss point — crying-wolf avoidance).
+ * - One action button: "Save & Restart" — saves all dirty tabs then restarts.
+ * - No separate Save / Revert buttons.
+ * - Closing the panel = discard. If unsaved changes exist, confirm first.
+ * - Tab-switch does NOT confirm (drafts persist across sub-tabs).
  *
  * ┌──────────────────────────────────────────────────────────────────────┐
- * │ happy-dom + React controlled input limitation (documented):         │
- * │ Native value setter + dispatchEvent("input") does NOT trigger       │
- * │ React's synthetic onChange on controlled <input>. So we CANNOT      │
- * │ simulate a dirty draft via DOM events. The dirty-path component     │
- * │ tests are STRUCTURALLY covered:                                     │
- * │  • isDirty() is unit-tested (pure function) — proves detection.    │
- * │  • Clean paths are component-tested — proves confirm wiring.       │
- * │  • The handleRestart/handleClose guards are ~4 lines of            │
- * │    `if (hasUnsavedChanges && !window.confirm(...)) return;`        │
- * │    which follow the same pattern the clean-path tests verify.      │
+ * │ happy-dom limitation: React controlled-input onChange can't be      │
+ * │ triggered via native value setter + dispatchEvent. So dirty-path    │
+ * │ component tests (where draft ≠ saved) can't be driven from the DOM.│
+ * │ isDirty() is unit-tested; clean-path wiring is component-tested.   │
  * └──────────────────────────────────────────────────────────────────────┘
  */
 
@@ -65,14 +52,12 @@ const SAVED_GLOBAL: Record<string, unknown> = {
 	authGroups: { main: { provider: "anthropic", apiKey: "sk-ant-test" } },
 };
 
-function makeLayers(
-	globalOverrides?: Record<string, unknown>,
-): ThreeLayerConfig {
+function makeLayers(): ThreeLayerConfig {
 	return {
-		global: { ...SAVED_GLOBAL, ...globalOverrides },
+		global: { ...SAVED_GLOBAL },
 		repo: {},
 		local: {},
-		resolved: { ...SAVED_GLOBAL, ...globalOverrides },
+		resolved: { ...SAVED_GLOBAL },
 	};
 }
 
@@ -81,12 +66,10 @@ interface RenderResult {
 	unmount: () => void;
 	fetchCalls: Array<{ url: string; method?: string }>;
 	onCloseCalls: number[];
+	updateGlobalCalls: Array<Record<string, unknown>>;
 }
 
-/** Mount a full SettingsPanel with spies for authFetch and onClose. */
-async function renderSettingsPanel(opts?: {
-	layers?: ThreeLayerConfig;
-}): Promise<RenderResult> {
+async function renderSettingsPanel(): Promise<RenderResult> {
 	const { createRoot } = await import("react-dom/client");
 	const { createElement } = await import("react");
 	const { SettingsPanel } = await import("./components/SettingsPanel.tsx");
@@ -94,14 +77,16 @@ async function renderSettingsPanel(opts?: {
 	const { AuthFetchProvider } = await import("./auth-context.ts");
 
 	const fetchCalls: Array<{ url: string; method?: string }> = [];
-	const mockFetch: typeof fetch = async (input, init) => {
+	const mockFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = typeof input === "string" ? input : (input as Request).url;
 		fetchCalls.push({ url, method: init?.method });
 		return new Response("ok");
 	};
 
 	const onCloseCalls: number[] = [];
-	const layers = opts?.layers ?? makeLayers();
+	const updateGlobalCalls: Array<Record<string, unknown>> = [];
+
+	const layers = makeLayers();
 
 	const div = document.createElement("div");
 	document.body.appendChild(div);
@@ -120,7 +105,10 @@ async function renderSettingsPanel(opts?: {
 					loading: false,
 					theme: "dark",
 					onThemeChange: () => {},
-					updateGlobal: async () => null,
+					updateGlobal: async (patch: Record<string, unknown>) => {
+						updateGlobalCalls.push(patch);
+						return null;
+					},
 					updateRepo: async () => null,
 					updateLocal: async () => null,
 					onClose: () => onCloseCalls.push(Date.now()),
@@ -139,10 +127,11 @@ async function renderSettingsPanel(opts?: {
 		},
 		fetchCalls,
 		onCloseCalls,
+		updateGlobalCalls,
 	};
 }
 
-// ---- isDirty unit tests (the detection algorithm) ----
+// ---- isDirty unit tests ----
 
 describe("isDirty (pure function)", () => {
 	let isDirtyFn: typeof import("./components/SettingsPanel.tsx").isDirty;
@@ -170,16 +159,10 @@ describe("isDirty (pure function)", () => {
 
 	test("nested objects compared by JSON value", () => {
 		expect(
-			isDirtyFn(
-				{ cacheTtl: { root: "1h" } },
-				{ cacheTtl: { root: "1h" } },
-			),
+			isDirtyFn({ cacheTtl: { root: "1h" } }, { cacheTtl: { root: "1h" } }),
 		).toBe(false);
 		expect(
-			isDirtyFn(
-				{ cacheTtl: { root: "5m" } },
-				{ cacheTtl: { root: "1h" } },
-			),
+			isDirtyFn({ cacheTtl: { root: "5m" } }, { cacheTtl: { root: "1h" } }),
 		).toBe(true);
 	});
 
@@ -188,67 +171,80 @@ describe("isDirty (pure function)", () => {
 	});
 });
 
-// ---- Fix ①: Restart button relabeled ----
+// ---- "Save & Restart" button ----
 
-describe("Fix ①: Restart button relabel + decoupling", () => {
+describe("Save & Restart unified button", () => {
 	let result: RenderResult;
 
 	afterEach(() => result?.unmount());
 
-	test("restart button says 'Restart backend (load new code)'", async () => {
+	test("button says 'Save & Restart'", async () => {
 		result = await renderSettingsPanel();
 		const btn = result.div.querySelector<HTMLButtonElement>(
-			".mxd-btn-warning",
+			".mxd-settings-tab-actions .mxd-btn-primary",
 		);
 		expect(btn).not.toBeNull();
-		expect(btn!.textContent).toContain("Restart backend");
-		expect(btn!.textContent).toContain("load new code");
-		// Must NOT contain old label
-		expect(btn!.textContent).not.toContain("Restart Daemon");
+		expect(btn?.textContent).toContain("Save & Restart");
 	});
 
-	test("description text explains restart ≠ config, and that Save suffices", async () => {
-		result = await renderSettingsPanel();
-		const hints = result.div.querySelectorAll(".mxd-settings-hint");
-		const hintTexts = Array.from(hints).map((h) => h.textContent ?? "");
-		// Daemon hint decouples restart from config
-		const daemonHint = hintTexts.find((t) =>
-			t.includes("Config changes do NOT need a restart"),
-		);
-		expect(daemonHint).toBeDefined();
-		expect(daemonHint).toContain("newly deployed code");
-	});
-
-	test("left label says 'Load new code' (not 'Restart the daemon process')", async () => {
-		result = await renderSettingsPanel();
-		const labels = result.div.querySelectorAll(".mxd-settings-label");
-		const labelTexts = Array.from(labels).map((l) => l.textContent ?? "");
-		expect(labelTexts).toContain("Load new code");
-		expect(labelTexts).not.toContain("Restart the daemon process");
-	});
-});
-
-// ---- Fix ②: Save-takes-effect hint ----
-
-describe("Fix ②: Save-effect hint in TabActions", () => {
-	let result: RenderResult;
-
-	afterEach(() => result?.unmount());
-
-	test("TabActions shows 'take effect on the next run — no restart needed'", async () => {
+	test("no separate Save or Revert buttons in tab-actions", async () => {
 		result = await renderSettingsPanel();
 		const tabActions = result.div.querySelector(".mxd-settings-tab-actions");
 		expect(tabActions).not.toBeNull();
-		const hint = tabActions!.querySelector(".mxd-settings-hint");
-		expect(hint).not.toBeNull();
-		expect(hint!.textContent).toContain("next run");
-		expect(hint!.textContent).toContain("no restart needed");
+		const buttons = tabActions?.querySelectorAll("button");
+		// Only one button: "Save & Restart"
+		expect(buttons.length).toBe(1);
+		expect(buttons[0]?.textContent).toContain("Save & Restart");
+	});
+
+	test("button is visible on every tab (shared RestartBar)", async () => {
+		result = await renderSettingsPanel();
+
+		// Check it's there on Global (default)
+		let bar = result.div.querySelector(".mxd-settings-tab-actions");
+		expect(bar).not.toBeNull();
+
+		// Switch to Project tab
+		const projectTab = Array.from(
+			result.div.querySelectorAll<HTMLButtonElement>(".mxd-settings-tab"),
+		).find((btn) => btn.textContent?.includes("Project"));
+		projectTab?.click();
+		await new Promise((r) => setTimeout(r, 20));
+
+		bar = result.div.querySelector(".mxd-settings-tab-actions");
+		expect(bar).not.toBeNull();
+
+		// Switch to Local tab
+		const localTab = Array.from(
+			result.div.querySelectorAll<HTMLButtonElement>(".mxd-settings-tab"),
+		).find((btn) => btn.textContent?.includes("Local"));
+		localTab?.click();
+		await new Promise((r) => setTimeout(r, 20));
+
+		bar = result.div.querySelector(".mxd-settings-tab-actions");
+		expect(bar).not.toBeNull();
+	});
+
+	test("clicking button with clean state → no PATCH, restart fires", async () => {
+		result = await renderSettingsPanel();
+		const btn = result.div.querySelector<HTMLButtonElement>(
+			".mxd-settings-tab-actions .mxd-btn-primary",
+		);
+		btn?.click();
+		await new Promise((r) => setTimeout(r, 30));
+
+		// No PATCH calls (nothing dirty)
+		expect(result.updateGlobalCalls.length).toBe(0);
+		// Restart POST fired
+		expect(
+			result.fetchCalls.some((c) => c.url.includes("restart-daemon")),
+		).toBe(true);
 	});
 });
 
-// ---- Fix ③: Unsaved-changes protection ----
+// ---- Close-panel guard ----
 
-describe("Fix ③: Unsaved-changes protection", () => {
+describe("Close-panel unsaved guard", () => {
 	let result: RenderResult;
 	let savedConfirm: typeof window.confirm;
 
@@ -261,27 +257,7 @@ describe("Fix ③: Unsaved-changes protection", () => {
 		result?.unmount();
 	});
 
-	test("restart with NO unsaved changes → no confirm, POST fires", async () => {
-		let confirmCalled = false;
-		window.confirm = () => {
-			confirmCalled = true;
-			return true;
-		};
-		result = await renderSettingsPanel();
-
-		const btn = result.div.querySelector<HTMLButtonElement>(
-			".mxd-btn-warning",
-		);
-		btn!.click();
-		await new Promise((r) => setTimeout(r, 30));
-
-		expect(confirmCalled).toBe(false);
-		expect(
-			result.fetchCalls.some((c) => c.url.includes("restart-daemon")),
-		).toBe(true);
-	});
-
-	test("close (X button) with NO unsaved → onClose called, no confirm", async () => {
+	test("close (X) with NO unsaved → onClose fires, no confirm", async () => {
 		let confirmCalled = false;
 		window.confirm = () => {
 			confirmCalled = true;
@@ -292,17 +268,14 @@ describe("Fix ③: Unsaved-changes protection", () => {
 		const closeBtn = result.div.querySelector<HTMLButtonElement>(
 			".mxd-settings-header .mxd-btn-icon",
 		);
-		closeBtn!.click();
+		closeBtn?.click();
 		await new Promise((r) => setTimeout(r, 30));
 
 		expect(confirmCalled).toBe(false);
 		expect(result.onCloseCalls.length).toBe(1);
 	});
 
-	test("tab-switch with dirty draft → NO confirm (drafts persist, not a loss point)", async () => {
-		// Even if drafts were dirty, switching sub-tabs does NOT lose them (each
-		// tab holds its own independent persistent draft state). This test verifies
-		// no confirm fires on tab switch — the crying-wolf avoidance principle.
+	test("tab-switch → NO confirm (drafts persist, not a loss point)", async () => {
 		let confirmCalled = false;
 		window.confirm = () => {
 			confirmCalled = true;
@@ -310,22 +283,19 @@ describe("Fix ③: Unsaved-changes protection", () => {
 		};
 		result = await renderSettingsPanel();
 
-		// Switch to Project tab
+		// Switch Global → Project → Global
 		const projectTab = Array.from(
 			result.div.querySelectorAll<HTMLButtonElement>(".mxd-settings-tab"),
 		).find((btn) => btn.textContent?.includes("Project"));
-		expect(projectTab).not.toBeNull();
-		projectTab!.click();
-		await new Promise((r) => setTimeout(r, 30));
+		projectTab?.click();
+		await new Promise((r) => setTimeout(r, 20));
 
-		// Switch back to Global
 		const globalTab = Array.from(
 			result.div.querySelectorAll<HTMLButtonElement>(".mxd-settings-tab"),
 		).find((btn) => btn.textContent?.includes("Global"));
-		globalTab!.click();
-		await new Promise((r) => setTimeout(r, 30));
+		globalTab?.click();
+		await new Promise((r) => setTimeout(r, 20));
 
-		// No confirm should fire on tab switch — ever
 		expect(confirmCalled).toBe(false);
 	});
 });
