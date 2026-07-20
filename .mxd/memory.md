@@ -4293,3 +4293,17 @@ for simplicity — "Save & Restart" always saves first, then restarts.
 
 **Revert path**: the entire change (three-fix base + this simplification) is two merge-able
 commits. `git revert <merge>` cleanly returns to pre-fix state.
+
+### Settings UX iteration 3: Revert button added, close-panel confirm removed (2026-07-17)
+
+User feedback: close-panel confirm dialog was more annoying than helpful. With Revert available,
+users undo mistakes themselves — no need for system to block close.
+
+- **Revert button** added to RestartBar (next to Save & Restart). Resets ALL tabs (global/repo/local)
+  to last-saved state. Disabled when clean (nothing to revert).
+- **Close-panel confirm removed**: X button + click-outside → direct onClose, no window.confirm.
+- `closeConfirmUnsaved` i18n key deleted (EN + ZH).
+- `handleClose` useCallback removed; click-outside handler reverted to direct `onClose()`.
+
+**Current SettingsPanel action model**: Save & Restart (saves all dirty + restarts daemon) +
+Revert (undo all edits) + close (just closes, discards unsaved). No confirm dialogs anywhere.

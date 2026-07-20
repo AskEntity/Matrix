@@ -895,10 +895,14 @@ function ThinkingEffortSection({
 
 function RestartBar({
 	onSaveAndRestart,
+	onRevertAll,
+	hasUnsavedChanges,
 	restarting,
 	error,
 }: {
 	onSaveAndRestart: () => void;
+	onRevertAll: () => void;
+	hasUnsavedChanges: boolean;
 	restarting: boolean;
 	error?: string | null;
 }) {
@@ -926,6 +930,14 @@ function RestartBar({
 						<IconRefresh size={12} /> {t("settings.restartDaemon")}
 					</>
 				)}
+			</button>
+			<button
+				type="button"
+				className="mxd-btn mxd-btn-sm mxd-btn-ghost"
+				disabled={!hasUnsavedChanges || restarting}
+				onClick={onRevertAll}
+			>
+				{t("settings.revert")}
 			</button>
 		</div>
 	);
@@ -1272,9 +1284,6 @@ export const SettingsPanel = memo(function SettingsPanel({
 	const dirtyGlobal = isDirty(draftGlobal, layers.global);
 	const dirtyRepo = isDirty(draftRepo, layers.repo);
 	const dirtyLocal = isDirty(draftLocal, layers.local);
-	// Any tab dirty → restart (page reload) and closing (unmount) both silently
-	// drop the draft. Switching sub-tabs does NOT (each tab keeps its own draft),
-	// so only restart + close are guarded.
 	const hasUnsavedChanges = dirtyGlobal || dirtyRepo || dirtyLocal;
 
 	// Save error state — surfaced inline when PATCH fails
@@ -1371,17 +1380,13 @@ export const SettingsPanel = memo(function SettingsPanel({
 		local: "settings.titleLocal",
 	} as const;
 
-	// Closing the panel unmounts it → all drafts are lost. Guard with a discard
-	// confirm only when there are unsaved changes.
-	const handleClose = useCallback(() => {
-		if (
-			hasUnsavedChanges &&
-			!window.confirm(t("settings.closeConfirmUnsaved"))
-		) {
-			return;
-		}
-		onClose();
-	}, [hasUnsavedChanges, onClose, t]);
+	// Revert all tabs to last-saved state
+	const handleRevertAll = useCallback(() => {
+		setDraftGlobal({ ...layers.global });
+		setDraftRepo({ ...layers.repo });
+		setDraftLocal({ ...layers.local });
+		setSaveError(null);
+	}, [layers]);
 
 	// Click-outside-to-close (exclude the gear toggle button in the header)
 	const panelRef = useRef<HTMLDivElement>(null);
@@ -1391,17 +1396,17 @@ export const SettingsPanel = memo(function SettingsPanel({
 			if (panelRef.current?.contains(target)) return;
 			if ((target as Element).closest?.(".mxd-settings-toggle-btn")) return;
 			if ((target as Element).closest?.(".mxd-sidebar-settings-btn")) return;
-			handleClose();
+			onClose();
 		};
 		document.addEventListener("mousedown", handler);
 		return () => document.removeEventListener("mousedown", handler);
-	}, [handleClose]);
+	}, [onClose]);
 
 	return (
 		<div ref={panelRef} className="mxd-settings-panel mxd-settings-panel-wide">
 			<div className="mxd-settings-header">
 				<span className="mxd-settings-title">{t(tabTitleKey[activeTab])}</span>
-				<button type="button" className="mxd-btn-icon" onClick={handleClose}>
+				<button type="button" className="mxd-btn-icon" onClick={onClose}>
 					<IconClose size={11} />
 				</button>
 			</div>
@@ -1467,6 +1472,8 @@ export const SettingsPanel = memo(function SettingsPanel({
 
 			<RestartBar
 				onSaveAndRestart={handleSaveAndRestart}
+				onRevertAll={handleRevertAll}
+				hasUnsavedChanges={hasUnsavedChanges}
 				restarting={restarting}
 				error={saveError}
 			/>
