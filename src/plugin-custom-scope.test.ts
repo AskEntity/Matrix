@@ -515,7 +515,7 @@ describe("Boundary: done() custom fields are opaque to the runtime", () => {
 
 		// 1. onDone READ the plugin's own custom fields → the runtime handed the
 		//    raw done input through OPAQUE (no reshaping to a fixed content struct).
-		//    A runtime that rebuilt a {result, lessons}-style payload would drop
+		//    A runtime that rebuilt a {result}-style payload would drop
 		//    wordCount/mood and this fails.
 		expect(node?.metadata).toEqual({ wordCount: 1200, mood: "triumphant" });
 

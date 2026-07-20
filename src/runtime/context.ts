@@ -122,10 +122,10 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 	 * this — status routing (→ verify/failed), the parent completion notice, and
 	 * the crash-safe marker. This hook is only where the plugin persists its own
 	 * done CONTENT, reading it from the OPAQUE `doneInput` (the raw done()
-	 * tool_call input): Matrix parses `{result, lessons}` and appends a
-	 * resultRound. The runtime hands the record through untouched — it never
-	 * reads round structure (lessons) itself, only the universal completion
-	 * output. `status` is absent from the plugin's job: it's a runtime control bit.
+	 * tool_call input): Matrix parses `{result}` and appends a resultRound.
+	 * The runtime hands the record through untouched — it never reads round
+	 * structure itself, only the universal completion output.
+	 * `status` is absent from the plugin's job: it's a runtime control bit.
 	 */
 	onDone?: (
 		node: T["node"],

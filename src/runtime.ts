@@ -98,7 +98,7 @@ export function findInterruptedDonePhase2(events: Event[]):
 	// universal completion-output string (parent notice), read from the SAME done
 	// tool_call so a crash-recovered done carries the exact string the live path
 	// would have delivered. Crash recovery is plugin-agnostic: it never reads
-	// round content (lessons) and can't append a resultRound.
+	// round content and can't append a resultRound.
 	const status =
 		doneInput?.status === "passed" ? ("verify" as const) : ("failed" as const);
 	const result = doneCompletionOutput(lastDoneCall.input);

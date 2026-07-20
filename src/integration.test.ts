@@ -12378,14 +12378,14 @@ describe("Integration: bash tiered output contract", () => {
 	}, 20000);
 });
 
-describe("Integration: done() result/lessons capture (resultRounds)", () => {
+describe("Integration: done() result capture (resultRounds)", () => {
 	let ctx: TestContext;
 
 	afterEach(async () => {
 		if (ctx) await teardownTestContext(ctx);
 	});
 
-	test("done(result + lessons) lands them on node.resultRounds", async () => {
+	test("done(result) lands it on node.resultRounds", async () => {
 		ctx = await setupTestContext();
 		const instruction = JSON.stringify({
 			blocks: [
@@ -12396,10 +12396,6 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 					input: {
 						status: "passed",
 						result: "Implemented X via A, B, C. All tests green.",
-						lessons: [
-							"Foo's bar option only applies on create, not overwrite",
-							"Baz needs an explicit flush before read",
-						],
 					},
 				},
 			],
@@ -12409,17 +12405,11 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 		expect(await waitForDone(ctx)).toBe("verify");
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
-			{
-				result: "Implemented X via A, B, C. All tests green.",
-				lessons: [
-					"Foo's bar option only applies on create, not overwrite",
-					"Baz needs an explicit flush before read",
-				],
-			},
+			{ result: "Implemented X via A, B, C. All tests green." },
 		]);
 	}, 20000);
 
-	test("done(result) with no lessons → one block, empty lessons", async () => {
+	test("done(result) with only a result → one block", async () => {
 		ctx = await setupTestContext();
 		const instruction = JSON.stringify({
 			blocks: [
@@ -12436,7 +12426,7 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 		expect(await waitForDone(ctx)).toBe("verify");
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
-			{ result: "shipped the widget", lessons: [] },
+			{ result: "shipped the widget" },
 		]);
 	}, 20000);
 
@@ -12483,7 +12473,7 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 		// Only the SUCCESSFUL done appended a round — the barren one was rejected,
 		// so there is NO empty {result:""} block.
 		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
-			{ result: "actually did the work", lessons: [] },
+			{ result: "actually did the work" },
 		]);
 	}, 20000);
 
@@ -12527,7 +12517,7 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 		expect(await waitForDone(ctx)).toBe("verify");
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
-			{ result: "did it properly", lessons: [] },
+			{ result: "did it properly" },
 		]);
 	}, 20000);
 
@@ -12542,7 +12532,6 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 					input: {
 						status: "passed",
 						result: "round 1 result",
-						lessons: ["l1"],
 					},
 				},
 			],
@@ -12560,7 +12549,6 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 					input: {
 						status: "passed",
 						result: "round 2 result",
-						lessons: ["l2a", "l2b"],
 					},
 				},
 			],
@@ -12573,8 +12561,8 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 		}
 		expect(await waitForDone(ctx, 20000)).toBe("verify");
 		expect(tracker.getTask(rootNodeId)?.resultRounds).toEqual([
-			{ result: "round 1 result", lessons: ["l1"] },
-			{ result: "round 2 result", lessons: ["l2a", "l2b"] },
+			{ result: "round 1 result" },
+			{ result: "round 2 result" },
 		]);
 	}, 30000);
 
@@ -12589,7 +12577,6 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 					input: {
 						status: "failed",
 						result: "Could not resolve the upstream 500s.",
-						lessons: ["The retry budget is exhausted after 5 attempts"],
 					},
 				},
 			],
@@ -12599,10 +12586,7 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 		expect(await waitForDone(ctx)).toBe("failed");
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		expect(tracker.getTask(tracker.rootNodeId)?.resultRounds).toEqual([
-			{
-				result: "Could not resolve the upstream 500s.",
-				lessons: ["The retry budget is exhausted after 5 attempts"],
-			},
+			{ result: "Could not resolve the upstream 500s." },
 		]);
 	}, 20000);
 
@@ -12622,7 +12606,6 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 					input: {
 						status: "passed",
 						result: MARKER,
-						lessons: ["child lesson"],
 					},
 				},
 			],
@@ -12700,8 +12683,6 @@ describe("Integration: done() result/lessons capture (resultRounds)", () => {
 		const childId = rootNode?.children?.[0] as string;
 		const childNode = tracker.getTask(childId);
 		// resultRounds.result is BYTE-IDENTICAL to the value the parent received.
-		expect(childNode?.resultRounds).toEqual([
-			{ result: MARKER, lessons: ["child lesson"] },
-		]);
+		expect(childNode?.resultRounds).toEqual([{ result: MARKER }]);
 	}, 45000);
 });

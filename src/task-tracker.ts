@@ -501,7 +501,7 @@ export class TaskTracker {
 	}
 
 	/**
-	 * Append one done()-round's `DonePayload` (result + lessons) to a task node.
+	 * Append one done()-round's `DonePayload` (result) to a task node.
 	 * APPEND-only — never overwrites prior rounds. Called once per done()
 	 * (a reawaken → re-done task accumulates multiple rounds in call order).
 	 * Creates the `resultRounds` array on first append. Rejects general nodes

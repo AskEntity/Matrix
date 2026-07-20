@@ -532,9 +532,9 @@ export function findOrphanedBackgroundProcesses(
  *
  * GENERIC — no field knowledge beyond "which tool is done". The runtime hands
  * this record OPAQUELY to the plugin's onDone hook; only the plugin reads its
- * content fields (Matrix: {result, lessons} via parseDonePayload). Keeping the
- * runtime on the raw record is what prevents round structure (lessons) from
- * leaking into the plugin-agnostic layer.
+ * content fields (Matrix: {result} via parseDonePayload). Keeping the runtime
+ * on the raw record is what prevents round structure from leaking into the
+ * plugin-agnostic layer.
  */
 export function readDoneInput(
 	events: Event[],
@@ -553,8 +553,8 @@ export function readDoneInput(
  * happened" summary the runtime sends to the parent (task_complete) and records
  * on the done_notified marker. This is the ONE done field the runtime is allowed
  * to read: a completion output every plugin has, conventionally named `result`.
- * NOT round content (lessons / structure) — that stays inside the plugin's
- * onDone. Empty string when absent / non-string.
+ * NOT round content / structure — that stays inside the plugin's onDone.
+ * Empty string when absent / non-string.
  */
 export function doneCompletionOutput(
 	input: Record<string, unknown> | undefined,

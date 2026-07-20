@@ -823,35 +823,21 @@ describe("TaskTracker: resultRounds (memory-index capture)", () => {
 
 	test("appendResultRound appends one block", () => {
 		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
-		tracker.appendResultRound(task.id, {
-			result: "did X",
-			lessons: ["L1", "L2"],
-		});
+		tracker.appendResultRound(task.id, { result: "did X" });
 		expect(tracker.getTask(task.id)?.resultRounds).toEqual([
-			{ result: "did X", lessons: ["L1", "L2"] },
-		]);
-	});
-
-	test("appendResultRound accepts an empty lessons list", () => {
-		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
-		tracker.appendResultRound(task.id, { result: "outcome", lessons: [] });
-		expect(tracker.getTask(task.id)?.resultRounds).toEqual([
-			{ result: "outcome", lessons: [] },
+			{ result: "did X" },
 		]);
 	});
 
 	test("appendResultRound APPENDS across rounds — never overwrites the first", () => {
 		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
 		// Simulate two done() rounds (e.g. reawaken → re-done).
-		tracker.appendResultRound(task.id, { result: "round 1", lessons: ["a"] });
-		tracker.appendResultRound(task.id, {
-			result: "round 2",
-			lessons: ["b", "c"],
-		});
+		tracker.appendResultRound(task.id, { result: "round 1" });
+		tracker.appendResultRound(task.id, { result: "round 2" });
 		// BOTH blocks present, in order — round 1 was NOT overwritten.
 		expect(tracker.getTask(task.id)?.resultRounds).toEqual([
-			{ result: "round 1", lessons: ["a"] },
-			{ result: "round 2", lessons: ["b", "c"] },
+			{ result: "round 1" },
+			{ result: "round 2" },
 		]);
 	});
 
@@ -863,7 +849,7 @@ describe("TaskTracker: resultRounds (memory-index capture)", () => {
 		while (Date.now() === t0) {
 			/* spin */
 		}
-		tracker.appendResultRound(task.id, { result: "r", lessons: [] });
+		tracker.appendResultRound(task.id, { result: "r" });
 		expect(tracker.getTask(task.id)?.updatedAt).not.toBe(before);
 	});
 
@@ -874,41 +860,36 @@ describe("TaskTracker: resultRounds (memory-index capture)", () => {
 			"folder",
 		);
 		expect(() =>
-			tracker.appendResultRound(folder.id, { result: "x", lessons: [] }),
+			tracker.appendResultRound(folder.id, { result: "x" }),
 		).toThrow(/non-task node/);
 	});
 
 	test("appendResultRound throws on an unknown node", () => {
 		expect(() =>
-			tracker.appendResultRound("nonexistent-12345678", {
-				result: "x",
-				lessons: [],
-			}),
+			tracker.appendResultRound("nonexistent-12345678", { result: "x" }),
 		).toThrow("Node not found");
 	});
 
 	test("resultRounds round-trip through save/load", async () => {
 		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
-		tracker.appendResultRound(task.id, { result: "r1", lessons: ["x"] });
-		tracker.appendResultRound(task.id, { result: "r2", lessons: [] });
+		tracker.appendResultRound(task.id, { result: "r1" });
+		tracker.appendResultRound(task.id, { result: "r2" });
 		await tracker.save();
 
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
 		expect(tracker2.getTask(task.id)?.resultRounds).toEqual([
-			{ result: "r1", lessons: ["x"] },
-			{ result: "r2", lessons: [] },
+			{ result: "r1" },
+			{ result: "r2" },
 		]);
 	});
 
 	test("stripSession (the serialization get_task/get_tree use) preserves resultRounds", () => {
 		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
-		tracker.appendResultRound(task.id, { result: "r", lessons: ["l"] });
+		tracker.appendResultRound(task.id, { result: "r" });
 		const node = tracker.getTask(task.id);
 		if (!node) throw new Error("node missing");
 		// get_task / get_tree return stripSession(node) — resultRounds must survive.
-		expect(stripSession(node).resultRounds).toEqual([
-			{ result: "r", lessons: ["l"] },
-		]);
+		expect(stripSession(node).resultRounds).toEqual([{ result: "r" }]);
 	});
 });
