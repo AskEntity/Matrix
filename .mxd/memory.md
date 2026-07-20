@@ -4411,3 +4411,75 @@ bun 1.3.14). Step 2 only reserves the vec table + schema_version.
   can resolve the index path without src→plugin coupling; minimal config interface gained `dataRoot?`.
 - **Post-merge cleanup (lessons-drop)**: `lessons` field removed from DonePayload after Step 2 was written.
   task-index.ts lessons rows removed; integration tests cleaned. Index now covers title/description/result only.
+
+## Memory-index Phase C: Orama + EmbeddingGemma hybrid search (2026-07-20)
+
+**SUPERSEDES the FTS5-based Step 2 architecture.** bun:sqlite + FTS5 replaced with Orama (pure TS
+search engine) + `@orama/tokenizers/mandarin` (jieba WASM Chinese tokenizer) +
+`@huggingface/transformers` EmbeddingGemma-300M (768-dim vectors, q8 quantization).
+
+### Architecture
+- **Hybrid search**: `mode: "hybrid"` — simultaneous BM25 keyword + cosine-similarity vector match with
+  Orama's built-in fusion ranking. Cross-lingual: "fix session recovery" ↔ "修复会话恢复" (0.81 cosine).
+- **Graceful degradation**: if embedding model fails to load → `mode: "fulltext"` (pure BM25). Daemon
+  never blocked. The `_setEmbeddingPipeline(null)` test helper forces BM25-only in tests.
+- **Mandarin tokenizer**: `@orama/tokenizers/mandarin` creates a Jieba-WASM tokenizer. Passed as
+  `components.tokenizer` to `create()`. Both Chinese and English queries work natively.
+- **Embedding pipeline**: lazy singleton (`getEmbeddingPipeline()`). First call loads the model (~5s cold,
+  ~1s warm). Cached module-level. `embed(text) → number[768]`.
+
+### Persistence — two files per project
+- `index.msp` — Orama binary (msgpack via `@orama/plugin-data-persistence`). Persisted after every
+  `indexTask` and after reconcile when changes occur.
+- `index-meta.json` — sidecar: `{ [taskId]: { indexedAt: string, docIds: string[] } }`. Tracks staleness
+  (`indexedAt` vs `node.updatedAt`) and enables targeted document removal by stored doc IDs.
+- Both live at `projectIndexDbPath()` (data-paths.ts), extension changed from `.db` → `.msp`.
+
+### Document ID convention
+`${taskId}:${field}:${round}` — deterministic. Enables targeted `remove(db, id)` without scanning.
+Fields: `title`, `description`, `result` (per round). No `_meta` sentinel docs in Orama itself
+(metadata is in the sidecar JSON).
+
+### In-memory DB cache
+`dbCache: Map<string, IndexDb>` keyed by `dbPath`. First access restores from disk (`restoreFromFile`);
+cache cleared in test teardown via `_clearDbCache()`. Production: one DB per project, lives for the
+daemon's lifetime.
+
+### Public API (all async now)
+- `indexTask(dbPath, node)` — (re)index one task with embeddings + sidecar update + persist.
+- `reconcileIndex(dbPath, tracker)` — backfill/incremental reindex + prune. Returns `{indexed, pruned}`.
+- `searchIndex(dbPath, query, limit?)` — hybrid (or BM25 fallback) search. Returns `SearchHit[]`.
+- `SearchHit` — `{ taskId, field, roundIndex?, snippet, score }`. Score is now higher=better (Orama
+  convention), **reversed from the old FTS5 BM25 where lower=better**.
+- `_setEmbeddingPipeline`, `_resetEmbeddingPipeline`, `_clearDbCache` — test helpers.
+
+### Deleted (from FTS5 era)
+- `bun:sqlite` / `Database` / FTS5 / SQL — all gone.
+- `openIndexDb`, `toMatchQuery`, `SCHEMA_VERSION`, `task_vec` placeholder table.
+- `initSchema`, `withDb`, `indexTaskInDb` internal functions.
+
+### Caller changes
+- `orchestrator-tools.ts` `search_tasks`: description updated ("hybrid-search"), `await searchIndex()`,
+  return type `Awaited<ReturnType<typeof searchIndex>>`.
+- `.mxd/plugin/scope-opts.ts`: `onScopeResume` now `async` with `await reconcileIndex()`. `onDone`
+  index call is fire-and-forget (`indexTask(...).catch(...)`) since `onDone` is sync in the runtime.
+- `src/integration.test.ts`: `await` on all `searchIndex`/`reconcileIndex` calls, `_setEmbeddingPipeline(null)`
+  in `beforeEach` to disable real model loading.
+
+### sharp workaround
+`@huggingface/transformers` depends on `sharp`. Bun's global cache layout puts libvips at a versioned
+path that sharp can't find. `scripts/fix-sharp-libvips.sh` creates a symlink from the unversioned `lib/`
+to the versioned one. Added as `postinstall` in package.json. Idempotent, platform-aware.
+
+### Orama `where` clause limitation
+Orama's `where` filter only works on `enum`-typed fields, and does NOT support `ne` (not-equal) on enums.
+`string`-typed fields silently return empty on `where`. This is why we don't store metadata in Orama
+(sidecar JSON instead) and don't use `where` in search queries.
+
+### Tests
+- `src/task-index.test.ts` (16): title/description/result provenance, re-index replaces stale rows,
+  reconcile backfill/incremental/prune/skip-folders, empty/punctuation query safety, BM25 ranking, limit,
+  Chinese tokenizer, embedding degradation, persistence round-trip, hybrid search with mock embeddings.
+- `src/integration.test.ts` "memory index (Orama hybrid search)" (4): index-on-done, startup reconcile,
+  search_tasks tool end-to-end, best-effort (sabotaged index path).
+- Full suite: 2547 pass / 0 fail. typecheck + check:ci clean.
