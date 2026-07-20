@@ -4265,3 +4265,31 @@ full-width row via `flex-basis: 100%`.
   setter + dispatchEvent ("input"). Dirty-path component tests can't make the internal draft
   diverge from saved state. Dirty detection is unit-tested via exported `isDirty`; the wiring
   (`if (hasUnsavedChanges && !window.confirm(...)) return;`) is ~4 lines verified by code review.
+
+## Settings UX — unified "Save & Restart" (2026-07-17, supersedes prior three-fix entry)
+
+Simplified from the three-fix model (separate Save, Revert, restart-relabel, save-effect hint,
+restart-confirm) to a single-action model per user request ("try simplest, revert if bad").
+
+**One button: "Save & Restart" / "保存并重启"** — saves ALL dirty tabs (global/repo/local) then
+restarts the daemon. Closing the panel = discard. No separate Save or Revert buttons.
+
+**handleSaveAndRestart** (SettingsPanel level): validates model required on global → PATCHes each
+dirty tab via updateGlobal/updateRepo/updateLocal → on first error stops + shows inline error → on
+all success POSTs /restart-daemon + polls /health + page reload. Lifted from GlobalTab to
+SettingsPanel so the RestartBar is shared across all tabs.
+
+**Close-panel guard retained**: X button + click-outside with `hasUnsavedChanges` → confirm
+"You have unsaved changes. Discard them?". Tab-switch NOT guarded (drafts persist).
+
+**RestartBar replaces TabActions**: renders after tab content, before danger zone. One button +
+error display. The old per-tab Save/Revert bar is gone. GlobalTab/ProjectTab are pure forms
+(no action buttons, no save/revert/error/dirty props).
+
+**Verified mechanism** (unchanged): config Save → daemon syncToWorkers (daemon.ts:2163) →
+worker ctx.globalConfig updates (scope-worker.ts:184-188) → next resolveProjectConfig uses new
+values. Restart is only for loading newly deployed code. But the UX merges both into one button
+for simplicity — "Save & Restart" always saves first, then restarts.
+
+**Revert path**: the entire change (three-fix base + this simplification) is two merge-able
+commits. `git revert <merge>` cleanly returns to pre-fix state.
