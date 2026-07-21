@@ -4483,3 +4483,34 @@ Orama's `where` filter only works on `enum`-typed fields, and does NOT support `
 - `src/integration.test.ts` "memory index (Orama hybrid search)" (4): index-on-done, startup reconcile,
   search_tasks tool end-to-end, best-effort (sabotaged index path).
 - Full suite: 2547 pass / 0 fail. typecheck + check:ci clean.
+
+
+## Sidebar search + work_context related-tasks injection (2026-07-21)
+
+### Part A — Sidebar search via Orama
+- REST endpoint `GET /projects/:id/search?q=...&limit=N` in `.mxd/plugin/runtime.ts`.
+  Calls async `searchIndex`, enriches with task titles from `ctx.trackers.get(projectId)`.
+- `api.search(projectId, query, limit?)` URL builder in `.mxd/plugin/web/api.ts`.
+- `useSidebarSearch` hook (`.mxd/plugin/web/search.ts`): debounced 300ms, abort-on-supersede.
+- `TaskTree` accepts `searchHits`/`searchLoading` props; renders search results overlay
+  (title + field badge + snippet) INSTEAD of tree filter when backend results arrive.
+- UX: search results replace tree filter when text is typed and backend hits arrive.
+  Empty query → normal tree. Local substring filter still runs as instant fallback.
+
+### Part B — work_context related-tasks injection
+- `searchIndexSync(dbPath, query, limit)` in `src/task-index.ts`: **synchronous** BM25-only
+  search using the already-cached in-memory Orama DB. Returns `[]` if DB not loaded (no crash).
+  The DB is pre-loaded by `reconcileIndex` at startup (via `onScopeResume` hook).
+- `buildWorkContext` in `.mxd/plugin/scope-opts.ts`: uses `searchIndexSync` with
+  `node.title + node.description` as query. Appends `[Related past tasks]` block with
+  up to 5 hits, capped at `RELATED_TASKS_CHAR_LIMIT = 8000` chars (~2000 tokens).
+  Excludes self (`taskId !== node.id`). Best-effort (try/catch, index unavailable = no block).
+- Injection is sync → no runtime interface change. Works in both initial launch and
+  compact re-arm paths (same `buildWorkContext` callback).
+
+### Boundary preserved
+- `src/runtime/*` has ZERO knowledge of search/index. The sync search uses the DB already
+  cached by `reconcileIndex` (onScopeResume startup hook in scope-opts.ts).
+- REST endpoint uses `ctx.trackers.get(projectId)` directly (not `getTracker` helper which
+  has scope-opts dependencies).
+
