@@ -320,6 +320,26 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	const toolCallToolNames = new Map<string, string>();
 
 	/**
+	 * Message IDs consumed in the most recent `processEventBatch` run.
+	 *
+	 * After a batch fetch (page load / SSE reconnect), `processEventBatch`
+	 * does RESET + full replay from JSONL — pending is correctly rebuilt.
+	 * But SSE ring-buffer catch-up events can arrive AFTER the batch and
+	 * re-add `message` events whose `messages_consumed` was already
+	 * processed in the batch. Without this guard the pending chip
+	 * reappears (and its SSE `messages_consumed` is either a no-op
+	 * on an empty pending, or never arrives if the catch-up window
+	 * didn't include it).
+	 *
+	 * `handleEvent` checks this set before dispatching APPLY(message)
+	 * for `message` events — if the id was already consumed in the last
+	 * batch, the pending action is suppressed.
+	 *
+	 * Cleared on every `processEventBatch` RESET (fresh derivation).
+	 */
+	const batchConsumedIds = new Set<string>();
+
+	/**
 	 * Convert a QueueMessage body into a UIEvent for rendering.
 	 * Works for both live SSE messages AND JSONL body fields.
 	 * Returns null for sources that should be skipped.
@@ -1357,6 +1377,16 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		setBackgroundProcesses(new Map());
 		dispatchPending({ type: "RESET" });
 
+		// Collect consumed IDs from this batch so handleEvent can suppress
+		// stale SSE catch-up `message` events that arrive after this batch
+		// (see batchConsumedIds declaration for the full race description).
+		batchConsumedIds.clear();
+		for (const evt of events) {
+			if (evt.type === "messages_consumed" && evt.messageIds) {
+				for (const id of evt.messageIds) batchConsumedIds.add(id);
+			}
+		}
+
 		let entries: LogEntry[] = [];
 		const deferredSideEffects: (() => void)[] = [];
 
@@ -1480,7 +1510,35 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			setLogs((prev) => applyUpdate(prev, op));
 		}
 		if (result.pendingActions) {
-			for (const action of result.pendingActions) dispatchPending(action);
+			for (const action of result.pendingActions) {
+				// Suppress stale SSE catch-up: if this is a `message` event
+				// whose id was already consumed in the last batch, don't
+				// re-add it to pending. The batch's RESET + rebuild already
+				// handled it correctly — re-adding it here would make the
+				// pending chip reappear with no subsequent messages_consumed
+				// to clear it (since that was already in the batch too).
+				if (
+					action.type === "APPLY" &&
+					action.event.type === "message" &&
+					action.event.id &&
+					batchConsumedIds.has(action.event.id)
+				) {
+					continue;
+				}
+				// A live messages_consumed clears the id from the guard set
+				// so that genuinely new messages with recycled IDs (shouldn't
+				// happen with ULIDs, but defensive) aren't permanently blocked.
+				if (
+					action.type === "APPLY" &&
+					action.event.type === "messages_consumed" &&
+					action.event.messageIds
+				) {
+					for (const id of action.event.messageIds) {
+						batchConsumedIds.delete(id);
+					}
+				}
+				dispatchPending(action);
+			}
 		}
 		result.sideEffects();
 	}
