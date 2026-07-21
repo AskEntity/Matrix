@@ -485,17 +485,17 @@ select {
 }
 .mxd-search-hit {
 	display: block;
-	width: 100%;
-	padding: 8px 12px;
+	width: calc(100% - 16px);
+	margin: 0 8px 6px;
+	padding: 10px 12px;
 	border: none;
-	border-bottom: 1px solid var(--border-muted);
-	background: none;
+	border-radius: 6px;
+	background: var(--bg-subtle, rgba(255, 255, 255, 0.04));
 	cursor: pointer;
 	text-align: left;
 	color: var(--text);
 	font-size: 12px;
 	line-height: 1.4;
-	border-left: 2px solid transparent;
 	transition: background 0.1s;
 }
 .mxd-search-hit:hover {
@@ -503,7 +503,7 @@ select {
 }
 .mxd-search-hit.selected {
 	background: var(--bg-selected);
-	border-left-color: var(--accent);
+	box-shadow: inset 2px 0 0 var(--accent);
 }
 .mxd-search-hit-title {
 	font-weight: 500;
