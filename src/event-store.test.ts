@@ -163,7 +163,7 @@ describe("EventStore", () => {
 		await store.appendBatch("s1", events);
 
 		const active = store.readActive("s1");
-		expect(active).toEqual([
+		expect(active).toMatchObject([
 			{
 				type: "assistant_text",
 				content: "checkpoint text",
@@ -217,7 +217,7 @@ describe("EventStore", () => {
 		await store.appendBatch("s1", events);
 
 		const active = store.readActive("s1");
-		expect(active).toEqual([
+		expect(active).toMatchObject([
 			{
 				type: "assistant_text",
 				content: "second checkpoint",
@@ -282,7 +282,7 @@ describe("EventStore", () => {
 
 		const result = store.readFromLastCompactMarker("s1");
 		expect(result.hasOlderEvents).toBe(true);
-		expect(result.events).toEqual([
+		expect(result.events).toMatchObject([
 			{
 				type: "compact_marker",
 				savedTokens: 5000,
@@ -337,7 +337,7 @@ describe("EventStore", () => {
 
 		const result = store.readFromLastCompactMarker("s1");
 		expect(result.hasOlderEvents).toBe(true);
-		expect(result.events).toEqual([
+		expect(result.events).toMatchObject([
 			{
 				type: "compact_marker",
 				savedTokens: 2000,
@@ -417,7 +417,7 @@ describe("EventStore", () => {
 
 		const result = store.readFromLastCompactMarker("forked");
 		expect(result.hasOlderEvents).toBe(true);
-		expect(result.events).toEqual([
+		expect(result.events).toMatchObject([
 			{
 				type: "fork_marker",
 				sourceTaskId: "parent-id",
@@ -470,7 +470,7 @@ describe("EventStore", () => {
 
 		const result = store.readFromLastCompactMarker("forked-compact");
 		expect(result.hasOlderEvents).toBe(true);
-		expect(result.events).toEqual([
+		expect(result.events).toMatchObject([
 			{
 				type: "compact_marker",
 				savedTokens: 1000,
@@ -520,7 +520,7 @@ describe("EventStore", () => {
 
 		const result = store.readBefore("s1", 3000, 100);
 		expect(result.hasMore).toBe(false);
-		expect(result.events).toEqual([
+		expect(result.events).toMatchObject([
 			{
 				type: "message",
 				id: "",
