@@ -217,6 +217,74 @@ describe("task-index (Orama hybrid search)", () => {
 		expect(hits.some((h) => h.taskId === t.id)).toBe(true);
 	});
 
+	// ── Tokenizer survives persist → restore (bug fix regression) ──
+	// restoreFromFile does NOT preserve custom tokenizer components. Without
+	// the fix (re-applying the mandarin tokenizer after restore), multi-token
+	// queries silently fail — the restored DB's default tokenizer splits
+	// differently than the mandarin tokenizer used at index time.
+
+	test("Chinese multi-token query works after persist → cache clear → restore", async () => {
+		const t = tracker.addTask(
+			"Bug: pending 消息栏未清除 — 已被 agent 处理的消息仍显示为 pending",
+			"修复 pending 消息栏在 agent 已处理消息后仍然显示的问题",
+		);
+		await indexTask(dbPath, t);
+
+		// Force restore from disk (the path where the tokenizer was lost).
+		_clearDbCache();
+
+		// Single-token query — works even without the fix (exact match).
+		const single = await searchIndex(dbPath, "消息");
+		expect(single.some((h) => h.taskId === t.id)).toBe(true);
+
+		// Multi-token query — FAILS without the fix (tokenizer mismatch).
+		const multi = await searchIndex(dbPath, "消息栏");
+		expect(multi.some((h) => h.taskId === t.id)).toBe(true);
+
+		const full = await searchIndex(dbPath, "消息栏未清除");
+		expect(full.some((h) => h.taskId === t.id)).toBe(true);
+	});
+
+	test("English multi-token query works after persist → cache clear → restore", async () => {
+		const t = tracker.addTask(
+			"Fix pending banner not cleared after agent processes message",
+			"The pending banner filter must be checked and cleared properly",
+		);
+		await indexTask(dbPath, t);
+
+		_clearDbCache();
+
+		const single = await searchIndex(dbPath, "pending");
+		expect(single.some((h) => h.taskId === t.id)).toBe(true);
+
+		// Multi-word English query — also FAILS without the fix.
+		const multi = await searchIndex(dbPath, "pending banner");
+		expect(multi.some((h) => h.taskId === t.id)).toBe(true);
+
+		const full = await searchIndex(dbPath, "banner not cleared");
+		expect(full.some((h) => h.taskId === t.id)).toBe(true);
+	});
+
+	test("searchIndexSync multi-token query works after persist → restore", async () => {
+		const t = tracker.addTask(
+			"Bug: pending 消息栏未清除",
+			"Fix pending banner not cleared",
+		);
+		await indexTask(dbPath, t);
+
+		// Force restore.
+		_clearDbCache();
+		// Warm the cache via async searchIndex (getDb loads from disk).
+		await searchIndex(dbPath, "x");
+
+		// Now searchIndexSync uses the cached (restored) DB.
+		const zhHits = searchIndexSync(dbPath, "消息栏");
+		expect(zhHits.some((h) => h.taskId === t.id)).toBe(true);
+
+		const enHits = searchIndexSync(dbPath, "pending banner");
+		expect(enHits.some((h) => h.taskId === t.id)).toBe(true);
+	});
+
 	// ── Hybrid search (with mock embeddings) ──
 
 	test("hybrid search finds semantically similar results via embeddings", async () => {

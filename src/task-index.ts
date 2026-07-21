@@ -166,6 +166,14 @@ async function getDb(dbPath: string): Promise<IndexDb> {
 	if (existsSync(dbPath)) {
 		try {
 			db = (await restoreFromFile("binary", dbPath)) as IndexDb;
+			// restoreFromFile does NOT preserve custom tokenizer components —
+			// the restored DB silently falls back to Orama's default tokenizer.
+			// Re-apply the mandarin tokenizer so multi-token queries (Chinese
+			// AND English) match correctly. Without this, single-token queries
+			// like "消息" or "pending" work (exact token match) but multi-token
+			// queries like "消息栏" or "pending banner" fail (tokenized differently
+			// at query time vs index time).
+			(db as Record<string, unknown>).tokenizer = createTokenizer();
 		} catch {
 			db = createDb();
 		}
