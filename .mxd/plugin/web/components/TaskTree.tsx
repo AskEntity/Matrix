@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isFolder, isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
+import type { SidebarSearchHit } from "../search.ts";
 import type { TaskStatus } from "../types.ts";
 import { IconChevron, IconHexagon, IconStar } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
@@ -145,6 +146,10 @@ export interface TaskTreeProps {
 	onFilterClose: () => void;
 	/** Current filter mode (controlled by parent) */
 	filterMode: FilterMode;
+	/** Backend search results (hybrid/BM25). When non-empty, shown INSTEAD of the tree filter. */
+	searchHits?: SidebarSearchHit[];
+	/** Whether a search request is in flight. */
+	searchLoading?: boolean;
 }
 
 export const TaskTree = memo(function TaskTree({
@@ -167,6 +172,8 @@ export const TaskTree = memo(function TaskTree({
 	onFilterQueryChange,
 	onFilterClose,
 	filterMode,
+	searchHits,
+	searchLoading,
 }: TaskTreeProps) {
 	// Root node's children are the visible top-level tasks
 	const rootNode = useMemo(
@@ -529,6 +536,9 @@ export const TaskTree = memo(function TaskTree({
 	// actual root id when root is viewed — no `!selectedTaskId` sentinel.
 	const isOrchestratorSelected = selectedTaskId === rootNodeId;
 	const hasTextFilter = filterQuery.trim().length > 0;
+	// When search hits are present, show search results instead of tree filter
+	const showSearchResults =
+		hasTextFilter && searchHits !== undefined && searchHits.length > 0;
 	// Force-expand tree when view is selective (text search or active+favorites mode)
 	const forceExpand = hasTextFilter || filterMode === "active-favorites";
 	const filteredRoots = matchingIds
@@ -593,40 +603,75 @@ export const TaskTree = memo(function TaskTree({
 
 			{/* Scrollable task list */}
 			<div className="mxd-task-list">
-				{filteredRoots.map((root, i) => (
-					<TreeNodeView
-						key={root.id}
-						node={root}
-						childMap={childMap}
-						depth={0}
-						selectedTaskId={selectedTaskId}
-						rootNodeId={rootNodeId}
-						activeAgents={activeAgents}
-						onSelect={onSelect}
-						onDoubleClick={onDoubleClick}
-						collapsed={collapsed}
-						toggleCollapse={toggleCollapse}
-						matchingIds={matchingIds}
-						forceExpand={forceExpand}
-						favorites={favorites}
-						toggleFavorite={toggleFavorite}
-						dragState={dragState}
-						dropIndicator={dropIndicator}
-						reparentTargetId={reparentTargetId}
-						parentId={topLevelParentId}
-						siblingIds={topLevelSiblingIds}
-						siblingIndex={i}
-						onDragStart={handleDragStart}
-						onDragOver={handleDragOver}
-						onDragEnd={handleDragEnd}
-						onDrop={handleDrop}
-						creatingChildOf={creatingChildOf}
-						onStartChildCreate={handleStartChildCreate}
-						onChildCreateConfirm={handleChildCreateConfirm}
-						onChildCreateCancel={handleChildCreateCancel}
-						onContextMenu={handleContextMenu}
-					/>
-				))}
+				{/* Search results overlay — shown when backend search returns hits */}
+				{showSearchResults && (
+					<div className="mxd-search-results">
+						<div className="mxd-search-results-header">
+							{t("tasks.searchResults")} ({searchHits.length})
+						</div>
+						{searchHits.map((hit) => (
+							<button
+								key={`${hit.taskId}:${hit.field}:${hit.roundIndex ?? ""}`}
+								type="button"
+								className={`mxd-search-hit${hit.taskId === selectedTaskId ? " selected" : ""}`}
+								onClick={() => onSelect(hit.taskId)}
+							>
+								<div className="mxd-search-hit-title">{hit.title}</div>
+								<div className="mxd-search-hit-meta">
+									<span className="mxd-search-hit-field">{hit.field}</span>
+									{hit.roundIndex !== undefined && (
+										<span className="mxd-search-hit-round">
+											round {hit.roundIndex}
+										</span>
+									)}
+								</div>
+								<div className="mxd-search-hit-snippet">{hit.snippet}</div>
+							</button>
+						))}
+					</div>
+				)}
+
+				{/* Loading indicator */}
+				{hasTextFilter && searchLoading && !showSearchResults && (
+					<div className="mxd-search-loading">{t("tasks.searching")}</div>
+				)}
+
+				{/* Normal tree view — hidden when search results are showing */}
+				{!showSearchResults &&
+					filteredRoots.map((root, i) => (
+						<TreeNodeView
+							key={root.id}
+							node={root}
+							childMap={childMap}
+							depth={0}
+							selectedTaskId={selectedTaskId}
+							rootNodeId={rootNodeId}
+							activeAgents={activeAgents}
+							onSelect={onSelect}
+							onDoubleClick={onDoubleClick}
+							collapsed={collapsed}
+							toggleCollapse={toggleCollapse}
+							matchingIds={matchingIds}
+							forceExpand={forceExpand}
+							favorites={favorites}
+							toggleFavorite={toggleFavorite}
+							dragState={dragState}
+							dropIndicator={dropIndicator}
+							reparentTargetId={reparentTargetId}
+							parentId={topLevelParentId}
+							siblingIds={topLevelSiblingIds}
+							siblingIndex={i}
+							onDragStart={handleDragStart}
+							onDragOver={handleDragOver}
+							onDragEnd={handleDragEnd}
+							onDrop={handleDrop}
+							creatingChildOf={creatingChildOf}
+							onStartChildCreate={handleStartChildCreate}
+							onChildCreateConfirm={handleChildCreateConfirm}
+							onChildCreateCancel={handleChildCreateCancel}
+							onContextMenu={handleContextMenu}
+						/>
+					))}
 
 				{roots.length === 0 && (
 					<div className="mxd-empty-state">
@@ -640,11 +685,14 @@ export const TaskTree = memo(function TaskTree({
 					</div>
 				)}
 
-				{roots.length > 0 && filteredRoots.length === 0 && filterQuery && (
-					<div className="mxd-tree-empty">
-						{t("tasks.noMatch")} "{filterQuery}"
-					</div>
-				)}
+				{!showSearchResults &&
+					roots.length > 0 &&
+					filteredRoots.length === 0 &&
+					filterQuery && (
+						<div className="mxd-tree-empty">
+							{t("tasks.noMatch")} "{filterQuery}"
+						</div>
+					)}
 
 				{/* Inline task creation row */}
 				{isCreating && (

@@ -65,6 +65,7 @@ import {
 	useTasks,
 } from "./hooks.ts";
 import { LocaleProvider, useLocale } from "./i18n.ts";
+import { useSidebarSearch } from "./search.ts";
 import { applyTheme, themes } from "./themes.ts";
 
 // ── Sidebar state model ────────────────────────────────────────────────────
@@ -414,6 +415,13 @@ function ProjectContent({
 	);
 	const filterOpen = filterState.open;
 	const filterQuery = filterState.query;
+
+	// Backend search (Orama hybrid/BM25) — debounced, replaces tree filter when active
+	const { hits: searchHits, loading: searchLoading } = useSidebarSearch(
+		projectId,
+		filterQuery,
+	);
+
 	const [filterMode, setFilterMode] = useState<FilterMode>(readFilterMode);
 	const cycleFilterMode = useCallback(() => {
 		setFilterMode((prev) => {
@@ -1583,6 +1591,8 @@ function ProjectContent({
 						}
 						onFilterClose={() => filterDispatch({ type: "close" })}
 						filterMode={filterMode}
+						searchHits={searchHits}
+						searchLoading={searchLoading}
 					/>
 				</aside>
 

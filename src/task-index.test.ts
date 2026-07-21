@@ -8,6 +8,7 @@ import {
 	indexTask,
 	reconcileIndex,
 	searchIndex,
+	searchIndexSync,
 } from "./task-index.ts";
 import { TaskTracker } from "./task-tracker.ts";
 
@@ -258,5 +259,35 @@ describe("task-index (Orama hybrid search)", () => {
 		if (hits.length >= 2) {
 			expect(hits[0]?.taskId).toBe(t1.id);
 		}
+	});
+
+	// ── searchIndexSync (BM25-only, uses cached DB) ──
+
+	test("searchIndexSync returns results when DB is cached", async () => {
+		const t = tracker.addTask(
+			"Fix session recovery bug",
+			"restore worktree state",
+		);
+		await indexTask(dbPath, t);
+
+		// DB is now in the cache (indexTask loaded it).
+		const hits = searchIndexSync(dbPath, "session recovery");
+		expect(hits.length).toBeGreaterThanOrEqual(1);
+		expect(hits[0]?.taskId).toBe(t.id);
+		expect(hits[0]?.field).toBe("title");
+	});
+
+	test("searchIndexSync returns [] when DB is NOT cached", () => {
+		// dbPath not loaded — no indexTask/reconcileIndex called.
+		const uncachedPath = join(tempDir, "nonexistent", "index.msp");
+		const hits = searchIndexSync(uncachedPath, "anything");
+		expect(hits).toEqual([]);
+	});
+
+	test("searchIndexSync returns [] for empty query", async () => {
+		const t = tracker.addTask("Something", "body");
+		await indexTask(dbPath, t);
+		expect(searchIndexSync(dbPath, "")).toEqual([]);
+		expect(searchIndexSync(dbPath, "   ")).toEqual([]);
 	});
 });

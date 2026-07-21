@@ -62,6 +62,8 @@ const en: Translations = {
 	"tasks.filterAll": "Show all tasks",
 	"tasks.filterHideClosed": "Hide closed/failed",
 	"tasks.filterActiveFavorites": "Active + Favorites",
+	"tasks.searchResults": "Search results",
+	"tasks.searching": "Searching…",
 
 	// Context menu
 	"context.newChildTask": "New Child Task",
@@ -390,6 +392,8 @@ const zh: Translations = {
 	"tasks.filterAll": "显示全部",
 	"tasks.filterHideClosed": "隐藏已关闭",
 	"tasks.filterActiveFavorites": "活跃 + 收藏",
+	"tasks.searchResults": "搜索结果",
+	"tasks.searching": "搜索中…",
 
 	// Context menu
 	"context.newChildTask": "新建子任务",

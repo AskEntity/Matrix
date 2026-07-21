@@ -20,13 +20,54 @@ import { createOrchestratorTools } from "../../src/orchestrator-tools.ts";
 import type { RuntimeContext, ScopeOpts } from "../../src/runtime/context.ts";
 import { resolveProjectConfig } from "../../src/runtime/helpers.ts";
 import { buildSystemPrompt } from "../../src/system-prompts.ts";
-import { indexTask, reconcileIndex } from "../../src/task-index.ts";
+import {
+	indexTask,
+	reconcileIndex,
+	type SearchHit,
+	searchIndexSync,
+} from "../../src/task-index.ts";
 import { slugify } from "../../src/task-utils.ts";
 import { toToolDefinition } from "../../src/tool-def.ts";
 import { buildBuiltinToolDefs } from "../../src/tools/index.ts";
 import type { TaskNode } from "../../src/types.ts";
 import { buildWorkContextContent } from "../../src/work-context.ts";
 import { WorktreeManager } from "../../src/worktree-manager.ts";
+
+/** Maximum characters for the [Related past tasks] block (~2000 tokens). */
+const RELATED_TASKS_CHAR_LIMIT = 8000;
+
+/**
+ * Format search hits into a concise work_context block.
+ * Each hit is one line with title, task id prefix, field, and snippet.
+ * Truncated at RELATED_TASKS_CHAR_LIMIT to protect the context window.
+ */
+function formatRelatedTasks(
+	hits: SearchHit[],
+	tracker: import("../../src/task-tracker.ts").TaskTracker,
+): string {
+	if (hits.length === 0) return "";
+
+	const lines: string[] = ["[Related past tasks]"];
+	let totalChars = lines[0]!.length;
+
+	for (const hit of hits) {
+		const task = tracker.getTask(hit.taskId);
+		const title = task?.title ?? "unknown";
+		const idPrefix = hit.taskId.slice(0, 12);
+		const fieldLabel =
+			hit.field === "result" && hit.roundIndex !== undefined
+				? `result round ${hit.roundIndex}`
+				: hit.field;
+		const snippet = hit.snippet.slice(0, 150);
+		const line = `- "${title}" (task ${idPrefix}…, ${fieldLabel}): "${snippet}"`;
+
+		if (totalChars + line.length + 1 > RELATED_TASKS_CHAR_LIMIT) break;
+		lines.push(line);
+		totalChars += line.length + 1;
+	}
+
+	return lines.length > 1 ? lines.join("\n") : "";
+}
 
 /** Matrix's plugin type bundle. */
 export type MatrixPluginTypes = {
@@ -105,8 +146,38 @@ export function buildMatrixScopeOpts(
 			const wm = new WorktreeManager(projectPath, wtRoot);
 			await wm.removeByPath(node.worktreePath, node.branch);
 		},
-		buildWorkContext: (node, projectPath) =>
-			buildWorkContextContent(node.cwd ?? node.worktreePath ?? projectPath),
+		buildWorkContext: (node, projectPath, projId) => {
+			const base = buildWorkContextContent(
+				node.cwd ?? node.worktreePath ?? projectPath,
+			);
+			// Inject related past tasks from the search index (sync, cached DB).
+			// Uses the task's title + description as the search query.
+			if (ctx) {
+				try {
+					const dbPath = projectIndexDbPath(
+						ctx.config.dataDir,
+						projId,
+						ctx.config.dataRoot,
+					);
+					const query = [node.title, node.description]
+						.filter(Boolean)
+						.join(" ");
+					if (query.trim()) {
+						const hits = searchIndexSync(dbPath, query, 5).filter(
+							(h) => h.taskId !== node.id,
+						);
+						const tracker = ctx.trackers.get(projId);
+						if (hits.length > 0 && tracker) {
+							const block = formatRelatedTasks(hits, tracker);
+							if (block) return base ? `${base}\n\n${block}` : block;
+						}
+					}
+				} catch {
+					// Best-effort — index not available or not loaded yet.
+				}
+			}
+			return base;
+		},
 		buildSummarizationPrompt: (node, projectPath) =>
 			buildSummarizationInstruction(
 				node.cwd ?? node.worktreePath ?? projectPath,

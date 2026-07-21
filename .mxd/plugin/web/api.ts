@@ -73,6 +73,13 @@ export const api = {
 	taskReorder: (id: string, nodeId: string) => taskUrl(id, nodeId, "reorder"),
 	taskGitlog: (id: string, nodeId: string) => taskUrl(id, nodeId, "gitlog"),
 
+	// Search
+	search: (id: string, query: string, limit?: number) => {
+		const params = new URLSearchParams({ q: query });
+		if (limit !== undefined) params.set("limit", String(limit));
+		return `${projectUrl(id, "search")}?${params}`;
+	},
+
 	// Debug (selfBootstrap only)
 	debugDumpMessages: (id: string) => projectUrl(id, "debug", "dump-messages"),
 } as const;

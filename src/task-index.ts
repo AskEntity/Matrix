@@ -438,6 +438,53 @@ export async function searchIndex(
 	}));
 }
 
+/**
+ * Synchronous BM25-only search using the ALREADY-CACHED in-memory DB.
+ * Returns [] if the DB hasn't been loaded yet (no blocking I/O).
+ *
+ * Intended for the work_context injection path, which must be sync (the
+ * ScopeOpts.buildWorkContext hook is sync). The DB is pre-loaded into
+ * `dbCache` by `reconcileIndex` at startup — so by the time any agent
+ * launches, the cache is warm.
+ *
+ * Skips embeddings entirely (no async pipeline call) — pure keyword match.
+ */
+export function searchIndexSync(
+	dbPath: string,
+	query: string,
+	limit = 20,
+): SearchHit[] {
+	const trimmed = query.trim();
+	if (!trimmed) return [];
+
+	const db = dbCache.get(dbPath);
+	if (!db) return []; // Not loaded yet — caller gets nothing, no crash.
+
+	type HitDoc = {
+		taskId: string;
+		field: string;
+		round: string;
+		text: string;
+	};
+
+	const results = search(db, {
+		mode: "fulltext",
+		term: trimmed,
+		properties: ["text"],
+		limit,
+	}) as Results<HitDoc>;
+
+	return results.hits.map((h) => ({
+		taskId: h.document.taskId,
+		field: h.document.field,
+		...(h.document.round !== ""
+			? { roundIndex: Number(h.document.round) }
+			: {}),
+		snippet: h.document.text.slice(0, 200),
+		score: h.score,
+	}));
+}
+
 // ── Test helpers ──
 
 /**
