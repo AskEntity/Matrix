@@ -92,7 +92,18 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 				})
 				.filter(Boolean);
 
-			return c.json(enriched);
+			// Deduplicate by taskId — same task may hit on title + description +
+			// result rounds. Keep only the highest-scoring hit per task.
+			const seen = new Map<string, (typeof enriched)[number]>();
+			for (const hit of enriched) {
+				const prev = seen.get(hit.taskId);
+				if (!prev || hit.score > prev.score) {
+					seen.set(hit.taskId, hit);
+				}
+			}
+			const deduped = [...seen.values()];
+
+			return c.json(deduped);
 		} catch (e) {
 			console.warn(`[search] failed for ${projectId}:`, e);
 			return c.json([]);
