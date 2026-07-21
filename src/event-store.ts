@@ -1,9 +1,11 @@
+import { randomBytes } from "node:crypto";
 import {
 	appendFileSync,
 	existsSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	renameSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -12,6 +14,11 @@ import { join } from "node:path";
 import type { Event } from "./events.ts";
 import { TOOL_FORK_TASK_CONTEXT } from "./tool-names.ts";
 import { ulid } from "./ulid.ts";
+
+/** Generate a 12-char hex event ID (48-bit, collision-safe for 50K+ events per file). */
+function generateEid(): string {
+	return randomBytes(6).toString("hex");
+}
 
 /**
  * JSONL-based event store for Event persistence.
@@ -36,6 +43,13 @@ export class EventStore {
 	 * This prevents async writes from re-creating a deleted JSONL file.
 	 */
 	private sessionGenerations = new Map<string, number>();
+	/**
+	 * Per-session last event ID. Tracks the eid of the most recently persisted
+	 * event so that the NEXT event's parentEid can point to it. null = next
+	 * event is the first in the session (parentEid = null). undefined (absent
+	 * from map) = unknown, will be populated on next read or append.
+	 */
+	private lastEventIds = new Map<string, string | null>();
 
 	constructor(private dir: string) {
 		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -107,6 +121,18 @@ export class EventStore {
 	}
 
 	/**
+	 * Stamp an event with eid + parentEid before persistence.
+	 * Mutates the event in-place (callers create inline object literals that
+	 * are never reused after emitEvent). Updates lastEventIds for the session.
+	 */
+	private stampEvent(sessionId: string, event: Event): void {
+		const eid = generateEid();
+		event.eid = eid;
+		event.parentEid = this.lastEventIds.get(sessionId) ?? null;
+		this.lastEventIds.set(sessionId, eid);
+	}
+
+	/**
 	 * Append a single event to the JSONL file.
 	 *
 	 * Uses `appendFileSync` intentionally: the filesystem write must complete
@@ -116,6 +142,7 @@ export class EventStore {
 	 */
 	append(sessionId: string, event: Event): Promise<void> {
 		return this.enqueueWrite(sessionId, () => {
+			this.stampEvent(sessionId, event);
 			try {
 				appendFileSync(this.path(sessionId), `${JSON.stringify(event)}\n`);
 			} catch {
@@ -129,6 +156,9 @@ export class EventStore {
 	appendBatch(sessionId: string, events: Event[]): Promise<void> {
 		if (events.length === 0) return Promise.resolve();
 		return this.enqueueWrite(sessionId, () => {
+			for (const e of events) {
+				this.stampEvent(sessionId, e);
+			}
 			const lines = `${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
 			try {
 				appendFileSync(this.path(sessionId), lines);
@@ -178,7 +208,49 @@ export class EventStore {
 				);
 			}
 		}
+
+		// Auto-migrate: if events exist but first one lacks eid, assign eids
+		// to the whole file and rewrite atomically (temp + rename).
+		const firstEvent = events[0];
+		if (firstEvent && !firstEvent.eid) {
+			this.migrateEventIds(sessionId, p, events);
+		}
+
+		// Sync lastEventIds so subsequent appends chain correctly.
+		const lastEvent = events[events.length - 1];
+		if (lastEvent) {
+			this.lastEventIds.set(sessionId, lastEvent.eid ?? null);
+		}
+
 		return { events, physicalLines };
+	}
+
+	/**
+	 * Auto-migrate a JSONL file that lacks eid/parentEid. Assigns a fresh
+	 * linear chain of eids and rewrites the file atomically (temp + rename).
+	 * Called once per file on first read; idempotent (skipped when first
+	 * event already has eid).
+	 */
+	private migrateEventIds(
+		sessionId: string,
+		filePath: string,
+		events: Event[],
+	): void {
+		let prevEid: string | null = null;
+		for (const e of events) {
+			const eid = generateEid();
+			e.eid = eid;
+			e.parentEid = prevEid;
+			prevEid = eid;
+		}
+		// Atomic rewrite: temp file + rename (same pattern as tracker.save()).
+		const tmpPath = join(
+			this.dir,
+			`.${sessionId}.jsonl.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`,
+		);
+		const content = `${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
+		writeFileSync(tmpPath, content);
+		renameSync(tmpPath, filePath);
 	}
 
 	/** Read events after the last compact_marker (for provider message reconstruction) */
@@ -267,6 +339,21 @@ export class EventStore {
 
 			const kept = lines.slice(0, lineIndex + 1);
 			writeFileSync(p, `${kept.join("\n")}\n`);
+
+			// Update lastEventIds from the last kept line so subsequent
+			// appends chain correctly after truncation.
+			const lastLine = kept[kept.length - 1];
+			if (lastLine) {
+				try {
+					const parsed = JSON.parse(lastLine) as Event;
+					this.lastEventIds.set(sessionId, parsed.eid ?? null);
+				} catch {
+					// Malformed last line — invalidate; next read will re-sync.
+					this.lastEventIds.delete(sessionId);
+				}
+			} else {
+				this.lastEventIds.delete(sessionId);
+			}
 			return Promise.resolve();
 		});
 	}
@@ -396,12 +483,17 @@ export class EventStore {
 		}
 
 		// Write: active events → synthetic events → fork_marker
-		const allLines: string[] = [];
-		for (const e of activeEvents) {
-			allLines.push(JSON.stringify(e));
-		}
+		// Active events already have eids from the source session (via read
+		// → migration). Stamp synthetic events + fork_marker with fresh eids
+		// chaining from the last active event.
+		const lastActive = activeEvents[activeEvents.length - 1];
+		let prevEid: string | null = lastActive?.eid ?? null;
+
 		for (const e of syntheticEvents) {
-			allLines.push(JSON.stringify(e));
+			const eid = generateEid();
+			e.eid = eid;
+			e.parentEid = prevEid;
+			prevEid = eid;
 		}
 
 		const forkMarker: Event = {
@@ -414,9 +506,23 @@ export class EventStore {
 			taskId: targetId,
 			ts: Date.now(),
 		};
+		const forkEid = generateEid();
+		forkMarker.eid = forkEid;
+		forkMarker.parentEid = prevEid;
+
+		const allLines: string[] = [];
+		for (const e of activeEvents) {
+			allLines.push(JSON.stringify(e));
+		}
+		for (const e of syntheticEvents) {
+			allLines.push(JSON.stringify(e));
+		}
 		allLines.push(JSON.stringify(forkMarker));
 
 		await appendFile(targetPath, `${allLines.join("\n")}\n`);
+
+		// Set lastEventId for the target session so subsequent appends chain.
+		this.lastEventIds.set(targetId, forkEid);
 
 		return { eventCount: activeEvents.length };
 	}
@@ -430,6 +536,7 @@ export class EventStore {
 		// Bump generation: all writes enqueued before this point see a stale
 		// generation and become no-ops when they eventually execute.
 		this.sessionGenerations.set(sessionId, this.getGeneration(sessionId) + 1);
+		this.lastEventIds.delete(sessionId);
 		const p = this.path(sessionId);
 		if (existsSync(p)) unlinkSync(p);
 	}

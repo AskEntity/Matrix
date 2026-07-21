@@ -272,7 +272,7 @@ describe("Invariant: Session Isolation", () => {
 			const active = store.readActive("child-task");
 
 			// Should only have events after the compact_marker
-			expect(active).toEqual([
+			expect(active).toMatchObject([
 				{
 					type: "assistant_text",
 					content: "child checkpoint",
@@ -343,7 +343,7 @@ describe("Invariant: Compact Barrier Correctness", () => {
 			expect(result.hasOlderEvents).toBe(true);
 			expect(result.events[0]?.type).toBe("fork_marker");
 			expect(result.events).toHaveLength(2);
-			expect(result.events[1]).toEqual({
+			expect(result.events[1]).toMatchObject({
 				type: "assistant_text",
 				content: "after fork",
 				taskId: "task-1",
@@ -407,7 +407,7 @@ describe("Invariant: Compact Barrier Correctness", () => {
 			expect(result.hasOlderEvents).toBe(true);
 			expect(result.events[0]?.type).toBe("compact_marker");
 			expect(result.events).toHaveLength(2);
-			expect(result.events[1]).toEqual({
+			expect(result.events[1]).toMatchObject({
 				type: "assistant_text",
 				content: "after compact",
 				taskId: "task-1",
