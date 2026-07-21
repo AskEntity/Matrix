@@ -4514,3 +4514,46 @@ Orama's `where` filter only works on `enum`-typed fields, and does NOT support `
 - REST endpoint uses `ctx.trackers.get(projectId)` directly (not `getTracker` helper which
   has scope-opts dependencies).
 
+## JSONL event eid + parentEid (rollback infrastructure) (2026-07-21)
+
+Every persisted JSONL event carries `eid` (12-char hex, `crypto.randomBytes(6).toString('hex')`)
+and `parentEid` (previous event's eid, or `null` for the first event). Auto-stamped by
+`EventStore.append`/`appendBatch` — callers never set them.
+
+### Field naming: eid/parentEid (NOT id/parentId)
+`MessageEvent` already has `id: string` (ULID for two-phase message lifecycle — `message` →
+`messages_consumed`). Using `id` for the event chain would collide. `eid`/`parentEid` are the
+event-chain fields; `id` on MessageEvent is unchanged and independent.
+
+### Mechanism
+- `EventStore.lastEventIds: Map<string, string|null>` — per-session chain head.
+- `stampEvent(sessionId, event)` — mutates event in-place (inline object literals, never reused
+  after emitEvent). Called inside the write queue (same microtask as appendFileSync).
+- `readWithLineMap` populates `lastEventIds` from the last event on read.
+- `truncateAfterLine` updates `lastEventIds` from the last kept line.
+- `copySessionFrom` preserves source eids, stamps synthetics + fork_marker with fresh eids
+  chaining from the last source event. Sets `lastEventIds` for the target session.
+- `clear` deletes the session's `lastEventIds` entry.
+
+### Auto-migration (old JSONL files)
+On first `readWithLineMap`, if the first event lacks `eid`, the entire file is migrated:
+assign linear eid chain, atomic rewrite (temp + rename, same pattern as `tracker.save()`).
+Idempotent — skipped when first event already has `eid`. After migration, subsequent appends
+chain correctly (lastEventIds populated from the last migrated event).
+
+### SSE broadcast does NOT carry eid/parentEid
+`emitEvent` broadcasts BEFORE persisting. `stampEvent` runs inside `append` (after broadcast).
+This is intentional — eid/parentEid are persistence-layer concerns for future rollback; the
+UI doesn't need them. The SSE-broadcast event object may gain eid/parentEid via mutation IF
+a subscriber holds a reference past the broadcast call, but no subscriber does this.
+
+### Walker unchanged (current stage)
+`event-converter.ts` walker is linear — it scans events sequentially. eid/parentEid are purely
+data at this stage. Future rollback/branching will make the walker "walk from leaf along
+parentEid" instead of linear scan.
+
+### Event type
+Both fields are optional on the `Event` union's trailing intersection (`& { traceId?; eid?;
+parentEid? }`). Optional because callers create events without them; EventStore stamps them.
+After persistence (in JSONL), they're always present. After migration, they're present on all
+old events too.
