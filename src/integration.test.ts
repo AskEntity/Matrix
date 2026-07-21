@@ -12511,6 +12511,91 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 		expect(await waitForDone(ctx)).toBe("verify");
 	}, 20000);
 
+	test("work_context injects related past tasks from the search index", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+
+		// Create a child with indexed content (simulating a completed task).
+		const pastChild = tracker.addChild(
+			tracker.rootNodeId,
+			"Fix session recovery bug",
+			"implemented the frobnicator cache via a ring buffer",
+		);
+		await tracker.save();
+		await reconcileIndex(indexDbPath(ctx), tracker);
+
+		// Launch root with a related title — the root's work_context should
+		// contain the related child's snippet. The root's title is set by the
+		// tracker's default ("Orchestrator") — change it to something related.
+		tracker.getTask(tracker.rootNodeId)!.title = "Session recovery follow-up";
+		await tracker.save();
+		// Re-index so the root's title doesn't dominate (we care about the child's hit).
+		// Actually reconcileIndex would index root too, but we want the CHILD to show up
+		// in the related-tasks block. The search is for root's title+desc, and "session
+		// recovery" should match the child's "Fix session recovery bug" title.
+
+		// Use the mock instruction that will assert work_context content.
+		// work_context is the FIRST user message — ValidatingMockAPI validates
+		// it as part of the conversation prefix.
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Starting work." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", result: "done" },
+				},
+			],
+		});
+
+		expect((await startAgent(ctx, instruction)).status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		// Verify the work_context message in JSONL contains the related task.
+		const events = await readSessionEvents(ctx, tracker.rootNodeId);
+		const workCtx = events.find((e) => {
+			if (e.type !== "message") return false;
+			const body = (e as { body?: { source?: string } }).body;
+			return body?.source === "work_context";
+		});
+		expect(workCtx).toBeDefined();
+		const content =
+			(workCtx as { body?: { content?: string } })?.body?.content ?? "";
+		expect(content).toContain("Related past tasks");
+		// The search matched the child's title ("Fix session recovery bug") —
+		// the snippet is from whichever field BM25 ranked highest.
+		expect(content).toContain("Fix session recovery bug");
+		// Must not include self (root's own id)
+		expect(content).not.toContain(tracker.rootNodeId);
+		// Must include the related child's task id prefix
+		expect(content).toContain(pastChild.id.slice(0, 12));
+	}, 20000);
+
+	test("searchIndex enriched with task titles (REST endpoint backing)", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+
+		const child = tracker.addChild(
+			tracker.rootNodeId,
+			"Auth rewrite sprint",
+			"migrate the loginflow to passkeys",
+		);
+		await tracker.save();
+		await reconcileIndex(indexDbPath(ctx), tracker);
+
+		// Directly call searchIndex (same call the REST endpoint makes).
+		const hits = await searchIndex(indexDbPath(ctx), "loginflow", 5);
+		expect(hits.length).toBeGreaterThanOrEqual(1);
+		const match = hits.find((h) => h.taskId === child.id);
+		expect(match).toBeDefined();
+		expect(match?.field).toBe("description");
+		expect(match?.snippet).toContain("loginflow");
+
+		// Verify enrichment: the tracker supplies the current title.
+		const task = tracker.getTask(match!.taskId);
+		expect(task?.title).toBe("Auth rewrite sprint");
+	}, 20000);
+
 	test("index-on-done is best-effort: an index-write failure never breaks done()", async () => {
 		ctx = await setupTestContext();
 		// Sabotage the index by making its PATH a directory — opening it throws.

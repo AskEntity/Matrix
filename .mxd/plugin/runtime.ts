@@ -52,4 +52,50 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 	// Previously registered unconditionally in runtime.ts for every plugin
 	// worker. Now matrix-specific: only the matrix worker serves it.
 	registerMockShowcaseRoute(app);
+
+	// ── Search endpoint ──
+	// Sidebar search: keyword + hybrid (Orama BM25 + vector when available).
+	// Lives here (matrix plugin route) because the index is matrix-specific
+	// (reads resultRounds, lives in matrix's dataRoot).
+	app.get("/projects/:id/search", async (c) => {
+		const projectId = c.req.param("id");
+		const query = c.req.query("q") ?? "";
+		const limitStr = c.req.query("limit");
+		const limit = limitStr
+			? Math.min(Math.max(Number(limitStr) || 20, 1), 50)
+			: 20;
+
+		if (!query.trim()) {
+			return c.json([]);
+		}
+
+		try {
+			const { projectIndexDbPath } = await import("../../src/data-paths.ts");
+			const { searchIndex } = await import("../../src/task-index.ts");
+			const dbPath = projectIndexDbPath(
+				ctx.config.dataDir,
+				projectId,
+				ctx.config.dataRoot,
+			);
+			const hits = await searchIndex(dbPath, query, limit);
+
+			// Enrich with current task titles from the tracker.
+			// Use ctx.trackers directly (already loaded at startup) — avoids
+			// pulling in the full getTracker which has scope-opts dependencies.
+			const tracker = ctx.trackers.get(projectId);
+			if (!tracker) return c.json([]);
+			const enriched = hits
+				.map((hit) => {
+					const task = tracker.getTask(hit.taskId);
+					if (!task) return null; // Deleted since indexing
+					return { ...hit, title: task.title };
+				})
+				.filter(Boolean);
+
+			return c.json(enriched);
+		} catch (e) {
+			console.warn(`[search] failed for ${projectId}:`, e);
+			return c.json([]);
+		}
+	});
 }
