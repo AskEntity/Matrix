@@ -4514,3 +4514,27 @@ Orama's `where` filter only works on `enum`-typed fields, and does NOT support `
 - REST endpoint uses `ctx.trackers.get(projectId)` directly (not `getTracker` helper which
   has scope-opts dependencies).
 
+
+## Pending chip reappears after SSE reconnect — batch-consumed ID guard (2026-07-21)
+
+**Root cause**: race between SSE ring-buffer catch-up and the batch REST re-fetch during
+reconnection. `processEventBatch` (via `handleReconnect`) does RESET + full JSONL replay —
+pending correctly empty. But SSE catch-up events arriving AFTER the batch can re-deliver a
+`message` event whose `messages_consumed` was already in the batch. The duplicate `message`
+re-adds the pending chip; no live `messages_consumed` arrives to clear it → chip persists.
+
+**Fix**: `processEventBatch` records consumed IDs in `batchConsumedIds` (module-scoped Set
+inside `createEventHandler`). `handleEvent` checks this before dispatching APPLY(message) —
+batch-consumed IDs are suppressed. Set cleared on every RESET; entries removed by live
+`messages_consumed` events (defensive against id reuse).
+
+**Diagnosis technique**: 22 "unconsumed" messages found in JSONL were ALL compact/
+compacted_resume source (correctly excluded by reducer). 0 unconsumed user messages. Backend
+is correct — every user message has a matching `messages_consumed` with identical IDs. Bug
+was purely frontend timing.
+
+**Key invariant**: `batchConsumedIds` is the **minimum-viable deduplication** between batch
+and SSE event sources. It does NOT replace the pure `pendingReducer` — the reducer stays
+pure (no side-channel). The guard lives in `handleEvent` (the event handler driver), not in
+the reducer itself.
+
