@@ -4134,7 +4134,6 @@ shape), so only a test using a NON-matrix custom field exposes the runtime resha
 understands (a custom field). Testing with the DEFAULT plugin's (matrix's) fields can't distinguish
 "passed through opaque" from "reconstructed to matrix's shape" — both produce the same matrix round.
 
-<<<<<<< HEAD
 ## fable silent-turn → silent idle + agent date-blindness (2026-07-15, from closed task 01KWYCYA)
 
 Two durable lessons from the fable-stall investigation (01KWYCYA, closed — fable now moot on opus-4-8, but these OUTLIVE fable). Generic fix drafted: **01KXK69KKKGG4XHPH7EWGNY5AC**. Date-blind fix drafted: **01KXK5QH2BDQSZB1H1CQV8X470**.
@@ -4557,3 +4556,26 @@ Both fields are optional on the `Event` union's trailing intersection (`& { trac
 parentEid? }`). Optional because callers create events without them; EventStore stamps them.
 After persistence (in JSONL), they're always present. After migration, they're present on all
 old events too.
+
+## Pending chip reappears after SSE reconnect — batch-consumed ID guard (2026-07-21)
+
+**Root cause**: race between SSE ring-buffer catch-up and the batch REST re-fetch during
+reconnection. `processEventBatch` (via `handleReconnect`) does RESET + full JSONL replay —
+pending correctly empty. But SSE catch-up events arriving AFTER the batch can re-deliver a
+`message` event whose `messages_consumed` was already in the batch. The duplicate `message`
+re-adds the pending chip; no live `messages_consumed` arrives to clear it → chip persists.
+
+**Fix**: `processEventBatch` records consumed IDs in `batchConsumedIds` (module-scoped Set
+inside `createEventHandler`). `handleEvent` checks this before dispatching APPLY(message) —
+batch-consumed IDs are suppressed. Set cleared on every RESET; entries removed by live
+`messages_consumed` events (defensive against id reuse).
+
+**Diagnosis technique**: 22 "unconsumed" messages found in JSONL were ALL compact/
+compacted_resume source (correctly excluded by reducer). 0 unconsumed user messages. Backend
+is correct — every user message has a matching `messages_consumed` with identical IDs. Bug
+was purely frontend timing.
+
+**Key invariant**: `batchConsumedIds` is the **minimum-viable deduplication** between batch
+and SSE event sources. It does NOT replace the pure `pendingReducer` — the reducer stays
+pure (no side-channel). The guard lives in `handleEvent` (the event handler driver), not in
+the reducer itself.

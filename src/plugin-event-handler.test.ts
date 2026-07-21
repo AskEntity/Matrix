@@ -3959,3 +3959,212 @@ describe("Task X: mutation-proof regression for the four prior fixes", () => {
 		expect(pendingBox.current.length).toBe(0);
 	});
 });
+
+// ============================================================
+// SSE catch-up vs batch re-fetch race — the pending chip reappears
+// after processEventBatch has already consumed the message.
+//
+// Scenario: SSE reconnects → handleReconnect batch-fetches events
+// from JSONL (RESET + rebuild → pending correct). Then SSE ring-
+// buffer catch-up delivers the same `message` event AGAIN via
+// handleEvent → the pending chip reappears. The corresponding
+// `messages_consumed` was already processed in the batch, so no
+// live SSE event removes it → chip persists until next refresh.
+//
+// Fix: processEventBatch records consumed IDs. handleEvent checks
+// this set before dispatching APPLY(message). Already-consumed
+// messages are not re-added to pending.
+// ============================================================
+
+describe("SSE catch-up vs batch re-fetch race (pending chip reappears)", () => {
+	it("batch-consumed message is NOT re-added by subsequent SSE catch-up handleEvent", () => {
+		const { deps, pendingBox } = makeDeps();
+		const { handleEvent, processEventBatch } = createEventHandler(
+			deps as EventHandlerDeps,
+		);
+
+		// Step 1: Batch re-fetch processes both message and consumed.
+		// This simulates a page load or SSE reconnect batch fetch.
+		processEventBatch([
+			{
+				type: "message",
+				id: "msg-race-1",
+				body: {
+					source: "user",
+					id: "msg-race-1",
+					ts: 1000,
+					content: "会不会导致id不是unique了",
+				},
+				taskId: "root",
+				ts: 1000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-race-1"],
+				taskId: "root",
+				ts: 2000,
+			},
+		] satisfies IncomingEvent[]);
+
+		// After batch: pending is correctly empty (message consumed).
+		expect(pendingBox.current.length).toBe(0);
+
+		// Step 2: SSE ring-buffer catch-up delivers the SAME message
+		// event again (it was in the ring buffer from before the reconnect).
+		handleEvent({
+			type: "message",
+			id: "msg-race-1",
+			body: {
+				source: "user",
+				id: "msg-race-1",
+				ts: 1000,
+				content: "会不会导致id不是unique了",
+			},
+			taskId: "root",
+			ts: 1000,
+		} satisfies IncomingEvent);
+
+		// BUG (pre-fix): pending = [msg-race-1] — chip reappears!
+		// FIX: pending stays empty — batch already consumed this id.
+		expect(pendingBox.current.length).toBe(0);
+	});
+
+	it("genuinely NEW message (after batch) is still added to pending", () => {
+		const { deps, pendingBox } = makeDeps();
+		const { handleEvent, processEventBatch } = createEventHandler(
+			deps as EventHandlerDeps,
+		);
+
+		// Batch processes old events.
+		processEventBatch([
+			{
+				type: "message",
+				id: "msg-old",
+				body: { source: "user", id: "msg-old", ts: 100, content: "old" },
+				taskId: "root",
+				ts: 100,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-old"],
+				taskId: "root",
+				ts: 200,
+			},
+		] satisfies IncomingEvent[]);
+
+		expect(pendingBox.current.length).toBe(0);
+
+		// A genuinely new message (id NOT in the batch) arrives via SSE.
+		handleEvent({
+			type: "message",
+			id: "msg-new",
+			body: { source: "user", id: "msg-new", ts: 3000, content: "new msg" },
+			taskId: "root",
+			ts: 3000,
+		} satisfies IncomingEvent);
+
+		// New message SHOULD appear in pending — it wasn't consumed.
+		expect(pendingBox.current.length).toBe(1);
+		expect(pendingBox.current[0]?.id).toBe("msg-new");
+	});
+
+	it("live messages_consumed clears the guard so subsequent message with same id is accepted", () => {
+		const { deps, pendingBox } = makeDeps();
+		const { handleEvent, processEventBatch } = createEventHandler(
+			deps as EventHandlerDeps,
+		);
+
+		// Batch consumes msg-A.
+		processEventBatch([
+			{
+				type: "message",
+				id: "msg-A",
+				body: { source: "user", id: "msg-A", ts: 100, content: "first" },
+				taskId: "root",
+				ts: 100,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-A"],
+				taskId: "root",
+				ts: 200,
+			},
+		] satisfies IncomingEvent[]);
+
+		// SSE catch-up: messages_consumed for msg-A (no-op for pending,
+		// but should clear the guard set entry).
+		handleEvent({
+			type: "messages_consumed",
+			messageIds: ["msg-A"],
+			taskId: "root",
+			ts: 200,
+		} satisfies IncomingEvent);
+
+		// Now a GENUINELY new message reusing "msg-A" id (shouldn't
+		// happen with ULIDs, but defensive). Since the live
+		// messages_consumed cleared msg-A from the guard, this goes
+		// through.
+		handleEvent({
+			type: "message",
+			id: "msg-A",
+			body: { source: "user", id: "msg-A", ts: 5000, content: "reuse" },
+			taskId: "root",
+			ts: 5000,
+		} satisfies IncomingEvent);
+
+		expect(pendingBox.current.length).toBe(1);
+		expect(pendingBox.current[0]?.text).toBe("reuse");
+	});
+
+	it("a fresh batch RESET clears the guard set from previous batch", () => {
+		const { deps, pendingBox } = makeDeps();
+		const { handleEvent, processEventBatch } = createEventHandler(
+			deps as EventHandlerDeps,
+		);
+
+		// First batch consumes msg-X.
+		processEventBatch([
+			{
+				type: "message",
+				id: "msg-X",
+				body: { source: "user", id: "msg-X", ts: 100, content: "first" },
+				taskId: "root",
+				ts: 100,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-X"],
+				taskId: "root",
+				ts: 200,
+			},
+		] satisfies IncomingEvent[]);
+
+		// Second batch (e.g., switched to different task and back).
+		// msg-X is NOT consumed in this batch (e.g., different task's events).
+		processEventBatch([
+			{
+				type: "message",
+				id: "msg-Y",
+				body: { source: "user", id: "msg-Y", ts: 300, content: "second" },
+				taskId: "root",
+				ts: 300,
+			},
+		] satisfies IncomingEvent[]);
+
+		// msg-Y is now pending (not consumed in the second batch).
+		expect(pendingBox.current.length).toBe(1);
+
+		// SSE delivers msg-X — should NOT be blocked because the second
+		// batch's RESET cleared the guard set from the first batch.
+		handleEvent({
+			type: "message",
+			id: "msg-X",
+			body: { source: "user", id: "msg-X", ts: 100, content: "first" },
+			taskId: "root",
+			ts: 100,
+		} satisfies IncomingEvent);
+
+		// Both msg-Y and msg-X in pending now.
+		expect(pendingBox.current.length).toBe(2);
+	});
+});
