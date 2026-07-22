@@ -265,6 +265,7 @@ const en: Translations = {
 
 	// Rollback
 	"activity.rollback": "Rewind to here",
+	"activity.rewindButton": "Rewind",
 	"activity.rollbackConfirm":
 		"Roll back to this message? Messages after this point will be hidden and the agent will regenerate from here.",
 
@@ -596,6 +597,7 @@ const zh: Translations = {
 
 	// Rollback
 	"activity.rollback": "回退到这里",
+	"activity.rewindButton": "回滚",
 	"activity.rollbackConfirm":
 		"回退到这条消息？之后的消息将被隐藏，代理将从这里重新生成。",
 
