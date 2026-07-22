@@ -839,18 +839,20 @@ export async function runAgentForNode(
 			// Handles both daemon restart orphans and accumulated poison
 			// from previous sessions where auto-recovery only fixed memory.
 			//
-			// readWithLineMap returns both parsed events AND their physical line
-			// numbers. buildSessionRepair returns an event-array-relative index;
+			// readActiveWithLineMap returns chain-walked active events AND
+			// their physical line numbers. Chain-walk ensures rolled-back
+			// events (from rollback_marker) are excluded from repair analysis.
+			// buildSessionRepair returns an event-array-relative index;
 			// we translate it to a physical line via the map before calling
 			// truncateAfterLine (which operates on raw file lines). Without this
 			// translation, malformed JSONL lines (from crash-mid-append) shift
 			// the cut point and silently destroy valid events (R8-B#4).
-			const { events: allEvents, physicalLines } =
-				eventStore.readWithLineMap(nodeId);
-			const repair = buildSessionRepair(allEvents, nodeId);
+			const { events: activeForRepair, physicalLines } =
+				eventStore.readActiveWithLineMap(nodeId);
+			const repair = buildSessionRepair(activeForRepair, nodeId);
 			if (repair) {
 				const needsTruncation =
-					repair.truncateAfterIndex < allEvents.length - 1;
+					repair.truncateAfterIndex < activeForRepair.length - 1;
 				const physicalLine = physicalLines[repair.truncateAfterIndex];
 				console.warn(
 					`[runAgentForNode] Repairing session ${nodeId}: ${needsTruncation ? `truncate after physical line ${physicalLine} (event index ${repair.truncateAfterIndex})` : "append only"}, ${repair.appendEvents.length} events to add`,

@@ -263,6 +263,11 @@ const en: Translations = {
 	"compact.checkpoint": "▶ Checkpoint",
 	"compact.summaryTitle": "Compact Summary",
 
+	// Rollback
+	"activity.rollback": "Rewind to here",
+	"activity.rollbackConfirm":
+		"Roll back to this message? Messages after this point will be hidden and the agent will regenerate from here.",
+
 	// Markdown table rendering
 	"table.copy": "Copy",
 	"table.copied": "Copied",
@@ -588,6 +593,11 @@ const zh: Translations = {
 	"compact.collapse": "▼ 折叠",
 	"compact.checkpoint": "▶ 检查点",
 	"compact.summaryTitle": "压缩摘要",
+
+	// Rollback
+	"activity.rollback": "回退到这里",
+	"activity.rollbackConfirm":
+		"回退到这条消息？之后的消息将被隐藏，代理将从这里重新生成。",
 
 	// Markdown table rendering
 	"table.copy": "复制",
