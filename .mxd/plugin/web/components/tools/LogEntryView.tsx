@@ -712,17 +712,18 @@ export const LogEntryView = memo(function LogEntryView({
 							</div>
 						)}
 					</div>
-					{onRollback && eid && (
+				</div>
+				{onRollback && eid && (
+					<div className="mxd-rollback-row">
 						<button
 							type="button"
 							className="mxd-rollback-btn"
-							title={t("activity.rollback")}
 							onClick={() => onRollback(eid)}
 						>
-							⟲
+							⟲ {t("activity.rewindButton")}
 						</button>
-					)}
-				</div>
+					</div>
+				)}
 				{lightboxSrc && (
 					<ImageLightbox
 						src={lightboxSrc}
