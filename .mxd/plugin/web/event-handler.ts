@@ -44,6 +44,8 @@ export type PendingMessage = {
 	source: string | undefined;
 	content: string;
 	queueEntry: QueueMessage | undefined;
+	/** JSONL event ID — needed for rollback button on user messages. */
+	eid?: string;
 };
 
 export type PendingAction =
@@ -132,6 +134,7 @@ export function pendingReducer(
 				source,
 				content,
 				queueEntry: body,
+				eid: e.eid,
 			},
 		];
 	}
@@ -507,6 +510,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			},
 			taskId: p.taskId ?? "",
 			ts,
+			...(p.eid ? { eid: p.eid } : {}),
 		});
 	}
 

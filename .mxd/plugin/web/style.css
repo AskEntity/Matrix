@@ -2386,32 +2386,28 @@ h6.mxd-md-h {
 	cursor: pointer;
 }
 
-/* Rollback button — hover-reveal on user messages */
+/* Rollback button — always visible but subtle on user messages */
 .mxd-rollback-btn {
 	position: absolute;
 	right: 4px;
 	top: 50%;
 	transform: translateY(-50%);
-	background: var(--bg-secondary);
-	border: 1px solid var(--border);
+	background: none;
+	border: none;
 	border-radius: var(--radius-sm);
-	color: var(--text-muted);
-	font-size: 14px;
-	padding: 2px 6px;
+	color: var(--text-faint);
+	font-size: 13px;
+	padding: 2px 4px;
 	cursor: pointer;
-	opacity: 0;
-	transition: opacity 0.15s;
+	opacity: 0.4;
+	transition: opacity 0.15s, color 0.15s;
 }
 .mxd-event-user_message {
 	position: relative;
 }
-.mxd-event-user_message:hover .mxd-rollback-btn {
-	opacity: 0.6;
-}
 .mxd-rollback-btn:hover {
-	opacity: 1 !important;
+	opacity: 1;
 	color: var(--accent);
-	border-color: var(--accent);
 }
 
 /* Rollback boundary marker */
