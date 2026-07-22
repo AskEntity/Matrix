@@ -12,6 +12,7 @@ import {
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Event } from "./events.ts";
+import { walkActiveChainIndices } from "./events.ts";
 import { TOOL_FORK_TASK_CONTEXT } from "./tool-names.ts";
 import { ulid } from "./ulid.ts";
 
@@ -172,6 +173,44 @@ export class EventStore {
 		});
 	}
 
+	/**
+	 * Append a rollback_marker event whose parentEid points to the TARGET
+	 * event (the user message to roll back to), NOT to the immediately
+	 * preceding event. This "jump" in the parentEid chain is what makes
+	 * rolled-back events invisible to the chain-walk algorithm.
+	 *
+	 * Must be called after flushSession so lastEventIds is up-to-date
+	 * (though we don't use it — the targetEid IS the parentEid).
+	 */
+	appendRollback(
+		sessionId: string,
+		targetEid: string,
+		taskId: string,
+	): Promise<void> {
+		return this.enqueueWrite(sessionId, () => {
+			const eid = generateEid();
+			const event: Event = {
+				type: "rollback_marker",
+				targetEid,
+				eid,
+				parentEid: targetEid, // jump to target, skipping rolled-back events
+				taskId,
+				ts: Date.now(),
+			};
+			try {
+				appendFileSync(
+					this.path(sessionId),
+					`${JSON.stringify(event)}\n`,
+				);
+			} catch {
+				/* non-fatal */
+			}
+			// Update lastEventIds so subsequent appends chain from the rollback_marker
+			this.lastEventIds.set(sessionId, eid);
+			return Promise.resolve();
+		});
+	}
+
 	/** Read all events for a session */
 	read(sessionId: string): Event[] {
 		return this.readWithLineMap(sessionId).events;
@@ -253,11 +292,41 @@ export class EventStore {
 		renameSync(tmpPath, filePath);
 	}
 
-	/** Read events after the last compact_marker (for provider message reconstruction) */
+	/**
+	 * Read active events for provider message reconstruction.
+	 *
+	 * Walks the parentEid chain from the last event backward, collecting only
+	 * events reachable via the chain. Stops at compact_marker (excluded).
+	 *
+	 * Without rollback: every event chains linearly → same result as the old
+	 * `findLastIndex(compact_marker) + slice()`.
+	 *
+	 * With rollback_marker: its parentEid jumps back to the target event,
+	 * so rolled-back events (between target and marker) are never visited.
+	 */
 	readActive(sessionId: string): Event[] {
 		const all = this.read(sessionId);
-		const lastMarker = all.findLastIndex((e) => e.type === "compact_marker");
-		return lastMarker === -1 ? all : all.slice(lastMarker + 1);
+		const activeIndices = walkActiveChainIndices(all, false);
+		return activeIndices.map((i) => all[i] as Event);
+	}
+
+	/**
+	 * Read active events with their physical line numbers (for repair).
+	 * Same chain-walk as readActive, but also returns the physical JSONL
+	 * line of each event so callers can translate event-array indices to
+	 * file positions for truncateAfterLine.
+	 */
+	readActiveWithLineMap(sessionId: string): {
+		events: Event[];
+		physicalLines: number[];
+	} {
+		const { events: all, physicalLines: allPhysical } =
+			this.readWithLineMap(sessionId);
+		const activeIndices = walkActiveChainIndices(all, false);
+		return {
+			events: activeIndices.map((i) => all[i] as Event),
+			physicalLines: activeIndices.map((i) => allPhysical[i] as number),
+		};
 	}
 
 	/**
@@ -265,24 +334,44 @@ export class EventStore {
 	 * Returns the compact_marker itself plus all events after it.
 	 * Also indicates whether there are older events before the marker.
 	 *
+	 * Uses chain-walk so rolled-back events are excluded. The barrier
+	 * (compact_marker or fork_marker, whichever comes last in the active chain)
+	 * is included in the result.
+	 *
 	 * For forked sessions, pre-fork events (copies of the parent's history) are
-	 * excluded: fork_marker acts as a barrier just like compact_marker. The barrier
-	 * used is whichever comes last — compact_marker or fork_marker.
+	 * excluded: fork_marker acts as a barrier just like compact_marker.
 	 */
 	readFromLastCompactMarker(sessionId: string): {
 		events: Event[];
 		hasOlderEvents: boolean;
 	} {
 		const all = this.read(sessionId);
-		const lastCompact = all.findLastIndex((e) => e.type === "compact_marker");
-		const lastFork = all.findLastIndex((e) => e.type === "fork_marker");
+		// Chain-walk including compact_marker (the barrier itself is part of the UI log)
+		const activeIndices = walkActiveChainIndices(all, true);
+		const activeEvents = activeIndices.map((i) => all[i] as Event);
+
+		// Find the barrier in the active chain
+		const lastCompact = activeEvents.findLastIndex(
+			(e) => e.type === "compact_marker",
+		);
+		const lastFork = activeEvents.findLastIndex(
+			(e) => e.type === "fork_marker",
+		);
 		const barrier = Math.max(lastCompact, lastFork);
 		if (barrier === -1) {
-			return { events: all, hasOlderEvents: false };
+			// No barrier — return all active events
+			// hasOlderEvents = true when some events were excluded by chain-walk
+			return {
+				events: activeEvents,
+				hasOlderEvents: activeEvents.length < all.length,
+			};
 		}
+		// hasOlderEvents = true only if the barrier is NOT the first event
+		// in the active chain (i.e., there are chain-walked events before it)
+		// OR if the chain-walk excluded some events from the full log
 		return {
-			events: all.slice(barrier),
-			hasOlderEvents: barrier > 0,
+			events: activeEvents.slice(barrier),
+			hasOlderEvents: barrier > 0 || activeIndices[0] !== 0,
 		};
 	}
 

@@ -2386,6 +2386,51 @@ h6.mxd-md-h {
 	cursor: pointer;
 }
 
+/* Rollback button — hover-reveal on user messages */
+.mxd-rollback-btn {
+	position: absolute;
+	right: 4px;
+	top: 50%;
+	transform: translateY(-50%);
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	color: var(--text-muted);
+	font-size: 14px;
+	padding: 2px 6px;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 0.15s;
+}
+.mxd-event-user_message {
+	position: relative;
+}
+.mxd-event-user_message:hover .mxd-rollback-btn {
+	opacity: 0.6;
+}
+.mxd-rollback-btn:hover {
+	opacity: 1 !important;
+	color: var(--accent);
+	border-color: var(--accent);
+}
+
+/* Rollback boundary marker */
+.mxd-rollback-boundary {
+	text-align: center;
+	padding: 6px 12px;
+	background: linear-gradient(
+		90deg,
+		transparent,
+		rgba(56, 139, 253, 0.08),
+		transparent
+	);
+	border-top: 1px dashed rgba(56, 139, 253, 0.3);
+	border-bottom: 1px dashed rgba(56, 139, 253, 0.3);
+}
+.mxd-rollback-boundary .mxd-compact-label {
+	color: var(--accent);
+}
+
 .mxd-tool-result-images {
 	display: flex;
 	flex-wrap: wrap;

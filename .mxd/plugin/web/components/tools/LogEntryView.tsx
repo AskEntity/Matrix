@@ -110,6 +110,7 @@ export const LogEntryView = memo(function LogEntryView({
 	onTaskNavigate,
 	onProjectNavigate,
 	showCacheBadges,
+	onRollback,
 }: {
 	entry: LogEntry;
 	nodeMap: Map<string, TreeNode>;
@@ -118,6 +119,8 @@ export const LogEntryView = memo(function LogEntryView({
 	onTaskNavigate?: (taskId: string, entryId?: string) => void;
 	onProjectNavigate?: (projectId: string) => void;
 	showCacheBadges?: boolean;
+	/** Called when user clicks the rollback button on a user message. */
+	onRollback?: (eid: string) => void;
 }) {
 	const authFetch = useAuthFetch();
 	const [movingToBg, setMovingToBg] = useState(false);
@@ -668,8 +671,18 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
+	// Rollback marker — visual separator showing where a rollback happened
+	if (entry.type === "rollback_marker") {
+		return (
+			<div className="mxd-lmxd-entry mxd-compact-boundary mxd-rollback-boundary">
+				<span className="mxd-compact-label">⟲ {t("activity.rollback")}</span>
+			</div>
+		);
+	}
+
 	// User message — special bubble rendering, not a card
 	if (entry.type === "message" && entry.body.source === "user") {
+		const eid = (entry as { eid?: string }).eid;
 		return (
 			<>
 				<div className="mxd-lmxd-entry mxd-event-user_message">
@@ -699,6 +712,16 @@ export const LogEntryView = memo(function LogEntryView({
 							</div>
 						)}
 					</div>
+					{onRollback && eid && (
+						<button
+							type="button"
+							className="mxd-rollback-btn"
+							title={t("activity.rollback")}
+							onClick={() => onRollback(eid)}
+						>
+							⟲
+						</button>
+					)}
 				</div>
 				{lightboxSrc && (
 					<ImageLightbox

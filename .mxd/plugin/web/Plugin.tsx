@@ -573,6 +573,29 @@ function ProjectContent({
 	const handleQuoteText = useCallback((text: string) => {
 		setQuoteRequest((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
 	}, []);
+	// Rollback handler: calls the rollback API, then refreshes activity log
+	const handleRollback = useCallback(
+		async (eid: string) => {
+			if (!selectedTaskId || !projectId) return;
+			const confirmed = window.confirm(t("activity.rollbackConfirm"));
+			if (!confirmed) return;
+			try {
+				const resp = await authFetch(
+					api.taskRollback(projectId, selectedTaskId),
+					{ method: "POST", body: JSON.stringify({ targetEid: eid }) },
+				);
+				if (!resp.ok) {
+					const err = await resp.json().catch(() => ({}));
+					console.warn("[rollback] failed:", err);
+				}
+				// After rollback, the SSE stream will deliver new events.
+				// The activity log refreshes automatically via SSE.
+			} catch (e) {
+				console.warn("[rollback] error:", e);
+			}
+		},
+		[selectedTaskId, projectId, authFetch, t],
+	);
 	// Page-wide image drop: an image dropped ANYWHERE on the page is routed
 	// into the composer's existing attachment state as a one-shot request
 	// (seq bump per drop), mirroring the quoteRequest hop. The window handler
@@ -1800,6 +1823,7 @@ function ProjectContent({
 								}}
 								showCacheBadges={showCacheBadges}
 								onQuoteText={handleQuoteText}
+								onRollback={handleRollback}
 							/>
 						</div>
 					) : isOrchestratorNode ? (
