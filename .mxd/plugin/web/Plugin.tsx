@@ -573,7 +573,7 @@ function ProjectContent({
 	const handleQuoteText = useCallback((text: string) => {
 		setQuoteRequest((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
 	}, []);
-	// Rollback handler: calls the rollback API, then refreshes activity log
+	// Rollback handler: calls the rollback API, then re-fetches events
 	const handleRollback = useCallback(
 		async (eid: string) => {
 			if (!selectedTaskId || !projectId) return;
@@ -587,14 +587,23 @@ function ProjectContent({
 				if (!resp.ok) {
 					const err = await resp.json().catch(() => ({}));
 					console.warn("[rollback] failed:", err);
+					return;
 				}
-				// After rollback, the SSE stream will deliver new events.
-				// The activity log refreshes automatically via SSE.
+				// Re-fetch events from the active chain — rolled-back messages
+				// are excluded by the backend's chain-walk. processEventBatch
+				// does RESET + rebuild, so the old log entries are replaced.
+				const evtResp = await authFetch(
+					api.taskEvents(projectId, selectedTaskId, "after=compact"),
+				);
+				const data = await evtResp.json().catch(() => ({}));
+				if (data.events) {
+					processEventResponse(data);
+				}
 			} catch (e) {
 				console.warn("[rollback] error:", e);
 			}
 		},
-		[selectedTaskId, projectId, authFetch, t],
+		[selectedTaskId, projectId, authFetch, t, processEventResponse],
 	);
 	// Page-wide image drop: an image dropped ANYWHERE on the page is routed
 	// into the composer's existing attachment state as a one-shot request
