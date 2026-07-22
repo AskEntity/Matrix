@@ -2386,23 +2386,39 @@ h6.mxd-md-h {
 	cursor: pointer;
 }
 
-/* Rollback button — below user message bubble, always visible */
-.mxd-rollback-row {
-	padding-left: 52px; /* align with bubble (timestamp width) */
-	margin-top: -2px;
-	margin-bottom: 4px;
+/* User message footer: timestamp + action icons (hover-reveal) */
+.mxd-user-msg-footer {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 6px;
+	margin-top: 4px;
 }
-.mxd-rollback-btn {
+.mxd-user-msg-ts {
+	font-family: var(--font-mono);
+	font-size: 10px;
+	color: var(--text-faint);
+}
+.mxd-user-msg-actions {
+	display: flex;
+	gap: 4px;
+	opacity: 0;
+	transition: opacity 0.15s;
+}
+.mxd-user-prompt-bubble:hover .mxd-user-msg-actions {
+	opacity: 1;
+}
+.mxd-user-msg-action {
 	background: none;
 	border: none;
 	color: var(--text-faint);
-	font-family: var(--font-mono);
-	font-size: 11px;
-	padding: 0;
+	font-size: 14px;
+	padding: 0 2px;
 	cursor: pointer;
+	line-height: 1;
 	transition: color 0.15s;
 }
-.mxd-rollback-btn:hover {
+.mxd-user-msg-action:hover {
 	color: var(--accent);
 }
 
