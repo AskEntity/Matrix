@@ -711,19 +711,23 @@ export const LogEntryView = memo(function LogEntryView({
 								)}
 							</div>
 						)}
+						<div className="mxd-user-msg-footer">
+							<span className="mxd-user-msg-ts">{formatTime(entry.ts)}</span>
+							{onRollback && eid && (
+								<div className="mxd-user-msg-actions">
+									<button
+										type="button"
+										className="mxd-user-msg-action"
+										title={t("activity.rollback")}
+										onClick={() => onRollback(eid)}
+									>
+										↻
+									</button>
+								</div>
+							)}
+						</div>
 					</div>
 				</div>
-				{onRollback && eid && (
-					<div className="mxd-rollback-row">
-						<button
-							type="button"
-							className="mxd-rollback-btn"
-							onClick={() => onRollback(eid)}
-						>
-							{t("activity.rewindButton")}
-						</button>
-					</div>
-				)}
 				{lightboxSrc && (
 					<ImageLightbox
 						src={lightboxSrc}
