@@ -2386,25 +2386,22 @@ h6.mxd-md-h {
 	cursor: pointer;
 }
 
-/* User message action icons (hover-reveal, bottom-right of bubble) */
-.mxd-user-msg-actions {
-	display: flex;
-	gap: 4px;
-	opacity: 0;
-	transition: opacity 0.15s;
-}
-.mxd-user-prompt-bubble:hover .mxd-user-msg-actions {
-	opacity: 1;
-}
+/* User message action icon — inline left of bubble, hover-reveal */
 .mxd-user-msg-action {
 	background: none;
 	border: none;
 	color: var(--text-faint);
 	font-size: 14px;
-	padding: 0 2px;
+	padding: 0;
 	cursor: pointer;
 	line-height: 1;
-	transition: color 0.15s;
+	opacity: 0;
+	transition: opacity 0.15s, color 0.15s;
+	align-self: center;
+	flex-shrink: 0;
+}
+.mxd-event-user_message:hover .mxd-user-msg-action {
+	opacity: 1;
 }
 .mxd-user-msg-action:hover {
 	color: var(--accent);
