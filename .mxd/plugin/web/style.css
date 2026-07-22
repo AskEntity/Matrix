@@ -2386,7 +2386,13 @@ h6.mxd-md-h {
 	cursor: pointer;
 }
 
-/* User message action icon — inline left of bubble, hover-reveal */
+/* Timestamp + rollback icon column (below timestamp, hover-reveal) */
+.mxd-user-ts-col {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	flex-shrink: 0;
+}
 .mxd-user-msg-action {
 	background: none;
 	border: none;
@@ -2397,8 +2403,6 @@ h6.mxd-md-h {
 	line-height: 1;
 	opacity: 0;
 	transition: opacity 0.15s, color 0.15s;
-	align-self: center;
-	flex-shrink: 0;
 }
 .mxd-event-user_message:hover .mxd-user-msg-action {
 	opacity: 1;
