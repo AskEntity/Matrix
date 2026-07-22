@@ -687,6 +687,16 @@ export const LogEntryView = memo(function LogEntryView({
 			<>
 				<div className="mxd-lmxd-entry mxd-event-user_message">
 					<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
+					{onRollback && eid && (
+						<button
+							type="button"
+							className="mxd-user-msg-action"
+							title={t("activity.rollback")}
+							onClick={() => onRollback(eid)}
+						>
+							↻
+						</button>
+					)}
 					<div className="mxd-user-prompt-bubble">
 						<span className="mxd-user-prompt-text">{entry.body.content}</span>
 						{entry.body.images && entry.body.images.length > 0 && (
@@ -709,18 +719,6 @@ export const LogEntryView = memo(function LogEntryView({
 										);
 									},
 								)}
-							</div>
-						)}
-						{onRollback && eid && (
-							<div className="mxd-user-msg-actions">
-								<button
-									type="button"
-									className="mxd-user-msg-action"
-									title={t("activity.rollback")}
-									onClick={() => onRollback(eid)}
-								>
-									↻
-								</button>
 							</div>
 						)}
 					</div>
