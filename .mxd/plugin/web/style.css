@@ -2386,19 +2386,7 @@ h6.mxd-md-h {
 	cursor: pointer;
 }
 
-/* User message footer: timestamp + action icons (hover-reveal) */
-.mxd-user-msg-footer {
-	display: flex;
-	align-items: center;
-	justify-content: flex-end;
-	gap: 6px;
-	margin-top: 4px;
-}
-.mxd-user-msg-ts {
-	font-family: var(--font-mono);
-	font-size: 10px;
-	color: var(--text-faint);
-}
+/* User message action icons (hover-reveal, bottom-right of bubble) */
 .mxd-user-msg-actions {
 	display: flex;
 	gap: 4px;
