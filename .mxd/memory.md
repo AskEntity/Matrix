@@ -4579,3 +4579,36 @@ was purely frontend timing.
 and SSE event sources. It does NOT replace the pure `pendingReducer` — the reducer stays
 pure (no side-channel). The guard lives in `handleEvent` (the event handler driver), not in
 the reducer itself.
+
+
+## Message rollback via parentEid chain-walk (2026-07-22)
+
+User clicks Rewind to here on a user message, system rolls back, agent regenerates. Claude Code /rewind equivalent.
+
+### Core mechanism: readActive() chain-walks instead of linear slice
+
+Old readActive(): findLastIndex(compact_marker) + slice(). New readActive(): walkActiveChainIndices() from the last event via parentEid, stops at compact_marker. Without rollback, every event chains linearly (identical to old behavior). With rollback_marker, its parentEid jumps to the target event, rolled-back events are never visited.
+
+### rollback_marker event type
+
+type: rollback_marker, targetEid: string, eid, parentEid = targetEid, taskId, ts. The parentEid EQUALS targetEid, this jump skips rolled-back events. Written by EventStore.appendRollback() which sets parentEid manually (not via stampEvent auto-chain).
+
+### Defensive chain-walk fallback (CRITICAL for backward compat)
+
+If parentEid chain breaks (null on non-first event, or missing eid), walk falls back to linear traversal for preceding events. Handles external EventStore instances, old JSONL files, migration gaps. Without this fallback, 83 tests failed.
+
+### REST endpoint
+
+POST /api/matrix/projects/:id/tasks/:nodeId/rollback (plugin route). Validates targetEid (exists, user message, after compact_marker). Stops agent, appends rollback_marker, restarts via deliverMessage.
+
+### Frontend
+
+Rollback button on user messages (hover-reveal). rollback_marker renders as visual boundary. event-handler.ts has a rollback_marker case. i18n: activity.rollback / activity.rollbackConfirm (EN + ZH).
+
+### Agent lifecycle / buildSessionRepair adaptation
+
+agent-lifecycle.ts uses readActiveWithLineMap (chain-walked) for repair instead of readWithLineMap (full). Rolled-back events excluded from repair analysis.
+
+### Tests (13)
+
+src/rollback.test.ts: 8 walkActiveChainIndices unit tests, 4 EventStore integration tests, 1 walker test. All mutation-verified.
