@@ -720,7 +720,7 @@ export const LogEntryView = memo(function LogEntryView({
 							className="mxd-rollback-btn"
 							onClick={() => onRollback(eid)}
 						>
-							⟲ {t("activity.rewindButton")}
+							{t("activity.rewindButton")}
 						</button>
 					</div>
 				)}
