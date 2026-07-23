@@ -709,7 +709,7 @@ export const LogEntryView = memo(function LogEntryView({
 									)
 								}
 							>
-								✏️
+								✎
 							</button>
 						)}
 						{onRollback && eid && (
@@ -730,7 +730,7 @@ export const LogEntryView = memo(function LogEntryView({
 									)
 								}
 							>
-								↻
+								↺
 							</button>
 						)}
 					</div>
