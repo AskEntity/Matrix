@@ -72,8 +72,6 @@ export const api = {
 	taskFork: (id: string, nodeId: string) => taskUrl(id, nodeId, "fork"),
 	taskReorder: (id: string, nodeId: string) => taskUrl(id, nodeId, "reorder"),
 	taskGitlog: (id: string, nodeId: string) => taskUrl(id, nodeId, "gitlog"),
-	taskRollback: (id: string, nodeId: string) =>
-		taskUrl(id, nodeId, "rollback"),
 	taskEdit: (id: string, nodeId: string) =>
 		taskUrl(id, nodeId, "edit"),
 

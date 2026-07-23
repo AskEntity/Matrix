@@ -280,6 +280,267 @@ describe("EventStore rollback", () => {
 	});
 });
 
+// ── Consistency: readActive + GET taskEvents + restart all agree ──
+
+describe("Edit/Rewind consistency across refresh and restart", () => {
+	let dataDir: string;
+
+	afterEach(async () => {
+		if (dataDir) await rm(dataDir, { recursive: true, force: true });
+	});
+
+	/**
+	 * Seed a JSONL session that simulates:
+	 *   session_config → user_msg_1 → consumed_1 → assistant_1 → tool_call_1
+	 *   → user_msg_2 → consumed_2 → assistant_2
+	 *   → rollback_marker (back to consumed_1, rolling back everything after msg_1's response)
+	 *   → user_msg_3 → consumed_3 → assistant_3  (the "edited" flow)
+	 *
+	 * After rollback, active events should be:
+	 *   session_config, user_msg_1, consumed_1, rollback_marker, user_msg_3, consumed_3, assistant_3
+	 *
+	 * Rolled-back events (assistant_1, tool_call_1, user_msg_2, consumed_2, assistant_2) must NOT appear.
+	 */
+	async function seedSessionWithRollback(store: EventStore, sessionId: string) {
+		// Pre-rollback: normal session with two user messages and responses
+		await store.append(sessionId, {
+			type: "session_config", tools: [], systemStable: "sys", systemVariable: "var", taskId: sessionId, ts: 1,
+		} as Event);
+		await store.append(sessionId, {
+			type: "message", id: "m1", body: { source: "user", id: "m1", content: "first question", ts: 2 } as any, taskId: sessionId, ts: 2,
+		} as Event);
+		await store.append(sessionId, {
+			type: "messages_consumed", messageIds: ["m1"], taskId: sessionId, ts: 3,
+		} as Event);
+		await store.append(sessionId, {
+			type: "assistant_text", content: "first answer (will be rolled back)", taskId: sessionId, ts: 4,
+		} as Event);
+		await store.append(sessionId, {
+			type: "tool_call", tool: "bash", toolCallId: "tc1", input: { command: "echo hi" }, taskId: sessionId, ts: 5,
+		} as Event);
+		await store.append(sessionId, {
+			type: "tool_result", tool: "bash", toolCallId: "tc1", content: "hi", taskId: sessionId, ts: 6,
+		} as Event);
+		await store.append(sessionId, {
+			type: "message", id: "m2", body: { source: "user", id: "m2", content: "second question (rolled back)", ts: 7 } as any, taskId: sessionId, ts: 7,
+		} as Event);
+		await store.append(sessionId, {
+			type: "messages_consumed", messageIds: ["m2"], taskId: sessionId, ts: 8,
+		} as Event);
+		await store.append(sessionId, {
+			type: "assistant_text", content: "second answer (rolled back)", taskId: sessionId, ts: 9,
+		} as Event);
+		await store.flushSession(sessionId);
+
+		// Find the messages_consumed for m1 — that's our rollback target
+		const allEvents = store.read(sessionId);
+		const consumed1 = allEvents.find(
+			e => e.type === "messages_consumed" && (e as any).messageIds?.[0] === "m1"
+		);
+		expect(consumed1?.eid).toBeDefined();
+
+		// Append rollback_marker: jump back to after consumed_1
+		await store.appendRollback(sessionId, consumed1!.eid!, sessionId);
+
+		// Post-rollback: new user message + response (the "edited" continuation)
+		await store.append(sessionId, {
+			type: "message", id: "m3", body: { source: "user", id: "m3", content: "edited question", ts: 11 } as any, taskId: sessionId, ts: 11,
+		} as Event);
+		await store.append(sessionId, {
+			type: "messages_consumed", messageIds: ["m3"], taskId: sessionId, ts: 12,
+		} as Event);
+		await store.append(sessionId, {
+			type: "assistant_text", content: "new answer after edit", taskId: sessionId, ts: 13,
+		} as Event);
+		await store.flushSession(sessionId);
+	}
+
+	/** The types that SHOULD be in the active chain after rollback */
+	const EXPECTED_ACTIVE_TYPES = [
+		"session_config",
+		"message",           // m1
+		"messages_consumed", // m1 consumed
+		"rollback_marker",
+		"message",           // m3 (edited)
+		"messages_consumed", // m3 consumed
+		"assistant_text",    // new answer
+	];
+
+	/** Content strings that should NOT appear in active events */
+	const ROLLED_BACK_CONTENT = [
+		"first answer (will be rolled back)",
+		"second question (rolled back)",
+		"second answer (rolled back)",
+	];
+
+	function assertActiveEventsCorrect(events: Event[], label: string) {
+		const types = events.map(e => e.type);
+		expect(types).toEqual(EXPECTED_ACTIVE_TYPES);
+
+		// Verify no rolled-back content leaks through
+		const allContent = events.map(e => {
+			if ("content" in e && typeof e.content === "string") return e.content;
+			if ("body" in e && e.body && typeof e.body === "object" && "content" in e.body) return (e.body as any).content;
+			return "";
+		}).join("\n");
+
+		for (const bad of ROLLED_BACK_CONTENT) {
+			expect(allContent).not.toContain(bad);
+		}
+
+		// Verify the post-rollback content IS present
+		expect(allContent).toContain("first question");
+		expect(allContent).toContain("edited question");
+		expect(allContent).toContain("new answer after edit");
+	}
+
+	test("Scenario 1: readActive immediately after rollback", async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "rollback-consistency-"));
+		const store = new EventStore(dataDir);
+		await seedSessionWithRollback(store, "s1");
+
+		const active = store.readActive("s1");
+		assertActiveEventsCorrect(active, "readActive (immediate)");
+	});
+
+	test("Scenario 2: readFromLastCompactMarker (page refresh / GET taskEvents)", async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "rollback-consistency-"));
+		const store = new EventStore(dataDir);
+		await seedSessionWithRollback(store, "s1");
+
+		const result = store.readFromLastCompactMarker("s1");
+		assertActiveEventsCorrect(result.events, "readFromLastCompactMarker (refresh)");
+	});
+
+	test("Scenario 3: daemon restart — fresh EventStore reads same JSONL", async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "rollback-consistency-"));
+		const store1 = new EventStore(dataDir);
+		await seedSessionWithRollback(store1, "s1");
+
+		// Simulate daemon restart: create a completely new EventStore on the same dataDir
+		const store2 = new EventStore(dataDir);
+
+		const active = store2.readActive("s1");
+		assertActiveEventsCorrect(active, "readActive (restart)");
+
+		const fromCompact = store2.readFromLastCompactMarker("s1");
+		assertActiveEventsCorrect(fromCompact.events, "readFromLastCompactMarker (restart)");
+	});
+
+	test("All three scenarios produce identical event sequences", async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "rollback-consistency-"));
+		const store = new EventStore(dataDir);
+		await seedSessionWithRollback(store, "s1");
+
+		// Scenario 1: immediate readActive
+		const immediate = store.readActive("s1");
+
+		// Scenario 2: readFromLastCompactMarker (page refresh)
+		const refresh = store.readFromLastCompactMarker("s1");
+
+		// Scenario 3: daemon restart
+		const restartStore = new EventStore(dataDir);
+		const restart = restartStore.readActive("s1");
+		const restartRefresh = restartStore.readFromLastCompactMarker("s1");
+
+		// All four must produce the exact same event types
+		const immTypes = immediate.map(e => e.type);
+		const refTypes = refresh.events.map(e => e.type);
+		const rstTypes = restart.map(e => e.type);
+		const rstRefTypes = restartRefresh.events.map(e => e.type);
+
+		expect(refTypes).toEqual(immTypes);
+		expect(rstTypes).toEqual(immTypes);
+		expect(rstRefTypes).toEqual(immTypes);
+
+		// All four must have the exact same eids (same identity)
+		const immEids = immediate.map(e => e.eid);
+		const refEids = refresh.events.map(e => e.eid);
+		const rstEids = restart.map(e => e.eid);
+		const rstRefEids = restartRefresh.events.map(e => e.eid);
+
+		expect(refEids).toEqual(immEids);
+		expect(rstEids).toEqual(immEids);
+		expect(rstRefEids).toEqual(immEids);
+	});
+
+	test("readActiveWithLineMap consistency after restart", async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "rollback-consistency-"));
+		const store1 = new EventStore(dataDir);
+		await seedSessionWithRollback(store1, "s1");
+
+		const map1 = store1.readActiveWithLineMap("s1");
+
+		// Restart
+		const store2 = new EventStore(dataDir);
+		const map2 = store2.readActiveWithLineMap("s1");
+
+		// Same events and same physical lines
+		expect(map2.events.map(e => e.type)).toEqual(map1.events.map(e => e.type));
+		expect(map2.physicalLines).toEqual(map1.physicalLines);
+	});
+
+	test("Multiple rollbacks: only latest branch visible across restart", async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "rollback-consistency-"));
+		const store = new EventStore(dataDir);
+
+		// Initial session
+		await store.append("s1", {
+			type: "session_config", tools: [], systemStable: "", systemVariable: "", taskId: "t1", ts: 1,
+		} as Event);
+		await store.append("s1", {
+			type: "message", id: "m1", body: { source: "user", id: "m1", content: "original", ts: 2 } as any, taskId: "t1", ts: 2,
+		} as Event);
+		await store.append("s1", {
+			type: "messages_consumed", messageIds: ["m1"], taskId: "t1", ts: 3,
+		} as Event);
+		await store.append("s1", {
+			type: "assistant_text", content: "attempt 1", taskId: "t1", ts: 4,
+		} as Event);
+		await store.flushSession("s1");
+
+		// First rollback
+		const all1 = store.read("s1");
+		const consumed = all1.find(e => e.type === "messages_consumed");
+		await store.appendRollback("s1", consumed!.eid!, "t1");
+		await store.append("s1", {
+			type: "assistant_text", content: "attempt 2", taskId: "t1", ts: 6,
+		} as Event);
+		await store.flushSession("s1");
+
+		// Second rollback (back to same point)
+		const all2 = store.read("s1");
+		const consumed2 = all2.find(e => e.type === "messages_consumed");
+		await store.appendRollback("s1", consumed2!.eid!, "t1");
+		await store.append("s1", {
+			type: "assistant_text", content: "attempt 3 (final)", taskId: "t1", ts: 8,
+		} as Event);
+		await store.flushSession("s1");
+
+		// Check before restart
+		const activeBefore = store.readActive("s1");
+		const assistantsBefore = activeBefore
+			.filter(e => e.type === "assistant_text")
+			.map(e => (e as any).content);
+		expect(assistantsBefore).toEqual(["attempt 3 (final)"]);
+
+		// Check after restart
+		const store2 = new EventStore(dataDir);
+		const activeAfter = store2.readActive("s1");
+		const assistantsAfter = activeAfter
+			.filter(e => e.type === "assistant_text")
+			.map(e => (e as any).content);
+		expect(assistantsAfter).toEqual(["attempt 3 (final)"]);
+
+		// readFromLastCompactMarker also consistent
+		const fromCompactAfter = store2.readFromLastCompactMarker("s1");
+		const assistantsCompact = fromCompactAfter.events
+			.filter(e => e.type === "assistant_text")
+			.map(e => (e as any).content);
+		expect(assistantsCompact).toEqual(["attempt 3 (final)"]);
+	});
+});
+
 // ── Walker: rollback_marker is skipped ──
 
 describe("walker: rollback_marker", () => {
