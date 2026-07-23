@@ -6,7 +6,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { formatTieredHits } from "./orchestrator-tools.ts";
+import { formatTieredHits, searchTasks } from "./orchestrator-tools.ts";
+import {
+	_clearDbCache,
+	_setEmbeddingPipeline,
+	reconcileIndex,
+} from "./task-index.ts";
 import { TaskTracker } from "./task-tracker.ts";
 
 describe("formatTieredHits", () => {
@@ -206,5 +211,71 @@ describe("formatTieredHits", () => {
 		const result = formatTieredHits(hits, tracker, 1);
 		expect(result).toContain("latest round result");
 		expect(result).not.toContain("old round result");
+	});
+});
+
+describe("searchTasks", () => {
+	let tempDir: string;
+	let tracker: TaskTracker;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-search-fn-"));
+		tracker = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker.load();
+		_setEmbeddingPipeline(null);
+	});
+
+	afterEach(async () => {
+		_clearDbCache();
+		_setEmbeddingPipeline(null);
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("combines search + format + excludeId in one call", async () => {
+		const task1 = tracker.addChild(tracker.rootNodeId, "Auth token rotation", "rotate JWT tokens");
+		(task1 as Record<string, unknown>).status = "closed";
+		const task2 = tracker.addChild(tracker.rootNodeId, "Auth session fix", "fix session bugs");
+		(task2 as Record<string, unknown>).status = "verify";
+		await tracker.save();
+
+		const dbPath = join(tempDir, "index.msp");
+		await reconcileIndex(dbPath, tracker);
+
+		const result = searchTasks(dbPath, "auth token", tracker, {
+			fullCount: 1,
+			briefCount: 5,
+			excludeId: task2.id,
+		});
+		// task1 should be in the output (matches "auth token").
+		expect(result).toContain("Auth token rotation");
+		expect(result).toContain("closed");
+		// task2 is excluded.
+		expect(result).not.toContain("Auth session fix");
+	});
+
+	test("returns empty string for empty query", () => {
+		const result = searchTasks(join(tempDir, "index.msp"), "  ", tracker);
+		expect(result).toBe("");
+	});
+
+	test("returns empty string when index is not loaded", () => {
+		// No reconcileIndex called — dbCache is empty.
+		const result = searchTasks(join(tempDir, "index.msp"), "anything", tracker);
+		expect(result).toBe("");
+	});
+
+	test("respects header option", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Auth session recovery", "fix the auth session timeout");
+		(task as Record<string, unknown>).status = "closed";
+		await tracker.save();
+
+		const dbPath = join(tempDir, "index.msp");
+		await reconcileIndex(dbPath, tracker);
+
+		const result = searchTasks(dbPath, "auth session", tracker, {
+			header: "[Related]",
+		});
+		expect(result.startsWith("[Related]")).toBe(true);
+		expect(result).toContain("Auth session recovery");
 	});
 });
