@@ -4612,3 +4612,30 @@ agent-lifecycle.ts uses readActiveWithLineMap (chain-walked) for repair instead 
 ### Tests (13)
 
 src/rollback.test.ts: 8 walkActiveChainIndices unit tests, 4 EventStore integration tests, 1 walker test. All mutation-verified.
+
+## search_tasks tiered return + create_task auto-search (2026-07-23)
+
+`search_tasks` now returns tiered output via `formatTieredHits()` (exported from
+`orchestrator-tools.ts`). Top hits get full info (description ≤500 chars, latest
+resultRound result ≤300 chars, matched field+snippet, score); remaining hits are
+one-line briefs (title, taskId, status, score). Total output hard-capped at 8000
+chars to protect the context window.
+
+`create_task` handler appends a best-effort `[Related existing tasks]` block after
+the node JSON. Uses `searchIndexSync` (sync, BM25-only, in-memory DB cache warmed
+at startup by `reconcileIndex`). Query = `title + description`; self-excluded;
+2 full + up to 5 brief hits. Index unavailable → silent skip, never blocks create.
+
+System prompt: "Search before building" bullet added to Planning before acting
+(§2), steering agents to `search_tasks` before creating tasks or starting work
+in unfamiliar areas.
+
+### Key design decisions
+- Full taskId in output (not truncated prefix) — agents need it for `fork_task_context`
+  / `send_message`.
+- `searchIndexSync` for create_task (not async `searchIndex`) — the handler is async
+  but sync search avoids a second embedding-pipeline load; the DB is already cached.
+- 8000-char budget matches `RELATED_TASKS_CHAR_LIMIT` in scope-opts.ts work_context
+  injection.
+- `formatTieredHits` is shared between search_tasks and create_task (same formatting,
+  different `fullCount` and header).
