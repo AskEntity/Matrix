@@ -12619,6 +12619,121 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 			{ result: "shipped anyway" },
 		]);
 	}, 20000);
+
+	test("search_tasks tiered format: full hits show description+result, brief hits show only title", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		// Create a task with description and a result round.
+		const child = tracker.addChild(
+			tracker.rootNodeId,
+			"Fix session recovery",
+			"Implemented the frobnicator cache via a ring buffer to prevent stale data",
+		);
+		child.resultRounds = [
+			{ result: "Fixed the cache invalidation bug by switching to LRU eviction" },
+		];
+		// Create a second task (will be a brief hit).
+		const child2 = tracker.addChild(
+			tracker.rootNodeId,
+			"Debug session timeout",
+			"investigated timeout issues in session management",
+		);
+		await tracker.save();
+		await reconcileIndex(indexDbPath(ctx), tracker);
+
+		// Use the agent to call search_tasks — the tool_result should have
+		// tiered formatting: first hit full (with description/result), rest brief.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Searching." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__search_tasks",
+							input: { query: "session" },
+						},
+					],
+				},
+				{
+					assert: [
+						// Full hit should contain description + result excerpts
+						{ block: 0, type: "tool_result", contains: "Description:" },
+						{ block: 0, type: "tool_result", contains: "frobnicator" },
+						{ block: 0, type: "tool_result", contains: "Latest result:" },
+						{ block: 0, type: "tool_result", contains: "LRU eviction" },
+						{ block: 0, type: "tool_result", contains: "Score:" },
+					],
+					blocks: [
+						{ type: "text", text: "Found results." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", result: "verified tiered search" },
+						},
+					],
+				},
+			],
+		});
+		expect((await startAgent(ctx, instruction)).status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+	}, 20000);
+
+	test("create_task appends related existing tasks to tool_result", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		// Seed the index with a completed task about auth.
+		const existing = tracker.addChild(
+			tracker.rootNodeId,
+			"Auth token rotation",
+			"rotate JWT tokens every 30 minutes to reduce session hijack window",
+		);
+		existing.resultRounds = [
+			{ result: "Implemented token rotation with sliding window" },
+		];
+		await tracker.save();
+		await reconcileIndex(indexDbPath(ctx), tracker);
+
+		// Now the agent creates a NEW task about auth — should get the related hit.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Creating a related task." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								parentId: tracker.rootNodeId,
+								title: "Auth session hardening",
+								description: "improve auth token security and session management",
+								draft: true,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						// The tool_result should contain both the created node JSON
+						// AND the related-tasks block.
+						{ block: 0, type: "tool_result", contains: "Auth session hardening" },
+						{ block: 0, type: "tool_result", contains: "[Related existing tasks]" },
+						{ block: 0, type: "tool_result", contains: "Auth token rotation" },
+					],
+					blocks: [
+						{ type: "text", text: "Task created with related context." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", result: "verified create_task related" },
+						},
+					],
+				},
+			],
+		});
+		expect((await startAgent(ctx, instruction)).status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+	}, 20000);
 });
 
 describe("Integration: done() result capture (resultRounds)", () => {

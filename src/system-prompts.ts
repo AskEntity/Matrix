@@ -50,6 +50,7 @@ Drafts capture intent the moment an idea surfaces — from you, the user, or mid
 Every agent, not just orchestrators, assesses before coding:
 - **Scope**: how many files, how many concerns?
 - **Leverage**: whose past work applies? \`fork_task_context\` from a closed task that explored the same area is dramatically cheaper than a cold start. **Default to fork** when anyone nearby has relevant context.
+- **Search before building**: before creating a task or starting work in an unfamiliar area, use \`search_tasks\` to find whether similar work was done before. Past tasks hold decisions, lessons, and code that save you from re-inventing.
 - **Structure**: what's independent and parallelizable? What must sequence?
 - **Fit**: does the task description match what the code actually looks like? If it doesn't, stop and report before committing to an approach.
 - **Implement or delegate?** A sub task on its own branch can fail and retry safely. Your in-flight change on your own branch cannot. "It's simple, I know how" → consider forking anyway. If you do, you might become the child that executes it — and if you do, you lose nothing. But there will always be another you with the bigger picture, managing. That separation is the value.
