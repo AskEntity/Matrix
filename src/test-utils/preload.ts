@@ -1,6 +1,7 @@
 /**
  * bun test preload — runs ONCE per test process, before any test file.
  *
+ * ── React scheduler binding ──
  * Imports react-dom/client while NO happy-dom environment is registered.
  * React's scheduler picks its timer machinery (MessageChannel & friends) at
  * FIRST IMPORT and react-dom is a process-wide singleton, so whoever imports
@@ -32,5 +33,16 @@
  *
  * Cost: one react-dom parse (~tens of ms) per test process, including
  * src-only runs. No side effects beyond module initialization.
+ *
+ * ── NAPI crash prevention ──
+ * MXD_DISABLE_EMBEDDINGS prevents @huggingface/transformers (and its
+ * onnxruntime-node NAPI dependency) from loading inside worker threads.
+ * Without this, worker teardown in daemon tests triggers a fatal NAPI crash
+ * (SIGTRAP / exit 133) that kills the entire bun test process. The env var
+ * is checked by getEmbeddingPipeline() in src/task-index.ts, which short-
+ * circuits to null (BM25-only mode). Workers inherit process.env from the
+ * parent thread, so setting it here covers both the main process and all
+ * spawned workers.
  */
+process.env.MXD_DISABLE_EMBEDDINGS = "1";
 import "react-dom/client";

@@ -111,9 +111,20 @@ let embeddingPipeline: EmbeddingPipeline | null | undefined; // undefined = not 
  * Get or lazily initialize the embedding pipeline. Returns null if the model
  * cannot be loaded (graceful degradation to BM25-only). The promise is cached
  * so concurrent callers share the same load attempt.
+ *
+ * When MXD_DISABLE_EMBEDDINGS is set (test environment), short-circuits to
+ * null immediately — prevents loading onnxruntime-node (NAPI module) inside
+ * worker threads, where worker teardown triggers a fatal NAPI crash
+ * (SIGTRAP / exit 133) that kills the entire bun test process.
  */
 async function getEmbeddingPipeline(): Promise<EmbeddingPipeline | null> {
+	// Explicit mock (via _setEmbeddingPipeline) takes priority — lets tests
+	// exercise hybrid search paths even when MXD_DISABLE_EMBEDDINGS is set.
 	if (embeddingPipeline !== undefined) return embeddingPipeline;
+	if (process.env.MXD_DISABLE_EMBEDDINGS) {
+		embeddingPipeline = null;
+		return null;
+	}
 	if (embeddingPipelinePromise) return embeddingPipelinePromise;
 
 	embeddingPipelinePromise = (async () => {
