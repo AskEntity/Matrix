@@ -4681,3 +4681,26 @@ as SSE reconnect and rollback. JSONL events carry eid/parentEid → buttons appe
 Implementation: `onAgentIdle` callback on `EventHandlerDeps`, triggered from the
 `agent_idle` case in `processEvent` when `msg.taskId === getViewedSessionId()`.
 Plugin.tsx wires it via `refetchOnIdleRef` (breaks the useMemo/useCallback dep cycle).
+
+## /rollback endpoint DELETED — /edit is the single path (2026-07-23)
+
+The standalone `/rollback` REST endpoint in `.mxd/plugin/runtime.ts` (~100 lines) and the
+`taskRollback` URL builder in `.mxd/plugin/web/api.ts` are deleted. Frontend (`Plugin.tsx
+handleRollback`) already calls `api.taskEdit` exclusively — the `/edit` endpoint combines
+rollback + message delivery atomically and fully supersedes `/rollback`.
+
+**Edit/Rewind consistency verified** across three scenarios via 6 integration tests in
+`src/rollback.test.ts`:
+1. `readActive` immediately after rollback
+2. `readFromLastCompactMarker` (simulates page refresh / `GET taskEvents?after=compact`)
+3. Fresh `EventStore` on the same dataDir (simulates daemon restart)
+4. All three produce byte-identical event sequences (same eids)
+5. `readActiveWithLineMap` consistency after restart
+6. Multiple consecutive rollbacks: only the latest branch visible after restart
+
+**Why consistency holds**: all read paths (`readActive`, `readFromLastCompactMarker`,
+`readActiveWithLineMap`) go through `walkActiveChainIndices`, which chain-walks events
+via `parentEid`. The `rollback_marker`'s `parentEid` jumps to the target event, skipping
+rolled-back events by construction. The chain-walk is deterministic and based solely on
+the persisted JSONL data — no in-memory state involved — so a fresh EventStore (restart)
+produces identical results.
