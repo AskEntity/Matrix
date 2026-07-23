@@ -74,6 +74,8 @@ export const api = {
 	taskGitlog: (id: string, nodeId: string) => taskUrl(id, nodeId, "gitlog"),
 	taskRollback: (id: string, nodeId: string) =>
 		taskUrl(id, nodeId, "rollback"),
+	taskEdit: (id: string, nodeId: string) =>
+		taskUrl(id, nodeId, "edit"),
 
 	// Search
 	search: (id: string, query: string, limit?: number) => {

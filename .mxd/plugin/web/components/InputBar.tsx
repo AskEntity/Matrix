@@ -30,6 +30,17 @@ export interface ImageDropRequest {
 }
 
 /**
+ * One-shot request to fill the InputBar with a user message's content for
+ * editing. The eid identifies the original message (used by the edit API
+ * on submit). `seq` increments so re-editing the same message re-fires.
+ */
+export interface EditRequest {
+	text: string;
+	eid: string;
+	seq: number;
+}
+
+/**
  * Minimal textarea surface the caret-scroll seam touches. `HTMLTextAreaElement`
  * satisfies it structurally; tests pass a fake that supplies `scrollHeight`
  * without a real layout engine (happy-dom does no layout).
@@ -75,6 +86,8 @@ export const InputBar = memo(function InputBar({
 	onSend,
 	quoteRequest,
 	imageDropRequest,
+	editRequest,
+	onCancelEdit,
 }: {
 	projectId: string;
 	targetNodeId: string | null;
@@ -85,6 +98,8 @@ export const InputBar = memo(function InputBar({
 	) => void;
 	quoteRequest?: QuoteRequest | null;
 	imageDropRequest?: ImageDropRequest | null;
+	editRequest?: EditRequest | null;
+	onCancelEdit?: () => void;
 }) {
 	const { t } = useLocale();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -150,6 +165,23 @@ export const InputBar = memo(function InputBar({
 			focusCaretAndScrollToEnd(el, next.length, adjustTextareaHeight);
 		});
 	}, [quoteRequest, setPromptAndRef]);
+
+	// Edit message: REPLACE the draft with the original message content so the
+	// user can modify and resubmit. Unlike quote (prepend), edit replaces.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: adjustTextareaHeight is hoisted; keying on editRequest is intentional
+	useEffect(() => {
+		if (!editRequest) return;
+		setPromptAndRef(editRequest.text);
+		requestAnimationFrame(() => {
+			const el = textareaRef.current;
+			if (!el) return;
+			focusCaretAndScrollToEnd(
+				el,
+				editRequest.text.length,
+				adjustTextareaHeight,
+			);
+		});
+	}, [editRequest, setPromptAndRef]);
 
 	// Slash command autocomplete state
 	const [slashMenuOpen, setSlashMenuOpen] = useState(false);
@@ -330,6 +362,21 @@ export const InputBar = memo(function InputBar({
 							</button>
 						</div>
 					))}
+				</div>
+			)}
+			{/* Editing indicator — shown when user clicked Edit on a message */}
+			{editRequest && (
+				<div className="mxd-edit-indicator">
+					<span>✏️ {t("footer.editing")}</span>
+					{onCancelEdit && (
+						<button
+							type="button"
+							className="mxd-edit-cancel"
+							onClick={onCancelEdit}
+						>
+							{t("footer.cancelEdit")}
+						</button>
+					)}
 				</div>
 			)}
 			{/* Slash command menu — positioned above the form */}

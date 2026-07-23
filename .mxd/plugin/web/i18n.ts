@@ -269,6 +269,11 @@ const en: Translations = {
 	"activity.rollbackConfirm":
 		"Roll back to this message? Messages after this point will be hidden and the agent will regenerate from here.",
 
+	// Edit message
+	"activity.editButton": "Edit",
+	"footer.editing": "Editing message",
+	"footer.cancelEdit": "Cancel",
+
 	// Markdown table rendering
 	"table.copy": "Copy",
 	"table.copied": "Copied",
@@ -600,6 +605,11 @@ const zh: Translations = {
 	"activity.rewindButton": "回滚",
 	"activity.rollbackConfirm":
 		"回退到这条消息？之后的消息将被隐藏，代理将从这里重新生成。",
+
+	// Edit message
+	"activity.editButton": "编辑",
+	"footer.editing": "编辑消息",
+	"footer.cancelEdit": "取消",
 
 	// Markdown table rendering
 	"table.copy": "复制",

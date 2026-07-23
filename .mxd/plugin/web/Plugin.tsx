@@ -573,6 +573,23 @@ function ProjectContent({
 	const handleQuoteText = useCallback((text: string) => {
 		setQuoteRequest((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
 	}, []);
+	// Edit message: fill InputBar with the original message content for editing.
+	// The eid is passed through so the submit handler can call the edit API.
+	const [editRequest, setEditRequest] = useState<{
+		text: string;
+		eid: string;
+		seq: number;
+	} | null>(null);
+	const handleEdit = useCallback((eid: string, content: string) => {
+		setEditRequest((prev) => ({
+			text: content,
+			eid,
+			seq: (prev?.seq ?? 0) + 1,
+		}));
+	}, []);
+	const handleCancelEdit = useCallback(() => {
+		setEditRequest(null);
+	}, []);
 	// Page-wide image drop: an image dropped ANYWHERE on the page is routed
 	// into the composer's existing attachment state as a one-shot request
 	// (seq bump per drop), mirroring the quoteRequest hop. The window handler
@@ -935,27 +952,29 @@ function ProjectContent({
 		[processEventBatch],
 	);
 
-	// Rollback handler: calls the rollback API, then re-fetches events.
-	// Declared after processEventResponse — it sits in the dep array, which is
-	// evaluated during render, so an earlier declaration would hit the TDZ.
+	// Rewind handler: unified with Edit — rollback to before the message, then
+	// resend the ORIGINAL content unchanged. Both Rewind and Edit use the same
+	// /edit endpoint; Rewind just doesn't modify the content.
 	const handleRollback = useCallback(
-		async (eid: string) => {
+		async (eid: string, content: string) => {
 			if (!selectedTaskId || !projectId) return;
 			const confirmed = window.confirm(t("activity.rollbackConfirm"));
 			if (!confirmed) return;
 			try {
 				const resp = await authFetch(
-					api.taskRollback(projectId, selectedTaskId),
-					{ method: "POST", body: JSON.stringify({ targetEid: eid }) },
+					api.taskEdit(projectId, selectedTaskId),
+					{
+						method: "POST",
+						body: JSON.stringify({ eid, content }),
+					},
 				);
 				if (!resp.ok) {
 					const err = await resp.json().catch(() => ({}));
-					console.warn("[rollback] failed:", err);
+					console.warn("[rewind] failed:", err);
 					return;
 				}
-				// Re-fetch events from the active chain — rolled-back messages
-				// are excluded by the backend's chain-walk. processEventBatch
-				// does RESET + rebuild, so the old log entries are replaced.
+				// Re-fetch events — the rolled-back region is excluded by
+				// the chain-walk; the resent message appears as a new event.
 				const evtResp = await authFetch(
 					api.taskEvents(projectId, selectedTaskId, "after=compact"),
 				);
@@ -964,7 +983,7 @@ function ProjectContent({
 					processEventResponse(data);
 				}
 			} catch (e) {
-				console.warn("[rollback] error:", e);
+				console.warn("[rewind] error:", e);
 			}
 		},
 		[selectedTaskId, projectId, authFetch, t, processEventResponse],
@@ -1257,6 +1276,63 @@ function ProjectContent({
 			setActiveAgents,
 			authFetch,
 			setSelectedTaskId,
+		],
+	);
+
+	// Edit message handler: calls the edit API (rollback + resend atomically),
+	// then re-fetches events. Wraps handleSend — when editRequest is active,
+	// the submit goes through the edit API; otherwise normal send.
+	const handleSendOrEdit = useCallback(
+		async (
+			message: string,
+			images?: { base64: string; mediaType: string }[],
+		) => {
+			if (editRequest && selectedTaskId && projectId) {
+				try {
+					const resp = await authFetch(
+						api.taskEdit(projectId, selectedTaskId),
+						{
+							method: "POST",
+							body: JSON.stringify({
+								eid: editRequest.eid,
+								content: message,
+								images,
+							}),
+						},
+					);
+					setEditRequest(null);
+					if (!resp.ok) {
+						const err = await resp.json().catch(() => ({}));
+						console.warn("[edit] failed:", err);
+						return;
+					}
+					// Re-fetch events — the edited chain replaces the old log
+					const evtResp = await authFetch(
+						api.taskEvents(
+							projectId,
+							selectedTaskId,
+							"after=compact",
+						),
+					);
+					const data = await evtResp.json().catch(() => ({}));
+					if (data.events) {
+						processEventResponse(data);
+					}
+				} catch (e) {
+					console.warn("[edit] error:", e);
+					setEditRequest(null);
+				}
+			} else {
+				handleSend(message, images);
+			}
+		},
+		[
+			editRequest,
+			selectedTaskId,
+			projectId,
+			authFetch,
+			processEventResponse,
+			handleSend,
 		],
 	);
 
@@ -1836,6 +1912,7 @@ function ProjectContent({
 								showCacheBadges={showCacheBadges}
 								onQuoteText={handleQuoteText}
 								onRollback={handleRollback}
+								onEdit={handleEdit}
 							/>
 						</div>
 					) : isOrchestratorNode ? (
@@ -1878,11 +1955,13 @@ function ProjectContent({
 				pendingMessages={pendingMessages}
 				pendingClarifications={pendingClarifications}
 				clarifyAnswers={clarifyAnswers}
-				onSend={handleSend}
+				onSend={handleSendOrEdit}
 				onClarifySubmit={handleClarifySubmit}
 				onClarifyAnswerChange={handleClarifyAnswerChange}
 				quoteRequest={quoteRequest}
 				imageDropRequest={imageDropRequest}
+				editRequest={editRequest}
+				onCancelEdit={handleCancelEdit}
 			/>
 
 			{isDraggingFile && (
