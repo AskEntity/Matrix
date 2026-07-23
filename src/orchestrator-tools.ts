@@ -23,7 +23,7 @@ import {
 	createTreeChange,
 } from "./queue-message-factory.ts";
 import * as R from "./resource-registry.ts";
-import { searchIndexSync } from "./task-index.ts";
+import { searchIndex, searchIndexSync } from "./task-index.ts";
 import {
 	closeTaskOp,
 	createTaskOp,
@@ -265,9 +265,9 @@ export function formatTieredHits(
 /**
  * Search the project index and return a tiered formatted string.
  *
- * Uses sync BM25 search (searchIndexSync) — the in-memory DB is pre-loaded
- * by reconcileIndex at startup. Returns "" if the index isn't ready or the
- * query is empty.
+ * Uses async hybrid search (BM25 + embedding vectors) for cross-lingual
+ * semantic matching. Falls back to BM25-only if the embedding pipeline
+ * is unavailable. Returns "" if the index isn't ready or query is empty.
  *
  * @param dbPath    Path to the Orama index file.
  * @param query     Search query string.
@@ -277,7 +277,7 @@ export function formatTieredHits(
  * @param opts.excludeId   Task id to exclude from results (e.g. self).
  * @param opts.header      Optional header line prepended to the output.
  */
-export function searchTasks(
+export async function searchTasks(
 	dbPath: string,
 	query: string,
 	tracker: TaskTracker,
@@ -287,13 +287,13 @@ export function searchTasks(
 		excludeId?: string;
 		header?: string;
 	},
-): string {
+): Promise<string> {
 	const fullCount = opts?.fullCount ?? DEFAULT_FULL_COUNT;
 	const briefCount = opts?.briefCount ?? DEFAULT_BRIEF_COUNT;
 	const trimmed = query.trim();
 	if (!trimmed) return "";
 
-	const hits = searchIndexSync(dbPath, trimmed, fullCount + briefCount)
+	const hits = (await searchIndex(dbPath, trimmed, fullCount + briefCount))
 		.filter((h) => {
 			if (opts?.excludeId && h.taskId === opts.excludeId) return false;
 			return !!tracker.getTask(h.taskId);
@@ -477,7 +477,7 @@ export function buildAllToolDefs() {
 				const { dataDir, dataRoot } = R.getDataPaths();
 				const dbPath = projectIndexDbPath(dataDir, projectId, dataRoot);
 				const limit = (args.limit as number | undefined) ?? 20;
-				const formatted = searchTasks(dbPath, args.query as string, tracker, {
+				const formatted = await searchTasks(dbPath, args.query as string, tracker, {
 					fullCount: Math.min(5, limit),
 					briefCount: Math.max(0, limit - 5),
 				});
@@ -577,7 +577,7 @@ export function buildAllToolDefs() {
 						const query = [args.title, args.description]
 							.filter(Boolean)
 							.join(" ");
-						relatedBlock = searchTasks(dbPath, query, tracker, {
+						relatedBlock = await searchTasks(dbPath, query, tracker, {
 							fullCount: 2,
 							briefCount: 3,
 							excludeId: node.id,

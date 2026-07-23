@@ -241,7 +241,7 @@ describe("searchTasks", () => {
 		const dbPath = join(tempDir, "index.msp");
 		await reconcileIndex(dbPath, tracker);
 
-		const result = searchTasks(dbPath, "auth token", tracker, {
+		const result = await searchTasks(dbPath, "auth token", tracker, {
 			fullCount: 1,
 			briefCount: 5,
 			excludeId: task2.id,
@@ -253,14 +253,14 @@ describe("searchTasks", () => {
 		expect(result).not.toContain("Auth session fix");
 	});
 
-	test("returns empty string for empty query", () => {
-		const result = searchTasks(join(tempDir, "index.msp"), "  ", tracker);
+	test("returns empty string for empty query", async () => {
+		const result = await searchTasks(join(tempDir, "index.msp"), "  ", tracker);
 		expect(result).toBe("");
 	});
 
-	test("returns empty string when index is not loaded", () => {
+	test("returns empty string when index is not loaded", async () => {
 		// No reconcileIndex called — dbCache is empty.
-		const result = searchTasks(join(tempDir, "index.msp"), "anything", tracker);
+		const result = await searchTasks(join(tempDir, "index.msp"), "anything", tracker);
 		expect(result).toBe("");
 	});
 
@@ -272,7 +272,7 @@ describe("searchTasks", () => {
 		const dbPath = join(tempDir, "index.msp");
 		await reconcileIndex(dbPath, tracker);
 
-		const result = searchTasks(dbPath, "auth session", tracker, {
+		const result = await searchTasks(dbPath, "auth session", tracker, {
 			header: "[Related]",
 		});
 		expect(result.startsWith("[Related]")).toBe(true);
