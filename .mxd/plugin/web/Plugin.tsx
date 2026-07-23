@@ -622,6 +622,10 @@ function ProjectContent({
 	const viewedSessionId = selectedTaskId;
 	viewedSessionRef.current = viewedSessionId;
 
+	// Ref-based re-fetch for agent_idle: the actual function is set after
+	// processEventResponse is defined (breaks the useMemo→useCallback cycle).
+	const refetchOnIdleRef = useRef<((taskId: string) => void) | null>(null);
+
 	const {
 		nodes,
 		refresh: refreshTasks,
@@ -890,6 +894,7 @@ function ProjectContent({
 				setBackgroundProcesses,
 				t,
 				getViewedSessionId: () => viewedSessionRef.current,
+				onAgentIdle: (taskId) => refetchOnIdleRef.current?.(taskId),
 			}),
 		[
 			updateFromWS,
@@ -934,6 +939,19 @@ function ProjectContent({
 		},
 		[processEventBatch],
 	);
+
+	// Wire up agent_idle re-fetch: when the viewed agent goes idle, re-fetch
+	// JSONL events so the frontend gets eid/parentEid for Edit/Rewind buttons.
+	// Uses the same processEventResponse + compact-barrier fetch as reconnect.
+	refetchOnIdleRef.current = (taskId: string) => {
+		if (!projectId) return;
+		authFetch(api.taskEvents(projectId, taskId, "after=compact"))
+			.then((r) => r.json())
+			.then(processEventResponse)
+			.catch((e) =>
+				console.warn("[Plugin] Failed to re-fetch events on agent idle:", e),
+			);
+	};
 
 	// Rollback handler: calls the rollback API, then re-fetches events.
 	// Declared after processEventResponse — it sits in the dep array, which is

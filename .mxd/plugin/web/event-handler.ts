@@ -295,6 +295,13 @@ export interface EventHandlerDeps {
 	t: (key: string, params?: Record<string, string>) => string;
 	/** Returns the currently viewed session ID (= selectedTaskId after Fix C; only during the brand-new-project transient does the rootNodeId fallback matter). Used to filter SSE events. */
 	getViewedSessionId?: () => string | null;
+	/**
+	 * Called when the viewed task's agent becomes idle. Plugin.tsx wires this
+	 * to re-fetch JSONL events so the frontend gets eid/parentEid (which are
+	 * only stamped at JSONL persistence time, not on SSE broadcast). This
+	 * enables Edit/Rewind buttons on messages after streaming completes.
+	 */
+	onAgentIdle?: (taskId: string) => void;
 }
 
 export function createEventHandler(deps: EventHandlerDeps) {
@@ -922,6 +929,13 @@ export function createEventHandler(deps: EventHandlerDeps) {
 								next.delete(msg.taskId);
 								return next;
 							});
+							// Trigger re-fetch when the VIEWED task's agent goes
+							// idle — JSONL events carry eid/parentEid that SSE
+							// events lack, enabling Edit/Rewind buttons.
+							const viewedId = deps.getViewedSessionId?.();
+							if (viewedId && msg.taskId === viewedId) {
+								deps.onAgentIdle?.(msg.taskId);
+							}
 						}
 					},
 				};
