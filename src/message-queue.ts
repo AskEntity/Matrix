@@ -171,11 +171,15 @@ export class MessageQueue {
 	 * One-shot — fires once then auto-clears. Call `resetBeforeFirstMessage()`
 	 * to re-arm (e.g. after compact_marker).
 	 */
-	private beforeFirstMessageHook?: () => QueueMessage[];
+	private beforeFirstMessageHook?: () =>
+		| QueueMessage[]
+		| Promise<QueueMessage[]>;
 	private beforeFirstMessageFired = false;
 
 	/** Set the before-first-message hook. Called at session setup. */
-	setBeforeFirstMessage(hook: () => QueueMessage[]): void {
+	setBeforeFirstMessage(
+		hook: () => QueueMessage[] | Promise<QueueMessage[]>,
+	): void {
 		this.beforeFirstMessageHook = hook;
 		this.beforeFirstMessageFired = false;
 	}
@@ -201,7 +205,7 @@ export class MessageQueue {
 	enqueue(
 		msg: QueueMessage,
 		options?: { quiet?: boolean; replay?: boolean },
-	): void {
+	): void | Promise<void> {
 		if (this.closed) {
 			throw new Error("Queue closed");
 		}
@@ -214,23 +218,64 @@ export class MessageQueue {
 		// Before-first-message hook: inject work_context (etc.) before the
 		// first real message on a fresh or post-compact session. Only fires
 		// on non-replay enqueue (replay = recovering existing JSONL messages).
+		// Hook may be async (e.g. buildWorkContext with hybrid search) — when
+		// it returns a Promise, enqueue returns a Promise too so the caller
+		// can await before proceeding.
 		if (
 			!options?.replay &&
 			this.beforeFirstMessageHook &&
 			!this.beforeFirstMessageFired
 		) {
 			this.beforeFirstMessageFired = true;
-			const injected = this.beforeFirstMessageHook();
-			for (const injMsg of injected) {
-				// Persist + deliver each injected message (same path as normal enqueue)
-				this.onPersist?.(injMsg);
-				this.messages.push(injMsg);
+			const hookResult = this.beforeFirstMessageHook();
+			if (hookResult instanceof Promise) {
+				return hookResult.then((injected) => {
+					this.injectAndDeliver(injected, msg, options);
+				});
 			}
+			this.injectHookMessages(hookResult);
 		}
 
 		// Persist first (unless this is a replay from JSONL).
 		// Any write failure propagates to the caller — we do not silently
 		// drop messages on persistence error.
+		if (!options?.replay && this.onPersist) {
+			this.onPersist(msg);
+		}
+
+		if (options?.quiet) {
+			this.messages.push(msg);
+			return;
+		}
+
+		this.onEnqueue?.(msg);
+
+		if (this.waiter) {
+			const { resolve } = this.waiter;
+			this.waiter = null;
+			resolve(msg);
+			this.onDrain?.();
+		} else {
+			this.messages.push(msg);
+		}
+	}
+
+	/** Inject hook-returned messages into the queue (persist + push). */
+	private injectHookMessages(injected: QueueMessage[]): void {
+		for (const injMsg of injected) {
+			this.onPersist?.(injMsg);
+			this.messages.push(injMsg);
+		}
+	}
+
+	/** Inject hook messages then persist + deliver the triggering message (async path). */
+	private injectAndDeliver(
+		injected: QueueMessage[],
+		msg: QueueMessage,
+		options?: { quiet?: boolean; replay?: boolean },
+	): void {
+		this.injectHookMessages(injected);
+
 		if (!options?.replay && this.onPersist) {
 			this.onPersist(msg);
 		}
