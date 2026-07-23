@@ -744,7 +744,7 @@ export const LogEntryView = memo(function LogEntryView({
 								navigator.clipboard?.writeText(text);
 							}}
 						>
-							⎘
+							⧉
 						</button>
 					</div>
 					<div className="mxd-user-prompt-bubble">
