@@ -4639,3 +4639,45 @@ in unfamiliar areas.
   injection.
 - `formatTieredHits` is shared between search_tasks and create_task (same formatting,
   different `fullCount` and header).
+
+## Bun Worker env isolation — process.env NOT inherited (2026-07-23)
+
+**Bun Workers do NOT inherit `process.env` assignments from the parent thread.** Workers
+get their own env from the OS process snapshot at spawn time. `process.env.X = "Y"` in
+the main thread is INVISIBLE to file-based Workers. This applies to BOTH:
+- Direct `process.env` assignment in JS
+- `bunfig.toml [test.env]` settings (which set process.env, not OS env)
+
+**The ONLY way to pass env vars to a Bun Worker**: the `env` option on the Worker
+constructor: `new Worker(url, { env: { KEY: "value" } })`. Verified empirically: data-URL
+workers DO inherit process.env (different codepath), file-based workers do NOT.
+
+**Fix applied**: `src/daemon.ts` Worker constructor passes `{ env: process.env as Record<string, string> }`
+so workers inherit runtime env vars. This is correct for production too — workers SHOULD
+see the same env as the main thread.
+
+## MXD_DISABLE_EMBEDDINGS — test-only NAPI crash prevention (2026-07-23)
+
+`getEmbeddingPipeline()` in `src/task-index.ts` checks `process.env.MXD_DISABLE_EMBEDDINGS`
+and short-circuits to null (BM25-only mode). Set via `bunfig.toml [test.env]` + propagated
+to workers via the daemon's `{ env: process.env }` Worker option.
+
+Priority order: explicit mock (`_setEmbeddingPipeline(mock)`) > env var > lazy load.
+This lets tests exercise hybrid search paths via mock pipelines even with the env var set.
+
+Root cause: `@huggingface/transformers` has a STATIC `import * as ONNX_NODE from "onnxruntime-node"`
+at module scope (line 7545 of `transformers.node.mjs`). The dynamic `import()` in
+`getEmbeddingPipeline()` loads this, which registers the NAPI backend. Worker teardown
+then triggers `NAPI FATAL ERROR: Error::New napi_create_error` → SIGTRAP → process death.
+
+## agent_idle re-fetch for Edit/Rewind buttons (2026-07-23)
+
+SSE-broadcast events lack `eid`/`parentEid` (stamped only at JSONL persist time in
+`EventStore.stampEvent`). During streaming, Edit/Rewind buttons are unavailable. When
+the agent goes idle (agent_idle SSE event for the VIEWED task), the frontend re-fetches
+JSONL events via `GET taskEvents?after=compact` → `processEventResponse` — same pattern
+as SSE reconnect and rollback. JSONL events carry eid/parentEid → buttons appear.
+
+Implementation: `onAgentIdle` callback on `EventHandlerDeps`, triggered from the
+`agent_idle` case in `processEvent` when `msg.taskId === getViewedSessionId()`.
+Plugin.tsx wires it via `refetchOnIdleRef` (breaks the useMemo/useCallback dep cycle).
