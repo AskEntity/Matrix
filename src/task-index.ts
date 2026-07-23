@@ -429,6 +429,20 @@ export async function searchIndex(
 				properties: ["text"],
 				limit,
 			}) as Results<HitDoc>;
+
+			// NaN-score fallback: documents indexed without valid embeddings
+			// (null or zero-vector) produce NaN cosine similarity, which
+			// contaminates the hybrid fusion score. If ANY hit has NaN, redo
+			// as pure BM25 — the entire result set is suspect when the index
+			// has mixed embedding coverage.
+			if (results.hits.some((h) => !Number.isFinite(h.score))) {
+				results = search(db, {
+					mode: "fulltext",
+					term: trimmed,
+					properties: ["text"],
+					limit,
+				}) as Results<HitDoc>;
+			}
 		} catch {
 			results = search(db, {
 				mode: "fulltext",
