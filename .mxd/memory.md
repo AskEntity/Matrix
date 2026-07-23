@@ -4690,17 +4690,17 @@ handleRollback`) already calls `api.taskEdit` exclusively — the `/edit` endpoi
 rollback + message delivery atomically and fully supersedes `/rollback`.
 
 **Edit/Rewind consistency verified** across three scenarios via 6 integration tests in
-`src/rollback.test.ts`:
-1. `readActive` immediately after rollback
-2. `readFromLastCompactMarker` (simulates page refresh / `GET taskEvents?after=compact`)
-3. Fresh `EventStore` on the same dataDir (simulates daemon restart)
-4. All three produce byte-identical event sequences (same eids)
-5. `readActiveWithLineMap` consistency after restart
-6. Multiple consecutive rollbacks: only the latest branch visible after restart
+`src/rollback.test.ts`: readActive immediately, page refresh (readFromLastCompactMarker),
+daemon restart (fresh EventStore). All produce byte-identical event sequences. Multiple
+consecutive rollbacks: only the latest branch visible. Chain-walk via parentEid is
+deterministic on persisted JSONL — no in-memory state.
 
-**Why consistency holds**: all read paths (`readActive`, `readFromLastCompactMarker`,
-`readActiveWithLineMap`) go through `walkActiveChainIndices`, which chain-walks events
-via `parentEid`. The `rollback_marker`'s `parentEid` jumps to the target event, skipping
-rolled-back events by construction. The chain-walk is deterministic and based solely on
-the persisted JSONL data — no in-memory state involved — so a fresh EventStore (restart)
-produces identical results.
+## search_tasks NaN-score fallback (2026-07-23)
+
+**Score NaN root cause**: Documents indexed without a valid embedding pipeline get
+`ZERO_EMBEDDING` (768 zeros). Cosine similarity on a zero vector = `0/0 = NaN`.
+Hybrid mode fusion score inherits NaN → all hits return `score: NaN`.
+
+**Fix** (`src/task-index.ts`): `searchIndex` checks
+`results.hits.some(h => !Number.isFinite(h.score))` after hybrid search. If ANY hit
+has NaN/Infinity, redo the entire search as pure BM25 fulltext. 3 regression tests.

@@ -285,6 +285,84 @@ describe("task-index (Orama hybrid search)", () => {
 		expect(enHits.some((h) => h.taskId === t.id)).toBe(true);
 	});
 
+	// ── NaN-score fallback (Score NaN bug fix) ──
+
+	test("hybrid search falls back to BM25 when docs have zero-vector embeddings (NaN scores)", async () => {
+		// Reproduce the bug: index documents WITHOUT embeddings (pipeline null),
+		// then search WITH the pipeline available. Zero-vector cosine → NaN.
+		_setEmbeddingPipeline(null); // pipeline unavailable at index time
+		const t1 = tracker.addTask("worktree cleanup race condition", "fix the race");
+		const t2 = tracker.addTask("session recovery bug", "restore JSONL state");
+		await indexTask(dbPath, t1);
+		await indexTask(dbPath, t2);
+
+		// Now enable the pipeline at search time — hybrid mode activates.
+		const dim = 768;
+		const queryVec = new Array(dim).fill(0);
+		queryVec[0] = 0.9;
+		queryVec[1] = 0.1;
+		_setEmbeddingPipeline({
+			embed: async () => queryVec,
+		});
+
+		// Without the fix, this would return NaN scores.
+		// With the fix, it detects NaN and falls back to fulltext.
+		const hits = await searchIndex(dbPath, "worktree");
+		expect(hits.length).toBeGreaterThanOrEqual(1);
+		const h = hits.find((x) => x.taskId === t1.id);
+		expect(h).toBeDefined();
+		// Score MUST be a finite number, not NaN.
+		expect(Number.isFinite(h!.score)).toBe(true);
+		expect(h!.score).toBeGreaterThan(0);
+	});
+
+	test("hybrid search works normally when ALL docs have valid embeddings", async () => {
+		// Ensure the fallback doesn't trigger when embeddings are valid.
+		const dim = 768;
+		const goodVec = new Array(dim).fill(0);
+		goodVec[0] = 0.8;
+		goodVec[1] = 0.2;
+		_setEmbeddingPipeline({
+			embed: async () => goodVec,
+		});
+
+		const t = tracker.addTask("valid embedding task", "has real vectors");
+		await indexTask(dbPath, t);
+
+		const hits = await searchIndex(dbPath, "embedding");
+		expect(hits.length).toBeGreaterThanOrEqual(1);
+		// All scores should be finite.
+		for (const h of hits) {
+			expect(Number.isFinite(h.score)).toBe(true);
+		}
+	});
+
+	test("mixed coverage: some docs have embeddings, some have zero vectors → falls back", async () => {
+		const dim = 768;
+		const realVec = new Array(dim).fill(0);
+		realVec[0] = 0.9;
+		realVec[1] = 0.1;
+
+		// Index first doc WITHOUT embeddings.
+		_setEmbeddingPipeline(null);
+		const noEmbed = tracker.addTask("searchterm alpha without embedding", "no embed");
+		await indexTask(dbPath, noEmbed);
+
+		// Index second doc WITH embeddings.
+		_setEmbeddingPipeline({ embed: async () => realVec });
+		const withEmbed = tracker.addTask("searchterm beta with embedding", "has embed");
+		await indexTask(dbPath, withEmbed);
+
+		// Search with pipeline available — hybrid would produce NaN for alpha.
+		const hits = await searchIndex(dbPath, "searchterm");
+		expect(hits.length).toBeGreaterThanOrEqual(2);
+		// ALL scores must be finite after fallback.
+		for (const h of hits) {
+			expect(Number.isFinite(h.score)).toBe(true);
+			expect(h.score).toBeGreaterThan(0);
+		}
+	});
+
 	// ── Hybrid search (with mock embeddings) ──
 
 	test("hybrid search finds semantically similar results via embeddings", async () => {
