@@ -23,7 +23,7 @@ import {
 	createTreeChange,
 } from "./queue-message-factory.ts";
 import * as R from "./resource-registry.ts";
-import { searchIndex, searchIndexSync } from "./task-index.ts";
+import { searchIndexSync } from "./task-index.ts";
 import {
 	closeTaskOp,
 	createTaskOp,
@@ -173,12 +173,16 @@ function stripEventsForLogs(
 	return result;
 }
 
-// ── Search result formatting (shared by search_tasks + create_task) ──
+// ── Search + format (shared by search_tasks + create_task) ──
 
 /** Hard limits for search result formatting (protect context window). */
 const DESCRIPTION_CHAR_LIMIT = 500;
 const RESULT_CHAR_LIMIT = 300;
 const TOTAL_CHAR_LIMIT = 8000;
+
+/** Default tier sizes. */
+const DEFAULT_FULL_COUNT = 5;
+const DEFAULT_BRIEF_COUNT = 10;
 
 /**
  * Format a FULL search result entry: title, description excerpt, latest
@@ -256,6 +260,46 @@ export function formatTieredHits(
 	}
 
 	return lines.length > (header ? 1 : 0) ? lines.join("\n") : "";
+}
+
+/**
+ * Search the project index and return a tiered formatted string.
+ *
+ * Uses sync BM25 search (searchIndexSync) — the in-memory DB is pre-loaded
+ * by reconcileIndex at startup. Returns "" if the index isn't ready or the
+ * query is empty.
+ *
+ * @param dbPath    Path to the Orama index file.
+ * @param query     Search query string.
+ * @param tracker   Live tracker for fresh node data + dead-hit filtering.
+ * @param opts.fullCount   Top N hits with full info (default 5).
+ * @param opts.briefCount  Next N hits with brief info (default 10).
+ * @param opts.excludeId   Task id to exclude from results (e.g. self).
+ * @param opts.header      Optional header line prepended to the output.
+ */
+export function searchTasks(
+	dbPath: string,
+	query: string,
+	tracker: TaskTracker,
+	opts?: {
+		fullCount?: number;
+		briefCount?: number;
+		excludeId?: string;
+		header?: string;
+	},
+): string {
+	const fullCount = opts?.fullCount ?? DEFAULT_FULL_COUNT;
+	const briefCount = opts?.briefCount ?? DEFAULT_BRIEF_COUNT;
+	const trimmed = query.trim();
+	if (!trimmed) return "";
+
+	const hits = searchIndexSync(dbPath, trimmed, fullCount + briefCount)
+		.filter((h) => {
+			if (opts?.excludeId && h.taskId === opts.excludeId) return false;
+			return !!tracker.getTask(h.taskId);
+		});
+
+	return formatTieredHits(hits, tracker, fullCount, opts?.header);
 }
 
 // ── All tool definitions ──
@@ -433,23 +477,10 @@ export function buildAllToolDefs() {
 				const { dataDir, dataRoot } = R.getDataPaths();
 				const dbPath = projectIndexDbPath(dataDir, projectId, dataRoot);
 				const limit = (args.limit as number | undefined) ?? 20;
-				let hits: Awaited<ReturnType<typeof searchIndex>>;
-				try {
-					hits = await searchIndex(dbPath, args.query as string, limit);
-				} catch (e) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Search failed: ${e instanceof Error ? e.message : String(e)}`,
-							},
-						],
-						isError: true,
-					};
-				}
-				// Drop hits whose task was deleted since indexing.
-				const liveHits = hits.filter((h) => tracker.getTask(h.taskId));
-				const formatted = formatTieredHits(liveHits, tracker, Math.min(5, liveHits.length));
+				const formatted = searchTasks(dbPath, args.query as string, tracker, {
+					fullCount: Math.min(5, limit),
+					briefCount: Math.max(0, limit - 5),
+				});
 				return {
 					content: [
 						{
@@ -546,19 +577,12 @@ export function buildAllToolDefs() {
 						const query = [args.title, args.description]
 							.filter(Boolean)
 							.join(" ");
-						if (query.trim()) {
-							const hits = searchIndexSync(dbPath, query, 7).filter(
-								(h) => h.taskId !== node.id,
-							);
-							if (hits.length > 0) {
-								relatedBlock = formatTieredHits(
-									hits,
-									tracker,
-									2,
-									"\n\n[Related existing tasks]",
-								);
-							}
-						}
+						relatedBlock = searchTasks(dbPath, query, tracker, {
+							fullCount: 2,
+							briefCount: 3,
+							excludeId: node.id,
+							header: "\n\n[Related existing tasks]",
+						});
 					} catch {
 						// Index not ready or search failed — silently skip.
 					}
