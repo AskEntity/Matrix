@@ -2390,7 +2390,7 @@ h6.mxd-md-h {
 .mxd-user-ts-col {
 	display: flex;
 	flex-direction: column;
-	align-items: center;
+	align-items: flex-start;
 	flex-shrink: 0;
 }
 .mxd-user-msg-actions-row {
