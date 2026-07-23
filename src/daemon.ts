@@ -860,6 +860,11 @@ export async function createDaemon(opts: {
 		return new Promise((resolve, reject) => {
 			const worker = new Worker(
 				new URL("./runtime/scope-worker.ts", import.meta.url).href,
+				// Bun Workers do NOT inherit process.env by default — they start
+				// with the OS process environment snapshot. Explicitly forward
+				// process.env so runtime env vars (e.g. MXD_DISABLE_EMBEDDINGS
+				// for preventing NAPI crashes in test workers) propagate.
+				{ env: process.env as Record<string, string> },
 			);
 
 			const scopeWorker: ScopeWorker = {

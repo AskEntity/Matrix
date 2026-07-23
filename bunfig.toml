@@ -5,3 +5,11 @@
 # file can register happy-dom — otherwise the whole web suite's fate depends
 # on bun's filesystem-dependent file order. See src/test-utils/preload.ts.
 preload = ["./src/test-utils/preload.ts"]
+
+[test.env]
+# Prevent @huggingface/transformers (→ onnxruntime-node NAPI module) from
+# loading inside worker threads. Without this, worker teardown in daemon
+# tests triggers a fatal NAPI crash (SIGTRAP / exit 133) that kills the
+# entire bun test process. Must be set at the OS process level (not via
+# process.env assignment) so Bun Workers inherit it.
+MXD_DISABLE_EMBEDDINGS = "1"
