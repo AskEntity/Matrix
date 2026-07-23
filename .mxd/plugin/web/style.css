@@ -2407,6 +2407,11 @@ h6.mxd-md-h {
 	padding: 0;
 	cursor: pointer;
 	line-height: 1;
+	width: 16px;
+	height: 16px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	opacity: 0;
 	transition: opacity 0.15s, color 0.15s;
 }
