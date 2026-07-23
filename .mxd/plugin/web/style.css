@@ -2390,14 +2390,14 @@ h6.mxd-md-h {
 .mxd-user-ts-col {
 	display: flex;
 	flex-direction: column;
-	align-items: flex-start;
+	align-items: center;
 	flex-shrink: 0;
 }
 .mxd-user-msg-actions-row {
 	display: flex;
 	flex-direction: row;
 	gap: 4px;
-	padding-left: 6px;
+	justify-content: center;
 }
 .mxd-user-msg-action {
 	background: none;
