@@ -111,6 +111,7 @@ export const LogEntryView = memo(function LogEntryView({
 	onProjectNavigate,
 	showCacheBadges,
 	onRollback,
+	onEdit,
 }: {
 	entry: LogEntry;
 	nodeMap: Map<string, TreeNode>;
@@ -121,6 +122,8 @@ export const LogEntryView = memo(function LogEntryView({
 	showCacheBadges?: boolean;
 	/** Called when user clicks the rollback button on a user message. */
 	onRollback?: (eid: string) => void;
+	/** Called when user clicks the edit button on a user message. */
+	onEdit?: (eid: string, content: string) => void;
 }) {
 	const authFetch = useAuthFetch();
 	const [movingToBg, setMovingToBg] = useState(false);
@@ -688,6 +691,27 @@ export const LogEntryView = memo(function LogEntryView({
 				<div className="mxd-lmxd-entry mxd-event-user_message">
 					<div className="mxd-user-ts-col">
 						<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
+						{onEdit && eid && (
+							<button
+								type="button"
+								className="mxd-user-msg-action"
+								title={t("activity.editButton")}
+								onClick={() =>
+									onEdit(
+										eid,
+										String(
+											(
+												entry.body as {
+													content?: string;
+												}
+											).content ?? "",
+										),
+									)
+								}
+							>
+								✏️
+							</button>
+						)}
 						{onRollback && eid && (
 							<button
 								type="button"

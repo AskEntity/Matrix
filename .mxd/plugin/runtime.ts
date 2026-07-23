@@ -212,4 +212,119 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 
 		return c.json({ ok: true });
 	});
+
+	// ── Edit endpoint ──
+	// Edit a user message: roll back to just before it, then send new content.
+	// Combines rollback + message delivery in one atomic operation.
+	app.post("/projects/:id/tasks/:nodeId/edit", async (c) => {
+		const projectId = c.req.param("id");
+		const nodeId = c.req.param("nodeId");
+		const body = await c.req
+			.json<{
+				eid: string;
+				content: string;
+				images?: Array<{ base64: string; mediaType: string }>;
+			}>()
+			.catch(() => null);
+
+		if (!body?.eid || !body?.content?.trim()) {
+			return c.json(
+				{ error: "eid and non-empty content are required" },
+				400,
+			);
+		}
+
+		const project = ctx.pm.get(projectId);
+		if (!project) return c.json({ error: "Project not found" }, 404);
+
+		const tracker = ctx.trackers.get(projectId);
+		if (!tracker) return c.json({ error: "Tracker not found" }, 404);
+
+		const node = tracker.getTask(nodeId);
+		if (!node || !isTask(node)) {
+			return c.json({ error: "Task not found" }, 404);
+		}
+
+		const { getEventStore } = await import(
+			"../../src/runtime/helpers.ts"
+		);
+		const eventStore = getEventStore(ctx, projectId);
+		if (!eventStore.has(nodeId)) {
+			return c.json({ error: "No session data" }, 400);
+		}
+
+		// Read all events and validate the target
+		const allEvents = eventStore.read(nodeId);
+		const targetEvent = allEvents.find((e) => e.eid === body.eid);
+		if (!targetEvent) {
+			return c.json({ error: "eid not found" }, 400);
+		}
+		// Must be a user message
+		if (
+			targetEvent.type !== "message" ||
+			targetEvent.body?.source !== "user"
+		) {
+			return c.json(
+				{ error: "eid must point to a user message" },
+				400,
+			);
+		}
+		// Must be after the last compact_marker
+		const lastCompactIdx = allEvents.findLastIndex(
+			(e) => e.type === "compact_marker",
+		);
+		const targetIdx = allEvents.indexOf(targetEvent);
+		if (lastCompactIdx >= 0 && targetIdx <= lastCompactIdx) {
+			return c.json(
+				{ error: "Cannot edit a message before compact boundary" },
+				400,
+			);
+		}
+		// The edited message's parentEid is the rollback target — the chain
+		// will include everything up to (and including) that event, effectively
+		// removing the edited message and everything after it.
+		const rollbackTargetEid = targetEvent.parentEid;
+		if (rollbackTargetEid == null) {
+			return c.json(
+				{ error: "Cannot edit the first event in the session" },
+				400,
+			);
+		}
+
+		// Stop the running agent (if any) and wait for loop exit
+		const { stopTask } = await import(
+			"../../src/runtime/agent-lifecycle.ts"
+		);
+		if (node.session) {
+			await stopTask(ctx, projectId, nodeId);
+		} else {
+			const loopPromise = ctx.agentLoopPromises.get(nodeId);
+			if (loopPromise) await loopPromise;
+		}
+
+		// Flush pending writes before appending the marker
+		await eventStore.flushSession(nodeId);
+
+		// Append rollback_marker — parentEid jumps to before the edited message
+		await eventStore.appendRollback(
+			nodeId,
+			rollbackTargetEid,
+			nodeId,
+		);
+		await eventStore.flushSession(nodeId);
+
+		// Send the edited content as a new user message
+		const { deliverMessage } = await import(
+			"../../src/runtime/agent-lifecycle.ts"
+		);
+		const { createUserMessage } = await import(
+			"../../src/queue-message-factory.ts"
+		);
+		const msg = createUserMessage(body.content.trim(), {
+			images: body.images,
+		});
+		await deliverMessage(ctx, project, nodeId, msg);
+
+		return c.json({ ok: true });
+	});
 }

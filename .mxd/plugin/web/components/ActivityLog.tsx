@@ -51,6 +51,7 @@ export const ActivityLog = memo(function ActivityLog({
 	showCacheBadges,
 	onQuoteText,
 	onRollback,
+	onEdit,
 }: {
 	entries: LogEntry[];
 	filterTaskId: string | null;
@@ -77,6 +78,8 @@ export const ActivityLog = memo(function ActivityLog({
 	onQuoteText?: (text: string) => void;
 	/** Rollback handler: called with the eid of a user message to roll back to. */
 	onRollback?: (eid: string) => void;
+	/** Edit handler: called with the eid + content of a user message to edit. */
+	onEdit?: (eid: string, content: string) => void;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 
@@ -433,6 +436,7 @@ export const ActivityLog = memo(function ActivityLog({
 							onProjectNavigate={onProjectNavigate}
 							showCacheBadges={showCacheBadges}
 							onRollback={onRollback}
+							onEdit={onEdit}
 						/>
 					),
 				)}

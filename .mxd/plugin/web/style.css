@@ -3153,6 +3153,34 @@ button.mxd-tool-card-header:hover {
 	}
 }
 
+/* Edit indicator — shown above the textarea when editing a message */
+.mxd-edit-indicator {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 4px 8px;
+	font-size: 12px;
+	color: var(--accent);
+	background: rgba(56, 139, 253, 0.06);
+	border-radius: 4px;
+	border: 1px solid rgba(56, 139, 253, 0.15);
+}
+.mxd-edit-cancel {
+	margin-left: auto;
+	background: none;
+	border: none;
+	color: var(--text-faint);
+	font-size: 11px;
+	cursor: pointer;
+	padding: 2px 6px;
+	border-radius: 3px;
+}
+.mxd-edit-cancel:hover {
+	color: var(--text-primary);
+	background: var(--bg-tertiary);
+}
+
 /* Image preview thumbnails */
 .mxd-image-previews {
 	display: flex;

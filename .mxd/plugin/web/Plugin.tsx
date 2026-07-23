@@ -573,6 +573,23 @@ function ProjectContent({
 	const handleQuoteText = useCallback((text: string) => {
 		setQuoteRequest((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
 	}, []);
+	// Edit message: fill InputBar with the original message content for editing.
+	// The eid is passed through so the submit handler can call the edit API.
+	const [editRequest, setEditRequest] = useState<{
+		text: string;
+		eid: string;
+		seq: number;
+	} | null>(null);
+	const handleEdit = useCallback((eid: string, content: string) => {
+		setEditRequest((prev) => ({
+			text: content,
+			eid,
+			seq: (prev?.seq ?? 0) + 1,
+		}));
+	}, []);
+	const handleCancelEdit = useCallback(() => {
+		setEditRequest(null);
+	}, []);
 	// Page-wide image drop: an image dropped ANYWHERE on the page is routed
 	// into the composer's existing attachment state as a one-shot request
 	// (seq bump per drop), mirroring the quoteRequest hop. The window handler
@@ -1260,6 +1277,63 @@ function ProjectContent({
 		],
 	);
 
+	// Edit message handler: calls the edit API (rollback + resend atomically),
+	// then re-fetches events. Wraps handleSend — when editRequest is active,
+	// the submit goes through the edit API; otherwise normal send.
+	const handleSendOrEdit = useCallback(
+		async (
+			message: string,
+			images?: { base64: string; mediaType: string }[],
+		) => {
+			if (editRequest && selectedTaskId && projectId) {
+				try {
+					const resp = await authFetch(
+						api.taskEdit(projectId, selectedTaskId),
+						{
+							method: "POST",
+							body: JSON.stringify({
+								eid: editRequest.eid,
+								content: message,
+								images,
+							}),
+						},
+					);
+					setEditRequest(null);
+					if (!resp.ok) {
+						const err = await resp.json().catch(() => ({}));
+						console.warn("[edit] failed:", err);
+						return;
+					}
+					// Re-fetch events — the edited chain replaces the old log
+					const evtResp = await authFetch(
+						api.taskEvents(
+							projectId,
+							selectedTaskId,
+							"after=compact",
+						),
+					);
+					const data = await evtResp.json().catch(() => ({}));
+					if (data.events) {
+						processEventResponse(data);
+					}
+				} catch (e) {
+					console.warn("[edit] error:", e);
+					setEditRequest(null);
+				}
+			} else {
+				handleSend(message, images);
+			}
+		},
+		[
+			editRequest,
+			selectedTaskId,
+			projectId,
+			authFetch,
+			processEventResponse,
+			handleSend,
+		],
+	);
+
 	// ── Stabilized callbacks for memoized child components ───────────────────
 	//
 	// No manual project-switch reset needed: shell passes
@@ -1836,6 +1910,7 @@ function ProjectContent({
 								showCacheBadges={showCacheBadges}
 								onQuoteText={handleQuoteText}
 								onRollback={handleRollback}
+								onEdit={handleEdit}
 							/>
 						</div>
 					) : isOrchestratorNode ? (
@@ -1878,11 +1953,13 @@ function ProjectContent({
 				pendingMessages={pendingMessages}
 				pendingClarifications={pendingClarifications}
 				clarifyAnswers={clarifyAnswers}
-				onSend={handleSend}
+				onSend={handleSendOrEdit}
 				onClarifySubmit={handleClarifySubmit}
 				onClarifyAnswerChange={handleClarifyAnswerChange}
 				quoteRequest={quoteRequest}
 				imageDropRequest={imageDropRequest}
+				editRequest={editRequest}
+				onCancelEdit={handleCancelEdit}
 			/>
 
 			{isDraggingFile && (
