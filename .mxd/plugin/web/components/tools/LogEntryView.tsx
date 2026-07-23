@@ -733,6 +733,19 @@ export const LogEntryView = memo(function LogEntryView({
 								↺
 							</button>
 						)}
+						<button
+							type="button"
+							className="mxd-user-msg-action"
+							title="Copy"
+							onClick={() => {
+								const text = String(
+									(entry.body as { content?: string }).content ?? "",
+								);
+								navigator.clipboard?.writeText(text);
+							}}
+						>
+							⎘
+						</button>
 					</div>
 					<div className="mxd-user-prompt-bubble">
 						<span className="mxd-user-prompt-text">{entry.body.content}</span>

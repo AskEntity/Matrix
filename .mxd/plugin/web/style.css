@@ -2386,11 +2386,12 @@ h6.mxd-md-h {
 	cursor: pointer;
 }
 
-/* Timestamp + rollback icon column (below timestamp, hover-reveal) */
+/* Timestamp + action icons row (horizontal, hover-reveal) */
 .mxd-user-ts-col {
 	display: flex;
-	flex-direction: column;
+	flex-direction: row;
 	align-items: center;
+	gap: 6px;
 	flex-shrink: 0;
 }
 .mxd-user-msg-action {
