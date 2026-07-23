@@ -2397,7 +2397,7 @@ h6.mxd-md-h {
 .mxd-user-msg-actions-row {
 	display: inline-flex;
 	flex-direction: row;
-	gap: 2px;
+	gap: 6px;
 }
 .mxd-user-msg-action {
 	background: none;
