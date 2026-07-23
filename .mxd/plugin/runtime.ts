@@ -125,9 +125,13 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 			}>()
 			.catch(() => null);
 
-		if (!body?.eid || !body?.content?.trim()) {
+		if (
+			!body?.eid ||
+			(!body?.content?.trim() &&
+				(!body?.images || body.images.length === 0))
+		) {
 			return c.json(
-				{ error: "eid and non-empty content are required" },
+				{ error: "eid and content or images required" },
 				400,
 			);
 		}
@@ -218,7 +222,7 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 		const { createUserMessage } = await import(
 			"../../src/queue-message-factory.ts"
 		);
-		const msg = createUserMessage(body.content.trim(), {
+		const msg = createUserMessage((body.content ?? "").trim(), {
 			images: body.images,
 		});
 		await deliverMessage(ctx, project, nodeId, msg);

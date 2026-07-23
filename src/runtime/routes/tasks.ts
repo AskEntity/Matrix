@@ -628,8 +628,8 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 			images?: QueueImage[];
 		}>();
 		const content = body.content ?? body.message;
-		if (!content) {
-			return c.json({ error: "content is required" }, 400);
+		if (!content?.trim() && (!body.images || body.images.length === 0)) {
+			return c.json({ error: "content or images required" }, 400);
 		}
 
 		const tracker = await getTracker(ctx, project.id);
@@ -663,7 +663,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		const statusBeforeDelivery = resolved.status;
 
 		// No header needed — work_context is injected by enqueue hook on fresh sessions.
-		const msg = createUserMessage(content, { images: body.images });
+		const msg = createUserMessage(content ?? "", { images: body.images });
 
 		// Single delivery path: JSONL persistence + queue delivery + auto-launch.
 		// Scope opts looked up from ctx.scopeOpts by deliverMessage.
@@ -676,7 +676,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 				project,
 				nodeId,
 				resolved.title ?? nodeId,
-				content,
+				content ?? "[image]",
 				statusBeforeDelivery,
 			);
 		}

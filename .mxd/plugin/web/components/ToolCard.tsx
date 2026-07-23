@@ -28,6 +28,7 @@ import {
 	formatArgs,
 	getArg,
 	getToolTitle,
+	isDefaultCollapsed,
 	isTitleOnly,
 	summarizeToolResult,
 } from "./tools/utils.ts";
@@ -128,7 +129,9 @@ export const ToolCard = memo(function ToolCard({
 	const titleOnly = isTitleOnly(toolName, toolArgs);
 	const totalContent = argsStr + (resultContent ?? "");
 	const [defaultExpanded] = useState(() =>
-		titleOnly ? false : totalContent.length <= 200,
+		titleOnly || isDefaultCollapsed(toolName)
+			? false
+			: totalContent.length <= 200,
 	);
 
 	const taskLabel = null;

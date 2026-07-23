@@ -4704,3 +4704,33 @@ Hybrid mode fusion score inherits NaN → all hits return `score: NaN`.
 **Fix** (`src/task-index.ts`): `searchIndex` checks
 `results.hits.some(h => !Number.isFinite(h.score))` after hybrid search. If ANY hit
 has NaN/Infinity, redo the entire search as pure BM25 fulltext. 3 regression tests.
+
+
+## Pure image send + read-only tool collapse + timestamp alignment + edit SVG icon (2026-07-23)
+
+Four fixes in one commit:
+
+### Bug 1 — Pure image messages blocked
+REST `/message` route (tasks.ts) and `/edit` route (plugin/runtime.ts) both rejected
+requests with empty `content` even when `images` were present. Fixed both guards to
+`!content?.trim() && (!images || images.length === 0)`. `createUserMessage` gets
+`content ?? ""` fallback (it requires `string`, not `undefined`). `notifyParentChain`
+gets `"[image]"` fallback for pure-image messages.
+
+### Bug 2 — Read-only tool cards default collapsed
+Added `TOOL_SEARCH_TASKS` to `tool-names.ts`. New `isDefaultCollapsed(toolName)` in
+`event-display.ts` returns true for `get_tree`, `get_task`, `search_tasks`,
+`list_projects`. `ToolCard.tsx` uses it alongside `titleOnly` to force
+`defaultExpanded=false`. These tools still have expandable bodies (unlike `isTitleOnly`
+which removes the body entirely) — users can click to see results.
+
+### Bug 3 — Timestamp vertical alignment
+`mxd-user-ts-col` had `align-items: center` with no fixed width. The action buttons row
+(3×16px + 2×6px = 60px) was wider than the timestamp `min-width: 58px`, causing the
+timestamp to center-shift rightward. Fixed: `width: 58px` + `align-items: flex-start`.
+Action button gap reduced 6px→4px to fit within 58px (3×16px + 2×4px = 56px).
+
+### Bug 4 — Edit button SVG icon
+Replaced `✎` unicode char with `<IconEdit size={12}/>` SVG pencil icon in LogEntryView
+user message action buttons. `IconEdit` added to `icons.tsx` (Lucide-style pencil path).
+

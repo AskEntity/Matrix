@@ -34,6 +34,7 @@ import {
 	TOOL_REPORT_TO_PARENT,
 	TOOL_RESET_TASK,
 	TOOL_SEARCH,
+	TOOL_SEARCH_TASKS,
 	TOOL_SEND_MESSAGE,
 	TOOL_SEND_MESSAGE_TO_CHILD,
 	TOOL_SEND_MESSAGE_TO_PROJECT,
@@ -409,6 +410,19 @@ export function isTitleOnly(
 			const msg = getArg(toolArgs, "message");
 			return !msg;
 		}
+		default:
+			return false;
+	}
+}
+
+/** Read-only tools that should default to collapsed in the UI (user can still expand). */
+export function isDefaultCollapsed(toolName: string): boolean {
+	switch (toolName) {
+		case TOOL_GET_TREE:
+		case TOOL_GET_TASK:
+		case TOOL_SEARCH_TASKS:
+		case TOOL_LIST_PROJECTS:
+			return true;
 		default:
 			return false;
 	}

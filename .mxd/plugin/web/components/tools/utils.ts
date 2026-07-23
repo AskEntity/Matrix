@@ -7,6 +7,7 @@ export {
 	formatToolArgs,
 	getArg,
 	getToolTitle,
+	isDefaultCollapsed,
 	isTitleOnly,
 	summarizeToolResult,
 } from "../../event-display.ts";
