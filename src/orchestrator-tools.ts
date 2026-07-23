@@ -23,7 +23,7 @@ import {
 	createTreeChange,
 } from "./queue-message-factory.ts";
 import * as R from "./resource-registry.ts";
-import { searchIndex } from "./task-index.ts";
+import { searchIndex, searchIndexSync } from "./task-index.ts";
 import {
 	closeTaskOp,
 	createTaskOp,
@@ -38,10 +38,12 @@ import { checkPermission } from "./tool-auth.ts";
 import { defineTool, toToolDefinition } from "./tool-def.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
+import type { TaskTracker } from "./task-tracker.ts";
 import {
 	type GeneralNode,
 	isTask,
 	stripSession,
+	type TaskNode,
 	type TaskStatus,
 	type TreeNode,
 } from "./types.ts";
@@ -169,6 +171,91 @@ function stripEventsForLogs(
 		result.push(processed);
 	}
 	return result;
+}
+
+// ── Search result formatting (shared by search_tasks + create_task) ──
+
+/** Hard limits for search result formatting (protect context window). */
+const DESCRIPTION_CHAR_LIMIT = 500;
+const RESULT_CHAR_LIMIT = 300;
+const TOTAL_CHAR_LIMIT = 8000;
+
+/**
+ * Format a FULL search result entry: title, description excerpt, latest
+ * result round excerpt, taskId, status, matched field + snippet, score.
+ */
+function formatFullHit(
+	hit: { taskId: string; field: string; roundIndex?: number; snippet: string; score: number },
+	task: TaskNode,
+): string {
+	const status = task.status ?? "unknown";
+	const desc = task.description
+		? `\n   Description: "${task.description.slice(0, DESCRIPTION_CHAR_LIMIT)}"`
+		: "";
+	const lastRound = task.resultRounds?.length
+		? task.resultRounds[task.resultRounds.length - 1]
+		: undefined;
+	const result = lastRound?.result
+		? `\n   Latest result: "${lastRound.result.slice(0, RESULT_CHAR_LIMIT)}"`
+		: "";
+	const fieldLabel =
+		hit.field === "result" && hit.roundIndex !== undefined
+			? `result round ${hit.roundIndex}`
+			: hit.field;
+	const matchedField = `\n   Matched: ${fieldLabel} — "${hit.snippet.slice(0, 200)}"`;
+	return `- "${task.title}" (${hit.taskId}, ${status})${desc}${result}${matchedField}\n   Score: ${hit.score.toFixed(2)}`;
+}
+
+/**
+ * Format a BRIEF search result entry: title, taskId, status, score.
+ */
+function formatBriefHit(
+	hit: { taskId: string; score: number },
+	task: TaskNode,
+): string {
+	const status = task.status ?? "unknown";
+	return `- "${task.title}" (${hit.taskId}, ${status}) — score: ${hit.score.toFixed(2)}`;
+}
+
+/**
+ * Build a tiered text block from search hits. Stops appending once the total
+ * character budget (TOTAL_CHAR_LIMIT) is exhausted.
+ *
+ * @param hits       Ranked search hits (best first).
+ * @param tracker    Live tracker for fresh node data.
+ * @param fullCount  How many of the top hits get the FULL treatment.
+ * @param header     Optional header line (e.g. "[Related existing tasks]").
+ * @returns Formatted text, or "" if no hits resolve to live tasks.
+ */
+export function formatTieredHits(
+	hits: Array<{ taskId: string; field: string; roundIndex?: number; snippet: string; score: number }>,
+	tracker: TaskTracker,
+	fullCount: number,
+	header?: string,
+): string {
+	const lines: string[] = [];
+	let totalChars = 0;
+
+	if (header) {
+		lines.push(header);
+		totalChars += header.length + 1;
+	}
+
+	for (let i = 0; i < hits.length; i++) {
+		const hit = hits[i]!;
+		const task = tracker.getTask(hit.taskId);
+		if (!task) continue;
+
+		const line = i < fullCount
+			? formatFullHit(hit, task)
+			: formatBriefHit(hit, task);
+
+		if (totalChars + line.length + 1 > TOTAL_CHAR_LIMIT) break;
+		lines.push(line);
+		totalChars += line.length + 1;
+	}
+
+	return lines.length > (header ? 1 : 0) ? lines.join("\n") : "";
 }
 
 // ── All tool definitions ──
@@ -360,31 +447,14 @@ export function buildAllToolDefs() {
 						isError: true,
 					};
 				}
-				// Enrich each hit with the task's CURRENT title (fresh from the
-				// tree) and drop hits whose task was deleted since indexing.
-				const results = hits.flatMap((h) => {
-					const task = tracker.getTask(h.taskId);
-					if (!task) return [];
-					return [
-						{
-							taskId: h.taskId,
-							title: task.title,
-							field: h.field,
-							...(h.roundIndex !== undefined ? { round: h.roundIndex } : {}),
-							snippet: h.snippet,
-							score: h.score,
-						},
-					];
-				});
+				// Drop hits whose task was deleted since indexing.
+				const liveHits = hits.filter((h) => tracker.getTask(h.taskId));
+				const formatted = formatTieredHits(liveHits, tracker, Math.min(5, liveHits.length));
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(
-								{ query: args.query, count: results.length, results },
-								null,
-								2,
-							),
+							text: formatted || `No results for "${args.query}".`,
 						},
 					],
 				};
@@ -439,7 +509,8 @@ export function buildAllToolDefs() {
 			},
 			handler: async (args) => {
 				try {
-					const tracker = R.getTracker(args.projectId as string);
+					const projectId = args.projectId as string;
+					const tracker = R.getTracker(projectId);
 					if (!tracker)
 						return {
 							content: [{ type: "text", text: "Project not found" }],
@@ -458,18 +529,45 @@ export function buildAllToolDefs() {
 						},
 						"agent",
 						{
-							broadcastTree: () => R.broadcastTree(args.projectId as string),
+							broadcastTree: () => R.broadcastTree(projectId),
 							projectPath: getProjectPath(
-								args.projectId as string,
+								projectId,
 								args.parentId,
 							),
 						},
 					);
+					const nodeJson = JSON.stringify(stripSession(node), null, 2);
+
+					// Best-effort: search for related existing tasks.
+					let relatedBlock = "";
+					try {
+						const { dataDir, dataRoot } = R.getDataPaths();
+						const dbPath = projectIndexDbPath(dataDir, projectId, dataRoot);
+						const query = [args.title, args.description]
+							.filter(Boolean)
+							.join(" ");
+						if (query.trim()) {
+							const hits = searchIndexSync(dbPath, query, 7).filter(
+								(h) => h.taskId !== node.id,
+							);
+							if (hits.length > 0) {
+								relatedBlock = formatTieredHits(
+									hits,
+									tracker,
+									2,
+									"\n\n[Related existing tasks]",
+								);
+							}
+						}
+					} catch {
+						// Index not ready or search failed — silently skip.
+					}
+
 					return {
 						content: [
 							{
 								type: "text",
-								text: JSON.stringify(stripSession(node), null, 2),
+								text: nodeJson + relatedBlock,
 							},
 						],
 					};
