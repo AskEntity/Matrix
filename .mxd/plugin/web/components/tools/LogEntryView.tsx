@@ -691,61 +691,63 @@ export const LogEntryView = memo(function LogEntryView({
 				<div className="mxd-lmxd-entry mxd-event-user_message">
 					<div className="mxd-user-ts-col">
 						<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
-						{onEdit && eid && (
+						<div className="mxd-user-msg-actions-row">
+							{onEdit && eid && (
+								<button
+									type="button"
+									className="mxd-user-msg-action"
+									title={t("activity.editButton")}
+									onClick={() =>
+										onEdit(
+											eid,
+											String(
+												(
+													entry.body as {
+														content?: string;
+													}
+												).content ?? "",
+											),
+										)
+									}
+								>
+									✎
+								</button>
+							)}
+							{onRollback && eid && (
+								<button
+									type="button"
+									className="mxd-user-msg-action"
+									title={t("activity.rollback")}
+									onClick={() =>
+										onRollback(
+											eid,
+											String(
+												(
+													entry.body as {
+														content?: string;
+													}
+												).content ?? "",
+											),
+										)
+									}
+								>
+									↺
+								</button>
+							)}
 							<button
 								type="button"
 								className="mxd-user-msg-action"
-								title={t("activity.editButton")}
-								onClick={() =>
-									onEdit(
-										eid,
-										String(
-											(
-												entry.body as {
-													content?: string;
-												}
-											).content ?? "",
-										),
-									)
-								}
+								title="Copy"
+								onClick={() => {
+									const text = String(
+										(entry.body as { content?: string }).content ?? "",
+									);
+									navigator.clipboard?.writeText(text);
+								}}
 							>
-								✎
+								⧉
 							</button>
-						)}
-						{onRollback && eid && (
-							<button
-								type="button"
-								className="mxd-user-msg-action"
-								title={t("activity.rollback")}
-								onClick={() =>
-									onRollback(
-										eid,
-										String(
-											(
-												entry.body as {
-													content?: string;
-												}
-											).content ?? "",
-										),
-									)
-								}
-							>
-								↺
-							</button>
-						)}
-						<button
-							type="button"
-							className="mxd-user-msg-action"
-							title="Copy"
-							onClick={() => {
-								const text = String(
-									(entry.body as { content?: string }).content ?? "",
-								);
-								navigator.clipboard?.writeText(text);
-							}}
-						>
-							⧉
-						</button>
+						</div>
 					</div>
 					<div className="mxd-user-prompt-bubble">
 						<span className="mxd-user-prompt-text">{entry.body.content}</span>

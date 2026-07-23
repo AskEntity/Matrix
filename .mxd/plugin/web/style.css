@@ -2386,13 +2386,17 @@ h6.mxd-md-h {
 	cursor: pointer;
 }
 
-/* Timestamp + action icons row (horizontal, hover-reveal) */
+/* Timestamp column: time on top, action icons row below (hover-reveal) */
 .mxd-user-ts-col {
 	display: flex;
-	flex-direction: row;
+	flex-direction: column;
 	align-items: center;
-	gap: 6px;
 	flex-shrink: 0;
+}
+.mxd-user-msg-actions-row {
+	display: flex;
+	flex-direction: row;
+	gap: 4px;
 }
 .mxd-user-msg-action {
 	background: none;
