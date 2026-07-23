@@ -40,11 +40,37 @@ TARGET="$BUN_CACHE/lib"
 
 # Already correct symlink?
 if [ -L "$TARGET" ] && [ "$(readlink "$TARGET")" = "$VERSIONED_DIR" ]; then
-  exit 0
+  : # skip
+else
+  # Create or update the symlink
+  mkdir -p "$BUN_CACHE"
+  rm -f "$TARGET"
+  ln -sf "$VERSIONED_DIR" "$TARGET"
+  echo "[fix-sharp-libvips] linked $TARGET → $VERSIONED_DIR"
 fi
 
-# Create or update the symlink
-mkdir -p "$BUN_CACHE"
-rm -f "$TARGET"
-ln -sf "$VERSIONED_DIR" "$TARGET"
-echo "[fix-sharp-libvips] linked $TARGET → $VERSIONED_DIR"
+# Fix 2: nested node_modules path (worker threads load sharp from here).
+# @huggingface/transformers → sharp → @img/sharp-darwin-arm64 expects
+# @img/sharp-libvips-<platform> as a sibling, but it's not installed there.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+NESTED="$PROJECT_ROOT/node_modules/@huggingface/transformers/node_modules/sharp/node_modules/@img/$PKG"
+
+if [ -d "$PROJECT_ROOT/node_modules/@huggingface/transformers/node_modules/sharp/node_modules/@img" ]; then
+  # Find a source libvips lib dir (prefer top-level node_modules)
+  SOURCE_LIB=""
+  for candidate in \
+    "$PROJECT_ROOT/node_modules/@img/$PKG/lib" \
+    "$PROJECT_ROOT/node_modules/sharp/node_modules/@img/$PKG/lib"; do
+    if [ -d "$candidate" ]; then
+      SOURCE_LIB="$candidate"
+      break
+    fi
+  done
+
+  if [ -n "$SOURCE_LIB" ] && [ ! -e "$NESTED/lib" ]; then
+    mkdir -p "$NESTED"
+    ln -sf "$SOURCE_LIB" "$NESTED/lib"
+    echo "[fix-sharp-libvips] linked nested $NESTED/lib → $SOURCE_LIB"
+  fi
+fi
