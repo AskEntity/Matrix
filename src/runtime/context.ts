@@ -83,7 +83,7 @@ export interface ScopeOpts<T extends PluginTypes = PluginTypes> {
 		node: T["node"],
 		projectPath: string,
 		projectId: string,
-	) => string | null;
+	) => string | null | Promise<string | null>;
 	/** Compaction: build the summarization instruction. */
 	buildSummarizationPrompt: (
 		node: T["node"],

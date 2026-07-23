@@ -24,7 +24,7 @@ import {
 	indexTask,
 	reconcileIndex,
 	type SearchHit,
-	searchIndexSync,
+	searchIndex,
 } from "../../src/task-index.ts";
 import { slugify } from "../../src/task-utils.ts";
 import { toToolDefinition } from "../../src/tool-def.ts";
@@ -146,11 +146,11 @@ export function buildMatrixScopeOpts(
 			const wm = new WorktreeManager(projectPath, wtRoot);
 			await wm.removeByPath(node.worktreePath, node.branch);
 		},
-		buildWorkContext: (node, projectPath, projId) => {
+		buildWorkContext: async (node, projectPath, projId) => {
 			const base = buildWorkContextContent(
 				node.cwd ?? node.worktreePath ?? projectPath,
 			);
-			// Inject related past tasks from the search index (sync, cached DB).
+			// Inject related past tasks from the search index (async hybrid search).
 			// Uses the task's title + description as the search query.
 			if (ctx) {
 				try {
@@ -163,7 +163,7 @@ export function buildMatrixScopeOpts(
 						.filter(Boolean)
 						.join(" ");
 					if (query.trim()) {
-						const hits = searchIndexSync(dbPath, query, 5).filter(
+						const hits = (await searchIndex(dbPath, query, 5)).filter(
 							(h) => h.taskId !== node.id,
 						);
 						const tracker = ctx.trackers.get(projId);

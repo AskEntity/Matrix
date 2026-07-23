@@ -475,8 +475,8 @@ export async function searchIndex(
  * Synchronous BM25-only search using the ALREADY-CACHED in-memory DB.
  * Returns [] if the DB hasn't been loaded yet (no blocking I/O).
  *
- * Intended for the work_context injection path, which must be sync (the
- * ScopeOpts.buildWorkContext hook is sync). The DB is pre-loaded into
+ * Intended for callers that need synchronous search (e.g. create_task
+ * auto-search in orchestrator-tools). The DB is pre-loaded into
  * `dbCache` by `reconcileIndex` at startup — so by the time any agent
  * launches, the cache is warm.
  *

@@ -1271,7 +1271,7 @@ export async function* runProviderLoop(
 					if (queue) {
 						queue.resetBeforeFirstMessage();
 						const resumeMsg = createCompactedResume(compactResult.checkpoint);
-						queue.enqueue(resumeMsg);
+						await queue.enqueue(resumeMsg);
 					}
 					// Drain the just-enqueued messages and build the user message
 					// through the unified adapter path — same walker callbacks used

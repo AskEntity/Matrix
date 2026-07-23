@@ -909,14 +909,14 @@ export async function runAgentForNode(
 				(e.body as { source: string }).source === "work_context",
 		);
 		if (!hasWorkContext) {
-			const content = opts.buildWorkContext(node, project.path, project.id);
+			const content = await opts.buildWorkContext(node, project.path, project.id);
 			if (content) {
 				childQueue.enqueue(createWorkContext(content));
 			}
 		}
 		// Set hook for future compact re-arm (resetBeforeFirstMessage in compact flow)
-		childQueue.setBeforeFirstMessage(() => {
-			const content = opts.buildWorkContext(node, project.path, project.id);
+		childQueue.setBeforeFirstMessage(async () => {
+			const content = await opts.buildWorkContext(node, project.path, project.id);
 			if (!content) return [];
 			return [createWorkContext(content)];
 		});
