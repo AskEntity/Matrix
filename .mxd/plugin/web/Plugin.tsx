@@ -952,27 +952,29 @@ function ProjectContent({
 		[processEventBatch],
 	);
 
-	// Rollback handler: calls the rollback API, then re-fetches events.
-	// Declared after processEventResponse — it sits in the dep array, which is
-	// evaluated during render, so an earlier declaration would hit the TDZ.
+	// Rewind handler: unified with Edit — rollback to before the message, then
+	// resend the ORIGINAL content unchanged. Both Rewind and Edit use the same
+	// /edit endpoint; Rewind just doesn't modify the content.
 	const handleRollback = useCallback(
-		async (eid: string) => {
+		async (eid: string, content: string) => {
 			if (!selectedTaskId || !projectId) return;
 			const confirmed = window.confirm(t("activity.rollbackConfirm"));
 			if (!confirmed) return;
 			try {
 				const resp = await authFetch(
-					api.taskRollback(projectId, selectedTaskId),
-					{ method: "POST", body: JSON.stringify({ targetEid: eid }) },
+					api.taskEdit(projectId, selectedTaskId),
+					{
+						method: "POST",
+						body: JSON.stringify({ eid, content }),
+					},
 				);
 				if (!resp.ok) {
 					const err = await resp.json().catch(() => ({}));
-					console.warn("[rollback] failed:", err);
+					console.warn("[rewind] failed:", err);
 					return;
 				}
-				// Re-fetch events from the active chain — rolled-back messages
-				// are excluded by the backend's chain-walk. processEventBatch
-				// does RESET + rebuild, so the old log entries are replaced.
+				// Re-fetch events — the rolled-back region is excluded by
+				// the chain-walk; the resent message appears as a new event.
 				const evtResp = await authFetch(
 					api.taskEvents(projectId, selectedTaskId, "after=compact"),
 				);
@@ -981,7 +983,7 @@ function ProjectContent({
 					processEventResponse(data);
 				}
 			} catch (e) {
-				console.warn("[rollback] error:", e);
+				console.warn("[rewind] error:", e);
 			}
 		},
 		[selectedTaskId, projectId, authFetch, t, processEventResponse],

@@ -120,9 +120,9 @@ export const LogEntryView = memo(function LogEntryView({
 	onTaskNavigate?: (taskId: string, entryId?: string) => void;
 	onProjectNavigate?: (projectId: string) => void;
 	showCacheBadges?: boolean;
-	/** Called when user clicks the rollback button on a user message. */
-	onRollback?: (eid: string) => void;
-	/** Called when user clicks the edit button on a user message. */
+	/** Called when user clicks the rewind button on a user message (resend same content). */
+	onRollback?: (eid: string, content: string) => void;
+	/** Called when user clicks the edit button on a user message (fill InputBar for modification). */
 	onEdit?: (eid: string, content: string) => void;
 }) {
 	const authFetch = useAuthFetch();
@@ -717,7 +717,18 @@ export const LogEntryView = memo(function LogEntryView({
 								type="button"
 								className="mxd-user-msg-action"
 								title={t("activity.rollback")}
-								onClick={() => onRollback(eid)}
+								onClick={() =>
+									onRollback(
+										eid,
+										String(
+											(
+												entry.body as {
+													content?: string;
+												}
+											).content ?? "",
+										),
+									)
+								}
 							>
 								↻
 							</button>
