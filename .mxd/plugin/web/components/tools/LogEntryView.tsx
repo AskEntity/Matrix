@@ -16,6 +16,7 @@ import {
 	TOOL_YIELD,
 } from "../../tool-names.ts";
 import { Card } from "../Card.tsx";
+import { IconEdit } from "../icons.tsx";
 import { ImageLightbox } from "../ImageLightbox.tsx";
 import { MarkdownText } from "../MarkdownText.tsx";
 import { ToolResultImages } from "./ToolResultImages.tsx";
@@ -711,7 +712,7 @@ export const LogEntryView = memo(function LogEntryView({
 										)
 									}
 								>
-									✎
+									<IconEdit size={12} />
 								</button>
 							)}
 							{onRollback && eid && (

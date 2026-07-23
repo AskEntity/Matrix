@@ -2386,18 +2386,20 @@ h6.mxd-md-h {
 	cursor: pointer;
 }
 
-/* Timestamp column: time on top, action icons row below (hover-reveal) */
+/* Timestamp column: time on top, action icons row below (hover-reveal).
+   Fixed width matches .mxd-lmxd-time min-width so timestamps align vertically
+   with all other entry types. */
 .mxd-user-ts-col {
 	display: flex;
 	flex-direction: column;
-	align-items: center;
+	align-items: flex-start;
 	flex-shrink: 0;
-	text-align: center;
+	width: 58px;
 }
 .mxd-user-msg-actions-row {
 	display: inline-flex;
 	flex-direction: row;
-	gap: 6px;
+	gap: 4px;
 }
 .mxd-user-msg-action {
 	background: none;
