@@ -127,6 +127,7 @@ export const LogEntryView = memo(function LogEntryView({
 }) {
 	const authFetch = useAuthFetch();
 	const [movingToBg, setMovingToBg] = useState(false);
+	const [copied, setCopied] = useState(false);
 	const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 	const taskLabel = null;
 
@@ -743,9 +744,11 @@ export const LogEntryView = memo(function LogEntryView({
 										(entry.body as { content?: string }).content ?? "",
 									);
 									navigator.clipboard?.writeText(text);
+									setCopied(true);
+									setTimeout(() => setCopied(false), 3000);
 								}}
 							>
-								⧉
+								{copied ? "✓" : "⧉"}
 							</button>
 						</div>
 					</div>
