@@ -4681,3 +4681,15 @@ as SSE reconnect and rollback. JSONL events carry eid/parentEid → buttons appe
 Implementation: `onAgentIdle` callback on `EventHandlerDeps`, triggered from the
 `agent_idle` case in `processEvent` when `msg.taskId === getViewedSessionId()`.
 Plugin.tsx wires it via `refetchOnIdleRef` (breaks the useMemo/useCallback dep cycle).
+
+## search_tasks NaN-score fallback (2026-07-23)
+
+**Score NaN root cause**: Documents indexed without a valid embedding pipeline get
+`ZERO_EMBEDDING` (768 zeros). Cosine similarity on a zero vector = `0/0 = NaN`.
+When the embedding pipeline later becomes available, `searchIndex` switches to hybrid
+mode, cosine NaN contaminates the Orama fusion score, ALL hits return `score: NaN`.
+
+**Fix** (`src/task-index.ts`): `searchIndex` checks
+`results.hits.some(h => !Number.isFinite(h.score))` after hybrid search. If ANY hit
+has NaN/Infinity, redo the entire search as pure BM25 fulltext. 3 regression tests
+(zero-vector-only, valid-only no-false-trigger, mixed coverage).
