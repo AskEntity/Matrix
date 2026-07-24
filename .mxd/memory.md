@@ -4855,3 +4855,73 @@ buttons appear.
 **Journey-test gotcha**: after a rollback re-fetch the log entries REMOUNT (fresh
 `createLogEntry` ids → new React keys → new DOM nodes), so any button captured
 before the rebuild is detached. Re-query it.
+
+## typecheck gate restored — every one of the 24 errors was a cast/hack, not a real type problem (2026-07-24)
+
+`bun run typecheck` had accumulated 24 errors over several rounds because worktree
+`core.hooksPath` is `/dev/null` (sub-task commits skip the hook) and root merged with
+`--no-verify`. Cleared them; the FULL `bash .hooks/pre-commit` (typecheck + check:ci +
+check-i18n.sh + the fast test subset) now exits 0, so main can commit without
+`--no-verify` again. `bun test` 2650 pass / 0 fail (unchanged baseline).
+
+**The headline: zero `as unknown as` were added. All 24 fixes DELETED a cast or a
+hack** — every error was a workaround for a type the code already had correctly.
+
+### The four patterns (each a reusable diagnosis)
+
+**1. `(node as Record<string, unknown>).status = …` in test fixtures (17 errors,
+`search-format.test.ts`)** — `TaskNode.status` / `.resultRounds` are ordinary typed,
+writable fields; `addChild` returns a real `TaskNode`. The cast was never needed for
+ANY reason. Replaced with the tracker's public API (`tracker.updateStatus(id, status)`,
+`tracker.appendResultRound(id, {result})`), which also stops the test from doing the
+external-mutation-of-tracker-managed-nodes thing draft 01KNWKZVHP flags.
+**Diagnosis rule: a `Record<string, unknown>` cast on a domain object in a TEST is
+almost always a fixture-seeding shortcut, not a type problem. Look for the setter.**
+
+**2. `(db as Record<string, unknown>).tokenizer = …` (`task-index.ts`)** — Orama's
+`AnyOrama` includes `Internals` which declares `tokenizer: Tokenizer`, and
+`@orama/tokenizers/mandarin`'s `createTokenizer()` returns a `DefaultTokenizer`
+(assignable). `db.tokenizer = createTokenizer()` typechecks directly. TS2352 fires
+because `AnyOrama` has no index signature — that error means "this isn't a bag of
+unknowns", i.e. **the type is more precise than the cast assumed. Read the .d.ts
+before laundering through `unknown`.**
+
+**3. `.filter(Boolean)` does NOT narrow in TypeScript** (`.mxd/plugin/runtime.ts`
+search endpoint) — `map(… | null).filter(Boolean)` still has type `(T | null)[]`, so
+every later `hit.x` is "possibly null". Fixed with `flatMap` (`return []` to drop,
+`return [value]` to keep), which infers the narrowed element type with no predicate
+and no `!`. A `(x): x is NonNullable<typeof x> =>` predicate also works; flatMap reads
+better. **Never "fix" this class with `!` — the compiler is right that filter(Boolean)
+told it nothing.**
+
+**4. Reading a variant-only field off the `Event` union** (`event-id.test.ts`) —
+`id` lives on `MessageEvent`, not on `Event`. Narrow on the `type` discriminant
+(`expect(stored?.type).toBe("message"); if (stored?.type !== "message") throw …`),
+which makes the test STRONGER (it now also asserts the event round-trips as a message
+event). Note `Event` is `(A|B|…) & {traceId?; eid?; parentEid?}` and TS still narrows
+the union through that intersection fine.
+
+### Process notes
+- **The `noUnusedLocals` cases were real** (`child2`, the `searchIndexSync` import) —
+  delete outright; `_` prefix does NOT satisfy `noUnusedLocals` for locals/imports
+  (only for function params), as noted in Known Pitfalls.
+- **Mutation-verified the one production behavior change**: reverting the flatMap
+  drop-branch to emit a ghost entry fails `src/search-endpoint.test.ts` "excludes
+  deleted tasks" — so that branch is genuinely guarded, the refactor didn't hollow it.
+- **`check:ci` exits 0 with ~158 warnings** (noNonNullAssertion / noExplicitAny).
+  Warnings never fail the gate; only format/lint ERRORS do. Don't "fix" the warning
+  count in a gate-restoration pass — biome's suggested `!` → `?.` autofix is marked
+  *unsafe* and silently changes assertion semantics in tests.
+
+### Why this kept happening (the actual root cause)
+The gate is only enforced on root's `main` commits, and root was passing
+`--no-verify`. A gate you routinely bypass is not a gate — that is exactly how 24
+errors, each individually 2 minutes of work, piled up across ~6 merges. If a merge
+genuinely can't pass the hook, the fix is a task, not a flag.
+
+**Orphan found while clearing this** (drafted as 01KYB46KTM, NOT fixed here):
+`searchIndexSync` in `task-index.ts` now has zero production callers — 01KY7TQXPP
+explicitly kept it for the then-sync `buildWorkContext`, then 01KY83C8BV made that
+hook async and switched it to `searchIndex`, and nobody reclaimed the sync variant.
+Only its own 6 tests use it. Deleting a public export is a separate, separately
+revertable decision from restoring a gate — so it was drafted, not silently swept in.

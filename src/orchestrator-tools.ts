@@ -23,7 +23,7 @@ import {
 	createTreeChange,
 } from "./queue-message-factory.ts";
 import * as R from "./resource-registry.ts";
-import { searchIndex, searchIndexSync } from "./task-index.ts";
+import { searchIndex } from "./task-index.ts";
 import {
 	closeTaskOp,
 	createTaskOp,

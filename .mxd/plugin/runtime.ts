@@ -85,13 +85,13 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 			// pulling in the full getTracker which has scope-opts dependencies.
 			const tracker = ctx.trackers.get(projectId);
 			if (!tracker) return c.json([]);
-			const enriched = hits
-				.map((hit) => {
-					const task = tracker.getTask(hit.taskId);
-					if (!task) return null; // Deleted since indexing
-					return { ...hit, title: task.title };
-				})
-				.filter(Boolean);
+			// flatMap (not map + filter(Boolean)) so the "deleted since indexing"
+			// drop narrows the element type — filter(Boolean) leaves `| null` in.
+			const enriched = hits.flatMap((hit) => {
+				const task = tracker.getTask(hit.taskId);
+				if (!task) return []; // Deleted since indexing
+				return [{ ...hit, title: task.title }];
+			});
 
 			// Deduplicate by taskId — same task may hit on title + description +
 			// result rounds. Keep only the highest-scoring hit per task.

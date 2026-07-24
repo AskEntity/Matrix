@@ -35,10 +35,10 @@ describe("formatTieredHits", () => {
 			"Fix session recovery",
 			"Implemented the frobnicator cache via a ring buffer",
 		);
-		(child as Record<string, unknown>).status = "closed";
-		(child as Record<string, unknown>).resultRounds = [
-			{ result: "Fixed cache invalidation bug by switching to LRU eviction" },
-		];
+		tracker.updateStatus(child.id, "closed");
+		tracker.appendResultRound(child.id, {
+			result: "Fixed cache invalidation bug by switching to LRU eviction",
+		});
 
 		const hits = [
 			{
@@ -66,10 +66,10 @@ describe("formatTieredHits", () => {
 			"Debug JSONL repair",
 			"investigated JSONL corruption scenarios in detail",
 		);
-		(child as Record<string, unknown>).status = "closed";
-		(child as Record<string, unknown>).resultRounds = [
-			{ result: "Fixed the repair logic for compacted sessions" },
-		];
+		tracker.updateStatus(child.id, "closed");
+		tracker.appendResultRound(child.id, {
+			result: "Fixed the repair logic for compacted sessions",
+		});
 
 		const hits = [
 			{
@@ -97,13 +97,13 @@ describe("formatTieredHits", () => {
 			"Alpha task",
 			"alpha description",
 		);
-		(task1 as Record<string, unknown>).status = "verify";
+		tracker.updateStatus(task1.id, "verify");
 		const task2 = tracker.addChild(
 			tracker.rootNodeId,
 			"Beta task",
 			"beta description",
 		);
-		(task2 as Record<string, unknown>).status = "closed";
+		tracker.updateStatus(task2.id, "closed");
 
 		const hits = [
 			{ taskId: task1.id, field: "title", snippet: "Alpha task", score: 0.9 },
@@ -121,7 +121,7 @@ describe("formatTieredHits", () => {
 
 	test("header is prepended when provided", () => {
 		const task = tracker.addChild(tracker.rootNodeId, "Some task", "desc");
-		(task as Record<string, unknown>).status = "closed";
+		tracker.updateStatus(task.id, "closed");
 
 		const hits = [
 			{ taskId: task.id, field: "title", snippet: "Some task", score: 0.7 },
@@ -157,7 +157,7 @@ describe("formatTieredHits", () => {
 			"Long desc task",
 			longDesc,
 		);
-		(task as Record<string, unknown>).status = "closed";
+		tracker.updateStatus(task.id, "closed");
 
 		const hits = [
 			{
@@ -181,10 +181,8 @@ describe("formatTieredHits", () => {
 			"Long result task",
 			"short desc",
 		);
-		(task as Record<string, unknown>).status = "closed";
-		(task as Record<string, unknown>).resultRounds = [
-			{ result: "y".repeat(600) },
-		];
+		tracker.updateStatus(task.id, "closed");
+		tracker.appendResultRound(task.id, { result: "y".repeat(600) });
 
 		const hits = [
 			{
@@ -210,10 +208,8 @@ describe("formatTieredHits", () => {
 				`Task number ${i}`,
 				"d".repeat(400),
 			);
-			(t as Record<string, unknown>).status = "closed";
-			(t as Record<string, unknown>).resultRounds = [
-				{ result: "r".repeat(250) },
-			];
+			tracker.updateStatus(t.id, "closed");
+			tracker.appendResultRound(t.id, { result: "r".repeat(250) });
 			tasks.push(t);
 		}
 
@@ -239,11 +235,9 @@ describe("formatTieredHits", () => {
 			"Multi-round task",
 			"desc",
 		);
-		(task as Record<string, unknown>).status = "closed";
-		(task as Record<string, unknown>).resultRounds = [
-			{ result: "old round result" },
-			{ result: "latest round result" },
-		];
+		tracker.updateStatus(task.id, "closed");
+		tracker.appendResultRound(task.id, { result: "old round result" });
+		tracker.appendResultRound(task.id, { result: "latest round result" });
 
 		const hits = [
 			{
@@ -283,13 +277,13 @@ describe("searchTasks", () => {
 			"Auth token rotation",
 			"rotate JWT tokens",
 		);
-		(task1 as Record<string, unknown>).status = "closed";
+		tracker.updateStatus(task1.id, "closed");
 		const task2 = tracker.addChild(
 			tracker.rootNodeId,
 			"Auth session fix",
 			"fix session bugs",
 		);
-		(task2 as Record<string, unknown>).status = "verify";
+		tracker.updateStatus(task2.id, "verify");
 		await tracker.save();
 
 		const dbPath = join(tempDir, "index.msp");
@@ -328,7 +322,7 @@ describe("searchTasks", () => {
 			"Auth session recovery",
 			"fix the auth session timeout",
 		);
-		(task as Record<string, unknown>).status = "closed";
+		tracker.updateStatus(task.id, "closed");
 		await tracker.save();
 
 		const dbPath = join(tempDir, "index.msp");

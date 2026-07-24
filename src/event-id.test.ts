@@ -308,13 +308,18 @@ describe("JSONL event eid + parentEid", () => {
 			ts: Date.now(),
 		};
 		await store.append("s1", msgEvent);
-		const events = store.read("s1");
+		const stored = store.read("s1")[0];
+
+		// Round-trips as a MessageEvent (narrow on the discriminant — `id` is a
+		// MessageEvent field, not an Event-wide one).
+		expect(stored?.type).toBe("message");
+		if (stored?.type !== "message") throw new Error("expected a message event");
 
 		// MessageEvent.id (ULID) is preserved
-		expect(events[0]!.id).toBe("msg-ulid-123");
+		expect(stored.id).toBe("msg-ulid-123");
 		// Event.eid (12-char hex) is added separately
-		expect(events[0]!.eid).toMatch(EID_PATTERN);
-		expect(events[0]!.eid).not.toBe("msg-ulid-123");
+		expect(stored.eid).toMatch(EID_PATTERN);
+		expect(stored.eid).not.toBe("msg-ulid-123");
 	});
 
 	// ── empty appendBatch is a no-op ──
