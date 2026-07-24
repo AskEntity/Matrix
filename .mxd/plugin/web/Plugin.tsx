@@ -34,6 +34,7 @@ import {
 } from "./components/icons.tsx";
 // LoginPage removed — auth handled by daemon shell
 import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
+import { RollbackConfirmDialog } from "./components/RollbackConfirmDialog.tsx";
 // SettingsPanel moved to daemon shell (web/components/SettingsPanel.tsx)
 import { statusDotClass } from "./components/StatusBadge.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
@@ -65,6 +66,7 @@ import {
 	useTasks,
 } from "./hooks.ts";
 import { LocaleProvider, useLocale } from "./i18n.ts";
+import { analyzeRollbackImpact } from "./rollback-impact.ts";
 import { useSidebarSearch } from "./search.ts";
 import { applyTheme, themes } from "./themes.ts";
 
@@ -575,12 +577,13 @@ function ProjectContent({
 	}, []);
 	// Edit message: fill InputBar with the original message content for editing.
 	// The eid is passed through so the submit handler can call the edit API.
+	// Entered only after the rollback confirm dialog (handleConfirmAccept).
 	const [editRequest, setEditRequest] = useState<{
 		text: string;
 		eid: string;
 		seq: number;
 	} | null>(null);
-	const handleEdit = useCallback((eid: string, content: string) => {
+	const startEdit = useCallback((eid: string, content: string) => {
 		setEditRequest((prev) => ({
 			text: content,
 			eid,
@@ -590,6 +593,20 @@ function ProjectContent({
 	const handleCancelEdit = useCallback(() => {
 		setEditRequest(null);
 	}, []);
+	// Clicking the composer's "editing" indicator brings the message being
+	// edited back into view (it can be far up the log). data-eid is stamped on
+	// the user-message entry by LogEntryView.
+	const handleScrollToEditing = useCallback(() => {
+		const eid = editRequest?.eid;
+		if (!eid) return;
+		const el = document.querySelector(`[data-eid="${CSS.escape(eid)}"]`);
+		if (!el) return;
+		// Instant, not smooth: a smooth animation races with follow-mode
+		// scrolling and loses (observed live — the log snapped back to the
+		// bottom mid-animation). Drop follow first, then jump.
+		setAutoScroll(false);
+		el.scrollIntoView({ block: "center" });
+	}, [editRequest?.eid]);
 	// Page-wide image drop: an image dropped ANYWHERE on the page is routed
 	// into the composer's existing attachment state as a one-shot request
 	// (seq bump per drop), mirroring the quoteRequest hop. The window handler
@@ -603,12 +620,16 @@ function ProjectContent({
 		setImageDropRequest((prev) => ({ files, seq: (prev?.seq ?? 0) + 1 }));
 	}, []);
 	const isDraggingFile = useWindowFileDrop(handleImageFiles);
-	// Scroll-to-bottom button: jump the activity log to "now" and resume
-	// follow mode. Optimistically hides the button; ActivityLog's scroll
-	// reporting confirms (and would re-show it if scrolling ever failed).
-	const handleScrollLogToBottom = useCallback(() => {
-		const logEl = document.querySelector<HTMLElement>(".mxd-activity-log");
-		if (logEl) logEl.scrollTop = logEl.scrollHeight;
+	// "Jump to now": one mechanism for every caller (the ↓ button, the
+	// post-rollback re-fetch). The counter is applied by ActivityLog in a
+	// layout effect, so a request issued in the same batch as a wholesale
+	// logs replacement lands AFTER the new entries are committed — which is
+	// exactly the case a rollback creates. Follow mode resumes; logAtBottom
+	// is set optimistically (ActivityLog's scroll reporting corrects it if
+	// the scroll ever failed).
+	const [scrollBottomRequest, setScrollBottomRequest] = useState(0);
+	const requestScrollLogToBottom = useCallback(() => {
+		setScrollBottomRequest((n) => n + 1);
 		setAutoScroll(true);
 		setLogAtBottom(true);
 	}, []);
@@ -970,22 +991,18 @@ function ProjectContent({
 			);
 	};
 
-	// Rewind handler: unified with Edit — rollback to before the message, then
-	// resend the ORIGINAL content unchanged. Both Rewind and Edit use the same
-	// /edit endpoint; Rewind just doesn't modify the content.
-	const handleRollback = useCallback(
+	// Rewind: rollback to before the message, then resend the ORIGINAL content
+	// unchanged. Both Rewind and Edit use the same /edit endpoint; Rewind just
+	// doesn't modify the content. Runs only after the confirm dialog, which
+	// spells out what the rollback does NOT undo (see rollback-impact.ts).
+	const performRollback = useCallback(
 		async (eid: string, content: string) => {
 			if (!selectedTaskId || !projectId) return;
-			const confirmed = window.confirm(t("activity.rollbackConfirm"));
-			if (!confirmed) return;
 			try {
-				const resp = await authFetch(
-					api.taskEdit(projectId, selectedTaskId),
-					{
-						method: "POST",
-						body: JSON.stringify({ eid, content }),
-					},
-				);
+				const resp = await authFetch(api.taskEdit(projectId, selectedTaskId), {
+					method: "POST",
+					body: JSON.stringify({ eid, content }),
+				});
 				if (!resp.ok) {
 					const err = await resp.json().catch(() => ({}));
 					console.warn("[rewind] failed:", err);
@@ -1000,11 +1017,54 @@ function ProjectContent({
 				if (data.events) {
 					processEventResponse(data);
 				}
+				// The whole logs array was just replaced (and is shorter), so
+				// the old scroll offset means nothing. Land on the newest
+				// state and resume follow — the agent regenerates from here.
+				requestScrollLogToBottom();
 			} catch (e) {
 				console.warn("[rewind] error:", e);
 			}
 		},
-		[selectedTaskId, projectId, authFetch, t, processEventResponse],
+		[
+			selectedTaskId,
+			projectId,
+			authFetch,
+			processEventResponse,
+			requestScrollLogToBottom,
+		],
+	);
+
+	// Rewind / Edit both roll the conversation back, so both go through one
+	// confirm dialog that reports the side effects living in the rolled-back
+	// range. `kind` decides what happens on accept: Rewind fires immediately;
+	// Edit loads the message into the composer (the /edit POST happens on
+	// submit, from handleSendOrEdit).
+	const [confirmRequest, setConfirmRequest] = useState<{
+		kind: "rewind" | "edit";
+		eid: string;
+		content: string;
+	} | null>(null);
+	const handleRollback = useCallback((eid: string, content: string) => {
+		setConfirmRequest({ kind: "rewind", eid, content });
+	}, []);
+	const handleEditRequest = useCallback((eid: string, content: string) => {
+		setConfirmRequest({ kind: "edit", eid, content });
+	}, []);
+	const handleConfirmCancel = useCallback(() => setConfirmRequest(null), []);
+	const handleConfirmAccept = useCallback(() => {
+		const req = confirmRequest;
+		setConfirmRequest(null);
+		if (!req) return;
+		if (req.kind === "rewind") {
+			void performRollback(req.eid, req.content);
+		} else {
+			startEdit(req.eid, req.content);
+		}
+	}, [confirmRequest, performRollback, startEdit]);
+	const rollbackImpact = useMemo(
+		() =>
+			confirmRequest ? analyzeRollbackImpact(logs, confirmRequest.eid) : null,
+		[confirmRequest, logs],
 	);
 
 	// Re-fetch full event history on SSE reconnect.
@@ -1326,16 +1386,15 @@ function ProjectContent({
 					}
 					// Re-fetch events — the edited chain replaces the old log
 					const evtResp = await authFetch(
-						api.taskEvents(
-							projectId,
-							selectedTaskId,
-							"after=compact",
-						),
+						api.taskEvents(projectId, selectedTaskId, "after=compact"),
 					);
 					const data = await evtResp.json().catch(() => ({}));
 					if (data.events) {
 						processEventResponse(data);
 					}
+					// Same as Rewind: the logs array was replaced wholesale, so
+					// re-assert "show me now" instead of trusting a stale offset.
+					requestScrollLogToBottom();
 				} catch (e) {
 					console.warn("[edit] error:", e);
 					setEditRequest(null);
@@ -1351,6 +1410,7 @@ function ProjectContent({
 			authFetch,
 			processEventResponse,
 			handleSend,
+			requestScrollLogToBottom,
 		],
 	);
 
@@ -1831,7 +1891,7 @@ function ProjectContent({
 								<button
 									type="button"
 									className="mxd-scroll-bottom-btn"
-									onClick={handleScrollLogToBottom}
+									onClick={requestScrollLogToBottom}
 									title={t("activity.scrollToBottom")}
 								>
 									<IconArrowDown size={11} />
@@ -1930,7 +1990,9 @@ function ProjectContent({
 								showCacheBadges={showCacheBadges}
 								onQuoteText={handleQuoteText}
 								onRollback={handleRollback}
-								onEdit={handleEdit}
+								onEdit={handleEditRequest}
+								editingEid={editRequest?.eid ?? null}
+								scrollToBottomRequest={scrollBottomRequest}
 							/>
 						</div>
 					) : isOrchestratorNode ? (
@@ -1980,6 +2042,7 @@ function ProjectContent({
 				imageDropRequest={imageDropRequest}
 				editRequest={editRequest}
 				onCancelEdit={handleCancelEdit}
+				onScrollToEditing={handleScrollToEditing}
 			/>
 
 			{isDraggingFile && (
@@ -1989,6 +2052,15 @@ function ProjectContent({
 						<span>{t("footer.dropImage")}</span>
 					</div>
 				</div>
+			)}
+
+			{confirmRequest && rollbackImpact && (
+				<RollbackConfirmDialog
+					kind={confirmRequest.kind}
+					impact={rollbackImpact}
+					onConfirm={handleConfirmAccept}
+					onCancel={handleConfirmCancel}
+				/>
 			)}
 
 			{themes[theme]?.hasCat && <CuteCat />}

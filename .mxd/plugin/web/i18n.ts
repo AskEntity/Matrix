@@ -256,6 +256,7 @@ const en: Translations = {
 		'Clear session for "{title}"? The task will start fresh next time.',
 	"confirm.deleteTask": 'Delete task "{title}"?',
 	"confirm.removeProject": 'Remove project "{name}"?',
+	"confirm.cancel": "Cancel",
 
 	// Compact boundary
 	"compact.notVisible": "↑ Content above is not visible to the agent",
@@ -266,8 +267,23 @@ const en: Translations = {
 	// Rollback
 	"activity.rollback": "Rewind to here",
 	"activity.rewindButton": "Rewind",
-	"activity.rollbackConfirm":
-		"Roll back to this message? Messages after this point will be hidden and the agent will regenerate from here.",
+	"rollback.rewindTitle": "Rewind to this message?",
+	"rollback.editTitle": "Edit this message?",
+	"rollback.rewindMessage":
+		"The conversation rewinds to just before this message and re-sends it. Everything after it leaves the agent's context.",
+	"rollback.editMessage":
+		"The conversation rewinds to just before this message and sends your edited version. Everything after it leaves the agent's context.",
+	"rollback.rewindConfirm": "Rewind",
+	"rollback.editConfirm": "Edit",
+	"rollback.warningsTitle": "This does NOT undo:",
+	"rollback.warnFiles": "File changes — edits and commands stay on disk",
+	"rollback.warnTasks": "Task tree changes — created/updated tasks stay",
+	"rollback.warnMessages": "Messages already sent to other agents",
+	"rollback.warnOther": "Effects of other tools that ran here",
+	"rollback.toolsRan": "Tools called after this point: {tools}",
+	"rollback.noSideEffects":
+		"Nothing outside the conversation changes — no side-effecting tools ran here.",
+	"activity.scrollToEditing": "Jump to the message being edited",
 
 	// Edit message
 	"activity.editButton": "Edit",
@@ -593,6 +609,7 @@ const zh: Translations = {
 	"confirm.clearTaskSession": '清除 "{title}" 的会话？任务下次将重新开始。',
 	"confirm.deleteTask": '删除任务 "{title}"？',
 	"confirm.removeProject": '移除项目 "{name}"？',
+	"confirm.cancel": "取消",
 
 	// Compact boundary
 	"compact.notVisible": "↑ 以上内容对代理不可见",
@@ -603,8 +620,23 @@ const zh: Translations = {
 	// Rollback
 	"activity.rollback": "回退到这里",
 	"activity.rewindButton": "回滚",
-	"activity.rollbackConfirm":
-		"回退到这条消息？之后的消息将被隐藏，代理将从这里重新生成。",
+	"rollback.rewindTitle": "回退到这条消息？",
+	"rollback.editTitle": "编辑这条消息？",
+	"rollback.rewindMessage":
+		"对话会回退到这条消息之前，然后重新发送它。之后的所有内容都会离开代理的上下文。",
+	"rollback.editMessage":
+		"对话会回退到这条消息之前，然后发送你修改后的版本。之后的所有内容都会离开代理的上下文。",
+	"rollback.rewindConfirm": "回退",
+	"rollback.editConfirm": "编辑",
+	"rollback.warningsTitle": "以下内容不会被回滚：",
+	"rollback.warnFiles": "文件改动 —— 编辑和命令的结果仍留在磁盘上",
+	"rollback.warnTasks": "任务树改动 —— 创建/修改过的任务仍然存在",
+	"rollback.warnMessages": "已经发给其他代理的消息",
+	"rollback.warnOther": "这期间其他工具产生的影响",
+	"rollback.toolsRan": "此后调用过的工具：{tools}",
+	"rollback.noSideEffects":
+		"对话之外没有任何改动 —— 这期间没有调用有副作用的工具。",
+	"activity.scrollToEditing": "跳转到正在编辑的消息",
 
 	// Edit message
 	"activity.editButton": "编辑",

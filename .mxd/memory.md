@@ -4736,3 +4736,122 @@ Action button gap reduced 6px→4px to fit within 58px (3×16px + 2×4px = 56px)
 Replaced `✎` unicode char with `<IconEdit size={12}/>` SVG pencil icon in LogEntryView
 user message action buttons. `IconEdit` added to `icons.tsx` (Lucide-style pencil path).
 
+
+## Rewind/Edit confirm dialog + rollback impact analysis (2026-07-24)
+
+Replaces `window.confirm` on Rewind with an in-app modal that reports **what the
+rollback does NOT undo**, and marks the message being edited in the log.
+
+### `.mxd/plugin/web/rollback-impact.ts` (pure, no DOM/React)
+`analyzeRollbackImpact(entries, targetEid) → { filesModified, tasksModified,
+messagesSent, otherSideEffects, toolNames[] }` + `hasSideEffects(impact)`.
+Scans from the entry carrying `targetEid` (inclusive) to the end of the log,
+counting `tool_call` / `tool_pair` entries, **skipping entries from other tasks**
+(rollback is per-session — a sibling agent's bash must not be reported here).
+Unknown `targetEid` → empty impact (the dialog then claims nothing).
+
+Categories (MCP prefix stripped via `stripMcpPrefix`): FILE = write_file /
+edit_file / bash · TASK = create/update/delete/close/reset_task, reorder_tasks,
+execute_tasks, create/delete/rename_folder, fork_task_context · MESSAGE =
+send_message, send_message_to_project, send_message_to_child, report_to_parent,
+clarify.
+
+**Read-only whitelist is load-bearing, not documentation**: read_file, list_files,
+search, search_tasks, get_tree, get_task, get_logs, list_projects, background,
+yield, done. Anything NOT whitelisted and NOT categorized sets `otherSideEffects`
+→ generic warning. **Unknown tools (external MCP, evaluate_script) are never
+assumed safe** — that's why the whitelist exists instead of "warn only on the
+three known categories".
+
+`toolNames` lists EVERY tool that ran in the range (read-only included, deduped,
+first-call order) — raw truth for the detail line; the dialog collapses >8 to `+N`.
+
+### Components
+- `components/ConfirmDialog.tsx` — generic in-app modal (backdrop + centered card,
+  Escape / backdrop click / Cancel all cancel, card click doesn't, `danger` picks
+  `mxd-btn-stop` vs `mxd-btn-primary`, confirm button autofocused, `children` slot).
+- `components/RollbackConfirmDialog.tsx` — composes it with the impact report.
+  `kind: "rewind" | "edit"` picks wording + danger styling. Warnings render in an
+  amber box; a clean range renders a green "nothing outside the conversation
+  changes" box (+ the tool list if read-only tools ran).
+
+**Other `confirm()` call sites are untouched** (delete task, clear session in
+Plugin.tsx + handlers.ts). ConfirmDialog is ready for them; migrating was out of
+scope.
+
+### Rewind vs Edit — where the dialog sits
+Both are the same backend operation (`POST /edit`). Rewind confirms and fires
+immediately. **Edit confirms at the moment the ✎ button is clicked**, not at
+submit: the warning's value is "before you decide to edit", and intercepting the
+submit would need draft restore on cancel (InputBar clears the prompt on submit).
+Trade-off accepted: the actual POST then happens without a second confirm.
+
+### One "jump to bottom" mechanism
+`ActivityLog` gained `scrollToBottomRequest?: number` — a monotonic counter applied
+in a `useLayoutEffect` (deps `[scrollToBottomRequest, entries, scrollToBottom]`).
+Plugin's `requestScrollLogToBottom()` bumps it + `setAutoScroll(true)` +
+`setLogAtBottom(true)`; both the ↓ button and the post-rollback/edit re-fetch call
+it (the ↓ button previously did its own `document.querySelector(...).scrollTop`).
+
+Why a counter and not just `setAutoScroll(true)`: the follow effect only fires when
+`visible.length` or `autoScroll` CHANGES. Rewinding while already at the bottom
+with an unchanged entry count changes neither → nothing scrolls. That matches the
+user's report that the "jumps to the top" symptom is **intermittent**. The layout
+effect also runs before paint (no flash), unlike the follow effect's rAF.
+
+This is a SIBLING of the "Load earlier history" bottom-relative anchor (01KXP05P),
+not a change to it: same class of bug (wholesale `entries` replacement invalidates
+the scroll offset), opposite intent (land at the bottom vs stay put). The anchor
+effect and the follow effect are untouched.
+
+### Editing highlight
+`editRequest.eid` → ActivityLog `editingEid` → LogEntryView adds
+`mxd-user-msg--editing` (inset accent rail + brighter bubble) and stamps
+`data-eid` on every user-message entry. The composer's "editing" indicator is now
+a button (`mxd-edit-indicator-label`, `IconEdit` SVG replacing the ✏️ emoji) that
+jumps back to that message via `[data-eid=...]`.
+
+**Gotcha — smooth scrollIntoView loses to follow mode.** `scrollIntoView({behavior:
+"smooth"})` on the edited message got snapped back to the bottom mid-animation
+(observed live in the browser, not in tests). Fix: `setAutoScroll(false)` first,
+then an INSTANT `scrollIntoView({block:"center"})`.
+
+### Test-harness gotcha: a seeded task with `status: "pending"` wipes its own log
+`clearSessionState` (event-handler.ts) drops log entries for sessions transitioning
+to `pending`. In happy-dom journey tests the SSE EventSource is a no-op mock so
+this never fires, but in a REAL browser the first `tree_updated` arrives and the
+activity log renders "No events yet" despite the events endpoint returning data.
+Seed live-smoke fixtures with `status: "verify"` (or in_progress) — a task that
+owns a session is never `pending` in reality.
+
+### Live smoke recipe (reusable)
+`/tmp/smoke-rewind/setup.ts` pattern: temp dataDir + `projects.json` + tree.json +
+hand-written JSONL (explicit `eid`/`parentEid` chain so no auto-migration) under
+`projects/<id>/plugin/matrix/`, `createTestToken`, `createDaemon({dataDir})`,
+`Bun.serve({port: 7434, fetch: daemon.fetch})`. Then in the browser:
+`localStorage.setItem("mxd-jwt", token)` + navigate to `/<projectId>/matrix/<rootId>`.
+A user message needs BOTH a `message` event with `id`+`eid` AND a
+`messages_consumed` event to materialize with its eid (the eid rides through
+`pendingReducer` → `materializeFromPending`), which is what makes Edit/Rewind
+buttons appear.
+
+### Tests (36 new, mutation-verified)
+- `web/rollback-impact.test.ts` (15, pure): every category, read-only → no warning,
+  no-tools → clean, unknown tool → otherSideEffects, range/task filtering, dedupe.
+- `web/ConfirmDialog.test.tsx` (12): dismissal contract + warning rendering per
+  impact + rewind/edit wording and button styling.
+- `web/ActivityLog-rollback-scroll.test.tsx` (7): request applies after a shrinking
+  entries replacement, **mutation proof** (no request → offset unchanged), repeat
+  requests, mount doesn't force a scroll, editingEid highlight on/off.
+- `web/Plugin-rewind-journey.test.tsx` (2, real daemon + real Plugin): ↺ → in-app
+  dialog (window.confirm spy proves it's never called) → impact warning → Cancel is
+  a no-op → Confirm POSTs /edit and lands at the bottom with follow resumed; ✎ →
+  edit wording → composer prefilled + log marked + indicator jumps back.
+  The `POST /edit` is the ONE stubbed call (the real endpoint would launch an agent
+  against the fixture repo; backend semantics live in src/rollback.test.ts).
+  Mutation-proofed: dropping `scrollToBottomRequest` fails the follow-mode-rewind
+  step; dropping `editingEid` fails the Edit test.
+
+**Journey-test gotcha**: after a rollback re-fetch the log entries REMOUNT (fresh
+`createLogEntry` ids → new React keys → new DOM nodes), so any button captured
+before the rebuild is detached. Re-query it.
