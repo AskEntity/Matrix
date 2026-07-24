@@ -809,7 +809,8 @@ Root node stores branch at init. `baseBranch` required on worktree create (no fa
 - **Abort signal leak**: After stop, old runAgentForNode settles async. catch/finally check `sessionWasReplaced` to suppress stale error events.
 - **TS6133 `_` prefix**: TypeScript's `noUnusedLocals` does NOT respect `_` prefix for local variables or destructured locals — only for function parameters. For unused destructured React state, use `const [, setX] = useState(...)` (skip the getter slot). For unused `const` locals, delete outright. The underscore-prefix hint in our prompts is a holdover that doesn't match TypeScript's actual behavior.
 - **`bun run check` auto-writes**: `bun run check` runs `biome check --write` and silently formats 70+ files. `bun run check:ci` is the non-write variant used by the pre-commit hook. When debugging lint, use `check:ci`. When committing formatting sweeps, use `check` and split format-only changes into a separate commit.
-- **Pre-commit hook disabled in worktrees**: `config.worktree` sets `core.hooksPath = /dev/null` in every worktree, so `git commit` in a sub-task skips the hook entirely. To verify the hook passes, run `bash /path/to/main/.hooks/pre-commit` manually. Only root-orchestrator commits on `main` are actually gated.
+- **Pre-commit hook: worktrees skip it, main enforces it (since 2026-07-24)**: `worktree-manager.ts` sets `core.hooksPath = /dev/null` per worktree, so `git commit` in a sub-task skips the hook entirely — intentional (sub-tasks commit often; a full typecheck+lint+test on each would be unusable). To verify the hook passes from a worktree, run `bash /path/to/main/.hooks/pre-commit` manually.
+  **CORRECTION of a long-standing false entry**: this note used to claim "only root-orchestrator commits on main are actually gated." That was WRONG — main had NO `core.hooksPath` set, so git looked in `.git/hooks/pre-commit`, which never existed (only `.sample` files). The tracked `.hooks/pre-commit` was orphaned; nothing pointed at it. **Nobody was ever gated, anywhere.** Every `--no-verify` on main was a no-op bypassing a gate that didn't exist. That is how 24 typecheck errors accumulated across several merges undetected. Fixed by running the install command the hook's own header documents: `git config core.hooksPath .hooks`. Verified it now fails on typecheck (exit 2). **This config is local (`.git/config`), NOT tracked — a fresh clone must run it again.** If onboarding friction matters later, move it into `.mxd/hooks/setup_worktree.sh`'s main-repo counterpart or a `postinstall` script.
 
 ## Known Bugs (unfixed)
 
@@ -4856,13 +4857,34 @@ buttons appear.
 `createLogEntry` ids → new React keys → new DOM nodes), so any button captured
 before the rebuild is detached. Re-query it.
 
+### Correction (2026-07-24, same day): `done` is NOT read-only
+
+The first cut of `rollback-impact.ts` whitelisted `done` as read-only, so a range
+that crossed a `done()` rendered the green "nothing outside the conversation
+changes" box — a lie. `done()` has two real, non-rollback-able effects: it flips
+the task's status to verify/failed AND delivers `task_complete` to the task above
+(which may already have woken, reviewed and merged).
+
+`done` now lives in BOTH `TASK_TOOLS` and `MESSAGE_TOOLS`, and the classification
+loop changed from a first-match `else if` chain to **independent membership
+checks** (`isFile` / `isTask` / `isMessage`, then `otherSideEffects` only when
+none matched and the tool isn't whitelisted). The sets are otherwise disjoint, so
+every single-category tool behaves exactly as before — a regression test pins
+that (`bash`/`create_task`/`send_message` each flip exactly one flag).
+
+Re-checked the rest of the whitelist: `yield` is a pure loop pause; `background`
+covers list/status and a kill is a stop, not a rollback-able state change. Both
+stay. Mutation-verified: moving `done` back to the whitelist fails 3 tests;
+restoring the `else if` chain fails 2.
+
 ## typecheck gate restored — every one of the 24 errors was a cast/hack, not a real type problem (2026-07-24)
 
-`bun run typecheck` had accumulated 24 errors over several rounds because worktree
-`core.hooksPath` is `/dev/null` (sub-task commits skip the hook) and root merged with
-`--no-verify`. Cleared them; the FULL `bash .hooks/pre-commit` (typecheck + check:ci +
-check-i18n.sh + the fast test subset) now exits 0, so main can commit without
-`--no-verify` again. `bun test` 2650 pass / 0 fail (unchanged baseline).
+`bun run typecheck` had accumulated 24 errors across ~6 merges, undetected because
+nothing was ever gated (see the `core.hooksPath` correction in Known Pitfalls — the
+hook was never installed on main; every `--no-verify` was a no-op on a hook that did
+not exist). Cleared them; the FULL `bash .hooks/pre-commit` (typecheck + check:ci +
+check-i18n.sh + the fast test subset) now exits 0. `bun test` 2654 pass / 0 fail
+(2650 on my fork point + 4 from main's rollback-impact work, merged in).
 
 **The headline: zero `as unknown as` were added. All 24 fixes DELETED a cast or a
 hack** — every error was a workaround for a type the code already had correctly.
@@ -4913,11 +4935,43 @@ the union through that intersection fine.
   count in a gate-restoration pass — biome's suggested `!` → `?.` autofix is marked
   *unsafe* and silently changes assertion semantics in tests.
 
+### ⚠️ The installed hook still does NOT cover merges — `pre-commit` is not run by `git merge`
+Empirically verified in a throwaway repo (`core.hooksPath` set, hook logs on run):
+**`git merge --no-ff <branch>` that auto-commits does NOT fire `pre-commit`.** Git
+fires `pre-merge-commit` for that path, and `.hooks/` contains ONLY `pre-commit`. So
+after the 2026-07-24 install, what is actually gated is:
+
+| path | hook git looks for | gated today? |
+|---|---|---|
+| root's direct `git commit` on main (memory curation, conflict resolution) | `pre-commit` | ✅ yes |
+| root's `git merge --no-ff <task-branch>`, clean auto-commit | `pre-merge-commit` | ❌ **no — file absent** |
+| a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | ✅ yes (inconsistent with the clean case) |
+| any commit inside a sub-task worktree | — (`hooksPath=/dev/null`) | ❌ no, by design |
+
+Merging is root's dominant path, so the gate as installed covers very little of the
+real workflow — and it fires on the CONFLICTING merge but not the clean one, which is
+backwards from intuition.
+
+**Deliberately NOT fixed by adding a `pre-merge-commit` hook**, because the project's
+documented merge model requires the opposite: "Intermediate merges may not typecheck
+(`--no-verify`). Final state must pass all hooks." Gating every merge would break
+incremental integration of parallel sub-tasks. The available options (root's call):
+(a) leave merges ungated and keep the manual `bash .hooks/pre-commit` discipline
+before declaring an integration finished; (b) add `pre-merge-commit` and accept
+`--no-verify` on intermediate merges — which reintroduces exactly the routine-bypass
+habit that hid these 24 errors; (c) move enforcement off the commit hook entirely
+(CI / a `mxd` preflight subcommand root runs once per integration).
+
 ### Why this kept happening (the actual root cause)
-The gate is only enforced on root's `main` commits, and root was passing
-`--no-verify`. A gate you routinely bypass is not a gate — that is exactly how 24
-errors, each individually 2 minutes of work, piled up across ~6 merges. If a merge
-genuinely can't pass the hook, the fix is a task, not a flag.
+NOT "root bypassed the gate" — there was no gate to bypass (root's own correction in
+Known Pitfalls establishes this). The failure was that a *tracked* `.hooks/pre-commit`
+existed, was referenced in memory as if it were active, and nothing pointed at it. The
+generalizable lesson: **a checked-in hook file is not an enforced hook.** Enforcement
+lives in untracked local config (`.git/config` → `core.hooksPath`), so it silently
+does not survive a fresh clone, and its absence looks identical to compliance — the
+only observable difference is errors quietly accumulating. If you rely on a hook,
+assert it is wired (`git config core.hooksPath`) rather than assuming the file's
+presence means anything.
 
 **Orphan found while clearing this** (drafted as 01KYB46KTM, NOT fixed here):
 `searchIndexSync` in `task-index.ts` now has zero production callers — 01KY7TQXPP

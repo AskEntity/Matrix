@@ -40,7 +40,14 @@ export type RollbackImpact = {
 /** Tools that write to the filesystem / run arbitrary commands. */
 const FILE_TOOLS = new Set(["write_file", "edit_file", "bash"]);
 
-/** Tools that mutate the task tree (nodes, status, worktrees, sessions). */
+/**
+ * Tools that mutate the task tree (nodes, status, worktrees, sessions).
+ *
+ * `done` belongs here AND in MESSAGE_TOOLS: it flips the task's status to
+ * verify/failed and delivers task_complete to the task above. Rolling the
+ * conversation back past a done() undoes neither — the parent may already
+ * have woken up, reviewed, and merged.
+ */
 const TASK_TOOLS = new Set([
 	"create_task",
 	"update_task",
@@ -53,6 +60,7 @@ const TASK_TOOLS = new Set([
 	"delete_folder",
 	"rename_folder",
 	"fork_task_context",
+	"done",
 ]);
 
 /** Tools that deliver something to another agent / the user. */
@@ -62,6 +70,7 @@ const MESSAGE_TOOLS = new Set([
 	"send_message_to_child",
 	"report_to_parent",
 	"clarify",
+	"done",
 ]);
 
 /**
@@ -69,8 +78,9 @@ const MESSAGE_TOOLS = new Set([
  * here and not categorized above sets `otherSideEffects` — unknown tools are
  * assumed to do something, never assumed safe.
  *
- * `background` covers list/status; a kill is a stop, not a state change we
- * could roll back either way.
+ * `yield` is a pure loop pause. `background` covers list/status; a kill is a
+ * stop, not a state change we could roll back either way. `done` is NOT here
+ * — see TASK_TOOLS.
  */
 const READ_ONLY_TOOLS = new Set([
 	"read_file",
@@ -83,7 +93,6 @@ const READ_ONLY_TOOLS = new Set([
 	"list_projects",
 	"background",
 	"yield",
-	"done",
 ]);
 
 const EMPTY_IMPACT: RollbackImpact = {
@@ -146,10 +155,19 @@ export function analyzeRollbackImpact(
 			seen.add(name);
 			impact.toolNames.push(name);
 		}
-		if (FILE_TOOLS.has(name)) impact.filesModified = true;
-		else if (TASK_TOOLS.has(name)) impact.tasksModified = true;
-		else if (MESSAGE_TOOLS.has(name)) impact.messagesSent = true;
-		else if (!READ_ONLY_TOOLS.has(name)) impact.otherSideEffects = true;
+		// Independent membership, NOT a first-match chain: a tool can carry
+		// more than one kind of side effect (done() changes task status AND
+		// notifies the task above). The sets are otherwise disjoint, so every
+		// single-category tool behaves exactly as before.
+		const isFile = FILE_TOOLS.has(name);
+		const isTask = TASK_TOOLS.has(name);
+		const isMessage = MESSAGE_TOOLS.has(name);
+		if (isFile) impact.filesModified = true;
+		if (isTask) impact.tasksModified = true;
+		if (isMessage) impact.messagesSent = true;
+		if (!isFile && !isTask && !isMessage && !READ_ONLY_TOOLS.has(name)) {
+			impact.otherSideEffects = true;
+		}
 	}
 
 	return impact;
