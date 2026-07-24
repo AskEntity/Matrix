@@ -4855,3 +4855,23 @@ buttons appear.
 **Journey-test gotcha**: after a rollback re-fetch the log entries REMOUNT (fresh
 `createLogEntry` ids → new React keys → new DOM nodes), so any button captured
 before the rebuild is detached. Re-query it.
+
+### Correction (2026-07-24, same day): `done` is NOT read-only
+
+The first cut of `rollback-impact.ts` whitelisted `done` as read-only, so a range
+that crossed a `done()` rendered the green "nothing outside the conversation
+changes" box — a lie. `done()` has two real, non-rollback-able effects: it flips
+the task's status to verify/failed AND delivers `task_complete` to the task above
+(which may already have woken, reviewed and merged).
+
+`done` now lives in BOTH `TASK_TOOLS` and `MESSAGE_TOOLS`, and the classification
+loop changed from a first-match `else if` chain to **independent membership
+checks** (`isFile` / `isTask` / `isMessage`, then `otherSideEffects` only when
+none matched and the tool isn't whitelisted). The sets are otherwise disjoint, so
+every single-category tool behaves exactly as before — a regression test pins
+that (`bash`/`create_task`/`send_message` each flip exactly one flag).
+
+Re-checked the rest of the whitelist: `yield` is a pure loop pause; `background`
+covers list/status and a kill is a stop, not a rollback-able state change. Both
+stay. Mutation-verified: moving `done` back to the whitelist fails 3 tests;
+restoring the `else if` chain fails 2.
