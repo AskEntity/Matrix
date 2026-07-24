@@ -184,7 +184,7 @@ async function getDb(dbPath: string): Promise<IndexDb> {
 			// like "消息" or "pending" work (exact token match) but multi-token
 			// queries like "消息栏" or "pending banner" fail (tokenized differently
 			// at query time vs index time).
-			(db as Record<string, unknown>).tokenizer = createTokenizer();
+			db.tokenizer = createTokenizer();
 		} catch {
 			db = createDb();
 		}

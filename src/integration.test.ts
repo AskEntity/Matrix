@@ -12635,7 +12635,7 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 			},
 		];
 		// Create a second task (will be a brief hit).
-		const child2 = tracker.addChild(
+		tracker.addChild(
 			tracker.rootNodeId,
 			"Debug session timeout",
 			"investigated timeout issues in session management",

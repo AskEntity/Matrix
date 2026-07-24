@@ -4876,3 +4876,106 @@ Re-checked the rest of the whitelist: `yield` is a pure loop pause; `background`
 covers list/status and a kill is a stop, not a rollback-able state change. Both
 stay. Mutation-verified: moving `done` back to the whitelist fails 3 tests;
 restoring the `else if` chain fails 2.
+
+## typecheck gate restored — every one of the 24 errors was a cast/hack, not a real type problem (2026-07-24)
+
+`bun run typecheck` had accumulated 24 errors across ~6 merges, undetected because
+nothing was ever gated (see the `core.hooksPath` correction in Known Pitfalls — the
+hook was never installed on main; every `--no-verify` was a no-op on a hook that did
+not exist). Cleared them; the FULL `bash .hooks/pre-commit` (typecheck + check:ci +
+check-i18n.sh + the fast test subset) now exits 0. `bun test` 2654 pass / 0 fail
+(2650 on my fork point + 4 from main's rollback-impact work, merged in).
+
+**The headline: zero `as unknown as` were added. All 24 fixes DELETED a cast or a
+hack** — every error was a workaround for a type the code already had correctly.
+
+### The four patterns (each a reusable diagnosis)
+
+**1. `(node as Record<string, unknown>).status = …` in test fixtures (17 errors,
+`search-format.test.ts`)** — `TaskNode.status` / `.resultRounds` are ordinary typed,
+writable fields; `addChild` returns a real `TaskNode`. The cast was never needed for
+ANY reason. Replaced with the tracker's public API (`tracker.updateStatus(id, status)`,
+`tracker.appendResultRound(id, {result})`), which also stops the test from doing the
+external-mutation-of-tracker-managed-nodes thing draft 01KNWKZVHP flags.
+**Diagnosis rule: a `Record<string, unknown>` cast on a domain object in a TEST is
+almost always a fixture-seeding shortcut, not a type problem. Look for the setter.**
+
+**2. `(db as Record<string, unknown>).tokenizer = …` (`task-index.ts`)** — Orama's
+`AnyOrama` includes `Internals` which declares `tokenizer: Tokenizer`, and
+`@orama/tokenizers/mandarin`'s `createTokenizer()` returns a `DefaultTokenizer`
+(assignable). `db.tokenizer = createTokenizer()` typechecks directly. TS2352 fires
+because `AnyOrama` has no index signature — that error means "this isn't a bag of
+unknowns", i.e. **the type is more precise than the cast assumed. Read the .d.ts
+before laundering through `unknown`.**
+
+**3. `.filter(Boolean)` does NOT narrow in TypeScript** (`.mxd/plugin/runtime.ts`
+search endpoint) — `map(… | null).filter(Boolean)` still has type `(T | null)[]`, so
+every later `hit.x` is "possibly null". Fixed with `flatMap` (`return []` to drop,
+`return [value]` to keep), which infers the narrowed element type with no predicate
+and no `!`. A `(x): x is NonNullable<typeof x> =>` predicate also works; flatMap reads
+better. **Never "fix" this class with `!` — the compiler is right that filter(Boolean)
+told it nothing.**
+
+**4. Reading a variant-only field off the `Event` union** (`event-id.test.ts`) —
+`id` lives on `MessageEvent`, not on `Event`. Narrow on the `type` discriminant
+(`expect(stored?.type).toBe("message"); if (stored?.type !== "message") throw …`),
+which makes the test STRONGER (it now also asserts the event round-trips as a message
+event). Note `Event` is `(A|B|…) & {traceId?; eid?; parentEid?}` and TS still narrows
+the union through that intersection fine.
+
+### Process notes
+- **The `noUnusedLocals` cases were real** (`child2`, the `searchIndexSync` import) —
+  delete outright; `_` prefix does NOT satisfy `noUnusedLocals` for locals/imports
+  (only for function params), as noted in Known Pitfalls.
+- **Mutation-verified the one production behavior change**: reverting the flatMap
+  drop-branch to emit a ghost entry fails `src/search-endpoint.test.ts` "excludes
+  deleted tasks" — so that branch is genuinely guarded, the refactor didn't hollow it.
+- **`check:ci` exits 0 with ~158 warnings** (noNonNullAssertion / noExplicitAny).
+  Warnings never fail the gate; only format/lint ERRORS do. Don't "fix" the warning
+  count in a gate-restoration pass — biome's suggested `!` → `?.` autofix is marked
+  *unsafe* and silently changes assertion semantics in tests.
+
+### ⚠️ The installed hook still does NOT cover merges — `pre-commit` is not run by `git merge`
+Empirically verified in a throwaway repo (`core.hooksPath` set, hook logs on run):
+**`git merge --no-ff <branch>` that auto-commits does NOT fire `pre-commit`.** Git
+fires `pre-merge-commit` for that path, and `.hooks/` contains ONLY `pre-commit`. So
+after the 2026-07-24 install, what is actually gated is:
+
+| path | hook git looks for | gated today? |
+|---|---|---|
+| root's direct `git commit` on main (memory curation, conflict resolution) | `pre-commit` | ✅ yes |
+| root's `git merge --no-ff <task-branch>`, clean auto-commit | `pre-merge-commit` | ❌ **no — file absent** |
+| a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | ✅ yes (inconsistent with the clean case) |
+| any commit inside a sub-task worktree | — (`hooksPath=/dev/null`) | ❌ no, by design |
+
+Merging is root's dominant path, so the gate as installed covers very little of the
+real workflow — and it fires on the CONFLICTING merge but not the clean one, which is
+backwards from intuition.
+
+**Deliberately NOT fixed by adding a `pre-merge-commit` hook**, because the project's
+documented merge model requires the opposite: "Intermediate merges may not typecheck
+(`--no-verify`). Final state must pass all hooks." Gating every merge would break
+incremental integration of parallel sub-tasks. The available options (root's call):
+(a) leave merges ungated and keep the manual `bash .hooks/pre-commit` discipline
+before declaring an integration finished; (b) add `pre-merge-commit` and accept
+`--no-verify` on intermediate merges — which reintroduces exactly the routine-bypass
+habit that hid these 24 errors; (c) move enforcement off the commit hook entirely
+(CI / a `mxd` preflight subcommand root runs once per integration).
+
+### Why this kept happening (the actual root cause)
+NOT "root bypassed the gate" — there was no gate to bypass (root's own correction in
+Known Pitfalls establishes this). The failure was that a *tracked* `.hooks/pre-commit`
+existed, was referenced in memory as if it were active, and nothing pointed at it. The
+generalizable lesson: **a checked-in hook file is not an enforced hook.** Enforcement
+lives in untracked local config (`.git/config` → `core.hooksPath`), so it silently
+does not survive a fresh clone, and its absence looks identical to compliance — the
+only observable difference is errors quietly accumulating. If you rely on a hook,
+assert it is wired (`git config core.hooksPath`) rather than assuming the file's
+presence means anything.
+
+**Orphan found while clearing this** (drafted as 01KYB46KTM, NOT fixed here):
+`searchIndexSync` in `task-index.ts` now has zero production callers — 01KY7TQXPP
+explicitly kept it for the then-sync `buildWorkContext`, then 01KY83C8BV made that
+hook async and switched it to `searchIndex`, and nobody reclaimed the sync variant.
+Only its own 6 tests use it. Deleting a public export is a separate, separately
+revertable decision from restoring a gate — so it was drafted, not silently swept in.
