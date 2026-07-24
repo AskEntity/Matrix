@@ -32,13 +32,13 @@ import {
 	resetTaskOp,
 	updateTaskOp,
 } from "./task-operations.ts";
+import type { TaskTracker } from "./task-tracker.ts";
 import { getDescendantIds } from "./task-utils.ts";
 import type { Auth } from "./tool-auth.ts";
 import { checkPermission } from "./tool-auth.ts";
 import { defineTool, toToolDefinition } from "./tool-def.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
-import type { TaskTracker } from "./task-tracker.ts";
 import {
 	type GeneralNode,
 	isTask,
@@ -189,7 +189,13 @@ const DEFAULT_BRIEF_COUNT = 10;
  * result round excerpt, taskId, status, matched field + snippet, score.
  */
 function formatFullHit(
-	hit: { taskId: string; field: string; roundIndex?: number; snippet: string; score: number },
+	hit: {
+		taskId: string;
+		field: string;
+		roundIndex?: number;
+		snippet: string;
+		score: number;
+	},
 	task: TaskNode,
 ): string {
 	const status = task.status ?? "unknown";
@@ -232,7 +238,13 @@ function formatBriefHit(
  * @returns Formatted text, or "" if no hits resolve to live tasks.
  */
 export function formatTieredHits(
-	hits: Array<{ taskId: string; field: string; roundIndex?: number; snippet: string; score: number }>,
+	hits: Array<{
+		taskId: string;
+		field: string;
+		roundIndex?: number;
+		snippet: string;
+		score: number;
+	}>,
 	tracker: TaskTracker,
 	fullCount: number,
 	header?: string,
@@ -250,9 +262,8 @@ export function formatTieredHits(
 		const task = tracker.getTask(hit.taskId);
 		if (!task) continue;
 
-		const line = i < fullCount
-			? formatFullHit(hit, task)
-			: formatBriefHit(hit, task);
+		const line =
+			i < fullCount ? formatFullHit(hit, task) : formatBriefHit(hit, task);
 
 		if (totalChars + line.length + 1 > TOTAL_CHAR_LIMIT) break;
 		lines.push(line);
@@ -293,11 +304,12 @@ export async function searchTasks(
 	const trimmed = query.trim();
 	if (!trimmed) return "";
 
-	const hits = (await searchIndex(dbPath, trimmed, fullCount + briefCount))
-		.filter((h) => {
-			if (opts?.excludeId && h.taskId === opts.excludeId) return false;
-			return !!tracker.getTask(h.taskId);
-		});
+	const hits = (
+		await searchIndex(dbPath, trimmed, fullCount + briefCount)
+	).filter((h) => {
+		if (opts?.excludeId && h.taskId === opts.excludeId) return false;
+		return !!tracker.getTask(h.taskId);
+	});
 
 	return formatTieredHits(hits, tracker, fullCount, opts?.header);
 }
@@ -477,10 +489,15 @@ export function buildAllToolDefs() {
 				const { dataDir, dataRoot } = R.getDataPaths();
 				const dbPath = projectIndexDbPath(dataDir, projectId, dataRoot);
 				const limit = (args.limit as number | undefined) ?? 20;
-				const formatted = await searchTasks(dbPath, args.query as string, tracker, {
-					fullCount: Math.min(5, limit),
-					briefCount: Math.max(0, limit - 5),
-				});
+				const formatted = await searchTasks(
+					dbPath,
+					args.query as string,
+					tracker,
+					{
+						fullCount: Math.min(5, limit),
+						briefCount: Math.max(0, limit - 5),
+					},
+				);
 				return {
 					content: [
 						{
@@ -561,10 +578,7 @@ export function buildAllToolDefs() {
 						"agent",
 						{
 							broadcastTree: () => R.broadcastTree(projectId),
-							projectPath: getProjectPath(
-								projectId,
-								args.parentId,
-							),
+							projectPath: getProjectPath(projectId, args.parentId),
 						},
 					);
 					const nodeJson = JSON.stringify(stripSession(node), null, 2);

@@ -2,10 +2,11 @@
  * Unit tests for formatTieredHits — the shared formatter used by both
  * search_tasks and create_task's related-tasks appendix.
  */
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { formatTieredHits, searchTasks } from "./orchestrator-tools.ts";
 import {
 	_clearDbCache,
@@ -91,9 +92,17 @@ describe("formatTieredHits", () => {
 	});
 
 	test("mixed full + brief hits in correct order", () => {
-		const task1 = tracker.addChild(tracker.rootNodeId, "Alpha task", "alpha description");
+		const task1 = tracker.addChild(
+			tracker.rootNodeId,
+			"Alpha task",
+			"alpha description",
+		);
 		(task1 as Record<string, unknown>).status = "verify";
-		const task2 = tracker.addChild(tracker.rootNodeId, "Beta task", "beta description");
+		const task2 = tracker.addChild(
+			tracker.rootNodeId,
+			"Beta task",
+			"beta description",
+		);
 		(task2 as Record<string, unknown>).status = "closed";
 
 		const hits = [
@@ -118,14 +127,24 @@ describe("formatTieredHits", () => {
 			{ taskId: task.id, field: "title", snippet: "Some task", score: 0.7 },
 		];
 
-		const result = formatTieredHits(hits, tracker, 1, "[Related existing tasks]");
+		const result = formatTieredHits(
+			hits,
+			tracker,
+			1,
+			"[Related existing tasks]",
+		);
 		expect(result.startsWith("[Related existing tasks]")).toBe(true);
 	});
 
 	test("returns empty string when no live tasks match", () => {
 		// Hit references a non-existent task.
 		const hits = [
-			{ taskId: "nonexistent-id-12345", field: "title", snippet: "ghost", score: 0.9 },
+			{
+				taskId: "nonexistent-id-12345",
+				field: "title",
+				snippet: "ghost",
+				score: 0.9,
+			},
 		];
 		const result = formatTieredHits(hits, tracker, 1);
 		expect(result).toBe("");
@@ -133,11 +152,20 @@ describe("formatTieredHits", () => {
 
 	test("description truncated at 500 chars", () => {
 		const longDesc = "x".repeat(1000);
-		const task = tracker.addChild(tracker.rootNodeId, "Long desc task", longDesc);
+		const task = tracker.addChild(
+			tracker.rootNodeId,
+			"Long desc task",
+			longDesc,
+		);
 		(task as Record<string, unknown>).status = "closed";
 
 		const hits = [
-			{ taskId: task.id, field: "title", snippet: "Long desc task", score: 0.8 },
+			{
+				taskId: task.id,
+				field: "title",
+				snippet: "Long desc task",
+				score: 0.8,
+			},
 		];
 
 		const result = formatTieredHits(hits, tracker, 1);
@@ -148,14 +176,23 @@ describe("formatTieredHits", () => {
 	});
 
 	test("result truncated at 300 chars", () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Long result task", "short desc");
+		const task = tracker.addChild(
+			tracker.rootNodeId,
+			"Long result task",
+			"short desc",
+		);
 		(task as Record<string, unknown>).status = "closed";
 		(task as Record<string, unknown>).resultRounds = [
 			{ result: "y".repeat(600) },
 		];
 
 		const hits = [
-			{ taskId: task.id, field: "title", snippet: "Long result task", score: 0.8 },
+			{
+				taskId: task.id,
+				field: "title",
+				snippet: "Long result task",
+				score: 0.8,
+			},
 		];
 
 		const result = formatTieredHits(hits, tracker, 1);
@@ -197,7 +234,11 @@ describe("formatTieredHits", () => {
 	});
 
 	test("result from latest round only (not older rounds)", () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Multi-round task", "desc");
+		const task = tracker.addChild(
+			tracker.rootNodeId,
+			"Multi-round task",
+			"desc",
+		);
 		(task as Record<string, unknown>).status = "closed";
 		(task as Record<string, unknown>).resultRounds = [
 			{ result: "old round result" },
@@ -205,7 +246,12 @@ describe("formatTieredHits", () => {
 		];
 
 		const hits = [
-			{ taskId: task.id, field: "title", snippet: "Multi-round task", score: 0.9 },
+			{
+				taskId: task.id,
+				field: "title",
+				snippet: "Multi-round task",
+				score: 0.9,
+			},
 		];
 
 		const result = formatTieredHits(hits, tracker, 1);
@@ -232,9 +278,17 @@ describe("searchTasks", () => {
 	});
 
 	test("combines search + format + excludeId in one call", async () => {
-		const task1 = tracker.addChild(tracker.rootNodeId, "Auth token rotation", "rotate JWT tokens");
+		const task1 = tracker.addChild(
+			tracker.rootNodeId,
+			"Auth token rotation",
+			"rotate JWT tokens",
+		);
 		(task1 as Record<string, unknown>).status = "closed";
-		const task2 = tracker.addChild(tracker.rootNodeId, "Auth session fix", "fix session bugs");
+		const task2 = tracker.addChild(
+			tracker.rootNodeId,
+			"Auth session fix",
+			"fix session bugs",
+		);
 		(task2 as Record<string, unknown>).status = "verify";
 		await tracker.save();
 
@@ -260,12 +314,20 @@ describe("searchTasks", () => {
 
 	test("returns empty string when index is not loaded", async () => {
 		// No reconcileIndex called — dbCache is empty.
-		const result = await searchTasks(join(tempDir, "index.msp"), "anything", tracker);
+		const result = await searchTasks(
+			join(tempDir, "index.msp"),
+			"anything",
+			tracker,
+		);
 		expect(result).toBe("");
 	});
 
 	test("respects header option", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Auth session recovery", "fix the auth session timeout");
+		const task = tracker.addChild(
+			tracker.rootNodeId,
+			"Auth session recovery",
+			"fix the auth session timeout",
+		);
 		(task as Record<string, unknown>).status = "closed";
 		await tracker.save();
 

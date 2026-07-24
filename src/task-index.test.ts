@@ -291,7 +291,10 @@ describe("task-index (Orama hybrid search)", () => {
 		// Reproduce the bug: index documents WITHOUT embeddings (pipeline null),
 		// then search WITH the pipeline available. Zero-vector cosine → NaN.
 		_setEmbeddingPipeline(null); // pipeline unavailable at index time
-		const t1 = tracker.addTask("worktree cleanup race condition", "fix the race");
+		const t1 = tracker.addTask(
+			"worktree cleanup race condition",
+			"fix the race",
+		);
 		const t2 = tracker.addTask("session recovery bug", "restore JSONL state");
 		await indexTask(dbPath, t1);
 		await indexTask(dbPath, t2);
@@ -345,12 +348,18 @@ describe("task-index (Orama hybrid search)", () => {
 
 		// Index first doc WITHOUT embeddings.
 		_setEmbeddingPipeline(null);
-		const noEmbed = tracker.addTask("searchterm alpha without embedding", "no embed");
+		const noEmbed = tracker.addTask(
+			"searchterm alpha without embedding",
+			"no embed",
+		);
 		await indexTask(dbPath, noEmbed);
 
 		// Index second doc WITH embeddings.
 		_setEmbeddingPipeline({ embed: async () => realVec });
-		const withEmbed = tracker.addTask("searchterm beta with embedding", "has embed");
+		const withEmbed = tracker.addTask(
+			"searchterm beta with embedding",
+			"has embed",
+		);
 		await indexTask(dbPath, withEmbed);
 
 		// Search with pipeline available — hybrid would produce NaN for alpha.
