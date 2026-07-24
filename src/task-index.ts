@@ -219,7 +219,7 @@ function readMeta(dbPath: string): IndexMeta {
 function writeMeta(dbPath: string, meta: IndexMeta): void {
 	const p = metaPath(dbPath);
 	mkdirSync(dirname(p), { recursive: true });
-	writeFileSync(p, JSON.stringify(meta));
+	writeFileSync(p, JSON.stringify(meta, null, 2));
 }
 
 // ── Document ID convention ──
