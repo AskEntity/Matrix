@@ -78,6 +78,33 @@ describe("analyzeRollbackImpact — categories", () => {
 		}
 	});
 
+	test("done() warns on BOTH axes — status flip AND task_complete", () => {
+		// done() is not read-only: it flips the task to verify/failed and
+		// delivers task_complete to the task above. Rolling back past it
+		// undoes neither — the parent may already have merged.
+		const impact = analyzeRollbackImpact(
+			[userMsg("e1"), toolCall("done")],
+			"e1",
+		);
+		expect(impact.tasksModified).toBe(true);
+		expect(impact.messagesSent).toBe(true);
+		expect(hasSideEffects(impact)).toBe(true);
+		expect(impact.filesModified).toBe(false);
+		expect(impact.otherSideEffects).toBe(false);
+		expect(impact.toolNames).toEqual(["done"]);
+	});
+
+	test("a done()-only range is NEVER reported as 'nothing changed'", () => {
+		// The dialog renders the green "nothing outside the conversation
+		// changes" box when hasSideEffects is false. For a range that crossed
+		// a done(), that box would be a lie.
+		const impact = analyzeRollbackImpact(
+			[userMsg("e1"), toolCall("read_file"), toolCall("done")],
+			"e1",
+		);
+		expect(hasSideEffects(impact)).toBe(true);
+	});
+
 	test("read-only tools → NO warning at all", () => {
 		const entries: ImpactEntry[] = [
 			userMsg("e1"),
@@ -137,6 +164,42 @@ describe("analyzeRollbackImpact — categories", () => {
 			"e1",
 		);
 		expect(impact.otherSideEffects).toBe(true);
+	});
+
+	test("categories are independent, not first-match: done + bash flips three", () => {
+		const impact = analyzeRollbackImpact(
+			[userMsg("e1"), toolCall("bash"), toolCall("done")],
+			"e1",
+		);
+		expect(impact.filesModified).toBe(true);
+		expect(impact.tasksModified).toBe(true);
+		expect(impact.messagesSent).toBe(true);
+		expect(impact.otherSideEffects).toBe(false);
+	});
+
+	test("single-category tools stay single-category (no over-flagging)", () => {
+		// Guards the else-if → independent-if change: only `done` is dual.
+		for (const [tool, expected] of [
+			["bash", "filesModified"],
+			["create_task", "tasksModified"],
+			["send_message", "messagesSent"],
+		] as const) {
+			const impact = analyzeRollbackImpact(
+				[userMsg("e1"), toolCall(tool)],
+				"e1",
+			);
+			const flags = {
+				filesModified: impact.filesModified,
+				tasksModified: impact.tasksModified,
+				messagesSent: impact.messagesSent,
+				otherSideEffects: impact.otherSideEffects,
+			};
+			expect(
+				Object.entries(flags)
+					.filter(([, v]) => v)
+					.map(([k]) => k),
+			).toEqual([expected]);
+		}
 	});
 
 	test("mixed range → every matching category flips", () => {
