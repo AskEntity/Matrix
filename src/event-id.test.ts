@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -327,5 +327,195 @@ describe("JSONL event eid + parentEid", () => {
 		const events = store.read("s1");
 		expect(events).toHaveLength(2);
 		expect(events[1]!.parentEid).toBe(events[0]!.eid);
+	});
+});
+
+/**
+ * Serialization ORDER: every line this codebase writes must start with the
+ * chain fields, so a human tailing the JSONL sees the links without scanning
+ * past a long `content`. Asserted on the RAW text, before JSON.parse —
+ * JSON.parse is order-agnostic and would happily pass either layout.
+ */
+describe("JSONL eid/parentEid serialize first", () => {
+	let dir: string;
+	let store: EventStore;
+
+	/** `{"eid":"<12hex>","parentEid":null|"<12hex>",` at the head of the line. */
+	const CHAIN_FIRST =
+		/^\{"eid":"[0-9a-f]{12}","parentEid":(null|"[0-9a-f]{12}"),/;
+
+	function rawLines(sessionId: string): string[] {
+		return readFileSync(join(dir, `${sessionId}.jsonl`), "utf-8")
+			.split("\n")
+			.filter(Boolean);
+	}
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), "eid-order-test-"));
+		store = new EventStore(dir);
+	});
+
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	test("append writes eid + parentEid as the first two fields", async () => {
+		await store.append("s1", makeEvent("agent_start"));
+		await store.append("s1", {
+			type: "assistant_text",
+			content: "a long reply that used to push the chain fields off screen",
+			taskId: "task-1",
+			ts: 1000,
+		} as Event);
+
+		const lines = rawLines("s1");
+		expect(lines).toHaveLength(2);
+		for (const line of lines) {
+			expect(line).toMatch(CHAIN_FIRST);
+		}
+		// First line's parentEid is literally null, not the string "null"
+		expect(lines[0]!.startsWith('{"eid":"')).toBe(true);
+		expect(JSON.parse(lines[0]!).parentEid).toBeNull();
+		// The event's own fields survive untouched after the chain fields
+		expect(JSON.parse(lines[1]!)).toMatchObject({
+			type: "assistant_text",
+			content: "a long reply that used to push the chain fields off screen",
+			taskId: "task-1",
+			ts: 1000,
+		});
+	});
+
+	test("appendBatch writes every line chain-first", async () => {
+		await store.appendBatch("s1", [
+			makeEvent("assistant_text"),
+			makeEvent("tool_call"),
+			makeEvent("tool_result"),
+		]);
+
+		const lines = rawLines("s1");
+		expect(lines).toHaveLength(3);
+		for (const line of lines) {
+			expect(line).toMatch(CHAIN_FIRST);
+		}
+	});
+
+	test("re-appending an event that already carries eid gets a FRESH chain", async () => {
+		// buildSessionRepair re-appends unconsumed `message` events read from
+		// the truncated region — those objects still carry their old eid /
+		// parentEid. A rebuild that spread them back would re-emit a stale
+		// link pointing at an event truncation just deleted.
+		await store.append("s1", makeEvent("session_config"));
+		await store.append("s1", makeEvent("assistant_text"));
+		const [first, second] = store.read("s1");
+
+		// Take the FIRST event (already stamped) and append it again.
+		await store.append("s1", second as Event);
+
+		const lines = rawLines("s1");
+		expect(lines).toHaveLength(3);
+		expect(lines[2]!).toMatch(CHAIN_FIRST);
+
+		const reappended = JSON.parse(lines[2]!) as Event;
+		// Fresh identity, not the stale one
+		expect(reappended.eid).not.toBe(second!.eid);
+		// Chains from the current tail, not from its original parent
+		expect(reappended.parentEid).toBe(second!.eid);
+		expect(reappended.parentEid).not.toBe(first!.eid);
+		// Exactly one eid/parentEid key each — no duplicate leftovers
+		expect(lines[2]!.match(/"eid":/g)).toHaveLength(1);
+		expect(lines[2]!.match(/"parentEid":/g)).toHaveLength(1);
+	});
+
+	test("append does not mutate the caller's event object", async () => {
+		const event = makeEvent("agent_start");
+		await store.append("s1", event);
+
+		expect(event.eid).toBeUndefined();
+		expect(event.parentEid).toBeUndefined();
+		// …but the persisted copy has both
+		expect(store.read("s1")[0]!.eid).toMatch(EID_PATTERN);
+	});
+
+	test("copySessionFrom writes every line chain-first (copies + synthetics + fork_marker)", async () => {
+		await store.append("src", makeEvent("session_config"));
+		await store.append("src", makeEvent("assistant_text"));
+
+		await store.copySessionFrom("src", "tgt", { targetTitle: "Child" });
+
+		const lines = rawLines("tgt");
+		expect(lines.length).toBeGreaterThanOrEqual(4);
+		for (const line of lines) {
+			expect(line).toMatch(CHAIN_FIRST);
+		}
+		// Last line is the fork_marker
+		expect(JSON.parse(lines[lines.length - 1]!).type).toBe("fork_marker");
+	});
+
+	test("old tail-ordered lines and new head-ordered lines coexist in one file", async () => {
+		// Files written before this change carry eid/parentEid at the END of the
+		// line. They are NOT migrated (JSON.parse is order-agnostic), so a live
+		// session keeps appending head-ordered lines onto tail-ordered history.
+		const filePath = join(dir, "mixed.jsonl");
+		const legacyTail = [
+			{
+				type: "agent_start",
+				taskId: "t1",
+				ts: 1000,
+				eid: "aaaaaaaaaaaa",
+				parentEid: null,
+			},
+			{
+				type: "assistant_text",
+				content: "written by the old serializer",
+				taskId: "t1",
+				ts: 2000,
+				eid: "bbbbbbbbbbbb",
+				parentEid: "aaaaaaaaaaaa",
+			},
+		];
+		writeFileSync(
+			filePath,
+			`${legacyTail.map((e) => JSON.stringify(e)).join("\n")}\n`,
+		);
+
+		// Reading syncs the chain head; no migration (eid already present).
+		expect(store.read("mixed")).toHaveLength(2);
+		await store.append("mixed", makeEvent("tool_call"));
+
+		const lines = rawLines("mixed");
+		expect(lines).toHaveLength(3);
+		// Old lines untouched, new line chain-first
+		expect(lines[0]!.startsWith('{"type":"agent_start"')).toBe(true);
+		expect(lines[2]!).toMatch(CHAIN_FIRST);
+
+		// The chain reads back as one continuous history regardless of order
+		const events = store.read("mixed");
+		expect(events.map((e) => e.eid)).toEqual([
+			"aaaaaaaaaaaa",
+			"bbbbbbbbbbbb",
+			expect.any(String),
+		]);
+		expect(events[2]!.parentEid).toBe("bbbbbbbbbbbb");
+		expect(store.readActive("mixed")).toHaveLength(3);
+	});
+
+	test("legacy-file migration rewrites lines chain-first", async () => {
+		const filePath = join(dir, "legacy.jsonl");
+		const legacy = [
+			{ type: "agent_start", taskId: "t1", ts: 1000 },
+			{ type: "assistant_text", content: "hi", taskId: "t1", ts: 2000 },
+		];
+		writeFileSync(
+			filePath,
+			`${legacy.map((e) => JSON.stringify(e)).join("\n")}\n`,
+		);
+
+		// First read migrates the file in place
+		const events = store.read("legacy");
+		expect(events).toHaveLength(2);
+
+		for (const line of rawLines("legacy")) {
+			expect(line).toMatch(CHAIN_FIRST);
+		}
 	});
 });

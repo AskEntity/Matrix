@@ -4876,3 +4876,61 @@ Re-checked the rest of the whitelist: `yield` is a pure loop pause; `background`
 covers list/status and a kill is a stop, not a rollback-able state change. Both
 stay. Mutation-verified: moving `done` back to the whitelist fails 3 tests;
 restoring the `else if` chain fails 2.
+
+## JSONL lines serialize eid/parentEid FIRST (2026-07-24)
+
+Every line `EventStore` writes now starts with the chain links:
+
+```json
+{"eid":"53fa71c8e43d","parentEid":null,"type":"assistant_text","content":"…"}
+```
+
+Readability only — tailing a JSONL shows the chain without scanning past a long
+`content`, and a future fixed-offset reader (draft 01KYB45P) would not need a
+second format change. **Reading is untouched**: `JSON.parse` is order-agnostic,
+so pre-change lines (chain fields at the tail) read back identically. Old files
+are NOT rewritten; head-ordered and tail-ordered lines coexist inside one file
+with zero effect (pinned by a test).
+
+### The mechanism, and the trap in the obvious version
+
+`stampEvent` no longer hangs fields on the caller's object — it returns a
+persisted copy built by module-level `withChainFields(event, eid, parentEid)`.
+Every write path goes through it: `append`, `appendBatch`, `migrateEventIds`
+(legacy eid-less files), and `copySessionFrom` (synthetics + fork_marker; copied
+source events are rebuilt too, with their OWN eids preserved, so a brand-new
+forked file is uniformly head-ordered).
+
+**`{ eid, parentEid, ...event }` alone is WRONG.** When the input already has
+those keys, the spread overwrites the fresh values with the stale ones (key
+POSITION stays first, so it looks right). `withChainFields` destructures them
+off before spreading. This is not hypothetical: `buildSessionRepair` re-appends
+unconsumed `message` events read from the region it is about to truncate — with
+the naive spread they keep a `parentEid` pointing at an event truncation just
+deleted, so `walkActiveChainIndices` hits a chain break and silently degrades to
+linear traversal (which can resurrect rolled-back events). Mutation-verified:
+reverting to the naive spread fails exactly one test —
+`event-id.test.ts` "re-appending an event that already carries eid gets a FRESH
+chain".
+
+### Consequence: append/appendBatch no longer mutate the caller's event
+
+Production never read `.eid` off an object it handed to the store (`emitEvent`
+broadcasts to SSE *before* persisting; every eid consumer — frontend rollback,
+repair, chain-walk — reads events back from disk). So this is invisible in
+production, and it deletes the "an SSE subscriber holding a reference past the
+broadcast could observe a mutation" caveat noted in the eid entry above.
+
+TESTS did depend on it: `expect(store.read(id)).toEqual([literal])` passed only
+because the literal was mutated to carry the chain fields. 9 such assertions
+(8 in `event-store.test.ts`, 1 in `invariant.test.ts`) now wrap the read in
+`stripChainFields()` (`src/test-utils/strip-chain-fields.ts`) — the assertion
+stays exact for every other field instead of weakening to `toMatchObject`.
+
+### Verification
+
+`bun test` green; typecheck error count unchanged (24, all pre-existing, owned by
+01KYB3MJ); `check:ci` exit 0. Eyeball check via a real agent run (mock provider,
+`emission-harness`): all 12 lines of the produced session file — message,
+work_context, session_config, agent_start, messages_consumed, assistant_text,
+tool_call, usage … — start with `{"eid":"…","parentEid":…`, chain visibly linear.

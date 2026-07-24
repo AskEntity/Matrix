@@ -20,6 +20,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { stripChainFields } from "./test-utils/strip-chain-fields.ts";
 import { ulid } from "./ulid.ts";
 
 // ── Test infrastructure ──
@@ -501,7 +502,7 @@ describe("Invariant: Compact Barrier Correctness", () => {
 
 			const result = store.readFromLastCompactMarker("task-1");
 			expect(result.hasOlderEvents).toBe(false);
-			expect(result.events).toEqual(events);
+			expect(stripChainFields(result.events)).toEqual(events);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

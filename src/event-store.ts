@@ -22,6 +22,31 @@ function generateEid(): string {
 }
 
 /**
+ * Build the persisted form of an event: `eid` / `parentEid` FIRST, then the
+ * event's own fields. `JSON.stringify` follows insertion order, so every line
+ * this store writes starts with the chain links instead of hiding them behind
+ * a long `content`.
+ *
+ * Order is a readability property only — `JSON.parse` is order-agnostic, so
+ * lines written before this change (chain fields at the tail) read back
+ * identically and old files need no migration.
+ *
+ * Returns a NEW object; the caller's event is never mutated. Any eid /
+ * parentEid ALREADY on the input is dropped before the spread — otherwise the
+ * spread would restore the stale link. That case is real: `buildSessionRepair`
+ * re-appends unconsumed `message` events read from the region it is about to
+ * truncate, and their original parent is exactly what truncation deletes.
+ */
+function withChainFields(
+	event: Event,
+	eid: string,
+	parentEid: string | null,
+): Event {
+	const { eid: _staleEid, parentEid: _staleParentEid, ...rest } = event;
+	return { eid, parentEid, ...rest } as Event;
+}
+
+/**
  * JSONL-based event store for Event persistence.
  * Append-only: one JSON line per event. File path: `{dir}/{sessionId}.jsonl`
  *
@@ -122,15 +147,20 @@ export class EventStore {
 	}
 
 	/**
-	 * Stamp an event with eid + parentEid before persistence.
-	 * Mutates the event in-place (callers create inline object literals that
-	 * are never reused after emitEvent). Updates lastEventIds for the session.
+	 * Stamp an event with eid + parentEid before persistence and advance the
+	 * session's chain head.
+	 *
+	 * Returns the persisted form (a new object with the chain fields first —
+	 * see `withChainFields`); the caller's event is left untouched. Nothing
+	 * reads eid off an event it handed to `append` — `emitEvent` broadcasts to
+	 * SSE before persisting, and every consumer of eid reads events back from
+	 * disk.
 	 */
-	private stampEvent(sessionId: string, event: Event): void {
+	private stampEvent(sessionId: string, event: Event): Event {
 		const eid = generateEid();
-		event.eid = eid;
-		event.parentEid = this.lastEventIds.get(sessionId) ?? null;
+		const parentEid = this.lastEventIds.get(sessionId) ?? null;
 		this.lastEventIds.set(sessionId, eid);
+		return withChainFields(event, eid, parentEid);
 	}
 
 	/**
@@ -143,9 +173,9 @@ export class EventStore {
 	 */
 	append(sessionId: string, event: Event): Promise<void> {
 		return this.enqueueWrite(sessionId, () => {
-			this.stampEvent(sessionId, event);
+			const stamped = this.stampEvent(sessionId, event);
 			try {
-				appendFileSync(this.path(sessionId), `${JSON.stringify(event)}\n`);
+				appendFileSync(this.path(sessionId), `${JSON.stringify(stamped)}\n`);
 			} catch {
 				/* non-fatal — don't break caller if write fails */
 			}
@@ -157,10 +187,8 @@ export class EventStore {
 	appendBatch(sessionId: string, events: Event[]): Promise<void> {
 		if (events.length === 0) return Promise.resolve();
 		return this.enqueueWrite(sessionId, () => {
-			for (const e of events) {
-				this.stampEvent(sessionId, e);
-			}
-			const lines = `${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
+			const stamped = events.map((e) => this.stampEvent(sessionId, e));
+			const lines = `${stamped.map((e) => JSON.stringify(e)).join("\n")}\n`;
 			try {
 				appendFileSync(this.path(sessionId), lines);
 			} catch (e) {
@@ -245,6 +273,9 @@ export class EventStore {
 	 * linear chain of eids and rewrites the file atomically (temp + rename).
 	 * Called once per file on first read; idempotent (skipped when first
 	 * event already has eid).
+	 *
+	 * Rewrites `events` in place (the caller returns that array), so the
+	 * stamped copies — not the eid-less originals — reach the reader.
 	 */
 	private migrateEventIds(
 		sessionId: string,
@@ -252,10 +283,9 @@ export class EventStore {
 		events: Event[],
 	): void {
 		let prevEid: string | null = null;
-		for (const e of events) {
+		for (let i = 0; i < events.length; i++) {
 			const eid = generateEid();
-			e.eid = eid;
-			e.parentEid = prevEid;
+			events[i] = withChainFields(events[i] as Event, eid, prevEid);
 			prevEid = eid;
 		}
 		// Atomic rewrite: temp file + rename (same pattern as tracker.save()).
@@ -554,32 +584,41 @@ export class EventStore {
 		const lastActive = activeEvents[activeEvents.length - 1];
 		let prevEid: string | null = lastActive?.eid ?? null;
 
-		for (const e of syntheticEvents) {
+		const stampedSynthetics = syntheticEvents.map((e) => {
 			const eid = generateEid();
-			e.eid = eid;
-			e.parentEid = prevEid;
+			const stamped = withChainFields(e, eid, prevEid);
 			prevEid = eid;
-		}
+			return stamped;
+		});
 
-		const forkMarker: Event = {
-			type: "fork_marker",
-			sourceTaskId: sourceId,
-			...(opts?.targetTitle && { targetTitle: opts.targetTitle }),
-			...(opts?.targetDescription && {
-				targetDescription: opts.targetDescription,
-			}),
-			taskId: targetId,
-			ts: Date.now(),
-		};
 		const forkEid = generateEid();
-		forkMarker.eid = forkEid;
-		forkMarker.parentEid = prevEid;
+		const forkMarker = withChainFields(
+			{
+				type: "fork_marker",
+				sourceTaskId: sourceId,
+				...(opts?.targetTitle && { targetTitle: opts.targetTitle }),
+				...(opts?.targetDescription && {
+					targetDescription: opts.targetDescription,
+				}),
+				taskId: targetId,
+				ts: Date.now(),
+			} as Event,
+			forkEid,
+			prevEid,
+		);
 
 		const allLines: string[] = [];
 		for (const e of activeEvents) {
-			allLines.push(JSON.stringify(e));
+			// Copied verbatim — the fork preserves source identity. Rebuilt only
+			// to put the chain fields first, so every line of this brand-new
+			// file has the same shape (the source file may predate that order).
+			allLines.push(
+				JSON.stringify(
+					e.eid ? withChainFields(e, e.eid, e.parentEid ?? null) : e,
+				),
+			);
 		}
-		for (const e of syntheticEvents) {
+		for (const e of stampedSynthetics) {
 			allLines.push(JSON.stringify(e));
 		}
 		allLines.push(JSON.stringify(forkMarker));
