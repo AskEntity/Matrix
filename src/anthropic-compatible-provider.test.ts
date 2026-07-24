@@ -3053,12 +3053,13 @@ describe("Event deterministic verification", () => {
 		];
 		await eventStore.appendBatch(sessionId, postEvents);
 
-		// readActive should only return post-marker events
+		// readActive returns the boundary marker + the post-marker events
 		await eventStore.flush();
 		const active = eventStore.readActive(sessionId);
-		expect(active.length).toBe(2);
-		expect(active[0]?.type).toBe("assistant_text");
+		expect(active.length).toBe(3);
+		expect(active[0]?.type).toBe("compact_marker");
 		expect(active[1]?.type).toBe("assistant_text");
+		expect(active[2]?.type).toBe("assistant_text");
 
 		// Full read should have all events including marker
 		const all = eventStore.read(sessionId);

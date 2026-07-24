@@ -2403,6 +2403,22 @@ describe("isPersistedByEmitEvent", () => {
 // ── Pure function tests: restart safety ──
 
 describe("buildSessionRepair", () => {
+	/**
+	 * Stamp a linear eid/parentEid chain, exactly like EventStore.append does.
+	 * A repair chains to an EVENT, so any fixture that expects a truncating
+	 * repair must carry eids — buildSessionRepair throws otherwise rather than
+	 * emit a jump it cannot express.
+	 */
+	function chained(events: Event[]): Event[] {
+		let prev: string | null = null;
+		return events.map((e, i) => {
+			const eid = `e${i}`;
+			const stamped = { ...e, eid, parentEid: prev } as Event;
+			prev = eid;
+			return stamped;
+		});
+	}
+
 	test("returns null when session is clean", () => {
 		const events: Event[] = [
 			{
@@ -2439,7 +2455,7 @@ describe("buildSessionRepair", () => {
 		];
 		const repair = buildSessionRepair(events, "t1");
 		expect(repair).not.toBeNull();
-		expect(repair?.truncateAfterIndex).toBe(events.length - 1); // no truncation
+		expect(repair?.chainToEid).toBeNull(); // nothing dropped
 		expect(repair?.appendEvents.length).toBe(1);
 		expect(repair?.appendEvents[0]?.type).toBe("tool_result");
 		expect((repair?.appendEvents[0] as { toolCallId: string }).toolCallId).toBe(
@@ -2534,8 +2550,8 @@ describe("buildSessionRepair", () => {
 		expect((repair?.appendEvents[0] as { isError: boolean }).isError).toBe(
 			true,
 		);
-		// No truncation
-		expect(repair?.truncateAfterIndex).toBe(events.length - 1);
+		// Nothing dropped from the chain
+		expect(repair?.chainToEid).toBeNull();
 	});
 
 	test("repairs duplicate yield orphan from same turn (production bug scenario)", () => {
@@ -2617,7 +2633,7 @@ describe("buildSessionRepair", () => {
 	});
 
 	test("truncates from first duplicate tool_result", () => {
-		const events: Event[] = [
+		const events: Event[] = chained([
 			{
 				type: "tool_call",
 				tool: "bash",
@@ -2644,17 +2660,18 @@ describe("buildSessionRepair", () => {
 				taskId: "t1",
 				ts: 1002,
 			},
-		];
+		]);
 		const repair = buildSessionRepair(events, "t1");
 		expect(repair).not.toBeNull();
-		expect(repair?.truncateAfterIndex).toBe(1); // keep events 0-1, truncate event 2
+		// Chain back to event 1 — the duplicate at index 2 leaves the chain.
+		expect(repair?.chainToEid).toBe(events[1]?.eid as string);
 		// Status message should be appended
 		const statusMsg = repair?.appendEvents.find((e) => e.type === "message");
 		expect(statusMsg).toBeDefined();
 	});
 
 	test("preserves unconsumed messages from truncated region", () => {
-		const events: Event[] = [
+		const events: Event[] = chained([
 			{
 				type: "tool_call",
 				tool: "bash",
@@ -2688,7 +2705,7 @@ describe("buildSessionRepair", () => {
 				taskId: "t1",
 				ts: 1003,
 			},
-		];
+		]);
 		const repair = buildSessionRepair(events, "t1");
 		expect(repair).not.toBeNull();
 		// The message from the truncated region should be preserved
@@ -2699,7 +2716,7 @@ describe("buildSessionRepair", () => {
 	});
 
 	test("handles orphan created by truncation (tool_call kept, result truncated)", () => {
-		const events: Event[] = [
+		const events: Event[] = chained([
 			{ type: "assistant_text", content: "Turn 1", taskId: "t1", ts: 1000 },
 			{
 				type: "tool_call",
@@ -2746,11 +2763,11 @@ describe("buildSessionRepair", () => {
 				taskId: "t1",
 				ts: 1006,
 			},
-		];
+		]);
 		const repair = buildSessionRepair(events, "t1");
 		expect(repair).not.toBeNull();
-		// Truncate before the duplicate (index 6), keeping 0-5
-		expect(repair?.truncateAfterIndex).toBe(5);
+		// Chain back to event 5 — the duplicate at index 6 leaves the chain.
+		expect(repair?.chainToEid).toBe(events[5]?.eid as string);
 		// No orphans in kept region (tc1 and tc2 both have results in 0-5)
 		const interruptedResults = repair?.appendEvents.filter(
 			(e) => e.type === "tool_result",
@@ -2761,7 +2778,7 @@ describe("buildSessionRepair", () => {
 	test("detects out-of-order tool_result (result after next assistant turn)", () => {
 		// Simulates the duplicate agent loop bug: two yields in one turn,
 		// second gets resolved, new assistant turn starts, THEN first resolves.
-		const events: Event[] = [
+		const events: Event[] = chained([
 			{
 				type: "tool_call",
 				tool: "mcp__mxd__yield",
@@ -2810,11 +2827,13 @@ describe("buildSessionRepair", () => {
 				taskId: "t1",
 				ts: 600,
 			} as Event,
-		];
+		]);
 		const repair = buildSessionRepair(events, "t1");
 		expect(repair).not.toBeNull();
-		// Should truncate before the out-of-order tool_call
-		expect(repair?.truncateAfterIndex).toBeLessThan(4);
+		// Chain back to before the out-of-order tool_call
+		expect(events.findIndex((e) => e.eid === repair?.chainToEid)).toBeLessThan(
+			4,
+		);
 	});
 
 	test("no repair needed when tool_results are positionally correct", () => {

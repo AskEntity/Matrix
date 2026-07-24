@@ -315,9 +315,12 @@ describe("Stress: compaction + restart", () => {
 		const content = `${allEvents.map((e) => JSON.stringify(e)).join("\n")}\n`;
 		writeFileSync(join(tmpDir, "compact-test.jsonl"), content);
 
-		// readActive should only return post-compact events
+		// readActive returns the boundary marker + everything after it. The
+		// marker is structural (the walker skips it) and is what tells the
+		// repair pass where the repairable region begins.
 		const active = store.readActive("compact-test");
-		expect(active.length).toBe(postCompactEvents.length);
+		expect(active.length).toBe(postCompactEvents.length + 1);
+		expect(active[0]?.type).toBe("compact_marker");
 
 		// Verify no pre-compact content
 		const allText = active.map((e) => JSON.stringify(e)).join(" ");
@@ -1228,11 +1231,13 @@ describe("Stress: JSONL corruption recovery", () => {
 		].join("\n");
 		writeFileSync(join(tmpDir, "active.jsonl"), `${content}\n`);
 
-		// readActive should return events after compact_marker, skipping corrupt line
+		// readActive returns the marker + the post-compact event, skipping the
+		// corrupt line and everything before the boundary.
 		const active = store.readActive("active");
-		expect(active.length).toBe(1);
-		expect(active[0]?.type).toBe("assistant_text");
-		expect((active[0] as unknown as { content: string }).content).toBe("new");
+		expect(active.length).toBe(2);
+		expect(active[0]?.type).toBe("compact_marker");
+		expect(active[1]?.type).toBe("assistant_text");
+		expect((active[1] as unknown as { content: string }).content).toBe("new");
 
 		Bun.spawnSync(["rm", "-rf", tmpDir]);
 	});

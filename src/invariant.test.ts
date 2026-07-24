@@ -269,11 +269,14 @@ describe("Invariant: Session Isolation", () => {
 				},
 			]);
 
-			// readActive uses compact_marker only (not fork_marker)
+			// readActive ends the chain at the compact boundary only — a
+			// fork_marker is NOT a barrier, a forked session's context
+			// legitimately includes the inherited history.
 			const active = store.readActive("child-task");
 
-			// Should only have events after the compact_marker
+			// The boundary marker itself plus everything after it
 			expect(active).toMatchObject([
+				{ type: "compact_marker" },
 				{
 					type: "assistant_text",
 					content: "child checkpoint",

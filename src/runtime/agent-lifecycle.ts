@@ -834,31 +834,23 @@ export async function runAgentForNode(
 			? eventStore.readActive(nodeId)
 			: [];
 		if (activeEvents.length > 0) {
-			// JSONL repair: truncate-and-rebuild if session has problems
-			// (duplicate tool_results, orphaned tool_calls, etc.)
-			// Handles both daemon restart orphans and accumulated poison
-			// from previous sessions where auto-recovery only fixed memory.
+			// JSONL repair if the session has problems (duplicate tool_results,
+			// orphaned tool_calls, out-of-order events). Handles both daemon
+			// restart orphans and accumulated poison from previous sessions
+			// where auto-recovery only fixed memory.
 			//
-			// readActiveWithLineMap returns chain-walked active events AND
-			// their physical line numbers. Chain-walk ensures rolled-back
-			// events (skipped via parentEid jumps) are excluded from repair analysis.
-			// buildSessionRepair returns an event-array-relative index;
-			// we translate it to a physical line via the map before calling
-			// truncateAfterLine (which operates on raw file lines). Without this
-			// translation, malformed JSONL lines (from crash-mid-append) shift
-			// the cut point and silently destroy valid events (R8-B#4).
-			const { events: activeForRepair, physicalLines } =
-				eventStore.readActiveWithLineMap(nodeId);
-			const repair = buildSessionRepair(activeForRepair, nodeId);
+			// Applied exactly like a rollback: point the chain at the last good
+			// event, then append. Nothing is deleted — the poison stays on disk
+			// and simply leaves the active chain. The jump reaches disk via the
+			// first appended event's parentEid, which is why a repair carrying a
+			// chainToEid always has events to append.
+			const repair = buildSessionRepair(activeEvents, nodeId);
 			if (repair) {
-				const needsTruncation =
-					repair.truncateAfterIndex < activeForRepair.length - 1;
-				const physicalLine = physicalLines[repair.truncateAfterIndex];
 				console.warn(
-					`[runAgentForNode] Repairing session ${nodeId}: ${needsTruncation ? `truncate after physical line ${physicalLine} (event index ${repair.truncateAfterIndex})` : "append only"}, ${repair.appendEvents.length} events to add`,
+					`[runAgentForNode] Repairing session ${nodeId}: ${repair.chainToEid ? `chain back to ${repair.chainToEid}` : "append only"}, ${repair.appendEvents.length} events to add`,
 				);
-				if (needsTruncation && physicalLine !== undefined) {
-					await eventStore.truncateAfterLine(nodeId, physicalLine);
+				if (repair.chainToEid) {
+					eventStore.setChainHead(nodeId, repair.chainToEid);
 				}
 				if (repair.appendEvents.length > 0) {
 					await eventStore.appendBatch(nodeId, repair.appendEvents);

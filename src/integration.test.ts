@@ -282,6 +282,24 @@ async function readSessionEvents(ctx: TestContext, sessionId: string) {
 }
 
 /**
+ * The events an agent actually resumes with — the active parentEid chain.
+ *
+ * Repair never deletes: a dropped event stays on disk and merely leaves the
+ * chain. So "the poison is gone" is a question about THIS list, never about
+ * the raw file.
+ */
+async function readActiveSessionEvents(ctx: TestContext, sessionId: string) {
+	const daemonStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+	if (daemonStore) {
+		await daemonStore.flushSession(sessionId);
+	}
+	const store = new EventStore(
+		join(ctx.dataDir, "projects", ctx.projectId, "tasks"),
+	);
+	return store.readActive(sessionId);
+}
+
+/**
  * Get root node ID (convenience).
  */
 async function getRootNodeId(ctx: TestContext): Promise<string> {
@@ -2659,8 +2677,16 @@ describe("Integration: auto-recovery from API 400", () => {
 		const status2 = await waitForDone(ctx, 10000);
 		expect(status2).toBe("verify");
 
-		// Verify: no duplicate tool_results in final JSONL
-		const finalEvents = await readSessionEvents(ctx, rootNodeId);
+		// Verify: no duplicate tool_results in the ACTIVE chain. The poisoned
+		// line is still in the file — repair drops it off the chain instead of
+		// rewriting history — so this must read the active chain, not the log.
+		const finalEvents = await readActiveSessionEvents(ctx, rootNodeId);
+		const rawEvents = await readSessionEvents(ctx, rootNodeId);
+		expect(
+			rawEvents.filter(
+				(e) => e.type === "tool_result" && e.toolCallId === bashCallId,
+			).length,
+		).toBe(2);
 		const toolResultsByCallId = new Map<string, number>();
 		for (const e of finalEvents) {
 			if (e.type === "tool_result") {
@@ -2833,7 +2859,7 @@ describe("Integration: repair on compacted session (FIX-1 cc#1)", () => {
 		const status = await waitForDone(ctx, 15000);
 		expect(status).toBe("verify");
 
-		const after = await readSessionEvents(ctx, rootNodeId);
+		const after = await readActiveSessionEvents(ctx, rootNodeId);
 
 		// The compact boundary + post-compact summary survive the repair.
 		expect(after.some((e) => e.type === "compact_marker")).toBe(true);
@@ -2855,12 +2881,20 @@ describe("Integration: repair on compacted session (FIX-1 cc#1)", () => {
 				(e) => e.type === "tool_call" && e.toolCallId === "tc-postcompact",
 			),
 		).toBe(true);
-		// The poison is gone: at most one result for the post-compact bash call.
+		// The poison left the chain: at most one result for the post-compact
+		// bash call in the resumed context — while the line itself is still on
+		// disk, since repair never deletes.
 		expect(
 			after.filter(
 				(e) => e.type === "tool_result" && e.toolCallId === "tc-postcompact",
 			).length,
 		).toBeLessThanOrEqual(1);
+		const rawAfter = await readSessionEvents(ctx, rootNodeId);
+		expect(
+			rawAfter.filter(
+				(e) => e.type === "tool_result" && e.toolCallId === "tc-postcompact",
+			).length,
+		).toBe(2);
 	}, 20000);
 });
 
@@ -10203,8 +10237,25 @@ describe("Integration: Phase 2 crash recovery", () => {
 			(e) => e.type === "done_notified",
 		);
 		expect(firstDoneNotifiedIdx).toBeGreaterThan(0);
-		// Truncate to keep only events before done_notified
-		await eventStore.truncateAfterLine(rootNodeId, firstDoneNotifiedIdx - 1);
+		// Cut the file down to the events before done_notified. This is direct
+		// file surgery on purpose: the product NEVER truncates a session log
+		// (repair drops events off the parentEid chain instead), but a crash
+		// mid-Phase-2 does leave a log that simply ends early — which is exactly
+		// the state under test. One line per event here, so the event index is
+		// also the line index.
+		const { readFileSync, writeFileSync } = await import("node:fs");
+		const sessionPath = join(
+			ctx.dataDir,
+			"projects",
+			ctx.projectId,
+			"tasks",
+			`${rootNodeId}.jsonl`,
+		);
+		const keptLines = readFileSync(sessionPath, "utf-8")
+			.split("\n")
+			.filter(Boolean)
+			.slice(0, firstDoneNotifiedIdx);
+		writeFileSync(sessionPath, `${keptLines.join("\n")}\n`);
 
 		// Verify truncation worked
 		const afterTruncEvents = eventStore.read(rootNodeId);
