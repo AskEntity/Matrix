@@ -4581,17 +4581,19 @@ pure (no side-channel). The guard lives in `handleEvent` (the event handler driv
 the reducer itself.
 
 
-## Message rollback via parentEid chain-walk (2026-07-22)
+## Message rollback via parentEid chain-walk (2026-07-22, simplified 2026-07-24)
 
 User clicks Rewind to here on a user message, system rolls back, agent regenerates. Claude Code /rewind equivalent.
 
 ### Core mechanism: readActive() chain-walks instead of linear slice
 
-Old readActive(): findLastIndex(compact_marker) + slice(). New readActive(): walkActiveChainIndices() from the last event via parentEid, stops at compact_marker. Without rollback, every event chains linearly (identical to old behavior). With rollback_marker, its parentEid jumps to the target event, rolled-back events are never visited.
+Old readActive(): findLastIndex(compact_marker) + slice(). New readActive(): walkActiveChainIndices() from the last event via parentEid, stops at compact_marker. Without rollback, every event chains linearly (identical to old behavior). With rollback (setChainHead), the next event's parentEid jumps to the target event, rolled-back events are never visited.
 
-### rollback_marker event type
+### Rollback mechanism: setChainHead (no marker event)
 
-type: rollback_marker, targetEid: string, eid, parentEid = targetEid, taskId, ts. The parentEid EQUALS targetEid, this jump skips rolled-back events. Written by EventStore.appendRollback() which sets parentEid manually (not via stampEvent auto-chain).
+`EventStore.setChainHead(sessionId, eid)` — one line: `this.lastEventIds.set(sessionId, eid)`. Pure in-memory. The NEXT event appended via `stampEvent` gets `parentEid = eid`, creating the chain jump. No intermediate `rollback_marker` event — the jump is carried by the first post-rollback event itself. `/edit` endpoint: `setChainHead(nodeId, rollbackTargetEid)` → `deliverMessage(newContent)` → stampEvent auto-sets parentEid.
+
+**DELETED (2026-07-24)**: `rollback_marker` event type, `EventStore.appendRollback()`, frontend rollback_marker rendering (LogEntryView, event-handler, CSS). The marker was an implementation shortcut — parentEid jumps via setChainHead are simpler (one line vs. a full event write+flush).
 
 ### Defensive chain-walk fallback (CRITICAL for backward compat)
 
@@ -4599,19 +4601,19 @@ If parentEid chain breaks (null on non-first event, or missing eid), walk falls 
 
 ### REST endpoint
 
-POST /api/matrix/projects/:id/tasks/:nodeId/rollback (plugin route). Validates targetEid (exists, user message, after compact_marker). Stops agent, appends rollback_marker, restarts via deliverMessage.
+POST /api/matrix/projects/:id/tasks/:nodeId/edit (plugin route). Validates targetEid (exists, user message, after compact_marker). Stops agent, setChainHead, delivers new message via deliverMessage.
 
 ### Frontend
 
-Rollback button on user messages (hover-reveal). rollback_marker renders as visual boundary. event-handler.ts has a rollback_marker case. i18n: activity.rollback / activity.rollbackConfirm (EN + ZH).
+Edit/Rewind buttons on user messages (hover-reveal). i18n: activity.rollback / activity.rollbackConfirm (EN + ZH).
 
 ### Agent lifecycle / buildSessionRepair adaptation
 
 agent-lifecycle.ts uses readActiveWithLineMap (chain-walked) for repair instead of readWithLineMap (full). Rolled-back events excluded from repair analysis.
 
-### Tests (13)
+### Tests
 
-src/rollback.test.ts: 8 walkActiveChainIndices unit tests, 4 EventStore integration tests, 1 walker test. All mutation-verified.
+src/rollback.test.ts: walkActiveChainIndices unit tests, EventStore integration tests, consistency tests (readActive + readFromLastCompactMarker + restart).
 
 ## search_tasks tiered return + create_task auto-search (2026-07-23)
 

@@ -676,15 +676,6 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
-	// Rollback marker — visual separator showing where a rollback happened
-	if (entry.type === "rollback_marker") {
-		return (
-			<div className="mxd-lmxd-entry mxd-compact-boundary mxd-rollback-boundary">
-				<span className="mxd-compact-label">⟲ {t("activity.rollback")}</span>
-			</div>
-		);
-	}
-
 	// User message — special bubble rendering, not a card
 	if (entry.type === "message" && entry.body.source === "user") {
 		const eid = (entry as { eid?: string }).eid;

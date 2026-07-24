@@ -2424,23 +2424,6 @@ h6.mxd-md-h {
 	color: var(--accent);
 }
 
-/* Rollback boundary marker */
-.mxd-rollback-boundary {
-	text-align: center;
-	padding: 6px 12px;
-	background: linear-gradient(
-		90deg,
-		transparent,
-		rgba(56, 139, 253, 0.08),
-		transparent
-	);
-	border-top: 1px dashed rgba(56, 139, 253, 0.3);
-	border-bottom: 1px dashed rgba(56, 139, 253, 0.3);
-}
-.mxd-rollback-boundary .mxd-compact-label {
-	color: var(--accent);
-}
-
 .mxd-tool-result-images {
 	display: flex;
 	flex-wrap: wrap;

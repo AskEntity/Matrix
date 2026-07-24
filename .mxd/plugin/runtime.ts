@@ -204,16 +204,12 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 			if (loopPromise) await loopPromise;
 		}
 
-		// Flush pending writes before appending the marker
+		// Flush pending writes so lastEventIds is current
 		await eventStore.flushSession(nodeId);
 
-		// Append rollback_marker — parentEid jumps to before the edited message
-		await eventStore.appendRollback(
-			nodeId,
-			rollbackTargetEid,
-			nodeId,
-		);
-		await eventStore.flushSession(nodeId);
+		// Set chain head to the target — next appended event's parentEid
+		// will jump to rollbackTargetEid, skipping rolled-back events
+		eventStore.setChainHead(nodeId, rollbackTargetEid);
 
 		// Send the edited content as a new user message
 		const { deliverMessage } = await import(

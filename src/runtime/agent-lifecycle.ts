@@ -841,7 +841,7 @@ export async function runAgentForNode(
 			//
 			// readActiveWithLineMap returns chain-walked active events AND
 			// their physical line numbers. Chain-walk ensures rolled-back
-			// events (from rollback_marker) are excluded from repair analysis.
+			// events (skipped via parentEid jumps) are excluded from repair analysis.
 			// buildSessionRepair returns an event-array-relative index;
 			// we translate it to a physical line via the map before calling
 			// truncateAfterLine (which operates on raw file lines). Without this

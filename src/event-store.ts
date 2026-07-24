@@ -174,41 +174,17 @@ export class EventStore {
 	}
 
 	/**
-	 * Append a rollback_marker event whose parentEid points to the TARGET
-	 * event (the user message to roll back to), NOT to the immediately
-	 * preceding event. This "jump" in the parentEid chain is what makes
-	 * rolled-back events invisible to the chain-walk algorithm.
+	 * Set the chain head for a session so the NEXT appended event's parentEid
+	 * points to `eid` instead of the most recently written event. This is
+	 * the rollback mechanism: setChainHead(targetEid) → deliverMessage writes
+	 * the new user message whose parentEid = targetEid → chain-walk skips
+	 * everything between target and the new message.
 	 *
-	 * Must be called after flushSession so lastEventIds is up-to-date
-	 * (though we don't use it — the targetEid IS the parentEid).
+	 * Pure in-memory operation — no disk I/O. The parentEid jump is persisted
+	 * naturally when the next event is appended via stampEvent.
 	 */
-	appendRollback(
-		sessionId: string,
-		targetEid: string,
-		taskId: string,
-	): Promise<void> {
-		return this.enqueueWrite(sessionId, () => {
-			const eid = generateEid();
-			const event: Event = {
-				type: "rollback_marker",
-				targetEid,
-				eid,
-				parentEid: targetEid, // jump to target, skipping rolled-back events
-				taskId,
-				ts: Date.now(),
-			};
-			try {
-				appendFileSync(
-					this.path(sessionId),
-					`${JSON.stringify(event)}\n`,
-				);
-			} catch {
-				/* non-fatal */
-			}
-			// Update lastEventIds so subsequent appends chain from the rollback_marker
-			this.lastEventIds.set(sessionId, eid);
-			return Promise.resolve();
-		});
+	setChainHead(sessionId: string, eid: string): void {
+		this.lastEventIds.set(sessionId, eid);
 	}
 
 	/** Read all events for a session */
@@ -301,8 +277,8 @@ export class EventStore {
 	 * Without rollback: every event chains linearly → same result as the old
 	 * `findLastIndex(compact_marker) + slice()`.
 	 *
-	 * With rollback_marker: its parentEid jumps back to the target event,
-	 * so rolled-back events (between target and marker) are never visited.
+	 * With rollback (setChainHead): the new event's parentEid jumps back to
+	 * the target event, so rolled-back events are never visited.
 	 */
 	readActive(sessionId: string): Event[] {
 		const all = this.read(sessionId);
