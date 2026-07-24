@@ -22,6 +22,7 @@ export const AppFooter = memo(function AppFooter({
 	imageDropRequest,
 	editRequest,
 	onCancelEdit,
+	onScrollToEditing,
 }: {
 	projectId: string;
 	targetNodeId: string | null;
@@ -52,6 +53,8 @@ export const AppFooter = memo(function AppFooter({
 	imageDropRequest?: ImageDropRequest | null;
 	editRequest?: EditRequest | null;
 	onCancelEdit?: () => void;
+	/** Click the "editing" indicator to jump to that message in the log. */
+	onScrollToEditing?: () => void;
 }) {
 	const { t } = useLocale();
 
@@ -137,6 +140,7 @@ export const AppFooter = memo(function AppFooter({
 				imageDropRequest={imageDropRequest}
 				editRequest={editRequest}
 				onCancelEdit={onCancelEdit}
+				onScrollToEditing={onScrollToEditing}
 			/>
 		</footer>
 	);

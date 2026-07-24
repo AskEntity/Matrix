@@ -127,13 +127,9 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 
 		if (
 			!body?.eid ||
-			(!body?.content?.trim() &&
-				(!body?.images || body.images.length === 0))
+			(!body?.content?.trim() && (!body?.images || body.images.length === 0))
 		) {
-			return c.json(
-				{ error: "eid and content or images required" },
-				400,
-			);
+			return c.json({ error: "eid and content or images required" }, 400);
 		}
 
 		const project = ctx.pm.get(projectId);
@@ -147,9 +143,7 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 			return c.json({ error: "Task not found" }, 404);
 		}
 
-		const { getEventStore } = await import(
-			"../../src/runtime/helpers.ts"
-		);
+		const { getEventStore } = await import("../../src/runtime/helpers.ts");
 		const eventStore = getEventStore(ctx, projectId);
 		if (!eventStore.has(nodeId)) {
 			return c.json({ error: "No session data" }, 400);
@@ -162,14 +156,8 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 			return c.json({ error: "eid not found" }, 400);
 		}
 		// Must be a user message
-		if (
-			targetEvent.type !== "message" ||
-			targetEvent.body?.source !== "user"
-		) {
-			return c.json(
-				{ error: "eid must point to a user message" },
-				400,
-			);
+		if (targetEvent.type !== "message" || targetEvent.body?.source !== "user") {
+			return c.json({ error: "eid must point to a user message" }, 400);
 		}
 		// Must be after the last compact_marker
 		const lastCompactIdx = allEvents.findLastIndex(
@@ -194,9 +182,7 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 		}
 
 		// Stop the running agent (if any) and wait for loop exit
-		const { stopTask } = await import(
-			"../../src/runtime/agent-lifecycle.ts"
-		);
+		const { stopTask } = await import("../../src/runtime/agent-lifecycle.ts");
 		if (node.session) {
 			await stopTask(ctx, projectId, nodeId);
 		} else {

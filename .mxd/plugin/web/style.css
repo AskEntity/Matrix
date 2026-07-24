@@ -2342,6 +2342,12 @@ h6.mxd-md-h {
 	margin: 4px 0;
 }
 
+/* The message currently loaded into the composer for editing. A marker,
+   not an alarm: accent rail on the left + a slightly warmer bubble. */
+.mxd-event-user_message.mxd-user-msg--editing {
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .mxd-user-prompt-bubble {
 	flex: 1;
 	min-width: 0;
@@ -2352,6 +2358,11 @@ h6.mxd-md-h {
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
+}
+
+.mxd-user-msg--editing .mxd-user-prompt-bubble {
+	background: rgba(56, 139, 253, 0.16);
+	border-color: var(--accent);
 }
 
 .mxd-user-prompt-label {
@@ -2415,7 +2426,9 @@ h6.mxd-md-h {
 	align-items: center;
 	justify-content: center;
 	opacity: 0;
-	transition: opacity 0.15s, color 0.15s;
+	transition:
+		opacity 0.15s,
+		color 0.15s;
 }
 .mxd-event-user_message:hover .mxd-user-msg-action {
 	opacity: 1;
@@ -2457,6 +2470,101 @@ h6.mxd-md-h {
 	object-fit: contain;
 	border-radius: 6px;
 	cursor: default;
+}
+
+/* =========================================================
+   Confirm dialog (in-app replacement for window.confirm)
+   ========================================================= */
+
+.mxd-confirm-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 9998;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 20px;
+	background: rgba(0, 0, 0, 0.6);
+}
+
+.mxd-confirm-card {
+	width: 100%;
+	max-width: 440px;
+	padding: 18px 20px 16px;
+	background: var(--bg-surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-lg);
+	cursor: default;
+}
+
+.mxd-confirm-title {
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--text-primary);
+	margin-bottom: 8px;
+}
+
+.mxd-confirm-message {
+	font-size: 12px;
+	line-height: 1.55;
+	color: var(--text-secondary);
+}
+
+.mxd-confirm-warnings {
+	margin-top: 12px;
+	padding: 10px 12px;
+	background: var(--bg-stuck);
+	border: 1px solid rgba(227, 179, 65, 0.3);
+	border-radius: var(--radius-md);
+}
+
+.mxd-confirm-warnings-title {
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--color-stuck);
+	margin-bottom: 6px;
+}
+
+.mxd-confirm-warning {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--text-primary);
+}
+
+.mxd-confirm-warning-icon {
+	color: var(--color-stuck);
+	flex-shrink: 0;
+}
+
+.mxd-confirm-clean {
+	margin-top: 12px;
+	padding: 10px 12px;
+	background: var(--bg-passed);
+	border: 1px solid rgba(63, 185, 80, 0.25);
+	border-radius: var(--radius-md);
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--text-secondary);
+}
+
+.mxd-confirm-tools {
+	margin-top: 6px;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	line-height: 1.5;
+	color: var(--text-muted);
+	word-break: break-word;
+}
+
+.mxd-confirm-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 16px;
 }
 
 /* Drag-over highlight on InputBar form */
@@ -3162,6 +3270,24 @@ button.mxd-tool-card-header:hover {
 	border-radius: 4px;
 	border: 1px solid rgba(56, 139, 253, 0.15);
 }
+/* Clickable label — jumps the log to the message being edited. */
+.mxd-edit-indicator-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	background: none;
+	border: none;
+	padding: 0;
+	font-family: inherit;
+	font-size: 12px;
+	color: var(--accent);
+	cursor: pointer;
+}
+.mxd-edit-indicator-label:hover {
+	color: var(--accent-hover);
+	text-decoration: underline;
+}
+
 .mxd-edit-cancel {
 	margin-left: auto;
 	background: none;

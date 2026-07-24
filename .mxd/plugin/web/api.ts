@@ -72,8 +72,7 @@ export const api = {
 	taskFork: (id: string, nodeId: string) => taskUrl(id, nodeId, "fork"),
 	taskReorder: (id: string, nodeId: string) => taskUrl(id, nodeId, "reorder"),
 	taskGitlog: (id: string, nodeId: string) => taskUrl(id, nodeId, "gitlog"),
-	taskEdit: (id: string, nodeId: string) =>
-		taskUrl(id, nodeId, "edit"),
+	taskEdit: (id: string, nodeId: string) => taskUrl(id, nodeId, "edit"),
 
 	// Search
 	search: (id: string, query: string, limit?: number) => {

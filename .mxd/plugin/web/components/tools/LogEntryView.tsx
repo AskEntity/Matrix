@@ -16,8 +16,8 @@ import {
 	TOOL_YIELD,
 } from "../../tool-names.ts";
 import { Card } from "../Card.tsx";
-import { IconEdit } from "../icons.tsx";
 import { ImageLightbox } from "../ImageLightbox.tsx";
+import { IconEdit } from "../icons.tsx";
 import { MarkdownText } from "../MarkdownText.tsx";
 import { ToolResultImages } from "./ToolResultImages.tsx";
 import {
@@ -113,6 +113,7 @@ export const LogEntryView = memo(function LogEntryView({
 	showCacheBadges,
 	onRollback,
 	onEdit,
+	editingEid,
 }: {
 	entry: LogEntry;
 	nodeMap: Map<string, TreeNode>;
@@ -125,6 +126,8 @@ export const LogEntryView = memo(function LogEntryView({
 	onRollback?: (eid: string, content: string) => void;
 	/** Called when user clicks the edit button on a user message (fill InputBar for modification). */
 	onEdit?: (eid: string, content: string) => void;
+	/** eid of the message currently loaded in the composer for editing — marked in the log. */
+	editingEid?: string | null;
 }) {
 	const authFetch = useAuthFetch();
 	const [movingToBg, setMovingToBg] = useState(false);
@@ -679,9 +682,15 @@ export const LogEntryView = memo(function LogEntryView({
 	// User message — special bubble rendering, not a card
 	if (entry.type === "message" && entry.body.source === "user") {
 		const eid = (entry as { eid?: string }).eid;
+		const isEditing = !!eid && eid === editingEid;
 		return (
 			<>
-				<div className="mxd-lmxd-entry mxd-event-user_message">
+				<div
+					className={`mxd-lmxd-entry mxd-event-user_message${
+						isEditing ? " mxd-user-msg--editing" : ""
+					}`}
+					data-eid={eid}
+				>
 					<div className="mxd-user-ts-col">
 						<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
 						<div className="mxd-user-msg-actions-row">

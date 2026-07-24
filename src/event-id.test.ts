@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 
@@ -118,12 +118,31 @@ describe("JSONL event eid + parentEid", () => {
 	test("old JSONL without eids is auto-migrated on first read", async () => {
 		// Write raw events WITHOUT eid/parentEid (simulating legacy data)
 		const legacy: Event[] = [
-			{ type: "session_config", tools: [], systemStable: "", systemVariable: "", taskId: "t1", ts: 1000 } as Event,
-			{ type: "agent_start", taskId: "t1", resume: false, model: "test", provider: "test", ts: 2000 } as Event,
-			{ type: "assistant_text", content: "hello", taskId: "t1", ts: 3000 } as Event,
+			{
+				type: "session_config",
+				tools: [],
+				systemStable: "",
+				systemVariable: "",
+				taskId: "t1",
+				ts: 1000,
+			} as Event,
+			{
+				type: "agent_start",
+				taskId: "t1",
+				resume: false,
+				model: "test",
+				provider: "test",
+				ts: 2000,
+			} as Event,
+			{
+				type: "assistant_text",
+				content: "hello",
+				taskId: "t1",
+				ts: 3000,
+			} as Event,
 		];
 		const filePath = join(dir, "legacy.jsonl");
-		const rawContent = legacy.map((e) => JSON.stringify(e)).join("\n") + "\n";
+		const rawContent = `${legacy.map((e) => JSON.stringify(e)).join("\n")}\n`;
 		require("node:fs").writeFileSync(filePath, rawContent);
 
 		const events = store.read("legacy");
@@ -151,10 +170,20 @@ describe("JSONL event eid + parentEid", () => {
 	test("migration is idempotent — second read does not re-generate eids", async () => {
 		// Write legacy events
 		const legacy = [
-			{ type: "agent_start", taskId: "t1", resume: false, model: "m", provider: "p", ts: 1000 },
+			{
+				type: "agent_start",
+				taskId: "t1",
+				resume: false,
+				model: "m",
+				provider: "p",
+				ts: 1000,
+			},
 		];
 		const filePath = join(dir, "idem.jsonl");
-		require("node:fs").writeFileSync(filePath, JSON.stringify(legacy[0]) + "\n");
+		require("node:fs").writeFileSync(
+			filePath,
+			JSON.stringify(legacy[0]) + "\n",
+		);
 
 		// First read triggers migration
 		const first = store.read("idem");
@@ -170,7 +199,14 @@ describe("JSONL event eid + parentEid", () => {
 		const filePath = join(dir, "chain.jsonl");
 		require("node:fs").writeFileSync(
 			filePath,
-			JSON.stringify({ type: "agent_start", taskId: "t1", resume: false, model: "m", provider: "p", ts: 1000 }) + "\n",
+			JSON.stringify({
+				type: "agent_start",
+				taskId: "t1",
+				resume: false,
+				model: "m",
+				provider: "p",
+				ts: 1000,
+			}) + "\n",
 		);
 
 		// Read triggers migration — sets lastEventId
@@ -263,7 +299,12 @@ describe("JSONL event eid + parentEid", () => {
 			type: "message",
 			id: "msg-ulid-123",
 			taskId: "t1",
-			body: { source: "user", id: "msg-ulid-123", ts: Date.now(), content: "hello" } as any,
+			body: {
+				source: "user",
+				id: "msg-ulid-123",
+				ts: Date.now(),
+				content: "hello",
+			} as any,
 			ts: Date.now(),
 		};
 		await store.append("s1", msgEvent);

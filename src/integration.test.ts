@@ -12630,7 +12630,9 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 			"Implemented the frobnicator cache via a ring buffer to prevent stale data",
 		);
 		child.resultRounds = [
-			{ result: "Fixed the cache invalidation bug by switching to LRU eviction" },
+			{
+				result: "Fixed the cache invalidation bug by switching to LRU eviction",
+			},
 		];
 		// Create a second task (will be a brief hit).
 		const child2 = tracker.addChild(
@@ -12706,7 +12708,8 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 							input: {
 								parentId: tracker.rootNodeId,
 								title: "Auth session hardening",
-								description: "improve auth token security and session management",
+								description:
+									"improve auth token security and session management",
 								draft: true,
 							},
 						},
@@ -12716,8 +12719,16 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 					assert: [
 						// The tool_result should contain both the created node JSON
 						// AND the related-tasks block.
-						{ block: 0, type: "tool_result", contains: "Auth session hardening" },
-						{ block: 0, type: "tool_result", contains: "[Related existing tasks]" },
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "Auth session hardening",
+						},
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "[Related existing tasks]",
+						},
 						{ block: 0, type: "tool_result", contains: "Auth token rotation" },
 					],
 					blocks: [
@@ -12725,7 +12736,10 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", result: "verified create_task related" },
+							input: {
+								status: "passed",
+								result: "verified create_task related",
+							},
 						},
 					],
 				},

@@ -52,6 +52,8 @@ export const ActivityLog = memo(function ActivityLog({
 	onQuoteText,
 	onRollback,
 	onEdit,
+	editingEid,
+	scrollToBottomRequest,
 }: {
 	entries: LogEntry[];
 	filterTaskId: string | null;
@@ -80,6 +82,15 @@ export const ActivityLog = memo(function ActivityLog({
 	onRollback?: (eid: string, content: string) => void;
 	/** Edit handler: called with the eid + content of a user message to edit. */
 	onEdit?: (eid: string, content: string) => void;
+	/** eid of the message loaded in the composer for editing — highlighted in the log. */
+	editingEid?: string | null;
+	/**
+	 * Monotonic counter: every increment means "jump to the bottom now".
+	 * Applied in a layout effect, so the scroll happens after the new entries
+	 * are committed — the caller can bump it in the same batch as a full logs
+	 * replacement (rollback / edit re-fetch) without any rAF guesswork.
+	 */
+	scrollToBottomRequest?: number;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 
@@ -101,6 +112,7 @@ export const ActivityLog = memo(function ActivityLog({
 	// restores scrollTop so the user stays at the same content.
 	const scrollAnchorRef = useRef<number | null>(null);
 	const prevLoadingOlderRef = useRef(!!loadingOlderEvents);
+	const prevScrollRequestRef = useRef(scrollToBottomRequest ?? 0);
 
 	// Select-to-quote: floating "Ask Matrix" button near the current selection.
 	// Set on mouseup with a valid selection inside the log container; dismissed
@@ -382,6 +394,21 @@ export const ActivityLog = memo(function ActivityLog({
 		}
 	}, [loadingOlderEvents, entries]);
 
+	// Explicit "jump to bottom" requests (scroll-to-bottom button, post-rollback
+	// re-fetch). Same shape as the anchor above — the sibling case of the same
+	// problem: a wholesale `entries` replacement invalidates the scroll offset,
+	// so the intent has to be re-applied AFTER React commits the new entries.
+	// Layout effect (not rAF): runs before paint, so there is no flash of the
+	// wrong position, and it fires deterministically even when the entry count
+	// happens not to change.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: entries in deps so the effect fires in the same render that commits new entries
+	useLayoutEffect(() => {
+		const current = scrollToBottomRequest ?? 0;
+		if (current === prevScrollRequestRef.current) return;
+		prevScrollRequestRef.current = current;
+		scrollToBottom();
+	}, [scrollToBottomRequest, entries, scrollToBottom]);
+
 	const { t } = useLocale();
 
 	return (
@@ -437,6 +464,7 @@ export const ActivityLog = memo(function ActivityLog({
 							showCacheBadges={showCacheBadges}
 							onRollback={onRollback}
 							onEdit={onEdit}
+							editingEid={editingEid}
 						/>
 					),
 				)}

@@ -3,7 +3,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { insertQuote } from "../quote.ts";
-import { IconClose, IconImage, IconSend } from "./icons.tsx";
+import { IconClose, IconEdit, IconImage, IconSend } from "./icons.tsx";
 import { SLASH_COMMANDS, SlashCommandMenu } from "./SlashCommandMenu.tsx";
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
@@ -88,6 +88,7 @@ export const InputBar = memo(function InputBar({
 	imageDropRequest,
 	editRequest,
 	onCancelEdit,
+	onScrollToEditing,
 }: {
 	projectId: string;
 	targetNodeId: string | null;
@@ -100,6 +101,8 @@ export const InputBar = memo(function InputBar({
 	imageDropRequest?: ImageDropRequest | null;
 	editRequest?: EditRequest | null;
 	onCancelEdit?: () => void;
+	/** Click the "editing" indicator to jump to that message in the log. */
+	onScrollToEditing?: () => void;
 }) {
 	const { t } = useLocale();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -367,7 +370,15 @@ export const InputBar = memo(function InputBar({
 			{/* Editing indicator — shown when user clicked Edit on a message */}
 			{editRequest && (
 				<div className="mxd-edit-indicator">
-					<span>✏️ {t("footer.editing")}</span>
+					<button
+						type="button"
+						className="mxd-edit-indicator-label"
+						title={t("activity.scrollToEditing")}
+						onClick={onScrollToEditing}
+					>
+						<IconEdit size={11} />
+						{t("footer.editing")}
+					</button>
 					{onCancelEdit && (
 						<button
 							type="button"
