@@ -1,5 +1,5 @@
 /**
- * Tests for message rollback — parentEid chain-walk + rollback_marker.
+ * Tests for message rollback — parentEid chain-walk + setChainHead.
  *
  * Tests three layers:
  * 1. walkActiveChainIndices (pure function — chain walk correctness)
@@ -28,28 +28,28 @@ describe("walkActiveChainIndices", () => {
 		expect(indices).toEqual([0, 1, 2]);
 	});
 
-	test("rollback_marker skips rolled-back events", () => {
+	test("parentEid jump skips rolled-back events", () => {
+		// Simulates what happens after setChainHead: the event AFTER the rollback
+		// (a6) has parentEid pointing to a3, skipping a4 and a5.
 		const events: Event[] = [
 			{ type: "session_config", tools: [], systemStable: "", systemVariable: "", taskId: "t1", ts: 1, eid: "a1", parentEid: null },
 			{ type: "message", id: "m1", body: { source: "user", id: "m1", content: "do X", ts: 2 }, taskId: "t1", ts: 2, eid: "a2", parentEid: "a1" },
 			{ type: "messages_consumed", messageIds: ["m1"], taskId: "t1", ts: 3, eid: "a3", parentEid: "a2" },
 			{ type: "assistant_text", content: "doing X", taskId: "t1", ts: 4, eid: "a4", parentEid: "a3" },
 			{ type: "tool_call", tool: "bash", toolCallId: "tc1", input: {}, taskId: "t1", ts: 5, eid: "a5", parentEid: "a4" },
-			// ^ events a4, a5 will be rolled back
-			{ type: "rollback_marker", targetEid: "a3", taskId: "t1", ts: 6, eid: "a6", parentEid: "a3" },
-			{ type: "assistant_text", content: "redoing X differently", taskId: "t1", ts: 7, eid: "a7", parentEid: "a6" },
+			// ^ events a4, a5 will be rolled back — a6's parentEid jumps to a3
+			{ type: "assistant_text", content: "redoing X differently", taskId: "t1", ts: 7, eid: "a6", parentEid: "a3" },
 		] as Event[];
 
 		const indices = walkActiveChainIndices(events);
 		// a4 (index 3) and a5 (index 4) should be SKIPPED
-		expect(indices).toEqual([0, 1, 2, 5, 6]);
+		expect(indices).toEqual([0, 1, 2, 5]);
 		// Verify the events at those indices
-		expect(events[indices[0]]!.type).toBe("session_config");
-		expect(events[indices[1]]!.type).toBe("message");
-		expect(events[indices[2]]!.type).toBe("messages_consumed");
-		expect(events[indices[3]]!.type).toBe("rollback_marker");
-		expect(events[indices[4]]!.type).toBe("assistant_text");
-		expect((events[indices[4]] as { content: string }).content).toBe("redoing X differently");
+		expect(events[indices[0]!]!.type).toBe("session_config");
+		expect(events[indices[1]!]!.type).toBe("message");
+		expect(events[indices[2]!]!.type).toBe("messages_consumed");
+		expect(events[indices[3]!]!.type).toBe("assistant_text");
+		expect((events[indices[3]!] as { content: string }).content).toBe("redoing X differently");
 	});
 
 	test("compact_marker terminates walk (excluded by default)", () => {
@@ -91,25 +91,22 @@ describe("walkActiveChainIndices", () => {
 	});
 
 	test("consecutive rollbacks: only the latest branch is active", () => {
+		// Two parentEid jumps back to a3 — only the final branch (a7) is active
 		const events: Event[] = [
 			{ type: "session_config", tools: [], systemStable: "", systemVariable: "", taskId: "t1", ts: 1, eid: "a1", parentEid: null },
 			{ type: "message", id: "m1", body: { source: "user", id: "m1", content: "Q1", ts: 2 }, taskId: "t1", ts: 2, eid: "a2", parentEid: "a1" },
 			{ type: "messages_consumed", messageIds: ["m1"], taskId: "t1", ts: 3, eid: "a3", parentEid: "a2" },
 			{ type: "assistant_text", content: "A1 (bad)", taskId: "t1", ts: 4, eid: "a4", parentEid: "a3" },
-			// First rollback: roll back to a3 (skip a4)
-			{ type: "rollback_marker", targetEid: "a3", taskId: "t1", ts: 5, eid: "a5", parentEid: "a3" },
-			{ type: "assistant_text", content: "A1 (also bad)", taskId: "t1", ts: 6, eid: "a6", parentEid: "a5" },
-			// Second rollback: roll back to a3 again (skip a5, a6)
-			{ type: "rollback_marker", targetEid: "a3", taskId: "t1", ts: 7, eid: "a7", parentEid: "a3" },
-			{ type: "assistant_text", content: "A1 (good)", taskId: "t1", ts: 8, eid: "a8", parentEid: "a7" },
+			// First rollback: new event jumps to a3 (skip a4)
+			{ type: "assistant_text", content: "A1 (also bad)", taskId: "t1", ts: 6, eid: "a5", parentEid: "a3" },
+			// Second rollback: new event jumps to a3 again (skip a5)
+			{ type: "assistant_text", content: "A1 (good)", taskId: "t1", ts: 8, eid: "a6", parentEid: "a3" },
 		] as Event[];
 
 		const indices = walkActiveChainIndices(events);
-		// Only a1, a2, a3, a7 (latest rollback_marker), a8 are active
-		// a4, a5, a6 are all skipped
-		expect(indices).toEqual([0, 1, 2, 6, 7]);
-		expect((events[indices[3]] as { type: string }).type).toBe("rollback_marker");
-		expect((events[indices[4]] as { content: string }).content).toBe("A1 (good)");
+		// Only a1, a2, a3, a6 are active — a4 and a5 skipped
+		expect(indices).toEqual([0, 1, 2, 5]);
+		expect((events[indices[3]!] as { content: string }).content).toBe("A1 (good)");
 	});
 
 	test("empty events returns empty", () => {
@@ -143,9 +140,9 @@ describe("EventStore rollback", () => {
 		store = new EventStore(dataDir);
 	}
 
-	test("readActive skips rolled-back events", async () => {
+	test("readActive skips rolled-back events via setChainHead", async () => {
 		await setup();
-		// Build a session with user message + response + rollback
+		// Build a session with user message + response
 		await store.append("s1", {
 			type: "session_config", tools: [], systemStable: "", systemVariable: "", taskId: "t1", ts: 1,
 		} as Event);
@@ -168,21 +165,27 @@ describe("EventStore rollback", () => {
 		const msgsConsumed = all.find(e => e.type === "messages_consumed");
 		expect(msgsConsumed?.eid).toBeDefined();
 
-		// Append rollback_marker pointing to messages_consumed
-		await store.appendRollback("s1", msgsConsumed!.eid!, "t1");
+		// setChainHead + append a new event to realize the jump
+		store.setChainHead("s1", msgsConsumed!.eid!);
+		await store.append("s1", {
+			type: "assistant_text", content: "new response", taskId: "t1", ts: 6,
+		} as Event);
 		await store.flushSession("s1");
 
-		// readActive should skip assistant_text and tool_call (rolled back)
+		// readActive should skip old assistant_text and tool_call (rolled back)
 		const active = store.readActive("s1");
 		expect(active.map(e => e.type)).toEqual([
 			"session_config",
 			"message",
 			"messages_consumed",
-			"rollback_marker",
+			"assistant_text",
 		]);
+		// The assistant_text should be the new one
+		const assistantText = active.find(e => e.type === "assistant_text") as { content: string };
+		expect(assistantText.content).toBe("new response");
 	});
 
-	test("readFromLastCompactMarker includes rollback_marker in UI log", async () => {
+	test("readFromLastCompactMarker skips rolled-back events", async () => {
 		await setup();
 		await store.append("s1", {
 			type: "session_config", tools: [], systemStable: "", systemVariable: "", taskId: "t1", ts: 1,
@@ -200,17 +203,13 @@ describe("EventStore rollback", () => {
 
 		const all = store.read("s1");
 		const target = all.find(e => e.type === "messages_consumed");
-		await store.appendRollback("s1", target!.eid!, "t1");
+		store.setChainHead("s1", target!.eid!);
 		await store.append("s1", {
 			type: "assistant_text", content: "good", taskId: "t1", ts: 6,
 		} as Event);
 		await store.flushSession("s1");
 
 		const result = store.readFromLastCompactMarker("s1");
-		// Should include rollback_marker + new events, skip rolled-back
-		const types = result.events.map(e => e.type);
-		expect(types).toContain("rollback_marker");
-		expect(types).toContain("assistant_text");
 		// Only the "good" assistant_text, not the "bad" one
 		const assistantTexts = result.events.filter(
 			e => e.type === "assistant_text"
@@ -219,7 +218,7 @@ describe("EventStore rollback", () => {
 		expect(assistantTexts[0]!.content).toBe("good");
 	});
 
-	test("appendRollback creates event with correct parentEid", async () => {
+	test("setChainHead causes next event's parentEid to jump to target", async () => {
 		await setup();
 		await store.append("s1", {
 			type: "session_config", tools: [], systemStable: "", systemVariable: "", taskId: "t1", ts: 1,
@@ -232,16 +231,17 @@ describe("EventStore rollback", () => {
 		const all = store.read("s1");
 		const targetEid = all[0]!.eid!;
 
-		await store.appendRollback("s1", targetEid, "t1");
+		store.setChainHead("s1", targetEid);
+		await store.append("s1", {
+			type: "assistant_text", content: "after rollback", taskId: "t1", ts: 3,
+		} as Event);
 		await store.flushSession("s1");
 
 		const afterRollback = store.read("s1");
-		const marker = afterRollback.find(e => e.type === "rollback_marker");
-		expect(marker).toBeDefined();
-		expect(marker!.parentEid).toBe(targetEid);
-		expect((marker as any).targetEid).toBe(targetEid);
-		expect(marker!.eid).toBeDefined();
-		expect(marker!.eid).not.toBe(targetEid); // fresh eid, not same as target
+		const newEvent = afterRollback[afterRollback.length - 1]!;
+		expect(newEvent.parentEid).toBe(targetEid);
+		expect(newEvent.eid).toBeDefined();
+		expect(newEvent.eid).not.toBe(targetEid); // fresh eid, not same as target
 	});
 
 	test("readActiveWithLineMap returns correct physical lines for chain-walked events", async () => {
@@ -262,21 +262,21 @@ describe("EventStore rollback", () => {
 
 		const all = store.read("s1");
 		const target = all.find(e => e.type === "messages_consumed");
-		await store.appendRollback("s1", target!.eid!, "t1");
+		store.setChainHead("s1", target!.eid!);
 		await store.append("s1", {
 			type: "assistant_text", content: "good", taskId: "t1", ts: 6,
 		} as Event);
 		await store.flushSession("s1");
 
 		const { events, physicalLines } = store.readActiveWithLineMap("s1");
-		// 6 events total on disk (0..5), active chain skips index 3 (bad assistant_text)
-		// Active: session_config(0), message(1), messages_consumed(2), rollback_marker(4), good_text(5)
-		expect(events.length).toBe(5);
+		// 5 events total on disk (0..4), active chain skips index 3 (bad assistant_text)
+		// Active: session_config(0), message(1), messages_consumed(2), good_text(4)
+		expect(events.length).toBe(4);
 		expect(events.map(e => e.type)).toEqual([
-			"session_config", "message", "messages_consumed", "rollback_marker", "assistant_text",
+			"session_config", "message", "messages_consumed", "assistant_text",
 		]);
 		// Physical lines skip line 3 (bad assistant_text)
-		expect(physicalLines).toEqual([0, 1, 2, 4, 5]);
+		expect(physicalLines).toEqual([0, 1, 2, 4]);
 	});
 });
 
@@ -291,15 +291,14 @@ describe("Edit/Rewind consistency across refresh and restart", () => {
 
 	/**
 	 * Seed a JSONL session that simulates:
-	 *   session_config → user_msg_1 → consumed_1 → assistant_1 → tool_call_1
+	 *   session_config → user_msg_1 → consumed_1 → assistant_1 → tool_call_1 → tool_result_1
 	 *   → user_msg_2 → consumed_2 → assistant_2
-	 *   → rollback_marker (back to consumed_1, rolling back everything after msg_1's response)
-	 *   → user_msg_3 → consumed_3 → assistant_3  (the "edited" flow)
+	 *   → setChainHead(consumed_1) → user_msg_3 → consumed_3 → assistant_3
 	 *
 	 * After rollback, active events should be:
-	 *   session_config, user_msg_1, consumed_1, rollback_marker, user_msg_3, consumed_3, assistant_3
+	 *   session_config, user_msg_1, consumed_1, user_msg_3, consumed_3, assistant_3
 	 *
-	 * Rolled-back events (assistant_1, tool_call_1, user_msg_2, consumed_2, assistant_2) must NOT appear.
+	 * Rolled-back events (assistant_1, tool_call_1, tool_result_1, user_msg_2, consumed_2, assistant_2) must NOT appear.
 	 */
 	async function seedSessionWithRollback(store: EventStore, sessionId: string) {
 		// Pre-rollback: normal session with two user messages and responses
@@ -339,8 +338,8 @@ describe("Edit/Rewind consistency across refresh and restart", () => {
 		);
 		expect(consumed1?.eid).toBeDefined();
 
-		// Append rollback_marker: jump back to after consumed_1
-		await store.appendRollback(sessionId, consumed1!.eid!, sessionId);
+		// setChainHead: jump back to after consumed_1
+		store.setChainHead(sessionId, consumed1!.eid!);
 
 		// Post-rollback: new user message + response (the "edited" continuation)
 		await store.append(sessionId, {
@@ -360,7 +359,6 @@ describe("Edit/Rewind consistency across refresh and restart", () => {
 		"session_config",
 		"message",           // m1
 		"messages_consumed", // m1 consumed
-		"rollback_marker",
 		"message",           // m3 (edited)
 		"messages_consumed", // m3 consumed
 		"assistant_text",    // new answer
@@ -373,8 +371,8 @@ describe("Edit/Rewind consistency across refresh and restart", () => {
 		"second answer (rolled back)",
 	];
 
-	function assertActiveEventsCorrect(events: Event[], label: string) {
-		const types = events.map(e => e.type);
+	function assertActiveEventsCorrect(events: Event[], _label: string) {
+		const types: string[] = events.map(e => e.type);
 		expect(types).toEqual(EXPECTED_ACTIVE_TYPES);
 
 		// Verify no rolled-back content leaks through
@@ -502,16 +500,14 @@ describe("Edit/Rewind consistency across refresh and restart", () => {
 		// First rollback
 		const all1 = store.read("s1");
 		const consumed = all1.find(e => e.type === "messages_consumed");
-		await store.appendRollback("s1", consumed!.eid!, "t1");
+		store.setChainHead("s1", consumed!.eid!);
 		await store.append("s1", {
 			type: "assistant_text", content: "attempt 2", taskId: "t1", ts: 6,
 		} as Event);
 		await store.flushSession("s1");
 
 		// Second rollback (back to same point)
-		const all2 = store.read("s1");
-		const consumed2 = all2.find(e => e.type === "messages_consumed");
-		await store.appendRollback("s1", consumed2!.eid!, "t1");
+		store.setChainHead("s1", consumed!.eid!);
 		await store.append("s1", {
 			type: "assistant_text", content: "attempt 3 (final)", taskId: "t1", ts: 8,
 		} as Event);
@@ -541,16 +537,19 @@ describe("Edit/Rewind consistency across refresh and restart", () => {
 	});
 });
 
-// ── Walker: rollback_marker is skipped ──
+// ── Walker: parentEid jumps are transparent to the walker ──
 
-describe("walker: rollback_marker", () => {
-	test("walkEventsToMessages skips rollback_marker", async () => {
+describe("walker: parentEid jump events", () => {
+	test("walkEventsToMessages handles events with parentEid jumps normally", async () => {
 		const { walkEventsToMessages } = await import("./event-converter.ts");
+		// After setChainHead, the next event simply has a different parentEid.
+		// The walker processes events linearly (it doesn't walk parentEid itself) —
+		// readActive/chain-walk has already filtered the events before the walker sees them.
+		// So no special handling is needed in the walker.
 		const events: Event[] = [
-			{ type: "rollback_marker", targetEid: "a3", taskId: "t1", ts: 1, eid: "a6", parentEid: "a3" },
+			{ type: "session_config", tools: [], systemStable: "", systemVariable: "", taskId: "t1", ts: 1, eid: "a1", parentEid: null },
 		] as Event[];
 
-		// Simple callbacks that track what was called
 		const messages: string[] = [];
 		const callbacks = {
 			onUserMessage: (content: string) => { messages.push(`user:${content}`); return content; },
@@ -561,7 +560,7 @@ describe("walker: rollback_marker", () => {
 		};
 
 		walkEventsToMessages(events, callbacks);
-		// rollback_marker should be skipped — no callback called
+		// session_config is structural — no callback called
 		expect(messages).toEqual([]);
 	});
 });

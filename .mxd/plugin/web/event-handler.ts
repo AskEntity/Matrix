@@ -824,21 +824,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					sideEffects: NO_SIDE_EFFECTS,
 				};
 
-			case "rollback_marker":
-				return {
-					entries: [
-						createLogEntry({
-							type: "rollback_marker",
-							targetEid: msg.targetEid,
-							taskId: msg.taskId,
-							ts: msg.ts,
-							eid: msg.eid,
-						}),
-					],
-					updates: [],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-
 			case "status":
 				// Status events are internal — no log entries
 				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
