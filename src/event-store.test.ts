@@ -3,6 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
+import { stripChainFields } from "./test-utils/strip-chain-fields.ts";
 
 const TEST_DIR = join(import.meta.dir, "..", ".test-event-store");
 
@@ -38,7 +39,7 @@ describe("EventStore", () => {
 		};
 		await store.append("s1", event);
 		expect(store.has("s1")).toBe(true);
-		expect(store.read("s1")).toEqual([event]);
+		expect(stripChainFields(store.read("s1"))).toEqual([event]);
 	});
 
 	test("append multiple events sequentially", async () => {
@@ -57,7 +58,7 @@ describe("EventStore", () => {
 		};
 		await store.append("s1", e1);
 		await store.append("s1", e2);
-		expect(store.read("s1")).toEqual([e1, e2]);
+		expect(stripChainFields(store.read("s1"))).toEqual([e1, e2]);
 	});
 
 	test("appendBatch writes multiple events", async () => {
@@ -80,7 +81,7 @@ describe("EventStore", () => {
 			},
 		];
 		await store.appendBatch("s1", events);
-		expect(store.read("s1")).toEqual(events);
+		expect(stripChainFields(store.read("s1"))).toEqual(events);
 	});
 
 	test("appendBatch with empty array is a no-op", async () => {
@@ -123,7 +124,7 @@ describe("EventStore", () => {
 			{ type: "assistant_text", content: "hi", taskId: "test", ts: 1001 },
 		];
 		await store.appendBatch("s1", events);
-		expect(store.readActive("s1")).toEqual(events);
+		expect(stripChainFields(store.readActive("s1"))).toEqual(events);
 	});
 
 	test("readActive returns events after last compact_marker", async () => {
@@ -246,7 +247,7 @@ describe("EventStore", () => {
 		];
 		await store.appendBatch("s1", events);
 		const result = store.readFromLastCompactMarker("s1");
-		expect(result.events).toEqual(events);
+		expect(stripChainFields(result.events)).toEqual(events);
 		expect(result.hasOlderEvents).toBe(false);
 	});
 
@@ -372,7 +373,7 @@ describe("EventStore", () => {
 
 		const result = store.readFromLastCompactMarker("s1");
 		expect(result.hasOlderEvents).toBe(false);
-		expect(result.events).toEqual(events);
+		expect(stripChainFields(result.events)).toEqual(events);
 	});
 
 	test("readFromLastCompactMarker returns empty for non-existent session", () => {
@@ -592,7 +593,7 @@ describe("EventStore", () => {
 			ts: 1234,
 		};
 		await store.append("s1", event);
-		expect(store.read("s1")).toEqual([event]);
+		expect(stripChainFields(store.read("s1"))).toEqual([event]);
 	});
 
 	test("read skips malformed JSONL lines", async () => {
@@ -637,8 +638,8 @@ describe("EventStore", () => {
 		};
 		await store.append("s1", e1);
 		await store.append("s2", e2);
-		expect(store.read("s1")).toEqual([e1]);
-		expect(store.read("s2")).toEqual([e2]);
+		expect(stripChainFields(store.read("s1"))).toEqual([e1]);
+		expect(stripChainFields(store.read("s2"))).toEqual([e2]);
 		store.clear("s1");
 		expect(store.has("s1")).toBe(false);
 		expect(store.has("s2")).toBe(true);
