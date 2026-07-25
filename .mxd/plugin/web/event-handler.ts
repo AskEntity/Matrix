@@ -1,6 +1,10 @@
 import type React from "react";
 import { isWorking } from "../agent-activity.ts";
-import { messageRunStarts } from "../run-start.ts";
+import {
+	endsTurnLookingBack,
+	type RunEvent,
+	turnAnswersPriorWork,
+} from "../run-start.ts";
 import { TOOL_YIELD } from "../tool-names.ts";
 // ID generation — crypto.randomUUID() for local UI state
 import {
@@ -621,11 +625,52 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	}
 
 	/**
+	 * Events since the last turn boundary, per task — the current user turn as
+	 * it is being built. Reading them in order is how "was this message sent
+	 * on its own" gets answered without a second pass over the log, which is
+	 * what let the live path answer it at all: it sees one event at a time and
+	 * never has the whole batch.
+	 */
+	const turnWindows = new Map<string, RunEvent[]>();
+
+	/**
+	 * Whether the events currently being processed are the conversation.
+	 * True for live events (an event arriving over SSE was just appended to
+	 * the chain head, so it is on it by construction) and for the
+	 * `after=compact` fetch; set per batch by processEventBatch.
+	 */
+	let annotateTurns = true;
+
+	/**
+	 * Feed one event to the per-task turn tracker, and return the turn it
+	 * closes. Only a boundary event closes a turn; for anything else the
+	 * return value is not meaningful (the event has just been added to the
+	 * window it would be describing).
+	 */
+	function noteTurnEvent(msg: IncomingEvent): RunEvent[] {
+		const taskId =
+			"taskId" in msg && typeof msg.taskId === "string" ? msg.taskId : "";
+		const current = turnWindows.get(taskId) ?? [];
+		if (endsTurnLookingBack(msg.type)) {
+			turnWindows.set(taskId, []);
+			return current;
+		}
+		current.push(msg as unknown as RunEvent);
+		turnWindows.set(taskId, current);
+		return current;
+	}
+
+	/**
 	 * Single event → entries, in-place updates, and side effects.
 	 * THE unified event processor — used by both live SSE and batch processing.
 	 * Accepts typed IncomingEvent — discriminated union narrowing eliminates all `as` casts.
 	 */
 	function processEvent(msg: IncomingEvent): ProcessResult {
+		// Both callers reach this one function in event order, which is why
+		// the turn tracker lives here: annotate once, and live and refetched
+		// entries get the same answer from the same rule.
+		const closedTurn = noteTurnEvent(msg);
+
 		switch (msg.type) {
 			case "tree_updated":
 				return {
@@ -1102,11 +1147,23 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				if (consumedIds.size === 0) {
 					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 				}
+				// This is the moment the question becomes answerable: a turn
+				// carrying a tool_result is answering the agent's own previous
+				// output, so nothing riding along in it started anything.
+				// Delivery order decides, and this is delivery order — the
+				// entries are not, since a message typed mid-tool-call renders
+				// after the finished tool card.
+				const startsRun = annotateTurns
+					? !turnAnswersPriorWork(closedTurn)
+					: undefined;
 				const newEntries: LogEntry[] = [];
 				for (const p of getPendingMessages()) {
 					if (consumedIds.has(p.id)) {
 						const entry = materializeFromPending(p, msg.ts);
-						if (entry) newEntries.push(entry);
+						if (entry)
+							newEntries.push(
+								startsRun === undefined ? entry : { ...entry, startsRun },
+							);
 					}
 				}
 				return {
@@ -1492,6 +1549,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// Reset per-batch state — reprocessing from scratch. Pending reducer
 		// also resets to []; message events in the batch will re-populate it.
 		toolCallToolNames.clear();
+		turnWindows.clear();
+		annotateTurns = opts?.fromActiveChain === true;
 		setBackgroundProcesses(new Map());
 		dispatchPending({ type: "RESET" });
 
@@ -1540,7 +1599,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// Collapse consecutive session lifecycle entries (resumed/stopped) with no
 		// meaningful content between them. Keep only the last one in each run.
 		entries = collapseLifecycleEntries(entries);
-		if (opts?.fromActiveChain) entries = annotateRunStarts(entries, events);
+		annotateTurns = true; // live events are always on the active chain
 
 		setLogs(entries);
 		for (const fn of deferredSideEffects) fn();
@@ -1550,33 +1609,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// overwrite that. Nothing in this batch can touch activity now — it
 		// comes only from ephemeral events that never enter JSONL — so there
 		// is nothing to correct.
-	}
-
-	/**
-	 * Mark which user-message entries started a run (run-start.ts).
-	 *
-	 * Decided from `events` — the RAW batch in delivery order — not from the
-	 * entries, because a message typed mid-tool-call is delivered inside the
-	 * tool's window but rendered after the finished tool card. Reading the
-	 * rendered order would call exactly the blocked case a run start.
-	 *
-	 * The batch is the only place this can be done, and the only place it
-	 * needs to be: an eid reaches the UI only through a JSONL fetch (SSE
-	 * broadcasts carry none), so an entry without one shows no buttons.
-	 */
-	function annotateRunStarts(
-		entries: LogEntry[],
-		events: IncomingEvent[],
-	): LogEntry[] {
-		const starts = messageRunStarts(events);
-		if (starts.size === 0) return entries;
-		return entries.map((entry) => {
-			if (entry.type !== "message") return entry;
-			const eid = (entry as { eid?: string }).eid;
-			if (!eid) return entry;
-			const startsRun = starts.get(eid);
-			return startsRun === undefined ? entry : { ...entry, startsRun };
-		});
 	}
 
 	/** Entry types that count as "meaningful content" — NOT lifecycle noise. */

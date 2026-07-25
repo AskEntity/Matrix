@@ -18,6 +18,7 @@ import { basename, join } from "node:path";
 import { projectIndexDbPath } from "./data-paths.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
+import { subscribeToEvents } from "./runtime/event-system.ts";
 import {
 	_clearDbCache,
 	_setEmbeddingPipeline,
@@ -13175,4 +13176,96 @@ describe("Integration: done() result capture (resultRounds)", () => {
 		// resultRounds.result is BYTE-IDENTICAL to the value the parent received.
 		expect(childNode?.resultRounds).toEqual([{ result: MARKER }]);
 	}, 45000);
+});
+
+// ── The event's name reaches every observer, not just the file ──
+//
+// `emitEvent` used to broadcast an anonymous copy and persist a named one, so
+// the only way for a client to learn an event's eid was to re-read the whole
+// JSONL afterwards. Everything that wants to point AT an event — Edit/Rewind,
+// a link to a message, a stable React key — was blocked behind that re-read.
+describe("Integration: broadcasts carry the eid the file holds", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("a live run's broadcasts and its JSONL agree, event for event", async () => {
+		ctx = await setupTestContext();
+
+		const broadcast: Array<{ type: string; eid?: string }> = [];
+		const unsubscribe = subscribeToEvents(ctx.app.ctx, ctx.projectId, (e) => {
+			broadcast.push({
+				type: e.type as string,
+				eid: (e as { eid?: string }).eid,
+			});
+		});
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Looking." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__bash",
+					input: { command: "echo hi" },
+				},
+			],
+		});
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		unsubscribe();
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const onDisk = await readSessionEvents(ctx, rootNodeId);
+		expect(onDisk.length).toBeGreaterThan(3);
+
+		// Every persisted event was broadcast with the SAME name it was
+		// written under — same events, same order, same eids. Identity, not
+		// merely "some eid is present".
+		const persistedTypes = new Set<string>(onDisk.map((e) => e.type));
+		const broadcastNamed = broadcast.filter((e) => persistedTypes.has(e.type));
+		expect(broadcastNamed.map((e) => `${e.type}:${e.eid}`)).toEqual(
+			onDisk.map((e) => `${e.type}:${e.eid}`),
+		);
+
+		// And the chain the client sees is the chain on disk: linear, no holes.
+		let parent: string | null = null;
+		for (const e of onDisk) {
+			expect(e.eid).toMatch(/^[0-9a-f]{12}$/);
+			expect(e.parentEid ?? null).toBe(parent);
+			parent = e.eid as string;
+		}
+	}, 15000);
+
+	test("ephemeral events stay nameless — they are not history", async () => {
+		ctx = await setupTestContext();
+
+		const broadcast: Array<{ type: string; eid?: string }> = [];
+		const unsubscribe = subscribeToEvents(ctx.app.ctx, ctx.projectId, (e) => {
+			broadcast.push({
+				type: e.type as string,
+				eid: (e as { eid?: string }).eid,
+			});
+		});
+
+		await startAgent(
+			ctx,
+			JSON.stringify({
+				blocks: [
+					{ type: "text", text: "Thinking out loud." },
+					{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+				],
+			}),
+		);
+		await waitForIdle(ctx);
+		unsubscribe();
+
+		// agent_activity is live process state that is deliberately never
+		// persisted. Handing it an eid would be a claim that it can be
+		// pointed at later, and nothing on disk would back that up.
+		const activity = broadcast.filter((e) => e.type === "agent_activity");
+		expect(activity.length).toBeGreaterThan(0);
+		for (const e of activity) expect(e.eid).toBeUndefined();
+	}, 15000);
 });

@@ -50,12 +50,24 @@ function withChainFields(
  * JSONL-based event store for Event persistence.
  * Append-only: one JSON line per event. File path: `{dir}/{sessionId}.jsonl`
  *
- * append/appendBatch are serialized per session via a Promise queue and return
- * a Promise for test callers that want to `await` visibility — but the
- * underlying disk I/O is synchronous (`appendFileSync`). Sync I/O is load-
- * bearing for the generation guard: the guard check and the filesystem write
- * happen in the SAME microtask, so clear() cannot interleave between them.
- * See the race notes in `enqueueWrite` below.
+ * append/appendBatch are FULLY SYNCHRONOUS: they stamp the event's place in
+ * the chain and write it in one uninterruptible step, and return the persisted
+ * form so the caller can hand the same object to anyone else (`emitEvent`
+ * broadcasts exactly what went to disk, eid included).
+ *
+ * That is what lets the chain have ONE writer. It used to stamp inside a write
+ * queue, one microtask later, which meant anything wanting the eid earlier had
+ * to stamp it too — and two writers of `lastEventIds` is a TOCTOU that breaks
+ * the chain under bursts (measured; see 01KY54YT round 11).
+ *
+ * Fully synchronous rather than "stamp now, write later" because of the write
+ * FAILURE path. `rewindChainHead` restores the head so a failed event is not
+ * left in the chain, and that is only correct while nothing can be stamped
+ * between the stamp and the write. Defer the write and a burst in one tick
+ * gets stamped first: the event after a failed one then names a parent no line
+ * carries, the walk stops dead there (there is no dangling-link fallback, by
+ * design), and the agent resumes with a silently truncated context. Synchronous
+ * keeps the cost of a failed write at "one event lost", never "history lost".
  *
  * Read operations remain synchronous for simplicity (only called during resume).
  */
@@ -103,17 +115,29 @@ export class EventStore {
 	 *   zombie file (appendFile with O_CREAT recreates a just-unlinked file,
 	 *   which caused the 2026-04-18 flake). Remove the zombie.
 	 *
-	 * Why two layers. In production, writeFn is synchronous (`appendFileSync`
-	 * inside `append`/`appendBatch`), so there is no window for clear() to
-	 * interleave between pre-check and post-check — Layer 2 is strictly
-	 * decorative in the fast path. Layer 2 exists so that ANY future caller
-	 * (or test) passing an async writeFn cannot resurrect the race silently.
+	 * ⚠️ **This guard has no reachable failure path today.** `append` and
+	 * `appendBatch` no longer come through here at all — they are synchronous,
+	 * so `clear()` cannot interleave with them by construction, and there is
+	 * no deferred write left for a generation bump to catch. The one caller
+	 * is `copySessionFrom`, whose write IS genuinely async — and fork is
+	 * structurally exclusive with reset at the task level, so even that one
+	 * cannot race a clear in practice.
 	 *
-	 * Historical context: the previous implementation used `fs.promises.
+	 * It stays for two reasons, both about the future rather than the present:
+	 * any async writeFn added later gets the protection without having to
+	 * rediscover why it is needed, and the two regression tests below record a
+	 * real bug that cost real time to diagnose. **Do not read "there is a
+	 * queue" as "there is protection" for the append path — there is nothing
+	 * left there to protect.** (Deciding whether this should exist at all, once
+	 * synchronous appends have run in production for a while: draft task
+	 * 01KYCQDJRF8Z8S6YC39F7ECVZ8.)
+	 *
+	 * Historical context: the original implementation used `fs.promises.
 	 * appendFile` (async libuv) and had only Layer 1. Under CPU contention
 	 * the libuv thread pool would delay the `open(O_CREAT)` syscall, letting
 	 * clear() sneak in between pre-check and open, after which the open
-	 * recreated the file. Switching to `appendFileSync` closes that window.
+	 * recreated the file. Sync I/O closed that window; synchronous appends
+	 * then removed the window's last inhabitant.
 	 */
 	private enqueueWrite(
 		sessionId: string,
@@ -164,45 +188,43 @@ export class EventStore {
 	}
 
 	/**
-	 * Append a single event to the JSONL file.
+	 * Append a single event to the JSONL file. Synchronous; returns the
+	 * persisted form — the same object shape the file now holds, chain fields
+	 * included. Callers that want to show the event to anyone else should pass
+	 * on THIS object, not the one they built.
 	 *
-	 * Uses `appendFileSync` intentionally: the filesystem write must complete
-	 * in the same microtask as the generation guard check (see `enqueueWrite`).
-	 * Writes are small (one JSON line), blocking the main thread for tens of
-	 * microseconds, which is negligible next to provider streaming latency.
+	 * Blocking the main thread for one small write costs tens of microseconds,
+	 * which is nothing next to provider streaming latency — and it was already
+	 * being paid, just one microtask later.
 	 */
-	append(sessionId: string, event: Event): Promise<void> {
-		return this.enqueueWrite(sessionId, () => {
-			const headBeforeWrite = this.lastEventIds.get(sessionId) ?? null;
-			const stamped = this.stampEvent(sessionId, event);
-			try {
-				appendFileSync(this.path(sessionId), `${JSON.stringify(stamped)}\n`);
-			} catch (e) {
-				// The event never reached disk, so the chain must not point at it:
-				// the next event's parentEid would name an eid no line carries, and
-				// the walk (which has no dangling-link fallback, by design) would
-				// stop dead there and strand the whole session. Non-fatal for the
-				// caller either way.
-				this.rewindChainHead(sessionId, headBeforeWrite, e);
-			}
-			return Promise.resolve();
-		});
+	append(sessionId: string, event: Event): Event {
+		const headBeforeWrite = this.lastEventIds.get(sessionId) ?? null;
+		const stamped = this.stampEvent(sessionId, event);
+		try {
+			appendFileSync(this.path(sessionId), `${JSON.stringify(stamped)}\n`);
+		} catch (e) {
+			// The event never reached disk, so the chain must not point at it:
+			// the next event's parentEid would name an eid no line carries, and
+			// the walk (which has no dangling-link fallback, by design) would
+			// stop dead there and strand the whole session. Non-fatal for the
+			// caller either way.
+			this.rewindChainHead(sessionId, headBeforeWrite, e);
+		}
+		return stamped;
 	}
 
-	/** Append multiple events in one write. Sync I/O for the same reason as `append`. */
-	appendBatch(sessionId: string, events: Event[]): Promise<void> {
-		if (events.length === 0) return Promise.resolve();
-		return this.enqueueWrite(sessionId, () => {
-			const headBeforeWrite = this.lastEventIds.get(sessionId) ?? null;
-			const stamped = events.map((e) => this.stampEvent(sessionId, e));
-			const lines = `${stamped.map((e) => JSON.stringify(e)).join("\n")}\n`;
-			try {
-				appendFileSync(this.path(sessionId), lines);
-			} catch (e) {
-				this.rewindChainHead(sessionId, headBeforeWrite, e);
-			}
-			return Promise.resolve();
-		});
+	/** Append multiple events in one write. Synchronous, like `append`. */
+	appendBatch(sessionId: string, events: Event[]): Event[] {
+		if (events.length === 0) return [];
+		const headBeforeWrite = this.lastEventIds.get(sessionId) ?? null;
+		const stamped = events.map((e) => this.stampEvent(sessionId, e));
+		const lines = `${stamped.map((e) => JSON.stringify(e)).join("\n")}\n`;
+		try {
+			appendFileSync(this.path(sessionId), lines);
+		} catch (e) {
+			this.rewindChainHead(sessionId, headBeforeWrite, e);
+		}
+		return stamped;
 	}
 
 	/** Undo a stamp whose write failed — see the call sites in append/appendBatch. */
@@ -581,7 +603,11 @@ export class EventStore {
 		}
 		allLines.push(JSON.stringify(forkMarker));
 
-		await appendFile(targetPath, `${allLines.join("\n")}\n`);
+		// The one genuinely async write left in this class, and therefore the
+		// only remaining user of the write queue's generation guard.
+		await this.enqueueWrite(targetId, () =>
+			appendFile(targetPath, `${allLines.join("\n")}\n`),
+		);
 
 		// Set lastEventId for the target session so subsequent appends chain.
 		this.lastEventIds.set(targetId, forkEid);
