@@ -456,15 +456,21 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 	/** Graceful shutdown: stop all agents, await loop settlement, flush pending JSONL writes.
 	 *
 	 * Durability contract: when shutdown() returns, every event emitted up to that
-	 * point MUST be on disk. `emitEvent` queues async `eventStore.append()` writes
-	 * without awaiting — without this flush, the last ~hundreds of ms of writes
-	 * (agent_end from stopAgent, done_notified from Phase 2, tool_results) are lost
-	 * when the worker terminates.
+	 * point MUST be on disk.
+	 *
+	 * Step 2 is what carries that contract. `eventStore.append` is synchronous,
+	 * so an event is durable the moment `emitEvent` returns — but only for
+	 * events that have actually been emitted, and an agent still inside its
+	 * `finally` (agent_end from stopAgent, done_notified from Phase 2) has not
+	 * emitted them yet. Awaiting the loops is what makes "up to that point"
+	 * include those. Step 3 is now a formality for the append path (there is
+	 * nothing queued to drain) and still real for `copySessionFrom`, the one
+	 * async write left.
 	 *
 	 * Order matters:
 	 *   1. stopAgent on every running project (emits agent_end, triggers finally cleanup)
 	 *   2. await residual in-flight loops with bounded timeout (Phase 2 writes)
-	 *   3. flush every EventStore (drains queued async appends to disk)
+	 *   3. flush every EventStore
 	 *
 	 * The loop-wait timeout matches stopAgent's (3s): real providers abort within
 	 * ms, stuck tools (foreground bash ignoring abort) get a bounded grace period.

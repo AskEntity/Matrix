@@ -1052,6 +1052,14 @@ describe("EventStore", () => {
 		// NEW generation enqueued after clear. Serialization via writeQueues
 		// guarantees ordering — W1 (old gen) completes (+ post-check unlinks)
 		// BEFORE W2 (new gen) runs, so W2's write is not touched.
+		//
+		// BOTH writes go through the queue by reflection. They used to be W1
+		// (reflection) + a real `store.append`, which no longer models this at
+		// all: appends are synchronous and do not enter the queue, so W2 would
+		// land BEFORE W1's slow write and the zombie's post-check would take
+		// the legitimate file with it. That is not a regression in the guard —
+		// it is this test's setup ceasing to describe the guard's world. The
+		// guard is about queued writes; the test now uses queued writes.
 		const event: Event = {
 			type: "agent_end",
 			reason: "stopped",
@@ -1092,7 +1100,9 @@ describe("EventStore", () => {
 			taskId: "g",
 			ts: 2,
 		} as Event;
-		const w2 = store.append("g", newEvent);
+		const w2 = privateStore.enqueueWrite("g", async () => {
+			syncAppend(privateStore.path("g"), `${JSON.stringify(newEvent)}\n`);
+		});
 
 		await Promise.all([w1, w2]);
 		await store.flush();

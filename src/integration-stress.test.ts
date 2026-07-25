@@ -1777,31 +1777,28 @@ describe("Stress: JSONL atomic operations", () => {
 		const tmpDir = await mkdtemp(join(tmpdir(), "mxd-atomic-"));
 		const store = new EventStore(tmpDir);
 
-		// Launch 20 concurrent appends — they should all serialize correctly
-		const promises: Promise<void>[] = [];
+		// 20 appends in one tick — the burst that used to be the interesting
+		// case. Appends are synchronous now, so "serialized" is no longer a
+		// property the queue provides: it is call order, and the file must
+		// show exactly that.
 		for (let i = 0; i < 20; i++) {
-			promises.push(
-				store.append("concurrent-session", {
-					type: "assistant_text",
-					content: `message_${i}`,
-					taskId: "test",
-					ts: Date.now() + i,
-				}),
-			);
+			store.append("concurrent-session", {
+				type: "assistant_text",
+				content: `message_${i}`,
+				taskId: "test",
+				ts: Date.now() + i,
+			});
 		}
-		await Promise.all(promises);
 		await store.flush();
 
 		const events = store.read("concurrent-session");
 		expect(events.length).toBe(20);
 
-		// All events should be present (no lost writes)
+		// Present, in call order (no lost writes, no reordering)
 		const texts = events.map(
 			(e) => (e as unknown as { content: string }).content,
 		);
-		for (let i = 0; i < 20; i++) {
-			expect(texts).toContain(`message_${i}`);
-		}
+		expect(texts).toEqual(Array.from({ length: 20 }, (_, i) => `message_${i}`));
 
 		// Each event should be valid JSON (no interleaving)
 		for (const evt of events) {
