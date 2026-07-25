@@ -5310,9 +5310,32 @@ setter is passed IN instead — `handleImplicitYield(queue, setActivity)`.
    finally, stopAgent, stopTask). Skipping any one leaves a permanent spinner
    for a dead agent in every connected client.
 
-There is deliberately NO `thinking` transition on the way *out* of idle: every
-path that leaves `handleImplicitYield` and stays in the loop reaches the API
-block, so a second setter would be unobservable (identical event sequence).
+6. `thinking` — on the way OUT of idle, right where `queue.idle = false` sits.
+
+⚠️ **Point 6 was initially left out, with an argument that was wrong in an
+instructive way.** The reasoning was: every path leaving `handleImplicitYield`
+reaches the API block, so a second setter is unobservable — *the emitted event
+sequence is identical either way*. True about the event sequence, and
+irrelevant: **consumers read the STORED value, not the event stream.**
+`yield_external`'s fast path and the connect-time snapshot both ask
+`session.activity` directly. Without the transition, the whole wake window
+(drain → filter compact → buildUserTurn → emit its events) reports `idle` for
+a loop that is provably not parked — and the documented
+`send_user_message → yield_external` workflow lands exactly there, told "the
+agent stopped working" at the moment it started.
+
+The old code left idle TWICE here (`queue.idle = false` AND an `agent_active`
+event). Collapsing to one state kept only the flag — which by then had no
+production reader — so the migration silently dropped the half that mattered.
+
+**The structural fix is the dedupe, not the extra line.** `setActivity`
+early-returns when the state is unchanged, which makes "an extra setActivity
+call is harmless" a true statement. Before that, every transition point needed
+a per-site argument about whether its event would be redundant — and that is
+precisely the argument that went wrong. With dedupe, you write a transition
+wherever the loop changes what it is doing and never reason about it again.
+Dedupe against a LOCAL (not the session field) so the property also holds for a
+provider driven directly in a unit test, where there is no session.
 
 ### Wire format
 
@@ -5400,6 +5423,7 @@ caught by tests only its own path can reach:
 | `thinking` at the API block | thinking→tool→thinking, alone |
 | `tool` before tool execution | the in-tool observation + thinking→tool→thinking |
 | `null` at the 3 teardown sites | session-end, stopTask, stopAgent — one each |
+| `thinking` on the way out of idle | wake-window test, alone |
 
 **The initial-drain mutation caught a bug in my own test.** The first version
 used the normal scope, so `work_context` was queued, the drain never parked,
@@ -5411,3 +5435,14 @@ shape. Fixed by launching with `buildWorkContext: () => null`.
 That is the argument for mutating per transition point as you add it rather
 than once at the end: a green test tells you nothing about WHICH line made it
 green.
+
+**Mutation testing cannot find a transition point that was never written.**
+The leave-idle gap (point 6) survived a full clean mutation sweep — nothing
+failed, because nothing existed to remove. It was caught by reading the comment
+that justified its absence. When a comment argues why some code is unnecessary,
+that argument is the thing to check; the tests around it are all consistent
+with it by construction.
+
+**Careless-git note**: reverting a mutation with `git checkout -- <file>` also
+reverts any UNCOMMITTED fix in the same file. Commit the fix before mutating
+it, or back the file up.

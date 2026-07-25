@@ -327,6 +327,59 @@ describe("Agent activity: three states, one source", () => {
 		expect(states[rootId]).toBe("idle");
 	}, 20000);
 
+	test("waking from idle leaves `idle` BEFORE the woken turn is processed", async () => {
+		// The window between `queue.wait()` returning and the next API call:
+		// draining, filtering, building the user turn. The loop is provably not
+		// parked there, so the STORED state must not still say idle — consumers
+		// read the field, not the event sequence. `yield_external`'s fast path
+		// is the one that bites: send_user_message → yield_external is a
+		// documented workflow, and it would answer "the agent stopped working"
+		// at the exact moment the agent started.
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+
+		// Sample the stored state at a moment strictly INSIDE the window:
+		// messages_consumed for the woken turn is emitted after the drain and
+		// before the API call.
+		let sawIdle = false;
+		const insideWindow: Array<AgentActivity | undefined> = [];
+		const unsub = subscribeToEvents(ctx.app.ctx, ctx.projectId, (event) => {
+			if (event.taskId !== rootId) return;
+			if (event.type === "agent_activity") {
+				if ((event as { state?: string }).state === "idle") sawIdle = true;
+				return;
+			}
+			if (sawIdle && event.type === "messages_consumed") {
+				insideWindow.push(storedState(ctx, rootId));
+			}
+		});
+
+		try {
+			const park = JSON.stringify({
+				blocks: [{ type: "text", text: "parking" }],
+			});
+			await postMessage(ctx, rootId, park);
+			await waitFor(
+				() => storedState(ctx, rootId) === "idle",
+				() => `stored=${storedState(ctx, rootId)}`,
+			);
+
+			// Wake it. The agent processes the message, then parks again.
+			await postMessage(ctx, rootId, park);
+			await waitFor(
+				() => insideWindow.length > 0,
+				() => `no messages_consumed observed after idle`,
+			);
+		} finally {
+			unsub();
+		}
+
+		// Sampled from inside the wake window — not idle, and specifically the
+		// residual state.
+		expect(insideWindow[0]).toBe("thinking");
+	}, 20000);
+
 	test("a launch whose message is already queued announces NO idle", async () => {
 		// The other half of "only when it really parks". The normal launch has
 		// its triggering message in the queue, so the initial drain's wait()

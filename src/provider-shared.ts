@@ -102,10 +102,17 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
  * here and storing at the call sites would split one source into two, and the
  * next call site added would only get one half.
  *
- * There is no matching transition on the way OUT: every path that leaves this
- * function and stays in the loop reaches the API-call block, which owns the
- * `thinking` transition. A second setter here would be unobservable — the
- * emitted event sequence is identical with or without it.
+ * The transition on the way OUT is REQUIRED, and it is not enough to say "the
+ * API-call block sets `thinking` a moment later". Consumers read the STORED
+ * state, not the event sequence: the fast path in `yield_external` and the
+ * connect-time snapshot both ask `session.activity` directly. Everything
+ * between the wake and the API call — draining, filtering compact, building
+ * the user turn, emitting its events — would otherwise report `idle` for a
+ * loop that is demonstrably not parked, and `send_user_message` →
+ * `yield_external` lands exactly there: the client would be told the agent had
+ * stopped working at the moment it started. The old code left idle twice here
+ * (`queue.idle = false` and an `agent_active` event); only the flag survived
+ * the move to one state, and the flag no longer has a production reader.
  *
  * `idle` is announced only when the loop will ACTUALLY park. With a message
  * already queued, `wait()` resolves on the next microtask and the agent never
@@ -127,6 +134,10 @@ async function handleImplicitYield(
 		queue.idle = true;
 		const first = await queue.wait();
 		queue.idle = false;
+		// Left the queue — everything from here to the next API call is the
+		// residual, which is `thinking`. Deduped, so this is free when the
+		// loop was never announced idle in the first place.
+		setActivity("thinking");
 		const rest = queue.drain();
 		const all = [first, ...rest];
 		const manualCompactRequested = all.some((m) => m.source === "compact");
@@ -695,8 +706,24 @@ export async function* runProviderLoop(
 	 *
 	 * Session birth/death is the other half of the story and lives in
 	 * agent-lifecycle (`setAgentActivity`) — this loop cannot see either.
+	 *
+	 * Re-announcing the current state is a no-op, and that is load-bearing
+	 * rather than an optimisation: it makes "an extra setActivity call is
+	 * harmless" true, so a transition point is written wherever the loop
+	 * changes what it is doing, without anyone having to first argue that the
+	 * event would be redundant. That argument is how the leave-idle transition
+	 * went missing — the reasoning was about the event sequence, and the
+	 * consumers read the stored value.
+	 *
+	 * Deduping against a local rather than the session keeps the property true
+	 * when there is no session (a provider driven directly in a unit test).
+	 * Nothing else writes the field while the loop runs — agent-lifecycle
+	 * touches it only at session creation and teardown — so the two agree.
 	 */
+	let announcedActivity: AgentActivity | undefined = currentSession?.activity;
 	const setActivity = (state: AgentActivity) => {
+		if (announcedActivity === state) return;
+		announcedActivity = state;
 		if (currentSession) currentSession.activity = state;
 		emit?.({ type: "agent_activity", state, ts: Date.now() });
 	};
