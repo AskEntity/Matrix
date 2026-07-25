@@ -163,6 +163,18 @@ next lookup.
   undone. Also record the false positives you hit while checking (e.g. a deleted function still
   appearing in comments that explain its deletion) — that is a negative result and it stops the
   next person reopening it.
+- **When a region checks out clean, say so IN the file**, dated and scoped ("verified <date>, skip
+  unless <file> moved"). Otherwise the next pass re-derives the same finding from scratch, which is
+  exactly the cost this exercise exists to remove. The file has almost no negative results; it
+  should have more.
+- **Rot correlates with the gap between when a sentence was written and when the code under it last
+  moved** — not with the sentence's age alone. The newest region checked out entirely clean because
+  its entries were written by the same tasks, in the same sessions, as the code they describe. This
+  is why the oldest sections are worth reordering first: it front-loads the finds.
+- **Understating a security surface is worse than overstating it.** The auth middleware's skip list
+  was described twice, both times smaller than reality, because a later change (frontend paths
+  becoming server-visible) enlarged the anonymous surface without touching either auth entry. When
+  verifying anything about access control, check what is reachable, not just what the entry lists.
 
 ---
 
