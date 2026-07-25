@@ -2965,6 +2965,128 @@ in unfamiliar areas.
 - `formatTieredHits` is shared between search_tasks and create_task (same formatting,
   different `fullCount` and header).
 
+## Retrieval that nobody acts on ⇒ guidance goes where the DECISION is (2026-07-25)
+
+All three related-tasks surfaces worked and produced real prior art. None of them said
+what to do with a hit, so the block read as a return value: scanned, then dropped. Root's
+count for one day — `create_task` ×8, block returned ×8, behaviour changed ×0,
+`search_tasks` called ×0.
+
+### The placement rule (this is the reusable part)
+
+> **Put the guidance where the decision is made. If the agent ASKED for the data, the
+> tool description reaches it in time — it still holds the intent it called with. If the
+> data arrives UNREQUESTED, only the payload reaches it.**
+
+One rule, three placements, no duplicated paragraph:
+
+| surface | asked for it? | guidance lives in |
+|---|---|---|
+| `search_tasks` | yes | its description (one added clause) |
+| `create_task`'s `[Related existing tasks]` | no — rides along | the block header |
+| `work_context`'s `[Related past tasks]` | no — injected | the block header |
+
+This is also why the bash "don't pipe" precedent does NOT transfer: that decision is made
+while CONSTRUCTING the call, so the description is its decision moment. A description read
+before the call is guidance about something that does not exist yet in the agent's world.
+
+Matrix-specific tiebreaker, worth knowing on its own: **tool descriptions are frozen in
+`session_config` until a compaction refreshes them, so a description change does not reach
+a running agent. Handler output reaches everyone on the next call.** For a fix motivated by
+"this failed today", that is decisive.
+
+⚠️ **Root's stated evidence did not support root's conclusion — a different fact did.**
+The argument offered was "I read the tool description and still dropped the block". But
+create_task's description had never mentioned the block at all, so that is evidence that an
+unexplained block does not self-explain, not evidence about description-placed guidance.
+The real support is next door: system prompt §2 has "Search before building", and
+`search_tasks` was called 0 times that day. The conclusion held; the reason had to be
+replaced. **Check that a conclusion's stated reason is the one actually carrying it —
+especially when you already agree with the conclusion.**
+
+### The two block headers are DIFFERENT sentences, on purpose
+
+Same shared kernel — *pointers, not answers; `get_task` and read the result rounds* — then
+they diverge, because the readers can do different things:
+
+- **create_task's reader is ROUTING**: it just made a task and is deciding where the work
+  should live. Menu: fold the conclusion into this task's description (most common, and
+  the one agents skip); `fork_task_context`; `send_message` to the found task and delete
+  the just-created one; or nothing.
+- **work_context's reader is already ASSIGNED the work**: it is deciding how to do it.
+  Read before re-deriving; and if a hit already tried the approach it is about to take,
+  **surface that upward** rather than obeying or ignoring it (that is §3's "your
+  investigation contradicts the premise the task above is operating on").
+
+Verified rather than assumed, because the hypothesis handed to me was half wrong:
+- ✅ a working agent **cannot** `send_message` to the task it found — the direction check
+  in the handler allows only ancestors in its parent chain and its DIRECT sub tasks.
+- ❌ it **can** update its own task description: `checkPermission(auth,"subtree",…)`
+  returns true for self, and the system prompt tells it to on scope change.
+- ⚠️ it **can** `fork_task_context` (only the TARGET is subtree-restricted, the source is
+  free) — but only into a sub task it creates, so forking is a dispatch move, not a
+  use-this-knowledge move.
+
+### ⭐ "Latest result" is the LAST round, and the last round is often trivial
+
+The single fact that makes the block structurally unable to answer anything. Measured on a
+real hit: `01KY28ZXXSJG` has 3 rounds — round 0 is the whole implementation, rounds 1-2 are
+CSS tweaks. The block therefore advertised that task with *"Restyled search hits as
+card-style items: background: var(--bg-subtle…)"*. Everything that made the task worth
+reading was invisible. Same shape for any task that was reawakened for a follow-up, which
+is most closed tasks of any size.
+
+Hence the ordering inside the header: the "these are excerpts, they cannot tell you what a
+task concluded" reframe comes FIRST, so the hits are read as an index. Put it after the
+hits and the agent has already formed a judgement from the excerpts.
+
+### The reading rule that prevents a NEW error
+
+A past round is *a measurement plus a judgement made at the time*. The measurement usually
+still holds; the judgement may already be void — **and a new task on the subject is often
+itself the evidence that intent changed** (see § *Tests as current truth* in the system
+prompt: a task is a certificate of intent change). An agent that reads "we tried this and
+reverted" as a prohibition abandons a road it is currently supposed to walk. Both headers
+carry this in one clause.
+
+### Two supporting fixes — an instruction you cannot execute is decoration
+
+Both in the work_context block, both only worth doing BECAUSE the header now says
+"get_task these":
+- **full taskId**, not `slice(0,12) + "…"`. 12 chars resolves (tracker prefix-matching is
+  ≥8), but the ellipsis does not, and a pasteable id costs ~70 chars per block.
+- **dead hits dropped** (`if (!task) continue`). `formatTieredHits` always did this; this
+  block rendered them as title `"unknown"` with a real-looking but unresolvable id.
+
+### Test notes
+
+Pinned by asserting the block contains `get_task` — the imperative, not the prose, so
+rewording survives and deletion does not. In the work_context test the assertion MUST be
+scoped to the block (`content.slice(content.lastIndexOf("[Related past tasks]"))`):
+work_context also preloads memory.md, which contains both the marker and `get_task`, so an
+unscoped `toContain` passes no matter what.
+
+Mutation-verified individually, and the pairing matters: **M2 (full id → prefix) and M3
+(dead-hit filter) must be mutated SEPARATELY.** Applied together they mask each other —
+the dead-hit test asserts `not.toContain(goneChild.id)`, and a reverted-to-prefix render
+does not contain the full id, so the M3 breakage passes silently. Results: both headers →
+bare markers = 2 fail (create_task + work_context, nothing else); M2 = 1 fail; M3 = 1 fail.
+
+### Relationship to draft 01KNZGYY (required `origin` param on create_task)
+
+This does NOT replace it and cannot. The block is **structurally late** — the task already
+exists by the time the agent learns a related one does. Everything here is recovery
+("…and delete this just-created task"); the parameter would make the choice up front. What
+changes is the evidence 01KNZGYY needs: its premise was "prompt alone cannot fix this", and
+until now no prompt had tried. The honest read is now measurable — if hits still change
+nothing, that premise is confirmed on real data instead of asserted.
+
+Left as drafts rather than swept in here: **01KYCQVA8CP** (one task can eat BOTH of
+create_task's full slots when it matches on two fields — observed twice; deduping would
+regress `search_tasks`, whose whole contract is per-LOCATION hits, so it is a decision not
+a tidy-up) and **01KYCQTGQZ** (the `search` tool skips `.mxd/` by default — see Known
+Pitfalls).
+
 ---
 # Daemon, Worker & Transport
 ---
@@ -6024,6 +6146,14 @@ Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", 
 - **Biome**: Typecheck BEFORE lint. No `!important`. No duplicate CSS properties.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`.
 - **Daemon reload**: Commits don't auto-restart the daemon. Must manually restart after code changes.
+- **`search` tool silently skips `.mxd/`** (verified 2026-07-25): with the default path it
+  never walks hidden directories, and in THIS repo `.mxd/plugin/` is production code — every
+  ScopeOpts hook, every plugin REST route, the whole plugin UI. `search("buildMatrixScopeOpts")`
+  returns 4 files and omits `.mxd/plugin/scope-opts.ts`, which is where it is DEFINED. The
+  pattern is fine; passing `path: ".mxd"` explicitly finds it. **This makes the "grep for the
+  name as a string before you rename or delete" rule (Refactoring Philosophy) return a false
+  negative with the tool the description tells you to always use.** Until fixed (draft
+  01KYCQTGQZ), verify by-name references with `grep -rn` via bash, not with `search`.
 - **Concurrent ULID**: Use full `ulid()` (26 chars) — sliced ULIDs collide within same millisecond.
 - **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
