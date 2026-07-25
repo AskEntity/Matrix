@@ -1437,6 +1437,42 @@ would discard exactly the window messages we just inherited, with nothing left
 in its file to ever recover them. That is the one genuinely irreversible
 version of this bug: the source recovers on restart, a fork never does.
 
+### ⚠️ Being ON the active chain ≠ being a legal rewind target (2026-07-25)
+
+The most expensive corollary of this design, found by the Edit/Rewind gate. **The active chain is
+NOT a uniform `parentEid` chain — it is a CONSTRUCTED sequence.** After the compaction point,
+array order and chain order are the same thing. The window messages are **spliced in** by the
+walker: adjacent in the resulting array, but their parent links point into the region the summary
+replaced.
+
+Rewinding is a pure parent-link operation (`setChainHead(target.parentEid)`). So **it is only
+defined on the segment where construction order and chain order agree** — which excludes exactly
+the window messages.
+
+Measured (seed a completed compaction, rewind to the window message, read `readActive` back):
+
+```
+active BEFORE: [message:m-window, compact_marker, message:m-after, messages_consumed]
+window msg's parentEid points at: compact_started
+active AFTER : [assistant_text, compact_started, message:m-edited]
+pre-compact history resurrected? true
+summary still present?           false
+```
+
+Mechanism: the walk only treats `compact_started` as a barrier **once it has already passed a
+`compact_marker`** (`window !== null`). With `window === null` it is an ordinary event — pushed,
+and the walk continues. Set the chain head to a window message and the backward walk never meets a
+marker, so the window mechanism never arms and it runs to the first line of the file. On a real
+session that is the entire summarized-away history returning at once, with the summary stranded on
+the abandoned branch.
+
+**Making the window messages visible was correct** — they genuinely are context, and that is what
+this section's window rule is for. Reading *visible* as *operable* is the error. A separate
+predicate (`hasRewindPoint`, `.mxd/plugin/rewind-point.ts`) answers "is there a state left to
+return to", and its mutation test fails on the DAMAGE — it asserts the resurrected history is
+absent by name — so anyone who tries to relax that limit sees what they just did rather than a bare
+status code.
+
 ### No dangling-link handling — and nothing may produce one
 
 A `parentEid` pointing at an eid no line carries gets NO fallback. Same rule as
