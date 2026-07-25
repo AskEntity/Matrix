@@ -88,22 +88,26 @@ export function skipDirsForPattern(pattern: string): string[] {
 
 /**
  * A glob with no `/` in it is a FILENAME pattern, and a filename pattern means
- * "at any depth" — that is what `--glob '*.ts'` means to ripgrep, what this
- * tool's description promises, and what every caller typing `*.ts` is saying.
- * Bun.Glob disagrees: `*` never crosses `/`, so an un-normalized `*.ts` matched
- * only files sitting directly in `path` and a repo-rooted search answered
- * `(no matches)`.
+ * "at any depth" — that is what `--glob '*.ts'` means to ripgrep and what every
+ * caller typing `*.ts` is saying. Bun.Glob disagrees: `*` never crosses `/`, so
+ * an un-normalized `*.ts` matched only files sitting directly in the walk root.
+ * From a repo root `search` answered `(no matches)` and `list_files` answered
+ * `(no files)`, both of which read exactly like an answer.
  *
  * A glob that DOES contain `/` is a PATH pattern and is passed through
- * untouched: `src/*.ts` stays anchored at the search root and must not start
+ * untouched: `src/*.ts` stays anchored at the walk root and must not start
  * reaching `deep/src/inner.ts`. Same split ripgrep makes.
  *
  * Promoting loses nothing — a leading `**` matches zero directories too, so the
  * promoted pattern is a strict superset of the original and still returns the
  * top-level file. (Phrased without the literal prefix on purpose: writing it
  * inside this block comment would close the comment.)
+ *
+ * Named for what it decides, not for who asked first: `search`'s `glob` and
+ * `list_files`'s `pattern` are the same question, and a name carrying one tool's
+ * label is how the second caller ends up with a second copy.
  */
-export function normalizeSearchGlob(glob: string): string {
+export function normalizeGlobDepth(glob: string): string {
 	return glob.includes("/") ? glob : `**/${glob}`;
 }
 
@@ -163,7 +167,7 @@ export async function jsSearch(opts: {
 		// `dot: true` — Bun.Glob otherwise refuses to descend into ANY hidden directory,
 		// which silently hides all of .mxd/ (production code here). What a search ignores
 		// is DEFAULT_SKIP_DIRS' decision alone; the walker must reach everything else.
-		const g = new Bun.Glob(normalizeSearchGlob(glob));
+		const g = new Bun.Glob(normalizeGlobDepth(glob));
 		files = Array.from(
 			g.scanSync({ cwd: absSearchPath, onlyFiles: true, dot: true }),
 		);

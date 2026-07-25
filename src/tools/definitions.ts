@@ -6,7 +6,12 @@ import * as R from "../resource-registry.ts";
 import { defineTool } from "../tool-def.ts";
 import { executeBackgroundTool } from "./background.ts";
 import { executeBashWithTimeout } from "./bash.ts";
-import { isInSkippedDir, jsSearch, skipDirsForPattern } from "./search.ts";
+import {
+	isInSkippedDir,
+	jsSearch,
+	normalizeGlobDepth,
+	skipDirsForPattern,
+} from "./search.ts";
 
 /** Resolve a path relative to cwd if not absolute. */
 export function resolvePath(p: string, cwd: string): string {
@@ -395,24 +400,37 @@ const editFileTool = defineTool({
 
 // ── list_files ──
 
+/** Most files `list_files` will return. Stated in the tool's description too. */
+const LIST_FILES_LIMIT = 500;
+
 const listFilesTool = defineTool({
 	name: "list_files",
 	availability: "internal",
 	description:
-		'List files matching a glob pattern. Use to discover project structure and find relevant files before reading them. Examples: "src/**/*.ts", "**/*.test.ts", "*.json".',
+		'List files matching a glob pattern. Use to find relevant files before reading them. A pattern with no "/" is a filename pattern and matches at any depth — "*.json" finds every .json file in the project, the same as it does in search\'s glob. Add a "/" to anchor it: "src/*.ts" matches src/a.ts but not src/sub/b.ts. Noise directories (node_modules, .git, .worktrees, dist, build, …) are excluded unless your pattern names one — "node_modules/zod/**" reaches inside. Returns at most 500 files and says so when it truncates.',
 	params: {
 		...bindParams,
 		pattern: {
 			schema: z.string().optional(),
 			decl: { kind: "optional" },
-			description: 'Glob pattern (e.g. "src/**/*.ts", "*.json"). Default: "*"',
+			description:
+				'Glob pattern. No "/" matches at any depth (e.g. "*.json", "**/*.test.ts"); with a "/" it is anchored at the working directory (e.g. "src/*.ts"). Default: "*" — i.e. every file in the project.',
 		},
 	},
 	handler: async (args) => {
 		const cwd = getTaskCwd(args.projectId, args.taskId);
 		const pattern = args.pattern ?? "*";
 		try {
-			const glob = new Bun.Glob(pattern);
+			// A pattern with no `/` is a filename pattern and means "at any depth" —
+			// the same rule `search`'s glob follows, deliberately, because the two are
+			// the same question asked by the same agent minutes apart. Two tools
+			// answering one glob differently is a trap with no tell: both answers look
+			// right on their own. Un-normalized, `*.ts` returned "(no files)" in a
+			// TypeScript repo, and `*` — the DEFAULT — returned the dozen loose files
+			// at the top of the tree and not one directory, since `onlyFiles` drops
+			// those. So the "list this directory" reading this pattern seems to
+			// protect was never a thing this tool could do.
+			const glob = new Bun.Glob(normalizeGlobDepth(pattern));
 			const skipDirs = skipDirsForPattern(pattern);
 			const files: string[] = [];
 			// Both options are passed explicitly rather than inherited from Bun's
@@ -428,9 +446,20 @@ const listFilesTool = defineTool({
 			for await (const file of glob.scan({ cwd, dot: true, onlyFiles: true })) {
 				if (isInSkippedDir(file, skipDirs)) continue;
 				files.push(file);
-				if (files.length >= 500) break;
+				// One PAST the cap, so "there is more" is known rather than guessed:
+				// stopping AT the cap cannot tell a project with exactly 500 files from
+				// one with 50,000. Silently truncating is the same failure as silently
+				// not walking — the caller reads a partial list as the whole answer.
+				if (files.length > LIST_FILES_LIMIT) break;
 			}
-			return textResult(files.join("\n") || "(no files)");
+			const truncated = files.length > LIST_FILES_LIMIT;
+			if (truncated) files.length = LIST_FILES_LIMIT;
+			const body = files.join("\n") || "(no files)";
+			return textResult(
+				truncated
+					? `${body}\n[... truncated at ${LIST_FILES_LIMIT} files — narrow the pattern]`
+					: body,
+			);
 		} catch (e) {
 			return textResult(
 				`Error: ${e instanceof Error ? e.message : String(e)}`,

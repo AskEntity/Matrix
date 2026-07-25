@@ -11,7 +11,7 @@ export {
 	DEFAULT_SKIP_DIRS,
 	isInSkippedDir,
 	jsSearch,
-	normalizeSearchGlob,
+	normalizeGlobDepth,
 	skipDirsForPattern,
 	truncateSearchOutput,
 } from "./search.ts";
