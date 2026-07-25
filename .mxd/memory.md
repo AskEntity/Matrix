@@ -1151,7 +1151,34 @@ subscribe to events and call `interrupt.request()` from the `tool_call` emission
 — that emission happens after the response is processed and before execution
 begins. Same trick reaches the done() race.
 
-Two test-writing notes worth carrying:
+⭐ **"Interrupt an agent that is mid-generation" had never been executed by any
+test in this suite** — and not because someone skipped it. `createMockAnthropicStream`
+ignored the request's AbortSignal outright: it slept `delay_ms`, then yielded the
+whole turn. Every test that aborted mid-stream therefore passed through a road
+that was open and led to the OPPOSITE of production. The gap is invisible from
+the test side: nothing fails, nothing is marked todo, the behaviour simply is not
+the product's. Fixed by honoring the signal inside the delay window only (a turn
+without `delay_ms` iterates byte-for-byte as before, so no existing test moved).
+Same principle FU2 applied to integration mocks via `abortableSleep`.
+
+**The class, stated generally: an unfaithful test double doesn't only make tests
+lie — it makes the missing test unthinkable.** Nobody writes "assert the abort
+actually aborts" when the harness has no way to express the difference. Sibling
+of the fictional-alternation finding (an over-strict double blocks a correct
+implementation); this is the permissive direction of the same failure.
+
+⚠️ **`activity === "thinking"` does NOT mean "a request is in flight."** A session
+is BORN thinking (setup — MCP connect, repair, work context — is the residual
+state too), so a test that waits for `thinking` and then interrupts can land
+before the first API call exists. That path parks the loop having never called
+the API, and it **passes every park assertion while testing nothing about
+aborting a request**. Key on the request actually being recorded
+(`mockAPI.getRequestHistory().length >= 1`) instead. Found by the failure being
+diagnostic: the tail of the log had no assistant turn at all before the wake.
+Which is the general lesson — a bare "timed out waiting for X" tells you nothing;
+dumping the last few events with it turned two blind reruns into one answer.
+
+Three test-writing notes worth carrying:
 - `await waitFor(() => x === null || true)` polls NOTHING (always true) and
   asserts before React commits. Poll the real condition.
 - `expect(domNode).toBeNull()` on failure prints the node *with its React fiber

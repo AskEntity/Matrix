@@ -544,7 +544,17 @@ describe("Interrupt: end the turn, keep the session", () => {
 			}),
 		);
 
-		await waitForActivity(ctx, nodeId, "thinking");
+		// ⚠️ NOT waitForActivity("thinking"): `thinking` is the residual state and
+		// a session is BORN in it — setup (MCP connect, repair, work context) is
+		// thinking too. Waiting for it returns before the first API call exists,
+		// so the interrupt would land during setup and the loop would park having
+		// never called the API — a different path that quietly passes the park
+		// assertions while testing nothing about aborting a request.
+		// The request being recorded is the precise "a call is in flight" signal.
+		await waitFor(
+			() => ctx.mockAPI.getRequestHistory().length >= 1,
+			"the API call to be in flight",
+		);
 		const liveSession = session(ctx, nodeId);
 		expect(interruptTask(ctx.app.ctx, ctx.projectId, nodeId)).toBe(true);
 
@@ -571,17 +581,28 @@ describe("Interrupt: end the turn, keep the session", () => {
 			),
 		).toBe(false);
 
-		// ⚠️ "…and then carries on when the user says something" is NOT asserted
-		// here, and the reason is worth knowing: with nothing streamed, the park
-		// leaves messages[] ending in the turn's own user message, so the wake
-		// appends a SECOND user message. The live API accepts consecutive user
-		// messages (measured, 2026-07-25); `ValidatingMockAPI.validateRequest`
-		// rejects them with "Messages must alternate roles", a constraint that
-		// was never verified against the API. So this path is exercisable in
-		// production and not against the mock. The `tool`-state sibling above
-		// ("the SAME agent continues on the next message") covers the carry-on
-		// behaviour, because tool_results make the trailing turn a working
-		// context that the wake merges into.
+		// …and carries on when the user says something. This is a DIFFERENT
+		// codepath from the `tool`-state sibling above: nothing streamed, so the
+		// park leaves messages[] ending in the turn's own user message and the
+		// wake starts a NEW user turn rather than merging into a working context.
+		// Two consecutive user messages, which the API accepts.
+		await injectMessage(ctx, createUserMessage("go on then"));
+		const deadline = Date.now() + 10000;
+		for (;;) {
+			const tracker = await ctx.app.getTracker(ctx.projectId);
+			if (tracker.getTask(nodeId)?.status === "verify") break;
+			if (Date.now() > deadline) {
+				// A bare "timed out" here says nothing about WHY the agent did not
+				// pick the message up. Dump the tail of the log with it.
+				const tail = (await readSessionEvents(ctx, nodeId))
+					.slice(-8)
+					.map((e) => JSON.stringify(e).slice(0, 220));
+				throw new Error(
+					`agent did not finish after a thinking-state interrupt. Last events:\n${tail.join("\n")}`,
+				);
+			}
+			await new Promise((r) => setTimeout(r, 25));
+		}
 	}, 30000);
 
 	test("interrupting an idle agent is a no-op, not an error", async () => {
