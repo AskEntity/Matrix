@@ -2475,14 +2475,14 @@ describe("Drift: compaction lifecycle", () => {
 	// which existed to bundle them, is gone. The real guarantee is unchanged:
 	// the yield tool_use is answered and compaction completes.
 	//
-	// This bug only manifested when messages.length > 4 (below that threshold,
-	// the compact path bails out with "Context too short" and masks the bug).
 	test("compact triggered while agent in pending yield completes without API 400", async () => {
 		ctx = await setupTestContext();
 
-		// Need messages.length > 4 at compact time. Use multi-cycle conversation.
-		// Each yield+wake cycle adds 2 messages (assistant+user). After 3 cycles:
-		// messages has system + user + assistant + user + assistant + user = 6.
+		// Several yield+wake cycles, so what gets compacted is a real
+		// conversation rather than a single turn. (It used to be a REQUIREMENT:
+		// below 5 messages the compact path took a second, shorter branch that
+		// masked this bug. That branch is gone — a short session compacts the
+		// same way, pinned by compact-short-session.test.ts.)
 		const instruction = JSON.stringify({
 			turns: [
 				// Turn 1: yield
@@ -2499,7 +2499,7 @@ describe("Drift: compaction lifecycle", () => {
 						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
 					],
 				},
-				// Turn 3: yield (now messages will have >4 entries when compact arrives)
+				// Turn 3: yield
 				{
 					blocks: [
 						{ type: "text", text: "Turn 3." },
@@ -2526,7 +2526,7 @@ describe("Drift: compaction lifecycle", () => {
 		await waitForIdle(ctx);
 		await sendMessage(ctx, "wake 2");
 		await waitForIdle(ctx);
-		// Now messages.length > 4. Agent is idle at yield. Trigger compact.
+		// Agent is idle at yield with a multi-turn history. Trigger compact.
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
@@ -2660,7 +2660,7 @@ describe("Drift: compaction lifecycle", () => {
 		// Pre-seed bogus session_config.
 		await seedBogusSessionConfig(ctx, rootNodeId);
 
-		// Drive 3 yield cycles to reach messages.length > 4, then compact, then done.
+		// Drive 3 yield cycles for a real conversation, then compact, then done.
 		const instruction = JSON.stringify({
 			turns: [
 				{
@@ -3201,8 +3201,7 @@ describe("Drift: compaction lifecycle", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
 
-		// 3 yield cycles then done() → messages.length > 4 so the compact path takes
-		// the real summarization-injection branch (not "context too short to compact").
+		// 3 yield cycles, then done() — a real conversation to compact.
 		const instruction = JSON.stringify({
 			turns: [
 				{
@@ -3290,25 +3289,32 @@ describe("Drift: compaction lifecycle", () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════
-// FIX-5: too-short compact brick + duplicate-done brick
+// A /compact or a duplicated control tool must not brick the session
 // ══════════════════════════════════════════════════════════════════════
 
-describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
+describe("compact + duplicate control tools must not brick the session", () => {
 	let ctx: TestContext;
 	afterEach(async () => {
 		if (ctx) await teardownTestContext(ctx);
 	});
 
-	// ── R8-B#1(a): too-short compact → must NOT emit compact_marker ──
-	// The old messages.length<=4 branch emitted a bare compact_marker WITHOUT
-	// rebuilding context (no session_config, no compacted_resume). On restart,
-	// readActive() returns only post-marker events → starts with assistant →
-	// 400 "first message must be role user" → permanent brick.
+	// ── a compact_marker is never BARE ──
+	// The brick (FIX-5 R8-B#1) was a `compact_marker` emitted WITHOUT rebuilding
+	// context — no session_config, no compacted_resume after it. readActive()
+	// then returns only post-marker events, so the next launch starts on an
+	// ASSISTANT turn → 400 "first message must use the 'user' role" → every
+	// resume repeats it → recoverable only by reset_task.
 	//
-	// Test: yield → /compact (too short, compactOnly) → the too-short branch
-	// consumes the deferred yield result and does NOT emit compact_marker → the
-	// agent makes the next API call normally → done.
-	test("R8-B#1(a): too-short compact must NOT emit compact_marker", async () => {
+	// It was written into a `messages.length <= 4` branch, so for a while the
+	// guarantee was stated as "a short session emits no marker at all". That
+	// branch is gone: a short session compacts like any other, and the property
+	// that actually prevents the brick is the one asserted here — whatever
+	// writes a marker also writes the rebuilt context after it.
+	//
+	// Scenario: pending YIELD + /compact as the only wake message (compactOnly),
+	// on a two-message conversation. compact-short-session.test.ts covers the
+	// implicit-yield (end_turn) shape and the restart itself.
+	test("short session at pending yield: /compact rebuilds context after the marker", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
 		const tracker = await ctx.app.getTracker(ctx.projectId);
@@ -3329,7 +3335,7 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", result: "too-short compact ok" },
+							input: { status: "passed", result: "short compact ok" },
 						},
 					],
 				},
@@ -3339,8 +3345,8 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 		await startAgent(ctx, instruction);
 		await waitForIdle(ctx);
 
-		// Send /compact during yield → compactOnly → too-short branch
-		// → agent processes, makes API call (turn 2: done) → exits
+		// Send /compact during yield → compactOnly → the one compaction path
+		// → summarize → marker + rebuild → next API call (turn 2: done) → exits
 		await deliverMessage(
 			ctx.app.ctx,
 			{ id: ctx.projectId, path: ctx.projectDir },
@@ -3351,15 +3357,26 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
 
-		// Key assertion: NO compact_marker in the JSONL
+		// Key assertion: the marker exists AND the rebuilt context follows it.
+		// Asserting only "a marker was written" would pass on the brick.
 		const events = await readSessionEvents(ctx, rootNodeId);
-		const compactMarkers = events.filter(
+		const markerIdx = events.findIndex(
 			(e: Event) => e.type === "compact_marker",
 		);
-		expect(compactMarkers.length).toBe(0);
+		expect(markerIdx).toBeGreaterThanOrEqual(0);
+		const afterMarker = events.slice(markerIdx + 1);
+		expect(afterMarker.some((e: Event) => e.type === "session_config")).toBe(
+			true,
+		);
+		expect(
+			afterMarker.some(
+				(e: Event) =>
+					e.type === "message" && e.body.source === "compacted_resume",
+			),
+		).toBe(true);
 
-		// Verify the deferred yield tool_result was consumed (proves the
-		// too-short branch handled it correctly)
+		// The yield tool_result was written — the assistant's tool_use is
+		// answered before the summarization instruction goes out (pairing rule).
 		const yieldResults = events.filter(
 			(e: Event) =>
 				e.type === "tool_result" &&
@@ -3378,17 +3395,18 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 		}
 	}, 30000);
 
-	// ── too-short compact must still answer the yield tool_use ──
-	// When /compact arrives during yield (compactOnly=true) and the conversation
-	// is too short to compact, the yield's tool_result must still reach the next
-	// request — otherwise the assistant's yield tool_use has no answer → a REAL
-	// API 400 (the pairing rule).
+	// ── /compact must answer the pending yield tool_use ──
+	// When /compact is the only wake message (compactOnly=true), the yield's
+	// tool_result must reach the next request — otherwise the assistant's yield
+	// tool_use goes out unanswered → a REAL API 400 (the pairing rule).
 	//
-	// R8-B#1(b) discharged that by having the too-short branch consume a deferred
-	// `pendingCompactYieldToolCall`. The deferral is gone (see memory.md); the
-	// obligation is not — it is now discharged where the tool_result is emitted.
-	// This test is unchanged in what it guarantees.
-	test("too-short compact still answers the pending yield tool_use", async () => {
+	// This obligation has now outlived two of its homes: FIX-5 R8-B#1(b)
+	// discharged it inside the short-session branch, which consumed a deferred
+	// `pendingCompactYieldToolCall`. Both are gone. It is discharged where the
+	// tool_result is EMITTED (`emitAndPushCompactToolResult`), which is the only
+	// place that cannot be skipped by a caller taking a different route — and it
+	// is why deleting the short-session branch orphaned nothing.
+	test("/compact at pending yield answers the yield tool_use before summarizing", async () => {
 		ctx = await setupTestContext();
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
@@ -3402,14 +3420,14 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
 					],
 				},
-				// After consuming the deferred yield result + too-short status, done
+				// Post-compaction turn: done
 				{
 					blocks: [
-						{ type: "text", text: "After compact attempt." },
+						{ type: "text", text: "After compaction." },
 						{
 							type: "tool_use",
 							name: "mcp__mxd__done",
-							input: { status: "passed", result: "deferred yield consumed" },
+							input: { status: "passed", result: "yield tool_use answered" },
 						},
 					],
 				},
@@ -3419,8 +3437,8 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 		await startAgent(ctx, instruction);
 		await waitForIdle(ctx);
 
-		// Send ONLY /compact (compactOnly=true) → yield handler defers tool_result
-		// → too-short branch must consume it
+		// Send ONLY /compact (compactOnly=true) → the yield tool_result is emitted
+		// and its user turn pushed before anything else joins the conversation.
 		await deliverMessage(
 			ctx.app.ctx,
 			{ id: ctx.projectId, path: ctx.projectDir },
@@ -3428,8 +3446,6 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 			createCompactMessage(),
 		);
 
-		// If the fix works, agent processes the deferred tool_result and continues
-		// to done. If not, the API call fails with 400 (dangling tool_use).
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
 
@@ -3438,6 +3454,19 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 		// it was actually guarding against.
 		const events = await readSessionEvents(ctx, rootNodeId);
 		expect(events.filter((e: Event) => e.type === "error")).toEqual([]);
+
+		// And say it directly rather than via the absence of an error: every
+		// tool_use in every request we sent is answered inside the leading
+		// tool_result run. The summarization instruction is a text block, so it
+		// ENDS that run — putting it before the yield's tool_result would be a
+		// 400 even though both messages are present.
+		const history = ctx.mockAPI.getRequestHistory();
+		expect(history.length).toBeGreaterThanOrEqual(2);
+		for (const rec of history) {
+			expect(
+				sendableRequestViolations(rec.messages as unknown as ApiMessage[]),
+			).toEqual([]);
+		}
 	}, 30000);
 
 	// ── duplicate done() calls → the session must survive a restart ──
