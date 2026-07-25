@@ -530,9 +530,6 @@ function ProjectContent({
 		"activity",
 	);
 	const [autoScroll, setAutoScroll] = useState(true);
-	// Whether the activity log is scrolled near its bottom (reported by
-	// ActivityLog). Drives the scroll-to-bottom button next to Compact.
-	const [logAtBottom, setLogAtBottom] = useState(true);
 	const [fullscreen, setFullscreen] = useState(false);
 	const [theme] = useState<"dark" | "light" | "cute-light" | "cute-dark">(
 		() => {
@@ -660,18 +657,16 @@ function ProjectContent({
 		setImageDropRequest((prev) => ({ files, seq: (prev?.seq ?? 0) + 1 }));
 	}, []);
 	const isDraggingFile = useWindowFileDrop(handleImageFiles);
-	// "Jump to now": one mechanism for every caller (the ↓ button, the
+	// "Jump to now": one mechanism for every caller (the Follow button, the
 	// post-rollback re-fetch). The counter is applied by ActivityLog in a
 	// layout effect, so a request issued in the same batch as a wholesale
 	// logs replacement lands AFTER the new entries are committed — which is
-	// exactly the case a rollback creates. Follow mode resumes; logAtBottom
-	// is set optimistically (ActivityLog's scroll reporting corrects it if
-	// the scroll ever failed).
+	// exactly the case a rollback creates. Follow mode resumes with it, in
+	// the same batch, so the button disappears in one commit.
 	const [scrollBottomRequest, setScrollBottomRequest] = useState(0);
 	const requestScrollLogToBottom = useCallback(() => {
 		setScrollBottomRequest((n) => n + 1);
 		setAutoScroll(true);
-		setLogAtBottom(true);
 	}, []);
 	const [backgroundProcesses, setBackgroundProcesses] = useState<
 		Map<
@@ -1893,12 +1888,12 @@ function ProjectContent({
 						</div>
 						<div className="mxd-panel-actions">
 							{/*
-							 * Follow and ↓ are the ONLY children here that toggle with the
-							 * scroll position, so they stay LEFTMOST. This is a right-aligned
-							 * flex row: inserting a child moves the children BEFORE it and
-							 * leaves the ones after it alone. With Follow sitting between the
-							 * token badge and ⚡, its appearance pushed ⌘ and the badge left by
-							 * a measured 71.3px every time the user scrolled away from the
+							 * Follow is the ONE control here that toggles with the scroll
+							 * position, so it stays LEFTMOST. This is a right-aligned flex
+							 * row: inserting a child moves the children BEFORE it and leaves
+							 * the ones after it alone. With Follow sitting between the token
+							 * badge and ⚡, its appearance pushed ⌘ and the badge left by a
+							 * measured 71.3px every time the user scrolled away from the
 							 * bottom. Keep any future scroll-state control in front of the
 							 * persistent ones (web/panel-actions-order.test.tsx pins this).
 							 */}
@@ -1910,16 +1905,6 @@ function ProjectContent({
 								>
 									<IconArrowDown size={10} />
 									{t("activity.follow")}
-								</button>
-							)}
-							{viewMode === "activity" && !logAtBottom && (
-								<button
-									type="button"
-									className="mxd-scroll-bottom-btn"
-									onClick={requestScrollLogToBottom}
-									title={t("activity.scrollToBottom")}
-								>
-									<IconArrowDown size={11} />
 								</button>
 							)}
 							{(() => {
@@ -1991,7 +1976,6 @@ function ProjectContent({
 								nodeMap={nodeMap}
 								autoScroll={autoScroll}
 								onAutoScrollChange={setAutoScroll}
-								onAtBottomChange={setLogAtBottom}
 								activity={viewedActivity}
 								projectId={projectId}
 								olderEventsAvailable={olderEventsAvailable}

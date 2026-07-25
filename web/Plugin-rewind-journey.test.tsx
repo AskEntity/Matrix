@@ -352,7 +352,7 @@ describe("Plugin — Rewind/Edit confirm dialog full journey", () => {
 		expect(posted.content).toBe(USER_TEXT);
 
 		// 7. THE FIX: after the log is rebuilt the view is at the bottom and
-		//    follow mode is back on (no "Follow" pill, no ↓ button).
+		//    follow mode is back on (no "Follow" pill).
 		await waitFor(
 			() => logContainer.scrollTop === 1000,
 			"log jumps to the bottom after the rewind",
@@ -362,7 +362,6 @@ describe("Plugin — Rewind/Edit confirm dialog full journey", () => {
 			() => div.querySelector(".mxd-scroll-follow-btn") === null,
 			"follow pill gone",
 		);
-		expect(div.querySelector(".mxd-scroll-bottom-btn")).toBeNull();
 
 		// 8. MUTATION PROOF for the explicit scroll request. Follow mode is
 		//    already on and the rebuilt log has the same entry count, so no
