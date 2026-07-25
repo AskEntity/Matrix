@@ -3976,8 +3976,15 @@ nothing, that premise is confirmed on real data instead of asserted.
 Left as drafts rather than swept in here: **01KYCQVA8CP** (one task can eat BOTH of
 create_task's full slots when it matches on two fields — observed twice; deduping would
 regress `search_tasks`, whose whole contract is per-LOCATION hits, so it is a decision not
-a tidy-up) and **01KYCQTGQZ** (the `search` tool skips `.mxd/` by default — see Known
-Pitfalls).
+a tidy-up) and **01KYCQTGQZ** (~~the `search` tool skips `.mxd/` by default~~ — **FIXED the same
+day**, along with its glob-depth sibling `01KYCS0BH6` and the same pair in `list_files`
+`01KYCV43JAZ`; the three of them are one class and live next to each other in Core Mechanisms).
+
+The strikethrough is the point, not politeness: that parenthetical was a **present-tense claim**
+sitting inside a list of *records*, which is the shape that rots without anyone noticing. The
+record — "this draft was filed here, for this reason" — stays true forever. "The tool skips
+`.mxd/`" stopped being true four hours later, and nothing in this entry would ever have
+contradicted it.
 
 ---
 # Daemon, Worker & Transport
@@ -7292,7 +7299,19 @@ to pay for it.
 - **Concurrent ULID**: Use full `ulid()` (26 chars) — sliced ULIDs collide within same millisecond.
 - **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
-- **Async JSONL writes**: `emitEvent` fire-and-forgets `eventStore.append()`. Flush before reading in tests.
+- ~~**Async JSONL writes**: `emitEvent` fire-and-forgets `eventStore.append()`. Flush before reading
+  in tests.~~ **FALSE since 2026-07-25.** `append(sessionId, event): Event` is fully SYNCHRONOUS and
+  returns the persisted copy; `emitEvent` writes first and broadcasts that. Verified in code, not
+  inferred: `src/runtime/event-system.ts:113` is `persisted = eventStore.append(...)` with no await
+  and no `.catch()`. The synchrony is load-bearing — it is what makes `rewindChainHead` correct on a
+  failed write — so do NOT "restore" the async form. See § *Every transport carries the event's name
+  (eid)*. Flushing before reading is now belt-and-braces rather than required; harmless to keep in
+  existing tests, unnecessary in new ones.
+  **This bullet is a specimen worth noticing**: it was made false by our OWN change, the same
+  afternoon, and nothing anywhere contradicted it — the change was recorded in a new section while
+  the stale claim sat in the list every agent reads on every start. That is the *drained* rot class
+  with a same-day fuse, and the only reason it was caught is that a curation pass happened to read
+  the neighbouring bullet.
 - **delete_task cascades**: Deletes all descendants AND session JSONL. Enforced: returns 400 with children.
 - **Abort signal leak**: After stop, old runAgentForNode settles async. catch/finally check `sessionWasReplaced` to suppress stale error events.
 - **TS6133 `_` prefix**: TypeScript's `noUnusedLocals` does NOT respect `_` prefix for local variables or destructured locals — only for function parameters. For unused destructured React state, use `const [, setX] = useState(...)` (skip the getter slot). For unused `const` locals, delete outright. The underscore-prefix hint in our prompts is a holdover that doesn't match TypeScript's actual behavior.
