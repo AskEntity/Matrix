@@ -49,7 +49,6 @@ export const ActivityLog = memo(function ActivityLog({
 	nodeMap,
 	autoScroll,
 	onAutoScrollChange,
-	onAtBottomChange,
 	activity,
 	projectId,
 	olderEventsAvailable,
@@ -71,12 +70,6 @@ export const ActivityLog = memo(function ActivityLog({
 	nodeMap: Map<string, TreeNode>;
 	autoScroll: boolean;
 	onAutoScrollChange: (locked: boolean) => void;
-	/**
-	 * Reports whether the log is scrolled near its bottom (isNearBottom).
-	 * Drives the scroll-to-bottom button's visibility in the panel header.
-	 * Fired on scroll, on content growth, and after auto-follow scrolls.
-	 */
-	onAtBottomChange?: (atBottom: boolean) => void;
 	/**
 	 * What the viewed task's agent is doing; undefined when it has no agent.
 	 * The backend's own answer — the log used to infer this from a 1.5s
@@ -113,10 +106,6 @@ export const ActivityLog = memo(function ActivityLog({
 	const [searchText, setSearchText] = useState("");
 	const autoScrollRef = useRef(autoScroll);
 	autoScrollRef.current = autoScroll;
-	// Ref-mirrored so scrollToBottom / observers don't need it in their deps
-	// (an unstable parent callback must not churn the MutationObserver).
-	const onAtBottomChangeRef = useRef(onAtBottomChange);
-	onAtBottomChangeRef.current = onAtBottomChange;
 	// No timer, no inspection of the last entry: the backend says what the
 	// agent is doing. `tool` keeps the indicator hidden because the tool card
 	// is already showing progress — which the old code approximated by
@@ -285,20 +274,6 @@ export const ActivityLog = memo(function ActivityLog({
 			attributeScrollWrite(el, who, () => {
 				el.scrollTop = el.scrollHeight;
 			});
-			// scrollTop clamps to the max scroll offset, so we are at the
-			// bottom by construction — report without a forced layout read.
-			onAtBottomChangeRef.current?.(true);
-		}
-	}, []);
-
-	// Re-evaluate the distance from the bottom and report it upward.
-	// Callback identity is stable ([]) — safe in effect deps.
-	const reportAtBottom = useCallback(() => {
-		const el = logRef.current;
-		if (el) {
-			onAtBottomChangeRef.current?.(
-				isNearBottom(el.scrollTop, el.scrollHeight, el.clientHeight),
-			);
 		}
 	}, []);
 
@@ -315,19 +290,14 @@ export const ActivityLog = memo(function ActivityLog({
 	// away, which is exactly what it was.
 	//
 	// Arming is not acting. "Go to the bottom now" is a separate intent with
-	// its own channel (`scrollToBottomRequest`, used by the ↓ and Follow
-	// buttons); this effect only handles "new content, and we are following".
+	// its own channel (`scrollToBottomRequest`, used by the Follow button);
+	// this effect only handles "new content, and we are following".
 	// biome-ignore lint/correctness/useExhaustiveDependencies: fires on new content only — see above
 	useEffect(() => {
 		if (autoScrollRef.current) {
 			requestAnimationFrame(() => scrollToBottom("follow-content"));
-		} else {
-			// New entries while the user is scrolled up: the distance from
-			// the bottom grew, so the scroll-to-bottom button's visibility
-			// must be re-evaluated without any scroll event.
-			reportAtBottom();
 		}
-	}, [visible.length, scrollToBottom, reportAtBottom]);
+	}, [visible.length, scrollToBottom]);
 
 	// Dev-only (localStorage mxd-debug-scroll): notice offset changes that no
 	// writer claimed. Returns a no-op when tracing is off.
@@ -337,18 +307,11 @@ export const ActivityLog = memo(function ActivityLog({
 		const el = logRef.current;
 		if (!el) return;
 		const observer = new MutationObserver(() => {
+			// Finer-grained complement to the visible.length effect above:
+			// catches streaming text growth (characterData), which moves the
+			// bottom without adding an entry.
 			if (autoScrollRef.current) {
 				requestAnimationFrame(() => scrollToBottom("follow-stream"));
-			} else {
-				// Finer-grained complement to the visible.length effect above:
-				// catches streaming text growth (characterData) that changes
-				// the scroll distance without adding an entry. Real browsers
-				// only — happy-dom v20 stores MutationObserver callbacks in a
-				// WeakRef (MutationObserverListener.js: `new WeakRef((record) =>
-				// this.report(record))` with no strong ref), so under GC
-				// pressure delivery silently stops; tests cover the effect
-				// path instead.
-				reportAtBottom();
 			}
 		});
 		observer.observe(el, {
@@ -357,7 +320,7 @@ export const ActivityLog = memo(function ActivityLog({
 			characterData: true,
 		});
 		return () => observer.disconnect();
-	}, [scrollToBottom, reportAtBottom]);
+	}, [scrollToBottom]);
 
 	const handleScroll = useCallback(() => {
 		const el = logRef.current;
@@ -367,24 +330,24 @@ export const ActivityLog = memo(function ActivityLog({
 			el.scrollHeight,
 			el.clientHeight,
 		);
-		// Two different questions, and only one of them this event can answer.
-		//
-		// "Is the log at its bottom right now" — yes, always answerable, drives
-		// the ↓ button. "Does the user want to follow new output" — only if the
-		// user is the reason the offset is here. When the range shrinks the
-		// browser clamps the offset and fires an ordinary scroll event, which
-		// reads as at-bottom and used to re-arm follow; the user then got
-		// yanked to the bottom the moment the content came back. See
+		// `atBottom` answers "is the log at its bottom right now". That is not
+		// the same question as "does the user want to follow new output",
+		// because the offset can arrive at the bottom without the user putting
+		// it there: when the scrollable range shrinks the browser clamps the
+		// offset and fires an ordinary scroll event, which reads as at-bottom
+		// and used to re-arm follow — the user was then yanked to the bottom
+		// the moment the content came back. Nothing on the event itself
+		// distinguishes the clamp from a real scroll (a clamp-dispatched event
+		// has isTrusted === true); the shrink is the only signal there is. See
 		// scrollRangeShrank for the measured cases.
 		const range = scrollRange(el.scrollHeight, el.clientHeight);
 		const shrank = scrollRangeShrank(prevScrollRangeRef.current, range);
-		// Only handleScroll advances this. Effects that read geometry (e.g.
-		// reportAtBottom) run at commit time, BEFORE the browser dispatches the
-		// clamp's scroll event — letting them update it would hide the very
-		// shrink this guard exists to see.
+		// Only handleScroll advances this. A geometry-reading effect runs at
+		// commit time, BEFORE the browser dispatches the clamp's scroll event,
+		// so letting one update it would hide the very shrink this guard
+		// exists to see.
 		prevScrollRangeRef.current = range;
 		if (!shrank) onAutoScrollChange(atBottom);
-		onAtBottomChangeRef.current?.(atBottom);
 		// The quote button is fixed-positioned; scrolling moves the selected
 		// text away from it. Dismiss instead of tracking.
 		setSelectionAction(null);

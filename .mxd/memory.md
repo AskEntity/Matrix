@@ -4323,3 +4323,41 @@ drift suite at merge time) and `message-editability` (breakage greys a button, w
   arbitrary descendants. That half is what remains open.
 - **Tool search** — dynamic tool discovery instead of sending every tool. Anthropic has a server-side
   `defer_loading`; the user prefers a client-side design.
+
+---
+
+## CORRECTION (2026-07-25) — `logAtBottom` no longer exists
+
+⚠️ **The section *The activity log's scroll position* still says "`autoScroll` and `logAtBottom` are
+two concepts and must not be merged into one boolean". `logAtBottom` is gone — and it was NOT merged
+into `autoScroll`, which is the reading to head off.** It was deleted, because the only thing that
+ever read it was an icon-only `↓` button whose `onClick` was the same function as Follow's. Follow
+arrived two and a half weeks later than `↓` and subsumed it; the superseding change did not look
+back. The observation/intent distinction the paragraph protects is intact and now lives entirely
+inside `handleScroll`: `if (!shrank) onAutoScrollChange(atBottom)` is what still stops an observation
+from writing an intent. **Do not "restore" a second reporting channel to re-establish a separation
+that is already there.**
+
+**A duplicate ENTRY POINT is not the same thing as a duplicate mechanism, and unifying the mechanism
+does not clean it up.** The jump had already been collapsed to one `scrollBottomRequest` counter, and
+that is exactly why the two buttons were so hard to notice: both were thin, both called the same
+handler, both worked. What made the pair visible was putting them side by side and asking what the
+older one still does that the newer one does not — nothing.
+
+⭐ **The cost of the narrow affordance was not the affordance.** Deleting one `useState` cascaded to a
+whole reporting channel: `ActivityLog`'s `onAtBottomChange` prop, its ref mirror, `reportAtBottom`,
+and the `else` branch of BOTH the `visible.length` effect and the MutationObserver — each of which
+existed only to keep that button's visibility fresh. **When you delete a consumer, follow the data
+backwards to the producer before believing you are done**; the compiler stops at the prop.
+
+⚠️ **THE TRAP, and it is general to every "delete the duplicate" task: the redundant channel was
+being used as the SYNCHRONIZATION for tests of the channel that survives.** Two follow-intent guard
+tests read `await waitFor(() => atBottomCalls.length > 0)` and then asserted
+`expect(autoScrollCalls).toEqual([])`. Delete the channel, delete the await — and the negative
+assertion now runs before anything *could* have been reported, so it passes on a component that
+reports nothing at all. Nothing goes red; the guard just stops being covered, silently, in the same
+commit that "only removed a duplicate". **A negative assertion is only worth the wait in front of
+it.** The fix is a positive control inside the same test — after asserting follow was NOT re-armed by
+the clamp, grow the range back and scroll for real, and require that one to re-arm. Verified the way
+this repo requires: with the `!shrank` guard mutated away, both tests fail on the negative assertion;
+restored, both pass, and 2973 → 2973 with 0 fail across the suite.

@@ -65,7 +65,7 @@ export function useWindowFileDrop(
 ): boolean {
 	const [isDragging, setIsDragging] = useState(false);
 	// Latest callback held in a ref so the window listeners subscribe ONCE and
-	// never go stale (mirrors the ActivityLog onAtBottomChange pattern).
+	// never go stale — an unstable parent callback must not churn them.
 	const onImageFilesRef = useRef(onImageFiles);
 	onImageFilesRef.current = onImageFiles;
 

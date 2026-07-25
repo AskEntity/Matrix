@@ -1,16 +1,21 @@
 /// <reference lib="dom" />
 /**
- * CANONICAL USER JOURNEY for the scroll-to-bottom button, full stack:
+ * CANONICAL USER JOURNEY for getting back to the newest content, full stack:
  * real daemon → real Plugin.tsx wiring → user scrolls the activity log up →
- * the ↓ button appears immediately LEFT of the Compact button → click →
- * the log jumps to the bottom, follow mode resumes, the button hides.
+ * the Follow control appears immediately LEFT of the Compact button → click →
+ * the log jumps to the bottom, follow mode resumes, the control hides.
+ *
+ * There is exactly ONE control for this. An icon-only ↓ button used to sit
+ * beside Follow calling the identical handler, and it is gone — do not add a
+ * second entry point back. The jump MECHANISM was already single (Plugin.tsx's
+ * `scrollBottomRequest` counter); what duplicated was the way in.
  *
  * The component tests (web/ActivityLog-scroll-report.test.tsx) cover the
- * reporting mechanism; this test covers the seam — Plugin.tsx's logAtBottom
- * state, the onAtBottomChange prop wiring, the button's placement in
- * .mxd-panel-actions, and the click handler. If any link is dropped
- * (e.g. onAtBottomChange not passed to ActivityLog, or the button not
- * rendered), this test fails while the component tests stay green.
+ * reporting mechanism; this test covers the seam — Plugin.tsx's autoScroll
+ * state, the onAutoScrollChange prop wiring, the control's placement in
+ * .mxd-panel-actions, and the click handler. If any link is dropped (e.g.
+ * onAutoScrollChange not passed to ActivityLog, or the control not rendered),
+ * this test fails while the component tests stay green.
  *
  * Setup mirrors web/Plugin-quote-journey.test.tsx: tree.json + a session
  * JSONL seeded at matrix's dataRoot. A `usage` event is seeded so the
@@ -31,7 +36,7 @@ const MATRIX_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const LOG_TEXT = "A long assistant reply the user scrolled away from";
 
-describe("Plugin — scroll-to-bottom button full journey", () => {
+describe("Plugin — back-to-newest (Follow) full journey", () => {
 	let daemon: DaemonInstance;
 	let tempDir: string;
 	let savedFetch: typeof fetch;
@@ -162,7 +167,7 @@ describe("Plugin — scroll-to-bottom button full journey", () => {
 		GlobalRegistrator.unregister();
 	});
 
-	test("scroll up → ↓ button appears left of Compact → click → back to bottom + hidden", async () => {
+	test("scroll up → Follow appears left of Compact → click → back to bottom + hidden", async () => {
 		const { createRoot } = await import("react-dom/client");
 		const { createElement, useState } = await import("react");
 		const { AuthFetchProvider, GetTokenProvider } = await import(
@@ -209,11 +214,11 @@ describe("Plugin — scroll-to-bottom button full journey", () => {
 				await new Promise((r) => setTimeout(r, 50));
 			}
 		};
-		const scrollBtn = () =>
-			div.querySelector<HTMLButtonElement>(".mxd-scroll-bottom-btn");
+		const followBtn = () =>
+			div.querySelector<HTMLButtonElement>(".mxd-scroll-follow-btn");
 
 		// 1. App ready: seeded reply visible in the log, Compact button
-		//    rendered (usage event consumed), scroll button NOT shown yet.
+		//    rendered (usage event consumed), Follow NOT shown yet.
 		const logContainer = await waitFor(() => {
 			const el = div.querySelector<HTMLElement>(".mxd-activity-log");
 			return el?.textContent?.includes(LOG_TEXT) ? el : null;
@@ -221,7 +226,14 @@ describe("Plugin — scroll-to-bottom button full journey", () => {
 		const compactBtn = await waitFor(() =>
 			div.querySelector<HTMLButtonElement>(".mxd-compact-trigger-btn"),
 		);
-		expect(scrollBtn()).toBeNull();
+		expect(followBtn()).toBeNull();
+		// Baseline width of the action row while at the bottom. Scrolling away
+		// must add EXACTLY ONE child — this is the whole point of the control
+		// being singular, and it is asserted by counting rather than by naming
+		// the deleted button's class (which no longer renders, so asserting
+		// its absence would be true no matter what anyone adds).
+		const actionsRow = compactBtn.parentElement as HTMLElement;
+		const persistentCount = actionsRow.children.length;
 
 		// 2. User scrolls up: mock overflow geometry, position far from the
 		//    bottom, and fire a scroll event.
@@ -236,23 +248,23 @@ describe("Plugin — scroll-to-bottom button full journey", () => {
 		logContainer.scrollTop = 100;
 		logContainer.dispatchEvent(new Event("scroll"));
 
-		// 3. The ↓ button appears — as a SIBLING immediately LEFT of Compact.
-		const btn = await waitFor(scrollBtn);
-		expect(btn.title).toBe("Scroll to bottom");
+		// 3. Follow appears — as a SIBLING immediately LEFT of Compact.
+		const btn = await waitFor(followBtn);
+		expect(btn.textContent).toContain("Follow");
 		const panelActions = btn.parentElement;
 		expect(panelActions?.className).toContain("mxd-panel-actions");
 		expect(compactBtn.parentElement).toBe(panelActions);
 		const children = Array.from(panelActions?.children ?? []);
 		expect(children.indexOf(btn)).toBeLessThan(children.indexOf(compactBtn));
+		// ONE control, not two: scrolling away added a single child.
+		expect(actionsRow.children.length).toBe(persistentCount + 1);
 
-		// 4. Click → the log jumps to the bottom and the button hides.
+		// 4. Click → the log jumps to the bottom, follow mode resumes, and the
+		//    control hides. One click, one commit, nothing left on screen —
+		//    there is no second control that could linger a frame behind.
 		btn.click();
-		await waitFor(() => scrollBtn() === null);
+		await waitFor(() => followBtn() === null);
 		expect(logContainer.scrollTop).toBe(1000); // scrollTop = scrollHeight
-
-		// 5. Follow mode resumed: the "Follow" pill is gone too (autoScroll
-		//    was re-enabled by the click).
-		expect(div.querySelector(".mxd-scroll-follow-btn")).toBeNull();
 
 		root.unmount();
 		div.remove();

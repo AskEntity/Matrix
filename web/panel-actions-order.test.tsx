@@ -10,20 +10,20 @@
  * badge and ⚡): scrolling up moved the ⌘ Compact button and the token badge
  * left by 71.3px. After the fix both stay at the same x.
  *
- * Two invariants are pinned here, because they were two separate defects:
+ * The invariant pinned here is ORDER: every scroll-state control precedes
+ * every persistent child.
  *
- *  1. ORDER — both scroll-state buttons precede every persistent child.
- *  2. ONE COMMIT — clicking Follow hides BOTH buttons in a single render.
- *     Follow used to call `setAutoScroll(true)` while ↓ was driven by
- *     `logAtBottom`, which only flipped one frame later when the follow scroll
- *     reported back. That left a visible intermediate state with exactly one
- *     button, i.e. the row changed width twice. Both buttons now go through
- *     the same `requestScrollLogToBottom` handler, so the two booleans flip in
- *     the same batch.
+ * There was a second invariant, ONE COMMIT — clicking Follow had to hide the
+ * icon-only ↓ button in the SAME render, because the two were driven by two
+ * booleans that flipped a frame apart and the row changed width twice. That
+ * duplicate control is gone (Follow always did the same thing), so the
+ * coherence question no longer exists rather than having been answered.
+ * ⚠️ If a second scroll-state control is ever added, it comes back with it —
+ * two controls sharing this row must appear and disappear in one commit.
  *
- * happy-dom does no layout, so this test asserts DOM order and commit
- * granularity — the two things that CAUSE the geometry. The geometry itself
- * was verified by hand in Chrome (see the task's report).
+ * happy-dom does no layout, so this test asserts DOM order — the thing that
+ * CAUSES the geometry. The geometry itself was verified by hand in Chrome
+ * (see the task's report).
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -172,7 +172,7 @@ describe("panel actions — scroll-state controls stay leftmost", () => {
 		GlobalRegistrator.unregister();
 	});
 
-	test("both scroll buttons precede every persistent control, and Follow hides both in one commit", async () => {
+	test("the Follow control precedes every persistent control, and clicking it jumps to the bottom", async () => {
 		const { createRoot } = await import("react-dom/client");
 		const { createElement, useState } = await import("react");
 		const { AuthFetchProvider, GetTokenProvider } = await import(
@@ -248,52 +248,24 @@ describe("panel actions — scroll-state controls stay leftmost", () => {
 		const follow = await waitFor(() =>
 			actions.querySelector<HTMLButtonElement>(".mxd-scroll-follow-btn"),
 		);
-		const down = await waitFor(() =>
-			actions.querySelector<HTMLButtonElement>(".mxd-scroll-bottom-btn"),
-		);
 
-		// ── Invariant 1: order ────────────────────────────────────────────
+		// ── The invariant: order ──────────────────────────────────────────
 		// Every scroll-state control comes before every persistent control.
 		const children = Array.from(actions.children);
-		const scrollIdx = [children.indexOf(follow), children.indexOf(down)];
 		const persistentIdx = children
 			.map((c, i) => ({ c, i }))
-			.filter(({ c }) => c !== follow && c !== down)
+			.filter(({ c }) => c !== follow)
 			.map(({ i }) => i);
 
-		expect(scrollIdx).not.toContain(-1);
+		expect(children.indexOf(follow)).not.toBe(-1);
 		expect(persistentIdx.length).toBeGreaterThan(0);
-		expect(Math.max(...scrollIdx)).toBeLessThan(Math.min(...persistentIdx));
+		expect(children.indexOf(follow)).toBeLessThan(Math.min(...persistentIdx));
 
-		// ── Invariant 2: one commit ───────────────────────────────────────
-		// Record the (follow, down) presence pair after every DOM mutation of
-		// the row. A state with exactly one of them present means the row
-		// changed width twice — the two-frame jump.
-		const states: Array<[boolean, boolean]> = [];
-		const observer = new MutationObserver(() => {
-			states.push([
-				!!actions.querySelector(".mxd-scroll-follow-btn"),
-				!!actions.querySelector(".mxd-scroll-bottom-btn"),
-			]);
-		});
-		observer.observe(actions, { childList: true, subtree: true });
-
+		// And the control does its job: jump to the bottom, and stand down.
 		follow.click();
-
 		await waitFor(
 			() => actions.querySelector(".mxd-scroll-follow-btn") === null,
 		);
-		await waitFor(
-			() => actions.querySelector(".mxd-scroll-bottom-btn") === null,
-		);
-		// Give any deferred (rAF / effect) commit a chance to be recorded.
-		await new Promise((r) => setTimeout(r, 100));
-		observer.disconnect();
-
-		const halfStates = states.filter(([f, d]) => f !== d);
-		expect(halfStates).toEqual([]);
-
-		// And the click still does its job: jump to the bottom.
 		expect(logContainer.scrollTop).toBe(1000);
 
 		root.unmount();

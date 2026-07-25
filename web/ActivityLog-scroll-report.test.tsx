@@ -1,15 +1,16 @@
 /// <reference lib="dom" />
 /**
- * ActivityLog scroll-position reporting (`onAtBottomChange`) — the mechanism
- * behind the scroll-to-bottom button next to the Compact button.
+ * ActivityLog's scroll reporting — `onAutoScrollChange`, the ONE channel by
+ * which a scroll position becomes follow intent, and the guard that decides
+ * when a scroll event is allowed to speak for the user at all.
  *
- * Covers every report path:
- *  - scroll events (user scrolls up / back down) — also asserts the existing
- *    auto-follow callback (onAutoScrollChange) still fires with the same
- *    value, pinning "don't disturb auto-follow" at the mechanism level
- *  - content growth while scrolled up (visible.length effect re-evaluation)
- *  - auto-follow scrolls (autoScroll=true + new entry → reports true)
- *  - prop omitted → no crash (optional prop, showcase/legacy callers)
+ * There used to be a second channel, `onAtBottomChange`, reporting raw
+ * at-bottom-ness for an icon-only ↓ button in the panel header. Both the
+ * button and the channel are gone: Follow subsumed the button, so nothing
+ * read the observation any more. Do NOT reintroduce a second reporting
+ * channel to serve a new control — one intent-guarded channel plus the
+ * `scrollToBottomRequest` counter is the whole vocabulary, and the split
+ * between them is what the guard below depends on.
  *
  * happy-dom does no layout, so container geometry (scrollHeight/clientHeight)
  * is mocked via Object.defineProperty; scrollTop assignment works natively.
@@ -20,7 +21,7 @@
  * (MutationObserverListener.js) — under full-suite GC pressure the callback
  * is collected and delivery silently stops, so any test of that branch is
  * inherently flaky. The deterministic visible.length effect is the primary
- * trigger and is what the content-growth test exercises.
+ * trigger and is what the arming/acting tests exercise.
  */
 
 import {
@@ -90,11 +91,7 @@ function mockGeometry(
  * Returns the container element, the spy logs, and a rerender helper that
  * swaps in a new entry list (same root — exercises the MutationObserver).
  */
-async function renderLog(opts: {
-	autoScroll: boolean;
-	withAtBottomCallback?: boolean;
-	entryCount?: number;
-}) {
+async function renderLog(opts: { autoScroll: boolean; entryCount?: number }) {
 	const { createRoot } = await import("react-dom/client");
 	const { createElement } = await import("react");
 	const { ActivityLog } = await import(
@@ -118,12 +115,7 @@ async function renderLog(opts: {
 	);
 	const makeEntries = (count: number) => master.slice(0, count);
 
-	const atBottomCalls: boolean[] = [];
 	const autoScrollCalls: boolean[] = [];
-	const onAtBottomChange =
-		opts.withAtBottomCallback === false
-			? undefined
-			: (v: boolean) => atBottomCalls.push(v);
 
 	const div = document.createElement("div");
 	document.body.appendChild(div);
@@ -141,7 +133,6 @@ async function renderLog(opts: {
 					nodeMap: new Map(),
 					autoScroll,
 					onAutoScrollChange: (v: boolean) => autoScrollCalls.push(v),
-					onAtBottomChange,
 					activity: undefined,
 					projectId: "proj-1",
 				}),
@@ -164,130 +155,34 @@ async function renderLog(opts: {
 		root.unmount();
 		div.remove();
 	});
-	return { container, atBottomCalls, autoScrollCalls, render };
+	return { container, autoScrollCalls, render };
 }
 
-describe("ActivityLog scroll-position reporting", () => {
-	test("scrolling away from the bottom reports false on BOTH callbacks", async () => {
-		const { container, atBottomCalls, autoScrollCalls } = await renderLog({
-			autoScroll: true,
-		});
-		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
-
-		atBottomCalls.length = 0;
-		autoScrollCalls.length = 0;
-
-		// User scrolls up: 500px from the bottom
-		container.scrollTop = 200;
-		container.dispatchEvent(new Event("scroll"));
-
-		await waitFor(() => atBottomCalls.length > 0);
-		expect(atBottomCalls[atBottomCalls.length - 1]).toBe(false);
-		// Existing auto-follow behavior untouched: same event, same value
-		expect(autoScrollCalls[autoScrollCalls.length - 1]).toBe(false);
-	});
-
-	test("scrolling back to the bottom reports true on BOTH callbacks", async () => {
-		const { container, atBottomCalls, autoScrollCalls } = await renderLog({
-			autoScroll: false,
-		});
-		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
-
-		// Away first…
-		container.scrollTop = 100;
-		container.dispatchEvent(new Event("scroll"));
-		await waitFor(() => atBottomCalls.length > 0);
-		expect(atBottomCalls[atBottomCalls.length - 1]).toBe(false);
-
-		// …then within the 40px threshold (distance = 1000-680-300 = 20)
-		container.scrollTop = 680;
-		container.dispatchEvent(new Event("scroll"));
-		await waitFor(() => atBottomCalls[atBottomCalls.length - 1] === true);
-		expect(autoScrollCalls[autoScrollCalls.length - 1]).toBe(true);
-	});
-
-	test("content growth while scrolled up re-reports without any scroll event", async () => {
-		// Neuter MutationObserver for this test so ONLY the visible.length
-		// effect can deliver the report — makes the mutation-proof exact
-		// (deleting the effect's else-branch fails this test even in
-		// isolated low-GC runs where the MO complement would still fire).
-		const RealMO = globalThis.MutationObserver;
-		class NoopMO {
-			observe() {}
-			disconnect() {}
-			takeRecords() {
-				return [];
-			}
-		}
-		(globalThis as { MutationObserver: unknown }).MutationObserver = NoopMO;
-		cleanups.push(() => {
-			(globalThis as { MutationObserver: unknown }).MutationObserver = RealMO;
-		});
-
-		const { container, atBottomCalls, render } = await renderLog({
-			autoScroll: false,
-		});
-		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
-		container.scrollTop = 100; // far from bottom; no scroll event dispatched
-
-		atBottomCalls.length = 0;
-
-		// New entry arrives → visible.length effect re-evaluates and reports
-		// (the deterministic growth trigger; see file header for why the
-		// MutationObserver complement is untestable in happy-dom)
-		render(4, false);
-		await waitFor(() => atBottomCalls.length > 0);
-		expect(atBottomCalls[atBottomCalls.length - 1]).toBe(false);
-	});
-
-	test("auto-follow scroll (autoScroll=true + new entry) reports true", async () => {
-		const { container, atBottomCalls, render } = await renderLog({
-			autoScroll: true,
-		});
-		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
-		container.scrollTop = 0;
-
-		atBottomCalls.length = 0;
-
-		// New entry with follow mode on → rAF scrollToBottom → reports true
-		render(4, true);
-		await waitFor(() => atBottomCalls.length > 0);
-		expect(atBottomCalls[atBottomCalls.length - 1]).toBe(true);
-		// And the container was actually scrolled to its bottom
-		expect(container.scrollTop).toBe(1000);
-	});
-
-	test("omitting onAtBottomChange crashes nothing (optional prop)", async () => {
-		const { container, autoScrollCalls } = await renderLog({
-			autoScroll: false,
-			withAtBottomCallback: false,
-		});
-		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
-
-		container.scrollTop = 150;
-		container.dispatchEvent(new Event("scroll"));
-
-		// Auto-follow callback still works; no throw anywhere
-		await waitFor(() => autoScrollCalls.length > 0);
-		expect(autoScrollCalls[autoScrollCalls.length - 1]).toBe(false);
-	});
-});
+/** Settle window for a NEGATIVE assertion ("nothing was reported"). */
+const settle = () => new Promise((r) => setTimeout(r, 80));
 
 /**
  * The follow-intent guard. `isNearBottom` answers "is the log at its bottom",
- * which is the right question for the ↓ button and the wrong one for "does the
- * user want to follow new output" — because the offset can arrive at the bottom
- * without the user doing anything, when the content or the viewport shrinks
- * under it. The browser clamps and fires an ordinary scroll event; nothing on
- * the event distinguishes it from a real scroll.
+ * which is not the same question as "does the user want to follow new output"
+ * — because the offset can arrive at the bottom without the user doing
+ * anything, when the content or the viewport shrinks under it. The browser
+ * clamps and fires an ordinary scroll event; nothing on the event
+ * distinguishes it from a real scroll (a clamp-dispatched event is
+ * isTrusted too).
  *
  * Measured in Chrome before the guard: switching tasks, and every log search
  * (no match / few matches / a match set that still overflows) re-armed follow
  * and dragged the user to the bottom the moment the content came back.
+ *
+ * ⚠️ Both tests below assert an ABSENCE, so each one ends with a positive
+ * control that re-arms follow for real. Without it they pass just as happily
+ * against a component that reports nothing at all — which is exactly what
+ * `expect(autoScrollCalls).toEqual([])` looked like while a second, unguarded
+ * reporting channel was still doing the synchronising for it.
  */
 describe("ActivityLog follow-intent guard (shrinking range)", () => {
-	test("range shrinks to zero → reports at-bottom but does NOT re-arm follow", async () => {
-		const { container, atBottomCalls, autoScrollCalls } = await renderLog({
+	test("range shrinks to zero → does NOT re-arm follow", async () => {
+		const { container, autoScrollCalls } = await renderLog({
 			autoScroll: false,
 		});
 		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
@@ -297,7 +192,6 @@ describe("ActivityLog follow-intent guard (shrinking range)", () => {
 		container.dispatchEvent(new Event("scroll"));
 		await waitFor(() => autoScrollCalls.length > 0);
 
-		atBottomCalls.length = 0;
 		autoScrollCalls.length = 0;
 
 		// The log empties (task switch mid-fetch / search matched nothing):
@@ -306,18 +200,26 @@ describe("ActivityLog follow-intent guard (shrinking range)", () => {
 		container.scrollTop = 0;
 		container.dispatchEvent(new Event("scroll"));
 
-		await waitFor(() => atBottomCalls.length > 0);
-		// The ↓ button still gets the truth: there is nowhere to scroll.
-		expect(atBottomCalls[atBottomCalls.length - 1]).toBe(true);
-		// Follow intent is left alone.
+		await settle();
+		// Follow intent is left alone, even though the offset reads as
+		// at-bottom (there is nowhere left to scroll).
 		expect(autoScrollCalls).toEqual([]);
+
+		// Positive control: the channel is alive and this container still
+		// reports. Content comes back (range 0 → 700, a GROWTH) and the user
+		// scrolls to within the threshold themselves.
+		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
+		container.scrollTop = 690;
+		container.dispatchEvent(new Event("scroll"));
+		await waitFor(() => autoScrollCalls.length > 0);
+		expect(autoScrollCalls[autoScrollCalls.length - 1]).toBe(true);
 	});
 
 	test("range shrinks but still overflows → still does NOT re-arm follow", async () => {
 		// The case that rules out "does it overflow" as the discriminator:
 		// a log search whose results still scroll. Measured range 1549 → 449,
 		// offset clamped to the new bottom, follow silently re-armed.
-		const { container, atBottomCalls, autoScrollCalls } = await renderLog({
+		const { container, autoScrollCalls } = await renderLog({
 			autoScroll: false,
 		});
 		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
@@ -325,16 +227,21 @@ describe("ActivityLog follow-intent guard (shrinking range)", () => {
 		container.dispatchEvent(new Event("scroll"));
 		await waitFor(() => autoScrollCalls.length > 0);
 
-		atBottomCalls.length = 0;
 		autoScrollCalls.length = 0;
 
 		mockGeometry(container, { scrollHeight: 400, clientHeight: 300 });
 		container.scrollTop = 100; // clamped to the new max → reads as at-bottom
 		container.dispatchEvent(new Event("scroll"));
 
-		await waitFor(() => atBottomCalls.length > 0);
-		expect(atBottomCalls[atBottomCalls.length - 1]).toBe(true);
+		await settle();
 		expect(autoScrollCalls).toEqual([]);
+
+		// Positive control — see the describe comment.
+		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
+		container.scrollTop = 690;
+		container.dispatchEvent(new Event("scroll"));
+		await waitFor(() => autoScrollCalls.length > 0);
+		expect(autoScrollCalls[autoScrollCalls.length - 1]).toBe(true);
 	});
 
 	test("range GROWS (streaming) → scrolling back down still re-arms follow", async () => {
