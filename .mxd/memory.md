@@ -4648,6 +4648,202 @@ the trick to make the Compact button exist in harness tests. Mutation-verified: 
 journey fails; handleScroll report drop → 2 scroll tests fail; effect else drop → content-growth
 test fails (exact, thanks to the MO stub).
 
+## Activity-log viewport position: 30 touch points, three clusters, and the one that isn't in the scroll code (2026-07-25)
+
+A survey of everything that reads, writes or invalidates the activity log's scroll offset found
+**30 touch points, not the 9 anyone could name**: 9 JS writers, 5 readers, 6 pieces of state,
+6 content-height mutators inside the container, 6 clientHeight mutators outside it, 6 wholesale
+`logs` replacements, plus **the browser** (`overflow-anchor: auto`, load-bearing here and not
+implemented by Safari — see below).
+
+They do NOT collapse into one mechanism, and forcing them to would be wrong. Three clusters:
+
+- **A — measuring or writing during a transitional state.** Produces the *unpredictable* symptoms,
+  because the transient's duration is a network variable.
+- **B — viewport position addressed by a perishable identity** (pixel offsets, a module-counter
+  entry id, a React component instance). Produces *deterministic* losses, each disguised as some
+  other feature behaving normally, which is why none of them were ever reported.
+- **C — conditional renders in a flex row.** Independent, cheap, cosmetic.
+
+Their common amplifier: `logs` is the whole viewed session's array, replaced wholesale on every
+refresh. **That amplifier turned out to be able to hurt users on its own** — see the causal chain
+below. "What time may I measure" and "what name do I remember a position by" are orthogonal
+questions; one mechanism cannot answer both.
+
+### What shipped
+
+- **`scrollRangeShrank(prev, current)`** (`scroll.ts`) gates follow INTENT in `handleScroll`.
+  `isNearBottom` answers "is it at the bottom" — right for the ↓ button, wrong for "does the user
+  want to follow", because the offset reaches the bottom on its own whenever the range shrinks and
+  the browser clamps. Measured cases that used to silently re-arm follow and then yank the user
+  down: task switch (range 1549→0), log search matching nothing / a few / **40 entries where it
+  still overflows (1549→449 — so "does it overflow" is NOT the discriminator)**, and the composer
+  growing (viewport 572→537). Growth is deliberately not suspicious: streaming grows the log every
+  frame and scrolling back down must still re-arm. `prevScrollRangeRef` may **only** be advanced by
+  `handleScroll` — effects that read geometry run at commit, BEFORE the browser dispatches the
+  clamp's scroll event, so letting them advance it hides the very shrink being detected.
+- **Arming is not acting.** `autoScroll` was a dependency of the new-content effect, so merely
+  re-arming follow ran it — and re-arming happens the instant a manual scroll comes within 40px of
+  the bottom, so the last stretch of the user's own gesture was completed for them mid-drag
+  (measured: 25px from the bottom → 0.5px two frames later). The flag is now read from the ref and
+  is not a dependency: that effect reacts to CONTENT, never to intent. "Go to the bottom now" is a
+  separate intent with its own channel (`scrollToBottomRequest`).
+- **Panel header ordering.** The row is right-aligned flex, so inserting a child moves the children
+  BEFORE it and leaves the rest alone. The Follow pill sat mid-row and shoved ⌘ + the token badge
+  71.3px sideways on every scroll-up; both scroll-state buttons are now leftmost. Follow also
+  shares `requestScrollLogToBottom` with ↓ so the two booleans flip in one batch instead of two.
+- **`scroll-attribution.ts`** — dev-only (`localStorage mxd-debug-scroll`), tags every programmatic
+  write with who did it, plus a per-frame sampler for movement nobody claimed. Read its docstring
+  before trusting it; it has a documented blind spot (below).
+- The per-tab `{scrollTop, follow}` map was **deleted, not repaired**: it never worked once (the
+  save ran in a passive effect, after the commit that swapped in the new filter, so scrollTop read
+  0 — measured 8/8 landing at the bottom). Whether task switching *should* remember your position
+  is a product question left open; answering it needs an address that survives a refetch.
+
+### The symptom that was not in the scroll code at all
+
+User: "from mid-output to output complete, my scroll gets yanked to somewhere above." Only visible
+with follow OFF. Caught with a console probe in the real session:
+
+```
+t=22467   GET events?after=compact        atScrollTop = 5517      (agent went idle)
+t=22736   5517 → 0   delta -5517   "BROWSER (no JS write)"   top=""   entries 59→60
+t=22751   JS write scrollTop 0 → 0        at index.js:4283:33
+```
+
+Both line numbers map back exactly: **4283 = the lazy-render anchor**
+(`container.scrollTop = container.scrollHeight - scrollBottom`), **4294 = `scrollToBottom`**.
+
+The chain: `agent_idle` → `refetchOnIdleRef` → `processEventBatch` → `setLogs` replaces every entry
+with a new object → new `createLogEntry` ids → new React keys → the whole subtree unmounts and
+remounts → **the offset does not survive the swap**.
+
+A second capture measured this from inside the DOM mutation:
+
+```
+t=87006  >>> REFETCH                          st 8089   sh 8823   kids 85
+t=87032  dom-mutation  removed:1              st 8089   sh 8809
+t=87299  dom-mutation  added:82 removed:82    st  191   sh 8978   ← offset already gone
+t=87313  js-write 191 → 191                   (the same anchor, pinning again)
+```
+
+Note what this does and does not show. All 82 entries are swapped in **one** mutation record, and by
+the time the observer's microtask runs the height is **already restored** — while the offset is
+already lost. It lands wherever the intermediate geometry allowed (0 in the first capture, 191 in
+this one), so "clamped to 0" is too specific; the honest statement is that **the offset does not
+survive a wholesale replacement**. And the usable evidence is not a dip in `scrollHeight` — nothing
+observable ever sees the dip — it is that **the offset changed across the mutation with no JS
+write**.
+
+**`added:82 removed:82` is the direct observation of every React key changing.** With stable keys
+React reuses nodes and a normal update looks like the `removed:1` record at t=87032. Eighty-two out,
+eighty-two back, `kids` unchanged — that is key churn measured, not inferred, and it is the positive
+evidence that **eid-as-React-key is aimed at the right thing**.
+
+Then the pin: landing near the top brings the sentinel into view → the IntersectionObserver fires →
+it captures `scrollBottom = scrollHeight - scrollTop` → one frame later writes
+`scrollHeight - scrollBottom`, reproducing the same offset (`0 → 0` in the first capture,
+`191 → 191` in the second). **The anchor is what turns the culprit's result into a persistent
+state** — which is why the symptom is "stuck near the top" rather than "flickered once".
+
+But the anchor is an accomplice, not the cause, and the arithmetic proves it: `scrollBottom =
+8978 − 191 = 8787`, and `scrollHeight` across that window was 8809–8978, so the offset **at capture
+time** was already ≈22–191 — already near the top. The anchor **observed and reproduced** a position
+that was lost before it ran; it did not compute a wrong one. So there is nothing to fix in the
+anchor. Fix the keys.
+
+**The fix is not in the scroll subsystem.** That refetch exists for exactly one reason: to get
+`eid` back, because SSE-broadcast events don't carry it (it is stamped at persist time), so
+Edit/Rewind can't work during streaming. Task `01KYBQXSVEP7Y94NWHGWSMNQSM` kills this two ways
+over — eid arriving with SSE means the refetch never happens, and **eid as the React key** makes a
+refetch reconcile instead of remount, which also covers `handleReconnect` (whose replacement will
+not disappear) and fixes expanded `Card` state being reset. A stop-gap was explicitly rejected:
+it would add a 31st touch point to a mechanism scheduled to disappear, and transitional code is
+code that must later be deleted — which is forgotten far more reliably than adding it was.
+
+### ⚠️ CORRECTION — "a wholesale replacement does not move the offset" is FALSE
+
+An earlier round measured this four times and concluded a full replacement preserves `scrollTop`
+(remove-all-then-insert-all inside one synchronous block does not clamp, because no layout happens
+in between). **The measurements were honest and the conclusion is wrong**, and left standing it
+sends the next reader straight past the actual culprit.
+
+Why it looked true: the fixture held ~60–80 plain-text entries. Tearing those down and rebuilding
+them is cheap enough that the collapse never survives to a layout. A real session has images with
+no reserved height, expandable cards, markdown tables — rebuilding is slow enough that the collapse
+becomes observable and the browser clamps.
+
+**The cost of a remount depends on how expensive the content is to rebuild**, so a fixture made of
+cheap content cannot answer the question at all. Second instance in one day of *correct measurement,
+wrong world sampled*.
+
+### The instrument's blind spot — and a rule about specifying observations
+
+The probe classified that exact jump as `range UNCHANGED → scroll anchoring or user — NOT a clamp`.
+Wrong: the range collapsed and refilled **inside one frame**, and a per-frame sampler only sees what
+survives to the end of a frame.
+
+So `range unchanged ⟹ not a clamp` holds ACROSS frames and fails for collapse-and-refill within
+one. And **`scrollHeight` never dipped in any sample of the second capture either** — read
+literally, that refutes "the container collapsed". It does not, and the reason is the sharp edge
+of this whole subsystem:
+
+```
+t=87032  dom-mutation  ...
+         ← 267ms, ZERO samples (≈16 expected at 60fps)
+t=87299  dom-mutation  added:82 removed:82
+```
+
+The main thread was blocked solid for 267ms rebuilding 82 entries, so every rAF callback and
+observer microtask queued behind it. **"No dip in the samples" ≠ "no dip."**
+
+This turns the blind spot from an edge case into a **systematic bias**: the operations that cause
+large displacement are exactly the operations that block the main thread long enough to hide
+themselves. A per-frame instrument is least able to see precisely the moments it is most needed for.
+Any future instrument here needs an observation that survives a blocked thread — a count taken
+either side of the render, or a mutation record — not a sample taken during it.
+
+The generalisation, which cost a nearly-wasted round: **before specifying a measurement, check that
+the instrument's resolution can carry it.** The request that prompted this was "record
+`scrollHeight` every frame across the window" — below the instrument's resolution, and its failure
+mode is a **silent false negative** ("no dip, so not a remount") that reads exactly like a real
+result. That is more dangerous than reasoning wrongly, because it arrives wearing evidence's
+clothes. Three false negatives of this family landed in one day: an over-specified observation, a
+fixture whose content was too cheap to reproduce the effect, and a blocked-thread sampling gap.
+
+And the counterpart to knowing when to measure — **stop collecting once the answer cannot change
+the action.** Exactly where in those 267ms the offset died does not alter the fix: don't remove the
+82 nodes. Further rounds of user reproduction would have bought precision nobody would spend.
+
+### Fixing a "you end up at the bottom anyway" mechanism makes older displacement visible
+
+This displacement had always been there. With follow ON, any content change re-triggered
+scroll-to-bottom, so **every** displacement was overwritten by the same endpoint and none of them
+produced a distinguishable symptom. Removing that overwrite is what made this one visible.
+
+Generally: **in a subsystem with a mechanism that keeps forcing one endpoint, that mechanism is
+masking every other bug that moves the same value.** Each masker you fix surfaces a symptom that
+"has always been there" — the user will report it as new and it is not a regression, it is
+*newly visible*. This explains a whole class of "I hit this often but can't say when" reports, and
+it means a subsystem's bug count can appear to grow while it is genuinely getting better.
+
+### Reusable method
+
+- **Attribution beats reasoning here.** One reproduction with the probe turned "something moved me
+  and I don't know what" into two exact line numbers. The previous round needed a full 30-touch-point
+  survey to reach a *worse* answer.
+- **Diagnose by absence.** Browser scroll anchoring goes through no JS path and fires no event, so
+  "the offset moved and nobody wrote it" is itself the diagnosis. Any instrument here must record
+  unclaimed movement, not just instrument the writers.
+- **Do not try to separate a clamp from a user scroll by `isTrusted`** — a clamp's scroll event is
+  trusted and identical at the event layer. Recorded before, re-derived, and now recorded again.
+- **A streaming mock provider is ~60 lines and puts a frontend bug on the real agent loop**: serve
+  Anthropic's SSE shape on a local port and set `ANTHROPIC_BASE_URL` (the daemon passes
+  `process.env` into the worker). Gets real `text_delta`, thinking, tool execution, `end_turn` →
+  real `agent_idle` → real refetch. `/tmp/scroll-probe/` holds the fixture + mock.
+- **When you cannot reproduce, send the instrument to whoever can.** Four increasingly faithful
+  attempts failed; one paste into the user's console succeeded immediately.
+
 ## Sidebar search/filter toggle — pure reducer, blur-close removed (2026-07-07)
 
 The sidebar filter button ([TASKS][+][refresh][🔍][👁] header row) now cleanly TOGGLES its
