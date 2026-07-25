@@ -1,6 +1,7 @@
 import type { DonePayload } from "./done-payload.ts";
 import type { MessageQueue } from "./message-queue.ts";
-import type { BackgroundProcess } from "./tools/bash.ts";
+import type { BackgroundProcess, ForegroundExecution } from "./tools/bash.ts";
+import type { TurnInterrupt } from "./turn-interrupt.ts";
 
 /** Task status follows the lifecycle: draft → pending → in_progress → verify | failed | closed */
 export type TaskStatus =
@@ -57,8 +58,20 @@ export interface TaskSession {
 	 * disagree, which is the failure this whole model removes.
 	 */
 	activity: AgentActivity;
-	/** Abort controller for cancelling in-flight API calls. */
+	/**
+	 * Session TEARDOWN signal — "we are dying". Aborts in-flight API calls on
+	 * the way out (stop / reset / delete). To end the current turn WITHOUT
+	 * tearing anything down, use `interrupt` below; the two must stay separate
+	 * or an interrupt starts dismantling the session. See TurnInterrupt.
+	 */
 	abortController: AbortController;
+	/**
+	 * Turn INTERRUPT signal — "stop this turn, but I'm still alive". Set by
+	 * `interruptTask`; the loop finishes writing every outstanding tool_result,
+	 * then parks at idle with the session (background processes, MCP, queue,
+	 * messages[]) fully intact.
+	 */
+	interrupt: TurnInterrupt;
 	/**
 	 * Trace ID for this agent loop instance. All events emitted BY this run
 	 * (provider loop, tool handlers, lifecycle events in runAgentForNode) carry
@@ -71,8 +84,15 @@ export interface TaskSession {
 	depth: number;
 	/** Background processes for this session, keyed by background process ID. */
 	backgroundProcesses: Map<string, BackgroundProcess>;
-	/** Foreground execution tracking — resolve callbacks for move-to-background. Key: `${sessionId}:${execId}` */
-	foregroundExecutions: Map<string, { resolve: () => void; command: string }>;
+	/**
+	 * Foreground executions that can be reached from outside while they run.
+	 * Key: `${sessionId}:${execId}`. Two verbs, opposite outcomes for the
+	 * command itself:
+	 * - `resolve()` — move to background; the command KEEPS RUNNING.
+	 * - `interrupt()` — the user pressed stop; the command is TERMINATED and
+	 *   its result carries the output it produced first.
+	 */
+	foregroundExecutions: Map<string, ForegroundExecution>;
 	/** Live provider messages[] — set by runProviderLoop via setMessages callback. For debug dump. */
 	messages?: unknown[];
 	/** Frozen JsonTool[] — set by runProviderLoop via setAllTools callback. For debug dump. */

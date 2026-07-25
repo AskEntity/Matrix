@@ -12,6 +12,7 @@ import {
 import type { RuntimeContext } from "./runtime/context.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import { type Auth, createAgentAuth } from "./tool-auth.ts";
+import { TurnInterrupt } from "./turn-interrupt.ts";
 import type { Project, TaskNode, TaskSession } from "./types.ts";
 
 /**
@@ -134,6 +135,7 @@ export function attachMockSession(
 	const session: TaskSession = {
 		queue,
 		abortController: new AbortController(),
+		interrupt: new TurnInterrupt(),
 		loopTraceId: "mock-trace-id",
 		depth: opts?.depth ?? 0,
 		backgroundProcesses: new Map(),

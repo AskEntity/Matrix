@@ -702,7 +702,7 @@ function ProjectContent({
 		checkStatus,
 		compact,
 		deleteTask,
-		stopTask,
+		interruptTask,
 		clearTaskSession,
 		sendMessageToTask,
 		reorderTasks,
@@ -1278,7 +1278,7 @@ function ProjectContent({
 		handleClarifySubmit,
 		handleClearRootSession,
 		handleDeleteTask,
-		handleStopTask,
+		handleInterrupt,
 		handleClearTaskSession,
 		handleAddTask,
 		handleCreateTask,
@@ -1316,7 +1316,7 @@ function ProjectContent({
 				compact,
 				sendMessageToTask,
 				deleteTask,
-				stopTask,
+				interruptTask,
 				clearTaskSession,
 				refreshTasks,
 				t,
@@ -1336,7 +1336,7 @@ function ProjectContent({
 			compact,
 			sendMessageToTask,
 			deleteTask,
-			stopTask,
+			interruptTask,
 			clearTaskSession,
 			refreshTasks,
 			t,
@@ -1854,7 +1854,6 @@ function ProjectContent({
 								projectId={projectId}
 								isActive={activeAgents.has(selectedNode.id)}
 								onDelete={handleDeleteTask}
-								onStop={handleStopTask}
 								onClearSession={handleClearTaskSession}
 								compact
 							/>
@@ -2023,7 +2022,6 @@ function ProjectContent({
 								projectId={projectId}
 								isActive={activeAgents.has(selectedNode.id)}
 								onDelete={handleDeleteTask}
-								onStop={handleStopTask}
 								onClearSession={handleClearTaskSession}
 							/>
 						</div>
@@ -2046,6 +2044,10 @@ function ProjectContent({
 				editRequest={editRequest}
 				onCancelEdit={handleCancelEdit}
 				onScrollToEditing={handleScrollToEditing}
+				// Stop acts on the task the composer is aimed at, not the one
+				// being viewed — "stop the agent I am talking to".
+				agentRunning={targetNodeId ? activeAgents.has(targetNodeId) : false}
+				onInterrupt={() => handleInterrupt(targetNodeId)}
 			/>
 
 			{isDraggingFile && (

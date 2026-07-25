@@ -3,7 +3,7 @@ import { api } from "../api.ts";
 import { useAuthFetch } from "../auth.ts";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconCopy, IconPause, IconTrash } from "./icons.tsx";
+import { IconCopy, IconTrash } from "./icons.tsx";
 import { StatusBadge, statusDotClass } from "./StatusBadge.tsx";
 
 const TASK_COLORS = [
@@ -46,7 +46,6 @@ export const TaskDetail = memo(function TaskDetail({
 	projectId,
 	isActive,
 	onDelete,
-	onStop,
 	onClearSession,
 	compact,
 }: {
@@ -54,7 +53,6 @@ export const TaskDetail = memo(function TaskDetail({
 	projectId: string;
 	isActive?: boolean;
 	onDelete: () => void;
-	onStop?: () => void;
 	onClearSession?: () => void;
 	compact?: boolean;
 }) {
@@ -171,16 +169,6 @@ export const TaskDetail = memo(function TaskDetail({
 					)}
 					{node.costUsd > 0 && (
 						<span className="mxd-meta-cost">${node.costUsd.toFixed(3)}</span>
-					)}
-					{isRunning && onStop && (
-						<button
-							type="button"
-							className="mxd-btn mxd-btn-warning mxd-btn-sm"
-							onClick={onStop}
-						>
-							<IconPause size={10} />
-							{t("detail.stop")}
-						</button>
 					)}
 				</div>
 			</div>
@@ -374,16 +362,11 @@ export const TaskDetail = memo(function TaskDetail({
 			</div>
 
 			<div className="mxd-detail-actions">
-				{isRunning && onStop && (
-					<button
-						type="button"
-						className="mxd-btn mxd-btn-warning mxd-btn-sm"
-						onClick={onStop}
-					>
-						<IconPause size={12} />
-						{t("detail.stop")}
-					</button>
-				)}
+				{/*
+				 * No stop button here. Stopping a turn belongs next to the composer
+				 * (one entry per function), and the one that used to live here
+				 * called stopTask — teardown wearing a pause icon.
+				 */}
 				{!isRunning &&
 					node.status !== "pending" &&
 					node.status !== "draft" &&

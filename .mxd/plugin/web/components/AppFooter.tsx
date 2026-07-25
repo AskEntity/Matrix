@@ -23,6 +23,8 @@ export const AppFooter = memo(function AppFooter({
 	editRequest,
 	onCancelEdit,
 	onScrollToEditing,
+	agentRunning,
+	onInterrupt,
 }: {
 	projectId: string;
 	targetNodeId: string | null;
@@ -55,6 +57,10 @@ export const AppFooter = memo(function AppFooter({
 	onCancelEdit?: () => void;
 	/** Click the "editing" indicator to jump to that message in the log. */
 	onScrollToEditing?: () => void;
+	/** The agent this composer targets is working right now. */
+	agentRunning?: boolean;
+	/** End the current turn. Leaves the session — and the queue — alive. */
+	onInterrupt?: () => void;
 }) {
 	const { t } = useLocale();
 
@@ -141,6 +147,8 @@ export const AppFooter = memo(function AppFooter({
 				editRequest={editRequest}
 				onCancelEdit={onCancelEdit}
 				onScrollToEditing={onScrollToEditing}
+				agentRunning={agentRunning}
+				onInterrupt={onInterrupt}
 			/>
 		</footer>
 	);

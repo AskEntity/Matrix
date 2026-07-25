@@ -7,6 +7,7 @@
  */
 import {
 	type BackgroundProcess,
+	type ForegroundExecution,
 	getBackgroundStatus,
 	killBackgroundProcess,
 } from "./bash.ts";
@@ -43,7 +44,7 @@ export function listBackgroundProcesses(
  * Returns null if the execution is not found or already completed.
  */
 export function moveToBackground(
-	fgMap: Map<string, { resolve: () => void; command: string }>,
+	fgMap: Map<string, ForegroundExecution>,
 	sessionId: string,
 	execId: string,
 ): string | null {

@@ -17,8 +17,14 @@ export interface AgentRequest {
 	/** Build system prompt. Called for fresh sessions and compact refresh.
 	 * On resume, provider loop uses frozen prompt from session_config in JSONL. */
 	buildSystemPrompt?: () => import("./system-prompts.ts").SystemPrompt;
-	/** Abort signal for cancellation. */
+	/** Abort signal for session TEARDOWN (stop / reset / delete). */
 	signal?: AbortSignal;
+	/**
+	 * Turn-interrupt channel — "end this turn, but the session lives".
+	 * Deliberately NOT the same object as `signal`: see TurnInterrupt for why
+	 * one channel cannot carry both meanings.
+	 */
+	interrupt?: import("./turn-interrupt.ts").TurnInterrupt;
 	/** Session ID to resume a previous conversation. */
 	resumeSessionId?: string;
 	/** Raw MCP tool definitions for direct API forwarding (for AnthropicCompatibleProvider). */

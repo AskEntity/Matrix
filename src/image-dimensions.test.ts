@@ -12,6 +12,7 @@ import { TaskTracker } from "./task-tracker.ts";
 import { initMockResourceRegistry } from "./test-utils.ts";
 import { toToolDefinition } from "./tool-def.ts";
 import { buildBuiltinToolDefs } from "./tools/definitions.ts";
+import { TurnInterrupt } from "./turn-interrupt.ts";
 
 // ── Helpers to construct minimal valid image headers ──
 
@@ -218,6 +219,7 @@ describe("read_file pixel dimension guard", () => {
 				}),
 			} as never,
 			abortController: new AbortController(),
+			interrupt: new TurnInterrupt(),
 			loopTraceId: "test-trace-id",
 			depth: 0,
 			backgroundProcesses: new Map(),

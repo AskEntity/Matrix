@@ -3,7 +3,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +16,7 @@ import {
 	updateTaskOp,
 } from "./task-operations.ts";
 import { TaskTracker } from "./task-tracker.ts";
+import { TurnInterrupt } from "./turn-interrupt.ts";
 
 let tempDir: string;
 let tracker: TaskTracker;
@@ -673,6 +673,7 @@ describe("resetTaskOp", () => {
 		task.session = {
 			queue,
 			abortController: new AbortController(),
+			interrupt: new TurnInterrupt(),
 			loopTraceId: "test-trace-id",
 			depth: 1,
 			backgroundProcesses: new Map(),

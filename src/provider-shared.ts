@@ -43,6 +43,7 @@ import {
 	MAX_OUTER_RETRIES,
 } from "./tool-execution.ts";
 import { TOOL_DONE, TOOL_FORK_TASK_CONTEXT, TOOL_YIELD } from "./tool-names.ts";
+import type { TurnInterrupt } from "./turn-interrupt.ts";
 import type { AgentActivity, AgentResult, ExitReason } from "./types.ts";
 
 // buildWorkContextContent import removed — work context now provided by plugin hook
@@ -124,11 +125,17 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
 async function handleImplicitYield(
 	queue: MessageQueue,
 	setActivity: (state: AgentActivity) => void,
+	interrupt?: TurnInterrupt,
 ): Promise<{
 	nonCompact: QueueMessage[];
 	manualCompactRequested: boolean;
 	compactOnly: boolean;
 } | null> {
+	// Reaching a park is what SATISFIES an interrupt — whichever path parked us,
+	// including one the agent reached on its own. Consuming here rather than at
+	// the decision point is what keeps a stop that lands exactly as the agent
+	// goes idle from surviving into the next turn. See TurnInterrupt.consume.
+	interrupt?.consume();
 	if (!queue.hasPending) setActivity("idle");
 	try {
 		queue.idle = true;
@@ -720,6 +727,14 @@ export async function* runProviderLoop(
 	 * Nothing else writes the field while the loop runs — agent-lifecycle
 	 * touches it only at session creation and teardown — so the two agree.
 	 */
+	/**
+	 * Turn-interrupt channel — "end this turn, but stay alive". Read at exactly
+	 * three places (the API call's signal, the retry backoff, the top of the
+	 * loop) and consumed in one (`handleImplicitYield`, i.e. when we park).
+	 * Absent when the loop is driven without a session (unit tests).
+	 */
+	const interrupt = request.interrupt;
+
 	let announcedActivity: AgentActivity | undefined = currentSession?.activity;
 	const setActivity = (state: AgentActivity) => {
 		if (announcedActivity === state) return;
@@ -946,7 +961,11 @@ export async function* runProviderLoop(
 		// synthetic tool_result for the done tool_call, then continue to next API call.
 		// This is like yield resume but with done context instead of yield messages.
 		if (pendingDoneToolCall && queue) {
-			const doneResumeResult = await handleImplicitYield(queue, setActivity);
+			const doneResumeResult = await handleImplicitYield(
+				queue,
+				setActivity,
+				interrupt,
+			);
 
 			if (doneResumeResult === null) {
 				// Queue closed — exit
@@ -1057,7 +1076,11 @@ export async function* runProviderLoop(
 		if (pendingImplicitYieldResume && queue) {
 			pendingImplicitYieldResume = false;
 
-			const yieldResult = await handleImplicitYield(queue, setActivity);
+			const yieldResult = await handleImplicitYield(
+				queue,
+				setActivity,
+				interrupt,
+			);
 
 			if (yieldResult === null) {
 				// Queue closed — exit (stop/reset during implicit yield = interrupted)
@@ -1116,7 +1139,11 @@ export async function* runProviderLoop(
 		// or (b) yield was detected in tool execution and deferred to loop level.
 		// Wait for messages, write yield tool_result, then continue to next API call.
 		if (pendingYieldToolCall && queue) {
-			const yieldResult = await handleImplicitYield(queue, setActivity);
+			const yieldResult = await handleImplicitYield(
+				queue,
+				setActivity,
+				interrupt,
+			);
 
 			if (yieldResult === null) {
 				// Queue closed — exit (stop/reset during yield = interrupted)
@@ -1245,7 +1272,8 @@ export async function* runProviderLoop(
 			continue;
 		}
 
-		// Check abort signal
+		// Check abort signal — TEARDOWN. Checked before the interrupt below:
+		// a dying session must never be mistaken for "park and wait".
 		if (request.signal?.aborted) {
 			const evt: EventSpec = {
 				type: "status",
@@ -1255,6 +1283,66 @@ export async function* runProviderLoop(
 			emit?.(evt);
 			yield evt;
 			break;
+		}
+
+		// ── Interrupt: THE park point ──
+		//
+		// The single place that decides "this turn is over, wait for the user".
+		// Both ways an interrupt can arrive converge here: a cut-off API call
+		// `continue`s to the top, and a tool batch runs to completion and falls
+		// through to the top. Neither branch parks on its own, so there is one
+		// site to reason about — and it is the SAME park every other path uses
+		// (`handleImplicitYield`), so no fifth "what is the agent waiting for"
+		// state exists. `handleImplicitYield` consumes the flag.
+		//
+		// Everything owed to the API has already been written by the time we get
+		// here: tool_results for every tool_use of the turn (that is what makes
+		// `buildSessionRepair` return null after an interrupt), or nothing at all
+		// if the turn was cut before the response arrived.
+		if (interrupt?.requested && queue) {
+			const yieldResult = await handleImplicitYield(
+				queue,
+				setActivity,
+				interrupt,
+			);
+			if (yieldResult === null) {
+				// Queue closed while parked = the session is being torn down.
+				const cost = adapter.computeCost(
+					model,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				);
+				const buildResultI = adapter.buildResult ?? defaultBuildResult;
+				return buildResultI({
+					exitReason: doneExitReason ?? "interrupted",
+					output: lastText,
+					costUsd: cost,
+					turns,
+					sessionId,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				});
+			}
+			if (yieldResult.manualCompactRequested) {
+				manualCompactRequested = true;
+			}
+			if (!yieldResult.compactOnly) {
+				filterQueueMessageImages(adapter, yieldResult.nonCompact);
+				// The one construction path — same helper the initial drain uses,
+				// which routes through the walker's own callback. It appends to a
+				// user turn still being built (tool_results from the interrupted
+				// turn) or starts a new one after an assistant turn, so the request
+				// always ends with a user message either way.
+				adapter.appendQueueMessagesToMessages(messages, yieldResult.nonCompact);
+				if (emit) recordQueueEvents(emit, yieldResult.nonCompact);
+			}
+			// compactOnly: fall through exactly as the end_turn path does — the
+			// compaction block at the top of the next iteration owns it.
+			continue;
 		}
 
 		// ── Handle compaction response: extract checkpoint and rebuild context ──
@@ -1568,6 +1656,26 @@ export async function* runProviderLoop(
 		// `thinking` too — see the naming-debt note on AgentActivity.
 		setActivity("thinking");
 		let response: unknown;
+		// The ONE place the two abort channels meet. A compaction turn is
+		// deliberately NOT interruptible mid-flight: it is a 2-3 minute system
+		// operation whose instruction is already sitting in messages[], and
+		// cutting it there would leave that instruction paired with whatever the
+		// user says next. The flag stays set and takes effect at the top of the
+		// next iteration.
+		const turnAbort =
+			interrupt && !compactionPending
+				? AbortSignal.any(
+						request.signal
+							? [request.signal, interrupt.signal]
+							: [interrupt.signal],
+					)
+				: request.signal;
+		// Set only by the interrupt branches below, so the post-retry check can
+		// tell "cut off on purpose" from "succeeded".
+		let turnInterrupted = false;
+		// Text the model streamed before the cut. Kept, not discarded — see the
+		// emission site after this loop.
+		let partialText = "";
 		for (let outerAttempt = 0; ; outerAttempt++) {
 			try {
 				const apiGen = adapter.callAPI({
@@ -1578,7 +1686,7 @@ export async function* runProviderLoop(
 					maxTokens: compactionPending
 						? COMPACTION_MAX_TOKENS
 						: DEFAULT_MAX_TOKENS,
-					signal: request.signal,
+					signal: turnAbort,
 					isCompacting: compactionPending,
 					cacheTtl: request.cacheTtl,
 					sessionId,
@@ -1596,6 +1704,7 @@ export async function* runProviderLoop(
 							ts: Date.now(),
 						});
 					} else if (streamEvent.type === "text_delta" && emit) {
+						partialText += streamEvent.content;
 						emit({
 							type: "text_delta",
 							content: streamEvent.content,
@@ -1608,6 +1717,14 @@ export async function* runProviderLoop(
 				response = apiStep.value;
 				break; // Success — exit retry loop
 			} catch (e) {
+				// ⭐ Interrupt is checked FIRST. An abort error is not classified as
+				// transient, so falling through would `throw e` and take the whole
+				// agent down — the exact outcome an interrupt exists to avoid.
+				// `request.signal.aborted` (teardown) still wins over it.
+				if (interrupt?.requested && !request.signal?.aborted) {
+					turnInterrupted = true;
+					break;
+				}
 				// API 400 (invalid_request_error) — don't try to fix in-memory.
 				// The error will propagate, the agent will stop, and on next launch
 				// buildSessionRepair will fix the JSONL on disk before retrying.
@@ -1633,12 +1750,50 @@ export async function* runProviderLoop(
 				// Abort-aware backoff: a stop/reset during this wait resolves it early
 				// (B-M3). If aborted, abandon the retry loop — the loop's normal abort
 				// handling / session replacement takes over instead of waiting out the
-				// full 120s backoff.
-				await abortableDelay(delay, request.signal);
+				// full 120s backoff. `turnAbort` also carries the interrupt, so a stop
+				// button reaches an agent parked in a 120s backoff — `thinking` is the
+				// residual state and that backoff is part of it.
+				await abortableDelay(delay, turnAbort);
 				if (request.signal?.aborted) {
 					throw e;
 				}
+				if (interrupt?.requested) {
+					turnInterrupted = true;
+					break;
+				}
 			}
+		}
+
+		if (turnInterrupted) {
+			// Keep what the model already streamed, as a normal assistant_text
+			// event + assistant message. Three reasons, the last decisive:
+			//   1. The user pressed stop BECAUSE of what they were reading; drop it
+			//      and their next message ("no, not that") has no referent.
+			//   2. It is what makes memory and JSONL agree: a final assistant_text
+			//      is what clears `ctx.streamingText`, so the UI's partial becomes
+			//      final instead of lingering until the next refetch.
+			//   3. It makes the interrupted state REPRESENTABLE on disk with zero
+			//      new states: the log then ends in assistant_text, which is
+			//      exactly `hasPendingImplicitYield` — so a daemon restart comes
+			//      back parked at idle instead of resuming the work.
+			// Never the thinking blocks (no signature) and never a half-emitted
+			// tool_use (that would be the orphan this whole task removes).
+			if (partialText) {
+				const evt: EventSpec = {
+					type: "assistant_text",
+					content: partialText,
+					ts: Date.now(),
+				};
+				emit?.(evt);
+				yield evt;
+				// Build the message by running the SAME event through the SAME
+				// reconstruction the walker uses, so live and restart cannot drift.
+				const [assistantMsg] = adapter.convertEventsToMessages([
+					{ ...evt, taskId: "" } as Event,
+				]);
+				if (assistantMsg) messages.push(assistantMsg);
+			}
+			continue; // → top of loop → the park point
 		}
 
 		// ── Process response ──
@@ -1753,7 +1908,11 @@ export async function* runProviderLoop(
 			emit?.(idleStatusEvt);
 			yield idleStatusEvt;
 
-			const yieldResult = await handleImplicitYield(queue, setActivity);
+			const yieldResult = await handleImplicitYield(
+				queue,
+				setActivity,
+				interrupt,
+			);
 
 			if (yieldResult === null) {
 				// Queue closed during implicit yield (stop/reset = interrupted).
@@ -1864,42 +2023,65 @@ export async function* runProviderLoop(
 		// From here until the results are built there IS an unclosed tool_call
 		// in the JSONL — that is what makes `tool` the precisely-defined state
 		// and the one an interrupt has to repair. Nothing else may claim it.
+		//
+		// An interrupt that landed in the window between "response arrived" and
+		// "tools start" means NOTHING in this batch has run yet, so nothing is
+		// started: every tool_use gets a "not executed" result and the loop parks.
+		// This is the only granularity at which "hasn't been reached yet" exists —
+		// the Promise.all below starts all tools at once, so there is no such
+		// thing as a per-tool queue.
+		//
+		// done()/yield() are deliberately NOT skipped: they are instantaneous
+		// control tools, and a stop that races a done() is the done winning.
+		// That is completion, not interruption — the task finished, and turning
+		// its last act into "not executed" would strand the parent waiting.
+		const interruptedBeforeExecution =
+			interrupt?.requested === true && !doneToolUse && !yieldToolUse;
 		setActivity("tool");
-		const execResults = await Promise.all(
-			toolUses.map(async (toolUse) => {
-				// yield + other tools: yield becomes no-op success
-				if (toolUse.name === TOOL_YIELD && hasOtherTools) {
-					return {
-						content:
-							"yield() ignored — other tools in the same turn produced results. Process them first.",
-						isError: false,
-					} satisfies ToolResult;
-				}
-				// done + other tools: done returns error
-				if (toolUse.name === TOOL_DONE && hasOtherTools) {
-					return {
-						content:
-							"Cannot call done() alongside other tools — you must process their results first before finishing.",
-						isError: true,
-					} satisfies ToolResult;
-				}
-				// fork + other tools: fork returns error (fork must be sole tool
-				// to ensure clean event state — like unix fork(), no race conditions)
-				if (toolUse.name === TOOL_FORK_TASK_CONTEXT && hasOtherTools) {
-					return {
-						content:
-							"Cannot call fork_task_context alongside other tools — fork must be the only tool in the turn to ensure clean event state.",
-						isError: true,
-					} satisfies ToolResult;
-				}
-				return executeTool(
-					toolUse.name,
-					toolUse.input,
-					mcpHandlers,
-					toolUse.id,
+		const execResults = interruptedBeforeExecution
+			? toolUses.map(
+					() =>
+						({
+							content:
+								"Not executed — interrupted by user before this tool ran.",
+							isError: true,
+						}) satisfies ToolResult,
+				)
+			: await Promise.all(
+					toolUses.map(async (toolUse) => {
+						// yield + other tools: yield becomes no-op success
+						if (toolUse.name === TOOL_YIELD && hasOtherTools) {
+							return {
+								content:
+									"yield() ignored — other tools in the same turn produced results. Process them first.",
+								isError: false,
+							} satisfies ToolResult;
+						}
+						// done + other tools: done returns error
+						if (toolUse.name === TOOL_DONE && hasOtherTools) {
+							return {
+								content:
+									"Cannot call done() alongside other tools — you must process their results first before finishing.",
+								isError: true,
+							} satisfies ToolResult;
+						}
+						// fork + other tools: fork returns error (fork must be sole tool
+						// to ensure clean event state — like unix fork(), no race conditions)
+						if (toolUse.name === TOOL_FORK_TASK_CONTEXT && hasOtherTools) {
+							return {
+								content:
+									"Cannot call fork_task_context alongside other tools — fork must be the only tool in the turn to ensure clean event state.",
+								isError: true,
+							} satisfies ToolResult;
+						}
+						return executeTool(
+							toolUse.name,
+							toolUse.input,
+							mcpHandlers,
+							toolUse.id,
+						);
+					}),
 				);
-			}),
-		);
 
 		// node.cwd is updated by the bash tool handler directly — no loop-local tracking.
 
@@ -2004,9 +2186,17 @@ export async function* runProviderLoop(
 			};
 		}
 
-		// Cancellation point: drain queue
+		// Cancellation point: drain queue.
+		//
+		// Skipped when interrupted: we are about to park, and a message drained
+		// HERE would be merged into this turn's user message and then sat on —
+		// the loop would wait for a further message before ever calling the API,
+		// so the user's "stop, do X instead" would look swallowed. Left in the
+		// queue instead, `handleImplicitYield` picks it up immediately (it does
+		// not even announce idle when something is pending) and the agent turns
+		// straight around to it. The queue is the buffer; don't front-run it.
 		let cancellationQueueMsgs: QueueMessage[] = [];
-		if (queue) {
+		if (queue && !interrupt?.requested) {
 			const drained = drainQueueAtCancellationPoint(queue);
 			if (drained) {
 				if (drained.manualCompactRequested) {

@@ -543,6 +543,7 @@ function createMockAnthropicStream(
 	stopReason: "end_turn" | "tool_use",
 	model: string,
 	delayMs?: number,
+	signal?: AbortSignal,
 ): {
 	[Symbol.asyncIterator](): AsyncIterableIterator<StreamEvent>;
 	finalMessage(): Promise<Anthropic.Messages.Message>;
@@ -665,7 +666,26 @@ function createMockAnthropicStream(
 	return {
 		[Symbol.asyncIterator]: async function* () {
 			if (delayMs != null && delayMs > 0) {
-				await new Promise((r) => setTimeout(r, delayMs));
+				// The `delay_ms` window is the mock's stand-in for "the API is
+				// taking time", and it is the only place this mock is ever mid-
+				// stream. The real SDK rejects the stream when the request's
+				// AbortSignal fires; without honoring it here, a test that aborts
+				// during this window would see the turn complete normally — the
+				// opposite of production, silently.
+				//
+				// Scoped to the delay on purpose: with no delay the iterator is
+				// byte-for-byte what it was, so no existing test changes behavior.
+				await new Promise<void>((resolve, reject) => {
+					const timer = setTimeout(resolve, delayMs);
+					signal?.addEventListener(
+						"abort",
+						() => {
+							clearTimeout(timer);
+							reject(new Error("Request was aborted."));
+						},
+						{ once: true },
+					);
+				});
 			}
 			for (const event of events) {
 				yield event;
@@ -1249,6 +1269,11 @@ export class ValidatingMockAPI {
 			[key: string]: unknown;
 		},
 		sessionId?: string,
+		/**
+		 * The request's abort signal, as the real SDK receives it. Honored only
+		 * during a turn's `delay_ms` window — see createMockAnthropicStream.
+		 */
+		signal?: AbortSignal,
 	): ReturnType<typeof createMockAnthropicStream> {
 		const { messages, system, tools, model } = params;
 
@@ -1330,7 +1355,13 @@ export class ValidatingMockAPI {
 
 		if (turn) {
 			const { content, stopReason, delayMs } = this.processTurn(turn, messages);
-			return createMockAnthropicStream(content, stopReason, modelName, delayMs);
+			return createMockAnthropicStream(
+				content,
+				stopReason,
+				modelName,
+				delayMs,
+				signal,
+			);
 		}
 
 		// Default response — no instruction found, turn queue empty.
@@ -1911,8 +1942,15 @@ export function createMockedProviderWithMock(
 	const mockClient: any = {
 		_currentSessionId: undefined as string | undefined,
 		messages: {
-			stream: (params: Parameters<typeof mockAPI.createStream>[0]) =>
-				mockAPI.createStream(params, mockClient._currentSessionId),
+			stream: (
+				params: Parameters<typeof mockAPI.createStream>[0],
+				opts?: { signal?: AbortSignal },
+			) =>
+				mockAPI.createStream(
+					params,
+					mockClient._currentSessionId,
+					opts?.signal,
+				),
 			countTokens: async () => ({ input_tokens: 100 }),
 		},
 	};

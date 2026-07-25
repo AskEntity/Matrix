@@ -66,7 +66,13 @@ export const api = {
 	taskMessage: (id: string, nodeId: string) => taskUrl(id, nodeId, "message"),
 	taskEvents: (id: string, nodeId: string, query?: string) =>
 		taskUrl(id, nodeId, "events") + (query ? `?${query}` : ""),
-	taskStop: (id: string, nodeId: string) => taskUrl(id, nodeId, "stop"),
+	/**
+	 * End the current turn, keep the session. NOT `…/stop` — that one is
+	 * teardown (kills background processes, drops the session) and is reached
+	 * from the lifecycle paths (reset / delete / close), not from a button.
+	 */
+	taskInterrupt: (id: string, nodeId: string) =>
+		taskUrl(id, nodeId, "interrupt"),
 	taskSessionsClear: (id: string, nodeId: string) =>
 		taskUrl(id, nodeId, "sessions", "clear"),
 	taskFork: (id: string, nodeId: string) => taskUrl(id, nodeId, "fork"),

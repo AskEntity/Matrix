@@ -33,7 +33,7 @@ import { type ParamDefs, toToolDefinition } from "./tool-def.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import { TOOL_YIELD } from "./tool-names.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
-import type { BackgroundProcess } from "./tools/bash.ts";
+import type { BackgroundProcess, ForegroundExecution } from "./tools/bash.ts";
 import { buildBuiltinToolDefs } from "./tools/definitions.ts";
 import {
 	cleanupSessionBackgroundProcesses,
@@ -46,6 +46,7 @@ import {
 	resolvePath,
 	truncateSearchOutput,
 } from "./tools/index.ts";
+import { TurnInterrupt } from "./turn-interrupt.ts";
 import type { AgentResult } from "./types.ts";
 
 /**
@@ -94,6 +95,7 @@ async function executeTool(
 	const defaultSession: import("./types.ts").TaskSession = {
 		queue: queue ?? new MessageQueue(),
 		abortController: new AbortController(),
+		interrupt: new TurnInterrupt(),
 		loopTraceId: "test-trace-id",
 		depth: 0,
 		backgroundProcesses: new Map(),
@@ -837,7 +839,7 @@ describe("executeBashWithTimeout", () => {
 	/** Create a fresh bgMap + fgMap pair for a test. Tracks bgMap for cleanup. */
 	function createTestMaps() {
 		const bgMap = new Map<string, BackgroundProcess>();
-		const fgMap = new Map<string, { resolve: () => void; command: string }>();
+		const fgMap = new Map<string, ForegroundExecution>();
 		allTestBgMaps.push(bgMap);
 		return { bgMap, fgMap };
 	}
@@ -845,7 +847,7 @@ describe("executeBashWithTimeout", () => {
 	/** Create a getSession callback that returns a fake session with the given Maps. */
 	function makeGetSession(
 		bgMap: Map<string, BackgroundProcess>,
-		fgMap: Map<string, { resolve: () => void; command: string }>,
+		fgMap: Map<string, ForegroundExecution>,
 	) {
 		return (_sessionId: string) =>
 			({
@@ -1235,7 +1237,7 @@ describe("executeBashWithTimeout", () => {
 				},
 			],
 		]);
-		const fgMap = new Map<string, { resolve: () => void; command: string }>();
+		const fgMap = new Map<string, ForegroundExecution>();
 		allTestBgMaps.push(bgMap);
 
 		const result = await executeTool(
@@ -1970,6 +1972,7 @@ describe("done tool", () => {
 		node.session = {
 			queue,
 			abortController: new AbortController(),
+			interrupt: new TurnInterrupt(),
 			loopTraceId: "test-trace-id",
 			depth: 0,
 			backgroundProcesses: new Map(),

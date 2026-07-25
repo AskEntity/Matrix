@@ -28,6 +28,7 @@ import { buildJsonTools, type ToolDefinition } from "../tool-definition.ts";
 import { formatUpstreamError } from "../tool-execution.ts";
 import { MCP_SERVER_NAME } from "../tool-names.ts";
 import { cleanupSessionBackgroundProcesses } from "../tools/index.ts";
+import { TurnInterrupt } from "../turn-interrupt.ts";
 import {
 	type AgentActivity,
 	type AgentResult,
@@ -504,6 +505,73 @@ export async function stopTask(
 }
 
 /**
+ * Interrupt a running agent: end the current turn, keep everything else.
+ *
+ * Read this against `stopTask` directly above — same button, opposite verb.
+ * stopTask DISMANTLES (kills background processes, closes the queue, drops the
+ * session, disconnects MCP) and deliberately leaves unclosed tool_calls behind
+ * for the next launch's `buildSessionRepair` to paper over with a synthetic
+ * "interrupted by daemon restart" result. That sentence is a lie the model then
+ * reads forever, and it is only tolerable there because the loop is already
+ * dead and cannot clean up after itself.
+ *
+ * An interrupt keeps the loop alive, so the loop cleans up after ITSELF: every
+ * tool_call of the current turn gets a real result before it parks, and
+ * `buildSessionRepair` therefore has nothing to repair. Nothing else is touched
+ * — background processes keep running (the headline case: a three-minute
+ * `bun test` must survive the user saying "wait"), MCP stays connected, the
+ * queue stays open so messages sent during the interrupt are delivered
+ * normally, and `messages[]` is untouched.
+ *
+ * The behaviour is a function of what the loop is doing right now:
+ *
+ * | activity  | is the model generating? | what an interrupt does                |
+ * |-----------|--------------------------|---------------------------------------|
+ * | `tool`    | no — the API already returned | terminate the running commands, write their real results, park |
+ * | `thinking`| yes                      | cut the response off, keep what streamed, park |
+ * | `idle`    | no                       | nothing — it is already waiting        |
+ * | no session| —                        | nothing                                |
+ *
+ * Returns true when an interrupt was actually requested.
+ */
+export function interruptTask(
+	ctx: RuntimeContext,
+	projectId: string,
+	nodeId: string,
+): boolean {
+	const tracker = ctx.trackers.get(projectId);
+	if (!tracker) return false;
+	const node = tracker.getTask(nodeId);
+	const session = node?.session;
+	if (!session) return false;
+	// Already parked and waiting for input — there is no turn to end. Not an
+	// error: the button and the state it reads can always be a frame apart.
+	if (session.activity === "idle") return false;
+
+	session.interrupt.request();
+
+	// Terminate whatever foreground tool executions are running. Only the ones
+	// that can be stopped safely register here (bash); anything else runs to
+	// completion and the loop waits for it — a half-written file is worse than
+	// a two-second wait. Either way every tool_result gets written, which is
+	// what the no-repair invariant rests on.
+	for (const [key, fg] of session.foregroundExecutions) {
+		fg.interrupt();
+		session.foregroundExecutions.delete(key);
+	}
+
+	emitEvent(ctx, projectId, {
+		type: "status",
+		taskId: nodeId,
+		message: "Interrupted by user",
+		traceId: session.loopTraceId,
+		ts: Date.now(),
+	});
+
+	return true;
+}
+
+/**
  * Unified message delivery: try direct queue delivery, persist + launch if no running agent.
  *
  * This is the SINGLE path for delivering a message to any task (child or root).
@@ -835,9 +903,11 @@ export async function runAgentForNode(
 
 		// Create and attach TaskSession to the node
 		const abortController = new AbortController();
+		const interrupt = new TurnInterrupt();
 		const taskSession: TaskSession = {
 			queue: childQueue,
 			abortController,
+			interrupt,
 			loopTraceId,
 			depth,
 			// The loop hasn't started; setup (MCP connect, JSONL repair, work
@@ -1062,6 +1132,7 @@ export async function runAgentForNode(
 			debugSnapshotPath,
 
 			signal: abortController.signal,
+			interrupt,
 			queue: childQueue,
 			// Lifecycle hooks bound to this node — plugin provides content, runtime calls at right time
 			buildWorkContext: () =>

@@ -44,6 +44,7 @@ import { MessageQueue } from "./message-queue.ts";
 import type { RuntimeContext } from "./runtime/context.ts";
 import { broadcast, broadcastTreeUpdate } from "./runtime/event-system.ts";
 import { TaskTracker } from "./task-tracker.ts";
+import { TurnInterrupt } from "./turn-interrupt.ts";
 import { isTask, type TaskSession } from "./types.ts";
 
 async function makeTrackerWithRunningTask(): Promise<{
@@ -62,6 +63,7 @@ async function makeTrackerWithRunningTask(): Promise<{
 	const session: TaskSession = {
 		queue: new MessageQueue({ onPersist: () => {} }),
 		abortController: new AbortController(),
+		interrupt: new TurnInterrupt(),
 		loopTraceId: "test-trace",
 		depth: 0,
 		backgroundProcesses: new Map(),

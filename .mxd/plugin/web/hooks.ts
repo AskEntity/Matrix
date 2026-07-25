@@ -475,13 +475,14 @@ export function useAgent(projectId: string) {
 		[authFetch, projectId],
 	);
 
-	const stopTask = useCallback(
+	const interruptTask = useCallback(
 		async (taskId: string) => {
-			const res = await authFetch(api.taskStop(projectId, taskId), {
+			const res = await authFetch(api.taskInterrupt(projectId, taskId), {
 				method: "POST",
 			});
 			if (!res.ok) {
-				// 404 means agent already stopped — not an error
+				// 404 = the task is gone. Nothing to interrupt is not an error;
+				// the endpoint answers 200 with interrupted:false for that.
 				if (res.status === 404) return;
 				throw new Error((await res.json()).error);
 			}
@@ -564,7 +565,7 @@ export function useAgent(projectId: string) {
 		checkStatus,
 		continueTask,
 		deleteTask,
-		stopTask,
+		interruptTask,
 		clearTaskSession,
 		sendMessageToTask,
 		reorderTasks,
