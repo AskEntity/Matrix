@@ -290,7 +290,13 @@ Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls
 
 Manual `/compact` injects a summarization instruction as a user message. If the previous loop iteration also pushed a user message (yield tool_result + queue content, done tool_result + queue content), result is two consecutive user messages → API 400 "Messages must alternate roles".
 
-Seven paths in `provider-shared.ts` have this shape. 3 are clean (`continue;` without pushing user msg). 1 is fixed. 3 are deferred via test.todo.
+Seven paths in `provider-shared.ts` have this shape. 3 are clean (`continue;` without pushing user msg). ~~1 is fixed. 3 are deferred via test.todo.~~
+
+**Current tally (verified — `drift-lifecycle.test.ts` has exactly ONE `test.todo` left):** 3 of the 4
+are fixed, 1 remains. Fixed since: the yield+compactOnly path below (304fccd), the **done**-resume +
+compactOnly variant (FIX-3 B-L9, `pendingCompactDoneToolCall`), and duplicate-yield extras in the
+compactOnly path (FIX-5 R8-B#11). **Still open**: compact arriving together with a regular message
+during a pending yield — that is the one test.todo, and it is the entry under *Known Bugs*.
 
 **Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. One user message with `[tool_result, text]` blocks → valid alternation.
 
@@ -5511,7 +5517,12 @@ Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", 
 
 ## Known Bugs (unfixed)
 
-- Manual compaction during yield → consecutive user messages → API 400. Scope: the deferred test.todo paths in "Compaction Asymmetry" (yield-side). The done-resume + compactOnly variant of this class is FIXED — see "FIX-3 … B-L9" (`pendingCompactDoneToolCall`); only the yield-side deferred paths remain.
+- Manual compaction during yield → consecutive user messages → API 400. **Exactly one path remains**
+  (verified: one `test.todo` in `drift-lifecycle.test.ts`, "compact + regular message in same drain
+  during pending yield"). The compact-ONLY variants — yield-side and done-side — and the
+  duplicate-yield-extras variant are all fixed; see *Compaction Asymmetry* for the tally and which
+  fix closed which. The surviving case needs compact and a regular message to arrive in the SAME
+  drain, which is why it survived: every other path had an empty queue to bundle into.
 
 ## Vertical Dependency Boundaries
 
@@ -5519,6 +5530,16 @@ Three layers: daemon → provider loop → tool handler. executeTool is clean (p
 
 ## Unresolved Design (prioritized)
 
-1. Message routing expansion (subtree + parent chain, not just direct parent/child)
-2. Folder/grouping feature (UI-only visual grouping, not tree structure)
-3. Tool search — dynamic tool discovery (draft exists, Anthropic has server-side `defer_loading` but user prefers client-side)
+⚠️ **This list had gone stale in two of three entries** — a list of open problems is the single
+easiest thing in this file to leave behind, because closing a problem happens in a task that has no
+reason to come back here. Re-checked against the code:
+
+1. ~~Message routing expansion (subtree + parent chain, not just direct parent/child)~~
+   **HALF DONE.** The parent chain shipped: `send_message` walks `getTaskAbove` upward, so any
+   ancestor is reachable, and the tool description says so. **Subtree routing did not** — you can
+   still only reach DIRECT sub tasks, not arbitrary descendants. That half is what remains open.
+2. ~~Folder/grouping feature (UI-only visual grouping, not tree structure)~~ **SHIPPED**, and then
+   generalized — see *The node model*. Folders exist, have zero behavior by design, and the
+   "resist feature creep" constraint on them is recorded there.
+3. Tool search — dynamic tool discovery. **Still open.** A draft exists; Anthropic has a server-side
+   `defer_loading`, but the user prefers a client-side design.
