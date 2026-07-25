@@ -32,8 +32,10 @@ afterAll(async () => {
 async function renderUserMessage(opts: {
 	startsRun?: boolean;
 	activity?: AgentActivity;
-	/** Simulate a live SSE entry, which carries no chain id. */
+	/** Simulate an entry with no chain id at all. */
 	noEid?: boolean;
+	/** As marked by the server on the raw-file fetch. */
+	offChain?: "summarized" | "abandoned";
 }): Promise<{ div: HTMLDivElement; unmount: () => void }> {
 	const { createRoot } = await import("react-dom/client");
 	const { createElement } = await import("react");
@@ -52,6 +54,7 @@ async function renderUserMessage(opts: {
 		...(opts.noEid ? {} : { eid: "e-1" }),
 	} as Parameters<typeof createLogEntry>[0]);
 	if (opts.startsRun !== undefined) entry.startsRun = opts.startsRun;
+	if (opts.offChain) entry.offChain = opts.offChain;
 
 	const div = document.createElement("div");
 	document.body.appendChild(div);
@@ -188,6 +191,60 @@ describe("Edit/Rewind buttons under the gate", () => {
 		const { div, unmount } = await renderUserMessage({ noEid: true });
 		try {
 			expect(actionButtons(div)).toHaveLength(1); // Copy only
+		} finally {
+			unmount();
+		}
+	});
+});
+
+// "Load earlier history" shows what the conversation no longer contains, so
+// these entries exist on screen and must say what they are. The old copy said
+// "no longer part of the conversation" about everything it could not judge —
+// which was every message in that batch, including ones still in it.
+describe("messages outside the conversation say which way they left", () => {
+	test("summarized away by a compaction", async () => {
+		const { div, unmount } = await renderUserMessage({
+			startsRun: true,
+			activity: "idle",
+			offChain: "summarized",
+		});
+		try {
+			for (const b of gatedButtons(div)) {
+				expect(b.disabled).toBe(true);
+				expect(b.title).toMatch(/compaction/i);
+			}
+		} finally {
+			unmount();
+		}
+	});
+
+	test("on a branch a rewind walked away from", async () => {
+		const { div, unmount } = await renderUserMessage({
+			startsRun: true,
+			activity: "idle",
+			offChain: "abandoned",
+		});
+		try {
+			for (const b of gatedButtons(div)) {
+				expect(b.disabled).toBe(true);
+				expect(b.title).toMatch(/rewind/i);
+			}
+		} finally {
+			unmount();
+		}
+	});
+
+	test("it outranks 'the agent is busy' — that remedy would not work", async () => {
+		const { div, unmount } = await renderUserMessage({
+			startsRun: true,
+			activity: "tool",
+			offChain: "abandoned",
+		});
+		try {
+			for (const b of gatedButtons(div)) {
+				expect(b.title).not.toMatch(/stop it/i);
+				expect(b.title).toMatch(/rewind/i);
+			}
 		} finally {
 			unmount();
 		}

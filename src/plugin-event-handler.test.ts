@@ -2979,107 +2979,6 @@ describe("event-handler: replaying history must not fake-activate (Verification 
 	});
 });
 
-describe("event-handler onAgentIdle (Edit/Rewind re-fetch)", () => {
-	function setup(viewed: string | null) {
-		const { deps: raw, activityBox } = makeDeps();
-		const deps = raw as unknown as EventHandlerDeps;
-		const idleCalls: string[] = [];
-		deps.getViewedSessionId = () => viewed;
-		deps.onAgentIdle = (taskId: string) => idleCalls.push(taskId);
-		const { handleEvent } = createEventHandler(deps);
-		return { handleEvent, idleCalls, activityBox };
-	}
-
-	it("fires when the VIEWED task stops working (thinking → idle)", () => {
-		const { handleEvent, idleCalls } = setup("task-1");
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "thinking",
-			ts: 1000,
-		});
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "idle",
-			ts: 2000,
-		});
-		expect(idleCalls).toEqual(["task-1"]);
-	});
-
-	it("fires on session END too — done() never goes idle", () => {
-		// An agent that finishes with done() goes straight from working to no
-		// session. Before, only agent_idle triggered the re-fetch, so the last
-		// messages of a completed task never got their eid and stayed
-		// uneditable.
-		const { handleEvent, idleCalls } = setup("task-1");
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "tool",
-			ts: 1000,
-		});
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: null,
-			ts: 2000,
-		});
-		expect(idleCalls).toEqual(["task-1"]);
-	});
-
-	it("does NOT fire for a task that is not being viewed", () => {
-		const { handleEvent, idleCalls } = setup("task-1");
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-2",
-			state: "thinking",
-			ts: 1000,
-		});
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-2",
-			state: "idle",
-			ts: 2000,
-		});
-		expect(idleCalls).toEqual([]);
-	});
-
-	it("does NOT fire on transitions between working states (thinking → tool)", () => {
-		const { handleEvent, idleCalls } = setup("task-1");
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "thinking",
-			ts: 1000,
-		});
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "tool",
-			ts: 2000,
-		});
-		expect(idleCalls).toEqual([]);
-	});
-
-	it("does NOT fire when a task that was already idle reports idle again", () => {
-		const { handleEvent, idleCalls } = setup("task-1");
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "idle",
-			ts: 1000,
-		});
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "idle",
-			ts: 2000,
-		});
-		expect(idleCalls).toEqual([]);
-	});
-});
-
 describe("event-handler usage / cache info", () => {
 	it("processEventBatch: usage event attaches cacheInfo to preceding assistant_text", () => {
 		const { deps } = makeDeps();
@@ -4400,24 +4299,19 @@ describe("processEventBatch: run-start annotation", () => {
 		] as unknown as IncomingEvent[];
 	}
 
-	function run(
-		events: IncomingEvent[],
-		opts?: { fromActiveChain?: boolean },
-	): LogEntry[] {
+	function run(events: IncomingEvent[]): LogEntry[] {
 		const { deps } = makeDeps();
 		let captured: LogEntry[] = [];
 		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
 			captured = typeof entries === "function" ? entries([]) : entries;
 		});
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
-		processEventBatch(events, opts);
+		processEventBatch(events);
 		return captured;
 	}
 
 	it("a message delivered inside a tool call renders AFTER it — and is still not a run start", () => {
-		const entries = run(batchWithMessageInsideToolCall(), {
-			fromActiveChain: true,
-		});
+		const entries = run(batchWithMessageInsideToolCall());
 		const toolIdx = entries.findIndex((e) => e.type === "tool_pair");
 		const msgIdx = entries.findIndex(
 			(e) => e.type === "message" && e.body?.source === "user",
@@ -4431,52 +4325,36 @@ describe("processEventBatch: run-start annotation", () => {
 	});
 
 	it("a message delivered while the agent was parked is a run start", () => {
-		const entries = run(
-			[
-				{
-					type: "tool_call",
-					tool: "mcp__mxd__yield",
-					toolCallId: "y1",
-					input: {},
-					taskId: "root",
-					ts: 1,
-					eid: "e1",
-				},
-				{
-					type: "message",
-					id: "m1",
-					body: { source: "user", id: "m1", ts: 2, content: "hi" },
-					taskId: "root",
-					ts: 2,
-					eid: "e2",
-				},
-				{
-					type: "messages_consumed",
-					messageIds: ["m1"],
-					taskId: "root",
-					ts: 3,
-					eid: "e3",
-				},
-			] as unknown as IncomingEvent[],
-			{ fromActiveChain: true },
-		);
+		const entries = run([
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__yield",
+				toolCallId: "y1",
+				input: {},
+				taskId: "root",
+				ts: 1,
+				eid: "e1",
+			},
+			{
+				type: "message",
+				id: "m1",
+				body: { source: "user", id: "m1", ts: 2, content: "hi" },
+				taskId: "root",
+				ts: 2,
+				eid: "e2",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m1"],
+				taskId: "root",
+				ts: 3,
+				eid: "e3",
+			},
+		] as unknown as IncomingEvent[]);
 		const msg = entries.find(
 			(e) => e.type === "message" && e.body?.source === "user",
 		);
 		expect(msg?.startsRun).toBe(true);
-	});
-
-	it("a raw-file batch is not annotated at all", () => {
-		// "Load earlier history" fetches the file, which holds summarized-away
-		// history and abandoned rewind branches. A tool call from a branch
-		// nobody is on would count against a message that has nothing to do
-		// with it, so we decline to answer rather than answer wrongly.
-		const entries = run(batchWithMessageInsideToolCall());
-		const msg = entries.find(
-			(e) => e.type === "message" && e.body?.source === "user",
-		);
-		expect(msg).toBeDefined();
-		expect(msg?.startsRun).toBeUndefined();
 	});
 });
 
@@ -4542,7 +4420,7 @@ describe("event-handler: entry id is derived from the event's eid", () => {
 			captured = typeof u === "function" ? u([]) : u;
 		});
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
-		processEventBatch(events, { fromActiveChain: true });
+		processEventBatch(events);
 		return captured;
 	}
 
@@ -4787,7 +4665,7 @@ describe("event-handler: run-start annotation in event order", () => {
 			captured = typeof u === "function" ? u([]) : u;
 		});
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
-		processEventBatch(events, { fromActiveChain: true });
+		processEventBatch(events);
 		const out = new Map<string, boolean>();
 		for (const e of captured) {
 			if (e.type === "message" && e.eid && e.startsRun !== undefined) {
@@ -4840,17 +4718,119 @@ describe("event-handler: run-start annotation in event order", () => {
 		expect(byEid.get("e4")).toBe(true);
 	});
 
-	it("a raw-file batch is still not annotated", () => {
-		// Unchanged reason: the file holds abandoned rewind branches, and a
-		// tool call from a branch nobody is on would count against a message
-		// that has nothing to do with it.
+	// These two used to say "a raw batch is not annotated at all", which was
+	// the honest answer while the client could not tell an abandoned branch
+	// from the conversation. The server marks them now, so declining has
+	// stopped being honest and started being a shrug.
+	it("an abandoned branch neither gets judged nor drags anyone else down", () => {
 		const { deps } = makeDeps();
 		let captured: LogEntry[] = [];
 		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
 			captured = typeof u === "function" ? u([]) : u;
 		});
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
-		processEventBatch(mixedLog());
-		for (const e of captured) expect(e.startsRun).toBeUndefined();
+
+		// A raw file as "Load earlier history" gets it: a rewound-away branch
+		// (with a bash call on it) sitting between two live messages.
+		processEventBatch([
+			{
+				type: "message",
+				id: "m0",
+				body: { source: "user", id: "m0", ts: 1, content: "first" },
+				taskId: "root",
+				ts: 1,
+				eid: "e0",
+				offChain: "abandoned",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m0"],
+				taskId: "root",
+				ts: 2,
+				eid: "c0",
+				offChain: "abandoned",
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "dead",
+				input: { command: "ls" },
+				taskId: "root",
+				ts: 3,
+				eid: "tc0",
+				offChain: "abandoned",
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "dead",
+				content: "ok",
+				isError: false,
+				taskId: "root",
+				ts: 4,
+				eid: "tr0",
+				offChain: "abandoned",
+			},
+			// Back on the conversation: sent on its own, and the dead branch's
+			// bash must not be counted against it.
+			{
+				type: "message",
+				id: "m1",
+				body: { source: "user", id: "m1", ts: 5, content: "live" },
+				taskId: "root",
+				ts: 5,
+				eid: "e1",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m1"],
+				taskId: "root",
+				ts: 6,
+				eid: "c1",
+			},
+		] as unknown as IncomingEvent[]);
+
+		const byEid = new Map(
+			captured
+				.filter((e) => e.type === "message" && e.eid)
+				.map((e) => [e.eid as string, e]),
+		);
+		// THE hole this closes: a tool call nobody is on used to make the
+		// annotation wrong, which is why the whole batch went unjudged.
+		expect(byEid.get("e1")?.startsRun).toBe(true);
+		// The abandoned message is readable, carries its reason, and is not
+		// given a run-start verdict — the reason is the more specific answer.
+		expect(byEid.get("e0")?.offChain).toBe("abandoned");
+		expect(byEid.get("e0")?.startsRun).toBeUndefined();
+	});
+
+	it("a summarized-away message says so", () => {
+		const { deps } = makeDeps();
+		let captured: LogEntry[] = [];
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			captured = typeof u === "function" ? u([]) : u;
+		});
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+		processEventBatch([
+			{
+				type: "message",
+				id: "old",
+				body: { source: "user", id: "old", ts: 1, content: "ancient" },
+				taskId: "root",
+				ts: 1,
+				eid: "eold",
+				offChain: "summarized",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["old"],
+				taskId: "root",
+				ts: 2,
+				eid: "cold",
+				offChain: "summarized",
+			},
+		] as unknown as IncomingEvent[]);
+		const msg = captured.find((e) => e.type === "message");
+		expect(msg?.offChain).toBe("summarized");
 	});
 });

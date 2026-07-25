@@ -287,14 +287,34 @@ describe("editVerdict: three conditions, permanent wins", () => {
 		).toEqual({ editable: false, reason: "unknown_message" });
 	});
 
+	test("being outside the conversation outranks every other reason", () => {
+		// It is the most specific thing we know: not "wait", not "this one
+		// isn't a starting point", but "this isn't part of the conversation
+		// at all, and here is which way it left".
+		expect(
+			editVerdict({
+				startsRun: false,
+				hasRewindPoint: false,
+				agentBusy: true,
+				offChain: "abandoned",
+			}),
+		).toEqual({ editable: false, reason: "off_chain_abandoned" });
+		expect(editVerdict({ ...ok, offChain: "summarized" })).toEqual({
+			editable: false,
+			reason: "off_chain_summarized",
+		});
+	});
+
 	test("every reason gets its own sentence", () => {
 		const said = [
 			editRefusalMessage("agent_busy"),
 			editRefusalMessage("did_not_start_run"),
 			editRefusalMessage("no_rewind_point"),
 			editRefusalMessage("unknown_message"),
+			editRefusalMessage("off_chain_summarized"),
+			editRefusalMessage("off_chain_abandoned"),
 		];
-		expect(new Set(said).size).toBe(4);
+		expect(new Set(said).size).toBe(6);
 		for (const s of said) expect(s.length).toBeGreaterThan(20);
 		// The transient one is the only one that tells you to do something.
 		expect(editRefusalMessage("agent_busy")).toMatch(/stop/i);
@@ -654,5 +674,59 @@ describe("POST /edit enforces the gate", () => {
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as { reason: string };
 		expect(body.reason).toBe("unknown_message");
+	});
+
+	// The buttons are greyed by the client, and the client cannot work this
+	// out for itself — "which events count" has one implementation and it is
+	// on this side. So the raw-file fetch has to say it.
+	describe("the events route says which events are not the conversation", () => {
+		async function rawEvents(): Promise<
+			Array<{ type: string; eid?: string; offChain?: string }>
+		> {
+			const res = await app.request(
+				`/projects/${projectId}/tasks/${rootNodeId}/events`,
+			);
+			expect(res.status).toBe(200);
+			return (
+				(await res.json()) as {
+					events: Array<{ type: string; eid?: string; offChain?: string }>;
+				}
+			).events;
+		}
+
+		test("an untouched conversation marks nothing", async () => {
+			await seed(parkedThenMessage);
+			const events = await rawEvents();
+			expect(events.length).toBeGreaterThan(0);
+			expect(events.every((e) => e.offChain === undefined)).toBe(true);
+		});
+
+		test("a rewound-away message is marked 'abandoned' — and still returned", async () => {
+			const { eids } = await seed(parkedThenMessage);
+			const first = eids[0] as string;
+			const store = getEventStore(ctx, projectId);
+			const parentEid = store
+				.read(rootNodeId)
+				.find((e) => e.eid === first)?.parentEid;
+			if (!parentEid) throw new Error("seeded message has no parent");
+			store.setChainHead(rootNodeId, parentEid);
+			await store.append(rootNodeId, {
+				type: "message",
+				id: "m2",
+				taskId: rootNodeId,
+				body: { source: "user", id: "m2", ts: Date.now(), content: "redo" },
+				ts: Date.now(),
+			});
+			await store.flushSession(rootNodeId);
+
+			const events = await rawEvents();
+			// Still there — "Load earlier history" exists to show what the
+			// conversation used to contain. Readable, not operable.
+			const cut = events.find((e) => e.eid === first);
+			expect(cut).toBeDefined();
+			expect(cut?.offChain).toBe("abandoned");
+			// The message that replaced it is the conversation.
+			expect(events.at(-1)?.offChain).toBeUndefined();
+		});
 	});
 });

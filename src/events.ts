@@ -1183,3 +1183,52 @@ export function walkActiveChainIndices(events: Event[]): number[] {
 	kept.reverse();
 	return kept;
 }
+
+/**
+ * Why an event in a raw log is not part of the conversation.
+ *
+ * The raw file is served to one place only — "Load earlier history", which
+ * deliberately shows what the conversation no longer contains so the user can
+ * read it. Those events must be *readable* and *not operable*, and saying
+ * which of the two reasons applies is the difference between an answer and a
+ * shrug ("no longer in the current conversation" is what the UI said when it
+ * could not tell, and it said it about live messages too).
+ */
+export type OffChainReason =
+	/** Older than the last completed compaction — a summary stands in for it. */
+	| "summarized"
+	/** Reachable in the file, but on a branch a rewind walked away from. */
+	| "abandoned";
+
+/**
+ * For a raw log, why each event is off the active chain — `undefined` where it
+ * is ON it.
+ *
+ * The client gets the ANSWER; the walk stays here. A second copy of "which
+ * events count" in the browser is exactly what *One boundary: the active
+ * chain* removed, and this question is not answerable from a single event
+ * anyway: membership is a relation between an event and the current chain
+ * head, and a rewind changes it without touching any event.
+ *
+ * Position tells the two reasons apart. Everything before the earliest active
+ * event predates the compaction the walk stopped at; everything after it that
+ * the walk did not visit is on an abandoned branch.
+ *
+ * KNOWN IMPRECISION, deliberately left: the summarizer's own output inside a
+ * compaction window (its thinking, the `<summary>` text, its usage) sits after
+ * the earliest active event and is therefore labelled "abandoned", when
+ * "summarized" would be truer. Nothing reads it — only user messages carry the
+ * buttons this feeds — and inventing a third category for events with no
+ * consumer is how a classification starts describing its author instead of the
+ * world.
+ */
+export function classifyOffChain(
+	events: Event[],
+	activeIndices: number[] = walkActiveChainIndices(events),
+): (OffChainReason | undefined)[] {
+	const active = new Set(activeIndices);
+	const firstActive = activeIndices[0] ?? events.length;
+	return events.map((_, i) =>
+		active.has(i) ? undefined : i < firstActive ? "summarized" : "abandoned",
+	);
+}

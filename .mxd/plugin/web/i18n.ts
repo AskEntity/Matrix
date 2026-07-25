@@ -298,7 +298,15 @@ const en: Translations = {
 	"activity.editBlockedNoRewindPoint":
 		"The history around this message was summarized away when the context was compacted — there is no state left to return to.",
 	"activity.editBlockedUnknown":
-		"No longer part of the conversation — an earlier rewind replaced it.",
+		"No message with that id is in this session's log.",
+	// Two ways a message can be visible without being part of the
+	// conversation — "Load earlier history" shows both. Saying which one is
+	// the whole point: the old copy said "no longer part of the conversation"
+	// about everything it could not judge, including live messages.
+	"activity.editBlockedSummarized":
+		"From before the last context compaction — a summary stands in for that stretch of the conversation now, so there is nothing to return to.",
+	"activity.editBlockedAbandoned":
+		"On a branch an earlier rewind walked away from. You can read it, but the conversation no longer runs through it.",
 	"footer.editing": "Editing message",
 	"footer.cancelEdit": "Cancel",
 
@@ -658,8 +666,11 @@ const zh: Translations = {
 		"这条不是独立发出的 —— agent 是把它和手上已经在做的活一起收进去的，所以这里没有一个单独的起点可以回到。",
 	"activity.editBlockedNoRewindPoint":
 		"这条消息周围的历史在上下文压缩时已经被总结掉了 —— 没有可以回到的状态。",
-	"activity.editBlockedUnknown":
-		"已经不在当前对话里了 —— 之前的一次回退替换掉了它。",
+	"activity.editBlockedUnknown": "这个 id 在本会话的日志里找不到对应的消息。",
+	"activity.editBlockedSummarized":
+		"这条在上一次上下文压缩之前 —— 那一段对话现在由一份摘要代替，没有可以回到的状态。",
+	"activity.editBlockedAbandoned":
+		"这条在一条已被回退放弃的分支上。可以读，但当前对话不再经过它。",
 	"footer.editing": "编辑消息",
 	"footer.cancelEdit": "取消",
 
