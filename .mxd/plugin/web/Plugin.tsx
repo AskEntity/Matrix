@@ -71,6 +71,7 @@ import {
 } from "./hooks.ts";
 import { LocaleProvider, useLocale } from "./i18n.ts";
 import { analyzeRollbackImpact } from "./rollback-impact.ts";
+import { attributeScrollWrite } from "./scroll-attribution.ts";
 import { useSidebarSearch } from "./search.ts";
 import { applyTheme, themes } from "./themes.ts";
 
@@ -628,7 +629,11 @@ function ProjectContent({
 		// scrolling and loses (observed live — the log snapped back to the
 		// bottom mid-animation). Drop follow first, then jump.
 		setAutoScroll(false);
-		el.scrollIntoView({ block: "center" });
+		attributeScrollWrite(
+			document.querySelector<HTMLElement>(".mxd-activity-log"),
+			"edit-indicator",
+			() => el.scrollIntoView({ block: "center" }),
+		);
 	}, [editRequest?.eid]);
 	// Page-wide image drop: an image dropped ANYWHERE on the page is routed
 	// into the composer's existing attachment state as a one-shot request
@@ -1251,15 +1256,21 @@ function ProjectContent({
 				const el = document.querySelector(
 					`[data-entry-id="${CSS.escape(targetEntryId)}"]`,
 				);
+				const logEl = document.querySelector<HTMLElement>(".mxd-activity-log");
 				if (el) {
-					el.scrollIntoView({ block: "center", behavior: "smooth" });
+					attributeScrollWrite(logEl, "navigate-entry", () =>
+						el.scrollIntoView({ block: "center", behavior: "smooth" }),
+					);
 					el.classList.add("mxd-scroll-target");
 					setTimeout(() => el.classList.remove("mxd-scroll-target"), 2000);
 				} else {
 					// Entry not found — likely pending. Enable follow mode.
 					setAutoScroll(true);
-					const logEl = document.querySelector(".mxd-activity-log");
-					if (logEl) logEl.scrollTop = logEl.scrollHeight;
+					if (logEl) {
+						attributeScrollWrite(logEl, "navigate-fallback", () => {
+							logEl.scrollTop = logEl.scrollHeight;
+						});
+					}
 				}
 			}, 300);
 		} else {
