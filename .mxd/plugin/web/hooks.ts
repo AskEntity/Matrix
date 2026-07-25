@@ -164,7 +164,20 @@ export interface CacheInfo {
 }
 
 export type LogEntry = UIEvent & {
+	/**
+	 * React key. NOT a display value — it exists so that rebuilding the log
+	 * from JSONL produces the SAME key for the same event, and React
+	 * reconciles instead of remounting. See `createLogEntry`.
+	 */
 	id: number;
+	/**
+	 * The persisted event this entry was built from, when there is one.
+	 * The durable name of this entry: survives a wholesale rebuild, a
+	 * daemon restart and a fork. Absent for entries with no persisted
+	 * counterpart (streamed text before its block closes, lifecycle notices
+	 * the backend never writes).
+	 */
+	eid?: string;
 	taskId?: string;
 	expanded?: boolean;
 	/** Per-turn token/cache breakdown, attached from usage events. */
@@ -549,13 +562,71 @@ export function useAgent(projectId: string) {
 
 // --- Log helpers ---
 
-/** Create a LogEntry from a UIEvent by adding id.
- * Extra fields (like taskId for routing) can be passed and will be preserved. */
-export function createLogEntry(event: UIEvent & { taskId?: string }): LogEntry {
-	return {
-		...event,
-		id: logIdCounter++,
-	} as LogEntry;
+/**
+ * eid → entry id. What makes a rebuilt entry keep its React key.
+ *
+ * Never cleared. Clearing it is the failure this whole mechanism exists to
+ * prevent: the moment it forgets an eid is the moment that entry gets a new
+ * key and remounts. Bounded by the number of distinct events this browser
+ * session has displayed (a few tens of thousands at worst, one small string
+ * plus one number each) — small next to the entries themselves.
+ */
+const entryIdByEid = new Map<string, number>();
+
+/**
+ * Bind an eid to an id that was already handed out.
+ *
+ * For entries that exist BEFORE their persisted event does: a streamed text
+ * block is created from `text_delta`, which is never written to disk, and
+ * only learns its eid when the block closes. Binding — rather than
+ * re-deriving the id — is why the key does not change at that moment.
+ *
+ * First binding wins, so this is idempotent.
+ */
+export function bindEntryId(eid: string, id: number): void {
+	if (!entryIdByEid.has(eid)) entryIdByEid.set(eid, id);
+}
+
+/** The id for a persisted event. Same eid → same id, for the life of the page. */
+export function entryIdForEid(eid: string): number {
+	const existing = entryIdByEid.get(eid);
+	if (existing !== undefined) return existing;
+	const id = logIdCounter++;
+	entryIdByEid.set(eid, id);
+	return id;
+}
+
+/**
+ * Create a LogEntry from a UIEvent by adding id.
+ * Extra fields (like taskId for routing) can be passed and will be preserved.
+ *
+ * **`id` is derived from `eid` whenever there is one.** The log is rebuilt
+ * wholesale on every refetch (reconnect, load-earlier, post-rollback), and a
+ * fresh counter made every key change on every rebuild — measured as a
+ * single MutationObserver batch removing 82 nodes and adding 82 back, which
+ * empties the container for a frame and lets the browser clamp the scroll
+ * offset to 0. Deriving the id from the event's durable name makes the
+ * rebuild a reconcile: same keys, same DOM nodes, same scroll offset, and
+ * component state (an expanded Card) survives.
+ *
+ * `reuseId` is for the one case where the entry predates its event — see
+ * `bindEntryId`.
+ */
+export function createLogEntry(
+	event: UIEvent & { taskId?: string; eid?: string },
+	reuseId?: number,
+): LogEntry {
+	const eid = event.eid;
+	let id: number;
+	if (reuseId !== undefined) {
+		id = reuseId;
+		if (eid) bindEntryId(eid, id);
+	} else if (eid) {
+		id = entryIdForEid(eid);
+	} else {
+		id = logIdCounter++;
+	}
+	return { ...event, id } as LogEntry;
 }
 
 /** Format a timestamp for display. */
