@@ -243,6 +243,11 @@ changelog, and a changelog is what every reader pays for on every launch.
 **Compression is not terseness.** Line count falls because seven sections became one, not because
 sentences became telegrams. Write every surviving sentence out properly.
 
+⚠️ **File a task's memory output BY SUBJECT, not where the task lived.** A round's findings are
+rarely one thing: a walker rewrite also produced two lessons about mutation harnesses and one about
+how prose rots. Filing all of it under the walker buries the other two where only someone already
+reading about walkers will find them — which is nobody, because they are not about walkers.
+
 **Three kinds of rot, three detectors, none substituting for another:**
 
 | kind | is a correction written down anywhere? | what finds it |
@@ -304,7 +309,12 @@ disappeared"*, which is addressed to nobody.
   nothing about the sentence is wrong on its face.** A third instance the same evening: a
   cross-reference in this file, `see *Bun Worker env isolation*`, broken by the person merging away
   the section it named. **Grep for the concept you just changed and read every hit; a grep gives you
-  candidates, not verdicts, and "changed nearby" is not "now false".** For this file specifically,
+  candidates, not verdicts.** Two directions to be careful in: *"changed nearby" is not "now
+  false"*, and — the one that catches more — ⭐ ***"still true" is not "still accurate".*** The
+  sentence that caught this rule out was *"the skip filter runs INSIDE the walk loop, so the cap
+  counts files we KEEP"*: the **invariant survived and the mechanism did not**, because the cap still
+  counts kept files but is now guaranteed by pruning at descent rather than achieved by a filter in a
+  loop. A check that only looks for false claims walks straight past it. For this file specifically,
   after any rename pass, extract every `*Section Name*` reference and check it against the heading
   list — that is what found the third one.
 - **Approved a side effect?** Grep for that too. Reviewing is how an `agent_idle` behavior change
