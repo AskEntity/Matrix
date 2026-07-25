@@ -1800,6 +1800,132 @@ pre-eid log be read.)
   the log early) does the file surgery itself; the product has no such
   operation any more. See the Phase-2 crash-recovery test in integration.test.ts.
 
+## Every transport carries the event's name (eid) — and what that let us delete (2026-07-25)
+
+Four consumers wanted the same missing thing and were each about to grow their own locating
+mechanism: the Edit/Rewind gate, message deep-links, viewport addressing, and "is this event still
+part of the conversation". They are one thing — **the frontend needs the persisted event identity
+on the path it actually receives events over** — and it was missing for one reason: `emitEvent`
+broadcast BEFORE persisting, so SSE clients were shown events they could not refer to.
+
+### The mechanism: `append` is synchronous and returns the persisted event
+
+`EventStore.append`/`appendBatch` stamp the chain fields and write in one uninterruptible step and
+return the stamped copy; `emitEvent` persists first and broadcasts THAT. One object, one name,
+every transport.
+
+**Why not "stamp now, write later"** (the shape tried and reverted in 01KY54YT round 11, whose
+failure was two writers of `lastEventIds` racing):
+
+- ONE writer of the chain head. This MOVES the only stamper earlier rather than adding a second, so
+  the TOCTOU has no premise left. (Round 11's measurement was real and its product judgement —
+  "rollback isn't a realtime feature" — is what expired.)
+- ⭐ **The write-failure path is the load-bearing argument.** `rewindChainHead` keeps a failed event
+  out of the chain, and that is correct ONLY while nothing can be stamped between the stamp and the
+  write. Defer the write and a burst in one tick gets stamped first: the event after a failed one
+  names a parent no line carries, the walk stops dead (no dangling-link fallback, deliberately), and
+  the agent resumes with a **silently truncated context**. Synchronous keeps the cost of a failed
+  write at "one event lost" instead of "history lost". Pinned by a test that chmods the file
+  read-only and asserts the next event chains to the last one that actually landed.
+- The general form: it replaces "correct because nothing happens to interleave" with "correct
+  because nothing CAN".
+
+`enqueueWrite` + the generation guard survive for `copySessionFrom`, the one genuinely async write.
+Its docstring now says outright that **the guard has no reachable failure path today** — a mechanism
+that looks like protection but protects nothing is worse than none, because the next reader reads
+"there is a queue" as "there is protection". Revisit once synchronous appends have production
+mileage: draft 01KYCQDJRF8Z8S6YC39F7ECVZ8.
+
+### Entry ids come from the eid — the React key, not a display value
+
+`createLogEntry` derives `LogEntry.id` from `eid` (`Map<eid, number>`, never cleared — clearing it
+IS the failure it prevents). The log is replaced wholesale on every refetch, and a module counter
+made every key change every time: measured in a real session as ONE MutationObserver batch with
+`added: 82, removed: 82` against `removed: 1` for a normal update in the same trace.
+
+Two entries exist BEFORE the event they are named after, and both **bind** their eid to the id they
+already have rather than re-deriving it:
+- a streamed text/thinking block is built from `*_delta`, which is never persisted, and learns its
+  eid when the block closes;
+- a tool card is replaced in place by its `tool_pair` when the result lands — which is exactly when
+  a user is most likely to have it expanded. (That one was a live, independent bug: every tool card
+  remounted and lost its expanded state the moment its result arrived.)
+
+⚠️ **`key={entry.eid ?? entry.id}` is the wrong shape** even though it looks simpler: it moves the
+key at the end of every streamed block, adding a per-block remount that does not exist today.
+
+**Known residual, deliberate**: an entry that is still streaming when a wholesale replacement lands
+changes key once — its rebuild source is the route-injected `partial: true` synthetic, which by
+definition has no eid. One entry, no container collapse, and the buttons are disabled anyway
+(`isWorking`). Closing it needs a second lifecycle-bearing map, i.e. a branch for an imagined
+consumer (anti-pattern #6). Add it if it ever produces an observable symptom.
+
+### Run-start is decided in the ONE in-order channel
+
+"Was this message sent on its own" used to be a second pass over the raw batch AFTER entries were
+built, which made it structurally unanswerable for a live message (the live path sees one event at a
+time and never holds a batch) — and that is why Edit/Rewind could only appear via a JSONL refetch.
+`processEvent` is reached in event order by BOTH paths, so the current turn is tracked there and the
+verdict is set at the `messages_consumed` that picks the message up. The rule itself is
+`turnAnswersPriorWork` in `run-start.ts`; the whole-log pass calls it too. **One rule, two entry
+points**, locked by a test asserting the in-order map equals the one-shot map key for key.
+
+### Active-chain membership needs its own bit — and this is the general reason
+
+> **eid is an IDENTITY (immutable, per event). Membership is a RELATION between an event and the
+> current chain head.** A rewind changes it for a whole stretch of log without touching a single
+> event in it. **An immutable identity cannot encode a mutable relation.**
+
+So the raw-file fetch (`GET .../events` without `after=compact`, i.e. "Load earlier history") marks
+each event: `offChain: "summarized" | "abandoned"` (`classifyOffChain` in events.ts, built on the
+one `walkActiveChainIndices`). The client gets the ANSWER, never the algorithm — a second chain walk
+in the browser is what *One boundary: the active chain* removed.
+
+Marked only where it is not the obvious answer: every other transport carries active events by
+construction. Explicit-everywhere was considered and rejected — it does not actually buy safety,
+because the reader still has to choose what `undefined` means, and it costs bytes on the hottest
+path.
+
+KNOWN IMPRECISION, documented in place: the summarizer's own output inside a compaction window is
+labelled "abandoned" where "summarized" would be truer. Nothing reads it (only user messages carry
+the buttons), and a third category for events with no consumer is a classification describing its
+author.
+
+### Two workarounds deleted, both by the person who filled the hole they stood in
+
+- `processEventBatch(events, { fromActiveChain })` — gone. Off-chain events are simply dropped from
+  the turn windows, which leaves exactly the active chain in order.
+- **the re-fetch on agent idle** — gone. It existed only to go and get eids the broadcast did not
+  carry, and it replaced the entire log to do it.
+
+Refusal wording followed: "No longer part of the conversation" was what the UI said when it could
+not tell — about every message in the batch, including ones still in it. Now it says which way the
+message left, and either reason outranks "the agent is busy", because that one promises a remedy
+that will never arrive.
+
+### Live verification, including one honest negative
+
+Real browser, two daemons (this branch vs main), same fixture, content deliberately expensive to
+rebuild (tool cards, markdown tables, images with no reserved height — 327 entries). After "Load
+earlier history":
+
+| | main | this branch |
+|---|---|---|
+| Edit/Rewind enabled | **0 of 280** | 120 messages editable |
+| what the rest say | all 280: "No longer part of the conversation — an earlier rewind replaced it." | the 20 pre-compaction ones: "From before the last context compaction…" |
+
+**Negative result worth keeping**: the load-older path did NOT remount on EITHER build (90 of 100
+entries kept both their React key and their DOM node, identical on both), so it does not discriminate
+the id change. The measured `+82/-82` came from the **agent_idle** refetch specifically — which this
+work deletes outright, so that trigger is gone rather than made cheap. Do not cite the load-older
+path as evidence for or against the key derivation; use the unit tests, which mutate in both
+directions.
+
+Also, twice in one session, a first measurement measured the wrong element: `log.children[0]` is the
+"load earlier" bar, not an entry, so "the first node is still attached" was true on a build that
+remounts everything. Same shape as the viewport task's container-vs-content error. **Check what your
+selector actually points at before believing a null result.**
+
 ---
 # Cache & Drift Prevention
 ---
@@ -2229,6 +2355,170 @@ Two things worth carrying out of that:
 - The official doc later stated "no customer opt-in or opt-out", which is the same fact the
   recurrence had already demonstrated. The measurement was right before the documentation existed;
   what was wrong was the *causal story* attached to it.
+
+## The Anthropic message-shape rules, MEASURED (2026-07-25) — and the fictional one we built on
+
+⚠️ **`ValidatingMockAPI` enforced a role-alternation rule that DOES NOT EXIST.** 628 occurrences of
+"Messages must alternate roles" in our JSONL history; **every one came from our own mock, none from
+the API.** Four mechanisms, one `test.todo` and one memory "⭐ reusable pattern" were built to avoid
+a 400 that cannot happen. Full audit + per-mechanism verdicts: task **01KYCQ856M3Z6F4EN247C4GW69**.
+
+### The rules, as measured against production Anthropic (19 shapes, OAuth, `claude-opus-5`)
+
+1. **First message must be `user`.** (mock had it ✅)
+2. **The conversation must END with a `user` message.** Ending on assistant →
+   400 *"This model does not support assistant message prefill."* (mock did NOT have it ❌)
+3. **The tool-answering rule — and it is NOT "in the next message":**
+
+   > Flatten the user messages after an assistant-with-`tool_use` into one block stream. Take the
+   > **maximal LEADING run of `tool_result` blocks**. It crosses message boundaries freely; **any
+   > non-`tool_result` block ends it** — including a *trailing* text block in an otherwise-fine
+   > message, and including a plain-string user message. Every `tool_use` must be answered inside
+   > that run.
+
+4. **Every `tool_result` must answer a `tool_use` in the preceding assistant message** (orphan →
+   400). (mock had it ✅)
+5. **Consecutive same-role messages are LEGAL** — user/user, user/user/user, and assistant/assistant
+   all accepted. (mock forbade ❌ — the fiction)
+6. **Empty content is LEGAL** — `""`, `[]`, and `[{type:"text",text:""}]` all accepted. (mock
+   forbade ❌ — a second, unnoticed fiction)
+
+Consequences of rule 3 that nothing tests today:
+- results **split across several user messages** are fine (`[R1] [R2] [R3,text]` ✅), in **any order**
+- `[R1, text]` then `[R2, …]` is **400** — the trailing text ended the run before R2
+- `[text, R1]` is **400** — block ORDER inside the message matters
+- ⭐ **`buildUserTurn` packs `[...tool_results, ...queueMessages]`, tool_results FIRST. That order is
+  a real API requirement, not style.** Put text before a tool_result, or between two batches of
+  them, and you get a production 400 with a fully green suite.
+
+### Reachable bug this exposed (BEHAVIOR SNAPSHOT test, `src/reachable-400-snapshot.test.ts`)
+
+`provider-shared.ts` "context too short to compact" (`manualCompactRequested && messages.length <= 4`):
+a fresh agent whose first turn ends with `end_turn` has `messages = [user, assistant]`; `/compact`
+takes the compactOnly path → `continue` → the too-short branch clears the flag and `continue`s with
+nothing to push → next iteration sends a request **ending in assistant** → 400. Reproduced
+end-to-end through the real agent loop; the agent crashes. **No new code needed to reach it.**
+
+### ⭐ The general lesson — how a fictional rule gets installed
+
+`jsonl-stress.test.ts`'s `assertStructurallyValidApiMessages` wrote down BOTH rules in the same
+comment, then chose:
+
+> *"We don't assert the trailing-role rule because some walker outputs are intermediate and meant to
+> be extended. We DO assert the alternation and structural shape."*
+
+**That reasoning is correct.** Some walker outputs genuinely are conversation *prefixes* that end on
+assistant; asserting the real rule would redden correct fixtures. So:
+
+> **An inconvenient TRUE assertion + a conveniently-green FALSE one ⇒ the false one gets installed,
+> and is then believed as fact.** The fiction does not win on persuasiveness — it wins on **not
+> causing trouble**. Once it lives inside a `throw` it starts MANUFACTURING EVIDENCE: 628 error
+> strings from the rule that was *executed*, 0 from the rule that was merely *documented*. **The
+> knowledge was never lost; the enforcement was.**
+
+**Detector — do not audit whether the assertions are correct** (that comment was entirely correct).
+Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
+fork is where the fiction starts producing evidence.
+
+### An over-strict test double bills you in THREE ways, and the third is the quiet one
+
+1. **It creates complexity you pay for.** Four `pending*` mechanisms, a `test.todo`, and a memory
+   entry filed as a ⭐ reusable pattern — all to dodge a 400 that cannot happen.
+2. **It hides gaps.** A fiction occupying the "role rules" slot stops anyone asking what the real
+   role rule is, so the true one (last message must be user) got zero coverage and a reachable
+   production 400 sat there unnoticed.
+3. ⭐ **It VETOES correct code — and this one never looks like a bug.** Found the same day by
+   01KYBB2Z: interrupting an agent before it emits anything, parking it, then sending another
+   message produces `[…, user, user]`. Legal; the old mock rejected it. So the correct
+   implementation could not be tested, the test was truncated at the park, and a comment was left
+   saying the mock's constraint was unverified. **Nothing was red. The feature simply acquired a
+   reputation for being "hard to test".**
+
+The first two produce artifacts you can go find — code, a todo, a crash. The third produces
+*absence*: a test that stops early, a scope quietly trimmed, an approach abandoned as awkward.
+**Ask what your test double has been making people give up on**, not only what it has made them
+build. A fiction's cheapest victims are the ones that were never written down.
+
+**The name is the other tell.** `assertStructurallyValidApiMessages` fuses two different predicates:
+*structurally valid* (a prefix property) and *API messages* (a sendable-request property). The code
+can only be one of them, so it silently became the weaker one plus a fictional bonus — 2 of its 5
+listed rules fictional, 1 true but deliberately unasserted. **A name that claims "valid" without
+saying valid-for-what will drift to "matches what we imagined".** The way out is two predicates:
+a *prefix* check and a *sendable* check. **Shipped as `src/test-utils/api-message-rules.ts`:**
+`wellFormedPrefixViolations` (first-must-be-user; pairing, but an answering run that simply RUNS OFF
+THE END of the array is incomplete rather than broken; orphan tool_results are violations at any
+position) and `sendableRequestViolations` (all of that, plus trailing-role, plus the last
+assistant's tool_uses must be answered by now). `ValidatingMockAPI.validateRequest` is the sendable
+one; `jsonl-stress.test.ts`'s helper is the prefix one, renamed `assertWellFormedPrefix`.
+`emptyContentViolations` holds the non-rule, opt-in, under a name that says it is ours.
+
+**Note the second half of the trap**: the PAIRING rule has the same intermediate-state problem the
+trailing-role rule has (an assistant's tool_results legitimately arrive after the prefix ends). So
+whoever tried to assert the true rules with only one predicate available would have gone red on
+correct fixtures *twice*, not once. **Courage was not the missing ingredient; the concept was.**
+That is what makes this a structural failure rather than a lapse — and it is why the fix is a new
+type of assertion, not a stricter one.
+
+Sibling entries, same family: *"a real error message + an unverified attribution beats a pure guess,
+because it arrives wearing evidence's clothes"* — the phrase that propagated this one was an
+offhand "(matches real Anthropic)" that nobody checked. And *"an accurate observation + an
+over-broad generalisation is harder to challenge than a guess, because it arrives with a number"*
+(Which messages can be edited/rewound).
+
+### Probing the real API: the `systemPreamble` trap
+
+Any probe against the OAuth endpoint **must send the auth group's `systemPreamble` as the FIRST
+system block**, or every call 429s. A first-pass probe that omitted it produced a wall of rate
+limits that reads exactly like validation failure — nearly yielding the opposite conclusion. Probes
+live in `/tmp/alt-probe/` (`probe2.ts`-`probe6.ts` = API shapes, `walker-shapes.ts` = runs disputed
+shapes through the real walker and checks them against the measured rule). They read `oauthToken`
+from config and never print it.
+
+### What the measurement cost, and the one number that reframes it
+
+Full `bun test` with the mock progressively made realistic (env-gated during the experiment, now
+shipped): **A** (drop alternation) 2774/2 — one is the mock's own self-test of the fiction, one a
+known teardown flake that did not recur; **B** (+ trailing-role) 2776/1; **C** (+ the real pairing
+rule) 2776/1. In every variant **the only real failure was the mock's self-test of the fictional
+rule.** The realistic mock was a drop-in: nothing depended on the fiction and the true rules cost
+nothing to adopt — they were simply never asked for.
+
+⭐ **Zero existing tests went red when the true rule was added, and that is the finding, not a
+disappointment.** The expectation going in was "some tests will red, and those reds are assets".
+They didn't, because `validateRequest` only ever sees requests the loop actually decided to send —
+and the loop only sends when its state is right, *except* on the one reachable bug, which had no
+test at all. **The fiction was not masking existing tests. It was masking the fact that nobody had
+written the missing one.** A gap does not turn red; it stays invisible until someone goes looking,
+which is why the probe had to be written by hand rather than discovered by running the suite.
+
+### What DID go red: swapping the fused helper for the two real predicates (10 tests)
+
+Splitting `assertStructurallyValidApiMessages` into prefix/sendable and giving both the measured
+rules turned 10 tests red. **Every one was a fixture that could never be sent to the API, and none
+of them was fixed by loosening a rule** — they were fixed by making the fixture a real
+conversation. Two shapes:
+
+- **6 walker fixtures produced assistant-first output** — no leading user message, because the
+  fixture only cared about the assistant/tool region. Given a `user` head, they assert exactly what
+  they always did.
+- **4 prefix-byte-comparison fixtures opened with an orphan `tool_result`** — no assistant carrying
+  the matching `tool_use`, because those tests are about byte diffing, not conversation validity.
+  Given a real head, likewise unchanged.
+
+One did NOT get a head, and it is the interesting one: the dirty-JSONL scenario table contained
+`orphan assistant_text with no user message before it` under the blanket claim *"walker produces
+valid structure"*. It doesn't — that output is assistant-first and the API rejects it. Moved to its
+own BEHAVIOR SNAPSHOT. **Not hypothetical**: FIX-5 R8-B#1 records a session permanently bricked by
+exactly this shape (a bare `compact_marker` left `readActive()` starting on an assistant turn),
+quoting the same API error.
+
+⭐ **The count that says how far this went.** The old helper's own comment listed five things it
+was about. Of the FOUR rules the API actually has, it enforced **none**: never checked
+first-must-be-user, explicitly skipped trailing-role, never checked pairing or orphans. What it did
+enforce was role-is-one-of-two (a type constraint) plus the two fictions. **A helper named
+`assertStructurallyValidApiMessages`, called from 10 sites, enforced zero real API rules for
+months** — and looked like coverage the whole time. That is the shape to watch for: not a wrong
+assertion, but a *confident name over a predicate nobody re-derived from the source of truth*.
 
 ---
 # Data Model & Storage
@@ -6637,293 +6927,3 @@ reason to come back here. Re-checked against the code:
 3. Tool search — dynamic tool discovery. **Still open.** A draft exists; Anthropic has a server-side
    `defer_loading`, but the user prefers a client-side design.
 
----
-
-## Every transport carries the event's name (eid) — and what that let us delete (2026-07-25)
-
-Four consumers wanted the same missing thing and were each about to grow their own locating
-mechanism: the Edit/Rewind gate, message deep-links, viewport addressing, and "is this event still
-part of the conversation". They are one thing — **the frontend needs the persisted event identity
-on the path it actually receives events over** — and it was missing for one reason: `emitEvent`
-broadcast BEFORE persisting, so SSE clients were shown events they could not refer to.
-
-### The mechanism: `append` is synchronous and returns the persisted event
-
-`EventStore.append`/`appendBatch` stamp the chain fields and write in one uninterruptible step and
-return the stamped copy; `emitEvent` persists first and broadcasts THAT. One object, one name,
-every transport.
-
-**Why not "stamp now, write later"** (the shape tried and reverted in 01KY54YT round 11, whose
-failure was two writers of `lastEventIds` racing):
-
-- ONE writer of the chain head. This MOVES the only stamper earlier rather than adding a second, so
-  the TOCTOU has no premise left. (Round 11's measurement was real and its product judgement —
-  "rollback isn't a realtime feature" — is what expired.)
-- ⭐ **The write-failure path is the load-bearing argument.** `rewindChainHead` keeps a failed event
-  out of the chain, and that is correct ONLY while nothing can be stamped between the stamp and the
-  write. Defer the write and a burst in one tick gets stamped first: the event after a failed one
-  names a parent no line carries, the walk stops dead (no dangling-link fallback, deliberately), and
-  the agent resumes with a **silently truncated context**. Synchronous keeps the cost of a failed
-  write at "one event lost" instead of "history lost". Pinned by a test that chmods the file
-  read-only and asserts the next event chains to the last one that actually landed.
-- The general form: it replaces "correct because nothing happens to interleave" with "correct
-  because nothing CAN".
-
-`enqueueWrite` + the generation guard survive for `copySessionFrom`, the one genuinely async write.
-Its docstring now says outright that **the guard has no reachable failure path today** — a mechanism
-that looks like protection but protects nothing is worse than none, because the next reader reads
-"there is a queue" as "there is protection". Revisit once synchronous appends have production
-mileage: draft 01KYCQDJRF8Z8S6YC39F7ECVZ8.
-
-### Entry ids come from the eid — the React key, not a display value
-
-`createLogEntry` derives `LogEntry.id` from `eid` (`Map<eid, number>`, never cleared — clearing it
-IS the failure it prevents). The log is replaced wholesale on every refetch, and a module counter
-made every key change every time: measured in a real session as ONE MutationObserver batch with
-`added: 82, removed: 82` against `removed: 1` for a normal update in the same trace.
-
-Two entries exist BEFORE the event they are named after, and both **bind** their eid to the id they
-already have rather than re-deriving it:
-- a streamed text/thinking block is built from `*_delta`, which is never persisted, and learns its
-  eid when the block closes;
-- a tool card is replaced in place by its `tool_pair` when the result lands — which is exactly when
-  a user is most likely to have it expanded. (That one was a live, independent bug: every tool card
-  remounted and lost its expanded state the moment its result arrived.)
-
-⚠️ **`key={entry.eid ?? entry.id}` is the wrong shape** even though it looks simpler: it moves the
-key at the end of every streamed block, adding a per-block remount that does not exist today.
-
-**Known residual, deliberate**: an entry that is still streaming when a wholesale replacement lands
-changes key once — its rebuild source is the route-injected `partial: true` synthetic, which by
-definition has no eid. One entry, no container collapse, and the buttons are disabled anyway
-(`isWorking`). Closing it needs a second lifecycle-bearing map, i.e. a branch for an imagined
-consumer (anti-pattern #6). Add it if it ever produces an observable symptom.
-
-### Run-start is decided in the ONE in-order channel
-
-"Was this message sent on its own" used to be a second pass over the raw batch AFTER entries were
-built, which made it structurally unanswerable for a live message (the live path sees one event at a
-time and never holds a batch) — and that is why Edit/Rewind could only appear via a JSONL refetch.
-`processEvent` is reached in event order by BOTH paths, so the current turn is tracked there and the
-verdict is set at the `messages_consumed` that picks the message up. The rule itself is
-`turnAnswersPriorWork` in `run-start.ts`; the whole-log pass calls it too. **One rule, two entry
-points**, locked by a test asserting the in-order map equals the one-shot map key for key.
-
-### Active-chain membership needs its own bit — and this is the general reason
-
-> **eid is an IDENTITY (immutable, per event). Membership is a RELATION between an event and the
-> current chain head.** A rewind changes it for a whole stretch of log without touching a single
-> event in it. **An immutable identity cannot encode a mutable relation.**
-
-So the raw-file fetch (`GET .../events` without `after=compact`, i.e. "Load earlier history") marks
-each event: `offChain: "summarized" | "abandoned"` (`classifyOffChain` in events.ts, built on the
-one `walkActiveChainIndices`). The client gets the ANSWER, never the algorithm — a second chain walk
-in the browser is what *One boundary: the active chain* removed.
-
-Marked only where it is not the obvious answer: every other transport carries active events by
-construction. Explicit-everywhere was considered and rejected — it does not actually buy safety,
-because the reader still has to choose what `undefined` means, and it costs bytes on the hottest
-path.
-
-KNOWN IMPRECISION, documented in place: the summarizer's own output inside a compaction window is
-labelled "abandoned" where "summarized" would be truer. Nothing reads it (only user messages carry
-the buttons), and a third category for events with no consumer is a classification describing its
-author.
-
-### Two workarounds deleted, both by the person who filled the hole they stood in
-
-- `processEventBatch(events, { fromActiveChain })` — gone. Off-chain events are simply dropped from
-  the turn windows, which leaves exactly the active chain in order.
-- **the re-fetch on agent idle** — gone. It existed only to go and get eids the broadcast did not
-  carry, and it replaced the entire log to do it.
-
-Refusal wording followed: "No longer part of the conversation" was what the UI said when it could
-not tell — about every message in the batch, including ones still in it. Now it says which way the
-message left, and either reason outranks "the agent is busy", because that one promises a remedy
-that will never arrive.
-
-### Live verification, including one honest negative
-
-Real browser, two daemons (this branch vs main), same fixture, content deliberately expensive to
-rebuild (tool cards, markdown tables, images with no reserved height — 327 entries). After "Load
-earlier history":
-
-| | main | this branch |
-|---|---|---|
-| Edit/Rewind enabled | **0 of 280** | 120 messages editable |
-| what the rest say | all 280: "No longer part of the conversation — an earlier rewind replaced it." | the 20 pre-compaction ones: "From before the last context compaction…" |
-
-**Negative result worth keeping**: the load-older path did NOT remount on EITHER build (90 of 100
-entries kept both their React key and their DOM node, identical on both), so it does not discriminate
-the id change. The measured `+82/-82` came from the **agent_idle** refetch specifically — which this
-work deletes outright, so that trigger is gone rather than made cheap. Do not cite the load-older
-path as evidence for or against the key derivation; use the unit tests, which mutate in both
-directions.
-
-Also, twice in one session, a first measurement measured the wrong element: `log.children[0]` is the
-"load earlier" bar, not an entry, so "the first node is still attached" was true on a build that
-remounts everything. Same shape as the viewport task's container-vs-content error. **Check what your
-selector actually points at before believing a null result.**
-## The Anthropic message-shape rules, MEASURED (2026-07-25) — and the fictional one we built on
-
-⚠️ **`ValidatingMockAPI` enforced a role-alternation rule that DOES NOT EXIST.** 628 occurrences of
-"Messages must alternate roles" in our JSONL history; **every one came from our own mock, none from
-the API.** Four mechanisms, one `test.todo` and one memory "⭐ reusable pattern" were built to avoid
-a 400 that cannot happen. Full audit + per-mechanism verdicts: task **01KYCQ856M3Z6F4EN247C4GW69**.
-
-### The rules, as measured against production Anthropic (19 shapes, OAuth, `claude-opus-5`)
-
-1. **First message must be `user`.** (mock had it ✅)
-2. **The conversation must END with a `user` message.** Ending on assistant →
-   400 *"This model does not support assistant message prefill."* (mock did NOT have it ❌)
-3. **The tool-answering rule — and it is NOT "in the next message":**
-
-   > Flatten the user messages after an assistant-with-`tool_use` into one block stream. Take the
-   > **maximal LEADING run of `tool_result` blocks**. It crosses message boundaries freely; **any
-   > non-`tool_result` block ends it** — including a *trailing* text block in an otherwise-fine
-   > message, and including a plain-string user message. Every `tool_use` must be answered inside
-   > that run.
-
-4. **Every `tool_result` must answer a `tool_use` in the preceding assistant message** (orphan →
-   400). (mock had it ✅)
-5. **Consecutive same-role messages are LEGAL** — user/user, user/user/user, and assistant/assistant
-   all accepted. (mock forbade ❌ — the fiction)
-6. **Empty content is LEGAL** — `""`, `[]`, and `[{type:"text",text:""}]` all accepted. (mock
-   forbade ❌ — a second, unnoticed fiction)
-
-Consequences of rule 3 that nothing tests today:
-- results **split across several user messages** are fine (`[R1] [R2] [R3,text]` ✅), in **any order**
-- `[R1, text]` then `[R2, …]` is **400** — the trailing text ended the run before R2
-- `[text, R1]` is **400** — block ORDER inside the message matters
-- ⭐ **`buildUserTurn` packs `[...tool_results, ...queueMessages]`, tool_results FIRST. That order is
-  a real API requirement, not style.** Put text before a tool_result, or between two batches of
-  them, and you get a production 400 with a fully green suite.
-
-### Reachable bug this exposed (BEHAVIOR SNAPSHOT test, `src/reachable-400-snapshot.test.ts`)
-
-`provider-shared.ts` "context too short to compact" (`manualCompactRequested && messages.length <= 4`):
-a fresh agent whose first turn ends with `end_turn` has `messages = [user, assistant]`; `/compact`
-takes the compactOnly path → `continue` → the too-short branch clears the flag and `continue`s with
-nothing to push → next iteration sends a request **ending in assistant** → 400. Reproduced
-end-to-end through the real agent loop; the agent crashes. **No new code needed to reach it.**
-
-### ⭐ The general lesson — how a fictional rule gets installed
-
-`jsonl-stress.test.ts`'s `assertStructurallyValidApiMessages` wrote down BOTH rules in the same
-comment, then chose:
-
-> *"We don't assert the trailing-role rule because some walker outputs are intermediate and meant to
-> be extended. We DO assert the alternation and structural shape."*
-
-**That reasoning is correct.** Some walker outputs genuinely are conversation *prefixes* that end on
-assistant; asserting the real rule would redden correct fixtures. So:
-
-> **An inconvenient TRUE assertion + a conveniently-green FALSE one ⇒ the false one gets installed,
-> and is then believed as fact.** The fiction does not win on persuasiveness — it wins on **not
-> causing trouble**. Once it lives inside a `throw` it starts MANUFACTURING EVIDENCE: 628 error
-> strings from the rule that was *executed*, 0 from the rule that was merely *documented*. **The
-> knowledge was never lost; the enforcement was.**
-
-**Detector — do not audit whether the assertions are correct** (that comment was entirely correct).
-Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
-fork is where the fiction starts producing evidence.
-
-### An over-strict test double bills you in THREE ways, and the third is the quiet one
-
-1. **It creates complexity you pay for.** Four `pending*` mechanisms, a `test.todo`, and a memory
-   entry filed as a ⭐ reusable pattern — all to dodge a 400 that cannot happen.
-2. **It hides gaps.** A fiction occupying the "role rules" slot stops anyone asking what the real
-   role rule is, so the true one (last message must be user) got zero coverage and a reachable
-   production 400 sat there unnoticed.
-3. ⭐ **It VETOES correct code — and this one never looks like a bug.** Found the same day by
-   01KYBB2Z: interrupting an agent before it emits anything, parking it, then sending another
-   message produces `[…, user, user]`. Legal; the old mock rejected it. So the correct
-   implementation could not be tested, the test was truncated at the park, and a comment was left
-   saying the mock's constraint was unverified. **Nothing was red. The feature simply acquired a
-   reputation for being "hard to test".**
-
-The first two produce artifacts you can go find — code, a todo, a crash. The third produces
-*absence*: a test that stops early, a scope quietly trimmed, an approach abandoned as awkward.
-**Ask what your test double has been making people give up on**, not only what it has made them
-build. A fiction's cheapest victims are the ones that were never written down.
-
-**The name is the other tell.** `assertStructurallyValidApiMessages` fuses two different predicates:
-*structurally valid* (a prefix property) and *API messages* (a sendable-request property). The code
-can only be one of them, so it silently became the weaker one plus a fictional bonus — 2 of its 5
-listed rules fictional, 1 true but deliberately unasserted. **A name that claims "valid" without
-saying valid-for-what will drift to "matches what we imagined".** The way out is two predicates:
-a *prefix* check and a *sendable* check. **Shipped as `src/test-utils/api-message-rules.ts`:**
-`wellFormedPrefixViolations` (first-must-be-user; pairing, but an answering run that simply RUNS OFF
-THE END of the array is incomplete rather than broken; orphan tool_results are violations at any
-position) and `sendableRequestViolations` (all of that, plus trailing-role, plus the last
-assistant's tool_uses must be answered by now). `ValidatingMockAPI.validateRequest` is the sendable
-one; `jsonl-stress.test.ts`'s helper is the prefix one, renamed `assertWellFormedPrefix`.
-`emptyContentViolations` holds the non-rule, opt-in, under a name that says it is ours.
-
-**Note the second half of the trap**: the PAIRING rule has the same intermediate-state problem the
-trailing-role rule has (an assistant's tool_results legitimately arrive after the prefix ends). So
-whoever tried to assert the true rules with only one predicate available would have gone red on
-correct fixtures *twice*, not once. **Courage was not the missing ingredient; the concept was.**
-That is what makes this a structural failure rather than a lapse — and it is why the fix is a new
-type of assertion, not a stricter one.
-
-Sibling entries, same family: *"a real error message + an unverified attribution beats a pure guess,
-because it arrives wearing evidence's clothes"* — the phrase that propagated this one was an
-offhand "(matches real Anthropic)" that nobody checked. And *"an accurate observation + an
-over-broad generalisation is harder to challenge than a guess, because it arrives with a number"*
-(Which messages can be edited/rewound).
-
-### Probing the real API: the `systemPreamble` trap
-
-Any probe against the OAuth endpoint **must send the auth group's `systemPreamble` as the FIRST
-system block**, or every call 429s. A first-pass probe that omitted it produced a wall of rate
-limits that reads exactly like validation failure — nearly yielding the opposite conclusion. Probes
-live in `/tmp/alt-probe/` (`probe2.ts`-`probe6.ts` = API shapes, `walker-shapes.ts` = runs disputed
-shapes through the real walker and checks them against the measured rule). They read `oauthToken`
-from config and never print it.
-
-### What the measurement cost, and the one number that reframes it
-
-Full `bun test` with the mock progressively made realistic (env-gated during the experiment, now
-shipped): **A** (drop alternation) 2774/2 — one is the mock's own self-test of the fiction, one a
-known teardown flake that did not recur; **B** (+ trailing-role) 2776/1; **C** (+ the real pairing
-rule) 2776/1. In every variant **the only real failure was the mock's self-test of the fictional
-rule.** The realistic mock was a drop-in: nothing depended on the fiction and the true rules cost
-nothing to adopt — they were simply never asked for.
-
-⭐ **Zero existing tests went red when the true rule was added, and that is the finding, not a
-disappointment.** The expectation going in was "some tests will red, and those reds are assets".
-They didn't, because `validateRequest` only ever sees requests the loop actually decided to send —
-and the loop only sends when its state is right, *except* on the one reachable bug, which had no
-test at all. **The fiction was not masking existing tests. It was masking the fact that nobody had
-written the missing one.** A gap does not turn red; it stays invisible until someone goes looking,
-which is why the probe had to be written by hand rather than discovered by running the suite.
-
-### What DID go red: swapping the fused helper for the two real predicates (10 tests)
-
-Splitting `assertStructurallyValidApiMessages` into prefix/sendable and giving both the measured
-rules turned 10 tests red. **Every one was a fixture that could never be sent to the API, and none
-of them was fixed by loosening a rule** — they were fixed by making the fixture a real
-conversation. Two shapes:
-
-- **6 walker fixtures produced assistant-first output** — no leading user message, because the
-  fixture only cared about the assistant/tool region. Given a `user` head, they assert exactly what
-  they always did.
-- **4 prefix-byte-comparison fixtures opened with an orphan `tool_result`** — no assistant carrying
-  the matching `tool_use`, because those tests are about byte diffing, not conversation validity.
-  Given a real head, likewise unchanged.
-
-One did NOT get a head, and it is the interesting one: the dirty-JSONL scenario table contained
-`orphan assistant_text with no user message before it` under the blanket claim *"walker produces
-valid structure"*. It doesn't — that output is assistant-first and the API rejects it. Moved to its
-own BEHAVIOR SNAPSHOT. **Not hypothetical**: FIX-5 R8-B#1 records a session permanently bricked by
-exactly this shape (a bare `compact_marker` left `readActive()` starting on an assistant turn),
-quoting the same API error.
-
-⭐ **The count that says how far this went.** The old helper's own comment listed five things it
-was about. Of the FOUR rules the API actually has, it enforced **none**: never checked
-first-must-be-user, explicitly skipped trailing-role, never checked pairing or orphans. What it did
-enforce was role-is-one-of-two (a type constraint) plus the two fictions. **A helper named
-`assertStructurallyValidApiMessages`, called from 10 sites, enforced zero real API rules for
-months** — and looked like coverage the whole time. That is the shape to watch for: not a wrong
-assertion, but a *confident name over a predicate nobody re-derived from the source of truth*.
