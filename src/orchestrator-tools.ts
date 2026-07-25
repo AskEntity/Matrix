@@ -185,6 +185,22 @@ const DEFAULT_FULL_COUNT = 5;
 const DEFAULT_BRIEF_COUNT = 10;
 
 /**
+ * Header for the related-tasks block create_task appends to its own result.
+ *
+ * The guidance lives HERE, in the payload, and not in create_task's tool
+ * description, because the description is read when the call is CONSTRUCTED
+ * and this decision is made when the result ARRIVES. Nobody asked for these
+ * hits, so nothing at call time primes an agent to act on them. (Contrast
+ * search_tasks, where the agent asked — there the description reaches it in
+ * time, so the same fact is one clause of that description instead.)
+ *
+ * Emitted only when there is at least one live hit — formatTieredHits returns
+ * "" for a header with no entries.
+ */
+const RELATED_EXISTING_TASKS_HEADER =
+	'\n\n[Related existing tasks] — pointers, not answers: these are truncated excerpts, and "Latest result" is only the FINAL round, often a trivial follow-up. None of it tells you what a task concluded. get_task the ones that look related and read their result rounds. Then: fold what they concluded into this task\'s description (most often this one — cite the taskId); or fork_task_context from one; or send_message to one instead and delete this just-created task; or nothing, if they are unrelated. A past measurement usually still holds; a past "so we decided not to" may not — this new task can be why it changed.';
+
+/**
  * Format a FULL search result entry: title, description excerpt, latest
  * result round excerpt, taskId, status, matched field + snippet, score.
  */
@@ -458,7 +474,9 @@ export function buildAllToolDefs() {
 				"round index (for result), a text snippet, and a relevance score " +
 				"(higher = more relevant; results are pre-sorted best-first). Use it " +
 				"to find whether a problem was solved before, or where a decision or " +
-				"lesson lives, instead of scanning the whole tree.",
+				"lesson lives, instead of scanning the whole tree. A hit tells you " +
+				"WHERE, not WHAT — get_task it and read the result rounds, which is " +
+				"where the conclusion actually is.",
 			params: {
 				projectId: {
 					schema: z.string(),
@@ -595,7 +613,7 @@ export function buildAllToolDefs() {
 							fullCount: 2,
 							briefCount: 3,
 							excludeId: node.id,
-							header: "\n\n[Related existing tasks]",
+							header: RELATED_EXISTING_TASKS_HEADER,
 						});
 					} catch {
 						// Index not ready or search failed — silently skip.
