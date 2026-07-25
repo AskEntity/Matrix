@@ -155,7 +155,7 @@ mutate "pendingReducer stops skipping interrupt (chip never clears)" \
 	'			source === "compacted_resume" ||
 			source === "interrupt"' \
 	'			source === "compacted_resume"' \
-	"web/ .mxd/plugin/web/"
+	"src/plugin-event-handler.test.ts"
 
 echo
 echo "──────────────────────────────────────────────────────────────"
