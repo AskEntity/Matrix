@@ -126,7 +126,7 @@ describe("walkActiveChainIndices", () => {
 		);
 	});
 
-	test("compact_marker terminates walk (excluded by default)", () => {
+	test("unpaired compact_marker (legacy log) ends the walk, marker kept", () => {
 		const events: Event[] = [
 			{
 				type: "assistant_text",
@@ -172,7 +172,7 @@ describe("walkActiveChainIndices", () => {
 		expect(indices).toEqual([1, 2, 3]);
 	});
 
-	test("chain break: falls back to linear for preceding events", () => {
+	test("an event with no parentEid stops chain-following — the rest is taken linearly", () => {
 		const events: Event[] = [
 			{
 				type: "session_config",
@@ -207,7 +207,9 @@ describe("walkActiveChainIndices", () => {
 		] as Event[];
 
 		const indices = walkActiveChainIndices(events);
-		// Chain break at a3 → fallback includes all preceding events
+		// a3 carries no parentEid, so the walk stops following links there and
+		// takes everything before it. Deliberate: it is the genuine chain root
+		// at index 0, and it is what makes a log written before eids readable.
 		expect(indices).toEqual([0, 1, 2]);
 	});
 
