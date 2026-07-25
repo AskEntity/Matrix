@@ -645,12 +645,16 @@ a false premise: separate the PREMISE from the OBLIGATION*** — premise "too sh
 obligation "answer the `tool_use`", and the deletion is only safe because the obligation was checked
 separately and found to live somewhere else.
 
-⚠️ **That floor is the one place a message COUNT still decides anything, and it has a known gap: a
+⚠️ **STANDING DEFECT of the automatic trigger, older than the deletion above and unchanged by it: a
 session with ≤4 messages cannot auto-compact no matter how large it is.** One giant tool result
-(`get_logs`) puts a 3-message session over the threshold, and it will keep calling the API instead
-of compacting until the context window rejects it. Untouched deliberately — the manual path is what
-this round changed, and a floor that also bounds compaction thrash should not be removed without a
-test that fails first. It is the code-level half of `01KXNZHYSJFF0BVQJVPG2WC1RV`.
+(`get_logs`) puts a 3-message session over the threshold, and it then keeps calling the API instead
+of compacting until the context window rejects it. **It is not a consequence of removing the manual
+short path**, and reading it as one is how someone reverts that and gets the 400 back: the two used
+to be two independent `if`s — `manual && len <= 4` bailed out, `len > 4` ran the compaction — so
+`auto + len <= 4` already fell through BOTH and silently never compacted. Folding the manual case
+into the surviving condition changes the automatic path by zero bytes. This is the code-level half
+of `01KXNZHYSJFF0BVQJVPG2WC1RV` (the deadlock that crashed root on 2026-07-15); that ticket has the
+incident, this is the exact condition.
 
 **Compact messages never get `messages_consumed`.** `handleImplicitYield` filters them out of
 `nonCompact` and only `nonCompact` is recorded, so on restart `findUnconsumedMessages` re-enqueues
