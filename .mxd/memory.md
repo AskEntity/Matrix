@@ -283,6 +283,37 @@ Runtime debug introspection ONLY. Do NOT use to: reparent tasks, modify tree str
 
 Embrace large type refactors. Delete first, let compiler show every dependency. Hundreds of errors = your todo list. Static type systems make large changes SAFE.
 
+### Deleting a mechanism built on a false premise: separate the PREMISE from the OBLIGATION
+
+When you have shown that the stated reason for some code is wrong, do NOT delete on that finding
+alone. For each block, answer separately:
+
+1. **What did it claim to prevent?** (the premise — now known false)
+2. **What does it actually still do?** (the obligation — possibly real, possibly load-bearing)
+
+Delete only where (2) is empty. Where (2) is real, **keep the effect and relocate or re-justify it**,
+and rewrite the comment to name the true reason.
+
+**If you skip this, you delete a real guarantee along with the phantom, and the loss is silent** —
+the premise was false so nothing was protecting the obligation, and the tests that covered it were
+usually written in the phantom's vocabulary too, so they go green or get "fixed" on the way out.
+
+Worked example, all four outcomes in one subsystem (`provider-shared.ts`, 2026-07-25 — the
+alternation phantom, see *The Anthropic message-shape rules, MEASURED*):
+
+| block | premise | obligation | outcome |
+|---|---|---|---|
+| `pendingCompactYieldToolCall` / `pendingCompactDoneToolCall` | false | none — the turn they merged into is never persisted | **deleted** |
+| `pendingDuplicateYieldExtras` | false | REAL, and different: live/walker byte-identity | **kept**, comment rewritten |
+| R8-B#11, R8-B#1b | correctly stated | REAL (pairing) | **kept in substance**, relocated |
+| FIX-5 R8-B#2 | false | none, AND it was costing behavior | **reverted** — a behavior FIX |
+
+Note the last row: a mechanism built on a phantom can also be **actively harmful**, so "harmless,
+leave it" is not the safe default it looks like. R8-B#2 answered every `done()` tool_call, which
+made resume detect a generic interrupted-resume instead of a done-resume — the woken agent lost its
+done-resume context. Reverting restored behavior. **Check for a cost, not only for redundancy: the
+cost is usually recorded in the mechanism's own comment as an accepted trade-off.**
+
 **Bound on "every dependency": the compiler enumerates only what it can TYPE.** Anything that
 reaches a symbol *by name* is invisible to it — string-keyed dispatch, an event-type name matched
 across a process boundary, a field an external system keys on. **The compiler's silence means
@@ -441,9 +472,9 @@ FIX-5 R8-B#11.
 yield/done `tool_use` must still be answered before the request goes out, and that is the pairing
 rule, which is real. R8-B#11 and R8-B#1b existed for exactly that and both survive in substance:
 the extras still ride in the same turn as the real tool_result, just built where it is emitted
-instead of two branches later. **When you delete a mechanism built on a false premise, separate the
-premise from the obligation** — here the false premise (alternation) and the true obligation
-(pairing) were served by the same lines, and deleting on premise alone would have deleted both.
+instead of two branches later. The procedure that keeps this from going wrong is in *Refactoring
+Philosophy* § **Deleting a mechanism built on a false premise** — here one set of lines served both
+the false premise (alternation) and the true obligation (pairing).
 
 Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn".
 
@@ -6427,6 +6458,17 @@ correct — ask whether the rule being ENFORCED is the same rule that is DOCUMEN
 fork is where a fiction starts producing evidence. Full case study: *The Anthropic message-shape
 rules, MEASURED*.
 
+**Fix the double BEFORE the code it guards, and treat that ordering as the point of the work.** A
+faithful double pays for itself immediately, on the very change that installs it — while a
+too-loose one lets a real defect through in the same window. Measured inside a single task: after
+`ValidatingMockAPI` was made to mirror the API, the next commit extracted a `yield`-ing block into a
+generator and omitted `yield*` at both call sites. Legal TS, zero diagnostics, and the whole effect
+silently gone — requests went out with an unanswered `tool_use`. **8 tests caught it, all of them
+via the pairing rule that had just been added; under the previous double every one of them would
+have been green.** The report even quoted the real API string, because the double's own rule says
+every throw must. **The reason to fix the double first is not tidiness — it is that you are about to
+be the one it catches.**
+
 ## Canonical user journey test is MANDATORY
 
 If the feature's name or description describes a user action — "fresh-install bootstrap", "sidebar toggle on desktop", "auto-save preserves output", "production mode blocks agent" — there MUST be a test that **performs that exact user action and asserts the user-observable result**. Testing subcomponents, supporting algorithms, and edge cases does not substitute.
@@ -7097,13 +7139,15 @@ to pay for it.
 ## Known Pitfalls
 
 - **memory.md**: Never `write_file` to append. Use `edit_file` or `echo >>`.
-- **A generator called without `yield*` is a SILENT NO-OP.** `foo()` on a `function*` builds a
-  generator object and discards it — the body never runs. Legal TS, no diagnostic, no lint warning.
-  Extracting a `yield`-ing block into a helper (as `emitAndPushCompactToolResult` in
-  `provider-shared.ts`) and forgetting the `yield*` at ONE call site removes that whole effect from
-  the program while everything still compiles. Cost one full suite run to find; the symptom was an
-  unanswered `tool_use` reaching the API. **When a refactor extracts a generator, grep the call
-  sites for `yield*` before running anything.**
+- **A generator called without `yield*` is a SILENT NO-OP. After extracting a `yield`-ing block into
+  a helper, grep every call site for `yield*` before running anything.** `foo()` on a `function*`
+  builds a generator object and discards it — the body never runs. Nothing catches this: it is legal
+  TS with no diagnostic and no lint warning, because the call genuinely does return a generator and
+  the type system has no opinion about whether anyone iterates it. Omit it at one site and that
+  entire effect leaves the program while the build stays clean. Observed cost: two missing `yield*`
+  meant a `tool_result` reached neither JSONL nor `messages[]`, so requests went out with an
+  unanswered `tool_use` (8 tests). See `emitAndPushCompactToolResult` in `provider-shared.ts`, whose
+  docstring carries the warning at the definition.
 - **Git worktrees**: `extensions.worktreeConfig` required. `core.hooksPath` absolute.
 - **Biome**: Typecheck BEFORE lint. No `!important`. No duplicate CSS properties.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`.
