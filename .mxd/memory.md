@@ -41,6 +41,8 @@ This is a product property of Matrix's commit model, not a policy preference. Br
 7. **Create-task as path of least resistance** — when a new requirement emerges, agents default to `create_task` even when an existing task (closed, verify, pending) is a better target. Three alternatives exist: (a) create_task fresh, (b) create_task + fork from source, (c) send_message to existing. Option (c) is often correct but loses in every "cheap" dimension: fresh description vs stale, clean session vs unknown state, single step vs two operations, "closed = finished" word bias. The agent picks (a) because it's the local optimum at every dimension — but globally it fragments context across redundant task trees. **Prompt alone cannot fix this** — mechanism is required: (1) required `origin` param on create_task forcing explicit fresh/fork/continue choice, (2) auto-search for similar titles on "fresh" with warning, (3) `latestDirective` field surfaced in get_tree so existing tasks' current focus is visible (not just their original description), (4) collapse fork_task_context into create_task's origin option to eliminate "two-step" cost. See draft task 01KNZGYY4T6SYWVT66DK13XCPV for full design. User framing: "Too many ways to achieve the same thing, and the easiest way isn't optimal."
 8. **Treating context as a deadline** — an agent that feels "context is running low" starts planning a handoff, cutting scope, or asking to be replaced. **Context is not a deadline, it is a compaction boundary.** When it fills, the agent continues with a summary; the task description and memory.md survive compaction by construction. So a compacted agent strictly DOMINATES a replacement: it has the same durable documents the newcomer would read, plus a summary of its own work, plus whatever tacit judgement survived in it. **Running low on context is never a reason to hand off.** The only legitimate reason is that FAMILIARITY ITSELF has become the liability — a final read-through, an adversarial review, anything where not knowing the material is the requirement rather than the cost. Two failures observed the same day: an agent halved its own remaining scope over a constraint that does not exist (and agents estimate their own remaining budget badly, so the estimate was likely wrong too), and root created a fresh task to continue finished-agent work without ever comparing it against reactivating the original — the reason was constructed after the fact and did not survive checking the data. Note this is #7's sibling: both are "start something new" winning by default over "continue something that exists".
 
+**Measured 2026-07-25**, because #8's "agents estimate their own remaining budget badly" was an assertion with no numbers under it. The agent that offered the handoff was at 2.0M / 891 events having **never compacted once**, and estimated it had 2-3 more sections in it. Told to continue instead, it finished all 5 remaining plus an extra debt, ending at 3.0M / 1191 events — **still zero compactions**. It therefore did roughly twice its own estimate and never reached the boundary it had budgeted against. Two sibling tasks working normally that same day sat at 2.0M / 928 events and 2.0M / 649 events, also zero compactions. This measures one day, one model, one config: read it as "the estimate was off by ~2x and the wall was nowhere near", **not** as a threshold. For where any session actually stands, count that task's own events and `compact_marker`s — no number written here can answer it.
+
 ## Change Ownership Principle
 
 **Whoever introduces a change owns ALL consequences** (prompt, UI, tests, docs). Root never writes production code — delegates everything.
@@ -2988,6 +2990,7 @@ Three tightly-coupled durability gaps closed so process exits + stops don't lose
 - `stopAgent` awaits loop settlement (bounded 1s) — symmetric with stopTask. Closes the race between `POST /projects/:id/stop` returning and the finally block's `agent_end` / Phase 2 `done_notified` / MCP disconnect writes. Fixes DELETE /projects → pm.delete → rm -rf racing with in-flight JSONL writes.
 - Both timeouts are defensive: real providers respect abort within ms. A stuck tool (foreground bash ignoring abort) gets bounded grace, then `buildSessionRepair` on next startup synthesizes the interrupted tool_result (orphan-repair contract). **Do NOT call `fg.resolve()` in stopAgent** — that moves bash cleanly to background and breaks the orphan-repair semantic.
 - Restart-crash integration tests (Restart B/I/J/K/N, LC3) rely on shutdown leaving foreground-tool orphans for autoResume to repair. 3s timeout was too slow for 5s test timeouts; 1s is the sweet spot.
+- ⚠️ **Correction (2026-07-25): that 1s was tuned under a single-run assumption.** Normal load is now 3-4 sub-agents each running the full suite plus root running it too, and under that contention `Restart B: crash during bash sleep` intermittently blows its 30s test timeout — it takes ~2.6s on the runs where it passes, so this is contention, not a marginal miss. Read the line above as the historical record of that tradeoff, not as "already tuned". Rate, mechanism and a second (port-collision) instance live in draft `01KYCMVKN14RRX0KK0H2CNTD9P`. **Triage shortcut from that draft: the suite's own total run time is a load probe** — when this test fails, check it before suspecting your diff (measured 2026-07-25: failing run 300.8s vs 267-269s for passing ones; the draft carries the current threshold). The thing to re-examine is whether 1s still holds under parallel load; raising the test's timeout would only hide it.
 
 ### Worker init timeout + restart backoff (daemon)
 
@@ -6212,6 +6215,43 @@ Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", 
 - Read the full prompt before editing. Prompt is for ALL Matrix users, not our project notebook.
 - Matrix-specific rules → memory.md (this file), not prompt.
 - Principle over rule: 4.7 generalizes from framings better than from rule lists. Prefer "tests are our current truth" (principle that generates behavior) over "don't contort arch for old tests" (rule specifying one behavior). Keep explicit rules only when they protect a product property (e.g., git worktree invariants) — those stay as-is.
+
+### The prompt contradicts itself across sessions, and nothing catches it
+
+Prompt edits rot the same three ways this file does (§ *Writing This File*), but the **superseded**
+kind — correction exists, filed away from the claim — is worse here because of the carrier.
+`memory.md` has regions and topical adjacency, so putting a claim next to its refutation is a move
+you can actually perform, and performing it is what makes the contradiction visible. **A prompt has
+no such mechanism.** It is one linear argument; two sentences sixty lines apart are never brought
+together by anything. And it does not present as a conflict — **both sentences are individually true
+and well written.** They only cancel when someone holds both at once, which is precisely what the
+linear form prevents.
+
+Observed 2026-07-25, two commits one session apart, same file, same author:
+- `be9707f9` added to §5 Refactoring: *"every unfinished break is state you carry, in a context that
+  runs out"* — true as written, there to explain why a half-broken tree is expensive for an agent.
+- `91ba03b5` existed to establish §6's *"compaction is a continuation, not a stopping point"* — i.e.
+  to deny the wall the earlier sentence had just asserted. Fixed to "exactly the kind of state a
+  compaction blurs", which keeps the cost claim and drops the wall.
+
+No gate can see this. The prompt is a template literal; typecheck and biome only prove it parses and
+is formatted, and the sole test touching its content greps for hardcoded git branch names.
+
+**Rule: before editing the prompt, read the recent prompt DIFFS, not just the current text** —
+`git log -p -5 -- src/system-prompts.ts`. The current text tells you what the prompt says; the
+recent diffs tell you what it has just *started* saying, which is the only place a fresh
+contradiction can have come from. After landing an edit, grep the file for the concept you leaned on
+(here, `context`) and read every hit: the sentence that cancels yours will not share your wording.
+
+**Why this step gets skipped**, from the same pair of sessions: the round that INTRODUCED the
+contradiction was required to re-read all 436 lines after editing and substituted a targeted grep,
+reasoning verbatim *"rather than burn context re-reading 436 lines verbatim"* — while sitting at
+zero compactions. The round that CAUGHT it did the full read, and the full read is also what found a
+second, subtler collision (§5 Text's "if you lack context … delegate to a sub task" reads as a
+licensed handoff once §6 forbids handing off for context reasons). So the proximate cause of the
+contradiction surviving a whole session was laziness pattern #8: a verification step narrowed to
+protect a budget that was not under pressure. This rule is worth exactly as much as the willingness
+to pay for it.
 
 ## Known Pitfalls
 
