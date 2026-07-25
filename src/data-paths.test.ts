@@ -363,20 +363,108 @@ function auditableSourceFiles(root: string): string[] {
 	return files;
 }
 
-describe("source audit — ONLY data-paths.ts performs .slice(2) on dataRoot", () => {
+/**
+ * Any string operation applied to a dataRoot-named value: `dataRoot.slice(2)`,
+ * `dataRoot.substring(2)`, `dataRoot.replace(...)`, `dataRoot.split("@/")[1]`,
+ * `dataRoot[2]`. `\s*` spans newlines on purpose — the formatter is free to
+ * wrap a long chain, and `manifest.dataRoot\n\t.replace(…)` is the same call.
+ *
+ * Not matched, correctly: `resolveDataRoot(...)` and friends (a `(` follows the
+ * name, not a `.`), and `x.dataRoot === undefined` (no operation at all).
+ *
+ * The trailing `\(` is what separates code from PROSE. Five doc comments in
+ * this repo end a sentence on the word and start the next with a capital —
+ * "…respecting the plugin's dataRoot. Creating the directory eagerly…" — which
+ * a bare `dataRoot\.\w+` reads as a method call. Requiring the call parens
+ * costs nothing real: a property read like `.length` builds no path.
+ */
+const DATAROOT_STRING_OP = /\b\w*[Dd]ataRoot\s*(\.[a-zA-Z_$][\w$]*\s*\(|\[)/g;
+
+/**
+ * Binding a dataRoot value to a name that does not contain "dataRoot" — the
+ * one escape a name-based audit cannot otherwise see, since `const r =
+ * cfg.dataRoot; r.slice(2)` puts the operation on a name nothing greps for.
+ *
+ * ZERO hits today, and that is the point: this fires on the day someone opens
+ * the bypass, not before. Do not read its silence as it being unnecessary.
+ */
+const DATAROOT_ALIAS =
+	/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[\w$.?[\]]*\.dataRoot\s*;/g;
+
+/**
+ * Operations on a dataRoot that are NOT path construction, named individually.
+ *
+ * This is the subtraction: the audit starts from EVERY string operation on a
+ * dataRoot anywhere in the repo and removes these. An entry that stops being
+ * true shows up as an unexplained absence rather than as silence, and a new
+ * operation nobody listed here goes red on its own.
+ */
+const ALLOWED_DATAROOT_OPS = [
+	{
+		file: "src/plugin.ts",
+		op: "dataRoot.replace",
+		// dataRoot in, dataRoot out — `effectiveDataRoot` strips trailing
+		// slashes and hands the result to resolveDataRoot. It never builds a
+		// path, so it is not what the invariant is about.
+		why: "effectiveDataRoot normalizes trailing slashes; result feeds resolveDataRoot",
+	},
+];
+
+describe("source audit — ONLY data-paths.ts turns a dataRoot into a path", () => {
 	const REPO_ROOT = join(import.meta.dir, "..");
 
-	test("no file outside data-paths.ts slices a dataRoot string by 2", () => {
-		// This walked `src/` only, for years, while `.mxd/plugin/` — where
-		// dataRoot is DEFINED (`dataRoot: "@/plugin/matrix"` in index.ts) and
-		// where three files pass it around — sat outside its reach. Verified by
-		// experiment, not by reading: a `dataRoot.slice(2)` planted in
+	test("no file outside data-paths.ts applies a string operation to a dataRoot", () => {
+		// Two independent axes, both fixed by planting rather than by reading.
+		//
+		// SCOPE: this walked `src/` only, for years, while `.mxd/plugin/` —
+		// where dataRoot is DEFINED (`dataRoot: "@/plugin/matrix"` in index.ts)
+		// — sat outside its reach. A `dataRoot.slice(2)` planted in
 		// `.mxd/plugin/scope-opts.ts` left the audit at 54 pass / 0 fail.
-		const offenders = auditableSourceFiles(REPO_ROOT)
-			.filter((f) => !f.endsWith("/src/data-paths.ts")) // the ONE allowed
-			.filter((f) => /dataRoot\.slice\(2\)/.test(readFileSync(f, "utf-8")))
-			.map((f) => f.slice(REPO_ROOT.length + 1));
+		//
+		// PATTERN: it then matched the literal string `dataRoot.slice(2)`, so
+		// `.substring(2)`, `.replace("@/", "")` and `.split("@/")[1]` all passed
+		// silently. Its NAME claimed the invariant; its REGEX claimed sixteen
+		// characters. Widening it immediately found a real second site
+		// (`effectiveDataRoot`), which the narrow pattern could never have seen.
+		const offenders: string[] = [];
+		for (const f of auditableSourceFiles(REPO_ROOT)) {
+			const rel = f.slice(REPO_ROOT.length + 1);
+			if (rel === "src/data-paths.ts") continue; // the ONE allowed resolver
+			for (const m of readFileSync(f, "utf-8").matchAll(DATAROOT_STRING_OP)) {
+				const op = m[0].replace(/\s+/g, "");
+				const allowed = ALLOWED_DATAROOT_OPS.some(
+					(a) => a.file === rel && op.startsWith(a.op),
+				);
+				if (allowed) continue;
+				offenders.push(`${rel}: ${op}`);
+			}
+		}
 		expect(offenders).toEqual([]);
+	});
+
+	test("no file binds a dataRoot to a differently-named local", () => {
+		// The alias escape, closed. Without this the audit above is one rename
+		// away from seeing nothing at all.
+		const offenders: string[] = [];
+		for (const f of auditableSourceFiles(REPO_ROOT)) {
+			const rel = f.slice(REPO_ROOT.length + 1);
+			if (rel === "src/data-paths.ts") continue;
+			for (const m of readFileSync(f, "utf-8").matchAll(DATAROOT_ALIAS)) {
+				if (!/dataroot/i.test(m[1] ?? "")) offenders.push(`${rel}: ${m[0]}`);
+			}
+		}
+		expect(offenders).toEqual([]);
+	});
+
+	test("every allowlist entry still corresponds to real code", () => {
+		// An allowlist is only a subtraction while its entries are real. A stale
+		// entry is a standing permission for an operation nobody is performing —
+		// which is exactly how the pre-commit hook came to name a test file that
+		// had not existed for four months.
+		for (const a of ALLOWED_DATAROOT_OPS) {
+			const src = readFileSync(join(REPO_ROOT, a.file), "utf-8");
+			expect(src.includes(a.op)).toBe(true);
+		}
 	});
 
 	test("the walk actually reaches the plugin — where dataRoot is defined", () => {
