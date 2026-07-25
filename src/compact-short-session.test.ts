@@ -66,7 +66,9 @@ async function setup(): Promise<Ctx> {
 	const dataDir = await mkdtemp(join(tmpdir(), "mxd-shortcompact-data-"));
 	const projectDir = await mkdtemp(join(tmpdir(), "mxd-shortcompact-proj-"));
 	Bun.spawnSync(["git", "init"], { cwd: projectDir });
-	Bun.spawnSync(["git", "config", "user.email", "t@t.com"], { cwd: projectDir });
+	Bun.spawnSync(["git", "config", "user.email", "t@t.com"], {
+		cwd: projectDir,
+	});
 	Bun.spawnSync(["git", "config", "user.name", "T"], { cwd: projectDir });
 	await Bun.write(
 		join(projectDir, ".gitignore"),
@@ -109,7 +111,10 @@ async function teardown(ctx: Ctx): Promise<void> {
 	await rm(ctx.projectDir, { recursive: true, force: true });
 }
 
-async function readSessionEvents(ctx: Ctx, sessionId: string): Promise<Event[]> {
+async function readSessionEvents(
+	ctx: Ctx,
+	sessionId: string,
+): Promise<Event[]> {
 	const daemonStore = ctx.app.ctx.eventStores.get(ctx.projectId);
 	if (daemonStore) await daemonStore.flushSession(sessionId);
 	const store = new EventStore(
@@ -119,11 +124,14 @@ async function readSessionEvents(ctx: Ctx, sessionId: string): Promise<Event[]> 
 }
 
 async function sendMessage(ctx: Ctx, nodeId: string, content: string) {
-	return ctx.app.app.request(`/projects/${ctx.projectId}/tasks/${nodeId}/message`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ content }),
-	});
+	return ctx.app.app.request(
+		`/projects/${ctx.projectId}/tasks/${nodeId}/message`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ content }),
+		},
+	);
 }
 
 async function waitForIdle(ctx: Ctx, nodeId: string, timeoutMs = 10000) {
@@ -215,7 +223,9 @@ describe("/compact on a short session", () => {
 		const postCompact = ctx.mockAPI
 			.getRequestHistory()
 			.slice(before + 1)
-			.find((rec) => JSON.stringify(rec.messages).includes(MOCK_SUMMARY_MARKER));
+			.find((rec) =>
+				JSON.stringify(rec.messages).includes(MOCK_SUMMARY_MARKER),
+			);
 		expect(postCompact).toBeDefined();
 		expect(postCompact?.messages[0]?.role).toBe("user");
 	}, 30000);
