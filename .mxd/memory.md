@@ -2377,180 +2377,169 @@ The five entries this replaces, and the one decision from each that still explai
   into the one zod struct above, and drew the runtime↔plugin boundary.
 - **After Step 2** — `lessons` dropped; `result` is the only content field.
 
-## Memory-index Step 2: FTS keyword-search vertical — `src/task-index.ts` + search_tasks tool (2026-07-15)
+## Memory index: the search engine — `src/task-index.ts` (2026-07-15 … 07-23)
 
-First usable slice of the memory index (design draft 01KWCQEB). Explicit keyword search (mode b),
-FTS-only, precise-location results. Builds on Step 1's `resultRounds` (structured done() content).
+Merged from "Memory-index Step 2" (FTS5) and "Memory-index Phase C" (Orama). Phase C replaced the
+entire storage engine, so Step 2's machinery is history — but its *architectural* decisions (where
+the engine lives, the sync model, the hook) survived the swap untouched and are stated here as
+current. The FTS5 era is at the bottom.
 
-### What shipped
-- **`src/task-index.ts`** (NEW src/ leaf) — per-project SQLite (bun:sqlite, zero deps) FTS5 index over
-  every task's title, description, and each done() round's result, at **per-field +
-  per-round granularity** (each row = one (task_id, field, round) unit → every hit traces to an exact
-  location). Public API: `openIndexDb`, `indexTask(dbPath,node)`, `reconcileIndex(dbPath,tracker)`,
-  `searchIndex(dbPath,query,limit)`, `toMatchQuery`, `SCHEMA_VERSION`, `SearchHit`.
-- **`search_tasks` tool** (orchestrator-tools.ts `buildAllToolDefs`, `availability:"both"`) — agent +
-  external-MCP keyword search. Returns `{taskId,title,field,round?,snippet,score}[]` (BM25 best-first).
-- **`projectIndexDbPath(dataDir,projectId,dataRoot?)`** in data-paths.ts (sibling of tree.json →
-  matrix: `projects/<id>/plugin/matrix/index.db`).
-- **Sync**: index-on-done (matrix onDone in `.mxd/plugin/scope-opts.ts`) + startup reconcile
-  (new generic `onScopeResume` hook).
+Indexes every task's **title**, **description**, and **each done() round's result**, at per-field +
+per-round granularity: one document per (task, field, round), so every hit traces to an exact
+location rather than to "somewhere in this task".
 
-### ⭐ Boundary (identical to the DonePayload boundary — the ACTUAL invariant)
-The red line is NOT "index code physically only in `.mxd/plugin/`" (that was a loose wording in the
-task description — src/ is the neutral building-block layer, like done-payload.ts / worktree-manager.ts).
-The REAL invariant: **`src/runtime/*` + runtime.ts + provider-shared.ts have ZERO occurrences of
-index/FTS/resultRounds** (grep-verified — even comments; I had to genericize two hook comments that
-said "search index"). The index engine is a `src/` leaf imported by BOTH the plugin (onDone +
-onScopeResume) AND orchestrator-tools (search_tasks) — plugin→src and src(non-runtime)→leaf are both
-fine. **Why the engine MUST be in src/ not `.mxd/plugin/`**: `search_tasks` needs `availability:"both"`,
-and the external-MCP tool list is built by `mcp-endpoint.ts:305` from `buildAllToolDefs()`
-(orchestrator-tools.ts, src/); src cannot import `.mxd/plugin/` (forbidden direction). So the tool must
-be in buildAllToolDefs → the search fn must be src-importable → engine lives in src/. This decisively
-resolved the layout.
+### Current engine
 
-### Generic `onScopeResume(tracker, projectId)` hook (runtime touch, boundary-clean)
-New ScopeOpts hook (`src/runtime/context.ts`), called once per project in `autoResumeProjects`
-(runtime.ts) after the tracker loads, BEFORE resumeScope. Counterpart to `seedTree` (fresh tree only);
-this runs every startup. Named by EVENT not resource (hook-naming rule) — no index/fts word, grep-clean.
-Matrix's impl reconciles the index; the runtime attaches no meaning. Best-effort (runtime try/catch).
-`createApp` does NOT call autoResumeProjects → tests trigger reconcile via `app.autoResumeProjects()`
-or by calling `reconcileIndex` directly (so index work doesn't fire in every createMatrixApp test).
+Orama (pure TS, no native deps) + `@orama/tokenizers/mandarin` (jieba WASM) +
+`@huggingface/transformers` EmbeddingGemma-300M (768-dim, q8 quantization).
 
-### Schema (versioned, forward-compatible for Phase C)
-`schema_meta(key,value)` (schema_version=1) · `task_fts` FTS5 `(task_id UNINDEXED, field UNINDEXED,
-round UNINDEXED, text, tokenize='porter unicode61')` · `task_index_meta(task_id PK, indexed_at)` ·
-`task_vec(task_id,field,round,embedding BLOB,dim)` **reserved placeholder, NOT populated** (Phase C).
+- **Hybrid search** (`mode: "hybrid"`): BM25 keyword + cosine vector in one query, fused by Orama's
+  built-in ranking. Cross-lingual in practice — "fix session recovery" ↔ "修复会话恢复" scores 0.81
+  cosine.
+- **Graceful degradation**: if the embedding model fails to load → `mode: "fulltext"` (pure BM25).
+  The daemon is never blocked on a model download.
+- **Mandarin tokenizer**: passed as `components.tokenizer` to `create()`. Chinese and English queries
+  both work natively.
+- **Embedding pipeline**: lazy module-level singleton (`getEmbeddingPipeline()`), ~5s cold / ~1s warm
+  on first call. `embed(text) → number[768]`.
+- ⚠️ **Score direction reversed at Phase C**: Orama scores are **higher = better**. FTS5 BM25 was
+  lower = better. Any comparison, sort, or threshold carried over from the FTS5 era is backwards.
+
+### ⭐ Boundary: why the engine lives in `src/`, not in the plugin
+
+The red line is NOT "index code must physically sit in `.mxd/plugin/`" — `src/` is the neutral
+building-block layer, like `done-payload.ts` or `worktree-manager.ts`. The REAL invariant:
+**`src/runtime/*` + `runtime.ts` + `provider-shared.ts` contain ZERO occurrences of index / search /
+resultRounds** — grep-verified including comments (two hook comments had to be genericized because
+they said "search index"). The engine is a `src/` leaf imported by BOTH the plugin (onDone,
+onScopeResume) AND `orchestrator-tools.ts` (search_tasks); plugin→src and src(non-runtime)→leaf are
+both allowed directions.
+
+**Why it cannot live in the plugin**: `search_tasks` needs `availability: "both"`, and the
+external-MCP tool list is built by `mcp-endpoint.ts` from `buildAllToolDefs()` in
+`orchestrator-tools.ts` — which is in `src/`, and `src/` may not import `.mxd/plugin/`. So the tool
+must be in buildAllToolDefs → the search function must be src-importable → the engine lives in
+`src/`. That chain decided the layout; it is the same boundary as the DonePayload one, stated for a
+different subsystem.
+
+### The `onScopeResume(tracker, projectId)` hook
+
+A generic ScopeOpts hook (`src/runtime/context.ts`), called once per project in
+`autoResumeProjects` after the tracker loads and BEFORE resumeScope. Counterpart to `seedTree`
+(fresh tree only); this one runs every startup. **Named by EVENT, not by resource** — no
+"index"/"search" token anywhere in the name, which is what keeps the boundary grep clean. Matrix's
+implementation reconciles the index; the runtime attaches no meaning to it and wraps it in
+try/catch (best-effort). Now `async`.
+
+**Test pitfall**: `createApp` does NOT call `autoResumeProjects`, so reconcile does not fire in
+every `createMatrixApp` test. Tests that want it call `app.autoResumeProjects()` or `reconcileIndex`
+directly.
 
 ### Sync model
-- **Staleness marker = per-task `indexed_at` stored IN index.db** = the node's `updatedAt` string at
-  index time. reconcile reindexes a task iff `stored.indexed_at !== node.updatedAt` (string compare, no
-  clock math). This SUBSUMES backfill (never-indexed task has no indexed_at → stale → indexed) — no
-  separate "already backfilled" marker needed. reconcile also PRUNES rows for tasks gone from the tree.
-- **index-on-done**: matrix onDone appends the round THEN best-effort `indexTask(canonical node)`
-  wrapped in try/catch — an index write must NEVER break the done lifecycle; reconcile retries misses.
-  Verified sync-safe: agent-lifecycle Phase 2 calls `opts.onDone?()` (sync) BEFORE
-  `updateStatus(verify)`, so when a test observes "verify" the index is already written (no race).
-- **Reconcile catches** title/description edits via update_task (no onDone) + crash-between-done-and-index.
-  Accepted edge: a same-millisecond edit-after-index yields an equal `updatedAt` string → skipped until
-  the next (different-ms) edit or restart. Practically never (edits happen at live-work time, indexing at
-  startup/done — different ms).
-- **KNOWN LIMITATION (inherited from Step 1)**: crash-recovery Phase 2 (`findInterruptedDonePhase2`,
-  runtime.ts) updates status via the runtime, never calls onDone → a crash-interrupted done's round is
-  lost from BOTH the node and the index. Normal path (overwhelming majority) is fine.
 
-### Connection model — open-per-operation, NO module cache
-Each op opens a fresh `Database`, closes in `finally`. Chose this over a cached-connection Map because
-onDone now runs in ~100 integration tests (each a fresh temp dataDir) → a module-level cache would leak
-one handle per test pointing at removed dirs. bun:sqlite is sync + single-threaded so ops never overlap;
-a per-op open on a small local file is sub-ms; reconcile opens ONCE and loops internally (`indexTaskInDb`
-on the shared handle). Default rollback journal (no WAL) → no `-wal/-shm` files left behind.
-
-### Query safety (NOT query rewriting — anti-pattern #6)
-`toMatchQuery`: split on whitespace, quote each term (doubling embedded `"`), join (implicit AND). This
-is INPUT SAFETY (prevents FTS5 syntax errors from stray `()`/operators), not semantic rewriting. Empty →
-"" → searchIndex returns []. Built ONLY raw FTS5 + BM25 + snippet — no field weighting, no ranking
-heuristics, no filters. Add those only when real use exposes a need.
-
-### ⚠️ Phase C de-risk — bun:sqlite CANNOT loadExtension (sqlite-vec blocker)
-Smoke-tested: `new Database(":memory:").loadExtension("x")` → **"This build of sqlite3 does not support
-dynamic extension loading"**. So Phase C's sqlite-vec CANNOT load into the default bun:sqlite build.
-Phase C options: (a) `Database.setCustomSQLite(path)` pointing at an extension-enabled libsqlite3
-(e.g. `brew install sqlite`), or (b) store embeddings as BLOB in `task_vec` + compute cosine in JS.
-FTS5 itself is fully built-in and works perfectly (MATCH/bm25/snippet/DELETE-by-column all verified,
-bun 1.3.14). Step 2 only reserves the vec table + schema_version.
-
-### Tests
-- `src/task-index.test.ts` (15 unit): schema/vec-reservation, title/description/result provenance,
-  re-index replaces stale rows, reconcile backfill/incremental-noop/prune/skip-folders, empty+punctuation
-  query safety, multi-term AND, BM25 ordering, limit, toMatchQuery.
-- `src/integration.test.ts` "memory index (Step 2 FTS...)" (4, full agent loop): index-on-done searchable,
-  startup reconcile via `autoResumeProjects`→onScopeResume, `search_tasks` tool end-to-end (asserts the
-  tool_result carries taskId+snippet+field), best-effort (index path made a DIRECTORY → open throws →
-  done() still verifies + round still on node).
-- Full suite 2516 pass / 0 fail; typecheck + check:ci clean (matches baseline 66 pre-existing warnings).
-
-### Gotchas
-- FTS5 standalone (own-content) table supports `DELETE FROM task_fts WHERE task_id=?` (re-index = delete
-  + reinsert). Verified — no external-content quirks.
-- `snippet(task_fts, 3, '[', ']', '…', 16)` — column index 3 = `text` (0-based: task_id=0,field=1,round=2,text=3).
-- The `search_tasks` handler enriches each hit with the task's CURRENT title (fresh `tracker.getTask`)
-  and drops hits whose task was deleted since indexing.
-- Generic `R.getDataPaths()` added to resource-registry (returns `{dataDir, dataRoot?}`) so the src/ tool
-  can resolve the index path without src→plugin coupling; minimal config interface gained `dataRoot?`.
-- **Post-merge cleanup (lessons-drop)**: `lessons` field removed from DonePayload after Step 2 was written.
-  task-index.ts lessons rows removed; integration tests cleaned. Index now covers title/description/result only.
-
-## Memory-index Phase C: Orama + EmbeddingGemma hybrid search (2026-07-20)
-
-**SUPERSEDES the FTS5-based Step 2 architecture.** bun:sqlite + FTS5 replaced with Orama (pure TS
-search engine) + `@orama/tokenizers/mandarin` (jieba WASM Chinese tokenizer) +
-`@huggingface/transformers` EmbeddingGemma-300M (768-dim vectors, q8 quantization).
-
-### Architecture
-- **Hybrid search**: `mode: "hybrid"` — simultaneous BM25 keyword + cosine-similarity vector match with
-  Orama's built-in fusion ranking. Cross-lingual: "fix session recovery" ↔ "修复会话恢复" (0.81 cosine).
-- **Graceful degradation**: if embedding model fails to load → `mode: "fulltext"` (pure BM25). Daemon
-  never blocked. The `_setEmbeddingPipeline(null)` test helper forces BM25-only in tests.
-- **Mandarin tokenizer**: `@orama/tokenizers/mandarin` creates a Jieba-WASM tokenizer. Passed as
-  `components.tokenizer` to `create()`. Both Chinese and English queries work natively.
-- **Embedding pipeline**: lazy singleton (`getEmbeddingPipeline()`). First call loads the model (~5s cold,
-  ~1s warm). Cached module-level. `embed(text) → number[768]`.
+- **Staleness marker = the node's `updatedAt` string, stored per task in the index's sidecar**
+  (`indexedAt`). Reconcile reindexes a task iff `stored.indexedAt !== node.updatedAt` — string
+  compare, no clock math. This SUBSUMES backfill: a never-indexed task has no `indexedAt`, so it is
+  stale, so it gets indexed. No separate "already backfilled" marker exists or is needed. Reconcile
+  also PRUNES documents for tasks that have left the tree.
+- **index-on-done**: Matrix's `onDone` appends the round, then indexes the canonical node
+  best-effort — an index write must NEVER break the done lifecycle, and reconcile retries misses.
+  Since Phase C the index call is fire-and-forget (`indexTask(...).catch(...)`) because `onDone` is
+  synchronous in the runtime.
+- **Reconcile catches what onDone cannot**: title/description edits via `update_task` (no done()
+  fires), and a crash between done and index.
+- **Accepted edge**: an edit landing in the same millisecond as an index write yields an equal
+  `updatedAt` string and is skipped until the next edit or restart. Practically never — edits happen
+  at live-work time, indexing at startup/done.
+- **KNOWN LIMITATION (inherited)**: crash-recovery Phase 2 never calls onDone, so a crash-interrupted
+  done()'s round is lost from BOTH the node and the index. See *The done() payload* § Flow.
 
 ### Persistence — two files per project
-- `index.msp` — Orama binary (msgpack via `@orama/plugin-data-persistence`). Persisted after every
-  `indexTask` and after reconcile when changes occur.
-- `index-meta.json` — sidecar: `{ [taskId]: { indexedAt: string, docIds: string[] } }`. Tracks staleness
-  (`indexedAt` vs `node.updatedAt`) and enables targeted document removal by stored doc IDs.
-- Both live at `projectIndexDbPath()` (data-paths.ts), extension changed from `.db` → `.msp`.
 
-### Document ID convention
-`${taskId}:${field}:${round}` — deterministic. Enables targeted `remove(db, id)` without scanning.
-Fields: `title`, `description`, `result` (per round). No `_meta` sentinel docs in Orama itself
-(metadata is in the sidecar JSON).
+- `index.msp` — the Orama binary (msgpack, via `@orama/plugin-data-persistence`). Written after every
+  `indexTask`, and after a reconcile that changed anything.
+- `index-meta.json` — sidecar: `{ [taskId]: { indexedAt, docIds } }`. Holds the staleness marker and
+  the stored document ids, which is what makes targeted removal possible.
+- Both resolve through `projectIndexDbPath()` (data-paths.ts), a sibling of tree.json →
+  `projects/<id>/plugin/matrix/`.
 
-### In-memory DB cache
-`dbCache: Map<string, IndexDb>` keyed by `dbPath`. First access restores from disk (`restoreFromFile`);
-cache cleared in test teardown via `_clearDbCache()`. Production: one DB per project, lives for the
-daemon's lifetime.
+**Document id convention**: `${taskId}:${field}:${round}` — deterministic, so `remove(db, id)` is
+targeted and needs no scan. Fields: `title`, `description`, `result` (per round). Metadata lives in
+the sidecar JSON, never in Orama — see the `where` limitation below.
 
-### Public API (all async now)
-- `indexTask(dbPath, node)` — (re)index one task with embeddings + sidecar update + persist.
-- `reconcileIndex(dbPath, tracker)` — backfill/incremental reindex + prune. Returns `{indexed, pruned}`.
-- `searchIndex(dbPath, query, limit?)` — hybrid (or BM25 fallback) search. Returns `SearchHit[]`.
-- `SearchHit` — `{ taskId, field, roundIndex?, snippet, score }`. Score is now higher=better (Orama
-  convention), **reversed from the old FTS5 BM25 where lower=better**.
-- `_setEmbeddingPipeline`, `_resetEmbeddingPipeline`, `_clearDbCache` — test helpers.
+**In-memory cache**: `dbCache: Map<dbPath, IndexDb>`. First access restores from disk
+(`restoreFromFile`); in production one DB per project lives for the daemon's lifetime. Tests clear
+it via `_clearDbCache()`.
 
-### Deleted (from FTS5 era)
-- `bun:sqlite` / `Database` / FTS5 / SQL — all gone.
-- `openIndexDb`, `toMatchQuery`, `SCHEMA_VERSION`, `task_vec` placeholder table.
-- `initSchema`, `withDb`, `indexTaskInDb` internal functions.
+### Public API (all async)
 
-### Caller changes
-- `orchestrator-tools.ts` `search_tasks`: description updated ("hybrid-search"), `await searchIndex()`,
-  return type `Awaited<ReturnType<typeof searchIndex>>`.
-- `.mxd/plugin/scope-opts.ts`: `onScopeResume` now `async` with `await reconcileIndex()`. `onDone`
-  index call is fire-and-forget (`indexTask(...).catch(...)`) since `onDone` is sync in the runtime.
-- `src/integration.test.ts`: `await` on all `searchIndex`/`reconcileIndex` calls, `_setEmbeddingPipeline(null)`
-  in `beforeEach` to disable real model loading.
+`indexTask(dbPath, node)` · `reconcileIndex(dbPath, tracker) → {indexed, pruned}` ·
+`searchIndex(dbPath, query, limit?) → SearchHit[]`, where
+`SearchHit = { taskId, field, roundIndex?, snippet, score }`. Test-only:
+`_setEmbeddingPipeline`, `_resetEmbeddingPipeline`, `_clearDbCache`.
 
-### sharp workaround
-`@huggingface/transformers` depends on `sharp`. Bun's global cache layout puts libvips at a versioned
-path that sharp can't find. `scripts/fix-sharp-libvips.sh` creates a symlink from the unversioned `lib/`
-to the versioned one. Added as `postinstall` in package.json. Idempotent, platform-aware.
+### Gotchas
 
-### Orama `where` clause limitation
-Orama's `where` filter only works on `enum`-typed fields, and does NOT support `ne` (not-equal) on enums.
-`string`-typed fields silently return empty on `where`. This is why we don't store metadata in Orama
-(sidecar JSON instead) and don't use `where` in search queries.
+- **NaN scores → automatic BM25 retry.** Documents indexed without a working embedding pipeline get
+  `ZERO_EMBEDDING` (768 zeros); cosine on a zero vector is `0/0 = NaN`, and hybrid fusion inherits
+  it, so *every* hit comes back `score: NaN`. `searchIndex` checks
+  `hits.some(h => !Number.isFinite(h.score))` after a hybrid search and, if any hit is non-finite,
+  redoes the whole search as pure fulltext. 3 regression tests.
+- **`MXD_DISABLE_EMBEDDINGS`** short-circuits `getEmbeddingPipeline()` to null (BM25-only). Set via
+  `bunfig.toml [test.env]` and propagated to workers by the daemon's `{ env: process.env }` Worker
+  option — see *Bun Worker env isolation*, because `process.env` assignments do NOT reach a Bun
+  Worker on their own. Priority: explicit mock (`_setEmbeddingPipeline`) > env var > lazy load, so a
+  test can still exercise hybrid paths with a mock while the env var is set.
+  **Why it exists**: `@huggingface/transformers` has a STATIC `import * as ONNX_NODE from
+  "onnxruntime-node"` at module scope. Loading it registers the NAPI backend, and worker teardown
+  then hits `NAPI FATAL ERROR: Error::New napi_create_error` → SIGTRAP → the whole test process
+  dies. The env var is how the test suite avoids ever registering it.
+- **sharp / libvips**: `@huggingface/transformers` depends on `sharp`, and Bun's global cache puts
+  libvips at a versioned path sharp cannot find. `scripts/fix-sharp-libvips.sh` symlinks the
+  unversioned `lib/` to the versioned one; wired as `postinstall`. Idempotent, platform-aware.
+- **Orama `where` only filters `enum` fields**, and has no `ne` on enums; `string`-typed fields
+  silently return empty. That is why metadata lives in the sidecar and no search query uses `where`.
+- **`search_tasks` enriches from the tracker, not the index**: each hit gets the task's CURRENT title
+  via a fresh `tracker.getTask`, and hits whose task has been deleted since indexing are dropped.
+- **`R.getDataPaths()`** (resource-registry, returns `{dataDir, dataRoot?}`) exists so the `src/` tool
+  can resolve the index path without any src→plugin coupling; the minimal config interface gained
+  `dataRoot?` for it.
+- **Index coverage is title / description / result.** `lessons` rows were removed when that field was
+  dropped from DonePayload — see *The done() payload* § Current state.
 
 ### Tests
-- `src/task-index.test.ts` (16): title/description/result provenance, re-index replaces stale rows,
-  reconcile backfill/incremental/prune/skip-folders, empty/punctuation query safety, BM25 ranking, limit,
-  Chinese tokenizer, embedding degradation, persistence round-trip, hybrid search with mock embeddings.
-- `src/integration.test.ts` "memory index (Orama hybrid search)" (4): index-on-done, startup reconcile,
-  search_tasks tool end-to-end, best-effort (sabotaged index path).
-- Full suite: 2547 pass / 0 fail. typecheck + check:ci clean.
+
+- `src/task-index.test.ts` — provenance per field, re-index replaces stale rows, reconcile
+  backfill/incremental-noop/prune/skip-folders, empty + punctuation query safety, BM25 ranking,
+  limit, Chinese tokenizer, embedding degradation, persistence round-trip, hybrid search with mock
+  embeddings.
+- `src/integration.test.ts` "memory index (Orama hybrid search)" (4, full agent loop) — index-on-done
+  searchable, startup reconcile via `autoResumeProjects` → onScopeResume, `search_tasks` end-to-end,
+  and best-effort (sabotage the index path → done() still verifies and the round is still on the
+  node).
+
+### History: the FTS5 era (Step 2, 2026-07-15 → 07-20)
+
+The first working index was per-project SQLite via `bun:sqlite`, zero deps: an FTS5 table
+`task_fts(task_id, field, round, text)` with `tokenize='porter unicode61'`, a `task_index_meta`
+staleness table, a versioned `schema_meta`, and a reserved-but-unpopulated `task_vec` table for the
+vector phase that never used it. Query input went through `toMatchQuery` (quote each whitespace-split
+term, implicit AND) — **input safety against FTS5 syntax errors, deliberately not query rewriting**;
+no field weighting, no ranking heuristics, no filters, on the "add heuristics only when real use
+exposes a need" rule. Connections were opened per operation with no module cache, specifically
+because ~100 integration tests each use a fresh temp dataDir and a cached handle map would have
+leaked one handle per test onto a removed directory.
+
+Deleted at Phase C: `bun:sqlite`/`Database`/FTS5/SQL entirely, `openIndexDb`, `toMatchQuery`,
+`SCHEMA_VERSION`, the `task_vec` table, and the `initSchema`/`withDb`/`indexTaskInDb` internals.
+
+**One durable fact from that era**: `bun:sqlite` CANNOT `loadExtension` — smoke-tested,
+`new Database(":memory:").loadExtension("x")` → *"This build of sqlite3 does not support dynamic
+extension loading"*. That killed the sqlite-vec plan (the alternatives were
+`Database.setCustomSQLite()` against an extension-enabled libsqlite3, or storing embeddings as BLOBs
+and computing cosine in JS) and is why the vector phase went to a pure-TS engine instead. FTS5
+itself was fully built in and worked correctly — MATCH, bm25, snippet and DELETE-by-column all
+verified on bun 1.3.14.
 
 ## Sidebar search + work_context related-tasks injection (2026-07-21)
 
@@ -2565,19 +2554,25 @@ Orama's `where` filter only works on `enum`-typed fields, and does NOT support `
   Empty query → normal tree. Local substring filter still runs as instant fallback.
 
 ### Part B — work_context related-tasks injection
-- `searchIndexSync(dbPath, query, limit)` in `src/task-index.ts`: **synchronous** BM25-only
-  search using the already-cached in-memory Orama DB. Returns `[]` if DB not loaded (no crash).
-  The DB is pre-loaded by `reconcileIndex` at startup (via `onScopeResume` hook).
-- `buildWorkContext` in `.mxd/plugin/scope-opts.ts`: uses `searchIndexSync` with
-  `node.title + node.description` as query. Appends `[Related past tasks]` block with
-  up to 5 hits, capped at `RELATED_TASKS_CHAR_LIMIT = 8000` chars (~2000 tokens).
-  Excludes self (`taskId !== node.id`). Best-effort (try/catch, index unavailable = no block).
-- Injection is sync → no runtime interface change. Works in both initial launch and
-  compact re-arm paths (same `buildWorkContext` callback).
+- `buildWorkContext` in `.mxd/plugin/scope-opts.ts` searches with `node.title + node.description` as
+  the query and appends a `[Related past tasks]` block: up to 5 hits, capped at
+  `RELATED_TASKS_CHAR_LIMIT = 8000` chars (~2000 tokens), self excluded (`taskId !== node.id`),
+  best-effort (try/catch — index unavailable just means no block). Works on both the initial-launch
+  and the compact re-arm path, because both go through the same `buildWorkContext` callback.
+
+⚠️ **SUPERSEDED — this shipped with a synchronous search and no longer has one.** The original text
+read: *"`searchIndexSync(dbPath, query, limit)`: synchronous BM25-only search using the
+already-cached in-memory Orama DB … Injection is sync → no runtime interface change."* Both halves
+are now false. `buildWorkContext` is `async` and awaits the normal `searchIndex`, and the runtime
+awaits the hook (`agent-lifecycle.ts` ~950/961) — so the interface DID change. Verified in code:
+`scope-opts.ts:149` is `buildWorkContext: async (...)`, `:166` is `await searchIndex(...)`.
+
+`searchIndexSync` still exists in `src/task-index.ts` but has **zero production callers** — only its
+own tests. It was written for this hook and orphaned when the hook went async. Whether to delete it
+is draft 01KYB46KTM.
 
 ### Boundary preserved
-- `src/runtime/*` has ZERO knowledge of search/index. The sync search uses the DB already
-  cached by `reconcileIndex` (onScopeResume startup hook in scope-opts.ts).
+- `src/runtime/*` has ZERO knowledge of search/index. Everything routes through the plugin's hooks.
 - REST endpoint uses `ctx.trackers.get(projectId)` directly (not `getTracker` helper which
   has scope-opts dependencies).
 
@@ -2590,9 +2585,13 @@ one-line briefs (title, taskId, status, score). Total output hard-capped at 8000
 chars to protect the context window.
 
 `create_task` handler appends a best-effort `[Related existing tasks]` block after
-the node JSON. Uses `searchIndexSync` (sync, BM25-only, in-memory DB cache warmed
-at startup by `reconcileIndex`). Query = `title + description`; self-excluded;
-2 full + up to 5 brief hits. Index unavailable → silent skip, never blocks create.
+the node JSON. Query = `title + description`; self-excluded; 2 full + up to 5 brief
+hits. Index unavailable → silent skip, never blocks create.
+
+⚠️ **SUPERSEDED**: this shipped using `searchIndexSync` ("sync, BM25-only, in-memory DB cache warmed
+at startup by `reconcileIndex`") — the handler now awaits the normal async `searchIndex`
+(`orchestrator-tools.ts:308`). Same staleness as the work_context injection above; both moved off
+the sync variant and left it with no production callers.
 
 System prompt: "Search before building" bullet added to Planning before acting
 (§2), steering agents to `search_tasks` before creating tasks or starting work
@@ -2601,40 +2600,14 @@ in unfamiliar areas.
 ### Key design decisions
 - Full taskId in output (not truncated prefix) — agents need it for `fork_task_context`
   / `send_message`.
-- `searchIndexSync` for create_task (not async `searchIndex`) — the handler is async
-  but sync search avoids a second embedding-pipeline load; the DB is already cached.
+- ~~`searchIndexSync` for create_task (not async `searchIndex`) — the handler is async
+  but sync search avoids a second embedding-pipeline load; the DB is already cached.~~
+  **REVERSED** — create_task awaits the async `searchIndex` now. The reasoning above was
+  sound but the sync variant lost its other caller and was not worth keeping alive for one.
 - 8000-char budget matches `RELATED_TASKS_CHAR_LIMIT` in scope-opts.ts work_context
   injection.
 - `formatTieredHits` is shared between search_tasks and create_task (same formatting,
   different `fullCount` and header).
-
-## MXD_DISABLE_EMBEDDINGS — test-only NAPI crash prevention (2026-07-23)
-
-`getEmbeddingPipeline()` in `src/task-index.ts` checks `process.env.MXD_DISABLE_EMBEDDINGS`
-and short-circuits to null (BM25-only mode). Set via `bunfig.toml [test.env]` + propagated
-to workers via the daemon's `{ env: process.env }` Worker option.
-
-Priority order: explicit mock (`_setEmbeddingPipeline(mock)`) > env var > lazy load.
-This lets tests exercise hybrid search paths via mock pipelines even with the env var set.
-
-Root cause: `@huggingface/transformers` has a STATIC `import * as ONNX_NODE from "onnxruntime-node"`
-at module scope (line 7545 of `transformers.node.mjs`). The dynamic `import()` in
-`getEmbeddingPipeline()` loads this, which registers the NAPI backend. Worker teardown
-then triggers `NAPI FATAL ERROR: Error::New napi_create_error` → SIGTRAP → process death.
-
-## search_tasks NaN-score fallback (2026-07-23)
-
-**Score NaN root cause**: Documents indexed without a valid embedding pipeline get
-`ZERO_EMBEDDING` (768 zeros). Cosine similarity on a zero vector = `0/0 = NaN`.
-Hybrid mode fusion score inherits NaN → all hits return `score: NaN`.
-
-**Fix** (`src/task-index.ts`): `searchIndex` checks
-`results.hits.some(h => !Number.isFinite(h.score))` after hybrid search. If ANY hit
-has NaN/Infinity, redo the entire search as pure BM25 fulltext. 3 regression tests.
-
----
-# Daemon, Worker & Transport
----
 
 ## Durability at process boundaries (FU2)
 
