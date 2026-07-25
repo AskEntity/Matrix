@@ -747,14 +747,19 @@ it, or back the file up.
 
 ## JSONL Repair
 
-`buildSessionRepair()` in events.ts handles all repair. It returns `{chainToEid, appendEvents}` and **never deletes anything** — the poison stays on disk and simply leaves the active chain, applied exactly like a rollback (`setChainHead(chainToEid)` then append).
-- **Orphan only** (tool_call without result): `chainToEid: null` — append interrupted results, nothing dropped
-- **Duplicate results / out-of-order**: chain back to the last good event + append (interrupted results, replayed messages from the dropped region, a status)
-- A repair carrying a `chainToEid` ALWAYS has ≥1 append event — `setChainHead` is pure in-memory, so the jump only reaches disk via the first appended event's parentEid
-- Repair runs in runAgentForNode before provider loop starts
-- **File truncation is gone** (`truncateAfterLine`, deleted 2026-07-24). Addressing events by file position produced two separate data-destroying bugs (FIX-1 cc#1, FIX-8 R8-B#4) and destroyed the evidence needed to debug the corruption. Read those FIX sections as history; the current shape is "One boundary: the active chain".
+`buildSessionRepair()` in events.ts handles all repair. **A repair is a chain jump, and it never
+deletes anything** — the poison stays on disk and simply stops being on the active chain, applied
+exactly like a rollback. Two shapes: append-only (an orphaned tool_call just gets its interrupted
+result, nothing dropped), or jump-back (duplicate / out-of-order results: chain back to the last
+good event, then append). Repair runs in runAgentForNode before the provider loop starts.
 
-Full account: *One boundary: the active chain*, at the end of this region. This entry is the index card.
+**File truncation is gone** (`truncateAfterLine`, deleted 2026-07-24). Addressing events by file
+position produced two separate data-destroying bugs (FIX-1 cc#1, FIX-8 R8-B#4) and destroyed the
+evidence needed to debug the corruption. Read those FIX sections as history.
+
+**The interface lives in exactly one place** — the return shape, the field names, what each jump
+must append and in what order: *One boundary: the active chain*, at the end of this region. This
+entry is the index card and states only the shape, so the two cannot drift apart.
 
 ### Scope: what it deliberately does NOT repair
 
