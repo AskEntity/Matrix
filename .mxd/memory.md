@@ -2882,26 +2882,40 @@ see the same env as the main thread.
 
 ### ScopeOpts on RuntimeContext
 
-`ctx.scopeOpts: Map<projectId, ScopeOpts<T>>` — per-project scope configuration. `buildMatrixScopeOpts()` is the ONE place that knows Matrix tools + prompt + hooks.
+`ctx.scopeOpts: Map<projectId, ScopeOpts<T>>` — per-project scope configuration. `buildMatrixScopeOpts()`
+is the ONE place that knows Matrix tools + prompt + hooks.
 
-```ts
-interface ScopeOpts<T extends PluginTypes> {
-  buildTools: (auth, taskId) => { tools, ... };
-  buildPrompt: () => SystemPrompt;
-  connectMcp?: (projectPath) => Promise<McpClientManager>;
-  beforeChildLaunch?: (node, tracker, projectPath) => Promise<void>;
-  shouldResume?: (node) => boolean;
-  onLaunch?: (node) => void;
-  onDone?: (node, doneData) => void;
-  buildWorkContext?: (node, project) => string;
-  buildSummarizationPrompt?: (node) => string;
-  buildDoneResumeContext?: (node) => string;
-}
-```
+**The hook list is NOT reproduced here.** It lives in `src/runtime/context.ts` and it has grown
+several times (`onTaskDelete`, `seedTree`, `onScopeResume` were all added after this section was
+written, and two hooks changed arity and became required). A copy in this file would go stale
+silently — there is no compiler between the two. Read the interface; the notes below are only for
+the parts the type signature does not tell you:
+
+- **Hooks are named by EVENT, never by resource.** `onTaskDelete`, not `removeWorkspace` — a name
+  like the latter presupposes that tasks HAVE workspaces, which is a plugin-specific assumption the
+  runtime must not encode. Prose comments may say "workspace"; hook NAMES may not.
+- **`seedTree` vs `onScopeResume`**: seedTree runs once, only when a project's tree is first created;
+  onScopeResume runs on every startup. They are the fresh-install and the every-boot halves of
+  "the plugin gets a chance to touch its tree".
+- **`onDone` returns void**, and the runtime hands it the raw done input as an opaque record — see
+  *The done() payload* § The boundary for why that opacity is load-bearing.
+- Everything optional is genuinely optional: the runtime does `opts.hook?.(...)` and attaches no
+  meaning to absence.
 
 ### BaseTaskNode / TaskNode Split
 
-Runtime uses `BaseTaskNode` (id, parentId, children, title, session) **at the type level**: the `ScopeOpts<T>` hook interfaces and the `PluginTypes { node; done }` generic are parameterized over it. Matrix extends: `TaskNode extends BaseTaskNode` adds status, description, branch, worktreePath, cwd, color, costUsd, budgetUsd. `PluginTypes { node; done }` generic flows through all `ScopeOpts<T>` hooks — type-safe per plugin. `MatrixPluginTypes` binds `node: TaskNode, done: MatrixDoneData`.
+Runtime uses `BaseTaskNode` **at the type level**: the `ScopeOpts<T>` hook interfaces and the
+`PluginTypes` generic are parameterized over it. Matrix extends it — `TaskNode extends BaseTaskNode`
+adds description, branch, worktreePath, cwd, color, costUsd, budgetUsd, resultRounds. The generic
+flows through all `ScopeOpts<T>` hooks, so each plugin gets its own node type back, type-safe.
+
+⚠️ **Two details in the original wording are superseded.** It said BaseTaskNode is
+"(id, parentId, children, title, session)" and that Matrix adds "status" — `status` and `metadata`
+were promoted UP to BaseTaskNode (they are genuinely runtime-generic: the runtime inits, mutates and
+resumes on status). See *The node model* § Later. It also said `PluginTypes { node; done }` and
+`MatrixPluginTypes binds done: MatrixDoneData` — **the `done` member of PluginTypes and the
+`MatrixDoneData` type were both deleted**; done content is opaque to the runtime now. See
+*The done() payload* § Step 1.4.
 
 CAVEAT (Audit A): only the *hook interfaces* are generic. The concrete `TaskTracker` (`src/task-tracker.ts`) still stores Matrix's `TreeNode` (`TaskNode | GeneralNode`) directly — it is NOT generic over `BaseTaskNode`. "Runtime uses BaseTaskNode" is aspirational for the tracker; full tracker generalization is future work (plugin-extraction track).
 
@@ -2928,16 +2942,21 @@ Changed from `"both"` to `"external"` — agents don't need to read other tasks'
 ### File Ownership
 
 ```
-.mxd/
-  config.json        ← daemon (project config)
+<repo>/.mxd/
+  config.json        ← daemon (repo-scope project config)
   plugin/            ← daemon reads for discovery
     index.ts         ← plugin manifest
     runtime.ts       ← plugin ScopeOpts (worker)
     web/             ← plugin React components (shell imports)
   hooks/             ← matrix plugin runtime
   memory.md          ← matrix plugin runtime
-  tree.json          ← matrix plugin runtime
 ```
+
+⚠️ **`tree.json` used to be listed here and that was wrong** — it is NOT in the repo. It is daemon
+runtime state at `~/.mxd/projects/<id>/plugin/matrix/tree.json`, deliberately outside git because the
+tree mutates constantly and committing it would pollute history. The listing above contradicted
+*Unified Storage Layout*, which has always said so. Only the four repo-tracked things are here now;
+everything runtime lives under `~/.mxd/` — same split, stated once per side.
 
 ### Addressing: `<scope>:<project>`
 
@@ -5074,7 +5093,7 @@ Consolidated cleanup of items flagged by the 12-audit review:
 - **Worker-side SSE ring buffer deleted** — daemon owns SSE (seqId, buffer, fanout). Worker just calls `onBroadcast`; daemon serializes + fans out. Removes triple-JSON-serialize path.
 - **`ctx.sseClients` removed from RuntimeContext** — worker never had SSE clients attached.
 - **`persistent-queue.ts` deleted** — dead code that bypassed the unified `projects/<id>/` storage layout.
-- **`scope: "project"` union variant dropped** from PluginManifest (only "global" is implemented). Re-introduce via task when a real per-project plugin appears.
+- ~~**`scope: "project"` union variant dropped** from PluginManifest (only "global" is implemented). Re-introduce via task when a real per-project plugin appears.~~ **It came back**, exactly as anticipated — `PluginManifest.scope` is `"global" | "project"` again since additive dual-lens routing. See *Additive project-scoped plugin routing*. Left visible because the removal-then-return is the honest record of a correct call: deleting an unimplemented union member and re-adding it when a real case arrived cost nothing, and is what anti-pattern #6 asks for.
 - **`family` PermissionMode dropped** (zero call sites). `send_message` still walks parent/child manually; when we finally apply a shared mode there, re-introduce.
 - **`@mxd/types` is now the plugin's single source** of TaskNode / FolderNode / TreeNode / TaskStatus / isFolder / isTask — `.mxd/plugin/web/types.ts` re-exports from it instead of redeclaring. `src/types.ts` is the one truth.
 - **Shell icon set reduced** from 19 to 7 in `web/icons.tsx`. `web/components/icons.tsx` (381 lines duplicated from plugin) deleted.
