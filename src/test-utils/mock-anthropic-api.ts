@@ -184,6 +184,10 @@ function validateAPIFields(params: Record<string, unknown>): void {
 }
 
 import type { CacheTtl } from "../config.ts";
+import {
+	type ApiMessage,
+	sendableRequestViolations,
+} from "./api-message-rules.ts";
 
 /** Numeric TTL rank for ordering: no ttl field (5m default) = 5, "5m" = 5, "1h" = 60. */
 function ttlRank(ttl: CacheTtl | undefined): number {
@@ -261,220 +265,33 @@ function validateCacheTtlOrder(
 }
 
 /**
- * The tool_use/tool_result pairing rule as MEASURED against the real Anthropic
- * API on 2026-07-25 (task 01KYCQ85, probes F/F4-F13, G, H, I, N, O).
+ * The mock validates every outgoing request against the MEASURED Anthropic
+ * rules — see `api-message-rules.ts` for the rules themselves, how they were
+ * measured, and why "sendable request" and "well-formed prefix" are two
+ * different predicates.
  *
- * Flatten the user messages following an assistant-with-tool_use into one block
- * stream. Take the MAXIMAL LEADING RUN of `tool_result` blocks — it may cross
- * message boundaries freely, but ANY non-tool_result block ends it (including a
- * trailing text block in an otherwise-fine message, and including a plain-string
- * user message). Every tool_use must be answered inside that run; every
- * tool_result inside it must answer a tool_use of that assistant message.
+ * ⚠️ HISTORY, and the reason this file now delegates instead of deciding:
+ * this function used to enforce STRICT ROLE ALTERNATION and NON-EMPTY CONTENT.
+ * Neither rule exists. Measured 2026-07-25 against production Anthropic:
+ * user/user, user/user/user and assistant/assistant are all accepted, as are
+ * "", [] and [{type:"text",text:""}]. Meanwhile the mock did NOT check the one
+ * role rule that IS real — the conversation must end with a user message.
  *
- * Fits all 13 measured data points; the old message-granular rule fits 9.
+ * That combination is the whole lesson (task 01KYCQ85): a test double that is
+ * stricter than the system under test manufactures phantom bugs, and phantom
+ * bugs get fixed with real complexity. "Messages must alternate roles" appears
+ * 628 times in our JSONL history and every single one was thrown by THIS
+ * function. Four production mechanisms exist to avoid that 400.
+ *
+ * ⚠️ Every throw below cites the real API error string it mirrors. If you add
+ * a check and cannot quote the API error, you have not verified it — put it in
+ * `emptyContentViolations`-style opt-in territory instead, under a name that
+ * says it is OUR rule.
  */
-function validatePairingRealRule(messages: MessageParam[]): void {
-	for (let i = 0; i < messages.length; i++) {
-		const msg = messages[i];
-		if (!msg || msg.role !== "assistant") continue;
-
-		const toolUseIds = new Set<string>();
-		if (Array.isArray(msg.content)) {
-			for (const block of msg.content) {
-				if (
-					block &&
-					typeof block === "object" &&
-					"type" in block &&
-					block.type === "tool_use" &&
-					"id" in block
-				) {
-					toolUseIds.add(block.id as string);
-				}
-			}
-		}
-		if (toolUseIds.size === 0) continue;
-
-		// Maximal leading run of tool_result blocks across following user messages.
-		const answered = new Set<string>();
-		outer: for (let j = i + 1; j < messages.length; j++) {
-			const next = messages[j];
-			if (!next || next.role !== "user") break;
-			if (!Array.isArray(next.content)) break; // plain string ends the run
-			for (const block of next.content) {
-				const isToolResult =
-					block &&
-					typeof block === "object" &&
-					"type" in block &&
-					block.type === "tool_result";
-				if (!isToolResult) break outer; // any other block ends the run
-				const id = (block as { tool_use_id: string }).tool_use_id;
-				if (answered.has(id)) {
-					throw new MockValidationError(
-						`Duplicate tool_result for tool_use_id '${id}' after assistant at index ${i}`,
-					);
-				}
-				if (!toolUseIds.has(id)) {
-					throw new MockValidationError(
-						`Unexpected tool_result for tool_use_id '${id}' — no matching tool_use in assistant at index ${i}. ` +
-							"Real API: 'Each `tool_result` block must have a corresponding `tool_use` block in the previous message.'",
-					);
-				}
-				answered.add(id);
-			}
-		}
-		for (const id of toolUseIds) {
-			if (!answered.has(id)) {
-				throw new MockValidationError(
-					`Missing tool_result for tool_use_id '${id}' (assistant at index ${i}). ` +
-						"Real API: '`tool_use` ids were found without `tool_result` blocks immediately after.'",
-				);
-			}
-		}
-	}
-}
-
 function validateRequest(messages: MessageParam[]): void {
-	if (messages.length === 0) {
-		throw new MockValidationError("Messages array must not be empty");
-	}
-
-	// 1. First message must be user
-	if (messages[0]?.role !== "user") {
-		throw new MockValidationError(
-			`First message must be role 'user', got '${messages[0]?.role}'`,
-		);
-	}
-
-	// ── EXPERIMENT (task 01KYCQ85, round 1 — data collection, NOT a shipped change) ──
-	// MXD_MOCK_EXP is read at call time:
-	//   unset / "0" → current behavior (fictional alternation rule, no last-must-be-user)
-	//   "A" → alternation check REMOVED
-	//   "B" → A + last-message-must-be-user (the REAL rule the mock never had)
-	//   "C" → B + pairing check replaced by the empirically-measured prefix rule
-	const EXP = process.env.MXD_MOCK_EXP ?? "0";
-
-	// 2. Strict alternation: user/assistant/user/assistant...
-	// MEASURED 2026-07-25 against the real API: this rule DOES NOT EXIST.
-	// user/user, user/user/user and assistant/assistant are all ACCEPTED.
-	if (EXP === "0") {
-		for (let i = 1; i < messages.length; i++) {
-			const prev = messages[i - 1];
-			const curr = messages[i];
-			if (prev?.role === curr?.role) {
-				throw new MockValidationError(
-					`Messages must alternate roles. Found consecutive '${curr?.role}' at index ${i - 1} and ${i}`,
-				);
-			}
-		}
-	}
-
-	// 2b. REAL rule the mock never had: the conversation must END with a user message.
-	// Real API: 400 "This model does not support assistant message prefill.
-	// The conversation must end with a user message."
-	if (EXP === "B" || EXP === "C") {
-		const last = messages[messages.length - 1];
-		if (last?.role !== "user") {
-			throw new MockValidationError(
-				`Conversation must end with a user message, got '${last?.role}' at index ${messages.length - 1}. ` +
-					"Real API: 'This model does not support assistant message prefill.'",
-			);
-		}
-	}
-
-	// 3. No empty content
-	for (let i = 0; i < messages.length; i++) {
-		const msg = messages[i];
-		if (!msg) continue;
-		const content = msg.content;
-		if (content === undefined || content === null) {
-			throw new MockValidationError(`Message at index ${i} has empty content`);
-		}
-		if (typeof content === "string" && content.length === 0) {
-			throw new MockValidationError(
-				`Message at index ${i} has empty string content`,
-			);
-		}
-		if (Array.isArray(content) && content.length === 0) {
-			throw new MockValidationError(
-				`Message at index ${i} has empty content array`,
-			);
-		}
-	}
-
-	if (EXP === "C") {
-		validatePairingRealRule(messages);
-		return;
-	}
-
-	// 4. tool_use/tool_result pairing
-	for (let i = 0; i < messages.length; i++) {
-		const msg = messages[i];
-		if (!msg || msg.role !== "assistant") continue;
-
-		// Collect tool_use IDs from this assistant message
-		const toolUseIds = new Set<string>();
-		if (Array.isArray(msg.content)) {
-			for (const block of msg.content) {
-				if (
-					block &&
-					typeof block === "object" &&
-					"type" in block &&
-					block.type === "tool_use" &&
-					"id" in block
-				) {
-					toolUseIds.add(block.id as string);
-				}
-			}
-		}
-
-		if (toolUseIds.size === 0) continue;
-
-		// The immediately-following message must be a user message with matching tool_results
-		const nextMsg = messages[i + 1];
-		if (!nextMsg || nextMsg.role !== "user") {
-			throw new MockValidationError(
-				`Assistant message at index ${i} has tool_use but no following user message with tool_results`,
-			);
-		}
-
-		const toolResultIds = new Set<string>();
-		if (Array.isArray(nextMsg.content)) {
-			for (const block of nextMsg.content) {
-				if (
-					block &&
-					typeof block === "object" &&
-					"type" in block &&
-					block.type === "tool_result" &&
-					"tool_use_id" in block
-				) {
-					const toolUseId = (block as { tool_use_id: string }).tool_use_id;
-					if (toolResultIds.has(toolUseId)) {
-						throw new MockValidationError(
-							`Duplicate tool_result for tool_use_id '${toolUseId}' in message at index ${i + 1}`,
-						);
-					}
-					toolResultIds.add(toolUseId);
-				}
-			}
-		}
-
-		// Every tool_use must have exactly one matching tool_result
-		for (const id of toolUseIds) {
-			if (!toolResultIds.has(id)) {
-				throw new MockValidationError(
-					`Missing tool_result for tool_use_id '${id}' (assistant at index ${i}, expected in user at index ${i + 1})`,
-				);
-			}
-		}
-
-		// No extra tool_results for tool_use IDs not in this assistant message
-		for (const id of toolResultIds) {
-			if (!toolUseIds.has(id)) {
-				throw new MockValidationError(
-					`Unexpected tool_result for tool_use_id '${id}' in message at index ${i + 1} — no matching tool_use in assistant at index ${i}`,
-				);
-			}
-		}
+	const violations = sendableRequestViolations(messages as ApiMessage[]);
+	if (violations.length > 0) {
+		throw new MockValidationError(violations.join("; "));
 	}
 }
 

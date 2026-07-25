@@ -11559,6 +11559,21 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 		mockAPI.createStream(
 			{
 				messages: [
+					// A realistic head: without it the tool_result answers nothing,
+					// which the real API rejects and (since 2026-07-25) so does the
+					// mock. This fixture is about prefix BYTE comparison. (01KYCQ85)
+					{ role: "user", content: "go" },
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "tool_use" as const,
+								id: "test_123",
+								name: "bash",
+								input: {},
+							},
+						],
+					},
 					{
 						role: "user",
 						content: [
@@ -11589,6 +11604,18 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 			mockAPI.createStream(
 				{
 					messages: [
+						{ role: "user", content: "go" },
+						{
+							role: "assistant",
+							content: [
+								{
+									type: "tool_use" as const,
+									id: "test_123",
+									name: "bash",
+									input: {},
+								},
+							],
+						},
 						{
 							role: "user",
 							content: [
