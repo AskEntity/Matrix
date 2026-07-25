@@ -293,9 +293,24 @@ export const ActivityLog = memo(function ActivityLog({
 		}
 	}, []);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new visible entries
+	// New content arrived. Follow mode means "come along when there is more to
+	// see", so this reacts to the content, never to the intent.
+	//
+	// `autoScroll` is deliberately NOT a dependency, and the flag is read from
+	// the ref instead of the closure. With it in the deps, merely re-arming
+	// follow ran this effect, and re-arming happens the instant a manual scroll
+	// comes within 40px of the bottom — so the last stretch of the user's own
+	// gesture was completed for them, mid-drag. Measured: a scroll walking down
+	// to 25px from the bottom found itself at 0.5px two frames later, without
+	// touching the wheel again. The user reported it as the scroll being taken
+	// away, which is exactly what it was.
+	//
+	// Arming is not acting. "Go to the bottom now" is a separate intent with
+	// its own channel (`scrollToBottomRequest`, used by the ↓ and Follow
+	// buttons); this effect only handles "new content, and we are following".
+	// biome-ignore lint/correctness/useExhaustiveDependencies: fires on new content only — see above
 	useEffect(() => {
-		if (autoScroll) {
+		if (autoScrollRef.current) {
 			requestAnimationFrame(scrollToBottom);
 		} else {
 			// New entries while the user is scrolled up: the distance from
@@ -303,7 +318,7 @@ export const ActivityLog = memo(function ActivityLog({
 			// must be re-evaluated without any scroll event.
 			reportAtBottom();
 		}
-	}, [visible.length, autoScroll, scrollToBottom, reportAtBottom]);
+	}, [visible.length, scrollToBottom, reportAtBottom]);
 
 	useEffect(() => {
 		const el = logRef.current;

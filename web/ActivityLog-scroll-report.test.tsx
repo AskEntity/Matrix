@@ -103,15 +103,20 @@ async function renderLog(opts: {
 	const { LocaleProvider } = await import("../.mxd/plugin/web/i18n.ts");
 	const { createLogEntry } = await import("../.mxd/plugin/web/hooks.ts");
 
-	const makeEntries = (count: number) =>
-		Array.from({ length: count }, (_, i) =>
-			createLogEntry({
-				type: "assistant_text",
-				content: `log entry number ${i}`,
-				taskId: "root-1",
-				ts: 1000 + i,
-			} as Parameters<typeof createLogEntry>[0]),
-		);
+	// Built ONCE and sliced, so an entry keeps its id — and therefore its React
+	// key and its DOM node — across rerenders. Regenerating them per render
+	// would make every rerender look like a wholesale content replacement,
+	// which fires the MutationObserver and hides whether the effect under test
+	// scrolled. Growing the count appends, exactly as production does.
+	const master = Array.from({ length: 64 }, (_, i) =>
+		createLogEntry({
+			type: "assistant_text",
+			content: `log entry number ${i}`,
+			taskId: "root-1",
+			ts: 1000 + i,
+		} as Parameters<typeof createLogEntry>[0]),
+	);
+	const makeEntries = (count: number) => master.slice(0, count);
 
 	const atBottomCalls: boolean[] = [];
 	const autoScrollCalls: boolean[] = [];
@@ -369,5 +374,69 @@ describe("ActivityLog follow-intent guard (shrinking range)", () => {
 
 		await waitFor(() => autoScrollCalls.length > 0);
 		expect(autoScrollCalls[autoScrollCalls.length - 1]).toBe(true);
+	});
+});
+
+/**
+ * Arming follow is not the same as going to the bottom.
+ *
+ * Re-arming happens the instant a manual scroll comes within 40px of the
+ * bottom. While `autoScroll` was a dependency of the new-content effect, that
+ * re-arm ran the effect and finished the user's gesture for them. Measured in
+ * Chrome: a scroll walking down to 25px from the bottom was at 0.5px two frames
+ * later, with no further input. The user reported it as the scroll being taken
+ * away from them.
+ *
+ * The two tests below are the two sides of the same guard. The first proves the
+ * effect no longer reacts to intent; the second proves it still reacts to
+ * content. Without the second, over-blocking this effect (or deleting it) would
+ * leave every test green while follow mode silently stopped working.
+ */
+describe("ActivityLog: arming follow vs acting on it", () => {
+	test("re-arming follow does NOT move the offset on its own", async () => {
+		const { container, render } = await renderLog({
+			autoScroll: false,
+			entryCount: 3,
+		});
+		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
+
+		// The user's own gesture has just crossed the 40px threshold and is
+		// still in progress — 20px of scroll left that THEY are driving.
+		container.scrollTop = 680;
+
+		// handleScroll re-arms follow. Same entries: no new content.
+		render(3, true);
+		await new Promise((r) => setTimeout(r, 80));
+
+		expect(container.scrollTop).toBe(680);
+	});
+
+	test("new content while following DOES scroll to the bottom", async () => {
+		const { container, render } = await renderLog({
+			autoScroll: true,
+			entryCount: 3,
+		});
+		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
+		container.scrollTop = 100;
+
+		// One more entry arrives while following.
+		render(4, true);
+
+		await waitFor(() => container.scrollTop === 1000);
+		expect(container.scrollTop).toBe(1000);
+	});
+
+	test("new content while NOT following leaves the offset alone", async () => {
+		const { container, render } = await renderLog({
+			autoScroll: false,
+			entryCount: 3,
+		});
+		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
+		container.scrollTop = 100;
+
+		render(4, false);
+		await new Promise((r) => setTimeout(r, 80));
+
+		expect(container.scrollTop).toBe(100);
 	});
 });
