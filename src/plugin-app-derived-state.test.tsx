@@ -103,7 +103,7 @@ function makeDeps(overrides?: Partial<Record<string, unknown>>) {
 		compact: mock(async () => {}),
 		sendMessageToTask: mock(async () => {}),
 		deleteTask: mock(async () => {}),
-		stopTask: mock(async () => {}),
+		interruptTask: mock(async () => {}),
 		clearTaskSession: mock(async () => {}),
 		refreshTasks: mock(() => {}),
 		t: (key: string) => key,

@@ -124,6 +124,24 @@ export function IconPause({ size = 14 }: { size?: number }) {
 	);
 }
 
+/**
+ * Stop — a single square, not two bars. Pause says "it will carry on where it
+ * left off"; this ends the turn and hands control back to you.
+ */
+export function IconStop({ size = 13 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="currentColor"
+		>
+			<rect x="5" y="5" width="14" height="14" rx="2" />
+		</svg>
+	);
+}
+
 export function IconTrash({ size = 13 }: { size?: number }) {
 	return (
 		<svg

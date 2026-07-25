@@ -330,35 +330,95 @@ describe("Interrupt: end the turn, keep the session", () => {
 		expect(JSON.stringify(events)).toContain("do the other thing instead");
 	}, 30000);
 
-	// ── 6. Reconstruction shape ──
+	// ── 6. Reconstruction obeys the REAL pairing rule ──
 	//
-	// The interrupt's own `status` event lands BEFORE the tool_results (it is
-	// written while the tools are still running). That position matters: the
-	// walker's tool_result collection loop breaks on any unrecognised event, so
-	// a status landing INSIDE the run would split one user turn into two. The
-	// repair path has the mirror-image rule for the same reason — its status
-	// event must come last. Reasoning is not enough here; pin it.
-	test("reconstruction keeps the interrupted turn's tool_results in ONE user message", async () => {
+	// Measured against the live API (audit 01KYCQ856M): flatten everything after
+	// an assistant turn that used tools into one block stream, take the LEADING
+	// run of tool_result blocks, and every tool_use must be answered inside it.
+	// Splitting the results across several user messages is fine; a non-
+	// tool_result block appearing before the last of them is NOT — it ends the
+	// run and orphans whatever came after.
+	//
+	// This matters here because the interrupt path is what decides whether queue
+	// content gets merged into the turn, and because the interrupt announces
+	// itself with a `status` event WHILE the tools are still running — i.e.
+	// between the tool_calls and their results.
+	//
+	// That status turns out to be doubly harmless, and the second reason is the
+	// load-bearing one: `isPersistedByEmitEvent` returns false for `status`, so
+	// it is broadcast to clients and never written to the log at all. It cannot
+	// sit between tool_results in a reconstruction that never sees it. (The
+	// walker also has no case for it — but that would only matter if it were on
+	// disk.) The test pins both halves: the interrupt really did announce
+	// itself, AND the announcement contributes nothing to the rebuilt stream.
+	test("the interrupted turn's tool_results form an unbroken leading run", async () => {
 		ctx = await setupEmissionTestContext();
 		ctx.mockAPI.disableStrictToolErrors();
 		const nodeId = await rootId(ctx);
 
-		await startAgent(ctx, bashTurn("sleep 30", "sleep 30"));
-		await waitForActivity(ctx, nodeId, "tool");
-		await waitFor(
-			() => session(ctx, nodeId).foregroundExecutions.size >= 2,
-			"both commands to register",
-		);
-		interruptTask(ctx.app.ctx, ctx.projectId, nodeId);
-		await waitForIdle(ctx);
+		const broadcast: string[] = [];
+		const unsubscribe = subscribeToEvents(ctx.app.ctx, ctx.projectId, (e) => {
+			if (e.type === "status") broadcast.push(String(e.message));
+		});
 
-		const messages = eventsToAnthropicMessages(
-			readActiveEvents(ctx, nodeId),
-		) as Array<{ role: string; content: unknown }>;
-		const last = messages[messages.length - 1];
-		expect(last?.role).toBe("user");
-		const blocks = last?.content as Array<{ type: string }>;
-		expect(blocks.filter((b) => b.type === "tool_result").length).toBe(2);
+		try {
+			await startAgent(ctx, bashTurn("sleep 30", "sleep 30"));
+			await waitForActivity(ctx, nodeId, "tool");
+			await waitFor(
+				() => session(ctx, nodeId).foregroundExecutions.size >= 2,
+				"both commands to register",
+			);
+			interruptTask(ctx.app.ctx, ctx.projectId, nodeId);
+			await waitForIdle(ctx);
+		} finally {
+			unsubscribe();
+		}
+
+		const events = readActiveEvents(ctx, nodeId);
+
+		// The interrupt announced itself to clients…
+		expect(broadcast).toContain("Interrupted by user");
+		// …and left nothing on disk to sit between the tool_results.
+		expect(events.some((e) => e.type === "status")).toBe(false);
+
+		const messages = eventsToAnthropicMessages(events) as Array<{
+			role: string;
+			content: unknown;
+		}>;
+
+		// Every tool_use of the last tool-using assistant turn…
+		let callIds: string[] = [];
+		let assistantIdx = -1;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const m = messages[i];
+			if (m?.role !== "assistant" || !Array.isArray(m.content)) continue;
+			const uses = (m.content as Array<{ type: string; id?: string }>).filter(
+				(b) => b.type === "tool_use",
+			);
+			if (uses.length > 0) {
+				callIds = uses.map((u) => u.id ?? "");
+				assistantIdx = i;
+				break;
+			}
+		}
+		expect(callIds.length).toBe(2);
+
+		// …must be answered inside the LEADING run of tool_result blocks of the
+		// flattened remainder. Crossing message boundaries is allowed; a
+		// non-tool_result block before the last answer is not.
+		const flattened: Array<{ type: string; tool_use_id?: string }> = [];
+		for (let i = assistantIdx + 1; i < messages.length; i++) {
+			const c = messages[i]?.content;
+			if (typeof c === "string") flattened.push({ type: "text" });
+			else if (Array.isArray(c))
+				flattened.push(...(c as Array<{ type: string; tool_use_id?: string }>));
+		}
+		const answered = new Set<string>();
+		for (const b of flattened) {
+			if (b.type !== "tool_result") break; // the run ends here
+			if (b.tool_use_id) answered.add(b.tool_use_id);
+		}
+		for (const id of callIds) expect(answered.has(id)).toBe(true);
 	}, 30000);
 
 	// ── 7. The window where the batch never started ──

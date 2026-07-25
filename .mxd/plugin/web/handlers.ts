@@ -85,7 +85,7 @@ interface ActionHandlerDeps {
 		images?: { base64: string; mediaType: string }[],
 	) => Promise<void>;
 	deleteTask: (taskId: string) => Promise<void>;
-	stopTask: (taskId: string) => Promise<void>;
+	interruptTask: (taskId: string) => Promise<void>;
 	clearTaskSession: (taskId: string) => Promise<void>;
 	// initProject — shell manages
 	// deleteProject — shell manages
@@ -119,7 +119,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		compact,
 		sendMessageToTask,
 		deleteTask,
-		stopTask,
+		interruptTask,
 		clearTaskSession,
 		refreshTasks,
 		t,
@@ -311,10 +311,16 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		}
 	}
 
-	async function handleStopTask() {
-		if (!selectedTaskId) return;
+	/**
+	 * End the current turn of the task the composer is aimed at. Not the same
+	 * verb as the old per-task stop this replaced: the session, its background
+	 * processes and its queue all survive, so anything typed next is delivered
+	 * to the same agent rather than launching a new one.
+	 */
+	async function handleInterrupt(taskId: string | null) {
+		if (!taskId) return;
 		try {
-			await stopTask(selectedTaskId);
+			await interruptTask(taskId);
 		} catch (err) {
 			addLog({
 				type: "error",
@@ -434,7 +440,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		handleClarifySubmit,
 		handleClearRootSession,
 		handleDeleteTask,
-		handleStopTask,
+		handleInterrupt,
 		handleClearTaskSession,
 		handleAddTask,
 		handleCreateTask,

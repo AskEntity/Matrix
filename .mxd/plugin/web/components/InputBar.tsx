@@ -3,7 +3,13 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { insertQuote } from "../quote.ts";
-import { IconClose, IconEdit, IconImage, IconSend } from "./icons.tsx";
+import {
+	IconClose,
+	IconEdit,
+	IconImage,
+	IconSend,
+	IconStop,
+} from "./icons.tsx";
 import { SLASH_COMMANDS, SlashCommandMenu } from "./SlashCommandMenu.tsx";
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
@@ -89,6 +95,8 @@ export const InputBar = memo(function InputBar({
 	editRequest,
 	onCancelEdit,
 	onScrollToEditing,
+	agentRunning,
+	onInterrupt,
 }: {
 	projectId: string;
 	targetNodeId: string | null;
@@ -103,6 +111,10 @@ export const InputBar = memo(function InputBar({
 	onCancelEdit?: () => void;
 	/** Click the "editing" indicator to jump to that message in the log. */
 	onScrollToEditing?: () => void;
+	/** The agent this composer targets is working right now. */
+	agentRunning?: boolean;
+	/** End the current turn. Leaves the session — and the queue — alive. */
+	onInterrupt?: () => void;
 }) {
 	const { t } = useLocale();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -505,6 +517,23 @@ export const InputBar = memo(function InputBar({
 				>
 					<IconImage size={14} />
 				</button>
+				{/*
+				 * Stop sits BESIDE Send, and deliberately does not replace it.
+				 * Matrix lets you send while the agent works — the message queues
+				 * and the agent reads it on its next turn. Swapping Send for Stop
+				 * while running (the chat-app convention) would delete that.
+				 */}
+				{agentRunning && onInterrupt && (
+					<button
+						type="button"
+						className="mxd-btn-interrupt"
+						onClick={onInterrupt}
+						title={t("footer.stopHint")}
+					>
+						<IconStop size={11} />
+						<span className="mxd-btn-run-label">{t("footer.stop")}</span>
+					</button>
+				)}
 				<button type="submit" className="mxd-btn-run" disabled={!canSend}>
 					<IconSend size={13} />
 					<span className="mxd-btn-run-label">{t("footer.send")}</span>

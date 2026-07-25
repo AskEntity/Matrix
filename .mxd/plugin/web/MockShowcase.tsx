@@ -529,7 +529,6 @@ function MockShowcaseInner() {
 								projectId=""
 								isActive={activeAgents.has(selectedNode.id)}
 								onDelete={noop}
-								onStop={noop}
 								onClearSession={noop}
 								compact
 							/>
@@ -666,7 +665,6 @@ function MockShowcaseInner() {
 								projectId=""
 								isActive={activeAgents.has(selectedNode.id)}
 								onDelete={noop}
-								onStop={noop}
 								onClearSession={noop}
 							/>
 						</div>

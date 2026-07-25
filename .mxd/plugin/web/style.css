@@ -3625,9 +3625,36 @@ button.mxd-tool-card-header:hover {
 	cursor: not-allowed;
 }
 
+/* Composer stop — sits beside Send while the agent works. Same geometry as
+   .mxd-btn-run so the pair reads as one control group; muted palette because
+   Send stays the primary action (you can send WHILE it runs). */
+.mxd-btn-interrupt {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	background: var(--bg-failed);
+	border: 1px solid rgba(248, 81, 73, 0.4);
+	color: var(--color-failed);
+	height: 36px;
+	padding: 0 12px;
+	border-radius: var(--radius-lg);
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	outline: none;
+	transition: all var(--t-fast);
+}
+
+.mxd-btn-interrupt:hover {
+	background: rgba(248, 81, 73, 0.2);
+	border-color: var(--color-failed);
+}
+
 /* Mobile: icon-only send button */
 @media (max-width: 768px) {
-	.mxd-btn-run {
+	.mxd-btn-run,
+	.mxd-btn-interrupt {
 		width: 36px;
 		padding: 0;
 		border-radius: var(--radius-md);
