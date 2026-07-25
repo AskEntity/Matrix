@@ -140,6 +140,13 @@ mutate "veto widens: interrupt notices merely filtered out" \
 	}' \
 	"src/should-launch.test.ts src/resume-launch-decision.test.ts"
 
+# 6b. shouldLaunchAgent stops consulting repair (reads the raw log).
+mutate "repair is no longer consulted — raw log only" \
+	src/events.ts \
+	'	const events = applyRepairInMemory(rawEvents);' \
+	'	const events = rawEvents;' \
+	"src/should-launch.test.ts src/event-dedup-jsonl.test.ts"
+
 # 7. A trailing thinking-only turn stops parking the launch decision.
 mutate "trailing thinking no longer parks the launch decision" \
 	src/events.ts \
