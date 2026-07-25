@@ -597,14 +597,19 @@ and writes `session_config` before it looks at the conversation.
 task's own warning was *"if the number does not move, something other than agent sessions is
 spawning them, and that matters more than this fix"*:
 
-| | |
-|---|---|
-| dormant nodes auto-resumed at one boot (21:39:02, within one second) | **13** |
-| of those, that did any work | **0** — every one parked |
-| that spawned MCP subprocesses | **8** (the matrix-scope ones; group-chat and story1001 scopes do not enable MCP, which is what makes 13 launches cost 8 sessions' worth) |
-| resulting subprocesses | **32 = 8 × 4** — exactly 4 per session, MCP being configured GLOBALLY so every session connects all of them |
-| resident | **1.58 GB**, ~202 MB per dormant agent |
-| still resident 85 minutes later | **unchanged** — a parked session never ends, so these are held for the daemon's life |
+| | | source |
+|---|---|---|
+| nodes auto-resumed at one boot (21:39:02, within one second) | **14** | the daemon log's `Auto-resuming` lines |
+| of those, that did any work | **0** — every one parked | their JSONL: no event after `agent_start` |
+| sessions that spawned MCP | **8** (only matrix-scope nodes connect MCP — the group-chat and story1001 scopes do not, which is what makes 14 launches cost 8 sessions' worth; 9 of the 14 were matrix-scope, so one did not get that far and is unexplained) | `ps` |
+| resulting subprocesses | **32 = 8 × 4** — exactly 4 per session, MCP being configured GLOBALLY so every session connects all of them | `ps` |
+| resident | **1.58 GB**, ~202 MB per dormant agent | `ps` |
+| still resident 85 minutes later | **unchanged** — a parked session never ends, so these are held for the daemon's life | `ps` |
+
+⚠️ The source column is not decoration. An earlier draft said 13, from counting the LAST
+`agent_start` per session file — which silently drops any node that started more than once, and root
+had. **Counting per-file gives you "sessions that have ever started", not "started at this boot"**,
+and the two agree until exactly the node you most care about restarts.
 
 Every process in the daemon's descendant tree was attributed to a session, so there is no other
 spawner.
