@@ -258,17 +258,58 @@ then exceeded within a week by ordinary work. What holds is a rule with a trigge
 when it passes some size, re-derive the criterion every Nth pass — because a number only decides how
 much gets destroyed on the day it is chosen.
 
-⭐ **The rate control we have was adopted by accident, and it is the write-time gate this file never
-had: tasks no longer append here.** They report what they learned in their `done()` result, and one
-curator with the whole file in view integrates it. It was introduced to stop parallel tasks
-conflicting on one file, and it turned out to do something much more valuable — the curator can see
-that a round's findings belong in three different places, and can spend 117 net lines where an
-appending task would have left a 200-line section wherever that task happened to live.
+**Writing and condensing are two separate activities, and only the first is everyone's job.**
 
-⚠️ **File a task's memory output BY SUBJECT, not where the task lived.** A round's findings are
-rarely one thing: a walker rewrite also produced two lessons about mutation harnesses and one about
-how prose rots. Filing all of it under the walker buries the other two where only someone already
-reading about walkers will find them — which is nobody, because they are not about walkers.
+**Normally every task appends here itself**, in the round that learned the thing. That is the right
+default for a reason, not just for convenience: the agent who found it knows which detail is
+load-bearing, and a curator who did not do the work can only see which sentences *read* as redundant
+— which is the third rot kind below, applied at the moment the knowledge is freshest. Parallel
+appends collide in git sometimes; that is routine and root resolves it.
+
+⚠️ **A previous version of this paragraph said the opposite** — that tasks report in `done()` and one
+curator integrates everything. That was a one-day workaround so parallel tasks would not conflict
+with a compression pass running on the same file, and it was written up here as a durable design
+within two hours of being invented, in the present tense, with a star on it. Worth leaving on the
+record: **a temporary measure looks most like a discovery at the moment it works**, because you can
+see the problem it solved and not the doors it closed. The rule three paragraphs down — *about to
+leave a sentence standing as CURRENT? verify it first* — did not fire, because the author was the
+person who had just invented it.
+
+**Condensing is a separate periodic pass with four phases, in this order.** Full procedure:
+`.mxd/memory-reorg.md`.
+
+| phase | what it does | what only it can detect |
+|---|---|---|
+| **1 · reorder** | move sections into subject regions, delete nothing; verified by `comm -23` over the sorted lines | **superseded** — append-only files every new fact maximally far from the claim it refutes, so putting the two side by side is the only thing that surfaces the contradiction. One pass found 12. |
+| **2 · merge** | same-subject sections become one narrative | redundancy that is invisible while scattered. The sharp question is *找不同*: once the invariant is stated, an instance earns its lines only if it does NOT fit. |
+| **3 · condense** | delete; `comm` no longer applies, so enumerate every section's disposition instead | nothing, from the inside — the enumeration is the *only* thing keeping **destroyed by understanding** detectable at all |
+| **4 · read-through** | a fresh agent who did not see phases 1-3 | whether it still READS |
+
+**The order is forced.** Condensing before merging condenses N copies separately and keeps N.
+Merging before reordering cannot see what is the same subject while it is scattered. And phase 4
+must be somebody else: every curator so far has reported, unprompted and in almost the same words,
+that by the end they could no longer see what was missing.
+
+⭐ **Phase 3 is not achieved by fixing the writing style.** Measured on the most chronicle-dense
+region: everything explicitly marked as history was **175 of 896 lines, 20%** — deleting all of it
+takes that region to 720 where a 7× target needed 116. **The changelog is a real defect and it is
+not the bulk.** The rest only comes out by removing things the file currently says, which is why
+phase 3 must be given a target *composition* and not a target line count: the remaining material has
+no principled ordering among itself, so a number leaves the curator guessing which of four
+categories to cut.
+
+⚠️ **A curator marking their own entries overstates what has to be kept.** Sampling 20 self-marked
+items against the "what earns a place" question above: **11 passed, 3 borderline, 5 failed** — and
+all five failures were craft or method rather than looks-wrong-but-is-right. The protected share was
+overstated by about a third, in the direction that favoured the curator's own position. **Sample and
+report the result**, or the number carrying the decision is the one nobody checked.
+
+⚠️ **File a task's findings BY SUBJECT, not where the task lived.** A round's output is rarely one
+thing: a walker rewrite also produced two lessons about mutation harnesses and one about how prose
+rots. Filing all of it under the walker buries the other two where only someone already reading
+about walkers will find them — which is nobody, because they are not about walkers. Splitting that
+round three ways cost 117 net lines against the ~200 it would have taken as one appended section,
+and the saving is the smaller half of the point.
 
 **Three kinds of rot, three detectors, none substituting for another:**
 
