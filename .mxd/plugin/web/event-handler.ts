@@ -1415,7 +1415,18 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	 * history and abandoned rewind branches so the user can read them). Only
 	 * the first kind can be annotated with run starts — in the raw file a
 	 * tool call from a branch nobody is on would count against a message that
-	 * has nothing to do with it.
+	 * has nothing to do with it. A gate that answers wrongly is worse than
+	 * one that says "I don't know", so on a raw batch we decline.
+	 *
+	 * ⚠️ TEMPORARY. This flag exists ONLY because "Load earlier history"
+	 * hands us the raw file and the client has no way to tell which of those
+	 * events the conversation still contains. The real fix is server-side:
+	 * mark active-chain membership in the response, so the client receives
+	 * the answer instead of guessing at the algorithm (a second copy of the
+	 * chain walk in the browser is exactly what "One boundary: the active
+	 * chain" removed). **When that lands, this parameter should be DELETED,
+	 * not repurposed** — it is scaffolding around a hole, and scaffolding
+	 * outlives holes unless whoever fills the hole takes it down.
 	 */
 	function processEventBatch(
 		events: IncomingEvent[],

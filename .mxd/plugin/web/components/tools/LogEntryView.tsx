@@ -1,4 +1,5 @@
 import { memo, useCallback, useState } from "react";
+import { isWorking } from "../../../agent-activity.ts";
 import {
 	type EditBlockedReason,
 	editVerdict,
@@ -719,7 +720,7 @@ export const LogEntryView = memo(function LogEntryView({
 			// batch is the raw file instead — those entries get no
 			// `startsRun` at all, and `unknown_message` outranks this.)
 			hasRewindPoint: true,
-			activity,
+			agentBusy: isWorking(activity),
 		});
 		const blockedTitle = verdict.editable
 			? null

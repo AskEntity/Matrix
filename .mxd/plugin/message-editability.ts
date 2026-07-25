@@ -26,8 +26,23 @@
  *
  * Their only shared property is that all three make the button grey. That is
  * a fact about rendering, not a common concept — resist the pull to give them
- * a shared abstraction just because the pixels agree. This module is the one
- * place they meet, and all it does is pick which sentence to show.
+ * a shared abstraction just because the pixels agree.
+ *
+ * ── What THIS module is, and the line it must not cross ───────────────────
+ *
+ * It encodes one thing the three judgments can't: WHICH SENTENCE WINS. That
+ * is a single product decision, and writing it as an if-chain on each side
+ * would drift — the drift being a button that says "wait a moment" while the
+ * 400 says "this one isn't a starting point", so the user waits, the agent
+ * stops, and the button is still grey.
+ *
+ * ⚠️ The boundary, and it is checkable by grep: **this file has NO imports.**
+ * `editVerdict` CONSUMES three verdicts and COMPUTES none of them. The moment
+ * it starts deciding anything itself — reaching for an event, testing a tool
+ * name, asking what the agent is doing — it has stopped being a presentation
+ * rule and become the shared abstraction the three judgments are deliberately
+ * not allowed to have. Split it then, not before: splitting it while it only
+ * consumes costs you the one copy of the precedence.
  *
  * ── Precedence ────────────────────────────────────────────────────────────
  *
@@ -40,9 +55,6 @@
  * Pure. The UI runs it to render the buttons, the `/edit` route runs it to
  * decide whether to accept.
  */
-
-import type { AgentActivity } from "@mxd/types";
-import { isWorking } from "./agent-activity.ts";
 
 /** Why the buttons are grey. Each reason is its own sentence to the user. */
 export type EditBlockedReason =
@@ -71,16 +83,18 @@ export type EditVerdict =
 const EDITABLE: EditVerdict = { editable: true };
 
 /**
+ * Every field is somebody else's answer. Nothing here is derived.
+ *
  * @param startsRun       from `messageStartsRun` — `undefined` = couldn't tell.
  * @param hasRewindPoint  from `hasRewindPoint`.
- * @param activity        the agent's current state; `undefined` = no agent.
+ * @param agentBusy       from `isWorking`.
  */
 export function editVerdict(judgments: {
 	startsRun: boolean | undefined;
 	hasRewindPoint: boolean;
-	activity: AgentActivity | undefined;
+	agentBusy: boolean;
 }): EditVerdict {
-	const { startsRun, hasRewindPoint, activity } = judgments;
+	const { startsRun, hasRewindPoint, agentBusy } = judgments;
 	// Permanent first, and among the permanent ones the most fundamental
 	// first: a message we can't locate, then one whose history is gone, then
 	// one that never started anything.
@@ -88,7 +102,7 @@ export function editVerdict(judgments: {
 		return { editable: false, reason: "unknown_message" };
 	if (!hasRewindPoint) return { editable: false, reason: "no_rewind_point" };
 	if (!startsRun) return { editable: false, reason: "did_not_start_run" };
-	if (isWorking(activity)) return { editable: false, reason: "agent_busy" };
+	if (agentBusy) return { editable: false, reason: "agent_busy" };
 	return EDITABLE;
 }
 

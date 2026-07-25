@@ -158,52 +158,58 @@ describe("rewind-point: is there a state to go back to?", () => {
 });
 
 describe("editVerdict: three conditions, permanent wins", () => {
-	const ok = { startsRun: true, hasRewindPoint: true, activity: undefined };
+	const ok = { startsRun: true, hasRewindPoint: true, agentBusy: false };
 
-	test("a run start on a parked agent is editable", () => {
-		expect(editVerdict({ ...ok, activity: "idle" })).toEqual({
-			editable: true,
-		});
-	});
-
-	test("no agent at all is also parked", () => {
+	test("a run start with somewhere to go, on a parked agent, is editable", () => {
 		expect(editVerdict(ok)).toEqual({ editable: true });
 	});
 
 	test("a busy agent blocks it, transiently", () => {
-		expect(editVerdict({ ...ok, activity: "thinking" })).toEqual({
-			editable: false,
-			reason: "agent_busy",
-		});
-		expect(editVerdict({ ...ok, activity: "tool" })).toEqual({
+		expect(editVerdict({ ...ok, agentBusy: true })).toEqual({
 			editable: false,
 			reason: "agent_busy",
 		});
 	});
 
+	test("it decides nothing itself — the module has no imports", async () => {
+		// The line editVerdict must not cross. It CONSUMES three verdicts; the
+		// moment it computes one (reaches for an event, tests a tool name,
+		// asks what the agent is doing) it stops being a presentation rule and
+		// becomes the shared abstraction the three judgments are deliberately
+		// not allowed to have. "No imports" is that boundary, mechanically.
+		const src = await Bun.file(
+			new URL("../.mxd/plugin/message-editability.ts", import.meta.url),
+		).text();
+		const code = src
+			.replace(/\/\*[\s\S]*?\*\//g, "")
+			.replace(/^\s*\/\/.*$/gm, "");
+		expect(code).not.toMatch(/^\s*import\s/m);
+	});
+
 	test("a message that started no run is blocked even when idle", () => {
-		expect(editVerdict({ ...ok, startsRun: false, activity: "idle" })).toEqual({
+		expect(editVerdict({ ...ok, startsRun: false })).toEqual({
 			editable: false,
 			reason: "did_not_start_run",
 		});
 	});
 
 	test("a message with no state to return to is blocked when idle too", () => {
-		expect(
-			editVerdict({ ...ok, hasRewindPoint: false, activity: "idle" }),
-		).toEqual({ editable: false, reason: "no_rewind_point" });
+		expect(editVerdict({ ...ok, hasRewindPoint: false })).toEqual({
+			editable: false,
+			reason: "no_rewind_point",
+		});
 	});
 
 	test("PERMANENT outranks TRANSIENT when both apply", () => {
 		// "wait for the agent to stop" would be a lie here: the user waits,
 		// the agent stops, the button is still grey, and now they can't tell
 		// whether they waited wrong or the product is broken.
-		expect(editVerdict({ ...ok, startsRun: false, activity: "tool" })).toEqual({
+		expect(editVerdict({ ...ok, startsRun: false, agentBusy: true })).toEqual({
 			editable: false,
 			reason: "did_not_start_run",
 		});
 		expect(
-			editVerdict({ ...ok, hasRewindPoint: false, activity: "tool" }),
+			editVerdict({ ...ok, hasRewindPoint: false, agentBusy: true }),
 		).toEqual({ editable: false, reason: "no_rewind_point" });
 	});
 
@@ -212,7 +218,7 @@ describe("editVerdict: three conditions, permanent wins", () => {
 			editVerdict({
 				startsRun: undefined,
 				hasRewindPoint: false,
-				activity: "tool",
+				agentBusy: true,
 			}),
 		).toEqual({ editable: false, reason: "unknown_message" });
 	});

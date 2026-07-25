@@ -8,6 +8,7 @@
 import type { Hono } from "hono";
 import type { RuntimeContext } from "../../src/runtime/context.ts";
 import { isTask } from "../../src/types.ts";
+import { isWorking } from "./agent-activity.ts";
 import { editRefusalMessage, editVerdict } from "./message-editability.ts";
 import { isProductionProject } from "./production.ts";
 import { hasRewindPoint } from "./rewind-point.ts";
@@ -179,7 +180,7 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 		const verdict = editVerdict({
 			startsRun: messageStartsRun(activeEvents, body.eid),
 			hasRewindPoint: hasRewindPoint(activeEvents, body.eid),
-			activity: node.session?.activity,
+			agentBusy: isWorking(node.session?.activity),
 		});
 		if (!verdict.editable) {
 			return c.json(
