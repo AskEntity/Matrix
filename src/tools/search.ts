@@ -29,6 +29,30 @@ export function truncateSearchOutput(
 }
 
 /**
+ * Directories skipped when scanning a directory, unless the caller passes its own
+ * `excludedDirs`. This list is the ONLY thing that decides what a search ignores —
+ * the walker itself must reach everything else, hidden directories included.
+ *
+ * ⚠️ `.worktrees/` is load-bearing: every sub-agent worktree is a full second copy
+ * of the repo, so dropping it turns one search from the main checkout into N copies
+ * of every hit. Pinned by a test.
+ *
+ * ⚠️ Mirrored in prose in the `excluded_dirs` param description (tools/definitions.ts).
+ * A test pins the two together — a prose copy of a list rots silently.
+ */
+export const DEFAULT_SKIP_DIRS = [
+	"node_modules/",
+	".git/",
+	"dist/",
+	"out/",
+	".worktrees/",
+	".cache/",
+	"coverage/",
+	".next/",
+	"build/",
+];
+
+/**
  * Pure JS search implementation using Bun.Glob + RegExp.
  * Replaces external rg/grep dependency for cross-platform reliability.
  */
@@ -80,27 +104,23 @@ export async function jsSearch(opts: {
 				? ""
 				: dirname(searchPath);
 	} else if (glob) {
-		// Use Bun.Glob to match files within searchPath
+		// Use Bun.Glob to match files within searchPath.
+		// `dot: true` — Bun.Glob otherwise refuses to descend into ANY hidden directory,
+		// which silently hides all of .mxd/ (production code here). What a search ignores
+		// is DEFAULT_SKIP_DIRS' decision alone; the walker must reach everything else.
 		const g = new Bun.Glob(glob);
-		files = Array.from(g.scanSync({ cwd: absSearchPath, onlyFiles: true }));
+		files = Array.from(
+			g.scanSync({ cwd: absSearchPath, onlyFiles: true, dot: true }),
+		);
 	} else {
-		// No glob — scan all files recursively
+		// No glob — scan all files recursively (`dot: true` as above)
 		const g = new Bun.Glob("**/*");
-		files = Array.from(g.scanSync({ cwd: absSearchPath, onlyFiles: true }));
+		files = Array.from(
+			g.scanSync({ cwd: absSearchPath, onlyFiles: true, dot: true }),
+		);
 	}
 
 	// Filter out common noisy directories (only matters for directory scans, not single files)
-	const DEFAULT_SKIP_DIRS = [
-		"node_modules/",
-		".git/",
-		"dist/",
-		"out/",
-		".worktrees/",
-		".cache/",
-		"coverage/",
-		".next/",
-		"build/",
-	];
 	if (!pathStat?.isFile()) {
 		const skipDirs = excludedDirs
 			? excludedDirs.map((d) => (d.endsWith("/") ? d : `${d}/`))
