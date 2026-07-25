@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { type Dirent, readdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
@@ -112,8 +112,116 @@ export function normalizeGlobDepth(glob: string): string {
 }
 
 /**
- * Pure JS search implementation using Bun.Glob + RegExp.
- * Replaces external rg/grep dependency for cross-platform reliability.
+ * List every file under `root`, skipping `skipDirs` AT DESCENT rather than
+ * afterwards, optionally keeping only those matching `glob`.
+ *
+ * ## Why this is not a `Bun.Glob.scanSync` call
+ *
+ * `scanSync` has no notion of a skip list, so the only way to use it is to
+ * enumerate everything and discard. Measured 2026-07-25 from the main checkout
+ * with two live sub-agent worktrees: **68,664 files enumerated to return 320**,
+ * 153ms against 0.4ms for this walk. Everything discarded was `node_modules/`,
+ * `.git/` or `.worktrees/` — all three in `DEFAULT_SKIP_DIRS`, all three read
+ * from disk and immediately thrown away. The cost scales with the number of
+ * concurrent sub-agents, because each worktree is another full copy of the repo
+ * (~21k files); the 320 does not.
+ *
+ * Those are a dated reading of one tree, not a property of the code — rerun
+ * before quoting them. What is a property of the code: the walk now costs what
+ * the ANSWER costs, so it beats the pre-`dot: true` version too (18,239/36ms).
+ * That is the point. Turning `dot` on was not paid for by pruning; pruning
+ * removes a waste that predates it.
+ *
+ * Pruning at descent is not a faster way to get the same answer — it is the
+ * same answer without opening the directories whose contents were never going
+ * to be used. `isInSkippedDir` is asked about the DIRECTORY, once, instead of
+ * about each of its files.
+ *
+ * ## Symlinks: `isFile()`/`isDirectory()`, never `statSync`
+ *
+ * `readdirSync`'s dirents are lstat-based, so a symlink answers false to BOTH
+ * predicates and is dropped by both branches. That is not a gap — it is exactly
+ * what `scanSync({onlyFiles: true})` does, measured rather than assumed:
+ * given a symlink to a file, a symlink to a directory, a broken symlink and a
+ * directory symlinked to its own ancestor, `scanSync` returned only the real
+ * files, never the links, and never descended the linked directory.
+ *
+ * Reproducing that matters twice over. Using `statSync` instead would start
+ * returning symlinked files that `search` has never returned, AND would descend
+ * symlinked directories — which is how a loop (`a/link -> a`) becomes an
+ * infinite walk. Not following links is what makes this terminate structurally,
+ * so there is no visited-inode set to keep.
+ *
+ * ## No cap
+ *
+ * Every file is collected and then sorted, and there is no way to stop early:
+ * you cannot know the alphabetically-first N files without having seen all of
+ * them. Sorted output and early termination are mutually exclusive.
+ *
+ * That is a constraint on BOTH callers, not a `search`-only detail. `jsSearch`'s
+ * `headLimit` counts MATCHES and applies to sorted order, and `list_files`'s
+ * 500-file cap slices this list after the fact — neither bounds the walk, and
+ * neither can while the answer is sorted. What they bound is the RESULT, which
+ * is what both were for. Stopping early would buy a cheaper walk by making
+ * "the first N" an arbitrary set that can differ between two runs over an
+ * unchanged tree.
+ */
+export function walkFiles(
+	root: string,
+	skipDirs: readonly string[],
+	glob?: string,
+): string[] {
+	const matcher = glob ? new Bun.Glob(normalizeGlobDepth(glob)) : null;
+	const out: string[] = [];
+	// Explicit stack rather than recursion: depth is bounded by the filesystem,
+	// not by anything we control, and the traversal order does not matter because
+	// the result is sorted.
+	const stack: Array<{ abs: string; rel: string }> = [{ abs: root, rel: "" }];
+
+	while (stack.length > 0) {
+		// biome-ignore lint/style/noNonNullAssertion: length checked by the loop
+		const { abs, rel } = stack.pop()!;
+		// NOT wrapped in try/catch, deliberately. `scanSync` throws on both a
+		// missing root (ENOENT) and an unreadable directory mid-walk (EACCES) —
+		// measured, after a first version of this walk swallowed them and a comment
+		// here claimed that was the matching behavior. It is not.
+		//
+		// Swallowing turns "your path is wrong" and "the directory holding the
+		// answer is unreadable" into `(no matches)`, which is the exact failure this
+		// tool has already shipped twice: an answer that looks like an answer. The
+		// tool handler turns a throw into a visible isError result, so throwing is
+		// what tells the caller anything at all.
+		const entries: Dirent[] = readdirSync(abs, { withFileTypes: true });
+		for (const entry of entries) {
+			// Forward slashes, always. This string is both what the caller sees and
+			// what the glob is matched against; `join()` would write `\` on Windows
+			// and break both.
+			const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+			if (entry.isDirectory()) {
+				// THE PRUNE. `isInSkippedDir` wants a path it can match whole
+				// segments in, and every skip entry ends in `/` — so the directory is
+				// asked about in its trailing-slash form. One predicate, asked once
+				// per directory instead of once per file inside it.
+				if (isInSkippedDir(`${childRel}/`, skipDirs)) continue;
+				stack.push({ abs: join(abs, entry.name), rel: childRel });
+			} else if (entry.isFile()) {
+				if (!matcher || matcher.match(childRel)) out.push(childRel);
+			}
+			// Everything else — symlinks, sockets, fifos, block devices — falls
+			// through deliberately. See the symlink note above.
+		}
+	}
+
+	out.sort();
+	return out;
+}
+
+/**
+ * Pure JS search implementation: `walkFiles` for discovery, RegExp for matching.
+ * Replaces an external rg/grep dependency for cross-platform reliability.
+ *
+ * (`Bun.Glob` is still involved, but only inside `walkFiles` and only to match a
+ * caller-supplied glob against a path — it no longer drives the walk.)
  */
 export async function jsSearch(opts: {
 	pattern: string;
@@ -162,35 +270,30 @@ export async function jsSearch(opts: {
 			: dirname(searchPath) === "."
 				? ""
 				: dirname(searchPath);
-	} else if (glob) {
-		// Use Bun.Glob to match files within searchPath.
-		// `dot: true` — Bun.Glob otherwise refuses to descend into ANY hidden directory,
-		// which silently hides all of .mxd/ (production code here). What a search ignores
-		// is DEFAULT_SKIP_DIRS' decision alone; the walker must reach everything else.
-		const g = new Bun.Glob(normalizeGlobDepth(glob));
-		files = Array.from(
-			g.scanSync({ cwd: absSearchPath, onlyFiles: true, dot: true }),
-		);
 	} else {
-		// No glob — scan all files recursively (`dot: true` as above)
-		const g = new Bun.Glob("**/*");
-		files = Array.from(
-			g.scanSync({ cwd: absSearchPath, onlyFiles: true, dot: true }),
-		);
-	}
-
-	// Filter out common noisy directories (only matters for directory scans, not single files)
-	if (!pathStat?.isFile()) {
+		// The skip list is applied AT DESCENT, inside the walk — an excluded
+		// directory is never opened, rather than being enumerated in full and then
+		// discarded. See `walkFiles` for the measurement.
+		//
+		// `excluded_dirs: []` still means "no exclusions" and reaches everything,
+		// and pointing `path` INTO a skipped directory still works, because the
+		// skip list is matched against paths relative to the walk root — the root
+		// itself is not part of them. Both are pinned by tests.
 		const skipDirs = excludedDirs
 			? excludedDirs.map((d) => (d.endsWith("/") ? d : `${d}/`))
 			: DEFAULT_SKIP_DIRS;
-		if (skipDirs.length > 0) {
-			files = files.filter((f) => !isInSkippedDir(f, skipDirs));
-		}
+		files = walkFiles(absSearchPath, skipDirs, glob);
 	}
 
-	// Sort for deterministic output
-	files.sort();
+	// NO sort here. `walkFiles` owns it, because the walk is what creates the
+	// disorder — `readdirSync` returns filesystem order, which on APFS is a hash
+	// order, not alphabetical. Single-file mode produces exactly one entry.
+	//
+	// There used to be a second `files.sort()` on this line, and mutation testing
+	// is the only reason we know it made the first one untestable: deleting the
+	// sort INSIDE the walk failed no test, because this one silently re-sorted the
+	// result. Order is part of the contract — `headLimit` decides which files get
+	// read at all — so it is pinned in exactly one place.
 
 	const ctxRange =
 		contextLines && contextLines > 0 ? Math.min(contextLines, 10) : 0;

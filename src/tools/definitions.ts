@@ -6,12 +6,7 @@ import * as R from "../resource-registry.ts";
 import { defineTool } from "../tool-def.ts";
 import { executeBackgroundTool } from "./background.ts";
 import { executeBashWithTimeout } from "./bash.ts";
-import {
-	isInSkippedDir,
-	jsSearch,
-	normalizeGlobDepth,
-	skipDirsForPattern,
-} from "./search.ts";
+import { jsSearch, skipDirsForPattern, walkFiles } from "./search.ts";
 
 /** Resolve a path relative to cwd if not absolute. */
 export function resolvePath(p: string, cwd: string): string {
@@ -430,28 +425,39 @@ const listFilesTool = defineTool({
 			// at the top of the tree and not one directory, since `onlyFiles` drops
 			// those. So the "list this directory" reading this pattern seems to
 			// protect was never a thing this tool could do.
-			const glob = new Bun.Glob(normalizeGlobDepth(pattern));
-			const skipDirs = skipDirsForPattern(pattern);
-			const files: string[] = [];
-			// Both options are passed explicitly rather than inherited from Bun's
-			// defaults. `dot` defaults to FALSE, which hid every file under `.mxd/` —
-			// production code in this repo. What this tool ignores is
-			// DEFAULT_SKIP_DIRS' decision alone.
+			// ONE walker, shared with `search` — the same function, not a second
+			// copy of the same idea. These two tools already share
+			// DEFAULT_SKIP_DIRS, normalizeGlobDepth and skipDirsForPattern so that
+			// "what does this tool ignore" has a single answer; having one tool
+			// prune at descent while the other filtered afterwards would give those
+			// predicates two meanings depending on the caller, and anyone changing
+			// one of them would have to hold both models.
 			//
-			// The filter runs INSIDE the loop so the cap counts files we KEEP.
-			// Filtering after the cap is not a slower version of the same answer, it
-			// is a different and worse one: measured from the main checkout,
-			// `**/*.ts` filled 323 of its 500 slots with `.worktrees/` copies of the
-			// same files and never reached `web/`, `scripts/` or `.mxd/` at all.
-			for await (const file of glob.scan({ cwd, dot: true, onlyFiles: true })) {
-				if (isInSkippedDir(file, skipDirs)) continue;
-				files.push(file);
-				// One PAST the cap, so "there is more" is known rather than guessed:
-				// stopping AT the cap cannot tell a project with exactly 500 files from
-				// one with 50,000. Silently truncating is the same failure as silently
-				// not walking — the caller reads a partial list as the whole answer.
-				if (files.length > LIST_FILES_LIMIT) break;
-			}
+			// The skip list is consulted per DIRECTORY, at descent, so an excluded
+			// directory is never opened — see `walkFiles` for the measurement. The
+			// 500-file cap did not protect against any of that cost: measured
+			// 2026-07-25, no pattern in this repo reaches 501 kept files, so the
+			// early break never fired and `list_files("*.rs")` spent 139ms walking
+			// the whole tree to answer "no files".
+			const skipDirs = skipDirsForPattern(pattern);
+			const files = walkFiles(cwd, skipDirs, pattern);
+			// The cap is applied AFTER the walk, and cannot be applied during it:
+			// `walkFiles` returns sorted output, and you cannot know the
+			// alphabetically-first 500 files without having seen all of them.
+			// Sorted output and early termination are mutually exclusive; this
+			// picks sorted, because a stable answer beats an arbitrary one and
+			// truncation then means "the first 500 in a predictable order" rather
+			// than "whichever 500 the filesystem happened to hand over first".
+			//
+			// So the cap bounds the RESULT, not the walk. That is what it was for
+			// — the description promises at most 500 files — and the walk it no
+			// longer bounds is now the cheap one: this whole repo is 320 entries.
+			//
+			// `> LIST_FILES_LIMIT`, one PAST the cap, so "there is more" is known
+			// rather than guessed: a project with exactly 500 files must not be
+			// accused of having more. Silently truncating is the same failure as
+			// silently not walking — the caller reads a partial list as the whole
+			// answer.
 			const truncated = files.length > LIST_FILES_LIMIT;
 			if (truncated) files.length = LIST_FILES_LIMIT;
 			const body = files.join("\n") || "(no files)";

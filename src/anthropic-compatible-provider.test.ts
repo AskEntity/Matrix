@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -2461,8 +2462,12 @@ describe("jsSearch: hidden directories", () => {
 	});
 
 	test("glob branch descends into hidden directories too", async () => {
-		// Separate scanSync call site from the no-glob branch above — fixing one
-		// and not the other leaves half the tool lying.
+		// Written when this was a SECOND `scanSync` call site and fixing one
+		// without the other left half the tool lying. There is one walker now, so
+		// the reason changed with the code: passing a glob installs a matcher, and
+		// this pins that having a matcher does not change which DIRECTORIES get
+		// reached. Same assertion, still worth its line — matching and descending
+		// are separate decisions and only one of them is the caller's.
 		const files = await matchedFiles({ glob: "**/*.ts" });
 		expect(files).toContain(".mxd/plugin/scope-opts.ts");
 		expect(files).toContain("src/caller.ts");
@@ -2596,6 +2601,192 @@ describe("jsSearch: glob depth", () => {
 		// has no file for, and "promote patterns that start with a bare `*`" is a
 		// plausible enough reading of the rule to write by accident.
 		expect(normalizeGlobDepth("*/top.ts")).toBe("*/top.ts");
+	});
+});
+
+/**
+ * The walk prunes an excluded directory at descent instead of enumerating it
+ * and throwing the result away. That is a pure performance change — every test
+ * above must keep passing untouched, and they do.
+ *
+ * What is NOT covered above is the thing the rewrite had to reproduce by hand.
+ * `Bun.Glob.scanSync` used to answer "is this a file, is this a directory", and
+ * a `readdirSync` walk has to answer it itself. The two obvious ways to do that
+ * disagree, and only one of them matches what `search` has always returned:
+ *
+ *   - `dirent.isFile()` / `dirent.isDirectory()` are lstat-based. A symlink is
+ *     neither, so it is skipped by both branches.
+ *   - `statSync` follows the link, so a symlink to a file looks like a file and
+ *     a symlink to a directory looks like a directory.
+ *
+ * `statSync` is the tidier-looking of the two and it is WRONG twice: it starts
+ * returning symlinked files `search` never returned, and it descends symlinked
+ * directories — which turns `dir/link -> dir` into a walk that never ends.
+ * Nothing above notices either. Measured against `scanSync` before the rewrite:
+ * given a symlink to a file, a symlink to a directory, a broken symlink and a
+ * directory linked to its own ancestor, it returned the real files and nothing
+ * else.
+ *
+ * So these tests exist to make that swap fail loudly rather than silently, and
+ * they are the reason not following links can be stated as the termination
+ * argument — there is no visited-inode set to lose.
+ */
+describe("jsSearch: the walk prunes at descent", () => {
+	let tempDir: string;
+	const SYMBOL = "walkFilesProbe";
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-search-walk-"));
+
+		await mkdir(join(tempDir, "real"), { recursive: true });
+		await writeFile(join(tempDir, "real", "plain.ts"), `${SYMBOL}();\n`);
+
+		// A skipped directory NESTED rather than at the top level. The top-level
+		// case goes through `startsWith`; this one goes through the `/prefix`
+		// branch, and at descent the directory is asked about in its
+		// trailing-slash form — drop that slash and only the nested case survives.
+		await mkdir(join(tempDir, "pkg", "node_modules", "dep"), {
+			recursive: true,
+		});
+		await writeFile(
+			join(tempDir, "pkg", "node_modules", "dep", "index.ts"),
+			`${SYMBOL}();\n`,
+		);
+		// A file sitting DIRECTLY in the skipped directory, not one level down.
+		// Without it, dropping the trailing slash from the descent check is caught
+		// only by whichever unrelated fixture happens to hold a file at that exact
+		// depth: `pkg/node_modules` fails the check and is descended, but
+		// `pkg/node_modules/dep` then matches `/node_modules/` and is pruned
+		// anyway — so the leak is invisible one level deeper. Mutation testing
+		// found that; the fixture looked thorough and was not.
+		await writeFile(
+			join(tempDir, "pkg", "node_modules", "direct.ts"),
+			`${SYMBOL}();\n`,
+		);
+		await writeFile(join(tempDir, "pkg", "own.ts"), `${SYMBOL}();\n`);
+
+		// A file whose NAME is a skip entry. `node_modules` the file must survive;
+		// only `node_modules` the directory is pruned.
+		await writeFile(join(tempDir, "node_modules.ts"), `${SYMBOL}();\n`);
+
+		// Symlinks: to a file, to a directory, and dangling.
+		symlinkSync(join(tempDir, "real", "plain.ts"), join(tempDir, "link.ts"));
+		symlinkSync(join(tempDir, "real"), join(tempDir, "linkdir"));
+		symlinkSync(join(tempDir, "nope.ts"), join(tempDir, "broken.ts"));
+
+		// A directory containing a link back to its own ancestor. Following links
+		// would walk this forever; the test then fails by timing out, which is the
+		// correct verdict and the only one available for "does not terminate".
+		await mkdir(join(tempDir, "loop"), { recursive: true });
+		await writeFile(join(tempDir, "loop", "leaf.ts"), `${SYMBOL}();\n`);
+		symlinkSync(tempDir, join(tempDir, "loop", "up"));
+	});
+
+	afterAll(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	async function matchedFiles(
+		extra: { glob?: string; excludedDirs?: string[] } = {},
+	): Promise<string[]> {
+		const result = await jsSearch({
+			pattern: SYMBOL,
+			searchPath: ".",
+			outputMode: "files_with_matches",
+			headLimit: 50,
+			caseInsensitive: false,
+			cwd: tempDir,
+			...extra,
+		});
+		return result.split("\n").filter(Boolean);
+	}
+
+	test("a nested node_modules/ is pruned, its parent is not", async () => {
+		const files = await matchedFiles();
+		expect(files).not.toContain("pkg/node_modules/direct.ts");
+		expect(files).not.toContain("pkg/node_modules/dep/index.ts");
+		// Two-sided: the sibling inside the same parent IS returned, so this
+		// cannot pass by pruning `pkg/` — or everything — instead.
+		expect(files).toContain("pkg/own.ts");
+	});
+
+	test("a FILE named like a skip entry is kept — only directories are pruned", async () => {
+		expect(await matchedFiles()).toContain("node_modules.ts");
+	});
+
+	test("symlinks are not followed, and real files still are", async () => {
+		const files = await matchedFiles();
+		// `link.ts` and `linkdir/plain.ts` are the same bytes as `real/plain.ts`.
+		// Returning them would report one file two or three times.
+		expect(files).not.toContain("link.ts");
+		expect(files).not.toContain("linkdir/plain.ts");
+		expect(files).not.toContain("broken.ts");
+		expect(files).toContain("real/plain.ts");
+	});
+
+	test("a symlink loop terminates", async () => {
+		// Fails by timeout if links are ever followed. `loop/leaf.ts` is asserted
+		// so the test cannot pass by refusing to enter `loop/` at all.
+		const files = await matchedFiles();
+		expect(files).toContain("loop/leaf.ts");
+		expect(files.some((f) => f.includes("loop/up/"))).toBe(false);
+	});
+
+	test("the whole listing, exactly — nothing extra, nothing missing", async () => {
+		// The three tests above each own one question and assert presence. This one
+		// is the closed statement: with symlinks, a nested skip, and a file named
+		// after a skip entry all in play, this is the entire answer.
+		expect(await matchedFiles()).toEqual([
+			"loop/leaf.ts",
+			"node_modules.ts",
+			"pkg/own.ts",
+			"real/plain.ts",
+		]);
+	});
+
+	test("a path that does not exist is an ERROR, not '(no matches)'", async () => {
+		// The walk must not swallow ENOENT. A typo'd path answering "(no matches)"
+		// is indistinguishable from a real empty result, and this is the tool whose
+		// entire bug history is answers that look like answers. `scanSync` threw
+		// here; the first version of this walk caught it and returned [] — with a
+		// comment claiming that matched. Measured: it did not.
+		const missing = join(tempDir, "no", "such", "dir");
+		await expect(
+			jsSearch({
+				pattern: SYMBOL,
+				searchPath: missing,
+				outputMode: "files_with_matches",
+				headLimit: 50,
+				caseInsensitive: false,
+				cwd: tempDir,
+			}),
+		).rejects.toThrow(/ENOENT/);
+	});
+
+	test("an unreadable directory mid-walk is an ERROR, not a short answer", async () => {
+		// The dangerous direction: silently returning the files we could reach
+		// while the one holding the definition sits in a directory we could not.
+		// chmod is a no-op for root, so the assertion would be meaningless there.
+		if (process.platform === "win32" || process.getuid?.() === 0) return;
+		const locked = join(tempDir, "locked");
+		await mkdir(locked, { recursive: true });
+		await writeFile(join(locked, "hidden.ts"), `${SYMBOL}();\n`);
+		chmodSync(locked, 0o000);
+		try {
+			await expect(matchedFiles()).rejects.toThrow(/EACCES|EPERM/);
+		} finally {
+			chmodSync(locked, 0o755);
+			await rm(locked, { recursive: true, force: true });
+		}
+	});
+
+	test("excluded_dirs: [] reaches the nested node_modules too", async () => {
+		// Pruning must stay the skip list's decision. An `excluded_dirs: []` that
+		// still pruned would be the walker deciding, which is the bug the
+		// hidden-directory fix removed — reintroduced one layer down.
+		const files = await matchedFiles({ excludedDirs: [] });
+		expect(files).toContain("pkg/node_modules/direct.ts");
+		expect(files).toContain("pkg/node_modules/dep/index.ts");
 	});
 });
 
@@ -2772,6 +2963,25 @@ describe("list_files: a pattern with no slash matches at any depth", () => {
 		// it could not answer "what is the shape of this project", which is what it
 		// looked like it was for.
 		expect((await listed("*")).sort()).toEqual([
+			"deep/src/inner.ts",
+			"src/nested.json",
+			"src/top.ts",
+			"top.json",
+		]);
+	});
+
+	test("output is sorted, and that is what makes truncation predictable", async () => {
+		// Note the test above sorts before asserting — every other list_files test
+		// is order-independent too, so nothing here pinned order, and until the
+		// shared walk landed there was nothing to pin: the tool returned
+		// filesystem order, which on APFS is a hash order (measured from the repo
+		// root: package.json, tsconfig.json, biome.json, …, .mxd/config.json last).
+		//
+		// It matters beyond tidiness because the 500-file cap slices this list. In
+		// traversal order "the first 500" is an arbitrary set that can change
+		// between two runs over an unchanged tree; sorted, it is the same 500 every
+		// time. So this assertion is deliberately NOT pre-sorted.
+		expect(await listed("*")).toEqual([
 			"deep/src/inner.ts",
 			"src/nested.json",
 			"src/top.ts",
