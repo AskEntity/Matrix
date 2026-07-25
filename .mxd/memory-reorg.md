@@ -83,7 +83,7 @@ person least able to.
 context is a compaction boundary, not a deadline — a compacted agent continues with a summary, and
 both this file and `memory.md` survive compaction by construction. The compacted original therefore
 strictly dominates a replacement, who would re-read the same documents *without* the summary and
-without any tacit judgement. See `memory.md` § *AI Agent Laziness Patterns* #8. Phase 3 is different
+without any tacit judgement. See `memory.md` § *Where agents predictably go wrong* #5. Phase 3 is different
 in kind: there, not knowing the material is the requirement, not the cost.
 
 ---

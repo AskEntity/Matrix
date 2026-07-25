@@ -428,10 +428,10 @@ dirty-JSONL scenario table claimed "the walker produces valid structure" for an 
 output. It does not, and **that is not hypothetical — a session was once permanently bricked by
 exactly that shape**, when a bare `compact_marker` left `readActive()` starting on an assistant turn.
 
-**Member 2: a plausible-but-wrong MECHANISM sets the verification bar.** Chasing the CoreML NaN
-above, a real published mechanism was found — ORT's CoreML provider defaults to the NeuralNetwork
-model format, which implicitly casts to FP16 — and an explanation was built that fitted both data
-points. **That is over-fitting to n=2 while carrying a citation.**
+**Member 2: a plausible-but-wrong MECHANISM sets the verification bar.** Chasing the CoreML NaN in
+*Choosing an embedding device*, a real published mechanism was found — ORT's CoreML provider
+defaults to the NeuralNetwork model format, which implicitly casts to FP16 — and an explanation was
+built that fitted both data points. **That is over-fitting to n=2 while carrying a citation.**
 
 > ⚠️ **A wrong mechanism does not merely fail to help — it LICENSES A WEAKER TEST, because a test's
 > adequacy is judged against the mechanism you currently believe.** "FP16 overflows on long inputs"
@@ -1642,7 +1642,7 @@ Three forensic techniques worth keeping, all model-agnostic:
 wrong.** It produced an action (an SDK bump, kept, harmless) and a false verification — one clean
 post-restart sample, then recurrence within the hour. **A single passing sample is not verification
 when the phenomenon is intermittent by design**, and the scope rules above guarantee a clean sample
-is always available regardless of the fix. This is a third instance of *Plausible and wrong* below:
+is always available regardless of the fix. This is a third instance of *Plausible and wrong*:
 the wrong mechanism is what made one sample look like enough.
 
 **Two gaps deliberately left open** (waiting for real data rather than building for imagined cases):
@@ -2162,9 +2162,9 @@ Four gotchas, three of them environmental:
   `NAPI FATAL ERROR: Error::New napi_create_error` → SIGTRAP → **the whole test process dies.** The
   env var short-circuits the pipeline so the backend is never registered. It must be passed to
   workers via the Worker constructor's `env` option (see *Two transport bugs that corrupt
-  silently*, Daemon region — a `bunfig.toml [test.env]` entry does NOT reach a Worker); a
-  `bunfig.toml [test.env]` entry alone does not reach them. Priority is explicit mock > env var >
-  lazy load, so a test can still exercise hybrid paths with a mock while the var is set.
+  silently*, Daemon region — a `bunfig.toml [test.env]` entry does NOT reach a Worker). Priority is
+  explicit mock > env var > lazy load, so a test can still exercise hybrid paths with a mock while
+  the var is set.
 - ⚠️ **`sharp`/`libvips`**: Bun's global cache puts libvips at a versioned path sharp cannot find.
   `scripts/fix-sharp-libvips.sh` symlinks it and is wired as `postinstall`.
 - ⚠️ **Orama's `where` only filters `enum` fields** and has no `ne` on them; `string`-typed fields
@@ -2948,12 +2948,13 @@ anywhere in the subtree has to be added to the reset list, and forgetting one le
 
 A survey of everything that reads, writes or invalidates the log's scroll offset found **30 touch
 points, not the 9 anyone could name** — including the browser itself, via `overflow-anchor: auto`,
-which silently absorbs top-of-list insertions and is not implemented by Safari. Three clusters: measuring or writing during a
-transitional state (unpredictable symptoms, because the transient's duration is a network variable);
-addressing a viewport position by a **perishable identity** (a pixel offset, a module-counter entry
-id, a React component instance — deterministic losses, each disguised as some other feature behaving
-normally); and conditional renders in a flex row (cheap, cosmetic). Their common amplifier is that
-`logs` is the whole session's array, replaced wholesale on every refetch.
+which silently absorbs top-of-list insertions and is not implemented by Safari. Three clusters:
+measuring or writing during a transitional state (unpredictable symptoms, because the transient's
+duration is a network variable); addressing a viewport position by a **perishable identity** (a
+pixel offset, a module-counter entry id, a React component instance — deterministic losses, each
+disguised as some other feature behaving normally); and conditional renders in a flex row (cheap,
+cosmetic). Their common amplifier is that `logs` is the whole session's array, replaced wholesale
+on every refetch.
 
 ⭐ **The predicate that works is `scrollRangeShrank(prev, current)`, where range = `scrollHeight −
 clientHeight`.** Two predicates were proposed on the *cause* side and one measurement killed both:
@@ -3201,7 +3202,7 @@ opener/closer whitespace rules individually — two tests were covering for each
 survived. Each rule now has a dedicated asymmetric test (`** x**` stays literal; `**a ** b**` spans
 the whole run). **A defence-in-depth pair can hide the fact that neither half is actually pinned.**
 
-⚠️ Two biome traps in this file: a `noArrayIndexKey` suppression on multiline JSX must sit directly
+⚠️ Two biome traps in the parser: a `noArrayIndexKey` suppression on multiline JSX must sit directly
 above the `key={i}` attribute line, not above the element; and `useIterableCallbackReturn` requires
 every switch path to return, which is why the last case and `default:` are merged.
 
@@ -3448,9 +3449,10 @@ says it is 30% *slower*, because real documents have a long tail (p50 206 chars,
 tail, so it measured a different workload and answered confidently. Same shape as the remount-cost
 error in the viewport section: **a fixture whose content is too cheap cannot answer the question at
 all, and the danger is that it answers anyway.** (The device decision survived only because a second
-number — CPU time, 3044s vs 38.8s — was measured on the real corpus too.) And ⚠️ **a test that can fail for two different reasons cannot tell you
-which one happened** — a guard's entire value is being legible on the day it fires, so narrow it to
-presence-only rather than asserting an exact list.
+number — CPU time, 3044s vs 38.8s — was measured on the real corpus too.) And ⚠️ **a test that can
+fail for two different reasons cannot tell you which one happened** — a guard's entire value is
+being legible on the day it fires, so narrow it to presence-only rather than asserting an exact
+list.
 
 ⚠️ **Two implementations of the same guarantee cover for each other, and the tell is a mutation
 surviving that obviously should not have.** `walkFiles` sorted its output and then `jsSearch` sorted
