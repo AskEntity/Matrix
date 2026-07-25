@@ -1525,9 +1525,14 @@ See: commit 0d8cda0, test file `src/drift-lifecycle.test.ts`, ValidatingMockAPI 
 3. **session_config tools=[] fix**: Moved session_config emission from agent-lifecycle to runProviderLoop (after tools are ready).
 4. **MCP tool ordering**: MCP servers connect asynchronously → tool registration order non-deterministic. Frozen tools solve this.
 
-### Cache Results
+### Cache results — measured once, when the four fixes landed
 - Restart: 99.8% cache hit (582 creation / 362K read)
 - Fork: 100% cache hit (0 creation / 365K read)
+
+These are a **dated measurement**, not a current reading: they are the evidence that the four fixes
+above worked, and they stay true as a record of that moment. Do NOT read them as "our cache hit rate
+is 99.8%" — nothing re-measures them, and a prefix change would move them without touching this
+file. If you need today's number, read `cache_creation` / `cache_read` off a real `usage` event.
 
 ### Message Cache Breakpoint
 Breakpoint on **last** user message (not second-to-last). Last message sent to API is always user role. Anthropic's 20-block lookback caches all preceding history. Previous "second-to-last" strategy caused full miss when only 1 user message existed (post-compaction with no new user input before restart).
@@ -3551,10 +3556,12 @@ reads from disk on every call (local JSON, cost negligible).
 - Long-lived session token never appears in URL / proxy logs / history.
 
 ### Auth middleware exact-skip
-Skip set: `{ "/", "/auth/status", "/auth/logout" }` + static `/vendor/`
-`/app/` prefixes. Previously `startsWith("/auth/")` would silently allow
-any future `/auth/*` worker route past the middleware (Audit J H1).
-Regression guard: `GET /auth/bogus` with auth enabled → 401.
+~~Skip set: `{ "/", "/auth/status", "/auth/logout" }` + static `/vendor/` `/app/` prefixes.~~
+**SUPERSEDED twice** — see *The anonymous surface* under Audit R7 P1 for the current list, which is
+one exact path plus two prefixes plus a GET-only frontend-path predicate. The durable half of this
+entry: replacing a `startsWith("/auth/")` skip with an EXACT set (Audit J H1), because the prefix
+form would silently exempt any future `/auth/*` route someone added. Regression guard:
+`GET /auth/bogus` → 401.
 
 ### Case-insensitive Bearer
 `extractBearerToken` uses `/^Bearer[ \t]+(.+)$/i`. RFC 7235 mandates
@@ -3646,11 +3653,33 @@ Per-test pattern varies — a small `authed(daemon, token)` wrapper that attache
 
 Migrated files: `daemon.test.ts`, `daemon-auth.test.ts`, `daemon-bootstrap.test.ts`, `daemon-plugin-ui.test.ts`, `plugin-url-namespace.test.ts`, `daemon-harness.ts`, `web/ShellApp.test.tsx`. Lines migrated: ~200 across 7 files, within scope budget.
 
-### SKIP_EXACT rules (post-P1.1)
-- `/` — SPA root, login page renders pre-auth
-- `/auth/status` — login page needs to ask "are we authenticated?" before having a token
-- `/vendor/`, `/app/` (prefix match) — compiled bundles, no secrets
-- Everything else under `/auth/*` requires a token. Regression test: `/auth/bogus` → 401.
+### The anonymous surface (verified 2026-07-25 — this is the whole list)
+
+Four ways a request skips auth, and `SKIP_EXACT` is now only the first:
+
+1. `SKIP_EXACT` = **`{"/auth/status"}`**, one entry. The login page must be able to ask "am I
+   authenticated?" before it has a token.
+2. `/vendor/` and `/app/` prefixes — compiled bundles, no secrets.
+3. **`GET` + `isFrontendPath(path)`** — `/` exact, OR the first path segment is a **currently
+   registered project id**. This is the biggest part of the surface and the least obvious: after
+   Task Y, tasks live at `/<projectId>/<scope>/<taskPath>`, browsers do not send `Authorization` on
+   navigation, so a refresh on such a URL must reach the shell. The shell itself is
+   auth-content-free and every API call it makes is gated by this same middleware. Unregistered
+   first segments fall through to a clean 404. See *Task Y SPA fallback* for the `pm.has` predicate
+   and why it is not a ULID regex.
+4. Nothing else. **Everything under `/auth/*` other than `/auth/status` requires a token** —
+   regression test `/auth/bogus` → 401, which exists because a former `startsWith("/auth/")` skip
+   would have silently exempted any future `/auth/*` route.
+
+**Method-gated on purpose**: item 3 is `GET` only. POST/PATCH to a frontend-shaped path stays
+401 — those are not legitimate SPA paths, and an honest 401 beats accidentally serving HTML.
+
+~~Earlier descriptions of this set said `{"/", "/auth/status", "/auth/logout"}`, and later
+`{"/", "/auth/status"}` + prefixes.~~ Both are superseded: `/auth/logout` was removed by P1.1 (it
+was CSRF-abusable — any drive-by page could force a `bumpSecretVersion` and log everyone out), and
+`/` moved out of `SKIP_EXACT` into `isFrontendPath` when Task Y made project paths server-visible.
+Reading either old list understates the anonymous surface, which is exactly the wrong direction for
+an auth note to be wrong in.
 
 ## Audit R7 P2 — CLI onboarding fixes (2026-04-18)
 
