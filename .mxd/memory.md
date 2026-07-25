@@ -1344,9 +1344,8 @@ text after all tool use, i.e. an `end_turn` — is UNAFFECTED and stays plain te
 **How it presents**, which is what to look for if it recurs: assistant turns stored as
 `[thinking, thinking, tool_use]`, where the SECOND thinking block is a server-generated summary of
 what should have been the visible reply — sometimes an English paraphrase of a Chinese one — carrying
-a signature. In the UI the user's reply vanishes into the thinking fold. **Matrix is faithful here**:
-the SDK accumulator and the walker reproduce whatever blocks the server sent, confirmed by reading a
-raw response where a 135-char paraphrase stood in for a ~300-char actual reply.
+a signature, so in the UI the user's reply vanishes into the thinking fold. **Matrix is faithful
+here**: the SDK accumulator and the walker reproduce whatever blocks the server sent.
 
 ⚠️ **Operational mitigation: an agent whose last action is a user-facing reply should END ITS TURN
 rather than call `yield()`.** Replying and then calling yield in the same turn makes the reply
@@ -1354,13 +1353,11 @@ rather than call `yield()`.** Replying and then calling yield in the same turn m
 identical pause semantics, so nothing is lost. Explicit `yield()` is fine when no user-facing prose
 precedes it.
 
-⭐ **The proof, and the reason it matters beyond this one mechanism.** A 12-digit canary was written
-only in visible reply text and kept out of every tool input. The client-side JSONL stored a
-paraphrase that mentioned "这串随机数" and **dropped the digits** — the canary existed nowhere
-client-side. The next turn's agent then recalled the full canary verbatim from its context, with the
-recall recorded in a tool input timestamped before any read. So the signature's encrypted payload is
-decrypted server-side on echo-back and the ORIGINAL is reconstituted into the model's effective
-context.
+⭐ **The proof.** A 12-digit canary was written only in visible reply text and kept out of every tool
+input; the client-side JSONL stored a paraphrase that mentioned "这串随机数" and **dropped the
+digits**, so the canary existed nowhere client-side. The next turn's agent recalled it verbatim, with
+the recall recorded in a tool input timestamped before any read. The signature's encrypted payload is
+decrypted server-side on echo-back and the original is reconstituted into the model's context.
 
 > **"Context = `messages[]`" is FALSE under this mechanism, and the model cannot detect the
 > divergence from inside.** The model sees its own originals; the client and the user hold only
@@ -1383,12 +1380,12 @@ Three forensic techniques worth keeping, all model-agnostic:
   suspension (that would orphan the turn and trigger repair on resume). So `clean usage +
   thinking-only shape` is an upstream silent turn, not a laptop-close.
 
-⚠️ **The first diagnosis was wrong, and it is worth knowing how.** It was SDK-version sniffing —
-plausible, matching the observed block shape, and it produced an action (an SDK bump, kept, harmless).
-One post-restart sample verified clean, and the pattern recurred within the hour. **A single passing
-sample is not verification when the phenomenon is intermittent by design** — the scope rules
-guarantee a clean sample is always available regardless of the fix. The measurement was right before
-the documentation existed; what was wrong was the causal story attached to it.
+⚠️ **The first diagnosis was SDK-version sniffing: plausible, matching the observed block shape, and
+wrong.** It produced an action (an SDK bump, kept, harmless) and a false verification — one clean
+post-restart sample, then recurrence within the hour. **A single passing sample is not verification
+when the phenomenon is intermittent by design**, and the scope rules above guarantee a clean sample
+is always available regardless of the fix. This is a third instance of *Plausible and wrong* below:
+the wrong mechanism is what made one sample look like enough.
 
 **Two gaps deliberately left open** (waiting for real data rather than building for imagined cases):
 `buildResponseEvents` has no branch for a server-side `fallback` block, so a fallback hop would not
@@ -2612,10 +2609,8 @@ anywhere in the subtree has to be added to the reset list, and forgetting one le
 ## The activity log's scroll position: guard the property, not the list of causes
 
 A survey of everything that reads, writes or invalidates the log's scroll offset found **30 touch
-points, not the 9 anyone could name**: 9 JS writers, 5 readers, 6 pieces of state, 6 content-height
-mutators inside the container, 6 clientHeight mutators outside it, 6 wholesale `logs` replacements —
-plus the browser itself, via `overflow-anchor: auto`, which silently absorbs top-of-list insertions
-and is not implemented by Safari. They fall into three clusters: measuring or writing during a
+points, not the 9 anyone could name** — including the browser itself, via `overflow-anchor: auto`,
+which silently absorbs top-of-list insertions and is not implemented by Safari. Three clusters: measuring or writing during a
 transitional state (unpredictable symptoms, because the transient's duration is a network variable);
 addressing a viewport position by a **perishable identity** (a pixel offset, a module-counter entry
 id, a React component instance — deterministic losses, each disguised as some other feature behaving
@@ -2634,10 +2629,10 @@ browser pushed the offset to the new bottom*.
 > cannot be enumerated — the survey started from "your nine are almost certainly incomplete" and
 > ended at 30. `scrollRangeShrank` tests **the property that makes an observation meaningless**, so
 > it covers causes nobody wrote down. The composer auto-growing is the proof: not a view parameter,
-> not anticipated, and it lands in the predicate for free. It also collapsed two separately-
-> catalogued classes — content-height changes inside the container and clientHeight changes outside
-> it — into one. They were two classes only because they were sorted by *what changed*; sorted by
-> *what it causes*, they are one thing.
+> not anticipated, and it lands in the predicate for free. It also collapsed two catalogued classes
+> into one — content-height changes inside the container and clientHeight changes outside it were
+> two classes only because they were sorted by *what changed*; sorted by *what it causes* they are
+> one thing.
 
 **Growth is deliberately NOT suspicious**: streaming grows every frame, and a user scrolling back to
 the bottom mid-stream must still be able to re-arm follow.
@@ -2661,14 +2656,12 @@ effects run at commit, the clamp's scroll event is dispatched by the browser *af
 The next person will read the single call site as a missed one.
 
 ⚠️ **"Only trust real user scrolls" is unimplementable.** A clamp-dispatched scroll event has
-`isTrusted === true` and is indistinguishable from a user's at the event layer. Recorded, re-derived,
-recorded again.
+`isTrusted === true` and is indistinguishable from a user's at the event layer.
 
 ⚠️ **In a right-aligned flex row, inserting a child moves only the siblings BEFORE it.** So
 conditionally-rendered controls belong *before* the persistent ones — cheaper than reserving blank
 space and with no side effects. This is what made the header jump 71.3px when the Follow pill
-appeared. (First measured as "100.3px on the whole actions group" — a container's property read as
-the content's; re-measure per child.)
+appeared.
 
 ### Deleting an implementation that never worked
 
