@@ -6296,3 +6296,131 @@ reason to come back here. Re-checked against the code:
    "resist feature creep" constraint on them is recorded there.
 3. Tool search — dynamic tool discovery. **Still open.** A draft exists; Anthropic has a server-side
    `defer_loading`, but the user prefers a client-side design.
+
+---
+
+## Every transport carries the event's name (eid) — and what that let us delete (2026-07-25)
+
+Four consumers wanted the same missing thing and were each about to grow their own locating
+mechanism: the Edit/Rewind gate, message deep-links, viewport addressing, and "is this event still
+part of the conversation". They are one thing — **the frontend needs the persisted event identity
+on the path it actually receives events over** — and it was missing for one reason: `emitEvent`
+broadcast BEFORE persisting, so SSE clients were shown events they could not refer to.
+
+### The mechanism: `append` is synchronous and returns the persisted event
+
+`EventStore.append`/`appendBatch` stamp the chain fields and write in one uninterruptible step and
+return the stamped copy; `emitEvent` persists first and broadcasts THAT. One object, one name,
+every transport.
+
+**Why not "stamp now, write later"** (the shape tried and reverted in 01KY54YT round 11, whose
+failure was two writers of `lastEventIds` racing):
+
+- ONE writer of the chain head. This MOVES the only stamper earlier rather than adding a second, so
+  the TOCTOU has no premise left. (Round 11's measurement was real and its product judgement —
+  "rollback isn't a realtime feature" — is what expired.)
+- ⭐ **The write-failure path is the load-bearing argument.** `rewindChainHead` keeps a failed event
+  out of the chain, and that is correct ONLY while nothing can be stamped between the stamp and the
+  write. Defer the write and a burst in one tick gets stamped first: the event after a failed one
+  names a parent no line carries, the walk stops dead (no dangling-link fallback, deliberately), and
+  the agent resumes with a **silently truncated context**. Synchronous keeps the cost of a failed
+  write at "one event lost" instead of "history lost". Pinned by a test that chmods the file
+  read-only and asserts the next event chains to the last one that actually landed.
+- The general form: it replaces "correct because nothing happens to interleave" with "correct
+  because nothing CAN".
+
+`enqueueWrite` + the generation guard survive for `copySessionFrom`, the one genuinely async write.
+Its docstring now says outright that **the guard has no reachable failure path today** — a mechanism
+that looks like protection but protects nothing is worse than none, because the next reader reads
+"there is a queue" as "there is protection". Revisit once synchronous appends have production
+mileage: draft 01KYCQDJRF8Z8S6YC39F7ECVZ8.
+
+### Entry ids come from the eid — the React key, not a display value
+
+`createLogEntry` derives `LogEntry.id` from `eid` (`Map<eid, number>`, never cleared — clearing it
+IS the failure it prevents). The log is replaced wholesale on every refetch, and a module counter
+made every key change every time: measured in a real session as ONE MutationObserver batch with
+`added: 82, removed: 82` against `removed: 1` for a normal update in the same trace.
+
+Two entries exist BEFORE the event they are named after, and both **bind** their eid to the id they
+already have rather than re-deriving it:
+- a streamed text/thinking block is built from `*_delta`, which is never persisted, and learns its
+  eid when the block closes;
+- a tool card is replaced in place by its `tool_pair` when the result lands — which is exactly when
+  a user is most likely to have it expanded. (That one was a live, independent bug: every tool card
+  remounted and lost its expanded state the moment its result arrived.)
+
+⚠️ **`key={entry.eid ?? entry.id}` is the wrong shape** even though it looks simpler: it moves the
+key at the end of every streamed block, adding a per-block remount that does not exist today.
+
+**Known residual, deliberate**: an entry that is still streaming when a wholesale replacement lands
+changes key once — its rebuild source is the route-injected `partial: true` synthetic, which by
+definition has no eid. One entry, no container collapse, and the buttons are disabled anyway
+(`isWorking`). Closing it needs a second lifecycle-bearing map, i.e. a branch for an imagined
+consumer (anti-pattern #6). Add it if it ever produces an observable symptom.
+
+### Run-start is decided in the ONE in-order channel
+
+"Was this message sent on its own" used to be a second pass over the raw batch AFTER entries were
+built, which made it structurally unanswerable for a live message (the live path sees one event at a
+time and never holds a batch) — and that is why Edit/Rewind could only appear via a JSONL refetch.
+`processEvent` is reached in event order by BOTH paths, so the current turn is tracked there and the
+verdict is set at the `messages_consumed` that picks the message up. The rule itself is
+`turnAnswersPriorWork` in `run-start.ts`; the whole-log pass calls it too. **One rule, two entry
+points**, locked by a test asserting the in-order map equals the one-shot map key for key.
+
+### Active-chain membership needs its own bit — and this is the general reason
+
+> **eid is an IDENTITY (immutable, per event). Membership is a RELATION between an event and the
+> current chain head.** A rewind changes it for a whole stretch of log without touching a single
+> event in it. **An immutable identity cannot encode a mutable relation.**
+
+So the raw-file fetch (`GET .../events` without `after=compact`, i.e. "Load earlier history") marks
+each event: `offChain: "summarized" | "abandoned"` (`classifyOffChain` in events.ts, built on the
+one `walkActiveChainIndices`). The client gets the ANSWER, never the algorithm — a second chain walk
+in the browser is what *One boundary: the active chain* removed.
+
+Marked only where it is not the obvious answer: every other transport carries active events by
+construction. Explicit-everywhere was considered and rejected — it does not actually buy safety,
+because the reader still has to choose what `undefined` means, and it costs bytes on the hottest
+path.
+
+KNOWN IMPRECISION, documented in place: the summarizer's own output inside a compaction window is
+labelled "abandoned" where "summarized" would be truer. Nothing reads it (only user messages carry
+the buttons), and a third category for events with no consumer is a classification describing its
+author.
+
+### Two workarounds deleted, both by the person who filled the hole they stood in
+
+- `processEventBatch(events, { fromActiveChain })` — gone. Off-chain events are simply dropped from
+  the turn windows, which leaves exactly the active chain in order.
+- **the re-fetch on agent idle** — gone. It existed only to go and get eids the broadcast did not
+  carry, and it replaced the entire log to do it.
+
+Refusal wording followed: "No longer part of the conversation" was what the UI said when it could
+not tell — about every message in the batch, including ones still in it. Now it says which way the
+message left, and either reason outranks "the agent is busy", because that one promises a remedy
+that will never arrive.
+
+### Live verification, including one honest negative
+
+Real browser, two daemons (this branch vs main), same fixture, content deliberately expensive to
+rebuild (tool cards, markdown tables, images with no reserved height — 327 entries). After "Load
+earlier history":
+
+| | main | this branch |
+|---|---|---|
+| Edit/Rewind enabled | **0 of 280** | 120 messages editable |
+| what the rest say | all 280: "No longer part of the conversation — an earlier rewind replaced it." | the 20 pre-compaction ones: "From before the last context compaction…" |
+
+**Negative result worth keeping**: the load-older path did NOT remount on EITHER build (90 of 100
+entries kept both their React key and their DOM node, identical on both), so it does not discriminate
+the id change. The measured `+82/-82` came from the **agent_idle** refetch specifically — which this
+work deletes outright, so that trigger is gone rather than made cheap. Do not cite the load-older
+path as evidence for or against the key derivation; use the unit tests, which mutate in both
+directions.
+
+Also, twice in one session, a first measurement measured the wrong element: `log.children[0]` is the
+"load earlier" bar, not an entry, so "the first node is still attached" was true on a build that
+remounts everything. Same shape as the viewport task's container-vs-content error. **Check what your
+selector actually points at before believing a null result.**
