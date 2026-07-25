@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -2596,6 +2597,144 @@ describe("jsSearch: glob depth", () => {
 		// has no file for, and "promote patterns that start with a bare `*`" is a
 		// plausible enough reading of the rule to write by accident.
 		expect(normalizeGlobDepth("*/top.ts")).toBe("*/top.ts");
+	});
+});
+
+/**
+ * The walk prunes an excluded directory at descent instead of enumerating it
+ * and throwing the result away. That is a pure performance change — every test
+ * above must keep passing untouched, and they do.
+ *
+ * What is NOT covered above is the thing the rewrite had to reproduce by hand.
+ * `Bun.Glob.scanSync` used to answer "is this a file, is this a directory", and
+ * a `readdirSync` walk has to answer it itself. The two obvious ways to do that
+ * disagree, and only one of them matches what `search` has always returned:
+ *
+ *   - `dirent.isFile()` / `dirent.isDirectory()` are lstat-based. A symlink is
+ *     neither, so it is skipped by both branches.
+ *   - `statSync` follows the link, so a symlink to a file looks like a file and
+ *     a symlink to a directory looks like a directory.
+ *
+ * `statSync` is the tidier-looking of the two and it is WRONG twice: it starts
+ * returning symlinked files `search` never returned, and it descends symlinked
+ * directories — which turns `dir/link -> dir` into a walk that never ends.
+ * Nothing above notices either. Measured against `scanSync` before the rewrite:
+ * given a symlink to a file, a symlink to a directory, a broken symlink and a
+ * directory linked to its own ancestor, it returned the real files and nothing
+ * else.
+ *
+ * So these tests exist to make that swap fail loudly rather than silently, and
+ * they are the reason not following links can be stated as the termination
+ * argument — there is no visited-inode set to lose.
+ */
+describe("jsSearch: the walk prunes at descent", () => {
+	let tempDir: string;
+	const SYMBOL = "walkFilesProbe";
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-search-walk-"));
+
+		await mkdir(join(tempDir, "real"), { recursive: true });
+		await writeFile(join(tempDir, "real", "plain.ts"), `${SYMBOL}();\n`);
+
+		// A skipped directory NESTED rather than at the top level. The top-level
+		// case goes through `startsWith`; this one goes through the `/prefix`
+		// branch, and at descent the directory is asked about in its
+		// trailing-slash form — drop that slash and only the nested case survives.
+		await mkdir(join(tempDir, "pkg", "node_modules", "dep"), {
+			recursive: true,
+		});
+		await writeFile(
+			join(tempDir, "pkg", "node_modules", "dep", "index.ts"),
+			`${SYMBOL}();\n`,
+		);
+		await writeFile(join(tempDir, "pkg", "own.ts"), `${SYMBOL}();\n`);
+
+		// A file whose NAME is a skip entry. `node_modules` the file must survive;
+		// only `node_modules` the directory is pruned.
+		await writeFile(join(tempDir, "node_modules.ts"), `${SYMBOL}();\n`);
+
+		// Symlinks: to a file, to a directory, and dangling.
+		symlinkSync(join(tempDir, "real", "plain.ts"), join(tempDir, "link.ts"));
+		symlinkSync(join(tempDir, "real"), join(tempDir, "linkdir"));
+		symlinkSync(join(tempDir, "nope.ts"), join(tempDir, "broken.ts"));
+
+		// A directory containing a link back to its own ancestor. Following links
+		// would walk this forever; the test then fails by timing out, which is the
+		// correct verdict and the only one available for "does not terminate".
+		await mkdir(join(tempDir, "loop"), { recursive: true });
+		await writeFile(join(tempDir, "loop", "leaf.ts"), `${SYMBOL}();\n`);
+		symlinkSync(tempDir, join(tempDir, "loop", "up"));
+	});
+
+	afterAll(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	async function matchedFiles(
+		extra: { glob?: string; excludedDirs?: string[] } = {},
+	): Promise<string[]> {
+		const result = await jsSearch({
+			pattern: SYMBOL,
+			searchPath: ".",
+			outputMode: "files_with_matches",
+			headLimit: 50,
+			caseInsensitive: false,
+			cwd: tempDir,
+			...extra,
+		});
+		return result.split("\n").filter(Boolean);
+	}
+
+	test("a nested node_modules/ is pruned, its parent is not", async () => {
+		const files = await matchedFiles();
+		expect(files).not.toContain("pkg/node_modules/dep/index.ts");
+		// Two-sided: the sibling inside the same parent IS returned, so this
+		// cannot pass by pruning `pkg/` — or everything — instead.
+		expect(files).toContain("pkg/own.ts");
+	});
+
+	test("a FILE named like a skip entry is kept — only directories are pruned", async () => {
+		expect(await matchedFiles()).toContain("node_modules.ts");
+	});
+
+	test("symlinks are not followed, and real files still are", async () => {
+		const files = await matchedFiles();
+		// `link.ts` and `linkdir/plain.ts` are the same bytes as `real/plain.ts`.
+		// Returning them would report one file two or three times.
+		expect(files).not.toContain("link.ts");
+		expect(files).not.toContain("linkdir/plain.ts");
+		expect(files).not.toContain("broken.ts");
+		expect(files).toContain("real/plain.ts");
+	});
+
+	test("a symlink loop terminates", async () => {
+		// Fails by timeout if links are ever followed. `loop/leaf.ts` is asserted
+		// so the test cannot pass by refusing to enter `loop/` at all.
+		const files = await matchedFiles();
+		expect(files).toContain("loop/leaf.ts");
+		expect(files.some((f) => f.includes("loop/up/"))).toBe(false);
+	});
+
+	test("the whole listing, exactly — nothing extra, nothing missing", async () => {
+		// The three tests above each own one question and assert presence. This one
+		// is the closed statement: with symlinks, a nested skip, and a file named
+		// after a skip entry all in play, this is the entire answer.
+		expect(await matchedFiles()).toEqual([
+			"loop/leaf.ts",
+			"node_modules.ts",
+			"pkg/own.ts",
+			"real/plain.ts",
+		]);
+	});
+
+	test("excluded_dirs: [] reaches the nested node_modules too", async () => {
+		// Pruning must stay the skip list's decision. An `excluded_dirs: []` that
+		// still pruned would be the walker deciding, which is the bug the
+		// hidden-directory fix removed — reintroduced one layer down.
+		expect(await matchedFiles({ excludedDirs: [] })).toContain(
+			"pkg/node_modules/dep/index.ts",
+		);
 	});
 });
 

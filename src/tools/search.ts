@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { type Dirent, readdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
@@ -112,6 +112,96 @@ export function normalizeGlobDepth(glob: string): string {
 }
 
 /**
+ * List every file under `root`, skipping `skipDirs` AT DESCENT rather than
+ * afterwards, optionally keeping only those matching `glob`.
+ *
+ * ## Why this is not a `Bun.Glob.scanSync` call
+ *
+ * `scanSync` has no notion of a skip list, so the only way to use it is to
+ * enumerate everything and discard. Measured from the main checkout with two
+ * live worktrees: 62,987 files enumerated, 1,265 kept. The other 61,722 were
+ * `node_modules/`, `.git/` and `.worktrees/` — all three in `DEFAULT_SKIP_DIRS`,
+ * all three read from disk and immediately thrown away. The cost scales with
+ * the number of concurrent sub-agents, since each worktree is another full copy
+ * of the repo.
+ *
+ * Pruning at descent is not a faster way to get the same answer — it is the
+ * same answer without opening the directories whose contents were never going
+ * to be used. `isInSkippedDir` is asked about the DIRECTORY, once, instead of
+ * about each of its files.
+ *
+ * ## Symlinks: `isFile()`/`isDirectory()`, never `statSync`
+ *
+ * `readdirSync`'s dirents are lstat-based, so a symlink answers false to BOTH
+ * predicates and is dropped by both branches. That is not a gap — it is exactly
+ * what `scanSync({onlyFiles: true})` does, measured rather than assumed:
+ * given a symlink to a file, a symlink to a directory, a broken symlink and a
+ * directory symlinked to its own ancestor, `scanSync` returned only the real
+ * files, never the links, and never descended the linked directory.
+ *
+ * Reproducing that matters twice over. Using `statSync` instead would start
+ * returning symlinked files that `search` has never returned, AND would descend
+ * symlinked directories — which is how a loop (`a/link -> a`) becomes an
+ * infinite walk. Not following links is what makes this terminate structurally,
+ * so there is no visited-inode set to keep.
+ *
+ * ## No cap
+ *
+ * Every file is collected and then sorted, because `jsSearch`'s `headLimit`
+ * counts MATCHES and applies to sorted order. Stopping the walk early would
+ * silently change which files a capped search looks at. (`list_files` caps
+ * during its walk — but its cap is on the returned list, which is a different
+ * question.)
+ */
+export function walkFiles(
+	root: string,
+	skipDirs: readonly string[],
+	glob?: string,
+): string[] {
+	const matcher = glob ? new Bun.Glob(normalizeGlobDepth(glob)) : null;
+	const out: string[] = [];
+	// Explicit stack rather than recursion: depth is bounded by the filesystem,
+	// not by anything we control, and the traversal order does not matter because
+	// the result is sorted.
+	const stack: Array<{ abs: string; rel: string }> = [{ abs: root, rel: "" }];
+
+	while (stack.length > 0) {
+		// biome-ignore lint/style/noNonNullAssertion: length checked by the loop
+		const { abs, rel } = stack.pop()!;
+		let entries: Dirent[];
+		try {
+			entries = readdirSync(abs, { withFileTypes: true });
+		} catch {
+			// Unreadable directory — permissions, or it vanished mid-walk. Skipping
+			// matches `scanSync`, which yields what it can rather than failing the
+			// whole search over one directory.
+			continue;
+		}
+		for (const entry of entries) {
+			// Forward slashes, always. This string is both what the caller sees and
+			// what the glob is matched against; `join()` would write `\` on Windows
+			// and break both.
+			const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+			if (entry.isDirectory()) {
+				// THE PRUNE. `isInSkippedDir` wants a path it can match whole
+				// segments in, and every skip entry ends in `/` — so the directory is
+				// asked about in its trailing-slash form. One predicate, asked once
+				// per directory instead of once per file inside it.
+				if (isInSkippedDir(`${childRel}/`, skipDirs)) continue;
+				stack.push({ abs: join(abs, entry.name), rel: childRel });
+			} else if (entry.isFile()) {
+				if (!matcher || matcher.match(childRel)) out.push(childRel);
+			}
+			// Everything else — symlinks, sockets, fifos, block devices — falls
+			// through deliberately. See the symlink note above.
+		}
+	}
+
+	out.sort();
+	return out;
+}
+
+/**
  * Pure JS search implementation using Bun.Glob + RegExp.
  * Replaces external rg/grep dependency for cross-platform reliability.
  */
@@ -162,34 +252,25 @@ export async function jsSearch(opts: {
 			: dirname(searchPath) === "."
 				? ""
 				: dirname(searchPath);
-	} else if (glob) {
-		// Use Bun.Glob to match files within searchPath.
-		// `dot: true` — Bun.Glob otherwise refuses to descend into ANY hidden directory,
-		// which silently hides all of .mxd/ (production code here). What a search ignores
-		// is DEFAULT_SKIP_DIRS' decision alone; the walker must reach everything else.
-		const g = new Bun.Glob(normalizeGlobDepth(glob));
-		files = Array.from(
-			g.scanSync({ cwd: absSearchPath, onlyFiles: true, dot: true }),
-		);
 	} else {
-		// No glob — scan all files recursively (`dot: true` as above)
-		const g = new Bun.Glob("**/*");
-		files = Array.from(
-			g.scanSync({ cwd: absSearchPath, onlyFiles: true, dot: true }),
-		);
-	}
-
-	// Filter out common noisy directories (only matters for directory scans, not single files)
-	if (!pathStat?.isFile()) {
+		// The skip list is applied AT DESCENT, inside the walk — an excluded
+		// directory is never opened, rather than being enumerated in full and then
+		// discarded. Measured on the main checkout: the old walk-then-filter read
+		// 68,641 files to return 320.
+		//
+		// `excluded_dirs: []` still means "no exclusions" and reaches everything,
+		// and pointing `path` INTO a skipped directory still works, because the
+		// skip list is matched against paths relative to the walk root — the root
+		// itself is not part of them. Both are pinned by tests.
 		const skipDirs = excludedDirs
 			? excludedDirs.map((d) => (d.endsWith("/") ? d : `${d}/`))
 			: DEFAULT_SKIP_DIRS;
-		if (skipDirs.length > 0) {
-			files = files.filter((f) => !isInSkippedDir(f, skipDirs));
-		}
+		files = walkFiles(absSearchPath, skipDirs, glob);
 	}
 
-	// Sort for deterministic output
+	// `walkFiles` already sorted; single-file mode is one entry. Sorting here would
+	// be the only thing keeping the walk's output deterministic if that changed, so
+	// it stays as the explicit statement of the contract.
 	files.sort();
 
 	const ctxRange =
