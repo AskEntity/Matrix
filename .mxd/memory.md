@@ -873,6 +873,134 @@ with it by construction.
 reverts any UNCOMMITTED fix in the same file. Commit the fix before mutating
 it, or back the file up.
 
+## Interrupt vs stop: two abort channels, and why they can't be one (2026-07-25)
+
+`stopTask` is TEARDOWN (kills background processes, closes the queue, drops the
+session, disconnects MCP). `interruptTask` ends the current TURN and leaves all
+of that alive. Same button in the UI before this; opposite verbs.
+
+### The signal
+
+`TaskSession.interrupt: TurnInterrupt` (`src/turn-interrupt.ts`), deliberately
+NOT `session.abortController`. Sharing one channel gives either "an interrupt
+tore the session down" or "a teardown was mistaken for an interrupt so it
+couldn't tear down" — **both silent**. They meet in exactly one place, the API
+call's signal (`AbortSignal.any([teardown, interrupt])`), and every reader asks
+`request.signal.aborted` FIRST: teardown always wins.
+
+Three read sites (API call, retry backoff, loop top) and **one park**. The two
+ways an interrupt arrives converge: a cut-off API call `continue`s to the top; a
+tool batch runs to completion and falls through to the top. That site parks via
+`handleImplicitYield` — the park every other path already uses, so there is no
+fifth "what is the agent waiting for" state.
+
+**`consume()` is called when the loop PARKS, not when it decides to.** "The loop
+actually parking satisfies the interrupt", whichever path parked it. Clearing at
+the decision point instead leaves the flag set when a stop lands in the same
+moment the agent goes idle on its own, and the next message gets swallowed into
+a park.
+
+### Why no repair is owed (the point of the whole thing)
+
+`stopTask` leaves the turn's tool_calls unclosed *because the loop is already
+dead*; the next launch's `buildSessionRepair` then writes
+`"Tool execution was interrupted by daemon restart"` — false whenever a human
+pressed stop, and re-read by the model on every later turn. An interrupt keeps
+the loop alive, so **the loop closes its own tool_calls before parking** and
+repair finds nothing. Pairing completeness is structural: `Promise.all` settles
+for every tool and `executeTool` never throws, so the only way to break it is
+bailing out early.
+
+**Foreground tools**: `foregroundExecutions` has two verbs now — `resolve()`
+moves to background (command KEEPS RUNNING, the pre-existing verb), `interrupt()`
+terminates it and returns its output so far through the same formatter a normal
+completion uses. A model told only "interrupted" knows it ran a command and lost
+the result, which invites re-running something that already had side effects.
+Tools that can't be stopped safely just run to completion — a half-written file
+is worse than a two-second wait.
+
+**done() wins a race with the stop button.** That is completion, not
+interruption; marking it "not executed" would strand the parent waiting forever.
+
+### ⚠️ SYMPTOM: "I pressed stop, then restarted the daemon, and it started working again"
+
+Not a bug — a boundary we accepted. It depends on which state the interrupt hit,
+and the window is *interrupt → daemon restart with no message in between*:
+
+| interrupted during | log ends in | resume detects | after restart |
+|---|---|---|---|
+| `thinking` (text had streamed) | `assistant_text` | `hasPendingImplicitYield` | **parked at idle** ✓ |
+| `thinking` (nothing streamed yet) | the turn's user message | `isInterruptedResume` | re-runs the turn |
+| `tool` | tool_results (a user turn) | `isInterruptedResume` | **continues working** |
+
+Making the `tool` row survive a restart needs a persisted "interrupted, waiting"
+marker, i.e. a fifth resume state — which the design explicitly refuses. If this
+ever has to change, that is the cost to weigh.
+
+The first row is not luck, and it is the reason **partial assistant text is
+KEPT** rather than discarded: keeping it makes the interrupted state
+representable on disk with zero new states. It also gives the user's next
+message a referent ("no, don't do that" needs the text they were reading), and
+emitting it as a normal final `assistant_text` is what clears
+`ctx.streamingText`, so the UI's partial becomes final instead of lingering
+until the next refetch. Never the thinking blocks (no signature) and never a
+half-emitted tool_use (that is the orphan being removed).
+
+### `status` events are broadcast-only — measured, and it matters here
+
+`isPersistedByEmitEvent` returns false for `status`, so the interrupt's
+"Interrupted by user" reaches clients and never reaches the log. Consequences:
+it cannot sit between tool_results in a reconstruction that never sees it; and
+after a refresh the durable evidence is the interrupted tool_result's own text,
+not a marker. **A test asserted the opposite and failed** — the assumption that
+"emitEvent means it's in JSONL" is easy to make and the repair path's own status
+event (written straight to the EventStore) makes it look true.
+
+### Do NOT front-run the queue when parking
+
+The cancellation-point drain is skipped while interrupted. A message drained
+there would be merged into the turn's user message and then sat on — the loop
+would wait for a *further* message before ever calling the API, so "stop, do X
+instead" would look swallowed. Left in the queue, `handleImplicitYield` returns
+it immediately (it doesn't even announce idle when something is pending).
+
+### Compaction turns are not interruptible mid-flight
+
+A 2-3 minute system operation whose instruction is already in `messages[]`;
+cutting it there would pair "summarize yourself" with whatever the user says
+next. The flag stays set and takes effect at the top of the next iteration.
+
+### Pre-existing hole found next door, deliberately NOT fixed here
+
+`provider-shared.ts` "context too short to compact" (`messages.length <= 4`)
+emits a status, clears the flag and `continue`s — landing on the API call with
+`messages[]` possibly ending in an ASSISTANT message, which IS a real 400
+("must end with a user message"). Reachable today with no interrupt involved:
+fresh agent ends its first turn with text, user hits compact. It lives inside
+the compaction deferral machinery that root's mock-audit task owns.
+
+### Tests: `src/interrupt.test.ts`, `web/InputBar-stop.test.tsx`
+
+Mutation-verified per claim, each fix committed before mutating it:
+
+| mutation | fails |
+|---|---|
+| interrupt also kills background processes | the background-survives test, ALONE |
+| skip emitting tool_results when interrupted | no-repair, all-closed, partial-output, leading-run, not-executed (5) |
+| drop the `!doneToolUse && !yieldToolUse` guard | done()-wins, by 10s timeout — the "parent waits forever" shape |
+
+Reaching the "interrupt landed before the batch started" window deterministically:
+subscribe to events and call `interrupt.request()` from the `tool_call` emission
+— that emission happens after the response is processed and before execution
+begins. Same trick reaches the done() race.
+
+Two test-writing notes worth carrying:
+- `await waitFor(() => x === null || true)` polls NOTHING (always true) and
+  asserts before React commits. Poll the real condition.
+- `expect(domNode).toBeNull()` on failure prints the node *with its React fiber
+  graph*: one failing assertion produced a **227MB** log and a 60s test. Compare
+  to a boolean (`expect(x === null).toBe(true)`) in DOM tests.
+
 ---
 # Events, JSONL & Session History
 ---
