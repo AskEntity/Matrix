@@ -591,11 +591,24 @@ order from the real walker and the real repair and asserts agreement shape by sh
 change reddens it even when every hand-written expectation still passes.
 
 **Why it must run before the session exists**: `runAgentForNode` connects MCP, builds work_context
-and writes `session_config` before it looks at the conversation. Measured 2026-07-25 on the live
-daemon — MCP servers are configured GLOBALLY, so every session connects all of them: the boot batch
-was **exactly 8 sessions × 4 subprocesses = 32 processes / 1.58 GB**, ~202 MB per dormant agent,
-held for as long as the session lives, and a parked session never ends. On the same tree, 15 of 15
-dormant nodes are refused and only root launches (`scripts/survey-resume.ts` re-derives it).
+and writes `session_config` before it looks at the conversation.
+
+⭐ **Measured on the live daemon, 2026-07-25** — a full accounting rather than a total, because the
+task's own warning was *"if the number does not move, something other than agent sessions is
+spawning them, and that matters more than this fix"*:
+
+| | |
+|---|---|
+| dormant nodes auto-resumed at one boot (21:39:02, within one second) | **13** |
+| of those, that did any work | **0** — every one parked |
+| that spawned MCP subprocesses | **8** (the matrix-scope ones; group-chat and story1001 scopes do not enable MCP, which is what makes 13 launches cost 8 sessions' worth) |
+| resulting subprocesses | **32 = 8 × 4** — exactly 4 per session, MCP being configured GLOBALLY so every session connects all of them |
+| resident | **1.58 GB**, ~202 MB per dormant agent |
+| still resident 85 minutes later | **unchanged** — a parked session never ends, so these are held for the daemon's life |
+
+Every process in the daemon's descendant tree was attributed to a session, so there is no other
+spawner. With the predicate all 13 are refused, taking the boot batch to zero.
+`scripts/survey-resume.ts` re-derives the decision on the current tree.
 
 ⭐ **The boundary condition on hoisting ANY such decision, which is not the obvious one:**
 
