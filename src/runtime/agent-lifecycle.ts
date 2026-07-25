@@ -647,56 +647,19 @@ export async function deliverMessage(
 		if (!node) {
 			// Unknown node — message persisted to JSONL but no launch
 		} else if (node.parentId) {
-			// Child node — launch in background.
-			// On failure: emit error event on target (for activity log), mark
-			// target failed, and notify the sender (task-above) via task_complete —
-			// same channel as done("failed"). Without this notification a yielding
-			// parent would wait forever for a subtask that never started.
-			ensureChildAgentRunning(ctx, project, tracker, nodeId).catch(
-				async (e) => {
-					const errorMsg = `Auto-launch failed: ${e instanceof Error ? e.message : String(e)}`;
-
-					// 1. Emit error event on target (preserves current UI behavior).
-					emitEvent(ctx, project.id, {
-						type: "error",
-						taskId: nodeId,
-						message: errorMsg,
-						ts: Date.now(),
-					});
-
-					// 2. Mark target failed in the tree so UI reconciles to red.
-					const failedNode = tracker.getTask(nodeId);
-					if (failedNode) {
-						tracker.updateStatus(nodeId, "failed");
-						await tracker.save();
-						broadcastTreeUpdate(ctx, project.id, tracker);
-					}
-
-					// 3. Notify the sender (task above) via task_complete.
-					// Launch failure IS a form of task completion — failed before starting.
-					// Reuses the same channel as done("failed"); sender handles identically.
-					const taskAbove = tracker.getTaskAbove(nodeId);
-					if (taskAbove && failedNode) {
-						const completionMsg = createTaskComplete(
-							nodeId,
-							failedNode.title ?? "unknown",
-							false,
-							errorMsg,
-						);
-						await deliverMessage(
-							ctx,
-							project,
-							taskAbove.id,
-							completionMsg,
-						).catch((e2) => {
-							console.warn(
-								`[launch-failure] Failed to deliver task_complete to parent ${taskAbove.id}:`,
-								e2 instanceof Error ? e2.message : String(e2),
-							);
-						});
-					}
-				},
-			);
+			// Child node — launch in background. See reportAutoLaunchFailure for
+			// what a failure owes the task above, and why this handler is not async.
+			ensureChildAgentRunning(ctx, project, tracker, nodeId)
+				.catch((e) => reportAutoLaunchFailure(ctx, project, tracker, nodeId, e))
+				.catch((e) => {
+					// Terminal net. reportAutoLaunchFailure is written not to reject,
+					// so reaching here means IT broke — which is the case where the
+					// task above learns nothing. Say so; never rethrow into nowhere.
+					console.error(
+						`[launch-failure] handler for ${nodeId} threw — the task above may never be notified:`,
+						e instanceof Error ? (e.stack ?? e.message) : String(e),
+					);
+				});
 		} else if (
 			ctx.scopeOpts.has(project.id) &&
 			!ctx.restartingProjects.has(project.id) &&
@@ -710,18 +673,118 @@ export async function deliverMessage(
 			runAgentForNode(ctx, project, tracker, nodeId, {
 				...rootScopeOpts,
 				resume: shouldResume,
-			}).catch((e) => {
-				emitEvent(ctx, project.id, {
-					type: "error",
-					taskId: nodeId,
-					message: `Root launch failed: ${e instanceof Error ? e.message : String(e)}`,
-					ts: Date.now(),
+			})
+				.catch((e) => {
+					emitEvent(ctx, project.id, {
+						type: "error",
+						taskId: nodeId,
+						message: `Root launch failed: ${e instanceof Error ? e.message : String(e)}`,
+						ts: Date.now(),
+					});
+				})
+				.catch((e) => {
+					// Root has no task above it, so there is no notification to
+					// protect here — only the rejection. `emitEvent` reaches
+					// `EventStore.append`, which throws on a failed write by design,
+					// and an unhandled rejection in the worker thread ends the whole
+					// worker (measured), taking every other agent in this lens with it.
+					console.error(
+						`[root-launch-failure] could not record the launch failure for ${nodeId}:`,
+						e instanceof Error ? (e.stack ?? e.message) : String(e),
+					);
 				});
-			});
 		}
 	}
 
 	return "persisted";
+}
+
+/**
+ * A child auto-launch failed: tell the task above, and make the target's own
+ * failure visible on the way.
+ *
+ * **The step order is the contract, not a style choice.** A child that never
+ * launched never calls done(), so `task_complete` is the ONLY thing that ever
+ * wakes a yielding task above — that notice is the entire reason this handler
+ * exists. The error event and the red status are cosmetic beside it, so each
+ * runs in its own try/catch: a failure there is reported loudly and CANNOT
+ * starve the notification below it.
+ *
+ * Two shapes to keep out. Passing an `async` function to `.catch()` puts the
+ * cosmetic steps in front of the load-bearing one with nothing between them —
+ * one rejected `tracker.save()` skips the notice AND escapes as an unhandled
+ * rejection, so the handler for a hung parent hangs the parent. Wrapping the
+ * whole body in a single swallowing try/catch is worse: the parent still
+ * hangs and now nothing anywhere says so.
+ *
+ * Written not to reject; the caller keeps a terminal `.catch` anyway, because
+ * "written not to reject" is a claim and the caller is a `.catch()` handler
+ * whose own rejection has nobody to catch it.
+ */
+async function reportAutoLaunchFailure(
+	ctx: RuntimeContext,
+	project: { id: string; path: string },
+	tracker: TaskTracker,
+	nodeId: string,
+	cause: unknown,
+): Promise<void> {
+	const errorMsg = `Auto-launch failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+	const failedNode = tracker.getTask(nodeId);
+
+	// Cosmetic: error event on the target, for its activity log.
+	try {
+		emitEvent(ctx, project.id, {
+			type: "error",
+			taskId: nodeId,
+			message: errorMsg,
+			ts: Date.now(),
+		});
+	} catch (e) {
+		console.error(
+			`[launch-failure] could not record the error event on ${nodeId}:`,
+			e instanceof Error ? e.message : String(e),
+		);
+	}
+
+	// Cosmetic: mark the target failed so the tree reconciles to red.
+	if (failedNode) {
+		try {
+			tracker.updateStatus(nodeId, "failed");
+			await tracker.save();
+			broadcastTreeUpdate(ctx, project.id, tracker);
+		} catch (e) {
+			console.error(
+				`[launch-failure] could not persist failed status for ${nodeId}:`,
+				e instanceof Error ? e.message : String(e),
+			);
+		}
+	}
+
+	// LOAD-BEARING: notify the task above via task_complete.
+	// Launch failure IS a form of task completion — failed before starting.
+	// Reuses the same channel as done("failed"); the receiver handles both
+	// identically, so "failed before starting" needs no new resume path.
+	const taskAbove = tracker.getTaskAbove(nodeId);
+	if (taskAbove && failedNode) {
+		try {
+			await deliverMessage(
+				ctx,
+				project,
+				taskAbove.id,
+				createTaskComplete(
+					nodeId,
+					failedNode.title ?? "unknown",
+					false,
+					errorMsg,
+				),
+			);
+		} catch (e) {
+			console.error(
+				`[launch-failure] could not deliver task_complete to ${taskAbove.id} — it may wait forever:`,
+				e instanceof Error ? e.message : String(e),
+			);
+		}
+	}
 }
 
 /**

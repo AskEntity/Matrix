@@ -3508,6 +3508,9 @@ describe("Integration: yield wakeup assertions", () => {
 
 // ── Parent-child lifecycle tests ──
 
+/** Injected inside the launch-failure handler; see the test that uses it. */
+const SAVE_FAILURE = "simulated tree.json write failure";
+
 describe("Integration: parent-child lifecycle", () => {
 	let ctx: TestContext;
 
@@ -3938,6 +3941,157 @@ describe("Integration: parent-child lifecycle", () => {
 		expect(errorEvents.length).toBe(1);
 		expect(errorEvents[0]?.message).toContain("Auto-launch failed");
 		expect(errorEvents[0]?.message).toContain("simulated hook failure");
+	}, 45000);
+
+	test("Scenario: launch-failure handler survives its OWN failure — task_complete still reaches the parent", async () => {
+		// The launch-failure handler exists for exactly one reason: a child that
+		// never starts never calls done(), so task_complete is the ONLY thing that
+		// ever wakes a yielding parent. This test injects a second failure INSIDE
+		// that handler — tracker.save() rejects while marking the child failed —
+		// and asserts the notification still arrives.
+		//
+		// Before the fix the handler was `.catch(async (e) => { … })`: an async
+		// rejection handler with nobody to catch IT. The rejected save() aborted
+		// the handler before the notification, so the failure handler for a hung
+		// parent hung the parent — and the escaped rejection was reported by bun
+		// as "0 fail, exit 1", which reads as a clean run.
+		ctx = await setupTestContext();
+		const rootId = await getRootNodeId(ctx);
+		ctx.mockAPI.setCapturedVar("rootId", rootId);
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Capture unhandled rejections rather than letting them poison the run.
+		// Filtered by message so a leftover rejection from another test can never
+		// make this one fail (or pass).
+		const escaped: string[] = [];
+		const onUnhandled = (reason: unknown) => {
+			const msg = reason instanceof Error ? reason.message : String(reason);
+			if (msg.includes(SAVE_FAILURE)) escaped.push(msg);
+		};
+		process.on("unhandledRejection", onUnhandled);
+
+		try {
+			const originalOpts = ctx.app.ctx.scopeOpts.get(ctx.projectId);
+			if (!originalOpts) throw new Error("scopeOpts not registered");
+			ctx.app.ctx.scopeOpts.set(ctx.projectId, {
+				...originalOpts,
+				beforeChildLaunch: async (_node, tracker) => {
+					// Real workspace prep (`git worktree add` + install) takes seconds,
+					// so by the time it fails the task above is long since parked at
+					// yield. Reproduce that ordering explicitly: without it, a
+					// fast-rejecting save() lets the notification overtake
+					// send_message's own tool_result and ride along with it, and the
+					// test would only sometimes exercise the wake it is named after.
+					await waitForIdle(ctx);
+
+					// Poison the NEXT tracker.save() only. The hook throws on the very
+					// next line, and nothing between that throw and the failure handler
+					// saves — so the one-shot lands exactly on the handler's save,
+					// which is what a real ENOSPC / racing-rmdir would hit.
+					const realSave = tracker.save.bind(tracker);
+					tracker.save = async () => {
+						tracker.save = realSave;
+						throw new Error(SAVE_FAILURE);
+					};
+					throw new Error("simulated hook failure");
+				},
+			});
+
+			const parentInstruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{
+								type: "tool_use",
+								name: "mcp__mxd__create_task",
+								input: {
+									parentId: "$rootId",
+									title: "Doomed Child",
+									description:
+										"Will fail to launch, and the handler will fail too",
+								},
+							},
+						],
+					},
+					{
+						assert: [
+							{
+								block: 0,
+								type: "tool_result",
+								isError: false,
+								capture: { childId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+							},
+						],
+						blocks: [
+							{
+								type: "tool_use",
+								name: "mcp__mxd__send_message",
+								input: {
+									taskId: "$childId",
+									title: "Start",
+									message: "begin work",
+								},
+							},
+						],
+					},
+					{
+						blocks: [{ type: "tool_use", name: "mcp__mxd__yield", input: {} }],
+					},
+					{
+						// The load-bearing assertion: the parent woke at all, and the
+						// notice carries the launch failure. On the broken handler this
+						// turn is never reached — the parent yields forever and
+						// waitForDone below times out.
+						assert: [
+							{ block: 0, type: "tool_result", contains: "resumed." },
+							{ block: 1, type: "text", contains: "task_complete" },
+							{ block: 1, type: "text", contains: 'status="failed"' },
+							{ block: 1, type: "text", contains: "Auto-launch failed" },
+							{ block: 1, type: "text", contains: "simulated hook failure" },
+						],
+						blocks: [
+							{
+								type: "text",
+								text: "Parent was notified despite the second failure.",
+							},
+							{
+								type: "tool_use",
+								name: "mcp__mxd__done",
+								input: {
+									status: "passed",
+									result: "handled launch failure with a failing handler",
+								},
+							},
+						],
+					},
+				],
+			});
+
+			const resp = await startAgent(ctx, parentInstruction);
+			expect(resp.status).toBe(200);
+
+			const status = await waitForDone(ctx, 30000);
+			expect(status).toBe("verify");
+
+			// The decorative step failed loudly and did not starve the notification:
+			// nothing escaped as an unhandled rejection.
+			expect(escaped).toEqual([]);
+
+			// And the failing save() really did run — otherwise this test proves
+			// nothing beyond the plain launch-failure case one test above.
+			const tracker = await ctx.app.getTracker(ctx.projectId);
+			const rootNode = tracker.getTask(tracker.rootNodeId);
+			const childId = rootNode?.children?.[0] as string;
+			expect(childId).toBeDefined();
+			const childEvents = await readSessionEvents(ctx, childId);
+			const errorEvents = childEvents.filter(
+				(e) => e.type === "error",
+			) as Array<{ type: "error"; message: string }>;
+			expect(errorEvents.length).toBe(1);
+			expect(errorEvents[0]?.message).toContain("simulated hook failure");
+		} finally {
+			process.off("unhandledRejection", onUnhandled);
+		}
 	}, 45000);
 });
 
