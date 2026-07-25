@@ -154,11 +154,17 @@ export function normalizeGlobDepth(glob: string): string {
  *
  * ## No cap
  *
- * Every file is collected and then sorted, because `jsSearch`'s `headLimit`
- * counts MATCHES and applies to sorted order. Stopping the walk early would
- * silently change which files a capped search looks at. (`list_files` caps
- * during its walk — but its cap is on the returned list, which is a different
- * question.)
+ * Every file is collected and then sorted, and there is no way to stop early:
+ * you cannot know the alphabetically-first N files without having seen all of
+ * them. Sorted output and early termination are mutually exclusive.
+ *
+ * That is a constraint on BOTH callers, not a `search`-only detail. `jsSearch`'s
+ * `headLimit` counts MATCHES and applies to sorted order, and `list_files`'s
+ * 500-file cap slices this list after the fact — neither bounds the walk, and
+ * neither can while the answer is sorted. What they bound is the RESULT, which
+ * is what both were for. Stopping early would buy a cheaper walk by making
+ * "the first N" an arbitrary set that can differ between two runs over an
+ * unchanged tree.
  */
 export function walkFiles(
 	root: string,
@@ -211,8 +217,11 @@ export function walkFiles(
 }
 
 /**
- * Pure JS search implementation using Bun.Glob + RegExp.
- * Replaces external rg/grep dependency for cross-platform reliability.
+ * Pure JS search implementation: `walkFiles` for discovery, RegExp for matching.
+ * Replaces an external rg/grep dependency for cross-platform reliability.
+ *
+ * (`Bun.Glob` is still involved, but only inside `walkFiles` and only to match a
+ * caller-supplied glob against a path — it no longer drives the walk.)
  */
 export async function jsSearch(opts: {
 	pattern: string;

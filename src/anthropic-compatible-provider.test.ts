@@ -2462,8 +2462,12 @@ describe("jsSearch: hidden directories", () => {
 	});
 
 	test("glob branch descends into hidden directories too", async () => {
-		// Separate scanSync call site from the no-glob branch above — fixing one
-		// and not the other leaves half the tool lying.
+		// Written when this was a SECOND `scanSync` call site and fixing one
+		// without the other left half the tool lying. There is one walker now, so
+		// the reason changed with the code: passing a glob installs a matcher, and
+		// this pins that having a matcher does not change which DIRECTORIES get
+		// reached. Same assertion, still worth its line — matching and descending
+		// are separate decisions and only one of them is the caller's.
 		const files = await matchedFiles({ glob: "**/*.ts" });
 		expect(files).toContain(".mxd/plugin/scope-opts.ts");
 		expect(files).toContain("src/caller.ts");
