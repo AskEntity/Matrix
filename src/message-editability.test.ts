@@ -273,6 +273,7 @@ describe("POST /edit enforces the gate", () => {
 	let dataDir: string;
 	let app: ReturnType<typeof createMatrixApp>["app"];
 	let ctx: ReturnType<typeof createMatrixApp>["ctx"];
+	let shutdown: ReturnType<typeof createMatrixApp>["shutdown"];
 	let projectId: string;
 	let rootNodeId: string;
 
@@ -293,11 +294,17 @@ describe("POST /edit enforces the gate", () => {
 		});
 		app = result.app;
 		ctx = result.ctx;
+		shutdown = result.shutdown;
 		projectId = project.id;
 		rootNodeId = (await result.getTracker(projectId)).rootNodeId;
 	});
 
 	afterEach(async () => {
+		// Shut down BEFORE removing the dirs. An accepted edit delivers a
+		// message, which launches an agent whose fire-and-forget tracker.save
+		// otherwise races the rm and fails with ENOENT — the flake shape
+		// documented for tracker.save's temp+rename.
+		await shutdown();
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
