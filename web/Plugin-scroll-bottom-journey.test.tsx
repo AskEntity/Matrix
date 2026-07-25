@@ -227,6 +227,13 @@ describe("Plugin — back-to-newest (Follow) full journey", () => {
 			div.querySelector<HTMLButtonElement>(".mxd-compact-trigger-btn"),
 		);
 		expect(followBtn()).toBeNull();
+		// Baseline width of the action row while at the bottom. Scrolling away
+		// must add EXACTLY ONE child — this is the whole point of the control
+		// being singular, and it is asserted by counting rather than by naming
+		// the deleted button's class (which no longer renders, so asserting
+		// its absence would be true no matter what anyone adds).
+		const actionsRow = compactBtn.parentElement as HTMLElement;
+		const persistentCount = actionsRow.children.length;
 
 		// 2. User scrolls up: mock overflow geometry, position far from the
 		//    bottom, and fire a scroll event.
@@ -249,6 +256,8 @@ describe("Plugin — back-to-newest (Follow) full journey", () => {
 		expect(compactBtn.parentElement).toBe(panelActions);
 		const children = Array.from(panelActions?.children ?? []);
 		expect(children.indexOf(btn)).toBeLessThan(children.indexOf(compactBtn));
+		// ONE control, not two: scrolling away added a single child.
+		expect(actionsRow.children.length).toBe(persistentCount + 1);
 
 		// 4. Click → the log jumps to the bottom, follow mode resumes, and the
 		//    control hides. One click, one commit, nothing left on screen —
