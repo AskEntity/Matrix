@@ -1,4 +1,4 @@
-import type { QueueMessage } from "./message-queue.ts";
+import { INTERRUPT_NOTICE, type QueueMessage } from "./message-queue.ts";
 import {
 	createBackgroundComplete,
 	createUserMessage,
@@ -414,6 +414,8 @@ function formatBodyForAI(body: QueueMessage): string {
 			return body.content;
 		case "compacted_resume":
 			return body.content;
+		case "interrupt":
+			return INTERRUPT_NOTICE;
 		default:
 			return "";
 	}

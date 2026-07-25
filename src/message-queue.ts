@@ -1,3 +1,13 @@
+/**
+ * What the model reads when a turn of its was cut off by the user.
+ *
+ * Fixed text, no character count. A number invites the model to discuss how
+ * much it lost; all it needs to know is that the sentence it can see stopping
+ * mid-word stops there because a human stopped it, not because it finished.
+ */
+export const INTERRUPT_NOTICE =
+	"[Your previous message was interrupted by the user]";
+
 /** Image attachment for user messages. */
 export interface QueueImage {
 	base64: string;
@@ -86,6 +96,22 @@ export type QueueMessage =
 			id: string;
 			ts: number;
 			content: string;
+	  }
+	| {
+			/**
+			 * Written by the provider loop when it parks with an interrupt
+			 * outstanding — "the user cut off your previous message".
+			 *
+			 * Not input: nobody sent it, it carries no instruction, and it is
+			 * enqueued quiet so it never wakes anyone. Its two jobs are to tell
+			 * the model its last turn was cut off (otherwise the only evidence is
+			 * a sentence that stops mid-word), and to leave a mark on the log that
+			 * distinguishes "the user stopped me" from "I died mid-work" — see
+			 * `shouldLaunchAgent`, which is the only thing that reads it back.
+			 */
+			source: "interrupt";
+			id: string;
+			ts: number;
 	  };
 
 /**

@@ -166,3 +166,17 @@ export function createCompactedResume(
 ): MessageOf<"compacted_resume"> {
 	return { source: "compacted_resume", ...stamp(), content };
 }
+
+// ── Turn interrupt ──
+
+/**
+ * The notice the loop leaves when a user interrupt parked it.
+ *
+ * Carries no fields — the text is fixed (`INTERRUPT_NOTICE`) and there is
+ * nothing per-instance to say. Deliberately no character count: a number
+ * invites the model to discuss how much it lost, and all it needs to know is
+ * that it was cut off.
+ */
+export function createInterruptNotice(): MessageOf<"interrupt"> {
+	return { source: "interrupt", ...stamp() };
+}

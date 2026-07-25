@@ -27,7 +27,10 @@ import {
 	hasPendingImplicitYield,
 } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
-import { createCompactedResume } from "./queue-message-factory.ts";
+import {
+	createCompactedResume,
+	createInterruptNotice,
+} from "./queue-message-factory.ts";
 import {
 	drainQueueAtCancellationPoint,
 	recordQueueEvents,
@@ -131,6 +134,30 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
  * Consumers depend on the stronger meaning: yield_external wakes an external
  * client on it, and the UI re-fetches JSONL on it to expose Edit/Rewind.
  */
+/**
+ * Leave the "you were cut off" mark on the log, at the park.
+ *
+ * Written HERE and not by `interruptTask` for two reasons. The loop is the only
+ * thing that knows the turn has actually ended — `interruptTask` only knows it
+ * asked. And nothing but the provider loop may write to JSONL after a yield, so
+ * the request side has no legal way to persist this.
+ *
+ * `quiet` so it cannot wake the park it is being written into, and so it stays
+ * unconsumed: that is precisely what makes it visible to `shouldLaunchAgent` on
+ * the next boot. A consumed message would leave the log looking like a turn
+ * that owes an answer.
+ *
+ * Best-effort. A closed queue (stop racing the interrupt) means the session is
+ * being torn down and there is nobody left to tell.
+ */
+function writeInterruptNotice(queue: MessageQueue): void {
+	try {
+		queue.enqueue(createInterruptNotice(), { quiet: true });
+	} catch {
+		/* queue closed — teardown won the race, nothing to annotate */
+	}
+}
+
 async function handleImplicitYield(
 	queue: MessageQueue,
 	setActivity: (state: AgentActivity) => void,
@@ -144,11 +171,26 @@ async function handleImplicitYield(
 	// including one the agent reached on its own. Consuming here rather than at
 	// the decision point is what keeps a stop that lands exactly as the agent
 	// goes idle from surviving into the next turn. See TurnInterrupt.consume.
+	const wasInterrupted = interrupt?.requested === true;
 	interrupt?.consume();
 	if (!queue.hasPending) setActivity("idle");
 	try {
 		queue.idle = true;
-		const first = await queue.wait();
+		// ⚠️ ORDER IS LOAD-BEARING AND SILENT WHEN WRONG — do not hoist the
+		// enqueue above `queue.wait()`.
+		//
+		// `wait()` returns IMMEDIATELY when the queue is already non-empty, and
+		// only registers a waiter (synchronously, in the executor) when it is
+		// empty. Enqueue first and the notice is sitting there, `wait()` takes
+		// its first branch and hands the agent its own interruption notice as if
+		// it were input — the agent wakes itself and starts a turn nobody asked
+		// for. Park first and `quiet` leaves the waiter alone, so the notice
+		// waits on disk and in the queue for whatever wakes us next.
+		//
+		// Two lines, opposite behaviour, nothing throws either way.
+		const parked = queue.wait();
+		if (wasInterrupted) writeInterruptNotice(queue);
+		const first = await parked;
 		queue.idle = false;
 		// Left the queue — everything from here to the next API call is the
 		// residual, which is `thinking`. Deduped, so this is free when the
