@@ -861,3 +861,57 @@ describe("task-index: hash-keyed staleness", () => {
 		for (const h of hits) expect(Number.isFinite(h.score)).toBe(true);
 	});
 });
+
+describe("task-index: a non-finite embedding is a defect, never a value", () => {
+	let tempDir: string;
+	let tracker: TaskTracker;
+	let dbPath: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-index-nan-"));
+		tracker = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker.load();
+		dbPath = join(tempDir, "index.msp");
+	});
+
+	afterEach(async () => {
+		_clearDbCache();
+		_setEmbeddingPipeline(null);
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("a NaN vector is never stored, and the document is retried", async () => {
+		// This is what a device like CoreML does: no throw, no warning, a
+		// perfectly shaped 768-dim vector of NaN. Storing it is permanent and
+		// silent damage — the sidecar would say "indexed", nothing would ever
+		// revisit it, and searchIndex's NaN guard would quietly serve
+		// keyword-only results for the life of the index.
+		tracker.addTask("nanword title", "nanword body");
+		let broken = true;
+		_setEmbeddingPipeline({
+			embed: async () =>
+				broken ? new Array(768).fill(Number.NaN) : new Array(768).fill(0.1),
+		});
+		await reconcileIndex(dbPath, tracker);
+
+		// Still searchable — a bad device degrades to keyword-only rather than
+		// losing the document.
+		expect(await searchIndex(dbPath, "nanword")).not.toHaveLength(0);
+		// And every score is finite, i.e. no NaN reached the store.
+		for (const h of await searchIndex(dbPath, "nanword")) {
+			expect(Number.isFinite(h.score)).toBe(true);
+		}
+
+		// Recorded as un-embedded, so a working device repairs it.
+		broken = false;
+		const r = await reconcileIndex(dbPath, tracker);
+		expect(r.indexed).toBeGreaterThan(0);
+	});
+
+	test("a wrong-dimension vector is rejected the same way", async () => {
+		tracker.addTask("dimword title", "dimword body");
+		_setEmbeddingPipeline({ embed: async () => [1, 2, 3] });
+		await reconcileIndex(dbPath, tracker);
+		expect(await searchIndex(dbPath, "dimword")).not.toHaveLength(0);
+	});
+});
