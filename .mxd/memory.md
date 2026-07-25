@@ -288,1292 +288,579 @@ disappeared"*, which is addressed to nobody.
 - **Promised to do something later, once some condition holds?** Create a draft task for it *at that
   moment*. A promise whose trigger exists only in one agent's context does not survive that agent
   being interrupted, and it fails silently because nothing records that it was owed.
+
 ---
-# Core Mechanisms
+# The Agent Loop
 ---
 
-## Agent Lifecycle
+## How an agent runs, parks and wakes
 
-- Root and child agents use the same launch function: `runAgentForNode` in `agent-lifecycle.ts`
-- `done()` = two-phase, and an intended orphan like yield (no tool_result written). Full contract and
-  its two hard-won invariants: *Two-Phase done() Lifecycle*, immediately below.
-- `yield()` = loop-level pause. Provider intercepts before executeTool.
-- `end_turn` = implicit yield, never implicit done.
-- `stopTask()` = per-task real interrupt (close queue + abort signal via `TaskSession.abortController`).
-- `launchingNodes: Set<string>` prevents duplicate launches during async setup.
-- Session identity check in finally block prevents cleanup clobber when replacement agent launched.
-- On JSONL resume, four states detected from JSONL shape:
-  - **Explicit yield** (pendingYieldToolCall): bypass to queue.wait
-  - **Done** (pendingDoneToolCall): wait for messages, write done tool_result with wake context
-  - **Implicit yield** (hasPendingImplicitYield): bypass to queue.wait → handleImplicitYield
-  - **Interrupted** (orphaned tools repaired): non-blocking queue drain → API call
-- autoResumeProjects: finds in_progress nodes with JSONL + crash recovery for interrupted Phase 2 (done without done_notified).
+Root and child agents use the same launch function, `runAgentForNode` in `agent-lifecycle.ts`.
 
-## Two-Phase done() Lifecycle
+**The loop parks in exactly one place.** `handleImplicitYield` is where every path that stops
+working ends up — explicit `yield()` (intercepted by the provider before `executeTool`), `end_turn`
+(an implicit yield, never an implicit done), a done-resume waiting for messages, and an interrupted
+turn. Keeping one park is what stops "what is this agent waiting for" from becoming five states.
 
-- **Phase 1** (agent-side): close queue, loop exits. No status update. Intended orphan (no tool_result).
-- **Phase 2** (daemon-side): status→verify/failed, task_complete to parent, `done_notified` crash-safe marker.
-- **Crash recovery**: `findInterruptedDonePhase2` detects orphaned TOOL_DONE without done_notified → completes Phase 2 on restart.
-- **Status**: `done("passed")` → verify → close_task → closed. `done("failed")` → failed.
-- **Phase 2 ordering**: session=null is irreversibility boundary. Phase 2 runs AFTER session cleanup.
+**On resume, four states are read off the JSONL shape**, not off any in-memory flag:
 
-**Two invariants inside Phase 2, both learned the hard way** (records in FIX-3 cc#3 and B-M4;
-re-verified in `agent-lifecycle.ts` 2026-07-25):
+| shape | meaning | what happens |
+|---|---|---|
+| last tool_call is `yield` | explicit yield | bypass straight to `queue.wait` |
+| last tool_call is `done` | pending done | wait for messages, then write the done tool_result with wake context |
+| `hasPendingImplicitYield` | ended on `end_turn` | bypass to `queue.wait` → `handleImplicitYield` |
+| orphaned tool_calls repaired | interrupted | non-blocking queue drain → API call |
 
-- **The loop promise settles on EVERY path.** Phase 2 is wrapped in try/catch/finally, and the
-  `agentLoopPromises.delete` + resolve live in the `finally`. A throw anywhere in Phase 2 is logged,
-  not rethrown — the task already did its work, and a Phase-2 hiccup must not be treated as agent
-  failure. Why it matters: `stopTask` awaits that promise with **no timeout**, so a leaked promise
-  hangs the stop forever.
-- **task_complete must be DURABLE before `done_notified` is written.** Both are awaited and the
-  parent's store flushed before the marker. The marker is the crash-recovery signal meaning "Phase 2
-  finished", so if it can land while task_complete has not, a crash in that window leaves the parent
-  waiting forever with nothing to re-deliver. The reverse window (marker written, crash before its
-  own flush) re-delivers on restart — a duplicate completion is recoverable, a lost one is not, and
-  that asymmetry is the whole reason for the ordering.
+There is no named helper for the explicit-yield case — `provider-shared.ts` reads it straight off
+the JSONL. Don't go looking for one; a `hasPendingYield` used to exist and was deleted with zero
+production callers. `hasPendingImplicitYield` (events.ts) is the implicit-yield one and is live.
 
-## Auto-Launch Failure = task_complete(failed)
+**`launchingNodes` guards the window between "we decided to launch" and "the session exists".**
+⚠️ **Never add a node to `launchingNodes` from outside `runAgentForNode`.** `autoResumeProjects`
+once pre-registered every node it was about to launch; `runAgentForNode` checks the set and returns
+early, so no agent ever started. The lock is acquired atomically at the top of
+`ensureChildAgentRunning`, in one synchronous tick with no await before `beforeChildLaunch` — that
+placement is the fix for a real race, because `git worktree add` takes seconds and two concurrent
+launches both used to get through, with the loser's throw marking the node `failed` and sending a
+bogus `task_complete(failed)` to the parent while the winner was still running. A caller that
+already holds the lock passes `launchLockHeld`, and `runAgentForNode` then takes over releasing it
+on **every** exit path including the early "session already running" bail, so the caller cannot leak
+it. `beforeChildLaunch` is the SOLE worktree creator; the inline `wm.create` that `send_message`
+used to do, and the REST `/continue` path that called `beforeChildLaunch` outside the lock, were
+both deleted rather than made careful.
 
-`deliverMessage` auto-launches a pending child via `ensureChildAgentRunning`. When `beforeChildLaunch` throws (e.g., missing hook file, worktree creation fails), the sender's yield would have hung forever — target never ran, so no done() ever fires, so no task_complete ever delivered.
+**The session-identity check in the `finally` block** prevents a dying agent from clobbering the
+cleanup of the replacement agent that was launched to succeed it.
 
-Launch failure IS task completion: failed before starting. The catch in `deliverMessage` (agent-lifecycle.ts ~580) handles this by reusing the existing task_complete channel — same semantic as `done("failed")`:
-1. emit error event on target (activity log)
-2. `tracker.updateStatus(nodeId, "failed")` + save + broadcast (UI red)
-3. `deliverMessage(taskAbove, createTaskComplete(nodeId, title, false, errorMsg))`
+**Retry backoff must be abort-aware.** Both the inner per-call retry and the outer retry
+(`abortableDelay`, 30/60/120s) race their sleep against the abort signal and re-check
+`signal.aborted` afterwards. Without that, a transient error parks the loop in a sleep, and a
+stop/reset blocks for up to 120s — past the daemon's 60s worker-forward timeout, producing a 504
+plus a retry racing the still-running first reset. ⚠️ **Test this with `stopTask`, not `stopAgent`**:
+`stopAgent`'s bounded 1s race masks the block entirely.
 
-Sender's yield wakes with `<task_complete status="failed" summary="Auto-launch failed: ...">` — handled by existing yield-resume flow, no new code paths. **Root launch failure is not handled** — root has no `taskAbove`; separate concern.
+**There is no in-memory recovery from a 400.** The old mechanism — pop the broken user message,
+splice in synthetic tool_results, retry once — was removed and its flags no longer exist. A
+non-transient 400 propagates, the agent stops, and the status stays `in_progress` so it is
+resumable; the next launch runs `buildSessionRepair` on the JSONL **before** the provider loop
+starts. The fix lives in persisted state rather than in volatile `messages[]`, which is the general
+rule for this codebase. Transient errors (429, 5xx, network) are still retried in-loop.
 
-Design rule: any code path that could silently hang a yielding parent MUST notify via task_complete. The channel is reusable because "failed before starting" and "failed during work" look identical from the sender's perspective.
+## done() is two-phase, and both of Phase 2's invariants were learned the hard way
 
-## Duplicate Yield Handling
+**Phase 1 is agent-side**: close the queue, exit the loop, no status update. done() is an *intended
+orphan* like yield — no tool_result is written. **Phase 2 is daemon-side**: status → verify/failed,
+`task_complete` to the parent, and a `done_notified` marker for crash recovery.
+`findInterruptedDonePhase2` completes an interrupted Phase 2 on restart. `session = null` is the
+irreversibility boundary, and Phase 2 runs after session cleanup.
 
-API can return multiple yield tool_calls in the same assistant turn.
+⚠️ **The loop promise must settle on EVERY path.** Phase 2 is wrapped in try/catch/finally with the
+`agentLoopPromises.delete` and the resolve inside the `finally`; a throw anywhere in Phase 2 is
+logged and not rethrown, because the task already did its work and a Phase-2 hiccup is not an agent
+failure. The reason this matters is not tidiness: `stopTask` awaits that promise with **no timeout**,
+so one leaked promise hangs the stop forever.
 
-**Current behavior.** Two rules, both live:
+⚠️ **`task_complete` must be DURABLE before `done_notified` is written.** Both are awaited and the
+parent's store flushed before the marker. The marker means "Phase 2 finished", so if it can land
+while `task_complete` has not, a crash in that window leaves the parent waiting forever with nothing
+to re-deliver. The reverse window — marker written, crash before its own flush — re-delivers on
+restart, giving a duplicate completion. **That asymmetry is the whole reason for the ordering: a
+duplicate completion is recoverable, a lost one hangs the parent.** The naive version is easy to
+write and looks fine — a fire-and-forget `deliverMessage(...).catch()` followed immediately by
+`emitEvent(done_notified)` — because the marker lands on *this* node's write queue synchronously
+while `task_complete` goes through `await getTracker` first.
+
+**Auto-launch failure IS task completion**, and must be reported through the same channel. When
+`beforeChildLaunch` throws (missing hook file, worktree creation fails), the target never runs, so
+no done() ever fires, so no `task_complete` is ever delivered, and the sender's `yield` hangs
+forever. The catch in `deliverMessage` emits an error event, marks the node `failed`, and delivers
+`task_complete(success: false)` to the task above — the sender's yield then wakes through the
+existing resume flow with no new code path, because "failed before starting" and "failed during
+work" are indistinguishable from the sender's side. **Design rule: any code path that could silently
+hang a yielding parent must notify via `task_complete`.** Root launch failure is not handled — root
+has no task above it, and that is a separate problem.
+
+⚠️ **Phase 2 crash recovery must deliver `task_complete` with `quiet: true`.** Without it the
+delivery auto-launches the parent, and `autoResumeProjects` launches it too — a duplicate launch.
+Quiet still persists the message to JSONL, and `findUnconsumedMessages` recovers it when autoResume
+gets there.
+
+Two things that look like duplicate-launch bugs and are not: after a crash,
+`orchestration_completed` never emitted, so `orchestration_started` from before the crash plus one
+from the resume is **two consecutive starts and is normal** — assert on `traceId` uniqueness
+instead. And in a restart test, `shutdown()` is required before `recreateApp()`, or the old app's
+agent stays alive and the new app launches a second one for the same node; in a real crash the
+process is dead, so that shape cannot occur in production.
+
+## Duplicate yield or done in one turn
+
+The API can return several `yield` tool_calls in the same assistant turn. Two rules, both live:
 
 1. **Repair skips the INTENDED orphan, which is specifically the LAST tool_call** — not "any
    yield/done". Earlier yield/done orphans in the same turn are genuine repair targets and do get
-   interrupted results.
+   interrupted results. The first version of this rule said "skip yield/done", which was too broad.
 2. **Extras emit to JSONL immediately** (orphan prevention) **but their live-path construction is
-   DEFERRED** via `pendingDuplicateYieldExtras`. On yield wake they bundle into the SAME
+   DEFERRED** via `pendingDuplicateYieldExtras`. On yield wake they bundle into the same
    `buildUserTurn` call as the real yield, producing ONE user message of
-   `[...extras, real, ...queue]`. That order is forced by JSONL: extras emit at yield-detection and
-   the real one at wake, so the walker reconstructs them in that order and the live path must match
-   or the two drift.
-
-⭐ **The reusable pattern — CONCLUSION KEPT, REASON REPLACED (2026-07-25).** It used to read: *"emit
-to JSONL for orphan prevention, defer the `messages[]` push so it merges with the next user turn"*,
-justified by role alternation. **Role alternation does not exist** (see *The Anthropic message-shape
-rules, MEASURED*), so that justification only told you "this looks like the last one". The real
-constraint is the one rule 2 above already states, and it is checkable:
-
-> **Deferral is a live/walker BYTE-IDENTITY device, not an API-shape device.** It is REQUIRED when
-> the deferred tool_result is PERSISTED and lands ADJACENT to another in JSONL — the walker's
-> collection loop merges adjacent tool_results into ONE user message, so the live path must too.
-> It is UNNECESSARY when the message it would merge into is TRANSIENT.
-
-Which is why the three sites did not all resolve the same way. `pendingDuplicateYieldExtras` **is
-still here**: nothing separates the extras' results from the real yield's in JSONL (the walker skips
-`message` events), so splitting the live push would require inventing a JSONL boundary event —
-strictly more machinery, not less. The two compaction deferrals **are gone** (2026-07-25): the
-summarization instruction is never persisted at all (`provider-shared.ts` "summarization_request
-event removed"), `messages.length = 0` on success, so that request is never reconstructed and there
-was nothing to stay byte-identical with. Both compactOnly sites now call one
-`emitAndPushCompactToolResult` generator that emits the tool_result and pushes its turn on the spot;
-the summarization instruction is pushed as its own user message. See *Compaction Asymmetry* and
-FIX-5 R8-B#11.
-
-⭐ **The obligation the deferrals discharged is NOT gone, only relocated** — the assistant's
-yield/done `tool_use` must still be answered before the request goes out, and that is the pairing
-rule, which is real. R8-B#11 and R8-B#1b existed for exactly that and both survive in substance:
-the extras still ride in the same turn as the real tool_result, just built where it is emitted
-instead of two branches later. The procedure that keeps this from going wrong is in *Refactoring
-Philosophy* § **Deleting a mechanism built on a false premise** — here one set of lines served both
-the false premise (alternation) and the true obligation (pairing).
-
-Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn".
-
-**How it got here** — rule 1 came first ("skip yield/done" was too broad; the invariant is "skip the
-INTENDED orphan"). ~~The first attempt at rule 2 wrote the extras' no-op tool_results as a SEPARATE
-user message, which produced a *new* bug: extras message + the real yield's message = two
-consecutive user messages → API 400 "Messages must alternate roles". Worth keeping because the
-failure is instructive: fixing an orphan by adding a message is how you turn a repair problem into
-an alternation problem, and deferral is what avoids both.~~
-
-**SUPERSEDED 2026-07-25 — that 400 never happened.** It was thrown by our own mock; the shape
-(`user[tool_result]` then `user[tool_result, …]`) is ACCEPTED by the real API — both messages open
-with tool_result blocks, so the answering run spans them. Kept because it is the clearest specimen
-of the phantom: a real error message plus an unverified attribution reads exactly like evidence.
-The deferral survives anyway, on the byte-identity ground above — **right mechanism, wrong reason,
-and the wrong reason is what spread.**
-
-## Compaction Asymmetry
-
-> ⚠️ **THE PREMISE OF THIS WHOLE SECTION IS A PHANTOM (established 2026-07-25).** Two consecutive
-> user messages are LEGAL — measured against production Anthropic, 19 shapes, see *The Anthropic
-> message-shape rules, MEASURED*. Every "→ API 400" below came from `ValidatingMockAPI`, never from
-> the API. Read this section as the HISTORY of why three `pending*` deferral variables exist.
->
-> What is still LIVE in here: FIX-5 **R8-B#11** and the too-short-compact consumption (**R8-B#1b**)
-> are REAL — their cause is the *pairing* rule (an assistant's tool_use with no answering
-> tool_result in the request), which was attributed correctly at the time. What is dead: the
-> alternation framing, the **B-L9** diagnosis, and the "latent walker bug" below.
-
-~~Manual `/compact` injects a summarization instruction as a user message. If the previous loop iteration also pushed a user message (yield tool_result + queue content, done tool_result + queue content), result is two consecutive user messages → API 400 "Messages must alternate roles".~~
-
-Seven paths in `provider-shared.ts` have this shape. 3 are clean (`continue;` without pushing user msg). ~~1 is fixed. 3 are deferred via test.todo.~~
-
-**Do not trust a count here — go read the source.** The open paths are exactly the `test.todo`s in
-`drift-lifecycle.test.ts`; that set shrinks over time and any number written down here starts
-rotting the day after. (It said "1 fixed, 3 deferred" for months while three of the four had been
-fixed — a stale count and a correct count look identical, which is why this is now a pointer.)
-
-Fixed so far, each recorded in its own entry: the yield+compactOnly path (304fccd), the
-**done**-resume + compactOnly variant (FIX-3 B-L9, `pendingCompactDoneToolCall`), and
-duplicate-yield extras in the compactOnly path (FIX-5 R8-B#11). The shape of what survives: paths
-where the queue had OTHER messages alongside the compact, so there was nothing empty to bundle the
-deferred tool_result into.
-
-**Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. ~~One user message with `[tool_result, text]` blocks → valid alternation.~~ **The unbundled form — `user[tool_result]` then `user[summarization]` — is equally valid** (measured). **COLLAPSED 2026-07-25** — `pendingCompactYieldToolCall` and `pendingCompactDoneToolCall` no longer exist; both compactOnly sites push the tool_result turn immediately via `emitAndPushCompactToolResult`.
-
-~~**Pattern**: emit to JSONL for orphan prevention, defer messages[] push to merge with next user turn. Same as duplicate-yield fix (19995b9).~~ **Re-derived** — see the ⭐ block in *Duplicate Yield Handling*: deferral is a byte-identity device, and it is required only when the deferred tool_result is persisted next to another one. That is true of the duplicate-yield case and false of both compaction cases.
-
-~~**Latent walker bug** (deferred): walker reading `[tool_result, messages_consumed, summarization_request]` produces two consecutive user messages. Proper structural fix: summarization_request should append to the current user turn, not create a separate one. Requires matching live + walker changes for byte-identical output. Documented as test.todo in drift-lifecycle.test.ts.~~
-
-**NOT A BUG (2026-07-25).** That walker output was run through the real walker and checked against
-the measured rules: `user[tool_result, text, text]` followed by the summarization user message —
-the tool_result leads its turn, so the yield is answered, and the following consecutive user
-message is fine. Verified verbatim against the live API. The `test.todo` in
-`drift-lifecycle.test.ts` described a shape that works — **deleted 2026-07-25**, not implemented.
-
-## API 400 → crash → repair-on-next-launch
-
-There is NO in-memory auto-recovery from a 400 invalid_request_error. The old mechanism (pop the broken user message, splice in synthetic tool_results + recovery text, retry once, gated by `enableAutoRecovery` / `autoRecoveryAttempted`) was REMOVED — those flags no longer exist anywhere in the codebase (grep confirms zero matches).
-
-Current behavior (`provider-shared.ts` outer-retry catch, ~line 1409): on a non-transient 400 the error propagates, the agent stops, status stays `in_progress` (resumable). On the NEXT launch, `buildSessionRepair` fixes the JSONL on disk *before* the provider loop starts (see events.ts ~line 583). The fix lives in persisted state, not volatile `messages[]` — consistent with the "recovery must touch JSONL, not just memory" invariant.
-
-Transient errors (429, 5xx, network) are still retried in-loop with backoff. Only the 400-class path is "crash + repair on next launch".
-
-## Abort Signal + Inner Retry Fix
-
-Inner retry checks `signal.aborted` first + abort-responsive sleep. Reset time: 30s → instant.
-
-## Duplicate Launch Prevention in autoResumeProjects
-
-### Bug: pre-register launchingNodes prevents runAgentForNode from starting
-`autoResumeProjects` tried to pre-register all nodes in `launchingNodes` before launching. But `runAgentForNode` checks `launchingNodes.has(nodeId)` → returns early. Agents never started. Never pre-register in `launchingNodes` from outside `runAgentForNode`.
-
-### Fix: quiet deliverMessage in Phase 2 crash recovery
-Phase 2 crash recovery calls `deliverMessage(task_complete)` to parent. Without `quiet: true`, this auto-launches the parent → duplicate launch (autoResume also launches it). Fix: `{ quiet: true }` prevents auto-launch. Message goes to JSONL, recovered by `findUnconsumedMessages` when autoResume launches the parent.
-
-### Test lesson: maxConsecutiveStarts conflates crash+resume with duplicate launch
-After a crash, `orchestration_completed` never emits (the loop was interrupted). So `orchestration_started` from before crash + from resume = 2 consecutive starts. This is NORMAL. Use traceId uniqueness on `orchestration_started` events instead.
-
-### Test lesson: shutdown() required before recreateApp() in restart tests
-Without shutdown, old app's agent stays alive. New app launches another agent for same node → appears as duplicate but is a test setup bug (can't happen in production crash where process is dead).
-
-## ParamDecl Bind
-
-All bind params hidden from agent, auto-bound. `create_task`/`create_folder` parentId is `explicit`.
-
-## bash tool: tiered output + merged streams (FU9)
-
-Defensive-instinct-as-tool-design. AI piped/redirected because context was at risk; now context is bounded by the tool, so the instinct has nothing to act on.
-
-**`<tmp>` below means `os.tmpdir()`**, i.e. `MXD_TMP_DIR = join(tmpdir(), "mxd")` in
-`src/tools/bash.ts`. It is **not** `/tmp` on macOS — it is the per-user `$TMPDIR` under
-`/var/folders/…/T/`. Never type the path from memory; the tool result prints the real one.
-
-### Tiered display (merged mode, default)
-- `<1024 bytes` → inline only, no file saved
-- `1024..10240` → full inline + top/bottom banner + file kept at `<tmp>/mxd/exec-<id>.out`
-- `>10240` → head 5KB + `... [N bytes / M lines truncated] ...` + tail 5KB + banner + read hint; file kept
-- Boundary: `head_budget + tail_budget >= total` naturally shows full (no special-case for size===10240)
-- Truncation: byte-aware + newline alignment via `Buffer.lastIndexOf(0x0a, budget-1)` / `Buffer.indexOf(0x0a, total-budget)`. No newline in window → hard byte cut + "mid-line cut" annotation.
-
-### Separate mode (opt-in `separate: true`)
-Two files: `<tmp>/mxd/exec-<id>.stdout` + `.stderr`. Budget allocation in the large case: if one stream is trivial (≤5KB), show it in full and give the other `BUDGET - trivial_size` split head/tail; else each gets 2.5k+2.5k. Continuous at boundary (stderr=5120 → both 5KB; stderr=5121 → stdout 2.5k+2.5k).
-
-### Stream merging
-`bash -c "(cmd) 2>&1"` wrapping. AI-written `2>&1` inside `cmd` becomes a harmless redundant no-op. Bash's own stderr (pre-subshell syntax errors, rare) is `stderr: "ignore"` at Bun.spawn level — acceptable tradeoff for clean single-file output.
-
-### Foreground/background parity
-One `formatBashResult` function. The `content` field of `background_complete` queue messages is byte-identical to what `parseForegroundResult` returns when the same command runs foreground.
-
-### Directory rename
-`mxd-bg/` → `mxd/` under the OS temp dir. The dir is no longer bg-specific (foreground commands save there too). `BackgroundProcess.separate: boolean` is the new mode discriminator; `stdoutPath` holds the `.out` file in merged mode (misleading name, kept for API compat).
-
-### Pure-function exports for testing
-`formatMergedOutput(path, exitCode)`, `formatSeparateOutput(so, se, exitCode)`, `truncateMiddle(buf, headBudget, tailBudget)`, `allocateSeparateBudget(stdoutSize, stderrSize)` — all exported from `src/tools/bash.ts` so tests hit them directly without spawning subshells.
-
-### Tool description vs system prompt
-The "don't pipe" guidance lives in the bash tool's `description` field (`src/tools/definitions.ts`), NOT in `src/system-prompts.ts`. Tool description is per-tool, embedded in API tool schema. system-prompts.ts has one general line about piping during long commands that's still accurate.
-
-### Architectural framing the task demonstrated
-When AI repeatedly does X (pipe/redirect/`| head`), ask: is the motivation legitimate? If yes (context protection IS legitimate), make the tool satisfy it naturally — don't enforce against it. Rule suppression leaks at edges; tool-level satisfaction closes the loop. If you find yourself adding parser/rejection/warning to the new tool, you drifted — the point is to make shortcuts unnecessary, not forbidden.
-
-## `search` tool: a hidden directory is not a boring directory (2026-07-25)
-
-`src/tools/search.ts` passed no `dot` option to `Bun.Glob.scanSync`, whose default is
-`dot: false` — so the walker never descended into ANY hidden directory. In this repo that
-is `.mxd/plugin/`: every ScopeOpts hook, every plugin REST route, the entire plugin UI —
-**17,862 lines across 54 files, i.e. 34% of all non-test source** (the task that filed this
-said "half"; measured, it is a third, and the whole UI). Invisible to the primary search
-tool. Fixed by `dot: true` at both scanSync call sites (the glob branch and the no-glob
-branch — fixing one and not the other leaves half the tool lying, so both are pinned
-separately).
-
-**`DEFAULT_SKIP_DIRS` is now the ONLY thing that decides what a search ignores**, which is
-what the code always claimed: `.git/` and `.worktrees/` were already listed *explicitly*,
-so `dot: false` was never anyone's intent — just a library default leaking through an
-option nobody passed. It is exported now, and a test pins it against its prose copy in the
-`excluded_dirs` param description. (Prose copies of lists are the "drained" rot from
-§ *Writing This File*: a stale list and a fresh list read identically.)
-
-⚠️ **`.worktrees/` in that list is load-bearing, costs nothing today, and therefore needs
-an assertion.** Each sub-agent worktree is a full second copy of the repo — measured 63,975
-files across 3 live worktrees — so dropping it makes one search from main scan every file
-4× and report every hit 4×. The guard test exists for the day someone "tidies" the list;
-it will not fail before then, which is the entire point.
-
-Two adjacent findings filed rather than swept in: **01KYCS0BH6** (`glob: "*.ts"` — the
-example in the tool's OWN description — returns nothing, because `*` does not cross `/` in
-Bun.Glob) and **01KYCS1552** (the skip list is applied AFTER the walk, so every excluded
-dir is enumerated then discarded; `dot: true` made that ~4× worse from main).
-
-### ⭐ How it was caught, and why that was the only way it could have been
-
-The failure mode is silent **by construction**: "no matches" and "never looked" produce a
-byte-identical tool_result. Nothing in a search result carries evidence that the search
-happened. So it can never be caught by inspecting the answer — only by a **collision with
-something you independently already know**.
-
-Forensic record, session 01KYCNHX9JAM, 13:01:04 → 13:01:55 (read out of its JSONL):
-
-| time | event |
-|---|---|
-| 13:01:04 | `search("formatTieredHits\|Related past tasks")` → a long, confident answer spanning 3 `src/` files. It silently omitted `.mxd/plugin/scope-opts.ts`, which holds the literal header string `[Related past tasks]` AND the second formatter. **The agent did not blink** — 2s later it was reading one of the returned files. |
-| 13:01:42 | `search("formatRelatedTasks\|RELATED_TASKS_CHAR_LIMIT")` → `(no matches)`. It had read that file 5 events earlier, and the thinking in the very same turn says *"I see there's a separate `formatRelatedTasks` function in scope-opts.ts"*. The answer was not incomplete, it was **impossible**. |
-| 13:01:47 | `bash grep -rn` — 4s after the empty result, reflexively, with no hypothesis stated. |
-| 13:01:55 | the hypothesis finally forms: *"seems to be skipping dotted directories"* — 7s AFTER grep had already proved it. The distrust was procedural, not analytical: the fallback fired first, the explanation came later. |
-
-Three things worth carrying:
-
-1. **The empty result is the detectable one; the partial result is the dangerous one.**
-   Same bug, same tool, same agent, 38 seconds apart: the non-empty answer went
-   unchallenged, the empty answer got double-checked. An under-report is only conspicuous
-   when it takes *everything* away — which is the case that matters least.
-2. **Detection needed an independently-held fact at that exact instant.** Search for
-   something you do NOT already know exists — "are there other callers of X?" — and a false
-   `(no matches)` is indistinguishable from the truth AND confirms your hypothesis, which is
-   the most comfortable answer there is. That is precisely the rename/delete check
-   § *Refactoring Philosophy* tells you to run.
-3. **The check that caught it is the one the tool description forbids** ("ALWAYS use this
-   for search tasks — NEVER invoke grep or rg via bash"), and the suppression had already
-   worked once that same minute. Sibling of the bash-tool framing directly above: a rule
-   that suppresses a redundant check also suppresses the only detector its failure mode has.
-   For as long as the bug lived, **an agent that obeyed the instruction got the wrong answer
-   and one that disobeyed got the right one** — which is not just a bad outcome, it is
-   training every agent that reads a tool description to discount it. If a description tells
-   agents to stop cross-checking, the tool has to earn it.
-
-### Test notes
-
-`src/anthropic-compatible-provider.test.ts` → `describe("jsSearch: hidden directories")`,
-next to the pre-existing `describe("jsSearch")`. **Yes, that file** — search's tests have
-always lived in the provider test file, and keeping them together beat giving `search` a
-second home.
-
-Mutations, each a full `bun test`:
-
-| mutation | fails |
-|---|---|
-| the bug itself (no `dot: true`, both sites) | the 2 walker tests + `excluded_dirs: []`. The 3 guards stay green — which is what makes them guards, not coverage. |
-| `.worktrees/` dropped from `DEFAULT_SKIP_DIRS` | the `.worktrees` guard + the description test, and nothing else. |
-
-Per-site attribution comes free rather than from a third mutation: the two walker tests are
-path-disjoint (one passes a `glob`, one does not), so each can only be reporting on its own
-`scanSync` call.
-
-⚠️ **The first cut of the two walker tests asserted an EXACT file list, and the `.worktrees`
-mutation tripped them too** — three extra red tests all naming the wrong cause. Narrowed to
-presence-only. **A test that can fail for two different reasons cannot tell you which one
-happened**, and a guard's entire value is being legible on the one day it fires. The exact
-list survives in `excluded_dirs: []`, where enumerating everything IS the claim.
-
-## `search`: a glob with no slash is a FILENAME pattern (2026-07-25)
-
-`src/tools/search.ts` handed the caller's `glob` to `Bun.Glob` verbatim. `*` never crosses `/`
-there, so `*.ts` — **the example printed in the tool's own description**, and what ripgrep's
-`--glob` means — matched only files sitting directly in `path`, i.e. `(no matches)` from a repo
-root. The tool documented one semantic and implemented another.
-
-`normalizeSearchGlob(glob)`: no `/` in the glob ⇒ it is a filename pattern ⇒ promote to
-`**/<glob>`. A glob containing `/` is a PATH pattern and passes through untouched, so `src/*.ts`
-stays anchored at the search root. Same split ripgrep makes.
-
-**Promoting loses nothing** — `**` matches zero directories too (measured: `**/*.ts` returns the
-top-level `top.ts` as well as nested ones). So the new behavior is a strict superset of the old
-and cannot take a result away from anyone.
-
-### ⭐ "That caller cannot exist, because the behavior never worked"
-
-The standard objection to changing a semantic is "some caller depends on the old one". Here it
-was answered by a fact rather than a judgement: a caller who genuinely wanted top-level-only
-would have been getting an **empty result almost every time**, so they cannot exist.
-**A semantic that has never worked has no users.** Worth keeping as a test for whether a
-backward-compatibility worry is real or imagined — it is cheap to check (what did the old path
-actually return?) and it settles the question outright instead of trading intuitions.
-
-### The empty-result/partial-result split is NOMINAL here
-
-The hidden-directory entry above concluded "the empty result is the detectable one; the partial
-result is the dangerous one". This bug produces empty results, which sounds like the good side.
-It is not, because of that entry's *second* point: detection needs a fact you independently hold
-at that instant. `glob: "*.ts"` is typed precisely when you are asking **"where does this symbol
-appear?"** — the case where you do NOT already know the answer, so a false `(no matches)` is
-indistinguishable from the truth and confirms the hypothesis. Filing a bug under "detectable"
-because of its output SHAPE is not the same as it being detectable in the situations it occurs in.
-
-### Test notes — `describe("jsSearch: glob depth")`, next to the hidden-dir block
-
-Same file as the rest of search's tests (`anthropic-compatible-provider.test.ts`) — see the
-hidden-dir entry for why that is deliberate. Three behavioral tests + one string test.
-
-| mutation | fails |
-|---|---|
-| the bug (`new Bun.Glob(glob)`) | the depth test, alone |
-| always prepend `**/` | anchored + string |
-| `startsWith("**/") ? glob : …` | anchored + string |
-| `startsWith("*") && !startsWith("**")` | string ALONE, on its `*/top.ts` line |
-
-⚠️ **The two PRE-EXISTING slash-glob tests do NOT catch over-promotion, though they look like
-they would.** Their fixtures contain exactly one `src/`, so `src/*.ts` and `**/src/*.ts` return
-the same files. Over-promotion is only observable against a fixture with the SAME directory name
-at two depths — hence `deep/src/inner.ts`. I assumed those tests covered it and the mutation run
-said otherwise: **a test whose fixture cannot express the difference passes both ways.**
-
-The string test (`normalizeSearchGlob` directly) exists because two of its four cases have no
-behavioral symptom at all: `**/**/*.ts` returns exactly the same files as `**/*.ts`, so a
-doubly-promoted glob is invisible from the outside. It earns its place on one line — `*/top.ts`
-— which is the shape no fixture covers and which the last mutation above breaks alone.
-
-### Correction to Known Pitfalls
-
-The ⚠️ under *Known Pitfalls* saying this bug is still OPEN and to "pass `**/*.ts`" until it
-lands is now **outdated** — `*.ts` and `*.{ts,tsx}` both work at any depth. The neighbouring
-claim in the hidden-dir entry ("Two adjacent findings filed rather than swept in: 01KYCS0BH6 …")
-is history, not a live warning: 01KYCS0BH6 is this fix. **01KYCS1552 (the skip list is applied
-after the walk) is still open** and was deliberately not touched here — `normalizeSearchGlob` is
-a pure string transform applied before the walker is constructed, so it survives any rewrite of
-the walk itself.
-
-~~**Filed, not swept in: 01KYCV43JAZ** — `list_files` has BOTH bugs this tool just had.~~
-**That is the section below** — fixed same day. The one number in it that was wrong is corrected
-there (329 was counted without the skip list).
-
-⚠️ **`normalizeSearchGlob` is now `normalizeGlobDepth`** — renamed when `list_files` became its
-second caller. Read every mention of the old name in the two entries above as the current one.
-
-## `list_files` had both of `search`'s bugs — and the third instance is where the CLASS got named (2026-07-25)
-
-Same two defects, in the tool sitting next to `search` in `src/tools/definitions.ts`: it walked
-with `dot: false` (so nothing under `.mxd/` existed — 29 `.ts` files) and handed its pattern to
-`Bun.Glob` verbatim (so `*.ts` answered `(no files)` in a TypeScript repo). Both fixed;
-`normalizeGlobDepth` and `DEFAULT_SKIP_DIRS` are now shared with `search` rather than copied.
-
-Corrected number from the filing above: `**/*.json` returns **329** only as a raw Bun.Glob count
-including `node_modules`. What the fixed tool returns is **5** — the 3 top-level ones plus
-`scripts/retrieval-exp/package.json` and `.mxd/config.json`, that last one visible only because of
-`dot: true`. Quoting a raw walk count as "what the tool would return" overstates the change by 65×
-and understates the interesting part, which is the one file that was hidden.
-
-Three things here outlive the fix: what the second bug's decision actually turned on, the shape
-all three share, and the survey for a fourth.
-
-### ⭐ The rule that settled this for `search` proves NOTHING here — and it points the other way
-
-*"A semantic that has never worked has no users"* (the entry above) closed the same question for
-`search` in one line, because there the old behavior was `(no matches)`. Here
-`list_files("*.json")` returned **package.json, tsconfig.json, biome.json** — three real,
-plausible files. The old semantic worked. **So the rule is only decisive when the old output was
-EMPTY; when it was "a plausible-looking subset" it settles nothing**, and quoting it would have
-been quoting a rule whose premise had not been checked.
-
-⚠️ **This is a warning to you, the reader, not a note about who wrote it.** A rule is at its most
-dangerous exactly when it happens to point at the answer you already want — and this one arrived
-from the task above, pre-approved, one line from done. Checking its premise cost one command.
-
-The generalisation that DOES hold is strictly stronger, and it is what actually decided the case:
-
-> **Before letting a compatibility worry veto a change, go measure what the current behavior
-> actually produces.** Not "is anything calling this" — *what does the call return today, and does
-> it answer the question the caller was asking?*
-
-The empty-output rule is the special case where the answer is trivially no. The common and more
-dangerous case is **non-empty output that does not answer the question**, which is what happened
-here: I was about to keep a wrong semantic to protect `list_files("*")` as a "list this
-directory" affordance, and then measured it. `scan()` defaults `onlyFiles: true`, so `*` returned
-the dozen loose files at the top of the repo and **not one directory** — no `src/`, no `web/`, no
-`.mxd/`. The tool could not answer "what is the shape of this project", which is what its own
-description ("discover project structure") claimed it was for. **The capability I was defending
-did not exist.** `*` is also the DEFAULT pattern, so that was the most-used input in the tool.
-
-### ⭐ The shape all three share: a library default serving somebody else's use case
-
-`dot: false` serves "don't treat dotfiles as source". `*` not crossing `/` serves a shell, where
-you `cd` first and *then* say `ls *.json` — the user picked the directory. Both defaults are
-reasonable. Neither is ours: an agent calling a tool at a fixed cwd never had the `cd` step, and
-in this repo the dot directory IS the source.
-
-**What makes this class invisible is that there is no line to review.** Nothing anywhere says
-"skip hidden directories" or "match only the top level" — the semantic lives in a library's
-default, i.e. in the *absence* of an argument. Code review cannot catch an absence. Only feeding
-it real input can. Hence the small discipline now in place at every walker: **pass every option
-you depend on explicitly, even when you agree with the default.** `dot: true, onlyFiles: true` on
-a call whose behavior is unchanged is not noise; it is the semantic becoming visible.
-
-And the second-order damage, which is why this is worth a section rather than a commit message:
-for as long as such a bug lives, **the tool's own description is teaching agents the wrong rule.**
-`list_files`'s examples were `"src/**/*.ts"`, `"**/*.test.ts"`, `"*.json"` — the first two anchored
-with `**/`, the third silently meaning something else. The defect was never that `*.json` returned
-the wrong three files; it was that a reader **generalises from the neighbours** and walks away
-believing all three are the same kind of pattern. Both tools now state the rule instead of
-implying it, so they READ consistently and not merely behave consistently.
-
-### Is there a fourth? — NO for the narrow class, YES for the harm (both are GATES)
-
-**Narrow answer: three, and that is all of them.** Every `Bun.Glob` in the repo is now correct.
-How that was established, so the next person can judge how complete "all of them" is:
-
-| searched | production hits | verdict |
-|---|---|---|
-| `Bun.Glob` / `.scanSync(` / `.scan(` | 3 call sites (2 `search`, 1 `list_files`) | all three fixed |
-| `readdir` / `readdirSync` / `opendir` / `globSync` / `fast-glob` / `tinyglobby` | 3 (`debug-snapshot.ts` roll, `event-store.ts listSessions`, `runtime/helpers.ts` prune) | **not instances** |
-| `ls-files` / `Array.fromAsync` / `walk(` / `withFileTypes` | 1, test-local | see below |
-
-The three `readdir`s are flat, single-directory reads of a directory we own, each with its filter
-written down (a ULID regex, a `.jsonl` suffix). `readdir` *does* return dotfiles by default, and
-here that is what we want — no default is doing hidden work. **That is the negative result: file
-enumeration in this repo is either a Bun.Glob (now correct) or a flat owned-directory read with an
-explicit filter. Do not go looking again.**
-
-⚠️ Note what made this survey possible: it greps for symbols, and until earlier the same day
-`search` could not see `.mxd/plugin/` — 54 files of production code. **A completeness survey run
-with a blind instrument returns a confident, wrong "that's all of them".**
-
-**Broader answer: two more, different cause, same harm — and both are GATES**, which is the worst
-place for it, because a gate's silence is read as a verdict on the whole repo.
-
-1. **`scripts/check-i18n.sh`** — `find web -maxdepth 1 -name '*.tsx'`. Measured: it reads
-   **4 of 31** non-test `.tsx` files, **927 of 11,534 lines (8%)**. It never sees the shell's own
-   `web/components/SettingsPanel.tsx` or `AppHeader.tsx`, and it never sees **any** of the 25-file
-   plugin UI (`Plugin.tsx`, `TaskTree.tsx`, `InputBar.tsx`, `LogEntryView.tsx`, `ToolCard.tsx`, …)
-   — which is where essentially every user-facing string in this product lives. It then prints
-   `i18n check passed — no bare strings found in JSX`, unqualified, from inside the pre-commit
-   hook.
-2. **`src/data-paths.test.ts` → `describe("source audit — ONLY data-paths.ts performs .slice(2)")`**
-   walks `src/` only, while 3 files under `.mxd/plugin/` do path work. **Verified by experiment,
-   not by reading**: a `dataRoot.slice(2)` planted in `.mxd/plugin/scope-opts.ts` leaves the audit
-   green (54 pass / 0 fail). Here the rot is mostly in the CITATION — the test's own name says
-   "no other **src/** file", honestly, while the describe block and the *Key Files* row ("a grep
-   test fails if a second site appears") drop the qualifier.
-
-Recorded here rather than as drafts because the task above said it would open the tickets; the
-measurements are the part that would otherwise be lost.
-
-✅ **BOTH FIXED the same day** — see *Two gates whose names were wider than their scope*, directly
-below, for what the fixes turned on and for the census that answers "is there a third". The
-measurements above stay as the record of what they read before.
-
-**The cause differs and that changes the detector.** These two scopes are *written down*
-(`-maxdepth 1`, a walk root) — the opposite of the invisible-default class. They are readable, and
-nobody reads them, because a gate that passes looks identical whether it checked 8% or 100%.
-Invisible defaults need real input to catch; narrow-scope gates need someone to ask **"what did
-you actually read?"** and get a number back.
-
-### ⭐ The design rule that separates the two that got it right from the two that didn't
-
-`biome.json` is `"includes": ["**", "!.worktrees", "!.claude", …]`. `tsconfig.json` is
-`"exclude": [".worktrees", …]`. Both **start from everything and subtract**, and both name
-`.worktrees` explicitly for exactly the reason `DEFAULT_SKIP_DIRS` does. Both are correct today
-with nobody maintaining them.
-
-> **Start from everything and subtract; do not enumerate what to include.** A subtract-list fails
-> LOUDLY (something noisy shows up and someone adds an entry). An include-list fails SILENTLY —
-> new code simply is not covered, and nothing anywhere says so.
-
-Which is the same statement as *"`DEFAULT_SKIP_DIRS` is the ONLY thing that decides what a search
-ignores"* from the first entry in this trio, arriving from the other direction.
-
-### The three additions the fix needed that nobody asked for
-
-1. **The skip filter runs INSIDE the walk loop, so the 500 cap counts files we KEEP.** Not an
-   optimisation — a correctness requirement. Measured from the main checkout with `dot: true` and
-   no skip list, an any-depth `*.ts` filled **323 of its 500 slots with `.worktrees/` copies** of
-   files the caller already had, and never reached `web/`, `scripts/` or `.mxd/` at all, because
-   `.worktrees` is walked before `src`. So **`dot: true` alone is not "a different flavour of
-   wrong", it is strictly worse than the bug**: the cap stops protecting you and starts
-   guaranteeing you get the copies. (The task above's first framing — "trading a false negative
-   for a flood" — is the thing to correct here: it invites shipping `dot: true` first and adding
-   the skip list later. Don't.)
-2. **Truncation is announced**, and detected one PAST the cap so a project with exactly 500 files
-   is not accused of having more. Silently returning 500 of 50,000 is the same failure as silently
-   not walking a directory. `search` already said so; that asymmetry was its own small bug, and
-   normalizing the depth makes it far easier to hit.
-3. **`skipDirsForPattern(pattern)` = the default skips minus any directory the pattern NAMES.**
-   `search` can reach an excluded directory by pointing `path` into it or passing
-   `excluded_dirs: []`; `list_files` takes a pattern and nothing else, so a plain skip list would
-   have deleted an ability with no replacement (`list_files("node_modules/zod/**")` →
-   `(no files)`). No new parameter — the caller's intent is already in the input, and every param
-   is a token every agent pays on every call. Comparing against the **trailing-slash** form is
-   what keeps it from firing by accident: a pattern hunting for `*build*.ts` does not contain
-   `build/`. When it misfires it hands over MORE files, never fewer — and every bug in this whole
-   family did its damage by handing over fewer and not saying so.
-
-### Test notes — three describes in `anthropic-compatible-provider.test.ts`
-
-Next to `jsSearch: hidden directories` and `jsSearch: glob depth`; see the first entry in this
-trio for why search's tests live in the provider test file.
-
-Tests come in PAIRS: something that must now be reachable, and something that must still not be.
-
-| mutation | fails |
-|---|---|
-| `dot: true` → `false` | the hidden-dir test + `.worktrees` reachable-when-named. The `.worktrees` guard stays green — which is what makes it a guard. |
-| skip filter deleted | both exclusion guards + the `*build*` probe + the cap test |
-| `skipDirsForPattern` loses the trailing slash | the `*build*` probe + the string test |
-| **skip list never opts in** (over-strict) | `.worktrees` reachable-when-named + the string test |
-| no `normalizeGlobDepth` | the nested-file test + the default-pattern test |
-| always prepend (over-promote) | 2 anchored tests + 1 string test, across BOTH tools |
-| cap AT the limit instead of one past | the 501 test |
-| **truncation claimed at exactly the cap** (over-strict) | the exactly-500 test, alone |
-
-The two **over-strict** rows are there deliberately (see *Guards need a two-sided mutation proof*):
-"the skip list blocks everything" and "everything is reported as truncated" are the typical ways a
-guard fails, and neither reddens a test unless someone wrote the what-it-must-NOT-block half.
-`.worktrees` reachable-when-named is that half, and it is the kind of thing whose deletion reddens
-nothing while a real ability silently disappears.
-
-⚠️ **One fixture was vacuous and only mutation testing said so.** The `*build*` probe first put
-`bundle.ts` inside `build/` — but `**/*build*.ts` does not match `bundle.ts`, so the
-`not.toContain` half could never fail and the test passed under two different mutations. Fixed by
-putting the SAME filename (`rebuild.ts`) in both `build/` and `src/`, so one pattern reaches both
-candidates and the directory is the only thing separating them. Same lesson as the over-promotion
-fixture in the entry above: **a test whose fixture cannot express the difference passes both
-ways** — and the tell is a mutation you expected to catch it surviving.
-
-## Two gates whose names were wider than their scope — fixed, plus the census (2026-07-25)
-
-The two GATES the entry above filed. Both are now subtractions: `scripts/check-i18n.sh` walks every
-non-test `.tsx` minus a named prune list (4 → 31 files), and `src/data-paths.test.ts`'s source audit
-walks the repo root instead of `src/`. Read the two files for the current lists; what follows is
-what the source cannot tell you.
-
-### ⭐ In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand
-
-> The tools an agent calls belong to the **running daemon**, not to anybody's worktree. So
-> *"I just fixed X, therefore I can use X"* is **false until the daemon restarts** — and it is false
-> for every other agent running at the same time, too.
-
-Measured from inside this task, hours after `search`'s two fixes had landed on main:
-
-| call | result |
-|---|---|
-| `search("ErrorBoundary", glob: "**/*.tsx")` | `(no matches)` |
-| `grep -rn 'ErrorBoundary' --include='*.tsx'` | **10 hits, including the file that DEFINES it** |
-| `search("SettingsPanel", glob: "*.tsx")` | `(no matches)`, with `web/components/SettingsPanel.tsx` sitting right there |
-
-Both of `search`'s bugs were still live in the instrument while the repo's source had been correct
-for hours.
-
-**This makes the blind-instrument trap strictly harder to avoid than it looks**, because of who
-walks into it: *the person who fixed the tool is the person with the most reason to believe it
-works.* `01KYCV43JAZ` wrote down "a completeness survey run with a blind instrument returns a
-confident, wrong 'that's all of them'" — and ran its own survey on the blind instrument, having
-just fixed the source in its worktree. The warning and the violation are in the same task.
-
-**Corollary about rules**: the tool description says *"ALWAYS use this for search tasks — NEVER
-invoke grep or rg via bash"*, and that rule has an unstated premise — that the tool works. Following
-a rule after its premise has failed is walking off a cliff on instruction. **The measurement above
-IS the compliant behaviour**: check the premise, then follow or don't. Note this is the same shape
-recorded under *`search` tool: a hidden directory is not a boring directory* — a rule that
-suppresses a redundant check also suppresses the only detector its failure mode has — arriving from
-a third direction.
-
-### The acceptance criterion was a planting experiment, not a green suite
-
-`01KYCV43JAZ` proved the data-paths audit dead by planting `dataRoot.slice(2)` in
-`.mxd/plugin/scope-opts.ts` and watching it stay at **54 pass / 0 fail**. That is the test the FIX
-had to pass too, and it was run in both directions: plant re-verified dead against the old audit
-(54/0 again, with a byte-literal `dataRoot.slice(2)` so the regex itself was never the excuse), then
-plant → **1 test red, naming `.mxd/plugin/scope-opts.ts`**, then plant removed → green.
-
-> **When a check is known dead, "the suite passes" is not evidence the fix worked** — the suite
-> passed while it was dead. The evidence is the round trip. A test whose value is entirely in the
-> day it fires must be made to fire on purpose at least once.
-
-### An unqualified pass is worse than a narrow scope
-
-`i18n check passed — no bare strings found in JSX` was printed from inside the pre-commit hook while
-reading 8% of the UI, and root quoted "i18n: 0" all day as a gate result. The scope was one readable
-line; nobody read it, because **a gate that passes looks identical whether it read 8% or 100%**.
-
-So the pass message carries the file count now (`scanned 31 JSX file(s)`), and **scanning 0 files is
-a failure, not a pass**. The count is the detector: re-narrowing to `-maxdepth 1` drops it to 4 in
-front of whoever commits next. A test pins the same property in non-rotting form — *scanned must
-exceed the number of non-test `.tsx` directly under `web/`*, both sides measured, so the historical
-bug reports as `Expected: > 4, Received: 4`.
-
-### ⭐ A partial-hit gate plus a fix-only-what-it-flagged policy produces incoherent output
-
-`ErrorBoundary.tsx` has 6 user-visible strings. The heuristic is single-line, so it flagged **1**.
-Fixing that one leaves a component that is half translated and half English — worse than untouched,
-and it looks *handled*.
-
-> **The unit of repair is the coherent unit, not the flagged line.** A gate that catches a subset
-> tells you WHERE to look, not WHAT to fix.
-
-The judgement is per-case, and the same round declined the other direction on purpose: `Plugin.tsx`'s
-flagged line was fixed alone, because its "coherent unit" is an 1800-line file containing an entire
-untranslated production-mode screen — fixing one neighbour there reproduces the same incoherence one
-level up. Small self-contained component ⇒ fix the component. Large file ⇒ fix the line and file the
-rest (draft `01KYCYSPVYPW0SGCX2YMK59875` carries the measurement).
-
-### Repair notes worth keeping
-
-- **6 of the first widened run's 11 hits were `) => Promise<void>;`** — `=>` plus ` Promise` plus
-  `<` reads as `>text<`. Guard is `(^|[^=])>`: in real JSX the character before a closing `>` is an
-  identifier char, a quote, `}`, `/` or a space, never `=`. **This is the shape a lazy agent would
-  use as cover for loosening the rule**, so the reasoning was surfaced upward before it was applied,
-  and it is pinned in BOTH directions (an arrow type must NOT report; real JSX text, including a `>`
-  in column 0, MUST).
-- **Brand names go through `t()` with the same value in every locale**, which is what
-  `"header.title": "Matrix"` has always done. An exemption mechanism was considered and rejected:
-  a hand-maintained exempt list is the entry point for the next fictional rule, and the existing
-  convention already answers the case.
-- Attribution: the old script `cat`-ed every file together, so a violation named no file. Fine at 4
-  files, useless at 31.
-
-### Is there a third? — ONE, and it is in the hook itself
-
-Everything grepped, with hit counts, so the next person can judge how complete "found them all" is.
-**Run with bash `grep -rn`, deliberately, for the reason at the top of this entry.** All counts
-exclude `node_modules/` and `.worktrees/`.
-
-| # | searched | hits | verdict |
-|---|---|---|---|
-| 1 | `readdirSync\|readdir(` in `*.test.ts(x)` | 6 files | 4 walk temp dirs / fixtures (auth, debug-snapshot ×2, durability) — not source audits. The 2 that walk the repo are the ones fixed here. |
-| 2 | `Bun.Glob\|.scanSync(\|.scan(` in tests | 1 file | provider test — matches are prose about the tool bugs. Not a gate. |
-| 3 | `ls-files\|execSync` in tests | 0 | — |
-| 4 | `readFileSync` + `import.meta.dir\|url` in tests | 2 files | data-paths (fixed) + web-builder (reads BUILD OUTPUT, single-file claims). |
-| 5 | `Bun.file(` on a source path in tests | 0 | — |
-| 6 | test FILENAMES matching `audit\|check\|verify\|guard\|invariant\|boundary\|lint` | 11 of 140 | all behavioural; none makes a repo-wide file-scope claim. "Audit" in the name means it came from an audit round. |
-| 7 | `describe(` names matching `audit\|only \|no other\|zero \|never \|source ` | 20 | only data-paths' was a filesystem-scope claim. |
-| 8 | `toEqual([])\|toHaveLength(0)\|toBe(0)` near `offend\|import\|occurr\|match` | 1 | data-paths', the one fixed. |
-| 9 | gate LOCATIONS: `.github/`, `.gitlab-ci.yml` | **0** | **there is no CI.** The pre-commit hook is the only gate runner in this repo. |
-| 10 | `package.json` scripts | 4 | `test` = bun test (all) ✓ · `check`/`check:ci` = biome `includes:["**","!…"]` ✓ · `typecheck` = tsc with `exclude` and no `include` ✓ · `postinstall` not a gate. |
-| 11 | `.hooks/pre-commit`, every step | 4 | typecheck ✓ · check:ci ✓ · check-i18n.sh (fixed) · **`bun test --bail` on 5 named files** ← the third one. |
-
-**NEGATIVE RESULT, worth as much as the positive one: file-scope claims in this repo are made in
-exactly two places** — a `readdirSync` walk in a test, or a config's include/exclude. Everything
-else that reads a file reads a file it names, where the scope IS the claim
-(`message-editability.test.ts` asserting one file has zero imports is correct by construction). Do
-not go looking again; look at rows 1, 4 and 8 if the question comes back.
-
-**Two things verified by measurement rather than assumed**, because both are exactly the kind of
-"surely it covers everything" that this whole family feeds on:
-- `tsc --noEmit --listFiles` puts **54** `.mxd/plugin/` files in its program. tsconfig has `exclude`
-  and no `include`, so it really is a subtraction.
-- `.hooks/pre-commit` runs 5 of **140** tracked test files (3.6%), then prints `All checks passed.`
-  Same shape as the i18n gate — an addition list plus a claim wider than what it read.
-
-⚠️ **The hook's test subset is NOT the same fix, and that matters.** The other two cost nothing to
-turn into subtractions; a full `bun test` is ~270-300s per commit, so **subtraction is genuinely
-infeasible here, on performance** — which is the exception the design rule explicitly leaves open,
-and saying it out loud is the point. The remedy is the other half of the i18n fix: say what you ran.
-Filed as **01KYCYSPVYPW0SGCX2YMK59874**, with the sharper question attached — the only gate runner in
-a repo with no CI executes 3.6% of its tests, and per *What is actually gated* it does not run in
-worktrees or on clean merges at all.
-
-Also filed, not fixed: **01KYCYSPVYPW0SGCX2YMK59875** (the i18n heuristic's DEPTH is an addition list
-of one syntactic form — scope fixed, depth untouched) and **01KYCYTJ2TC72AR8RDZGF9HMBZ** (the
-data-paths audit's PATTERN is one spelling: `dataRoot.substring(2)` passes silently). Both are the
-same class along a different axis, which is the thing to notice: **"scope" is only one of the
-dimensions an addition list can hide in.**
-
-## FIX-3 (2026-06-05) — lifecycle + provider concurrency: Phase-2 leak, done ordering, launch race, abort-sleep, done+compact
-
-Five concurrency bugs in `agent-lifecycle.ts` + `provider-shared.ts`. Each is a "the loop/parent
-silently hangs or corrupts" failure, NOT a crash. Files: `runtime/agent-lifecycle.ts`,
-`provider-shared.ts`, `orchestrator-tools.ts`, `runtime/routes/tasks.ts`.
-
-### cc#3 — Phase 2 + loop-promise resolution MUST be inside try/finally
-`runAgentForNode`. Phase 2 (save/flushSession/onDone/deliverMessage) + the `resolveLoopPromise()` +
-`agentLoopPromises.delete(nodeId)` sat AFTER the agent-loop try/finally, OUTSIDE any guard. A throw in
-ANY Phase 2 step skipped the resolution → `agentLoopPromise` leaked forever. `stopTask` awaits that
-promise with NO timeout (unlike `stopAgent`'s bounded 1s race) → it hung indefinitely. Fix: wrap
-Phase 2 in `try { … } catch (log) { … } finally { delete + resolve }`. The loop promise now settles on
-EVERY path. The old comment claiming resolution happened "in finally block" was a lie — now true.
-Phase 2 errors are logged, not rethrown (the task already finished its work; a Phase-2 hiccup is not
-an agent failure). **This corrects the "Two-Phase done() Lifecycle" section: resolution is now genuinely
-in a finally.**
-
-### B-M4 — task_complete MUST be durable BEFORE done_notified
-`runAgentForNode` Phase 2 done branch used fire-and-forget `deliverMessage(parent,
-task_complete).catch()` then immediately `emitEvent(done_notified)`. done_notified lands on THIS node's
-write queue synchronously; task_complete goes through deliverMessage's `await getTracker` first → lands
-later. So "done_notified durable ⟹ task_complete durable" did NOT hold. Crash with done_notified
-persisted but task_complete not → restart's `findInterruptedDonePhase2` returns `status_stale` (marker
-present, runtime.ts:~376) → does NOT re-deliver → parent hangs forever. Fix: `await deliverMessage(parent,
-task_complete)` then `await eventStore.flushSession(parentId)` BEFORE `emitEvent(done_notified)` (+ flush
-the marker too). Reverse case (crash after marker, before its flush) → restart re-delivers (needs_phase2)
-→ at-least-once duplicate task_complete. A duplicate completion is recoverable; a lost one hangs the
-parent — we deliberately prefer the duplicate (the needs_phase2 branch already accepts at-least-once).
-
-### B-H2 — worktree-creation launch race (close the CLASS, not one instance)
-The launch lock (`ctx.launchingNodes`) was added INSIDE runAgentForNode, AFTER the seconds-long
-`beforeChildLaunch` (`git worktree add`). Two concurrent launches for the same fresh child both passed
-the pre-lock guard → two `git worktree add` → the loser threw → `deliverMessage.catch` marked the node
-`failed` + sent a bogus task_complete(failed) to the parent WHILE the winner ran. THREE create paths
-existed post-FIX-2 — all three fixed:
-1. `ensureChildAgentRunning → beforeChildLaunch`: acquire `launchingNodes` ATOMICALLY at the top
-   (has-check + add in one synchronous tick, no await between), BEFORE beforeChildLaunch. Phase A (prep)
-   releases the lock on throw; Phase B hands it to runAgentForNode.
-2. `orchestrator-tools.ts send_message` inline `wm.create`: **DELETED**. send_message now delegates to
-   deliverMessage → ensureChildAgentRunning (the single locked creator). Kept the git-clean + branch
-   pre-flight gates; dropped the now-async "on branch X" suffix from the success string (the branch
-   isn't known synchronously anymore — no test asserted that string). "Delete until ONE remains":
-   beforeChildLaunch (existsSync-guarded) is the SOLE creator. (`slugify` import dropped from the file.)
-3. `runtime/routes/tasks.ts` REST `/continue` reactivation (verify/closed, no worktree): FIX-2 wired
-   this to call `beforeChildLaunch` directly, OUTSIDE the lock — same race (milder blast: a duplicate
-   POST 500s, no parent corruption). Acquire the lock around it with the same launchLockHeld handoff.
-- New `RunAgentOpts.launchLockHeld?: boolean`: when set, runAgentForNode's entry guard does NOT treat
-  its own already-held lock as a competing launcher, and TAKES OVER the lock's release on EVERY exit
-  path (incl. the early session-already-running bail) so the caller can't leak it. Entry guard split:
-  `if (node.session != null) { if (launchLockHeld) delete; return; }` then `if (has(nodeId) &&
-  !launchLockHeld) return;` then `add`.
-
-### B-M3 — outer-retry backoff MUST be abort-aware
-`provider-shared.ts` outer retry used `await new Promise(r => setTimeout(r, delay))` (30/60/120s). The
-inner per-call retry was already abort-aware; this one was not. A transient error parked the loop in
-this sleep; a stop/reset then blocked for the full backoff (up to 120s), exceeding the daemon's 60s
-worker-forward timeout → 504 + a retry racing the still-running first reset. Fix: module-level
-`abortableDelay(ms, signal)` (setTimeout raced against an `abort` listener, listener removed on both
-paths so a long-lived signal doesn't accumulate listeners) + after it `if (signal.aborted) throw e` to
-abandon the retry loop. **Test with stopTask (no timeout), NOT stopAgent (its 1s race masks the block).**
-
-### B-L9 — done-resume + compactOnly → consecutive user messages → API 400 (FIXED)
-
-> ⚠️ **PHANTOM (2026-07-25).** There was no 400. `pendingCompactDoneToolCall` was built against a
-> mock-only rule; the unbundled shape is accepted by the real API. The mechanism works and is
-> harmless, but it has no reason to exist — slated for collapse alongside
-> `pendingCompactYieldToolCall`. See *The Anthropic message-shape rules, MEASURED*. Everything
-> below is history, including the "Reachability trick", whose last sentence names the mock's
-> fictional check as the detection mechanism — which is exactly how the phantom stayed alive.
-
-`provider-shared.ts` pendingDoneToolCall handler did NOT check `compactOnly` (the yield path already did
-via `pendingCompactYieldToolCall`). When the ONLY wake message during a done-resume was /compact, it
-pushed the done tool_result as its own user message, then the compact block pushed the summarization as
-a SECOND consecutive user message → 400. NOTE: the in-memory auto-recovery (`enableAutoRecovery`) is
-GONE — this 400 is NOT masked; it crashes → buildSessionRepair on next launch. Fix: new
-`pendingCompactDoneToolCall` mirroring the yield path — on compactOnly, emit the done tool_result
-("Manual compaction requested") for orphan-prevention but DEFER its messages[] push; the compact block
-bundles it + the summarization into ONE user turn. The compact-block bundling now unifies yield AND done
-(`pendingCompactYieldToolCall ?? pendingCompactDoneToolCall` — mutually exclusive: a resume ends in one
-orphan, not both). The compact-with-OTHER-messages (compactOnly=false) done case stays an analog of the
-known-unfixed yield bug (still a test.todo). **Updates "Known Bugs": the done+compactOnly variant is
-now fixed; only the +other-messages variants (yield AND done) remain.**
-
-### Reachability trick for the B-L9 test — ⭐ the durable half, still in use
-`/compact` endpoint 404s for a non-running (done/verify) agent, so it can't wake a pending-done agent.
-Instead: `deliverMessage(node, createCompactMessage())` — a compact QueueMessage HAS an id, so
-deliverMessage persists it to JSONL and findUnconsumedMessages recovers it on the auto-launched resume.
-The resume drains ONLY the compact → compactOnly=true. ~~The mock's `validateRequest` throws on
-consecutive user roles, so the bug surfaces as an "alternate roles" error event + a missing
-compact_marker.~~ **That last sentence named the FICTION as the detector** — the mock no longer
-rejects consecutive user roles because the API never did. The test survives (the trick is what made
-it reachable at all); it now watches for ANY error event plus the missing compact_marker, which is
-strictly better and would have caught the pairing failure the old grep was blind to.
-
-### Regression tests (all mutation-proofed — each fails when its fix is reverted)
-- `src/lifecycle-concurrency.test.ts` (new): cc#3 (throwing onDone → loop promise still settles +
-  agentLoopPromises cleared), B-M4 (at the moment the child's done_notified is appended, the spy
-  reads the parent JSONL from disk and asserts task_complete is ALREADY there — directly tests the
-  durability ordering), B-H2 (counting beforeChildLaunch: two concurrent deliverMessage → ONE create +
-  no bogus task_complete(success=false); two concurrent REST /continue → ONE create), B-M3 (stopTask
-  during a 4s backoff returns <3s). Test gotchas: task_complete message has `source:"task_complete"`,
-  field `success` (not "child_complete"/"passed"); a holder OBJECT (not a bare `let`) avoids TS
-  narrowing the closure-assigned probe back to its `null` initializer; awaiting `ensureChildAgentRunning`
-  directly HANGS (it awaits the whole agent loop) — drive launches via deliverMessage/REST instead.
-- `src/drift-lifecycle.test.ts` "compact triggered while agent in pending-done (done resume)" — was a
-  test.todo, now a real B-L9 test (compact_marker written, no alternate-roles error, every recorded
-  request alternates roles).
-
-## FIX-5 (2026-06-10) — too-short compact brick + duplicate-done brick + dup-yield compact extras
-
-Three bugs in `provider-shared.ts`, all causing permanent session bricks.
-
-### R8-B#1 — too-short compact must NOT emit compact_marker
-`messages.length <= 4` branch emitted `compact_started` + `compact_marker` without
-rebuilding context (no session_config, no compacted_resume). On restart,
-`readActive()` returns only post-marker events → starts with assistant → 400
-"first message must be role user" → permanent brick. Fix: emit only a status
-"Context is too short to compact", reset `manualCompactRequested`, and consume any
-`pendingCompactYieldToolCall` / `pendingCompactDoneToolCall` + `pendingDuplicateYieldExtras`
-so the assistant tool_use has a matching result.
-
-### R8-B#2 — duplicate done() → emit results for ALL dones
-
-> ⚠️ **PHANTOM, and this one COST something (2026-07-25).** The diagnosis below is accurate right
-> up to "two separate user messages", and then wrong: that shape is `user[tool_result]`
-> `user[tool_result]`, which the real API ACCEPTS — both messages open with tool_result blocks so
-> the answering run spans them. Verified by feeding this exact event sequence through the real
-> walker. **So the trade-off recorded in the last sentence — the agent losing its done-resume
-> context and getting a generic interrupted resume — was paid for a bug that does not exist.**
-> Reverting is therefore a BEHAVIOR FIX, not a cleanup; do not treat it as a risky style revert.
-> **REVERTED 2026-07-25.** Duplicate dones exit as orphans again: repair gives the earlier one an
-> interrupted result and skips the last (the intended orphan), so the resume is a done-resume and
-> the woken agent gets its done-resume context back. `drift-lifecycle.test.ts` "duplicate done()
-> calls — restart survives AND resumes as a done-resume" pins the restored string; re-emitting
-> results for every done makes it disappear.
-
-Two done tool_calls both exited as orphans. On resume, repair placed the interrupted
-result AFTER lifecycle events (agent_end, done_notified). The walker tool_result
-collection loop broke at those lifecycle events → two separate user messages → API 400
-→ permanent brick. Fix: for duplicates, emit tool_results for ALL dones (extras get
-"duplicate done", winner gets "processed successfully"). No orphans → no repair →
-no walker issue. Trade-off: resume detects `isInterruptedResume` instead of
-`pendingDoneToolCall`, so agent gets normal interrupted resume instead of special
-done-resume context.
-
-### R8-B#11 — duplicate-yield extras must be bundled in compactOnly compact path
-`pendingDuplicateYieldExtras` was only consumed in the normal yield-wake path. The
-compactOnly compact path ignored them → extras tool_results were dangling → API 400.
-Fix: compact summarization path and too-short path both include extras in the bundled
-user turn.
-
-✅ **REAL — and correctly attributed at the time (re-verified 2026-07-25).** "Dangling" is the
-*pairing* rule, not alternation: the assistant's extra `tool_use` blocks had no answering
-`tool_result` in the compaction request. Its sibling R8-B#1b (the too-short branch consuming the
-same pendings) is real for the identical reason. **When the two compaction deferrals collapse, this
-requirement does NOT go away** — the extras still have to be pushed, just as their own
-`user[tool_result…]` message ahead of the rest. Form changes, obligation stays. Worth noting that
-these two entries sit inches from B-L9 and R8-B#2 in the same file and are the ones that got it
-right; the wording is nearly identical, so read the *mechanism* rather than pattern-matching the
-sentence.
-
-### Pre-existing issue found (not fixed here): compact messages never get messages_consumed
-`handleImplicitYield` filters compact messages from `nonCompact` and `recordQueueEvents`
-only records nonCompact. On restart, `findUnconsumedMessages` re-enqueues the compact →
-spurious `manualCompactRequested` on next session. Usually benign but ~~can cause
-consecutive user messages during done-resume with compact.~~ **that consequence was the phantom
-(2026-07-25) — consecutive user messages are legal.** The re-enqueue itself is still real; it just
-has no known bad effect.
-
-## fable silent-turn → silent idle + agent date-blindness (2026-07-15, from closed task 01KWYCYA)
-
-Two durable lessons from the fable-stall investigation (01KWYCYA, closed — fable now moot on opus-4-8, but these OUTLIVE fable). Generic fix drafted: **01KXK69KKKGG4XHPH7EWGNY5AC**. Date-blind fix drafted: **01KXK5QH2BDQSZB1H1CQV8X470**.
-
-### Silent-idle on a no-text-no-tool turn (durable failure MODE)
-An assistant turn returning **thinking-only** (no text block, no tool_call) makes the provider loop see `toolUses.length === 0` → treat it as end-of-turn → **implicit yield → idle, with NO user-visible signal**. The agent then waits for a message **indefinitely**; daemon restarts just RE-IDLE an implicit-yield agent (they don't self-continue it). Benign for a root-in-conversation (a human eventually pokes it); an **indefinite hang for an autonomous sub-agent nobody is watching** — the parent's yield never wakes. 01KWYCYA was the live repro: interrupted 7/7 14:56, idle 8 days until poked 7/15.
-- Trigger was fable (server-side turn termination). Our gap: `getStopReason()` collapses all non-`end_turn` (incl. `refusal` / `pause_turn` / `model_context_window_exceeded` / `compaction`) to `tool_use`, and the loop idles without persisting/surfacing the anomalous stop.
-- GUARD (deferred → draft 01KXK69K): any `stop_reason ∉ {end_turn, tool_use}` → emit a **persisted, user-visible error event BEFORE idling** (Part A observability); + bounded `pause_turn` continue (~3) (Part B). Generic, zero fable coupling.
-
-### Forensics (durable, model-agnostic debugging tools)
-- **Which model ACTUALLY served a turn**: base64-decode a thinking block's `signature` — it embeds the serving model name (e.g. `claude-fable-5`), **independent of `response.model`** (which can lie under silent routing). Root's full history: 8/8 silent turns were fable, 0/9800 opus.
-- **Mid-stream/hardware cut vs upstream turn-completion**: a **clean `usage` event present** ⟹ the API turn completed and our loop processed it → RULES OUT a mid-stream process suspension (which would orphan the turn + trigger `buildSessionRepair` on resume). So `clean usage + thinking-only shape` = upstream silent turn, NOT a laptop-close/suspend.
-
-### Agent time-perception is DATE-BLIND (ground truth = epoch ts)
-Context message timestamps are `[HH:MM:SS]` with **no date**. 01KWYCYA was interrupted 7/7 14:56 and idle until 7/15 16:13 — **8 days** — but on wake it confidently reported "~80 minutes" because 14:56→16:13 looks same-day. **Ground truth is the epoch `ts` in the JSONL (encodes the date); the display stamps do NOT.** Rule for ANY "how long was I stalled / when did this happen / is this stale" reasoning: **read the epoch `ts`, never trust the `[HH:MM]` display for elapsed wall-clock.** Root hit the same thing this session: an overnight `bun test` `[22:06]` → user `[11:04]` next-day gap was invisible in the stamps (inferred only from anomalous test durations). Surfacing-fix design in draft 01KXK5QH.
-
-## Agent activity: live process state is asked for, never replayed (2026-07-25)
-
-"What is this agent doing" is now ONE explicit value the backend owns, pushed
-on change and asked for at connect. It replaced a boolean with three competing
-sources plus a 1.5s timer in the UI.
-
-### The rule that generates the design
-
-> **State is never derived from the event log. On connect the client ASKS;
-> while connected the server PUSHES.**
-
-The log records *"it became active at some past instant"*. Replaying that as
-*"it is active now"* is a category error — and the old code had a poll
-(`checkAgentStatus()` after every `processEventBatch`) whose ONLY job was to
-undo the error it had just made. That poll was the bug report.
-
-Note the exact inversion against pending messages (Task X): pending IS a
-projection of a persistent log, so a reducer over events is right there.
-Activity has no persistent representation at all. Same-looking code, opposite
-conclusion — the question to ask is "does this thing exist on disk?".
-
-### `AgentActivity = "idle" | "thinking" | "tool"` — asymmetric on purpose
-
-| state | meaning |
-|---|---|
-| `tool` | loop is executing tools — **the only state with an unclosed tool_call** |
-| `idle` | loop is parked on `queue.wait()` |
-| `thinking` | **explicitly the residual**: every other way the loop is alive |
-
-`tool` is the precise one because it is the one with an interrupt consequence
-(an interrupted tool needs a synthetic tool_result). `idle` is the empty one.
-`thinking` is *defined as the leftover*, which is what makes the following fall
-out as consequences rather than special cases:
-- the outer-retry backoff (up to 120s between API attempts) is `thinking`
-- session setup before the loop starts (MCP connect can take seconds) is `thinking`
-- a compaction turn is `thinking`
-
-**Known naming debt, deliberately not fixed**: a compaction runs 2-3 minutes
-and showing "Thinking..." across it is the same kind of lie this model removes.
-Adding `compacting` later is a pure carve-OUT of the residual, not a
-re-partition — cheap precisely because the residual is written down.
-
-**Rejected framing** (offered, vetoed by root): defining the states by "what
-feedback the user sees" (spinner vs tool card). That defines backend state in
-terms of frontend rendering — the same class of error as deriving state from
-the log. Add a UI affordance and the definition collapses.
-
-### Where it lives, and the one rule about writing it
-
-`TaskSession.activity` — dies with the session, so there is no second lifecycle
-to keep in sync and nothing to leak. "All tasks' states" is DERIVED at read
-time by walking tracker nodes that have a session.
-
-**Field write and broadcast must happen in the same function.** Two writers,
-because neither layer can reach the other:
-- `setActivity(state)` — closure inside `runProviderLoop` (loop transitions)
-- `setAgentActivity(ctx, projectId, taskId, session, state)` — `agent-lifecycle.ts`
-  (session birth/death)
-
-The tempting shortcut is to emit the event inside `handleImplicitYield` (which
-only has `queue` + `emit`) and write the field at its four call sites. That
-splits one source into two, and call site number five gets only one half. The
-setter is passed IN instead — `handleImplicitYield(queue, setActivity)`.
-
-### Transition points (each independently mutation-tested)
-
-1. `idle` — in `handleImplicitYield`, before `queue.wait()`. ONE site covering
-   four call paths (done resume / implicit-yield resume / explicit yield / end_turn).
-   **Announced only when the loop will ACTUALLY park** (`!queue.hasPending`):
-   with a message already queued, `wait()` resolves on the next microtask and
-   the agent never paused. This is not flicker-avoidance dressed up — it is
-   what makes `idle` mean "waiting for you" rather than "reached a yield
-   point", and both consumers depend on the stronger meaning (yield_external
-   wakes an external client on it; the UI re-fetches JSONL on it to expose
-   Edit/Rewind). It also kept two provider harnesses working unchanged: they
-   script the loop by counting idles, and an unconditional announce added a
-   phantom startup idle that consumed their "first idle" step.
-2. `idle` — the initial drain's blocking wait (`provider-shared.ts`, fresh start),
-   same `!queue.hasPending` rule. The fifth place the loop parks on the queue,
-   and it announced nothing — an agent waiting for its first message looked
-   busy to every client. It deliberately does NOT set `queue.idle`; that flag
-   is polled by test helpers as "the steady-state loop has settled", and
-   flipping it during startup lets a poller call a booting agent settled.
-   **Narrower than it looks**: `runAgentForNode` enqueues a `work_context`
-   message before the loop starts whenever the scope's `buildWorkContext`
-   returns content, so a matrix launch always has something queued and this
-   park is not reached. It fires for a scope with no work context (the hook is
-   optional), and on a resume that ends in a non-user message with nothing
-   recovered. Worth its one line — an agent genuinely stuck here is stuck
-   forever — but do not describe it as the common path.
-3. `thinking` — at the API-call block, OUTSIDE the outer-retry loop.
-4. `tool` — immediately before `Promise.all(executeTool)`.
-5. `null` — at all three sites that clear `node.session` (runAgentForNode's
-   finally, stopAgent, stopTask). Skipping any one leaves a permanent spinner
-   for a dead agent in every connected client.
-
-6. `thinking` — on the way OUT of idle, right where `queue.idle = false` sits.
-
-⚠️ **Point 6 was initially left out, with an argument that was wrong in an
-instructive way.** The reasoning was: every path leaving `handleImplicitYield`
-reaches the API block, so a second setter is unobservable — *the emitted event
-sequence is identical either way*. True about the event sequence, and
-irrelevant: **consumers read the STORED value, not the event stream.**
-`yield_external`'s fast path and the connect-time snapshot both ask
-`session.activity` directly. Without the transition, the whole wake window
-(drain → filter compact → buildUserTurn → emit its events) reports `idle` for
-a loop that is provably not parked — and the documented
-`send_user_message → yield_external` workflow lands exactly there, told "the
-agent stopped working" at the moment it started.
-
-The old code left idle TWICE here (`queue.idle = false` AND an `agent_active`
-event). Collapsing to one state kept only the flag — which by then had no
-production reader — so the migration silently dropped the half that mattered.
-
-**The structural fix is the dedupe, not the extra line.** `setActivity`
-early-returns when the state is unchanged, which makes "an extra setActivity
-call is harmless" a true statement. Before that, every transition point needed
-a per-site argument about whether its event would be redundant — and that is
-precisely the argument that went wrong. With dedupe, you write a transition
-wherever the loop changes what it is doing and never reason about it again.
-Dedupe against a LOCAL (not the session field) so the property also holds for a
-provider driven directly in a unit test, where there is no session.
-
-### Wire format
-
-- `{ type: "agent_activity", taskId, state: AgentActivity | null }` — ephemeral
-  delta. `null` = session gone. In `isPersistedByEmitEvent`'s broadcast-only
-  group; **it must never reach JSONL** — that is what makes "replaying history
-  can't fake-activate" structurally true instead of corrected afterwards.
-- `{ type: "agent_activity_snapshot", projectId, states }` — daemon → client on
-  SSE connect, alongside the existing initial `tree_updated` /
-  `pending_clarifications`. Sourced from `GET /projects/:id/agent/status`
-  (shape changed from `{idle[], active[]}` to `{states}`). **Sent even when
-  empty**: "nothing is running" is the message a client reconnecting after
-  everything stopped needs in order to drop stale entries.
-
-Delta rather than full-snapshot-per-change because building a snapshot needs
-the tracker and the provider loop has none — a hard constraint, not taste.
-
-### Frontend: mostly deletion
-
-Deleted: the `checkAgentStatus` poll and its `/agent/status` fetch; the
-`agent_start`/`agent_end` → activeAgents derivation; the `agent_active` /
-`agent_idle` event types; ActivityLog's 1.5s timer + `lastEntry?.type ===
-"tool_call"` guess; dead `useAgent.running`; dead `handlers.ts setActiveAgents`.
-
-Kept: `agent_start`/`agent_end` themselves (persisted lifecycle log; agent_start
-still reports provider/model), and `checkStatus` reduced to the provider/model
-fetch only.
-
-Added: `activityReducer` (pure) + `isWorking()` in event-handler.ts; one
-write-through ref + `dispatchActivity` in Plugin.tsx mirroring `dispatchPending`;
-`activeAgents = new Set(keys where isWorking)` derived ONCE, so the five
-existing consumers (tree spinner, tab spinner, TaskDetail ×2,
-OrchestratorDetail) did not change at all. ActivityLog takes `activity` and
-does `showThinking = activity === "thinking"`.
-
-Activity events bypass the viewed-session filter in `handleEvent` (activity is
-project-wide — the sidebar shows every task) and produce no log entries.
-
-### Two consumers that a grep for "activeAgents" does NOT find
-
-1. **`yield_external` subscribes to the `agent_idle` EVENT TYPE**
-   (`mcp-endpoint.ts` WAKE_SIGNALS). Deleting the type without migrating turns
-   every external `send → yield_external → get_logs` wake into a timeout,
-   silently. Now matched via a `wakeReason()` predicate on `agent_activity`
-   (`state === "idle" || state === null`). The reported reason string stays
-   `"agent_idle"` — that is the tool's EXTERNAL contract and is unrelated to
-   our internal event names. (Same file, ~15 lines apart: the fast path
-   `session.queue?.idle` returning the *string* `"agent_idle"` is a different
-   thing from the *event type* in WAKE_SIGNALS. Easy to conflate.)
-2. **`onAgentIdle`** (Edit/Rewind re-fetch — SSE events lack eid/parentEid, so
-   the buttons only appear after a JSONL refetch). Migrated to "the viewed task
-   stopped working", which now ALSO covers session end — an agent that finishes
-   with `done()` never goes idle, so its last messages used to stay uneditable.
-
-### Pre-existing bug found next door (fixed in its own commit)
-
-WAKE_SIGNALS still listed `agent_stopped` and `orchestration_completed` — names
-replaced by `agent_end` long ago, so they could never match. A stopped agent
-only ever woke an external client by timing out. Committed separately from the
-activity work so the two can be reverted independently.
-
-### Test notes
-
-- `src/agent-activity.test.ts` — real agent loop. The `tool` window is observed
-  FROM INSIDE a tool handler (`getSession(...).activity`), which is the direct
-  form of "there is an unclosed tool_call right now". Ordering assertions
-  collapse repeats so they pin ORDER, not announcement count.
-- Idle-detection in provider tests keys on
-  `event.type === "agent_activity" && event.state === "idle"` (was `agent_idle`).
-  Two harnesses in `anthropic-compatible-provider.test.ts` drive the loop this
-  way — they hang for the full test timeout if missed.
-- `web/ActivityLog-activity.test.tsx` renders with the LAST ENTRY being a
-  tool_call in every case, so `tool` vs `thinking` can only be distinguished by
-  the prop — the old heuristic would have gotten it right by accident.
-
-### Mutation results, and the test the mutation caught
-
-Every transition point was removed individually and the suite re-run. Each is
-caught by tests only its own path can reach:
-
-| removed | fails |
-|---|---|
-| `idle` in handleImplicitYield | parks-on-queue + 2 provider harnesses that script the loop by counting idles |
-| `idle` in the initial drain | the initial-drain test, alone |
-| `thinking` at the API block | thinking→tool→thinking, alone |
-| `tool` before tool execution | the in-tool observation + thinking→tool→thinking |
-| `null` at the 3 teardown sites | session-end, stopTask, stopAgent — one each |
-| `thinking` on the way out of idle | wake-window test, alone |
-
-**The initial-drain mutation caught a bug in my own test.** The first version
-used the normal scope, so `work_context` was queued, the drain never parked,
-the agent ran a turn and parked in `handleImplicitYield` instead — the test was
-named for one transition and measured another. It passed clean and failed under
-the WRONG mutation, which is exactly the "two tests covering for each other"
-shape. Fixed by launching with `buildWorkContext: () => null`.
-
-That is the argument for mutating per transition point as you add it rather
-than once at the end: a green test tells you nothing about WHICH line made it
-green.
-
-**Mutation testing cannot find a transition point that was never written.**
-The leave-idle gap (point 6) survived a full clean mutation sweep — nothing
-failed, because nothing existed to remove. It was caught by reading the comment
-that justified its absence. When a comment argues why some code is unnecessary,
-that argument is the thing to check; the tests around it are all consistent
-with it by construction.
-
-**Careless-git note**: reverting a mutation with `git checkout -- <file>` also
-reverts any UNCOMMITTED fix in the same file. Commit the fix before mutating
-it, or back the file up.
-
-## Interrupt vs stop: two abort channels, and why they can't be one (2026-07-25)
-
-`stopTask` is TEARDOWN (kills background processes, closes the queue, drops the
-session, disconnects MCP). `interruptTask` ends the current TURN and leaves all
-of that alive. Same button in the UI before this; opposite verbs.
-
-### The signal
-
-`TaskSession.interrupt: TurnInterrupt` (`src/turn-interrupt.ts`), deliberately
-NOT `session.abortController`. Sharing one channel gives either "an interrupt
-tore the session down" or "a teardown was mistaken for an interrupt so it
-couldn't tear down" — **both silent**. They meet in exactly one place, the API
-call's signal (`AbortSignal.any([teardown, interrupt])`), and every reader asks
-`request.signal.aborted` FIRST: teardown always wins.
-
-Three read sites (API call, retry backoff, loop top) and **one park**. The two
-ways an interrupt arrives converge: a cut-off API call `continue`s to the top; a
-tool batch runs to completion and falls through to the top. That site parks via
-`handleImplicitYield` — the park every other path already uses, so there is no
-fifth "what is the agent waiting for" state.
-
-**`consume()` is called when the loop PARKS, not when it decides to.** "The loop
-actually parking satisfies the interrupt", whichever path parked it. Clearing at
-the decision point instead leaves the flag set when a stop lands in the same
-moment the agent goes idle on its own, and the next message gets swallowed into
-a park.
-
-### Why no repair is owed (the point of the whole thing)
-
-`stopTask` leaves the turn's tool_calls unclosed *because the loop is already
-dead*; the next launch's `buildSessionRepair` then writes
-`"Tool execution was interrupted by daemon restart"` — false whenever a human
-pressed stop, and re-read by the model on every later turn. An interrupt keeps
-the loop alive, so **the loop closes its own tool_calls before parking** and
-repair finds nothing. Pairing completeness is structural: `Promise.all` settles
-for every tool and `executeTool` never throws, so the only way to break it is
-bailing out early.
-
-**Foreground tools**: `foregroundExecutions` has two verbs now — `resolve()`
-moves to background (command KEEPS RUNNING, the pre-existing verb), `interrupt()`
-terminates it and returns its output so far through the same formatter a normal
-completion uses. A model told only "interrupted" knows it ran a command and lost
-the result, which invites re-running something that already had side effects.
-Tools that can't be stopped safely just run to completion — a half-written file
-is worse than a two-second wait.
-
-**done() wins a race with the stop button.** That is completion, not
-interruption; marking it "not executed" would strand the parent waiting forever.
-
-### ⚠️ SYMPTOM: "I pressed stop, then restarted the daemon, and it started working again"
-
-Not a bug — a boundary we accepted. It depends on which state the interrupt hit,
-and the window is *interrupt → daemon restart with no message in between*:
+   `[...extras, real, ...queue]`.
+
+⭐ **The deferral is a live/walker BYTE-IDENTITY device, not an API-shape device.** This is the
+reusable rule and it was wrong for a long time:
+
+> Deferral is REQUIRED when the deferred tool_result is PERSISTED and lands ADJACENT to another one
+> in JSONL, because the walker's collection loop merges adjacent tool_results into one user message
+> and the live path must match. It is UNNECESSARY when the message it would merge into is TRANSIENT.
+
+⚠️ **Do not "simplify" `pendingDuplicateYieldExtras` away by analogy with the compaction deferrals
+that were deleted.** Nothing separates the extras' results from the real yield's in JSONL (the
+walker skips `message` events), so splitting the live push would require inventing a JSONL boundary
+event — strictly more machinery. The two compaction deferrals were removable for the opposite
+reason: the summarization instruction is never persisted at all, so nothing reconstructs it and
+there was nothing to stay byte-identical with. Both compaction sites now emit the tool_result and
+push its turn on the spot via one `emitAndPushCompactToolResult` generator.
+
+The justification these three sites *used* to share — role alternation — does not exist; see
+*The Anthropic message-shape rules, MEASURED*. What survives it is the **pairing** obligation: the
+assistant's yield/done `tool_use` must be answered before the request goes out. That is real, it is
+why the extras still ride in the same turn, and it is why the compaction paths still push them.
+
+⚠️ **Duplicate `done()` calls must exit as orphans. Do NOT emit tool_results for all of them.** That
+was tried, to avoid a repair path; it works, and it costs behavior — with every done answered, resume
+detects a generic interrupted-resume instead of a done-resume, so the woken agent silently loses its
+done-resume context. Reverting it was a behavior fix, not a style cleanup.
+
+## Compaction: the two ways it bricks a session
+
+**A too-short compact must NOT emit `compact_marker`.** The `messages.length <= 4` branch used to
+emit `compact_started` + `compact_marker` without rebuilding context — no `session_config`, no
+`compacted_resume`. On restart, `readActive()` returns only post-marker events, so the session starts
+on an assistant turn, and the API rejects it permanently. The branch now emits only a status, resets
+`manualCompactRequested`, and — this is the part that is easy to drop — **consumes any pending
+yield/done tool_result and the duplicate-yield extras**, so the assistant's `tool_use` blocks have
+matching results.
+
+⚠️ **That branch has a live, reachable hole that is NOT fixed**: it clears the flag and `continue`s
+with nothing pushed, so the next iteration sends a request whose last message is the ASSISTANT one,
+which really is a 400 (*"does not support assistant message prefill"*). A fresh agent whose first
+turn ends with `end_turn`, followed by `/compact`, reaches it with no other setup. Pinned by
+`src/reachable-400-snapshot.test.ts`, which asserts the CURRENT buggy shape.
+
+**Compact messages never get `messages_consumed`.** `handleImplicitYield` filters them out of
+`nonCompact` and only `nonCompact` is recorded, so on restart `findUnconsumedMessages` re-enqueues
+the compact and the next session sees a spurious `manualCompactRequested`. Real, still there, no
+known bad effect — the consequence it was once blamed for was the alternation phantom.
+
+**Session config is refreshed at the compaction boundary, and only there.** Compaction wipes
+`messages[]`, so the cache is already lost, which makes it the one safe moment to re-emit
+`session_config` with current values: tools rebuilt from `request.mcpToolDefs`, system prompt
+refreshed from `request.refreshSystemPrompt()`. ⚠️ **`request.systemPrompt` must be updated too, not
+just the emitted event** — the next API call reads the former. That was the mutation-testing find
+here; refreshing only the event looks complete and leaves the next call on the stale prompt.
+`cacheTtl` is deliberately NOT refreshed, to preserve fork inheritance. Without a compaction,
+everything stays frozen from the stored config, which is what gives a byte-identical prefix and a
+cache hit on resume.
+
+Why the refresh matters differs by provider, and the difference is worth knowing: on Anthropic
+frozen tools are a DX problem, since the model can invoke a tool by name whether or not it is in the
+list. On OpenAI Responses it is a CORRECTNESS problem — schema-constrained sampling masks the token
+distribution to the supplied tool names, so an agent physically cannot call a tool that was not in
+its frozen `session_config`.
+
+## Interrupt and stop are two abort channels, and they cannot be one
+
+`stopTask` is TEARDOWN: kill background processes, close the queue, drop the session, disconnect
+MCP. `interruptTask` ends the current TURN and leaves all of that alive. They were the same button
+in the UI before this, and they are opposite verbs.
+
+The signal is `TaskSession.interrupt` (`src/turn-interrupt.ts`), deliberately **not**
+`session.abortController`. Sharing one channel gives you either "an interrupt tore the session down"
+or "a teardown was mistaken for an interrupt so it could not tear down", and **both are silent**.
+They meet in exactly one place — the API call's signal, `AbortSignal.any([teardown, interrupt])` —
+and every reader checks `request.signal.aborted` FIRST, so teardown always wins.
+
+⚠️ **`consume()` is called when the loop PARKS, not when it decides to.** The satisfying event is
+the loop actually parking, whichever path parked it. Clear the flag at the decision point instead
+and a stop landing in the same moment the agent goes idle on its own leaves the flag set, so the
+next message is swallowed into a park.
+
+**No repair is owed, and that is the point of the design.** `stopTask` leaves the turn's tool_calls
+unclosed because the loop is already dead, and the next launch's repair then writes *"Tool execution
+was interrupted by daemon restart"* — false whenever a human pressed stop, and re-read by the model
+on every later turn. An interrupt keeps the loop alive, so the loop closes its own tool_calls before
+parking and repair finds nothing. Completeness is structural: `Promise.all` settles for every tool
+and `executeTool` never throws, so the only way to break it is bailing out early.
+
+**Partial assistant text is KEPT, deliberately.** It makes the interrupted state representable on
+disk with zero new resume states (the log ends in `assistant_text`, which reads as
+`hasPendingImplicitYield`); it gives the user's next message a referent, because "no, don't do that"
+needs the text they were reading; and emitting it as a normal final `assistant_text` is what clears
+`ctx.streamingText`, so the UI's partial becomes final instead of lingering. Never the thinking
+blocks (no signature) and never a half-emitted `tool_use` (that is the orphan being removed).
+
+⚠️ **Do NOT front-run the queue when parking.** The cancellation-point drain is skipped while
+interrupted. A message drained there would be merged into the turn's user message and then sat on —
+the loop would wait for a *further* message before calling the API, so "stop, do X instead" would
+look swallowed. Left in the queue, `handleImplicitYield` returns it immediately.
+
+**Compaction turns are not interruptible mid-flight.** The summarization instruction is already in
+`messages[]`; cutting there would pair "summarize yourself" with whatever the user says next. The
+flag stays set and takes effect at the top of the next iteration.
+
+**`done()` wins a race with the stop button.** That is completion, not interruption; marking it "not
+executed" would strand the parent waiting forever.
+
+**Foreground tools have two verbs now.** `foregroundExecutions.resolve()` moves a command to
+background and it keeps running (the pre-existing verb); `interrupt()` terminates it and returns its
+output so far through the same formatter a normal completion uses. A model told only "interrupted"
+knows it ran a command and lost the result, which invites re-running something that already had side
+effects. Tools that cannot be stopped safely just run to completion — a half-written file is worse
+than a two-second wait.
+
+⚠️ **SYMPTOM: "I pressed stop, then restarted the daemon, and it started working again."** Not a
+bug; an accepted boundary, in the window *interrupt → restart with no message in between*:
 
 | interrupted during | log ends in | resume detects | after restart |
 |---|---|---|---|
-| `thinking` (text had streamed) | `assistant_text` | `hasPendingImplicitYield` | **parked at idle** ✓ |
-| `thinking` (nothing streamed yet) | the turn's user message | `isInterruptedResume` | re-runs the turn |
-| `tool` | tool_results (a user turn) | `isInterruptedResume` | **continues working** |
+| `thinking`, text had streamed | `assistant_text` | implicit yield | **parked at idle** ✓ |
+| `thinking`, nothing streamed yet | the turn's user message | interrupted | re-runs the turn |
+| `tool` | tool_results (a user turn) | interrupted | **continues working** |
 
-Making the `tool` row survive a restart needs a persisted "interrupted, waiting"
-marker, i.e. a fifth resume state — which the design explicitly refuses. If this
-ever has to change, that is the cost to weigh.
+Making the last row survive a restart needs a persisted "interrupted, waiting" marker — a fifth
+resume state, which this design refuses. That is the cost to weigh if it ever has to change.
 
-The first row is not luck, and it is the reason **partial assistant text is
-KEPT** rather than discarded: keeping it makes the interrupted state
-representable on disk with zero new states. It also gives the user's next
-message a referent ("no, don't do that" needs the text they were reading), and
-emitting it as a normal final `assistant_text` is what clears
-`ctx.streamingText`, so the UI's partial becomes final instead of lingering
-until the next refetch. Never the thinking blocks (no signature) and never a
-half-emitted tool_use (that is the orphan being removed).
+**`status` events are broadcast-only** (`isPersistedByEmitEvent` returns false), so the interrupt's
+"Interrupted by user" reaches clients and never reaches the log. Two consequences: it cannot sit
+between tool_results in a reconstruction that never sees it, and after a refresh the durable
+evidence is the interrupted tool_result's own text. ⚠️ A test asserted the opposite and failed —
+"emitEvent means it's in JSONL" is an easy assumption, and the repair path's own status event
+(written straight to the EventStore) makes it look true.
 
-### `status` events are broadcast-only — measured, and it matters here
+## Agent activity: live process state is asked for, never replayed
 
-`isPersistedByEmitEvent` returns false for `status`, so the interrupt's
-"Interrupted by user" reaches clients and never reaches the log. Consequences:
-it cannot sit between tool_results in a reconstruction that never sees it; and
-after a refresh the durable evidence is the interrupted tool_result's own text,
-not a marker. **A test asserted the opposite and failed** — the assumption that
-"emitEvent means it's in JSONL" is easy to make and the repair path's own status
-event (written straight to the EventStore) makes it look true.
+> **State is never derived from the event log. On connect the client ASKS; while connected the
+> server PUSHES.**
 
-### Do NOT front-run the queue when parking
+The log records *"it became active at some past instant"*. Replaying that as *"it is active now"* is
+a category error, and the old code had a poll (`checkAgentStatus()` after every event batch) whose
+only job was to undo the error it had just made. That poll was the bug report. Note the exact
+inversion against pending messages: pending IS a projection of a persistent log, so a reducer over
+events is right there. **The question to ask is "does this thing exist on disk?"**
 
-The cancellation-point drain is skipped while interrupted. A message drained
-there would be merged into the turn's user message and then sat on — the loop
-would wait for a *further* message before ever calling the API, so "stop, do X
-instead" would look swallowed. Left in the queue, `handleImplicitYield` returns
-it immediately (it doesn't even announce idle when something is pending).
+`AgentActivity = "idle" | "thinking" | "tool"`, and it is asymmetric on purpose. `tool` is the
+precise one because it is the only state with an unclosed tool_call, which is the one with an
+interrupt consequence. `idle` means the loop is parked on `queue.wait()`. **`thinking` is explicitly
+the residual** — every other way the loop is alive — which makes the following consequences rather
+than special cases: the outer-retry backoff is `thinking`, session setup before the loop starts is
+`thinking`, and a compaction turn is `thinking`. Known naming debt, deliberately unfixed: a
+compaction runs 2-3 minutes and "Thinking…" across it is the same kind of lie this model removed.
+Adding `compacting` later is a pure carve-OUT of the residual, which is cheap precisely because the
+residual is written down.
 
-### Compaction turns are not interruptible mid-flight
+⚠️ **Rejected framing, offered and vetoed: defining the states by what feedback the user sees**
+(spinner vs tool card). That defines backend state in terms of frontend rendering — the same class
+of error as deriving state from the log — and it collapses the moment a UI affordance is added.
 
-A 2-3 minute system operation whose instruction is already in `messages[]`;
-cutting it there would pair "summarize yourself" with whatever the user says
-next. The flag stays set and takes effect at the top of the next iteration.
+It lives on `TaskSession.activity`, so it dies with the session and there is no second lifecycle to
+keep in sync. **The field write and the broadcast must happen in the same function**, which is why
+the setter is passed INTO `handleImplicitYield` rather than the event being emitted there and the
+field written at its four call sites. Split them and call site number five gets only one half.
 
-### Pre-existing hole found next door, deliberately NOT fixed here
+Two of the six transition points are worth stating explicitly, because both are the kind that get
+"simplified" out:
 
-`provider-shared.ts` "context too short to compact" (`messages.length <= 4`)
-emits a status, clears the flag and `continue`s — landing on the API call with
-`messages[]` possibly ending in an ASSISTANT message, which IS a real 400
-("must end with a user message"). Reachable today with no interrupt involved:
-fresh agent ends its first turn with text, user hits compact. It lives inside
-the compaction deferral machinery that root's mock-audit task owns.
+⚠️ **`idle` is announced only when the loop will ACTUALLY park (`!queue.hasPending`).** This is not
+flicker avoidance. It is what makes `idle` mean "waiting for you" rather than "reached a yield
+point", and both consumers depend on the stronger meaning: `yield_external` wakes an external client
+on it, and the UI re-fetches JSONL on it. It also keeps two provider test harnesses working — they
+script the loop by counting idles, and an unconditional announce adds a phantom startup idle that
+eats their first step.
 
-### Tests: `src/interrupt.test.ts`, `web/InputBar-stop.test.tsx`
+⚠️ **There is a `thinking` transition on the way OUT of idle, and the argument for omitting it was
+wrong in an instructive way.** The reasoning was: every path leaving `handleImplicitYield` reaches
+the API block, so a second setter is unobservable — *the emitted event sequence is identical either
+way*. True about the event sequence, and irrelevant, because **consumers read the STORED value, not
+the event stream**. `yield_external`'s fast path and the connect-time snapshot both ask
+`session.activity` directly, so without the transition the entire wake window reports `idle` for a
+loop that is provably not parked, and the documented `send_user_message → yield_external` workflow
+lands exactly there and is told the agent stopped working. **The structural fix is the dedupe, not
+the extra line**: `setActivity` early-returns on an unchanged state, which makes "an extra
+`setActivity` call is harmless" a true statement, so you write a transition wherever the loop
+changes what it is doing and never reason about it again. Dedupe against a LOCAL rather than the
+session field, so the property also holds for a provider driven in a unit test with no session.
 
-Mutation-verified per claim, each fix committed before mutating it:
+**`agent_activity` is a broadcast-only delta and must never reach JSONL.** That is what makes
+"replaying history cannot fake-activate an agent" structurally true instead of corrected afterwards.
+A separate `agent_activity_snapshot` goes daemon→client on SSE connect, **sent even when empty**,
+because "nothing is running" is exactly the message a client reconnecting after everything stopped
+needs in order to drop stale entries. A delta rather than a snapshot per change because building a
+snapshot needs the tracker and the provider loop has none.
 
-| mutation | fails |
-|---|---|
-| interrupt also kills background processes | the background-survives test, ALONE |
-| skip emitting tool_results when interrupted | no-repair, all-closed, partial-output, leading-run, not-executed (5) |
-| drop the `!doneToolUse && !yieldToolUse` guard | done()-wins, by 10s timeout — the "parent waits forever" shape |
+⚠️ **Two consumers that a grep for `activeAgents` does NOT find**, and this is the canonical local
+example of the by-name blindness described in *Changing code here*:
 
-Reaching the "interrupt landed before the batch started" window deterministically:
-subscribe to events and call `interrupt.request()` from the `tool_call` emission
-— that emission happens after the response is processed and before execution
-begins. Same trick reaches the done() race.
+1. `yield_external` subscribes to the `agent_idle` **event type name** in `WAKE_SIGNALS`
+   (`mcp-endpoint.ts`). It is matched now via a predicate on `agent_activity`
+   (`state === "idle" || state === null`), and **the reported reason string stays `"agent_idle"`
+   because that is the tool's external contract**, unrelated to our internal event names. In the
+   same file, ~15 lines apart, the fast path returns the *string* `"agent_idle"` off
+   `session.queue?.idle` — a different thing from the event type, and easy to conflate.
+2. `onAgentIdle` (the Edit/Rewind re-fetch). Migrated to "the viewed task stopped working", which
+   now also covers session end — an agent that finishes with `done()` never goes idle, so its last
+   messages used to stay uneditable forever.
 
-⭐ **"Interrupt an agent that is mid-generation" had never been executed by any
-test in this suite** — and not because someone skipped it. `createMockAnthropicStream`
-ignored the request's AbortSignal outright: it slept `delay_ms`, then yielded the
-whole turn. Every test that aborted mid-stream therefore passed through a road
-that was open and led to the OPPOSITE of production. The gap is invisible from
-the test side: nothing fails, nothing is marked todo, the behaviour simply is not
-the product's. Fixed by honoring the signal inside the delay window only (a turn
-without `delay_ms` iterates byte-for-byte as before, so no existing test moved).
-Same principle FU2 applied to integration mocks via `abortableSleep`.
+## An anomalous stop idles the agent silently
 
-**The class, stated generally: an unfaithful test double doesn't only make tests
-lie — it makes the missing test unthinkable.** Nobody writes "assert the abort
-actually aborts" when the harness has no way to express the difference. Sibling
-of the fictional-alternation finding (an over-strict double blocks a correct
-implementation); this is the permissive direction of the same failure.
+An assistant turn that returns **thinking only** — no text block, no tool_call — makes the loop see
+`toolUses.length === 0`, treat it as end of turn, and implicitly yield. **With no user-visible
+signal.** The agent then waits for a message indefinitely, and a daemon restart just re-idles an
+implicit-yield agent rather than continuing it. For a root in conversation this is benign, because a
+human eventually pokes it. For an autonomous sub-agent nobody is watching it is an indefinite hang,
+and the parent's yield never wakes: the live case sat idle for **8 days**.
 
-⚠️ **`activity === "thinking"` does NOT mean "a request is in flight."** A session
-is BORN thinking (setup — MCP connect, repair, work context — is the residual
-state too), so a test that waits for `thinking` and then interrupts can land
-before the first API call exists. That path parks the loop having never called
-the API, and it **passes every park assertion while testing nothing about
-aborting a request**. Key on the request actually being recorded
-(`mockAPI.getRequestHistory().length >= 1`) instead. Found by the failure being
-diagnostic: the tail of the log had no assistant turn at all before the wake.
-Which is the general lesson — a bare "timed out waiting for X" tells you nothing;
-dumping the last few events with it turned two blind reruns into one answer.
+Our gap is that `getStopReason()` collapses every non-`end_turn` reason — including `refusal`,
+`pause_turn`, `model_context_window_exceeded`, `compaction` — to `tool_use`, and the loop idles
+without persisting or surfacing the anomaly. The guard (draft `01KXK69KKKGG4XHPH7EWGNY5AC`) is to
+emit a persisted, user-visible error event **before** idling for any stop reason outside
+`{end_turn, tool_use}`, plus a bounded `pause_turn` continue.
 
-Three test-writing notes worth carrying:
-- `await waitFor(() => x === null || true)` polls NOTHING (always true) and
-  asserts before React commits. Poll the real condition.
-- `expect(domNode).toBeNull()` on failure prints the node *with its React fiber
-  graph*: one failing assertion produced a **227MB** log and a 60s test. Compare
-  to a boolean (`expect(x === null).toBe(true)`) in DOM tests.
+⚠️ **Agent time perception is DATE-BLIND, and it fails confidently.** Context message timestamps are
+`[HH:MM:SS]` with no date. The 8-day agent woke and reported "~80 minutes", because 14:56 → 16:13
+looks same-day. **Ground truth is the epoch `ts` in the JSONL; the display stamps do not encode the
+date.** For any "how long was I stalled / when did this happen / is this stale" reasoning, read the
+epoch. Root hit the identical thing with an overnight test run whose `[22:06]` → `[11:04]` gap was
+invisible in the stamps and only inferable from anomalous test durations.
+
+---
+# Tools the Agent Calls
+---
+
+## bash: bound the output rather than forbidding the workaround
+
+The tiered display exists because agents piped and redirected for a legitimate reason — context was
+genuinely at risk — and rules against it leak at the edges. Now context is bounded by the tool, so
+the instinct has nothing to act on. Under 1KB is inline only; up to 10KB is full inline plus a
+saved file; over 10KB is head 5KB + a truncation banner + tail 5KB, with the complete output on
+disk. Streams are merged by wrapping in `bash -c "(cmd) 2>&1"`, which makes an agent-written `2>&1`
+a harmless no-op. Foreground and background go through one `formatBashResult`, so a
+`background_complete` message is byte-identical to the foreground result for the same command.
+
+⭐ **The framing generalises**: when agents repeatedly do X, ask whether the motivation is
+legitimate. If it is, make the tool satisfy it naturally instead of enforcing against it. **If you
+find yourself adding a parser, a rejection or a warning to the new tool, you have drifted** — the
+point is to make the shortcut unnecessary, not forbidden.
+
+The "don't pipe" guidance lives in the bash tool's `description`, not in `system-prompts.ts`,
+because that is where the decision to pipe is made — while constructing the call.
+
+## The three glob bugs were one class: a library default serving somebody else's use case
+
+`search` and `list_files` each had two defects, and finding the third instance is what named the
+class.
+
+- **Neither walked hidden directories.** `Bun.Glob.scanSync` defaults to `dot: false` and nobody
+  passed the option. In this repo the hidden directory IS the source: `.mxd/plugin/` is every
+  ScopeOpts hook, every plugin REST route and the entire UI — **17,862 lines across 54 files, 34% of
+  all non-test source**, invisible to the primary search tool.
+- **A glob with no slash was treated as a path pattern.** `*` does not cross `/` in `Bun.Glob`, so
+  `*.ts` — *the example printed in the tool's own description*, and what ripgrep's `--glob` means —
+  matched only files sitting directly in the search root, i.e. `(no matches)` from a repo root.
+  `normalizeGlobDepth` now promotes a slash-free glob to `**/<glob>`; a glob containing `/` is a
+  path pattern and passes through untouched, so `src/*.ts` stays anchored. Same split ripgrep makes.
+
+**What makes this class invisible is that there is no line to review.** Nothing anywhere said "skip
+hidden directories" or "match only the top level" — the semantic lived in a library's default, i.e.
+in the *absence* of an argument, and code review cannot catch an absence. Hence the discipline now
+in place at every walker: **pass every option you depend on explicitly, even when you agree with the
+default.** `dot: true, onlyFiles: true` on a call whose behavior is unchanged is not noise; it is
+the semantic becoming visible.
+
+The second-order damage is why this is worth a section rather than a commit message: for as long as
+such a bug lives, **the tool's own description is teaching agents the wrong rule.** `list_files`'s
+examples were `"src/**/*.ts"`, `"**/*.test.ts"`, `"*.json"` — the first two anchored, the third
+silently meaning something else. The defect was never that `*.json` returned the wrong three files;
+it was that a reader **generalises from the neighbours**. Both tools now state the rule rather than
+implying it.
+
+### Four things in the fix that will look like oversights
+
+1. ⚠️ **The skip filter runs INSIDE the walk loop, so the 500-file cap counts files we KEEP.** Not
+   an optimisation — a correctness requirement. Measured from the main checkout with `dot: true` and
+   no skip list, an any-depth `*.ts` filled **323 of its 500 slots with `.worktrees/` copies** of
+   files the caller already had, and never reached `web/`, `scripts/` or `.mxd/` at all, because
+   `.worktrees` is walked before `src`. **So `dot: true` alone is not a different flavour of wrong,
+   it is strictly worse than the bug**: the cap stops protecting you and starts guaranteeing you get
+   the copies. Do not ship the two halves separately.
+2. ⚠️ **`.worktrees/` in `DEFAULT_SKIP_DIRS` is load-bearing and costs nothing today, so it needs an
+   assertion.** Each sub-agent worktree is a full second copy of the repo — measured 63,975 files
+   across 3 live worktrees — so dropping it makes one search from main scan every file 4× and report
+   every hit 4×. The guard test will not fail before someone "tidies" the list, which is the entire
+   point of it.
+3. ⚠️ **Truncation is announced, and detected one PAST the cap**, so a project with exactly 500
+   files is not accused of having more. Silently returning 500 of 50,000 is the same failure as
+   silently not walking a directory.
+4. ⚠️ **`skipDirsForPattern(pattern)` is the default skips minus any directory the pattern NAMES.**
+   `search` can reach an excluded directory by pointing `path` into it or passing `excluded_dirs:
+   []`; `list_files` takes a pattern and nothing else, so a plain skip list would have deleted an
+   ability with no replacement. No new parameter — the caller's intent is already in the input, and
+   every param is a token every agent pays on every call. **Comparing against the trailing-slash
+   form is what keeps it from firing by accident**: a pattern hunting for `*build*.ts` does not
+   contain `build/`. When it misfires it hands over MORE files, never fewer, and every bug in this
+   family did its damage by handing over fewer without saying so.
+
+⭐ **`DEFAULT_SKIP_DIRS` is now the ONLY thing that decides what a search ignores**, which is what
+the code always claimed — `.git/` and `.worktrees/` were already listed explicitly, so `dot: false`
+was never anyone's intent. It is exported, and a test pins it against its prose copy in the
+`excluded_dirs` description, because a prose copy of a list is the drained rot kind: a stale list
+and a fresh list read identically.
+
+### Detecting a silent under-report
+
+The failure mode is silent **by construction**: "no matches" and "never looked" produce a
+byte-identical tool_result. Nothing in a search result carries evidence that the search happened, so
+it can never be caught by inspecting the answer — only by a **collision with something you
+independently already know**. Three things generalise from how it was actually caught:
+
+1. ⚠️ **The empty result is the detectable one; the partial result is the dangerous one.** Same bug,
+   same tool, same agent, 38 seconds apart: a long confident answer that silently omitted the file
+   *defining* the symbol went unchallenged and was acted on 2 seconds later, while an empty result
+   for something the agent had read 5 events earlier got double-checked immediately. An
+   under-report is only conspicuous when it takes *everything* away, which is the case that matters
+   least.
+2. ⚠️ **Detection needs an independently-held fact at that exact instant.** You search for things
+   you do NOT already know — "are there other callers of X?" — and there a false `(no matches)` is
+   indistinguishable from the truth AND confirms your hypothesis, which is the most comfortable
+   answer there is. That is precisely the rename/delete check *Changing code here* tells you to run.
+   Do not file a bug under "detectable" because of its output SHAPE; ask whether it is detectable in
+   the situations it occurs in.
+3. ⚠️ **The check that caught it is the one the tool description forbids** — *"ALWAYS use this for
+   search tasks — NEVER invoke grep or rg via bash"* — and that suppression had already worked once
+   in the same minute. **A rule that suppresses a redundant check also suppresses the only detector
+   its failure mode has.** For as long as the bug lived, an agent that obeyed got the wrong answer
+   and one that disobeyed got the right one, which trains every agent reading a tool description to
+   discount it. A description that tells agents to stop cross-checking has to earn it.
+
+### Two rules about compatibility worries, one of which is a trap
+
+*"A semantic that has never worked has no users"* settled the `search` glob change in one line: a
+caller wanting top-level-only would have been getting an empty result almost every time, so they
+cannot exist. ⚠️ **It proves nothing for `list_files`, where the same change was in front of the
+same person one line from done.** There, `list_files("*.json")` returned `package.json`,
+`tsconfig.json`, `biome.json` — three real, plausible files. The old semantic worked. **The rule is
+only decisive when the old output was EMPTY; when it was a plausible-looking subset it settles
+nothing** — and a rule is at its most dangerous exactly when it happens to point at the answer you
+already want. Checking its premise cost one command.
+
+The generalisation that does hold is stronger, and it is what decided the case:
+
+> **Before letting a compatibility worry veto a change, measure what the current behavior actually
+> produces.** Not "is anything calling this" — *what does the call return today, and does it answer
+> the question the caller was asking?*
+
+The empty-output rule is the trivial special case. The common and more dangerous one is non-empty
+output that does not answer the question, which is what happened here: the capability being
+defended was `list_files("*")` as a "show me this directory" affordance, and `scan()` defaults
+`onlyFiles: true`, so `*` returned the dozen loose files at the top of the repo and **not one
+directory** — no `src/`, no `web/`, no `.mxd/`. The tool could not answer "what is the shape of this
+project", which is what its own description claimed it was for, and `*` is the DEFAULT pattern.
+**The capability being protected did not exist.**
+
+## Gates: a passing gate looks identical whether it read 8% or 100%
+
+Two gates had scopes narrower than their names, and both are now subtractions: `scripts/
+check-i18n.sh` walks every non-test `.tsx` minus a named prune list (4 → 31 files), and
+`src/data-paths.test.ts`'s source audit walks the repo root instead of `src/`. Before the fix the
+i18n gate read **927 of 11,534 lines (8%)** — never the shell's own `SettingsPanel.tsx` or
+`AppHeader.tsx`, and never *any* of the 25-file plugin UI, which is where essentially every
+user-facing string in this product lives — and then printed `i18n check passed — no bare strings
+found in JSX`, unqualified, from inside the pre-commit hook. The data-paths audit was proven dead by
+experiment rather than by reading: a `dataRoot.slice(2)` planted in `.mxd/plugin/scope-opts.ts` left
+it at 54 pass / 0 fail.
+
+⭐ **Start from everything and subtract; do not enumerate what to include.** A subtract-list fails
+LOUDLY — something noisy shows up and someone adds an entry. An include-list fails SILENTLY: new
+code simply is not covered and nothing anywhere says so. `biome.json` (`"includes": ["**",
+"!.worktrees", …]`) and `tsconfig.json` (`exclude`, no `include`) both got this right with nobody
+maintaining them, and `tsc --noEmit --listFiles` really does put all 54 `.mxd/plugin/` files in its
+program. The one legitimate exception is performance, and it must be said out loud rather than
+implied — see the pre-commit hook below.
+
+⭐ **When a check is known dead, "the suite passes" is not evidence the fix worked** — the suite
+passed while it was dead. The evidence is the round trip: plant re-verified dead against the old
+audit, then plant → **1 test red naming the offending file**, then plant removed → green. A test
+whose value is entirely in the day it fires must be made to fire on purpose at least once.
+
+⭐ **An unqualified pass is worse than a narrow scope.** The pass message carries the file count now
+(`scanned 31 JSX file(s)`), and **scanning 0 files is a failure, not a pass**. The count is the
+detector: re-narrowing to `-maxdepth 1` drops it to 4 in front of whoever commits next. A test pins
+the same property in non-rotting form — scanned must exceed the number of non-test `.tsx` directly
+under `web/`, both sides measured — so the historical bug reports as `Expected: > 4, Received: 4`.
+
+⭐ **A partial-hit gate plus a fix-only-what-it-flagged policy produces incoherent output.** The
+i18n heuristic is single-line, so in a component with 6 user-visible strings it flagged 1. Fixing
+that one leaves a component half translated and half English — worse than untouched, and it looks
+*handled*. **The unit of repair is the coherent unit, not the flagged line**; a gate that catches a
+subset tells you WHERE to look, not WHAT to fix. The judgement is per-case and the same round went
+the other way on purpose: in an 1800-line file containing an entire untranslated screen, fixing the
+flagged line's neighbours reproduces the same incoherence one level up, so the line was fixed alone
+and the rest filed.
+
+Two repair notes worth keeping. The heuristic's `>text<` detector matched `) => Promise<void>;` six
+times out of eleven hits, so the guard is `(^|[^=])>` — in real JSX the character before a closing
+`>` is an identifier char, a quote, `}`, `/` or a space, never `=`. **That is exactly the shape a
+lazy agent would use as cover for loosening the rule**, so it is pinned in both directions: an arrow
+type must NOT report, and real JSX text including a `>` in column 0 MUST. And **brand names go
+through `t()` with the same value in every locale**, which is what `"header.title": "Matrix"` has
+always done; an exemption list was considered and rejected as the entry point for the next fictional
+rule.
+
+### The census — negative results, so nobody re-runs this
+
+Every file-enumeration site in the repo was searched, deliberately with bash `grep -rn` rather than
+`search` (see the self-bootstrap warning below). Conclusions:
+
+- **Every `Bun.Glob` in the repo is now correct** — three call sites, two in `search`, one in
+  `list_files`.
+- **File enumeration here is either a `Bun.Glob` or a flat, single-directory read of a directory we
+  own with its filter written down** (a ULID regex, a `.jsonl` suffix). `readdir` returns dotfiles
+  by default and here that is what we want, so no default is doing hidden work. **Do not go looking
+  again.**
+- **File-scope CLAIMS are made in exactly two places**: a `readdirSync` walk in a test, or a
+  config's include/exclude. Everything else that reads a file reads a file it names, where the scope
+  IS the claim.
+- **There is no CI.** `.github/` and `.gitlab-ci.yml` do not exist; the pre-commit hook is the only
+  gate runner in this repo.
+- ⚠️ **The hook itself is the third addition list**: it runs `bun test --bail` on **5 of 140** test
+  files (3.6%) and then prints `All checks passed.` Here subtraction is genuinely infeasible — a
+  full `bun test` is ~270-300s per commit — which is the performance exception, and the remedy is
+  the other half of the i18n fix: say what you ran. Filed as `01KYCYSPVYPW0SGCX2YMK59874`.
+
+Two more of the same class along a different axis, filed not fixed: the i18n heuristic's DEPTH is
+still an addition list of one syntactic form (`01KYCYSPVYPW0SGCX2YMK59875`), and the data-paths
+audit's PATTERN is one spelling, so `dataRoot.substring(2)` passes silently
+(`01KYCYTJ2TC72AR8RDZGF9HMBZ`). **"Scope" is only one of the dimensions an addition list can hide
+in.**
+
+### ⚠️ In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand
+
+> The tools an agent calls belong to the **running daemon**, not to anybody's worktree. So *"I just
+> fixed X, therefore I can use X"* is **false until the daemon restarts** — and it is false for
+> every other agent running at the same time.
+
+Measured hours after `search`'s fixes landed on main: `search("ErrorBoundary", glob: "**/*.tsx")`
+returned `(no matches)` while `grep -rn` returned 10 hits including the file that DEFINES it.
+
+**This makes the blind-instrument trap harder to avoid than it looks, because of who walks into
+it: the person who fixed the tool is the person with the most reason to believe it works.** The task
+that wrote down "a completeness survey run with a blind instrument returns a confident, wrong
+'that's all of them'" then ran its own survey on the blind instrument. The warning and the violation
+were in the same task. **A tool description's "always use this" has an unstated premise — that the
+tool works. Spend one call proving your instrument sees a file you already know exists before
+trusting a by-name survey.**
+
+⚠️ **Consequence for this file**: any "grepped it, nothing points there" conclusion recorded here
+before 2026-07-25 was reached with an instrument that could not see `.mxd/plugin/`, and the failure
+was silent in the direction that matters — a confident non-empty answer with the deciding file
+missing from it.
 
 ---
 # Events, JSONL & Session History
