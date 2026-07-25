@@ -2867,7 +2867,11 @@ the whole run). **A defence-in-depth pair can hide the fact that neither half is
 above the `key={i}` attribute line, not above the element; and `useIterableCallbackReturn` requires
 every switch path to return, which is why the last case and `default:` are merged.
 
-## Interactions with a load-bearing event detail
+## Four interactions, each with one line that silently breaks it
+
+These features are unrelated except in the way that matters here: each depends on a single
+easy-to-delete line — an event-phase choice or a `preventDefault` — whose removal breaks the feature
+without breaking a test or producing an error.
 
 **Select-to-quote ("Ask Matrix").** ⚠️ **`onMouseDown={e => e.preventDefault()}` on the floating
 button is LOAD-BEARING**: without it, mousedown collapses the selection, `selectionchange` unmounts
@@ -2910,15 +2914,6 @@ click-away.** If that is ever wanted back, use a document-level outside-click li
 and the `Object.getOwnPropertyDescriptor(...).value` setter trick fail to fire `onChange` (probed).
 That is *why* the query was lifted to a controlled prop: filtering became testable by passing a prop
 instead of typing. `.blur()` and keydown do work.
-
-⚠️ **happy-dom v20 silently drops MutationObserver callbacks under GC pressure.**
-`MutationObserverListener` stores its callback in a `new WeakRef(...)` with no strong reference
-anywhere, and dispatch does `callback.deref()` — so after any GC pass, mutations are delivered to
-nothing, with **no error**. A test relying on MO delivery passes in isolation (no GC between observe
-and mutate) and flakes inside the full suite. Real browsers hold strong refs per spec, so production
-is fine. **Rule: never let a happy-dom test depend on MutationObserver delivery.** Route the tested
-behavior through a React effect and treat the MO path as a real-browser-only complement — and stub a
-no-op MutationObserver so the mutation proof targets the effect branch exactly.
 
 ## Settings: one Save & Restart button, and the misconception it encodes
 
@@ -3133,6 +3128,15 @@ writes "assert the abort actually aborts" when the harness cannot express the di
 (setup is the residual state too), so a test that waits for `thinking` and then interrupts can land
 before the first API call exists — and it **passes every park assertion while testing nothing about
 aborting a request**. Key on `mockAPI.getRequestHistory().length >= 1`.
+
+⚠️ **happy-dom v20 silently drops MutationObserver callbacks under GC pressure.**
+`MutationObserverListener` stores its callback in a `new WeakRef(...)` with no strong reference
+anywhere, and dispatch does `callback.deref()` — so after any GC pass, mutations are delivered to
+nothing, with **no error**. A test relying on MO delivery passes in isolation (no GC between observe
+and mutate) and flakes inside the full suite. Real browsers hold strong refs per spec, so production
+is fine. **Rule: never let a happy-dom test depend on MutationObserver delivery.** Route the tested
+behavior through a React effect and treat the MO path as a real-browser-only complement — and stub a
+no-op MutationObserver so the mutation proof targets the effect branch exactly.
 
 ⚠️ **happy-dom does no layout, so geometry cannot be observed there.** It can still test the *causes*
 of geometry — DOM order, commit granularity, whether a callback ran — which is far better than
