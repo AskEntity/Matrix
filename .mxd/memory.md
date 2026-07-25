@@ -4214,36 +4214,6 @@ evidence that an `agent_idle` event exists.
 # Web UI — Components & Interactions
 ---
 
-## FIX-10 (2026-06-10) — Settings save: silent failure + null-in-global-patch
-
-Two frontend bugs caused "save then restart, changes gone":
-
-### Root cause chain
-1. `updateDraftGlobal` deletes keys when value is `""` / `null` / `undefined`
-2. `buildPatch` sends `null` for keys in saved but missing from draft (second loop)
-3. Server PATCH `/config/global` rejects null on required fields -> 400
-4. `updateConfig` in ShellApp.tsx didn't check `res.ok` -> silent swallow
-5. Refetch after silent failure reverts UI -> user sees changes "disappear"
-
-**Backend persistence is fine** -- PATCH -> disk write -> restart -> GET all works. Bug was
-purely frontend.
-
-### Fix 1 -- `buildPatch(draft, saved, allowNull)`
-New third parameter. `saveGlobal` passes `allowNull=false` -> null values omitted from
-patch. `saveRepo`/`saveLocal` keep `allowNull=true` (null = "remove override"). A model
-change + cleared field no longer poisons the entire PATCH body.
-
-### Fix 2 -- `updateConfig` checks `res.ok`
-Returns `Promise<string | null>` (error message or null). SettingsPanel shows inline
-red error banner in `TabActions`. Draft stays dirty on failure. Error clears on revert
-or next save attempt. i18n: `settings.saveError` (EN: "Save failed", ZH: "保存失败").
-
-### Interaction with server-side null rejection (cc#4)
-The server's null rejection for global config (added in FIX-2 cc#4) is CORRECT -- it
-prevents writing incomplete configs that would brick the next boot. The frontend was
-producing the null values that triggered the rejection. Both sides are now correct:
-server rejects null, frontend never sends it for global.
-
 ## Compact sidebar header (2026-06-17)
 
 Sidebar header consolidated from 3 rows (TASKS+buttons / filter input / hide-completed)
@@ -4259,73 +4229,6 @@ into one: `[TASKS] [+] [Refresh] [🔍 Filter] [👁 Hide completed]`.
   in the header (inherits icon button sizing, overrides color for active/favorites).
 - `IconSearch` added to icons.tsx (magnifying glass SVG).
 - `tasks.filterToggle` i18n key added (EN + ZH).
-
-## Markdown TABLE rendering in activity log + copy button (2026-06-22)
-
-Agent replies frequently use markdown tables to compare options; they rendered
-as misaligned pipe text in the proportional/mono font. Now rendered as real
-aligned `<table>` with a hover copy button.
-
-### Scope: TABLES ONLY (not full markdown — deliberate)
-No markdown library pulled in. A focused hand-written GFM-table parser. Inline
-markdown (`**bold**`, `` `code` ``) inside cells is NOT parsed — cells render as
-plain text. If full markdown is ever wanted, that's a separate decision.
-
-### Files
-- `.mxd/plugin/web/markdown-table.ts` — pure parser (no DOM, fully unit-tested):
-  `parseTextSegments(text)` → ordered `{type:"text"} | {type:"table"}` segments;
-  `splitRow`, `isDelimiterRow`, `hasTable` exported for tests.
-- `.mxd/plugin/web/components/MarkdownText.tsx` — `<MarkdownText text className>`.
-  Renders tables as `<table class="mxd-md-table">` + a `MarkdownTable` subcomponent
-  with the copy button. Reusable — currently wired ONLY into `assistant_text`.
-- `LogEntryView.tsx` — assistant_text path: `<span class=mxd-lmxd-text>{text}</span>`
-  → `<MarkdownText text={text} className="mxd-lmxd-text" />`. Two-line diff.
-- `style.css` — `.mxd-md*` block (after `.mxd-event-assistant_text .mxd-lmxd-text`).
-- `i18n.ts` — `table.copy`/`table.copied` (EN + ZH).
-- `routes/mock-showcase.ts` — added an assistant_text-with-table sample (same
-  precedent as the compacted_resume card) → visually verifiable at `/mock-showcase`.
-
-### Parser grammar (strict — false positives are the danger)
-A table requires a HEADER line containing `|` IMMEDIATELY followed by a DELIMITER
-row whose cells are all `:?-+:?`, AND header/delimiter must have the SAME cell
-count (GFM rule). The column-count match is what stops a thematic break (`---`)
-or a piped prose line from being misread as a table. Body rows continue until a
-blank/non-pipe/delimiter line; padded or truncated to header width. Escaped pipes
-(`\|`) inside cells are unescaped and don't split. Alignment from delimiter colons.
-
-### Key invariants
-- **Zero regression for the no-table case**: `MarkdownText` fast-paths to the
-  SAME `<span className={className}>{text}</span>` when no table is present.
-  `.mxd-md` wrapper only appears when a table exists.
-- **XSS-safe**: cells render as React text children (escaped), never
-  `dangerouslySetInnerHTML`. Test asserts `<img>`/`<b>` in a cell stay literal text.
-- **Copy = original markdown source** (the captured `raw` block), so it re-pastes
-  into another markdown surface verbatim. `navigator.clipboard?.writeText` guarded
-  (insecure-context / denied → no-op).
-- Copy button is hover/focus-reveal (`opacity 0 → 1`), styled like
-  `mxd-bash-background-btn`. Non-scrolling `.mxd-md-table-wrap` holds the absolute
-  button; inner `.mxd-md-table-scroll` does `overflow-x:auto` so the button stays
-  fixed while a wide table scrolls.
-
-### Tests (mutation-verified)
-- `web/markdown-table.test.ts` (26) — parser grammar, heavy on "this is NOT a
-  table" (thematic break, no-delimiter, column mismatch). Mutation: removing the
-  column-count guard fails the mismatch test.
-- `web/MarkdownText.test.tsx` (6) — full render through LogEntryView: no-table
-  plain span, real `<table>` headers/cells, alignment styles, copy-button copies
-  the markdown, mixed prose+table, XSS guard. Mutations (force plain path / copy
-  wrong content) fail the right tests.
-- TS gotcha hit + fixed: clipboard capture used a holder object `{value}` (not a
-  bare `let`) so TS doesn't narrow the closure-assigned probe back to `null` (same
-  pattern noted in lifecycle-concurrency tests).
-
-### Pre-existing base-branch issues observed (NOT introduced here; flagged to root)
-At fork point the branch already had: 5 `tsc` TS6133 unused-symbol errors
-(`handlers.ts` isOrchestratorNode, `lifecycle-guards.test.ts` x3,
-`worker-lifecycle.test.ts`) + 1 biome format drift (`mxd-user-prompt-text` span in
-LogEntryView). Verified identical with my changes stashed. `bun test` is green
-(2305 pass); these only affect `tsc`/`check:ci`. Root should clean before the
-final main commit (worktree hooks are /dev/null so they don't gate here).
 
 ## Full lightweight markdown rendering in agent replies (2026-07-02)
 
@@ -4383,6 +4286,79 @@ only (no dangerouslySetInnerHTML).
   typecheck/biome diagnostics); full-suite re-verification owed once the bun gate is
   restored.
 
+### First slice: tables only (2026-06-22) — the parser this builds on
+
+The table parser below was NOT replaced — the full-markdown parser composes with it
+(`parseMarkdown` delegates tables to `parseTextSegments`). So its grammar rules are live, not
+history. **One thing here IS superseded**: the scope statement "TABLES ONLY (not full markdown —
+deliberate) … if full markdown is ever wanted, that's a separate decision". That decision was
+taken, six weeks later, and is the section above.
+
+Agent replies frequently use markdown tables to compare options; they rendered
+as misaligned pipe text in the proportional/mono font. Now rendered as real
+aligned `<table>` with a hover copy button.
+
+#### Scope: TABLES ONLY (not full markdown — deliberate)
+No markdown library pulled in. A focused hand-written GFM-table parser. Inline
+markdown (`**bold**`, `` `code` ``) inside cells is NOT parsed — cells render as
+plain text. If full markdown is ever wanted, that's a separate decision.
+
+#### Files
+- `.mxd/plugin/web/markdown-table.ts` — pure parser (no DOM, fully unit-tested):
+  `parseTextSegments(text)` → ordered `{type:"text"} | {type:"table"}` segments;
+  `splitRow`, `isDelimiterRow`, `hasTable` exported for tests.
+- `.mxd/plugin/web/components/MarkdownText.tsx` — `<MarkdownText text className>`.
+  Renders tables as `<table class="mxd-md-table">` + a `MarkdownTable` subcomponent
+  with the copy button. Reusable — currently wired ONLY into `assistant_text`.
+- `LogEntryView.tsx` — assistant_text path: `<span class=mxd-lmxd-text>{text}</span>`
+  → `<MarkdownText text={text} className="mxd-lmxd-text" />`. Two-line diff.
+- `style.css` — `.mxd-md*` block (after `.mxd-event-assistant_text .mxd-lmxd-text`).
+- `i18n.ts` — `table.copy`/`table.copied` (EN + ZH).
+- `routes/mock-showcase.ts` — added an assistant_text-with-table sample (same
+  precedent as the compacted_resume card) → visually verifiable at `/mock-showcase`.
+
+#### Parser grammar (strict — false positives are the danger)
+A table requires a HEADER line containing `|` IMMEDIATELY followed by a DELIMITER
+row whose cells are all `:?-+:?`, AND header/delimiter must have the SAME cell
+count (GFM rule). The column-count match is what stops a thematic break (`---`)
+or a piped prose line from being misread as a table. Body rows continue until a
+blank/non-pipe/delimiter line; padded or truncated to header width. Escaped pipes
+(`\|`) inside cells are unescaped and don't split. Alignment from delimiter colons.
+
+#### Key invariants
+- **Zero regression for the no-table case**: `MarkdownText` fast-paths to the
+  SAME `<span className={className}>{text}</span>` when no table is present.
+  `.mxd-md` wrapper only appears when a table exists.
+- **XSS-safe**: cells render as React text children (escaped), never
+  `dangerouslySetInnerHTML`. Test asserts `<img>`/`<b>` in a cell stay literal text.
+- **Copy = original markdown source** (the captured `raw` block), so it re-pastes
+  into another markdown surface verbatim. `navigator.clipboard?.writeText` guarded
+  (insecure-context / denied → no-op).
+- Copy button is hover/focus-reveal (`opacity 0 → 1`), styled like
+  `mxd-bash-background-btn`. Non-scrolling `.mxd-md-table-wrap` holds the absolute
+  button; inner `.mxd-md-table-scroll` does `overflow-x:auto` so the button stays
+  fixed while a wide table scrolls.
+
+#### Tests (mutation-verified)
+- `web/markdown-table.test.ts` (26) — parser grammar, heavy on "this is NOT a
+  table" (thematic break, no-delimiter, column mismatch). Mutation: removing the
+  column-count guard fails the mismatch test.
+- `web/MarkdownText.test.tsx` (6) — full render through LogEntryView: no-table
+  plain span, real `<table>` headers/cells, alignment styles, copy-button copies
+  the markdown, mixed prose+table, XSS guard. Mutations (force plain path / copy
+  wrong content) fail the right tests.
+- TS gotcha hit + fixed: clipboard capture used a holder object `{value}` (not a
+  bare `let`) so TS doesn't narrow the closure-assigned probe back to `null` (same
+  pattern noted in lifecycle-concurrency tests).
+
+#### Pre-existing base-branch issues observed (NOT introduced here; flagged to root)
+At fork point the branch already had: 5 `tsc` TS6133 unused-symbol errors
+(`handlers.ts` isOrchestratorNode, `lifecycle-guards.test.ts` x3,
+`worker-lifecycle.test.ts`) + 1 biome format drift (`mxd-user-prompt-text` span in
+LogEntryView). Verified identical with my changes stashed. `bun test` is green
+(2305 pass); these only affect `tsc`/`check:ci`. Root should clean before the
+final main commit (worktree hooks are /dev/null so they don't gate here).
+
 ## Select-to-quote "Ask Matrix" in activity log (2026-07-02)
 
 Select text in the activity log → floating "Ask Matrix" button near the selection →
@@ -4430,6 +4406,43 @@ before any existing draft), textarea focused with cursor at end.
   the WRONG path since the dataRoot move (silently ignored; test passes because a fresh
   tree's default root title is also "Orchestrator"). Harmless but misleading; fix when
   next touching that file.
+
+### Follow-up: scroll to the caret after inserting a long quote (2026-07-14)
+
+Bug: after "Ask Matrix" select-to-quote prepends a markdown blockquote into the
+InputBar and moves the caret to the END, a LONG quote overflowed the textarea's
+`max-height: 120px; overflow-y: auto` cap — the visible region showed the quote
+(top), the caret line (bottom) stayed below the fold → user typed blind.
+
+Fix (`.mxd/plugin/web/components/InputBar.tsx`, the quote-apply effect's rAF ONLY —
+`quote.ts insertQuote` is pure + correct, untouched): after caret-to-end, scroll to
+the caret via `el.scrollTop = el.scrollHeight` (browser clamps to the max offset →
+bottom, which is where the caret sits after a quote insert).
+
+⚠️ ORDER IS LOAD-BEARING: the capped auto-grow height recompute (`adjustTextareaHeight`)
+MUST run BEFORE reading `scrollHeight`/setting `scrollTop`, and BOTH inside the SAME
+rAF. Reading scrollHeight before the new height applies yields a stale value → wrong
+scroll. Do NOT rely on the separate `[prompt]` resize effect having run before the
+rAF — React 18 flushes passive effects asynchronously; rAF-vs-passive-effect ordering
+is NOT guaranteed. rAF body = applyHeight() → focus() → setSelectionRange(end) →
+scrollTop=scrollHeight.
+
+Seam: `focusCaretAndScrollToEnd(el, caret, applyHeight)` (exported from InputBar.tsx)
+encapsulates that exact order; unit-testable against a fake element (no live layout).
+
+Tests (`web/InputBar-quote.test.tsx`): 3 pure seam tests (scroll-to-bottom; the
+stale-height guard = applyHeight mutates scrollHeight and we assert the POST value;
+fits-the-cap) + 1 component test (mock `scrollHeight` via Object.defineProperty=500,
+fire quoteRequest, assert `scrollTop===500` after rAF — happy-dom stores scrollTop
+unclamped, same pattern as the existing ActivityLog/Plugin scroll tests).
+Mutation-verified: removing `scrollTop=scrollHeight` fails exactly the 4 scroll
+tests; the 4 insertion tests stay green.
+
+biome gotcha: referencing the hoisted `adjustTextareaHeight` inside the effect's rAF
+trips `useExhaustiveDependencies` (ERROR-level, not warning). Adding it to deps would
+re-fire the insert every render (new fn identity each render) — a `biome-ignore` on
+the effect is the correct fix, matching the codebase convention. No CSS/i18n change
+(textarea was already capped+scrollable; fix is purely JS scroll).
 
 ## Scroll-to-bottom button + happy-dom v20 MutationObserver WeakRef GC hazard (2026-07-07)
 
@@ -4527,43 +4540,6 @@ fire in happy-dom (probed) — used for the component-level guards.
   fails BOTH the blur guard AND the reproduction (reproduction shows `Received: true` = reopened).
 - Full `bun test` 2465 pass / 0 fail (baseline 2447 + 18). typecheck + check:ci + i18n clean.
 
-## InputBar quote-insert scroll-to-caret + textarea height/scroll rAF ordering (2026-07-14)
-
-Bug: after "Ask Matrix" select-to-quote prepends a markdown blockquote into the
-InputBar and moves the caret to the END, a LONG quote overflowed the textarea's
-`max-height: 120px; overflow-y: auto` cap — the visible region showed the quote
-(top), the caret line (bottom) stayed below the fold → user typed blind.
-
-Fix (`.mxd/plugin/web/components/InputBar.tsx`, the quote-apply effect's rAF ONLY —
-`quote.ts insertQuote` is pure + correct, untouched): after caret-to-end, scroll to
-the caret via `el.scrollTop = el.scrollHeight` (browser clamps to the max offset →
-bottom, which is where the caret sits after a quote insert).
-
-⚠️ ORDER IS LOAD-BEARING: the capped auto-grow height recompute (`adjustTextareaHeight`)
-MUST run BEFORE reading `scrollHeight`/setting `scrollTop`, and BOTH inside the SAME
-rAF. Reading scrollHeight before the new height applies yields a stale value → wrong
-scroll. Do NOT rely on the separate `[prompt]` resize effect having run before the
-rAF — React 18 flushes passive effects asynchronously; rAF-vs-passive-effect ordering
-is NOT guaranteed. rAF body = applyHeight() → focus() → setSelectionRange(end) →
-scrollTop=scrollHeight.
-
-Seam: `focusCaretAndScrollToEnd(el, caret, applyHeight)` (exported from InputBar.tsx)
-encapsulates that exact order; unit-testable against a fake element (no live layout).
-
-Tests (`web/InputBar-quote.test.tsx`): 3 pure seam tests (scroll-to-bottom; the
-stale-height guard = applyHeight mutates scrollHeight and we assert the POST value;
-fits-the-cap) + 1 component test (mock `scrollHeight` via Object.defineProperty=500,
-fire quoteRequest, assert `scrollTop===500` after rAF — happy-dom stores scrollTop
-unclamped, same pattern as the existing ActivityLog/Plugin scroll tests).
-Mutation-verified: removing `scrollTop=scrollHeight` fails exactly the 4 scroll
-tests; the 4 insertion tests stay green.
-
-biome gotcha: referencing the hoisted `adjustTextareaHeight` inside the effect's rAF
-trips `useExhaustiveDependencies` (ERROR-level, not warning). Adding it to deps would
-re-fire the insert every render (new fn identity each render) — a `biome-ignore` on
-the effect is the correct fix, matching the codebase convention. No CSS/i18n change
-(textarea was already capped+scrollable; fix is purely JS scroll).
-
 ## Global image drag-drop → composer attachment (2026-07-15)
 
 Drop an image ANYWHERE on the plugin web page → it attaches to the composer's existing
@@ -4636,51 +4612,18 @@ tests and the live smoke inject SYNTHETIC drops (dataTransfer stub). "Browser do
 file" rests on standard `preventDefault(dragover+drop)` semantics (verified prevented) + a human's
 eventual real-file drag. Everything else is covered end-to-end.
 
-## Settings restart-vs-Save UX decouple (2026-07-16)
+## Settings UX — unified "Save & Restart" (2026-07-17)
 
-Three UX fixes to `web/components/SettingsPanel.tsx` that stop users from conflating
-"restart daemon (loads code)" with "apply config changes (Save → next run)". Root cause
-was layout: restart button appeared inside the Global tab near Save/Revert, giving the
-impression that restart = apply config.
+Three entries merged, newest-first, because this UI was rebuilt twice in a month and only the end
+state is actionable. **Current shape** (verified in `web/components/SettingsPanel.tsx`): a
+`RestartBar` with exactly two buttons — **Save & Restart** (saves every dirty tab, then restarts the
+daemon) and **Revert** (resets all tabs to last-saved). Closing the panel discards. **No confirm
+dialogs anywhere.**
 
-**Verified mechanism (write into copy)**: config Save → daemon `syncToWorkers("config",
-globalConfig)` (daemon.ts:2163) → worker `ctx.globalConfig` updates instantly
-(scope-worker.ts:184-188) → next `resolveProjectConfig` → `resolveConfig(ctx.globalConfig,...)`
-uses new values. **Restart is only for loading newly deployed code.**
-
-### Fix ①: Restart button relabel + decouple
-- `settings.restartDaemon` = "Restart backend (load new code)" / "重启后台(加载新代码)"
-- `settings.restartDaemonLabel` = "Load new code" (left label, replaces old misleading hint)
-- `settings.restartDaemonHint` = description below button: "Only reloads daemon to pick up
-  newly deployed code. Config changes do NOT need a restart — Save applies on the next run."
-  
-### Fix ②: Save-takes-effect hint
-- `settings.saveEffectHint` in TabActions (shared across all three config tabs):
-  "Saved changes take effect on the next run — no restart needed."
-
-### Fix ③: Unsaved-changes protection (option A — guard real loss points only)
-- **Restart** with any-tab unsaved → `window.confirm` with misconception-correcting text:
-  "Restarting reloads code, does NOT apply config changes. Save first." If cancelled, no POST.
-- **Close panel** (X or click-outside) with any-tab unsaved → standard "You have unsaved
-  changes. Discard them?" confirm.
-- **Tab-switch** (global↔project↔local): NO guard — each tab keeps independent persistent
-  draft state; no data lost on switch. A confirm here = crying-wolf (trains users to ignore
-  the real confirms on restart/close).
-
-### CSS
-`.mxd-settings-hint` (muted 11px helper text). Inside `.mxd-settings-tab-actions` takes
-full-width row via `flex-basis: 100%`.
-
-### Tests (`web/SettingsPanel-restart.test.tsx`, 13 tests)
-- `isDirty` pure-function unit tests (6) — detection algorithm.
-- Fix ①: button text, description text, left label. Fix ②: hint presence. Fix ③: clean-path
-  restart (no confirm, POST fires), close (no confirm, onClose fires), tab-switch (no confirm).
-- happy-dom limitation: React controlled `<input>` onChange doesn't fire from native value
-  setter + dispatchEvent ("input"). Dirty-path component tests can't make the internal draft
-  diverge from saved state. Dirty detection is unit-tested via exported `isDirty`; the wiring
-  (`if (hasUnsavedChanges && !window.confirm(...)) return;`) is ~4 lines verified by code review.
-
-## Settings UX — unified "Save & Restart" (2026-07-17, supersedes prior three-fix entry)
+The two superseded entries are kept below for one reason each: the three-fix decouple carries the
+mechanism note that is still true and still counter-intuitive (config Save takes effect on the next
+run WITHOUT a restart — restart only reloads code), and FIX-10 carries the bug that made all of this
+necessary in the first place.
 
 Simplified from the three-fix model (separate Save, Revert, restart-relabel, save-effect hint,
 restart-confirm) to a single-action model per user request ("try simplest, revert if bad").
@@ -4721,6 +4664,80 @@ users undo mistakes themselves — no need for system to block close.
 
 **Current SettingsPanel action model**: Save & Restart (saves all dirty + restarts daemon) +
 Revert (undo all edits) + close (just closes, discards unsaved). No confirm dialogs anywhere.
+
+### Superseded by this: the three-fix decouple (2026-07-16)
+
+Three UX fixes to `web/components/SettingsPanel.tsx` that stop users from conflating
+"restart daemon (loads code)" with "apply config changes (Save → next run)". Root cause
+was layout: restart button appeared inside the Global tab near Save/Revert, giving the
+impression that restart = apply config.
+
+**Verified mechanism (write into copy)**: config Save → daemon `syncToWorkers("config",
+globalConfig)` (daemon.ts:2163) → worker `ctx.globalConfig` updates instantly
+(scope-worker.ts:184-188) → next `resolveProjectConfig` → `resolveConfig(ctx.globalConfig,...)`
+uses new values. **Restart is only for loading newly deployed code.**
+
+#### Fix ①: Restart button relabel + decouple
+- `settings.restartDaemon` = "Restart backend (load new code)" / "重启后台(加载新代码)"
+- `settings.restartDaemonLabel` = "Load new code" (left label, replaces old misleading hint)
+- `settings.restartDaemonHint` = description below button: "Only reloads daemon to pick up
+  newly deployed code. Config changes do NOT need a restart — Save applies on the next run."
+  
+#### Fix ②: Save-takes-effect hint
+- `settings.saveEffectHint` in TabActions (shared across all three config tabs):
+  "Saved changes take effect on the next run — no restart needed."
+
+#### Fix ③: Unsaved-changes protection (option A — guard real loss points only)
+- **Restart** with any-tab unsaved → `window.confirm` with misconception-correcting text:
+  "Restarting reloads code, does NOT apply config changes. Save first." If cancelled, no POST.
+- **Close panel** (X or click-outside) with any-tab unsaved → standard "You have unsaved
+  changes. Discard them?" confirm.
+- **Tab-switch** (global↔project↔local): NO guard — each tab keeps independent persistent
+  draft state; no data lost on switch. A confirm here = crying-wolf (trains users to ignore
+  the real confirms on restart/close).
+
+#### CSS
+`.mxd-settings-hint` (muted 11px helper text). Inside `.mxd-settings-tab-actions` takes
+full-width row via `flex-basis: 100%`.
+
+#### Tests (`web/SettingsPanel-restart.test.tsx`, 13 tests)
+- `isDirty` pure-function unit tests (6) — detection algorithm.
+- Fix ①: button text, description text, left label. Fix ②: hint presence. Fix ③: clean-path
+  restart (no confirm, POST fires), close (no confirm, onClose fires), tab-switch (no confirm).
+- happy-dom limitation: React controlled `<input>` onChange doesn't fire from native value
+  setter + dispatchEvent ("input"). Dirty-path component tests can't make the internal draft
+  diverge from saved state. Dirty detection is unit-tested via exported `isDirty`; the wiring
+  (`if (hasUnsavedChanges && !window.confirm(...)) return;`) is ~4 lines verified by code review.
+
+### The bug underneath it all: Save silently failed (FIX-10, 2026-06-10)
+
+Two frontend bugs caused "save then restart, changes gone":
+
+#### Root cause chain
+1. `updateDraftGlobal` deletes keys when value is `""` / `null` / `undefined`
+2. `buildPatch` sends `null` for keys in saved but missing from draft (second loop)
+3. Server PATCH `/config/global` rejects null on required fields -> 400
+4. `updateConfig` in ShellApp.tsx didn't check `res.ok` -> silent swallow
+5. Refetch after silent failure reverts UI -> user sees changes "disappear"
+
+**Backend persistence is fine** -- PATCH -> disk write -> restart -> GET all works. Bug was
+purely frontend.
+
+#### Fix 1 -- `buildPatch(draft, saved, allowNull)`
+New third parameter. `saveGlobal` passes `allowNull=false` -> null values omitted from
+patch. `saveRepo`/`saveLocal` keep `allowNull=true` (null = "remove override"). A model
+change + cleared field no longer poisons the entire PATCH body.
+
+#### Fix 2 -- `updateConfig` checks `res.ok`
+Returns `Promise<string | null>` (error message or null). SettingsPanel shows inline
+red error banner in `TabActions`. Draft stays dirty on failure. Error clears on revert
+or next save attempt. i18n: `settings.saveError` (EN: "Save failed", ZH: "保存失败").
+
+#### Interaction with server-side null rejection (cc#4)
+The server's null rejection for global config (added in FIX-2 cc#4) is CORRECT -- it
+prevents writing incomplete configs that would brick the next boot. The frontend was
+producing the null values that triggered the rejection. Both sides are now correct:
+server rejects null, frontend never sends it for global.
 
 ## Pure image send + read-only tool collapse + timestamp alignment + edit SVG icon (2026-07-23)
 
