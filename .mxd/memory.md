@@ -191,6 +191,25 @@ Runtime debug introspection ONLY. Do NOT use to: reparent tasks, modify tree str
 
 Embrace large type refactors. Delete first, let compiler show every dependency. Hundreds of errors = your todo list. Static type systems make large changes SAFE.
 
+**Bound on "every dependency": the compiler enumerates only what it can TYPE.** Anything that
+reaches a symbol *by name* is invisible to it — string-keyed dispatch, an event-type name matched
+across a process boundary, a field an external system keys on. **The compiler's silence means
+"nothing typed points here". It never means "nothing points here".** So the error list is a todo
+list, not a completeness proof: before trusting it, grep for the symbol's name as a *string*, and
+check every boundary the type system does not cross.
+
+This bound is not hypothetical — the counter-evidence is in *Agent activity: live process state*
+(Agent Loop region), § "Two consumers that a grep for `activeAgents` does NOT find". Deleting the
+`agent_idle` event type would have made every external `send_user_message → yield_external →
+get_logs` workflow hang until timeout, because `yield_external` matches the type NAME in a string
+set. Same section records the identical class already having bitten us and gone unnoticed for
+months: `WAKE_SIGNALS` still listed `agent_stopped` and `orchestration_completed`, names replaced
+long before, so they could never match and a stopped agent never woke an external client.
+
+Also note the asymmetry that makes this worth a paragraph: a typed break costs you one compiler
+error and ten seconds. A name-based break costs you a silent, delayed, hard-to-attribute failure in
+a system you were not looking at. Same deletion, two completely different blast radii.
+
 ## Key Architectural Invariants
 
 ### JSONL Content Fidelity
