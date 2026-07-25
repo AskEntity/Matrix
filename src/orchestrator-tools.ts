@@ -597,6 +597,7 @@ export function buildAllToolDefs() {
 						{
 							broadcastTree: () => R.broadcastTree(projectId),
 							projectPath: getProjectPath(projectId, args.parentId),
+							dataPaths: { ...R.getDataPaths(), projectId },
 						},
 					);
 					const nodeJson = JSON.stringify(stripSession(node), null, 2);
@@ -864,6 +865,10 @@ export function buildAllToolDefs() {
 								}
 							},
 							projectPath: getProjectPath(args.projectId as string, null),
+							dataPaths: {
+								...R.getDataPaths(),
+								projectId: args.projectId as string,
+							},
 						},
 					);
 					return {
@@ -1238,6 +1243,7 @@ export function buildAllToolDefs() {
 								await R.stopTask(projectId, nodeId);
 							},
 							awaitLoopExit: (nodeId) => R.awaitLoopExit(nodeId),
+							dataPaths: { ...R.getDataPaths(), projectId },
 						},
 					);
 					return {

@@ -1,14 +1,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	_clearDbCache,
 	_setEmbeddingPipeline,
+	_waitForBackgroundIndexing,
+	batchDocs,
 	indexTask,
 	reconcileIndex,
+	reconcileIndexDeferred,
+	removeTaskFromIndex,
 	searchIndex,
 	searchIndexSync,
+	updateTaskIndex,
 } from "./task-index.ts";
 import { TaskTracker } from "./task-tracker.ts";
 
@@ -110,14 +116,15 @@ describe("task-index (Orama hybrid search)", () => {
 		expect(r2.pruned).toBe(0);
 	});
 
-	test("reconcileIndex reindexes only a task whose updatedAt changed", async () => {
+	test("reconcileIndex reindexes only the document whose CONTENT changed", async () => {
 		const a = tracker.addTask("uniquealpha title", "body");
 		await reconcileIndex(dbPath, tracker);
 		expect(await searchIndex(dbPath, "uniquealpha")).toHaveLength(1);
 
-		await Bun.sleep(2); // guarantee a later ISO timestamp
 		tracker.updateTitle(a.id, "uniquebeta title");
 
+		// 1, not 2: the description's content did not change, so its document
+		// is not rebuilt even though the task's updatedAt moved.
 		const r = await reconcileIndex(dbPath, tracker);
 		expect(r.indexed).toBe(1);
 		expect(await searchIndex(dbPath, "uniquealpha")).toHaveLength(0);
@@ -444,5 +451,520 @@ describe("task-index (Orama hybrid search)", () => {
 		await indexTask(dbPath, t);
 		expect(searchIndexSync(dbPath, "")).toEqual([]);
 		expect(searchIndexSync(dbPath, "   ")).toEqual([]);
+	});
+});
+
+/**
+ * The contract this module was rewritten for: staleness is a hash of the
+ * indexed CONTENT, per document, and the startup pass never blocks the caller.
+ *
+ * Every assertion here counts EMBEDDINGS, not wall-clock. The suite runs with
+ * MXD_DISABLE_EMBEDDINGS set (bunfig.toml), so "nothing was re-embedded" is not
+ * observable by timing — it needs a pipeline that counts. The counter is also
+ * the only thing that can tell a re-index apart from a no-op, since both leave
+ * the same searchable index behind.
+ */
+/**
+ * One-hot vector derived from the text: identical texts collide, different
+ * texts are orthogonal (cosine 0, below SIMILARITY_THRESHOLD). See
+ * countingPipeline for why a constant vector is useless here.
+ */
+function orthogonalVector(text: string): number[] {
+	let h = 0;
+	for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
+	const v = new Array(768).fill(0);
+	v[h % 768] = 1;
+	return v;
+}
+
+describe("task-index: hash-keyed staleness", () => {
+	let tempDir: string;
+	let tracker: TaskTracker;
+	let dbPath: string;
+	let embedCalls: string[];
+
+	/**
+	 * A pipeline that records every text it is asked to embed, and returns a
+	 * DISTINCT vector per text.
+	 *
+	 * Distinctness is load-bearing, not decoration. A mock that returns one
+	 * constant vector gives every document cosine 1.0 against every query, so
+	 * hybrid search returns the entire index and any assertion about WHICH
+	 * documents came back silently passes. Three of these tests were written
+	 * against a constant-vector mock first and were measuring nothing.
+	 */
+	function countingPipeline() {
+		embedCalls = [];
+		_setEmbeddingPipeline({
+			embed: async (text: string) => {
+				embedCalls.push(text);
+				return orthogonalVector(text);
+			},
+		});
+	}
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-index-hash-"));
+		tracker = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker.load();
+		dbPath = join(tempDir, "plugin", "matrix", "index.msp");
+		countingPipeline();
+	});
+
+	afterEach(async () => {
+		_clearDbCache();
+		_setEmbeddingPipeline(null);
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	// ── Bar item 2: a day of activity must cost nothing ──
+
+	test("a day of non-content activity re-embeds ZERO documents", async () => {
+		const parent = tracker.addTask("Parent task", "parent body");
+		const child = tracker.addChild(parent.id, "Child task", "child body");
+		await reconcileIndex(dbPath, tracker);
+		expect(embedCalls.length).toBeGreaterThan(0); // backfill happened
+		embedCalls.length = 0;
+
+		// Everything below writes node.updatedAt in task-tracker.ts, and NONE of
+		// it touches an indexed field. Under the old `indexedAt !== updatedAt`
+		// key every one of these marked a task stale — and `addChild`/`remove`
+		// mark the PARENT stale, which is why the root task was re-embedded
+		// (title + description + every result round) over and over on a busy day.
+		tracker.updateStatus(child.id, "in_progress");
+		tracker.updateStatus(child.id, "verify");
+		tracker.updateStatus(child.id, "closed");
+		tracker.updateCost(child.id, 1.23);
+		tracker.assignWorktree(child.id, "some-branch", "/tmp/wt");
+		tracker.assignBranch(child.id, "other-branch");
+		tracker.updateColor(child.id, "#ff0000");
+		tracker.setMetadata(child.id, { anything: "at all" });
+		const doomed = tracker.addChild(parent.id, "Doomed", "gone soon");
+		tracker.remove(doomed.id);
+		const folder = tracker.addGeneralNode("Folder", parent.id, "folder");
+		tracker.reparent(child.id, folder.id);
+		tracker.reorderChildren(parent.id, [folder.id]);
+
+		const r = await reconcileIndex(dbPath, tracker);
+		expect(embedCalls).toEqual([]);
+		expect(r.indexed).toBe(0);
+	});
+
+	// ── Bar item 3: per-document granularity ──
+
+	test("editing a title re-embeds ONLY the title — not the description or any round", async () => {
+		const t = tracker.addTask("Original title", "A description that stays put");
+		tracker.appendResultRound(t.id, { result: "round zero result" });
+		tracker.appendResultRound(t.id, { result: "round one result" });
+		await reconcileIndex(dbPath, tracker);
+		// 5 = this task's title + description + 2 rounds, plus the root's title.
+		expect(embedCalls).toHaveLength(5);
+		embedCalls.length = 0;
+
+		tracker.updateTitle(t.id, "Replacement title");
+		await reconcileIndex(dbPath, tracker);
+
+		// THE point of per-document hashing. A whole-task hash would re-embed
+		// all four here — and root has dozens of rounds, so a one-word title
+		// edit would be the most expensive thing in the system.
+		expect(embedCalls).toEqual(["Replacement title"]);
+		expect(await searchIndex(dbPath, "Replacement")).toHaveLength(1);
+		expect(await searchIndex(dbPath, "Original")).toHaveLength(0);
+	});
+
+	test("editing a description re-embeds ONLY the description", async () => {
+		const t = tracker.addTask("Stable title", "first body text");
+		tracker.appendResultRound(t.id, { result: "a round" });
+		await reconcileIndex(dbPath, tracker);
+		embedCalls.length = 0;
+
+		tracker.updateDescription(t.id, "second body text");
+		await reconcileIndex(dbPath, tracker);
+
+		expect(embedCalls).toEqual(["second body text"]);
+		expect(await searchIndex(dbPath, "second")).toHaveLength(1);
+	});
+
+	test("appending a result round re-embeds ONLY that round", async () => {
+		const t = tracker.addTask("Task title", "task body");
+		tracker.appendResultRound(t.id, { result: "first round" });
+		await reconcileIndex(dbPath, tracker);
+		embedCalls.length = 0;
+
+		tracker.appendResultRound(t.id, { result: "second round" });
+		await reconcileIndex(dbPath, tracker);
+
+		expect(embedCalls).toEqual(["second round"]);
+		const hits = await searchIndex(dbPath, "second");
+		expect(hits[0]?.field).toBe("result");
+		expect(hits[0]?.roundIndex).toBe(1);
+	});
+
+	test("indexTask on a single task is the same per-document diff", async () => {
+		const t = tracker.addTask("Alpha title", "alpha body");
+		tracker.appendResultRound(t.id, { result: "alpha round" });
+		await indexTask(dbPath, tracker.getTask(t.id)!);
+		expect(embedCalls).toHaveLength(3);
+		embedCalls.length = 0;
+
+		tracker.updateTitle(t.id, "Gamma title");
+		await indexTask(dbPath, tracker.getTask(t.id)!);
+		expect(embedCalls).toEqual(["Gamma title"]);
+	});
+
+	test("emptying a field removes its document without touching the others", async () => {
+		const t = tracker.addTask("Kept title", "removable body");
+		await reconcileIndex(dbPath, tracker);
+		embedCalls.length = 0;
+
+		tracker.updateDescription(t.id, "");
+		await reconcileIndex(dbPath, tracker);
+
+		expect(embedCalls).toEqual([]);
+		expect(await searchIndex(dbPath, "removable")).toHaveLength(0);
+		expect(await searchIndex(dbPath, "Kept")).toHaveLength(1);
+	});
+
+	// ── Bar item 4: migration must not trigger a full re-embed ──
+
+	test("a legacy indexedAt sidecar adopts hashes and re-embeds NOTHING", async () => {
+		const a = tracker.addTask("Legacy alpha", "legacy alpha body");
+		const b = tracker.addTask("Legacy beta", "legacy beta body");
+		tracker.appendResultRound(b.id, { result: "legacy beta round" });
+		await reconcileIndex(dbPath, tracker);
+		const embeddedAtBuild = embedCalls.length;
+		expect(embeddedAtBuild).toBeGreaterThan(0);
+
+		// Rewrite the sidecar in the OLD shape: an `indexedAt` marker and a flat
+		// docId list, no hashes at all. This is what every deployed machine has.
+		const metaFile = dbPath.replace(/\.msp$/, "-meta.json");
+		const legacy: Record<string, unknown> = {};
+		for (const node of [tracker.getTask(a.id)!, tracker.getTask(b.id)!]) {
+			const ids = [`${node.id}:title:`, `${node.id}:description:`];
+			(node.resultRounds ?? []).forEach((_, i) => {
+				ids.push(`${node.id}:result:${i}`);
+			});
+			legacy[node.id] = { indexedAt: node.updatedAt, docIds: ids };
+		}
+		// The root task too — it is in the tree and therefore in the sidecar.
+		const root = tracker.getTask(tracker.rootNodeId)!;
+		legacy[root.id] = {
+			indexedAt: root.updatedAt,
+			docIds: [`${root.id}:title:`, `${root.id}:description:`],
+		};
+		writeFileSync(metaFile, JSON.stringify(legacy));
+		_clearDbCache();
+		embedCalls.length = 0;
+
+		// Deploying the fix must NOT trigger the very backfill it exists to
+		// prevent. "No hash" means "unknown", not "stale": the documents were
+		// built from some version of this content, and assuming it is current is
+		// exactly the claim `indexedAt` was already making — so adopting is
+		// strictly no worse than what it replaces.
+		const r = await reconcileIndex(dbPath, tracker);
+		expect(embedCalls).toEqual([]);
+		expect(r.indexed).toBe(0);
+
+		// And the adopted hashes are real: the NEXT content change is detected
+		// normally, so migration does not leave the task permanently frozen.
+		tracker.updateTitle(a.id, "Migrated alpha");
+		await reconcileIndex(dbPath, tracker);
+		expect(embedCalls).toEqual(["Migrated alpha"]);
+	});
+
+	test("a legacy entry still re-embeds a document the old index never had", async () => {
+		const t = tracker.addTask("Legacy title", "legacy body");
+		await reconcileIndex(dbPath, tracker);
+		const metaFile = dbPath.replace(/\.msp$/, "-meta.json");
+		// The old sidecar knew about the title only — so the description is
+		// genuinely absent from the index and must be built, adoption or not.
+		const root = tracker.getTask(tracker.rootNodeId)!;
+		writeFileSync(
+			metaFile,
+			JSON.stringify({
+				[t.id]: { indexedAt: t.updatedAt, docIds: [`${t.id}:title:`] },
+				// The root's entry is kept in the legacy shape too, so the only
+				// document this test can re-embed is the one it is about. (Drop
+				// it and the root's title re-embeds, which is correct behaviour
+				// and pure noise here.)
+				[root.id]: {
+					indexedAt: root.updatedAt,
+					docIds: [`${root.id}:title:`],
+				},
+			}),
+		);
+		_clearDbCache();
+		embedCalls.length = 0;
+
+		await reconcileIndex(dbPath, tracker);
+		expect(embedCalls).toEqual(["legacy body"]);
+	});
+
+	// ── Bar item 1 + §3: the startup pass may never wait for index work ──
+
+	test("reconcileIndexDeferred returns before any document is embedded", async () => {
+		for (let i = 0; i < 20; i++) {
+			tracker.addTask(`Backfill task ${i}`, `Backfill body ${i}`);
+		}
+
+		const r = await reconcileIndexDeferred(dbPath, tracker);
+
+		// The awaited half only PLANS. This is the whole acceptance criterion:
+		// an empty index is exactly the case that used to burn the 30s worker
+		// init budget and take the daemon down with it.
+		expect(r.deferred).toBe(true);
+		expect(r.planned).toBe(41); // 20 tasks × (title + description) + root title
+		expect(embedCalls).toEqual([]);
+
+		await _waitForBackgroundIndexing();
+		expect(embedCalls.length).toBe(r.planned);
+		expect(await searchIndex(dbPath, "Backfill")).not.toHaveLength(0);
+	});
+
+	test("a steady-state reconcile defers nothing and touches no index file", async () => {
+		tracker.addTask("Steady task", "steady body");
+		await reconcileIndex(dbPath, tracker);
+		_clearDbCache();
+		embedCalls.length = 0;
+
+		const r = await reconcileIndexDeferred(dbPath, tracker);
+
+		expect(r).toEqual({ planned: 0, pruned: 0, deferred: false });
+		expect(embedCalls).toEqual([]);
+	});
+
+	test("a plan with nothing to embed never loads the embedding pipeline", async () => {
+		tracker.addTask("Lazy task", "lazy body");
+		await reconcileIndex(dbPath, tracker);
+
+		// A pipeline that EXPLODES if touched. The old reconcile awaited
+		// getEmbeddingPipeline() before the staleness loop, so a zero-work boot
+		// paid a full model load — seconds, on the path that must not block.
+		_setEmbeddingPipeline({
+			embed: async () => {
+				throw new Error("pipeline must not be consulted for an empty plan");
+			},
+		});
+
+		await expect(reconcileIndex(dbPath, tracker)).resolves.toEqual({
+			indexed: 0,
+			pruned: 0,
+		});
+	});
+
+	// ── Deletion is first-party, not left to the next boot ──
+
+	test("removeTaskFromIndex drops a deleted task's documents immediately", async () => {
+		const t = tracker.addTask("Deletable task", "deletable body");
+		await reconcileIndex(dbPath, tracker);
+		expect(await searchIndex(dbPath, "Deletable")).not.toHaveLength(0);
+
+		tracker.remove(t.id);
+		await removeTaskFromIndex(dbPath, t.id);
+
+		expect(await searchIndex(dbPath, "Deletable")).toHaveLength(0);
+		// And it leaves nothing for the next reconcile to prune.
+		const r = await reconcileIndex(dbPath, tracker);
+		expect(r).toEqual({ indexed: 0, pruned: 0 });
+	});
+
+	test("updateTaskIndex is non-fatal — a broken index path never throws", async () => {
+		const t = tracker.addTask("Resilient task", "resilient body");
+		// A path whose parent is a FILE, so every write under it fails.
+		const blocked = join(tempDir, "blocker");
+		writeFileSync(blocked, "not a directory");
+		await expect(
+			updateTaskIndex(join(blocked, "index.msp"), t.id, t),
+		).resolves.toBeUndefined();
+	});
+
+	test("updateTaskIndex(null) is a no-op for callers with no index", async () => {
+		const t = tracker.addTask("Unindexed task", "unindexed body");
+		await updateTaskIndex(null, t.id, t);
+		expect(embedCalls).toEqual([]);
+	});
+
+	// ── A failed embedding must not be recorded as done ──
+
+	test("a document whose embedding fails is retried on the next pass", async () => {
+		tracker.addTask("Retry title", "retry body");
+		const vec = new Array(768).fill(0);
+		vec[0] = 1;
+		let failing = true;
+		_setEmbeddingPipeline({
+			embed: async (text: string) => {
+				embedCalls.push(text);
+				if (failing) throw new Error("transient embedding failure");
+				return vec;
+			},
+		});
+
+		await reconcileIndex(dbPath, tracker);
+		// DISTINCT texts: when a batch throws, every member is retried
+		// individually, so the failing pass calls embed twice per document.
+		const attempted = new Set(embedCalls).size;
+		expect(attempted).toBeGreaterThan(0);
+		// Still searchable — a failed embedding degrades to keyword-only, it
+		// does not lose the document.
+		expect(await searchIndex(dbPath, "Retry")).not.toHaveLength(0);
+
+		embedCalls.length = 0;
+		failing = false;
+		// Content is unchanged, so the CONTENT hash matches — this is entirely
+		// the `e: false` clause of isDocStale doing the work. Without it, a
+		// single offline boot (or one run with MXD_DISABLE_EMBEDDINGS) would
+		// leave the index permanently keyword-only with nothing reporting it.
+		await reconcileIndex(dbPath, tracker);
+		expect(new Set(embedCalls).size).toBe(attempted);
+	});
+
+	test("turning embeddings OFF does not destroy vectors that already exist", async () => {
+		tracker.addTask("Asymmetric title", "asymmetric body");
+		await reconcileIndex(dbPath, tracker);
+		const built = embedCalls.length;
+		expect(built).toBeGreaterThan(0);
+
+		// BM25-only mode. The `e:false → stale` clause is deliberately
+		// one-directional: upgrading is worth a rebuild, downgrading must never
+		// throw away work.
+		_setEmbeddingPipeline(null);
+		embedCalls.length = 0;
+		const r = await reconcileIndex(dbPath, tracker);
+		expect(r.indexed).toBe(0);
+
+		countingPipeline();
+		embedCalls.length = 0;
+		const r2 = await reconcileIndex(dbPath, tracker);
+		expect(r2.indexed).toBe(0);
+		expect(embedCalls).toEqual([]);
+	});
+
+	// ── Batching ──
+
+	test("batching does not change which documents get which vector", async () => {
+		// 40 tasks → 80+ documents → several batches (EMBED_BATCH_SIZE = 32).
+		for (let i = 0; i < 40; i++) {
+			tracker.addTask(`Batchword ${i} title`, `Batchword ${i} body`);
+		}
+		const seen: string[] = [];
+		_setEmbeddingPipeline({
+			embed: async (text: string) => {
+				seen.push(text);
+				return orthogonalVector(text);
+			},
+		});
+
+		await reconcileIndex(dbPath, tracker);
+		expect(seen.length).toBe(81); // 40 × (title + description) + root title
+
+		const hits = await searchIndex(dbPath, "Batchword", 100);
+		expect(hits.length).toBeGreaterThan(0);
+		for (const h of hits) expect(Number.isFinite(h.score)).toBe(true);
+	});
+});
+
+describe("task-index: a non-finite embedding is a defect, never a value", () => {
+	let tempDir: string;
+	let tracker: TaskTracker;
+	let dbPath: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-index-nan-"));
+		tracker = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker.load();
+		dbPath = join(tempDir, "index.msp");
+	});
+
+	afterEach(async () => {
+		_clearDbCache();
+		_setEmbeddingPipeline(null);
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("a NaN vector is never stored, and the document is retried", async () => {
+		// This is what a device like CoreML does: no throw, no warning, a
+		// perfectly shaped 768-dim vector of NaN. Storing it is permanent and
+		// silent damage — the sidecar would say "indexed", nothing would ever
+		// revisit it, and searchIndex's NaN guard would quietly serve
+		// keyword-only results for the life of the index.
+		tracker.addTask("nanword title", "nanword body");
+		let broken = true;
+		_setEmbeddingPipeline({
+			embed: async () =>
+				broken ? new Array(768).fill(Number.NaN) : new Array(768).fill(0.1),
+		});
+		await reconcileIndex(dbPath, tracker);
+
+		// Still searchable — a bad device degrades to keyword-only rather than
+		// losing the document.
+		expect(await searchIndex(dbPath, "nanword")).not.toHaveLength(0);
+		// And every score is finite, i.e. no NaN reached the store.
+		for (const h of await searchIndex(dbPath, "nanword")) {
+			expect(Number.isFinite(h.score)).toBe(true);
+		}
+
+		// Recorded as un-embedded, so a working device repairs it.
+		broken = false;
+		const r = await reconcileIndex(dbPath, tracker);
+		expect(r.indexed).toBeGreaterThan(0);
+	});
+
+	test("a wrong-dimension vector is rejected the same way", async () => {
+		tracker.addTask("dimword title", "dimword body");
+		_setEmbeddingPipeline({ embed: async () => [1, 2, 3] });
+		await reconcileIndex(dbPath, tracker);
+		expect(await searchIndex(dbPath, "dimword")).not.toHaveLength(0);
+	});
+});
+
+describe("task-index: batching packs by length", () => {
+	const doc = (text: string): Parameters<typeof batchDocs>[0][number] => ({
+		taskId: "t",
+		id: `t:x:${text.length}:${Math.random()}`,
+		field: "x",
+		round: "",
+		text,
+		hash: "h",
+	});
+
+	/** What a batch actually costs the model: count × its longest member. */
+	function paddedWork(batches: ReturnType<typeof batchDocs>): number {
+		return batches.reduce(
+			(sum, b) => sum + b.length * Math.max(...b.map((d) => d.text.length)),
+			0,
+		);
+	}
+
+	test("length-sorted packing beats input order on a realistic mix", () => {
+		// The real matrix tree's shape: mostly short, a long tail. Interleaved,
+		// which is how a tree walk produces them.
+		const docs = [];
+		for (let i = 0; i < 200; i++) {
+			docs.push(doc("t".repeat(200)));
+			if (i % 10 === 0) docs.push(doc("r".repeat(4000)));
+		}
+		const actual = docs.reduce((a, d) => a + d.text.length, 0);
+		const sorted = paddedWork(batchDocs(docs));
+
+		// Every document appears exactly once, whatever the grouping.
+		expect(batchDocs(docs).flat()).toHaveLength(docs.length);
+		// And the padding overhead stays close to 1×. Without the sort this mix
+		// pads every short title up to 4000 characters — measured 3.2× on the
+		// real tree, and the model pays for every one of those characters.
+		expect(sorted / actual).toBeLessThan(1.3);
+	});
+
+	test("one huge document travels alone rather than dragging a batch up", () => {
+		const batches = batchDocs([
+			doc("a".repeat(40_000)),
+			...Array.from({ length: 40 }, () => doc("b".repeat(50))),
+		]);
+		const huge = batches.find((b) => b.some((d) => d.text.length === 40_000));
+		expect(huge).toHaveLength(1);
+	});
+
+	test("batches respect the count cap", () => {
+		const batches = batchDocs(Array.from({ length: 100 }, () => doc("x")));
+		for (const b of batches) expect(b.length).toBeLessThanOrEqual(32);
 	});
 });

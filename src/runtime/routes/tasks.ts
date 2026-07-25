@@ -11,6 +11,7 @@ import {
 import {
 	createTaskOp,
 	deleteTaskOp,
+	type ProjectDataPaths,
 	reorderTasksOp,
 	TaskOperationError,
 	updateTaskOp,
@@ -44,6 +45,27 @@ import {
  */
 function serializeNode(node: TreeNode) {
 	return isTask(node) ? stripSession(node) : node;
+}
+
+/**
+ * Where this project's plugin-owned data lives. Task operations need it to
+ * keep plugin-side derived state in step with the tree.
+ *
+ * This is deliberately the raw path inputs and nothing more: the runtime is
+ * plugin-agnostic by a grep-verified rule, so it can say where a project's data
+ * lives but must never know what the plugin keeps there.
+ */
+function projectDataPaths(
+	ctx: RuntimeContext,
+	projectId: string,
+): ProjectDataPaths {
+	return {
+		dataDir: ctx.config.dataDir,
+		...(ctx.config.dataRoot !== undefined
+			? { dataRoot: ctx.config.dataRoot }
+			: {}),
+		projectId,
+	};
 }
 
 /** Notify each ancestor in the parent chain that the user sent a message to a child task. */
@@ -189,6 +211,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 					notifyTreeChange: (action, nodeId, title) =>
 						notifyTreeChange(ctx, project, action, nodeId, title),
 					projectPath: project.path,
+					dataPaths: projectDataPaths(ctx, project.id),
 				},
 			);
 			return c.json(serializeNode(node), 201);
@@ -256,6 +279,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 						deliverMessage(ctx, project, nId, msg, { quiet: true });
 					},
 					projectPath: project.path,
+					dataPaths: projectDataPaths(ctx, project.id),
 				},
 			);
 
@@ -498,6 +522,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 					const loopPromise = ctx.agentLoopPromises.get(id);
 					if (loopPromise) await loopPromise;
 				},
+				dataPaths: projectDataPaths(ctx, project.id),
 			});
 			return c.json({ ok: true });
 		} catch (e) {

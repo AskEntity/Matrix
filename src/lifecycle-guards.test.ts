@@ -55,6 +55,8 @@ function makeCallbacks(projectPath: string) {
 		notifyTreeChange: () => {},
 		notifyTargetNode: () => {},
 		projectPath,
+		// No index in this harness — these tests exercise tree semantics only.
+		dataPaths: null,
 		removeWorktree: async () => {},
 		clearEventStore: () => {},
 	};
