@@ -7,9 +7,14 @@
 preload = ["./src/test-utils/preload.ts"]
 
 [test.env]
-# Prevent @huggingface/transformers (→ onnxruntime-node NAPI module) from
-# loading inside worker threads. Without this, worker teardown in daemon
-# tests triggers a fatal NAPI crash (SIGTRAP / exit 133) that kills the
-# entire bun test process. Must be set at the OS process level (not via
-# process.env assignment) so Bun Workers inherit it.
+# Run the suite BM25-only: no 500MB model load, no embedder child process.
+# Tests that want vectors install a mock pipeline instead, which takes
+# priority over this flag.
+#
+# This is a speed choice, not a safety one. It used to be the thing keeping
+# `bun test` alive — embeddings loaded onnxruntime-node into the worker
+# thread, and a live ORT session in an ENDING thread aborts the process
+# (exit 133), so every daemon test's worker teardown killed the run. The
+# session now lives in a child process whose main thread owns it
+# (src/embedder-client.ts), so teardown is clean either way.
 MXD_DISABLE_EMBEDDINGS = "1"

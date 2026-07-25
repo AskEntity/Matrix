@@ -77,14 +77,21 @@ import {
 	restoreFromFile,
 } from "@orama/plugin-data-persistence/server";
 import { createTokenizer } from "@orama/tokenizers/mandarin";
+import {
+	createChildPipeline,
+	embedderDevice,
+	stopEmbedderChild,
+} from "./embedder-client.ts";
+import {
+	EMBEDDING_DIM,
+	EMBEDDING_DTYPE,
+	EMBEDDING_MODEL,
+	type EmbeddingPipeline,
+} from "./embedding.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import { isTask, type TaskNode } from "./types.ts";
 
 // ── Constants ──
-
-const EMBEDDING_MODEL = "onnx-community/embeddinggemma-300m-ONNX";
-const EMBEDDING_DTYPE = "q8";
-const EMBEDDING_DIM = 768;
 
 /** Minimum cosine similarity for vector results in hybrid mode. */
 const SIMILARITY_THRESHOLD = 0.5;
@@ -172,76 +179,18 @@ const INDEX_SCHEMA = {
 
 type IndexDb = ReturnType<typeof createDb>;
 
-// ── Embedding device selection ──
-
-/**
- * Device candidates per platform, best first. `cpu` is always last and always
- * works. Every candidate is VERIFIED before use (see `verifyEmbedder`) — a
- * device is selected because it produced a usable vector, never because a
- * config value said it should.
- *
- * ⚠️ DO NOT "simplify" this to `device: "auto"`. It is the obvious answer and
- * it silently corrupts the index. On darwin, transformers.js resolves `auto`
- * to the execution-provider list ["coreml","webgpu","cpu"], so CoreML claims
- * the graph — and CoreML returns a 768-dim vector of NaN for any text longer
- * than a couple dozen characters (measured 2026-07-25: fine at 24 chars, all
- * NaN at 336). Nothing raises. `searchIndex`'s NaN-score guard then quietly
- * redoes every query as pure BM25, so the product keeps working with semantic
- * search deleted and no error anywhere. `auto` is also 7.4× slower than CPU.
- *
- * Measured on the same machine (M-series, bun, transformers.js 4.2.0,
- * embeddinggemma-300m q8, 24 embeddings): cpu 52.9ms/embed at 5.4s user CPU;
- * webgpu 59.0ms/embed at 0.8s user CPU, output bit-identical to CPU;
- * coreml 226.7ms/embed at 19.4s user CPU, output NaN.
- *
- * webgpu is first on darwin for the CPU number, not the wall-clock one: the
- * backfill now runs in the background NEXT TO agents, so not saturating four
- * cores is the property that matters. Non-darwin candidates are unmeasured —
- * they are safe only because verification gates them, and they fall through to
- * cpu when the runtime cannot provide them.
- */
-const DEVICE_CANDIDATES: Record<string, string[]> = {
-	darwin: ["webgpu", "cpu"],
-	win32: ["dml", "webgpu", "cpu"],
-	linux: ["cuda", "webgpu", "cpu"],
-};
-
-/**
- * Verification inputs. SEVERAL, of deliberately different shapes, and every one
- * must come back usable.
- *
- * ⚠️ One probe string is not enough, and the reason is worth knowing before
- * anyone trims this list. CoreML's failure on this model is **deterministic per
- * input and NOT monotonic in length** — measured 2026-07-25, repeatably, in any
- * order: a 24-character string is CORRECT, a 10-character string is NaN, a
- * 336-character string is NaN. So there is no "safe length" to probe at, and a
- * single probe that happens to draw a good input certifies a device that is
- * broken for nearly everything else. (The first pass here drew exactly 24 and
- * 336 characters and read it as a length threshold. It was a coincidence of two
- * strings, and it would have shipped as a one-string probe.)
- */
-const DEVICE_PROBE_TEXTS = [
-	"reconcile ",
-	"Fix session recovery bug",
-	"The daemon became unbootable because the startup reconcile ran on the worker's ready path, " +
-		"and the staleness key was a timestamp that moved for reasons unrelated to indexed content.",
-	"这段文字同时包含中文，用来确认分词与嵌入在真实内容上都能正常工作。",
-];
-
-// ── Embedding pipeline (lazy singleton) ──
-
-type EmbeddingPipeline = {
-	/** One text — used for search queries. */
-	embed: (text: string) => Promise<number[]>;
-	/** Many texts in one session run — used for indexing. See EMBED_BATCH_SIZE. */
-	embedMany: (texts: string[]) => Promise<number[][]>;
-};
+// ── Embedding pipeline (lazy singleton, hosted in a child process) ──
 
 let embeddingPipelinePromise: Promise<EmbeddingPipeline | null> | null = null;
 let embeddingPipeline: EmbeddingPipeline | null | undefined; // undefined = not attempted
 
-/** Which device the loaded pipeline actually verified on (for logging/tests). */
-let selectedDevice: string | null = null;
+/**
+ * Set only by `_setEmbeddingPipeline` (tests). A mock pipeline has no child
+ * process and therefore no device of its own, but callers still ask "which
+ * device is in use?" — so the mock answers for itself rather than reading
+ * through to a child that isn't there.
+ */
+let mockDevice: string | null = null;
 
 /** Is the embedding pipeline allowed to load at all? Cheap — no model I/O. */
 function embeddingsEnabled(): boolean {
@@ -251,89 +200,7 @@ function embeddingsEnabled(): boolean {
 
 /** The device actually in use, or null if no pipeline has been loaded. */
 export function embeddingDevice(): string | null {
-	return selectedDevice;
-}
-
-/**
- * Build a pipeline on one device and prove it works before returning it.
- *
- * "Works" is checked by embedding real-length text and requiring a finite,
- * unit-norm vector of the right dimension — NOT by reading a config field.
- * `session.config.device` reports the device that was REQUESTED, so it says
- * "coreml" just as confidently when CoreML is emitting NaN. A configuration
- * that claims acceleration and silently does something else is worse than an
- * honest CPU path, so the only accepted evidence is an actual vector.
- */
-async function tryDevice(device: string): Promise<EmbeddingPipeline | null> {
-	const { pipeline } = await import("@huggingface/transformers");
-	const opts: Record<string, unknown> = { dtype: EMBEDDING_DTYPE };
-	// "cpu" is passed explicitly rather than left to the library default, so
-	// the selected device is always something we chose and can print.
-	opts.device = device;
-
-	let extractor: Awaited<ReturnType<typeof pipeline>> | null = null;
-	try {
-		extractor = await pipeline(
-			"feature-extraction",
-			EMBEDDING_MODEL,
-			opts as never,
-		);
-		const run = extractor as unknown as (
-			t: string | string[],
-			o: Record<string, unknown>,
-		) => Promise<{ data: Float32Array }>;
-		const embedMany = async (texts: string[]): Promise<number[][]> => {
-			const output = await run(texts, { pooling: "mean", normalize: true });
-			// One flat Float32Array of texts.length × EMBEDDING_DIM.
-			const flat = output.data;
-			return texts.map((_, i) =>
-				Array.from(flat.subarray(i * EMBEDDING_DIM, (i + 1) * EMBEDDING_DIM)),
-			);
-		};
-		const embed = async (text: string): Promise<number[]> => {
-			const output = await run(text, { pooling: "mean", normalize: true });
-			return Array.from(output.data);
-		};
-
-		const check = (label: string, vectors: number[][]): void => {
-			vectors.forEach((v, i) => {
-				if (v.length !== EMBEDDING_DIM) {
-					throw new Error(
-						`${label}[${i}] returned ${v.length} dims, expected ${EMBEDDING_DIM}`,
-					);
-				}
-				if (!v.every((x) => Number.isFinite(x))) {
-					throw new Error(`${label}[${i}] returned non-finite values`);
-				}
-				const norm = Math.sqrt(v.reduce((a, b) => a + b * b, 0));
-				if (!(norm > 0.5)) {
-					throw new Error(`${label}[${i}] is degenerate (L2 norm ${norm})`);
-				}
-			});
-		};
-
-		// Both call shapes are verified because indexing uses `embedMany` and
-		// search uses `embed`, and they take different paths through the model
-		// (a batch is padded to its longest member). A device that is fine
-		// one-at-a-time is not thereby fine batched.
-		for (const text of DEVICE_PROBE_TEXTS) {
-			check("probe", [await embed(text)]);
-		}
-		check("batched probe", await embedMany(DEVICE_PROBE_TEXTS));
-		return { embed, embedMany };
-	} catch (e) {
-		console.warn(
-			`[task-index] embedding device "${device}" rejected: ${
-				e instanceof Error ? e.message : String(e)
-			}`,
-		);
-		try {
-			(extractor as unknown as { dispose?: () => unknown } | null)?.dispose?.();
-		} catch {
-			// Best-effort teardown of the rejected session.
-		}
-		return null;
-	}
+	return mockDevice ?? embedderDevice();
 }
 
 /**
@@ -341,10 +208,17 @@ async function tryDevice(device: string): Promise<EmbeddingPipeline | null> {
  * can produce usable vectors (graceful degradation to BM25-only). The promise
  * is cached so concurrent callers share the same load attempt.
  *
- * When MXD_DISABLE_EMBEDDINGS is set (test environment), short-circuits to
- * null immediately — prevents loading onnxruntime-node (NAPI module) inside
- * worker threads, where worker teardown triggers a fatal NAPI crash
- * (SIGTRAP / exit 133) that kills the entire bun test process.
+ * ⚠️ The pipeline lives in a CHILD PROCESS, and that is load-bearing, not an
+ * implementation detail. An ORT session in a thread that is ENDING aborts the
+ * process (`NAPI FATAL ERROR`, exit 133) — and this module runs on a worker
+ * thread, which Matrix terminates both on shutdown and on crash-recovery
+ * restart. Loading the model here instead would re-arm that hazard for the
+ * rest of the daemon's life on the first search. See `embedder-client.ts`.
+ *
+ * MXD_DISABLE_EMBEDDINGS short-circuits to null. It is no longer load-bearing
+ * for crash-safety — the child process is what makes teardown safe — but it
+ * stays as the honest "run without embeddings" switch: `bun test` uses it to
+ * skip a 500MB model load and a per-suite child spawn it has no use for.
  *
  * MXD_EMBEDDING_DEVICE forces a single candidate. It is still verified: an
  * explicit request is not a reason to accept a corrupt index, so a device that
@@ -352,7 +226,7 @@ async function tryDevice(device: string): Promise<EmbeddingPipeline | null> {
  */
 async function getEmbeddingPipeline(): Promise<EmbeddingPipeline | null> {
 	// Explicit mock (via _setEmbeddingPipeline) takes priority — lets tests
-	// exercise hybrid search paths even when MXD_DISABLE_EMBEDDINGS is set.
+	// exercise hybrid search paths without spawning a child at all.
 	if (embeddingPipeline !== undefined) return embeddingPipeline;
 	if (process.env.MXD_DISABLE_EMBEDDINGS) {
 		embeddingPipeline = null;
@@ -361,32 +235,14 @@ async function getEmbeddingPipeline(): Promise<EmbeddingPipeline | null> {
 	if (embeddingPipelinePromise) return embeddingPipelinePromise;
 
 	embeddingPipelinePromise = (async () => {
-		const forced = process.env.MXD_EMBEDDING_DEVICE;
-		const candidates = forced
-			? [forced, ...(forced === "cpu" ? [] : ["cpu"])]
-			: (DEVICE_CANDIDATES[process.platform] ?? ["cpu"]);
-
-		for (const device of candidates) {
-			const pipe = await tryDevice(device);
-			if (pipe) {
-				selectedDevice = device;
-				// Logged once, and it says WHAT WAS PROVEN, not what was asked
-				// for. `session.config.device` reports the requested device and
-				// would print "coreml" just as confidently while emitting NaN,
-				// so a log line sourced from it would be exactly the "claims
-				// acceleration, silently does something else" failure.
-				console.log(
-					`[task-index] embedding device: ${device} — verified on ${DEVICE_PROBE_TEXTS.length} probe inputs, single + batched`,
-				);
-				embeddingPipeline = pipe;
-				return pipe;
-			}
+		const pipe = await createChildPipeline();
+		embeddingPipeline = pipe;
+		if (!pipe) {
+			console.warn(
+				`[task-index] no embedding device produced usable vectors — degrading to BM25-only`,
+			);
 		}
-		console.warn(
-			`[task-index] no embedding device produced usable vectors — degrading to BM25-only`,
-		);
-		embeddingPipeline = null;
-		return null;
+		return pipe;
 	})();
 	return embeddingPipelinePromise;
 }
@@ -996,7 +852,7 @@ export async function reconcileIndexDeferred(
 			const r = await applyIndexPlan(plan);
 			if (r.indexed > 0) {
 				console.log(
-					`[task-index] background reconcile finished: ${r.indexed} indexed, ${r.pruned} pruned, ${((Date.now() - t0) / 1000).toFixed(1)}s on device ${selectedDevice ?? "none"}`,
+					`[task-index] background reconcile finished: ${r.indexed} indexed, ${r.pruned} pruned, ${((Date.now() - t0) / 1000).toFixed(1)}s on device ${embeddingDevice() ?? "none"}`,
 				);
 			}
 		} catch (e) {
@@ -1169,8 +1025,11 @@ export function searchIndexSync(
 export function _resetEmbeddingPipeline(): void {
 	embeddingPipeline = undefined;
 	embeddingPipelinePromise = null;
-	selectedDevice = null;
+	mockDevice = null;
 	warnedNaNFallback = false;
+	// A real pipeline owns a child process; resetting the singleton without
+	// stopping it would leak one child per reset.
+	stopEmbedderChild();
 }
 
 /**
@@ -1190,7 +1049,7 @@ export function _setEmbeddingPipeline(
 			}
 		: null;
 	embeddingPipelinePromise = null;
-	selectedDevice = pipe ? "mock" : null;
+	mockDevice = pipe ? "mock" : null;
 }
 
 /**

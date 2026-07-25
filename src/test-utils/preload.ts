@@ -34,15 +34,19 @@
  * Cost: one react-dom parse (~tens of ms) per test process, including
  * src-only runs. No side effects beyond module initialization.
  *
- * ── NAPI crash prevention ──
- * MXD_DISABLE_EMBEDDINGS prevents @huggingface/transformers (and its
- * onnxruntime-node NAPI dependency) from loading inside worker threads.
- * Without this, worker teardown in daemon tests triggers a fatal NAPI crash
- * (SIGTRAP / exit 133) that kills the entire bun test process. The env var
- * is checked by getEmbeddingPipeline() in src/task-index.ts, which short-
- * circuits to null (BM25-only mode). Workers inherit process.env from the
- * parent thread, so setting it here covers both the main process and all
- * spawned workers.
+ * ── Skipping the embedding model ──
+ * MXD_DISABLE_EMBEDDINGS makes `getEmbeddingPipeline()` return null, so the
+ * suite runs BM25-only and never loads a 500MB model or spawns an embedder
+ * child process it has no assertions about. Tests that DO want vectors set a
+ * mock pipeline, which takes priority over this flag.
+ *
+ * It is no longer what keeps `bun test` alive. It was, once: embeddings used
+ * to load onnxruntime-node into the WORKER THREAD, and a live ORT session in
+ * a thread that is ENDING aborts the whole process (`NAPI FATAL ERROR`, exit
+ * 133) — so every daemon test's worker teardown killed the run. That is now
+ * fixed at the source: the session lives in a child process whose MAIN thread
+ * owns it (see src/embedder-client.ts), and main-thread teardown is clean.
+ * Unsetting this flag is therefore safe; it just makes the suite slower.
  */
 process.env.MXD_DISABLE_EMBEDDINGS = "1";
 import "react-dom/client";
