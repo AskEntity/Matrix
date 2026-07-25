@@ -72,9 +72,19 @@ deliberate pass catches it, so the interval between passes is how long a wrong n
   a closed question.
 
 **Rules:**
-1. **If code can answer it, point at it — don't snapshot it.** Interfaces, counts, file paths, file
-   lists. Write what code CANNOT answer: why it is shaped this way, what bit us, which rule is
-   load-bearing. "See the `test.todo`s in X" stays true; "3 remain" does not.
+1. **If something else is the authoritative source, point at it — don't snapshot it.** Interfaces,
+   counts, file paths, file lists — and equally another task's `done()` result, a config value, an
+   upstream doc. Write what the source CANNOT answer: why it is shaped this way, what bit us, which
+   rule is load-bearing. "See the `test.todo`s in X" stays true; "3 remain" does not.
+   ⚠️ **Not "code" — any authoritative source.** Reading the rule as "documentation vs code" is how
+   a hand-compressed copy of two task results ended up in a task description, written before those
+   tasks had even finished. The shape was recognisable and the rule still did not fire, because its
+   perceived scope was too narrow.
+   ⚠️ **A MEASUREMENT is not a snapshot — it is a record, and deleting it destroys evidence.**
+   "99.8% cache hit (582 creation / 362K read)" is the proof that four specific fixes worked and
+   stays true about the moment it describes. What rots is stating it in the present tense, so a
+   reader takes it for today's number. Date it, say what it measured, and say where the current
+   value actually lives. **Delete claims; keep measurements.**
 2. **Name things by what they ARE, not where they came from.** A check called "the phase-1
    invariant" gets switched off after phase 1 — which is exactly when it starts being useful.
 3. **Don't delete a refuted claim — mark it and point at what replaced it.** The old sentence is
