@@ -2648,6 +2648,17 @@ describe("jsSearch: the walk prunes at descent", () => {
 			join(tempDir, "pkg", "node_modules", "dep", "index.ts"),
 			`${SYMBOL}();\n`,
 		);
+		// A file sitting DIRECTLY in the skipped directory, not one level down.
+		// Without it, dropping the trailing slash from the descent check is caught
+		// only by whichever unrelated fixture happens to hold a file at that exact
+		// depth: `pkg/node_modules` fails the check and is descended, but
+		// `pkg/node_modules/dep` then matches `/node_modules/` and is pruned
+		// anyway — so the leak is invisible one level deeper. Mutation testing
+		// found that; the fixture looked thorough and was not.
+		await writeFile(
+			join(tempDir, "pkg", "node_modules", "direct.ts"),
+			`${SYMBOL}();\n`,
+		);
 		await writeFile(join(tempDir, "pkg", "own.ts"), `${SYMBOL}();\n`);
 
 		// A file whose NAME is a skip entry. `node_modules` the file must survive;
@@ -2688,6 +2699,7 @@ describe("jsSearch: the walk prunes at descent", () => {
 
 	test("a nested node_modules/ is pruned, its parent is not", async () => {
 		const files = await matchedFiles();
+		expect(files).not.toContain("pkg/node_modules/direct.ts");
 		expect(files).not.toContain("pkg/node_modules/dep/index.ts");
 		// Two-sided: the sibling inside the same parent IS returned, so this
 		// cannot pass by pruning `pkg/` — or everything — instead.
@@ -2732,9 +2744,9 @@ describe("jsSearch: the walk prunes at descent", () => {
 		// Pruning must stay the skip list's decision. An `excluded_dirs: []` that
 		// still pruned would be the walker deciding, which is the bug the
 		// hidden-directory fix removed — reintroduced one layer down.
-		expect(await matchedFiles({ excludedDirs: [] })).toContain(
-			"pkg/node_modules/dep/index.ts",
-		);
+		const files = await matchedFiles({ excludedDirs: [] });
+		expect(files).toContain("pkg/node_modules/direct.ts");
+		expect(files).toContain("pkg/node_modules/dep/index.ts");
 	});
 });
 

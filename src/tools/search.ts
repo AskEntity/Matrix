@@ -268,10 +268,15 @@ export async function jsSearch(opts: {
 		files = walkFiles(absSearchPath, skipDirs, glob);
 	}
 
-	// `walkFiles` already sorted; single-file mode is one entry. Sorting here would
-	// be the only thing keeping the walk's output deterministic if that changed, so
-	// it stays as the explicit statement of the contract.
-	files.sort();
+	// NO sort here. `walkFiles` owns it, because the walk is what creates the
+	// disorder — `readdirSync` returns filesystem order, which on APFS is a hash
+	// order, not alphabetical. Single-file mode produces exactly one entry.
+	//
+	// There used to be a second `files.sort()` on this line, and mutation testing
+	// is the only reason we know it made the first one untestable: deleting the
+	// sort INSIDE the walk failed no test, because this one silently re-sorted the
+	// result. Order is part of the contract — `headLimit` decides which files get
+	// read at all — so it is pinned in exactly one place.
 
 	const ctxRange =
 		contextLines && contextLines > 0 ? Math.min(contextLines, 10) : 0;
