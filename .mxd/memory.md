@@ -5213,3 +5213,236 @@ pre-eid log be read.)
 - A test that needs a genuinely truncated file (simulating a crash that ended
   the log early) does the file surgery itself; the product has no such
   operation any more. See the Phase-2 crash-recovery test in integration.test.ts.
+
+## Agent activity: live process state is asked for, never replayed (2026-07-25)
+
+"What is this agent doing" is now ONE explicit value the backend owns, pushed
+on change and asked for at connect. It replaced a boolean with three competing
+sources plus a 1.5s timer in the UI.
+
+### The rule that generates the design
+
+> **State is never derived from the event log. On connect the client ASKS;
+> while connected the server PUSHES.**
+
+The log records *"it became active at some past instant"*. Replaying that as
+*"it is active now"* is a category error — and the old code had a poll
+(`checkAgentStatus()` after every `processEventBatch`) whose ONLY job was to
+undo the error it had just made. That poll was the bug report.
+
+Note the exact inversion against pending messages (Task X): pending IS a
+projection of a persistent log, so a reducer over events is right there.
+Activity has no persistent representation at all. Same-looking code, opposite
+conclusion — the question to ask is "does this thing exist on disk?".
+
+### `AgentActivity = "idle" | "thinking" | "tool"` — asymmetric on purpose
+
+| state | meaning |
+|---|---|
+| `tool` | loop is executing tools — **the only state with an unclosed tool_call** |
+| `idle` | loop is parked on `queue.wait()` |
+| `thinking` | **explicitly the residual**: every other way the loop is alive |
+
+`tool` is the precise one because it is the one with an interrupt consequence
+(an interrupted tool needs a synthetic tool_result). `idle` is the empty one.
+`thinking` is *defined as the leftover*, which is what makes the following fall
+out as consequences rather than special cases:
+- the outer-retry backoff (up to 120s between API attempts) is `thinking`
+- session setup before the loop starts (MCP connect can take seconds) is `thinking`
+- a compaction turn is `thinking`
+
+**Known naming debt, deliberately not fixed**: a compaction runs 2-3 minutes
+and showing "Thinking..." across it is the same kind of lie this model removes.
+Adding `compacting` later is a pure carve-OUT of the residual, not a
+re-partition — cheap precisely because the residual is written down.
+
+**Rejected framing** (offered, vetoed by root): defining the states by "what
+feedback the user sees" (spinner vs tool card). That defines backend state in
+terms of frontend rendering — the same class of error as deriving state from
+the log. Add a UI affordance and the definition collapses.
+
+### Where it lives, and the one rule about writing it
+
+`TaskSession.activity` — dies with the session, so there is no second lifecycle
+to keep in sync and nothing to leak. "All tasks' states" is DERIVED at read
+time by walking tracker nodes that have a session.
+
+**Field write and broadcast must happen in the same function.** Two writers,
+because neither layer can reach the other:
+- `setActivity(state)` — closure inside `runProviderLoop` (loop transitions)
+- `setAgentActivity(ctx, projectId, taskId, session, state)` — `agent-lifecycle.ts`
+  (session birth/death)
+
+The tempting shortcut is to emit the event inside `handleImplicitYield` (which
+only has `queue` + `emit`) and write the field at its four call sites. That
+splits one source into two, and call site number five gets only one half. The
+setter is passed IN instead — `handleImplicitYield(queue, setActivity)`.
+
+### Transition points (each independently mutation-tested)
+
+1. `idle` — in `handleImplicitYield`, before `queue.wait()`. ONE site covering
+   four call paths (done resume / implicit-yield resume / explicit yield / end_turn).
+   **Announced only when the loop will ACTUALLY park** (`!queue.hasPending`):
+   with a message already queued, `wait()` resolves on the next microtask and
+   the agent never paused. This is not flicker-avoidance dressed up — it is
+   what makes `idle` mean "waiting for you" rather than "reached a yield
+   point", and both consumers depend on the stronger meaning (yield_external
+   wakes an external client on it; the UI re-fetches JSONL on it to expose
+   Edit/Rewind). It also kept two provider harnesses working unchanged: they
+   script the loop by counting idles, and an unconditional announce added a
+   phantom startup idle that consumed their "first idle" step.
+2. `idle` — the initial drain's blocking wait (`provider-shared.ts`, fresh start),
+   same `!queue.hasPending` rule. The fifth place the loop parks on the queue,
+   and it announced nothing — an agent waiting for its first message looked
+   busy to every client. It deliberately does NOT set `queue.idle`; that flag
+   is polled by test helpers as "the steady-state loop has settled", and
+   flipping it during startup lets a poller call a booting agent settled.
+   **Narrower than it looks**: `runAgentForNode` enqueues a `work_context`
+   message before the loop starts whenever the scope's `buildWorkContext`
+   returns content, so a matrix launch always has something queued and this
+   park is not reached. It fires for a scope with no work context (the hook is
+   optional), and on a resume that ends in a non-user message with nothing
+   recovered. Worth its one line — an agent genuinely stuck here is stuck
+   forever — but do not describe it as the common path.
+3. `thinking` — at the API-call block, OUTSIDE the outer-retry loop.
+4. `tool` — immediately before `Promise.all(executeTool)`.
+5. `null` — at all three sites that clear `node.session` (runAgentForNode's
+   finally, stopAgent, stopTask). Skipping any one leaves a permanent spinner
+   for a dead agent in every connected client.
+
+6. `thinking` — on the way OUT of idle, right where `queue.idle = false` sits.
+
+⚠️ **Point 6 was initially left out, with an argument that was wrong in an
+instructive way.** The reasoning was: every path leaving `handleImplicitYield`
+reaches the API block, so a second setter is unobservable — *the emitted event
+sequence is identical either way*. True about the event sequence, and
+irrelevant: **consumers read the STORED value, not the event stream.**
+`yield_external`'s fast path and the connect-time snapshot both ask
+`session.activity` directly. Without the transition, the whole wake window
+(drain → filter compact → buildUserTurn → emit its events) reports `idle` for
+a loop that is provably not parked — and the documented
+`send_user_message → yield_external` workflow lands exactly there, told "the
+agent stopped working" at the moment it started.
+
+The old code left idle TWICE here (`queue.idle = false` AND an `agent_active`
+event). Collapsing to one state kept only the flag — which by then had no
+production reader — so the migration silently dropped the half that mattered.
+
+**The structural fix is the dedupe, not the extra line.** `setActivity`
+early-returns when the state is unchanged, which makes "an extra setActivity
+call is harmless" a true statement. Before that, every transition point needed
+a per-site argument about whether its event would be redundant — and that is
+precisely the argument that went wrong. With dedupe, you write a transition
+wherever the loop changes what it is doing and never reason about it again.
+Dedupe against a LOCAL (not the session field) so the property also holds for a
+provider driven directly in a unit test, where there is no session.
+
+### Wire format
+
+- `{ type: "agent_activity", taskId, state: AgentActivity | null }` — ephemeral
+  delta. `null` = session gone. In `isPersistedByEmitEvent`'s broadcast-only
+  group; **it must never reach JSONL** — that is what makes "replaying history
+  can't fake-activate" structurally true instead of corrected afterwards.
+- `{ type: "agent_activity_snapshot", projectId, states }` — daemon → client on
+  SSE connect, alongside the existing initial `tree_updated` /
+  `pending_clarifications`. Sourced from `GET /projects/:id/agent/status`
+  (shape changed from `{idle[], active[]}` to `{states}`). **Sent even when
+  empty**: "nothing is running" is the message a client reconnecting after
+  everything stopped needs in order to drop stale entries.
+
+Delta rather than full-snapshot-per-change because building a snapshot needs
+the tracker and the provider loop has none — a hard constraint, not taste.
+
+### Frontend: mostly deletion
+
+Deleted: the `checkAgentStatus` poll and its `/agent/status` fetch; the
+`agent_start`/`agent_end` → activeAgents derivation; the `agent_active` /
+`agent_idle` event types; ActivityLog's 1.5s timer + `lastEntry?.type ===
+"tool_call"` guess; dead `useAgent.running`; dead `handlers.ts setActiveAgents`.
+
+Kept: `agent_start`/`agent_end` themselves (persisted lifecycle log; agent_start
+still reports provider/model), and `checkStatus` reduced to the provider/model
+fetch only.
+
+Added: `activityReducer` (pure) + `isWorking()` in event-handler.ts; one
+write-through ref + `dispatchActivity` in Plugin.tsx mirroring `dispatchPending`;
+`activeAgents = new Set(keys where isWorking)` derived ONCE, so the five
+existing consumers (tree spinner, tab spinner, TaskDetail ×2,
+OrchestratorDetail) did not change at all. ActivityLog takes `activity` and
+does `showThinking = activity === "thinking"`.
+
+Activity events bypass the viewed-session filter in `handleEvent` (activity is
+project-wide — the sidebar shows every task) and produce no log entries.
+
+### Two consumers that a grep for "activeAgents" does NOT find
+
+1. **`yield_external` subscribes to the `agent_idle` EVENT TYPE**
+   (`mcp-endpoint.ts` WAKE_SIGNALS). Deleting the type without migrating turns
+   every external `send → yield_external → get_logs` wake into a timeout,
+   silently. Now matched via a `wakeReason()` predicate on `agent_activity`
+   (`state === "idle" || state === null`). The reported reason string stays
+   `"agent_idle"` — that is the tool's EXTERNAL contract and is unrelated to
+   our internal event names. (Same file, ~15 lines apart: the fast path
+   `session.queue?.idle` returning the *string* `"agent_idle"` is a different
+   thing from the *event type* in WAKE_SIGNALS. Easy to conflate.)
+2. **`onAgentIdle`** (Edit/Rewind re-fetch — SSE events lack eid/parentEid, so
+   the buttons only appear after a JSONL refetch). Migrated to "the viewed task
+   stopped working", which now ALSO covers session end — an agent that finishes
+   with `done()` never goes idle, so its last messages used to stay uneditable.
+
+### Pre-existing bug found next door (fixed in its own commit)
+
+WAKE_SIGNALS still listed `agent_stopped` and `orchestration_completed` — names
+replaced by `agent_end` long ago, so they could never match. A stopped agent
+only ever woke an external client by timing out. Committed separately from the
+activity work so the two can be reverted independently.
+
+### Test notes
+
+- `src/agent-activity.test.ts` — real agent loop. The `tool` window is observed
+  FROM INSIDE a tool handler (`getSession(...).activity`), which is the direct
+  form of "there is an unclosed tool_call right now". Ordering assertions
+  collapse repeats so they pin ORDER, not announcement count.
+- Idle-detection in provider tests keys on
+  `event.type === "agent_activity" && event.state === "idle"` (was `agent_idle`).
+  Two harnesses in `anthropic-compatible-provider.test.ts` drive the loop this
+  way — they hang for the full test timeout if missed.
+- `web/ActivityLog-activity.test.tsx` renders with the LAST ENTRY being a
+  tool_call in every case, so `tool` vs `thinking` can only be distinguished by
+  the prop — the old heuristic would have gotten it right by accident.
+
+### Mutation results, and the test the mutation caught
+
+Every transition point was removed individually and the suite re-run. Each is
+caught by tests only its own path can reach:
+
+| removed | fails |
+|---|---|
+| `idle` in handleImplicitYield | parks-on-queue + 2 provider harnesses that script the loop by counting idles |
+| `idle` in the initial drain | the initial-drain test, alone |
+| `thinking` at the API block | thinking→tool→thinking, alone |
+| `tool` before tool execution | the in-tool observation + thinking→tool→thinking |
+| `null` at the 3 teardown sites | session-end, stopTask, stopAgent — one each |
+| `thinking` on the way out of idle | wake-window test, alone |
+
+**The initial-drain mutation caught a bug in my own test.** The first version
+used the normal scope, so `work_context` was queued, the drain never parked,
+the agent ran a turn and parked in `handleImplicitYield` instead — the test was
+named for one transition and measured another. It passed clean and failed under
+the WRONG mutation, which is exactly the "two tests covering for each other"
+shape. Fixed by launching with `buildWorkContext: () => null`.
+
+That is the argument for mutating per transition point as you add it rather
+than once at the end: a green test tells you nothing about WHICH line made it
+green.
+
+**Mutation testing cannot find a transition point that was never written.**
+The leave-idle gap (point 6) survived a full clean mutation sweep — nothing
+failed, because nothing existed to remove. It was caught by reading the comment
+that justified its absence. When a comment argues why some code is unnecessary,
+that argument is the thing to check; the tests around it are all consistent
+with it by construction.
+
+**Careless-git note**: reverting a mutation with `git checkout -- <file>` also
+reverts any UNCOMMITTED fix in the same file. Commit the fix before mutating
+it, or back the file up.

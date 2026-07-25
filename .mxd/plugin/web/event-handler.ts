@@ -1,6 +1,7 @@
 import type React from "react";
 // ID generation — crypto.randomUUID() for local UI state
 import {
+	type AgentActivity,
 	createLogEntry,
 	getLogTaskId,
 	type IncomingEvent,
@@ -145,6 +146,53 @@ export function pendingReducer(
 	return state;
 }
 
+// ── Agent activity: pushed state, never reconstructed ──
+//
+// Pending (above) and activity look superficially alike and are opposites.
+// Pending is a PROJECTION of a persistent log — replaying the log rebuilds it
+// exactly, so a reducer over events is the right shape. Activity is LIVE
+// PROCESS STATE with no persistent representation at all: the log can only
+// say "it became active at some past instant", and replaying that as "it is
+// active now" is a category error. That error is what the previous design
+// made, and what it then needed a status poll to undo after every batch.
+//
+// So the map here is fed by exactly one thing — `agent_activity` /
+// `agent_activity_snapshot`, both ephemeral, neither ever written to JSONL.
+// Historical events cannot reach this reducer, which makes "replay must not
+// fake-activate" structurally true instead of corrected after the fact.
+//
+// A task with NO entry has no agent. That is deliberately different from
+// `idle`, which means the loop is alive and waiting for input.
+
+/** taskId → what that task's agent is doing. Absent = no agent at all. */
+export type ActivityMap = Readonly<Record<string, AgentActivity>>;
+
+export type ActivityAction =
+	/** Full replacement — the connect-time snapshot. Empty is meaningful. */
+	| { type: "RESET"; states: Record<string, AgentActivity> }
+	/** One task changed. `state: null` = its session ended. */
+	| { type: "SET"; taskId: string; state: AgentActivity | null };
+
+export function activityReducer(
+	state: ActivityMap,
+	action: ActivityAction,
+): ActivityMap {
+	if (action.type === "RESET") return { ...action.states };
+	const next = { ...state };
+	if (action.state === null) delete next[action.taskId];
+	else next[action.taskId] = action.state;
+	return next;
+}
+
+/**
+ * Is this agent doing something, as opposed to waiting for input or absent?
+ * The ONE derivation of "active" — spinners, tab indicators and the task tree
+ * all resolve through it rather than each deciding for themselves.
+ */
+export function isWorking(state: AgentActivity | undefined): boolean {
+	return state !== undefined && state !== "idle";
+}
+
 // --- Update operations for in-place entry mutations ---
 
 type UpdateOp =
@@ -242,9 +290,14 @@ export interface EventHandlerDeps {
 	setOlderEventsAvailable?: React.Dispatch<
 		React.SetStateAction<Map<string, { hasOlder: boolean; oldestTs: number }>>
 	>;
-	setActiveAgents: React.Dispatch<React.SetStateAction<Set<string>>>;
-	/** Re-check actual agent status from backend (GET /projects/:id/agent). */
-	checkAgentStatus: () => void;
+	/**
+	 * Apply an activity action. Like dispatchPending, the consumer writes
+	 * through to a ref synchronously before triggering a re-render, so a
+	 * follow-up event in the same tick reads the already-applied map.
+	 */
+	dispatchActivity: (action: ActivityAction) => void;
+	/** Synchronous snapshot of the activity map (ref-backed on the consumer). */
+	getAgentActivity: () => ActivityMap;
 	setAgentProvider: (provider: string) => void;
 	setAgentModel: (model: string) => void;
 	setLogs: React.Dispatch<React.SetStateAction<LogEntry[]>>;
@@ -296,10 +349,15 @@ export interface EventHandlerDeps {
 	/** Returns the currently viewed session ID (= selectedTaskId after Fix C; only during the brand-new-project transient does the rootNodeId fallback matter). Used to filter SSE events. */
 	getViewedSessionId?: () => string | null;
 	/**
-	 * Called when the viewed task's agent becomes idle. Plugin.tsx wires this
-	 * to re-fetch JSONL events so the frontend gets eid/parentEid (which are
-	 * only stamped at JSONL persistence time, not on SSE broadcast). This
-	 * enables Edit/Rewind buttons on messages after streaming completes.
+	 * Called when the viewed task's agent stops working — it parked on the
+	 * queue, or its session ended. Plugin.tsx wires this to re-fetch JSONL
+	 * events so the frontend gets eid/parentEid (only stamped at persistence
+	 * time, not on SSE broadcast), which is what makes Edit/Rewind buttons
+	 * appear once streaming is over.
+	 *
+	 * Session-end counts, which it did not before: an agent that finishes with
+	 * done() never goes idle, so its last messages stayed uneditable until
+	 * something unrelated triggered a refetch.
 	 */
 	onAgentIdle?: (taskId: string) => void;
 }
@@ -309,8 +367,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		updateFromWS,
 		setRootNodeId,
 		setOlderEventsAvailable,
-		setActiveAgents,
-		checkAgentStatus,
+		dispatchActivity,
+		getAgentActivity,
 		setAgentProvider,
 		setAgentModel,
 		setLogs,
@@ -568,8 +626,13 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					},
 				};
 
-			// SSE-only events that processEvent doesn't handle
+			// SSE-only events that processEvent doesn't handle. The two
+			// activity events are consumed by handleEvent before the
+			// viewed-session filter (activity is project-wide) and are listed
+			// here only so this switch stays exhaustive.
 			case "pending_clarifications":
+			case "agent_activity":
+			case "agent_activity_snapshot":
 			case "heartbeat":
 				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 
@@ -845,10 +908,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				return {
 					entries,
 					updates: [],
+					// Lifecycle events report which provider/model a run used —
+					// they no longer say anything about activity. Deriving
+					// "running" from agent_start was one of the three competing
+					// sources, and the one that made replaying history light the
+					// UI up for agents that died long ago.
 					sideEffects: () => {
-						if (msg.taskId) {
-							setActiveAgents((prev) => new Set(prev).add(msg.taskId));
-						}
 						if (msg.provider) setAgentProvider(msg.provider);
 						if (msg.model) setAgentModel(msg.model);
 					},
@@ -880,50 +945,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							setLastCacheReadTokens(msg.stats.cacheReadTokens);
 						if (msg.stats?.outputTokens !== undefined)
 							setLastOutputTokens(msg.stats.outputTokens);
-						if (msg.taskId) {
-							setActiveAgents((prev) => {
-								const next = new Set(prev);
-								next.delete(msg.taskId);
-								return next;
-							});
-						}
-						checkAgentStatus();
 					},
 				};
 			}
-
-			case "agent_active":
-				return {
-					entries: [],
-					updates: [],
-					sideEffects: () => {
-						if (msg.taskId) {
-							setActiveAgents((prev) => new Set(prev).add(msg.taskId));
-						}
-					},
-				};
-
-			case "agent_idle":
-				return {
-					entries: [],
-					updates: [],
-					sideEffects: () => {
-						if (msg.taskId) {
-							setActiveAgents((prev) => {
-								const next = new Set(prev);
-								next.delete(msg.taskId);
-								return next;
-							});
-							// Trigger re-fetch when the VIEWED task's agent goes
-							// idle — JSONL events carry eid/parentEid that SSE
-							// events lack, enabling Edit/Rewind buttons.
-							const viewedId = deps.getViewedSessionId?.();
-							if (viewedId && msg.taskId === viewedId) {
-								deps.onAgentIdle?.(msg.taskId);
-							}
-						}
-					},
-				};
 
 			case "task_completed":
 				// UIOnlyEvent — materialized from task_complete queue messages
@@ -1443,11 +1467,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 		setLogs(entries);
 		for (const fn of deferredSideEffects) fn();
-		// Re-fetch real agent status after processing historical events.
-		// processEvent side effects may have stale setActiveAgents calls from
-		// old agent_start/agent_end events — checkAgentStatus
-		// overwrites with the actual current state from the backend.
-		checkAgentStatus();
+		// No status re-fetch here any more. This used to end with
+		// `checkAgentStatus()` because replaying historical agent_start events
+		// left the UI believing dead agents were running, and something had to
+		// overwrite that. Nothing in this batch can touch activity now — it
+		// comes only from ephemeral events that never enter JSONL — so there
+		// is nothing to correct.
 	}
 
 	/** Entry types that count as "meaningful content" — NOT lifecycle noise. */
@@ -1498,18 +1523,32 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			return;
 		}
 
-		// Agent lifecycle events update activeAgents GLOBALLY — before the per-session filter.
-		// The task tree sidebar needs accurate active/idle status for ALL tasks, not just the viewed one.
-		if ("taskId" in msg && msg.taskId) {
-			if (msg.type === "agent_start" || msg.type === "agent_active") {
-				setActiveAgents((prev) => new Set(prev).add(msg.taskId));
-			} else if (msg.type === "agent_idle" || msg.type === "agent_end") {
-				setActiveAgents((prev) => {
-					const next = new Set(prev);
-					next.delete(msg.taskId);
-					return next;
-				});
+		// Activity is project-wide, not per-session: the sidebar shows a
+		// spinner for every task, so these must be handled BEFORE the
+		// viewed-session filter below and never produce log entries.
+		if (msg.type === "agent_activity_snapshot") {
+			dispatchActivity({ type: "RESET", states: msg.states });
+			return;
+		}
+		if (msg.type === "agent_activity") {
+			const wasWorking = isWorking(getAgentActivity()[msg.taskId]);
+			dispatchActivity({
+				type: "SET",
+				taskId: msg.taskId,
+				state: msg.state,
+			});
+			// Streaming just stopped for the task on screen: re-fetch so the
+			// messages get their eid back and Edit/Rewind appears. Fires on
+			// idle AND on session end — done() never goes idle, and its last
+			// messages should be editable too.
+			if (
+				wasWorking &&
+				!isWorking(msg.state ?? undefined) &&
+				msg.taskId === deps.getViewedSessionId?.()
+			) {
+				deps.onAgentIdle?.(msg.taskId);
 			}
+			return;
 		}
 
 		// Filter SSE events by taskId — only process events for the currently viewed session.

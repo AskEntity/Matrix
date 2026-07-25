@@ -130,7 +130,7 @@ async function renderLogWithOlder(opts: { entryCount: number }) {
 					nodeMap: new Map(),
 					autoScroll: false,
 					onAutoScrollChange: () => {},
-					isActive: false,
+					activity: undefined,
 					projectId: "proj-1",
 					olderEventsAvailable,
 					loadingOlderEvents: props.loadingOlderEvents,

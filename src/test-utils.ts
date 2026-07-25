@@ -137,6 +137,7 @@ export function attachMockSession(
 		loopTraceId: "mock-trace-id",
 		depth: opts?.depth ?? 0,
 		backgroundProcesses: new Map(),
+		activity: "thinking",
 		foregroundExecutions: new Map(),
 	};
 	node.session = session;

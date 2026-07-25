@@ -197,25 +197,56 @@ function buildExternalOnlyToolDefs(ctx: RuntimeContext): AnyToolDef[] {
 					};
 				};
 
-				// Wake signals — agent paused or stopped
-				const WAKE_SIGNALS = new Set([
-					"agent_idle",
-					"done_notified",
-					"agent_stopped",
-					"orchestration_completed",
-				]);
+				// Wake signals — agent paused or stopped. Matched against the
+				// LIVE event stream, so this is coupled to event-type names: a
+				// rename in the runtime silently turns every wake into a
+				// timeout. `agent_stopped` / `orchestration_completed` sat here
+				// long after they were replaced by `agent_end`, so a stopped
+				// agent only ever woke an external client by timing out.
+				const WAKE_EVENT_TYPES = new Set(["done_notified", "agent_end"]);
+
+				/**
+				 * Returns the `reason` string to report, or null if this event
+				 * is not a wake. `agent_activity` carries every pause now (it
+				 * replaced the agent_idle event), but only the states that mean
+				 * "the agent stopped working" count: parked on the queue, or
+				 * session gone.
+				 *
+				 * The reported reason stays `"agent_idle"` — that string is the
+				 * EXTERNAL contract of this tool (the already-idle fast path
+				 * above returns the same one) and has nothing to do with our
+				 * internal event names.
+				 */
+				const wakeReason = (event: { type: string }): string | null => {
+					if (event.type === "agent_activity") {
+						const { state } = event as { state?: string | null };
+						return state === "idle" || state == null ? "agent_idle" : null;
+					}
+					return WAKE_EVENT_TYPES.has(event.type) ? event.type : null;
+				};
 
 				// ── Fast path: agent already idle/stopped/done ──
 				// If the agent isn't actively running, return immediately.
 				// Without this, yield_external would deadlock waiting for
 				// an event that was already emitted before we subscribed.
+				//
+				// MUST use the same predicate as `wakeReason` above: this and
+				// the subscription are ONE consumer answering ONE question
+				// ("has the agent stopped working?") and the answer must not
+				// depend on which side of the subscribe the caller arrived on.
+				// It used to read `session.queue?.idle` — equivalent back when
+				// idle was announced unconditionally, but no longer: with a
+				// message already queued the loop does not park, so queue.idle
+				// can be true while the agent is still working. An early caller
+				// would have been told "idle" and returned; a late one would
+				// have correctly kept waiting.
 				const session = node.session;
 				if (!session) {
 					// No session = agent not running (never started, or stopped)
 					return result("not_running");
 				}
-				if (session.queue?.idle) {
-					// Agent is in yield/idle state — already paused
+				if (session.activity === "idle") {
+					// Parked on the queue — already paused, waiting for input.
 					return result("agent_idle");
 				}
 
@@ -232,10 +263,10 @@ function buildExternalOnlyToolDefs(ctx: RuntimeContext): AnyToolDef[] {
 
 					const unsub = subscribeToEvents(ctx, projectId, (event) => {
 						if (event.taskId !== taskId) return;
-						const eventType = event.type as string;
-						if (WAKE_SIGNALS.has(eventType)) {
+						const reason = wakeReason(event as { type: string });
+						if (reason) {
 							// Small delay to let Phase 2 (status update) complete
-							setTimeout(() => finish(eventType), 50);
+							setTimeout(() => finish(reason), 50);
 						}
 					});
 

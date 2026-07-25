@@ -13,6 +13,7 @@ export type { Event } from "../src/events.ts";
 export type { QueueMessage } from "../src/message-queue.ts";
 export { pluginApiPrefix } from "../src/plugin-url.ts";
 export {
+	type AgentActivity,
 	type BaseTaskNode,
 	type GeneralNode,
 	isGeneral,

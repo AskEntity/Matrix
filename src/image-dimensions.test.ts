@@ -221,6 +221,7 @@ describe("read_file pixel dimension guard", () => {
 			loopTraceId: "test-trace-id",
 			depth: 0,
 			backgroundProcesses: new Map(),
+			activity: "thinking",
 			foregroundExecutions: new Map(),
 		};
 		const { auth } = initMockResourceRegistry({

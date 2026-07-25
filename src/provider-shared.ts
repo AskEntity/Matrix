@@ -43,7 +43,7 @@ import {
 	MAX_OUTER_RETRIES,
 } from "./tool-execution.ts";
 import { TOOL_DONE, TOOL_FORK_TASK_CONTEXT, TOOL_YIELD } from "./tool-names.ts";
-import type { AgentResult, ExitReason } from "./types.ts";
+import type { AgentActivity, AgentResult, ExitReason } from "./types.ts";
 
 // buildWorkContextContent import removed — work context now provided by plugin hook
 
@@ -95,32 +95,49 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
  * Shared implicit yield logic: wait for messages on queue, format them, emit events.
  * Returns the formatted messages and images, or null if queue was closed.
  *
- * Events (agent_idle, agent_active) are emitted directly via the emit callback —
- * they don't need to be yielded since consumers of the provider generator ignore
- * intermediate events (they only care about driving the generator and the final AgentResult).
+ * This is THE place the loop parks on the queue — four call sites (done resume,
+ * implicit-yield resume, explicit yield, end_turn) funnel through it, so the
+ * `idle` transition is written once. `setActivity` is passed in rather than the
+ * raw `emit` on purpose: it both stores the state and broadcasts it. Emitting
+ * here and storing at the call sites would split one source into two, and the
+ * next call site added would only get one half.
+ *
+ * The transition on the way OUT is REQUIRED, and it is not enough to say "the
+ * API-call block sets `thinking` a moment later". Consumers read the STORED
+ * state, not the event sequence: the fast path in `yield_external` and the
+ * connect-time snapshot both ask `session.activity` directly. Everything
+ * between the wake and the API call — draining, filtering compact, building
+ * the user turn, emitting its events — would otherwise report `idle` for a
+ * loop that is demonstrably not parked, and `send_user_message` →
+ * `yield_external` lands exactly there: the client would be told the agent had
+ * stopped working at the moment it started. The old code left idle twice here
+ * (`queue.idle = false` and an `agent_active` event); only the flag survived
+ * the move to one state, and the flag no longer has a production reader.
+ *
+ * `idle` is announced only when the loop will ACTUALLY park. With a message
+ * already queued, `wait()` resolves on the next microtask and the agent never
+ * paused — reporting idle for that would be a state we were never in, and
+ * would make `idle` mean "reached a yield point" instead of "waiting for you".
+ * Consumers depend on the stronger meaning: yield_external wakes an external
+ * client on it, and the UI re-fetches JSONL on it to expose Edit/Rewind.
  */
 async function handleImplicitYield(
 	queue: MessageQueue,
-	emit?: (spec: EventSpec) => void,
+	setActivity: (state: AgentActivity) => void,
 ): Promise<{
 	nonCompact: QueueMessage[];
 	manualCompactRequested: boolean;
 	compactOnly: boolean;
 } | null> {
-	const idleEvt: EventSpec = {
-		type: "agent_idle",
-		ts: Date.now(),
-	};
-	emit?.(idleEvt);
+	if (!queue.hasPending) setActivity("idle");
 	try {
 		queue.idle = true;
 		const first = await queue.wait();
 		queue.idle = false;
-		const activeEvt: EventSpec = {
-			type: "agent_active",
-			ts: Date.now(),
-		};
-		emit?.(activeEvt);
+		// Left the queue — everything from here to the next API call is the
+		// residual, which is `thinking`. Deduped, so this is free when the
+		// loop was never announced idle in the first place.
+		setActivity("thinking");
 		const rest = queue.drain();
 		const all = [first, ...rest];
 		const manualCompactRequested = all.some((m) => m.source === "compact");
@@ -681,6 +698,36 @@ export async function* runProviderLoop(
 		currentSession.messages = messages;
 	}
 
+	/**
+	 * THE loop-side writer of agent activity: stores the state on the session
+	 * AND broadcasts it, in one call. Both halves live here so they cannot
+	 * drift — a stored state nobody was told about, or a broadcast nobody can
+	 * read back at connect time, are the same bug wearing different clothes.
+	 *
+	 * Session birth/death is the other half of the story and lives in
+	 * agent-lifecycle (`setAgentActivity`) — this loop cannot see either.
+	 *
+	 * Re-announcing the current state is a no-op, and that is load-bearing
+	 * rather than an optimisation: it makes "an extra setActivity call is
+	 * harmless" true, so a transition point is written wherever the loop
+	 * changes what it is doing, without anyone having to first argue that the
+	 * event would be redundant. That argument is how the leave-idle transition
+	 * went missing — the reasoning was about the event sequence, and the
+	 * consumers read the stored value.
+	 *
+	 * Deduping against a local rather than the session keeps the property true
+	 * when there is no session (a provider driven directly in a unit test).
+	 * Nothing else writes the field while the loop runs — agent-lifecycle
+	 * touches it only at session creation and teardown — so the two agree.
+	 */
+	let announcedActivity: AgentActivity | undefined = currentSession?.activity;
+	const setActivity = (state: AgentActivity) => {
+		if (announcedActivity === state) return;
+		announcedActivity = state;
+		if (currentSession) currentSession.activity = state;
+		emit?.({ type: "agent_activity", state, ts: Date.now() });
+	};
+
 	// Detect pending yield from JSONL: if last tool_call is yield with no matching result,
 	// the agent was in yield state when the daemon restarted. We restore this at loop level
 	// instead of writing a synthetic orphan result — yield is a loop-level pause, not a JS await.
@@ -784,6 +831,24 @@ export async function* runProviderLoop(
 			allMsgs = queue.drain();
 		} else {
 			// Blocking wait: fresh start needs first message (with header).
+			// This is the FIFTH place the loop parks on the queue and the only
+			// one outside handleImplicitYield. It used to set nothing at all —
+			// not queue.idle, not an event — so an agent launched with an empty
+			// queue sat here waiting for input while every client showed it as
+			// running. Usually the launching message is already queued and this
+			// returns immediately; when it isn't, idle is the truth.
+			//
+			// Deliberately does NOT set `queue.idle`: that flag means "a waiter
+			// is parked on this queue" and is read as a synchronization signal
+			// for the steady-state loop (test helpers poll it to know the agent
+			// has settled). Flipping it during startup would let a poller
+			// declare a still-booting agent settled.
+			//
+			// Same "only if it really parks" rule as handleImplicitYield: the
+			// launching message is normally already queued, and announcing idle
+			// on every launch would blink the spinner off for a pause that
+			// never happened.
+			if (!queue.hasPending) setActivity("idle");
 			const firstMsg = await queue.wait();
 			const rest = queue.drain();
 			allMsgs = [firstMsg, ...rest];
@@ -881,7 +946,7 @@ export async function* runProviderLoop(
 		// synthetic tool_result for the done tool_call, then continue to next API call.
 		// This is like yield resume but with done context instead of yield messages.
 		if (pendingDoneToolCall && queue) {
-			const doneResumeResult = await handleImplicitYield(queue, emit);
+			const doneResumeResult = await handleImplicitYield(queue, setActivity);
 
 			if (doneResumeResult === null) {
 				// Queue closed — exit
@@ -992,7 +1057,7 @@ export async function* runProviderLoop(
 		if (pendingImplicitYieldResume && queue) {
 			pendingImplicitYieldResume = false;
 
-			const yieldResult = await handleImplicitYield(queue, emit);
+			const yieldResult = await handleImplicitYield(queue, setActivity);
 
 			if (yieldResult === null) {
 				// Queue closed — exit (stop/reset during implicit yield = interrupted)
@@ -1051,7 +1116,7 @@ export async function* runProviderLoop(
 		// or (b) yield was detected in tool execution and deferred to loop level.
 		// Wait for messages, write yield tool_result, then continue to next API call.
 		if (pendingYieldToolCall && queue) {
-			const yieldResult = await handleImplicitYield(queue, emit);
+			const yieldResult = await handleImplicitYield(queue, setActivity);
 
 			if (yieldResult === null) {
 				// Queue closed — exit (stop/reset during yield = interrupted)
@@ -1495,6 +1560,13 @@ export async function* runProviderLoop(
 		turns++;
 
 		// ── Call provider API (with outer retry for transient errors) ──
+		// The ONE `thinking` transition. Set outside the retry loop on purpose:
+		// the backoff between attempts (up to 120s) is the loop alive, not
+		// parked on the queue, with no unclosed tool_call — the residual, so it
+		// is `thinking` by definition rather than by special case. Compaction
+		// turns run through this same block (isCompacting), so they are
+		// `thinking` too — see the naming-debt note on AgentActivity.
+		setActivity("thinking");
 		let response: unknown;
 		for (let outerAttempt = 0; ; outerAttempt++) {
 			try {
@@ -1681,7 +1753,7 @@ export async function* runProviderLoop(
 			emit?.(idleStatusEvt);
 			yield idleStatusEvt;
 
-			const yieldResult = await handleImplicitYield(queue, emit);
+			const yieldResult = await handleImplicitYield(queue, setActivity);
 
 			if (yieldResult === null) {
 				// Queue closed during implicit yield (stop/reset = interrupted).
@@ -1789,6 +1861,10 @@ export async function* runProviderLoop(
 		}
 
 		// ── Execute tools concurrently ──
+		// From here until the results are built there IS an unclosed tool_call
+		// in the JSONL — that is what makes `tool` the precisely-defined state
+		// and the one an interrupt has to repair. Nothing else may claim it.
+		setActivity("tool");
 		const execResults = await Promise.all(
 			toolUses.map(async (toolUse) => {
 				// yield + other tools: yield becomes no-op success
