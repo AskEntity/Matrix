@@ -2219,701 +2219,314 @@ public export is its own decision, drafted as `01KYB46KTMNTW8E48YHE3KVXSR`.
 # Daemon, Worker & Transport
 ---
 
-## Durability at process boundaries (FU2)
+## Durability at the process boundaries
 
-> **Verified 2026-07-25, every constant in this region still matches the code** —
-> `WORKER_INIT_TIMEOUT_MS` 30s, `STABLE_RESET_MS` 60s, `RESTART_BACKOFF_MS` [2,4,8,16,30]s,
-> `SSE_INITIAL_STATE_RETRY_MS` 200 × 15 attempts (= the 3s budget), `pendingRestartTimers`,
-> `sseEpoch`, `formatSseEventId`/`parseSseLastEventId`, `{ env: process.env }` on the Worker
-> constructor, `.mxd.lock`, and `arrayBuffer()` in scope-worker. Recorded as a **negative result**:
-> this region was never re-checked before, and now it has been, so the next pass can skip it unless
-> daemon.ts changed. FIX-6 (below) fixes bugs in the machinery this section builds — read them
-> together.
+**`shutdown()` order is fixed**: stop every running project's agent, then await residual
+`agentLoopPromises` (bounded 1s), then flush every EventStore. `stopAgent` awaits loop settlement
+with the same 1s bound, symmetric with `stopTask` — that closes the race between
+`POST /projects/:id/stop` returning and the `finally` block's `agent_end` / Phase 2 `done_notified` /
+MCP-disconnect writes, and it is what stops `DELETE /projects` → `rm -rf` racing in-flight writes.
+The final flush matters only for the one genuinely async write path (`copySessionFrom`) now that
+`append` is synchronous, but it is the correct shape and costs nothing.
 
-Three tightly-coupled durability gaps closed so process exits + stops don't lose data:
+⚠️ **Do NOT call `fg.resolve()` in `stopAgent`.** It looks like the tidy way to deal with a
+foreground bash that is ignoring abort, and it moves the command cleanly to background — which
+**breaks the orphan-repair semantic**. A stuck tool is supposed to get bounded grace and then be
+left as an orphan, so `buildSessionRepair` synthesizes the interrupted tool_result on the next
+launch. Several restart tests depend on exactly that.
 
-### shutdown() + stopAgent loop settlement
+⚠️ **The 1s bound was tuned under a single-run assumption and is now a known flake source.** Normal
+load today is 3-4 sub-agents each running the full suite plus root running it too, and under that
+contention `Restart B: crash during bash sleep` intermittently blows its 30s test timeout — it takes
+~2.6s on the runs where it passes, so this is contention rather than a marginal miss. **Triage
+shortcut: the suite's own total run time is a load probe** — measured 300.8s on the failing run
+against 267-269s on passing ones. Check that before suspecting your diff. Raising the test's timeout
+would only hide it; the open question is whether 1s still holds under parallel load
+(`01KYCMVKN14RRX0KK0H2CNTD9P`).
 
-- `shutdown()` order: (1) stopAgent on every running project, (2) await residual `ctx.agentLoopPromises` (bounded 1s), (3) `Promise.all(eventStores.map(s => s.flush()))`. Without (3), fire-and-forget `emitEvent` queued in `agent_end`/`done_notified`/tool_results was lost on worker terminate.
-- `stopAgent` awaits loop settlement (bounded 1s) — symmetric with stopTask. Closes the race between `POST /projects/:id/stop` returning and the finally block's `agent_end` / Phase 2 `done_notified` / MCP disconnect writes. Fixes DELETE /projects → pm.delete → rm -rf racing with in-flight JSONL writes.
-- Both timeouts are defensive: real providers respect abort within ms. A stuck tool (foreground bash ignoring abort) gets bounded grace, then `buildSessionRepair` on next startup synthesizes the interrupted tool_result (orphan-repair contract). **Do NOT call `fg.resolve()` in stopAgent** — that moves bash cleanly to background and breaks the orphan-repair semantic.
-- Restart-crash integration tests (Restart B/I/J/K/N, LC3) rely on shutdown leaving foreground-tool orphans for autoResume to repair. 3s timeout was too slow for 5s test timeouts; 1s is the sweet spot.
-- ⚠️ **Correction (2026-07-25): that 1s was tuned under a single-run assumption.** Normal load is now 3-4 sub-agents each running the full suite plus root running it too, and under that contention `Restart B: crash during bash sleep` intermittently blows its 30s test timeout — it takes ~2.6s on the runs where it passes, so this is contention, not a marginal miss. Read the line above as the historical record of that tradeoff, not as "already tuned". Rate, mechanism and a second (port-collision) instance live in draft `01KYCMVKN14RRX0KK0H2CNTD9P`. **Triage shortcut from that draft: the suite's own total run time is a load probe** — when this test fails, check it before suspecting your diff (measured 2026-07-25: failing run 300.8s vs 267-269s for passing ones; the draft carries the current threshold). The thing to re-examine is whether 1s still holds under parallel load; raising the test's timeout would only hide it.
+**Worker init has a 30s timeout** (`WORKER_INIT_TIMEOUT_MS`, overridable for tests). Without it a
+plugin whose `runtime.ts` hangs at top level hangs daemon boot forever — no log, no 503. On timeout
+the worker is terminated and the promise rejects with a message naming the plugin. Crash-restart
+uses exponential backoff `[2, 4, 8, 16, 30]s`, five attempts, then a circuit break with an SSE
+event; a worker that has been ready for 60s resets its attempt counter.
 
-### Worker init timeout + restart backoff (daemon)
+⚠️ **A `beforeAll` that calls `createDaemon` with a worker must budget ≥ `WORKER_INIT_TIMEOUT_MS`.**
+Otherwise on a real flake the test's own timer fires first and you get a useless "beforeAll timed
+out" with no diagnostic, **masking the daemon's much better "Worker init timed out: <plugin>"
+message that names the actual stuck plugin.** Measured cost of `createDaemon` with one global
+plugin: ~213ms cold, ~137ms warm, ~346ms under 24 CPU stressors plus 4 parallel `bun test` runs —
+worker spawn dominates every time. So 30s has 100×+ headroom; a 15s budget had >40× headroom and
+still produced rare flakes from scheduler stalls, and the test never observed which step stalled.
+**Do not try to fit it under 15s "to fail fast" — fast is meaningless when it fails on the wrong
+timer.** (`createTestToken` is HMAC only, 2-3ms — never the cause of a slow bootstrap.)
 
-- `WORKER_INIT_TIMEOUT_MS = 30_000` default, override via `createDaemon({ workerInitTimeoutMs })` for tests. Without this, a hung plugin `runtime.ts` (top-level `await new Promise(()=>{})`) hangs daemon boot forever — no log, no 503.
-- On timeout: `worker.terminate()` + reject with `"Worker init timed out: <plugin> (>30000ms)"`. Tests use 1.5s override.
-- Exponential backoff on crash-restart: `[2, 4, 8, 16, 30]s`, max 5 attempts, then circuit-break (log + SSE `worker_circuit_broken` event). `STABLE_RESET_MS = 60_000` — a worker that's been ready 60s resets its attempt counter. Per-scope state in `workerRestartState: Map<string, {attempts, lastReadyAt, circuitBroken}>`.
+**`.mxd.lock`** at the dataDir root is acquired with `O_EXCL` and holds `{pid, startedAt, version}`.
+A stale lock whose PID is dead is stolen; a live PID errors out. It is opt-in (`lockDataDir: true`),
+because tests run concurrent daemons on isolated tempdirs. ⚠️ **It refuses even when the lock holds
+our own PID** — a second `createDaemon` in one process is a test bug or a double-init, and surfacing
+it beats tolerating it. Released in `shutdown()` after the workers are gone.
 
-### Test rule: createDaemon-with-worker beforeAll budget ≥ WORKER_INIT_TIMEOUT_MS
+⚠️ **Test mocks must honor the abort signal.** A mock doing `setTimeout(resolve, 10000)` makes
+`stopAgent`'s loop-settlement await wait the full window. Real provider SDKs already respect abort;
+`abortableSleep(ms, req.signal)` brings mocks in line.
 
-When a test's `beforeAll` calls `createDaemon` with a global-scope plugin (i.e., a worker spawn happens inside createDaemon), the test's beforeAll timeout MUST be ≥ the daemon's WORKER_INIT_TIMEOUT_MS (default 30s) — otherwise the test's timer fires first on a real flake and the test reports a useless "beforeAll timed out" with no diagnostic, masking the daemon's much-better "Worker init timed out: <plugin> (>30000ms)" message that names the actual stuck plugin.
+## The self-bootstrap death chain, and the five worker-lifecycle bugs that formed it
 
-Measured cost of `createDaemon` with one global plugin (no plugin runtime, no projects to resume):
-- Cold isolated: ~213ms total (worker spawn ~120ms is dominant; web build ~37ms; plugin discovery ~35ms; rest <15ms)
-- Warm mid-suite: ~137ms total (worker spawn ~107ms)
-- Heavy contention (24 CPU stressors + 4 parallel `bun test`): peak ~346ms total (worker spawn ~209ms)
+Agent commits bad code → daemon restarts → worker crashes → **permanent hang plus a held lock.**
+Five bugs in `daemon.ts` chained into that, and each is worth knowing because the failure is always
+"nothing happens" rather than an error:
 
-Normal headroom is 100×+ over a 30s budget. A 15s budget had >40× headroom and still produced rare flakes from extreme scheduler stalls; the test never observed which step stalled because the test's own timer fired first. **Default rule: pick 30s for any beforeAll that spawns a worker via createDaemon. Don't try to fit it under 15s "to fail fast" — fast is meaningless when it's failing on the wrong timer.**
+- **`worker.onerror` must reject the init promise.** It cleared the init timer and then did nothing;
+  Bun fires `onerror` *and* terminates the worker, so with the timer cleared and no reject, the
+  start promise hung forever with no timeout left to save it. An `initResolved` flag now decides:
+  during init → reject (boot failed, no restart scheduled); after init → schedule a backoff restart.
+- **`shutdown()` must tolerate dead workers.** `postMessage` throws `InvalidStateError` on a
+  terminated Bun Worker, and that throw skipped every remaining worker **and**
+  `releaseDataDirLock` — which is where the held lock in the chain came from. Try/catch per worker;
+  a dead one goes straight to terminate.
+- **A `{type:"error"}` message from the worker must also `terminate()` it.** Rejecting the init
+  promise alone left the thread alive consuming resources.
+- **Restart timers must be tracked and cleared on shutdown.** Bare `setTimeout` restart timers fired
+  *after* the lock was released and spawned zombie workers.
+- **Dead workers must be deleted from the `workers` map** on all three failure paths (timeout,
+  onerror, `{type:"error"}`).
 
-`createTestToken` does NOT generate RSA keys (HMAC JWT secret only) — typically 2-3ms. Not a hypothesis worth investigating for slow daemon-test bootstraps. The dominant cost is always worker spawn.
+⚠️ **Triggering `onerror` during init in a test is not obvious**: a plugin runtime with
+`setTimeout(() => { throw … }, 0)` followed by `await new Promise(r => setTimeout(r, 50))` gives the
+event loop a chance to run the 0ms timer while scope-worker is still in its init phase. The two
+approaches that seem simpler both fail — **`process.exit(1)` does NOT fire `onerror`** (silent
+death, only the timeout catches it), and a module-level `throw` is caught by scope-worker's own
+try/catch and becomes `{type:"error"}` instead.
 
-### tracker.save() atomic via temp + rename
+## Two transport bugs that corrupt silently
 
-- Writes `.{basename}.tmp.{pid}.{time}.{rand}` sibling, then `rename` to `tree.json`. POSIX rename is atomic — crash mid-write leaves old `tree.json` intact, not truncated.
-- `mkdir` before writeFile stays — removing it broke projects added via `pm.sync` (no pre-existing tasks/ dir).
-- **Test gotcha**: temp-file rename races with recursive `rm(dataDir)` during test teardown. The rm lists entries, then rename moves the tmp entry, then rm tries to delete the now-gone tmp → ENOENT. Fix: every test afterEach uses `rm(..., { recursive: true, force: true })`.
+⚠️ **`response.text()` on a proxied response destroys binary data.** scope-worker used it for
+buffered HTTP responses forwarded back to the daemon; `text()` decodes as UTF-8, so **every byte
+above 0x7F becomes U+FFFD** — a 256-byte binary payload inflates to 512 bytes and a PNG header
+(first byte 0x89) becomes garbage. Fixed with `arrayBuffer()` plus a transferable postMessage
+(zero-copy); `new Response()` accepts both `string` and `ArrayBuffer` natively. Request bodies are
+*not* affected today only because they are JSON in practice — a binary request body (plugin file
+upload) needs the same fix on `forwardToWorker`.
 
-### dataDir filesystem lock
+⚠️ **Bun Workers do NOT inherit `process.env` assignments from the parent thread.** They get their
+env from the OS process snapshot at spawn time, so `process.env.X = "Y"` in the main thread — and
+therefore `bunfig.toml [test.env]`, which sets `process.env` — is **invisible** to a file-based
+Worker. The only way through is the `env` option on the Worker constructor, and the daemon passes
+`{ env: process.env }`. Verified empirically, including the confusing part: **data-URL workers DO
+inherit it** (different codepath), so a minimal repro can "prove" the opposite of production.
 
-- `.mxd.lock` at `<dataDir>/.mxd.lock` — JSON `{pid, startedAt, version}`. Acquired via `O_EXCL` (`openSync(..., 'wx')`). Stale locks (dead PID via `process.kill(pid, 0)`) are stolen; live PID → error "already running on dataDir X (PID Y)".
-- `createDaemon({ lockDataDir: true })` — opt-in. Production entry passes `true`; tests pass `false` (concurrent test daemons on isolated tempdirs). Lock released in `shutdown()` AFTER workers are gone.
-- **Semantic**: refuses even when the lock holds our own PID. A second `createDaemon` in the same process is a test bug or double-init — better to surface it.
+## SSE catch-up must survive a restart: epoch-prefix every event id
 
-### Test mock abort awareness
+**Symptom: after a daemon restart, an open page stays blank until F5.** Per-lens seq counters restart
+at 0 on every boot. There was already a guard for a pre-restart cursor *beyond* the new tail, but
+not for one that falls *inside* the new incarnation's refilled range — and after a real restart
+agents auto-resume and stream, so the buffer refills past the browser's low cursor before it
+reconnects. `getEventsSince` then returned a wrong-epoch slice, catch-up was marked done, and the
+full initial state was never sent.
 
-- Integration test mocks using `setTimeout(resolve, 10000)` / `5000` now call `abortableSleep(ms, req.signal)` helper in `runtime.test.ts`. Without signal awareness, stopAgent's loop-settlement await would wait the full sleep window. Real providers (Anthropic, OpenAI SDKs) already respect abort; this brings mocks in line.
+Every SSE `id:` is now `<epoch>-<seq>` where the epoch is minted once per `createDaemon`. Catch-up
+runs **only** when the cursor's epoch matches; a legacy bare-numeric cursor, a foreign epoch and
+garbage all fall through to full initial state. ⚠️ **`parseSseLastEventId` splits on the LAST dash**,
+because the epoch may contain dashes. ⚠️ **Both `id:` emit sites must use the formatter** — the live
+relay and the catch-up replay — since one bare-seq emit poisons the client's NEXT reconnect cursor.
+The client needs zero changes: EventSource echoes `Last-Event-ID` opaquely and only the server
+parses it.
 
-## FIX-6 (2026-06-10) — worker init crash hang + shutdown throw (daemon.ts)
+Two adjacent restart-window holes closed with it:
 
-Five worker-lifecycle bugs in `src/daemon.ts`. Together they form the self-bootstrap death
-chain: agent commits bad code → daemon restarts → worker crashes → permanent hang + lock.
+⚠️ **There is ONE `worker.onmessage`, installed before init.** The old code used a temporary
+init-only handler and swapped in the runtime handler after `ready` — but **the worker posts
+`sse_event`s DURING init** (autoResume crash recovery runs with `onBroadcast` already wired), so
+those were dropped silently. Harmless on first boot with no clients; on a worker auto-restart, SSE
+clients are still connected daemon-side and miss every recovery event.
 
-### R8-A#1 — onerror rejects init promise (was: permanent hang)
-`worker.onerror` cleared `initTimer` but never called `reject()`. Bun fires onerror AND
-terminates the worker on unhandled errors. With the timer cleared and no reject, the
-`startWorkerForPlugin` promise hung forever — no timeout fallback, no rejection.
-Fix: `initResolved` boolean tracks whether init succeeded. onerror during init → reject
-(daemon boot failed, no restart scheduled). onerror after init → schedule restart with
-backoff (normal runtime crash recovery).
-
-### R8-A#2 — shutdown() tolerates dead workers (was: thrown InvalidStateError)
-`sw.worker.postMessage({ type: "shutdown" })` throws `InvalidStateError` on a terminated
-Bun Worker. The throw skipped remaining workers + `releaseDataDirLock`. Fix: try/catch
-per worker. Dead workers skip graceful-shutdown wait, go straight to terminate.
-
-### R8-A#9a — {type:"error"} terminates worker (was: thread leak)
-scope-worker catches init errors and posts `{type:"error"}`. Daemon rejected the init
-promise but never called `worker.terminate()` — the worker thread stayed alive consuming
-resources. Fix: terminate + delete from workers map.
-
-### R8-A#9b — restart timers cleared on shutdown (was: zombie workers)
-`scheduleWorkerRestart` used bare `setTimeout` without storing the timer ID. After shutdown
-released the lock, pending restart timers fired and spawned zombie workers. Fix:
-`pendingRestartTimers: Set<Timer>` tracks all restart timers. `shutdown()` clears them
-before touching workers.
-
-### R8-A#9c — dead workers cleaned from workers map
-Timeout, onerror, and {type:"error"} all left dead `ScopeWorker` entries in the `workers`
-map. Fix: `workers.delete(scopeName)` in all three failure paths.
-
-### Test technique: triggering onerror during init
-A plugin runtime with `setTimeout(() => { throw ... }, 0)` + `await new Promise(r =>
-setTimeout(r, 50))` fires an unhandled throw DURING scope-worker's init phase (before
-"ready" is sent). The top-level await gives the event loop a chance to process the 0ms
-timer, which crashes the worker and fires `worker.onerror` on the parent. This is the
-only reliable way to trigger onerror during init in tests — `process.exit(1)` does NOT
-fire onerror (silent death, caught by timeout), and module-level `throw` is caught by
-scope-worker's try/catch (posts `{type:"error"}`, not onerror).
-
-## FIX-9 (2026-06-10) — binary response proxy: scope-worker .text() corrupts bytes >0x7F
-
-`scope-worker.ts` used `response.text()` for buffered HTTP responses forwarded back to the
-daemon. `text()` decodes bytes as UTF-8 — every byte >0x7F becomes U+FFFD (EF BF BD). A 256-byte
-binary payload inflated to 512 bytes; PNG headers (0x89 first byte) became garbage.
-
-**Fix**: `response.arrayBuffer()` + postMessage with transferable `[responseBody]` (zero-copy).
-`daemon.ts` `ScopeWorker.pending` type widened from `body: string` to `body: string | ArrayBuffer`
-— `new Response()` constructor handles both natively. `scope-worker.test.ts` `workerFetch` helper
-decodes ArrayBuffer→string for JSON test convenience.
-
-**Request bodies are NOT affected** — `forwardToWorker` already uses `request.text()` for the
-outgoing request, but request bodies in practice are JSON (text). If binary request bodies are ever
-needed (file upload via plugin route), that's a separate fix (`request.arrayBuffer()` in
-`forwardToWorker` + `ArrayBuffer` in the worker's `new Request(url, { body })`).
-
-Tests: `src/binary-proxy.test.ts` (3 tests) — full byte range 0x00–0xFF, PNG header, text
-passthrough. Daemon integration: plugin registers routes serving binary, request goes through
-daemon→worker→plugin route→worker→daemon pipeline.
-
-## Audit FU3 [CRITICAL] — SSE catch-up correct across daemon/worker restarts (2026-07-07)
-
-The LIVE "daemon restart → open page blank until F5" bug + two adjacent restart-window
-holes. All in `src/daemon.ts`. Three findings, one class: after a restart the UI silently
-diverges from server state.
-
-### Finding 1 — epoch-prefix every SSE id (the live blank-until-F5 bug)
-Per-lens seq counters restart at 0 on every daemon boot. Audit R7 P2.9 added a stale-ahead
-check (`getEventsSinceFromBuffer`: `lastSeqId > lastEntry.seqId → null`) that catches a
-pre-restart cursor BEYOND the new tail — but NOT a cursor whose seq falls INSIDE the new
-incarnation's refilled range. After a real restart agents auto-resume + stream, so the buffer
-refills PAST the browser's low pre-restart cursor before it reconnects → `getEventsSince`
-returns a wrong-epoch slice → `catchUpDone=true` → full initial state skipped → stale UI until F5.
-P2.9's own comment called epoch ids "the proper fix, out of scope"; FU3 shipped it.
-
-- Every SSE `id:` is now `<epoch>-<seq>`, epoch = `String(Date.now())` minted once per
-  `createDaemon` (const `sseEpoch`). Two pure exported helpers at module scope:
-  `formatSseEventId(epoch, seqId)` and `parseSseLastEventId(header)`.
-- `parseSseLastEventId`: `<epoch>-<seq>` → `{epoch, seq}` (split on the LAST dash — epoch may
-  contain dashes); bare numeric (pre-epoch daemon cursor) → `{epoch: null, seq}`; garbage → null.
-- `/events` catch-up runs ONLY when `lastCursor.epoch === sseEpoch`. `epoch:null` (legacy),
-  foreign epoch (previous incarnation), and null (garbage) all fall through to full initial state.
-- `getEventsSinceFromBuffer` is unchanged + still reasons WITHIN one incarnation; the epoch
-  layer sits above it. Both `id:` emit sites (live relay ~837, catch-up replay ~1886) use
-  `formatSseEventId` — a bare-seq emit would poison the client's NEXT reconnect cursor.
-- Client needs ZERO changes: EventSource echoes `Last-Event-ID` opaquely; only the server parses.
-
-### Finding 2 — ONE unified worker.onmessage, installed before init
-The old code used a temp init-only handler (loaded/ready/error) and swapped in the runtime
-handler AFTER `ready`. But the worker posts `sse_event`s DURING init (autoResumeProjects crash
-recovery, `onBroadcast` wired before `autoResumeProjects` in scope-worker.ts) → dropped silently.
-Harmless on first boot (no clients), HIGH impact on worker auto-restart (SSE clients still
-connected daemon-side miss every recovery event). Fix: `setupWorkerMessageHandler` →
-`handleWorkerRuntimeMessage(pluginName, scopeWorker, msg)`, called from the SINGLE
-`worker.onmessage` for any non-init-protocol message (`else` branch after loaded/ready/error).
-`shutdown_complete` is unaffected — it uses `addEventListener`, not `onmessage`.
-
-### Finding 3 — /events initial-state polls worker readiness (restart-gap reconnect)
-`workerKeyForProjectScope` (one-shot `workers.has → undefined`) → `awaitLensWorkerReady(projectId,
-scope, signal)`: no plugin for the lens → undefined immediately (permanent; auth-only `scope=""`);
-plugin exists but worker not ready → poll `SSE_INITIAL_STATE_RETRY_ATTEMPTS(15) ×
-SSE_INITIAL_STATE_RETRY_MS(200)` = 3s, aborts on client disconnect. A client connecting during
-the ~2s worker-restart backoff+init previously got a live stream with NO tree until the next
-unrelated event. Budget is 3s not the spec's 2s ON PURPOSE: the 2s backoff expires exactly as the
-restarted worker BEGINS init, so a 2s poll guarantees a miss for early-gap clients; spec Test 4
-asserts arrival "within 3s". Ready worker resolves on first check, zero delay.
-
-### Tests
-- `src/sse-catchup.test.ts` (7 integration, REAL daemon+worker via in-process `daemon.fetch`):
-  spec Tests 1-4 + the live old-epoch-cursor-INSIDE-new-range regression + same-epoch replay
-  still works + same-epoch-ahead-cursor. Test plugin emits an `init_probe` sse_event at MODULE
-  IMPORT time (fires inside the worker's init sequence, before `ready` — models
-  autoResumeProjects timing) and exposes `/test-emit` (emit via ctx.onBroadcast) + `/test-crash`
-  (unhandled throw → onerror → auto-restart, the FIX-6 technique). An `SseReader` parses `id:`/
-  `data:` frames from the stream body with a `waitFor(pred, timeout)`.
-- `src/sse-ring-buffer.test.ts` (+6 unit): formatSseEventId/parseSseLastEventId incl. legacy
-  bare-numeric → epoch:null, last-dash split, garbage → null.
-- Full suite 2447 pass / 0 fail (baseline 2435 + 12). typecheck + check:ci clean.
-- Verified the LIVE correspondence first: pre-fix `getEventsSinceFromBuffer(buf 1..10, oldLEI=5)`
-  returned a 5-event wrong-epoch slice (bug); the spec's literal repro (LEI=100) was already
-  null via P2.9. So the epoch variant — NOT the literal one — is today's blank-until-F5 symptom.
-
-### Pre-existing base-branch gate failures (NOT from this work — flagged to root)
-`bash scripts/check-i18n.sh` fails on 3 bare strings in `web/MarkdownText.test.tsx` /
-`web/markdown-table.test.ts` (from markdown commit 32b4f440, ancestor of this branch). My files
-are `.ts` (no JSX). typecheck + check:ci pass with my changes; root should clean i18n before the
-final main commit.
-
-## Bun Worker env isolation — process.env NOT inherited (2026-07-23)
-
-**Bun Workers do NOT inherit `process.env` assignments from the parent thread.** Workers
-get their own env from the OS process snapshot at spawn time. `process.env.X = "Y"` in
-the main thread is INVISIBLE to file-based Workers. This applies to BOTH:
-- Direct `process.env` assignment in JS
-- `bunfig.toml [test.env]` settings (which set process.env, not OS env)
-
-**The ONLY way to pass env vars to a Bun Worker**: the `env` option on the Worker
-constructor: `new Worker(url, { env: { KEY: "value" } })`. Verified empirically: data-URL
-workers DO inherit process.env (different codepath), file-based workers do NOT.
-
-**Fix applied**: `src/daemon.ts` Worker constructor passes `{ env: process.env as Record<string, string> }`
-so workers inherit runtime env vars. This is correct for production too — workers SHOULD
-see the same env as the main thread.
+⚠️ **`/events` initial state polls for worker readiness for 3s, and the 3s is deliberate, not the
+spec's 2s.** The restart backoff is 2s and expires exactly as the restarted worker *begins* init, so
+a 2s poll guarantees a miss for early-gap clients. A ready worker resolves on the first check with
+zero delay; a lens with no plugin at all resolves immediately as undefined.
 
 ---
 # Plugin System
 ---
 
-## Plugin Architecture
-
-### Three-Layer Split
-- **Daemon** (`src/daemon.ts`): HTTP shell, auth, config, project CRUD, plugin discovery, worker management, SSE relay (ring buffer + Last-Event-ID), web build (Bun.build + importmap)
-- **Runtime** (`src/runtime.ts`): Plugin-agnostic. ZERO Matrix imports. Receives `buildScopeOpts` via config.
-- **Plugin** (`.mxd/plugin/`): Matrix-specific — manifest, tools, prompt, hooks, web UI component
-
-### ScopeOpts on RuntimeContext
-
-`ctx.scopeOpts: Map<projectId, ScopeOpts<T>>` — per-project scope configuration. `buildMatrixScopeOpts()`
-is the ONE place that knows Matrix tools + prompt + hooks.
-
-**The hook list is NOT reproduced here.** It lives in `src/runtime/context.ts` and it has grown
-several times (`onTaskDelete`, `seedTree`, `onScopeResume` were all added after this section was
-written, and two hooks changed arity and became required). A copy in this file would go stale
-silently — there is no compiler between the two. Read the interface; the notes below are only for
-the parts the type signature does not tell you:
-
-- **Hooks are named by EVENT, never by resource.** `onTaskDelete`, not `removeWorkspace` — a name
-  like the latter presupposes that tasks HAVE workspaces, which is a plugin-specific assumption the
-  runtime must not encode. Prose comments may say "workspace"; hook NAMES may not.
-- **`seedTree` vs `onScopeResume`**: seedTree runs once, only when a project's tree is first created;
-  onScopeResume runs on every startup. They are the fresh-install and the every-boot halves of
-  "the plugin gets a chance to touch its tree".
-- **`onDone` returns void**, and the runtime hands it the raw done input as an opaque record — see
-  *The done() payload* § The boundary for why that opacity is load-bearing.
-- Everything optional is genuinely optional: the runtime does `opts.hook?.(...)` and attaches no
-  meaning to absence.
-
-### BaseTaskNode / TaskNode Split
-
-Runtime uses `BaseTaskNode` **at the type level**: the `ScopeOpts<T>` hook interfaces and the
-`PluginTypes` generic are parameterized over it. Matrix extends it — `TaskNode extends BaseTaskNode`
-adds description, branch, worktreePath, cwd, color, costUsd, budgetUsd, resultRounds. The generic
-flows through all `ScopeOpts<T>` hooks, so each plugin gets its own node type back, type-safe.
-
-⚠️ **Two details in the original wording are superseded.** It said BaseTaskNode is
-"(id, parentId, children, title, session)" and that Matrix adds "status" — `status` and `metadata`
-were promoted UP to BaseTaskNode (they are genuinely runtime-generic: the runtime inits, mutates and
-resumes on status). See *The node model* § Later. It also said `PluginTypes { node; done }` and
-`MatrixPluginTypes binds done: MatrixDoneData` — **the `done` member of PluginTypes and the
-`MatrixDoneData` type were both deleted**; done content is opaque to the runtime now. See
-*The done() payload* § Step 1.4.
-
-CAVEAT (Audit A): only the *hook interfaces* are generic. The concrete `TaskTracker` (`src/task-tracker.ts`) still stores Matrix's `TreeNode` (`TaskNode | GeneralNode`) directly — it is NOT generic over `BaseTaskNode`. "Runtime uses BaseTaskNode" is aspirational for the tracker; full tracker generalization is future work (plugin-extraction track).
-
-### cwd / AgentRequest
-
-- `node.cwd` is source of truth (persistent, survives restart). Bash `cd` updates it directly. Tools read via `getTaskCwd()` (node.cwd → node.worktreePath fallback).
-- `AgentRequest.buildSystemPrompt: () => SystemPrompt` — single entry point; provider loop owns resume-vs-refresh internally.
-
-### get_logs Availability
-
-Changed from `"both"` to `"external"` — agents don't need to read other tasks' JSONL. get_logs is for external MCP clients (send → yield → get_logs workflow).
-
-### Worker Communication
-
-- Shell → Worker: HTTP request serialized via postMessage → worker's Hono app.fetch() → response back. `text/event-stream` detected; chunks stream via postMessage.
-- Worker → Shell: `ctx.onBroadcast` hook → postMessage sse_event → shell relays to SSE clients.
-- Shell owns: auth, global config, SSE connections, plugin discovery, web build, `/plugin-assets/<pluginName>/` asset serving.
-- Worker owns: routes, agent loop, tools, events, JSONL, per-project tracker.
-
-### Plugin Manifest
-
-`PluginManifest` (src/plugin.ts): `{ name, scope: "global" | "project", web?, runtime?, onProjectInit? }`. Matrix plugin at `.mxd/plugin/index.ts` with `{ name: "matrix", scope: "global" }` — not special-cased; discovered through the same scan as any plugin.
-
-### File Ownership
-
-```
-<repo>/.mxd/
-  config.json        ← daemon (repo-scope project config)
-  plugin/            ← daemon reads for discovery
-    index.ts         ← plugin manifest
-    runtime.ts       ← plugin ScopeOpts (worker)
-    web/             ← plugin React components (shell imports)
-  hooks/             ← matrix plugin runtime
-  memory.md          ← matrix plugin runtime
-```
-
-⚠️ **`tree.json` used to be listed here and that was wrong** — it is NOT in the repo. It is daemon
-runtime state at `~/.mxd/projects/<id>/plugin/matrix/tree.json`, deliberately outside git because the
-tree mutates constantly and committing it would pollute history. The listing above contradicted
-*Unified Storage Layout*, which has always said so. Only the four repo-tracked things are here now;
-everything runtime lives under `~/.mxd/` — same split, stated once per side.
-
-### Addressing: `<scope>:<project>`
-
-- `matrix:story1001` = story1001 in dev mode (matrix worker handles it)
-- `story1001:story1001` = story1001 in product mode (story1001 worker)
-- Inside worker: scope is implicit (worker IS the scope), just `projectId`
-- Cross-scope: worker escalates to shell → shell routes to correct worker
-
-### ProjectStore
-
-Worker's read-only project registry. `sync(projects)` from daemon; `get`/`list`/`has` read-only. No disk access, no CRUD. `createApp({ projects })` injects at construction. `ProjectManager` (daemon-only) owns disk persistence + CRUD.
-
-### Test patterns
-
-- Runtime tests: `createApp({ dataDir, projects: [...] })` — inject directly, no HTTP.
-- Daemon tests: `createDaemon({ dataDir })` + `daemon.fetch(new Request("/projects", { method: "POST", body: ... }))`.
-- Tests needing git worktrees: `initTestProject(path)` helper.
-- Matrix scope auto-injected via `createMatrixApp` (test-utils).
-
-### Key Invariants
-- Shell/src → ZERO imports from `.mxd/plugin/` (delete plugin → shell still compiles)
-- Plugin web → ZERO imports from `../../../src/` (plugin is independent)
-- Plugin web imports via `@mxd/auth-context`, `@mxd/types` (importmap shared modules)
-- Runtime throws if `buildScopeOpts` not provided (no silent fallback)
-- Shell web UI (`web/`) is auth + project/scope selector. Plugin UI via `React.lazy(() => import(pluginWebPath))` (not iframe).
-
-## Plugin URL Namespace `/api/<plugin>/*`
-
-Plugin-owned routes live under `/api/<plugin-name>/*` on the wire. Daemon strips the prefix; worker serves routes as-if-at-root. Shell wraps nothing — explicit URLs over hidden rewrites.
-
-### Single source of truth
-`src/plugin.ts → pluginApiPrefix(name)` returns `/api/<name>`. Imported by:
-- `src/daemon.ts` — the `/api/:plugin/*` router branch strips this prefix.
-- `src/cli.ts` — `MATRIX_API = pluginApiPrefix("matrix")` prepended to every plugin-owned CLI call.
-- `.mxd/plugin/web/api.ts` — `PROJECT_PREFIX = \`${pluginApiPrefix("matrix")}/projects\``; every `api.tasks/taskMessage/etc` builder produces namespaced URLs.
-- `web/runtime-types.ts` — re-export so plugin web code gets it via the `@mxd/types` importmap alias.
-
-Any format change (`/api/...` → `/v1/plugins/...`) propagates atomically across all four sites.
-
-### Daemon routing (src/daemon.ts)
-- `app.all("/api/:plugin/*", ...)` strips the prefix, rebuilds a Request with the rewritten URL + preserved method/headers/body, forwards to that plugin's worker. Unknown plugin → 404, worker missing → 503.
-- The old `app.all("*", ...)` catch-all is **removed**. Unprefixed plugin paths (`/projects/:id/tasks` etc.) return 404 — no silent fallback to "first global worker".
-- `/version` and `/stats` got explicit daemon-level forwarders (same pattern as `/health?check_model=true`) because they were previously served only via the catch-all.
-
-### Daemon-owned paths (unchanged — stay at root)
-Plugin web + CLI call these directly, no prefix:
-- `/auth/*`, `/health`, `/version`, `/stats`, `/plugins`, `/global-context`, `/events` (SSE)
-- `/projects` (CRUD: list/create/get/patch/delete)
-- `/projects/:id` bare (project info)
-- `/projects/:id/config*` (three-layer config)
-- `/vendor/*`, `/app/*`, `/restart-daemon`
-
-### Plugin-owned paths (go through `/api/matrix/*`)
-Everything else under `/projects/:id/` (tasks, agent, events activity log, clarifications, stop, compact, sessions, background, debug) + standalone `/mcp` + `/mock-showcase`.
-
-### Plugin code discipline
-Plugin web uses `api.ts` builders for plugin routes — everything funnels through one file, `PROJECT_PREFIX` is the one line to change. Plugin daemon calls stay raw (`authFetch("/auth/stream-token")`, `authFetch("/global-context")`, `authFetch(\`/projects/${id}\`)`) — plugin is explicit about whose route it's calling. No shell wrapper, no pass-through list, no magic.
-
-`/mock-showcase` is a standalone plugin route outside the `/projects` tree — `.mxd/plugin/web/MockShowcase.tsx` inlines `${pluginApiPrefix("matrix")}/mock-showcase` directly.
-
-### External MCP clients
-`POST /mcp` moved to `/api/matrix/mcp`. External MCP clients (Claude Desktop, etc.) configured against the old URL break on this change. Intentional — no deprecation alias per design.
-
-### Tests (src/plugin-url-namespace.test.ts)
-Covers pluginApiPrefix invariant, every api.ts builder produces the prefix, daemon forwards correctly with body/query preserved, unknown plugin 404, bare-plugin-path 404, daemon routes untouched. Plus daemon-integration.test.ts + daemon-plugin-ui.test.ts were migrated to use namespaced URLs (new plugin name "test-matrix" → `/api/test-matrix/*`).
-
-### Why this shape (over alternatives)
-- Not a shell authFetch wrapper: wrapper would need a daemon-route passthrough list → shell couples to daemon's internal routing table. Fragile if daemon adds routes.
-- Not plugin-via-props data flow: cleaner long-term but 100+ LOC scope creep across event stream / props plumbing — separate follow-up.
-- Explicit URL construction at each layer: plugin author sees exactly what hits the wire; no hidden rewriting; tests assert exact strings.
-
-## Plugin extraction — Chunk 1: buildMatrixScopeOpts → .mxd/plugin/, worktree via hooks (2026-06-05)
-
-First chunk of "matrix → plugin" physical extraction. Runtime (`src/runtime/*`) no longer
-CONTAINS matrix scope logic nor imports `WorktreeManager`.
-
-**Moved**: `buildMatrixScopeOpts` + `MatrixDoneData`/`MatrixPluginTypes` → `.mxd/plugin/scope-opts.ts`.
-The factory is self-contained; runtime only ever invokes it through the `ScopeOpts` hook
-interface, never by name. Leaf utilities (WorktreeManager, createOrchestratorTools,
-buildSystemPrompt, buildWorkContextContent, buildSummarizationInstruction, slugify,
-McpClientManager) stay in `src/` as neutral building blocks — the plugin imports them
-(plugin→src is the allowed direction). The LEAK was buildMatrixScopeOpts living in
-runtime/agent-lifecycle.ts, NOT the utils.
-
-**worktree-manager.ts stays in src/** (Option a — user-confirmed). Stateless git util, zero
-matrix domain knowledge; both the plugin scope-opts AND orchestrator-tools.ts (matrix code
-still in src/) import it. Re-evaluate its final home when orchestrator-tools moves (later chunk).
-
-**Worktree ops in runtime routes → hooks** (`src/runtime/routes/tasks.ts`):
-- Reactivation (verify/closed relaunch): now calls existing `scopeOpts.beforeChildLaunch(node,
-  tracker, projectPath)` — semantics matched the inline worktree-create exactly. Kept the
-  parent-no-branch 400 pre-check for behavior parity (hook throws → 500 otherwise).
-- DELETE route: new hook `ScopeOpts.onTaskDelete?(node, projectPath)`. Matrix implements via
-  `WorktreeManager.remove`. Route bridges the `removeWorktree(taskId, slug)` task-operations
-  callback contract by looking up the node (`tracker.getTask(id)` — still present: cleanup runs
-  before `tracker.remove`, and delete only works on leaf tasks). closeTaskOp/resetTaskOp worktree
-  removal stays in orchestrator-tools.ts (matrix code) — out of scope this chunk.
-
-**Hook naming rule (user)**: name lifecycle hooks by the EVENT, not the resource. `removeWorkspace`
-was REJECTED — "workspace" presupposes tasks HAVE workspaces, a plugin-specific assumption;
-runtime's BaseTaskNode is pure structure. Chose `onTaskDelete` (parallels onLaunch/onDone). Prose
-comments may use "workspace" as a generic concept; the constraint is only on the hook/API NAME —
-no "WorktreeManager"/"worktree" token in any runtime hook/API name.
-
-**Invariants held**: `grep WorktreeManager src/runtime/` → zero. Zero production (non-test) imports
-from `.mxd/plugin/` in src/ (test-utils + *.test.ts may import plugin — test infra). `bun test`
-green, `bun run typecheck` clean. test-utils/matrix-scope.ts only changed its import path to the
-new plugin location (test infra → plugin is allowed).
-
-## Narrowed plugin messaging API — deliverToNode + listNodes (2026-06-07)
-
-Two stable, named primitives in `src/resource-registry.ts` that a plugin's
-tools compose for intra-project peer messaging WITHOUT importing the internal
-singleton accessors (`getTracker` / `deliverMessage`) directly. The SDK
-(task 01KTJ4EW8T3B1YWNV9JKGGZJW2) re-exports exactly these two;
-`getTracker`/`deliverMessage` stay internal to matrix.
-
-- `deliverToNode(projectId, nodeId, msg, opts?): Promise<void>` — a thin
-  stable-named wrapper over the ONE existing `deliverMessage` (the
-  projectId-handle side-effect). NOT a fork — it calls the single delivery
-  path verbatim (JSONL persist → enqueue to a live peer's queue → auto-launch
-  an idle peer unless `opts.quiet`). The "wake an idle recipient" semantic is
-  exactly what a plugin wants. NO permission policy baked in (unlike matrix's
-  `send_message` ancestor/sub-task restriction — that's matrix policy);
-  intra-project delivery is unrestricted, the plugin's tools own routing.
-- `listNodes(projectId): ReadonlyArray<BaseTaskNode>` — fresh read-only
-  snapshot of the project's LAUNCHABLE nodes (`tracker.allNodes().filter(isTask)`).
-  General (non-launchable) nodes — matrix folders, a plugin's grouping nodes —
-  are excluded: you can only deliver to a launchable node, and `BaseTaskNode`
-  is the runtime-generic launchable shape every plugin's node type extends.
-  Returns a FRESH array each call (filter creates a new array): mutating the
-  returned array does not affect the tracker. The plugin resolves group
-  membership + name→node from each node's plugin-owned `metadata` (added to
-  `BaseTaskNode` by the node-model generalization task).
-
-### ⭐ Singleton constraint — the whole point
-Both operate on the SAME in-process tracker/session registry the agent loop
-uses (the module-level `_ctx` in resource-registry, initialized once at first
-agent launch via `R.initResourceRegistry(ctx)` in agent-lifecycle.ts:183).
-That shared singleton is the only reason a delivered message ARRIVES at a live
-peer (enqueued / auto-launched) instead of being silently dropped. A plugin
-that vendored its OWN copy of resource-registry would get a DIFFERENT `_ctx` →
-a different tracker → delivery would no-op with no error. So the SDK MUST
-re-export from this single live module, never bundle a copy. This is the same
-finding the SDK task encodes ("thin re-export of the live install, never a
-standalone bundle").
-
-### Why narrow (not just expose getTracker/deliverMessage)
-dchat was forced to import `getTracker` + `deliverMessage` (resource-registry's
-own header declares it matrix-tool-handler INTERNAL). The narrowing is
-SEMANTIC: `deliverToNode` exposes only delivery (can't be misused);
-`listNodes` exposes a read-only snapshot (can't mutate the tracker). Versus
-`getTracker` = full mutable tracker access, `deliverMessage` = raw path. The
-SDK re-exports the narrow two; the plugin never touches resource-registry.
-
-### Tests — `src/plugin-messaging.test.ts` (integration, mock provider)
-Real agent loop (createMatrixApp + lightweight non-matrix "peer" scope, no
-worktrees) so the registry is wired exactly as in production. (1) A dummy
-plugin tool `send_to_peer` (invoked from inside a running root agent) calls
-`deliverToNode` to an idle peer child → the peer AUTO-LAUNCHES, reads the
-delivered instruction, done()s → verify; asserts the delivered user message is
-in the peer's JSONL AND `registryGetTracker(projectId) === app.ctx.trackers.get(projectId)`
-(same singleton). (2) `listNodes` returns root + task children, excludes a
-folder; pushing to the returned array leaves a later call + the tracker
-unchanged. (3) broadcast: loop `listNodes` → `deliverToNode` to each OTHER
-member (exclude root + self) → both peers verify, self stays pending with no
-JSONL ("none to self"). NB: in test 1 the sender root YIELDS after the tool
-(single-turn instruction → mock end_turn) so it stays alive and the peer's
-later task_complete enqueues instead of relaunching it.
-
-### Rendering gap NOT solved here
-A plugin still can't define how its own messages render (`formatQueueMessage`
-hardcodes an XML wrapper per built-in source). Tracked as low-pri draft
-01KTJ5F5XTM32YNS6RSPW7R5PF; dchat smuggles via `source:"user"` until then.
-
-## Additive project-scoped plugin routing — dual lenses (2026-06-08)
-
-A project that ships its own `.mxd/plugin/` is served by BOTH its own scope AND
-the global matrix scope, **ADDITIVELY**. `matrix:<id>` (dev lens — coding/
-orchestration) and `<own>:<id>` (product lens — its own worker) **coexist**, on
-separate per-scope dataRoots. Shipping a plugin ADDS a lens; it NEVER removes the
-matrix dev lens.
-
-### Why additive, NOT exclusive (the lesson — don't re-pollute)
-The first attempt (commit `171a3bf`, **REVERTED by `7b17a43`**) made ownership
-EXCLUSIVE: `pluginForProject = own ?? global` (single owner) — matrix STOPPED
-serving a project that shipped its own plugin. That was WRONG:
-- **`<scope>:<project>` is a TWO-PART address — its existence PROVES dual.** If a
-  project mapped to one scope, the prefix would be redundant. Exclusive collapsed
-  it to `scope = f(project)`.
-- The original design is **"Parallel Run Loops — alongside, NOT override."**
-  Exclusive turned alongside into override.
-- Self-bootstrap REQUIRES coexistence (matrix is its own product; "product is a
-  dev tool" only holds if a project opens in both lenses at once).
-- per-plugin dataRoot (`projects/<id>/plugin/<plugin>/`) was built for multiple
-  plugins coexisting on one project — wasted under exclusive.
-
-If any routing decision tempts you toward "a project belongs to ONE plugin",
-that's the bug returning. Additive, never exclusive.
-
-### Daemon-core routing (`src/daemon.ts`)
-- `workerKeyForPlugin(plugin)`: global → `name`; project → `<projectId>:<name>`
-  (two projects can ship a same-named plugin → distinct workers). This worker KEY
-  uses `:`; it is NOT the URL scope segment (which is the bare plugin NAME).
-- `scopesForProject(id)` = all globals ∪ the project's own plugin (if any).
-  **GLOBALS-FIRST** ordering → default lens is matrix/dev. REPLACES the reverted
-  exclusive `pluginForProject` single-owner. Used by DELETE fan-out + shell.
-- `projectsForPlugin(plugin)`: **global → ALL projects** (matrix is every
-  project's dev lens, MUST know them all to resume/build scope opts); project →
-  its own project only. No double-resume: the lenses live in DISTINCT dataRoots,
-  so each worker only resumes the tree under its own dataRoot. (The reverted
-  version filtered globals to "only-owned" — dropped; that was a patch for a
-  non-problem, dataRoot already isolates.)
-- One worker per plugin (spawn loop over ALL plugins, not globals-only).
-- `onProjectInit` (startup) runs per `projectsForPlugin` → matrix scaffolds EVERY
-  project's dev lens (memory.md, hooks) — restores pre-exclusive behavior.
-- DELETE `/projects/:id` **FANS OUT** a `/stop` to every scope serving the
-  project (a running agent in ANY lens must stop before data removal).
-- `/api/:plugin/*` resolution (reused verbatim from the reverted infra, correct
-  for additive): a GLOBAL candidate named `<plugin>` is used directly → matrix
-  serves any project; else the projectId in the stripped `/projects/<id>/...`
-  path selects the project-scoped worker.
-- `firstGlobalWorkerKey()` (ready-checked) for project-agnostic routes
-  (health, /version, /stats). `firstGlobalPluginName()` = default SSE scope.
-
-### SSE is scope-aware — a "lens" = (projectId, scope)
-`scope` = the plugin NAME (URL `<pluginScope>`). A project has a DISTINCT tree
-per lens, so each lens has its own SSE stream:
-- `ShellSSEClient` carries `scope`; `/events?projectId=&scope=` (scope defaults
-  to `firstGlobalPluginName()` ?? `""` — `""` keeps an auth-only/plugin-less
-  daemon's `/events` opening 200 with no initial tree, the old behavior).
-- seqId counter + ring buffer keyed by `lensKey(projectId, scope)` =
-  `${projectId}\u0000${scope}` (`\u0000` can't appear in a ULID id or a
-  `[A-Za-z0-9_-]` name; distinct from the worker key's `:`).
-- The `sse_event` relay derives the lens from the EMITTING worker: the worker
-  serving `pluginName` → events belong to `(projectId, pluginName)`. Only clients
-  matching `(projectId, scope)` receive them → a product viewer never sees the
-  dev tree and vice versa. `setupWorkerMessageHandler` gets the plugin NAME.
-- Initial tree/clarifications come from `workerKeyForProjectScope(projectId,
-  scope)` (the VIEWED lens's worker), not "first global".
-- DELETE cleans every `${projectId}\u0000*` lens buffer.
-- Single-lens projects (no own plugin) → one worker emits scope=matrix → one
-  stream → **identical to pre-additive behavior** (the regression bar).
-
-### Shell multi-lens (`web/`)
-- `web/plugin-scope.ts → pluginsForProject(plugins, projectId)` = all globals ∪
-  the project's own plugin, **globals-first** (default = dev/matrix). Mirrors the
-  daemon `scopesForProject`.
-- `ShellApp.tsx`: `availablePlugins = pluginsFor(projectId)` feeds the scope
-  SELECTOR (lists BOTH lenses for a project with its own plugin); `scopeIsValid`
-  + URL normalization rewrite a missing/stale `<pluginScope>` to a valid lens;
-  `resolvePlugin(scope)` disambiguates same-named project plugins by projectId
-  (loads the right web bundle). `<PluginUI key={projectId/scope}>` gets a new
-  `scope` prop.
-- Plugin web: `PluginProps += scope`; threaded Plugin → PluginShell →
-  ProjectContent → `useSSE(projectId, scope, ...)` → `/events?...&scope=`.
-  `useSSE` guards `if (!projectId || !scope) return` and includes `scope` in deps
-  (lens switch → reconnect).
-
-### DEFAULT LENS = dev-first (matrix), decided
-Globals-first ordering. Rationale (orchestrator, 2026-06-08): additive
-consistency (matrix is the foundation lens every project always has, the product
-lens is the ADDITION — defaulting to product would make first-load identical to
-the reverted exclusive model and HIDE the addition; the default should TEACH the
-model), robustness (matrix dev lens always works; product workers are mid-build),
-dev-workflow fit. A FUTURE per-project configurable default (for finished,
-end-user-facing products) is draft `01KTJZ07MC0VWM923SBDZHDRP8` — do NOT bake
-product-first globally while products are under development.
-
-### Tests
-- `src/plugin-project-scope.test.ts` (additive): INVERTS the reverted "matrix
-  404s P_own" → "matrix STILL serves P_own (dev lens, 200 + Orchestrator)";
-  dual-lens coexist + ISOLATION (task in `matrix:pown` absent from `story:pown`
-  and vice-versa); DELETE fan-out (project gone from BOTH lenses); + onProjectInit
-  runs on P_own too. Keeps regression + same-named-distinct-workers + scope-info.
-- `web/plugin-scope.test.ts` (additive): a project with its own plugin sees BOTH
-  scopes, default (first) = matrix; globals-first ordering pinned.
-- `src/test-utils/story-scope.ts`: generic non-matrix test scope (reused verbatim
-  from the reverted infra — it has no exclusive/additive logic).
-
-### Pre-existing worktree noise (NOT a regression)
-Daemon tests that run `createDaemon` with the matrix repo (a git WORKTREE, where
-`.git` is a FILE) log `onProjectInit failed for matrix on matrix: ENOTDIR …
-.git/info` from `excludeWorktrees`'s `mkdir(.git/info)`. Caught + logged, tests
-pass. Predates this work (matrix's onProjectInit ran on the matrix project under
-the old code too). On a normal checkout (`.git` is a dir) it succeeds.
-
-## Plugin SDK — `mxd/plugin-sdk` bare specifier + re-exported zod (the "bun add mxd" dependency story) (2026-06-08)
-
-An out-of-tree plugin (dchat) depends on matrix's public API via a STABLE,
-depth-independent bare specifier instead of counting `../`s, with exactly ONE
-zod identity shared between matrix and the plugin. Closes the two
-dependency-boundary gaps the dchat 试水 surfaced (both had fragile workarounds:
-a dev symlink + an exact zod pin on dchat's side).
-
-### Mechanism — `exports`-map SUBPATH of the real `mxd` package (NOT `@mxd/plugin-sdk`)
-- `package.json` gains `"exports": { "./plugin-sdk": "./src/plugin-sdk.ts", "./package.json": "./package.json" }`.
-- Plugin imports `import { defineTool, type ScopeOpts, z, ... } from "mxd/plugin-sdk"`.
-- A plugin installs matrix ONCE (`bun add <matrix>` / `bun link mxd` → a
-  `node_modules/mxd` entry, typically a symlink). Bare-specifier resolution walks
-  UP node_modules → depth-independent, so it works inside the plugin's own git
-  worktree with NO `../` counting and NO dev-symlink hack (Gap A closed).
-- Chose `mxd/plugin-sdk` over `@mxd/plugin-sdk`: the `@mxd/*` names
-  (`@mxd/types`, `@mxd/auth-context`) are BROWSER virtual modules (tsconfig
-  paths + importmap), a different mechanism. A server node_modules package reusing
-  `@mxd/*` would falsely imply kinship. `mxd/plugin-sdk` is the honest subpath of
-  the real `mxd` package — the literal "bun add mxd → import its subpath" story,
-  zero extra publishing. (This overrides the `@mxd/plugin-sdk` example that
-  appeared in the original task description; orchestrator approved the deviation.)
-
-### ⭐ Singleton: thin re-export, never a vendored copy (realpath dedup — EMPIRICALLY PROVEN)
-`src/plugin-sdk.ts` re-exports matrix's own modules via RELATIVE paths. Bun/Node
-dedupe modules by REALPATH, so a plugin importing `mxd/plugin-sdk` through its
-`node_modules/mxd` symlink resolves to the SAME physical files → the SAME process
-singletons matrix's agent loop uses (the module-level `_ctx` in
-resource-registry.ts). So `deliverToNode`/`listNodes` hit the ONE in-process
-tracker — a delivered peer message ARRIVES (enqueued / auto-launched), never
-silently dropped against a different `_ctx`. A vendored copy = different realpath
-= different `_ctx` = silent no-op. Proven: a probe outside matrix with a
-`node_modules/mxd` symlink shares matrix's `_ctx` (and `listNodes` returns the
-EXACT same node object the app's tracker holds — reference identity).
-
-### ⭐ One zod identity (Gap B closed) + exact pin (DO NOT re-add the caret)
-- The SDK does `export { z } from "zod"`. A plugin imports `z` from the SDK →
-  matrix's exact zod instance → a plugin's `z.string()` passes matrix's
-  `shapeToJsonSchema` (`z.toJSONSchema(z.object(pluginShape))` — matrix's z
-  wrapping the plugin's schema; only works when both are the same ZodString
-  class). The plugin need not depend on zod at all.
-- `package.json` pins `"zod": "4.3.6"` EXACT — the caret (`^4.3.6`) was the drift
-  root cause on BOTH sides (dchat drifted to 4.4.3 → two distinct ZodString types
-  → `defineTool` stopped typechecking). package.json is strict JSON (no inline
-  comment possible) — this memory entry IS the "why no caret"; a future agent
-  must NOT re-loosen it without re-reading the zod-identity requirement.
-
-### Surface — EXACTLY the finalized manifest, never widened (anti-pattern #6)
-Type-only: `ScopeOpts`, `PluginTypes`, `BaseDoneData`, `RuntimeContext`
-(runtime/context.ts); `BaseTaskNode`, `TaskStatus` (types.ts); `Auth`
-(tool-auth.ts); `PluginManifest` (plugin.ts).
-Runtime values: `defineTool`, `toToolDefinition` (tool-def.ts); `createYieldTool`,
-`createDoneTool` (tools/prefab.ts); `createUserMessage` (queue-message-factory.ts);
-`isTask` (types.ts); `deliverToNode`, `listNodes` (resource-registry.ts — the
-NARROWED messaging API, NOT raw getTracker/deliverMessage which stay internal);
-`z` (zod). NO `checkPermission` (only `Auth` as a type), NO LLM facility — no
-plugin imports them today.
-
-### Exports map narrows the surface (gating is load-bearing)
-Adding `exports` GATES deep imports: `import "mxd/src/resource-registry.ts"` now
-FAILS to resolve — so `getTracker`/`deliverMessage` are un-importable; only the
-narrowed `deliverToNode`/`listNodes` reach a plugin. Verified safe to add: ZERO
-bare `mxd/`/`matrix/` self-imports exist in the tree (matrix uses relative
-imports; the worker `import()`s plugins by ABSOLUTE path — both bypass package
-resolution, so gating breaks nothing internal). The aspirational
-`import "matrix/src/llm.ts"` docstring in src/llm.ts was wrong (wrong name +
-non-resolving) and is unrelated — left as-is (not in scope).
-
-### Tests
-- `src/plugin-sdk.test.ts` (NEW, 7 tests): (1) thin re-export reference identity
-  (every value === its origin symbol; `z` === zod's z); (2) zod identity
-  end-to-end (SDK's z through toToolDefinition); (3) bare-specifier-through-symlink
-  singleton — `listNodes` reads the app's own tracker, and the returned node is
-  REFERENTIALLY the app's tracker node (the headline "same live tracker" proof);
-  (4) zod through the bare specifier; (5) deep-import gating (exports map blocks
-  `mxd/src/...`).
-- `src/plugin-messaging.test.ts` (REROUTED): its dummy plugin now consumes the
-  PUBLIC SDK surface (`./plugin-sdk.ts`) instead of resource-registry directly —
-  so its real-agent-loop tests ("deliverToNode wakes an idle peer on the SAME
-  tracker", listNodes snapshot, broadcast) double as the LITERAL proof that the
-  SDK's deliverToNode delivers + wakes in a loop. `registryGetTracker` stays the
-  internal accessor (used only to ASSERT identity, intentionally off-surface).
-  Reference identity + this reroute = airtight arrival coverage WITHOUT
-  duplicating the agent-loop harness.
-
-### Gotcha — `deliverToNode` needs `registerSideEffects` (wired at AGENT LAUNCH, not createApp)
-`_ctx` is set by `initResourceRegistry` (createApp path), but `_deliverMessage`
-(backing `deliverMessage`/`deliverToNode`) is registered by `registerSideEffects`
-which runs inside `buildAgentContext` at agent launch (agent-lifecycle.ts:184).
-So `deliverToNode` THROWS "deliverMessage not registered" if called outside any
-agent loop (e.g. a fresh createMatrixApp with no launch). `listNodes` works
-without a launch (only needs `_ctx`). This is why the SDK's deliverToNode arrival
-is tested via a real loop (plugin-messaging) not a bare createApp.
-
-## Mock-showcase extraction — unconditional → matrix-plugin-only (2026-06-09)
-
-Mock-showcase (static data endpoint + standalone UI page for component development)
-extracted from unconditional runtime registration into the matrix plugin.
-
-### What moved
-- `src/runtime/routes/mock-showcase.ts` → `.mxd/plugin/routes/mock-showcase.ts`
-- `src/runtime/routes/mock-showcase-image.png` → `.mxd/plugin/routes/mock-showcase-image.png`
-- Route registered in `.mxd/plugin/runtime.ts` `registerRoutes`, not `src/runtime.ts`
-
-### Leak fixed
-Previously `registerMockShowcaseRoute(app)` was called unconditionally in
-`src/runtime.ts` for EVERY plugin worker. Now only the matrix plugin worker serves it.
-
-### UI activation path
-Old: `?mock=true` query param — dead since Task Y.
-New: `/<projectId>/matrix/mock-showcase` — Plugin.tsx lazy-loads MockShowcase when
-`pluginPath === "mock-showcase"`.
-
-### Key details
-- MockShowcase.tsx stays at `.mxd/plugin/web/MockShowcase.tsx` (unchanged location)
-- Data endpoint URL unchanged: `GET /api/matrix/mock-showcase`
-- No new plugin entity — mock-showcase is a FEATURE of the matrix plugin
-- Moved route file uses `../../../src/` relative paths (same pattern as scope-opts.ts)
+## What a plugin is, and the boundaries that keep it one
+
+A plugin is `.mxd/plugin/`: a manifest (`index.ts`), a worker-side `runtime.ts` supplying
+`ScopeOpts`, and a `web/` React component the shell lazy-loads. Matrix is one of these and is
+discovered by the same scan as any other. `ctx.scopeOpts: Map<projectId, ScopeOpts<T>>` holds the
+per-project configuration, and `buildMatrixScopeOpts` in `.mxd/plugin/scope-opts.ts` is the ONE
+place that knows matrix's tools, prompt and hooks.
+
+**The hook list is deliberately not reproduced here.** It lives in `src/runtime/context.ts`, it has
+grown several times, and two hooks have changed arity — a copy in this file would go stale silently
+because there is no compiler between the two. What the type signature cannot tell you:
+
+⚠️ **Hooks are named by EVENT, never by resource.** `onTaskDelete`, not `removeWorkspace` — the
+latter presupposes that tasks HAVE workspaces, which is a plugin-specific assumption the runtime
+must not encode. Prose comments may say "workspace"; hook NAMES may not. The same rule is why the
+index reconciliation hook is called `onScopeResume`.
+
+Everything optional is genuinely optional — the runtime does `opts.hook?.(...)` and attaches no
+meaning to absence.
+
+**Four invariants, each checkable:**
+
+- `src/` has **ZERO** production imports from `.mxd/plugin/`. Delete the plugin and the shell still
+  compiles. (Test files and test-utils may import it; that is test infrastructure.)
+- Plugin web has **ZERO** imports from `../../../src/`. It reaches shared code through the
+  `@mxd/auth-context` and `@mxd/types` importmap aliases.
+- The runtime **throws** if `buildScopeOpts` is not provided. No silent fallback to a built-in
+  matrix scope — that fallback existed and was deleted.
+- `src/runtime/*`, `runtime.ts` and `provider-shared.ts` mention no matrix concept, including in
+  comments.
+
+**`BaseTaskNode` vs `TaskNode`**: the runtime is generic **at the type level** — `ScopeOpts<T>` and
+the `PluginTypes` generic are parameterized over `BaseTaskNode`, and matrix extends it with
+description, branch, worktreePath, cwd, color, costUsd, budgetUsd, resultRounds. ⚠️ **CAVEAT: only
+the hook interfaces are generic.** The concrete `TaskTracker` still stores matrix's
+`TaskNode | GeneralNode` directly and is not generic over `BaseTaskNode`, so "the runtime uses
+BaseTaskNode" is aspirational for the tracker. Full tracker generalization is future work.
+
+## `/api/<plugin>/*` — explicit URLs, no hidden rewriting
+
+Plugin-owned routes live under `/api/<plugin-name>/*` on the wire. The daemon strips the prefix and
+the worker serves its routes as if at root. `pluginApiPrefix(name)` is the single source and is
+imported by the daemon router, the CLI, the plugin's `api.ts` URL builders, and `web/runtime-types.ts`
+— so a format change propagates atomically across all four.
+
+⚠️ **The `app.all("*")` catch-all was REMOVED, and that is the point of the change.** An unprefixed
+plugin path now 404s instead of silently falling back to "the first global worker". `/version` and
+`/stats` needed explicit daemon-level forwarders because they had only ever been served by that
+catch-all. Daemon-owned paths stay at root: `/auth/*`, `/health`, `/version`, `/stats`, `/plugins`,
+`/global-context`, `/events`, `/projects` CRUD and `/projects/:id/config*`, `/vendor/*`, `/app/*`,
+`/restart-daemon`. Everything else under `/projects/:id/` is plugin-owned.
+
+External MCP clients configured against the old `/mcp` URL break, deliberately and with no
+deprecation alias.
+
+⚠️ **`pluginApiPrefix` lives in `src/plugin-url.ts`, which has ZERO imports, and it must stay that
+way.** `web/runtime-types.ts` re-exports it to browser code; when it lived in `plugin.ts` it dragged
+in `data-paths.ts` → `node:path`, and Bun's browser target polyfilled the entire module into every
+plugin's first-load bundle: **10,293 bytes → 281 bytes when it was split out, a 37× reduction.** A
+test builds the shared module and asserts it stays under 500 bytes, so any future server-only import
+that creeps into that graph fails loudly rather than quietly costing 10KB on first paint.
+
+**Rejected alternatives, so nobody re-proposes them**: a shell `authFetch` wrapper would need a
+daemon-route passthrough list, coupling the shell to the daemon's internal routing table; and
+plugin-via-props data flow is cleaner long-term but was 100+ LOC of scope creep. Explicit URL
+construction at each layer means the plugin author sees exactly what hits the wire.
+
+## Additive dual lenses — a project is served by its own plugin AND by matrix
+
+A project that ships its own `.mxd/plugin/` is served by **both** its own scope and the global matrix
+scope, on separate per-scope data roots. `matrix:<id>` is the dev lens (coding, orchestration);
+`<own>:<id>` is the product lens. Shipping a plugin **ADDS** a lens and never removes the matrix one.
+
+⚠️ **The first implementation made ownership EXCLUSIVE (`own ?? global`) and was reverted. Do not
+re-derive it.** Four reasons it is wrong, and the first is decisive:
+
+1. **`<scope>:<project>` is a TWO-PART address, and its existence proves the relationship is dual.**
+   If a project mapped to one scope the prefix would be redundant. Exclusive collapsed it to
+   `scope = f(project)`.
+2. The design was always "parallel run loops — alongside, NOT override". Exclusive turned alongside
+   into override.
+3. Self-bootstrap requires coexistence: matrix is its own product, and "the product is a dev tool"
+   only holds if a project opens in both lenses at once.
+4. Per-plugin `dataRoot` was built for exactly this and is wasted under exclusive.
+
+**If any routing decision tempts you toward "a project belongs to ONE plugin", that is this bug
+returning.**
+
+Consequences that follow from additive and would otherwise look arbitrary: `scopesForProject` is
+all globals ∪ the project's own plugin, **globals-first**, so the default lens is dev/matrix;
+`projectsForPlugin` gives a global plugin **ALL** projects (matrix is every project's dev lens and
+must know them all to resume), with no double-resume because the lenses live in distinct data roots;
+`onProjectInit` runs per that list, so matrix scaffolds every project's dev lens; and `DELETE
+/projects/:id` **fans out** a stop to every scope serving the project, because a running agent in
+any lens must stop before data removal.
+
+**SSE is scope-aware, because a lens is `(projectId, scope)` and each lens has its own tree.** The
+ring buffer and seq counter are keyed by `lensKey = ${projectId}\u0000${scope}` — `\u0000` cannot
+appear in a ULID or a plugin name, and is deliberately different from the worker key's `:`. The
+relay derives the lens from the *emitting* worker, so a product viewer never sees the dev tree. A
+project with no plugin of its own has one worker emitting one scope, so behavior is identical to
+before the change, which is the regression bar.
+
+**Default lens is dev-first (globals-first ordering).** Rationale: matrix is the foundation lens
+every project always has and the product lens is the ADDITION, so defaulting to product would make
+first load identical to the reverted exclusive model and **hide the addition** — the default should
+teach the model. Also the matrix lens always works while product workers are mid-build. A per-project
+configurable default is drafted (`01KTJZ07MC0VWM923SBDZHDRP8`); do not bake product-first globally
+while products are under development.
+
+⚠️ **Pre-existing noise, not a regression**: daemon tests that run `createDaemon` against the matrix
+repo log `onProjectInit failed … ENOTDIR .git/info`, because a git WORKTREE has `.git` as a FILE and
+`excludeWorktrees` tries to mkdir inside it. Caught and logged; succeeds on a normal checkout.
+
+## The plugin SDK: `mxd/plugin-sdk`, one zod, one live module
+
+An out-of-tree plugin imports `mxd/plugin-sdk` — a subpath of the real `mxd` package via its
+`exports` map — rather than counting `../`s. Bare-specifier resolution walks up `node_modules`, so it
+is depth-independent and works inside the plugin's own worktree with no dev symlink.
+
+⚠️ **Chosen over `@mxd/plugin-sdk` on purpose.** The `@mxd/*` names are BROWSER virtual modules
+(tsconfig paths + importmap), a different mechanism; a server package reusing that prefix would
+falsely imply kinship.
+
+⭐ **It must stay a thin re-export and must never become a vendored copy.** Bun and Node dedupe
+modules by REALPATH, so a plugin importing through its `node_modules/mxd` symlink resolves to the
+same physical files and therefore the **same process singletons** the agent loop uses — in
+particular the module-level `_ctx` in `resource-registry.ts`. A vendored copy has a different
+realpath, a different `_ctx`, and **message delivery silently no-ops with no error.** Proven by a
+probe outside the repo: `listNodes` returns the exact same node object the app's tracker holds,
+reference-identical.
+
+⭐ **`package.json` pins `zod` EXACT (`"4.3.6"`), and the caret must not come back.** The SDK does
+`export { z } from "zod"` so a plugin's `z.string()` passes matrix's `shapeToJsonSchema` — which
+only works when both sides are the same `ZodString` class. A caret let a consumer drift to 4.4.3,
+producing two distinct Zod identities and a `defineTool` that stopped typechecking. **package.json
+is strict JSON and cannot hold a comment, so this paragraph is the only record of why.** The
+`@anthropic-ai/sdk` pin is exact for the same class of reason.
+
+**The `exports` map also GATES deep imports**, and that gating is load-bearing rather than
+incidental: `import "mxd/src/resource-registry.ts"` no longer resolves, so `getTracker` and
+`deliverMessage` are un-importable and only the narrowed pair reaches a plugin. Verified safe
+because nothing in the tree self-imports by bare specifier (matrix uses relative imports; the worker
+`import()`s plugins by absolute path).
+
+**The narrowed messaging API is `deliverToNode` + `listNodes`**, and the narrowing is semantic rather
+than cosmetic: `deliverToNode` exposes only delivery and cannot be misused, `listNodes` returns a
+fresh read-only snapshot of launchable nodes and cannot mutate the tracker — versus `getTracker`,
+which is full mutable access. `deliverToNode` is a thin wrapper over the ONE `deliverMessage` path,
+not a fork, so it keeps the wake-an-idle-recipient semantic. **No permission policy is baked in**;
+matrix's ancestor/sub-task restriction is matrix policy, and intra-project delivery is unrestricted
+with the plugin's own tools owning routing.
+
+⚠️ **`deliverToNode` throws "deliverMessage not registered" outside any agent loop.** `_ctx` is set
+by `initResourceRegistry` on the `createApp` path, but `_deliverMessage` is registered by
+`registerSideEffects`, which runs inside `buildAgentContext` **at agent launch**. `listNodes` works
+without a launch; delivery does not. This is why its arrival is tested through a real loop rather
+than a bare `createApp`.
+
+**Still missing**: a plugin cannot define how its own message source renders — `formatQueueMessage`
+hardcodes a wrapper per built-in source. Drafted as `01KTJ5F5XTM32YNS6RSPW7R5PF`.
+
+## What extraction actually moved
+
+`buildMatrixScopeOpts` moved into `.mxd/plugin/`; the **leaf utilities stayed in `src/`**
+(WorktreeManager, `createOrchestratorTools`, `buildSystemPrompt`, `slugify`, `McpClientManager`) and
+the plugin imports them, because plugin→src is the allowed direction. **The leak was
+`buildMatrixScopeOpts` living in `runtime/agent-lifecycle.ts`, not the utils.** `grep WorktreeManager
+src/runtime/` is zero, and that is the check.
+
+Worktree operations in runtime routes became hooks: reactivation calls the existing
+`beforeChildLaunch` (the semantics already matched exactly), and DELETE got `onTaskDelete`.
+
+Mock-showcase (a static data endpoint plus a component-development page) was registered
+**unconditionally in `src/runtime.ts`, so every plugin worker served it.** It is a FEATURE of the
+matrix plugin, not a plugin of its own, and now lives in `.mxd/plugin/routes/`. Its UI activates at
+`/<projectId>/matrix/mock-showcase`; the old `?mock=true` query param was dead. It is the place to
+visually confirm a new log-entry card renders without running a real agent.
 
 ---
 # Auth & External API
