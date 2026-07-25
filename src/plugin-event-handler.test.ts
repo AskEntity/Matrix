@@ -2464,11 +2464,23 @@ describe("ActivityLog filtering logic", () => {
 });
 
 // ============================================================
-// agent_stopped rendering + start/stop collapse
+// agent_start / agent_end: processed, never rendered
 // ============================================================
+//
+// These events keep being emitted, persisted and processed — the handler
+// still reads them for provider/model and for the token badge. What they no
+// longer do is put a line in the activity log. `▶ Agent started` rendered
+// only on resume and meant "the daemon restarted and this agent came back";
+// once an agent was launched only when work was outstanding, the cause became
+// overwhelmingly a message that renders immediately below it.
+//
+// These tests are INVERSIONS of the ones that asserted the lines render, not
+// deletions of them. A deleted test leaves nothing standing between here and
+// someone re-adding the push; an inverted one is the record that the absence
+// is deliberate.
 
-describe("event-handler agent_stopped and lifecycle collapse", () => {
-	it("processEvent: agent_stopped creates a lifecycle LogEntry", () => {
+describe("event-handler agent_start/agent_end produce no log entry", () => {
+	it("handleEvent: a stopped agent_end renders nothing and still reports its run stats", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -2487,17 +2499,59 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 			reason: "stopped",
 			taskId: "task-1",
 			ts: 1000,
-		});
+			stats: {
+				turns: 7,
+				inputTokens: 111,
+				cacheCreationTokens: 222,
+				cacheReadTokens: 333,
+				outputTokens: 444,
+			},
+		} as IncomingEvent);
 
-		expect(capturedLogs.length).toBe(1);
-		expect(capturedLogs[0]?.type).toBe("lifecycle");
-		if (capturedLogs[0]?.type === "lifecycle") {
-			expect(capturedLogs[0].content).toContain("stopped");
-			expect(capturedLogs[0].taskId).toBe("task-1");
-		}
+		expect(capturedLogs.length).toBe(0);
+
+		// The five values behind the token badge. Deleting the whole `case`
+		// instead of just its entry push would blank these with nothing red.
+		expect(deps.setLastTurns).toHaveBeenCalledWith(7);
+		expect(deps.setLastInputTokens).toHaveBeenCalledWith(111);
+		expect(deps.setLastCacheCreationTokens).toHaveBeenCalledWith(222);
+		expect(deps.setLastCacheReadTokens).toHaveBeenCalledWith(333);
+		expect(deps.setLastOutputTokens).toHaveBeenCalledWith(444);
 	});
 
-	it("processEventBatch: agent_stopped creates a lifecycle LogEntry", () => {
+	it("handleEvent: a resuming agent_start renders nothing and still reports provider/model", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		// resume: true is the case that used to render. If anything renders
+		// again, it renders here first.
+		handleEvent({
+			type: "agent_start",
+			taskId: "task-1",
+			resume: true,
+			provider: "anthropic",
+			model: "claude-opus",
+			ts: 1000,
+		});
+
+		expect(capturedLogs.length).toBe(0);
+
+		// How the UI learns which provider/model a run used.
+		expect(deps.setAgentProvider).toHaveBeenCalledWith("anthropic");
+		expect(deps.setAgentModel).toHaveBeenCalledWith("claude-opus");
+	});
+
+	it("processEventBatch: a whole restart cycle rebuilds to an empty log, side effects intact", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -2508,22 +2562,43 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
+			{
+				type: "agent_start",
+				taskId: "task-1",
+				resume: true,
+				provider: "anthropic",
+				model: "claude-opus",
+				ts: 1000,
+			},
 			{
 				type: "agent_end",
 				reason: "stopped",
 				taskId: "task-1",
-				ts: 1000,
+				ts: 2000,
+				stats: {
+					turns: 7,
+					inputTokens: 111,
+					cacheCreationTokens: 222,
+					cacheReadTokens: 333,
+					outputTokens: 444,
+				},
 			},
-		]);
+		] as IncomingEvent[]);
 
-		expect(capturedLogs.length).toBe(1);
-		expect(capturedLogs[0]?.type).toBe("lifecycle");
-		if (capturedLogs[0]?.type === "lifecycle") {
-			expect(capturedLogs[0].content).toContain("stopped");
-		}
+		expect(capturedLogs.length).toBe(0);
+
+		// processEventBatch DEFERS side effects to the end of the batch — a
+		// separate path from handleEvent's, so it gets its own assertion.
+		expect(deps.setAgentProvider).toHaveBeenCalledWith("anthropic");
+		expect(deps.setAgentModel).toHaveBeenCalledWith("claude-opus");
+		expect(deps.setLastTurns).toHaveBeenCalledWith(7);
+		expect(deps.setLastInputTokens).toHaveBeenCalledWith(111);
+		expect(deps.setLastCacheCreationTokens).toHaveBeenCalledWith(222);
+		expect(deps.setLastCacheReadTokens).toHaveBeenCalledWith(333);
+		expect(deps.setLastOutputTokens).toHaveBeenCalledWith(444);
 	});
 
-	it("processEventBatch: collapses consecutive start/stop pairs with no content between them", () => {
+	it("processEventBatch: a restart cycle around real content leaves only the content", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -2533,157 +2608,49 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
-		// Simulate many daemon restarts — each produces orchestration_started(resume) + agent_stopped
 		processEventBatch([
 			{
 				type: "agent_start",
 				taskId: "task-1",
 				resume: true,
-				model: "claude-sonnet",
 				provider: "anthropic",
+				model: "claude-opus",
 				ts: 1000,
 			},
-			{ type: "agent_end", reason: "stopped", taskId: "task-1", ts: 2000 },
-			{
-				type: "agent_start",
-				taskId: "task-1",
-				resume: true,
-				model: "claude-sonnet",
-				provider: "anthropic",
-				ts: 3000,
-			},
-			{ type: "agent_end", reason: "stopped", taskId: "task-1", ts: 4000 },
-			{
-				type: "agent_start",
-				taskId: "task-1",
-				resume: true,
-				model: "claude-sonnet",
-				provider: "anthropic",
-				ts: 5000,
-			},
-			{ type: "agent_end", reason: "stopped", taskId: "task-1", ts: 6000 },
-			{
-				type: "agent_start",
-				taskId: "task-1",
-				resume: true,
-				model: "claude-sonnet",
-				provider: "anthropic",
-				ts: 7000,
-			},
-			// This last one is active — no agent_stopped after it
 			{
 				type: "assistant_text",
 				content: "Doing work now",
 				taskId: "task-1",
-				ts: 8000,
-			},
-		]);
-
-		// Should collapse the first 3 start/stop pairs and keep only the last resume entry
-		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
-		// Only the last "Agent started" should remain (the one at ts=7000)
-		expect(lifecycleEntries.length).toBe(1);
-		expect(lifecycleEntries[0]?.content).toContain("Agent started");
-
-		// The assistant_text should still be there
-		const textEntries = capturedLogs.filter((e) => e.type === "assistant_text");
-		expect(textEntries.length).toBe(1);
-	});
-
-	it("processEventBatch: preserves start/stop entries that have meaningful content between them", () => {
-		const { deps } = makeDeps();
-
-		let capturedLogs: LogEntry[] = [];
-		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
-			capturedLogs = typeof entries === "function" ? entries([]) : entries;
-		});
-
-		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
-
-		processEventBatch([
-			{
-				type: "agent_start",
-				taskId: "task-1",
-				resume: true,
-				model: "claude-sonnet",
-				provider: "anthropic",
-				ts: 1000,
-			},
-			{
-				type: "assistant_text",
-				content: "First session work",
-				taskId: "task-1",
 				ts: 1500,
 			},
 			{ type: "agent_end", reason: "stopped", taskId: "task-1", ts: 2000 },
-			{
-				type: "agent_start",
-				taskId: "task-1",
-				resume: true,
-				model: "claude-sonnet",
-				provider: "anthropic",
-				ts: 3000,
-			},
-			{
-				type: "assistant_text",
-				content: "Second session work",
-				taskId: "task-1",
-				ts: 3500,
-			},
-		]);
+		] as IncomingEvent[]);
 
-		// Both "Agent started" entries should be preserved because there's content between them
-		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
-		expect(lifecycleEntries.length).toBeGreaterThanOrEqual(2);
+		// Positive control: the lines around the content are gone, and the
+		// content itself is untouched. Without this, "length is 0" would also
+		// pass on a handler that dropped everything.
+		expect(capturedLogs.length).toBe(1);
+		expect(capturedLogs[0]?.type).toBe("assistant_text");
 	});
 
-	it("processEventBatch: collapse works across many empty cycles, keeps the very last resume", () => {
-		const { deps } = makeDeps();
-
-		let capturedLogs: LogEntry[] = [];
-		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
-			capturedLogs = typeof entries === "function" ? entries([]) : entries;
-		});
-
-		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
-
-		// 20 empty restart cycles
-		const events: IncomingEvent[] = [];
-		for (let i = 0; i < 20; i++) {
-			events.push({
-				type: "agent_start",
-				taskId: "task-1",
-				resume: true,
-				model: "claude-sonnet",
-				provider: "anthropic",
-				ts: 1000 + i * 2000,
-			});
-			events.push({
-				type: "agent_end",
-				reason: "stopped",
-				taskId: "task-1",
-				ts: 2000 + i * 2000,
-			});
-		}
-		// Final resume that's actually active
-		events.push({
-			type: "agent_start",
-			taskId: "task-1",
-			resume: true,
-			model: "claude-sonnet",
-			provider: "anthropic",
-			ts: 50000,
-		});
-
-		processEventBatch(events);
-
-		// Only the very last "Agent started" should remain
-		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
-		expect(lifecycleEntries.length).toBe(1);
-		expect(lifecycleEntries[0]?.ts).toBe(50000);
-	});
-
-	it("processEventBatch: task_started entries are NOT collapsed (only session lifecycle events)", () => {
+	// A CONTRACT test, not a scenario test. It pins "processEventBatch does
+	// not collapse lifecycle entries" — the property, for the whole `lifecycle`
+	// category, which will get producers we have not written yet.
+	//
+	// Do NOT read it as "this is what two interrupts look like" and go trying
+	// to reproduce it: today the interrupt notice is the only lifecycle
+	// producer and two of them cannot become adjacent, because the notice is
+	// written AT the park, so a second one needs the agent to have woken,
+	// which needs a message, which renders between them.
+	//
+	// What it guards is the mechanism that used to run here. Restart
+	// bookkeeping produced runs of `▶ Agent started` / `⏹ Agent stopped` with
+	// nothing between them, and `collapseLifecycleEntries` folded each run to
+	// its last member — by REPLACING IN PLACE (`result[first] = last`), so two
+	// distinct entries came out as one, carrying the last one's content at the
+	// first one's timestamp. That is the failure being pinned, which is why
+	// the assertions are on both timestamps and not on the count.
+	it("processEventBatch: consecutive lifecycle entries each survive, in place", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -2695,45 +2662,25 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 
 		processEventBatch([
 			{
-				type: "agent_start",
+				type: "message",
+				id: "int-1",
+				body: { source: "interrupt", id: "int-1", ts: 1000 },
 				taskId: "task-1",
-				resume: false,
-				model: "test",
-				provider: "test",
-				ts: 500,
-			},
-			{
-				type: "agent_start",
-				taskId: "task-1",
-				resume: true,
-				model: "claude-sonnet",
-				provider: "anthropic",
 				ts: 1000,
 			},
-			{ type: "agent_end", reason: "stopped", taskId: "task-1", ts: 2000 },
 			{
-				type: "agent_start",
+				type: "message",
+				id: "int-2",
+				body: { source: "interrupt", id: "int-2", ts: 2000 },
 				taskId: "task-1",
-				resume: true,
-				model: "claude-sonnet",
-				provider: "anthropic",
-				ts: 3000,
+				ts: 2000,
 			},
-			{
-				type: "assistant_text",
-				content: "Working",
-				taskId: "task-1",
-				ts: 4000,
-			},
-		]);
+		] as IncomingEvent[]);
 
-		// agent_start with resume produces lifecycle entries. Non-resume agent_start produces nothing.
-		// The first empty start/stop pair should be collapsed, keeping only the last resume
-		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
-		// Two resume agent_start → 2 lifecycle entries, but the first start+stop pair collapses
-		// agent_start(resume:false) doesn't produce lifecycle, agent_end(stopped) does,
-		// then both get collapsed with agent_start(resume:true). Last resume + assistant_text remain.
-		expect(lifecycleEntries.length).toBe(1);
+		const lifecycle = capturedLogs.filter((e) => e.type === "lifecycle");
+		expect(lifecycle.length).toBe(2);
+		expect(lifecycle[0]?.ts).toBe(1000);
+		expect(lifecycle[1]?.ts).toBe(2000);
 	});
 });
 
