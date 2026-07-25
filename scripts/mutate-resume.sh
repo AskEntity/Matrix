@@ -140,14 +140,19 @@ mutate "veto widens: interrupt notices merely filtered out" \
 	}' \
 	"src/should-launch.test.ts src/resume-launch-decision.test.ts"
 
-# 7. thinking stops being transparent — trailing thinking-only turn survives.
-mutate "trailing thinking-only turn is no longer repaired away" \
+# 7. A trailing thinking-only turn stops parking the launch decision.
+mutate "trailing thinking no longer parks the launch decision" \
 	src/events.ts \
-	'		const { thinkingOnlyFrom } = classifyTail(events);
-		if (thinkingOnlyFrom > 0) {' \
-	'		const { thinkingOnlyFrom } = classifyTail(events);
-		if (false && thinkingOnlyFrom > 0) {' \
+	'	if (trailingThinkingOnly) return false;' \
+	'' \
 	"src/should-launch.test.ts"
+
+# 7b. Rule 1b: an orphaned background process no longer counts as work.
+mutate "orphaned background process no longer launches" \
+	src/events.ts \
+	'	if (findOrphanedBackgroundProcesses(events, "").length > 0) return true;' \
+	'' \
+	"src/should-launch.test.ts src/event-dedup-jsonl.test.ts"
 
 # 8. The pendingReducer skip for interrupt (the permanent-chip bug).
 mutate "pendingReducer stops skipping interrupt (chip never clears)" \

@@ -192,8 +192,8 @@ const SHAPES: Shape[] = [
 			consumed(["m1"]),
 			think("mid-thought"),
 		]),
-		launch: true,
-		why: "verification 4 — thinking is not an answer",
+		launch: false,
+		why: "the loop parks on this shape, so the predicate must too",
 	},
 	{
 		name: "died mid tool-using turn, after a tool_result",
@@ -401,7 +401,13 @@ describe("rule 2: unconsumed messages, by source", () => {
 	});
 });
 
-describe("repair: a trailing thinking-only turn is dropped", () => {
+describe("a log ending in thinking: park, and repair leaves it alone", () => {
+	// Measured against production Anthropic 2026-07-25: a thinking block is
+	// positionally identical to a text block. `u | a[thinking] | u` → 200;
+	// `u | a[text, thinking] | u` → 200; only the TRAILING assistant message
+	// 400s, and trailing text 400s the same way with a different string. So a
+	// trailing thinking is not a broken shape to be repaired — it is an
+	// assistant turn like any other, and the loop parks on it.
 	const events = chain([
 		...HEAD,
 		text("hi"),
@@ -411,39 +417,36 @@ describe("repair: a trailing thinking-only turn is dropped", () => {
 		think("thought but never spoke"),
 	]);
 
-	test("buildSessionRepair chains back past the dead turn", () => {
-		const repair = buildSessionRepair(events, T);
-		expect(repair).not.toBeNull();
-		// The kept head must end at the messages_consumed — the user turn the
-		// dead turn was failing to answer.
-		const consumedEvent = events.findLast(
-			(e) => e.type === "messages_consumed",
-		);
-		expect(repair?.chainToEid).toBe(consumedEvent?.eid as string);
+	test("repair does nothing — there is nothing structurally wrong", () => {
+		expect(buildSessionRepair(events, T)).toBeNull();
 	});
 
-	test("it appends an event, so the jump reaches disk", () => {
-		// setChainHead is pure in-memory; the jump only becomes durable as the
-		// next appended event's parentEid.
-		const repair = buildSessionRepair(events, T);
-		expect(repair?.appendEvents.length).toBeGreaterThan(0);
+	test("not launched — the loop would park, so the predicate parks", () => {
+		expect(shouldLaunchAgent(events)).toBe(false);
+		expect(loopWouldAct(events)).toBe(false);
 	});
 
-	test("after repair the conversation ends on the user turn", () => {
-		const repair = buildSessionRepair(events, T);
-		const cut = events.slice(
-			0,
-			events.findIndex((e) => e.eid === repair?.chainToEid) + 1,
-		);
-		const messages = eventsToAnthropicMessages([
-			...cut,
-			...(repair?.appendEvents ?? []),
-		]) as Array<{ role: string }>;
+	test("a message arriving later produces a sendable [.., a[thinking], u]", () => {
+		// The turn is not lost, it is deferred. Once something wakes the agent,
+		// the reconstructed conversation ends assistant[thinking] → user, which
+		// the API accepts.
+		const woken = chain([
+			...(events.map(({ eid: _e, parentEid: _p, ...rest }) => rest) as Array<
+				Omit<Event, "eid" | "parentEid">
+			>),
+			msg("m2", "still there?"),
+			consumed(["m2"]),
+		]);
+		const messages = eventsToAnthropicMessages(woken) as Array<{
+			role: string;
+			content: unknown;
+		}>;
 		expect(messages[messages.length - 1]?.role).toBe("user");
+		expect(messages[messages.length - 2]?.role).toBe("assistant");
+		expect(shouldLaunchAgent(woken)).toBe(true);
 	});
 
-	test("a turn with thinking AND text is left alone", () => {
-		// The normal end_turn shape. Dropping this would delete real replies.
+	test("a turn with thinking AND text parks the same way", () => {
 		const ok = chain([
 			...HEAD,
 			msg("m1", "go"),
@@ -455,20 +458,74 @@ describe("repair: a trailing thinking-only turn is dropped", () => {
 		expect(shouldLaunchAgent(ok)).toBe(false);
 	});
 
-	test("a turn with thinking AND a tool_call is not thinking-only", () => {
-		// It has an orphan tool_call, so repair fires — but as the orphan
-		// strategy (append-only), never as a chain jump that would drop the call.
+	test("a turn with thinking AND a tool_call is real work", () => {
+		// It has an orphan tool_call, so repair fires — append-only, never a
+		// chain jump — and the repaired conversation owes a turn.
 		const ok = chain([...HEAD, think("t"), call("c1")]);
 		const repair = buildSessionRepair(ok, T);
 		expect(repair?.chainToEid).toBeNull();
 		expect(shouldLaunchAgent(ok)).toBe(true);
 	});
+});
 
-	test("thinking at the very start of a log is not chained past", () => {
-		// thinkingOnlyFrom must be > 0 — chaining to index -1 has no target.
-		const odd = chain([think("orphan thought")]);
-		expect(() => buildSessionRepair(odd, T)).not.toThrow();
-		expect(buildSessionRepair(odd, T)).toBeNull();
+describe("rule 1b: a background process the restart killed", () => {
+	// Found by an existing restart test, not by reading: bgOrphan synthesis
+	// happens INSIDE runAgentForNode, so refusing to launch loses the
+	// completion entirely — the agent never learns its command died and the UI
+	// shows it running forever.
+	const bgResult = (id: string, backgroundId: string) =>
+		({
+			type: "tool_result",
+			toolCallId: id,
+			tool: "mcp__mxd__bash",
+			content: "moved to background",
+			isError: false,
+			backgroundId,
+			backgroundCommand: "sleep 60",
+			taskId: T,
+			ts: 1,
+		}) as unknown as Omit<Event, "eid" | "parentEid">;
+
+	test("parked on yield with an orphaned bg process → LAUNCH", () => {
+		const events = chain([
+			...HEAD,
+			call("c1"),
+			bgResult("c1", "bg-1"),
+			text("started it"),
+			call("y1", TOOL_YIELD),
+		]);
+		// Without rule 1b the yield gate would park this.
+		expect(shouldLaunchAgent(events)).toBe(true);
+	});
+
+	test("the same session once the bg process has reported → park", () => {
+		const done = {
+			type: "message",
+			id: "bgm1",
+			taskId: T,
+			ts: 1,
+			body: {
+				source: "background_complete",
+				id: "bgm1",
+				ts: 1,
+				commandId: "bg-1",
+				command: "sleep 60",
+				exitCode: 0,
+				durationMs: 10,
+				content: "ok",
+			},
+		} as unknown as Omit<Event, "eid" | "parentEid">;
+		const events = chain([
+			...HEAD,
+			call("c1"),
+			bgResult("c1", "bg-1"),
+			text("started it"),
+			done,
+			consumed(["bgm1"]),
+			text("it finished"),
+			call("y1", TOOL_YIELD),
+		]);
+		expect(shouldLaunchAgent(events)).toBe(false);
 	});
 });
 

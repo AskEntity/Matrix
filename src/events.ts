@@ -505,17 +505,30 @@ export function findUnconsumedMessages(events: Event[]): QueueMessage[] {
  * assistant messages, and everything else (usage, lifecycle, status,
  * session_config, deferred `message` events) contributes nothing.
  *
- * `thinking` is TRANSPARENT, and that is the subtle part. Reaching it before
- * any `assistant_text` or `tool_call` is precisely what "this turn produced
- * only thinking" means — the model thought and died before it spoke. Such a
- * turn answered nothing, so the walk continues to whatever it was failing to
- * answer, and `thinkingOnlyFrom` reports where the dead turn starts so repair
- * can drop it.
+ * `thinking` is TRANSPARENT to `kind`, and reported separately. Reaching it
+ * before any `assistant_text` or `tool_call` is precisely what "this turn
+ * produced only thinking" means — the model thought and died before it spoke.
+ * The two consumers want opposite things from that, which is why it is a
+ * separate field rather than a `kind`:
+ *
+ * - `hasPendingImplicitYield` walks THROUGH it, unchanged: it asks which
+ *   resume branch the live loop takes, and a trailing thinking has never
+ *   selected the yield branch.
+ * - `shouldLaunchAgent` treats it as a stop, because the loop parks on that
+ *   shape (`hasPendingImplicitYield` false, reconstructed last role
+ *   `assistant`, so the blocking-wait branch) and the predicate must agree
+ *   with the loop rather than out-guess it.
+ *
+ * Measured against production Anthropic 2026-07-25: a thinking block is
+ * positionally identical to a text block — legal anywhere text is legal, and
+ * 400 only when it is the trailing assistant message, which is the same rule
+ * as trailing text wearing a different error string. So there is nothing to
+ * repair here, only a park to agree with.
  */
 function classifyTail(events: Event[]): {
 	kind: "user" | "assistant" | "orphan_tool_call" | "empty";
-	/** Start index of a trailing thinking-only turn, or -1 if there is none. */
-	thinkingOnlyFrom: number;
+	/** The last assistant turn produced only thinking — no text, no tool_call. */
+	trailingThinkingOnly: boolean;
 } {
 	let thinkingFrom = -1;
 	for (let i = events.length - 1; i >= 0; i--) {
@@ -529,26 +542,27 @@ function classifyTail(events: Event[]): {
 			// The model spoke, or called a tool. Either way the turn had real
 			// content, so any thinking we walked past belongs to it.
 			case "assistant_text":
-				return { kind: "assistant", thinkingOnlyFrom: -1 };
+				return { kind: "assistant", trailingThinkingOnly: false };
 			case "tool_call":
 				// Unanswered by construction: its tool_result would sit after
 				// it and we would have stopped there first.
-				return { kind: "orphan_tool_call", thinkingOnlyFrom: -1 };
+				return { kind: "orphan_tool_call", trailingThinkingOnly: false };
 			case "tool_result":
 			case "messages_consumed":
 			case "budget_warning":
-				return { kind: "user", thinkingOnlyFrom: thinkingFrom };
+				return { kind: "user", trailingThinkingOnly: thinkingFrom >= 0 };
 			case "message":
 				// An id marks the deferred two-phase path (materialized by
 				// messages_consumed). Without one the walker renders it
 				// directly as a user message.
-				if (!e.id) return { kind: "user", thinkingOnlyFrom: thinkingFrom };
+				if (!e.id)
+					return { kind: "user", trailingThinkingOnly: thinkingFrom >= 0 };
 				break;
 			default:
 				break;
 		}
 	}
-	return { kind: "empty", thinkingOnlyFrom: thinkingFrom };
+	return { kind: "empty", trailingThinkingOnly: thinkingFrom >= 0 };
 }
 
 /**
@@ -638,6 +652,18 @@ export function shouldLaunchAgent(events: Event[]): boolean {
 		return unconsumed.some((m) => !NON_LAUNCHING_MESSAGE_SOURCES.has(m.source));
 	}
 
+	// 1b. Input the launch itself would CREATE. A background process the
+	//     restart killed becomes a `background_complete` message inside
+	//     runAgentForNode, which then wakes the loop exactly like any other
+	//     message — so refusing to launch loses the completion entirely: the
+	//     agent never learns its command died and the UI shows it running
+	//     forever. Found by an existing restart test rather than by reading;
+	//     the synthesis is invisible from the log, which only shows a
+	//     tool_result with a backgroundId and no completion.
+	//     The "" taskId only lands on the synthetic events, which are discarded
+	//     here — we are asking whether any exist, not building them.
+	if (findOrphanedBackgroundProcesses(events, "").length > 0) return true;
+
 	// 2. Parked on an intended orphan — an unanswered yield()/done() is the
 	//    agent having stopped ITSELF. It resumes by waiting for a message, and
 	//    step 1 already established there is none.
@@ -665,7 +691,18 @@ export function shouldLaunchAgent(events: Event[]): boolean {
 	//      treated as "stopped".
 	//    - `assistant`: the model spoke and is waiting for us. Parks.
 	//    - `empty`: nothing but lifecycle noise. Launching buys nothing.
-	const { kind } = classifyTail(events);
+	//
+	//    A trailing thinking-only turn parks too, and it is worth saying why
+	//    rather than leaving it to the `kind`: the model thought and died
+	//    before it spoke, so the log ends mid-turn — but the loop reads that as
+	//    an assistant message and waits. This predicate exists to agree with
+	//    the loop, not to out-guess it, so it waits as well. The turn is not
+	//    lost: the next message wakes the agent and the reconstructed
+	//    conversation ends `[…, assistant[thinking], user]`, which production
+	//    Anthropic accepts (measured 2026-07-25 — thinking is positionally
+	//    identical to text).
+	const { kind, trailingThinkingOnly } = classifyTail(events);
+	if (trailingThinkingOnly) return false;
 	return kind === "user" || kind === "orphan_tool_call";
 }
 
@@ -987,38 +1024,8 @@ function repairActiveRegion(
 		if (resultCount === 0) orphanCallIds.push(callId);
 	}
 
-	if (!hasDuplicates && orphanCallIds.length === 0 && outOfOrderIndex === -1) {
-		// Nothing structurally broken. One shape still needs repairing: a
-		// TRAILING TURN THAT PRODUCED ONLY THINKING.
-		//
-		// The daemon died between the thinking block closing and the first text
-		// delta. The model thought and never spoke, so the turn answered
-		// nothing — but the walker collapses `thinking` into an assistant
-		// message, so the conversation reads as "the model has replied" and the
-		// agent parks on a user message it never answered. Dropping the dead
-		// turn puts the conversation back on the user turn it was failing to
-		// answer, and the resume re-runs it.
-		//
-		// Only reached when nothing else is wrong: a session with orphans or
-		// duplicates has a more severe problem, and those strategies own it.
-		const { thinkingOnlyFrom } = classifyTail(events);
-		if (thinkingOnlyFrom > 0) {
-			return {
-				chainToEid: chainTarget(events, thinkingOnlyFrom - 1),
-				// A chain jump is pure in-memory state — it only reaches disk as
-				// the next appended event's parentEid, so a truncating repair
-				// must always append something.
-				appendEvents: [
-					repairStatusEvent(
-						taskId,
-						opts?.reason ??
-							"turn produced only thinking before the daemon stopped — re-running it",
-					),
-				],
-			};
-		}
+	if (!hasDuplicates && orphanCallIds.length === 0 && outOfOrderIndex === -1)
 		return null;
-	}
 
 	// Strategy 0: OUT-OF-ORDER tool_results — truncate from the problematic tool_call.
 	// This is the most severe case: two agent loops wrote interleaved events.
