@@ -1,384 +1,293 @@
 # Matrix Project Memory
 
-> Single source of truth. Read on every session start. Full design: `Matrix.md`
+> Read on every session start. This file exists to record what the code cannot record about itself:
+> why the obvious simplification fails, what has already been checked and ruled out, and how to
+> operate here. Full design doc: `Matrix.md`.
 
-## ⚠️ Architecture Discipline
+## How to run tests — the command is exactly `bun test`
 
-Every bug fix MUST ask: (1) What caused this specific bug? (2) Why does the architecture make this class of bug easy?
-
-**Anti-patterns**: duplicate codepaths, lifecycle dependency coupling, legacy fallbacks masking bugs, lazy optional fields, "unify" = adding a third path (delete until ONE remains).
-
-## ⚠️ Task Execution Discipline
-
-Creating tasks is CHEAP. Executing must be DELIBERATE. When user discusses design → draft + discuss. Only execute when they say "go" or explicitly ask to start.
-
-## ⚠️ Clean Rollback = Branch Model Property
-
-Root orchestrator never commits to main directly — not because "root delegates" as abstract rule, but because **direct commits destroy clean-rollback**. If root fixes something on main and the fix is wrong, there is no clean revert: the commit is interleaved with main's history.
-
-Proof: we have cleanly reverted wrong-semantic merges and wrong-architecture merges as single-commit operations. Only possible because both went through branch→merge, never direct-to-main.
-
-User's framing: "if you fix it yourself, how do we cleanly rollback on master branch?"
-
-Two concrete gates root must pass before committing ANY code change:
-1. Could this fix be wrong? (answer: any code change could be wrong — always yes)
-2. If wrong, do I want to be able to `git revert <merge>` as one operation? (answer: yes)
-
-If yes + yes, the change MUST go through a branch. No exceptions for "it's small" or "I'm sure".
-
-The ONLY direct-to-main operations allowed for root: merge-conflict resolution during branch integration, memory.md curation, task tree management (tree.json updates happen automatically).
-
-This is a product property of Matrix's commit model, not a policy preference. Breaking it degrades the whole system's safety.
-
-## ⚠️ AI Agent Laziness Patterns
-
-1. **Fear of large changes** — revert/fallback instead of executing.
-2. **Unnecessary fallbacks** — keep old path "just in case". Delete it.
-3. **Won't communicate** — text blocks invisible to parent. Use send_message.
-4. **Won't question architecture** — "why does this exist" > "how to make it work".
-5. **"Unify" = add third path** — delete until ONE remains.
-6. **Premature heuristic stacking** — when building a tool/analyzer, agents default to "handle every imagined case upfront": classifications, category labels, filter flags, pattern-match explanations. Each branch corresponds to an **imagined** use need, not an **observed** one. Half of them end up dead code, and the non-dead ones often hide data patterns the raw output would have revealed. **Correct default: start with the simplest raw dump. Add heuristics only after real use exposes a concrete need.** A 50-line dump is far more valuable than a 500-line "smart analyzer" whose categories were invented at design time. User framing: "List raw data first, add heuristics incrementally during actual use — we're not sure we actually need certain items."
-7. **Create-task as path of least resistance** — when a new requirement emerges, agents default to `create_task` even when an existing task (closed, verify, pending) is a better target. Three alternatives exist: (a) create_task fresh, (b) create_task + fork from source, (c) send_message to existing. Option (c) is often correct but loses in every "cheap" dimension: fresh description vs stale, clean session vs unknown state, single step vs two operations, "closed = finished" word bias. The agent picks (a) because it's the local optimum at every dimension — but globally it fragments context across redundant task trees. **Prompt alone cannot fix this** — mechanism is required: (1) required `origin` param on create_task forcing explicit fresh/fork/continue choice, (2) auto-search for similar titles on "fresh" with warning, (3) `latestDirective` field surfaced in get_tree so existing tasks' current focus is visible (not just their original description), (4) collapse fork_task_context into create_task's origin option to eliminate "two-step" cost. See draft task 01KNZGYY4T6SYWVT66DK13XCPV for full design. User framing: "Too many ways to achieve the same thing, and the easiest way isn't optimal."
-8. **Treating context as a deadline** — an agent that feels "context is running low" starts planning a handoff, cutting scope, or asking to be replaced. **Context is not a deadline, it is a compaction boundary.** When it fills, the agent continues with a summary; the task description and memory.md survive compaction by construction. So a compacted agent strictly DOMINATES a replacement: it has the same durable documents the newcomer would read, plus a summary of its own work, plus whatever tacit judgement survived in it. **Running low on context is never a reason to hand off.** The only legitimate reason is that FAMILIARITY ITSELF has become the liability — a final read-through, an adversarial review, anything where not knowing the material is the requirement rather than the cost. Two failures observed the same day: an agent halved its own remaining scope over a constraint that does not exist (and agents estimate their own remaining budget badly, so the estimate was likely wrong too), and root created a fresh task to continue finished-agent work without ever comparing it against reactivating the original — the reason was constructed after the fact and did not survive checking the data. Note this is #7's sibling: both are "start something new" winning by default over "continue something that exists".
-
-**Measured 2026-07-25**, because #8's "agents estimate their own remaining budget badly" was an assertion with no numbers under it. The agent that offered the handoff was at 2.0M / 891 events having **never compacted once**, and estimated it had 2-3 more sections in it. Told to continue instead, it finished all 5 remaining plus an extra debt, ending at 3.0M / 1191 events — **still zero compactions**. It therefore did roughly twice its own estimate and never reached the boundary it had budgeted against. Two sibling tasks working normally that same day sat at 2.0M / 928 events and 2.0M / 649 events, also zero compactions. This measures one day, one model, one config: read it as "the estimate was off by ~2x and the wall was nowhere near", **not** as a threshold. For where any session actually stands, count that task's own events and `compact_marker`s — no number written here can answer it.
-
-## Change Ownership Principle
-
-**Whoever introduces a change owns ALL consequences** (prompt, UI, tests, docs). Root never writes production code — delegates everything.
-
-## ⚠️ Writing This File — entries rot in three different ways
-
-Full reorganization procedure: `.mxd/memory-reorg.md`. What follows is what you need when **writing
-or updating an entry**, which is every session.
-
-**Three kinds of rot, three detectors, none substitutes for another:**
-
-| Kind | Is a correction written down somewhere? | What finds it |
-|---|---|---|
-| **Superseded** — a later change invalidated this | Yes — but filed under the change, never under the claim | Putting claim and correction in the same region |
-| **Drained** — a count/list quietly stopped being true | **No.** Nobody thinks they are correcting anything | Checking against the code, item by item |
-| **Destroyed by understanding** — a curator deleted it as redundant | Content was there until we removed it | Being forced to enumerate what you dropped |
-
-The drained kind has **no trigger at all**: a stale count and a fresh count look identical. Only a
-deliberate pass catches it, so the interval between passes is how long a wrong number survives.
-
-**Four roles content plays.** Know which one you are writing:
-- **Claims** ("it works like X") — few, must be maintained, **these are what rot**.
-- **Records** ("on date D we did X because Y") — many, **never rot**. Prefer this tense when you can.
-- **Symptoms** ("what you SEE when this bites") — **this is the retrieval key.** This file is
-  organized by cause but queried by symptom: the reader has "the buttons are missing", not
-  "the event type was renamed". Never delete a symptom as a redundant example of a mechanism you
-  have just understood — that is exactly when it looks redundant and exactly when it is needed.
-- **Negative results** ("checked, it is not that") — rare, and they stop the next person reopening
-  a closed question.
-
-**Rules:**
-1. **If something else is the authoritative source, point at it — don't snapshot it.** Interfaces,
-   counts, file paths, file lists — and equally another task's `done()` result, a config value, an
-   upstream doc. Write what the source CANNOT answer: why it is shaped this way, what bit us, which
-   rule is load-bearing. "See the `test.todo`s in X" stays true; "3 remain" does not.
-   ⚠️ **Not "code" — any authoritative source.** Reading the rule as "documentation vs code" is how
-   a hand-compressed copy of two task results ended up in a task description, written before those
-   tasks had even finished. The shape was recognisable and the rule still did not fire, because its
-   perceived scope was too narrow.
-   ⚠️ **A MEASUREMENT is not a snapshot — it is a record, and deleting it destroys evidence.**
-   "99.8% cache hit (582 creation / 362K read)" is the proof that four specific fixes worked and
-   stays true about the moment it describes. What rots is stating it in the present tense, so a
-   reader takes it for today's number. Date it, say what it measured, and say where the current
-   value actually lives. **Delete claims; keep measurements.**
-2. **Name things by what they ARE, not where they came from.** A check called "the phase-1
-   invariant" gets switched off after phase 1 — which is exactly when it starts being useful.
-3. **Don't delete a refuted claim — mark it and point at what replaced it.** The old sentence is
-   usually the evidence for why the new design exists. Two riders: when you mark a whole section as
-   history, **name the parts of it that are still live**, or the banner becomes a new trap; and
-   remember a pointer can rot **from either end** — "trust me over that older section" has to be
-   re-checked whenever either end changes.
-4. **Anything probabilistic: one passing sample is not verification.** The complement of mutation
-   testing — that one makes a test fail on purpose, this one says a single green proves nothing.
-
-**Daily maintenance** (cheap, do it every time):
-- Changed an identifier? `grep` it in this file.
-- **Approved a side effect?** Grep for that too — reviewing is how the `agent_idle` behavior change
-  went unrecorded for months.
-- About to leave a sentence standing as CURRENT? Verify it first — moving a sentence under a
-  "current state" heading is **endorsing** it, not relocating it.
-- **Promised to do something later, once some condition holds?** Create a draft task for it *at
-  that moment*. A promise whose trigger exists only in one agent's context does not survive that
-  agent being interrupted — and it fails silently, because nothing anywhere records that it was
-  owed. (Same family as the rot above: a commitment with no home is a claim with no section.)
-
-## Language Policy
-
-Code, task tree, and memory.md: English
-Matrix.md: Chinese
-Agent reply language: follows the sender's language.
-
-## How to Run Tests
-
-> **⚠️ WHEN YOU WANT TO RUN TESTS, THE ONLY COMMAND YOU ARE ALLOWED TO EXECUTE IS EXACTLY `bun test`. ⚠️**
->
-> **Literally 8 characters: `b u n (space) t e s t`. No prefix. No suffix. No pipes, no redirects, no flags, no arguments, no `&&`, no `2>&1`. Just `bun test`.**
->
-> **If the command you are about to send to bash is not byte-identical to `bun test`, STOP. You are about to do the wrong thing.**
+**`b u n (space) t e s t`. No flags, no arguments, no pipes, no redirects, no `&&`, no `2>&1`.**
+If what you are about to send to bash is not byte-identical to `bun test`, stop.
 
 ```bash
-bun test              # ALL tests (src/ + web/). Single command. Nothing appended.
+bun test              # ALL tests (src/ + web/)
 bun run typecheck     # tsc --noEmit
-bun run check         # biome lint + format
+bun run check         # biome — WRITES, and silently formats 70+ files. `check:ci` is read-only.
 ```
 
-### Forms that are WRONG (every one of these has bitten us)
+**Piping is not size reduction, it is data loss.** The bash tool already merges stdout+stderr and
+already bounds what reaches you: over 10KB it shows head 5KB + tail 5KB and preserves the **whole**
+output in a file whose path it prints. A pipe consumes the stream before the tool ever sees it, so
+whatever `head`/`tail`/`grep` did not match is gone from the universe — not truncated, not on disk,
+not recoverable. The failure repeats with the same shape every time: pipe to `tail -8`, see
+`2116 pass / 2 fail`, discover you cannot see *which* two, re-run with `| grep fail`, get a
+different flaky subset because scheduling differs per run, and spend hours chasing a test that was
+never failing. Run it bare and read the saved file.
 
-- ❌ `bun test 2>&1`
-- ❌ `bun test | head` / `| tail` / `| grep`
-- ❌ `bun test > /tmp/out.log`
-- ❌ `bun test src/some.test.ts 2>&1 | tail -100`
-- ❌ `bun test --bail`, `--silent`, `--quiet`, any flag to "reduce noise"
-- ❌ `bun test && echo ok` (masks non-zero exit)
-- ❌ Any combination of the above
+**Copy the output path out of the tool result. Never type one from memory.** The directory is
+`mxd/` under the OS temp dir, which on macOS is the per-user `$TMPDIR` (`/var/folders/…/T/mxd/`) and
+is **not** `/tmp`. `/tmp/mxd/` exists on a Mac and is empty, so a remembered path gives you "the
+tool lied to me" instead of your output.
 
-### Why, in detail
+**Tests are independent and flake at the scheduling level** (port conflicts, filesystem races,
+timer precision). There is no file ordering guarantee, so "let me just run the failing file" may not
+reproduce it, and a `grep` run afterwards is questioning a *different* run than the one that failed.
+Suspect a flake? Run `bun test` five times and read all five saved files.
 
-The bash tool (FU9) already does everything decoration would do, and better:
-- Merges stdout+stderr via `(cmd) 2>&1` wrapper → `2>&1` is redundant.
-- Tiers large output: head 5KB + banner + tail 5KB + banner + **full file preserved** on disk, with the exact path printed in the tool result → `| head` / `| tail` are redundant AND destructive.
-- Output file persists across turns → `> /tmp/out.log` is redundant.
+Do not record test counts in this file. They were ~500 short within three months, and a stale count
+is indistinguishable from a fresh one.
 
-**Piping is not "harmless size reduction". Piping is CATASTROPHIC DATA LOSS.** A pipe consumes the stream; bytes that go through your pipe never reach the bash tool. Whatever `head`/`tail`/`grep` didn't match is **gone from the Universe** — not in the output, not on disk, not recoverable. If the failure details are in the 50 lines you trimmed, you just burned them.
+## Language
 
-### Concrete anti-pattern (happens every week)
+Code, task tree and this file: English. `Matrix.md`: Chinese. Agent replies follow the sender's
+language.
 
-Real scenario:
-1. Agent runs `bun test 2>&1 | tail -8` to "save context".
-2. Output tail shows `2116 pass / 2 fail` summary in the last 8 lines.
-3. Which tests failed? In the 200 lines above. Gone.
-4. Agent re-runs `bun test 2>&1 | grep fail` hoping to see failures.
-5. Second run happens to be a DIFFERENT flaky combination (tests are non-deterministic at scheduling level). Grep matches different failures, or none.
-6. Agent is now chasing a test that wasn't failing in (1) — or worse, gaslit into thinking no failures exist at all.
-7. They re-run 5 more times. Each run flakes differently. Each `| grep` shows a different subset. Agent loses sense of reality.
+## How work moves through this repo
 
-**Previous agents have gotten stuck in this loop for hours.** The fix is always the same: run `bun test` bare, read the saved output file, you see exactly what failed in that specific run.
+**Root never commits code to main.** Not because "root delegates" as an abstract rule — because a
+direct commit destroys clean rollback. A wrong fix that went through branch→merge reverts as one
+operation. A wrong fix committed straight to main is interleaved with main's history and there is
+nothing clean to revert. We have cleanly reverted both a wrong-semantic merge and a
+wrong-architecture merge as single-commit operations, and only the branch model made that possible.
+Two gates before root touches any code: *could this fix be wrong?* (any code change could — always
+yes) and *if it is wrong, do I want `git revert <merge>` to be one operation?* (yes). Yes plus yes
+means it goes through a branch, with no exception for "it's small" or "I'm sure". The only
+direct-to-main operations are merge-conflict resolution, memory.md curation, and task-tree
+management. This is a property of the product's commit model, not a policy preference.
 
-### Tests are independent
+**Whoever introduces a change owns every consequence of it** — prompt, UI, tests, docs, i18n.
 
-Every test is its own isolated world. There is no guaranteed ordering between test files, and no expectation that "running just the one that failed" reproduces the failure — flakes are often scheduling-dependent (port conflicts, filesystem races, timer precision). So:
+**Creating tasks is cheap; executing is deliberate.** While the user is discussing a design, draft
+and discuss. Start when they say go.
 
-- ❌ "Let me just run the failing file" — the failure may not reproduce in isolation.
-- ❌ "Let me `| grep fail`" — the grep is against a stale run, different from the current failure.
-- ✅ `bun test` → read the full saved file → see what failed → analyze → fix → `bun test` again → verify green.
+**Merging is signing, and a green hook is a floor rather than a ceiling.** The hook checks syntax,
+types and pass count. It does not check whether the diff addresses every point of the task, whether
+layer boundaries held, whether the commit message matches the code, or whether the child's
+self-report matches the diff — and the last of those differs non-trivially, because a child reports
+what it *thinks* it did. Read `git diff main...<branch>` line by line before merging. The observed
+failure always has one shape: child done → `git log --oneline` + `--stat` → merge → post-merge bugs
+that a manual smoke caught immediately. Watch for single-line catastrophes (`autoRegisterSelf:
+false` shipped exactly this way) and for matrix-specific code leaking into daemon or shell.
 
-If a test is genuinely flaky, `bun test` it 5 times and read all 5 saved output files. Each time. No pipes. The bash tool's file preservation is your friend; the pipe is your enemy.
+**`evaluate_script` is runtime introspection only.** Never use it to reparent tasks, edit the tree,
+or run batch operations. Fix the tool instead.
 
-### Rules summary
-
-- **Every test run is `bun test`, full stop.**
-- If the tool result shows `<test_output saved at …>`, that file has everything. Read it. **Copy the
-  path out of the tool result — do not type one from memory.** The directory is `mxd/` under the OS
-  temp dir, which is NOT `/tmp` on macOS (it is the per-user `$TMPDIR`, e.g.
-  `/var/folders/…/T/mxd/`). This file used to say `/tmp/mxd/`; on a Mac that path exists and is
-  EMPTY, so following it produces "the tool lied to me" instead of the output you wanted.
-- If you want to re-investigate, rerun `bun test` again. Both files persist; read either.
-- If you're tempted to pipe "for context reasons": the bash tool's tiered output has already protected your context. Piping doesn't help — it only destroys.
-- ~~~2119 tests pass, 4 skip, 12 todo (as of 2026-04-18 after Fix A/B/C).~~ **Don't record test
-  counts here** — they were already ~500 short within three months, and a stale count is
-  indistinguishable from a fresh one. `bun test` prints the current numbers; that is the only place
-  they are true.
-
-## Architecture Overview
+## The shape of the system
 
 ```
 Daemon (src/daemon.ts — Hono HTTP shell, :7433)
   ├── Auth, project CRUD, config CRUD, plugin discovery
   ├── Web build (Bun.build → importmap + vendor React + shell + plugin)
   ├── SSE relay (ring buffer + Last-Event-ID catch-up)
-  └── Worker (src/runtime/scope-worker.ts — per-plugin)
+  └── Worker (src/runtime/scope-worker.ts — one per plugin)
         └── Runtime (src/runtime.ts — agent lifecycle, tools, JSONL, MCP)
               └── Plugin (ScopeOpts: tools, prompt, hooks)
 
-CLI (mxd) → HTTP API → Daemon → Worker
-Browser → Daemon (static assets + SSE) + Worker (API forwarding)
+CLI (mxd) → HTTP → Daemon.   Browser → Daemon (assets + SSE) + Worker (API forwarding).
 ```
 
-- **Daemon** = HTTP shell. Owns auth, projects, config, SSE, web build. No agent logic.
-- **Worker** = Bun Worker thread running runtime. Owns agents, tools, JSONL, trackers.
-- **Plugin** = `.mxd/plugin/` — provides ScopeOpts (tools, prompt, hooks) + web UI component.
-- **Shell UI** = `web/` — auth, header, project/scope selector, settings.
-- **Plugin UI** = `.mxd/plugin/web/Plugin.tsx` — compiled React component library, NOT SPA. Receives `projectId` prop.
-- Two providers: `AnthropicCompatibleProvider`, `OpenAIResponsesCompatibleProvider`.
-- Three-layer config: global > repo > local. Auth groups define provider+credentials.
-- Agent tree = Task tree. Each agent gets worktree + branch from parent's branch.
-- External MCP servers: `McpClientManager` (src/mcp-client.ts).
+- **Daemon** owns auth, projects, config, SSE, web build. It holds no agent logic.
+- **Worker** is a Bun Worker thread running the runtime: agents, tools, JSONL, trackers.
+- **Plugin** is `.mxd/plugin/` — ScopeOpts plus a web component. Matrix is itself a plugin,
+  discovered by the same scan as any other; it is not special-cased anywhere.
+- **Shell UI** (`web/`) is auth, header, project/scope selector. Plugin UI is a compiled React
+  component library, not an SPA, loaded with `React.lazy`.
+- Agent tree = task tree. Each task gets a worktree and a branch off its parent's branch.
+- Three-layer config: global < repo < local. Two providers: Anthropic, OpenAI Responses.
 
-## Key Files
+**Files whose name does not tell you the thing you need to know.** Everything else is findable with
+`list_files`; this is the exception set. It fails by OMISSION — nothing ever contradicts it, it just
+quietly stops being the answer to "where do I start" — so if you add a file a newcomer must find,
+add the row.
 
-| File | Purpose |
-|------|---------|
-| src/daemon.ts | Meta-daemon: HTTP, auth, plugins, workers, SSE relay, web build |
-| src/runtime.ts | Worker runtime: createApp, agent lifecycle, routes |
-| src/runtime/agent-lifecycle.ts | runAgentForNode, stop, deliverMessage, autoResume |
-| src/runtime/scope-worker.ts | Worker entry: postMessage protocol, HTTP forwarding |
-| src/web-builder.ts | Bun.build pipeline: vendor React ESM + importmap + shell + plugin |
-| src/plugin.ts | PluginManifest type, dataRoot resolution, collision detection |
-| .mxd/plugin/index.ts | Matrix plugin manifest (scope, web, runtime, onProjectInit) |
-| .mxd/plugin/web/Plugin.tsx | Matrix UI component (task tree, activity, input bar) |
-| src/task-operations.ts | Shared CRUD operations (MCP + REST call these) |
-| src/provider-shared.ts | Run loop, ProviderAdapter, yield/done handling |
-| src/events.ts | Event types, formatBodyForAI, buildSessionRepair |
-| src/event-store.ts | JSONL EventStore — append-only; eid/parentEid chain, `setChainHead` for rollback+repair. Never truncates. |
-| src/event-converter.ts | walkEventsToMessages + EventConverterCallbacks |
-| src/task-tracker.ts | Task tree, node CRUD, tree.json persistence |
-| src/orchestrator-tools.ts | Every matrix tool definition + `buildAllToolDefs` (the external-MCP list is built from it) |
-| src/data-paths.ts | THE resolver for every path built from `dataRoot` — a grep test fails if a second site appears, ANYWHERE in the repo (it walked `src/` only until 2026-07-25, so the plugin was unguarded) |
-| src/done-payload.ts | `donePayloadSchema` — the one source for done() content, imports only zod |
-| src/task-index.ts | Orama hybrid search index (title / description / result) |
-| src/plugin-sdk.ts | The public `mxd/plugin-sdk` surface — thin re-exports, never a vendored copy |
-| src/llm.ts | Stateless single-turn LLM for plugins (no tools, no session) |
-| .mxd/plugin/scope-opts.ts | `buildMatrixScopeOpts` — the ONE place that knows matrix's tools + prompt + hooks |
-| .mxd/plugin/web/event-handler.ts | UI event → log entries; `queueEntryToUIEvent` is the materialization gate, `pendingReducer` is pending |
-| src/test-utils/api-message-rules.ts | The MEASURED Anthropic message-shape rules, and the prefix-vs-sendable split. The authority on "would this request be accepted" |
-| .mxd/plugin/message-editability.ts | Where the three Edit/Rewind judgments meet — and the ONLY place they may. Has zero imports, asserted by a test |
+| file | the part you would not guess |
+|---|---|
+| `src/data-paths.ts` | THE resolver for every path built from `dataRoot`. A grep test fails if a second site computes one, anywhere in the repo. |
+| `src/done-payload.ts` | the one source for done()'s content shape. Imports only zod, so the type layer and the tool layer can both import it without a cycle. |
+| `src/orchestrator-tools.ts` | every matrix tool definition **and** `buildAllToolDefs`, from which the external-MCP tool list is built |
+| `src/event-store.ts` | append-only JSONL. eid/parentEid chain, `setChainHead` for rollback and repair. **Never truncates.** |
+| `src/events.ts` | event types, `buildSessionRepair`, and `walkActiveChainIndices` — the ONE definition of "which events count" |
+| `src/task-operations.ts` | the shared CRUD ops. MCP and REST are both thin wrappers over these. |
+| `src/test-utils/api-message-rules.ts` | the MEASURED Anthropic message-shape rules, and the prefix-vs-sendable split |
+| `.mxd/plugin/scope-opts.ts` | `buildMatrixScopeOpts` — the one place that knows matrix's tools, prompt and hooks |
+| `.mxd/plugin/web/event-handler.ts` | UI event → log entries. `queueEntryToUIEvent` is the materialization gate; `pendingReducer` is pending. |
+| `.mxd/plugin/message-editability.ts` | where the three Edit/Rewind judgments meet, and the only place they may. Has zero imports, asserted by a test. |
 
-**Verified 2026-07-25**: every path above exists. Eight rows were added in the reorganisation pass
-and two more the same afternoon — all of them files that had existed for a while, or landed that
-day, without anyone adding the row. A file map is one of the entries most prone to going quietly
-wrong, because it fails by OMISSION: nothing contradicts it, it just silently stops being the answer
-to "where do I start". If you add a file that a newcomer would need to find, add the row.
+## Changing code here
 
-**The two additions are the test of that instruction, and it failed twice in one day** — both files
-were created by tasks that wrote careful memory entries about them and neither added a row. So the
-instruction is not enough on its own; if this keeps happening the answer is a check, not a
-firmer sentence.
+**Every bug fix asks two questions, not one.** What caused this specific bug, and why does the
+architecture make this *class* of bug easy? The recurring answers: duplicate codepaths, lifecycle
+dependency coupling, legacy fallbacks masking bugs, lazily-optional fields.
 
-## Merge review discipline — hook-pass ≠ reviewed
-
-**"Pre-commit hook passed + tests green" is necessary but NOT sufficient for merging.** Hook verifies syntax, types, test-pass count. It does NOT verify:
-- Is the diff addressing every point in the task description?
-- Are layer boundaries respected (no matrix-specific code leaking into daemon/shell)?
-- Does the commit message match what the code actually does?
-- Are edge cases the task called out actually handled?
-- Does the child's self-report align with the diff's actual content?
-
-**Required before every merge** (this session burned multiple times on skipping):
-1. `git diff main...<branch>` — read every line of diff, not just stat
-2. Cross-check against task description — did the child address the stated scope?
-3. Verify layer discipline — for each file changed, is this the right layer?
-4. Look for `autoRegisterSelf: false`-style catastrophic single-line oversights
-5. Flag anything ambiguous BEFORE pressing merge
-
-**Observed failure pattern** (session 2026-04-18):
-- Child done → run `git log --oneline` + `git diff --stat` → directly `git merge`
-- Skipped: actual diff content review
-- Result: multiple post-merge bugs that manual smoke caught (`autoRegisterSelf: false` in prod entry; layer violations in production-mode placement)
-
-**The anti-pattern**: trusting the child's summary as review. Child reports what they THINK they did; diff shows what they ACTUALLY did. These differ non-trivially.
-
-**Hook passing tempts you to skip review because it feels green.** Resist — hook is a floor, not a ceiling. For 400+ line architecture refactors, the user themselves wouldn't dare merge without reading the diff; orchestrator definitely can't.
-
-## evaluate_script Discipline
-
-Runtime debug introspection ONLY. Do NOT use to: reparent tasks, modify tree structure, batch operations. Fix the tool instead.
-
-## Refactoring Philosophy
-
-Embrace large type refactors. Delete first, let compiler show every dependency. Hundreds of errors = your todo list. Static type systems make large changes SAFE.
+⚠️ **The compiler enumerates only what it can TYPE.** Anything reaching a symbol *by name* is
+invisible to it: string-keyed dispatch, an event-type name matched across a process boundary, a
+field an external system keys on. **The compiler's silence means "nothing typed points here". It
+never means "nothing points here".** So grep for the symbol as a *string* before trusting the error
+list, and check every boundary the type system does not cross. The asymmetry is what makes this
+worth a paragraph: a typed break costs one compiler error and ten seconds, while a name-based break
+costs a silent, delayed, hard-to-attribute failure in a system you were not looking at. Deleting the
+`agent_idle` event type would have hung every external `send_user_message → yield_external →
+get_logs` workflow until timeout, because `yield_external` matches the type NAME in a string set —
+and the same class had already bitten us unnoticed for months, with `WAKE_SIGNALS` still listing
+`agent_stopped` and `orchestration_completed` long after both names were replaced, so a stopped
+agent could only ever wake an external client by timing out.
 
 ### Deleting a mechanism built on a false premise: separate the PREMISE from the OBLIGATION
 
-When you have shown that the stated reason for some code is wrong, do NOT delete on that finding
-alone. For each block, answer separately:
-
-1. **What did it claim to prevent?** (the premise — now known false)
-2. **What does it actually still do?** (the obligation — possibly real, possibly load-bearing)
-
-Delete only where (2) is empty. Where (2) is real, **keep the effect and relocate or re-justify it**,
+Having shown that the stated reason for some code is wrong, do **not** delete on that finding alone.
+For each block answer two questions separately: what did it claim to prevent (the premise, now known
+false), and what does it actually still do (the obligation, possibly real and load-bearing)? Delete
+only where the obligation is empty. Where it is real, keep the effect, relocate or re-justify it,
 and rewrite the comment to name the true reason.
 
-**If you skip this, you delete a real guarantee along with the phantom, and the loss is silent** —
-the premise was false so nothing was protecting the obligation, and the tests that covered it were
-usually written in the phantom's vocabulary too, so they go green or get "fixed" on the way out.
+**Skip this and you delete a real guarantee along with the phantom, silently** — the premise was
+false so nothing was protecting the obligation, and the tests that covered it were usually written
+in the phantom's vocabulary too, so they go green or get "fixed" on the way out.
 
-Worked example, all four outcomes in one subsystem (`provider-shared.ts`, 2026-07-25 — the
-alternation phantom, see *The Anthropic message-shape rules, MEASURED*):
+⚠️ **A mechanism built on a phantom can also be actively harmful, so "harmless, leave it" is not the
+safe default it looks like.** Check for a COST, not only for redundancy — and the cost is usually
+written in the mechanism's own comment as an accepted trade-off. One such block answered every
+`done()` tool_call, which made resume detect a generic interrupted-resume instead of a done-resume,
+so the woken agent silently lost its done-resume context. Reverting it was a behavior fix.
 
-| block | premise | obligation | outcome |
-|---|---|---|---|
-| `pendingCompactYieldToolCall` / `pendingCompactDoneToolCall` | false | none — the turn they merged into is never persisted | **deleted** |
-| `pendingDuplicateYieldExtras` | false | REAL, and different: live/walker byte-identity | **kept**, comment rewritten |
-| R8-B#11, R8-B#1b | correctly stated | REAL (pairing) | **kept in substance**, relocated |
-| FIX-5 R8-B#2 | false | none, AND it was costing behavior | **reverted** — a behavior FIX |
+## Where agents predictably go wrong
 
-Note the last row: a mechanism built on a phantom can also be **actively harmful**, so "harmless,
-leave it" is not the safe default it looks like. R8-B#2 answered every `done()` tool_call, which
-made resume detect a generic interrupted-resume instead of a done-resume — the woken agent lost its
-done-resume context. Reverting restored behavior. **Check for a cost, not only for redundancy: the
-cost is usually recorded in the mechanism's own comment as an accepted trade-off.**
+These are not hypotheticals; each has cost us real work.
 
-**Bound on "every dependency": the compiler enumerates only what it can TYPE.** Anything that
-reaches a symbol *by name* is invisible to it — string-keyed dispatch, an event-type name matched
-across a process boundary, a field an external system keys on. **The compiler's silence means
-"nothing typed points here". It never means "nothing points here".** So the error list is a todo
-list, not a completeness proof: before trusting it, grep for the symbol's name as a *string*, and
-check every boundary the type system does not cross.
+1. **The broken intermediate state feels more dangerous than it is.** Fear of a large change
+   produces a revert, or a fallback that keeps the old path "just in case". Both are worse than the
+   break: two codepaths drift silently and nobody knows which one ran. Delete until ONE remains.
+2. **The existing shape is not a given.** "Why does this exist" beats "how do I make this work". And
+   a "unification" that adds a third path is not a unification.
+3. **Imagined requirements get built.** Building a tool or analyzer, agents default to handling every
+   case they can imagine: classifications, category labels, filter flags, pattern-matched
+   explanations. Each branch corresponds to an imagined need, not an observed one; half end up dead,
+   and the live half often hides the data patterns a raw dump would have shown. **Start with the
+   simplest raw dump and add heuristics only when real use exposes a concrete need.** A 50-line dump
+   beats a 500-line smart analyzer whose categories were invented at design time.
+4. **"Start something new" wins locally and loses globally.** When a requirement appears, three
+   options exist: create a task fresh, create and fork context into it, or `send_message` an
+   existing (closed, verify, pending) task. The third is often correct and loses on every cheap
+   dimension — fresh description vs stale, clean session vs unknown state, one step vs two, and the
+   word "closed" reading as "finished" — so agents take the first and fragment context across
+   redundant trees. The same shape appears as handing work to a fresh agent instead of continuing.
+   Prompt alone has not fixed this; the mechanism design is draft `01KNZGYY4T6SYWVT66DK13XCPV`.
+5. **Context is a compaction boundary, not a deadline.** An agent that feels low on context starts
+   planning a handoff, cutting scope, or asking to be replaced. When context fills, the agent
+   continues from a summary; the task description and this file survive compaction by construction.
+   So a compacted agent strictly DOMINATES a replacement — same durable documents, plus a summary of
+   its own work, plus whatever tacit judgement survived. Running low is never a reason to hand off.
+   The only legitimate reason is that FAMILIARITY ITSELF has become the liability: a final
+   read-through, an adversarial review, anything where not knowing the material is the requirement
+   rather than the cost.
+   **Measured 2026-07-25**, because the claim that agents estimate their own budget badly had no
+   numbers under it. The agent offering a handoff was at 2.0M tokens / 891 events having **never
+   compacted once**, and estimated 2-3 sections left in it. Told to continue, it finished all 5
+   remaining plus an extra debt, ending at 3.0M / 1191 events, still zero compactions — roughly
+   twice its own estimate, never reaching the boundary it budgeted against. Two sibling tasks that
+   day sat at 2.0M / 928 and 2.0M / 649, also zero compactions. That is one day, one model, one
+   config: read it as "the estimate was off by ~2× and the wall was nowhere near", not as a
+   threshold. For where a session actually stands, count its own events and `compact_marker`s.
 
-⚠️ **The instrument that rule depends on was itself blind until 2026-07-25.** `search` skipped every
-dot directory — so all of `.mxd/plugin/`, 34% of non-test source and the entire UI — and its
-documented `glob: "*.ts"` example matched only the top level. Both are fixed. But it means **a
-"grepped it, nothing points there" conclusion reached before that date proves less than it looks
-like**, and the failure was silent in the direction that matters: a confident non-empty answer with
-the deciding file missing from it. See the two `search` entries in Core Mechanisms.
+## Hard invariants
 
-⚠️ **"Fixed" means fixed in the SOURCE. Your `search` is the running daemon's, not your worktree's**
-— so it stays blind until a restart, and it was still blind hours after those commits landed
-(measured). Before trusting a by-name survey, spend one call proving your instrument sees a file you
-already know exists. Full measurement and why the fixer is the likeliest victim: *Two gates whose
-names were wider than their scope*.
+Violating any of these produces silent corruption rather than an error. The reasoning for each lives
+in its own region; this is the index.
 
-This bound is not hypothetical — the counter-evidence is in *Agent activity: live process state*
-(Agent Loop region), § "Two consumers that a grep for `activeAgents` does NOT find". Deleting the
-`agent_idle` event type would have made every external `send_user_message → yield_external →
-get_logs` workflow hang until timeout, because `yield_external` matches the type NAME in a string
-set. Same section records the identical class already having bitten us and gone unnoticed for
-months: `WAKE_SIGNALS` still listed `agent_stopped` and `orchestration_completed`, names replaced
-long before, so they could never match and a stopped agent never woke an external client.
+- **JSONL content fidelity.** What is written to JSONL is byte-identical to what was sent to the
+  API. No `.slice()`, no truncation on persisted content. UI truncation happens at the rendering
+  layer only.
+- **Tool results are three-part.** Every tool_result must (1) emit to JSONL, (2) yield to SSE, and
+  (3) push to `messages[]`. Missing any one gives an orphan, a missing UI entry, or an API 400.
+- **Nothing writes to JSONL after a yield tool_call except the provider loop.** External events go
+  to the queue, not to JSONL.
+- **Persist before broadcast.** `emitEvent` writes to JSONL first and broadcasts the *stamped* copy,
+  so every observer — SSE included — gets the event's durable name (`eid`/`parentEid`) at the
+  instant the event exists. `append`/`appendBatch` are fully synchronous and return the persisted
+  event; that synchrony is what makes chain-head rewind correct on a failed write, so it is
+  load-bearing, not a style choice.
+- **`deliverMessage` is THE message delivery path**: JSONL write → queue delivery → flush →
+  auto-launch. No other code writes message events to JSONL.
+- **One codepath per task operation.** `src/task-operations.ts` holds create/update/delete/close/
+  reset/reorder. MCP and REST are thin wrappers; behavioral differences are explicit
+  (`if (editedBy === "user")`), never a second implementation.
+- **Messages have a two-phase lifecycle.** `message` persisted → frontend defers; `messages_consumed`
+  → frontend materializes. `QueueMessage.ts`, `Event.ts` and the displayed `[HH:MM:SS]` are all the
+  same value, set once at creation.
+- **Recovery must touch JSONL, not just memory.** In-memory `messages[]` and the JSONL events are
+  two data structures. A "fix" that only edits `messages[]` leaves the poison on disk and it comes
+  back on the next resume.
 
-Also note the asymmetry that makes this worth a paragraph: a typed break costs you one compiler
-error and ten seconds. A name-based break costs you a silent, delayed, hard-to-attribute failure in
-a system you were not looking at. Same deletion, two completely different blast radii.
+## ⚠️ Writing this file
 
-## Key Architectural Invariants
+Full reorganization procedure: `.mxd/memory-reorg.md`. What follows is what you need when writing or
+updating an entry, which is every session.
 
-### JSONL Content Fidelity
-JSONL event content = exact content sent to API. Zero transformation. No `.slice()`, no truncation on persisted content. UI truncation happens only at the frontend rendering layer — never on persisted events. (The former SSE-layer `stripEventForUI` helper was deleted in the FU8 sweep; the citation is kept here only as a tombstone so future readers don't go looking for it.)
+**What earns a place.** Code can state what it does. It cannot state why the change that looks like
+an improvement is wrong. So: *if a reader of this code would want to simplify it, this file must say
+why that fails; if nobody would touch it, this file should say nothing.* Do not ask "is this
+useful" — the answer is "somewhat" for every entry ever written, and that is how the file reached
+7,616 lines. Four things survive that question: how to operate here and what happens if you don't;
+why the design is shaped this way; **the places that look wrong but are right**; and negative
+results ("checked, it is not that"), which are recorded nowhere else because nobody opens a task for
+"it wasn't that".
 
-### Tool Result Three-Part Invariant
-Every tool_result must: (1) emit to JSONL, (2) yield to SSE, (3) push to messages[]. Missing any = orphan, missing UI, or API 400.
+**Write the current design as one narrative, not as a sequence of amendments.** A past state earns
+its lines only when a reader without it could not justify the current design, or would likely
+reintroduce the old one — and then it is not history, it is a guardrail, and must be written as one:
+*"do not change Z back to Y; Y silently loses history when W"*. If you cannot write that sentence,
+delete the old state instead of striking it through. Strikethrough-plus-pointer produces a
+changelog, and a changelog is what every reader pays for on every launch.
 
-### Yield JSONL Invariant
-Nothing written to JSONL after yield tool_call except by provider loop. External events go to queue, not JSONL. ~~`hasPendingYield()` detects this state.~~ **That function no longer exists** — deleted in the FU/FIX-4b sweep with zero production callers (grep-verified: zero occurrences in `src/` today). Do not go looking for it; this file used to contradict itself about it. What exists now: `hasPendingImplicitYield` (events.ts) for the *implicit* yield, and for an *explicit* pending yield there is no named helper at all — `provider-shared.ts` reads it straight off the JSONL shape on resume (`pendingYieldToolCall`, set when the last tool_call is yield). The invariant itself is unchanged and live; only its detector sentence was stale.
+**Compression is not terseness.** Line count falls because seven sections became one, not because
+sentences became telegrams. Write every surviving sentence out properly.
 
-### Persist Before Broadcast (2026-07-25)
-`emitEvent` writes to JSONL FIRST and broadcasts the *stamped* copy, so every observer — SSE
-clients included — gets the event's durable name (`eid`/`parentEid`) at the instant the event
-exists. `append`/`appendBatch` are fully synchronous and return the persisted event; that synchrony
-is what makes `rewindChainHead` correct on a failed write, so it is load-bearing, not a style
-choice. Four consumers depend on the name being there (Edit/Rewind, deep-links, viewport
-addressing, active-chain membership) and would each grow their own locating mechanism without it.
-Ephemeral events (`text_delta`, `agent_activity`) are deliberately NOT stamped — they are not
-history. Full reasoning: *Every transport carries the event's name (eid)* (Events/JSONL region).
+**Three kinds of rot, three detectors, none substituting for another:**
 
-### Single Delivery Path
-`deliverMessage` is THE message delivery path: JSONL write → queue delivery → flush → auto-launch. `quiet: true` for notifications. No other code writes message events to JSONL.
+| kind | is a correction written down anywhere? | what finds it |
+|---|---|---|
+| **Superseded** — a later change invalidated this | yes, but filed under the change, never under the claim | putting claim and correction in the same region |
+| **Drained** — a count or list quietly stopped being true | **no.** Nobody thinks they are correcting anything | checking against the source, item by item |
+| **Destroyed by understanding** — a curator deleted it as redundant | the content was there until we removed it | being forced to enumerate what you dropped |
 
-### ONE Codepath Per Task Operation
-`src/task-operations.ts`: createTaskOp, updateTaskOp, deleteTaskOp, closeTaskOp, resetTaskOp, reorderTasksOp. MCP and REST are thin wrappers. Behavioral differences via explicit `if (editedBy === "user")`.
+The drained kind has **no trigger at all**: a stale count and a fresh count look identical, so the
+interval between deliberate passes is how long a wrong number survives.
 
-### Two-Phase Message Lifecycle
-Phase 1: `message` event persisted → frontend defers. Phase 2: `messages_consumed` → frontend materializes. `QueueMessage.ts` = `Event.ts` = timestamp in `[HH:MM:SS]` — all same value, set once at creation.
+⭐ **Symptoms are the retrieval key, and the third rot kind eats them.** This file is organised by
+cause and queried by symptom: the reader arrives holding "the buttons are missing", not "the event
+type was renamed". A symptom looks most redundant exactly when you have just understood its
+mechanism, which is exactly when it is most needed. Keep the conditional form — *"if you break this
+invariant, you will see X"* — and cut the perfect tense — *"in July we had a bug where the buttons
+disappeared"*, which is addressed to nobody.
 
-### JSONL-Memory Consistency
-In-memory `messages[]` and JSONL events are two data structures. Recovery that only modifies `messages[]` doesn't persist — JSONL retains the poison. Any "fix" must touch JSONL, not just memory.
+**Rules:**
 
+1. **If something else is the authoritative source, point at it rather than snapshotting it.**
+   Interfaces, counts, file paths, file lists — and equally another task's `done()` result, a config
+   value, an upstream doc. Write what the source cannot answer: why it is shaped this way, what bit
+   us, which rule is load-bearing. "See the `test.todo`s in X" stays true; "3 remain" does not.
+   ⚠️ Reading this as "documentation vs code" is too narrow, and that misreading is how a
+   hand-compressed copy of two task results ended up in a task description, written before those
+   tasks had even finished.
+   ⚠️ **A MEASUREMENT is a record, not a snapshot, and deleting it destroys evidence.** "99.8% cache
+   hit (582 creation / 362K read)" is proof that four specific fixes worked and stays true about the
+   moment it describes. What rots is the present tense. Date it, say what it measured, say where the
+   current value lives. **Delete claims; keep measurements.**
+2. **Name things for what they ARE, not where they came from.** A check called "the phase-1
+   invariant" gets switched off after phase 1 — precisely when it starts being useful.
+3. **Anything probabilistic: one passing sample is not verification.** The complement of mutation
+   testing — that one makes a test fail on purpose, this one says a single green proves nothing.
+
+**Daily maintenance, all cheap:**
+
+- Changed an identifier? Grep it in this file.
+- **Approved a side effect?** Grep for that too. Reviewing is how an `agent_idle` behavior change
+  went unrecorded for months.
+- About to leave a sentence standing as CURRENT? Verify it first. Moving a sentence under a
+  "current state" heading is **endorsing** it, not relocating it.
+- **Promised to do something later, once some condition holds?** Create a draft task for it *at that
+  moment*. A promise whose trigger exists only in one agent's context does not survive that agent
+  being interrupted, and it fails silently because nothing records that it was owed.
 ---
 # Core Mechanisms
 ---
