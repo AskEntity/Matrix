@@ -42,8 +42,9 @@ import {
 	getBackgroundStatus,
 	jsSearch,
 	killBackgroundProcess,
-	normalizeSearchGlob,
+	normalizeGlobDepth,
 	resolvePath,
+	skipDirsForPattern,
 	truncateSearchOutput,
 } from "./tools/index.ts";
 import { TurnInterrupt } from "./turn-interrupt.ts";
@@ -2588,13 +2589,290 @@ describe("jsSearch: glob depth", () => {
 		// Stated at the string level because two of these have no behavioral
 		// symptom to assert: `**/**/*.ts` returns the same files as `**/*.ts`, so
 		// a doubly-promoted glob is invisible from the outside.
-		expect(normalizeSearchGlob("*.ts")).toBe("**/*.ts");
-		expect(normalizeSearchGlob("**/*.ts")).toBe("**/*.ts");
-		expect(normalizeSearchGlob("src/*.ts")).toBe("src/*.ts");
+		expect(normalizeGlobDepth("*.ts")).toBe("**/*.ts");
+		expect(normalizeGlobDepth("**/*.ts")).toBe("**/*.ts");
+		expect(normalizeGlobDepth("src/*.ts")).toBe("src/*.ts");
 		// This is the one that earns the test: it is the shape the fixture above
 		// has no file for, and "promote patterns that start with a bare `*`" is a
 		// plausible enough reading of the rule to write by accident.
-		expect(normalizeSearchGlob("*/top.ts")).toBe("*/top.ts");
+		expect(normalizeGlobDepth("*/top.ts")).toBe("*/top.ts");
+	});
+});
+
+/**
+ * `list_files` walked with `dot: false` and no skip list at all — the same
+ * hidden-directory blindness `search` had, plus the reason it could not be fixed
+ * with one word: turning `dot` on with nothing excluded makes the tool WORSE,
+ * because the 500-file cap then fills up with `.git/` internals and
+ * `.worktrees/` copies of files the caller already has.
+ *
+ * So the two halves are one change, and the tests come in pairs: something that
+ * must now be reachable, and something that must still not be.
+ */
+describe("list_files: hidden directories and the skip list", () => {
+	let tempDir: string;
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-listfiles-"));
+		// Production code in a hidden directory — models `.mxd/plugin/`.
+		await mkdir(join(tempDir, ".mxd", "plugin"), { recursive: true });
+		await writeFile(join(tempDir, ".mxd", "plugin", "scope-opts.ts"), "");
+		await mkdir(join(tempDir, "src"), { recursive: true });
+		await writeFile(join(tempDir, "src", "visible.ts"), "");
+		// A sub-agent worktree: a whole second copy of the repo.
+		await mkdir(join(tempDir, ".worktrees", "child", "src"), {
+			recursive: true,
+		});
+		await writeFile(
+			join(tempDir, ".worktrees", "child", "src", "visible.ts"),
+			"",
+		);
+		await mkdir(join(tempDir, ".git"), { recursive: true });
+		await writeFile(join(tempDir, ".git", "COMMIT_EDITMSG"), "");
+		// The accident probe for the opt-in rule: a pattern hunting for `rebuild.ts`
+		// contains the letters "build" but not `build/`, so `build/` must stay
+		// excluded. The SAME filename sits in both places, so one pattern reaches
+		// both candidates and the directory is the only thing separating them —
+		// without that, the exclusion half of the assertion is vacuous and passes
+		// no matter what the rule does.
+		await mkdir(join(tempDir, "build"), { recursive: true });
+		await writeFile(join(tempDir, "build", "rebuild.ts"), "");
+		await writeFile(join(tempDir, "src", "rebuild.ts"), "");
+	});
+
+	afterAll(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	async function listed(pattern: string): Promise<string[]> {
+		const result = await executeTool("list_files", { pattern }, tempDir);
+		expect(result.isError).toBe(false);
+		return result.content.split("\n").filter(Boolean);
+	}
+
+	test("finds a file inside a hidden directory", async () => {
+		// One question only — does the walker descend into a dot directory. Which
+		// directories stay EXCLUDED is the next tests' business; asserting it here
+		// too would make a failure ambiguous between the two halves.
+		const files = await listed("**/*.ts");
+		expect(files).toContain(".mxd/plugin/scope-opts.ts");
+		expect(files).toContain("src/visible.ts");
+	});
+
+	test(".worktrees/ stays excluded when the pattern does not name it", async () => {
+		const files = await listed("**/*.ts");
+		expect(files.some((f) => f.startsWith(".worktrees/"))).toBe(false);
+		// Two-sided: the real copy IS listed, so this cannot pass by listing nothing.
+		expect(files).toContain("src/visible.ts");
+	});
+
+	test("…and is reachable when the pattern DOES name it", async () => {
+		// The half that disappears silently. Adding a skip list takes away an
+		// ability that has no replacement — `list_files` has no `path` parameter to
+		// point into an excluded directory the way `search` does — and nothing else
+		// in this suite would notice.
+		expect(await listed(".worktrees/**/*.ts")).toEqual([
+			".worktrees/child/src/visible.ts",
+		]);
+	});
+
+	test(".git/ stays excluded", async () => {
+		const files = await listed("**/*");
+		expect(files.some((f) => f.startsWith(".git/"))).toBe(false);
+		expect(files).toContain("src/visible.ts");
+	});
+
+	test("a pattern that merely CONTAINS a skipped name does not opt in", async () => {
+		// The one path by which "you named it, you get it" could slide from handing
+		// over more files into handing over the wrong ones. Comparing against the
+		// trailing-slash form is what prevents it, and nothing else here would fail
+		// if that slash were dropped.
+		const files = await listed("**/*build*.ts");
+		expect(files).toContain("src/rebuild.ts");
+		expect(files).not.toContain("build/rebuild.ts");
+	});
+
+	test("the opt-in rule reads off the pattern, one entry at a time", () => {
+		// At the string level because two of these have no behavioral symptom in
+		// any fixture: a pattern naming `dist/` still returns nothing here, and
+		// whether the OTHER eight skips survived is invisible from the outside.
+		expect(skipDirsForPattern("**/*.ts")).toEqual(DEFAULT_SKIP_DIRS);
+		expect(skipDirsForPattern("**/*build*.ts")).toEqual(DEFAULT_SKIP_DIRS);
+		expect(skipDirsForPattern("node_modules/zod/**")).not.toContain(
+			"node_modules/",
+		);
+		// Naming one directory drops exactly that one — the other eight still apply.
+		expect(skipDirsForPattern("node_modules/zod/**")).toContain(".worktrees/");
+		expect(skipDirsForPattern("dist/**")).toEqual(
+			DEFAULT_SKIP_DIRS.filter((d) => d !== "dist/"),
+		);
+	});
+});
+
+/**
+ * `list_files` handed its pattern to Bun.Glob verbatim, so `*.json` — the
+ * example in its OWN description — listed only files sitting at the top of the
+ * tree, and `*.ts` answered "(no files)" in a TypeScript repo.
+ *
+ * Unlike `search`, the old behavior here was not empty: `*.json` returned
+ * package.json, tsconfig.json and biome.json. Three real, plausible files. So
+ * "a semantic that never worked has no users" — which settled the same question
+ * for `search` in one line — proves nothing here, and the case for changing it
+ * had to be made on what an agent typing `*.json` is asking for instead.
+ */
+describe("list_files: a pattern with no slash matches at any depth", () => {
+	let tempDir: string;
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-listfiles-depth-"));
+		await mkdir(join(tempDir, "src"), { recursive: true });
+		await mkdir(join(tempDir, "deep", "src"), { recursive: true });
+		await writeFile(join(tempDir, "top.json"), "");
+		await writeFile(join(tempDir, "src", "nested.json"), "");
+		await writeFile(join(tempDir, "src", "top.ts"), "");
+		// A second `src/` one level down: the probe for over-promotion. `src/*.ts`
+		// must not reach it.
+		await writeFile(join(tempDir, "deep", "src", "inner.ts"), "");
+	});
+
+	afterAll(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	async function listed(pattern: string): Promise<string[]> {
+		const result = await executeTool("list_files", { pattern }, tempDir);
+		expect(result.isError).toBe(false);
+		return result.content.split("\n").filter(Boolean);
+	}
+
+	test("finds the nested file", async () => {
+		expect(await listed("*.json")).toContain("src/nested.json");
+	});
+
+	test("…and still finds the top-level one — promotion loses nothing", async () => {
+		// A leading `**` matches zero directories too, so this is a strict superset
+		// of the old behavior and cannot take a result away from anyone. Separate
+		// test because it is a separate property: this is what regresses if that
+		// collapse ever stops holding, which has nothing to do with reaching nested
+		// files.
+		expect(await listed("*.json")).toContain("top.json");
+	});
+
+	test("a pattern containing a slash stays anchored at the working directory", async () => {
+		const files = await listed("src/*.ts");
+		// Two-sided: it must still find the anchored file, so this cannot pass by
+		// matching nothing at all.
+		expect(files).toContain("src/top.ts");
+		expect(files).not.toContain("deep/src/inner.ts");
+	});
+
+	test("the default pattern lists the project, not the top of it", async () => {
+		// `*` is what `list_files()` sends. It used to return the loose files at the
+		// top of the tree and not a single directory — `onlyFiles` drops those — so
+		// it could not answer "what is the shape of this project", which is what it
+		// looked like it was for.
+		expect((await listed("*")).sort()).toEqual([
+			"deep/src/inner.ts",
+			"src/nested.json",
+			"src/top.ts",
+			"top.json",
+		]);
+	});
+});
+
+/**
+ * The cap counts files the tool KEEPS.
+ *
+ * Its own fixture, because it needs more files than the cap and that is slow
+ * enough to be worth isolating. Filtering after the cap is not a slower route to
+ * the same answer — it is a different, wrong one: measured from the main
+ * checkout, an any-depth `*.ts` pattern filled 323 of its 500 slots with
+ * `.worktrees/` copies and never reached `web/`, `scripts/` or `.mxd/` at all.
+ * The cap stops protecting you and starts guaranteeing you get the copies.
+ */
+describe("list_files: the cap counts kept files, not walked ones", () => {
+	let tempDir: string;
+	const NOISE = 600;
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-listfiles-cap-"));
+		await mkdir(join(tempDir, ".worktrees", "child"), { recursive: true });
+		await Promise.all(
+			Array.from({ length: NOISE }, (_, i) =>
+				writeFile(join(tempDir, ".worktrees", "child", `copy${i}.ts`), ""),
+			),
+		);
+		await mkdir(join(tempDir, "src"), { recursive: true });
+		await writeFile(join(tempDir, "src", "real.ts"), "");
+	});
+
+	afterAll(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("one real file still surfaces past 600 excluded ones", async () => {
+		const result = await executeTool(
+			"list_files",
+			{ pattern: "**/*.ts" },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content.split("\n").filter(Boolean)).toEqual(["src/real.ts"]);
+	});
+});
+
+/**
+ * Truncation says so.
+ *
+ * The tool used to `break` at 500 and return the slice with no marking, so a
+ * partial list and a complete one were byte-identical in shape — the same
+ * failure as not walking a directory, and now easier to hit, since a filename
+ * pattern reaches the whole tree.
+ */
+describe("list_files: truncation is announced", () => {
+	let tempDir: string;
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-listfiles-trunc-"));
+		await mkdir(join(tempDir, "many"), { recursive: true });
+		await Promise.all([
+			...Array.from({ length: 500 }, (_, i) =>
+				writeFile(
+					join(tempDir, "many", `keep${String(i).padStart(3, "0")}.ts`),
+					"",
+				),
+			),
+			writeFile(join(tempDir, "many", "extra.ts"), ""),
+		]);
+	});
+
+	afterAll(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	async function listed(pattern: string): Promise<string> {
+		const result = await executeTool("list_files", { pattern }, tempDir);
+		expect(result.isError).toBe(false);
+		return result.content;
+	}
+
+	test("501 matches → 500 files and a notice", async () => {
+		const content = await listed("many/*.ts");
+		expect(content.split("\n").filter((l) => l.endsWith(".ts"))).toHaveLength(
+			500,
+		);
+		expect(content).toContain("truncated at 500 files");
+	});
+
+	test("exactly 500 matches → no notice", async () => {
+		// The half that pins "one past the cap" rather than "at the cap": stopping
+		// at 500 cannot tell a project with exactly 500 files from one with 50,000,
+		// and would cry truncation on a complete answer.
+		const content = await listed("many/keep*.ts");
+		expect(content.split("\n").filter((l) => l.endsWith(".ts"))).toHaveLength(
+			500,
+		);
+		expect(content).not.toContain("truncated");
 	});
 });
 

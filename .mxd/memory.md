@@ -711,10 +711,196 @@ after the walk) is still open** and was deliberately not touched here — `norma
 a pure string transform applied before the walker is constructed, so it survives any rewrite of
 the walk itself.
 
-**Filed, not swept in: 01KYCV43JAZ** — `list_files` has BOTH bugs this tool just had.
-Measured: `dot: false` hides 29 `.ts` files under `.mxd/plugin/` from it, and its own documented
-`"*.json"` example returns 3 files where `**/*.json` returns 329. Not a one-word fix, because
-`list_files` has no skip list, so `dot: true` there would start walking `.git/` and `.worktrees/`.
+~~**Filed, not swept in: 01KYCV43JAZ** — `list_files` has BOTH bugs this tool just had.~~
+**That is the section below** — fixed same day. The one number in it that was wrong is corrected
+there (329 was counted without the skip list).
+
+⚠️ **`normalizeSearchGlob` is now `normalizeGlobDepth`** — renamed when `list_files` became its
+second caller. Read every mention of the old name in the two entries above as the current one.
+
+## `list_files` had both of `search`'s bugs — and the third instance is where the CLASS got named (2026-07-25)
+
+Same two defects, in the tool sitting next to `search` in `src/tools/definitions.ts`: it walked
+with `dot: false` (so nothing under `.mxd/` existed — 29 `.ts` files) and handed its pattern to
+`Bun.Glob` verbatim (so `*.ts` answered `(no files)` in a TypeScript repo). Both fixed;
+`normalizeGlobDepth` and `DEFAULT_SKIP_DIRS` are now shared with `search` rather than copied.
+
+Corrected number from the filing above: `**/*.json` returns **329** only as a raw Bun.Glob count
+including `node_modules`. What the fixed tool returns is **5** — the 3 top-level ones plus
+`scripts/retrieval-exp/package.json` and `.mxd/config.json`, that last one visible only because of
+`dot: true`. Quoting a raw walk count as "what the tool would return" overstates the change by 65×
+and understates the interesting part, which is the one file that was hidden.
+
+Three things here outlive the fix: what the second bug's decision actually turned on, the shape
+all three share, and the survey for a fourth.
+
+### ⭐ The rule that settled this for `search` proves NOTHING here — and it points the other way
+
+*"A semantic that has never worked has no users"* (the entry above) closed the same question for
+`search` in one line, because there the old behavior was `(no matches)`. Here
+`list_files("*.json")` returned **package.json, tsconfig.json, biome.json** — three real,
+plausible files. The old semantic worked. **So the rule is only decisive when the old output was
+EMPTY; when it was "a plausible-looking subset" it settles nothing**, and quoting it would have
+been quoting a rule whose premise had not been checked.
+
+⚠️ **This is a warning to you, the reader, not a note about who wrote it.** A rule is at its most
+dangerous exactly when it happens to point at the answer you already want — and this one arrived
+from the task above, pre-approved, one line from done. Checking its premise cost one command.
+
+The generalisation that DOES hold is strictly stronger, and it is what actually decided the case:
+
+> **Before letting a compatibility worry veto a change, go measure what the current behavior
+> actually produces.** Not "is anything calling this" — *what does the call return today, and does
+> it answer the question the caller was asking?*
+
+The empty-output rule is the special case where the answer is trivially no. The common and more
+dangerous case is **non-empty output that does not answer the question**, which is what happened
+here: I was about to keep a wrong semantic to protect `list_files("*")` as a "list this
+directory" affordance, and then measured it. `scan()` defaults `onlyFiles: true`, so `*` returned
+the dozen loose files at the top of the repo and **not one directory** — no `src/`, no `web/`, no
+`.mxd/`. The tool could not answer "what is the shape of this project", which is what its own
+description ("discover project structure") claimed it was for. **The capability I was defending
+did not exist.** `*` is also the DEFAULT pattern, so that was the most-used input in the tool.
+
+### ⭐ The shape all three share: a library default serving somebody else's use case
+
+`dot: false` serves "don't treat dotfiles as source". `*` not crossing `/` serves a shell, where
+you `cd` first and *then* say `ls *.json` — the user picked the directory. Both defaults are
+reasonable. Neither is ours: an agent calling a tool at a fixed cwd never had the `cd` step, and
+in this repo the dot directory IS the source.
+
+**What makes this class invisible is that there is no line to review.** Nothing anywhere says
+"skip hidden directories" or "match only the top level" — the semantic lives in a library's
+default, i.e. in the *absence* of an argument. Code review cannot catch an absence. Only feeding
+it real input can. Hence the small discipline now in place at every walker: **pass every option
+you depend on explicitly, even when you agree with the default.** `dot: true, onlyFiles: true` on
+a call whose behavior is unchanged is not noise; it is the semantic becoming visible.
+
+And the second-order damage, which is why this is worth a section rather than a commit message:
+for as long as such a bug lives, **the tool's own description is teaching agents the wrong rule.**
+`list_files`'s examples were `"src/**/*.ts"`, `"**/*.test.ts"`, `"*.json"` — the first two anchored
+with `**/`, the third silently meaning something else. The defect was never that `*.json` returned
+the wrong three files; it was that a reader **generalises from the neighbours** and walks away
+believing all three are the same kind of pattern. Both tools now state the rule instead of
+implying it, so they READ consistently and not merely behave consistently.
+
+### Is there a fourth? — NO for the narrow class, YES for the harm (both are GATES)
+
+**Narrow answer: three, and that is all of them.** Every `Bun.Glob` in the repo is now correct.
+How that was established, so the next person can judge how complete "all of them" is:
+
+| searched | production hits | verdict |
+|---|---|---|
+| `Bun.Glob` / `.scanSync(` / `.scan(` | 3 call sites (2 `search`, 1 `list_files`) | all three fixed |
+| `readdir` / `readdirSync` / `opendir` / `globSync` / `fast-glob` / `tinyglobby` | 3 (`debug-snapshot.ts` roll, `event-store.ts listSessions`, `runtime/helpers.ts` prune) | **not instances** |
+| `ls-files` / `Array.fromAsync` / `walk(` / `withFileTypes` | 1, test-local | see below |
+
+The three `readdir`s are flat, single-directory reads of a directory we own, each with its filter
+written down (a ULID regex, a `.jsonl` suffix). `readdir` *does* return dotfiles by default, and
+here that is what we want — no default is doing hidden work. **That is the negative result: file
+enumeration in this repo is either a Bun.Glob (now correct) or a flat owned-directory read with an
+explicit filter. Do not go looking again.**
+
+⚠️ Note what made this survey possible: it greps for symbols, and until earlier the same day
+`search` could not see `.mxd/plugin/` — 54 files of production code. **A completeness survey run
+with a blind instrument returns a confident, wrong "that's all of them".**
+
+**Broader answer: two more, different cause, same harm — and both are GATES**, which is the worst
+place for it, because a gate's silence is read as a verdict on the whole repo.
+
+1. **`scripts/check-i18n.sh`** — `find web -maxdepth 1 -name '*.tsx'`. Measured: it reads
+   **4 of 31** non-test `.tsx` files, **927 of 11,534 lines (8%)**. It never sees the shell's own
+   `web/components/SettingsPanel.tsx` or `AppHeader.tsx`, and it never sees **any** of the 25-file
+   plugin UI (`Plugin.tsx`, `TaskTree.tsx`, `InputBar.tsx`, `LogEntryView.tsx`, `ToolCard.tsx`, …)
+   — which is where essentially every user-facing string in this product lives. It then prints
+   `i18n check passed — no bare strings found in JSX`, unqualified, from inside the pre-commit
+   hook.
+2. **`src/data-paths.test.ts` → `describe("source audit — ONLY data-paths.ts performs .slice(2)")`**
+   walks `src/` only, while 3 files under `.mxd/plugin/` do path work. **Verified by experiment,
+   not by reading**: a `dataRoot.slice(2)` planted in `.mxd/plugin/scope-opts.ts` leaves the audit
+   green (54 pass / 0 fail). Here the rot is mostly in the CITATION — the test's own name says
+   "no other **src/** file", honestly, while the describe block and the *Key Files* row ("a grep
+   test fails if a second site appears") drop the qualifier.
+
+Recorded here rather than as drafts because the task above said it would open the tickets; the
+measurements are the part that would otherwise be lost.
+
+**The cause differs and that changes the detector.** These two scopes are *written down*
+(`-maxdepth 1`, a walk root) — the opposite of the invisible-default class. They are readable, and
+nobody reads them, because a gate that passes looks identical whether it checked 8% or 100%.
+Invisible defaults need real input to catch; narrow-scope gates need someone to ask **"what did
+you actually read?"** and get a number back.
+
+### ⭐ The design rule that separates the two that got it right from the two that didn't
+
+`biome.json` is `"includes": ["**", "!.worktrees", "!.claude", …]`. `tsconfig.json` is
+`"exclude": [".worktrees", …]`. Both **start from everything and subtract**, and both name
+`.worktrees` explicitly for exactly the reason `DEFAULT_SKIP_DIRS` does. Both are correct today
+with nobody maintaining them.
+
+> **Start from everything and subtract; do not enumerate what to include.** A subtract-list fails
+> LOUDLY (something noisy shows up and someone adds an entry). An include-list fails SILENTLY —
+> new code simply is not covered, and nothing anywhere says so.
+
+Which is the same statement as *"`DEFAULT_SKIP_DIRS` is the ONLY thing that decides what a search
+ignores"* from the first entry in this trio, arriving from the other direction.
+
+### The three additions the fix needed that nobody asked for
+
+1. **The skip filter runs INSIDE the walk loop, so the 500 cap counts files we KEEP.** Not an
+   optimisation — a correctness requirement. Measured from the main checkout with `dot: true` and
+   no skip list, an any-depth `*.ts` filled **323 of its 500 slots with `.worktrees/` copies** of
+   files the caller already had, and never reached `web/`, `scripts/` or `.mxd/` at all, because
+   `.worktrees` is walked before `src`. So **`dot: true` alone is not "a different flavour of
+   wrong", it is strictly worse than the bug**: the cap stops protecting you and starts
+   guaranteeing you get the copies. (The task above's first framing — "trading a false negative
+   for a flood" — is the thing to correct here: it invites shipping `dot: true` first and adding
+   the skip list later. Don't.)
+2. **Truncation is announced**, and detected one PAST the cap so a project with exactly 500 files
+   is not accused of having more. Silently returning 500 of 50,000 is the same failure as silently
+   not walking a directory. `search` already said so; that asymmetry was its own small bug, and
+   normalizing the depth makes it far easier to hit.
+3. **`skipDirsForPattern(pattern)` = the default skips minus any directory the pattern NAMES.**
+   `search` can reach an excluded directory by pointing `path` into it or passing
+   `excluded_dirs: []`; `list_files` takes a pattern and nothing else, so a plain skip list would
+   have deleted an ability with no replacement (`list_files("node_modules/zod/**")` →
+   `(no files)`). No new parameter — the caller's intent is already in the input, and every param
+   is a token every agent pays on every call. Comparing against the **trailing-slash** form is
+   what keeps it from firing by accident: a pattern hunting for `*build*.ts` does not contain
+   `build/`. When it misfires it hands over MORE files, never fewer — and every bug in this whole
+   family did its damage by handing over fewer and not saying so.
+
+### Test notes — three describes in `anthropic-compatible-provider.test.ts`
+
+Next to `jsSearch: hidden directories` and `jsSearch: glob depth`; see the first entry in this
+trio for why search's tests live in the provider test file.
+
+Tests come in PAIRS: something that must now be reachable, and something that must still not be.
+
+| mutation | fails |
+|---|---|
+| `dot: true` → `false` | the hidden-dir test + `.worktrees` reachable-when-named. The `.worktrees` guard stays green — which is what makes it a guard. |
+| skip filter deleted | both exclusion guards + the `*build*` probe + the cap test |
+| `skipDirsForPattern` loses the trailing slash | the `*build*` probe + the string test |
+| **skip list never opts in** (over-strict) | `.worktrees` reachable-when-named + the string test |
+| no `normalizeGlobDepth` | the nested-file test + the default-pattern test |
+| always prepend (over-promote) | 2 anchored tests + 1 string test, across BOTH tools |
+| cap AT the limit instead of one past | the 501 test |
+| **truncation claimed at exactly the cap** (over-strict) | the exactly-500 test, alone |
+
+The two **over-strict** rows are there deliberately (see *Guards need a two-sided mutation proof*):
+"the skip list blocks everything" and "everything is reported as truncated" are the typical ways a
+guard fails, and neither reddens a test unless someone wrote the what-it-must-NOT-block half.
+`.worktrees` reachable-when-named is that half, and it is the kind of thing whose deletion reddens
+nothing while a real ability silently disappears.
+
+⚠️ **One fixture was vacuous and only mutation testing said so.** The `*build*` probe first put
+`bundle.ts` inside `build/` — but `**/*build*.ts` does not match `bundle.ts`, so the
+`not.toContain` half could never fail and the test passed under two different mutations. Fixed by
+putting the SAME filename (`rebuild.ts`) in both `build/` and `src/`, so one pattern reaches both
+candidates and the directory is the only thing separating them. Same lesson as the over-promotion
+fixture in the entry above: **a test whose fixture cannot express the difference passes both
+ways** — and the tell is a mutation you expected to catch it surviving.
 
 ## FIX-3 (2026-06-05) — lifecycle + provider concurrency: Phase-2 leak, done ordering, launch race, abort-sleep, done+compact
 
@@ -7093,10 +7279,16 @@ to pay for it.
   **FIXED same day (01KYCQTGQZ) — hidden dirs are searched now; the workaround advice above is
   obsolete.** The claim is kept because it is the clearest statement of the symptom, and
   because the DETECTION lesson generalises to any silent under-report: see
-  § *`search` tool: a hidden directory is not a boring directory*. ⚠️ **One sibling bug in the
+  § *`search` tool: a hidden directory is not a boring directory*. ~~⚠️ **One sibling bug in the
   same tool is still OPEN and still produces silent false negatives**: `glob: "*.ts"` — the
   example in the tool's own description — matches nothing below the top level, because `*`
-  does not cross `/` in Bun.Glob (**01KYCS0BH6**). Until that lands, pass `**/*.ts`.
+  does not cross `/` in Bun.Glob (**01KYCS0BH6**). Until that lands, pass `**/*.ts`.~~
+  **ALSO FIXED (01KYCS0BH6), and `list_files` had both defects too (01KYCV43JAZ, same day).**
+  Nothing in this bullet is live any more: a pattern with no `/` means "at any depth" in BOTH
+  tools, and both walk hidden directories. The
+  workarounds above (`grep -rn` via bash, `**/*.ts`) are obsolete in both tools. Whether the
+  three together were the whole class was surveyed — the answer, and how far it reached, is in
+  § *`list_files` had both of `search`'s bugs*.
 - **Concurrent ULID**: Use full `ulid()` (26 chars) — sliced ULIDs collide within same millisecond.
 - **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
