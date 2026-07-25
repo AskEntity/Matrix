@@ -227,7 +227,8 @@ updating an entry, which is every session.
 an improvement is wrong. So: *if a reader of this code would want to simplify it, this file must say
 why that fails; if nobody would touch it, this file should say nothing.* Do not ask "is this
 useful" — the answer is "somewhat" for every entry ever written, and that is how the file reached
-7,616 lines. Four things survive that question: how to operate here and what happens if you don't;
+7,616 lines by 2026-07 (a compression pass then took it to ~3,400). Four things survive that
+question: how to operate here and what happens if you don't;
 why the design is shaped this way; **the places that look wrong but are right**; and negative
 results ("checked, it is not that"), which are recorded nowhere else because nobody opens a task for
 "it wasn't that".
@@ -273,6 +274,11 @@ disappeared"*, which is addressed to nobody.
    hit (582 creation / 362K read)" is proof that four specific fixes worked and stays true about the
    moment it describes. What rots is the present tense. Date it, say what it measured, say where the
    current value lives. **Delete claims; keep measurements.**
+   ⭐ **A measurement survives best folded INTO the guardrail it evidences, not standing as its own
+   paragraph.** "Prefix order is tools → system → messages, and a tools mismatch misses the entire
+   prefix; measured 99.8% hit after fixing it (2026-04, 582 creation / 362K read)" is one line that
+   keeps the number, the date and the instruction. As a separate paragraph the same number is the
+   first thing a compression pass deletes, because on its own it reads as trivia.
 2. **Name things for what they ARE, not where they came from.** A check called "the phase-1
    invariant" gets switched off after phase 1 — precisely when it starts being useful.
 3. **Anything probabilistic: one passing sample is not verification.** The complement of mutation
@@ -281,6 +287,26 @@ disappeared"*, which is addressed to nobody.
 **Daily maintenance, all cheap:**
 
 - Changed an identifier? Grep it in this file.
+- ⭐ **Changed a BEHAVIOUR? Grep for prose that describes it — in this file, in docstrings, in tool
+  descriptions and in test names.** This is the rule the identifier one is missing, and it is the
+  only thing that finds the second kind of prose rot:
+
+  | kind | wrong when? | found by |
+  |---|---|---|
+  | **Fabricated** — a claim that was never true | the moment it is written | checking it against reality |
+  | **Invalidated** — a true statement about a neighbour | **later**, when the neighbour changes | *nothing you can do by re-reading it* |
+
+  Both kinds appeared in the same docstring on the same day. The fabricated one was a benchmark
+  quoted before the benchmark was run (`62,987 enumerated / 1,265 kept`; real: 68,664 → 320) and was
+  caught by its author reading their own diff. The invalidated one — *"`list_files` caps during its
+  walk, which is a different question"* — was true when written, falsified two commits later by a
+  change 300 lines away, and **auditing that same docstring for falsehoods did not catch it, because
+  nothing about the sentence is wrong on its face.** A third instance the same evening: a
+  cross-reference in this file, `see *Bun Worker env isolation*`, broken by the person merging away
+  the section it named. **Grep for the concept you just changed and read every hit; a grep gives you
+  candidates, not verdicts, and "changed nearby" is not "now false".** For this file specifically,
+  after any rename pass, extract every `*Section Name*` reference and check it against the heading
+  list — that is what found the third one.
 - **Approved a side effect?** Grep for that too. Reviewing is how an `agent_idle` behavior change
   went unrecorded for months.
 - About to leave a sentence standing as CURRENT? Verify it first. Moving a sentence under a
@@ -652,10 +678,10 @@ point is to make the shortcut unnecessary, not forbidden.
 The "don't pipe" guidance lives in the bash tool's `description`, not in `system-prompts.ts`,
 because that is where the decision to pipe is made — while constructing the call.
 
-## The three glob bugs were one class: a library default serving somebody else's use case
+## Two filesystem-walk defects, in both tools that walk: a library default serving somebody else
 
-`search` and `list_files` each had two defects, and finding the third instance is what named the
-class.
+`search` and `list_files` each had the SAME two defects, and finding the pair a second time in the
+second tool is what turned two bug reports into a class.
 
 - **Neither walked hidden directories.** `Bun.Glob.scanSync` defaults to `dot: false` and nobody
   passed the option. In this repo the hidden directory IS the source: `.mxd/plugin/` is every
@@ -683,8 +709,9 @@ implying it.
 
 ### Four things in the fix that will look like oversights
 
-1. ⚠️ **The skip filter runs INSIDE the walk loop, so the 500-file cap counts files we KEEP.** Not
-   an optimisation — a correctness requirement. Measured from the main checkout with `dot: true` and
+1. ⚠️ **The 500-file cap counts files we KEEP, never files we walked past.** Not an optimisation — a
+   correctness requirement, and now structurally guaranteed by pruning at descent (below) rather
+   than achieved by a filter inside the loop. Measured from the main checkout with `dot: true` and
    no skip list, an any-depth `*.ts` filled **323 of its 500 slots with `.worktrees/` copies** of
    files the caller already had, and never reached `web/`, `scripts/` or `.mxd/` at all, because
    `.worktrees` is walked before `src`. **So `dot: true` alone is not a different flavour of wrong,
@@ -764,10 +791,72 @@ directory** — no `src/`, no `web/`, no `.mxd/`. The tool could not answer "wha
 project", which is what its own description claimed it was for, and `*` is the DEFAULT pattern.
 **The capability being protected did not exist.**
 
+### The fourth change to this family, and the one that is NOT a correctness bug
+
+The two defects above produced silently wrong answers from a library default. This one produced the
+**right answer at the wrong cost**, and its cause is architectural rather than a missing argument:
+both tools consulted the skip list about FILES after the walk instead of about DIRECTORIES during
+it, so every excluded directory was enumerated in full and then discarded. `dot: true` made an
+existing waste roughly 4× worse by adding `.worktrees/` (~21k files per live worktree) and `.git/`.
+
+`walkFiles(root, skipDirs, glob?)` is now the ONE walker for both tools, and `isInSkippedDir` is
+asked about a directory once, in its trailing-slash form, **before the directory is opened**.
+Measured 2026-07-25 from main with 2 live worktrees: **68,664 files enumerated to return 320 → 320
+to return 320**, 153ms → 0.4ms — which also beats the pre-`dot: true` code (18,239 files / 36ms),
+because pruning removes a waste that PREDATES the hidden-directory fix rather than paying for it.
+The durable claim is that **the walk now costs what the ANSWER costs**; the numbers are a dated
+reading of one tree.
+
+⚠️ **`list_files` had to move onto the same walk, and "doing just one is the smaller change" is the
+wrong instinct.** Two tools sharing three predicates but disagreeing on WHEN to consult them give
+those predicates two meanings depending on the caller, and the next person to change one has to hold
+both models. That is precisely the drift the shared predicates were introduced to prevent, so
+leaving one tool behind is a decision to create it.
+
+#### What a hand-rolled walk must reproduce, and where the tidy version fails silently
+
+⭐ **Symlinks: use `dirent.isFile()` / `isDirectory()`, NEVER `statSync`.** `readdirSync`'s dirents
+are lstat-based, so a symlink answers false to BOTH predicates and is dropped by both branches —
+which is exactly what `scanSync({onlyFiles: true})` did, verified against a symlink to a file, to a
+directory, a broken one, and a directory linked to its own ancestor.
+
+> **The tidiest-looking way to write this walk — `statSync` instead of lstat-based dirents — is
+> wrong, and wrong in a way that makes `dir/link -> dir` walk forever. Before this change NOTHING in
+> the suite would have gone red. 6 tests catch it now and all 6 are new.**
+
+It is wrong twice over, and the second half is the one someone would defend as a feature: it also
+starts **returning symlinked files `search` has never returned**, so one file is reported two or
+three times under different paths. **Not following links is also the entire termination argument** —
+there is no visited-inode set and it needs none.
+
+⚠️ **Errors must THROW, not be swallowed.** `scanSync` throws on a missing root (ENOENT) and on an
+unreadable directory mid-walk (EACCES). The first version wrapped `readdirSync` in try/catch and
+continued — with a comment asserting that matched `scanSync`, written without measuring it.
+Swallowing turns "your path is wrong" and "the directory holding the definition is unreadable" into
+`(no matches)`, which is exactly the failure mode this family has already shipped twice.
+
+⚠️ **Sort is load-bearing and must live in exactly ONE place.** `readdirSync` returns filesystem
+order (on APFS, a hash order). Order is part of the contract because both caps SLICE the sorted
+list, so in traversal order "the first N" is an arbitrary set that can differ between two runs over
+an unchanged tree. **Forward slashes are built by string concatenation, not `join()`** — the
+relative path is both what the caller sees and what the glob is matched against, and `join()` writes
+`\` on Windows.
+
+⚠️ **`list_files`'s cap bounds the RESULT and can no longer bound the walk, because sorted output
+and early termination are mutually exclusive.** You cannot know the alphabetically-first 500 files
+without having seen all of them. Accepted because the walk it no longer bounds is now the cheap one,
+and because the old early break never fired anyway: no pattern in this repo reaches 501 kept files —
+**which is exactly the condition that would have made a regression here invisible.** No parameter
+was added for a large-repo case we have not hit; if one arrives, the choice is sorted-and-complete
+versus early-and-arbitrary and it cannot be both.
+
+**The only case that regresses**: for an anchored glob (`src/*.ts`) `Bun.Glob` prunes the path
+prefix itself and this walk does not, so it is slower — 0.3ms → 0.4ms. Deliberately not chased.
+
 ## Gates: a passing gate looks identical whether it read 8% or 100%
 
-Two gates had scopes narrower than their names, and both are now subtractions: `scripts/
-check-i18n.sh` walks every non-test `.tsx` minus a named prune list (4 → 31 files), and
+Two gates had scopes narrower than their names, and both are now subtractions:
+`scripts/check-i18n.sh` walks every non-test `.tsx` minus a named prune list (4 → 31 files), and
 `src/data-paths.test.ts`'s source audit walks the repo root instead of `src/`. Before the fix the
 i18n gate read **927 of 11,534 lines (8%)** — never the shell's own `SettingsPanel.tsx` or
 `AppHeader.tsx`, and never *any* of the 25-file plugin UI, which is where essentially every
@@ -3104,6 +3193,30 @@ was invisible because the fixture contained exactly one `src/`, so `src/*.ts` an
 returned the same files. And ⚠️ **a test that can fail for two different reasons cannot tell you
 which one happened** — a guard's entire value is being legible on the day it fires, so narrow it to
 presence-only rather than asserting an exact list.
+
+⚠️ **Two implementations of the same guarantee cover for each other, and the tell is a mutation
+surviving that obviously should not have.** `walkFiles` sorted its output and then `jsSearch` sorted
+the same array again; deleting the sort *inside the walk* failed **no test at all**. Deleting the
+redundant one is what made the survivor testable. Same shape as the markdown parser's whitespace
+rules, where a symmetric fixture pinned neither half individually — **a defence-in-depth pair can
+hide the fact that neither half is actually pinned.**
+
+⚠️ **Check that the harness RAN before believing its verdict — "survived" is the comfortable answer
+for every mutation.** A mutation harness wrapped its run in `timeout 180 bun test`; **macOS ships no
+coreutils `timeout`**, so the command failed, the run never happened, `grep -c '^(fail)'` on empty
+output returned 0, and **the harness reported the mutation as SURVIVED** — which reads as a real and
+even reassuring result about your tests rather than as a broken instrument. The only available
+signal was wall-clock: 234ms against an expected ~12s. The fixed harness refuses to print a verdict
+unless the file text actually changed AND bun printed a summary line. **An instrument that fails by
+producing the comfortable answer is worse than one that errors**, and this is the same family as the
+blind `search` and the blocked-main-thread sampler: a false negative wearing evidence's clothes.
+
+⭐ **When you replace an implementation but not its contract, a differential probe beats a green
+suite.** ~40 lines running the OLD path and the NEW one over 21 real cases — the actual repo, both
+checkouts, subdirectory roots, every glob shape, a synthetic symlink fixture, `excluded_dirs: []` at
+68,641 files — asserting **byte-identical output including order**. It found nothing, which is the
+point: it states "behaviour is unchanged" as a measurement over whole outputs, where a green suite
+can only state "the cases someone thought to write still pass".
 
 ⚠️ **Careless-git note**: reverting a mutation with `git checkout -- <file>` also reverts any
 UNCOMMITTED fix in the same file. Commit the fix before mutating it.
