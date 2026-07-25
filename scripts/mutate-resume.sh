@@ -105,10 +105,10 @@ mutate "hasPendingImplicitYield ignores messages_consumed again" \
 	'			case "tool_result":
 			case "messages_consumed":
 			case "budget_warning":
-				return { kind: "user", thinkingOnlyFrom: thinkingFrom };' \
+				return { kind: "user", trailingThinkingOnly: thinkingFrom >= 0 };' \
 	'			case "tool_result":
 			case "budget_warning":
-				return { kind: "user", thinkingOnlyFrom: thinkingFrom };
+				return { kind: "user", trailingThinkingOnly: thinkingFrom >= 0 };
 			case "messages_consumed":
 				break;' \
 	"src/should-launch.test.ts"
