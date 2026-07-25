@@ -159,9 +159,38 @@ Browser → Daemon (static assets + SSE) + Worker (API forwarding)
 | src/event-converter.ts | walkEventsToMessages + EventConverterCallbacks |
 | src/task-tracker.ts | Task tree, node CRUD, tree.json persistence |
 
----
-# Core Mechanisms
----
+## Merge review discipline — hook-pass ≠ reviewed
+
+**"Pre-commit hook passed + tests green" is necessary but NOT sufficient for merging.** Hook verifies syntax, types, test-pass count. It does NOT verify:
+- Is the diff addressing every point in the task description?
+- Are layer boundaries respected (no matrix-specific code leaking into daemon/shell)?
+- Does the commit message match what the code actually does?
+- Are edge cases the task called out actually handled?
+- Does the child's self-report align with the diff's actual content?
+
+**Required before every merge** (this session burned multiple times on skipping):
+1. `git diff main...<branch>` — read every line of diff, not just stat
+2. Cross-check against task description — did the child address the stated scope?
+3. Verify layer discipline — for each file changed, is this the right layer?
+4. Look for `autoRegisterSelf: false`-style catastrophic single-line oversights
+5. Flag anything ambiguous BEFORE pressing merge
+
+**Observed failure pattern** (session 2026-04-18):
+- Child done → run `git log --oneline` + `git diff --stat` → directly `git merge`
+- Skipped: actual diff content review
+- Result: multiple post-merge bugs that manual smoke caught (`autoRegisterSelf: false` in prod entry; layer violations in production-mode placement)
+
+**The anti-pattern**: trusting the child's summary as review. Child reports what they THINK they did; diff shows what they ACTUALLY did. These differ non-trivially.
+
+**Hook passing tempts you to skip review because it feels green.** Resist — hook is a floor, not a ceiling. For 400+ line architecture refactors, the user themselves wouldn't dare merge without reading the diff; orchestrator definitely can't.
+
+## evaluate_script Discipline
+
+Runtime debug introspection ONLY. Do NOT use to: reparent tasks, modify tree structure, batch operations. Fix the tool instead.
+
+## Refactoring Philosophy
+
+Embrace large type refactors. Delete first, let compiler show every dependency. Hundreds of errors = your todo list. Static type systems make large changes SAFE.
 
 ## Key Architectural Invariants
 
@@ -185,6 +214,10 @@ Phase 1: `message` event persisted → frontend defers. Phase 2: `messages_consu
 
 ### JSONL-Memory Consistency
 In-memory `messages[]` and JSONL events are two data structures. Recovery that only modifies `messages[]` doesn't persist — JSONL retains the poison. Any "fix" must touch JSONL, not just memory.
+
+---
+# Core Mechanisms
+---
 
 ## Agent Lifecycle
 
@@ -223,6 +256,477 @@ Sender's yield wakes with `<task_complete status="failed" summary="Auto-launch f
 
 Design rule: any code path that could silently hang a yielding parent MUST notify via task_complete. The channel is reusable because "failed before starting" and "failed during work" look identical from the sender's perspective.
 
+## Duplicate Yield Handling
+
+API can return multiple yield tool_calls in the same assistant turn. Evolution:
+
+**Fix 1**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done. Earlier yield/done orphans are genuine repair targets. Architectural lesson: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call.
+
+**Fix 2 (superseded)**: Provider loop wrote no-op tool_results for extras as a SEPARATE user message. This caused a new bug: extras user message + real yield's user message → 2 consecutive user messages → API 400 "Messages must alternate roles".
+
+**Fix 3 (current)**: Extras' tool_result events still emit to JSONL immediately (orphan prevention), but their live-path construction is DEFERRED via `pendingDuplicateYieldExtras`. On yield wake, extras bundle into the SAME `buildUserTurn` call as the real yield, producing ONE user message with `[...extras, real, ...queue]`. Order matches JSONL (extras emit at yield-detection, real emits at wake → walker reconstructs in that order → live must match).
+
+Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn" regression-guard this.
+
+## Compaction Asymmetry
+
+Manual `/compact` injects a summarization instruction as a user message. If the previous loop iteration also pushed a user message (yield tool_result + queue content, done tool_result + queue content), result is two consecutive user messages → API 400 "Messages must alternate roles".
+
+Seven paths in `provider-shared.ts` have this shape. 3 are clean (`continue;` without pushing user msg). 1 is fixed. 3 are deferred via test.todo.
+
+**Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. One user message with `[tool_result, text]` blocks → valid alternation.
+
+**Pattern**: emit to JSONL for orphan prevention, defer messages[] push to merge with next user turn. Same as duplicate-yield fix (19995b9).
+
+**Latent walker bug** (deferred): walker reading `[tool_result, messages_consumed, summarization_request]` produces two consecutive user messages. Proper structural fix: summarization_request should append to the current user turn, not create a separate one. Requires matching live + walker changes for byte-identical output. Documented as test.todo in drift-lifecycle.test.ts.
+
+## API 400 → crash → repair-on-next-launch
+
+There is NO in-memory auto-recovery from a 400 invalid_request_error. The old mechanism (pop the broken user message, splice in synthetic tool_results + recovery text, retry once, gated by `enableAutoRecovery` / `autoRecoveryAttempted`) was REMOVED — those flags no longer exist anywhere in the codebase (grep confirms zero matches).
+
+Current behavior (`provider-shared.ts` outer-retry catch, ~line 1409): on a non-transient 400 the error propagates, the agent stops, status stays `in_progress` (resumable). On the NEXT launch, `buildSessionRepair` fixes the JSONL on disk *before* the provider loop starts (see events.ts ~line 583). The fix lives in persisted state, not volatile `messages[]` — consistent with the "recovery must touch JSONL, not just memory" invariant.
+
+Transient errors (429, 5xx, network) are still retried in-loop with backoff. Only the 400-class path is "crash + repair on next launch".
+
+## Abort Signal + Inner Retry Fix
+
+Inner retry checks `signal.aborted` first + abort-responsive sleep. Reset time: 30s → instant.
+
+## Duplicate Launch Prevention in autoResumeProjects
+
+### Bug: pre-register launchingNodes prevents runAgentForNode from starting
+`autoResumeProjects` tried to pre-register all nodes in `launchingNodes` before launching. But `runAgentForNode` checks `launchingNodes.has(nodeId)` → returns early. Agents never started. Never pre-register in `launchingNodes` from outside `runAgentForNode`.
+
+### Fix: quiet deliverMessage in Phase 2 crash recovery
+Phase 2 crash recovery calls `deliverMessage(task_complete)` to parent. Without `quiet: true`, this auto-launches the parent → duplicate launch (autoResume also launches it). Fix: `{ quiet: true }` prevents auto-launch. Message goes to JSONL, recovered by `findUnconsumedMessages` when autoResume launches the parent.
+
+### Test lesson: maxConsecutiveStarts conflates crash+resume with duplicate launch
+After a crash, `orchestration_completed` never emits (the loop was interrupted). So `orchestration_started` from before crash + from resume = 2 consecutive starts. This is NORMAL. Use traceId uniqueness on `orchestration_started` events instead.
+
+### Test lesson: shutdown() required before recreateApp() in restart tests
+Without shutdown, old app's agent stays alive. New app launches another agent for same node → appears as duplicate but is a test setup bug (can't happen in production crash where process is dead).
+
+## ParamDecl Bind
+
+All bind params hidden from agent, auto-bound. `create_task`/`create_folder` parentId is `explicit`.
+
+## bash tool: tiered output + merged streams (FU9)
+
+Defensive-instinct-as-tool-design. AI piped/redirected because context was at risk; now context is bounded by the tool, so the instinct has nothing to act on.
+
+### Tiered display (merged mode, default)
+- `<1024 bytes` → inline only, no file saved
+- `1024..10240` → full inline + top/bottom banner + file kept at `/tmp/mxd/exec-<id>.out`
+- `>10240` → head 5KB + `... [N bytes / M lines truncated] ...` + tail 5KB + banner + read hint; file kept
+- Boundary: `head_budget + tail_budget >= total` naturally shows full (no special-case for size===10240)
+- Truncation: byte-aware + newline alignment via `Buffer.lastIndexOf(0x0a, budget-1)` / `Buffer.indexOf(0x0a, total-budget)`. No newline in window → hard byte cut + "mid-line cut" annotation.
+
+### Separate mode (opt-in `separate: true`)
+Two files: `/tmp/mxd/exec-<id>.stdout` + `.stderr`. Budget allocation in the large case: if one stream is trivial (≤5KB), show it in full and give the other `BUDGET - trivial_size` split head/tail; else each gets 2.5k+2.5k. Continuous at boundary (stderr=5120 → both 5KB; stderr=5121 → stdout 2.5k+2.5k).
+
+### Stream merging
+`bash -c "(cmd) 2>&1"` wrapping. AI-written `2>&1` inside `cmd` becomes a harmless redundant no-op. Bash's own stderr (pre-subshell syntax errors, rare) is `stderr: "ignore"` at Bun.spawn level — acceptable tradeoff for clean single-file output.
+
+### Foreground/background parity
+One `formatBashResult` function. The `content` field of `background_complete` queue messages is byte-identical to what `parseForegroundResult` returns when the same command runs foreground.
+
+### Directory rename
+`/tmp/mxd-bg/` → `/tmp/mxd/`. The dir is no longer bg-specific (foreground commands save there too). `BackgroundProcess.separate: boolean` is the new mode discriminator; `stdoutPath` holds the `.out` file in merged mode (misleading name, kept for API compat).
+
+### Pure-function exports for testing
+`formatMergedOutput(path, exitCode)`, `formatSeparateOutput(so, se, exitCode)`, `truncateMiddle(buf, headBudget, tailBudget)`, `allocateSeparateBudget(stdoutSize, stderrSize)` — all exported from `src/tools/bash.ts` so tests hit them directly without spawning subshells.
+
+### Tool description vs system prompt
+The "don't pipe" guidance lives in the bash tool's `description` field (`src/tools/definitions.ts`), NOT in `src/system-prompts.ts`. Tool description is per-tool, embedded in API tool schema. system-prompts.ts has one general line about piping during long commands that's still accurate.
+
+### Architectural framing the task demonstrated
+When AI repeatedly does X (pipe/redirect/`| head`), ask: is the motivation legitimate? If yes (context protection IS legitimate), make the tool satisfy it naturally — don't enforce against it. Rule suppression leaks at edges; tool-level satisfaction closes the loop. If you find yourself adding parser/rejection/warning to the new tool, you drifted — the point is to make shortcuts unnecessary, not forbidden.
+
+## FIX-3 (2026-06-05) — lifecycle + provider concurrency: Phase-2 leak, done ordering, launch race, abort-sleep, done+compact
+
+Five concurrency bugs in `agent-lifecycle.ts` + `provider-shared.ts`. Each is a "the loop/parent
+silently hangs or corrupts" failure, NOT a crash. Files: `runtime/agent-lifecycle.ts`,
+`provider-shared.ts`, `orchestrator-tools.ts`, `runtime/routes/tasks.ts`.
+
+### cc#3 — Phase 2 + loop-promise resolution MUST be inside try/finally
+`runAgentForNode`. Phase 2 (save/flushSession/onDone/deliverMessage) + the `resolveLoopPromise()` +
+`agentLoopPromises.delete(nodeId)` sat AFTER the agent-loop try/finally, OUTSIDE any guard. A throw in
+ANY Phase 2 step skipped the resolution → `agentLoopPromise` leaked forever. `stopTask` awaits that
+promise with NO timeout (unlike `stopAgent`'s bounded 1s race) → it hung indefinitely. Fix: wrap
+Phase 2 in `try { … } catch (log) { … } finally { delete + resolve }`. The loop promise now settles on
+EVERY path. The old comment claiming resolution happened "in finally block" was a lie — now true.
+Phase 2 errors are logged, not rethrown (the task already finished its work; a Phase-2 hiccup is not
+an agent failure). **This corrects the "Two-Phase done() Lifecycle" section: resolution is now genuinely
+in a finally.**
+
+### B-M4 — task_complete MUST be durable BEFORE done_notified
+`runAgentForNode` Phase 2 done branch used fire-and-forget `deliverMessage(parent,
+task_complete).catch()` then immediately `emitEvent(done_notified)`. done_notified lands on THIS node's
+write queue synchronously; task_complete goes through deliverMessage's `await getTracker` first → lands
+later. So "done_notified durable ⟹ task_complete durable" did NOT hold. Crash with done_notified
+persisted but task_complete not → restart's `findInterruptedDonePhase2` returns `status_stale` (marker
+present, runtime.ts:~376) → does NOT re-deliver → parent hangs forever. Fix: `await deliverMessage(parent,
+task_complete)` then `await eventStore.flushSession(parentId)` BEFORE `emitEvent(done_notified)` (+ flush
+the marker too). Reverse case (crash after marker, before its flush) → restart re-delivers (needs_phase2)
+→ at-least-once duplicate task_complete. A duplicate completion is recoverable; a lost one hangs the
+parent — we deliberately prefer the duplicate (the needs_phase2 branch already accepts at-least-once).
+
+### B-H2 — worktree-creation launch race (close the CLASS, not one instance)
+The launch lock (`ctx.launchingNodes`) was added INSIDE runAgentForNode, AFTER the seconds-long
+`beforeChildLaunch` (`git worktree add`). Two concurrent launches for the same fresh child both passed
+the pre-lock guard → two `git worktree add` → the loser threw → `deliverMessage.catch` marked the node
+`failed` + sent a bogus task_complete(failed) to the parent WHILE the winner ran. THREE create paths
+existed post-FIX-2 — all three fixed:
+1. `ensureChildAgentRunning → beforeChildLaunch`: acquire `launchingNodes` ATOMICALLY at the top
+   (has-check + add in one synchronous tick, no await between), BEFORE beforeChildLaunch. Phase A (prep)
+   releases the lock on throw; Phase B hands it to runAgentForNode.
+2. `orchestrator-tools.ts send_message` inline `wm.create`: **DELETED**. send_message now delegates to
+   deliverMessage → ensureChildAgentRunning (the single locked creator). Kept the git-clean + branch
+   pre-flight gates; dropped the now-async "on branch X" suffix from the success string (the branch
+   isn't known synchronously anymore — no test asserted that string). "Delete until ONE remains":
+   beforeChildLaunch (existsSync-guarded) is the SOLE creator. (`slugify` import dropped from the file.)
+3. `runtime/routes/tasks.ts` REST `/continue` reactivation (verify/closed, no worktree): FIX-2 wired
+   this to call `beforeChildLaunch` directly, OUTSIDE the lock — same race (milder blast: a duplicate
+   POST 500s, no parent corruption). Acquire the lock around it with the same launchLockHeld handoff.
+- New `RunAgentOpts.launchLockHeld?: boolean`: when set, runAgentForNode's entry guard does NOT treat
+  its own already-held lock as a competing launcher, and TAKES OVER the lock's release on EVERY exit
+  path (incl. the early session-already-running bail) so the caller can't leak it. Entry guard split:
+  `if (node.session != null) { if (launchLockHeld) delete; return; }` then `if (has(nodeId) &&
+  !launchLockHeld) return;` then `add`.
+
+### B-M3 — outer-retry backoff MUST be abort-aware
+`provider-shared.ts` outer retry used `await new Promise(r => setTimeout(r, delay))` (30/60/120s). The
+inner per-call retry was already abort-aware; this one was not. A transient error parked the loop in
+this sleep; a stop/reset then blocked for the full backoff (up to 120s), exceeding the daemon's 60s
+worker-forward timeout → 504 + a retry racing the still-running first reset. Fix: module-level
+`abortableDelay(ms, signal)` (setTimeout raced against an `abort` listener, listener removed on both
+paths so a long-lived signal doesn't accumulate listeners) + after it `if (signal.aborted) throw e` to
+abandon the retry loop. **Test with stopTask (no timeout), NOT stopAgent (its 1s race masks the block).**
+
+### B-L9 — done-resume + compactOnly → consecutive user messages → API 400 (FIXED)
+`provider-shared.ts` pendingDoneToolCall handler did NOT check `compactOnly` (the yield path already did
+via `pendingCompactYieldToolCall`). When the ONLY wake message during a done-resume was /compact, it
+pushed the done tool_result as its own user message, then the compact block pushed the summarization as
+a SECOND consecutive user message → 400. NOTE: the in-memory auto-recovery (`enableAutoRecovery`) is
+GONE — this 400 is NOT masked; it crashes → buildSessionRepair on next launch. Fix: new
+`pendingCompactDoneToolCall` mirroring the yield path — on compactOnly, emit the done tool_result
+("Manual compaction requested") for orphan-prevention but DEFER its messages[] push; the compact block
+bundles it + the summarization into ONE user turn. The compact-block bundling now unifies yield AND done
+(`pendingCompactYieldToolCall ?? pendingCompactDoneToolCall` — mutually exclusive: a resume ends in one
+orphan, not both). The compact-with-OTHER-messages (compactOnly=false) done case stays an analog of the
+known-unfixed yield bug (still a test.todo). **Updates "Known Bugs": the done+compactOnly variant is
+now fixed; only the +other-messages variants (yield AND done) remain.**
+
+### Reachability trick for the B-L9 test
+`/compact` endpoint 404s for a non-running (done/verify) agent, so it can't wake a pending-done agent.
+Instead: `deliverMessage(node, createCompactMessage())` — a compact QueueMessage HAS an id, so
+deliverMessage persists it to JSONL and findUnconsumedMessages recovers it on the auto-launched resume.
+The resume drains ONLY the compact → compactOnly=true. The mock's `validateRequest` throws on
+consecutive user roles, so the bug surfaces as an "alternate roles" error event + a missing
+compact_marker.
+
+### Regression tests (all mutation-proofed — each fails when its fix is reverted)
+- `src/lifecycle-concurrency.test.ts` (new): cc#3 (throwing onDone → loop promise still settles +
+  agentLoopPromises cleared), B-M4 (at the moment the child's done_notified is appended, the spy
+  reads the parent JSONL from disk and asserts task_complete is ALREADY there — directly tests the
+  durability ordering), B-H2 (counting beforeChildLaunch: two concurrent deliverMessage → ONE create +
+  no bogus task_complete(success=false); two concurrent REST /continue → ONE create), B-M3 (stopTask
+  during a 4s backoff returns <3s). Test gotchas: task_complete message has `source:"task_complete"`,
+  field `success` (not "child_complete"/"passed"); a holder OBJECT (not a bare `let`) avoids TS
+  narrowing the closure-assigned probe back to its `null` initializer; awaiting `ensureChildAgentRunning`
+  directly HANGS (it awaits the whole agent loop) — drive launches via deliverMessage/REST instead.
+- `src/drift-lifecycle.test.ts` "compact triggered while agent in pending-done (done resume)" — was a
+  test.todo, now a real B-L9 test (compact_marker written, no alternate-roles error, every recorded
+  request alternates roles).
+
+## FIX-5 (2026-06-10) — too-short compact brick + duplicate-done brick + dup-yield compact extras
+
+Three bugs in `provider-shared.ts`, all causing permanent session bricks.
+
+### R8-B#1 — too-short compact must NOT emit compact_marker
+`messages.length <= 4` branch emitted `compact_started` + `compact_marker` without
+rebuilding context (no session_config, no compacted_resume). On restart,
+`readActive()` returns only post-marker events → starts with assistant → 400
+"first message must be role user" → permanent brick. Fix: emit only a status
+"Context is too short to compact", reset `manualCompactRequested`, and consume any
+`pendingCompactYieldToolCall` / `pendingCompactDoneToolCall` + `pendingDuplicateYieldExtras`
+so the assistant tool_use has a matching result.
+
+### R8-B#2 — duplicate done() → emit results for ALL dones
+Two done tool_calls both exited as orphans. On resume, repair placed the interrupted
+result AFTER lifecycle events (agent_end, done_notified). The walker tool_result
+collection loop broke at those lifecycle events → two separate user messages → API 400
+→ permanent brick. Fix: for duplicates, emit tool_results for ALL dones (extras get
+"duplicate done", winner gets "processed successfully"). No orphans → no repair →
+no walker issue. Trade-off: resume detects `isInterruptedResume` instead of
+`pendingDoneToolCall`, so agent gets normal interrupted resume instead of special
+done-resume context.
+
+### R8-B#11 — duplicate-yield extras must be bundled in compactOnly compact path
+`pendingDuplicateYieldExtras` was only consumed in the normal yield-wake path. The
+compactOnly compact path ignored them → extras tool_results were dangling → API 400.
+Fix: compact summarization path and too-short path both include extras in the bundled
+user turn.
+
+### Pre-existing issue found (not fixed here): compact messages never get messages_consumed
+`handleImplicitYield` filters compact messages from `nonCompact` and `recordQueueEvents`
+only records nonCompact. On restart, `findUnconsumedMessages` re-enqueues the compact →
+spurious `manualCompactRequested` on next session. Usually benign but can cause
+consecutive user messages during done-resume with compact.
+
+## fable silent-turn → silent idle + agent date-blindness (2026-07-15, from closed task 01KWYCYA)
+
+Two durable lessons from the fable-stall investigation (01KWYCYA, closed — fable now moot on opus-4-8, but these OUTLIVE fable). Generic fix drafted: **01KXK69KKKGG4XHPH7EWGNY5AC**. Date-blind fix drafted: **01KXK5QH2BDQSZB1H1CQV8X470**.
+
+### Silent-idle on a no-text-no-tool turn (durable failure MODE)
+An assistant turn returning **thinking-only** (no text block, no tool_call) makes the provider loop see `toolUses.length === 0` → treat it as end-of-turn → **implicit yield → idle, with NO user-visible signal**. The agent then waits for a message **indefinitely**; daemon restarts just RE-IDLE an implicit-yield agent (they don't self-continue it). Benign for a root-in-conversation (a human eventually pokes it); an **indefinite hang for an autonomous sub-agent nobody is watching** — the parent's yield never wakes. 01KWYCYA was the live repro: interrupted 7/7 14:56, idle 8 days until poked 7/15.
+- Trigger was fable (server-side turn termination). Our gap: `getStopReason()` collapses all non-`end_turn` (incl. `refusal` / `pause_turn` / `model_context_window_exceeded` / `compaction`) to `tool_use`, and the loop idles without persisting/surfacing the anomalous stop.
+- GUARD (deferred → draft 01KXK69K): any `stop_reason ∉ {end_turn, tool_use}` → emit a **persisted, user-visible error event BEFORE idling** (Part A observability); + bounded `pause_turn` continue (~3) (Part B). Generic, zero fable coupling.
+
+### Forensics (durable, model-agnostic debugging tools)
+- **Which model ACTUALLY served a turn**: base64-decode a thinking block's `signature` — it embeds the serving model name (e.g. `claude-fable-5`), **independent of `response.model`** (which can lie under silent routing). Root's full history: 8/8 silent turns were fable, 0/9800 opus.
+- **Mid-stream/hardware cut vs upstream turn-completion**: a **clean `usage` event present** ⟹ the API turn completed and our loop processed it → RULES OUT a mid-stream process suspension (which would orphan the turn + trigger `buildSessionRepair` on resume). So `clean usage + thinking-only shape` = upstream silent turn, NOT a laptop-close/suspend.
+
+### Agent time-perception is DATE-BLIND (ground truth = epoch ts)
+Context message timestamps are `[HH:MM:SS]` with **no date**. 01KWYCYA was interrupted 7/7 14:56 and idle until 7/15 16:13 — **8 days** — but on wake it confidently reported "~80 minutes" because 14:56→16:13 looks same-day. **Ground truth is the epoch `ts` in the JSONL (encodes the date); the display stamps do NOT.** Rule for ANY "how long was I stalled / when did this happen / is this stale" reasoning: **read the epoch `ts`, never trust the `[HH:MM]` display for elapsed wall-clock.** Root hit the same thing this session: an overnight `bun test` `[22:06]` → user `[11:04]` next-day gap was invisible in the stamps (inferred only from anomalous test durations). Surfacing-fix design in draft 01KXK5QH.
+
+## Agent activity: live process state is asked for, never replayed (2026-07-25)
+
+"What is this agent doing" is now ONE explicit value the backend owns, pushed
+on change and asked for at connect. It replaced a boolean with three competing
+sources plus a 1.5s timer in the UI.
+
+### The rule that generates the design
+
+> **State is never derived from the event log. On connect the client ASKS;
+> while connected the server PUSHES.**
+
+The log records *"it became active at some past instant"*. Replaying that as
+*"it is active now"* is a category error — and the old code had a poll
+(`checkAgentStatus()` after every `processEventBatch`) whose ONLY job was to
+undo the error it had just made. That poll was the bug report.
+
+Note the exact inversion against pending messages (Task X): pending IS a
+projection of a persistent log, so a reducer over events is right there.
+Activity has no persistent representation at all. Same-looking code, opposite
+conclusion — the question to ask is "does this thing exist on disk?".
+
+### `AgentActivity = "idle" | "thinking" | "tool"` — asymmetric on purpose
+
+| state | meaning |
+|---|---|
+| `tool` | loop is executing tools — **the only state with an unclosed tool_call** |
+| `idle` | loop is parked on `queue.wait()` |
+| `thinking` | **explicitly the residual**: every other way the loop is alive |
+
+`tool` is the precise one because it is the one with an interrupt consequence
+(an interrupted tool needs a synthetic tool_result). `idle` is the empty one.
+`thinking` is *defined as the leftover*, which is what makes the following fall
+out as consequences rather than special cases:
+- the outer-retry backoff (up to 120s between API attempts) is `thinking`
+- session setup before the loop starts (MCP connect can take seconds) is `thinking`
+- a compaction turn is `thinking`
+
+**Known naming debt, deliberately not fixed**: a compaction runs 2-3 minutes
+and showing "Thinking..." across it is the same kind of lie this model removes.
+Adding `compacting` later is a pure carve-OUT of the residual, not a
+re-partition — cheap precisely because the residual is written down.
+
+**Rejected framing** (offered, vetoed by root): defining the states by "what
+feedback the user sees" (spinner vs tool card). That defines backend state in
+terms of frontend rendering — the same class of error as deriving state from
+the log. Add a UI affordance and the definition collapses.
+
+### Where it lives, and the one rule about writing it
+
+`TaskSession.activity` — dies with the session, so there is no second lifecycle
+to keep in sync and nothing to leak. "All tasks' states" is DERIVED at read
+time by walking tracker nodes that have a session.
+
+**Field write and broadcast must happen in the same function.** Two writers,
+because neither layer can reach the other:
+- `setActivity(state)` — closure inside `runProviderLoop` (loop transitions)
+- `setAgentActivity(ctx, projectId, taskId, session, state)` — `agent-lifecycle.ts`
+  (session birth/death)
+
+The tempting shortcut is to emit the event inside `handleImplicitYield` (which
+only has `queue` + `emit`) and write the field at its four call sites. That
+splits one source into two, and call site number five gets only one half. The
+setter is passed IN instead — `handleImplicitYield(queue, setActivity)`.
+
+### Transition points (each independently mutation-tested)
+
+1. `idle` — in `handleImplicitYield`, before `queue.wait()`. ONE site covering
+   four call paths (done resume / implicit-yield resume / explicit yield / end_turn).
+   **Announced only when the loop will ACTUALLY park** (`!queue.hasPending`):
+   with a message already queued, `wait()` resolves on the next microtask and
+   the agent never paused. This is not flicker-avoidance dressed up — it is
+   what makes `idle` mean "waiting for you" rather than "reached a yield
+   point", and both consumers depend on the stronger meaning (yield_external
+   wakes an external client on it; the UI re-fetches JSONL on it to expose
+   Edit/Rewind). It also kept two provider harnesses working unchanged: they
+   script the loop by counting idles, and an unconditional announce added a
+   phantom startup idle that consumed their "first idle" step.
+2. `idle` — the initial drain's blocking wait (`provider-shared.ts`, fresh start),
+   same `!queue.hasPending` rule. The fifth place the loop parks on the queue,
+   and it announced nothing — an agent waiting for its first message looked
+   busy to every client. It deliberately does NOT set `queue.idle`; that flag
+   is polled by test helpers as "the steady-state loop has settled", and
+   flipping it during startup lets a poller call a booting agent settled.
+   **Narrower than it looks**: `runAgentForNode` enqueues a `work_context`
+   message before the loop starts whenever the scope's `buildWorkContext`
+   returns content, so a matrix launch always has something queued and this
+   park is not reached. It fires for a scope with no work context (the hook is
+   optional), and on a resume that ends in a non-user message with nothing
+   recovered. Worth its one line — an agent genuinely stuck here is stuck
+   forever — but do not describe it as the common path.
+3. `thinking` — at the API-call block, OUTSIDE the outer-retry loop.
+4. `tool` — immediately before `Promise.all(executeTool)`.
+5. `null` — at all three sites that clear `node.session` (runAgentForNode's
+   finally, stopAgent, stopTask). Skipping any one leaves a permanent spinner
+   for a dead agent in every connected client.
+
+6. `thinking` — on the way OUT of idle, right where `queue.idle = false` sits.
+
+⚠️ **Point 6 was initially left out, with an argument that was wrong in an
+instructive way.** The reasoning was: every path leaving `handleImplicitYield`
+reaches the API block, so a second setter is unobservable — *the emitted event
+sequence is identical either way*. True about the event sequence, and
+irrelevant: **consumers read the STORED value, not the event stream.**
+`yield_external`'s fast path and the connect-time snapshot both ask
+`session.activity` directly. Without the transition, the whole wake window
+(drain → filter compact → buildUserTurn → emit its events) reports `idle` for
+a loop that is provably not parked — and the documented
+`send_user_message → yield_external` workflow lands exactly there, told "the
+agent stopped working" at the moment it started.
+
+The old code left idle TWICE here (`queue.idle = false` AND an `agent_active`
+event). Collapsing to one state kept only the flag — which by then had no
+production reader — so the migration silently dropped the half that mattered.
+
+**The structural fix is the dedupe, not the extra line.** `setActivity`
+early-returns when the state is unchanged, which makes "an extra setActivity
+call is harmless" a true statement. Before that, every transition point needed
+a per-site argument about whether its event would be redundant — and that is
+precisely the argument that went wrong. With dedupe, you write a transition
+wherever the loop changes what it is doing and never reason about it again.
+Dedupe against a LOCAL (not the session field) so the property also holds for a
+provider driven directly in a unit test, where there is no session.
+
+### Wire format
+
+- `{ type: "agent_activity", taskId, state: AgentActivity | null }` — ephemeral
+  delta. `null` = session gone. In `isPersistedByEmitEvent`'s broadcast-only
+  group; **it must never reach JSONL** — that is what makes "replaying history
+  can't fake-activate" structurally true instead of corrected afterwards.
+- `{ type: "agent_activity_snapshot", projectId, states }` — daemon → client on
+  SSE connect, alongside the existing initial `tree_updated` /
+  `pending_clarifications`. Sourced from `GET /projects/:id/agent/status`
+  (shape changed from `{idle[], active[]}` to `{states}`). **Sent even when
+  empty**: "nothing is running" is the message a client reconnecting after
+  everything stopped needs in order to drop stale entries.
+
+Delta rather than full-snapshot-per-change because building a snapshot needs
+the tracker and the provider loop has none — a hard constraint, not taste.
+
+### Frontend: mostly deletion
+
+Deleted: the `checkAgentStatus` poll and its `/agent/status` fetch; the
+`agent_start`/`agent_end` → activeAgents derivation; the `agent_active` /
+`agent_idle` event types; ActivityLog's 1.5s timer + `lastEntry?.type ===
+"tool_call"` guess; dead `useAgent.running`; dead `handlers.ts setActiveAgents`.
+
+Kept: `agent_start`/`agent_end` themselves (persisted lifecycle log; agent_start
+still reports provider/model), and `checkStatus` reduced to the provider/model
+fetch only.
+
+Added: `activityReducer` (pure) + `isWorking()` in event-handler.ts; one
+write-through ref + `dispatchActivity` in Plugin.tsx mirroring `dispatchPending`;
+`activeAgents = new Set(keys where isWorking)` derived ONCE, so the five
+existing consumers (tree spinner, tab spinner, TaskDetail ×2,
+OrchestratorDetail) did not change at all. ActivityLog takes `activity` and
+does `showThinking = activity === "thinking"`.
+
+Activity events bypass the viewed-session filter in `handleEvent` (activity is
+project-wide — the sidebar shows every task) and produce no log entries.
+
+### Two consumers that a grep for "activeAgents" does NOT find
+
+1. **`yield_external` subscribes to the `agent_idle` EVENT TYPE**
+   (`mcp-endpoint.ts` WAKE_SIGNALS). Deleting the type without migrating turns
+   every external `send → yield_external → get_logs` wake into a timeout,
+   silently. Now matched via a `wakeReason()` predicate on `agent_activity`
+   (`state === "idle" || state === null`). The reported reason string stays
+   `"agent_idle"` — that is the tool's EXTERNAL contract and is unrelated to
+   our internal event names. (Same file, ~15 lines apart: the fast path
+   `session.queue?.idle` returning the *string* `"agent_idle"` is a different
+   thing from the *event type* in WAKE_SIGNALS. Easy to conflate.)
+2. **`onAgentIdle`** (Edit/Rewind re-fetch — SSE events lack eid/parentEid, so
+   the buttons only appear after a JSONL refetch). Migrated to "the viewed task
+   stopped working", which now ALSO covers session end — an agent that finishes
+   with `done()` never goes idle, so its last messages used to stay uneditable.
+
+### Pre-existing bug found next door (fixed in its own commit)
+
+WAKE_SIGNALS still listed `agent_stopped` and `orchestration_completed` — names
+replaced by `agent_end` long ago, so they could never match. A stopped agent
+only ever woke an external client by timing out. Committed separately from the
+activity work so the two can be reverted independently.
+
+### Test notes
+
+- `src/agent-activity.test.ts` — real agent loop. The `tool` window is observed
+  FROM INSIDE a tool handler (`getSession(...).activity`), which is the direct
+  form of "there is an unclosed tool_call right now". Ordering assertions
+  collapse repeats so they pin ORDER, not announcement count.
+- Idle-detection in provider tests keys on
+  `event.type === "agent_activity" && event.state === "idle"` (was `agent_idle`).
+  Two harnesses in `anthropic-compatible-provider.test.ts` drive the loop this
+  way — they hang for the full test timeout if missed.
+- `web/ActivityLog-activity.test.tsx` renders with the LAST ENTRY being a
+  tool_call in every case, so `tool` vs `thinking` can only be distinguished by
+  the prop — the old heuristic would have gotten it right by accident.
+
+### Mutation results, and the test the mutation caught
+
+Every transition point was removed individually and the suite re-run. Each is
+caught by tests only its own path can reach:
+
+| removed | fails |
+|---|---|
+| `idle` in handleImplicitYield | parks-on-queue + 2 provider harnesses that script the loop by counting idles |
+| `idle` in the initial drain | the initial-drain test, alone |
+| `thinking` at the API block | thinking→tool→thinking, alone |
+| `tool` before tool execution | the in-tool observation + thinking→tool→thinking |
+| `null` at the 3 teardown sites | session-end, stopTask, stopAgent — one each |
+| `thinking` on the way out of idle | wake-window test, alone |
+
+**The initial-drain mutation caught a bug in my own test.** The first version
+used the normal scope, so `work_context` was queued, the drain never parked,
+the agent ran a turn and parked in `handleImplicitYield` instead — the test was
+named for one transition and measured another. It passed clean and failed under
+the WRONG mutation, which is exactly the "two tests covering for each other"
+shape. Fixed by launching with `buildWorkContext: () => null`.
+
+That is the argument for mutating per transition point as you add it rather
+than once at the end: a green test tells you nothing about WHICH line made it
+green.
+
+**Mutation testing cannot find a transition point that was never written.**
+The leave-idle gap (point 6) survived a full clean mutation sweep — nothing
+failed, because nothing existed to remove. It was caught by reading the comment
+that justified its absence. When a comment argues why some code is unnecessary,
+that argument is the thing to check; the tests around it are all consistent
+with it by construction.
+
+**Careless-git note**: reverting a mutation with `git checkout -- <file>` also
+reverts any UNCOMMITTED fix in the same file. Commit the fix before mutating
+it, or back the file up.
+
+---
+# Events, JSONL & Session History
+---
+
 ## JSONL Repair
 
 `buildSessionRepair()` in events.ts handles all repair. It returns `{chainToEid, appendEvents}` and **never deletes anything** — the poison stays on disk and simply leaves the active chain, applied exactly like a rollback (`setChainHead(chainToEid)` then append).
@@ -253,6 +757,539 @@ Repairs: orphan tool_call → synthetic result, duplicate tool_result → trunca
 ## EventSpec Type
 
 `EventSpec = DistributiveOmit<Event, "taskId">`. Single emit path: `R.emit(projectId, taskId, spec)`.
+
+## Usage Event Persistence
+
+`usage` events moved from ephemeral to persisted. Now written to JSONL by emitEvent.
+- Added `outputTokens?: number` to usage event type.
+- `walkEventsToMessages` skips `usage` via default case (not conversation content).
+- UI: `attach_usage` UpdateOp finds most recent `assistant_text` for same taskId and attaches `CacheInfo` (inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens).
+- Displayed as subtle ⚡ hover badge on assistant messages (not separate log entries).
+- Color-coded: green (>80% hit), yellow (>30%), grey (<30%).
+- Compaction also emits usage (estimated=true, no cache fields) — persisted harmlessly.
+
+## In-Process Event Subscribers
+
+Third event consumer (alongside JSONL + SSE): `subscribeToEvents(ctx, projectId, callback)`. Per-project keyed Map. Used by yield_external, test helpers. Throwing subscribers caught + logged.
+
+## EventStore generation guard: sync writes + post-check (2026-04-18)
+
+`src/event-store.ts` `append`/`appendBatch` use `appendFileSync` (not
+`fs.promises.appendFile`). The guard check and the filesystem write
+must happen in the SAME microtask — anything async between them lets
+`clear()` interleave and recreate a just-unlinked file.
+
+### Race symptom (the flake)
+
+`Integration: resetTask JSONL cleanup race` tests, especially "reset
+running agent during bash: JSONL stays deleted", failed under CPU
+contention with "JSONL reappeared after Nms — async cleanup wrote
+after clear".
+
+### Root cause
+
+Old code in `enqueueWrite`:
+```ts
+const guardedFn = () => {
+  if (this.getGeneration(sessionId) !== generation) return Promise.resolve();
+  return writeFn();  // returns async appendFile Promise
+};
+```
+
+Sequence under contention:
+1. `guardedFn` microtask runs: guard passes (G0 == G0).
+2. `writeFn = () => appendFile(path, line)` called. libuv schedules
+   `open(path, O_APPEND | O_CREAT)` on the thread pool. `guardedFn`
+   returns the pending Promise.
+3. Main thread is free. Test's `eventStore.clear(rootId)` runs:
+   generation bumped to G1, `unlinkSync` removes the file.
+4. libuv thread pool finally wakes, calls `open(O_APPEND | O_CREAT)`.
+   `O_CREAT` creates a NEW file (directory entry was just removed).
+5. Writes the line. Closes. File has reappeared.
+
+The window is typically sub-ms and invisible. Under load (sibling tests
+saturating the libuv thread pool), it widens to tens of ms — wide enough
+to flake.
+
+### Fix (two layers)
+
+**Primary — sync writes**: `append`/`appendBatch` use `appendFileSync`
+inside the guardedFn. Guard check + write happen synchronously in one
+microtask; `clear()` cannot interleave by construction.
+
+**Defense — post-check**: after `await writeFn()` in `guardedFn`, check
+generation again. If `clear()` ran DURING writeFn, any file writeFn
+created is a zombie — `unlinkSync` it. Redundant in the fast path (sync
+writeFn leaves no window) but catches any future caller who passes an
+async writeFn.
+
+### Why sync I/O is fine
+
+- Per-write cost: one JSONL line (~100 bytes), microseconds on SSD.
+- Writes are already serialized per-session via `writeQueues` Promise
+  chain. Sync just means each link of the chain is itself atomic.
+- Main thread is usually idle between provider streaming ticks; blocking
+  it for microseconds is invisible.
+
+### Regression tests (mutation-proof)
+
+`src/event-store.test.ts`:
+- `race: clear during async writeFn delay → post-check unlinks zombie`:
+  uses reflection to call private `enqueueWrite` with a deliberately
+  slow async writeFn. After 5ms (guard passed, writeFn sleeping), test
+  calls `clear()`. When writeFn finally writes, post-check must remove
+  the zombie. Fails without Layer 2.
+- `race: new agent enqueues AFTER clear — new write survives post-check`:
+  exercises the edge where W1 (old gen, slow async) + clear + W2 (new
+  gen, fast sync) all chain on the same session. W1's zombie gets
+  unlinked; W2's legitimate write is preserved. Zombie content is valid
+  JSON so `read()` doesn't silently skip it — "only agent_start
+  survives" is a real mutation guard.
+
+Both tests verified by `git stash push src/event-store.ts` + re-running
+the file: both FAIL on main, both PASS with the fix.
+
+### What NOT to do
+
+- Don't revert `appendFileSync` to `fs.promises.appendFile` because it
+  "feels more idiomatic". The sync I/O is load-bearing for the guard.
+- Don't remove the post-check even though it's decorative in the
+  current fast path. It's the safety net for any future async writeFn.
+- Don't remove `appendFile` from the `node:fs/promises` import —
+  `copySessionFrom` still uses it (different path, no `clear()` race
+  because fork has structural exclusion with reset at the task level).
+
+## FIX-1 (2026-06-05) — buildSessionRepair corrupted COMPACTED sessions (index-space + orphan results)
+
+CRITICAL data-corruption fix. Both audits (matrix F-H2 + cc#1) independently hit it. The repair
+path could permanently brick any *compacted* session (recoverable only by `reset_task`). Four
+facets, one subsystem (`src/events.ts buildSessionRepair`, call site `agent-lifecycle.ts:~801`).
+
+**This SUPERSEDES the "JSONL Repair" and "buildSessionRepair Scope Boundary" sections above.** The
+key claim that changed: `buildSessionRepair` now takes the **FULL** event log and returns a
+**PHYSICAL** line index. Read those older sections with this correction in mind.
+
+### cc#1 — index-space mismatch (root cause)
+`buildSessionRepair` computed `truncateAfterIndex` against `readActive()` (post-`compact_marker`
+slice), but `EventStore.truncateAfterLine` slices by **physical file line**. For a compacted
+session, an active-relative index fed to physical truncation sliced off the `compact_marker`,
+post-compact `session_config`, and `compacted_resume` summary, AND appended interrupted results
+referencing tool_calls that had just been truncated away → unrecoverable.
+- **Fix**: `buildSessionRepair(events)` is now a thin boundary-aware wrapper. It finds the last
+  `compact_marker`, scopes analysis to the active region via an internal `repairActiveRegion(active)`
+  (the old body, unchanged), then translates the returned index back to physical by adding the
+  active offset. **Callers MUST pass the FULL log (`EventStore.read`), NOT `readActive`.** The call
+  site in `agent-lifecycle.ts` now reads `read(nodeId)` and compares against `allEvents.length`.
+- Truncation can never cross the compact boundary by construction (analysis is on the active slice;
+  the floor is the boundary). Corruption that lives *before* the last marker is compacted away and
+  is correctly ignored.
+
+### F-H2 — Strategy 2 appended results for TRUNCATED-region tool_calls → orphan tool_results
+The duplicate-repair branch had a second loop appending interrupted results for tool_calls located
+in the region being truncated away. Those calls are removed → the results become **orphan
+tool_results** (result with no matching call) → walker builds an invalid user message → API 400 →
+next launch `buildSessionRepair` returns null (it detects orphan CALLS + duplicates, NOT orphan
+RESULTS) → permanent crash loop. **Fix: that loop is DELETED.** Only the kept-region orphan loop is
+correct (kept tool_calls whose results were truncated).
+
+### B-L8 — kept-region orphan loop skipped TOOL_YIELD but not TOOL_DONE
+A kept-region `done()` orphan got a spurious tool_result. Replaced the `!== TOOL_YIELD` filter with
+the intended-orphan rule used by Strategy 0: skip yield/done **only when it is the last tool_call in
+the kept region** (the resume's pending control state). Earlier yield/done orphans correctly get
+interrupted results. New helper `lastToolCallEvent(events)`.
+
+### Status-message structural guard (required once B-L8 lands)
+Strategy 2's status message is a synthetic **user** message. If the kept region ends in an
+unresolved intended-orphan yield/done (now skipped, not given a result), appending a user message
+after it breaks assistant→tool_result alternation → API 400. Guard: append the status message only
+when `!endsInPendingControl`. When the session ends in pending yield/done, it correctly resumes in
+that state (no API-forcing user message).
+
+### D#1 — `source: "system" as never` rendered to an EMPTY string
+Strategy 0's reason message forced an illegal `source: "system"`; `formatBodyForAI`'s `default`
+branch returned `""` (and the UI `queueEntryToUIEvent` had no "system" case) → the repair reason
+silently vanished. **Fix: use `createUserMessage` (source "user")** — surfaced by both AI formatter
+and UI materialization. No new source variant added; reuse the existing visible one. Same guarded
+by `endsInPendingControl`.
+
+### Regression tests (mutation-proof)
+- `src/jsonl-stress.test.ts` → `describe("FIX-1: buildSessionRepair compact-boundary safety")`:
+  5 unit tests (cc#1 pre-compact-ignored + physical-index survival, F-H2 orphan + idempotent second
+  pass, B-L8 done orphan, D#1 visible status). Each seeds a session WITH a `compact_marker` — the
+  gap every prior repair test had.
+- `src/integration.test.ts` → `describe("Integration: repair on compacted session (FIX-1 cc#1)")`:
+  drives the REAL `runAgentForNode` repair pipeline on a seeded compacted session; asserts the
+  post-compact tool turn + summary + marker survive and the poison is gone. Catches the call-site
+  `readActive`→`read` change (unit tests on `buildSessionRepair` alone can't).
+- Mutation-checked: reverting the active-region scoping makes the pre-compact-ignored test return a
+  repair; re-adding the truncated-region loop makes F-H2 see an orphan result; restoring the
+  `!== TOOL_YIELD`-only filter gives the done orphan a spurious result; restoring the `as never`
+  source makes the D#1 status render empty.
+
+## FIX-8 (2026-06-10) — EventStore truncation safety: malformed-line index + write-queue serialization
+
+> **HISTORY — the whole mechanism described below is deleted (2026-07-24).** `truncateAfterLine`,
+> `readWithLineMap` and the event-index→physical-line translation are gone; repair addresses
+> events by eid and applies as a chain jump. Both bugs below were symptoms of "address events by
+> file position", and deleting the position-addressing deleted the bug class. Kept because the
+> DIAGNOSIS is the reusable part: an index computed in one space and consumed in another is a
+> silent corruption engine, and it bit us twice before we removed the second space. See "One
+> boundary: the active chain".
+
+Two EventStore bugs that amplify corruption during crash recovery.
+
+### R8-B#4 — Malformed lines shift truncation index
+`read()` skips malformed JSONL lines (crash artifacts) while `truncateAfterLine` slices raw
+physical lines. `buildSessionRepair` returns event-array-relative indices. With N malformed lines
+before the cut point, the physical cut lands N lines early → silently destroys valid events. Same
+index-space-mismatch class as FIX-1 cc#1 (compact boundary), but at the individual-line level.
+
+**Fix**: `EventStore.readWithLineMap()` returns `{ events, physicalLines }` where `physicalLines[i]`
+is the 0-based physical file line of `events[i]`. The call site in `agent-lifecycle.ts` reads via
+`readWithLineMap`, passes events to `buildSessionRepair` (which returns event-array-relative
+indices), then translates via the map before calling `truncateAfterLine`. `read()` now delegates to
+`readWithLineMap().events` — single parsing implementation.
+
+**Docstring correction**: `buildSessionRepair` previously claimed to return "PHYSICAL line index" —
+it actually returns event-array indices. Fixed in both the function-level and compact-boundary-safety
+docstrings.
+
+### R8-B#5 — truncateAfterLine not serialized with write queue
+`truncateAfterLine` bypassed `enqueueWrite` (did its own `flushSession` + direct sync I/O). A
+message persisted by `deliverMessage` in the flush-to-truncate window could land physically then get
+cut by the truncation's `writeFileSync`.
+
+**Fix**: route `truncateAfterLine` through `enqueueWrite`. Now fully serialized — pending writes
+complete before truncation, and writes enqueued after truncation wait for it. The generation guard
+also applies (if `clear()` runs while truncation is queued, truncation is silently dropped).
+
+### Tests (5 new, all TDD — written before fix)
+- `readWithLineMap returns events with their physical line numbers` — 2 malformed lines, verifies
+  physical line mapping [0, 2, 4]
+- `truncation after event index 2 with malformed lines preserves all 3 valid events` — end-to-end
+  proof the fix works (uses readWithLineMap → physical line → truncateAfterLine)
+- `BUG REPRO: using event-array index as physical line destroys the last event` — proves B#4 bug
+  exists (passing event-index 2 as physical line cuts physical line 3)
+- `truncation waits for pending writes before executing` — slow write completes before truncation
+- `writes enqueued after truncation wait for truncation to complete` — truncation then append, order
+  preserved
+
+## JSONL event eid + parentEid (rollback infrastructure) (2026-07-21)
+
+Every persisted JSONL event carries `eid` (12-char hex, `crypto.randomBytes(6).toString('hex')`)
+and `parentEid` (previous event's eid, or `null` for the first event). Auto-stamped by
+`EventStore.append`/`appendBatch` — callers never set them.
+
+### Field naming: eid/parentEid (NOT id/parentId)
+`MessageEvent` already has `id: string` (ULID for two-phase message lifecycle — `message` →
+`messages_consumed`). Using `id` for the event chain would collide. `eid`/`parentEid` are the
+event-chain fields; `id` on MessageEvent is unchanged and independent.
+
+### Mechanism
+- `EventStore.lastEventIds: Map<string, string|null>` — per-session chain head.
+- `stampEvent(sessionId, event)` — returns a persisted COPY with the chain fields first (it no
+  longer mutates the caller's object). Called inside the write queue (same microtask as
+  appendFileSync). A failed write REWINDS the head — an event not on disk must not be in the chain.
+- `read` populates `lastEventIds` from the last event on read.
+- `copySessionFrom` preserves source eids but RE-LINKS the copied subset into one contiguous
+  chain (the active context is a filtered subset, so the originals' parents aren't in the new
+  file). Stamps synthetics + fork_marker with fresh eids. Sets `lastEventIds` for the target.
+- `clear` deletes the session's `lastEventIds` entry.
+
+### Auto-migration (old JSONL files)
+On first `read`, if the first event lacks `eid`, the entire file is migrated:
+assign linear eid chain, atomic rewrite (temp + rename, same pattern as `tracker.save()`).
+Idempotent — skipped when first event already has `eid`. After migration, subsequent appends
+chain correctly (lastEventIds populated from the last migrated event).
+
+### SSE broadcast does NOT carry eid/parentEid
+`emitEvent` broadcasts BEFORE persisting. `stampEvent` runs inside `append` (after broadcast).
+This is intentional — eid/parentEid are persistence-layer concerns for future rollback; the
+UI doesn't need them. The SSE-broadcast event object may gain eid/parentEid via mutation IF
+a subscriber holds a reference past the broadcast call, but no subscriber does this.
+
+### Walker unchanged (current stage)
+`event-converter.ts` walker is linear — it scans events sequentially. eid/parentEid are purely
+data at this stage. Future rollback/branching will make the walker "walk from leaf along
+parentEid" instead of linear scan.
+
+### Event type
+Both fields are optional on the `Event` union's trailing intersection (`& { traceId?; eid?;
+parentEid? }`). Optional because callers create events without them; EventStore stamps them.
+After persistence (in JSONL), they're always present. After migration, they're present on all
+old events too.
+
+## Message rollback via parentEid chain-walk (2026-07-22, simplified 2026-07-24)
+
+User clicks Rewind to here on a user message, system rolls back, agent regenerates. Claude Code /rewind equivalent.
+
+### Core mechanism: readActive() chain-walks instead of linear slice
+
+Old readActive(): findLastIndex(compact_marker) + slice(). New readActive(): walkActiveChainIndices() from the last event via parentEid. Without rollback, every event chains linearly (identical to old behavior). With rollback (setChainHead), the next event's parentEid jumps to the target event, rolled-back events are never visited.
+
+⚠️ **Where the walk STOPS was changed later the same day** — see "One boundary: the active chain (2026-07-24)" at the end of this file. It is no longer `compact_marker`; it is the `compact_started` of the last COMPLETED compaction, and inside that window only `type === "message"` survives. Read this section for the rollback mechanism; read that one for the boundary.
+
+### Rollback mechanism: setChainHead (no marker event)
+
+`EventStore.setChainHead(sessionId, eid)` — one line: `this.lastEventIds.set(sessionId, eid)`. Pure in-memory. The NEXT event appended via `stampEvent` gets `parentEid = eid`, creating the chain jump. No intermediate `rollback_marker` event — the jump is carried by the first post-rollback event itself. `/edit` endpoint: `setChainHead(nodeId, rollbackTargetEid)` → `deliverMessage(newContent)` → stampEvent auto-sets parentEid.
+
+**DELETED (2026-07-24)**: `rollback_marker` event type, `EventStore.appendRollback()`, frontend rollback_marker rendering (LogEntryView, event-handler, CSS). The marker was an implementation shortcut — parentEid jumps via setChainHead are simpler (one line vs. a full event write+flush).
+
+### ~~Defensive chain-walk fallback~~ — DELETED 2026-07-24
+
+This used to say: "if the parentEid chain breaks (null on a non-first event, or a parentEid naming a missing eid), fall back to linear traversal for preceding events. Without this fallback, 83 tests failed."
+
+Half of it survived and half of it was wrong. What survived: **an event with no parentEid stops chain-following, and everything before it is taken linearly** — that is the genuine chain root at index 0, and it is what makes a pre-eid log readable. That is a documented rule now, not a fallback.
+
+What was deleted: the *dangling-link* branch (a parentEid naming an eid no line carries). Coding around a state the runtime cannot produce hides bugs instead of surfacing them — the same reason `buildSessionRepair` refuses to repair orphan tool_results. Deleting it was only honest once the sole path that could produce a dangle was closed: `stampEvent` used to advance the chain head BEFORE the write, so a failed append (ENOSPC/EIO) left the next event pointing at an eid that never reached disk. `append`/`appendBatch` now rewind the head on write failure. **If you ever re-introduce a dangling-link fallback, you are papering over a writer bug — go find the writer.**
+
+### REST endpoint
+
+POST /api/matrix/projects/:id/tasks/:nodeId/edit (plugin route). Validates targetEid (exists, user message, after compact_marker). Stops agent, setChainHead, delivers new message via deliverMessage.
+
+### Frontend
+
+Edit/Rewind buttons on user messages (hover-reveal). i18n: activity.rollback / activity.rollbackConfirm (EN + ZH).
+
+### Agent lifecycle / buildSessionRepair adaptation
+
+agent-lifecycle.ts feeds repair the chain-walked active events, so rolled-back events are excluded from repair analysis. (`readActiveWithLineMap` / `readWithLineMap` / the physical-line translation were deleted on 2026-07-24 — repair now addresses events by eid and applies as a chain jump, not a file truncation.)
+
+### Tests
+
+src/rollback.test.ts: walkActiveChainIndices unit tests, EventStore integration tests, consistency tests (readActive + readFromLastCompactMarker + restart).
+
+## /rollback endpoint DELETED — /edit is the single path (2026-07-23)
+
+The standalone `/rollback` REST endpoint in `.mxd/plugin/runtime.ts` (~100 lines) and the
+`taskRollback` URL builder in `.mxd/plugin/web/api.ts` are deleted. Frontend (`Plugin.tsx
+handleRollback`) already calls `api.taskEdit` exclusively — the `/edit` endpoint combines
+rollback + message delivery atomically and fully supersedes `/rollback`.
+
+**Edit/Rewind consistency verified** across three scenarios via 6 integration tests in
+`src/rollback.test.ts`: readActive immediately, page refresh (readFromLastCompactMarker),
+daemon restart (fresh EventStore). All produce byte-identical event sequences. Multiple
+consecutive rollbacks: only the latest branch visible. Chain-walk via parentEid is
+deterministic on persisted JSONL — no in-memory state.
+
+## JSONL lines serialize eid/parentEid FIRST (2026-07-24)
+
+Every line `EventStore` writes now starts with the chain links:
+
+```json
+{"eid":"53fa71c8e43d","parentEid":null,"type":"assistant_text","content":"…"}
+```
+
+Readability only — tailing a JSONL shows the chain without scanning past a long
+`content`, and a future fixed-offset reader (draft 01KYB45P) would not need a
+second format change. **Reading is untouched**: `JSON.parse` is order-agnostic,
+so pre-change lines (chain fields at the tail) read back identically. Old files
+are NOT rewritten; head-ordered and tail-ordered lines coexist inside one file
+with zero effect (pinned by a test).
+
+### The mechanism, and the trap in the obvious version
+
+`stampEvent` no longer hangs fields on the caller's object — it returns a
+persisted copy built by module-level `withChainFields(event, eid, parentEid)`.
+Every write path goes through it: `append`, `appendBatch`, `migrateEventIds`
+(legacy eid-less files), and `copySessionFrom` (synthetics + fork_marker; copied
+source events are rebuilt too, with their OWN eids preserved, so a brand-new
+forked file is uniformly head-ordered).
+
+**`{ eid, parentEid, ...event }` alone is WRONG.** When the input already has
+those keys, the spread overwrites the fresh values with the stale ones (key
+POSITION stays first, so it looks right). `withChainFields` destructures them
+off before spreading. This is not hypothetical: `buildSessionRepair` re-appends
+unconsumed `message` events read from the region it is about to truncate — with
+the naive spread they keep a `parentEid` pointing at an event truncation just
+deleted, so `walkActiveChainIndices` hits a chain break and silently degrades to
+linear traversal (which can resurrect rolled-back events). Mutation-verified:
+reverting to the naive spread fails exactly one test —
+`event-id.test.ts` "re-appending an event that already carries eid gets a FRESH
+chain".
+
+### Consequence: append/appendBatch no longer mutate the caller's event
+
+Production never read `.eid` off an object it handed to the store (`emitEvent`
+broadcasts to SSE *before* persisting; every eid consumer — frontend rollback,
+repair, chain-walk — reads events back from disk). So this is invisible in
+production, and it deletes the "an SSE subscriber holding a reference past the
+broadcast could observe a mutation" caveat noted in the eid entry above.
+
+TESTS did depend on it: `expect(store.read(id)).toEqual([literal])` passed only
+because the literal was mutated to carry the chain fields. 9 such assertions
+(8 in `event-store.test.ts`, 1 in `invariant.test.ts`) now wrap the read in
+`stripChainFields()` (`src/test-utils/strip-chain-fields.ts`) — the assertion
+stays exact for every other field instead of weakening to `toMatchObject`.
+
+### Verification
+
+`bun test` green; typecheck error count unchanged (24, all pre-existing, owned by
+01KYB3MJ); `check:ci` exit 0. Eyeball check via a real agent run (mock provider,
+`emission-harness`): all 12 lines of the produced session file — message,
+work_context, session_config, agent_start, messages_consumed, assistant_text,
+tool_call, usage … — start with `{"eid":"…","parentEid":…`, chain visibly linear.
+
+## One boundary: the active chain (2026-07-24)
+
+"Which events count" had FOUR independent implementations. Now there is one:
+`walkActiveChainIndices` (events.ts). `readActive`, `readFromLastCompactMarker`
+and `copySessionFrom` all go through it; repair and rollback both express
+"these events stop counting" the same way — a `parentEid` jump. Nothing
+addresses events by file position any more, and nothing deletes.
+
+### The rule
+
+> The active chain ends at the `compact_started` of the last COMPLETED
+> compaction. Inside that compaction's window, only `type === "message"`
+> survives.
+
+One backward scan does both jobs. `parentEid` always points at an earlier
+position, so scanning backward IS the lookup — no eid→index map (O(result)
+memory), and a cycle is structurally impossible because `i` only decreases.
+Walking back: a `compact_marker` opens the window, its `compact_started`
+closes the walk. `compact_marker` is always kept (walker treats it as
+structural; `readFromLastCompactMarker` slices the UI log at it;
+`buildSessionRepair` needs it to scope). `includeBarrier` is gone.
+
+### Why the window (the bug it fixes)
+
+Messages delivered WHILE the summarizer runs land between `compact_started`
+and `compact_marker`. The old rule ended the chain at the marker, so those
+messages were outside the active region while the `messages_consumed` that
+acknowledged them (written after the marker) was inside — the walker resolved
+a consumption record referencing an id it had never seen and dropped the
+content silently. Measured on the root session: 22 compactions, 8 with
+stranded messages, 15 lost, 4 typed by a human. The live path was fine; only
+reconstruction (restart / fork / UI refetch) lost them, so this was pure
+live-vs-reconstruction drift.
+
+The window filter is equally load-bearing in the other direction: the
+summarizer's own `thinking` + `<summary>…` `assistant_text` + `usage` must NOT
+come back — the summary is already in the context as `compacted_resume`.
+
+### ⚠️ Do NOT encode the barrier as `compact_started.parentEid = null`
+
+This looks cleaner (termination collapses to the chain root, zero type
+knowledge) and it is WRONG. Two independent reasons, both verified:
+
+1. **A compaction is a 2-3 minute window whose outcome is unknown when
+   `compact_started` is written.** Real durations from the root session:
+   124s (1784053169510→1784053293730), 178s (1784222935672→1784223113791),
+   145s (1784829047832→1784829193473). If the daemon dies inside that window
+   there is no summary at all — but the chain root is already committed, so
+   the active region becomes `[compact_started, window messages]`, the agent
+   resumes with an empty context, `hasWorkContext` is false so a fresh
+   work_context gets injected, and it carries on like a newborn. No error, no
+   crash: **silent total context loss**, recoverable only by hand-editing
+   JSONL. Under self-bootstrap (dozens of restarts a day) this is a matter of
+   time. The type rule handles it for free: no marker ⇒ not a barrier ⇒ full
+   history stays reachable.
+2. **The type check has to exist anyway.** Logs written before
+   `compact_started` existed have a marker with no opener, and walking past
+   such a marker would drag pre-compact user messages back into the context.
+   That legacy branch is mandatory — so emitting `null` only ADDS a mechanism
+   on top of it, plus a migration pass over every existing session (otherwise
+   the chain runs to line 1 and a compacted session's whole 84MB history
+   floods back on the next restart). Strictly more code, strictly more risk.
+
+Orchestrator's framing after being talked out of it twice: encoding structure
+in links fits a JUMP (rollback, repair — you know the target when you write
+it). A compaction is an INTERVAL whose validity depends on a result you don't
+have yet. Don't express an undetermined fact as a link.
+
+### Repair is a chain jump, never a truncation
+
+`buildSessionRepair` returns `{ chainToEid, appendEvents }` (`SessionRepair`).
+The caller does `setChainHead(chainToEid)` + `appendBatch` — literally the
+rollback mechanism. `chainToEid: null` means append-only (orphan repair).
+Deleted: `EventStore.truncateAfterLine`, `readWithLineMap`,
+`readActiveWithLineMap`, the `physicalLines` array, and the event-index →
+file-line translation that produced FIX-1 cc#1 and FIX-8 R8-B#4. Poisoned
+events stay on disk and simply stop being reachable, so the evidence needed to
+debug a corruption survives it.
+
+**A truncating repair ALWAYS appends at least one event.** `setChainHead` is
+pure in-memory; the jump only reaches disk as the first appended event's
+`parentEid`. Both truncation strategies therefore append a `status` event
+("Session repaired: …") LAST — last so it can never split a run of
+tool_results into two user turns (the walker skips `status`, but position
+still matters for the tool_result collection loop). Without it, the repair of
+a session that resumes in pending-done (no orphan results, no replayed
+messages, status user-message suppressed) would evaporate on restart and loop
+forever.
+
+Messages in the dropped region are replayed (fresh eids) so
+`findUnconsumedMessages` re-delivers them. ALL of them, not just the ones
+without a `messages_consumed`: a message consumed into a turn the repair just
+dropped is exactly as absent as one that never arrived. Strategy 2 already did
+this; Strategy 0 (out-of-order) silently ate them.
+
+`buildSessionRepair` THROWS if the event it must chain to has no eid. Every
+event on an active chain is stamped (EventStore stamps on write, migrates
+legacy files on read), so that means the caller passed something that never
+came from a store. A repair that cannot express its jump would leave the
+poison in place and loop — better to ring.
+
+### Fork had its own copy of the boundary — three bugs, one of them irreversible
+
+`copySessionFrom` computed `findLastIndex(compact_marker) + slice()`. Now it
+calls `readActive` (fork means "wake up with the source's current context" —
+that IS readActive's definition). Fixed, each mutation-verified separately:
+
+1. **Rolled-back events were copied into the child.** A linear slice ignores
+   parentEid entirely. Empirically: source `readActive` = 2 events, fork
+   copied 4.
+2. **Window messages were dropped**, same root cause as the source-side leak.
+3. **The copied subset was NOT re-linked.** The active context is a FILTERED
+   subset, so the copied events' original parents (compact_started, the
+   summarizer output, a rolled-back branch) are absent from the child's file.
+   Copying links verbatim leaves a hole; everything older is stranded. The
+   copy now keeps SOURCE eids (identity survives) but re-chains parentEid.
+
+Also: the compaction boundary events are NOT copied. Only half of one can be
+(compact_started is outside the active region by definition), and a lone
+marker in the child reads as the legacy "unpaired marker" shape — so the child
+would discard exactly the window messages we just inherited, with nothing left
+in its file to ever recover them. That is the one genuinely irreversible
+version of this bug: the source recovers on restart, a fork never does.
+
+### No dangling-link handling — and nothing may produce one
+
+A `parentEid` pointing at an eid no line carries gets NO fallback. Same rule as
+`buildSessionRepair` refusing to repair orphan tool_results: a state the
+runtime cannot produce must not have code that quietly patches it, or the code
+becomes a silencer for real structural bugs. It shows up as "the events before
+it stop rendering", which is what we want.
+
+That premise is only true because a failed write now REWINDS the chain head
+(`rewindChainHead` in append/appendBatch). `stampEvent` advances
+`lastEventIds` before the write; on ENOSPC/EIO the event never lands, and the
+next event would then name a nonexistent parent and strand the session. An
+event that isn't on disk isn't in the chain.
+
+(An event with NO parentEid at all still ends chain-following and takes the
+rest linearly — that is the genuine root at index 0, and it is what lets a
+pre-eid log be read.)
+
+### Test notes
+
+- `src/rollback.test.ts` owns the walker + fork + repair-as-jump tests;
+  `src/jsonl-stress.test.ts` owns the pure repair-strategy tests.
+- Repair fixtures MUST carry eids now (`chained()` helper in both files, plus
+  `events.test.ts`) — a repair chains to an event, so an eid-less fixture is
+  not modelling production. That is a feature: it throws.
+- Mutation-verified, each fix individually: barrier back at `compact_marker`
+  (5 fail), no window type filter (5), unpaired started treated as a barrier
+  (2), fork's old linear slice (3), fork without re-link (2), fork without the
+  marker strip (2), no repair status event (2), no message replay (1), no
+  chain-head rewind (1).
+- Assertions about "the poison is gone" must read `readActive`, NOT the raw
+  log — repair no longer deletes. `readActiveSessionEvents` exists next to
+  `readSessionEvents` in integration.test.ts for exactly this.
+- A test that needs a genuinely truncated file (simulating a crash that ended
+  the log early) does the file surgery itself; the product has no such
+  operation any more. See the Phase-2 crash-recovery test in integration.test.ts.
 
 ---
 # Cache & Drift Prevention
@@ -323,6 +1360,18 @@ Breakpoint on **last** user message (not second-to-last). Last message sent to A
 ### await_background Deleted
 await blocked entire agent loop. yield is the one path — accepts all message types. -360 lines.
 
+## Pre-API-Call Debug Snapshot (v2: per-traceId epoch)
+
+Layout: `projects/<id>/debug/<taskId>/<traceId>/last.json`. Each `runAgentForNode` gets unique `loopTraceId`. Restart → new dir → old snapshot preserved. `rollOldTraceIdDirs` keeps 10 most recent. Post-mortem: diff two newest traceId dirs' `last.json` files to find drift.
+
+## Live/Reconstruction Drift Fix — Caption Bug
+
+`buildUserTurn` now delegates to walker callbacks (single source of truth per provider). Live path has no independent construction logic — can't drift from JSONL reconstruction. Initial drain also delegates via `adapter.appendQueueMessagesToMessages`. Dead ToolResult fields (`formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages`) removed.
+
+---
+# Providers & API
+---
+
 ## 70K Post-Restart Cache Miss (RESOLVED — correct diagnosis 2026-04-16, bit-exact proof)
 
 Caused by **Anthropic occasionally routing our OAuth traffic to what was then the unreleased Opus 4.7 tokenizer/model**. NOT a Matrix bug. The previous hypothesis ("server-side system prompt injection") was wrong — corrected via bit-exact replay experiment.
@@ -363,50 +1412,6 @@ Opus 4.7 GA was 2026-04-16 — **12 days AFTER our observation**. During that pe
 
 **Why this matters**: Silent model routing means `response.model` cannot be trusted as ground truth for which model actually served a request. A client declaring model X may receive model Y's output without any disclosed indicator. Tokenizer ratio is the most reliable post-hoc signal, but only visible at cache-transition moments.
 
-## Pre-API-Call Debug Snapshot (v2: per-traceId epoch)
-
-Layout: `projects/<id>/debug/<taskId>/<traceId>/last.json`. Each `runAgentForNode` gets unique `loopTraceId`. Restart → new dir → old snapshot preserved. `rollOldTraceIdDirs` keeps 10 most recent. Post-mortem: diff two newest traceId dirs' `last.json` files to find drift.
-
-## Live/Reconstruction Drift Fix — Caption Bug
-
-`buildUserTurn` now delegates to walker callbacks (single source of truth per provider). Live path has no independent construction logic — can't drift from JSONL reconstruction. Initial drain also delegates via `adapter.appendQueueMessagesToMessages`. Dead ToolResult fields (`formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages`) removed.
-
-## Duplicate Yield Handling
-
-API can return multiple yield tool_calls in the same assistant turn. Evolution:
-
-**Fix 1**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done. Earlier yield/done orphans are genuine repair targets. Architectural lesson: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call.
-
-**Fix 2 (superseded)**: Provider loop wrote no-op tool_results for extras as a SEPARATE user message. This caused a new bug: extras user message + real yield's user message → 2 consecutive user messages → API 400 "Messages must alternate roles".
-
-**Fix 3 (current)**: Extras' tool_result events still emit to JSONL immediately (orphan prevention), but their live-path construction is DEFERRED via `pendingDuplicateYieldExtras`. On yield wake, extras bundle into the SAME `buildUserTurn` call as the real yield, producing ONE user message with `[...extras, real, ...queue]`. Order matches JSONL (extras emit at yield-detection, real emits at wake → walker reconstructs in that order → live must match).
-
-Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn" regression-guard this.
-
-## Compaction Asymmetry
-
-Manual `/compact` injects a summarization instruction as a user message. If the previous loop iteration also pushed a user message (yield tool_result + queue content, done tool_result + queue content), result is two consecutive user messages → API 400 "Messages must alternate roles".
-
-Seven paths in `provider-shared.ts` have this shape. 3 are clean (`continue;` without pushing user msg). 1 is fixed. 3 are deferred via test.todo.
-
-**Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. One user message with `[tool_result, text]` blocks → valid alternation.
-
-**Pattern**: emit to JSONL for orphan prevention, defer messages[] push to merge with next user turn. Same as duplicate-yield fix (19995b9).
-
-**Latent walker bug** (deferred): walker reading `[tool_result, messages_consumed, summarization_request]` produces two consecutive user messages. Proper structural fix: summarization_request should append to the current user turn, not create a separate one. Requires matching live + walker changes for byte-identical output. Documented as test.todo in drift-lifecycle.test.ts.
-
----
-# Providers & API
----
-
-## API 400 → crash → repair-on-next-launch
-
-There is NO in-memory auto-recovery from a 400 invalid_request_error. The old mechanism (pop the broken user message, splice in synthetic tool_results + recovery text, retry once, gated by `enableAutoRecovery` / `autoRecoveryAttempted`) was REMOVED — those flags no longer exist anywhere in the codebase (grep confirms zero matches).
-
-Current behavior (`provider-shared.ts` outer-retry catch, ~line 1409): on a non-transient 400 the error propagates, the agent stops, status stays `in_progress` (resumable). On the NEXT launch, `buildSessionRepair` fixes the JSONL on disk *before* the provider loop starts (see events.ts ~line 583). The fix lives in persisted state, not volatile `messages[]` — consistent with the "recovery must touch JSONL, not just memory" invariant.
-
-Transient errors (429, 5xx, network) are still retried in-loop with backoff. Only the 400-class path is "crash + repair on next launch".
-
 ## OpenAI Provider
 
 - Chat Completions (`OpenAICompatibleProvider`) is dead code — not wired into production.
@@ -436,9 +1441,233 @@ Both providers use `openai` npm package (v6.34.0). `DebugSnapshot.body` === exac
 
 Thinking events have `provider?: string`. Switching providers automatically drops stale thinking blocks (provider mismatch → filtered). OpenAI walker ignores thinking entirely.
 
-## Abort Signal + Inner Retry Fix
+## LLM Facility — stateless single-turn LLM for plugins (2026-04-23)
 
-Inner retry checks `signal.aborted` first + abort-responsive sleep. Reset time: 30s → instant.
+`src/llm.ts` — a thin, provider-agnostic wrapper around the existing provider
+adapters. For plugins that need individual LLM calls outside the agent loop
+(pipelines, one-shot generation, classifiers). **Strictly single-turn, no
+tools, no session state.**
+
+### Surface
+
+```ts
+createLLM({ authGroup, model, defaultThinkingEffort? }): LLMClient
+runLLM(config, req): Promise<LLMResult>
+streamLLM(config, req): AsyncIterable<LLMChunk>
+```
+
+`LLMChunk`:
+```ts
+| { type: "text_delta"; delta: string }
+| { type: "thinking_delta"; delta: string }  // Anthropic only in v1
+| { type: "final"; text; thinking?; usage; stopReason }
+```
+
+`LLMRequest`: `{ system?, user? | messages?, maxTokens?, thinkingEffort?, signal? }`
+— exactly one of `user` / `messages`. No image input, no tool_use.
+
+### Plugin idiom
+
+```ts
+import { createLLM } from "matrix/src/llm.ts";
+import { resolveAuthGroup } from "matrix/src/config.ts";
+
+const authGroup = resolveAuthGroup(effectiveCfg);
+if (!authGroup) throw new Error("No auth group configured");
+const llm = createLLM({
+  authGroup,
+  model: effectiveCfg.model,
+  defaultThinkingEffort: effectiveCfg.thinkingEffort,  // plugin resolves once
+});
+const { text } = await llm.run({ system: "...", user: "..." });
+```
+
+**Plugin resolves from MatrixConfig itself**. The facility stays decoupled
+from `MatrixConfig`/`RuntimeContext` shape — it only knows `AuthGroup`, model
+string, and thinking effort number. Per-call `thinkingEffort` overrides the
+default; unset → uses `defaultThinkingEffort` → unset → 0 (no thinking).
+
+### Reuse strategy (audit-driven)
+
+Leverages existing runtime aggressively — the facility is ~180 LOC of wiring
+over existing adapter code:
+
+1. **`adapter.callAPI`** (reuse) — already yields `text_delta`/`thinking_delta`
+   and returns the raw SDK response. Facility drives it, normalizes chunks,
+   extracts `final`. Two factory functions exposed via `export`:
+   `createAnthropicAdapter`, `createOpenAIResponsesAdapter`.
+2. **`adapter.buildResponseEvents(response, false)`** (reuse for Anthropic
+   thinking extraction) — filter for `type: "thinking" && !redacted` events,
+   concat. Redacted blocks dropped silently.
+3. **`adapter.getTokenUsage` / `computeCost` / `getResponseText`** (reuse).
+4. **`requestToRoleList`** — single helper maps `LLMRequest` to
+   `[{role, content: string}]`. Both Anthropic's `MessageParam` and Matrix's
+   OpenAI `HistoryMessage` accept this shape natively — no
+   `buildAnthropicMessages`/`buildOpenAIMessages` wrappers needed.
+5. **OpenAI reasoning extraction** — NEW code (~15 lines). No existing
+   walker emits reasoning events for OpenAI Responses (only `message` and
+   `function_call` surface in `buildResponseEvents`). Walks
+   `response.output[].type === "reasoning"` items directly for `final.thinking`.
+6. **Stop reason mapping** — NEW (~20 lines total across both providers).
+   `adapter.getStopReason` returns `"end_turn" | "tool_use"` — too coarse
+   for facility (can't distinguish `max_tokens`). Facility maps explicitly.
+7. **SDK client construction** — DUPLICATED from provider class
+   constructors (~40 lines). Not extracted this round (scope). Beta headers
+   and timeout match `AnthropicCompatibleProvider` exactly. Note: any
+   future change to beta headers must update BOTH the class constructor
+   AND `createAnthropicClient` in `src/llm.ts`.
+
+### Error / retry / abort
+
+- Transient errors auto-retried by the SDK (5 attempts × exponential
+  backoff), inherited from `callAPI`. No outer retry — caller can layer
+  their own if they want more.
+- Non-transient errors (401, 400) throw immediately.
+- `signal.abort()` throws from the SDK; propagates as a thrown error from
+  `run()` / mid-iteration in `stream()`.
+- No `error` chunk in v1. Errors are exceptions.
+- `max_tokens` hit → text still returned; `stopReason: "max_tokens"`
+  signals truncation. Does NOT throw.
+
+### What's NOT pulled in (by design)
+
+Agent-loop concerns stay out: MessageQueue, JSONL EventStore, MCP tools,
+`runProviderLoop`, compaction, budget, work context, debug snapshot,
+session_config, session identity (fresh random sessionId per call — it's
+used only for mock test-conversation keying inside `adapter.callAPI`'s
+side channel, never visible to production).
+
+`cache_control` breakpoints still emitted by `callAPI` on every call. 
+Harmless for single-shot (nothing repeats to hit the cache), just a few
+extra bytes per request.
+
+### systemPreamble is honored
+
+`AnthropicAuthGroup.systemPreamble` is passed through to
+`createAnthropicAdapter` opts → prepended as first system block. A plugin
+using the facility sees the same preamble an agent-loop call would. OpenAI
+has no equivalent; `OpenAIAuthGroup` has no `systemPreamble` field.
+
+### Testing discipline
+
+Mocks must set `sessionId` for Anthropic (ValidatingMockAPI requires it
+for conversation keying). Facility generates a fresh ULID internally and
+passes it to `adapter.callAPI`, which writes it onto
+`client._currentSessionId` (side channel). Mock picks it up from there.
+
+OpenAI mock intercepts `globalThis.fetch` globally — facility has nothing
+to configure; construction via `createLLM` with the mock fetch installed
+just works.
+
+Anthropic test pattern uses `_createLLMFromAnthropicClient(mockClient, ...)`
+— test-only internal export that bypasses `createAnthropicClient`'s
+credential resolution. Do not import from production code.
+
+### OpenAI Responses mock: `response.output_text.delta`
+
+`ValidatingMockResponsesAPI.buildTurnResponse` now emits a single
+`response.output_text.delta` event per text block (between `content_part.added`
+and `response.completed`). Real Responses API streams the output_text via one
+or more delta events; the mock produces one delta carrying the whole text.
+This makes the mock more accurate without breaking existing tests (they check
+final content, not per-token granularity).
+
+### Files
+
+- `src/llm.ts` — ~560 LOC (incl. JSDoc)
+- `src/llm.test.ts` — 18 tests, all providers × run/stream × error/abort paths
+- `src/anthropic-compatible-provider.ts` — 1 line changed (`export function createAnthropicAdapter`)
+- `src/openai-responses-compatible-provider.ts` — 1 line changed (`export function createOpenAIResponsesAdapter`)
+- `src/test-utils/mock-openai-responses-api.ts` — +10 lines (delta emission)
+
+## fable-5/mythos-5: old SDK gets replies downgraded to signed thinking blocks (2026-06-09)
+
+**Symptom**: assistant turns WITH thinking stored as `[thinking, thinking, tool_use]` — the
+second "thinking" block is a server-generated SUMMARY of the visible reply (sometimes English
+paraphrase of a Chinese reply), WITH signature. User-visible replies vanish into the thinking
+fold in UI. Reported by story1001, reproduced in root's own session.
+
+**Root cause — NOT a matrix bug**: claude-fable-5's visible output passes through a server-side
+filter/summarizer model and carries a signature ("thinking verification hash chains", see new
+SDK BetaFallbackBlock docs). The server sniffs client SDK version (x-stainless headers); old
+SDKs (0.78) are served a COMPAT format where signed content is downgraded to thinking blocks —
+the only block type old clients reliably round-trip with signatures. SDK accumulator and walker
+faithfully reproduce server blocks; verified via debug `last-response.json` (raw finalMessage):
+the "second thinking" was a 135-char compressed paraphrase of a ~300-char actual reply.
+
+**Fix attempt**: @anthropic-ai/sdk 0.78.0 → 0.104.0 (commit a61d341). One-sample post-restart
+verification passed, then the pattern RECURRED (23:17+, multiple sessions incl. the verifying
+turn itself) — SDK version is NOT the discriminator. Update kept (new model types, harmless).
+
+**CORRECTED diagnosis (2026-06-09 23:35)**: signature field length is content-proportional
+(364..14756 chars, ~2-4x displayed text; opus-era thinking already did this) → signature carries
+an ENCRYPTED payload of the original content. fable-5 intermittently applies the same protection
+to the VISIBLE REPLY: displayed text = server-rewritten paraphrase in a second thinking block,
+original never leaves Anthropic in readable form. User's read: anti-distillation. Client-side
+unfixable; options = tolerate / report upstream / switch back to opus-4-8. Historical JSONL keeps
+the summarized turns (accurate record of what the server sent) — no retroactive repair.
+
+**Diagnosis pattern (reusable)**: when block types look wrong, read the per-traceId
+`debug/<taskId>/<traceId>/last-response.json` (raw server response, written before tool exec —
+a bash call can read its OWN turn's response). That separates server-sent vs client-corrupted
+in one step.
+
+**Known follow-up gaps (untouched, wait for real data — anti-pattern #6)**:
+1. `fallback` block (server-side model fallback on refusal): buildResponseEvents has no branch →
+   not persisted to JSONL → post-restart walker omits it → per SDK docs the thinking hash chains
+   flanking the boundary can't verify → request rejected. Only fires when a fallback hop occurs.
+2. New stop_reasons (`refusal`, `pause_turn`, `compaction`, `model_context_window_exceeded`):
+   getStopReason maps all non-end_turn to "tool_use".
+3. SDK pin is caret (`^0.104.0`) — fine for now; fable-era servers change behavior by SDK
+   version, so future "weird block" bugs should check SDK gap FIRST.
+
+## fable-5 hidden-channel CONFIRMED: model context ≠ client-visible messages (2026-06-09 canary experiment)
+
+Two-sided experimental proof (this session, ~23:50):
+1. **Setup turn**: a 12-digit random canary written ONLY in visible reply text (kept out of
+   all tool inputs). Turn got downgraded: client-side JSONL stored a 132-char paraphrase that
+   mentions "这串随机数" but DROPS the digits. Canary existed NOWHERE client-side.
+2. **Recall turn**: next-turn agent recalled the full canary verbatim from its context, recall
+   claim recorded in the tool input (timestamped before any read). All 4 JSONL occurrences of
+   the canary are from post-recall commands.
+
+**Conclusion**: the signature field's encrypted payload is decrypted server-side on echo-back
+and the ORIGINAL content is reconstituted into the model's effective context. The model sees
+its own originals; the client/user only ever has the server-rewritten summaries. Implications:
+- "context = messages[]" is FALSE on fable-5 — the model cannot detect the divergence from
+  inside; only comparison against client-side records (JSONL/debug snapshots) reveals it.
+- The thinking-block packaging for old SDKs is the compat envelope that guarantees ciphertext
+  round-trip (old clients faithfully echo thinking+signature) — model continuity survives.
+- Anti-distillation reading (user's): full-fidelity outputs never exist client-side.
+- **Agent-side caveat**: an agent's "memory" of its own past replies is NOT evidence of what
+  the user saw. When verifying user-visible behavior, check JSONL/debug snapshots, never trust
+  introspection of own context.
+- Experiment protocol (reusable): canary in visible-text-only → next-turn recall recorded in
+  tool input BEFORE any read → grep client records. Tool inputs are the only generation-time
+  verbatim side channel (must be executed as written).
+
+## fable-5 FINAL: "Connector text summarization (beta)" — official doc found (2026-06-10)
+
+AWS Bedrock doc (claude-messages-adaptive-thinking.html) documents the whole phenomenon:
+- Text emitted BETWEEN tool calls ("connector text") on Fable 5 is **summarized server-side
+  and returned as a thinking block** (standard thinking shape, signature carries encrypted
+  original). "No new content block type." **"No customer opt-in or opt-out"** — SDK version
+  irrelevant, exactly as measured.
+- Scope rules explain the intermittency: applies only AFTER a tool_result exists in the
+  conversation; SHORT text segments may pass through unsummarized; **final assistant answers
+  (after all tool use is complete, i.e. end_turn text) are UNAFFECTED and remain plain text**.
+- Echo-back: pass the thinking blocks back unchanged (signature validated; stripped if sent
+  to a different model). Model-side context gets decrypted originals (canary-proven).
+
+**Operational mitigation for matrix agents**: reply-then-yield() in one turn makes the reply
+connector text (text followed by tool_use) → summarized away. Matrix already treats
+**end_turn as implicit yield** — identical pause semantics. Agents whose last action is a
+user-facing reply should END TURN instead of calling yield(); the reply then survives as
+plain text. Explicit yield() still fine when no user-facing prose precedes it.
+
+Supersedes the uncertainty in the two entries above. Fable 5 launched 2026-06-09 (public
+Mythos-class with safeguard layer; classifiers route cybersecurity/bio-chem/distillation
+requests to a guarded path — the anti-distillation reading was correct as motive).
 
 ---
 # Data Model & Storage
@@ -467,30 +1696,6 @@ Inner retry checks `signal.aborted` first + abort-responsive sleep. Reset time: 
 `JSON.stringify(TaskNode)` must NEVER include `session` (runtime-only: messages[], allTools, queue, abortController). Use `stripSession(node)` from `types.ts`. All four MCP tools that return TaskNode now use it: `get_tree`, `get_task`, `create_task`, `update_task`.
 
 **Bug found**: create_task and update_task were missing the strip. A forked task (700K+ tokens in messages[]) updating its own description produced a 2.95MB tool_result → context doubled from 735K to 1.75M → API rejected. get_tree and get_task already had manual `const { session, ...rest }` — unified to `stripSession()`.
-
-## Duplicate Launch Prevention in autoResumeProjects
-
-### Bug: pre-register launchingNodes prevents runAgentForNode from starting
-`autoResumeProjects` tried to pre-register all nodes in `launchingNodes` before launching. But `runAgentForNode` checks `launchingNodes.has(nodeId)` → returns early. Agents never started. Never pre-register in `launchingNodes` from outside `runAgentForNode`.
-
-### Fix: quiet deliverMessage in Phase 2 crash recovery
-Phase 2 crash recovery calls `deliverMessage(task_complete)` to parent. Without `quiet: true`, this auto-launches the parent → duplicate launch (autoResume also launches it). Fix: `{ quiet: true }` prevents auto-launch. Message goes to JSONL, recovered by `findUnconsumedMessages` when autoResume launches the parent.
-
-### Test lesson: maxConsecutiveStarts conflates crash+resume with duplicate launch
-After a crash, `orchestration_completed` never emits (the loop was interrupted). So `orchestration_started` from before crash + from resume = 2 consecutive starts. This is NORMAL. Use traceId uniqueness on `orchestration_started` events instead.
-
-### Test lesson: shutdown() required before recreateApp() in restart tests
-Without shutdown, old app's agent stays alive. New app launches another agent for same node → appears as duplicate but is a test setup bug (can't happen in production crash where process is dead).
-
-## Usage Event Persistence
-
-`usage` events moved from ephemeral to persisted. Now written to JSONL by emitEvent.
-- Added `outputTokens?: number` to usage event type.
-- `walkEventsToMessages` skips `usage` via default case (not conversation content).
-- UI: `attach_usage` UpdateOp finds most recent `assistant_text` for same taskId and attaches `CacheInfo` (inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens).
-- Displayed as subtle ⚡ hover badge on assistant messages (not separate log entries).
-- Color-coded: green (>80% hit), yellow (>30%), grey (<30%).
-- Compaction also emits usage (estimated=true, no cache fields) — persisted harmlessly.
 
 ## Unified Storage Layout
 
@@ -524,308 +1729,1169 @@ Three-layer config (merged at runtime, later overrides earlier): global `~/.mxd/
 - Project = single folder: back up / move / delete = one operation, not two.
 - `debug/` directory created per-project for future drift snapshots and investigation artifacts.
 
-## In-Process Event Subscribers
-
-Third event consumer (alongside JSONL + SSE): `subscribeToEvents(ctx, projectId, callback)`. Per-project keyed Map. Used by yield_external, test helpers. Throwing subscribers caught + logged.
-
----
-# Auth & External API
----
-
-## Stateless HTTP MCP Endpoint
-
-POST `/mcp` — MCP Streamable HTTP transport for external clients. Stateless: no attach_to, no session state. 6 tools: list_projects, get_tree, get_task, get_logs (both), send_user_message, yield_external (external-only). ToolDef `availability: "internal" | "external" | "both"` on every tool. Workflow: send_user_message → yield_external → get_logs.
-
-## Anti-pattern: Conflating Attached-Observer with Peer-Project
-
-**Lesson**: Layer 1 (attached external client, asymmetric) and Layer 2 (peer project, symmetric) are different relationships. Same wire format ≠ same semantic. Check symmetry before unifying.
-
-## Auth
-
-Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_key>` → encrypted JWT → paste to browser. CLI auto-auth via `signCLIToken()`.
-
-## Auth/Resource Split
-
-- `tool-auth.ts`: Auth opaque type. `checkPermission(auth, mode, resource)`. Modes: project, exact, subtree, family, root, human.
-- `resource-registry.ts`: Global handle-based functions (`R.getTracker`, `R.emit`, etc.). No closures.
-- `tool-def.ts`: ParamDecl with `bind`. Handler signature: `handler(args, auth, toolCallId)`.
-- All 32 tools use ToolDef + auth + global functions. Zero closure-based handlers.
-
-## AuthGroup Discriminated Union
-
-`AuthGroup = AnthropicAuthGroup | OpenAIAuthGroup` — discriminated on `provider`. `systemPreamble?: string` on Anthropic. System blocks always `ttl: "1h"`.
-
-## ParamDecl Bind
-
-All bind params hidden from agent, auto-bound. `create_task`/`create_folder` parentId is `explicit`.
-
 ## DEFAULT_CONFIG Immutability
 
 `Object.freeze`d at module load. `createApp()` defensive-clones. PATCH never mutates. **Lesson**: module-level constants MUST be frozen.
-
-## CLI Installation
-
-`mxd` CLI globally installed via `bun link`. package.json `"bin": { "mxd": "src/cli.ts" }`, cli.ts has `#!/usr/bin/env bun` shebang.
-
-## UI Notes
-
-- Event fetching: per-session (`api.taskEvents(projectId, sessionId)`) not per-project. Forked sessions contain parent events — merging causes stale content.
-- Derived state reset: ALL state cleared on project/task switch (logs, tokenUsage, pendingMessages, etc.).
-- Lifecycle entry collapse: consecutive lifecycle-only entries collapsed, keeping last per run.
-- Agent status: **SUPERSEDED 2026-07-25 — see "Agent activity: one explicit backend state" at the end of this file.** This used to read: *"`activeAgents` Set updated globally in `handleEvent` BEFORE per-session filter (agent_active/idle/stopped/orchestration_started/orchestration_completed). `processEventBatch` calls `checkAgentStatus()` after processing to overwrite stale state from historical events."* That second sentence WAS the bug report — replaying the log falsely activated agents, so a poll had to undo it. Activity is now one explicit backend state pushed by the server (and asked for at connect); `activeAgents` is derived from it in one place, and nothing reconstructs it from events.
-- Per-task message drafts: `localStorage` key `mxd-prompt-draft:<nodeId>`. Debounce uses `targetRef.current` (not `targetNodeId` in deps) to avoid saving stale prompt to wrong task key during render transition.
-- `/compact` targets viewed task: backend reads `nodeId` from POST body, falls back to rootNodeId. Frontend passes `viewedTaskId`.
-- Task tree sort: `STATUS_PRIORITY` in TaskTree.tsx: in_progress(0) > verify(1) > pending(2) > draft(3) > failed(4) > closed(5). Stable sort preserves user ordering within each status group.
-- hideCompleted filter: hides `closed` and `failed` only. `verify` is actionable and remains visible.
-- Scroll follow mode: scroll-to-bottom re-enables follow, scroll-up disables. Follow button also enables.
-
----
-# Testing
----
-
-## Integration Test Framework
-
-**This is the strongest verification framework in this codebase. Use it any time you make a claim about agent-observable behavior.**
-
-**Policy — MUST use integration tests when**:
-- A prompt, tool description, or user-facing string promises a specific shape ("output is bounded ~10KB", "stdout and stderr are labeled separately", "the file path appears at top and bottom", etc.)
-- A change affects what the LLM sees in a tool_result, system prompt, or message
-- A behavior crosses the agent-loop / tool-execution / JSONL / mock-reply boundary
-
-Unit tests verify internal logic (a formatter function returns X). Integration tests verify **what the LLM actually observes when driving the full stack**. Those are different contracts. A formatter unit test doesn't prove the LLM sees the promised shape through MCP wrapping + tool_result persistence + mock-reply path — the gap between them is where prompt/code drift silently lies. The LLM then builds strategy on a lie, and no unit test catches it.
-
-When a prompt says "X", there MUST be a test that:
-1. Constructs a mock instruction / real tool invocation trigger
-2. Runs the full agent loop with `ValidatingMockAPI`
-3. Observes the tool_result the mock receives
-4. Asserts the observed content matches the X claim literally
-
-Drift between prompt claims and tool reality is a **silent failure mode**. Integration tests are the only guard against it.
-
-**Framework components**:
-- `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation, **strict tool-error mode**.
-- Mock DSL: `{"blocks": [...]}` or `{"turns": [...]}` with assert/capture.
-- `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
-- ~1976 tests (unit + integration). 4 skipped (E2E).
-
-## Merge review discipline — hook-pass ≠ reviewed
-
-**"Pre-commit hook passed + tests green" is necessary but NOT sufficient for merging.** Hook verifies syntax, types, test-pass count. It does NOT verify:
-- Is the diff addressing every point in the task description?
-- Are layer boundaries respected (no matrix-specific code leaking into daemon/shell)?
-- Does the commit message match what the code actually does?
-- Are edge cases the task called out actually handled?
-- Does the child's self-report align with the diff's actual content?
-
-**Required before every merge** (this session burned multiple times on skipping):
-1. `git diff main...<branch>` — read every line of diff, not just stat
-2. Cross-check against task description — did the child address the stated scope?
-3. Verify layer discipline — for each file changed, is this the right layer?
-4. Look for `autoRegisterSelf: false`-style catastrophic single-line oversights
-5. Flag anything ambiguous BEFORE pressing merge
-
-**Observed failure pattern** (session 2026-04-18):
-- Child done → run `git log --oneline` + `git diff --stat` → directly `git merge`
-- Skipped: actual diff content review
-- Result: multiple post-merge bugs that manual smoke caught (`autoRegisterSelf: false` in prod entry; layer violations in production-mode placement)
-
-**The anti-pattern**: trusting the child's summary as review. Child reports what they THINK they did; diff shows what they ACTUALLY did. These differ non-trivially.
-
-**Hook passing tempts you to skip review because it feels green.** Resist — hook is a floor, not a ceiling. For 400+ line architecture refactors, the user themselves wouldn't dare merge without reading the diff; orchestrator definitely can't.
-
-## Canonical user journey test is MANDATORY
-
-If the feature's name or description describes a user action — "fresh-install bootstrap", "sidebar toggle on desktop", "auto-save preserves output", "production mode blocks agent" — there MUST be a test that **performs that exact user action and asserts the user-observable result**. Testing subcomponents, supporting algorithms, and edge cases does not substitute.
-
-The canonical user path IS the feature; everything else is scaffolding around it.
-
-**Diagnostic**: open your test file. Is there a test whose whole shape is "do user-action X, observe X works for the user"? If no, the feature is untested — even if thousands of other tests pass.
-
-**Typical silent failures** (tests green, production fails):
-- **Test config ≠ production config.** Test calls `createDaemon({ installRoot: fake })` directly; production path is `import.meta.main` with different flags. Only one path tested.
-- **Subcomponents tested individually, not the chain.** `findProjectRoot` ✓, `onProjectInit` ✓, `markProduction` ✓ — but no test that starts a real daemon and watches the whole flow run.
-- **Partial-chain assertion.** "Marker written ✓" — and done. But GET /projects response, UI reading the flag, backend guarding agent ops — all unverified. The chain breaks after the first green check and no test looks.
-- **Mocks matching the test, not reality.** Mock `onBroadcast` as in-process no-op; production goes through postMessage. Structural differences at process boundaries never exercised.
-
-**Minimum bar for "feature works"**:
-1. Real process boundary: if the feature is about daemon behavior, spawn a real daemon (`Bun.spawn(["bun", "src/daemon.ts"], { env: { MXD_DATA_DIR: fakeDataDir, ... } })`) and HTTP-call it.
-2. Manual smoke: before calling `done("passed")`, run the canonical user journey by hand. If you can't describe the concrete steps you took and what you observed, you haven't verified the feature.
-3. All observable consequences: if the feature involves UI, test UI (happy-dom render + assertion). If it involves backend guards, test the guard fires with a 403. If it involves marker files, test the marker affects all downstream consumers.
-
-**The rule of thumb**: "2003 tests pass" is not a merge gate. "I ran the feature the way a user would and it worked" is.
-
-## Test harness: broadcast payload cloneability (structuredClone wrapper)
-
-`createMatrixApp` (src/test-utils/create-matrix-app.ts) wraps `ctx.onBroadcast` with a `structuredClone({projectId, event})` call. Every broadcast payload MUST be structured-clone compatible — production's postMessage boundary (worker → shell) will reject anything else.
-
-**Why this exists**: FU8 deleted a triple-JSON-serialize step that was silently dropping non-cloneable fields (functions, `AbortController`, live class instances). `broadcastTreeUpdate` had relied on that accidental sanitization to pass `tracker.allNodes()` with live `TaskSession` attached. Post-FU8, production threw `DataCloneError` on every tree mutation. No integration test caught it because none of them exercise `structuredClone`.
-
-**Invariant**: every broadcast site MUST either construct a plain object, or explicitly strip runtime-only fields. `broadcastTreeUpdate` now runs `.map((n) => isFolder(n) ? n : stripSession(n))`. If you add a new broadcast site and pass live objects through, the harness fails the first test with `DataCloneError: The object can not be cloned`.
-
-**Regression test**: `src/broadcast-strip-session.test.ts` pins the positive invariant (fix works) and the mutation-proof (unstripped broadcast throws). Removing the `.map(...stripSession)` in event-system.ts makes both the unit test AND every integration test that creates a task fail loudly.
-
-## Test harness: strict tool-error mode
-
-`ValidatingMockAPI.enableStrictToolErrors(allowlist?)` — when enabled, any `is_error: true` tool_result that reaches the mock throws `MockValidationError("Unsurfaced tool error: ...")`. That propagates back through `client.messages.stream` and surfaces as a test failure. Default-off to keep individual tests opt-in.
-
-**Three ways a test opts a specific error out**:
-1. **Turn assert with `isError: true`** — if a turn's `assert` array has `{ block: N, type: "tool_result", isError: true }`, block N is pre-acknowledged. Tests that already express intent through asserts get strict coverage for free.
-2. **Global allowlist entry** — pass `[{ tool: "mcp__mxd__bash", contains: "..." }]` to `enableStrictToolErrors`. Tool + contains are ANDed; omit either to match any.
-3. **Per-test disable** — `mockAPI.disableStrictToolErrors()` inside an individual test. Used by drift-test scenarios that intentionally invoke error tools (bash with nonexistent command, read_file on missing path) to exercise `is_error` round-trip through JSONL. Strict mode is orthogonal to what those tests assert.
-
-**Default allowlist** (`ValidatingMockAPI.DEFAULT_ERROR_ALLOWLIST`): `{ contains: "Tool execution was interrupted by daemon restart" }` — covers the `buildSessionRepair` synthetic tool_result for orphaned tool_calls on restart. This is a system contract, not a bug. Restart tests legitimately trigger it.
-
-Called with no argument → uses defaults. Called with explicit array → no defaults merged; caller takes full control.
-
-**Where enabled** (2026-04-17 rollout):
-- `setupTestContext` in `src/integration.test.ts`
-- `setupEmissionTestContext` in `src/test-utils/emission-harness.ts`
-- Every drift test's local mock construction: `drift-lifecycle`, `drift-initial-drain`, `drift-message-sources`, `drift-thinking`, `drift-tool-lifecycle`
-- `integration-stress`, `invariant`, `debug-snapshot-integration`, `plugin-hooks`, `plugin-custom-scope`
-
-**Not enabled** (yet): `openai-responses-integration.test.ts` — uses a separate `ValidatingMockResponsesAPI` class that doesn't have strict-mode wired in. Follow-up.
-
-**Motivation**: the stripSession regression caused every `create_task`/`update_task`/`delete_task`/etc. to return `is_error: true` to the agent. Dozens of tests hit those tools; none failed because nothing asserted the error state. Strict mode + structuredClone wrapper now cover that class of bug from two independent angles.
-
-## Test Architecture: Drift vs Correctness Invariants
-
-Two distinct test classes protect against different bug classes. Learned via mutation testing during the caption-bug unification audit.
-
-### Drift invariant (prefix-validation integration tests)
-Full agent loop + restart + `ValidatingMockAPI.enablePrefixValidation()`. Catch when **live path diverges from reconstruction path** — two independent codepaths producing different bytes.
-
-**Blind spot after unification**: live path delegates to walker → live and reconstruction SHARE the walker. A walker bug makes both paths "consistently wrong" → validation passes. **Experimentally confirmed**: removing caption from walker → all 27 integration prefix-validation tests still pass.
-
-What drift tests DO catch:
-- Accidental creation of parallel user-message-construction paths
-- Bugs in non-walker paths: initial drain, buildSessionRepair, compaction rebuild, cache control construction
-- EventStore/JSONL corruption
-- System/tools presence asymmetry (fixed a gap: previously silently passed when dropping system/tools mid-conversation)
-
-Files:
-- `src/drift-tool-lifecycle.test.ts` (22 integration tests — tool lifecycle)
-- `src/drift-message-sources.test.ts` (27 integration tests — every QueueMessage source type)
-- `src/drift-lifecycle.test.ts` (21 integration tests — yield/done/fork/compact transitions)
-- `src/integration.test.ts` Bug repro suite — original caption bug regressions
-
-### Correctness invariant (golden snapshot unit tests)
-Direct invocation of `eventsToAnthropicMessages(events)`, assert exact output bytes. Catch when **walker callbacks produce wrong output** (even if consistently wrong across both paths). Fast (~90-150ms per file).
-
-Example: if walker's `onConsumedMessages` lacked caption, both paths would miss it → drift tests pass, golden test catches it by asserting `[{text}, {image}, {caption}]` is the expected output.
-
-Mutation-tested rigorously: every mutation (remove caption idle/working, drop is_error, add is_error to image tool_result, swap block order, break string↔array invariant, drop interleaved text, remove caller field) is caught by at least one test.
-
-Files:
-- `src/walker-golden.test.ts` (47 unit tests — core walker correctness)
-- `src/drift-infra-audit.test.ts` (23 golden + 39 mock-validator mutation tests)
-- `src/drift-tool-lifecycle.test.ts` (29 golden tests — tool lifecycle)
-- `src/drift-lifecycle.test.ts` (17 golden tests — yield/done/fork/compact)
-
-### Principle
-- Prefix validation tests **convergence** between paths (drift detection)
-- Golden snapshots test **correctness** of the path itself
-- After unification, correctness can't be inferred from convergence — both needed
-- **Don't silently lose coverage when removing duplication.** Unifying two paths into one shifts responsibility: correctness tests must re-establish coverage that drift tests provided.
-
-### Gotcha for golden snapshot authors
-User `message` events with `id` are DEFERRED by walker — only materialize via `messages_consumed`. Helper pattern:
-```ts
-function userPromptEvents(id, content, ts, images?): Event[] {
-  return [
-    { type: "message", id, taskId: "", body: {source:"user", id, ts, content, images}, ts },
-    { type: "messages_consumed", messageIds: [id], taskId: "", ts: ts+1 },
-  ];
-}
-```
-Without messages_consumed, message with id is never rendered.
-
-### Third-codepath drift fixed (commit 39e420b)
-`src/drift-initial-drain.test.ts` image-drift tests now pass. Initial drain delegates to `adapter.appendQueueMessagesToMessages`, which routes through the same `applyXxxQueueContent` function the walker uses. One function, two call sites, zero drift possible.
-
-## Test-is-Golden / ITA Philosophy
-
-Three layers: Intention → Test → Architecture. Three mutations guard each layer:
-- **Intention Mutation**: is this behavior what users actually want?
-- **Test Mutation**: do tests catch code changes?
-- **Architecture Mutation**: can the code evolve?
-
-Tests are the single source of truth. Bottom-up: write tests → find simplest architecture that passes them. Architecture is replaceable long-term, improved short-term. Reject spec-driven development.
-
----
-# Reference & Pitfalls
----
-
-## System Prompt
-
-**7 chapters + Staying Alive + Closing** (v2, rewritten for 4.7-era calibration). Core framings:
-- Three engagement modes (§3 Dialogue): Upward / User / Autonomous — decision authority varies, reporting threshold constant
-- Silent deliberation named as canonical failure mode + self-check ("if the person above you would only learn what you decided by reading your thinking...")
-- Tests as **current** truth (§5): Intent → Tests → Arch hierarchy; task is certificate of intent change; "absent a task certifying intent change, tests ARE the intent"
-- Memory as calling convention (§6): callee-saved inheritance
-- "fork" is the only allowed parent/child context; everywhere else positional (task above / sub task / ancestor)
-
-### Authorship rule — what goes in prompt vs memory
-
-System prompt is **universal** across all matrix projects. Each project has its own `memory.md`. Agents in OTHER matrix projects see: shared system prompt + THEIR memory.md. They do NOT see our memory.md, and they do NOT need Matrix's implementation details.
-
-- **System prompt content**: principles, roles, tool semantics, communication patterns, task lifecycle, craft — things that apply to ANY project using Matrix.
-- **memory.md content**: matrix-internal implementation details, project-specific architecture, pitfalls, design decisions — things meaningful only within THIS project.
-
-**The one matrix-internal detail system prompt IS allowed to expose**: the file path where pre-compaction events are preserved. Agents must be able to retrieve lost context after compaction; without the path, a compacted agent has no way to read their own history. Everything else matrix-internal goes to memory.md.
-
-### Pitfall: "avoid internal" ≠ "delete the concept"
-
-Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", agents DELETE the whole concept. Wrong. "Avoid internal" means **strip implementation-specific words, keep the agent-experience concept**. Example: the §6 Session history section — don't delete the memory/compaction block; rewrite without `JSONL` / `checkpoint` / type names, but keep the file path agents operationally need. Preserve what agents experience; remove what only implementers reason about.
-
-### Editing discipline
-
-- Read the full prompt before editing. Prompt is for ALL Matrix users, not our project notebook.
-- Matrix-specific rules → memory.md (this file), not prompt.
-- Principle over rule: 4.7 generalizes from framings better than from rule lists. Prefer "tests are our current truth" (principle that generates behavior) over "don't contort arch for old tests" (rule specifying one behavior). Keep explicit rules only when they protect a product property (e.g., git worktree invariants) — those stay as-is.
-
-## evaluate_script Discipline
-
-Runtime debug introspection ONLY. Do NOT use to: reparent tasks, modify tree structure, batch operations. Fix the tool instead.
-
-## Refactoring Philosophy
-
-Embrace large type refactors. Delete first, let compiler show every dependency. Hundreds of errors = your todo list. Static type systems make large changes SAFE.
 
 ## Default Branch
 
 Root node stores branch at init. `baseBranch` required on worktree create (no fallback). Child worktrees branch from parent's branch.
 
-## Known Pitfalls
+## Plugin-namespace storage layout
 
-- **memory.md**: Never `write_file` to append. Use `edit_file` or `echo >>`.
-- **Git worktrees**: `extensions.worktreeConfig` required. `core.hooksPath` absolute.
-- **Biome**: Typecheck BEFORE lint. No `!important`. No duplicate CSS properties.
-- **noUncheckedIndexedAccess**: Array index returns `T | undefined`.
-- **Daemon reload**: Commits don't auto-restart the daemon. Must manually restart after code changes.
-- **Concurrent ULID**: Use full `ulid()` (26 chars) — sliced ULIDs collide within same millisecond.
-- **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
-- **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
-- **Async JSONL writes**: `emitEvent` fire-and-forgets `eventStore.append()`. Flush before reading in tests.
-- **delete_task cascades**: Deletes all descendants AND session JSONL. Enforced: returns 400 with children.
-- **Abort signal leak**: After stop, old runAgentForNode settles async. catch/finally check `sessionWasReplaced` to suppress stale error events.
-- **TS6133 `_` prefix**: TypeScript's `noUnusedLocals` does NOT respect `_` prefix for local variables or destructured locals — only for function parameters. For unused destructured React state, use `const [, setX] = useState(...)` (skip the getter slot). For unused `const` locals, delete outright. The underscore-prefix hint in our prompts is a holdover that doesn't match TypeScript's actual behavior.
-- **`bun run check` auto-writes**: `bun run check` runs `biome check --write` and silently formats 70+ files. `bun run check:ci` is the non-write variant used by the pre-commit hook. When debugging lint, use `check:ci`. When committing formatting sweeps, use `check` and split format-only changes into a separate commit.
-- **Pre-commit hook: worktrees skip it, main enforces it (since 2026-07-24)**: `worktree-manager.ts` sets `core.hooksPath = /dev/null` per worktree, so `git commit` in a sub-task skips the hook entirely — intentional (sub-tasks commit often; a full typecheck+lint+test on each would be unusable). To verify the hook passes from a worktree, run `bash /path/to/main/.hooks/pre-commit` manually.
-  **CORRECTION of a long-standing false entry**: this note used to claim "only root-orchestrator commits on main are actually gated." That was WRONG — main had NO `core.hooksPath` set, so git looked in `.git/hooks/pre-commit`, which never existed (only `.sample` files). The tracked `.hooks/pre-commit` was orphaned; nothing pointed at it. **Nobody was ever gated, anywhere.** Every `--no-verify` on main was a no-op bypassing a gate that didn't exist. That is how 24 typecheck errors accumulated across several merges undetected. Fixed by running the install command the hook's own header documents: `git config core.hooksPath .hooks`. Verified it now fails on typecheck (exit 2). **This config is local (`.git/config`), NOT tracked — a fresh clone must run it again.** If onboarding friction matters later, move it into `.mxd/hooks/setup_worktree.sh`'s main-repo counterpart or a `postinstall` script.
+Matrix's per-project runtime data lives in a plugin-namespaced subdirectory,
+matching the shape every other plugin uses. Completes the "matrix is just a
+plugin" framing started in P2 (dataRoot infrastructure).
 
-## Known Bugs (unfixed)
+### Layout
 
-- Manual compaction during yield → consecutive user messages → API 400. Scope: the deferred test.todo paths in "Compaction Asymmetry" (yield-side). The done-resume + compactOnly variant of this class is FIXED — see "FIX-3 … B-L9" (`pendingCompactDoneToolCall`); only the yield-side deferred paths remain.
+```
+~/.mxd/projects/<projectId>/
+├── config.json      (daemon-owned)
+└── plugin/matrix/
+    ├── tree.json
+    ├── tasks/<taskId>.jsonl
+    └── debug/<taskId>/<traceId>/last.json
+```
 
-## Vertical Dependency Boundaries
+A future `story1001` plugin with `dataRoot` defaulting to `@/plugin/story1001`
+parks its own data at `projects/<id>/plugin/story1001/`, right next to matrix.
+No top-level collision possible.
 
-Three layers: daemon → provider loop → tool handler. executeTool is clean (pure dispatch). done() closes queue through closure (boundary violation, but structural). evaluate_script punctures all layers (intentional). TaskSession has three-way mutation. Full audit in `VERTICAL-BOUNDARY-AUDIT.md`.
+### Mechanism
 
-## Unresolved Design (prioritized)
+Driven by **matrix's manifest** in `.mxd/plugin/index.ts`:
+`dataRoot: "@/plugin/matrix"`. All path construction — `getTracker`,
+`getEventStore`, `projectDebugDir`, `projectTreeJsonPath` — reads this
+through `ctx.config.dataRoot` and routes through `resolveDataRoot` in
+`src/data-paths.ts`. **The resolver stays the single source of truth** (the
+`data-paths.test.ts` "ONLY data-paths.ts performs .slice(2)" grep test still
+guards this).
 
-1. Message routing expansion (subtree + parent chain, not just direct parent/child)
-2. Folder/grouping feature (UI-only visual grouping, not tree structure)
-3. Tool search — dynamic tool discovery (draft exists, Anthropic has server-side `defer_loading` but user prefers client-side)
+**Helper**: `projectTreeJsonPath(dataDir, projectId, dataRoot?)` in
+`data-paths.ts`, parallel to `projectTasksDir` / `projectDebugDir`. Used by
+`runtime/helpers.ts:getTracker`.
+
+### Gotchas
+
+- **CLI tools that read JSONL directly** (e.g. `resolveTaskJsonlPath` in
+  `cli-analyze-cache.ts`) must call `projectTasksDir(dataDir, projectId,
+  "@/plugin/matrix")` — not hardcode the `projects/<id>/tasks/` path. Matrix
+  is the only consumer of that helper today, so embedding the dataRoot string
+  is fine; if more plugins need similar post-hoc tools, pass it as an arg.
+- **In-process test harnesses** (`createApp` called without `dataRoot`) use
+  the project-root layout by design. They exercise runtime semantics, not
+  the matrix-plugin manifest layout. Tests that hardcode `projects/<id>/
+  tree.json` in those harnesses stay correct.
+- **Daemon-level tests** go through `createDaemon` → plugin discovery reads
+  the manifest → matrix's `@/plugin/matrix` takes effect. A daemon-level
+  test that hardcodes old paths will break; use `projectTreeJsonPath` with
+  `ctx.config.dataRoot` (as done in `src/integration.test.ts` root-branch
+  persistence test).
+
+## P3: Tree is TaskNode | GeneralNode (folder becomes a GeneralNode variant)
+
+Runtime exposes exactly two node kinds. Discriminator is `type: string`,
+required on every node, no `undefined` fallback.
+
+- **TaskNode** (`type: "task"`): launchable, has session + git branch +
+  status + lifecycle. Matrix's actual work units.
+- **GeneralNode** (`type: string`, anything except `"task"`): pure metadata
+  + tree position, no session, no lifecycle, no agent. Optional
+  `metadata?: Record<string, unknown>` — opaque to runtime, plugin-owned.
+  NO `plugin` field — each tree.json belongs to exactly one plugin by
+  construction; plugin identity is implicit.
+
+Matrix uses `type: "folder"` as its only GeneralNode flavor today. A
+future plugin in its own project could define its own types
+(`"chapter"`, `"note"`, …) without touching runtime code.
+
+### Type guards
+
+`src/types.ts` exports:
+- `isTask(node)` — narrows to `TaskNode`, `node.type === "task"`.
+- `isGeneral(node)` — narrows to `GeneralNode`, `node.type !== "task"`.
+
+`isFolder` is **matrix-plugin-local**, not runtime-exported. Lives in two
+places:
+- `src/orchestrator-tools.ts` — backend (matrix's MCP tool handlers).
+- `.mxd/plugin/web/types.ts` — frontend (tree UI, drag/drop, icons).
+Both are `(node) => isGeneral(node) && node.type === "folder"`.
+
+### Tracker API
+
+`TaskTracker.addGeneralNode(title, parentId, type, metadata?)` — one
+method covers every non-task node. Rejects `type === "task"`. Matrix
+callers pass `"folder"`; tests for other plugins can pass any string.
+
+### MCP tools
+
+User-facing tool names unchanged: `create_folder`, `delete_folder`,
+`rename_folder`. Internals call `tracker.addGeneralNode(title, parent,
+"folder")`. Matrix-specific syntactic sugar on the general-node API.
+Agents cannot create generic GeneralNodes via MCP; matrix-plugin
+decides what kinds its agents can create.
+
+### Invariants locked in
+
+- `TaskNode.type: "task"` — required, not optional (breaks `undefined`
+  fallback idioms).
+- `GeneralNode.type: string` — any string except `"task"`.
+- `TaskTracker.addGeneralNode` throws if called with `"task"`.
+- `TaskTracker.load()` throws on a node with missing `type`. Every save
+  writes `type` explicitly — a typeless node means corrupted tree.json
+  or a bug, not "legacy data".
+- Runtime never reads `metadata` — it's opaque plugin data.
+
+### What did NOT change
+
+- tree.json serialization format (other than `type` now present on task
+  entries, which was previously absent).
+- MCP tool names (`create_folder` etc. preserved — matrix-plugin surface).
+- Folder UX / UI rendering / drag-and-drop / lifecycle rejection.
+- `getTaskAbove` / `getTasksBelow` / transparent ownership walks.
+
+### Tests
+
+`src/general-node.test.ts` — 10 tests exercising a probe-typed
+GeneralNode (`type: "probe"`) through save/load, ownership walks,
+tracker helpers. Proves generalization works outside matrix's
+folder-only world.
+
+## FIX-2 (2026-06-05) — REST boundary must use the same shared-op discipline as MCP
+
+Five bugs, one theme: REST/HTTP routes bypassed fixes the MCP/shared ops already had. Failure
+mode is silent data loss/leak, not a crash. Rule going forward: **a REST route that touches a
+task lifecycle resource (session, JSONL, worktree, config) MUST route through the same shared op
+the MCP path uses, or replicate its guard exactly.** Where they drift, the REST side silently
+re-introduces a solved bug.
+
+### cc#2 — `/sessions/clear` must await loop exit before clearing JSONL
+`runtime/routes/tasks.ts` sessions/clear inlined a stop that closed the queue but did NOT await
+the agent loop's exit (unlike `resetTaskOp`/`stopTask`). The loop's `finally` (agent_end, orphan
+repair, Phase 2) then re-polluted the JSONL right after the clear — the "clear-race" the project's
+own `integration.test.ts` documents as a BUG PATH. Fix: `if (node.session) await stopTask(...)`
+else `await ctx.agentLoopPromises.get(nodeId)` (launchingNodes gap), THEN clear. The EventStore
+generation guard handles stopTask's own fire-and-forget agent_end append racing the clear.
+
+### cc#5 — REST node responses MUST stripSession
+`c.json` does NOT throw on the live `session` (unlike SSE's `structuredClone`, which is FORCED to
+strip). So every REST route returning a node serialized the whole queue/conversation/AbortController
+over the wire. One shared `serializeNode(node)` helper in tasks.ts (`isTask(n) ? stripSession(n) : n`)
+now wraps ALL node responses: GET /tasks (`.map`), POST /tasks (task + folder), PATCH, and all 3
+continue returns. Mirrors the existing MCP `stripSession` discipline (get_tree/get_task/etc.).
+
+### cc#4 — config null-delete + corrupt config must never wipe credentials (two layers)
+- **PATCH /config/global** now rejects null/undefined for ANY top-level field (400). Global config
+  is a COMPLETE MatrixConfig — no optional fields — so `delete next[k]` on null wrote an incomplete
+  config. Per-auth-group deletion still goes through `{ authGroups: { name: ... } }` (object value,
+  not rejected).
+- **`createDaemon`** no longer catches a load failure into `{ ...DEFAULT_CONFIG }` — it RETHROWS.
+  Silent DEFAULT_CONFIG booted with empty authGroups, and the next `saveGlobalConfig` overwrote the
+  on-disk credentials with nothing. Fail boot loudly → on-disk config preserved.
+- **`loadGlobalConfig`** now distinguishes ENOENT (fresh install → defaults) from read-error /
+  invalid-JSON (throw). The old single catch returned defaults for a CORRUPT file too — same
+  credential-wipe path. ENOENT-only return keeps fresh install working.
+
+### B-H1 — delete_task must stop+await the live loop before cleanup (reset-style)
+`deleteTaskOp` did NEITHER close's "reject in_progress" NOR reset's "await loop exit" — it called
+`cleanupTaskResources` (close queue, `git worktree remove --force`, clearEventStore) WITHOUT
+aborting/awaiting the loop. Destroyed unmerged work, removed a worktree under a running process,
+and a pending done() then read getTask=undefined in Phase 2 → parent hangs forever. Fix: added
+optional `stopTask`/`awaitLoopExit` callbacks to `deleteTaskOp` (mirroring resetTaskOp) + wired
+them in BOTH the MCP (orchestrator-tools) and REST (tasks.ts) delete handlers. Semantic chosen:
+reset-style ("delete a running task = stop it, then delete"), not close-style (reject).
+
+### cc#6 — worktree removal must use STORED path+branch, never a re-slugified title
+close/reset/delete removed worktrees via `wm.remove(node.id, slugify(node.title))`. The title can
+change after creation (`mxd/<id>/<oldSlug>`), so re-slugifying the CURRENT title computes a
+different path/branch → the real worktree is orphaned forever. Fix:
+- New `WorktreeManager.removeByPath(worktreePath, branch)` — removes the EXACT stored values, no
+  recomputation. (`remove(taskId, slug)` kept, now delegates to it; still used by its own test.)
+- `removeWorktree` callback signature changed `(taskId, slug)` → `(taskId, worktreePath, branch)`.
+  Ops pass `node.worktreePath`/`node.branch` (already inside the `if (worktreePath && branch)`
+  guard, so type-clean). MCP wirings call `removeByPath(worktreePath, branch)`; the REST delete
+  callback still uses param-1 (taskId) to look up the node for `onTaskDelete`.
+- `.mxd/plugin/scope-opts.ts onTaskDelete` (the REST worktree hook) likewise uses
+  `node.worktreePath`/`node.branch` instead of `slugify(node.title)`.
+
+### Tests (all mutation-verified)
+- `src/rest-boundary.test.ts` (new): session leak (GET/PATCH strip), clear-race (session +
+  launchingNodes-gap), delete-race (loop awaited before cleanup), delete stops queue+session.
+  The race tests use a 50ms-delayed simulated loop write — reverting the await makes JSONL reappear.
+- `src/task-operations.test.ts`: close/reset/delete removeWorktree gets the STORED path+branch
+  after a rename (cc#6).
+- `src/worktree-manager.test.ts`: removeByPath removes exact path+branch; re-slugified remove
+  orphans the worktree (demonstrates cc#6 directly).
+- `src/config.test.ts`: loadGlobalConfig ENOENT→defaults, missing-field→throw, corrupt-JSON→throw.
+- `src/daemon.test.ts`: PATCH null-delete → 400 (credentials preserved); createDaemon on
+  corrupt/incomplete config → throws, on-disk config untouched.
+
+## Node-model generalization for plugins (status↑ + metadata↑, SET methods, hook projectId, seedTree) — 2026-06-07
+
+Pushes the genuinely runtime-generic node fields UP to `BaseTaskNode` and gives
+plugins the SET path + project context they need to drive launchable nodes —
+without re-declaring runtime fields or mutating the live tracker. Surfaced by the
+dchat out-of-tree 试水 (Wall #2 + interface-gap D). Matrix's own `TaskNode` +
+every status-driven path is byte-for-byte unchanged (regression bar held: full
+`bun test` green, 2179→2189 with the new tests).
+
+### `status` + `metadata` moved to `BaseTaskNode` (`src/types.ts`)
+- `status: TaskStatus` is now on `BaseTaskNode`, NOT only on matrix's `TaskNode`.
+  It IS runtime-generic: `createNode` inits it, `updateStatus` mutates it, `load()`
+  migrates it, and the default `shouldResume` keys on `status === "in_progress"`.
+  A plugin whose nodes are launchable inherits it — it must not re-declare it.
+- `metadata?: Record<string, unknown>` added to `BaseTaskNode` (parallel to the
+  one `GeneralNode` already had — it's exactly the LAUNCHABLE node that needs
+  per-node plugin config). Runtime NEVER reads it; only round-trips via save/load.
+- Persistence is automatic: `save()` spreads all non-session task fields, `load()`
+  casts the raw task object through untouched — so `metadata` round-trips with zero
+  new code. The status-node load branch already migrated `status` ("passed"→"verify").
+
+### TaskTracker SET methods (`src/task-tracker.ts`)
+- `CreateNodeOpts` type now carries `metadata?`; `addChild`/`addTask`/`createNode`
+  thread it into the node literal (`...(opts?.metadata !== undefined ? {metadata} : {})`
+  — absent, not `{}`, when unset).
+- `setMetadata(nodeId, metadata)` — plugin-safe SET path; **REPLACES** the whole
+  metadata object (to update one key, read+spread), bumps `updatedAt` for tasks,
+  works for general nodes too. This replaces "mutate the live tracker directly".
+- `load()` now returns `boolean` (`true` = fresh tree just created, `false` =
+  loaded existing). Backward-compatible — every existing caller ignores the return.
+
+### Gotcha: moving status/metadata up tightened TaskNode⊆GeneralNode structural overlap
+`save()`'s `if (isGeneral(node)) return node; const {session, ...rest} = node;`
+started failing TS2700 ("Rest types may only be created from object types") because
+the negative `isGeneral` narrowing collapsed `TaskNode` to `never`. Fix: use the
+POSITIVE guard — `if (!isTask(node)) return node;` — so the narrowed type is
+concretely `TaskNode`. Same runtime behavior. (Lesson: prefer positive type-guard
+narrowing for destructure-after-guard when the union members overlap structurally.)
+
+### Hooks get `projectId` (gap D-C) — `src/runtime/context.ts` + `agent-lifecycle.ts`
+`buildWorkContext` / `buildSummarizationPrompt` / `buildDoneResumeContext` now
+receive `(node, projectPath, projectId)`. `projectPath` is the git checkout;
+`projectId` is the registry id a data-driven plugin needs to locate its per-project
+dataRoot (`~/.mxd/projects/<projectId>/...`) — matrix uses projectPath, dchat needs
+projectId. Adding a TRAILING param is type-backward-compatible: existing impls that
+take fewer args (matrix's, the story-scope tests') stay assignable. Three call sites
+in `agent-lifecycle.ts` pass `project.id` (initial work-context inject ~907, the
+compact re-arm `setBeforeFirstMessage` ~914, the AgentRequest closure ~1017).
+The default `shouldResume` in `runtime.ts resumeScope` retyped `(n: TaskNode)` →
+`(n: BaseTaskNode)` to reflect the now-generic `status`.
+
+### `seedTree` — worker-side tree-init hook (gap D-B) — `ScopeOpts` + `getTracker`
+`onProjectInit` (PluginManifest, `src/plugin.ts`) runs DAEMON-side where there is
+NO tracker → it can create FILES but not initial tree NODES. The complement is
+`ScopeOpts.seedTree?(tracker, projectId)`, called once from `getTracker`
+(`runtime/helpers.ts`) the first time a project's tree is created (`load()` returned
+`true`), AFTER scope-opts registration, then `tracker.save()`. The plugin seeds its
+starting nodes via `addChild`/`addGeneralNode`/`setMetadata`. Fires exactly once —
+tree.json then exists, so reloads return `false` and never re-seed. Matrix has no
+seedTree → no-op. (`markReady()` does NOT auto-run autoResume, so in tests the seed
+fires deterministically on the first explicit `getTracker`.)
+
+### Tests
+- `src/task-tracker.test.ts` "node-model generalization" (8 unit): addChild/addTask
+  metadata, metadata-absent-not-`{}`, setMetadata REPLACE (the `extra` key
+  disappearing proves replace≠merge), setMetadata on general nodes + throws-on-missing,
+  metadata+status save/load round-trip, `load()` fresh→true / existing→false.
+- `src/plugin-custom-scope.test.ts` "Node-model generalization (plugin integration)"
+  (2 integration): (a) a non-matrix scope's `buildWorkContext` reads `node.metadata`
+  + receives `projectId`, exercising addChild-metadata + setMetadata + round-trip
+  end-to-end through a real agent run; (b) `seedTree` seeds 2 nodes with metadata on
+  a fresh tree exactly once (custom `buildScopeOpts` passed via `setupTestContext`).
+- **Mutation-verified**: setMetadata replace→merge fails the REPLACE test; dropping
+  `projectId` at the initial-inject call site (~907) fails the integration test.
+  (Mutating the AgentRequest-closure site ~1017 instead did NOT fail it — that path
+  only fires on compaction; the integration test covers the fresh-inject path.)
+
+## Node metadata write-path over REST — create + update (2026-06-08)
+
+Exposed plugin-owned `metadata` editing over REST on BOTH paths. The tracker
+primitives existed since the node-model task (`addChild` opts.metadata +
+`setMetadata`) but NO REST/MCP path reached them — nodes could neither be born
+with metadata nor have it edited:
+- POST  `/projects/:id/tasks`          body `metadata?` → `createTaskOp` → `addChild(parent, title, desc, { metadata })`
+- PATCH `/projects/:id/tasks/:nodeId`  body `metadata?` → `updateTaskOp` → `tracker.setMetadata(nodeId, metadata)`
+
+### REPLACE, never deep-merge
+`tracker.setMetadata` replaces the WHOLE object; `updateTaskOp` does NOT merge —
+the caller (plugin UI) reads current metadata and sends the complete merged
+object. PATCH with `metadata` absent (`undefined`) = "leave existing untouched"
+(guarded by `if (updates.metadata !== undefined)`); PATCH `metadata: {...}` with
+a key omitted = that key DISAPPEARS. Mirrors the color/status/title handlers in
+the one shared `updateTaskOp` (and `createOpts.metadata` mirrors budgetUsd/draft).
+
+### No new auth, no MCP
+- REST relies on the daemon-level auth middleware (Bearer). The MCP path's
+  `requireSubtreePermission` is a different layer — no new guard added.
+- MCP `create_task`/`update_task` deliberately NOT given a `metadata` param: the
+  only consumer is dchat's REST UI; an agent-facing opaque-metadata param is an
+  imagined need (anti-pattern #6). REST is the whole requirement.
+
+### Serialization is free
+`serializeNode` (stripSession) keeps `metadata` — it's on BaseTaskNode,
+round-trips via save/load. So POST/PATCH responses + GET /tasks + the SSE tree
+broadcast all carry updated metadata with no extra code. `updateTaskOp`'s
+existing `broadcastTree()` pushes it to the UI. Metadata changes do NOT fire
+`notifyTargetNode`/`notifyTreeChange` (those stay title/description-only — a
+metadata edit is config, not a message to the node).
+
+### Driver + effect timing
+dchat's roster UI: "add a character" = POST a node with personality metadata;
+"edit a character's prompt" = PATCH its metadata. Editing a RUNNING character's
+metadata takes effect on its next launch/compact (system prompt is built at
+launch), not mid-session — dchat's UX concern, NOT this write-path's scope.
+
+### Tests
+- `src/task-operations.test.ts`: createTaskOp "applies metadata" + "persists
+  across reload"; updateTaskOp "sets metadata" + "REPLACES — removed key
+  disappears" + "metadata undefined leaves existing untouched".
+- `src/rest-metadata.test.ts` (NEW, createMatrixApp harness): the canonical dchat
+  journey — POST/PATCH metadata → GET /tasks reflects it; PATCH replace; PATCH
+  title-only preserves metadata; POST without metadata → no metadata field.
+- Mutation-verified: commenting out BOTH `createOpts.metadata = …` and
+  `tracker.setMetadata(…)` → exactly the 9 metadata-asserting tests fail; the 1
+  absence-asserting test (POST without metadata) correctly stays green.
+
+## FIX-7 (2026-06-10) — lifecycle guards: root delete, status validation, prefix canonicalization
+
+Five guard bugs at the task-operations + routes layer, each TDD with failing tests first.
+
+### R8-C#1 — root node protection (delete/close/reset)
+`deleteTaskOp`, `closeTaskOp`, `resetTaskOp` now reject `tracker.rootNodeId` with
+`TaskOperationError("Cannot {delete,close,reset} the root node")`. The root orchestrator
+is the tree anchor — destroying it orphans the tree.
+
+### R8-C#2 — status transition validation
+`updateTaskOp` rejects `status: "closed"` and `status: "failed"`. Both are lifecycle-terminal
+states requiring cleanup (worktree removal for close, Phase 2 done delivery for failed). A
+plain PATCH bypasses those ops and leaks worktrees / orphans state. Callers must use
+`closeTaskOp` or let `done("failed")` set it (which goes through `tracker.updateStatus`
+directly, NOT through `updateTaskOp`). Tests that need "failed" as setup now use
+`tracker.updateStatus` directly instead of PATCH.
+
+### R8-C#3 — prefix canonicalization in REST /message
+REST `/message` route resolves `tracker.get(rawNodeId)` and uses `resolved.id` (canonical
+full ID) for all downstream ops. Response also returns the canonical `taskId`.
+
+### R8-C#4 — REST /message + /clarify node validation
+Both routes now validate: node must exist (404) and be a task node, not folder (400).
+`handleClarifyResponse` in agent-lifecycle.ts also got canonicalization + validation.
+
+### R8-C#5 — draft guard on REST /message
+REST `/message` rejects `status === "draft"` with 400, matching MCP `send_message` behavior.
+
+---
+# Memory Index & Search
+---
+
+## Memory-index Step 1: done() captures structured result/lessons → TaskNode.resultRounds (2026-07-14)
+
+First brick of the memory index (draft 01KWCQEB). WRITE side only — structured
+result/lessons land on the node as a FIRST-CLASS field. NO FTS/sqlite/embedding/search
+here (that's Step 2+).
+
+### Shape (locked with user)
+`TaskNode.resultRounds?: Array<{ result: string; lessons: string[] }>` (`ResultRound` in
+`src/types.ts`). ONE block APPENDED per done() — never overwritten. Single-done task → one
+block; reawaken→re-done task → N blocks in call order. Absent until first done(). Per-round
+structure (not a big string) so Step 2 indexes per-round-per-field with no text-splitting.
+
+### Data flow (read from JSONL, persist via plugin hook)
+1. **done() tool params** (`orchestrator-tools.ts` createDoneTool config): added `result`
+   (optional string) + `lessons` (optional string[]) alongside existing `status`+`summary`.
+   Both OPTIONAL — making them required would break every existing done() caller/test.
+   `summary` kept working unchanged (additive, not folded into result).
+2. **Read at Phase 2** (`runtime/agent-lifecycle.ts` ~1123): `readDoneRound(events)` (new
+   helper in `events.ts`) finds the LAST `tool_call` with `tool === TOOL_DONE` and reads
+   `input.result`/`input.lessons` straight from the persisted tool_call — the 01KN8D1M
+   "JSONL is the source of truth" pattern, NOT AgentResult plumbing (avoids threading two
+   fields through ~8 buildResult call sites in the hot provider loop). Defaults: absent
+   result→"", absent/dirty lessons→[] (drops non-string entries). Flush gating changed from
+   `!isRoot && has` to `has` so ROOT done()s are captured too; the late-message check stays
+   non-root-only. result/lessons ride into `doneArgs` (typed `Record<string,unknown>`, so no
+   ScopeOpts signature change).
+3. **Persist via onDone** (`.mxd/plugin/scope-opts.ts`): the Matrix onDone appends
+   `{result, lessons}` via `tracker.appendResultRound(node.id, ...)` BEFORE the status flip
+   (append then updateStatus). Keeping persistence in onDone (not runtime) respects the
+   plugin-agnostic boundary — `resultRounds` is on `TaskNode` (matrix), not `BaseTaskNode`;
+   runtime never touches it. onDone's RETURN stays `MatrixDoneData {status, summary}` — the
+   round is a side-effect, NOT spread into the `done_notified` marker.
+4. **Tracker** (`task-tracker.ts`): `appendResultRound(nodeId, round)` — append-only, creates
+   the array on first call, rejects general nodes, bumps updatedAt. Round-trips through
+   save()/load() FREE (save spreads `...rest`, load casts raw→TaskNode) — zero extra
+   serialization code. Surfaces via get_task/get_tree FREE (stripSession spreads all fields).
+
+### Decisions surfaced (the summary/result overlap "awkwardness")
+- `result` and `summary` overlap semantically (both "what happened"). Kept BOTH additively
+  per user directive (don't break callers). `summary` = brief note for parent + done_notified;
+  `result` = durable outcome narrative for the memory index. NO fallback result→summary — an
+  omitted result yields an EMPTY round (`{result:"", lessons:[]}`), one-block-per-done()
+  invariant stays clean and literal. Step 2 (indexing) owns any distill/fallback policy, not
+  the write path. `result` optional means existing agents produce empty rounds until they
+  learn to fill it (tool description strongly steers them).
+
+### KNOWN LIMITATION (documented, in-scope call)
+The **crash-recovery Phase 2** path (`runtime.ts` autoResume `findInterruptedDonePhase2` →
+`needs_phase2`) does NOT append a resultRound: it's plugin-agnostic runtime code that updates
+status directly via `tracker.updateStatus`, never calling the Matrix onDone. So a done() whose
+Phase 2 was interrupted by a daemon crash (rare) loses its round. Wiring it in would either
+break the plugin-agnostic boundary (runtime knowing about resultRounds) or change crash-recovery
+behavior (route through onDone) — both out of Step-1 scope. The normal Phase 2 path (the
+overwhelming majority) captures correctly.
+
+### Tests
+- `task-tracker.test.ts` "resultRounds (memory-index capture)" (9 unit): append, empty-lessons,
+  **append-twice-never-overwrites**, updatedAt bump, non-task throws (asserts /non-task node/),
+  unknown-node throws, **save/load round-trip**, stripSession preserves (get_task surfacing).
+- `integration.test.ts` "done() captures structured result/lessons (resultRounds)" (4 full-flow):
+  done with result+lessons → node.resultRounds; done WITHOUT (back-compat) → one empty round;
+  **two done() rounds (reawaken via sendMessage) → two blocks in order, first preserved**;
+  failed done() also appends. Full stack: tool param → JSONL tool_call → Phase 2 readDoneRound
+  → onDone → node.
+
+### Gotchas
+- `readDoneRound` compares `e.tool === TOOL_DONE` (the full `mcp__mxd__done` name — tool_call
+  events store the mcp-prefixed name, same as `findInterruptedDonePhase2`).
+- `appendResultRound` must NOT use `(node.resultRounds ??= []).push(x)` — biome
+  `noAssignInExpressions` errors. Use `if (!node.resultRounds) node.resultRounds = []; ...push`.
+
+## Memory-index Step 1.1: unify done() summary+result into ONE concept `result` (summary=deprecated alias) (2026-07-14)
+
+SUPERSEDES the Step-1 entry's "kept BOTH summary and result additively / NO fallback" decision.
+The user identified that `summary` and `result` said the SAME thing ("成果 / what this round did") —
+only `lessons` was genuinely new. So Step 1 left a redundancy. This collapses them into ONE concept.
+
+### End state — two concepts on done(): `result` + `lessons`
+- **`result`** (optional, PRIMARY): "what this round accomplished (passed) / went wrong (failed)".
+  ONE value that flows to BOTH (a) the parent notification (task_complete `output` + done_notified
+  marker) AND (b) `resultRounds.result`. Byte-identical in both places (same string).
+- **`summary`** (optional, DEPRECATED ALIAS): coalesced `result ?? summary`. Kept so every
+  existing/frozen `done(summary=...)` caller + test is 100% untouched (zero regression). Declared
+  in the schema (not just tolerated) so it's robust even if tool schemas ever become strict; marked
+  deprecated in its description so new agents use `result`.
+- **`lessons`** (optional): unchanged, independent → `resultRounds.lessons`.
+
+### Why PRIMARY=`result` (not keep param named `summary`)
+The tool description is agent-facing on every done(); it must name the real concept (`result`,
+matching the field `resultRounds.result`), not the legacy `summary` we're retiring. Leaving the
+primary param `summary` while the field/concept is `result` re-seeds the exact "two names for one
+thing" confusion this change kills. The alias makes the clean name zero-cost on back-compat.
+
+### Coalesce sites (both read the done tool_call input for the "what I did" value)
+- `provider-shared.ts` (~1896, live done): `doneResult = doneInput?.result ?? doneInput?.summary ?? ""`.
+  `doneInput` type gained `result?`. `doneResult` is the LEGACY internal carrier name — it now holds
+  the coalesced result (NOT renamed to doneResult; that's a ~9-buildResult-site churn, deferred —
+  flagged to orchestrator).
+- `runtime.ts findInterruptedDonePhase2` (crash-recovery): same coalesce, so a crash-recovered done
+  carries the same outcome string the live path would have delivered.
+
+### How resultRounds.result gets the value (one value, both destinations)
+`doneResult` (coalesced) → `AgentResult.doneResult` → agent-lifecycle Phase 2 `doneArgs.summary`
+→ (a) `createTaskComplete(..., agentResult.doneResult)` = parent notification, AND (b) Matrix
+`onDone` sets `resultRounds.result = doneArgs.summary`. SAME variable → byte-identical.
+`lessons` still read from JSONL via `readDoneLessons(events)` (renamed from Step-1 `readDoneRound`,
+now returns just `string[]` — result no longer needs a JSONL read since it reuses the plumbed summary).
+
+### Enforcement note (forced relaxation)
+Step 1 had `summary` REQUIRED. For the alias to work through Zod, `result` MUST be optional (a frozen
+summary-only call must pass validation), and `summary` is also optional — so a `done()` with NEITHER
+now passes Zod → empty round `{result:"", lessons:[]}` (previously summary-required blocked this).
+This relaxation is FORCED by "primary=result + summary-alias + zero-regression-on-frozen". No beforeDone
+"at least one required" check added (kept minimal; flagged to orchestrator).
+
+### Zod strips unknown keys (why frozen callers are safe)
+`z.object(inputSchema).safeParse` (tool-execution.ts) has NO `.strict()` → unknown keys are STRIPPED,
+not rejected. So even a caller passing an undeclared key is fine. Declaring `summary` is belt-and-braces.
+
+### Tests
+- `integration.test.ts` "done() result/lessons capture — unified result concept" (8): result+lessons,
+  result-no-lessons, **deprecated summary alias → result (coalesce)**, **result-wins-when-both**,
+  barren-done→empty-round, two-round-append-order, failed, and **ONE value → BOTH parent-notification
+  AND resultRounds.result byte-identical (parent-child, via the summary alias)**.
+- `task-tracker.test.ts` resultRounds unit tests UNCHANGED (appendResultRound is agnostic to where
+  result comes from).
+
+## Memory-index Step 1.2: DELETE done() `summary` entirely — `result` is required-non-empty (2026-07-14)
+
+SUPERSEDES Step 1.1 (the "keep summary as a deprecated alias / coalesce result ?? summary" entry).
+User decided: go all the way — no alias, no legacy tail. done()'s agent-facing params are now
+exactly: `status` (control signal), `result` (成果, REQUIRED-non-empty — absorbs everything summary
+did), `lessons` (independent). There is NO `summary` param on the done tool anywhere.
+
+### Enforcement — `result` required-non-empty (two layers)
+- Zod `explicit` (required) → an ABSENT result is rejected at executeTool's safeParse with
+  "Tool input validation error (mcp__mxd__done): result: …" (mentions `result`).
+- `beforeDone` (orchestrator-tools.ts) checks `!args.result?.trim()` FIRST (before the git-clean
+  check) → an EMPTY/whitespace-only result is rejected with a steering message ("done() needs a
+  non-empty `result`: state what this round ACTUALLY accomplished…"). A rejected done returns
+  isError → the provider-loop done-exit block (`if (doneResult && !doneResult.isError)`) is skipped
+  → the loop does NOT exit, no Phase 2, no resultRound appended → the agent sees the error and
+  continues. So a barren done() never lands an empty `{result:""}` round.
+
+### Coalesce → just `result` (summary read deleted)
+- `provider-shared.ts` (live done): `doneResult = doneInput?.result ?? ""` (was `result ?? summary`).
+- `runtime.ts findInterruptedDonePhase2` (crash recovery): `summary = doneInput?.result ?? ""`.
+- `agent-lifecycle.ts` doneArgs: `result: agentResult.doneResult ?? ""` (bridge field renamed
+  summary→result); `scope-opts.ts onDone` reads `doneArgs.result` → `resultRounds.result`.
+
+### Internal carriers KEPT (invisible to agents, some persisted — renaming = JSONL migration, out of scope)
+`AgentResult.doneResult`, `MatrixDoneData.summary`, the `done_notified` event's `summary` field,
+`createTaskComplete(output=…)`, and `findInterruptedDonePhase2`'s return `.summary` field all keep
+their names. They now hold the `result` value. So `expect(result.summary).toBe(...)` in
+findInterrupted tests is correct: INPUT uses `result` (runtime reads it), RETURN field is still
+`summary` (the internal marker field).
+
+### Byte-identical: one value → both destinations
+`result` → doneResult → task_complete `output` (parent notification) AND resultRounds.result — the
+SAME string. Test "ONE value → BOTH parent notification and resultRounds.result (byte-identical)"
+(parent-child) pins it.
+
+### Migration of ALL call sites (the accepted churn)
+Every `done(summary=…)` test/fixture/helper → `result`. z.object() strips unknown keys (no
+`.strict()`), so a MISSED site is NOT silently stripped-to-empty — it's LOUD: `result` required →
+Zod rejects → the done never completes → the test fails/times out. That enforcement WAS the safety
+net. **GOTCHA that bit once**: the bulk `summary: "` replace missed a BACKTICK template literal
+(`summary: \`child ${label}…\``) in integration-stress MULTI1 → the child's done was rejected →
+parent hung → 48s timeout that looked like a flake but was the regression. Always grep BOTH
+`summary: "` AND `summary: \`` (and shorthand `summary }`).
+
+### Two test files that are NOT Matrix's done (left on `summary`, correct)
+- `openai-responses-compatible-provider.test.ts` — standalone PROVIDER unit test (uses `provider.stream()`
+  directly, defines its OWN `done` tool with a `summary` schema, never runs the runtime loop nor asserts
+  the value). Reverted my changes to it — it's independent of Matrix's rename.
+- `anthropic-compatible-provider.test.ts` ~2560 — a provider-level test whose mock `done` tool declares a
+  `summary` schema but whose mock RESPONSE input uses `result`; provider-shared reads the raw input's
+  `result`, the schema `summary` is cosmetic (unknown `result` stripped by Zod, value read from raw input).
+  Works as-is.
+
+### FROZEN-AGENT transition window (accepted, self-correcting)
+A mid-flight agent whose session_config froze the OLD done schema and emits `done(summary=…)` right after
+the daemon restarts loses that ONE round's result (unknown `summary` stripped → `result` absent → done
+REJECTED with the required-result error; the agent retries with `result` next turn after reading the new
+tool desc). Tiny, one-time, self-correcting.
+
+### Tests
+`integration.test.ts` "done() result/lessons capture (resultRounds)" (7): result+lessons, result-no-lessons,
+**NO-result→REJECTED (no empty round)**, **whitespace-result→REJECTED (steering msg)**, two-round order,
+failed, byte-identical parent-child. Tracker unit tests unchanged.
+
+## Memory-index Step 1.3: COMPLETE summary→result rename — no `summary` anywhere in the done-outcome concept (2026-07-14)
+
+SUPERSEDES the "internal carriers kept as summary" decisions in Step 1.1/1.2 (the earlier notes'
+`doneSummary` mentions were auto-updated to `doneResult` by this rename; read them as historical).
+User directive: "把summary在所有地方完整重命名成result" — no legacy tail, internal or not.
+
+The done-outcome concept is now `result`/`doneResult` EVERYWHERE it's the done payload/carrier:
+- done() param `result` (required-non-empty) — the single agent-facing name.
+- `AgentResult.doneSummary` → `doneResult` (types.ts + provider-shared ~14 sites + agent-lifecycle
+  + anthropic-compatible-provider buildResult).
+- `MatrixDoneData.summary` → `result` (scope-opts onDone return → done_notified marker).
+- `findInterruptedDonePhase2` return field `summary` → `result` (runtime.ts + crash-recovery emit).
+- `done_notified` event field `summary` → `result` (events.ts:196). CONFIRMED write-only: nothing
+  reads the marker's own field — crash recovery reads `input.result` from the done tool_call
+  (runtime.ts), not the marker. So renaming it is zero-back-compat, NOT a JSONL migration. Step 1.2's
+  "migration risk" reasoning was wrong.
+- `agent_end.result?` (events.ts) — the done-outcome field on agent_end (was summary, unused/optional).
+- Frontend done-card consumers (all read the done tool_call `result` now): `event-display.ts`
+  getToolTitle TOOL_DONE, `McpToolCard.tsx`, `LogEntryView.tsx`, `ToolCard.tsx`, and the
+  `mock-showcase.ts` done fixtures. THESE WERE A SILENT UI REGRESSION — they read `getArg(.., "summary")`
+  / `toolArgs?.summary`, which typecheck can't catch (index/any access) and integration tests don't
+  render, so only a manual grep found them. Lesson: after renaming a tool param, grep the FRONTEND
+  (`getArg(.., "<param>")`, `toolArgs?.<param>`, event-display/ToolCard/LogEntryView/McpToolCard) — the
+  done cards would silently lose their text otherwise.
+- system-prompts.ts prose "your done() summary" → "your done() result".
+- All test call sites/assertions (done_notified `.result` asserts in plugin-hooks + integration;
+  findInterrupted return `.result` in events/jsonl-stress; helper params; the two standalone provider
+  tests' own mock done tools).
+
+GOTCHA — naming collision: a blanket `doneSummary→doneResult` collided with TWO pre-existing local
+`doneResult` vars in provider-shared (the done ToolResult `execResults[doneIndex]`, and the
+`handleImplicitYield` resume result). Renamed those to `doneToolResult` / `doneResumeResult`. When
+renaming an identifier to a generic name, grep for pre-existing uses of the target name first.
+
+LEFT ON `summary` (different concepts — renaming would break): compaction `<summary>` tags /
+SUMMARIZATION_INSTRUCTION; llm.ts OpenAI Responses reasoning `summary[]`/`summary_text` (API field);
+cli.ts cost/tree display; get_logs "short summary" + send_message title "Short summary of the message";
+generic ToolDisplay.summary (dead display abstraction); compactedResume `"summary-1"` ids.
+
+OPEN (user-driven, NOT yet done): the done-payload SHAPE architecture. There are 3 shapes
+(done params {status,result,lessons} / ResultRound {result,lessons} / MatrixDoneData {status,result})
+whose fields are hand-picked → adding/removing a done param needs edits in 3 places (fan-out). User
+wants a single source of truth: ResultRound = the done payload (derived), so it's 1:1 with done() by
+construction. Proposed but NOT implemented — awaiting the user's call on ResultRound={status,result,lessons}
+(or =DoneData derived from the schema) + whether to collapse the runtime's doneResult carrier.
+
+## Memory-index Step 1.4: DonePayload = ONE struct (zod source of truth) + strict runtime/plugin boundary (2026-07-14)
+
+RESOLVES the "OPEN done-payload SHAPE architecture" item above. The 3 hand-picked shapes are gone;
+there is now ONE done-content struct + a hard runtime↔plugin boundary. SUPERSEDES the field-picking
+framing of the Step 1.1/1.2/1.3 notes (which renamed summary→result but still had 3 shapes).
+
+### The ONE struct — `src/done-payload.ts` (imports ONLY zod, no cycles)
+- `donePayloadSchema = z.object({ result: z.string(), lessons: z.array(z.string()) })` — the SINGLE
+  source of the done CONTENT shape. `DonePayload = z.infer<typeof donePayloadSchema>`.
+- `parseDonePayload(input: Record<string,unknown>|undefined): DonePayload` — the ONE raw-input →
+  round normalizer (result:string|"" , lessons:string[]|[]). Manual (schema requires lessons; raw
+  input may omit it — safeParse would reject, so normalize by hand). Add a content field → edit THIS
+  schema; the tool params (`donePayloadSchema.shape`), the type, the stored round, and the normalizer
+  all follow. No fan-out.
+- Imports ONLY zod so BOTH `types.ts` (type layer) and `orchestrator-tools.ts` (tool layer) can import
+  it without an import cycle.
+
+`DonePayload` is 1:1 with a `resultRounds` element: `TaskNode.resultRounds?: DonePayload[]` (types.ts),
+`tracker.appendResultRound(nodeId, round: DonePayload)` (task-tracker.ts). done() ↔ round by construction.
+DELETED: `ResultRound` interface, `MatrixDoneData` type, `AgentResult.doneResult` field, `readDonePayload`,
+`readDoneLessons`, `PluginTypes.done`, `MatrixPluginTypes.done`, all `doneResult` provider-loop carrying.
+
+### ⭐ The boundary (root's review criterion — hold this line)
+`status` is NOT in the struct — it's a RUNTIME control bit. The runtime↔plugin split for done():
+- **Runtime MAY read**: `status` (routes → verify/failed) + ONE completion-output string
+  (`doneCompletionOutput(input)` = `input.result` — the universal "what happened" summary sent to the
+  parent via task_complete AND recorded on the done_notified marker; every plugin has one, calling it
+  `result` is fine).
+- **Runtime MUST NOT carry**: `lessons` or the round structure. Those are read ONLY inside Matrix's
+  `onDone`, via `parseDonePayload(doneInput)`. The runtime hands the raw done tool_call input to onDone
+  as an OPAQUE `Record` (`BaseDoneData`) and never destructures round content itself.
+- Enforcement check (grep): `lessons`/`resultRounds`/`appendResultRound`/`parseDonePayload`/`DonePayload`
+  appear in `src/runtime/*`, `src/runtime.ts`, `src/provider-shared.ts`, `src/events.ts` ONLY in
+  boundary-explaining COMMENTS, never in code. If a future change reads `input.lessons` in the runtime,
+  the boundary is broken.
+
+### Flow (live + crash recovery)
+- **provider-shared.ts** (loop): reads only `doneInput.status` → `doneExitReason`. Does NOT carry the
+  result out (removed `let doneResult` + `doneResult` from `buildResult` type/defaultBuildResult/anthropic
+  buildResult + 8 call sites + `AgentResult.doneResult`).
+- **agent-lifecycle.ts Phase 2**: `readDoneInput(events)` → raw `doneInput` (generic: last done
+  tool_call's input, in events.ts). `doneCompletionOutput(doneInput)` → the parent-notice/marker string.
+  Runtime does the status flip (`updateStatus(passed?"verify":"failed")` — ONE mapping) + `opts.onDone?.
+  (node, tracker, doneInput ?? {})` (opaque) + `createTaskComplete(..., completionOutput)` + marker
+  `{status, result: completionOutput}`.
+- **scope-opts.ts onDone** (Matrix): `tracker.appendResultRound(node.id, parseDonePayload(doneInput))`.
+  Content-only, returns void. No status flip (runtime's job now — removed the old duplicate mapping).
+- **runtime.ts findInterruptedDonePhase2** (crash recovery): reads `status` + `doneCompletionOutput
+  (lastDoneCall.input)`. Plugin-agnostic → does NOT append a resultRound (KNOWN LIMITATION, unchanged
+  from Step 1: a done() whose Phase 2 was crash-interrupted loses its round; the normal path is the
+  overwhelming majority).
+
+### onDone → void; done_notified marker-injection capability DELETED (root-blessed)
+Old `onDone` returned `MatrixDoneData` which was spread into `done_notified`, letting a plugin inject
+arbitrary marker fields (`plugin-custom-scope.test.ts` asserted a story plugin's `{status:"published",
+wordCount:42}` in the marker). REMOVED — onDone returns void; `done_notified` is RUNTIME-standard
+`{status, result}` always. Rationale (root): the marker is write-only (nothing reads its fields;
+findInterruptedDonePhase2 recomputes from the tool_call), only a synthetic test used the channel →
+anti-pattern #6 (imagined use). Did NOT keep a `T["done"]|void` "just in case" shape. The story test
+was rewritten to verify the REAL generic contract: onDone runs + mutates the tracker via a side-effect
+(`setMetadata`), and `done_notified` is runtime-standard.
+
+### done() tool params derive from the schema (no drift)
+orchestrator-tools.ts: `result` param `schema: donePayloadSchema.shape.result.describe(...)` (explicit,
+required-non-empty via beforeDone); `lessons` param `donePayloadSchema.shape.lessons.optional().describe
+(...)`. The tool adds agent-facing descriptions + input laxity (lessons optional → normalized to [] by
+parseDonePayload); the TYPES come from the one schema so tool input can't drift from the stored round.
+
+### Test contract changes
+- Test scope opts whose onDone ONLY flipped status (plugin-messaging, lifecycle-concurrency default)
+  → onDone REMOVED (runtime flips status universally now). The throwing-onDone Phase-2 test overrides
+  onDone via `overrides` — `() => {throw}` is compatible with the void signature.
+- `anthropic-compatible-provider.test.ts`: the standalone provider test can't assert `agentResult.
+  doneResult` anymore (removed) — re-pointed to assert the emitted done() tool_call's `input.result`
+  (the value Phase 2 reads back). This is the honest new assertion: the result lives in JSONL, not on
+  AgentResult.
+- integration `resultRounds` + `done_notified` tests + task-tracker `appendResultRound` tests UNCHANGED
+  in expectation ({result, lessons} rounds; {status, result} marker) — the flow produces the same data.
+
+### Gotchas
+- `parseDonePayload` must NOT use `donePayloadSchema.safeParse` — the schema REQUIRES lessons, raw done
+  input may omit it → reject. Manual normalization only.
+- Removing `PluginTypes.done` is safe: test scopes use `ScopeOpts<any>` (erased); `BaseDoneData` is KEPT
+  (now documents "the opaque raw done input" — still exported from `plugin-sdk.ts`, SDK unchanged).
+- `donePayloadSchema.shape.result` is a `ZodString`; `.describe()` on it works; `.shape.lessons` is a
+  `ZodArray<ZodString>`; `.optional().describe()` works. The tool's `decl:{kind:"explicit"}` (result) /
+  `{kind:"optional"}` (lessons) drive required-ness independent of the schema.
+
+### Robustness test — "a plugin evolves its done fields without touching the runtime" (mutation-proof)
+User + root ask: adding/removing a done field must NOT ripple into runtime code. The runtime IS already
+field-agnostic (opaque passthrough); the deliverable is the test that PROVES + PROTECTS it. Target = a
+plugin's OWN extended fields (the opaque part) — NOT `status`/completion-output, which ARE the runtime
+contract (every plugin has them; changing them affecting the runtime is expected, not a leak).
+
+- `src/plugin-custom-scope.test.ts` "Boundary: done() custom fields are opaque to the runtime": a
+  non-matrix scope whose done() carries `wordCount` + `mood` (fields the runtime never heard of). onDone
+  reads them off the opaque `doneInput` and setMetadata's them. Asserts: (1) `node.metadata ==
+  {wordCount, mood}` → runtime handed the raw input through untouched (no reshape to a fixed content
+  struct); (2) `done_notified` marker = `{status, result}` ONLY, `wordCount`/`mood` undefined → runtime
+  never spreads plugin content into its artifacts; (3) status routed to verify.
+- `src/events.test.ts`: `findInterruptedDonePhase2` with a custom-field input returns EXACTLY
+  `{needs_phase2, status, result}` — crash recovery carries no custom fields.
+- `src/done-payload.test.ts` (NEW): `parseDonePayload` unit robustness — extra fields dropped, missing/
+  malformed defaulted, never throws.
+
+**EMPIRICALLY mutation-proofed** (full `bun test`, not reasoning): mutating agent-lifecycle to reshape
+`doneInput` → `{result, lessons}` before onDone (exactly the earlier-reverted wrong version) → the ONLY
+failure across 2508 tests is this boundary test; ALL matrix resultRounds/done_notified tests PASS. That's
+the proof it catches a real gap the matrix tests miss: matrix is happy with `{result,lessons}` (that's its
+shape), so only a test using a NON-matrix custom field exposes the runtime reshaping the payload. Clean:
+2493 pass / 0 fail (2481 baseline + 12 new).
+
+**Lesson**: to test "layer X is opaque to layer Y's data", the test MUST use data that ONLY layer Y
+understands (a custom field). Testing with the DEFAULT plugin's (matrix's) fields can't distinguish
+"passed through opaque" from "reconstructed to matrix's shape" — both produce the same matrix round.
+
+## Memory-index Step 2: FTS keyword-search vertical — `src/task-index.ts` + search_tasks tool (2026-07-15)
+
+First usable slice of the memory index (design draft 01KWCQEB). Explicit keyword search (mode b),
+FTS-only, precise-location results. Builds on Step 1's `resultRounds` (structured done() content).
+
+### What shipped
+- **`src/task-index.ts`** (NEW src/ leaf) — per-project SQLite (bun:sqlite, zero deps) FTS5 index over
+  every task's title, description, and each done() round's result, at **per-field +
+  per-round granularity** (each row = one (task_id, field, round) unit → every hit traces to an exact
+  location). Public API: `openIndexDb`, `indexTask(dbPath,node)`, `reconcileIndex(dbPath,tracker)`,
+  `searchIndex(dbPath,query,limit)`, `toMatchQuery`, `SCHEMA_VERSION`, `SearchHit`.
+- **`search_tasks` tool** (orchestrator-tools.ts `buildAllToolDefs`, `availability:"both"`) — agent +
+  external-MCP keyword search. Returns `{taskId,title,field,round?,snippet,score}[]` (BM25 best-first).
+- **`projectIndexDbPath(dataDir,projectId,dataRoot?)`** in data-paths.ts (sibling of tree.json →
+  matrix: `projects/<id>/plugin/matrix/index.db`).
+- **Sync**: index-on-done (matrix onDone in `.mxd/plugin/scope-opts.ts`) + startup reconcile
+  (new generic `onScopeResume` hook).
+
+### ⭐ Boundary (identical to the DonePayload boundary — the ACTUAL invariant)
+The red line is NOT "index code physically only in `.mxd/plugin/`" (that was a loose wording in the
+task description — src/ is the neutral building-block layer, like done-payload.ts / worktree-manager.ts).
+The REAL invariant: **`src/runtime/*` + runtime.ts + provider-shared.ts have ZERO occurrences of
+index/FTS/resultRounds** (grep-verified — even comments; I had to genericize two hook comments that
+said "search index"). The index engine is a `src/` leaf imported by BOTH the plugin (onDone +
+onScopeResume) AND orchestrator-tools (search_tasks) — plugin→src and src(non-runtime)→leaf are both
+fine. **Why the engine MUST be in src/ not `.mxd/plugin/`**: `search_tasks` needs `availability:"both"`,
+and the external-MCP tool list is built by `mcp-endpoint.ts:305` from `buildAllToolDefs()`
+(orchestrator-tools.ts, src/); src cannot import `.mxd/plugin/` (forbidden direction). So the tool must
+be in buildAllToolDefs → the search fn must be src-importable → engine lives in src/. This decisively
+resolved the layout.
+
+### Generic `onScopeResume(tracker, projectId)` hook (runtime touch, boundary-clean)
+New ScopeOpts hook (`src/runtime/context.ts`), called once per project in `autoResumeProjects`
+(runtime.ts) after the tracker loads, BEFORE resumeScope. Counterpart to `seedTree` (fresh tree only);
+this runs every startup. Named by EVENT not resource (hook-naming rule) — no index/fts word, grep-clean.
+Matrix's impl reconciles the index; the runtime attaches no meaning. Best-effort (runtime try/catch).
+`createApp` does NOT call autoResumeProjects → tests trigger reconcile via `app.autoResumeProjects()`
+or by calling `reconcileIndex` directly (so index work doesn't fire in every createMatrixApp test).
+
+### Schema (versioned, forward-compatible for Phase C)
+`schema_meta(key,value)` (schema_version=1) · `task_fts` FTS5 `(task_id UNINDEXED, field UNINDEXED,
+round UNINDEXED, text, tokenize='porter unicode61')` · `task_index_meta(task_id PK, indexed_at)` ·
+`task_vec(task_id,field,round,embedding BLOB,dim)` **reserved placeholder, NOT populated** (Phase C).
+
+### Sync model
+- **Staleness marker = per-task `indexed_at` stored IN index.db** = the node's `updatedAt` string at
+  index time. reconcile reindexes a task iff `stored.indexed_at !== node.updatedAt` (string compare, no
+  clock math). This SUBSUMES backfill (never-indexed task has no indexed_at → stale → indexed) — no
+  separate "already backfilled" marker needed. reconcile also PRUNES rows for tasks gone from the tree.
+- **index-on-done**: matrix onDone appends the round THEN best-effort `indexTask(canonical node)`
+  wrapped in try/catch — an index write must NEVER break the done lifecycle; reconcile retries misses.
+  Verified sync-safe: agent-lifecycle Phase 2 calls `opts.onDone?()` (sync) BEFORE
+  `updateStatus(verify)`, so when a test observes "verify" the index is already written (no race).
+- **Reconcile catches** title/description edits via update_task (no onDone) + crash-between-done-and-index.
+  Accepted edge: a same-millisecond edit-after-index yields an equal `updatedAt` string → skipped until
+  the next (different-ms) edit or restart. Practically never (edits happen at live-work time, indexing at
+  startup/done — different ms).
+- **KNOWN LIMITATION (inherited from Step 1)**: crash-recovery Phase 2 (`findInterruptedDonePhase2`,
+  runtime.ts) updates status via the runtime, never calls onDone → a crash-interrupted done's round is
+  lost from BOTH the node and the index. Normal path (overwhelming majority) is fine.
+
+### Connection model — open-per-operation, NO module cache
+Each op opens a fresh `Database`, closes in `finally`. Chose this over a cached-connection Map because
+onDone now runs in ~100 integration tests (each a fresh temp dataDir) → a module-level cache would leak
+one handle per test pointing at removed dirs. bun:sqlite is sync + single-threaded so ops never overlap;
+a per-op open on a small local file is sub-ms; reconcile opens ONCE and loops internally (`indexTaskInDb`
+on the shared handle). Default rollback journal (no WAL) → no `-wal/-shm` files left behind.
+
+### Query safety (NOT query rewriting — anti-pattern #6)
+`toMatchQuery`: split on whitespace, quote each term (doubling embedded `"`), join (implicit AND). This
+is INPUT SAFETY (prevents FTS5 syntax errors from stray `()`/operators), not semantic rewriting. Empty →
+"" → searchIndex returns []. Built ONLY raw FTS5 + BM25 + snippet — no field weighting, no ranking
+heuristics, no filters. Add those only when real use exposes a need.
+
+### ⚠️ Phase C de-risk — bun:sqlite CANNOT loadExtension (sqlite-vec blocker)
+Smoke-tested: `new Database(":memory:").loadExtension("x")` → **"This build of sqlite3 does not support
+dynamic extension loading"**. So Phase C's sqlite-vec CANNOT load into the default bun:sqlite build.
+Phase C options: (a) `Database.setCustomSQLite(path)` pointing at an extension-enabled libsqlite3
+(e.g. `brew install sqlite`), or (b) store embeddings as BLOB in `task_vec` + compute cosine in JS.
+FTS5 itself is fully built-in and works perfectly (MATCH/bm25/snippet/DELETE-by-column all verified,
+bun 1.3.14). Step 2 only reserves the vec table + schema_version.
+
+### Tests
+- `src/task-index.test.ts` (15 unit): schema/vec-reservation, title/description/result provenance,
+  re-index replaces stale rows, reconcile backfill/incremental-noop/prune/skip-folders, empty+punctuation
+  query safety, multi-term AND, BM25 ordering, limit, toMatchQuery.
+- `src/integration.test.ts` "memory index (Step 2 FTS...)" (4, full agent loop): index-on-done searchable,
+  startup reconcile via `autoResumeProjects`→onScopeResume, `search_tasks` tool end-to-end (asserts the
+  tool_result carries taskId+snippet+field), best-effort (index path made a DIRECTORY → open throws →
+  done() still verifies + round still on node).
+- Full suite 2516 pass / 0 fail; typecheck + check:ci clean (matches baseline 66 pre-existing warnings).
+
+### Gotchas
+- FTS5 standalone (own-content) table supports `DELETE FROM task_fts WHERE task_id=?` (re-index = delete
+  + reinsert). Verified — no external-content quirks.
+- `snippet(task_fts, 3, '[', ']', '…', 16)` — column index 3 = `text` (0-based: task_id=0,field=1,round=2,text=3).
+- The `search_tasks` handler enriches each hit with the task's CURRENT title (fresh `tracker.getTask`)
+  and drops hits whose task was deleted since indexing.
+- Generic `R.getDataPaths()` added to resource-registry (returns `{dataDir, dataRoot?}`) so the src/ tool
+  can resolve the index path without src→plugin coupling; minimal config interface gained `dataRoot?`.
+- **Post-merge cleanup (lessons-drop)**: `lessons` field removed from DonePayload after Step 2 was written.
+  task-index.ts lessons rows removed; integration tests cleaned. Index now covers title/description/result only.
+
+## Memory-index Phase C: Orama + EmbeddingGemma hybrid search (2026-07-20)
+
+**SUPERSEDES the FTS5-based Step 2 architecture.** bun:sqlite + FTS5 replaced with Orama (pure TS
+search engine) + `@orama/tokenizers/mandarin` (jieba WASM Chinese tokenizer) +
+`@huggingface/transformers` EmbeddingGemma-300M (768-dim vectors, q8 quantization).
+
+### Architecture
+- **Hybrid search**: `mode: "hybrid"` — simultaneous BM25 keyword + cosine-similarity vector match with
+  Orama's built-in fusion ranking. Cross-lingual: "fix session recovery" ↔ "修复会话恢复" (0.81 cosine).
+- **Graceful degradation**: if embedding model fails to load → `mode: "fulltext"` (pure BM25). Daemon
+  never blocked. The `_setEmbeddingPipeline(null)` test helper forces BM25-only in tests.
+- **Mandarin tokenizer**: `@orama/tokenizers/mandarin` creates a Jieba-WASM tokenizer. Passed as
+  `components.tokenizer` to `create()`. Both Chinese and English queries work natively.
+- **Embedding pipeline**: lazy singleton (`getEmbeddingPipeline()`). First call loads the model (~5s cold,
+  ~1s warm). Cached module-level. `embed(text) → number[768]`.
+
+### Persistence — two files per project
+- `index.msp` — Orama binary (msgpack via `@orama/plugin-data-persistence`). Persisted after every
+  `indexTask` and after reconcile when changes occur.
+- `index-meta.json` — sidecar: `{ [taskId]: { indexedAt: string, docIds: string[] } }`. Tracks staleness
+  (`indexedAt` vs `node.updatedAt`) and enables targeted document removal by stored doc IDs.
+- Both live at `projectIndexDbPath()` (data-paths.ts), extension changed from `.db` → `.msp`.
+
+### Document ID convention
+`${taskId}:${field}:${round}` — deterministic. Enables targeted `remove(db, id)` without scanning.
+Fields: `title`, `description`, `result` (per round). No `_meta` sentinel docs in Orama itself
+(metadata is in the sidecar JSON).
+
+### In-memory DB cache
+`dbCache: Map<string, IndexDb>` keyed by `dbPath`. First access restores from disk (`restoreFromFile`);
+cache cleared in test teardown via `_clearDbCache()`. Production: one DB per project, lives for the
+daemon's lifetime.
+
+### Public API (all async now)
+- `indexTask(dbPath, node)` — (re)index one task with embeddings + sidecar update + persist.
+- `reconcileIndex(dbPath, tracker)` — backfill/incremental reindex + prune. Returns `{indexed, pruned}`.
+- `searchIndex(dbPath, query, limit?)` — hybrid (or BM25 fallback) search. Returns `SearchHit[]`.
+- `SearchHit` — `{ taskId, field, roundIndex?, snippet, score }`. Score is now higher=better (Orama
+  convention), **reversed from the old FTS5 BM25 where lower=better**.
+- `_setEmbeddingPipeline`, `_resetEmbeddingPipeline`, `_clearDbCache` — test helpers.
+
+### Deleted (from FTS5 era)
+- `bun:sqlite` / `Database` / FTS5 / SQL — all gone.
+- `openIndexDb`, `toMatchQuery`, `SCHEMA_VERSION`, `task_vec` placeholder table.
+- `initSchema`, `withDb`, `indexTaskInDb` internal functions.
+
+### Caller changes
+- `orchestrator-tools.ts` `search_tasks`: description updated ("hybrid-search"), `await searchIndex()`,
+  return type `Awaited<ReturnType<typeof searchIndex>>`.
+- `.mxd/plugin/scope-opts.ts`: `onScopeResume` now `async` with `await reconcileIndex()`. `onDone`
+  index call is fire-and-forget (`indexTask(...).catch(...)`) since `onDone` is sync in the runtime.
+- `src/integration.test.ts`: `await` on all `searchIndex`/`reconcileIndex` calls, `_setEmbeddingPipeline(null)`
+  in `beforeEach` to disable real model loading.
+
+### sharp workaround
+`@huggingface/transformers` depends on `sharp`. Bun's global cache layout puts libvips at a versioned
+path that sharp can't find. `scripts/fix-sharp-libvips.sh` creates a symlink from the unversioned `lib/`
+to the versioned one. Added as `postinstall` in package.json. Idempotent, platform-aware.
+
+### Orama `where` clause limitation
+Orama's `where` filter only works on `enum`-typed fields, and does NOT support `ne` (not-equal) on enums.
+`string`-typed fields silently return empty on `where`. This is why we don't store metadata in Orama
+(sidecar JSON instead) and don't use `where` in search queries.
+
+### Tests
+- `src/task-index.test.ts` (16): title/description/result provenance, re-index replaces stale rows,
+  reconcile backfill/incremental/prune/skip-folders, empty/punctuation query safety, BM25 ranking, limit,
+  Chinese tokenizer, embedding degradation, persistence round-trip, hybrid search with mock embeddings.
+- `src/integration.test.ts` "memory index (Orama hybrid search)" (4): index-on-done, startup reconcile,
+  search_tasks tool end-to-end, best-effort (sabotaged index path).
+- Full suite: 2547 pass / 0 fail. typecheck + check:ci clean.
+
+## Sidebar search + work_context related-tasks injection (2026-07-21)
+
+### Part A — Sidebar search via Orama
+- REST endpoint `GET /projects/:id/search?q=...&limit=N` in `.mxd/plugin/runtime.ts`.
+  Calls async `searchIndex`, enriches with task titles from `ctx.trackers.get(projectId)`.
+- `api.search(projectId, query, limit?)` URL builder in `.mxd/plugin/web/api.ts`.
+- `useSidebarSearch` hook (`.mxd/plugin/web/search.ts`): debounced 300ms, abort-on-supersede.
+- `TaskTree` accepts `searchHits`/`searchLoading` props; renders search results overlay
+  (title + field badge + snippet) INSTEAD of tree filter when backend results arrive.
+- UX: search results replace tree filter when text is typed and backend hits arrive.
+  Empty query → normal tree. Local substring filter still runs as instant fallback.
+
+### Part B — work_context related-tasks injection
+- `searchIndexSync(dbPath, query, limit)` in `src/task-index.ts`: **synchronous** BM25-only
+  search using the already-cached in-memory Orama DB. Returns `[]` if DB not loaded (no crash).
+  The DB is pre-loaded by `reconcileIndex` at startup (via `onScopeResume` hook).
+- `buildWorkContext` in `.mxd/plugin/scope-opts.ts`: uses `searchIndexSync` with
+  `node.title + node.description` as query. Appends `[Related past tasks]` block with
+  up to 5 hits, capped at `RELATED_TASKS_CHAR_LIMIT = 8000` chars (~2000 tokens).
+  Excludes self (`taskId !== node.id`). Best-effort (try/catch, index unavailable = no block).
+- Injection is sync → no runtime interface change. Works in both initial launch and
+  compact re-arm paths (same `buildWorkContext` callback).
+
+### Boundary preserved
+- `src/runtime/*` has ZERO knowledge of search/index. The sync search uses the DB already
+  cached by `reconcileIndex` (onScopeResume startup hook in scope-opts.ts).
+- REST endpoint uses `ctx.trackers.get(projectId)` directly (not `getTracker` helper which
+  has scope-opts dependencies).
+
+## search_tasks tiered return + create_task auto-search (2026-07-23)
+
+`search_tasks` now returns tiered output via `formatTieredHits()` (exported from
+`orchestrator-tools.ts`). Top hits get full info (description ≤500 chars, latest
+resultRound result ≤300 chars, matched field+snippet, score); remaining hits are
+one-line briefs (title, taskId, status, score). Total output hard-capped at 8000
+chars to protect the context window.
+
+`create_task` handler appends a best-effort `[Related existing tasks]` block after
+the node JSON. Uses `searchIndexSync` (sync, BM25-only, in-memory DB cache warmed
+at startup by `reconcileIndex`). Query = `title + description`; self-excluded;
+2 full + up to 5 brief hits. Index unavailable → silent skip, never blocks create.
+
+System prompt: "Search before building" bullet added to Planning before acting
+(§2), steering agents to `search_tasks` before creating tasks or starting work
+in unfamiliar areas.
+
+### Key design decisions
+- Full taskId in output (not truncated prefix) — agents need it for `fork_task_context`
+  / `send_message`.
+- `searchIndexSync` for create_task (not async `searchIndex`) — the handler is async
+  but sync search avoids a second embedding-pipeline load; the DB is already cached.
+- 8000-char budget matches `RELATED_TASKS_CHAR_LIMIT` in scope-opts.ts work_context
+  injection.
+- `formatTieredHits` is shared between search_tasks and create_task (same formatting,
+  different `fullCount` and header).
+
+## MXD_DISABLE_EMBEDDINGS — test-only NAPI crash prevention (2026-07-23)
+
+`getEmbeddingPipeline()` in `src/task-index.ts` checks `process.env.MXD_DISABLE_EMBEDDINGS`
+and short-circuits to null (BM25-only mode). Set via `bunfig.toml [test.env]` + propagated
+to workers via the daemon's `{ env: process.env }` Worker option.
+
+Priority order: explicit mock (`_setEmbeddingPipeline(mock)`) > env var > lazy load.
+This lets tests exercise hybrid search paths via mock pipelines even with the env var set.
+
+Root cause: `@huggingface/transformers` has a STATIC `import * as ONNX_NODE from "onnxruntime-node"`
+at module scope (line 7545 of `transformers.node.mjs`). The dynamic `import()` in
+`getEmbeddingPipeline()` loads this, which registers the NAPI backend. Worker teardown
+then triggers `NAPI FATAL ERROR: Error::New napi_create_error` → SIGTRAP → process death.
+
+## search_tasks NaN-score fallback (2026-07-23)
+
+**Score NaN root cause**: Documents indexed without a valid embedding pipeline get
+`ZERO_EMBEDDING` (768 zeros). Cosine similarity on a zero vector = `0/0 = NaN`.
+Hybrid mode fusion score inherits NaN → all hits return `score: NaN`.
+
+**Fix** (`src/task-index.ts`): `searchIndex` checks
+`results.hits.some(h => !Number.isFinite(h.score))` after hybrid search. If ANY hit
+has NaN/Infinity, redo the entire search as pure BM25 fulltext. 3 regression tests.
+
+---
+# Daemon, Worker & Transport
+---
+
+## Durability at process boundaries (FU2)
+
+Three tightly-coupled durability gaps closed so process exits + stops don't lose data:
+
+### shutdown() + stopAgent loop settlement
+
+- `shutdown()` order: (1) stopAgent on every running project, (2) await residual `ctx.agentLoopPromises` (bounded 1s), (3) `Promise.all(eventStores.map(s => s.flush()))`. Without (3), fire-and-forget `emitEvent` queued in `agent_end`/`done_notified`/tool_results was lost on worker terminate.
+- `stopAgent` awaits loop settlement (bounded 1s) — symmetric with stopTask. Closes the race between `POST /projects/:id/stop` returning and the finally block's `agent_end` / Phase 2 `done_notified` / MCP disconnect writes. Fixes DELETE /projects → pm.delete → rm -rf racing with in-flight JSONL writes.
+- Both timeouts are defensive: real providers respect abort within ms. A stuck tool (foreground bash ignoring abort) gets bounded grace, then `buildSessionRepair` on next startup synthesizes the interrupted tool_result (orphan-repair contract). **Do NOT call `fg.resolve()` in stopAgent** — that moves bash cleanly to background and breaks the orphan-repair semantic.
+- Restart-crash integration tests (Restart B/I/J/K/N, LC3) rely on shutdown leaving foreground-tool orphans for autoResume to repair. 3s timeout was too slow for 5s test timeouts; 1s is the sweet spot.
+
+### Worker init timeout + restart backoff (daemon)
+
+- `WORKER_INIT_TIMEOUT_MS = 30_000` default, override via `createDaemon({ workerInitTimeoutMs })` for tests. Without this, a hung plugin `runtime.ts` (top-level `await new Promise(()=>{})`) hangs daemon boot forever — no log, no 503.
+- On timeout: `worker.terminate()` + reject with `"Worker init timed out: <plugin> (>30000ms)"`. Tests use 1.5s override.
+- Exponential backoff on crash-restart: `[2, 4, 8, 16, 30]s`, max 5 attempts, then circuit-break (log + SSE `worker_circuit_broken` event). `STABLE_RESET_MS = 60_000` — a worker that's been ready 60s resets its attempt counter. Per-scope state in `workerRestartState: Map<string, {attempts, lastReadyAt, circuitBroken}>`.
+
+### Test rule: createDaemon-with-worker beforeAll budget ≥ WORKER_INIT_TIMEOUT_MS
+
+When a test's `beforeAll` calls `createDaemon` with a global-scope plugin (i.e., a worker spawn happens inside createDaemon), the test's beforeAll timeout MUST be ≥ the daemon's WORKER_INIT_TIMEOUT_MS (default 30s) — otherwise the test's timer fires first on a real flake and the test reports a useless "beforeAll timed out" with no diagnostic, masking the daemon's much-better "Worker init timed out: <plugin> (>30000ms)" message that names the actual stuck plugin.
+
+Measured cost of `createDaemon` with one global plugin (no plugin runtime, no projects to resume):
+- Cold isolated: ~213ms total (worker spawn ~120ms is dominant; web build ~37ms; plugin discovery ~35ms; rest <15ms)
+- Warm mid-suite: ~137ms total (worker spawn ~107ms)
+- Heavy contention (24 CPU stressors + 4 parallel `bun test`): peak ~346ms total (worker spawn ~209ms)
+
+Normal headroom is 100×+ over a 30s budget. A 15s budget had >40× headroom and still produced rare flakes from extreme scheduler stalls; the test never observed which step stalled because the test's own timer fired first. **Default rule: pick 30s for any beforeAll that spawns a worker via createDaemon. Don't try to fit it under 15s "to fail fast" — fast is meaningless when it's failing on the wrong timer.**
+
+`createTestToken` does NOT generate RSA keys (HMAC JWT secret only) — typically 2-3ms. Not a hypothesis worth investigating for slow daemon-test bootstraps. The dominant cost is always worker spawn.
+
+### tracker.save() atomic via temp + rename
+
+- Writes `.{basename}.tmp.{pid}.{time}.{rand}` sibling, then `rename` to `tree.json`. POSIX rename is atomic — crash mid-write leaves old `tree.json` intact, not truncated.
+- `mkdir` before writeFile stays — removing it broke projects added via `pm.sync` (no pre-existing tasks/ dir).
+- **Test gotcha**: temp-file rename races with recursive `rm(dataDir)` during test teardown. The rm lists entries, then rename moves the tmp entry, then rm tries to delete the now-gone tmp → ENOENT. Fix: every test afterEach uses `rm(..., { recursive: true, force: true })`.
+
+### dataDir filesystem lock
+
+- `.mxd.lock` at `<dataDir>/.mxd.lock` — JSON `{pid, startedAt, version}`. Acquired via `O_EXCL` (`openSync(..., 'wx')`). Stale locks (dead PID via `process.kill(pid, 0)`) are stolen; live PID → error "already running on dataDir X (PID Y)".
+- `createDaemon({ lockDataDir: true })` — opt-in. Production entry passes `true`; tests pass `false` (concurrent test daemons on isolated tempdirs). Lock released in `shutdown()` AFTER workers are gone.
+- **Semantic**: refuses even when the lock holds our own PID. A second `createDaemon` in the same process is a test bug or double-init — better to surface it.
+
+### Test mock abort awareness
+
+- Integration test mocks using `setTimeout(resolve, 10000)` / `5000` now call `abortableSleep(ms, req.signal)` helper in `runtime.test.ts`. Without signal awareness, stopAgent's loop-settlement await would wait the full sleep window. Real providers (Anthropic, OpenAI SDKs) already respect abort; this brings mocks in line.
+
+## FIX-6 (2026-06-10) — worker init crash hang + shutdown throw (daemon.ts)
+
+Five worker-lifecycle bugs in `src/daemon.ts`. Together they form the self-bootstrap death
+chain: agent commits bad code → daemon restarts → worker crashes → permanent hang + lock.
+
+### R8-A#1 — onerror rejects init promise (was: permanent hang)
+`worker.onerror` cleared `initTimer` but never called `reject()`. Bun fires onerror AND
+terminates the worker on unhandled errors. With the timer cleared and no reject, the
+`startWorkerForPlugin` promise hung forever — no timeout fallback, no rejection.
+Fix: `initResolved` boolean tracks whether init succeeded. onerror during init → reject
+(daemon boot failed, no restart scheduled). onerror after init → schedule restart with
+backoff (normal runtime crash recovery).
+
+### R8-A#2 — shutdown() tolerates dead workers (was: thrown InvalidStateError)
+`sw.worker.postMessage({ type: "shutdown" })` throws `InvalidStateError` on a terminated
+Bun Worker. The throw skipped remaining workers + `releaseDataDirLock`. Fix: try/catch
+per worker. Dead workers skip graceful-shutdown wait, go straight to terminate.
+
+### R8-A#9a — {type:"error"} terminates worker (was: thread leak)
+scope-worker catches init errors and posts `{type:"error"}`. Daemon rejected the init
+promise but never called `worker.terminate()` — the worker thread stayed alive consuming
+resources. Fix: terminate + delete from workers map.
+
+### R8-A#9b — restart timers cleared on shutdown (was: zombie workers)
+`scheduleWorkerRestart` used bare `setTimeout` without storing the timer ID. After shutdown
+released the lock, pending restart timers fired and spawned zombie workers. Fix:
+`pendingRestartTimers: Set<Timer>` tracks all restart timers. `shutdown()` clears them
+before touching workers.
+
+### R8-A#9c — dead workers cleaned from workers map
+Timeout, onerror, and {type:"error"} all left dead `ScopeWorker` entries in the `workers`
+map. Fix: `workers.delete(scopeName)` in all three failure paths.
+
+### Test technique: triggering onerror during init
+A plugin runtime with `setTimeout(() => { throw ... }, 0)` + `await new Promise(r =>
+setTimeout(r, 50))` fires an unhandled throw DURING scope-worker's init phase (before
+"ready" is sent). The top-level await gives the event loop a chance to process the 0ms
+timer, which crashes the worker and fires `worker.onerror` on the parent. This is the
+only reliable way to trigger onerror during init in tests — `process.exit(1)` does NOT
+fire onerror (silent death, caught by timeout), and module-level `throw` is caught by
+scope-worker's try/catch (posts `{type:"error"}`, not onerror).
+
+## FIX-9 (2026-06-10) — binary response proxy: scope-worker .text() corrupts bytes >0x7F
+
+`scope-worker.ts` used `response.text()` for buffered HTTP responses forwarded back to the
+daemon. `text()` decodes bytes as UTF-8 — every byte >0x7F becomes U+FFFD (EF BF BD). A 256-byte
+binary payload inflated to 512 bytes; PNG headers (0x89 first byte) became garbage.
+
+**Fix**: `response.arrayBuffer()` + postMessage with transferable `[responseBody]` (zero-copy).
+`daemon.ts` `ScopeWorker.pending` type widened from `body: string` to `body: string | ArrayBuffer`
+— `new Response()` constructor handles both natively. `scope-worker.test.ts` `workerFetch` helper
+decodes ArrayBuffer→string for JSON test convenience.
+
+**Request bodies are NOT affected** — `forwardToWorker` already uses `request.text()` for the
+outgoing request, but request bodies in practice are JSON (text). If binary request bodies are ever
+needed (file upload via plugin route), that's a separate fix (`request.arrayBuffer()` in
+`forwardToWorker` + `ArrayBuffer` in the worker's `new Request(url, { body })`).
+
+Tests: `src/binary-proxy.test.ts` (3 tests) — full byte range 0x00–0xFF, PNG header, text
+passthrough. Daemon integration: plugin registers routes serving binary, request goes through
+daemon→worker→plugin route→worker→daemon pipeline.
+
+## Audit FU3 [CRITICAL] — SSE catch-up correct across daemon/worker restarts (2026-07-07)
+
+The LIVE "daemon restart → open page blank until F5" bug + two adjacent restart-window
+holes. All in `src/daemon.ts`. Three findings, one class: after a restart the UI silently
+diverges from server state.
+
+### Finding 1 — epoch-prefix every SSE id (the live blank-until-F5 bug)
+Per-lens seq counters restart at 0 on every daemon boot. Audit R7 P2.9 added a stale-ahead
+check (`getEventsSinceFromBuffer`: `lastSeqId > lastEntry.seqId → null`) that catches a
+pre-restart cursor BEYOND the new tail — but NOT a cursor whose seq falls INSIDE the new
+incarnation's refilled range. After a real restart agents auto-resume + stream, so the buffer
+refills PAST the browser's low pre-restart cursor before it reconnects → `getEventsSince`
+returns a wrong-epoch slice → `catchUpDone=true` → full initial state skipped → stale UI until F5.
+P2.9's own comment called epoch ids "the proper fix, out of scope"; FU3 shipped it.
+
+- Every SSE `id:` is now `<epoch>-<seq>`, epoch = `String(Date.now())` minted once per
+  `createDaemon` (const `sseEpoch`). Two pure exported helpers at module scope:
+  `formatSseEventId(epoch, seqId)` and `parseSseLastEventId(header)`.
+- `parseSseLastEventId`: `<epoch>-<seq>` → `{epoch, seq}` (split on the LAST dash — epoch may
+  contain dashes); bare numeric (pre-epoch daemon cursor) → `{epoch: null, seq}`; garbage → null.
+- `/events` catch-up runs ONLY when `lastCursor.epoch === sseEpoch`. `epoch:null` (legacy),
+  foreign epoch (previous incarnation), and null (garbage) all fall through to full initial state.
+- `getEventsSinceFromBuffer` is unchanged + still reasons WITHIN one incarnation; the epoch
+  layer sits above it. Both `id:` emit sites (live relay ~837, catch-up replay ~1886) use
+  `formatSseEventId` — a bare-seq emit would poison the client's NEXT reconnect cursor.
+- Client needs ZERO changes: EventSource echoes `Last-Event-ID` opaquely; only the server parses.
+
+### Finding 2 — ONE unified worker.onmessage, installed before init
+The old code used a temp init-only handler (loaded/ready/error) and swapped in the runtime
+handler AFTER `ready`. But the worker posts `sse_event`s DURING init (autoResumeProjects crash
+recovery, `onBroadcast` wired before `autoResumeProjects` in scope-worker.ts) → dropped silently.
+Harmless on first boot (no clients), HIGH impact on worker auto-restart (SSE clients still
+connected daemon-side miss every recovery event). Fix: `setupWorkerMessageHandler` →
+`handleWorkerRuntimeMessage(pluginName, scopeWorker, msg)`, called from the SINGLE
+`worker.onmessage` for any non-init-protocol message (`else` branch after loaded/ready/error).
+`shutdown_complete` is unaffected — it uses `addEventListener`, not `onmessage`.
+
+### Finding 3 — /events initial-state polls worker readiness (restart-gap reconnect)
+`workerKeyForProjectScope` (one-shot `workers.has → undefined`) → `awaitLensWorkerReady(projectId,
+scope, signal)`: no plugin for the lens → undefined immediately (permanent; auth-only `scope=""`);
+plugin exists but worker not ready → poll `SSE_INITIAL_STATE_RETRY_ATTEMPTS(15) ×
+SSE_INITIAL_STATE_RETRY_MS(200)` = 3s, aborts on client disconnect. A client connecting during
+the ~2s worker-restart backoff+init previously got a live stream with NO tree until the next
+unrelated event. Budget is 3s not the spec's 2s ON PURPOSE: the 2s backoff expires exactly as the
+restarted worker BEGINS init, so a 2s poll guarantees a miss for early-gap clients; spec Test 4
+asserts arrival "within 3s". Ready worker resolves on first check, zero delay.
+
+### Tests
+- `src/sse-catchup.test.ts` (7 integration, REAL daemon+worker via in-process `daemon.fetch`):
+  spec Tests 1-4 + the live old-epoch-cursor-INSIDE-new-range regression + same-epoch replay
+  still works + same-epoch-ahead-cursor. Test plugin emits an `init_probe` sse_event at MODULE
+  IMPORT time (fires inside the worker's init sequence, before `ready` — models
+  autoResumeProjects timing) and exposes `/test-emit` (emit via ctx.onBroadcast) + `/test-crash`
+  (unhandled throw → onerror → auto-restart, the FIX-6 technique). An `SseReader` parses `id:`/
+  `data:` frames from the stream body with a `waitFor(pred, timeout)`.
+- `src/sse-ring-buffer.test.ts` (+6 unit): formatSseEventId/parseSseLastEventId incl. legacy
+  bare-numeric → epoch:null, last-dash split, garbage → null.
+- Full suite 2447 pass / 0 fail (baseline 2435 + 12). typecheck + check:ci clean.
+- Verified the LIVE correspondence first: pre-fix `getEventsSinceFromBuffer(buf 1..10, oldLEI=5)`
+  returned a 5-event wrong-epoch slice (bug); the spec's literal repro (LEI=100) was already
+  null via P2.9. So the epoch variant — NOT the literal one — is today's blank-until-F5 symptom.
+
+### Pre-existing base-branch gate failures (NOT from this work — flagged to root)
+`bash scripts/check-i18n.sh` fails on 3 bare strings in `web/MarkdownText.test.tsx` /
+`web/markdown-table.test.ts` (from markdown commit 32b4f440, ancestor of this branch). My files
+are `.ts` (no JSX). typecheck + check:ci pass with my changes; root should clean i18n before the
+final main commit.
+
+## Bun Worker env isolation — process.env NOT inherited (2026-07-23)
+
+**Bun Workers do NOT inherit `process.env` assignments from the parent thread.** Workers
+get their own env from the OS process snapshot at spawn time. `process.env.X = "Y"` in
+the main thread is INVISIBLE to file-based Workers. This applies to BOTH:
+- Direct `process.env` assignment in JS
+- `bunfig.toml [test.env]` settings (which set process.env, not OS env)
+
+**The ONLY way to pass env vars to a Bun Worker**: the `env` option on the Worker
+constructor: `new Worker(url, { env: { KEY: "value" } })`. Verified empirically: data-URL
+workers DO inherit process.env (different codepath), file-based workers do NOT.
+
+**Fix applied**: `src/daemon.ts` Worker constructor passes `{ env: process.env as Record<string, string> }`
+so workers inherit runtime env vars. This is correct for production too — workers SHOULD
+see the same env as the main thread.
+
+---
+# Plugin System
+---
 
 ## Plugin Architecture
 
@@ -918,50 +2984,412 @@ Worker's read-only project registry. `sync(projects)` from daemon; `get`/`list`/
 - Runtime throws if `buildScopeOpts` not provided (no silent fallback)
 - Shell web UI (`web/`) is auth + project/scope selector. Plugin UI via `React.lazy(() => import(pluginWebPath))` (not iframe).
 
-## Audit FU8 Dead-Code Sweep (2026-04-17)
+## Plugin URL Namespace `/api/<plugin>/*`
 
-Consolidated cleanup of items flagged by the 12-audit review:
+Plugin-owned routes live under `/api/<plugin-name>/*` on the wire. Daemon strips the prefix; worker serves routes as-if-at-root. Shell wraps nothing — explicit URLs over hidden rewrites.
 
-- **Shared `src/version.ts`** for VERSION + GIT_HASH — was duplicated in daemon.ts + runtime.ts.
-- **Worker-side SSE ring buffer deleted** — daemon owns SSE (seqId, buffer, fanout). Worker just calls `onBroadcast`; daemon serializes + fans out. Removes triple-JSON-serialize path.
-- **`ctx.sseClients` removed from RuntimeContext** — worker never had SSE clients attached.
-- **`persistent-queue.ts` deleted** — dead code that bypassed the unified `projects/<id>/` storage layout.
-- **`scope: "project"` union variant dropped** from PluginManifest (only "global" is implemented). Re-introduce via task when a real per-project plugin appears.
-- **`family` PermissionMode dropped** (zero call sites). `send_message` still walks parent/child manually; when we finally apply a shared mode there, re-introduce.
-- **`@mxd/types` is now the plugin's single source** of TaskNode / FolderNode / TreeNode / TaskStatus / isFolder / isTask — `.mxd/plugin/web/types.ts` re-exports from it instead of redeclaring. `src/types.ts` is the one truth.
-- **Shell icon set reduced** from 19 to 7 in `web/icons.tsx`. `web/components/icons.tsx` (381 lines duplicated from plugin) deleted.
-- **`DaemonConfig` renamed to `RuntimeConfig`** in `runtime/context.ts` — the type configures the worker runtime, not the daemon. Old name re-exported from `runtime.ts` as a type alias for back-compat.
-- **`SystemPrompt` type moved** to `runtime/context.ts` (plugin-agnostic); `system-prompts.ts` re-exports for back-compat.
-- **ShellApp tests made hermetic** — no more `resolve(".")` (CWD-dependent). Tests derive matrix-repo path from `import.meta.url`.
-- **`_isYield` field removed** from yield prefab — yield detection is by name.
-- **`buildMatrixScopeOpts` fallback dropped** from scope-worker — plugin contract is `buildScopeOpts` or `default`.
-- **`worker-api.ts` reduced** to `SyncMap` + `SyncMessage` (everything else was declared-and-never-imported).
-- **JSDoc cleanups**: orphan comments on ScopeOpts/BaseDoneData, duplicate JSDoc on computeDepth + RunAgentOpts, "extracted for plugin reuse" that was never exported, `stripEventForUI` transitional-fix note.
+### Single source of truth
+`src/plugin.ts → pluginApiPrefix(name)` returns `/api/<name>`. Imported by:
+- `src/daemon.ts` — the `/api/:plugin/*` router branch strips this prefix.
+- `src/cli.ts` — `MATRIX_API = pluginApiPrefix("matrix")` prepended to every plugin-owned CLI call.
+- `.mxd/plugin/web/api.ts` — `PROJECT_PREFIX = \`${pluginApiPrefix("matrix")}/projects\``; every `api.tasks/taskMessage/etc` builder produces namespaced URLs.
+- `web/runtime-types.ts` — re-export so plugin web code gets it via the `@mxd/types` importmap alias.
 
-Net: ~880 lines deleted, 0 test failures, no functional behavior change.
+Any format change (`/api/...` → `/v1/plugins/...`) propagates atomically across all four sites.
 
-### dataRoot Hardening (Audit FU5)
+### Daemon routing (src/daemon.ts)
+- `app.all("/api/:plugin/*", ...)` strips the prefix, rebuilds a Request with the rewritten URL + preserved method/headers/body, forwards to that plugin's worker. Unknown plugin → 404, worker missing → 503.
+- The old `app.all("*", ...)` catch-all is **removed**. Unprefixed plugin paths (`/projects/:id/tasks` etc.) return 404 — no silent fallback to "first global worker".
+- `/version` and `/stats` got explicit daemon-level forwarders (same pattern as `/health?check_model=true`) because they were previously served only via the catch-all.
 
-**One resolver, `src/data-paths.ts`**, owns every path built from `dataRoot`. Never compute `dataRoot.slice(2)` anywhere else — the grep test in `data-paths.test.ts` fails if a second site appears. `projectTasksDir`, `projectDebugDir`, `getTracker`, and `agent-lifecycle`'s debug snapshot all route through `resolveDataRoot(dataDir, projectId, dataRoot?)`.
+### Daemon-owned paths (unchanged — stay at root)
+Plugin web + CLI call these directly, no prefix:
+- `/auth/*`, `/health`, `/version`, `/stats`, `/plugins`, `/global-context`, `/events` (SSE)
+- `/projects` (CRUD: list/create/get/patch/delete)
+- `/projects/:id` bare (project info)
+- `/projects/:id/config*` (three-layer config)
+- `/vendor/*`, `/app/*`, `/restart-daemon`
 
-**Three lines of defence**:
-1. Strict regex at input boundary — `DATA_ROOT_PATTERN = /^@(\/[A-Za-z0-9_-]+)*$/`, `PROJECT_ID_PATTERN = /^[A-Za-z0-9_-]+$/`. Run at daemon startup (`validatePluginManifest`) and at every `resolveDataRoot` call.
-2. ONE resolver — any traversal must pass regex AND the post-resolve invariant.
-3. Post-resolve invariant — `resolved.startsWith(projectRoot)` check inside `resolveDataRoot`. Belt to the regex's braces. If someone ever relaxes the regex, this still rejects traversal.
+### Plugin-owned paths (go through `/api/matrix/*`)
+Everything else under `/projects/:id/` (tasks, agent, events activity log, clarifications, stop, compact, sessions, background, debug) + standalone `/mcp` + `/mock-showcase`.
 
-**Before**: `resolveDataRoot("@/../etc")` returned `dataDir/etc` — cross-plugin attack (reported: Audit H F1, Audit C H4). Four inline `.slice(2)` sites meant every fix had to touch four files.
+### Plugin code discipline
+Plugin web uses `api.ts` builders for plugin routes — everything funnels through one file, `PROJECT_PREFIX` is the one line to change. Plugin daemon calls stay raw (`authFetch("/auth/stream-token")`, `authFetch("/global-context")`, `authFetch(\`/projects/${id}\`)`) — plugin is explicit about whose route it's calling. No shell wrapper, no pass-through list, no magic.
 
-**Malformed manifest is fatal at startup**, not a warning. `src/daemon.ts` separates import errors (recoverable, skip plugin) from validation errors (unrecoverable, throw). A malicious plugin with `dataRoot: "@/../etc"` cannot be silently skipped while its legitimate siblings run.
+`/mock-showcase` is a standalone plugin route outside the `/projects` tree — `.mxd/plugin/web/MockShowcase.tsx` inlines `${pluginApiPrefix("matrix")}/mock-showcase` directly.
 
-**Lazy dir creation respects dataRoot**. `daemon.ts`, `project-manager.ts`, `runtime.ts` used to eagerly `mkdir projects/<id>/tasks` + `projects/<id>/debug` — hardcoded Matrix's `@` layout. Deleted. `EventStore` constructor and `TaskTracker.save` mkdir on first write, at the owning plugin's dataRoot. For Matrix this is a no-op behavior change; for any plugin with `dataRoot !== "@"` it moves the dirs to the right place.
+### External MCP clients
+`POST /mcp` moved to `/api/matrix/mcp`. External MCP clients (Claude Desktop, etc.) configured against the old URL break on this change. Intentional — no deprecation alias per design.
 
-**Why path-based collision check still runs after validation**: validation alone catches `"@/foo/.."` (regex rejects). Defence in depth — `checkDataRootCollisions` also resolves both roots against a canonical `dataDir`/`projectId` and compares paths. If anyone ever relaxes the regex, the collision check still catches structural duplicates.
+### Tests (src/plugin-url-namespace.test.ts)
+Covers pluginApiPrefix invariant, every api.ts builder produces the prefix, daemon forwards correctly with body/query preserved, unknown plugin 404, bare-plugin-path 404, daemon routes untouched. Plus daemon-integration.test.ts + daemon-plugin-ui.test.ts were migrated to use namespaced URLs (new plugin name "test-matrix" → `/api/test-matrix/*`).
 
-**Key files**:
-- `src/data-paths.ts` — single source of truth (validators + resolver + task/debug dirs).
-- `src/plugin.ts` — imports validators from data-paths.ts; delegates path resolution; keeps `effectiveDataRoot` (normalizes defaults) + `checkDataRootCollisions`.
-- `src/runtime/helpers.ts` — re-exports `projectTasksDir`/`projectDebugDir` from data-paths.ts for existing callers (convenience barrel).
-- `src/runtime/agent-lifecycle.ts:~984` — passes `ctx.config.dataRoot` to `projectDebugDir` (was missing, debug snapshots landed at Matrix's path regardless of plugin).
+### Why this shape (over alternatives)
+- Not a shell authFetch wrapper: wrapper would need a daemon-route passthrough list → shell couples to daemon's internal routing table. Fragile if daemon adds routes.
+- Not plugin-via-props data flow: cleaner long-term but 100+ LOC scope creep across event stream / props plumbing — separate follow-up.
+- Explicit URL construction at each layer: plugin author sees exactly what hits the wire; no hidden rewriting; tests assert exact strings.
+
+## Plugin extraction — Chunk 1: buildMatrixScopeOpts → .mxd/plugin/, worktree via hooks (2026-06-05)
+
+First chunk of "matrix → plugin" physical extraction. Runtime (`src/runtime/*`) no longer
+CONTAINS matrix scope logic nor imports `WorktreeManager`.
+
+**Moved**: `buildMatrixScopeOpts` + `MatrixDoneData`/`MatrixPluginTypes` → `.mxd/plugin/scope-opts.ts`.
+The factory is self-contained; runtime only ever invokes it through the `ScopeOpts` hook
+interface, never by name. Leaf utilities (WorktreeManager, createOrchestratorTools,
+buildSystemPrompt, buildWorkContextContent, buildSummarizationInstruction, slugify,
+McpClientManager) stay in `src/` as neutral building blocks — the plugin imports them
+(plugin→src is the allowed direction). The LEAK was buildMatrixScopeOpts living in
+runtime/agent-lifecycle.ts, NOT the utils.
+
+**worktree-manager.ts stays in src/** (Option a — user-confirmed). Stateless git util, zero
+matrix domain knowledge; both the plugin scope-opts AND orchestrator-tools.ts (matrix code
+still in src/) import it. Re-evaluate its final home when orchestrator-tools moves (later chunk).
+
+**Worktree ops in runtime routes → hooks** (`src/runtime/routes/tasks.ts`):
+- Reactivation (verify/closed relaunch): now calls existing `scopeOpts.beforeChildLaunch(node,
+  tracker, projectPath)` — semantics matched the inline worktree-create exactly. Kept the
+  parent-no-branch 400 pre-check for behavior parity (hook throws → 500 otherwise).
+- DELETE route: new hook `ScopeOpts.onTaskDelete?(node, projectPath)`. Matrix implements via
+  `WorktreeManager.remove`. Route bridges the `removeWorktree(taskId, slug)` task-operations
+  callback contract by looking up the node (`tracker.getTask(id)` — still present: cleanup runs
+  before `tracker.remove`, and delete only works on leaf tasks). closeTaskOp/resetTaskOp worktree
+  removal stays in orchestrator-tools.ts (matrix code) — out of scope this chunk.
+
+**Hook naming rule (user)**: name lifecycle hooks by the EVENT, not the resource. `removeWorkspace`
+was REJECTED — "workspace" presupposes tasks HAVE workspaces, a plugin-specific assumption;
+runtime's BaseTaskNode is pure structure. Chose `onTaskDelete` (parallels onLaunch/onDone). Prose
+comments may use "workspace" as a generic concept; the constraint is only on the hook/API NAME —
+no "WorktreeManager"/"worktree" token in any runtime hook/API name.
+
+**Invariants held**: `grep WorktreeManager src/runtime/` → zero. Zero production (non-test) imports
+from `.mxd/plugin/` in src/ (test-utils + *.test.ts may import plugin — test infra). `bun test`
+green, `bun run typecheck` clean. test-utils/matrix-scope.ts only changed its import path to the
+new plugin location (test infra → plugin is allowed).
+
+## Narrowed plugin messaging API — deliverToNode + listNodes (2026-06-07)
+
+Two stable, named primitives in `src/resource-registry.ts` that a plugin's
+tools compose for intra-project peer messaging WITHOUT importing the internal
+singleton accessors (`getTracker` / `deliverMessage`) directly. The SDK
+(task 01KTJ4EW8T3B1YWNV9JKGGZJW2) re-exports exactly these two;
+`getTracker`/`deliverMessage` stay internal to matrix.
+
+- `deliverToNode(projectId, nodeId, msg, opts?): Promise<void>` — a thin
+  stable-named wrapper over the ONE existing `deliverMessage` (the
+  projectId-handle side-effect). NOT a fork — it calls the single delivery
+  path verbatim (JSONL persist → enqueue to a live peer's queue → auto-launch
+  an idle peer unless `opts.quiet`). The "wake an idle recipient" semantic is
+  exactly what a plugin wants. NO permission policy baked in (unlike matrix's
+  `send_message` ancestor/sub-task restriction — that's matrix policy);
+  intra-project delivery is unrestricted, the plugin's tools own routing.
+- `listNodes(projectId): ReadonlyArray<BaseTaskNode>` — fresh read-only
+  snapshot of the project's LAUNCHABLE nodes (`tracker.allNodes().filter(isTask)`).
+  General (non-launchable) nodes — matrix folders, a plugin's grouping nodes —
+  are excluded: you can only deliver to a launchable node, and `BaseTaskNode`
+  is the runtime-generic launchable shape every plugin's node type extends.
+  Returns a FRESH array each call (filter creates a new array): mutating the
+  returned array does not affect the tracker. The plugin resolves group
+  membership + name→node from each node's plugin-owned `metadata` (added to
+  `BaseTaskNode` by the node-model generalization task).
+
+### ⭐ Singleton constraint — the whole point
+Both operate on the SAME in-process tracker/session registry the agent loop
+uses (the module-level `_ctx` in resource-registry, initialized once at first
+agent launch via `R.initResourceRegistry(ctx)` in agent-lifecycle.ts:183).
+That shared singleton is the only reason a delivered message ARRIVES at a live
+peer (enqueued / auto-launched) instead of being silently dropped. A plugin
+that vendored its OWN copy of resource-registry would get a DIFFERENT `_ctx` →
+a different tracker → delivery would no-op with no error. So the SDK MUST
+re-export from this single live module, never bundle a copy. This is the same
+finding the SDK task encodes ("thin re-export of the live install, never a
+standalone bundle").
+
+### Why narrow (not just expose getTracker/deliverMessage)
+dchat was forced to import `getTracker` + `deliverMessage` (resource-registry's
+own header declares it matrix-tool-handler INTERNAL). The narrowing is
+SEMANTIC: `deliverToNode` exposes only delivery (can't be misused);
+`listNodes` exposes a read-only snapshot (can't mutate the tracker). Versus
+`getTracker` = full mutable tracker access, `deliverMessage` = raw path. The
+SDK re-exports the narrow two; the plugin never touches resource-registry.
+
+### Tests — `src/plugin-messaging.test.ts` (integration, mock provider)
+Real agent loop (createMatrixApp + lightweight non-matrix "peer" scope, no
+worktrees) so the registry is wired exactly as in production. (1) A dummy
+plugin tool `send_to_peer` (invoked from inside a running root agent) calls
+`deliverToNode` to an idle peer child → the peer AUTO-LAUNCHES, reads the
+delivered instruction, done()s → verify; asserts the delivered user message is
+in the peer's JSONL AND `registryGetTracker(projectId) === app.ctx.trackers.get(projectId)`
+(same singleton). (2) `listNodes` returns root + task children, excludes a
+folder; pushing to the returned array leaves a later call + the tracker
+unchanged. (3) broadcast: loop `listNodes` → `deliverToNode` to each OTHER
+member (exclude root + self) → both peers verify, self stays pending with no
+JSONL ("none to self"). NB: in test 1 the sender root YIELDS after the tool
+(single-turn instruction → mock end_turn) so it stays alive and the peer's
+later task_complete enqueues instead of relaunching it.
+
+### Rendering gap NOT solved here
+A plugin still can't define how its own messages render (`formatQueueMessage`
+hardcodes an XML wrapper per built-in source). Tracked as low-pri draft
+01KTJ5F5XTM32YNS6RSPW7R5PF; dchat smuggles via `source:"user"` until then.
+
+## Additive project-scoped plugin routing — dual lenses (2026-06-08)
+
+A project that ships its own `.mxd/plugin/` is served by BOTH its own scope AND
+the global matrix scope, **ADDITIVELY**. `matrix:<id>` (dev lens — coding/
+orchestration) and `<own>:<id>` (product lens — its own worker) **coexist**, on
+separate per-scope dataRoots. Shipping a plugin ADDS a lens; it NEVER removes the
+matrix dev lens.
+
+### Why additive, NOT exclusive (the lesson — don't re-pollute)
+The first attempt (commit `171a3bf`, **REVERTED by `7b17a43`**) made ownership
+EXCLUSIVE: `pluginForProject = own ?? global` (single owner) — matrix STOPPED
+serving a project that shipped its own plugin. That was WRONG:
+- **`<scope>:<project>` is a TWO-PART address — its existence PROVES dual.** If a
+  project mapped to one scope, the prefix would be redundant. Exclusive collapsed
+  it to `scope = f(project)`.
+- The original design is **"Parallel Run Loops — alongside, NOT override."**
+  Exclusive turned alongside into override.
+- Self-bootstrap REQUIRES coexistence (matrix is its own product; "product is a
+  dev tool" only holds if a project opens in both lenses at once).
+- per-plugin dataRoot (`projects/<id>/plugin/<plugin>/`) was built for multiple
+  plugins coexisting on one project — wasted under exclusive.
+
+If any routing decision tempts you toward "a project belongs to ONE plugin",
+that's the bug returning. Additive, never exclusive.
+
+### Daemon-core routing (`src/daemon.ts`)
+- `workerKeyForPlugin(plugin)`: global → `name`; project → `<projectId>:<name>`
+  (two projects can ship a same-named plugin → distinct workers). This worker KEY
+  uses `:`; it is NOT the URL scope segment (which is the bare plugin NAME).
+- `scopesForProject(id)` = all globals ∪ the project's own plugin (if any).
+  **GLOBALS-FIRST** ordering → default lens is matrix/dev. REPLACES the reverted
+  exclusive `pluginForProject` single-owner. Used by DELETE fan-out + shell.
+- `projectsForPlugin(plugin)`: **global → ALL projects** (matrix is every
+  project's dev lens, MUST know them all to resume/build scope opts); project →
+  its own project only. No double-resume: the lenses live in DISTINCT dataRoots,
+  so each worker only resumes the tree under its own dataRoot. (The reverted
+  version filtered globals to "only-owned" — dropped; that was a patch for a
+  non-problem, dataRoot already isolates.)
+- One worker per plugin (spawn loop over ALL plugins, not globals-only).
+- `onProjectInit` (startup) runs per `projectsForPlugin` → matrix scaffolds EVERY
+  project's dev lens (memory.md, hooks) — restores pre-exclusive behavior.
+- DELETE `/projects/:id` **FANS OUT** a `/stop` to every scope serving the
+  project (a running agent in ANY lens must stop before data removal).
+- `/api/:plugin/*` resolution (reused verbatim from the reverted infra, correct
+  for additive): a GLOBAL candidate named `<plugin>` is used directly → matrix
+  serves any project; else the projectId in the stripped `/projects/<id>/...`
+  path selects the project-scoped worker.
+- `firstGlobalWorkerKey()` (ready-checked) for project-agnostic routes
+  (health, /version, /stats). `firstGlobalPluginName()` = default SSE scope.
+
+### SSE is scope-aware — a "lens" = (projectId, scope)
+`scope` = the plugin NAME (URL `<pluginScope>`). A project has a DISTINCT tree
+per lens, so each lens has its own SSE stream:
+- `ShellSSEClient` carries `scope`; `/events?projectId=&scope=` (scope defaults
+  to `firstGlobalPluginName()` ?? `""` — `""` keeps an auth-only/plugin-less
+  daemon's `/events` opening 200 with no initial tree, the old behavior).
+- seqId counter + ring buffer keyed by `lensKey(projectId, scope)` =
+  `${projectId}\u0000${scope}` (`\u0000` can't appear in a ULID id or a
+  `[A-Za-z0-9_-]` name; distinct from the worker key's `:`).
+- The `sse_event` relay derives the lens from the EMITTING worker: the worker
+  serving `pluginName` → events belong to `(projectId, pluginName)`. Only clients
+  matching `(projectId, scope)` receive them → a product viewer never sees the
+  dev tree and vice versa. `setupWorkerMessageHandler` gets the plugin NAME.
+- Initial tree/clarifications come from `workerKeyForProjectScope(projectId,
+  scope)` (the VIEWED lens's worker), not "first global".
+- DELETE cleans every `${projectId}\u0000*` lens buffer.
+- Single-lens projects (no own plugin) → one worker emits scope=matrix → one
+  stream → **identical to pre-additive behavior** (the regression bar).
+
+### Shell multi-lens (`web/`)
+- `web/plugin-scope.ts → pluginsForProject(plugins, projectId)` = all globals ∪
+  the project's own plugin, **globals-first** (default = dev/matrix). Mirrors the
+  daemon `scopesForProject`.
+- `ShellApp.tsx`: `availablePlugins = pluginsFor(projectId)` feeds the scope
+  SELECTOR (lists BOTH lenses for a project with its own plugin); `scopeIsValid`
+  + URL normalization rewrite a missing/stale `<pluginScope>` to a valid lens;
+  `resolvePlugin(scope)` disambiguates same-named project plugins by projectId
+  (loads the right web bundle). `<PluginUI key={projectId/scope}>` gets a new
+  `scope` prop.
+- Plugin web: `PluginProps += scope`; threaded Plugin → PluginShell →
+  ProjectContent → `useSSE(projectId, scope, ...)` → `/events?...&scope=`.
+  `useSSE` guards `if (!projectId || !scope) return` and includes `scope` in deps
+  (lens switch → reconnect).
+
+### DEFAULT LENS = dev-first (matrix), decided
+Globals-first ordering. Rationale (orchestrator, 2026-06-08): additive
+consistency (matrix is the foundation lens every project always has, the product
+lens is the ADDITION — defaulting to product would make first-load identical to
+the reverted exclusive model and HIDE the addition; the default should TEACH the
+model), robustness (matrix dev lens always works; product workers are mid-build),
+dev-workflow fit. A FUTURE per-project configurable default (for finished,
+end-user-facing products) is draft `01KTJZ07MC0VWM923SBDZHDRP8` — do NOT bake
+product-first globally while products are under development.
+
+### Tests
+- `src/plugin-project-scope.test.ts` (additive): INVERTS the reverted "matrix
+  404s P_own" → "matrix STILL serves P_own (dev lens, 200 + Orchestrator)";
+  dual-lens coexist + ISOLATION (task in `matrix:pown` absent from `story:pown`
+  and vice-versa); DELETE fan-out (project gone from BOTH lenses); + onProjectInit
+  runs on P_own too. Keeps regression + same-named-distinct-workers + scope-info.
+- `web/plugin-scope.test.ts` (additive): a project with its own plugin sees BOTH
+  scopes, default (first) = matrix; globals-first ordering pinned.
+- `src/test-utils/story-scope.ts`: generic non-matrix test scope (reused verbatim
+  from the reverted infra — it has no exclusive/additive logic).
+
+### Pre-existing worktree noise (NOT a regression)
+Daemon tests that run `createDaemon` with the matrix repo (a git WORKTREE, where
+`.git` is a FILE) log `onProjectInit failed for matrix on matrix: ENOTDIR …
+.git/info` from `excludeWorktrees`'s `mkdir(.git/info)`. Caught + logged, tests
+pass. Predates this work (matrix's onProjectInit ran on the matrix project under
+the old code too). On a normal checkout (`.git` is a dir) it succeeds.
+
+## Plugin SDK — `mxd/plugin-sdk` bare specifier + re-exported zod (the "bun add mxd" dependency story) (2026-06-08)
+
+An out-of-tree plugin (dchat) depends on matrix's public API via a STABLE,
+depth-independent bare specifier instead of counting `../`s, with exactly ONE
+zod identity shared between matrix and the plugin. Closes the two
+dependency-boundary gaps the dchat 试水 surfaced (both had fragile workarounds:
+a dev symlink + an exact zod pin on dchat's side).
+
+### Mechanism — `exports`-map SUBPATH of the real `mxd` package (NOT `@mxd/plugin-sdk`)
+- `package.json` gains `"exports": { "./plugin-sdk": "./src/plugin-sdk.ts", "./package.json": "./package.json" }`.
+- Plugin imports `import { defineTool, type ScopeOpts, z, ... } from "mxd/plugin-sdk"`.
+- A plugin installs matrix ONCE (`bun add <matrix>` / `bun link mxd` → a
+  `node_modules/mxd` entry, typically a symlink). Bare-specifier resolution walks
+  UP node_modules → depth-independent, so it works inside the plugin's own git
+  worktree with NO `../` counting and NO dev-symlink hack (Gap A closed).
+- Chose `mxd/plugin-sdk` over `@mxd/plugin-sdk`: the `@mxd/*` names
+  (`@mxd/types`, `@mxd/auth-context`) are BROWSER virtual modules (tsconfig
+  paths + importmap), a different mechanism. A server node_modules package reusing
+  `@mxd/*` would falsely imply kinship. `mxd/plugin-sdk` is the honest subpath of
+  the real `mxd` package — the literal "bun add mxd → import its subpath" story,
+  zero extra publishing. (This overrides the `@mxd/plugin-sdk` example that
+  appeared in the original task description; orchestrator approved the deviation.)
+
+### ⭐ Singleton: thin re-export, never a vendored copy (realpath dedup — EMPIRICALLY PROVEN)
+`src/plugin-sdk.ts` re-exports matrix's own modules via RELATIVE paths. Bun/Node
+dedupe modules by REALPATH, so a plugin importing `mxd/plugin-sdk` through its
+`node_modules/mxd` symlink resolves to the SAME physical files → the SAME process
+singletons matrix's agent loop uses (the module-level `_ctx` in
+resource-registry.ts). So `deliverToNode`/`listNodes` hit the ONE in-process
+tracker — a delivered peer message ARRIVES (enqueued / auto-launched), never
+silently dropped against a different `_ctx`. A vendored copy = different realpath
+= different `_ctx` = silent no-op. Proven: a probe outside matrix with a
+`node_modules/mxd` symlink shares matrix's `_ctx` (and `listNodes` returns the
+EXACT same node object the app's tracker holds — reference identity).
+
+### ⭐ One zod identity (Gap B closed) + exact pin (DO NOT re-add the caret)
+- The SDK does `export { z } from "zod"`. A plugin imports `z` from the SDK →
+  matrix's exact zod instance → a plugin's `z.string()` passes matrix's
+  `shapeToJsonSchema` (`z.toJSONSchema(z.object(pluginShape))` — matrix's z
+  wrapping the plugin's schema; only works when both are the same ZodString
+  class). The plugin need not depend on zod at all.
+- `package.json` pins `"zod": "4.3.6"` EXACT — the caret (`^4.3.6`) was the drift
+  root cause on BOTH sides (dchat drifted to 4.4.3 → two distinct ZodString types
+  → `defineTool` stopped typechecking). package.json is strict JSON (no inline
+  comment possible) — this memory entry IS the "why no caret"; a future agent
+  must NOT re-loosen it without re-reading the zod-identity requirement.
+
+### Surface — EXACTLY the finalized manifest, never widened (anti-pattern #6)
+Type-only: `ScopeOpts`, `PluginTypes`, `BaseDoneData`, `RuntimeContext`
+(runtime/context.ts); `BaseTaskNode`, `TaskStatus` (types.ts); `Auth`
+(tool-auth.ts); `PluginManifest` (plugin.ts).
+Runtime values: `defineTool`, `toToolDefinition` (tool-def.ts); `createYieldTool`,
+`createDoneTool` (tools/prefab.ts); `createUserMessage` (queue-message-factory.ts);
+`isTask` (types.ts); `deliverToNode`, `listNodes` (resource-registry.ts — the
+NARROWED messaging API, NOT raw getTracker/deliverMessage which stay internal);
+`z` (zod). NO `checkPermission` (only `Auth` as a type), NO LLM facility — no
+plugin imports them today.
+
+### Exports map narrows the surface (gating is load-bearing)
+Adding `exports` GATES deep imports: `import "mxd/src/resource-registry.ts"` now
+FAILS to resolve — so `getTracker`/`deliverMessage` are un-importable; only the
+narrowed `deliverToNode`/`listNodes` reach a plugin. Verified safe to add: ZERO
+bare `mxd/`/`matrix/` self-imports exist in the tree (matrix uses relative
+imports; the worker `import()`s plugins by ABSOLUTE path — both bypass package
+resolution, so gating breaks nothing internal). The aspirational
+`import "matrix/src/llm.ts"` docstring in src/llm.ts was wrong (wrong name +
+non-resolving) and is unrelated — left as-is (not in scope).
+
+### Tests
+- `src/plugin-sdk.test.ts` (NEW, 7 tests): (1) thin re-export reference identity
+  (every value === its origin symbol; `z` === zod's z); (2) zod identity
+  end-to-end (SDK's z through toToolDefinition); (3) bare-specifier-through-symlink
+  singleton — `listNodes` reads the app's own tracker, and the returned node is
+  REFERENTIALLY the app's tracker node (the headline "same live tracker" proof);
+  (4) zod through the bare specifier; (5) deep-import gating (exports map blocks
+  `mxd/src/...`).
+- `src/plugin-messaging.test.ts` (REROUTED): its dummy plugin now consumes the
+  PUBLIC SDK surface (`./plugin-sdk.ts`) instead of resource-registry directly —
+  so its real-agent-loop tests ("deliverToNode wakes an idle peer on the SAME
+  tracker", listNodes snapshot, broadcast) double as the LITERAL proof that the
+  SDK's deliverToNode delivers + wakes in a loop. `registryGetTracker` stays the
+  internal accessor (used only to ASSERT identity, intentionally off-surface).
+  Reference identity + this reroute = airtight arrival coverage WITHOUT
+  duplicating the agent-loop harness.
+
+### Gotcha — `deliverToNode` needs `registerSideEffects` (wired at AGENT LAUNCH, not createApp)
+`_ctx` is set by `initResourceRegistry` (createApp path), but `_deliverMessage`
+(backing `deliverMessage`/`deliverToNode`) is registered by `registerSideEffects`
+which runs inside `buildAgentContext` at agent launch (agent-lifecycle.ts:184).
+So `deliverToNode` THROWS "deliverMessage not registered" if called outside any
+agent loop (e.g. a fresh createMatrixApp with no launch). `listNodes` works
+without a launch (only needs `_ctx`). This is why the SDK's deliverToNode arrival
+is tested via a real loop (plugin-messaging) not a bare createApp.
+
+## Mock-showcase extraction — unconditional → matrix-plugin-only (2026-06-09)
+
+Mock-showcase (static data endpoint + standalone UI page for component development)
+extracted from unconditional runtime registration into the matrix plugin.
+
+### What moved
+- `src/runtime/routes/mock-showcase.ts` → `.mxd/plugin/routes/mock-showcase.ts`
+- `src/runtime/routes/mock-showcase-image.png` → `.mxd/plugin/routes/mock-showcase-image.png`
+- Route registered in `.mxd/plugin/runtime.ts` `registerRoutes`, not `src/runtime.ts`
+
+### Leak fixed
+Previously `registerMockShowcaseRoute(app)` was called unconditionally in
+`src/runtime.ts` for EVERY plugin worker. Now only the matrix plugin worker serves it.
+
+### UI activation path
+Old: `?mock=true` query param — dead since Task Y.
+New: `/<projectId>/matrix/mock-showcase` — Plugin.tsx lazy-loads MockShowcase when
+`pluginPath === "mock-showcase"`.
+
+### Key details
+- MockShowcase.tsx stays at `.mxd/plugin/web/MockShowcase.tsx` (unchanged location)
+- Data endpoint URL unchanged: `GET /api/matrix/mock-showcase`
+- No new plugin entity — mock-showcase is a FEATURE of the matrix plugin
+- Moved route file uses `../../../src/` relative paths (same pattern as scope-opts.ts)
+
+---
+# Auth & External API
+---
+
+## Stateless HTTP MCP Endpoint
+
+POST `/mcp` — MCP Streamable HTTP transport for external clients. Stateless: no attach_to, no session state. 6 tools: list_projects, get_tree, get_task, get_logs (both), send_user_message, yield_external (external-only). ToolDef `availability: "internal" | "external" | "both"` on every tool. Workflow: send_user_message → yield_external → get_logs.
+
+## Anti-pattern: Conflating Attached-Observer with Peer-Project
+
+**Lesson**: Layer 1 (attached external client, asymmetric) and Layer 2 (peer project, symmetric) are different relationships. Same wire format ≠ same semantic. Check symmetry before unifying.
+
+## Auth
+
+Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_key>` → encrypted JWT → paste to browser. CLI auto-auth via `signCLIToken()`.
+
+## Auth/Resource Split
+
+- `tool-auth.ts`: Auth opaque type. `checkPermission(auth, mode, resource)`. Modes: project, exact, subtree, family, root, human.
+- `resource-registry.ts`: Global handle-based functions (`R.getTracker`, `R.emit`, etc.). No closures.
+- `tool-def.ts`: ParamDecl with `bind`. Handler signature: `handler(args, auth, toolCallId)`.
+- All 32 tools use ToolDef + auth + global functions. Zero closure-based handlers.
+
+## AuthGroup Discriminated Union
+
+`AuthGroup = AnthropicAuthGroup | OpenAIAuthGroup` — discriminated on `provider`. `systemPreamble?: string` on Anthropic. System blocks always `ttl: "1h"`.
 
 ## Auth Hardening (Audit FU4)
 
@@ -1030,129 +3458,6 @@ other} + one-line curated headline. Raw message preserved (trimmed to
 300 chars) for debugging. Used by `runAgentForNode` catch + provider
 outer-retry emit — users no longer see raw Anthropic JSON blobs.
 
-## Durability at process boundaries (FU2)
-
-Three tightly-coupled durability gaps closed so process exits + stops don't lose data:
-
-### shutdown() + stopAgent loop settlement
-
-- `shutdown()` order: (1) stopAgent on every running project, (2) await residual `ctx.agentLoopPromises` (bounded 1s), (3) `Promise.all(eventStores.map(s => s.flush()))`. Without (3), fire-and-forget `emitEvent` queued in `agent_end`/`done_notified`/tool_results was lost on worker terminate.
-- `stopAgent` awaits loop settlement (bounded 1s) — symmetric with stopTask. Closes the race between `POST /projects/:id/stop` returning and the finally block's `agent_end` / Phase 2 `done_notified` / MCP disconnect writes. Fixes DELETE /projects → pm.delete → rm -rf racing with in-flight JSONL writes.
-- Both timeouts are defensive: real providers respect abort within ms. A stuck tool (foreground bash ignoring abort) gets bounded grace, then `buildSessionRepair` on next startup synthesizes the interrupted tool_result (orphan-repair contract). **Do NOT call `fg.resolve()` in stopAgent** — that moves bash cleanly to background and breaks the orphan-repair semantic.
-- Restart-crash integration tests (Restart B/I/J/K/N, LC3) rely on shutdown leaving foreground-tool orphans for autoResume to repair. 3s timeout was too slow for 5s test timeouts; 1s is the sweet spot.
-
-### Worker init timeout + restart backoff (daemon)
-
-- `WORKER_INIT_TIMEOUT_MS = 30_000` default, override via `createDaemon({ workerInitTimeoutMs })` for tests. Without this, a hung plugin `runtime.ts` (top-level `await new Promise(()=>{})`) hangs daemon boot forever — no log, no 503.
-- On timeout: `worker.terminate()` + reject with `"Worker init timed out: <plugin> (>30000ms)"`. Tests use 1.5s override.
-- Exponential backoff on crash-restart: `[2, 4, 8, 16, 30]s`, max 5 attempts, then circuit-break (log + SSE `worker_circuit_broken` event). `STABLE_RESET_MS = 60_000` — a worker that's been ready 60s resets its attempt counter. Per-scope state in `workerRestartState: Map<string, {attempts, lastReadyAt, circuitBroken}>`.
-
-### Test rule: createDaemon-with-worker beforeAll budget ≥ WORKER_INIT_TIMEOUT_MS
-
-When a test's `beforeAll` calls `createDaemon` with a global-scope plugin (i.e., a worker spawn happens inside createDaemon), the test's beforeAll timeout MUST be ≥ the daemon's WORKER_INIT_TIMEOUT_MS (default 30s) — otherwise the test's timer fires first on a real flake and the test reports a useless "beforeAll timed out" with no diagnostic, masking the daemon's much-better "Worker init timed out: <plugin> (>30000ms)" message that names the actual stuck plugin.
-
-Measured cost of `createDaemon` with one global plugin (no plugin runtime, no projects to resume):
-- Cold isolated: ~213ms total (worker spawn ~120ms is dominant; web build ~37ms; plugin discovery ~35ms; rest <15ms)
-- Warm mid-suite: ~137ms total (worker spawn ~107ms)
-- Heavy contention (24 CPU stressors + 4 parallel `bun test`): peak ~346ms total (worker spawn ~209ms)
-
-Normal headroom is 100×+ over a 30s budget. A 15s budget had >40× headroom and still produced rare flakes from extreme scheduler stalls; the test never observed which step stalled because the test's own timer fired first. **Default rule: pick 30s for any beforeAll that spawns a worker via createDaemon. Don't try to fit it under 15s "to fail fast" — fast is meaningless when it's failing on the wrong timer.**
-
-`createTestToken` does NOT generate RSA keys (HMAC JWT secret only) — typically 2-3ms. Not a hypothesis worth investigating for slow daemon-test bootstraps. The dominant cost is always worker spawn.
-
-### tracker.save() atomic via temp + rename
-
-- Writes `.{basename}.tmp.{pid}.{time}.{rand}` sibling, then `rename` to `tree.json`. POSIX rename is atomic — crash mid-write leaves old `tree.json` intact, not truncated.
-- `mkdir` before writeFile stays — removing it broke projects added via `pm.sync` (no pre-existing tasks/ dir).
-- **Test gotcha**: temp-file rename races with recursive `rm(dataDir)` during test teardown. The rm lists entries, then rename moves the tmp entry, then rm tries to delete the now-gone tmp → ENOENT. Fix: every test afterEach uses `rm(..., { recursive: true, force: true })`.
-
-### dataDir filesystem lock
-
-- `.mxd.lock` at `<dataDir>/.mxd.lock` — JSON `{pid, startedAt, version}`. Acquired via `O_EXCL` (`openSync(..., 'wx')`). Stale locks (dead PID via `process.kill(pid, 0)`) are stolen; live PID → error "already running on dataDir X (PID Y)".
-- `createDaemon({ lockDataDir: true })` — opt-in. Production entry passes `true`; tests pass `false` (concurrent test daemons on isolated tempdirs). Lock released in `shutdown()` AFTER workers are gone.
-- **Semantic**: refuses even when the lock holds our own PID. A second `createDaemon` in the same process is a test bug or double-init — better to surface it.
-
-### Test mock abort awareness
-
-- Integration test mocks using `setTimeout(resolve, 10000)` / `5000` now call `abortableSleep(ms, req.signal)` helper in `runtime.test.ts`. Without signal awareness, stopAgent's loop-settlement await would wait the full sleep window. Real providers (Anthropic, OpenAI SDKs) already respect abort; this brings mocks in line.
-
-## bash tool: tiered output + merged streams (FU9)
-
-Defensive-instinct-as-tool-design. AI piped/redirected because context was at risk; now context is bounded by the tool, so the instinct has nothing to act on.
-
-### Tiered display (merged mode, default)
-- `<1024 bytes` → inline only, no file saved
-- `1024..10240` → full inline + top/bottom banner + file kept at `/tmp/mxd/exec-<id>.out`
-- `>10240` → head 5KB + `... [N bytes / M lines truncated] ...` + tail 5KB + banner + read hint; file kept
-- Boundary: `head_budget + tail_budget >= total` naturally shows full (no special-case for size===10240)
-- Truncation: byte-aware + newline alignment via `Buffer.lastIndexOf(0x0a, budget-1)` / `Buffer.indexOf(0x0a, total-budget)`. No newline in window → hard byte cut + "mid-line cut" annotation.
-
-### Separate mode (opt-in `separate: true`)
-Two files: `/tmp/mxd/exec-<id>.stdout` + `.stderr`. Budget allocation in the large case: if one stream is trivial (≤5KB), show it in full and give the other `BUDGET - trivial_size` split head/tail; else each gets 2.5k+2.5k. Continuous at boundary (stderr=5120 → both 5KB; stderr=5121 → stdout 2.5k+2.5k).
-
-### Stream merging
-`bash -c "(cmd) 2>&1"` wrapping. AI-written `2>&1` inside `cmd` becomes a harmless redundant no-op. Bash's own stderr (pre-subshell syntax errors, rare) is `stderr: "ignore"` at Bun.spawn level — acceptable tradeoff for clean single-file output.
-
-### Foreground/background parity
-One `formatBashResult` function. The `content` field of `background_complete` queue messages is byte-identical to what `parseForegroundResult` returns when the same command runs foreground.
-
-### Directory rename
-`/tmp/mxd-bg/` → `/tmp/mxd/`. The dir is no longer bg-specific (foreground commands save there too). `BackgroundProcess.separate: boolean` is the new mode discriminator; `stdoutPath` holds the `.out` file in merged mode (misleading name, kept for API compat).
-
-### Pure-function exports for testing
-`formatMergedOutput(path, exitCode)`, `formatSeparateOutput(so, se, exitCode)`, `truncateMiddle(buf, headBudget, tailBudget)`, `allocateSeparateBudget(stdoutSize, stderrSize)` — all exported from `src/tools/bash.ts` so tests hit them directly without spawning subshells.
-
-### Tool description vs system prompt
-The "don't pipe" guidance lives in the bash tool's `description` field (`src/tools/definitions.ts`), NOT in `src/system-prompts.ts`. Tool description is per-tool, embedded in API tool schema. system-prompts.ts has one general line about piping during long commands that's still accurate.
-
-### Architectural framing the task demonstrated
-When AI repeatedly does X (pipe/redirect/`| head`), ask: is the motivation legitimate? If yes (context protection IS legitimate), make the tool satisfy it naturally — don't enforce against it. Rule suppression leaks at edges; tool-level satisfaction closes the loop. If you find yourself adding parser/rejection/warning to the new tool, you drifted — the point is to make shortcuts unnecessary, not forbidden.
-
-## Plugin URL Namespace `/api/<plugin>/*`
-
-Plugin-owned routes live under `/api/<plugin-name>/*` on the wire. Daemon strips the prefix; worker serves routes as-if-at-root. Shell wraps nothing — explicit URLs over hidden rewrites.
-
-### Single source of truth
-`src/plugin.ts → pluginApiPrefix(name)` returns `/api/<name>`. Imported by:
-- `src/daemon.ts` — the `/api/:plugin/*` router branch strips this prefix.
-- `src/cli.ts` — `MATRIX_API = pluginApiPrefix("matrix")` prepended to every plugin-owned CLI call.
-- `.mxd/plugin/web/api.ts` — `PROJECT_PREFIX = \`${pluginApiPrefix("matrix")}/projects\``; every `api.tasks/taskMessage/etc` builder produces namespaced URLs.
-- `web/runtime-types.ts` — re-export so plugin web code gets it via the `@mxd/types` importmap alias.
-
-Any format change (`/api/...` → `/v1/plugins/...`) propagates atomically across all four sites.
-
-### Daemon routing (src/daemon.ts)
-- `app.all("/api/:plugin/*", ...)` strips the prefix, rebuilds a Request with the rewritten URL + preserved method/headers/body, forwards to that plugin's worker. Unknown plugin → 404, worker missing → 503.
-- The old `app.all("*", ...)` catch-all is **removed**. Unprefixed plugin paths (`/projects/:id/tasks` etc.) return 404 — no silent fallback to "first global worker".
-- `/version` and `/stats` got explicit daemon-level forwarders (same pattern as `/health?check_model=true`) because they were previously served only via the catch-all.
-
-### Daemon-owned paths (unchanged — stay at root)
-Plugin web + CLI call these directly, no prefix:
-- `/auth/*`, `/health`, `/version`, `/stats`, `/plugins`, `/global-context`, `/events` (SSE)
-- `/projects` (CRUD: list/create/get/patch/delete)
-- `/projects/:id` bare (project info)
-- `/projects/:id/config*` (three-layer config)
-- `/vendor/*`, `/app/*`, `/restart-daemon`
-
-### Plugin-owned paths (go through `/api/matrix/*`)
-Everything else under `/projects/:id/` (tasks, agent, events activity log, clarifications, stop, compact, sessions, background, debug) + standalone `/mcp` + `/mock-showcase`.
-
-### Plugin code discipline
-Plugin web uses `api.ts` builders for plugin routes — everything funnels through one file, `PROJECT_PREFIX` is the one line to change. Plugin daemon calls stay raw (`authFetch("/auth/stream-token")`, `authFetch("/global-context")`, `authFetch(\`/projects/${id}\`)`) — plugin is explicit about whose route it's calling. No shell wrapper, no pass-through list, no magic.
-
-`/mock-showcase` is a standalone plugin route outside the `/projects` tree — `.mxd/plugin/web/MockShowcase.tsx` inlines `${pluginApiPrefix("matrix")}/mock-showcase` directly.
-
-### External MCP clients
-`POST /mcp` moved to `/api/matrix/mcp`. External MCP clients (Claude Desktop, etc.) configured against the old URL break on this change. Intentional — no deprecation alias per design.
-
-### Tests (src/plugin-url-namespace.test.ts)
-Covers pluginApiPrefix invariant, every api.ts builder produces the prefix, daemon forwards correctly with body/query preserved, unknown plugin 404, bare-plugin-path 404, daemon routes untouched. Plus daemon-integration.test.ts + daemon-plugin-ui.test.ts were migrated to use namespaced URLs (new plugin name "test-matrix" → `/api/test-matrix/*`).
-
-### Why this shape (over alternatives)
-- Not a shell authFetch wrapper: wrapper would need a daemon-route passthrough list → shell couples to daemon's internal routing table. Fragile if daemon adds routes.
-- Not plugin-via-props data flow: cleaner long-term but 100+ LOC scope creep across event stream / props plumbing — separate follow-up.
-- Explicit URL construction at each layer: plugin author sees exactly what hits the wire; no hidden rewriting; tests assert exact strings.
-
 ## auth.json file mode — 0o600 + chmod-on-init
 
 `src/auth.ts:writeAuthData` passes `{mode: 0o600}` to `writeFile`. Legacy files get a one-time upgrade via `ensureSecureFileMode` called at the top of `ensureAuthInitialized` (daemon boot).
@@ -1219,48 +3524,6 @@ Migrated files: `daemon.test.ts`, `daemon-auth.test.ts`, `daemon-bootstrap.test.
 - `/vendor/`, `/app/` (prefix match) — compiled bundles, no secrets
 - Everything else under `/auth/*` requires a token. Regression test: `/auth/bogus` → 401.
 
-## Audit R7 [LOW] drift cleanup (2026-04-18)
-
-Four cosmetic items flagged by Audit R7 bundled in one commit:
-
-### pluginApiPrefix split: `src/plugin.ts` → `src/plugin-url.ts` (zero imports)
-
-`pluginApiPrefix(name)` moved to a standalone file with ZERO imports. Rationale:
-- `web/runtime-types.ts` (compiled to browser via `@mxd/types` importmap) re-exports `pluginApiPrefix` for plugin web code.
-- Before the split: `plugin.ts` imported `data-paths.ts` which imports `node:path`. Bun's `target: "browser"` polyfilled the entire `node:path` module (~10 KB of assertPath/normalize/resolve/join/...) into every plugin's first-load bundle.
-- Built `runtime-types.js` size: **10,293 B → 281 B (37× reduction)**.
-- Server callers (cli, daemon, tests) import from `./plugin-url.ts` directly — one canonical location, no re-export. **Corrects the earlier "Plugin URL Namespace" memory entry that listed `src/plugin.ts` as the home.**
-
-Regression guard: `src/plugin-url-namespace.test.ts` builds the shared module at test time and asserts `runtime-types.js < 500 bytes`. Any future re-introduction of a `node:*` transitive dep (or other server-only import) into `web/runtime-types.ts`'s graph will exceed the threshold and fail loud.
-
-JSDoc fix: the old `pluginApiPrefix` docstring claimed "shell wraps a plugin's authFetch so relative paths become prefixed automatically" — the opposite of the b42c9a2 design, which explicitly rejects a shell wrapper. New docstring reflects reality ("explicit prefix prepended by each call site; no shell wrapper, no hidden rewriting").
-
-### BackgroundProcess dead fields removed
-
-`stdout: string` and `stderr: string` on `BackgroundProcess` were zero-initialized and never read. Removed from `src/tools/bash.ts` (type + constructor) and from 4 test object literals in `src/anthropic-compatible-provider.test.ts`. The "kept for test harness compat" comment was stale — grep confirmed zero reads.
-
-### resetAuthDataCache deleted
-
-`resetAuthDataCache` in `src/auth.ts` became a deprecated no-op after FU4 removed the in-memory cache. Zero callers remained; deleted outright to prevent future code from importing it expecting cache-flush semantics.
-
-## Audit R7: "Clear All Sessions" feature deleted
-
-The project-wide `POST /projects/:id/sessions/clear` endpoint, its CLI subcommand (`mxd sessions clear`), the SettingsPanel danger-zone button, the `/clear` slash command, and `EventStore.clearAll()` are GONE. `handleClearSessions` (shell + plugin), `api.sessionsClear`, and the i18n strings (`settings.clearAllSessions*`, `confirm.clearSessions`) are deleted.
-
-**Why deleted**: User decided deletion over repair (post-audit-R7 discussion). Repair would have required an architectural call on whether shell should know plugin URL prefixes; the feature itself has no unique use case:
-- `reset_task` already handles per-task reset
-- Delete-project + re-add covers "fresh start for this project"
-- Per-task `POST /projects/:id/tasks/:nodeId/sessions/clear` (called from OrchestratorDetail / TaskDetail "Clear Session" buttons) remains and handles per-task reset
-
-**Kept (do NOT confuse with the deleted feature)**:
-- `EventStore.clear(sessionId)` — per-session JSONL delete (used by per-task clear route)
-- `POST /projects/:id/sessions/prune` — prunes oldest JSONL files (used by autoResumeProjects + `mxd sessions prune` CLI)
-- `POST /projects/:id/tasks/:nodeId/sessions/clear` — per-task clear, the `reset_task`-equivalent for the UI
-- `taskSessionsClear` in `.mxd/plugin/web/api.ts` — calls the per-task route
-- `clearSessionState` in `event-handler.ts` — frontend state cleanup helper, unrelated to the API
-
-Rule going forward: deletion is preferable to repair when a feature is duplicative AND the user explicitly wants it gone. Don't reach for "fix the URL bug" when the feature itself doesn't justify its surface area.
-
 ## Audit R7 P2 — CLI onboarding fixes (2026-04-18)
 
 Two independent CLI fixes, both in `src/cli.ts`, landed as separate commits for per-fix revert granularity. Both pinch points were filed by five+ independent auditors — onboarding-critical.
@@ -1286,6 +3549,22 @@ Stream token rides in `?token=` on `/events`; CLI Bearer rides as `Authorization
 **Test gotcha (macOS)**: `mkdtemp(tmpdir())` returns `/var/folders/...` but `process.cwd()` inside the spawned subprocess returns the resolved `/private/var/folders/...`. `resolveCurrentProject`'s string compare fails; CLI exits 1 with "No project found for current directory" before ever reaching the stream-token flow. Fix in test setup: `realpathSync(await mkdtemp(...))` for both dataDir and fakeHome, so the project is registered with the path the CLI's `cwd` actually resolves to.
 
 **Mutation-verified**: all 6 tests (3 per fix, in `src/cli-audit-r7-p2_1.test.ts` and `src/cli-audit-r7-p2_2.test.ts`) fail when the fix line is reverted. Test 3 of P2.2 especially — stdout shows `"Reconnecting in 2s... (attempt 1)"` without the fix, exactly the 401-loop symptom users reported.
+
+---
+# Web UI — Routing, State & Event Handling
+---
+
+## UI Notes
+
+- Event fetching: per-session (`api.taskEvents(projectId, sessionId)`) not per-project. Forked sessions contain parent events — merging causes stale content.
+- Derived state reset: ALL state cleared on project/task switch (logs, tokenUsage, pendingMessages, etc.).
+- Lifecycle entry collapse: consecutive lifecycle-only entries collapsed, keeping last per run.
+- Agent status: **SUPERSEDED 2026-07-25 — see "Agent activity: one explicit backend state" at the end of this file.** This used to read: *"`activeAgents` Set updated globally in `handleEvent` BEFORE per-session filter (agent_active/idle/stopped/orchestration_started/orchestration_completed). `processEventBatch` calls `checkAgentStatus()` after processing to overwrite stale state from historical events."* That second sentence WAS the bug report — replaying the log falsely activated agents, so a poll had to undo it. Activity is now one explicit backend state pushed by the server (and asked for at connect); `activeAgents` is derived from it in one place, and nothing reconstructs it from events.
+- Per-task message drafts: `localStorage` key `mxd-prompt-draft:<nodeId>`. Debounce uses `targetRef.current` (not `targetNodeId` in deps) to avoid saving stale prompt to wrong task key during render transition.
+- `/compact` targets viewed task: backend reads `nodeId` from POST body, falls back to rootNodeId. Frontend passes `viewedTaskId`.
+- Task tree sort: `STATUS_PRIORITY` in TaskTree.tsx: in_progress(0) > verify(1) > pending(2) > draft(3) > failed(4) > closed(5). Stable sort preserves user ordering within each status group.
+- hideCompleted filter: hides `closed` and `failed` only. `verify` is actionable and remains visible.
+- Scroll follow mode: scroll-to-bottom re-enables follow, scroll-up disables. Follow button also enables.
 
 ## Fix A (2026-04-18) — root is a regular task, not a null sentinel
 
@@ -1770,87 +4049,6 @@ list; forgetting → cross-project leaks.
 
 Net LOC: -20 (+7 / -27).
 
-## Content-hashed build pipeline (2026-04-18) — `Cache-Control: immutable` replaces `no-store`
-
-**What shipped**: every asset `buildWebAssets` emits carries its content hash
-in the filename. `main-a1b2c3d4.js`, `react-7h8j9kml.js`, `styles-q2w3e4r5.css`.
-Served with `Cache-Control: public, max-age=31536000, immutable`. HTML that
-references them is served with `Cache-Control: no-cache, must-revalidate` so
-the browser always asks "is there a new index?" and never asks "is the
-hashed JS still fresh?".
-
-**Why**: Task Y SPA fallback memorized the deferred cache-hygiene problem —
-"browser caches old `/app/web/main.js` after daemon restart". Two
-options: `Cache-Control: no-store` (band-aid — works but every reload
-re-downloads the ~MB shell) vs content hash (standard web pattern —
-cache win is preserved, and stale content is impossible because stale
-URLs literally don't exist on disk). User ordered the second.
-
-**Mechanism**:
-- `Bun.build({ naming: "[name]-[hash].[ext]" })` for vendor shims,
-  shared modules, and plugins.
-- `Bun.build({ naming: "[dir]/[name]-[hash].[ext]" })` for the shell
-  entry — preserves the `web/` subdir.
-- CSS goes through `hashRename(sourcePath, outDir, logicalBasename)`
-  which reads bytes, computes `Bun.hash → base36 → low 8 chars`, copies
-  to `<logicalBasename>-<hash>.<ext>`. Same shape as Bun.build's own
-  hashes so URLs look uniform.
-- `manifest: Record<string, string>` — logical URL → hashed URL. Populated
-  for every asset. Used by `generateIndexHTML` to emit the correct
-  `<script>`/`<link>`/importmap hrefs.
-- `importmap.imports` is sourced from `manifest` — so every bare
-  specifier (`react`, `@mxd/auth-context`, etc.) resolves through the
-  importmap to a hashed URL. If the manifest is missing an entry, build
-  throws (`Vendor shim ${specifier} missing from manifest`) instead of
-  silently emitting a bare URL that would 404.
-
-**Cache header semantic**:
-- Hashed asset URL changes iff content changes → `immutable` is safe.
-- HTML URL (`/` and every SPA-fallback path) is stable → `no-cache`
-  forces revalidation on every navigation. Daemon rebuild → next index
-  fetch learns the new hashed asset URLs → browser downloads them
-  fresh. No orphan references, no band-aid.
-
-**Determinism**: `Bun.hash` on content bytes is pure. Two builds of the
-same source produce identical hashes → identical filenames → identical
-HTML → byte-identical deployments. Changed source → different hash →
-different filename → automatic cache bust.
-
-**Tests** (`src/web-builder.test.ts`, 18 tests, including):
-- Every importmap entry is a hashed URL
-- Every logical asset URL has a manifest entry pointing at a hashed URL
-- Two builds of same input produce identical hashes
-- Changed shell source produces a different shell hash
-- CSS content change produces a different CSS hash
-- Plugin output is hashed; hashed file exists on disk
-
-**Tests updated** (dropped hardcoded `/app/web/main.js` references):
-- `src/daemon-bootstrap.test.ts:244` → regex match against
-  `/app/web/main-[a-z0-9]{8}\.js`
-- `web/ShellApp.test.tsx:60,61,78,82` → extract hashed URLs from HTML,
-  fetch those; also assert `Cache-Control: immutable` on assets +
-  `no-cache` on HTML.
-- `src/plugin-url-namespace.test.ts` runtime-types.js size regression
-  → look up hashed path via manifest instead of `vendor/shared/runtime-types.js`.
-
-**What NOT to do**:
-- Don't add `Cache-Control: no-store` anywhere as a fallback. Either
-  the URL is content-addressable (immutable) or it's the index (no-cache).
-  `no-store` is the band-aid the hashing design replaced.
-- Don't hardcode logical asset URLs (`/app/web/main.js`) in production
-  code — only the manifest knows the real hashed URL.
-- Don't assume Bun.build hash width matches our manual CSS hash width
-  blindly; the test regex `[a-z0-9]{8}` pins the shape. Bun could widen
-  it in a future version — if so, update `shortContentHash` to match
-  and re-run the shape tests.
-
-**Anti-pattern avoided**: my first instinct was to write `no-store` +
-add a query-string cache buster `?v=abc123`. Both are cargo-cult. Query
-strings defeat CDN caching; `no-store` wastes bandwidth. Content-
-addressable URLs are the web-native answer to this class of problem —
-the browser's cache is already an infinite content-addressable store if
-you feed it content-addressable URLs.
-
 ## compacted_resume UI card (2026-04-18) — queueEntryToUIEvent is the UI materialization gate
 
 Rendered post-compact summaries as a collapsible card in the activity log
@@ -1921,1375 +4119,44 @@ renders without running a real compaction.
   messages_consumed produces exactly ONE log entry (no duplicate).
   Mutation proofs documented per-test.
 
-## EventStore generation guard: sync writes + post-check (2026-04-18)
-
-`src/event-store.ts` `append`/`appendBatch` use `appendFileSync` (not
-`fs.promises.appendFile`). The guard check and the filesystem write
-must happen in the SAME microtask — anything async between them lets
-`clear()` interleave and recreate a just-unlinked file.
-
-### Race symptom (the flake)
-
-`Integration: resetTask JSONL cleanup race` tests, especially "reset
-running agent during bash: JSONL stays deleted", failed under CPU
-contention with "JSONL reappeared after Nms — async cleanup wrote
-after clear".
-
-### Root cause
-
-Old code in `enqueueWrite`:
-```ts
-const guardedFn = () => {
-  if (this.getGeneration(sessionId) !== generation) return Promise.resolve();
-  return writeFn();  // returns async appendFile Promise
-};
-```
-
-Sequence under contention:
-1. `guardedFn` microtask runs: guard passes (G0 == G0).
-2. `writeFn = () => appendFile(path, line)` called. libuv schedules
-   `open(path, O_APPEND | O_CREAT)` on the thread pool. `guardedFn`
-   returns the pending Promise.
-3. Main thread is free. Test's `eventStore.clear(rootId)` runs:
-   generation bumped to G1, `unlinkSync` removes the file.
-4. libuv thread pool finally wakes, calls `open(O_APPEND | O_CREAT)`.
-   `O_CREAT` creates a NEW file (directory entry was just removed).
-5. Writes the line. Closes. File has reappeared.
-
-The window is typically sub-ms and invisible. Under load (sibling tests
-saturating the libuv thread pool), it widens to tens of ms — wide enough
-to flake.
-
-### Fix (two layers)
-
-**Primary — sync writes**: `append`/`appendBatch` use `appendFileSync`
-inside the guardedFn. Guard check + write happen synchronously in one
-microtask; `clear()` cannot interleave by construction.
-
-**Defense — post-check**: after `await writeFn()` in `guardedFn`, check
-generation again. If `clear()` ran DURING writeFn, any file writeFn
-created is a zombie — `unlinkSync` it. Redundant in the fast path (sync
-writeFn leaves no window) but catches any future caller who passes an
-async writeFn.
-
-### Why sync I/O is fine
-
-- Per-write cost: one JSONL line (~100 bytes), microseconds on SSD.
-- Writes are already serialized per-session via `writeQueues` Promise
-  chain. Sync just means each link of the chain is itself atomic.
-- Main thread is usually idle between provider streaming ticks; blocking
-  it for microseconds is invisible.
-
-### Regression tests (mutation-proof)
-
-`src/event-store.test.ts`:
-- `race: clear during async writeFn delay → post-check unlinks zombie`:
-  uses reflection to call private `enqueueWrite` with a deliberately
-  slow async writeFn. After 5ms (guard passed, writeFn sleeping), test
-  calls `clear()`. When writeFn finally writes, post-check must remove
-  the zombie. Fails without Layer 2.
-- `race: new agent enqueues AFTER clear — new write survives post-check`:
-  exercises the edge where W1 (old gen, slow async) + clear + W2 (new
-  gen, fast sync) all chain on the same session. W1's zombie gets
-  unlinked; W2's legitimate write is preserved. Zombie content is valid
-  JSON so `read()` doesn't silently skip it — "only agent_start
-  survives" is a real mutation guard.
-
-Both tests verified by `git stash push src/event-store.ts` + re-running
-the file: both FAIL on main, both PASS with the fix.
-
-### What NOT to do
-
-- Don't revert `appendFileSync` to `fs.promises.appendFile` because it
-  "feels more idiomatic". The sync I/O is load-bearing for the guard.
-- Don't remove the post-check even though it's decorative in the
-  current fast path. It's the safety net for any future async writeFn.
-- Don't remove `appendFile` from the `node:fs/promises` import —
-  `copySessionFrom` still uses it (different path, no `clear()` race
-  because fork has structural exclusion with reset at the task level).
-
-## Plugin-namespace storage layout
-
-Matrix's per-project runtime data lives in a plugin-namespaced subdirectory,
-matching the shape every other plugin uses. Completes the "matrix is just a
-plugin" framing started in P2 (dataRoot infrastructure).
-
-### Layout
-
-```
-~/.mxd/projects/<projectId>/
-├── config.json      (daemon-owned)
-└── plugin/matrix/
-    ├── tree.json
-    ├── tasks/<taskId>.jsonl
-    └── debug/<taskId>/<traceId>/last.json
-```
-
-A future `story1001` plugin with `dataRoot` defaulting to `@/plugin/story1001`
-parks its own data at `projects/<id>/plugin/story1001/`, right next to matrix.
-No top-level collision possible.
-
-### Mechanism
-
-Driven by **matrix's manifest** in `.mxd/plugin/index.ts`:
-`dataRoot: "@/plugin/matrix"`. All path construction — `getTracker`,
-`getEventStore`, `projectDebugDir`, `projectTreeJsonPath` — reads this
-through `ctx.config.dataRoot` and routes through `resolveDataRoot` in
-`src/data-paths.ts`. **The resolver stays the single source of truth** (the
-`data-paths.test.ts` "ONLY data-paths.ts performs .slice(2)" grep test still
-guards this).
-
-**Helper**: `projectTreeJsonPath(dataDir, projectId, dataRoot?)` in
-`data-paths.ts`, parallel to `projectTasksDir` / `projectDebugDir`. Used by
-`runtime/helpers.ts:getTracker`.
-
-### Gotchas
-
-- **CLI tools that read JSONL directly** (e.g. `resolveTaskJsonlPath` in
-  `cli-analyze-cache.ts`) must call `projectTasksDir(dataDir, projectId,
-  "@/plugin/matrix")` — not hardcode the `projects/<id>/tasks/` path. Matrix
-  is the only consumer of that helper today, so embedding the dataRoot string
-  is fine; if more plugins need similar post-hoc tools, pass it as an arg.
-- **In-process test harnesses** (`createApp` called without `dataRoot`) use
-  the project-root layout by design. They exercise runtime semantics, not
-  the matrix-plugin manifest layout. Tests that hardcode `projects/<id>/
-  tree.json` in those harnesses stay correct.
-- **Daemon-level tests** go through `createDaemon` → plugin discovery reads
-  the manifest → matrix's `@/plugin/matrix` takes effect. A daemon-level
-  test that hardcodes old paths will break; use `projectTreeJsonPath` with
-  `ctx.config.dataRoot` (as done in `src/integration.test.ts` root-branch
-  persistence test).
-
-## P3: Tree is TaskNode | GeneralNode (folder becomes a GeneralNode variant)
-
-Runtime exposes exactly two node kinds. Discriminator is `type: string`,
-required on every node, no `undefined` fallback.
-
-- **TaskNode** (`type: "task"`): launchable, has session + git branch +
-  status + lifecycle. Matrix's actual work units.
-- **GeneralNode** (`type: string`, anything except `"task"`): pure metadata
-  + tree position, no session, no lifecycle, no agent. Optional
-  `metadata?: Record<string, unknown>` — opaque to runtime, plugin-owned.
-  NO `plugin` field — each tree.json belongs to exactly one plugin by
-  construction; plugin identity is implicit.
-
-Matrix uses `type: "folder"` as its only GeneralNode flavor today. A
-future plugin in its own project could define its own types
-(`"chapter"`, `"note"`, …) without touching runtime code.
-
-### Type guards
-
-`src/types.ts` exports:
-- `isTask(node)` — narrows to `TaskNode`, `node.type === "task"`.
-- `isGeneral(node)` — narrows to `GeneralNode`, `node.type !== "task"`.
-
-`isFolder` is **matrix-plugin-local**, not runtime-exported. Lives in two
-places:
-- `src/orchestrator-tools.ts` — backend (matrix's MCP tool handlers).
-- `.mxd/plugin/web/types.ts` — frontend (tree UI, drag/drop, icons).
-Both are `(node) => isGeneral(node) && node.type === "folder"`.
-
-### Tracker API
-
-`TaskTracker.addGeneralNode(title, parentId, type, metadata?)` — one
-method covers every non-task node. Rejects `type === "task"`. Matrix
-callers pass `"folder"`; tests for other plugins can pass any string.
-
-### MCP tools
-
-User-facing tool names unchanged: `create_folder`, `delete_folder`,
-`rename_folder`. Internals call `tracker.addGeneralNode(title, parent,
-"folder")`. Matrix-specific syntactic sugar on the general-node API.
-Agents cannot create generic GeneralNodes via MCP; matrix-plugin
-decides what kinds its agents can create.
-
-### Invariants locked in
-
-- `TaskNode.type: "task"` — required, not optional (breaks `undefined`
-  fallback idioms).
-- `GeneralNode.type: string` — any string except `"task"`.
-- `TaskTracker.addGeneralNode` throws if called with `"task"`.
-- `TaskTracker.load()` throws on a node with missing `type`. Every save
-  writes `type` explicitly — a typeless node means corrupted tree.json
-  or a bug, not "legacy data".
-- Runtime never reads `metadata` — it's opaque plugin data.
-
-### What did NOT change
-
-- tree.json serialization format (other than `type` now present on task
-  entries, which was previously absent).
-- MCP tool names (`create_folder` etc. preserved — matrix-plugin surface).
-- Folder UX / UI rendering / drag-and-drop / lifecycle rejection.
-- `getTaskAbove` / `getTasksBelow` / transparent ownership walks.
-
-### Tests
-
-`src/general-node.test.ts` — 10 tests exercising a probe-typed
-GeneralNode (`type: "probe"`) through save/load, ownership walks,
-tracker helpers. Proves generalization works outside matrix's
-folder-only world.
-
-## LLM Facility — stateless single-turn LLM for plugins (2026-04-23)
-
-`src/llm.ts` — a thin, provider-agnostic wrapper around the existing provider
-adapters. For plugins that need individual LLM calls outside the agent loop
-(pipelines, one-shot generation, classifiers). **Strictly single-turn, no
-tools, no session state.**
-
-### Surface
-
-```ts
-createLLM({ authGroup, model, defaultThinkingEffort? }): LLMClient
-runLLM(config, req): Promise<LLMResult>
-streamLLM(config, req): AsyncIterable<LLMChunk>
-```
-
-`LLMChunk`:
-```ts
-| { type: "text_delta"; delta: string }
-| { type: "thinking_delta"; delta: string }  // Anthropic only in v1
-| { type: "final"; text; thinking?; usage; stopReason }
-```
-
-`LLMRequest`: `{ system?, user? | messages?, maxTokens?, thinkingEffort?, signal? }`
-— exactly one of `user` / `messages`. No image input, no tool_use.
-
-### Plugin idiom
-
-```ts
-import { createLLM } from "matrix/src/llm.ts";
-import { resolveAuthGroup } from "matrix/src/config.ts";
-
-const authGroup = resolveAuthGroup(effectiveCfg);
-if (!authGroup) throw new Error("No auth group configured");
-const llm = createLLM({
-  authGroup,
-  model: effectiveCfg.model,
-  defaultThinkingEffort: effectiveCfg.thinkingEffort,  // plugin resolves once
-});
-const { text } = await llm.run({ system: "...", user: "..." });
-```
-
-**Plugin resolves from MatrixConfig itself**. The facility stays decoupled
-from `MatrixConfig`/`RuntimeContext` shape — it only knows `AuthGroup`, model
-string, and thinking effort number. Per-call `thinkingEffort` overrides the
-default; unset → uses `defaultThinkingEffort` → unset → 0 (no thinking).
-
-### Reuse strategy (audit-driven)
-
-Leverages existing runtime aggressively — the facility is ~180 LOC of wiring
-over existing adapter code:
-
-1. **`adapter.callAPI`** (reuse) — already yields `text_delta`/`thinking_delta`
-   and returns the raw SDK response. Facility drives it, normalizes chunks,
-   extracts `final`. Two factory functions exposed via `export`:
-   `createAnthropicAdapter`, `createOpenAIResponsesAdapter`.
-2. **`adapter.buildResponseEvents(response, false)`** (reuse for Anthropic
-   thinking extraction) — filter for `type: "thinking" && !redacted` events,
-   concat. Redacted blocks dropped silently.
-3. **`adapter.getTokenUsage` / `computeCost` / `getResponseText`** (reuse).
-4. **`requestToRoleList`** — single helper maps `LLMRequest` to
-   `[{role, content: string}]`. Both Anthropic's `MessageParam` and Matrix's
-   OpenAI `HistoryMessage` accept this shape natively — no
-   `buildAnthropicMessages`/`buildOpenAIMessages` wrappers needed.
-5. **OpenAI reasoning extraction** — NEW code (~15 lines). No existing
-   walker emits reasoning events for OpenAI Responses (only `message` and
-   `function_call` surface in `buildResponseEvents`). Walks
-   `response.output[].type === "reasoning"` items directly for `final.thinking`.
-6. **Stop reason mapping** — NEW (~20 lines total across both providers).
-   `adapter.getStopReason` returns `"end_turn" | "tool_use"` — too coarse
-   for facility (can't distinguish `max_tokens`). Facility maps explicitly.
-7. **SDK client construction** — DUPLICATED from provider class
-   constructors (~40 lines). Not extracted this round (scope). Beta headers
-   and timeout match `AnthropicCompatibleProvider` exactly. Note: any
-   future change to beta headers must update BOTH the class constructor
-   AND `createAnthropicClient` in `src/llm.ts`.
-
-### Error / retry / abort
-
-- Transient errors auto-retried by the SDK (5 attempts × exponential
-  backoff), inherited from `callAPI`. No outer retry — caller can layer
-  their own if they want more.
-- Non-transient errors (401, 400) throw immediately.
-- `signal.abort()` throws from the SDK; propagates as a thrown error from
-  `run()` / mid-iteration in `stream()`.
-- No `error` chunk in v1. Errors are exceptions.
-- `max_tokens` hit → text still returned; `stopReason: "max_tokens"`
-  signals truncation. Does NOT throw.
-
-### What's NOT pulled in (by design)
-
-Agent-loop concerns stay out: MessageQueue, JSONL EventStore, MCP tools,
-`runProviderLoop`, compaction, budget, work context, debug snapshot,
-session_config, session identity (fresh random sessionId per call — it's
-used only for mock test-conversation keying inside `adapter.callAPI`'s
-side channel, never visible to production).
-
-`cache_control` breakpoints still emitted by `callAPI` on every call. 
-Harmless for single-shot (nothing repeats to hit the cache), just a few
-extra bytes per request.
-
-### systemPreamble is honored
-
-`AnthropicAuthGroup.systemPreamble` is passed through to
-`createAnthropicAdapter` opts → prepended as first system block. A plugin
-using the facility sees the same preamble an agent-loop call would. OpenAI
-has no equivalent; `OpenAIAuthGroup` has no `systemPreamble` field.
-
-### Testing discipline
-
-Mocks must set `sessionId` for Anthropic (ValidatingMockAPI requires it
-for conversation keying). Facility generates a fresh ULID internally and
-passes it to `adapter.callAPI`, which writes it onto
-`client._currentSessionId` (side channel). Mock picks it up from there.
-
-OpenAI mock intercepts `globalThis.fetch` globally — facility has nothing
-to configure; construction via `createLLM` with the mock fetch installed
-just works.
-
-Anthropic test pattern uses `_createLLMFromAnthropicClient(mockClient, ...)`
-— test-only internal export that bypasses `createAnthropicClient`'s
-credential resolution. Do not import from production code.
-
-### OpenAI Responses mock: `response.output_text.delta`
-
-`ValidatingMockResponsesAPI.buildTurnResponse` now emits a single
-`response.output_text.delta` event per text block (between `content_part.added`
-and `response.completed`). Real Responses API streams the output_text via one
-or more delta events; the mock produces one delta carrying the whole text.
-This makes the mock more accurate without breaking existing tests (they check
-final content, not per-token granularity).
-
-### Files
-
-- `src/llm.ts` — ~560 LOC (incl. JSDoc)
-- `src/llm.test.ts` — 18 tests, all providers × run/stream × error/abort paths
-- `src/anthropic-compatible-provider.ts` — 1 line changed (`export function createAnthropicAdapter`)
-- `src/openai-responses-compatible-provider.ts` — 1 line changed (`export function createOpenAIResponsesAdapter`)
-- `src/test-utils/mock-openai-responses-api.ts` — +10 lines (delta emission)
-
-## Plugin extraction — Chunk 1: buildMatrixScopeOpts → .mxd/plugin/, worktree via hooks (2026-06-05)
-
-First chunk of "matrix → plugin" physical extraction. Runtime (`src/runtime/*`) no longer
-CONTAINS matrix scope logic nor imports `WorktreeManager`.
-
-**Moved**: `buildMatrixScopeOpts` + `MatrixDoneData`/`MatrixPluginTypes` → `.mxd/plugin/scope-opts.ts`.
-The factory is self-contained; runtime only ever invokes it through the `ScopeOpts` hook
-interface, never by name. Leaf utilities (WorktreeManager, createOrchestratorTools,
-buildSystemPrompt, buildWorkContextContent, buildSummarizationInstruction, slugify,
-McpClientManager) stay in `src/` as neutral building blocks — the plugin imports them
-(plugin→src is the allowed direction). The LEAK was buildMatrixScopeOpts living in
-runtime/agent-lifecycle.ts, NOT the utils.
-
-**worktree-manager.ts stays in src/** (Option a — user-confirmed). Stateless git util, zero
-matrix domain knowledge; both the plugin scope-opts AND orchestrator-tools.ts (matrix code
-still in src/) import it. Re-evaluate its final home when orchestrator-tools moves (later chunk).
-
-**Worktree ops in runtime routes → hooks** (`src/runtime/routes/tasks.ts`):
-- Reactivation (verify/closed relaunch): now calls existing `scopeOpts.beforeChildLaunch(node,
-  tracker, projectPath)` — semantics matched the inline worktree-create exactly. Kept the
-  parent-no-branch 400 pre-check for behavior parity (hook throws → 500 otherwise).
-- DELETE route: new hook `ScopeOpts.onTaskDelete?(node, projectPath)`. Matrix implements via
-  `WorktreeManager.remove`. Route bridges the `removeWorktree(taskId, slug)` task-operations
-  callback contract by looking up the node (`tracker.getTask(id)` — still present: cleanup runs
-  before `tracker.remove`, and delete only works on leaf tasks). closeTaskOp/resetTaskOp worktree
-  removal stays in orchestrator-tools.ts (matrix code) — out of scope this chunk.
-
-**Hook naming rule (user)**: name lifecycle hooks by the EVENT, not the resource. `removeWorkspace`
-was REJECTED — "workspace" presupposes tasks HAVE workspaces, a plugin-specific assumption;
-runtime's BaseTaskNode is pure structure. Chose `onTaskDelete` (parallels onLaunch/onDone). Prose
-comments may use "workspace" as a generic concept; the constraint is only on the hook/API NAME —
-no "WorktreeManager"/"worktree" token in any runtime hook/API name.
-
-**Invariants held**: `grep WorktreeManager src/runtime/` → zero. Zero production (non-test) imports
-from `.mxd/plugin/` in src/ (test-utils + *.test.ts may import plugin — test infra). `bun test`
-green, `bun run typecheck` clean. test-utils/matrix-scope.ts only changed its import path to the
-new plugin location (test infra → plugin is allowed).
-
-## FIX-2 (2026-06-05) — REST boundary must use the same shared-op discipline as MCP
-
-Five bugs, one theme: REST/HTTP routes bypassed fixes the MCP/shared ops already had. Failure
-mode is silent data loss/leak, not a crash. Rule going forward: **a REST route that touches a
-task lifecycle resource (session, JSONL, worktree, config) MUST route through the same shared op
-the MCP path uses, or replicate its guard exactly.** Where they drift, the REST side silently
-re-introduces a solved bug.
-
-### cc#2 — `/sessions/clear` must await loop exit before clearing JSONL
-`runtime/routes/tasks.ts` sessions/clear inlined a stop that closed the queue but did NOT await
-the agent loop's exit (unlike `resetTaskOp`/`stopTask`). The loop's `finally` (agent_end, orphan
-repair, Phase 2) then re-polluted the JSONL right after the clear — the "clear-race" the project's
-own `integration.test.ts` documents as a BUG PATH. Fix: `if (node.session) await stopTask(...)`
-else `await ctx.agentLoopPromises.get(nodeId)` (launchingNodes gap), THEN clear. The EventStore
-generation guard handles stopTask's own fire-and-forget agent_end append racing the clear.
-
-### cc#5 — REST node responses MUST stripSession
-`c.json` does NOT throw on the live `session` (unlike SSE's `structuredClone`, which is FORCED to
-strip). So every REST route returning a node serialized the whole queue/conversation/AbortController
-over the wire. One shared `serializeNode(node)` helper in tasks.ts (`isTask(n) ? stripSession(n) : n`)
-now wraps ALL node responses: GET /tasks (`.map`), POST /tasks (task + folder), PATCH, and all 3
-continue returns. Mirrors the existing MCP `stripSession` discipline (get_tree/get_task/etc.).
-
-### cc#4 — config null-delete + corrupt config must never wipe credentials (two layers)
-- **PATCH /config/global** now rejects null/undefined for ANY top-level field (400). Global config
-  is a COMPLETE MatrixConfig — no optional fields — so `delete next[k]` on null wrote an incomplete
-  config. Per-auth-group deletion still goes through `{ authGroups: { name: ... } }` (object value,
-  not rejected).
-- **`createDaemon`** no longer catches a load failure into `{ ...DEFAULT_CONFIG }` — it RETHROWS.
-  Silent DEFAULT_CONFIG booted with empty authGroups, and the next `saveGlobalConfig` overwrote the
-  on-disk credentials with nothing. Fail boot loudly → on-disk config preserved.
-- **`loadGlobalConfig`** now distinguishes ENOENT (fresh install → defaults) from read-error /
-  invalid-JSON (throw). The old single catch returned defaults for a CORRUPT file too — same
-  credential-wipe path. ENOENT-only return keeps fresh install working.
-
-### B-H1 — delete_task must stop+await the live loop before cleanup (reset-style)
-`deleteTaskOp` did NEITHER close's "reject in_progress" NOR reset's "await loop exit" — it called
-`cleanupTaskResources` (close queue, `git worktree remove --force`, clearEventStore) WITHOUT
-aborting/awaiting the loop. Destroyed unmerged work, removed a worktree under a running process,
-and a pending done() then read getTask=undefined in Phase 2 → parent hangs forever. Fix: added
-optional `stopTask`/`awaitLoopExit` callbacks to `deleteTaskOp` (mirroring resetTaskOp) + wired
-them in BOTH the MCP (orchestrator-tools) and REST (tasks.ts) delete handlers. Semantic chosen:
-reset-style ("delete a running task = stop it, then delete"), not close-style (reject).
-
-### cc#6 — worktree removal must use STORED path+branch, never a re-slugified title
-close/reset/delete removed worktrees via `wm.remove(node.id, slugify(node.title))`. The title can
-change after creation (`mxd/<id>/<oldSlug>`), so re-slugifying the CURRENT title computes a
-different path/branch → the real worktree is orphaned forever. Fix:
-- New `WorktreeManager.removeByPath(worktreePath, branch)` — removes the EXACT stored values, no
-  recomputation. (`remove(taskId, slug)` kept, now delegates to it; still used by its own test.)
-- `removeWorktree` callback signature changed `(taskId, slug)` → `(taskId, worktreePath, branch)`.
-  Ops pass `node.worktreePath`/`node.branch` (already inside the `if (worktreePath && branch)`
-  guard, so type-clean). MCP wirings call `removeByPath(worktreePath, branch)`; the REST delete
-  callback still uses param-1 (taskId) to look up the node for `onTaskDelete`.
-- `.mxd/plugin/scope-opts.ts onTaskDelete` (the REST worktree hook) likewise uses
-  `node.worktreePath`/`node.branch` instead of `slugify(node.title)`.
-
-### Tests (all mutation-verified)
-- `src/rest-boundary.test.ts` (new): session leak (GET/PATCH strip), clear-race (session +
-  launchingNodes-gap), delete-race (loop awaited before cleanup), delete stops queue+session.
-  The race tests use a 50ms-delayed simulated loop write — reverting the await makes JSONL reappear.
-- `src/task-operations.test.ts`: close/reset/delete removeWorktree gets the STORED path+branch
-  after a rename (cc#6).
-- `src/worktree-manager.test.ts`: removeByPath removes exact path+branch; re-slugified remove
-  orphans the worktree (demonstrates cc#6 directly).
-- `src/config.test.ts`: loadGlobalConfig ENOENT→defaults, missing-field→throw, corrupt-JSON→throw.
-- `src/daemon.test.ts`: PATCH null-delete → 400 (credentials preserved); createDaemon on
-  corrupt/incomplete config → throws, on-disk config untouched.
-
-## FIX-1 (2026-06-05) — buildSessionRepair corrupted COMPACTED sessions (index-space + orphan results)
-
-CRITICAL data-corruption fix. Both audits (matrix F-H2 + cc#1) independently hit it. The repair
-path could permanently brick any *compacted* session (recoverable only by `reset_task`). Four
-facets, one subsystem (`src/events.ts buildSessionRepair`, call site `agent-lifecycle.ts:~801`).
-
-**This SUPERSEDES the "JSONL Repair" and "buildSessionRepair Scope Boundary" sections above.** The
-key claim that changed: `buildSessionRepair` now takes the **FULL** event log and returns a
-**PHYSICAL** line index. Read those older sections with this correction in mind.
-
-### cc#1 — index-space mismatch (root cause)
-`buildSessionRepair` computed `truncateAfterIndex` against `readActive()` (post-`compact_marker`
-slice), but `EventStore.truncateAfterLine` slices by **physical file line**. For a compacted
-session, an active-relative index fed to physical truncation sliced off the `compact_marker`,
-post-compact `session_config`, and `compacted_resume` summary, AND appended interrupted results
-referencing tool_calls that had just been truncated away → unrecoverable.
-- **Fix**: `buildSessionRepair(events)` is now a thin boundary-aware wrapper. It finds the last
-  `compact_marker`, scopes analysis to the active region via an internal `repairActiveRegion(active)`
-  (the old body, unchanged), then translates the returned index back to physical by adding the
-  active offset. **Callers MUST pass the FULL log (`EventStore.read`), NOT `readActive`.** The call
-  site in `agent-lifecycle.ts` now reads `read(nodeId)` and compares against `allEvents.length`.
-- Truncation can never cross the compact boundary by construction (analysis is on the active slice;
-  the floor is the boundary). Corruption that lives *before* the last marker is compacted away and
-  is correctly ignored.
-
-### F-H2 — Strategy 2 appended results for TRUNCATED-region tool_calls → orphan tool_results
-The duplicate-repair branch had a second loop appending interrupted results for tool_calls located
-in the region being truncated away. Those calls are removed → the results become **orphan
-tool_results** (result with no matching call) → walker builds an invalid user message → API 400 →
-next launch `buildSessionRepair` returns null (it detects orphan CALLS + duplicates, NOT orphan
-RESULTS) → permanent crash loop. **Fix: that loop is DELETED.** Only the kept-region orphan loop is
-correct (kept tool_calls whose results were truncated).
-
-### B-L8 — kept-region orphan loop skipped TOOL_YIELD but not TOOL_DONE
-A kept-region `done()` orphan got a spurious tool_result. Replaced the `!== TOOL_YIELD` filter with
-the intended-orphan rule used by Strategy 0: skip yield/done **only when it is the last tool_call in
-the kept region** (the resume's pending control state). Earlier yield/done orphans correctly get
-interrupted results. New helper `lastToolCallEvent(events)`.
-
-### Status-message structural guard (required once B-L8 lands)
-Strategy 2's status message is a synthetic **user** message. If the kept region ends in an
-unresolved intended-orphan yield/done (now skipped, not given a result), appending a user message
-after it breaks assistant→tool_result alternation → API 400. Guard: append the status message only
-when `!endsInPendingControl`. When the session ends in pending yield/done, it correctly resumes in
-that state (no API-forcing user message).
-
-### D#1 — `source: "system" as never` rendered to an EMPTY string
-Strategy 0's reason message forced an illegal `source: "system"`; `formatBodyForAI`'s `default`
-branch returned `""` (and the UI `queueEntryToUIEvent` had no "system" case) → the repair reason
-silently vanished. **Fix: use `createUserMessage` (source "user")** — surfaced by both AI formatter
-and UI materialization. No new source variant added; reuse the existing visible one. Same guarded
-by `endsInPendingControl`.
-
-### Regression tests (mutation-proof)
-- `src/jsonl-stress.test.ts` → `describe("FIX-1: buildSessionRepair compact-boundary safety")`:
-  5 unit tests (cc#1 pre-compact-ignored + physical-index survival, F-H2 orphan + idempotent second
-  pass, B-L8 done orphan, D#1 visible status). Each seeds a session WITH a `compact_marker` — the
-  gap every prior repair test had.
-- `src/integration.test.ts` → `describe("Integration: repair on compacted session (FIX-1 cc#1)")`:
-  drives the REAL `runAgentForNode` repair pipeline on a seeded compacted session; asserts the
-  post-compact tool turn + summary + marker survive and the poison is gone. Catches the call-site
-  `readActive`→`read` change (unit tests on `buildSessionRepair` alone can't).
-- Mutation-checked: reverting the active-region scoping makes the pre-compact-ignored test return a
-  repair; re-adding the truncated-region loop makes F-H2 see an orphan result; restoring the
-  `!== TOOL_YIELD`-only filter gives the done orphan a spurious result; restoring the `as never`
-  source makes the D#1 status render empty.
-
-## FIX-3 (2026-06-05) — lifecycle + provider concurrency: Phase-2 leak, done ordering, launch race, abort-sleep, done+compact
-
-Five concurrency bugs in `agent-lifecycle.ts` + `provider-shared.ts`. Each is a "the loop/parent
-silently hangs or corrupts" failure, NOT a crash. Files: `runtime/agent-lifecycle.ts`,
-`provider-shared.ts`, `orchestrator-tools.ts`, `runtime/routes/tasks.ts`.
-
-### cc#3 — Phase 2 + loop-promise resolution MUST be inside try/finally
-`runAgentForNode`. Phase 2 (save/flushSession/onDone/deliverMessage) + the `resolveLoopPromise()` +
-`agentLoopPromises.delete(nodeId)` sat AFTER the agent-loop try/finally, OUTSIDE any guard. A throw in
-ANY Phase 2 step skipped the resolution → `agentLoopPromise` leaked forever. `stopTask` awaits that
-promise with NO timeout (unlike `stopAgent`'s bounded 1s race) → it hung indefinitely. Fix: wrap
-Phase 2 in `try { … } catch (log) { … } finally { delete + resolve }`. The loop promise now settles on
-EVERY path. The old comment claiming resolution happened "in finally block" was a lie — now true.
-Phase 2 errors are logged, not rethrown (the task already finished its work; a Phase-2 hiccup is not
-an agent failure). **This corrects the "Two-Phase done() Lifecycle" section: resolution is now genuinely
-in a finally.**
-
-### B-M4 — task_complete MUST be durable BEFORE done_notified
-`runAgentForNode` Phase 2 done branch used fire-and-forget `deliverMessage(parent,
-task_complete).catch()` then immediately `emitEvent(done_notified)`. done_notified lands on THIS node's
-write queue synchronously; task_complete goes through deliverMessage's `await getTracker` first → lands
-later. So "done_notified durable ⟹ task_complete durable" did NOT hold. Crash with done_notified
-persisted but task_complete not → restart's `findInterruptedDonePhase2` returns `status_stale` (marker
-present, runtime.ts:~376) → does NOT re-deliver → parent hangs forever. Fix: `await deliverMessage(parent,
-task_complete)` then `await eventStore.flushSession(parentId)` BEFORE `emitEvent(done_notified)` (+ flush
-the marker too). Reverse case (crash after marker, before its flush) → restart re-delivers (needs_phase2)
-→ at-least-once duplicate task_complete. A duplicate completion is recoverable; a lost one hangs the
-parent — we deliberately prefer the duplicate (the needs_phase2 branch already accepts at-least-once).
-
-### B-H2 — worktree-creation launch race (close the CLASS, not one instance)
-The launch lock (`ctx.launchingNodes`) was added INSIDE runAgentForNode, AFTER the seconds-long
-`beforeChildLaunch` (`git worktree add`). Two concurrent launches for the same fresh child both passed
-the pre-lock guard → two `git worktree add` → the loser threw → `deliverMessage.catch` marked the node
-`failed` + sent a bogus task_complete(failed) to the parent WHILE the winner ran. THREE create paths
-existed post-FIX-2 — all three fixed:
-1. `ensureChildAgentRunning → beforeChildLaunch`: acquire `launchingNodes` ATOMICALLY at the top
-   (has-check + add in one synchronous tick, no await between), BEFORE beforeChildLaunch. Phase A (prep)
-   releases the lock on throw; Phase B hands it to runAgentForNode.
-2. `orchestrator-tools.ts send_message` inline `wm.create`: **DELETED**. send_message now delegates to
-   deliverMessage → ensureChildAgentRunning (the single locked creator). Kept the git-clean + branch
-   pre-flight gates; dropped the now-async "on branch X" suffix from the success string (the branch
-   isn't known synchronously anymore — no test asserted that string). "Delete until ONE remains":
-   beforeChildLaunch (existsSync-guarded) is the SOLE creator. (`slugify` import dropped from the file.)
-3. `runtime/routes/tasks.ts` REST `/continue` reactivation (verify/closed, no worktree): FIX-2 wired
-   this to call `beforeChildLaunch` directly, OUTSIDE the lock — same race (milder blast: a duplicate
-   POST 500s, no parent corruption). Acquire the lock around it with the same launchLockHeld handoff.
-- New `RunAgentOpts.launchLockHeld?: boolean`: when set, runAgentForNode's entry guard does NOT treat
-  its own already-held lock as a competing launcher, and TAKES OVER the lock's release on EVERY exit
-  path (incl. the early session-already-running bail) so the caller can't leak it. Entry guard split:
-  `if (node.session != null) { if (launchLockHeld) delete; return; }` then `if (has(nodeId) &&
-  !launchLockHeld) return;` then `add`.
-
-### B-M3 — outer-retry backoff MUST be abort-aware
-`provider-shared.ts` outer retry used `await new Promise(r => setTimeout(r, delay))` (30/60/120s). The
-inner per-call retry was already abort-aware; this one was not. A transient error parked the loop in
-this sleep; a stop/reset then blocked for the full backoff (up to 120s), exceeding the daemon's 60s
-worker-forward timeout → 504 + a retry racing the still-running first reset. Fix: module-level
-`abortableDelay(ms, signal)` (setTimeout raced against an `abort` listener, listener removed on both
-paths so a long-lived signal doesn't accumulate listeners) + after it `if (signal.aborted) throw e` to
-abandon the retry loop. **Test with stopTask (no timeout), NOT stopAgent (its 1s race masks the block).**
-
-### B-L9 — done-resume + compactOnly → consecutive user messages → API 400 (FIXED)
-`provider-shared.ts` pendingDoneToolCall handler did NOT check `compactOnly` (the yield path already did
-via `pendingCompactYieldToolCall`). When the ONLY wake message during a done-resume was /compact, it
-pushed the done tool_result as its own user message, then the compact block pushed the summarization as
-a SECOND consecutive user message → 400. NOTE: the in-memory auto-recovery (`enableAutoRecovery`) is
-GONE — this 400 is NOT masked; it crashes → buildSessionRepair on next launch. Fix: new
-`pendingCompactDoneToolCall` mirroring the yield path — on compactOnly, emit the done tool_result
-("Manual compaction requested") for orphan-prevention but DEFER its messages[] push; the compact block
-bundles it + the summarization into ONE user turn. The compact-block bundling now unifies yield AND done
-(`pendingCompactYieldToolCall ?? pendingCompactDoneToolCall` — mutually exclusive: a resume ends in one
-orphan, not both). The compact-with-OTHER-messages (compactOnly=false) done case stays an analog of the
-known-unfixed yield bug (still a test.todo). **Updates "Known Bugs": the done+compactOnly variant is
-now fixed; only the +other-messages variants (yield AND done) remain.**
-
-### Reachability trick for the B-L9 test
-`/compact` endpoint 404s for a non-running (done/verify) agent, so it can't wake a pending-done agent.
-Instead: `deliverMessage(node, createCompactMessage())` — a compact QueueMessage HAS an id, so
-deliverMessage persists it to JSONL and findUnconsumedMessages recovers it on the auto-launched resume.
-The resume drains ONLY the compact → compactOnly=true. The mock's `validateRequest` throws on
-consecutive user roles, so the bug surfaces as an "alternate roles" error event + a missing
-compact_marker.
-
-### Regression tests (all mutation-proofed — each fails when its fix is reverted)
-- `src/lifecycle-concurrency.test.ts` (new): cc#3 (throwing onDone → loop promise still settles +
-  agentLoopPromises cleared), B-M4 (at the moment the child's done_notified is appended, the spy
-  reads the parent JSONL from disk and asserts task_complete is ALREADY there — directly tests the
-  durability ordering), B-H2 (counting beforeChildLaunch: two concurrent deliverMessage → ONE create +
-  no bogus task_complete(success=false); two concurrent REST /continue → ONE create), B-M3 (stopTask
-  during a 4s backoff returns <3s). Test gotchas: task_complete message has `source:"task_complete"`,
-  field `success` (not "child_complete"/"passed"); a holder OBJECT (not a bare `let`) avoids TS
-  narrowing the closure-assigned probe back to its `null` initializer; awaiting `ensureChildAgentRunning`
-  directly HANGS (it awaits the whole agent loop) — drive launches via deliverMessage/REST instead.
-- `src/drift-lifecycle.test.ts` "compact triggered while agent in pending-done (done resume)" — was a
-  test.todo, now a real B-L9 test (compact_marker written, no alternate-roles error, every recorded
-  request alternates roles).
-
-## FIX-4b (2026-06-05) — dead-code sweep + biome gate restored
-
-Wave-3 audit cleanup. ~78 dead tests removed, net ~−4250 LOC across 22 files (+ new
-`src/zod-schema.ts`). `bun test` 2163 pass / 0 fail; `bun run check:ci` exits 0 (gate
-restored — `--no-verify` can be dropped on main). Committed as 3 deletion commits (grouped by
-non-overlapping file sets) + 1 format-only commit + this memory note.
-
-**C1 — Chat Completions provider deleted**: `openai-compatible-provider.ts` (893 LOC) +
-`.test.ts` (1624 LOC, 41 tests). Production-dead — `createProviderFromAuth`
-(runtime/helpers.ts) only builds Anthropic + OpenAIResponses. `eventsToOpenAIMessages` (the
-Chat-Completions event→message converter) lived ONLY there; `events.test.ts` exercised it in
-~36 tests (`describe("eventsToOpenAIMessages")` block + scattered `OpenAI:`-prefixed tests +
-dual Anthropic/OpenAI assertions) — all removed, Anthropic assertions preserved. Its
-pricing/context utils (getModelPricing/getContextWindow/clearContextWindowCache) were
-near-verbatim dups of the LIVE copies in anthropic-/openai-responses-compatible-provider.ts;
-anthropic-compatible-provider.test.ts imports resolve to the Anthropic copy. Closes draft
-01KN496YTW6HQNDWEKV0W99NQQ.
-
-**F-L1 — hasPendingYield deleted** (events.ts): zero production callers (re-verified post
-FIX-1/FIX-3 — FIX-1's repair rewrite uses its own `lastToolCallEvent`, not hasPendingYield).
-`hasPendingImplicitYield` is the LIVE sibling (provider-shared.ts:759) — kept. Removed its
-tests from events.test.ts + jsonl-stress.test.ts; the jsonl-stress tests that ALSO asserted
-`buildSessionRepair` kept those assertions (renamed to drop the dead-fn reference).
-
-**Tier-2 dead exports** (declaration-only, zero refs): formatPendingSection (events.ts),
-combineSystemPrompt (system-prompts.ts), buildExternalJsonSchema (tool-def.ts — the
-`buildExternalShape` it wrapped stays live in mcp-endpoint.ts), SerializedTreeNode (types.ts).
-
-**C6 — clarifyTimeoutMs vertical deleted**: a user-settable setting that did NOTHING.
-`getClarifyTimeoutMs` (resource-registry.ts) was never called, no clarify-timeout mechanism
-exists, and the SettingsPanel "Clarify Timeout (ms)" input lied. Removed config field+default,
-cli row + KNOWN_CONFIG_KEYS, resource-registry type + getter, SettingsPanel field, and i18n
-keys `settings.clarifyTimeout` + the now-orphaned `settings.noTimeout` (only the clarify field
-used it) in BOTH web/ and plugin i18n copies.
-
-**C3** — RelocateBanner.tsx deleted (orphan; only ref a stale "moved to shell" comment — it was
-NOT moved, relocate survives via CLI). **C9** — collapsed duplicate MCP_TOOL_PREFIX into
-MCP_PREFIX (plugin tool-names.ts). **A-F7** — deleted the unreachable `scopeOpts.get(id) ??
-{stubs}` fallback in routes/agent.ts `/restart` (createApp throws if buildScopeOpts missing) →
-explicit guard-throw. **C4** — deleted `_cache_audit.ts` + `_token_audit.ts` (standalone
-investigation scripts, zero importers, made real Anthropic API calls — a liability; recoverable
-from git history).
-
-**C8 — NARROWED (audit's "dead" was WRONG)**: the audit called `tool()` (tool-definition.ts)
-"production-dead (test-only)" and asked to delete it. `tool()` IS test-only but NOT dead — it's
-live test infrastructure with 23 call sites (anthropic/openai-responses provider tests,
-evaluate-script, tool-execution). Its `tool(name, desc, zodRawShape, handler)` signature is
-intentionally lightweight; the production builder `toToolDefinition(defineTool({params:
-ParamDefs}), auth)` is a heavier, different shape. Deleting `tool()` = a risky 23-site migration
-pulling auth/ParamDefs into unit tests that specifically test executeTool's Zod validation on the
-raw inputSchema — that changes what's tested, NOT reclamation. KEPT `tool()`. The REAL violation
-was the genuine duplication: `stripZodMeta` + `shapeToJsonSchema` existed verbatim in BOTH
-tool-def.ts and tool-definition.ts → extracted both to a new leaf `src/zod-schema.ts` (depends
-only on zod, no import cycle); both files import `shapeToJsonSchema` from it.
-**Lesson: "test-only" ≠ "dead." A test helper with N call sites is live infra; deleting it is
-test refactoring, not reclamation. Verify the actual violation (here: duplication) and fix THAT.**
-
-**biome gate**: main was failing `check:ci` with 4 format ERRORS (incl. event-store.ts K8
-`appendFileSync`) — the pre-commit hook had been bypassed via `--no-verify`. Ran `bun run check`
-(write, NO `--unsafe`) → auto-fixed format only → committed as a SEPARATE commit from the
-deletions. `check:ci` now exits 0. 35 lint WARNINGS remain (noNonNullAssertion + noExplicitAny —
-pre-existing, not auto-fixable, out of scope); warnings don't fail check:ci, only the format
-errors did. NOTE: the worktree pre-commit hook is /dev/null (hooksPath), so these commits skipped
-the hook locally — verify on main's gate after merge.
-
-**NOT touched**: mock-showcase (C2) — excluded, becoming a local plugin (draft
-01KTBZRFXD3A9J3JTKK38FH3WA).
-
-## Narrowed plugin messaging API — deliverToNode + listNodes (2026-06-07)
-
-Two stable, named primitives in `src/resource-registry.ts` that a plugin's
-tools compose for intra-project peer messaging WITHOUT importing the internal
-singleton accessors (`getTracker` / `deliverMessage`) directly. The SDK
-(task 01KTJ4EW8T3B1YWNV9JKGGZJW2) re-exports exactly these two;
-`getTracker`/`deliverMessage` stay internal to matrix.
-
-- `deliverToNode(projectId, nodeId, msg, opts?): Promise<void>` — a thin
-  stable-named wrapper over the ONE existing `deliverMessage` (the
-  projectId-handle side-effect). NOT a fork — it calls the single delivery
-  path verbatim (JSONL persist → enqueue to a live peer's queue → auto-launch
-  an idle peer unless `opts.quiet`). The "wake an idle recipient" semantic is
-  exactly what a plugin wants. NO permission policy baked in (unlike matrix's
-  `send_message` ancestor/sub-task restriction — that's matrix policy);
-  intra-project delivery is unrestricted, the plugin's tools own routing.
-- `listNodes(projectId): ReadonlyArray<BaseTaskNode>` — fresh read-only
-  snapshot of the project's LAUNCHABLE nodes (`tracker.allNodes().filter(isTask)`).
-  General (non-launchable) nodes — matrix folders, a plugin's grouping nodes —
-  are excluded: you can only deliver to a launchable node, and `BaseTaskNode`
-  is the runtime-generic launchable shape every plugin's node type extends.
-  Returns a FRESH array each call (filter creates a new array): mutating the
-  returned array does not affect the tracker. The plugin resolves group
-  membership + name→node from each node's plugin-owned `metadata` (added to
-  `BaseTaskNode` by the node-model generalization task).
-
-### ⭐ Singleton constraint — the whole point
-Both operate on the SAME in-process tracker/session registry the agent loop
-uses (the module-level `_ctx` in resource-registry, initialized once at first
-agent launch via `R.initResourceRegistry(ctx)` in agent-lifecycle.ts:183).
-That shared singleton is the only reason a delivered message ARRIVES at a live
-peer (enqueued / auto-launched) instead of being silently dropped. A plugin
-that vendored its OWN copy of resource-registry would get a DIFFERENT `_ctx` →
-a different tracker → delivery would no-op with no error. So the SDK MUST
-re-export from this single live module, never bundle a copy. This is the same
-finding the SDK task encodes ("thin re-export of the live install, never a
-standalone bundle").
-
-### Why narrow (not just expose getTracker/deliverMessage)
-dchat was forced to import `getTracker` + `deliverMessage` (resource-registry's
-own header declares it matrix-tool-handler INTERNAL). The narrowing is
-SEMANTIC: `deliverToNode` exposes only delivery (can't be misused);
-`listNodes` exposes a read-only snapshot (can't mutate the tracker). Versus
-`getTracker` = full mutable tracker access, `deliverMessage` = raw path. The
-SDK re-exports the narrow two; the plugin never touches resource-registry.
-
-### Tests — `src/plugin-messaging.test.ts` (integration, mock provider)
-Real agent loop (createMatrixApp + lightweight non-matrix "peer" scope, no
-worktrees) so the registry is wired exactly as in production. (1) A dummy
-plugin tool `send_to_peer` (invoked from inside a running root agent) calls
-`deliverToNode` to an idle peer child → the peer AUTO-LAUNCHES, reads the
-delivered instruction, done()s → verify; asserts the delivered user message is
-in the peer's JSONL AND `registryGetTracker(projectId) === app.ctx.trackers.get(projectId)`
-(same singleton). (2) `listNodes` returns root + task children, excludes a
-folder; pushing to the returned array leaves a later call + the tracker
-unchanged. (3) broadcast: loop `listNodes` → `deliverToNode` to each OTHER
-member (exclude root + self) → both peers verify, self stays pending with no
-JSONL ("none to self"). NB: in test 1 the sender root YIELDS after the tool
-(single-turn instruction → mock end_turn) so it stays alive and the peer's
-later task_complete enqueues instead of relaunching it.
-
-### Rendering gap NOT solved here
-A plugin still can't define how its own messages render (`formatQueueMessage`
-hardcodes an XML wrapper per built-in source). Tracked as low-pri draft
-01KTJ5F5XTM32YNS6RSPW7R5PF; dchat smuggles via `source:"user"` until then.
-## Node-model generalization for plugins (status↑ + metadata↑, SET methods, hook projectId, seedTree) — 2026-06-07
-
-Pushes the genuinely runtime-generic node fields UP to `BaseTaskNode` and gives
-plugins the SET path + project context they need to drive launchable nodes —
-without re-declaring runtime fields or mutating the live tracker. Surfaced by the
-dchat out-of-tree 试水 (Wall #2 + interface-gap D). Matrix's own `TaskNode` +
-every status-driven path is byte-for-byte unchanged (regression bar held: full
-`bun test` green, 2179→2189 with the new tests).
-
-### `status` + `metadata` moved to `BaseTaskNode` (`src/types.ts`)
-- `status: TaskStatus` is now on `BaseTaskNode`, NOT only on matrix's `TaskNode`.
-  It IS runtime-generic: `createNode` inits it, `updateStatus` mutates it, `load()`
-  migrates it, and the default `shouldResume` keys on `status === "in_progress"`.
-  A plugin whose nodes are launchable inherits it — it must not re-declare it.
-- `metadata?: Record<string, unknown>` added to `BaseTaskNode` (parallel to the
-  one `GeneralNode` already had — it's exactly the LAUNCHABLE node that needs
-  per-node plugin config). Runtime NEVER reads it; only round-trips via save/load.
-- Persistence is automatic: `save()` spreads all non-session task fields, `load()`
-  casts the raw task object through untouched — so `metadata` round-trips with zero
-  new code. The status-node load branch already migrated `status` ("passed"→"verify").
-
-### TaskTracker SET methods (`src/task-tracker.ts`)
-- `CreateNodeOpts` type now carries `metadata?`; `addChild`/`addTask`/`createNode`
-  thread it into the node literal (`...(opts?.metadata !== undefined ? {metadata} : {})`
-  — absent, not `{}`, when unset).
-- `setMetadata(nodeId, metadata)` — plugin-safe SET path; **REPLACES** the whole
-  metadata object (to update one key, read+spread), bumps `updatedAt` for tasks,
-  works for general nodes too. This replaces "mutate the live tracker directly".
-- `load()` now returns `boolean` (`true` = fresh tree just created, `false` =
-  loaded existing). Backward-compatible — every existing caller ignores the return.
-
-### Gotcha: moving status/metadata up tightened TaskNode⊆GeneralNode structural overlap
-`save()`'s `if (isGeneral(node)) return node; const {session, ...rest} = node;`
-started failing TS2700 ("Rest types may only be created from object types") because
-the negative `isGeneral` narrowing collapsed `TaskNode` to `never`. Fix: use the
-POSITIVE guard — `if (!isTask(node)) return node;` — so the narrowed type is
-concretely `TaskNode`. Same runtime behavior. (Lesson: prefer positive type-guard
-narrowing for destructure-after-guard when the union members overlap structurally.)
-
-### Hooks get `projectId` (gap D-C) — `src/runtime/context.ts` + `agent-lifecycle.ts`
-`buildWorkContext` / `buildSummarizationPrompt` / `buildDoneResumeContext` now
-receive `(node, projectPath, projectId)`. `projectPath` is the git checkout;
-`projectId` is the registry id a data-driven plugin needs to locate its per-project
-dataRoot (`~/.mxd/projects/<projectId>/...`) — matrix uses projectPath, dchat needs
-projectId. Adding a TRAILING param is type-backward-compatible: existing impls that
-take fewer args (matrix's, the story-scope tests') stay assignable. Three call sites
-in `agent-lifecycle.ts` pass `project.id` (initial work-context inject ~907, the
-compact re-arm `setBeforeFirstMessage` ~914, the AgentRequest closure ~1017).
-The default `shouldResume` in `runtime.ts resumeScope` retyped `(n: TaskNode)` →
-`(n: BaseTaskNode)` to reflect the now-generic `status`.
-
-### `seedTree` — worker-side tree-init hook (gap D-B) — `ScopeOpts` + `getTracker`
-`onProjectInit` (PluginManifest, `src/plugin.ts`) runs DAEMON-side where there is
-NO tracker → it can create FILES but not initial tree NODES. The complement is
-`ScopeOpts.seedTree?(tracker, projectId)`, called once from `getTracker`
-(`runtime/helpers.ts`) the first time a project's tree is created (`load()` returned
-`true`), AFTER scope-opts registration, then `tracker.save()`. The plugin seeds its
-starting nodes via `addChild`/`addGeneralNode`/`setMetadata`. Fires exactly once —
-tree.json then exists, so reloads return `false` and never re-seed. Matrix has no
-seedTree → no-op. (`markReady()` does NOT auto-run autoResume, so in tests the seed
-fires deterministically on the first explicit `getTracker`.)
-
-### Tests
-- `src/task-tracker.test.ts` "node-model generalization" (8 unit): addChild/addTask
-  metadata, metadata-absent-not-`{}`, setMetadata REPLACE (the `extra` key
-  disappearing proves replace≠merge), setMetadata on general nodes + throws-on-missing,
-  metadata+status save/load round-trip, `load()` fresh→true / existing→false.
-- `src/plugin-custom-scope.test.ts` "Node-model generalization (plugin integration)"
-  (2 integration): (a) a non-matrix scope's `buildWorkContext` reads `node.metadata`
-  + receives `projectId`, exercising addChild-metadata + setMetadata + round-trip
-  end-to-end through a real agent run; (b) `seedTree` seeds 2 nodes with metadata on
-  a fresh tree exactly once (custom `buildScopeOpts` passed via `setupTestContext`).
-- **Mutation-verified**: setMetadata replace→merge fails the REPLACE test; dropping
-  `projectId` at the initial-inject call site (~907) fails the integration test.
-  (Mutating the AgentRequest-closure site ~1017 instead did NOT fail it — that path
-  only fires on compaction; the integration test covers the fresh-inject path.)
-
-## Additive project-scoped plugin routing — dual lenses (2026-06-08)
-
-A project that ships its own `.mxd/plugin/` is served by BOTH its own scope AND
-the global matrix scope, **ADDITIVELY**. `matrix:<id>` (dev lens — coding/
-orchestration) and `<own>:<id>` (product lens — its own worker) **coexist**, on
-separate per-scope dataRoots. Shipping a plugin ADDS a lens; it NEVER removes the
-matrix dev lens.
-
-### Why additive, NOT exclusive (the lesson — don't re-pollute)
-The first attempt (commit `171a3bf`, **REVERTED by `7b17a43`**) made ownership
-EXCLUSIVE: `pluginForProject = own ?? global` (single owner) — matrix STOPPED
-serving a project that shipped its own plugin. That was WRONG:
-- **`<scope>:<project>` is a TWO-PART address — its existence PROVES dual.** If a
-  project mapped to one scope, the prefix would be redundant. Exclusive collapsed
-  it to `scope = f(project)`.
-- The original design is **"Parallel Run Loops — alongside, NOT override."**
-  Exclusive turned alongside into override.
-- Self-bootstrap REQUIRES coexistence (matrix is its own product; "product is a
-  dev tool" only holds if a project opens in both lenses at once).
-- per-plugin dataRoot (`projects/<id>/plugin/<plugin>/`) was built for multiple
-  plugins coexisting on one project — wasted under exclusive.
-
-If any routing decision tempts you toward "a project belongs to ONE plugin",
-that's the bug returning. Additive, never exclusive.
-
-### Daemon-core routing (`src/daemon.ts`)
-- `workerKeyForPlugin(plugin)`: global → `name`; project → `<projectId>:<name>`
-  (two projects can ship a same-named plugin → distinct workers). This worker KEY
-  uses `:`; it is NOT the URL scope segment (which is the bare plugin NAME).
-- `scopesForProject(id)` = all globals ∪ the project's own plugin (if any).
-  **GLOBALS-FIRST** ordering → default lens is matrix/dev. REPLACES the reverted
-  exclusive `pluginForProject` single-owner. Used by DELETE fan-out + shell.
-- `projectsForPlugin(plugin)`: **global → ALL projects** (matrix is every
-  project's dev lens, MUST know them all to resume/build scope opts); project →
-  its own project only. No double-resume: the lenses live in DISTINCT dataRoots,
-  so each worker only resumes the tree under its own dataRoot. (The reverted
-  version filtered globals to "only-owned" — dropped; that was a patch for a
-  non-problem, dataRoot already isolates.)
-- One worker per plugin (spawn loop over ALL plugins, not globals-only).
-- `onProjectInit` (startup) runs per `projectsForPlugin` → matrix scaffolds EVERY
-  project's dev lens (memory.md, hooks) — restores pre-exclusive behavior.
-- DELETE `/projects/:id` **FANS OUT** a `/stop` to every scope serving the
-  project (a running agent in ANY lens must stop before data removal).
-- `/api/:plugin/*` resolution (reused verbatim from the reverted infra, correct
-  for additive): a GLOBAL candidate named `<plugin>` is used directly → matrix
-  serves any project; else the projectId in the stripped `/projects/<id>/...`
-  path selects the project-scoped worker.
-- `firstGlobalWorkerKey()` (ready-checked) for project-agnostic routes
-  (health, /version, /stats). `firstGlobalPluginName()` = default SSE scope.
-
-### SSE is scope-aware — a "lens" = (projectId, scope)
-`scope` = the plugin NAME (URL `<pluginScope>`). A project has a DISTINCT tree
-per lens, so each lens has its own SSE stream:
-- `ShellSSEClient` carries `scope`; `/events?projectId=&scope=` (scope defaults
-  to `firstGlobalPluginName()` ?? `""` — `""` keeps an auth-only/plugin-less
-  daemon's `/events` opening 200 with no initial tree, the old behavior).
-- seqId counter + ring buffer keyed by `lensKey(projectId, scope)` =
-  `${projectId}\u0000${scope}` (`\u0000` can't appear in a ULID id or a
-  `[A-Za-z0-9_-]` name; distinct from the worker key's `:`).
-- The `sse_event` relay derives the lens from the EMITTING worker: the worker
-  serving `pluginName` → events belong to `(projectId, pluginName)`. Only clients
-  matching `(projectId, scope)` receive them → a product viewer never sees the
-  dev tree and vice versa. `setupWorkerMessageHandler` gets the plugin NAME.
-- Initial tree/clarifications come from `workerKeyForProjectScope(projectId,
-  scope)` (the VIEWED lens's worker), not "first global".
-- DELETE cleans every `${projectId}\u0000*` lens buffer.
-- Single-lens projects (no own plugin) → one worker emits scope=matrix → one
-  stream → **identical to pre-additive behavior** (the regression bar).
-
-### Shell multi-lens (`web/`)
-- `web/plugin-scope.ts → pluginsForProject(plugins, projectId)` = all globals ∪
-  the project's own plugin, **globals-first** (default = dev/matrix). Mirrors the
-  daemon `scopesForProject`.
-- `ShellApp.tsx`: `availablePlugins = pluginsFor(projectId)` feeds the scope
-  SELECTOR (lists BOTH lenses for a project with its own plugin); `scopeIsValid`
-  + URL normalization rewrite a missing/stale `<pluginScope>` to a valid lens;
-  `resolvePlugin(scope)` disambiguates same-named project plugins by projectId
-  (loads the right web bundle). `<PluginUI key={projectId/scope}>` gets a new
-  `scope` prop.
-- Plugin web: `PluginProps += scope`; threaded Plugin → PluginShell →
-  ProjectContent → `useSSE(projectId, scope, ...)` → `/events?...&scope=`.
-  `useSSE` guards `if (!projectId || !scope) return` and includes `scope` in deps
-  (lens switch → reconnect).
-
-### DEFAULT LENS = dev-first (matrix), decided
-Globals-first ordering. Rationale (orchestrator, 2026-06-08): additive
-consistency (matrix is the foundation lens every project always has, the product
-lens is the ADDITION — defaulting to product would make first-load identical to
-the reverted exclusive model and HIDE the addition; the default should TEACH the
-model), robustness (matrix dev lens always works; product workers are mid-build),
-dev-workflow fit. A FUTURE per-project configurable default (for finished,
-end-user-facing products) is draft `01KTJZ07MC0VWM923SBDZHDRP8` — do NOT bake
-product-first globally while products are under development.
-
-### Tests
-- `src/plugin-project-scope.test.ts` (additive): INVERTS the reverted "matrix
-  404s P_own" → "matrix STILL serves P_own (dev lens, 200 + Orchestrator)";
-  dual-lens coexist + ISOLATION (task in `matrix:pown` absent from `story:pown`
-  and vice-versa); DELETE fan-out (project gone from BOTH lenses); + onProjectInit
-  runs on P_own too. Keeps regression + same-named-distinct-workers + scope-info.
-- `web/plugin-scope.test.ts` (additive): a project with its own plugin sees BOTH
-  scopes, default (first) = matrix; globals-first ordering pinned.
-- `src/test-utils/story-scope.ts`: generic non-matrix test scope (reused verbatim
-  from the reverted infra — it has no exclusive/additive logic).
-
-### Pre-existing worktree noise (NOT a regression)
-Daemon tests that run `createDaemon` with the matrix repo (a git WORKTREE, where
-`.git` is a FILE) log `onProjectInit failed for matrix on matrix: ENOTDIR …
-.git/info` from `excludeWorktrees`'s `mkdir(.git/info)`. Caught + logged, tests
-pass. Predates this work (matrix's onProjectInit ran on the matrix project under
-the old code too). On a normal checkout (`.git` is a dir) it succeeds.
-
-## Plugin SDK — `mxd/plugin-sdk` bare specifier + re-exported zod (the "bun add mxd" dependency story) (2026-06-08)
-
-An out-of-tree plugin (dchat) depends on matrix's public API via a STABLE,
-depth-independent bare specifier instead of counting `../`s, with exactly ONE
-zod identity shared between matrix and the plugin. Closes the two
-dependency-boundary gaps the dchat 试水 surfaced (both had fragile workarounds:
-a dev symlink + an exact zod pin on dchat's side).
-
-### Mechanism — `exports`-map SUBPATH of the real `mxd` package (NOT `@mxd/plugin-sdk`)
-- `package.json` gains `"exports": { "./plugin-sdk": "./src/plugin-sdk.ts", "./package.json": "./package.json" }`.
-- Plugin imports `import { defineTool, type ScopeOpts, z, ... } from "mxd/plugin-sdk"`.
-- A plugin installs matrix ONCE (`bun add <matrix>` / `bun link mxd` → a
-  `node_modules/mxd` entry, typically a symlink). Bare-specifier resolution walks
-  UP node_modules → depth-independent, so it works inside the plugin's own git
-  worktree with NO `../` counting and NO dev-symlink hack (Gap A closed).
-- Chose `mxd/plugin-sdk` over `@mxd/plugin-sdk`: the `@mxd/*` names
-  (`@mxd/types`, `@mxd/auth-context`) are BROWSER virtual modules (tsconfig
-  paths + importmap), a different mechanism. A server node_modules package reusing
-  `@mxd/*` would falsely imply kinship. `mxd/plugin-sdk` is the honest subpath of
-  the real `mxd` package — the literal "bun add mxd → import its subpath" story,
-  zero extra publishing. (This overrides the `@mxd/plugin-sdk` example that
-  appeared in the original task description; orchestrator approved the deviation.)
-
-### ⭐ Singleton: thin re-export, never a vendored copy (realpath dedup — EMPIRICALLY PROVEN)
-`src/plugin-sdk.ts` re-exports matrix's own modules via RELATIVE paths. Bun/Node
-dedupe modules by REALPATH, so a plugin importing `mxd/plugin-sdk` through its
-`node_modules/mxd` symlink resolves to the SAME physical files → the SAME process
-singletons matrix's agent loop uses (the module-level `_ctx` in
-resource-registry.ts). So `deliverToNode`/`listNodes` hit the ONE in-process
-tracker — a delivered peer message ARRIVES (enqueued / auto-launched), never
-silently dropped against a different `_ctx`. A vendored copy = different realpath
-= different `_ctx` = silent no-op. Proven: a probe outside matrix with a
-`node_modules/mxd` symlink shares matrix's `_ctx` (and `listNodes` returns the
-EXACT same node object the app's tracker holds — reference identity).
-
-### ⭐ One zod identity (Gap B closed) + exact pin (DO NOT re-add the caret)
-- The SDK does `export { z } from "zod"`. A plugin imports `z` from the SDK →
-  matrix's exact zod instance → a plugin's `z.string()` passes matrix's
-  `shapeToJsonSchema` (`z.toJSONSchema(z.object(pluginShape))` — matrix's z
-  wrapping the plugin's schema; only works when both are the same ZodString
-  class). The plugin need not depend on zod at all.
-- `package.json` pins `"zod": "4.3.6"` EXACT — the caret (`^4.3.6`) was the drift
-  root cause on BOTH sides (dchat drifted to 4.4.3 → two distinct ZodString types
-  → `defineTool` stopped typechecking). package.json is strict JSON (no inline
-  comment possible) — this memory entry IS the "why no caret"; a future agent
-  must NOT re-loosen it without re-reading the zod-identity requirement.
-
-### Surface — EXACTLY the finalized manifest, never widened (anti-pattern #6)
-Type-only: `ScopeOpts`, `PluginTypes`, `BaseDoneData`, `RuntimeContext`
-(runtime/context.ts); `BaseTaskNode`, `TaskStatus` (types.ts); `Auth`
-(tool-auth.ts); `PluginManifest` (plugin.ts).
-Runtime values: `defineTool`, `toToolDefinition` (tool-def.ts); `createYieldTool`,
-`createDoneTool` (tools/prefab.ts); `createUserMessage` (queue-message-factory.ts);
-`isTask` (types.ts); `deliverToNode`, `listNodes` (resource-registry.ts — the
-NARROWED messaging API, NOT raw getTracker/deliverMessage which stay internal);
-`z` (zod). NO `checkPermission` (only `Auth` as a type), NO LLM facility — no
-plugin imports them today.
-
-### Exports map narrows the surface (gating is load-bearing)
-Adding `exports` GATES deep imports: `import "mxd/src/resource-registry.ts"` now
-FAILS to resolve — so `getTracker`/`deliverMessage` are un-importable; only the
-narrowed `deliverToNode`/`listNodes` reach a plugin. Verified safe to add: ZERO
-bare `mxd/`/`matrix/` self-imports exist in the tree (matrix uses relative
-imports; the worker `import()`s plugins by ABSOLUTE path — both bypass package
-resolution, so gating breaks nothing internal). The aspirational
-`import "matrix/src/llm.ts"` docstring in src/llm.ts was wrong (wrong name +
-non-resolving) and is unrelated — left as-is (not in scope).
-
-### Tests
-- `src/plugin-sdk.test.ts` (NEW, 7 tests): (1) thin re-export reference identity
-  (every value === its origin symbol; `z` === zod's z); (2) zod identity
-  end-to-end (SDK's z through toToolDefinition); (3) bare-specifier-through-symlink
-  singleton — `listNodes` reads the app's own tracker, and the returned node is
-  REFERENTIALLY the app's tracker node (the headline "same live tracker" proof);
-  (4) zod through the bare specifier; (5) deep-import gating (exports map blocks
-  `mxd/src/...`).
-- `src/plugin-messaging.test.ts` (REROUTED): its dummy plugin now consumes the
-  PUBLIC SDK surface (`./plugin-sdk.ts`) instead of resource-registry directly —
-  so its real-agent-loop tests ("deliverToNode wakes an idle peer on the SAME
-  tracker", listNodes snapshot, broadcast) double as the LITERAL proof that the
-  SDK's deliverToNode delivers + wakes in a loop. `registryGetTracker` stays the
-  internal accessor (used only to ASSERT identity, intentionally off-surface).
-  Reference identity + this reroute = airtight arrival coverage WITHOUT
-  duplicating the agent-loop harness.
-
-### Gotcha — `deliverToNode` needs `registerSideEffects` (wired at AGENT LAUNCH, not createApp)
-`_ctx` is set by `initResourceRegistry` (createApp path), but `_deliverMessage`
-(backing `deliverMessage`/`deliverToNode`) is registered by `registerSideEffects`
-which runs inside `buildAgentContext` at agent launch (agent-lifecycle.ts:184).
-So `deliverToNode` THROWS "deliverMessage not registered" if called outside any
-agent loop (e.g. a fresh createMatrixApp with no launch). `listNodes` works
-without a launch (only needs `_ctx`). This is why the SDK's deliverToNode arrival
-is tested via a real loop (plugin-messaging) not a bare createApp.
-
-## Node metadata write-path over REST — create + update (2026-06-08)
-
-Exposed plugin-owned `metadata` editing over REST on BOTH paths. The tracker
-primitives existed since the node-model task (`addChild` opts.metadata +
-`setMetadata`) but NO REST/MCP path reached them — nodes could neither be born
-with metadata nor have it edited:
-- POST  `/projects/:id/tasks`          body `metadata?` → `createTaskOp` → `addChild(parent, title, desc, { metadata })`
-- PATCH `/projects/:id/tasks/:nodeId`  body `metadata?` → `updateTaskOp` → `tracker.setMetadata(nodeId, metadata)`
-
-### REPLACE, never deep-merge
-`tracker.setMetadata` replaces the WHOLE object; `updateTaskOp` does NOT merge —
-the caller (plugin UI) reads current metadata and sends the complete merged
-object. PATCH with `metadata` absent (`undefined`) = "leave existing untouched"
-(guarded by `if (updates.metadata !== undefined)`); PATCH `metadata: {...}` with
-a key omitted = that key DISAPPEARS. Mirrors the color/status/title handlers in
-the one shared `updateTaskOp` (and `createOpts.metadata` mirrors budgetUsd/draft).
-
-### No new auth, no MCP
-- REST relies on the daemon-level auth middleware (Bearer). The MCP path's
-  `requireSubtreePermission` is a different layer — no new guard added.
-- MCP `create_task`/`update_task` deliberately NOT given a `metadata` param: the
-  only consumer is dchat's REST UI; an agent-facing opaque-metadata param is an
-  imagined need (anti-pattern #6). REST is the whole requirement.
-
-### Serialization is free
-`serializeNode` (stripSession) keeps `metadata` — it's on BaseTaskNode,
-round-trips via save/load. So POST/PATCH responses + GET /tasks + the SSE tree
-broadcast all carry updated metadata with no extra code. `updateTaskOp`'s
-existing `broadcastTree()` pushes it to the UI. Metadata changes do NOT fire
-`notifyTargetNode`/`notifyTreeChange` (those stay title/description-only — a
-metadata edit is config, not a message to the node).
-
-### Driver + effect timing
-dchat's roster UI: "add a character" = POST a node with personality metadata;
-"edit a character's prompt" = PATCH its metadata. Editing a RUNNING character's
-metadata takes effect on its next launch/compact (system prompt is built at
-launch), not mid-session — dchat's UX concern, NOT this write-path's scope.
-
-### Tests
-- `src/task-operations.test.ts`: createTaskOp "applies metadata" + "persists
-  across reload"; updateTaskOp "sets metadata" + "REPLACES — removed key
-  disappears" + "metadata undefined leaves existing untouched".
-- `src/rest-metadata.test.ts` (NEW, createMatrixApp harness): the canonical dchat
-  journey — POST/PATCH metadata → GET /tasks reflects it; PATCH replace; PATCH
-  title-only preserves metadata; POST without metadata → no metadata field.
-- Mutation-verified: commenting out BOTH `createOpts.metadata = …` and
-  `tracker.setMetadata(…)` → exactly the 9 metadata-asserting tests fail; the 1
-  absence-asserting test (POST without metadata) correctly stays green.
-
-## Mock-showcase extraction — unconditional → matrix-plugin-only (2026-06-09)
-
-Mock-showcase (static data endpoint + standalone UI page for component development)
-extracted from unconditional runtime registration into the matrix plugin.
-
-### What moved
-- `src/runtime/routes/mock-showcase.ts` → `.mxd/plugin/routes/mock-showcase.ts`
-- `src/runtime/routes/mock-showcase-image.png` → `.mxd/plugin/routes/mock-showcase-image.png`
-- Route registered in `.mxd/plugin/runtime.ts` `registerRoutes`, not `src/runtime.ts`
-
-### Leak fixed
-Previously `registerMockShowcaseRoute(app)` was called unconditionally in
-`src/runtime.ts` for EVERY plugin worker. Now only the matrix plugin worker serves it.
-
-### UI activation path
-Old: `?mock=true` query param — dead since Task Y.
-New: `/<projectId>/matrix/mock-showcase` — Plugin.tsx lazy-loads MockShowcase when
-`pluginPath === "mock-showcase"`.
-
-### Key details
-- MockShowcase.tsx stays at `.mxd/plugin/web/MockShowcase.tsx` (unchanged location)
-- Data endpoint URL unchanged: `GET /api/matrix/mock-showcase`
-- No new plugin entity — mock-showcase is a FEATURE of the matrix plugin
-- Moved route file uses `../../../src/` relative paths (same pattern as scope-opts.ts)
-
-## fable-5/mythos-5: old SDK gets replies downgraded to signed thinking blocks (2026-06-09)
-
-**Symptom**: assistant turns WITH thinking stored as `[thinking, thinking, tool_use]` — the
-second "thinking" block is a server-generated SUMMARY of the visible reply (sometimes English
-paraphrase of a Chinese reply), WITH signature. User-visible replies vanish into the thinking
-fold in UI. Reported by story1001, reproduced in root's own session.
-
-**Root cause — NOT a matrix bug**: claude-fable-5's visible output passes through a server-side
-filter/summarizer model and carries a signature ("thinking verification hash chains", see new
-SDK BetaFallbackBlock docs). The server sniffs client SDK version (x-stainless headers); old
-SDKs (0.78) are served a COMPAT format where signed content is downgraded to thinking blocks —
-the only block type old clients reliably round-trip with signatures. SDK accumulator and walker
-faithfully reproduce server blocks; verified via debug `last-response.json` (raw finalMessage):
-the "second thinking" was a 135-char compressed paraphrase of a ~300-char actual reply.
-
-**Fix attempt**: @anthropic-ai/sdk 0.78.0 → 0.104.0 (commit a61d341). One-sample post-restart
-verification passed, then the pattern RECURRED (23:17+, multiple sessions incl. the verifying
-turn itself) — SDK version is NOT the discriminator. Update kept (new model types, harmless).
-
-**CORRECTED diagnosis (2026-06-09 23:35)**: signature field length is content-proportional
-(364..14756 chars, ~2-4x displayed text; opus-era thinking already did this) → signature carries
-an ENCRYPTED payload of the original content. fable-5 intermittently applies the same protection
-to the VISIBLE REPLY: displayed text = server-rewritten paraphrase in a second thinking block,
-original never leaves Anthropic in readable form. User's read: anti-distillation. Client-side
-unfixable; options = tolerate / report upstream / switch back to opus-4-8. Historical JSONL keeps
-the summarized turns (accurate record of what the server sent) — no retroactive repair.
-
-**Diagnosis pattern (reusable)**: when block types look wrong, read the per-traceId
-`debug/<taskId>/<traceId>/last-response.json` (raw server response, written before tool exec —
-a bash call can read its OWN turn's response). That separates server-sent vs client-corrupted
-in one step.
-
-**Known follow-up gaps (untouched, wait for real data — anti-pattern #6)**:
-1. `fallback` block (server-side model fallback on refusal): buildResponseEvents has no branch →
-   not persisted to JSONL → post-restart walker omits it → per SDK docs the thinking hash chains
-   flanking the boundary can't verify → request rejected. Only fires when a fallback hop occurs.
-2. New stop_reasons (`refusal`, `pause_turn`, `compaction`, `model_context_window_exceeded`):
-   getStopReason maps all non-end_turn to "tool_use".
-3. SDK pin is caret (`^0.104.0`) — fine for now; fable-era servers change behavior by SDK
-   version, so future "weird block" bugs should check SDK gap FIRST.
-
-## fable-5 hidden-channel CONFIRMED: model context ≠ client-visible messages (2026-06-09 canary experiment)
-
-Two-sided experimental proof (this session, ~23:50):
-1. **Setup turn**: a 12-digit random canary written ONLY in visible reply text (kept out of
-   all tool inputs). Turn got downgraded: client-side JSONL stored a 132-char paraphrase that
-   mentions "这串随机数" but DROPS the digits. Canary existed NOWHERE client-side.
-2. **Recall turn**: next-turn agent recalled the full canary verbatim from its context, recall
-   claim recorded in the tool input (timestamped before any read). All 4 JSONL occurrences of
-   the canary are from post-recall commands.
-
-**Conclusion**: the signature field's encrypted payload is decrypted server-side on echo-back
-and the ORIGINAL content is reconstituted into the model's effective context. The model sees
-its own originals; the client/user only ever has the server-rewritten summaries. Implications:
-- "context = messages[]" is FALSE on fable-5 — the model cannot detect the divergence from
-  inside; only comparison against client-side records (JSONL/debug snapshots) reveals it.
-- The thinking-block packaging for old SDKs is the compat envelope that guarantees ciphertext
-  round-trip (old clients faithfully echo thinking+signature) — model continuity survives.
-- Anti-distillation reading (user's): full-fidelity outputs never exist client-side.
-- **Agent-side caveat**: an agent's "memory" of its own past replies is NOT evidence of what
-  the user saw. When verifying user-visible behavior, check JSONL/debug snapshots, never trust
-  introspection of own context.
-- Experiment protocol (reusable): canary in visible-text-only → next-turn recall recorded in
-  tool input BEFORE any read → grep client records. Tool inputs are the only generation-time
-  verbatim side channel (must be executed as written).
-
-## fable-5 FINAL: "Connector text summarization (beta)" — official doc found (2026-06-10)
-
-AWS Bedrock doc (claude-messages-adaptive-thinking.html) documents the whole phenomenon:
-- Text emitted BETWEEN tool calls ("connector text") on Fable 5 is **summarized server-side
-  and returned as a thinking block** (standard thinking shape, signature carries encrypted
-  original). "No new content block type." **"No customer opt-in or opt-out"** — SDK version
-  irrelevant, exactly as measured.
-- Scope rules explain the intermittency: applies only AFTER a tool_result exists in the
-  conversation; SHORT text segments may pass through unsummarized; **final assistant answers
-  (after all tool use is complete, i.e. end_turn text) are UNAFFECTED and remain plain text**.
-- Echo-back: pass the thinking blocks back unchanged (signature validated; stripped if sent
-  to a different model). Model-side context gets decrypted originals (canary-proven).
-
-**Operational mitigation for matrix agents**: reply-then-yield() in one turn makes the reply
-connector text (text followed by tool_use) → summarized away. Matrix already treats
-**end_turn as implicit yield** — identical pause semantics. Agents whose last action is a
-user-facing reply should END TURN instead of calling yield(); the reply then survives as
-plain text. Explicit yield() still fine when no user-facing prose precedes it.
-
-Supersedes the uncertainty in the two entries above. Fable 5 launched 2026-06-09 (public
-Mythos-class with safeguard layer; classifiers route cybersecurity/bio-chem/distillation
-requests to a guarded path — the anti-distillation reading was correct as motive).
-
-## FIX-8 (2026-06-10) — EventStore truncation safety: malformed-line index + write-queue serialization
-
-> **HISTORY — the whole mechanism described below is deleted (2026-07-24).** `truncateAfterLine`,
-> `readWithLineMap` and the event-index→physical-line translation are gone; repair addresses
-> events by eid and applies as a chain jump. Both bugs below were symptoms of "address events by
-> file position", and deleting the position-addressing deleted the bug class. Kept because the
-> DIAGNOSIS is the reusable part: an index computed in one space and consumed in another is a
-> silent corruption engine, and it bit us twice before we removed the second space. See "One
-> boundary: the active chain".
-
-Two EventStore bugs that amplify corruption during crash recovery.
-
-### R8-B#4 — Malformed lines shift truncation index
-`read()` skips malformed JSONL lines (crash artifacts) while `truncateAfterLine` slices raw
-physical lines. `buildSessionRepair` returns event-array-relative indices. With N malformed lines
-before the cut point, the physical cut lands N lines early → silently destroys valid events. Same
-index-space-mismatch class as FIX-1 cc#1 (compact boundary), but at the individual-line level.
-
-**Fix**: `EventStore.readWithLineMap()` returns `{ events, physicalLines }` where `physicalLines[i]`
-is the 0-based physical file line of `events[i]`. The call site in `agent-lifecycle.ts` reads via
-`readWithLineMap`, passes events to `buildSessionRepair` (which returns event-array-relative
-indices), then translates via the map before calling `truncateAfterLine`. `read()` now delegates to
-`readWithLineMap().events` — single parsing implementation.
-
-**Docstring correction**: `buildSessionRepair` previously claimed to return "PHYSICAL line index" —
-it actually returns event-array indices. Fixed in both the function-level and compact-boundary-safety
-docstrings.
-
-### R8-B#5 — truncateAfterLine not serialized with write queue
-`truncateAfterLine` bypassed `enqueueWrite` (did its own `flushSession` + direct sync I/O). A
-message persisted by `deliverMessage` in the flush-to-truncate window could land physically then get
-cut by the truncation's `writeFileSync`.
-
-**Fix**: route `truncateAfterLine` through `enqueueWrite`. Now fully serialized — pending writes
-complete before truncation, and writes enqueued after truncation wait for it. The generation guard
-also applies (if `clear()` runs while truncation is queued, truncation is silently dropped).
-
-### Tests (5 new, all TDD — written before fix)
-- `readWithLineMap returns events with their physical line numbers` — 2 malformed lines, verifies
-  physical line mapping [0, 2, 4]
-- `truncation after event index 2 with malformed lines preserves all 3 valid events` — end-to-end
-  proof the fix works (uses readWithLineMap → physical line → truncateAfterLine)
-- `BUG REPRO: using event-array index as physical line destroys the last event` — proves B#4 bug
-  exists (passing event-index 2 as physical line cuts physical line 3)
-- `truncation waits for pending writes before executing` — slow write completes before truncation
-- `writes enqueued after truncation wait for truncation to complete` — truncation then append, order
-  preserved
-
-## FIX-7 (2026-06-10) — lifecycle guards: root delete, status validation, prefix canonicalization
-
-Five guard bugs at the task-operations + routes layer, each TDD with failing tests first.
-
-### R8-C#1 — root node protection (delete/close/reset)
-`deleteTaskOp`, `closeTaskOp`, `resetTaskOp` now reject `tracker.rootNodeId` with
-`TaskOperationError("Cannot {delete,close,reset} the root node")`. The root orchestrator
-is the tree anchor — destroying it orphans the tree.
-
-### R8-C#2 — status transition validation
-`updateTaskOp` rejects `status: "closed"` and `status: "failed"`. Both are lifecycle-terminal
-states requiring cleanup (worktree removal for close, Phase 2 done delivery for failed). A
-plain PATCH bypasses those ops and leaks worktrees / orphans state. Callers must use
-`closeTaskOp` or let `done("failed")` set it (which goes through `tracker.updateStatus`
-directly, NOT through `updateTaskOp`). Tests that need "failed" as setup now use
-`tracker.updateStatus` directly instead of PATCH.
-
-### R8-C#3 — prefix canonicalization in REST /message
-REST `/message` route resolves `tracker.get(rawNodeId)` and uses `resolved.id` (canonical
-full ID) for all downstream ops. Response also returns the canonical `taskId`.
-
-### R8-C#4 — REST /message + /clarify node validation
-Both routes now validate: node must exist (404) and be a task node, not folder (400).
-`handleClarifyResponse` in agent-lifecycle.ts also got canonicalization + validation.
-
-### R8-C#5 — draft guard on REST /message
-REST `/message` rejects `status === "draft"` with 400, matching MCP `send_message` behavior.
-
-## FIX-5 (2026-06-10) — too-short compact brick + duplicate-done brick + dup-yield compact extras
-
-Three bugs in `provider-shared.ts`, all causing permanent session bricks.
-
-### R8-B#1 — too-short compact must NOT emit compact_marker
-`messages.length <= 4` branch emitted `compact_started` + `compact_marker` without
-rebuilding context (no session_config, no compacted_resume). On restart,
-`readActive()` returns only post-marker events → starts with assistant → 400
-"first message must be role user" → permanent brick. Fix: emit only a status
-"Context is too short to compact", reset `manualCompactRequested`, and consume any
-`pendingCompactYieldToolCall` / `pendingCompactDoneToolCall` + `pendingDuplicateYieldExtras`
-so the assistant tool_use has a matching result.
-
-### R8-B#2 — duplicate done() → emit results for ALL dones
-Two done tool_calls both exited as orphans. On resume, repair placed the interrupted
-result AFTER lifecycle events (agent_end, done_notified). The walker tool_result
-collection loop broke at those lifecycle events → two separate user messages → API 400
-→ permanent brick. Fix: for duplicates, emit tool_results for ALL dones (extras get
-"duplicate done", winner gets "processed successfully"). No orphans → no repair →
-no walker issue. Trade-off: resume detects `isInterruptedResume` instead of
-`pendingDoneToolCall`, so agent gets normal interrupted resume instead of special
-done-resume context.
-
-### R8-B#11 — duplicate-yield extras must be bundled in compactOnly compact path
-`pendingDuplicateYieldExtras` was only consumed in the normal yield-wake path. The
-compactOnly compact path ignored them → extras tool_results were dangling → API 400.
-Fix: compact summarization path and too-short path both include extras in the bundled
-user turn.
-
-### Pre-existing issue found (not fixed here): compact messages never get messages_consumed
-`handleImplicitYield` filters compact messages from `nonCompact` and `recordQueueEvents`
-only records nonCompact. On restart, `findUnconsumedMessages` re-enqueues the compact →
-spurious `manualCompactRequested` on next session. Usually benign but can cause
-consecutive user messages during done-resume with compact.
-
-## FIX-6 (2026-06-10) — worker init crash hang + shutdown throw (daemon.ts)
-
-Five worker-lifecycle bugs in `src/daemon.ts`. Together they form the self-bootstrap death
-chain: agent commits bad code → daemon restarts → worker crashes → permanent hang + lock.
-
-### R8-A#1 — onerror rejects init promise (was: permanent hang)
-`worker.onerror` cleared `initTimer` but never called `reject()`. Bun fires onerror AND
-terminates the worker on unhandled errors. With the timer cleared and no reject, the
-`startWorkerForPlugin` promise hung forever — no timeout fallback, no rejection.
-Fix: `initResolved` boolean tracks whether init succeeded. onerror during init → reject
-(daemon boot failed, no restart scheduled). onerror after init → schedule restart with
-backoff (normal runtime crash recovery).
-
-### R8-A#2 — shutdown() tolerates dead workers (was: thrown InvalidStateError)
-`sw.worker.postMessage({ type: "shutdown" })` throws `InvalidStateError` on a terminated
-Bun Worker. The throw skipped remaining workers + `releaseDataDirLock`. Fix: try/catch
-per worker. Dead workers skip graceful-shutdown wait, go straight to terminate.
-
-### R8-A#9a — {type:"error"} terminates worker (was: thread leak)
-scope-worker catches init errors and posts `{type:"error"}`. Daemon rejected the init
-promise but never called `worker.terminate()` — the worker thread stayed alive consuming
-resources. Fix: terminate + delete from workers map.
-
-### R8-A#9b — restart timers cleared on shutdown (was: zombie workers)
-`scheduleWorkerRestart` used bare `setTimeout` without storing the timer ID. After shutdown
-released the lock, pending restart timers fired and spawned zombie workers. Fix:
-`pendingRestartTimers: Set<Timer>` tracks all restart timers. `shutdown()` clears them
-before touching workers.
-
-### R8-A#9c — dead workers cleaned from workers map
-Timeout, onerror, and {type:"error"} all left dead `ScopeWorker` entries in the `workers`
-map. Fix: `workers.delete(scopeName)` in all three failure paths.
-
-### Test technique: triggering onerror during init
-A plugin runtime with `setTimeout(() => { throw ... }, 0)` + `await new Promise(r =>
-setTimeout(r, 50))` fires an unhandled throw DURING scope-worker's init phase (before
-"ready" is sent). The top-level await gives the event loop a chance to process the 0ms
-timer, which crashes the worker and fires `worker.onerror` on the parent. This is the
-only reliable way to trigger onerror during init in tests — `process.exit(1)` does NOT
-fire onerror (silent death, caught by timeout), and module-level `throw` is caught by
-scope-worker's try/catch (posts `{type:"error"}`, not onerror).
-
-## FIX-9 (2026-06-10) — binary response proxy: scope-worker .text() corrupts bytes >0x7F
-
-`scope-worker.ts` used `response.text()` for buffered HTTP responses forwarded back to the
-daemon. `text()` decodes bytes as UTF-8 — every byte >0x7F becomes U+FFFD (EF BF BD). A 256-byte
-binary payload inflated to 512 bytes; PNG headers (0x89 first byte) became garbage.
-
-**Fix**: `response.arrayBuffer()` + postMessage with transferable `[responseBody]` (zero-copy).
-`daemon.ts` `ScopeWorker.pending` type widened from `body: string` to `body: string | ArrayBuffer`
-— `new Response()` constructor handles both natively. `scope-worker.test.ts` `workerFetch` helper
-decodes ArrayBuffer→string for JSON test convenience.
-
-**Request bodies are NOT affected** — `forwardToWorker` already uses `request.text()` for the
-outgoing request, but request bodies in practice are JSON (text). If binary request bodies are ever
-needed (file upload via plugin route), that's a separate fix (`request.arrayBuffer()` in
-`forwardToWorker` + `ArrayBuffer` in the worker's `new Request(url, { body })`).
-
-Tests: `src/binary-proxy.test.ts` (3 tests) — full byte range 0x00–0xFF, PNG header, text
-passthrough. Daemon integration: plugin registers routes serving binary, request goes through
-daemon→worker→plugin route→worker→daemon pipeline.
+## Pending chip reappears after SSE reconnect — batch-consumed ID guard (2026-07-21)
+
+**Root cause**: race between SSE ring-buffer catch-up and the batch REST re-fetch during
+reconnection. `processEventBatch` (via `handleReconnect`) does RESET + full JSONL replay —
+pending correctly empty. But SSE catch-up events arriving AFTER the batch can re-deliver a
+`message` event whose `messages_consumed` was already in the batch. The duplicate `message`
+re-adds the pending chip; no live `messages_consumed` arrives to clear it → chip persists.
+
+**Fix**: `processEventBatch` records consumed IDs in `batchConsumedIds` (module-scoped Set
+inside `createEventHandler`). `handleEvent` checks this before dispatching APPLY(message) —
+batch-consumed IDs are suppressed. Set cleared on every RESET; entries removed by live
+`messages_consumed` events (defensive against id reuse).
+
+**Diagnosis technique**: 22 "unconsumed" messages found in JSONL were ALL compact/
+compacted_resume source (correctly excluded by reducer). 0 unconsumed user messages. Backend
+is correct — every user message has a matching `messages_consumed` with identical IDs. Bug
+was purely frontend timing.
+
+**Key invariant**: `batchConsumedIds` is the **minimum-viable deduplication** between batch
+and SSE event sources. It does NOT replace the pure `pendingReducer` — the reducer stays
+pure (no side-channel). The guard lives in `handleEvent` (the event handler driver), not in
+the reducer itself.
+
+## agent_idle re-fetch for Edit/Rewind buttons (2026-07-23)
+
+SSE-broadcast events lack `eid`/`parentEid` (stamped only at JSONL persist time in
+`EventStore.stampEvent`). During streaming, Edit/Rewind buttons are unavailable. When
+the agent goes idle (agent_idle SSE event for the VIEWED task), the frontend re-fetches
+JSONL events via `GET taskEvents?after=compact` → `processEventResponse` — same pattern
+as SSE reconnect and rollback. JSONL events carry eid/parentEid → buttons appear.
+
+Implementation: `onAgentIdle` callback on `EventHandlerDeps`, triggered from the
+`agent_idle` case in `processEvent` when `msg.taskId === getViewedSessionId()`.
+Plugin.tsx wires it via `refetchOnIdleRef` (breaks the useMemo/useCallback dep cycle).
+
+---
+# Web UI — Components & Interactions
+---
 
 ## FIX-10 (2026-06-10) — Settings save: silent failure + null-in-global-patch
 
@@ -3404,41 +4271,6 @@ LogEntryView). Verified identical with my changes stashed. `bun test` is green
 (2305 pass); these only affect `tsc`/`check:ci`. Root should clean before the
 final main commit (worktree hooks are /dev/null so they don't gate here).
 
-## bun 1.3.7–1.3.8 SIGTRAP on worker teardown — RESOLVED 2026-07-02: global bun upgraded to 1.3.14
-
-RESOLUTION (root, same day): minimal 7-line repro (spawn Worker → terminate → exit 133) confirmed
-the crash class independent of tests. Version matrix via isolated installs: 1.3.0 OK · 1.3.7 BAD ·
-1.3.8 BAD · **1.3.14 (latest) FIXED**. Global `bun upgrade` run (user-blessed) → 1.3.14; repro
-survives; full suite on main under 1.3.14 = **2305 pass / 0 fail** (baseline restored). The running
-daemon (started Jun 17, pre-upgrade image) was never exposed; next restart boots 1.3.14 = safe.
-Isolated pins ~/.bun-pin (1.3.7), ~/.bun-130, ~/.bun-latest are deletable. The interim scoped-gate
-below is no longer needed — kept for the record of the era.
-
-### Original diagnosis (markdown task 01KWHXMB, before resolution)
-
-**Any test file that terminates a Bun Worker crashes the whole `bun test` process** with
-SIGTRAP (exit 133) on bun v1.3.8. Native bug inside bun, NOT repo code: macOS crash report
-shows libmalloc abort `BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED_WAS_NOT_ALLOCATED`
-in `_pthread_tsd_cleanup` → `pthread_exit` (TSD double-free on worker-thread exit). Crash
-logs: `~/Library/Logs/DiagnosticReports/bun-2026-07-02-*.ips`.
-
-- Reproduced on the markdown branch, its clean base commit (stash), AND the main checkout —
-  identical crash, so no branch's code is the cause. User presumably upgraded bun since the
-  last green run (package.json pins no engines; only ~/.bun/bin/bun 1.3.8 on machine).
-- Confirmed on `web/ShellApp.test.tsx` AND `src/daemon-integration.test.ts` (no happy-dom
-  involved) — the trigger is worker terminate, i.e. every daemon/worker test file.
-- The crashing file runs FIRST in a full `bun test`, so the full suite verifies ~3 tests
-  before dying. **"bun test passed" claims from this era are meaningless — check exit code.**
-- Production daemon runs the same bun 1.3.8 and terminates workers on restart/shutdown —
-  same crash class may hit the live daemon.
-- Same environment refresh also drifted node_modules: 5 pre-existing `tsc` errors in
-  `_vendor_shims/*` (@types/react caret bump exposes missing internal props) + 2 biome
-  format errors on `_vendor_shims/react{,-dom}.ts` + 61 lint warnings. All verified
-  identical on clean base — NOT from any branch's diff.
-- Orchestrator owns the fix (isolated older-bun pin to restore the gate, then user decision
-  on downgrade). Interim per-task gate: typecheck + check:ci with zero NEW diagnostics vs
-  base, plus scoped `bun test ./<files>` on non-worker test files.
-
 ## Full lightweight markdown rendering in agent replies (2026-07-02)
 
 Extends the tables-only pipeline to the full lightweight set: fenced code, headings,
@@ -3543,53 +4375,6 @@ before any existing draft), textarea focused with cursor at end.
   tree's default root title is also "Orchestrator"). Harmless but misleading; fix when
   next touching that file.
 
-## bun test cross-file React breakage: root cause is react-dom scheduler binding — FIXED via preload (2026-07-02)
-
-**Supersedes the "Test pollution gotcha (pre-existing, not Fix C)" entry and the Task Y
-"ShellApp integration tests — DELETED" workaround rationale.** The "happy-dom state
-surviving GlobalRegistrator cycles" theory was wrong, and the class is now FIXED, not
-worked around.
-
-### Actual mechanism (probe-bisected, 2-file repros)
-react-dom is a process-wide singleton; its scheduler picks timer machinery
-(MessageChannel etc.) at FIRST IMPORT. If the first `import("react-dom/client")` in a
-`bun test` process happens INSIDE a registered happy-dom environment, the scheduler
-binds that window's machinery; when that file's afterAll runs
-`GlobalRegistrator.unregister()`, scheduled render work stops flushing → EVERY
-subsequent test file's React renders produce nothing (fast assertion fails + 5s render
-timeouts). If the first import happens under plain bun globals, the binding is
-bun-native and immortal — all later register/unregister cycles are harmless.
-
-- bun's test-file order is filesystem-dependent (NOT alphabetical, NOT mtime). Baseline
-  was green only because web/ShellApp.test.tsx happened to run first (its react-dom
-  import path was benign); adding 4 new web test files reshuffled the order, put a new
-  file in pole position, and 52 tests across 11 web files failed. Any file addition
-  could have re-rolled this dice — the landmine was latent, not caused by any file's
-  content.
-- Red herrings eliminated by probes: matchMedia mocks (assign OR call), happy-dom
-  register options (width/height), IS_REACT_ACT_ENVIRONMENT — none of them matter. A
-  minimal register→import-react-dom→render→unregister file poisons; the identical file
-  with a TOP-LEVEL react-dom import stays benign.
-- Bisect trap to remember: a sed-mangled probe whose beforeAll THROWS never registers
-  happy-dom → the paired victim file runs clean → looks like "mutation fixed it".
-  Validate probe files pass on their own before trusting a bisect step.
-
-### Fix (the ONE mechanism)
-`bunfig.toml [test] preload = ["./src/test-utils/preload.ts"]` — the preload just does
-`import "react-dom/client"` once per process, before any test file, guaranteeing the
-native binding regardless of file order. Verified: previously-poisonous orders
-(journey-first, targetNodeId-first, url-task-id-first) all green; full suite 2419/0.
-
-### Consequences
-- happy-dom + GlobalRegistrator register/unregister per file is SAFE now. Subset runs
-  (`bun test web/A.tsx web/B.tsx`) are no longer order-flaky for this reason.
-- matchMedia mocks in test files are innocent; keep them if a test needs desktop
-  viewport (or use `GlobalRegistrator.register({ width, height })` — happy-dom's real
-  matchMedia evaluates min/max-width correctly against it).
-- Do NOT remove the preload "because tests pass without it locally" — passing depends
-  on file order, which depends on the filesystem. The preload is what makes order
-  irrelevant.
-
 ## Scroll-to-bottom button + happy-dom v20 MutationObserver WeakRef GC hazard (2026-07-07)
 
 Scroll-to-bottom button (↓, `.mxd-scroll-bottom-btn`) in `.mxd-panel-actions`, rendered
@@ -3632,74 +4417,6 @@ gone). Seeding a `usage` JSONL event (`{type:"usage", taskId, inputTokens, conte
 the trick to make the Compact button exist in harness tests. Mutation-verified: prop-wire drop →
 journey fails; handleScroll report drop → 2 scroll tests fail; effect else drop → content-growth
 test fails (exact, thanks to the MO stub).
-
-## Audit FU3 [CRITICAL] — SSE catch-up correct across daemon/worker restarts (2026-07-07)
-
-The LIVE "daemon restart → open page blank until F5" bug + two adjacent restart-window
-holes. All in `src/daemon.ts`. Three findings, one class: after a restart the UI silently
-diverges from server state.
-
-### Finding 1 — epoch-prefix every SSE id (the live blank-until-F5 bug)
-Per-lens seq counters restart at 0 on every daemon boot. Audit R7 P2.9 added a stale-ahead
-check (`getEventsSinceFromBuffer`: `lastSeqId > lastEntry.seqId → null`) that catches a
-pre-restart cursor BEYOND the new tail — but NOT a cursor whose seq falls INSIDE the new
-incarnation's refilled range. After a real restart agents auto-resume + stream, so the buffer
-refills PAST the browser's low pre-restart cursor before it reconnects → `getEventsSince`
-returns a wrong-epoch slice → `catchUpDone=true` → full initial state skipped → stale UI until F5.
-P2.9's own comment called epoch ids "the proper fix, out of scope"; FU3 shipped it.
-
-- Every SSE `id:` is now `<epoch>-<seq>`, epoch = `String(Date.now())` minted once per
-  `createDaemon` (const `sseEpoch`). Two pure exported helpers at module scope:
-  `formatSseEventId(epoch, seqId)` and `parseSseLastEventId(header)`.
-- `parseSseLastEventId`: `<epoch>-<seq>` → `{epoch, seq}` (split on the LAST dash — epoch may
-  contain dashes); bare numeric (pre-epoch daemon cursor) → `{epoch: null, seq}`; garbage → null.
-- `/events` catch-up runs ONLY when `lastCursor.epoch === sseEpoch`. `epoch:null` (legacy),
-  foreign epoch (previous incarnation), and null (garbage) all fall through to full initial state.
-- `getEventsSinceFromBuffer` is unchanged + still reasons WITHIN one incarnation; the epoch
-  layer sits above it. Both `id:` emit sites (live relay ~837, catch-up replay ~1886) use
-  `formatSseEventId` — a bare-seq emit would poison the client's NEXT reconnect cursor.
-- Client needs ZERO changes: EventSource echoes `Last-Event-ID` opaquely; only the server parses.
-
-### Finding 2 — ONE unified worker.onmessage, installed before init
-The old code used a temp init-only handler (loaded/ready/error) and swapped in the runtime
-handler AFTER `ready`. But the worker posts `sse_event`s DURING init (autoResumeProjects crash
-recovery, `onBroadcast` wired before `autoResumeProjects` in scope-worker.ts) → dropped silently.
-Harmless on first boot (no clients), HIGH impact on worker auto-restart (SSE clients still
-connected daemon-side miss every recovery event). Fix: `setupWorkerMessageHandler` →
-`handleWorkerRuntimeMessage(pluginName, scopeWorker, msg)`, called from the SINGLE
-`worker.onmessage` for any non-init-protocol message (`else` branch after loaded/ready/error).
-`shutdown_complete` is unaffected — it uses `addEventListener`, not `onmessage`.
-
-### Finding 3 — /events initial-state polls worker readiness (restart-gap reconnect)
-`workerKeyForProjectScope` (one-shot `workers.has → undefined`) → `awaitLensWorkerReady(projectId,
-scope, signal)`: no plugin for the lens → undefined immediately (permanent; auth-only `scope=""`);
-plugin exists but worker not ready → poll `SSE_INITIAL_STATE_RETRY_ATTEMPTS(15) ×
-SSE_INITIAL_STATE_RETRY_MS(200)` = 3s, aborts on client disconnect. A client connecting during
-the ~2s worker-restart backoff+init previously got a live stream with NO tree until the next
-unrelated event. Budget is 3s not the spec's 2s ON PURPOSE: the 2s backoff expires exactly as the
-restarted worker BEGINS init, so a 2s poll guarantees a miss for early-gap clients; spec Test 4
-asserts arrival "within 3s". Ready worker resolves on first check, zero delay.
-
-### Tests
-- `src/sse-catchup.test.ts` (7 integration, REAL daemon+worker via in-process `daemon.fetch`):
-  spec Tests 1-4 + the live old-epoch-cursor-INSIDE-new-range regression + same-epoch replay
-  still works + same-epoch-ahead-cursor. Test plugin emits an `init_probe` sse_event at MODULE
-  IMPORT time (fires inside the worker's init sequence, before `ready` — models
-  autoResumeProjects timing) and exposes `/test-emit` (emit via ctx.onBroadcast) + `/test-crash`
-  (unhandled throw → onerror → auto-restart, the FIX-6 technique). An `SseReader` parses `id:`/
-  `data:` frames from the stream body with a `waitFor(pred, timeout)`.
-- `src/sse-ring-buffer.test.ts` (+6 unit): formatSseEventId/parseSseLastEventId incl. legacy
-  bare-numeric → epoch:null, last-dash split, garbage → null.
-- Full suite 2447 pass / 0 fail (baseline 2435 + 12). typecheck + check:ci clean.
-- Verified the LIVE correspondence first: pre-fix `getEventsSinceFromBuffer(buf 1..10, oldLEI=5)`
-  returned a 5-event wrong-epoch slice (bug); the spec's literal repro (LEI=100) was already
-  null via P2.9. So the epoch variant — NOT the literal one — is today's blank-until-F5 symptom.
-
-### Pre-existing base-branch gate failures (NOT from this work — flagged to root)
-`bash scripts/check-i18n.sh` fails on 3 bare strings in `web/MarkdownText.test.tsx` /
-`web/markdown-table.test.ts` (from markdown commit 32b4f440, ancestor of this branch). My files
-are `.ts` (no JSX). typecheck + check:ci pass with my changes; root should clean i18n before the
-final main commit.
 
 ## Sidebar search/filter toggle — pure reducer, blur-close removed (2026-07-07)
 
@@ -3754,197 +4471,6 @@ fire in happy-dom (probed) — used for the component-level guards.
   fails BOTH the blur guard AND the reproduction (reproduction shows `Received: true` = reopened).
 - Full `bun test` 2465 pass / 0 fail (baseline 2447 + 18). typecheck + check:ci + i18n clean.
 
-## Memory-index Step 1: done() captures structured result/lessons → TaskNode.resultRounds (2026-07-14)
-
-First brick of the memory index (draft 01KWCQEB). WRITE side only — structured
-result/lessons land on the node as a FIRST-CLASS field. NO FTS/sqlite/embedding/search
-here (that's Step 2+).
-
-### Shape (locked with user)
-`TaskNode.resultRounds?: Array<{ result: string; lessons: string[] }>` (`ResultRound` in
-`src/types.ts`). ONE block APPENDED per done() — never overwritten. Single-done task → one
-block; reawaken→re-done task → N blocks in call order. Absent until first done(). Per-round
-structure (not a big string) so Step 2 indexes per-round-per-field with no text-splitting.
-
-### Data flow (read from JSONL, persist via plugin hook)
-1. **done() tool params** (`orchestrator-tools.ts` createDoneTool config): added `result`
-   (optional string) + `lessons` (optional string[]) alongside existing `status`+`summary`.
-   Both OPTIONAL — making them required would break every existing done() caller/test.
-   `summary` kept working unchanged (additive, not folded into result).
-2. **Read at Phase 2** (`runtime/agent-lifecycle.ts` ~1123): `readDoneRound(events)` (new
-   helper in `events.ts`) finds the LAST `tool_call` with `tool === TOOL_DONE` and reads
-   `input.result`/`input.lessons` straight from the persisted tool_call — the 01KN8D1M
-   "JSONL is the source of truth" pattern, NOT AgentResult plumbing (avoids threading two
-   fields through ~8 buildResult call sites in the hot provider loop). Defaults: absent
-   result→"", absent/dirty lessons→[] (drops non-string entries). Flush gating changed from
-   `!isRoot && has` to `has` so ROOT done()s are captured too; the late-message check stays
-   non-root-only. result/lessons ride into `doneArgs` (typed `Record<string,unknown>`, so no
-   ScopeOpts signature change).
-3. **Persist via onDone** (`.mxd/plugin/scope-opts.ts`): the Matrix onDone appends
-   `{result, lessons}` via `tracker.appendResultRound(node.id, ...)` BEFORE the status flip
-   (append then updateStatus). Keeping persistence in onDone (not runtime) respects the
-   plugin-agnostic boundary — `resultRounds` is on `TaskNode` (matrix), not `BaseTaskNode`;
-   runtime never touches it. onDone's RETURN stays `MatrixDoneData {status, summary}` — the
-   round is a side-effect, NOT spread into the `done_notified` marker.
-4. **Tracker** (`task-tracker.ts`): `appendResultRound(nodeId, round)` — append-only, creates
-   the array on first call, rejects general nodes, bumps updatedAt. Round-trips through
-   save()/load() FREE (save spreads `...rest`, load casts raw→TaskNode) — zero extra
-   serialization code. Surfaces via get_task/get_tree FREE (stripSession spreads all fields).
-
-### Decisions surfaced (the summary/result overlap "awkwardness")
-- `result` and `summary` overlap semantically (both "what happened"). Kept BOTH additively
-  per user directive (don't break callers). `summary` = brief note for parent + done_notified;
-  `result` = durable outcome narrative for the memory index. NO fallback result→summary — an
-  omitted result yields an EMPTY round (`{result:"", lessons:[]}`), one-block-per-done()
-  invariant stays clean and literal. Step 2 (indexing) owns any distill/fallback policy, not
-  the write path. `result` optional means existing agents produce empty rounds until they
-  learn to fill it (tool description strongly steers them).
-
-### KNOWN LIMITATION (documented, in-scope call)
-The **crash-recovery Phase 2** path (`runtime.ts` autoResume `findInterruptedDonePhase2` →
-`needs_phase2`) does NOT append a resultRound: it's plugin-agnostic runtime code that updates
-status directly via `tracker.updateStatus`, never calling the Matrix onDone. So a done() whose
-Phase 2 was interrupted by a daemon crash (rare) loses its round. Wiring it in would either
-break the plugin-agnostic boundary (runtime knowing about resultRounds) or change crash-recovery
-behavior (route through onDone) — both out of Step-1 scope. The normal Phase 2 path (the
-overwhelming majority) captures correctly.
-
-### Tests
-- `task-tracker.test.ts` "resultRounds (memory-index capture)" (9 unit): append, empty-lessons,
-  **append-twice-never-overwrites**, updatedAt bump, non-task throws (asserts /non-task node/),
-  unknown-node throws, **save/load round-trip**, stripSession preserves (get_task surfacing).
-- `integration.test.ts` "done() captures structured result/lessons (resultRounds)" (4 full-flow):
-  done with result+lessons → node.resultRounds; done WITHOUT (back-compat) → one empty round;
-  **two done() rounds (reawaken via sendMessage) → two blocks in order, first preserved**;
-  failed done() also appends. Full stack: tool param → JSONL tool_call → Phase 2 readDoneRound
-  → onDone → node.
-
-### Gotchas
-- `readDoneRound` compares `e.tool === TOOL_DONE` (the full `mcp__mxd__done` name — tool_call
-  events store the mcp-prefixed name, same as `findInterruptedDonePhase2`).
-- `appendResultRound` must NOT use `(node.resultRounds ??= []).push(x)` — biome
-  `noAssignInExpressions` errors. Use `if (!node.resultRounds) node.resultRounds = []; ...push`.
-
-## Memory-index Step 1.1: unify done() summary+result into ONE concept `result` (summary=deprecated alias) (2026-07-14)
-
-SUPERSEDES the Step-1 entry's "kept BOTH summary and result additively / NO fallback" decision.
-The user identified that `summary` and `result` said the SAME thing ("成果 / what this round did") —
-only `lessons` was genuinely new. So Step 1 left a redundancy. This collapses them into ONE concept.
-
-### End state — two concepts on done(): `result` + `lessons`
-- **`result`** (optional, PRIMARY): "what this round accomplished (passed) / went wrong (failed)".
-  ONE value that flows to BOTH (a) the parent notification (task_complete `output` + done_notified
-  marker) AND (b) `resultRounds.result`. Byte-identical in both places (same string).
-- **`summary`** (optional, DEPRECATED ALIAS): coalesced `result ?? summary`. Kept so every
-  existing/frozen `done(summary=...)` caller + test is 100% untouched (zero regression). Declared
-  in the schema (not just tolerated) so it's robust even if tool schemas ever become strict; marked
-  deprecated in its description so new agents use `result`.
-- **`lessons`** (optional): unchanged, independent → `resultRounds.lessons`.
-
-### Why PRIMARY=`result` (not keep param named `summary`)
-The tool description is agent-facing on every done(); it must name the real concept (`result`,
-matching the field `resultRounds.result`), not the legacy `summary` we're retiring. Leaving the
-primary param `summary` while the field/concept is `result` re-seeds the exact "two names for one
-thing" confusion this change kills. The alias makes the clean name zero-cost on back-compat.
-
-### Coalesce sites (both read the done tool_call input for the "what I did" value)
-- `provider-shared.ts` (~1896, live done): `doneResult = doneInput?.result ?? doneInput?.summary ?? ""`.
-  `doneInput` type gained `result?`. `doneResult` is the LEGACY internal carrier name — it now holds
-  the coalesced result (NOT renamed to doneResult; that's a ~9-buildResult-site churn, deferred —
-  flagged to orchestrator).
-- `runtime.ts findInterruptedDonePhase2` (crash-recovery): same coalesce, so a crash-recovered done
-  carries the same outcome string the live path would have delivered.
-
-### How resultRounds.result gets the value (one value, both destinations)
-`doneResult` (coalesced) → `AgentResult.doneResult` → agent-lifecycle Phase 2 `doneArgs.summary`
-→ (a) `createTaskComplete(..., agentResult.doneResult)` = parent notification, AND (b) Matrix
-`onDone` sets `resultRounds.result = doneArgs.summary`. SAME variable → byte-identical.
-`lessons` still read from JSONL via `readDoneLessons(events)` (renamed from Step-1 `readDoneRound`,
-now returns just `string[]` — result no longer needs a JSONL read since it reuses the plumbed summary).
-
-### Enforcement note (forced relaxation)
-Step 1 had `summary` REQUIRED. For the alias to work through Zod, `result` MUST be optional (a frozen
-summary-only call must pass validation), and `summary` is also optional — so a `done()` with NEITHER
-now passes Zod → empty round `{result:"", lessons:[]}` (previously summary-required blocked this).
-This relaxation is FORCED by "primary=result + summary-alias + zero-regression-on-frozen". No beforeDone
-"at least one required" check added (kept minimal; flagged to orchestrator).
-
-### Zod strips unknown keys (why frozen callers are safe)
-`z.object(inputSchema).safeParse` (tool-execution.ts) has NO `.strict()` → unknown keys are STRIPPED,
-not rejected. So even a caller passing an undeclared key is fine. Declaring `summary` is belt-and-braces.
-
-### Tests
-- `integration.test.ts` "done() result/lessons capture — unified result concept" (8): result+lessons,
-  result-no-lessons, **deprecated summary alias → result (coalesce)**, **result-wins-when-both**,
-  barren-done→empty-round, two-round-append-order, failed, and **ONE value → BOTH parent-notification
-  AND resultRounds.result byte-identical (parent-child, via the summary alias)**.
-- `task-tracker.test.ts` resultRounds unit tests UNCHANGED (appendResultRound is agnostic to where
-  result comes from).
-
-## Memory-index Step 1.2: DELETE done() `summary` entirely — `result` is required-non-empty (2026-07-14)
-
-SUPERSEDES Step 1.1 (the "keep summary as a deprecated alias / coalesce result ?? summary" entry).
-User decided: go all the way — no alias, no legacy tail. done()'s agent-facing params are now
-exactly: `status` (control signal), `result` (成果, REQUIRED-non-empty — absorbs everything summary
-did), `lessons` (independent). There is NO `summary` param on the done tool anywhere.
-
-### Enforcement — `result` required-non-empty (two layers)
-- Zod `explicit` (required) → an ABSENT result is rejected at executeTool's safeParse with
-  "Tool input validation error (mcp__mxd__done): result: …" (mentions `result`).
-- `beforeDone` (orchestrator-tools.ts) checks `!args.result?.trim()` FIRST (before the git-clean
-  check) → an EMPTY/whitespace-only result is rejected with a steering message ("done() needs a
-  non-empty `result`: state what this round ACTUALLY accomplished…"). A rejected done returns
-  isError → the provider-loop done-exit block (`if (doneResult && !doneResult.isError)`) is skipped
-  → the loop does NOT exit, no Phase 2, no resultRound appended → the agent sees the error and
-  continues. So a barren done() never lands an empty `{result:""}` round.
-
-### Coalesce → just `result` (summary read deleted)
-- `provider-shared.ts` (live done): `doneResult = doneInput?.result ?? ""` (was `result ?? summary`).
-- `runtime.ts findInterruptedDonePhase2` (crash recovery): `summary = doneInput?.result ?? ""`.
-- `agent-lifecycle.ts` doneArgs: `result: agentResult.doneResult ?? ""` (bridge field renamed
-  summary→result); `scope-opts.ts onDone` reads `doneArgs.result` → `resultRounds.result`.
-
-### Internal carriers KEPT (invisible to agents, some persisted — renaming = JSONL migration, out of scope)
-`AgentResult.doneResult`, `MatrixDoneData.summary`, the `done_notified` event's `summary` field,
-`createTaskComplete(output=…)`, and `findInterruptedDonePhase2`'s return `.summary` field all keep
-their names. They now hold the `result` value. So `expect(result.summary).toBe(...)` in
-findInterrupted tests is correct: INPUT uses `result` (runtime reads it), RETURN field is still
-`summary` (the internal marker field).
-
-### Byte-identical: one value → both destinations
-`result` → doneResult → task_complete `output` (parent notification) AND resultRounds.result — the
-SAME string. Test "ONE value → BOTH parent notification and resultRounds.result (byte-identical)"
-(parent-child) pins it.
-
-### Migration of ALL call sites (the accepted churn)
-Every `done(summary=…)` test/fixture/helper → `result`. z.object() strips unknown keys (no
-`.strict()`), so a MISSED site is NOT silently stripped-to-empty — it's LOUD: `result` required →
-Zod rejects → the done never completes → the test fails/times out. That enforcement WAS the safety
-net. **GOTCHA that bit once**: the bulk `summary: "` replace missed a BACKTICK template literal
-(`summary: \`child ${label}…\``) in integration-stress MULTI1 → the child's done was rejected →
-parent hung → 48s timeout that looked like a flake but was the regression. Always grep BOTH
-`summary: "` AND `summary: \`` (and shorthand `summary }`).
-
-### Two test files that are NOT Matrix's done (left on `summary`, correct)
-- `openai-responses-compatible-provider.test.ts` — standalone PROVIDER unit test (uses `provider.stream()`
-  directly, defines its OWN `done` tool with a `summary` schema, never runs the runtime loop nor asserts
-  the value). Reverted my changes to it — it's independent of Matrix's rename.
-- `anthropic-compatible-provider.test.ts` ~2560 — a provider-level test whose mock `done` tool declares a
-  `summary` schema but whose mock RESPONSE input uses `result`; provider-shared reads the raw input's
-  `result`, the schema `summary` is cosmetic (unknown `result` stripped by Zod, value read from raw input).
-  Works as-is.
-
-### FROZEN-AGENT transition window (accepted, self-correcting)
-A mid-flight agent whose session_config froze the OLD done schema and emits `done(summary=…)` right after
-the daemon restarts loses that ONE round's result (unknown `summary` stripped → `result` absent → done
-REJECTED with the required-result error; the agent retries with `result` next turn after reading the new
-tool desc). Tiny, one-time, self-correcting.
-
-### Tests
-`integration.test.ts` "done() result/lessons capture (resultRounds)" (7): result+lessons, result-no-lessons,
-**NO-result→REJECTED (no empty round)**, **whitespace-result→REJECTED (steering msg)**, two-round order,
-failed, byte-identical parent-child. Tracker unit tests unchanged.
-
 ## InputBar quote-insert scroll-to-caret + textarea height/scroll rAF ordering (2026-07-14)
 
 Bug: after "Ask Matrix" select-to-quote prepends a markdown blockquote into the
@@ -3981,184 +4507,6 @@ trips `useExhaustiveDependencies` (ERROR-level, not warning). Adding it to deps 
 re-fire the insert every render (new fn identity each render) — a `biome-ignore` on
 the effect is the correct fix, matching the codebase convention. No CSS/i18n change
 (textarea was already capped+scrollable; fix is purely JS scroll).
-
-## Memory-index Step 1.3: COMPLETE summary→result rename — no `summary` anywhere in the done-outcome concept (2026-07-14)
-
-SUPERSEDES the "internal carriers kept as summary" decisions in Step 1.1/1.2 (the earlier notes'
-`doneSummary` mentions were auto-updated to `doneResult` by this rename; read them as historical).
-User directive: "把summary在所有地方完整重命名成result" — no legacy tail, internal or not.
-
-The done-outcome concept is now `result`/`doneResult` EVERYWHERE it's the done payload/carrier:
-- done() param `result` (required-non-empty) — the single agent-facing name.
-- `AgentResult.doneSummary` → `doneResult` (types.ts + provider-shared ~14 sites + agent-lifecycle
-  + anthropic-compatible-provider buildResult).
-- `MatrixDoneData.summary` → `result` (scope-opts onDone return → done_notified marker).
-- `findInterruptedDonePhase2` return field `summary` → `result` (runtime.ts + crash-recovery emit).
-- `done_notified` event field `summary` → `result` (events.ts:196). CONFIRMED write-only: nothing
-  reads the marker's own field — crash recovery reads `input.result` from the done tool_call
-  (runtime.ts), not the marker. So renaming it is zero-back-compat, NOT a JSONL migration. Step 1.2's
-  "migration risk" reasoning was wrong.
-- `agent_end.result?` (events.ts) — the done-outcome field on agent_end (was summary, unused/optional).
-- Frontend done-card consumers (all read the done tool_call `result` now): `event-display.ts`
-  getToolTitle TOOL_DONE, `McpToolCard.tsx`, `LogEntryView.tsx`, `ToolCard.tsx`, and the
-  `mock-showcase.ts` done fixtures. THESE WERE A SILENT UI REGRESSION — they read `getArg(.., "summary")`
-  / `toolArgs?.summary`, which typecheck can't catch (index/any access) and integration tests don't
-  render, so only a manual grep found them. Lesson: after renaming a tool param, grep the FRONTEND
-  (`getArg(.., "<param>")`, `toolArgs?.<param>`, event-display/ToolCard/LogEntryView/McpToolCard) — the
-  done cards would silently lose their text otherwise.
-- system-prompts.ts prose "your done() summary" → "your done() result".
-- All test call sites/assertions (done_notified `.result` asserts in plugin-hooks + integration;
-  findInterrupted return `.result` in events/jsonl-stress; helper params; the two standalone provider
-  tests' own mock done tools).
-
-GOTCHA — naming collision: a blanket `doneSummary→doneResult` collided with TWO pre-existing local
-`doneResult` vars in provider-shared (the done ToolResult `execResults[doneIndex]`, and the
-`handleImplicitYield` resume result). Renamed those to `doneToolResult` / `doneResumeResult`. When
-renaming an identifier to a generic name, grep for pre-existing uses of the target name first.
-
-LEFT ON `summary` (different concepts — renaming would break): compaction `<summary>` tags /
-SUMMARIZATION_INSTRUCTION; llm.ts OpenAI Responses reasoning `summary[]`/`summary_text` (API field);
-cli.ts cost/tree display; get_logs "short summary" + send_message title "Short summary of the message";
-generic ToolDisplay.summary (dead display abstraction); compactedResume `"summary-1"` ids.
-
-OPEN (user-driven, NOT yet done): the done-payload SHAPE architecture. There are 3 shapes
-(done params {status,result,lessons} / ResultRound {result,lessons} / MatrixDoneData {status,result})
-whose fields are hand-picked → adding/removing a done param needs edits in 3 places (fan-out). User
-wants a single source of truth: ResultRound = the done payload (derived), so it's 1:1 with done() by
-construction. Proposed but NOT implemented — awaiting the user's call on ResultRound={status,result,lessons}
-(or =DoneData derived from the schema) + whether to collapse the runtime's doneResult carrier.
-
-## Memory-index Step 1.4: DonePayload = ONE struct (zod source of truth) + strict runtime/plugin boundary (2026-07-14)
-
-RESOLVES the "OPEN done-payload SHAPE architecture" item above. The 3 hand-picked shapes are gone;
-there is now ONE done-content struct + a hard runtime↔plugin boundary. SUPERSEDES the field-picking
-framing of the Step 1.1/1.2/1.3 notes (which renamed summary→result but still had 3 shapes).
-
-### The ONE struct — `src/done-payload.ts` (imports ONLY zod, no cycles)
-- `donePayloadSchema = z.object({ result: z.string(), lessons: z.array(z.string()) })` — the SINGLE
-  source of the done CONTENT shape. `DonePayload = z.infer<typeof donePayloadSchema>`.
-- `parseDonePayload(input: Record<string,unknown>|undefined): DonePayload` — the ONE raw-input →
-  round normalizer (result:string|"" , lessons:string[]|[]). Manual (schema requires lessons; raw
-  input may omit it — safeParse would reject, so normalize by hand). Add a content field → edit THIS
-  schema; the tool params (`donePayloadSchema.shape`), the type, the stored round, and the normalizer
-  all follow. No fan-out.
-- Imports ONLY zod so BOTH `types.ts` (type layer) and `orchestrator-tools.ts` (tool layer) can import
-  it without an import cycle.
-
-`DonePayload` is 1:1 with a `resultRounds` element: `TaskNode.resultRounds?: DonePayload[]` (types.ts),
-`tracker.appendResultRound(nodeId, round: DonePayload)` (task-tracker.ts). done() ↔ round by construction.
-DELETED: `ResultRound` interface, `MatrixDoneData` type, `AgentResult.doneResult` field, `readDonePayload`,
-`readDoneLessons`, `PluginTypes.done`, `MatrixPluginTypes.done`, all `doneResult` provider-loop carrying.
-
-### ⭐ The boundary (root's review criterion — hold this line)
-`status` is NOT in the struct — it's a RUNTIME control bit. The runtime↔plugin split for done():
-- **Runtime MAY read**: `status` (routes → verify/failed) + ONE completion-output string
-  (`doneCompletionOutput(input)` = `input.result` — the universal "what happened" summary sent to the
-  parent via task_complete AND recorded on the done_notified marker; every plugin has one, calling it
-  `result` is fine).
-- **Runtime MUST NOT carry**: `lessons` or the round structure. Those are read ONLY inside Matrix's
-  `onDone`, via `parseDonePayload(doneInput)`. The runtime hands the raw done tool_call input to onDone
-  as an OPAQUE `Record` (`BaseDoneData`) and never destructures round content itself.
-- Enforcement check (grep): `lessons`/`resultRounds`/`appendResultRound`/`parseDonePayload`/`DonePayload`
-  appear in `src/runtime/*`, `src/runtime.ts`, `src/provider-shared.ts`, `src/events.ts` ONLY in
-  boundary-explaining COMMENTS, never in code. If a future change reads `input.lessons` in the runtime,
-  the boundary is broken.
-
-### Flow (live + crash recovery)
-- **provider-shared.ts** (loop): reads only `doneInput.status` → `doneExitReason`. Does NOT carry the
-  result out (removed `let doneResult` + `doneResult` from `buildResult` type/defaultBuildResult/anthropic
-  buildResult + 8 call sites + `AgentResult.doneResult`).
-- **agent-lifecycle.ts Phase 2**: `readDoneInput(events)` → raw `doneInput` (generic: last done
-  tool_call's input, in events.ts). `doneCompletionOutput(doneInput)` → the parent-notice/marker string.
-  Runtime does the status flip (`updateStatus(passed?"verify":"failed")` — ONE mapping) + `opts.onDone?.
-  (node, tracker, doneInput ?? {})` (opaque) + `createTaskComplete(..., completionOutput)` + marker
-  `{status, result: completionOutput}`.
-- **scope-opts.ts onDone** (Matrix): `tracker.appendResultRound(node.id, parseDonePayload(doneInput))`.
-  Content-only, returns void. No status flip (runtime's job now — removed the old duplicate mapping).
-- **runtime.ts findInterruptedDonePhase2** (crash recovery): reads `status` + `doneCompletionOutput
-  (lastDoneCall.input)`. Plugin-agnostic → does NOT append a resultRound (KNOWN LIMITATION, unchanged
-  from Step 1: a done() whose Phase 2 was crash-interrupted loses its round; the normal path is the
-  overwhelming majority).
-
-### onDone → void; done_notified marker-injection capability DELETED (root-blessed)
-Old `onDone` returned `MatrixDoneData` which was spread into `done_notified`, letting a plugin inject
-arbitrary marker fields (`plugin-custom-scope.test.ts` asserted a story plugin's `{status:"published",
-wordCount:42}` in the marker). REMOVED — onDone returns void; `done_notified` is RUNTIME-standard
-`{status, result}` always. Rationale (root): the marker is write-only (nothing reads its fields;
-findInterruptedDonePhase2 recomputes from the tool_call), only a synthetic test used the channel →
-anti-pattern #6 (imagined use). Did NOT keep a `T["done"]|void` "just in case" shape. The story test
-was rewritten to verify the REAL generic contract: onDone runs + mutates the tracker via a side-effect
-(`setMetadata`), and `done_notified` is runtime-standard.
-
-### done() tool params derive from the schema (no drift)
-orchestrator-tools.ts: `result` param `schema: donePayloadSchema.shape.result.describe(...)` (explicit,
-required-non-empty via beforeDone); `lessons` param `donePayloadSchema.shape.lessons.optional().describe
-(...)`. The tool adds agent-facing descriptions + input laxity (lessons optional → normalized to [] by
-parseDonePayload); the TYPES come from the one schema so tool input can't drift from the stored round.
-
-### Test contract changes
-- Test scope opts whose onDone ONLY flipped status (plugin-messaging, lifecycle-concurrency default)
-  → onDone REMOVED (runtime flips status universally now). The throwing-onDone Phase-2 test overrides
-  onDone via `overrides` — `() => {throw}` is compatible with the void signature.
-- `anthropic-compatible-provider.test.ts`: the standalone provider test can't assert `agentResult.
-  doneResult` anymore (removed) — re-pointed to assert the emitted done() tool_call's `input.result`
-  (the value Phase 2 reads back). This is the honest new assertion: the result lives in JSONL, not on
-  AgentResult.
-- integration `resultRounds` + `done_notified` tests + task-tracker `appendResultRound` tests UNCHANGED
-  in expectation ({result, lessons} rounds; {status, result} marker) — the flow produces the same data.
-
-### Gotchas
-- `parseDonePayload` must NOT use `donePayloadSchema.safeParse` — the schema REQUIRES lessons, raw done
-  input may omit it → reject. Manual normalization only.
-- Removing `PluginTypes.done` is safe: test scopes use `ScopeOpts<any>` (erased); `BaseDoneData` is KEPT
-  (now documents "the opaque raw done input" — still exported from `plugin-sdk.ts`, SDK unchanged).
-- `donePayloadSchema.shape.result` is a `ZodString`; `.describe()` on it works; `.shape.lessons` is a
-  `ZodArray<ZodString>`; `.optional().describe()` works. The tool's `decl:{kind:"explicit"}` (result) /
-  `{kind:"optional"}` (lessons) drive required-ness independent of the schema.
-
-### Robustness test — "a plugin evolves its done fields without touching the runtime" (mutation-proof)
-User + root ask: adding/removing a done field must NOT ripple into runtime code. The runtime IS already
-field-agnostic (opaque passthrough); the deliverable is the test that PROVES + PROTECTS it. Target = a
-plugin's OWN extended fields (the opaque part) — NOT `status`/completion-output, which ARE the runtime
-contract (every plugin has them; changing them affecting the runtime is expected, not a leak).
-
-- `src/plugin-custom-scope.test.ts` "Boundary: done() custom fields are opaque to the runtime": a
-  non-matrix scope whose done() carries `wordCount` + `mood` (fields the runtime never heard of). onDone
-  reads them off the opaque `doneInput` and setMetadata's them. Asserts: (1) `node.metadata ==
-  {wordCount, mood}` → runtime handed the raw input through untouched (no reshape to a fixed content
-  struct); (2) `done_notified` marker = `{status, result}` ONLY, `wordCount`/`mood` undefined → runtime
-  never spreads plugin content into its artifacts; (3) status routed to verify.
-- `src/events.test.ts`: `findInterruptedDonePhase2` with a custom-field input returns EXACTLY
-  `{needs_phase2, status, result}` — crash recovery carries no custom fields.
-- `src/done-payload.test.ts` (NEW): `parseDonePayload` unit robustness — extra fields dropped, missing/
-  malformed defaulted, never throws.
-
-**EMPIRICALLY mutation-proofed** (full `bun test`, not reasoning): mutating agent-lifecycle to reshape
-`doneInput` → `{result, lessons}` before onDone (exactly the earlier-reverted wrong version) → the ONLY
-failure across 2508 tests is this boundary test; ALL matrix resultRounds/done_notified tests PASS. That's
-the proof it catches a real gap the matrix tests miss: matrix is happy with `{result,lessons}` (that's its
-shape), so only a test using a NON-matrix custom field exposes the runtime reshaping the payload. Clean:
-2493 pass / 0 fail (2481 baseline + 12 new).
-
-**Lesson**: to test "layer X is opaque to layer Y's data", the test MUST use data that ONLY layer Y
-understands (a custom field). Testing with the DEFAULT plugin's (matrix's) fields can't distinguish
-"passed through opaque" from "reconstructed to matrix's shape" — both produce the same matrix round.
-
-## fable silent-turn → silent idle + agent date-blindness (2026-07-15, from closed task 01KWYCYA)
-
-Two durable lessons from the fable-stall investigation (01KWYCYA, closed — fable now moot on opus-4-8, but these OUTLIVE fable). Generic fix drafted: **01KXK69KKKGG4XHPH7EWGNY5AC**. Date-blind fix drafted: **01KXK5QH2BDQSZB1H1CQV8X470**.
-
-### Silent-idle on a no-text-no-tool turn (durable failure MODE)
-An assistant turn returning **thinking-only** (no text block, no tool_call) makes the provider loop see `toolUses.length === 0` → treat it as end-of-turn → **implicit yield → idle, with NO user-visible signal**. The agent then waits for a message **indefinitely**; daemon restarts just RE-IDLE an implicit-yield agent (they don't self-continue it). Benign for a root-in-conversation (a human eventually pokes it); an **indefinite hang for an autonomous sub-agent nobody is watching** — the parent's yield never wakes. 01KWYCYA was the live repro: interrupted 7/7 14:56, idle 8 days until poked 7/15.
-- Trigger was fable (server-side turn termination). Our gap: `getStopReason()` collapses all non-`end_turn` (incl. `refusal` / `pause_turn` / `model_context_window_exceeded` / `compaction`) to `tool_use`, and the loop idles without persisting/surfacing the anomalous stop.
-- GUARD (deferred → draft 01KXK69K): any `stop_reason ∉ {end_turn, tool_use}` → emit a **persisted, user-visible error event BEFORE idling** (Part A observability); + bounded `pause_turn` continue (~3) (Part B). Generic, zero fable coupling.
-
-### Forensics (durable, model-agnostic debugging tools)
-- **Which model ACTUALLY served a turn**: base64-decode a thinking block's `signature` — it embeds the serving model name (e.g. `claude-fable-5`), **independent of `response.model`** (which can lie under silent routing). Root's full history: 8/8 silent turns were fable, 0/9800 opus.
-- **Mid-stream/hardware cut vs upstream turn-completion**: a **clean `usage` event present** ⟹ the API turn completed and our loop processed it → RULES OUT a mid-stream process suspension (which would orphan the turn + trigger `buildSessionRepair` on resume). So `clean usage + thinking-only shape` = upstream silent turn, NOT a laptop-close/suspend.
-
-### Agent time-perception is DATE-BLIND (ground truth = epoch ts)
-Context message timestamps are `[HH:MM:SS]` with **no date**. 01KWYCYA was interrupted 7/7 14:56 and idle until 7/15 16:13 — **8 days** — but on wake it confidently reported "~80 minutes" because 14:56→16:13 looks same-day. **Ground truth is the epoch `ts` in the JSONL (encodes the date); the display stamps do NOT.** Rule for ANY "how long was I stalled / when did this happen / is this stale" reasoning: **read the epoch `ts`, never trust the `[HH:MM]` display for elapsed wall-clock.** Root hit the same thing this session: an overnight `bun test` `[22:06]` → user `[11:04]` next-day gap was invisible in the stamps (inferred only from anomalous test durations). Surfacing-fix design in draft 01KXK5QH.
 
 ## Global image drag-drop → composer attachment (2026-07-15)
 
@@ -4318,413 +4666,6 @@ users undo mistakes themselves — no need for system to block close.
 **Current SettingsPanel action model**: Save & Restart (saves all dirty + restarts daemon) +
 Revert (undo all edits) + close (just closes, discards unsaved). No confirm dialogs anywhere.
 
-## Memory-index Step 2: FTS keyword-search vertical — `src/task-index.ts` + search_tasks tool (2026-07-15)
-
-First usable slice of the memory index (design draft 01KWCQEB). Explicit keyword search (mode b),
-FTS-only, precise-location results. Builds on Step 1's `resultRounds` (structured done() content).
-
-### What shipped
-- **`src/task-index.ts`** (NEW src/ leaf) — per-project SQLite (bun:sqlite, zero deps) FTS5 index over
-  every task's title, description, and each done() round's result, at **per-field +
-  per-round granularity** (each row = one (task_id, field, round) unit → every hit traces to an exact
-  location). Public API: `openIndexDb`, `indexTask(dbPath,node)`, `reconcileIndex(dbPath,tracker)`,
-  `searchIndex(dbPath,query,limit)`, `toMatchQuery`, `SCHEMA_VERSION`, `SearchHit`.
-- **`search_tasks` tool** (orchestrator-tools.ts `buildAllToolDefs`, `availability:"both"`) — agent +
-  external-MCP keyword search. Returns `{taskId,title,field,round?,snippet,score}[]` (BM25 best-first).
-- **`projectIndexDbPath(dataDir,projectId,dataRoot?)`** in data-paths.ts (sibling of tree.json →
-  matrix: `projects/<id>/plugin/matrix/index.db`).
-- **Sync**: index-on-done (matrix onDone in `.mxd/plugin/scope-opts.ts`) + startup reconcile
-  (new generic `onScopeResume` hook).
-
-### ⭐ Boundary (identical to the DonePayload boundary — the ACTUAL invariant)
-The red line is NOT "index code physically only in `.mxd/plugin/`" (that was a loose wording in the
-task description — src/ is the neutral building-block layer, like done-payload.ts / worktree-manager.ts).
-The REAL invariant: **`src/runtime/*` + runtime.ts + provider-shared.ts have ZERO occurrences of
-index/FTS/resultRounds** (grep-verified — even comments; I had to genericize two hook comments that
-said "search index"). The index engine is a `src/` leaf imported by BOTH the plugin (onDone +
-onScopeResume) AND orchestrator-tools (search_tasks) — plugin→src and src(non-runtime)→leaf are both
-fine. **Why the engine MUST be in src/ not `.mxd/plugin/`**: `search_tasks` needs `availability:"both"`,
-and the external-MCP tool list is built by `mcp-endpoint.ts:305` from `buildAllToolDefs()`
-(orchestrator-tools.ts, src/); src cannot import `.mxd/plugin/` (forbidden direction). So the tool must
-be in buildAllToolDefs → the search fn must be src-importable → engine lives in src/. This decisively
-resolved the layout.
-
-### Generic `onScopeResume(tracker, projectId)` hook (runtime touch, boundary-clean)
-New ScopeOpts hook (`src/runtime/context.ts`), called once per project in `autoResumeProjects`
-(runtime.ts) after the tracker loads, BEFORE resumeScope. Counterpart to `seedTree` (fresh tree only);
-this runs every startup. Named by EVENT not resource (hook-naming rule) — no index/fts word, grep-clean.
-Matrix's impl reconciles the index; the runtime attaches no meaning. Best-effort (runtime try/catch).
-`createApp` does NOT call autoResumeProjects → tests trigger reconcile via `app.autoResumeProjects()`
-or by calling `reconcileIndex` directly (so index work doesn't fire in every createMatrixApp test).
-
-### Schema (versioned, forward-compatible for Phase C)
-`schema_meta(key,value)` (schema_version=1) · `task_fts` FTS5 `(task_id UNINDEXED, field UNINDEXED,
-round UNINDEXED, text, tokenize='porter unicode61')` · `task_index_meta(task_id PK, indexed_at)` ·
-`task_vec(task_id,field,round,embedding BLOB,dim)` **reserved placeholder, NOT populated** (Phase C).
-
-### Sync model
-- **Staleness marker = per-task `indexed_at` stored IN index.db** = the node's `updatedAt` string at
-  index time. reconcile reindexes a task iff `stored.indexed_at !== node.updatedAt` (string compare, no
-  clock math). This SUBSUMES backfill (never-indexed task has no indexed_at → stale → indexed) — no
-  separate "already backfilled" marker needed. reconcile also PRUNES rows for tasks gone from the tree.
-- **index-on-done**: matrix onDone appends the round THEN best-effort `indexTask(canonical node)`
-  wrapped in try/catch — an index write must NEVER break the done lifecycle; reconcile retries misses.
-  Verified sync-safe: agent-lifecycle Phase 2 calls `opts.onDone?()` (sync) BEFORE
-  `updateStatus(verify)`, so when a test observes "verify" the index is already written (no race).
-- **Reconcile catches** title/description edits via update_task (no onDone) + crash-between-done-and-index.
-  Accepted edge: a same-millisecond edit-after-index yields an equal `updatedAt` string → skipped until
-  the next (different-ms) edit or restart. Practically never (edits happen at live-work time, indexing at
-  startup/done — different ms).
-- **KNOWN LIMITATION (inherited from Step 1)**: crash-recovery Phase 2 (`findInterruptedDonePhase2`,
-  runtime.ts) updates status via the runtime, never calls onDone → a crash-interrupted done's round is
-  lost from BOTH the node and the index. Normal path (overwhelming majority) is fine.
-
-### Connection model — open-per-operation, NO module cache
-Each op opens a fresh `Database`, closes in `finally`. Chose this over a cached-connection Map because
-onDone now runs in ~100 integration tests (each a fresh temp dataDir) → a module-level cache would leak
-one handle per test pointing at removed dirs. bun:sqlite is sync + single-threaded so ops never overlap;
-a per-op open on a small local file is sub-ms; reconcile opens ONCE and loops internally (`indexTaskInDb`
-on the shared handle). Default rollback journal (no WAL) → no `-wal/-shm` files left behind.
-
-### Query safety (NOT query rewriting — anti-pattern #6)
-`toMatchQuery`: split on whitespace, quote each term (doubling embedded `"`), join (implicit AND). This
-is INPUT SAFETY (prevents FTS5 syntax errors from stray `()`/operators), not semantic rewriting. Empty →
-"" → searchIndex returns []. Built ONLY raw FTS5 + BM25 + snippet — no field weighting, no ranking
-heuristics, no filters. Add those only when real use exposes a need.
-
-### ⚠️ Phase C de-risk — bun:sqlite CANNOT loadExtension (sqlite-vec blocker)
-Smoke-tested: `new Database(":memory:").loadExtension("x")` → **"This build of sqlite3 does not support
-dynamic extension loading"**. So Phase C's sqlite-vec CANNOT load into the default bun:sqlite build.
-Phase C options: (a) `Database.setCustomSQLite(path)` pointing at an extension-enabled libsqlite3
-(e.g. `brew install sqlite`), or (b) store embeddings as BLOB in `task_vec` + compute cosine in JS.
-FTS5 itself is fully built-in and works perfectly (MATCH/bm25/snippet/DELETE-by-column all verified,
-bun 1.3.14). Step 2 only reserves the vec table + schema_version.
-
-### Tests
-- `src/task-index.test.ts` (15 unit): schema/vec-reservation, title/description/result provenance,
-  re-index replaces stale rows, reconcile backfill/incremental-noop/prune/skip-folders, empty+punctuation
-  query safety, multi-term AND, BM25 ordering, limit, toMatchQuery.
-- `src/integration.test.ts` "memory index (Step 2 FTS...)" (4, full agent loop): index-on-done searchable,
-  startup reconcile via `autoResumeProjects`→onScopeResume, `search_tasks` tool end-to-end (asserts the
-  tool_result carries taskId+snippet+field), best-effort (index path made a DIRECTORY → open throws →
-  done() still verifies + round still on node).
-- Full suite 2516 pass / 0 fail; typecheck + check:ci clean (matches baseline 66 pre-existing warnings).
-
-### Gotchas
-- FTS5 standalone (own-content) table supports `DELETE FROM task_fts WHERE task_id=?` (re-index = delete
-  + reinsert). Verified — no external-content quirks.
-- `snippet(task_fts, 3, '[', ']', '…', 16)` — column index 3 = `text` (0-based: task_id=0,field=1,round=2,text=3).
-- The `search_tasks` handler enriches each hit with the task's CURRENT title (fresh `tracker.getTask`)
-  and drops hits whose task was deleted since indexing.
-- Generic `R.getDataPaths()` added to resource-registry (returns `{dataDir, dataRoot?}`) so the src/ tool
-  can resolve the index path without src→plugin coupling; minimal config interface gained `dataRoot?`.
-- **Post-merge cleanup (lessons-drop)**: `lessons` field removed from DonePayload after Step 2 was written.
-  task-index.ts lessons rows removed; integration tests cleaned. Index now covers title/description/result only.
-
-## Memory-index Phase C: Orama + EmbeddingGemma hybrid search (2026-07-20)
-
-**SUPERSEDES the FTS5-based Step 2 architecture.** bun:sqlite + FTS5 replaced with Orama (pure TS
-search engine) + `@orama/tokenizers/mandarin` (jieba WASM Chinese tokenizer) +
-`@huggingface/transformers` EmbeddingGemma-300M (768-dim vectors, q8 quantization).
-
-### Architecture
-- **Hybrid search**: `mode: "hybrid"` — simultaneous BM25 keyword + cosine-similarity vector match with
-  Orama's built-in fusion ranking. Cross-lingual: "fix session recovery" ↔ "修复会话恢复" (0.81 cosine).
-- **Graceful degradation**: if embedding model fails to load → `mode: "fulltext"` (pure BM25). Daemon
-  never blocked. The `_setEmbeddingPipeline(null)` test helper forces BM25-only in tests.
-- **Mandarin tokenizer**: `@orama/tokenizers/mandarin` creates a Jieba-WASM tokenizer. Passed as
-  `components.tokenizer` to `create()`. Both Chinese and English queries work natively.
-- **Embedding pipeline**: lazy singleton (`getEmbeddingPipeline()`). First call loads the model (~5s cold,
-  ~1s warm). Cached module-level. `embed(text) → number[768]`.
-
-### Persistence — two files per project
-- `index.msp` — Orama binary (msgpack via `@orama/plugin-data-persistence`). Persisted after every
-  `indexTask` and after reconcile when changes occur.
-- `index-meta.json` — sidecar: `{ [taskId]: { indexedAt: string, docIds: string[] } }`. Tracks staleness
-  (`indexedAt` vs `node.updatedAt`) and enables targeted document removal by stored doc IDs.
-- Both live at `projectIndexDbPath()` (data-paths.ts), extension changed from `.db` → `.msp`.
-
-### Document ID convention
-`${taskId}:${field}:${round}` — deterministic. Enables targeted `remove(db, id)` without scanning.
-Fields: `title`, `description`, `result` (per round). No `_meta` sentinel docs in Orama itself
-(metadata is in the sidecar JSON).
-
-### In-memory DB cache
-`dbCache: Map<string, IndexDb>` keyed by `dbPath`. First access restores from disk (`restoreFromFile`);
-cache cleared in test teardown via `_clearDbCache()`. Production: one DB per project, lives for the
-daemon's lifetime.
-
-### Public API (all async now)
-- `indexTask(dbPath, node)` — (re)index one task with embeddings + sidecar update + persist.
-- `reconcileIndex(dbPath, tracker)` — backfill/incremental reindex + prune. Returns `{indexed, pruned}`.
-- `searchIndex(dbPath, query, limit?)` — hybrid (or BM25 fallback) search. Returns `SearchHit[]`.
-- `SearchHit` — `{ taskId, field, roundIndex?, snippet, score }`. Score is now higher=better (Orama
-  convention), **reversed from the old FTS5 BM25 where lower=better**.
-- `_setEmbeddingPipeline`, `_resetEmbeddingPipeline`, `_clearDbCache` — test helpers.
-
-### Deleted (from FTS5 era)
-- `bun:sqlite` / `Database` / FTS5 / SQL — all gone.
-- `openIndexDb`, `toMatchQuery`, `SCHEMA_VERSION`, `task_vec` placeholder table.
-- `initSchema`, `withDb`, `indexTaskInDb` internal functions.
-
-### Caller changes
-- `orchestrator-tools.ts` `search_tasks`: description updated ("hybrid-search"), `await searchIndex()`,
-  return type `Awaited<ReturnType<typeof searchIndex>>`.
-- `.mxd/plugin/scope-opts.ts`: `onScopeResume` now `async` with `await reconcileIndex()`. `onDone`
-  index call is fire-and-forget (`indexTask(...).catch(...)`) since `onDone` is sync in the runtime.
-- `src/integration.test.ts`: `await` on all `searchIndex`/`reconcileIndex` calls, `_setEmbeddingPipeline(null)`
-  in `beforeEach` to disable real model loading.
-
-### sharp workaround
-`@huggingface/transformers` depends on `sharp`. Bun's global cache layout puts libvips at a versioned
-path that sharp can't find. `scripts/fix-sharp-libvips.sh` creates a symlink from the unversioned `lib/`
-to the versioned one. Added as `postinstall` in package.json. Idempotent, platform-aware.
-
-### Orama `where` clause limitation
-Orama's `where` filter only works on `enum`-typed fields, and does NOT support `ne` (not-equal) on enums.
-`string`-typed fields silently return empty on `where`. This is why we don't store metadata in Orama
-(sidecar JSON instead) and don't use `where` in search queries.
-
-### Tests
-- `src/task-index.test.ts` (16): title/description/result provenance, re-index replaces stale rows,
-  reconcile backfill/incremental/prune/skip-folders, empty/punctuation query safety, BM25 ranking, limit,
-  Chinese tokenizer, embedding degradation, persistence round-trip, hybrid search with mock embeddings.
-- `src/integration.test.ts` "memory index (Orama hybrid search)" (4): index-on-done, startup reconcile,
-  search_tasks tool end-to-end, best-effort (sabotaged index path).
-- Full suite: 2547 pass / 0 fail. typecheck + check:ci clean.
-
-
-## Sidebar search + work_context related-tasks injection (2026-07-21)
-
-### Part A — Sidebar search via Orama
-- REST endpoint `GET /projects/:id/search?q=...&limit=N` in `.mxd/plugin/runtime.ts`.
-  Calls async `searchIndex`, enriches with task titles from `ctx.trackers.get(projectId)`.
-- `api.search(projectId, query, limit?)` URL builder in `.mxd/plugin/web/api.ts`.
-- `useSidebarSearch` hook (`.mxd/plugin/web/search.ts`): debounced 300ms, abort-on-supersede.
-- `TaskTree` accepts `searchHits`/`searchLoading` props; renders search results overlay
-  (title + field badge + snippet) INSTEAD of tree filter when backend results arrive.
-- UX: search results replace tree filter when text is typed and backend hits arrive.
-  Empty query → normal tree. Local substring filter still runs as instant fallback.
-
-### Part B — work_context related-tasks injection
-- `searchIndexSync(dbPath, query, limit)` in `src/task-index.ts`: **synchronous** BM25-only
-  search using the already-cached in-memory Orama DB. Returns `[]` if DB not loaded (no crash).
-  The DB is pre-loaded by `reconcileIndex` at startup (via `onScopeResume` hook).
-- `buildWorkContext` in `.mxd/plugin/scope-opts.ts`: uses `searchIndexSync` with
-  `node.title + node.description` as query. Appends `[Related past tasks]` block with
-  up to 5 hits, capped at `RELATED_TASKS_CHAR_LIMIT = 8000` chars (~2000 tokens).
-  Excludes self (`taskId !== node.id`). Best-effort (try/catch, index unavailable = no block).
-- Injection is sync → no runtime interface change. Works in both initial launch and
-  compact re-arm paths (same `buildWorkContext` callback).
-
-### Boundary preserved
-- `src/runtime/*` has ZERO knowledge of search/index. The sync search uses the DB already
-  cached by `reconcileIndex` (onScopeResume startup hook in scope-opts.ts).
-- REST endpoint uses `ctx.trackers.get(projectId)` directly (not `getTracker` helper which
-  has scope-opts dependencies).
-
-## JSONL event eid + parentEid (rollback infrastructure) (2026-07-21)
-
-Every persisted JSONL event carries `eid` (12-char hex, `crypto.randomBytes(6).toString('hex')`)
-and `parentEid` (previous event's eid, or `null` for the first event). Auto-stamped by
-`EventStore.append`/`appendBatch` — callers never set them.
-
-### Field naming: eid/parentEid (NOT id/parentId)
-`MessageEvent` already has `id: string` (ULID for two-phase message lifecycle — `message` →
-`messages_consumed`). Using `id` for the event chain would collide. `eid`/`parentEid` are the
-event-chain fields; `id` on MessageEvent is unchanged and independent.
-
-### Mechanism
-- `EventStore.lastEventIds: Map<string, string|null>` — per-session chain head.
-- `stampEvent(sessionId, event)` — returns a persisted COPY with the chain fields first (it no
-  longer mutates the caller's object). Called inside the write queue (same microtask as
-  appendFileSync). A failed write REWINDS the head — an event not on disk must not be in the chain.
-- `read` populates `lastEventIds` from the last event on read.
-- `copySessionFrom` preserves source eids but RE-LINKS the copied subset into one contiguous
-  chain (the active context is a filtered subset, so the originals' parents aren't in the new
-  file). Stamps synthetics + fork_marker with fresh eids. Sets `lastEventIds` for the target.
-- `clear` deletes the session's `lastEventIds` entry.
-
-### Auto-migration (old JSONL files)
-On first `read`, if the first event lacks `eid`, the entire file is migrated:
-assign linear eid chain, atomic rewrite (temp + rename, same pattern as `tracker.save()`).
-Idempotent — skipped when first event already has `eid`. After migration, subsequent appends
-chain correctly (lastEventIds populated from the last migrated event).
-
-### SSE broadcast does NOT carry eid/parentEid
-`emitEvent` broadcasts BEFORE persisting. `stampEvent` runs inside `append` (after broadcast).
-This is intentional — eid/parentEid are persistence-layer concerns for future rollback; the
-UI doesn't need them. The SSE-broadcast event object may gain eid/parentEid via mutation IF
-a subscriber holds a reference past the broadcast call, but no subscriber does this.
-
-### Walker unchanged (current stage)
-`event-converter.ts` walker is linear — it scans events sequentially. eid/parentEid are purely
-data at this stage. Future rollback/branching will make the walker "walk from leaf along
-parentEid" instead of linear scan.
-
-### Event type
-Both fields are optional on the `Event` union's trailing intersection (`& { traceId?; eid?;
-parentEid? }`). Optional because callers create events without them; EventStore stamps them.
-After persistence (in JSONL), they're always present. After migration, they're present on all
-old events too.
-
-## Pending chip reappears after SSE reconnect — batch-consumed ID guard (2026-07-21)
-
-**Root cause**: race between SSE ring-buffer catch-up and the batch REST re-fetch during
-reconnection. `processEventBatch` (via `handleReconnect`) does RESET + full JSONL replay —
-pending correctly empty. But SSE catch-up events arriving AFTER the batch can re-deliver a
-`message` event whose `messages_consumed` was already in the batch. The duplicate `message`
-re-adds the pending chip; no live `messages_consumed` arrives to clear it → chip persists.
-
-**Fix**: `processEventBatch` records consumed IDs in `batchConsumedIds` (module-scoped Set
-inside `createEventHandler`). `handleEvent` checks this before dispatching APPLY(message) —
-batch-consumed IDs are suppressed. Set cleared on every RESET; entries removed by live
-`messages_consumed` events (defensive against id reuse).
-
-**Diagnosis technique**: 22 "unconsumed" messages found in JSONL were ALL compact/
-compacted_resume source (correctly excluded by reducer). 0 unconsumed user messages. Backend
-is correct — every user message has a matching `messages_consumed` with identical IDs. Bug
-was purely frontend timing.
-
-**Key invariant**: `batchConsumedIds` is the **minimum-viable deduplication** between batch
-and SSE event sources. It does NOT replace the pure `pendingReducer` — the reducer stays
-pure (no side-channel). The guard lives in `handleEvent` (the event handler driver), not in
-the reducer itself.
-
-
-## Message rollback via parentEid chain-walk (2026-07-22, simplified 2026-07-24)
-
-User clicks Rewind to here on a user message, system rolls back, agent regenerates. Claude Code /rewind equivalent.
-
-### Core mechanism: readActive() chain-walks instead of linear slice
-
-Old readActive(): findLastIndex(compact_marker) + slice(). New readActive(): walkActiveChainIndices() from the last event via parentEid. Without rollback, every event chains linearly (identical to old behavior). With rollback (setChainHead), the next event's parentEid jumps to the target event, rolled-back events are never visited.
-
-⚠️ **Where the walk STOPS was changed later the same day** — see "One boundary: the active chain (2026-07-24)" at the end of this file. It is no longer `compact_marker`; it is the `compact_started` of the last COMPLETED compaction, and inside that window only `type === "message"` survives. Read this section for the rollback mechanism; read that one for the boundary.
-
-### Rollback mechanism: setChainHead (no marker event)
-
-`EventStore.setChainHead(sessionId, eid)` — one line: `this.lastEventIds.set(sessionId, eid)`. Pure in-memory. The NEXT event appended via `stampEvent` gets `parentEid = eid`, creating the chain jump. No intermediate `rollback_marker` event — the jump is carried by the first post-rollback event itself. `/edit` endpoint: `setChainHead(nodeId, rollbackTargetEid)` → `deliverMessage(newContent)` → stampEvent auto-sets parentEid.
-
-**DELETED (2026-07-24)**: `rollback_marker` event type, `EventStore.appendRollback()`, frontend rollback_marker rendering (LogEntryView, event-handler, CSS). The marker was an implementation shortcut — parentEid jumps via setChainHead are simpler (one line vs. a full event write+flush).
-
-### ~~Defensive chain-walk fallback~~ — DELETED 2026-07-24
-
-This used to say: "if the parentEid chain breaks (null on a non-first event, or a parentEid naming a missing eid), fall back to linear traversal for preceding events. Without this fallback, 83 tests failed."
-
-Half of it survived and half of it was wrong. What survived: **an event with no parentEid stops chain-following, and everything before it is taken linearly** — that is the genuine chain root at index 0, and it is what makes a pre-eid log readable. That is a documented rule now, not a fallback.
-
-What was deleted: the *dangling-link* branch (a parentEid naming an eid no line carries). Coding around a state the runtime cannot produce hides bugs instead of surfacing them — the same reason `buildSessionRepair` refuses to repair orphan tool_results. Deleting it was only honest once the sole path that could produce a dangle was closed: `stampEvent` used to advance the chain head BEFORE the write, so a failed append (ENOSPC/EIO) left the next event pointing at an eid that never reached disk. `append`/`appendBatch` now rewind the head on write failure. **If you ever re-introduce a dangling-link fallback, you are papering over a writer bug — go find the writer.**
-
-### REST endpoint
-
-POST /api/matrix/projects/:id/tasks/:nodeId/edit (plugin route). Validates targetEid (exists, user message, after compact_marker). Stops agent, setChainHead, delivers new message via deliverMessage.
-
-### Frontend
-
-Edit/Rewind buttons on user messages (hover-reveal). i18n: activity.rollback / activity.rollbackConfirm (EN + ZH).
-
-### Agent lifecycle / buildSessionRepair adaptation
-
-agent-lifecycle.ts feeds repair the chain-walked active events, so rolled-back events are excluded from repair analysis. (`readActiveWithLineMap` / `readWithLineMap` / the physical-line translation were deleted on 2026-07-24 — repair now addresses events by eid and applies as a chain jump, not a file truncation.)
-
-### Tests
-
-src/rollback.test.ts: walkActiveChainIndices unit tests, EventStore integration tests, consistency tests (readActive + readFromLastCompactMarker + restart).
-
-## search_tasks tiered return + create_task auto-search (2026-07-23)
-
-`search_tasks` now returns tiered output via `formatTieredHits()` (exported from
-`orchestrator-tools.ts`). Top hits get full info (description ≤500 chars, latest
-resultRound result ≤300 chars, matched field+snippet, score); remaining hits are
-one-line briefs (title, taskId, status, score). Total output hard-capped at 8000
-chars to protect the context window.
-
-`create_task` handler appends a best-effort `[Related existing tasks]` block after
-the node JSON. Uses `searchIndexSync` (sync, BM25-only, in-memory DB cache warmed
-at startup by `reconcileIndex`). Query = `title + description`; self-excluded;
-2 full + up to 5 brief hits. Index unavailable → silent skip, never blocks create.
-
-System prompt: "Search before building" bullet added to Planning before acting
-(§2), steering agents to `search_tasks` before creating tasks or starting work
-in unfamiliar areas.
-
-### Key design decisions
-- Full taskId in output (not truncated prefix) — agents need it for `fork_task_context`
-  / `send_message`.
-- `searchIndexSync` for create_task (not async `searchIndex`) — the handler is async
-  but sync search avoids a second embedding-pipeline load; the DB is already cached.
-- 8000-char budget matches `RELATED_TASKS_CHAR_LIMIT` in scope-opts.ts work_context
-  injection.
-- `formatTieredHits` is shared between search_tasks and create_task (same formatting,
-  different `fullCount` and header).
-
-## Bun Worker env isolation — process.env NOT inherited (2026-07-23)
-
-**Bun Workers do NOT inherit `process.env` assignments from the parent thread.** Workers
-get their own env from the OS process snapshot at spawn time. `process.env.X = "Y"` in
-the main thread is INVISIBLE to file-based Workers. This applies to BOTH:
-- Direct `process.env` assignment in JS
-- `bunfig.toml [test.env]` settings (which set process.env, not OS env)
-
-**The ONLY way to pass env vars to a Bun Worker**: the `env` option on the Worker
-constructor: `new Worker(url, { env: { KEY: "value" } })`. Verified empirically: data-URL
-workers DO inherit process.env (different codepath), file-based workers do NOT.
-
-**Fix applied**: `src/daemon.ts` Worker constructor passes `{ env: process.env as Record<string, string> }`
-so workers inherit runtime env vars. This is correct for production too — workers SHOULD
-see the same env as the main thread.
-
-## MXD_DISABLE_EMBEDDINGS — test-only NAPI crash prevention (2026-07-23)
-
-`getEmbeddingPipeline()` in `src/task-index.ts` checks `process.env.MXD_DISABLE_EMBEDDINGS`
-and short-circuits to null (BM25-only mode). Set via `bunfig.toml [test.env]` + propagated
-to workers via the daemon's `{ env: process.env }` Worker option.
-
-Priority order: explicit mock (`_setEmbeddingPipeline(mock)`) > env var > lazy load.
-This lets tests exercise hybrid search paths via mock pipelines even with the env var set.
-
-Root cause: `@huggingface/transformers` has a STATIC `import * as ONNX_NODE from "onnxruntime-node"`
-at module scope (line 7545 of `transformers.node.mjs`). The dynamic `import()` in
-`getEmbeddingPipeline()` loads this, which registers the NAPI backend. Worker teardown
-then triggers `NAPI FATAL ERROR: Error::New napi_create_error` → SIGTRAP → process death.
-
-## agent_idle re-fetch for Edit/Rewind buttons (2026-07-23)
-
-SSE-broadcast events lack `eid`/`parentEid` (stamped only at JSONL persist time in
-`EventStore.stampEvent`). During streaming, Edit/Rewind buttons are unavailable. When
-the agent goes idle (agent_idle SSE event for the VIEWED task), the frontend re-fetches
-JSONL events via `GET taskEvents?after=compact` → `processEventResponse` — same pattern
-as SSE reconnect and rollback. JSONL events carry eid/parentEid → buttons appear.
-
-Implementation: `onAgentIdle` callback on `EventHandlerDeps`, triggered from the
-`agent_idle` case in `processEvent` when `msg.taskId === getViewedSessionId()`.
-Plugin.tsx wires it via `refetchOnIdleRef` (breaks the useMemo/useCallback dep cycle).
-
-## /rollback endpoint DELETED — /edit is the single path (2026-07-23)
-
-The standalone `/rollback` REST endpoint in `.mxd/plugin/runtime.ts` (~100 lines) and the
-`taskRollback` URL builder in `.mxd/plugin/web/api.ts` are deleted. Frontend (`Plugin.tsx
-handleRollback`) already calls `api.taskEdit` exclusively — the `/edit` endpoint combines
-rollback + message delivery atomically and fully supersedes `/rollback`.
-
-**Edit/Rewind consistency verified** across three scenarios via 6 integration tests in
-`src/rollback.test.ts`: readActive immediately, page refresh (readFromLastCompactMarker),
-daemon restart (fresh EventStore). All produce byte-identical event sequences. Multiple
-consecutive rollbacks: only the latest branch visible. Chain-walk via parentEid is
-deterministic on persisted JSONL — no in-memory state.
-
-## search_tasks NaN-score fallback (2026-07-23)
-
-**Score NaN root cause**: Documents indexed without a valid embedding pipeline get
-`ZERO_EMBEDDING` (768 zeros). Cosine similarity on a zero vector = `0/0 = NaN`.
-Hybrid mode fusion score inherits NaN → all hits return `score: NaN`.
-
-**Fix** (`src/task-index.ts`): `searchIndex` checks
-`results.hits.some(h => !Number.isFinite(h.score))` after hybrid search. If ANY hit
-has NaN/Infinity, redo the entire search as pure BM25 fulltext. 3 regression tests.
-
-
 ## Pure image send + read-only tool collapse + timestamp alignment + edit SVG icon (2026-07-23)
 
 Four fixes in one commit:
@@ -4752,7 +4693,6 @@ Action button gap reduced 6px→4px to fit within 58px (3×16px + 2×4px = 56px)
 ### Bug 4 — Edit button SVG icon
 Replaced `✎` unicode char with `<IconEdit size={12}/>` SVG pencil icon in LogEntryView
 user message action buttons. `IconEdit` added to `icons.tsx` (Lucide-style pencil path).
-
 
 ## Rewind/Edit confirm dialog + rollback impact analysis (2026-07-24)
 
@@ -4893,6 +4833,479 @@ covers list/status and a kill is a stop, not a rollback-able state change. Both
 stay. Mutation-verified: moving `done` back to the whitelist fails 3 tests;
 restoring the `else if` chain fails 2.
 
+---
+# Testing
+---
+
+## Integration Test Framework
+
+**This is the strongest verification framework in this codebase. Use it any time you make a claim about agent-observable behavior.**
+
+**Policy — MUST use integration tests when**:
+- A prompt, tool description, or user-facing string promises a specific shape ("output is bounded ~10KB", "stdout and stderr are labeled separately", "the file path appears at top and bottom", etc.)
+- A change affects what the LLM sees in a tool_result, system prompt, or message
+- A behavior crosses the agent-loop / tool-execution / JSONL / mock-reply boundary
+
+Unit tests verify internal logic (a formatter function returns X). Integration tests verify **what the LLM actually observes when driving the full stack**. Those are different contracts. A formatter unit test doesn't prove the LLM sees the promised shape through MCP wrapping + tool_result persistence + mock-reply path — the gap between them is where prompt/code drift silently lies. The LLM then builds strategy on a lie, and no unit test catches it.
+
+When a prompt says "X", there MUST be a test that:
+1. Constructs a mock instruction / real tool invocation trigger
+2. Runs the full agent loop with `ValidatingMockAPI`
+3. Observes the tool_result the mock receives
+4. Asserts the observed content matches the X claim literally
+
+Drift between prompt claims and tool reality is a **silent failure mode**. Integration tests are the only guard against it.
+
+**Framework components**:
+- `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation, **strict tool-error mode**.
+- Mock DSL: `{"blocks": [...]}` or `{"turns": [...]}` with assert/capture.
+- `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
+- ~1976 tests (unit + integration). 4 skipped (E2E).
+
+## Canonical user journey test is MANDATORY
+
+If the feature's name or description describes a user action — "fresh-install bootstrap", "sidebar toggle on desktop", "auto-save preserves output", "production mode blocks agent" — there MUST be a test that **performs that exact user action and asserts the user-observable result**. Testing subcomponents, supporting algorithms, and edge cases does not substitute.
+
+The canonical user path IS the feature; everything else is scaffolding around it.
+
+**Diagnostic**: open your test file. Is there a test whose whole shape is "do user-action X, observe X works for the user"? If no, the feature is untested — even if thousands of other tests pass.
+
+**Typical silent failures** (tests green, production fails):
+- **Test config ≠ production config.** Test calls `createDaemon({ installRoot: fake })` directly; production path is `import.meta.main` with different flags. Only one path tested.
+- **Subcomponents tested individually, not the chain.** `findProjectRoot` ✓, `onProjectInit` ✓, `markProduction` ✓ — but no test that starts a real daemon and watches the whole flow run.
+- **Partial-chain assertion.** "Marker written ✓" — and done. But GET /projects response, UI reading the flag, backend guarding agent ops — all unverified. The chain breaks after the first green check and no test looks.
+- **Mocks matching the test, not reality.** Mock `onBroadcast` as in-process no-op; production goes through postMessage. Structural differences at process boundaries never exercised.
+
+**Minimum bar for "feature works"**:
+1. Real process boundary: if the feature is about daemon behavior, spawn a real daemon (`Bun.spawn(["bun", "src/daemon.ts"], { env: { MXD_DATA_DIR: fakeDataDir, ... } })`) and HTTP-call it.
+2. Manual smoke: before calling `done("passed")`, run the canonical user journey by hand. If you can't describe the concrete steps you took and what you observed, you haven't verified the feature.
+3. All observable consequences: if the feature involves UI, test UI (happy-dom render + assertion). If it involves backend guards, test the guard fires with a 403. If it involves marker files, test the marker affects all downstream consumers.
+
+**The rule of thumb**: "2003 tests pass" is not a merge gate. "I ran the feature the way a user would and it worked" is.
+
+## Test harness: broadcast payload cloneability (structuredClone wrapper)
+
+`createMatrixApp` (src/test-utils/create-matrix-app.ts) wraps `ctx.onBroadcast` with a `structuredClone({projectId, event})` call. Every broadcast payload MUST be structured-clone compatible — production's postMessage boundary (worker → shell) will reject anything else.
+
+**Why this exists**: FU8 deleted a triple-JSON-serialize step that was silently dropping non-cloneable fields (functions, `AbortController`, live class instances). `broadcastTreeUpdate` had relied on that accidental sanitization to pass `tracker.allNodes()` with live `TaskSession` attached. Post-FU8, production threw `DataCloneError` on every tree mutation. No integration test caught it because none of them exercise `structuredClone`.
+
+**Invariant**: every broadcast site MUST either construct a plain object, or explicitly strip runtime-only fields. `broadcastTreeUpdate` now runs `.map((n) => isFolder(n) ? n : stripSession(n))`. If you add a new broadcast site and pass live objects through, the harness fails the first test with `DataCloneError: The object can not be cloned`.
+
+**Regression test**: `src/broadcast-strip-session.test.ts` pins the positive invariant (fix works) and the mutation-proof (unstripped broadcast throws). Removing the `.map(...stripSession)` in event-system.ts makes both the unit test AND every integration test that creates a task fail loudly.
+
+## Test harness: strict tool-error mode
+
+`ValidatingMockAPI.enableStrictToolErrors(allowlist?)` — when enabled, any `is_error: true` tool_result that reaches the mock throws `MockValidationError("Unsurfaced tool error: ...")`. That propagates back through `client.messages.stream` and surfaces as a test failure. Default-off to keep individual tests opt-in.
+
+**Three ways a test opts a specific error out**:
+1. **Turn assert with `isError: true`** — if a turn's `assert` array has `{ block: N, type: "tool_result", isError: true }`, block N is pre-acknowledged. Tests that already express intent through asserts get strict coverage for free.
+2. **Global allowlist entry** — pass `[{ tool: "mcp__mxd__bash", contains: "..." }]` to `enableStrictToolErrors`. Tool + contains are ANDed; omit either to match any.
+3. **Per-test disable** — `mockAPI.disableStrictToolErrors()` inside an individual test. Used by drift-test scenarios that intentionally invoke error tools (bash with nonexistent command, read_file on missing path) to exercise `is_error` round-trip through JSONL. Strict mode is orthogonal to what those tests assert.
+
+**Default allowlist** (`ValidatingMockAPI.DEFAULT_ERROR_ALLOWLIST`): `{ contains: "Tool execution was interrupted by daemon restart" }` — covers the `buildSessionRepair` synthetic tool_result for orphaned tool_calls on restart. This is a system contract, not a bug. Restart tests legitimately trigger it.
+
+Called with no argument → uses defaults. Called with explicit array → no defaults merged; caller takes full control.
+
+**Where enabled** (2026-04-17 rollout):
+- `setupTestContext` in `src/integration.test.ts`
+- `setupEmissionTestContext` in `src/test-utils/emission-harness.ts`
+- Every drift test's local mock construction: `drift-lifecycle`, `drift-initial-drain`, `drift-message-sources`, `drift-thinking`, `drift-tool-lifecycle`
+- `integration-stress`, `invariant`, `debug-snapshot-integration`, `plugin-hooks`, `plugin-custom-scope`
+
+**Not enabled** (yet): `openai-responses-integration.test.ts` — uses a separate `ValidatingMockResponsesAPI` class that doesn't have strict-mode wired in. Follow-up.
+
+**Motivation**: the stripSession regression caused every `create_task`/`update_task`/`delete_task`/etc. to return `is_error: true` to the agent. Dozens of tests hit those tools; none failed because nothing asserted the error state. Strict mode + structuredClone wrapper now cover that class of bug from two independent angles.
+
+## Test Architecture: Drift vs Correctness Invariants
+
+Two distinct test classes protect against different bug classes. Learned via mutation testing during the caption-bug unification audit.
+
+### Drift invariant (prefix-validation integration tests)
+Full agent loop + restart + `ValidatingMockAPI.enablePrefixValidation()`. Catch when **live path diverges from reconstruction path** — two independent codepaths producing different bytes.
+
+**Blind spot after unification**: live path delegates to walker → live and reconstruction SHARE the walker. A walker bug makes both paths "consistently wrong" → validation passes. **Experimentally confirmed**: removing caption from walker → all 27 integration prefix-validation tests still pass.
+
+What drift tests DO catch:
+- Accidental creation of parallel user-message-construction paths
+- Bugs in non-walker paths: initial drain, buildSessionRepair, compaction rebuild, cache control construction
+- EventStore/JSONL corruption
+- System/tools presence asymmetry (fixed a gap: previously silently passed when dropping system/tools mid-conversation)
+
+Files:
+- `src/drift-tool-lifecycle.test.ts` (22 integration tests — tool lifecycle)
+- `src/drift-message-sources.test.ts` (27 integration tests — every QueueMessage source type)
+- `src/drift-lifecycle.test.ts` (21 integration tests — yield/done/fork/compact transitions)
+- `src/integration.test.ts` Bug repro suite — original caption bug regressions
+
+### Correctness invariant (golden snapshot unit tests)
+Direct invocation of `eventsToAnthropicMessages(events)`, assert exact output bytes. Catch when **walker callbacks produce wrong output** (even if consistently wrong across both paths). Fast (~90-150ms per file).
+
+Example: if walker's `onConsumedMessages` lacked caption, both paths would miss it → drift tests pass, golden test catches it by asserting `[{text}, {image}, {caption}]` is the expected output.
+
+Mutation-tested rigorously: every mutation (remove caption idle/working, drop is_error, add is_error to image tool_result, swap block order, break string↔array invariant, drop interleaved text, remove caller field) is caught by at least one test.
+
+Files:
+- `src/walker-golden.test.ts` (47 unit tests — core walker correctness)
+- `src/drift-infra-audit.test.ts` (23 golden + 39 mock-validator mutation tests)
+- `src/drift-tool-lifecycle.test.ts` (29 golden tests — tool lifecycle)
+- `src/drift-lifecycle.test.ts` (17 golden tests — yield/done/fork/compact)
+
+### Principle
+- Prefix validation tests **convergence** between paths (drift detection)
+- Golden snapshots test **correctness** of the path itself
+- After unification, correctness can't be inferred from convergence — both needed
+- **Don't silently lose coverage when removing duplication.** Unifying two paths into one shifts responsibility: correctness tests must re-establish coverage that drift tests provided.
+
+### Gotcha for golden snapshot authors
+User `message` events with `id` are DEFERRED by walker — only materialize via `messages_consumed`. Helper pattern:
+```ts
+function userPromptEvents(id, content, ts, images?): Event[] {
+  return [
+    { type: "message", id, taskId: "", body: {source:"user", id, ts, content, images}, ts },
+    { type: "messages_consumed", messageIds: [id], taskId: "", ts: ts+1 },
+  ];
+}
+```
+Without messages_consumed, message with id is never rendered.
+
+### Third-codepath drift fixed (commit 39e420b)
+`src/drift-initial-drain.test.ts` image-drift tests now pass. Initial drain delegates to `adapter.appendQueueMessagesToMessages`, which routes through the same `applyXxxQueueContent` function the walker uses. One function, two call sites, zero drift possible.
+
+## Test-is-Golden / ITA Philosophy
+
+Three layers: Intention → Test → Architecture. Three mutations guard each layer:
+- **Intention Mutation**: is this behavior what users actually want?
+- **Test Mutation**: do tests catch code changes?
+- **Architecture Mutation**: can the code evolve?
+
+Tests are the single source of truth. Bottom-up: write tests → find simplest architecture that passes them. Architecture is replaceable long-term, improved short-term. Reject spec-driven development.
+
+## bun test cross-file React breakage: root cause is react-dom scheduler binding — FIXED via preload (2026-07-02)
+
+**Supersedes the "Test pollution gotcha (pre-existing, not Fix C)" entry and the Task Y
+"ShellApp integration tests — DELETED" workaround rationale.** The "happy-dom state
+surviving GlobalRegistrator cycles" theory was wrong, and the class is now FIXED, not
+worked around.
+
+### Actual mechanism (probe-bisected, 2-file repros)
+react-dom is a process-wide singleton; its scheduler picks timer machinery
+(MessageChannel etc.) at FIRST IMPORT. If the first `import("react-dom/client")` in a
+`bun test` process happens INSIDE a registered happy-dom environment, the scheduler
+binds that window's machinery; when that file's afterAll runs
+`GlobalRegistrator.unregister()`, scheduled render work stops flushing → EVERY
+subsequent test file's React renders produce nothing (fast assertion fails + 5s render
+timeouts). If the first import happens under plain bun globals, the binding is
+bun-native and immortal — all later register/unregister cycles are harmless.
+
+- bun's test-file order is filesystem-dependent (NOT alphabetical, NOT mtime). Baseline
+  was green only because web/ShellApp.test.tsx happened to run first (its react-dom
+  import path was benign); adding 4 new web test files reshuffled the order, put a new
+  file in pole position, and 52 tests across 11 web files failed. Any file addition
+  could have re-rolled this dice — the landmine was latent, not caused by any file's
+  content.
+- Red herrings eliminated by probes: matchMedia mocks (assign OR call), happy-dom
+  register options (width/height), IS_REACT_ACT_ENVIRONMENT — none of them matter. A
+  minimal register→import-react-dom→render→unregister file poisons; the identical file
+  with a TOP-LEVEL react-dom import stays benign.
+- Bisect trap to remember: a sed-mangled probe whose beforeAll THROWS never registers
+  happy-dom → the paired victim file runs clean → looks like "mutation fixed it".
+  Validate probe files pass on their own before trusting a bisect step.
+
+### Fix (the ONE mechanism)
+`bunfig.toml [test] preload = ["./src/test-utils/preload.ts"]` — the preload just does
+`import "react-dom/client"` once per process, before any test file, guaranteeing the
+native binding regardless of file order. Verified: previously-poisonous orders
+(journey-first, targetNodeId-first, url-task-id-first) all green; full suite 2419/0.
+
+### Consequences
+- happy-dom + GlobalRegistrator register/unregister per file is SAFE now. Subset runs
+  (`bun test web/A.tsx web/B.tsx`) are no longer order-flaky for this reason.
+- matchMedia mocks in test files are innocent; keep them if a test needs desktop
+  viewport (or use `GlobalRegistrator.register({ width, height })` — happy-dom's real
+  matchMedia evaluates min/max-width correctly against it).
+- Do NOT remove the preload "because tests pass without it locally" — passing depends
+  on file order, which depends on the filesystem. The preload is what makes order
+  irrelevant.
+
+---
+# Build, Tooling & Housekeeping
+---
+
+## CLI Installation
+
+`mxd` CLI globally installed via `bun link`. package.json `"bin": { "mxd": "src/cli.ts" }`, cli.ts has `#!/usr/bin/env bun` shebang.
+
+## Audit FU8 Dead-Code Sweep (2026-04-17)
+
+Consolidated cleanup of items flagged by the 12-audit review:
+
+- **Shared `src/version.ts`** for VERSION + GIT_HASH — was duplicated in daemon.ts + runtime.ts.
+- **Worker-side SSE ring buffer deleted** — daemon owns SSE (seqId, buffer, fanout). Worker just calls `onBroadcast`; daemon serializes + fans out. Removes triple-JSON-serialize path.
+- **`ctx.sseClients` removed from RuntimeContext** — worker never had SSE clients attached.
+- **`persistent-queue.ts` deleted** — dead code that bypassed the unified `projects/<id>/` storage layout.
+- **`scope: "project"` union variant dropped** from PluginManifest (only "global" is implemented). Re-introduce via task when a real per-project plugin appears.
+- **`family` PermissionMode dropped** (zero call sites). `send_message` still walks parent/child manually; when we finally apply a shared mode there, re-introduce.
+- **`@mxd/types` is now the plugin's single source** of TaskNode / FolderNode / TreeNode / TaskStatus / isFolder / isTask — `.mxd/plugin/web/types.ts` re-exports from it instead of redeclaring. `src/types.ts` is the one truth.
+- **Shell icon set reduced** from 19 to 7 in `web/icons.tsx`. `web/components/icons.tsx` (381 lines duplicated from plugin) deleted.
+- **`DaemonConfig` renamed to `RuntimeConfig`** in `runtime/context.ts` — the type configures the worker runtime, not the daemon. Old name re-exported from `runtime.ts` as a type alias for back-compat.
+- **`SystemPrompt` type moved** to `runtime/context.ts` (plugin-agnostic); `system-prompts.ts` re-exports for back-compat.
+- **ShellApp tests made hermetic** — no more `resolve(".")` (CWD-dependent). Tests derive matrix-repo path from `import.meta.url`.
+- **`_isYield` field removed** from yield prefab — yield detection is by name.
+- **`buildMatrixScopeOpts` fallback dropped** from scope-worker — plugin contract is `buildScopeOpts` or `default`.
+- **`worker-api.ts` reduced** to `SyncMap` + `SyncMessage` (everything else was declared-and-never-imported).
+- **JSDoc cleanups**: orphan comments on ScopeOpts/BaseDoneData, duplicate JSDoc on computeDepth + RunAgentOpts, "extracted for plugin reuse" that was never exported, `stripEventForUI` transitional-fix note.
+
+Net: ~880 lines deleted, 0 test failures, no functional behavior change.
+
+### dataRoot Hardening (Audit FU5)
+
+**One resolver, `src/data-paths.ts`**, owns every path built from `dataRoot`. Never compute `dataRoot.slice(2)` anywhere else — the grep test in `data-paths.test.ts` fails if a second site appears. `projectTasksDir`, `projectDebugDir`, `getTracker`, and `agent-lifecycle`'s debug snapshot all route through `resolveDataRoot(dataDir, projectId, dataRoot?)`.
+
+**Three lines of defence**:
+1. Strict regex at input boundary — `DATA_ROOT_PATTERN = /^@(\/[A-Za-z0-9_-]+)*$/`, `PROJECT_ID_PATTERN = /^[A-Za-z0-9_-]+$/`. Run at daemon startup (`validatePluginManifest`) and at every `resolveDataRoot` call.
+2. ONE resolver — any traversal must pass regex AND the post-resolve invariant.
+3. Post-resolve invariant — `resolved.startsWith(projectRoot)` check inside `resolveDataRoot`. Belt to the regex's braces. If someone ever relaxes the regex, this still rejects traversal.
+
+**Before**: `resolveDataRoot("@/../etc")` returned `dataDir/etc` — cross-plugin attack (reported: Audit H F1, Audit C H4). Four inline `.slice(2)` sites meant every fix had to touch four files.
+
+**Malformed manifest is fatal at startup**, not a warning. `src/daemon.ts` separates import errors (recoverable, skip plugin) from validation errors (unrecoverable, throw). A malicious plugin with `dataRoot: "@/../etc"` cannot be silently skipped while its legitimate siblings run.
+
+**Lazy dir creation respects dataRoot**. `daemon.ts`, `project-manager.ts`, `runtime.ts` used to eagerly `mkdir projects/<id>/tasks` + `projects/<id>/debug` — hardcoded Matrix's `@` layout. Deleted. `EventStore` constructor and `TaskTracker.save` mkdir on first write, at the owning plugin's dataRoot. For Matrix this is a no-op behavior change; for any plugin with `dataRoot !== "@"` it moves the dirs to the right place.
+
+**Why path-based collision check still runs after validation**: validation alone catches `"@/foo/.."` (regex rejects). Defence in depth — `checkDataRootCollisions` also resolves both roots against a canonical `dataDir`/`projectId` and compares paths. If anyone ever relaxes the regex, the collision check still catches structural duplicates.
+
+**Key files**:
+- `src/data-paths.ts` — single source of truth (validators + resolver + task/debug dirs).
+- `src/plugin.ts` — imports validators from data-paths.ts; delegates path resolution; keeps `effectiveDataRoot` (normalizes defaults) + `checkDataRootCollisions`.
+- `src/runtime/helpers.ts` — re-exports `projectTasksDir`/`projectDebugDir` from data-paths.ts for existing callers (convenience barrel).
+- `src/runtime/agent-lifecycle.ts:~984` — passes `ctx.config.dataRoot` to `projectDebugDir` (was missing, debug snapshots landed at Matrix's path regardless of plugin).
+
+## Audit R7 [LOW] drift cleanup (2026-04-18)
+
+Four cosmetic items flagged by Audit R7 bundled in one commit:
+
+### pluginApiPrefix split: `src/plugin.ts` → `src/plugin-url.ts` (zero imports)
+
+`pluginApiPrefix(name)` moved to a standalone file with ZERO imports. Rationale:
+- `web/runtime-types.ts` (compiled to browser via `@mxd/types` importmap) re-exports `pluginApiPrefix` for plugin web code.
+- Before the split: `plugin.ts` imported `data-paths.ts` which imports `node:path`. Bun's `target: "browser"` polyfilled the entire `node:path` module (~10 KB of assertPath/normalize/resolve/join/...) into every plugin's first-load bundle.
+- Built `runtime-types.js` size: **10,293 B → 281 B (37× reduction)**.
+- Server callers (cli, daemon, tests) import from `./plugin-url.ts` directly — one canonical location, no re-export. **Corrects the earlier "Plugin URL Namespace" memory entry that listed `src/plugin.ts` as the home.**
+
+Regression guard: `src/plugin-url-namespace.test.ts` builds the shared module at test time and asserts `runtime-types.js < 500 bytes`. Any future re-introduction of a `node:*` transitive dep (or other server-only import) into `web/runtime-types.ts`'s graph will exceed the threshold and fail loud.
+
+JSDoc fix: the old `pluginApiPrefix` docstring claimed "shell wraps a plugin's authFetch so relative paths become prefixed automatically" — the opposite of the b42c9a2 design, which explicitly rejects a shell wrapper. New docstring reflects reality ("explicit prefix prepended by each call site; no shell wrapper, no hidden rewriting").
+
+### BackgroundProcess dead fields removed
+
+`stdout: string` and `stderr: string` on `BackgroundProcess` were zero-initialized and never read. Removed from `src/tools/bash.ts` (type + constructor) and from 4 test object literals in `src/anthropic-compatible-provider.test.ts`. The "kept for test harness compat" comment was stale — grep confirmed zero reads.
+
+### resetAuthDataCache deleted
+
+`resetAuthDataCache` in `src/auth.ts` became a deprecated no-op after FU4 removed the in-memory cache. Zero callers remained; deleted outright to prevent future code from importing it expecting cache-flush semantics.
+
+## Audit R7: "Clear All Sessions" feature deleted
+
+The project-wide `POST /projects/:id/sessions/clear` endpoint, its CLI subcommand (`mxd sessions clear`), the SettingsPanel danger-zone button, the `/clear` slash command, and `EventStore.clearAll()` are GONE. `handleClearSessions` (shell + plugin), `api.sessionsClear`, and the i18n strings (`settings.clearAllSessions*`, `confirm.clearSessions`) are deleted.
+
+**Why deleted**: User decided deletion over repair (post-audit-R7 discussion). Repair would have required an architectural call on whether shell should know plugin URL prefixes; the feature itself has no unique use case:
+- `reset_task` already handles per-task reset
+- Delete-project + re-add covers "fresh start for this project"
+- Per-task `POST /projects/:id/tasks/:nodeId/sessions/clear` (called from OrchestratorDetail / TaskDetail "Clear Session" buttons) remains and handles per-task reset
+
+**Kept (do NOT confuse with the deleted feature)**:
+- `EventStore.clear(sessionId)` — per-session JSONL delete (used by per-task clear route)
+- `POST /projects/:id/sessions/prune` — prunes oldest JSONL files (used by autoResumeProjects + `mxd sessions prune` CLI)
+- `POST /projects/:id/tasks/:nodeId/sessions/clear` — per-task clear, the `reset_task`-equivalent for the UI
+- `taskSessionsClear` in `.mxd/plugin/web/api.ts` — calls the per-task route
+- `clearSessionState` in `event-handler.ts` — frontend state cleanup helper, unrelated to the API
+
+Rule going forward: deletion is preferable to repair when a feature is duplicative AND the user explicitly wants it gone. Don't reach for "fix the URL bug" when the feature itself doesn't justify its surface area.
+
+## Content-hashed build pipeline (2026-04-18) — `Cache-Control: immutable` replaces `no-store`
+
+**What shipped**: every asset `buildWebAssets` emits carries its content hash
+in the filename. `main-a1b2c3d4.js`, `react-7h8j9kml.js`, `styles-q2w3e4r5.css`.
+Served with `Cache-Control: public, max-age=31536000, immutable`. HTML that
+references them is served with `Cache-Control: no-cache, must-revalidate` so
+the browser always asks "is there a new index?" and never asks "is the
+hashed JS still fresh?".
+
+**Why**: Task Y SPA fallback memorized the deferred cache-hygiene problem —
+"browser caches old `/app/web/main.js` after daemon restart". Two
+options: `Cache-Control: no-store` (band-aid — works but every reload
+re-downloads the ~MB shell) vs content hash (standard web pattern —
+cache win is preserved, and stale content is impossible because stale
+URLs literally don't exist on disk). User ordered the second.
+
+**Mechanism**:
+- `Bun.build({ naming: "[name]-[hash].[ext]" })` for vendor shims,
+  shared modules, and plugins.
+- `Bun.build({ naming: "[dir]/[name]-[hash].[ext]" })` for the shell
+  entry — preserves the `web/` subdir.
+- CSS goes through `hashRename(sourcePath, outDir, logicalBasename)`
+  which reads bytes, computes `Bun.hash → base36 → low 8 chars`, copies
+  to `<logicalBasename>-<hash>.<ext>`. Same shape as Bun.build's own
+  hashes so URLs look uniform.
+- `manifest: Record<string, string>` — logical URL → hashed URL. Populated
+  for every asset. Used by `generateIndexHTML` to emit the correct
+  `<script>`/`<link>`/importmap hrefs.
+- `importmap.imports` is sourced from `manifest` — so every bare
+  specifier (`react`, `@mxd/auth-context`, etc.) resolves through the
+  importmap to a hashed URL. If the manifest is missing an entry, build
+  throws (`Vendor shim ${specifier} missing from manifest`) instead of
+  silently emitting a bare URL that would 404.
+
+**Cache header semantic**:
+- Hashed asset URL changes iff content changes → `immutable` is safe.
+- HTML URL (`/` and every SPA-fallback path) is stable → `no-cache`
+  forces revalidation on every navigation. Daemon rebuild → next index
+  fetch learns the new hashed asset URLs → browser downloads them
+  fresh. No orphan references, no band-aid.
+
+**Determinism**: `Bun.hash` on content bytes is pure. Two builds of the
+same source produce identical hashes → identical filenames → identical
+HTML → byte-identical deployments. Changed source → different hash →
+different filename → automatic cache bust.
+
+**Tests** (`src/web-builder.test.ts`, 18 tests, including):
+- Every importmap entry is a hashed URL
+- Every logical asset URL has a manifest entry pointing at a hashed URL
+- Two builds of same input produce identical hashes
+- Changed shell source produces a different shell hash
+- CSS content change produces a different CSS hash
+- Plugin output is hashed; hashed file exists on disk
+
+**Tests updated** (dropped hardcoded `/app/web/main.js` references):
+- `src/daemon-bootstrap.test.ts:244` → regex match against
+  `/app/web/main-[a-z0-9]{8}\.js`
+- `web/ShellApp.test.tsx:60,61,78,82` → extract hashed URLs from HTML,
+  fetch those; also assert `Cache-Control: immutable` on assets +
+  `no-cache` on HTML.
+- `src/plugin-url-namespace.test.ts` runtime-types.js size regression
+  → look up hashed path via manifest instead of `vendor/shared/runtime-types.js`.
+
+**What NOT to do**:
+- Don't add `Cache-Control: no-store` anywhere as a fallback. Either
+  the URL is content-addressable (immutable) or it's the index (no-cache).
+  `no-store` is the band-aid the hashing design replaced.
+- Don't hardcode logical asset URLs (`/app/web/main.js`) in production
+  code — only the manifest knows the real hashed URL.
+- Don't assume Bun.build hash width matches our manual CSS hash width
+  blindly; the test regex `[a-z0-9]{8}` pins the shape. Bun could widen
+  it in a future version — if so, update `shortContentHash` to match
+  and re-run the shape tests.
+
+**Anti-pattern avoided**: my first instinct was to write `no-store` +
+add a query-string cache buster `?v=abc123`. Both are cargo-cult. Query
+strings defeat CDN caching; `no-store` wastes bandwidth. Content-
+addressable URLs are the web-native answer to this class of problem —
+the browser's cache is already an infinite content-addressable store if
+you feed it content-addressable URLs.
+
+## FIX-4b (2026-06-05) — dead-code sweep + biome gate restored
+
+Wave-3 audit cleanup. ~78 dead tests removed, net ~−4250 LOC across 22 files (+ new
+`src/zod-schema.ts`). `bun test` 2163 pass / 0 fail; `bun run check:ci` exits 0 (gate
+restored — `--no-verify` can be dropped on main). Committed as 3 deletion commits (grouped by
+non-overlapping file sets) + 1 format-only commit + this memory note.
+
+**C1 — Chat Completions provider deleted**: `openai-compatible-provider.ts` (893 LOC) +
+`.test.ts` (1624 LOC, 41 tests). Production-dead — `createProviderFromAuth`
+(runtime/helpers.ts) only builds Anthropic + OpenAIResponses. `eventsToOpenAIMessages` (the
+Chat-Completions event→message converter) lived ONLY there; `events.test.ts` exercised it in
+~36 tests (`describe("eventsToOpenAIMessages")` block + scattered `OpenAI:`-prefixed tests +
+dual Anthropic/OpenAI assertions) — all removed, Anthropic assertions preserved. Its
+pricing/context utils (getModelPricing/getContextWindow/clearContextWindowCache) were
+near-verbatim dups of the LIVE copies in anthropic-/openai-responses-compatible-provider.ts;
+anthropic-compatible-provider.test.ts imports resolve to the Anthropic copy. Closes draft
+01KN496YTW6HQNDWEKV0W99NQQ.
+
+**F-L1 — hasPendingYield deleted** (events.ts): zero production callers (re-verified post
+FIX-1/FIX-3 — FIX-1's repair rewrite uses its own `lastToolCallEvent`, not hasPendingYield).
+`hasPendingImplicitYield` is the LIVE sibling (provider-shared.ts:759) — kept. Removed its
+tests from events.test.ts + jsonl-stress.test.ts; the jsonl-stress tests that ALSO asserted
+`buildSessionRepair` kept those assertions (renamed to drop the dead-fn reference).
+
+**Tier-2 dead exports** (declaration-only, zero refs): formatPendingSection (events.ts),
+combineSystemPrompt (system-prompts.ts), buildExternalJsonSchema (tool-def.ts — the
+`buildExternalShape` it wrapped stays live in mcp-endpoint.ts), SerializedTreeNode (types.ts).
+
+**C6 — clarifyTimeoutMs vertical deleted**: a user-settable setting that did NOTHING.
+`getClarifyTimeoutMs` (resource-registry.ts) was never called, no clarify-timeout mechanism
+exists, and the SettingsPanel "Clarify Timeout (ms)" input lied. Removed config field+default,
+cli row + KNOWN_CONFIG_KEYS, resource-registry type + getter, SettingsPanel field, and i18n
+keys `settings.clarifyTimeout` + the now-orphaned `settings.noTimeout` (only the clarify field
+used it) in BOTH web/ and plugin i18n copies.
+
+**C3** — RelocateBanner.tsx deleted (orphan; only ref a stale "moved to shell" comment — it was
+NOT moved, relocate survives via CLI). **C9** — collapsed duplicate MCP_TOOL_PREFIX into
+MCP_PREFIX (plugin tool-names.ts). **A-F7** — deleted the unreachable `scopeOpts.get(id) ??
+{stubs}` fallback in routes/agent.ts `/restart` (createApp throws if buildScopeOpts missing) →
+explicit guard-throw. **C4** — deleted `_cache_audit.ts` + `_token_audit.ts` (standalone
+investigation scripts, zero importers, made real Anthropic API calls — a liability; recoverable
+from git history).
+
+**C8 — NARROWED (audit's "dead" was WRONG)**: the audit called `tool()` (tool-definition.ts)
+"production-dead (test-only)" and asked to delete it. `tool()` IS test-only but NOT dead — it's
+live test infrastructure with 23 call sites (anthropic/openai-responses provider tests,
+evaluate-script, tool-execution). Its `tool(name, desc, zodRawShape, handler)` signature is
+intentionally lightweight; the production builder `toToolDefinition(defineTool({params:
+ParamDefs}), auth)` is a heavier, different shape. Deleting `tool()` = a risky 23-site migration
+pulling auth/ParamDefs into unit tests that specifically test executeTool's Zod validation on the
+raw inputSchema — that changes what's tested, NOT reclamation. KEPT `tool()`. The REAL violation
+was the genuine duplication: `stripZodMeta` + `shapeToJsonSchema` existed verbatim in BOTH
+tool-def.ts and tool-definition.ts → extracted both to a new leaf `src/zod-schema.ts` (depends
+only on zod, no import cycle); both files import `shapeToJsonSchema` from it.
+**Lesson: "test-only" ≠ "dead." A test helper with N call sites is live infra; deleting it is
+test refactoring, not reclamation. Verify the actual violation (here: duplication) and fix THAT.**
+
+**biome gate**: main was failing `check:ci` with 4 format ERRORS (incl. event-store.ts K8
+`appendFileSync`) — the pre-commit hook had been bypassed via `--no-verify`. Ran `bun run check`
+(write, NO `--unsafe`) → auto-fixed format only → committed as a SEPARATE commit from the
+deletions. `check:ci` now exits 0. 35 lint WARNINGS remain (noNonNullAssertion + noExplicitAny —
+pre-existing, not auto-fixable, out of scope); warnings don't fail check:ci, only the format
+errors did. NOTE: the worktree pre-commit hook is /dev/null (hooksPath), so these commits skipped
+the hook locally — verify on main's gate after merge.
+
+**NOT touched**: mock-showcase (C2) — excluded, becoming a local plugin (draft
+01KTBZRFXD3A9J3JTKK38FH3WA).
+
+## bun 1.3.7–1.3.8 SIGTRAP on worker teardown — RESOLVED 2026-07-02: global bun upgraded to 1.3.14
+
+RESOLUTION (root, same day): minimal 7-line repro (spawn Worker → terminate → exit 133) confirmed
+the crash class independent of tests. Version matrix via isolated installs: 1.3.0 OK · 1.3.7 BAD ·
+1.3.8 BAD · **1.3.14 (latest) FIXED**. Global `bun upgrade` run (user-blessed) → 1.3.14; repro
+survives; full suite on main under 1.3.14 = **2305 pass / 0 fail** (baseline restored). The running
+daemon (started Jun 17, pre-upgrade image) was never exposed; next restart boots 1.3.14 = safe.
+Isolated pins ~/.bun-pin (1.3.7), ~/.bun-130, ~/.bun-latest are deletable. The interim scoped-gate
+below is no longer needed — kept for the record of the era.
+
+### Original diagnosis (markdown task 01KWHXMB, before resolution)
+
+**Any test file that terminates a Bun Worker crashes the whole `bun test` process** with
+SIGTRAP (exit 133) on bun v1.3.8. Native bug inside bun, NOT repo code: macOS crash report
+shows libmalloc abort `BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED_WAS_NOT_ALLOCATED`
+in `_pthread_tsd_cleanup` → `pthread_exit` (TSD double-free on worker-thread exit). Crash
+logs: `~/Library/Logs/DiagnosticReports/bun-2026-07-02-*.ips`.
+
+- Reproduced on the markdown branch, its clean base commit (stash), AND the main checkout —
+  identical crash, so no branch's code is the cause. User presumably upgraded bun since the
+  last green run (package.json pins no engines; only ~/.bun/bin/bun 1.3.8 on machine).
+- Confirmed on `web/ShellApp.test.tsx` AND `src/daemon-integration.test.ts` (no happy-dom
+  involved) — the trigger is worker terminate, i.e. every daemon/worker test file.
+- The crashing file runs FIRST in a full `bun test`, so the full suite verifies ~3 tests
+  before dying. **"bun test passed" claims from this era are meaningless — check exit code.**
+- Production daemon runs the same bun 1.3.8 and terminates workers on restart/shutdown —
+  same crash class may hit the live daemon.
+- Same environment refresh also drifted node_modules: 5 pre-existing `tsc` errors in
+  `_vendor_shims/*` (@types/react caret bump exposes missing internal props) + 2 biome
+  format errors on `_vendor_shims/react{,-dom}.ts` + 61 lint warnings. All verified
+  identical on clean base — NOT from any branch's diff.
+- Orchestrator owns the fix (isolated older-bun pin to restore the gate, then user decision
+  on downgrade). Interim per-task gate: typecheck + check:ci with zero NEW diagnostics vs
+  base, plus scoped `bun test ./<files>` on non-worker test files.
+
 ## typecheck gate restored — every one of the 24 errors was a cast/hack, not a real type problem (2026-07-24)
 
 `bun run typecheck` had accumulated 24 errors across ~6 merges, undetected because
@@ -4995,454 +5408,67 @@ explicitly kept it for the then-sync `buildWorkContext`, then 01KY83C8BV made th
 hook async and switched it to `searchIndex`, and nobody reclaimed the sync variant.
 Only its own 6 tests use it. Deleting a public export is a separate, separately
 revertable decision from restoring a gate — so it was drafted, not silently swept in.
-## JSONL lines serialize eid/parentEid FIRST (2026-07-24)
-
-Every line `EventStore` writes now starts with the chain links:
-
-```json
-{"eid":"53fa71c8e43d","parentEid":null,"type":"assistant_text","content":"…"}
-```
-
-Readability only — tailing a JSONL shows the chain without scanning past a long
-`content`, and a future fixed-offset reader (draft 01KYB45P) would not need a
-second format change. **Reading is untouched**: `JSON.parse` is order-agnostic,
-so pre-change lines (chain fields at the tail) read back identically. Old files
-are NOT rewritten; head-ordered and tail-ordered lines coexist inside one file
-with zero effect (pinned by a test).
-
-### The mechanism, and the trap in the obvious version
-
-`stampEvent` no longer hangs fields on the caller's object — it returns a
-persisted copy built by module-level `withChainFields(event, eid, parentEid)`.
-Every write path goes through it: `append`, `appendBatch`, `migrateEventIds`
-(legacy eid-less files), and `copySessionFrom` (synthetics + fork_marker; copied
-source events are rebuilt too, with their OWN eids preserved, so a brand-new
-forked file is uniformly head-ordered).
-
-**`{ eid, parentEid, ...event }` alone is WRONG.** When the input already has
-those keys, the spread overwrites the fresh values with the stale ones (key
-POSITION stays first, so it looks right). `withChainFields` destructures them
-off before spreading. This is not hypothetical: `buildSessionRepair` re-appends
-unconsumed `message` events read from the region it is about to truncate — with
-the naive spread they keep a `parentEid` pointing at an event truncation just
-deleted, so `walkActiveChainIndices` hits a chain break and silently degrades to
-linear traversal (which can resurrect rolled-back events). Mutation-verified:
-reverting to the naive spread fails exactly one test —
-`event-id.test.ts` "re-appending an event that already carries eid gets a FRESH
-chain".
-
-### Consequence: append/appendBatch no longer mutate the caller's event
-
-Production never read `.eid` off an object it handed to the store (`emitEvent`
-broadcasts to SSE *before* persisting; every eid consumer — frontend rollback,
-repair, chain-walk — reads events back from disk). So this is invisible in
-production, and it deletes the "an SSE subscriber holding a reference past the
-broadcast could observe a mutation" caveat noted in the eid entry above.
-
-TESTS did depend on it: `expect(store.read(id)).toEqual([literal])` passed only
-because the literal was mutated to carry the chain fields. 9 such assertions
-(8 in `event-store.test.ts`, 1 in `invariant.test.ts`) now wrap the read in
-`stripChainFields()` (`src/test-utils/strip-chain-fields.ts`) — the assertion
-stays exact for every other field instead of weakening to `toMatchObject`.
-
-### Verification
-
-`bun test` green; typecheck error count unchanged (24, all pre-existing, owned by
-01KYB3MJ); `check:ci` exit 0. Eyeball check via a real agent run (mock provider,
-`emission-harness`): all 12 lines of the produced session file — message,
-work_context, session_config, agent_start, messages_consumed, assistant_text,
-tool_call, usage … — start with `{"eid":"…","parentEid":…`, chain visibly linear.
-
-## One boundary: the active chain (2026-07-24)
-
-"Which events count" had FOUR independent implementations. Now there is one:
-`walkActiveChainIndices` (events.ts). `readActive`, `readFromLastCompactMarker`
-and `copySessionFrom` all go through it; repair and rollback both express
-"these events stop counting" the same way — a `parentEid` jump. Nothing
-addresses events by file position any more, and nothing deletes.
-
-### The rule
-
-> The active chain ends at the `compact_started` of the last COMPLETED
-> compaction. Inside that compaction's window, only `type === "message"`
-> survives.
-
-One backward scan does both jobs. `parentEid` always points at an earlier
-position, so scanning backward IS the lookup — no eid→index map (O(result)
-memory), and a cycle is structurally impossible because `i` only decreases.
-Walking back: a `compact_marker` opens the window, its `compact_started`
-closes the walk. `compact_marker` is always kept (walker treats it as
-structural; `readFromLastCompactMarker` slices the UI log at it;
-`buildSessionRepair` needs it to scope). `includeBarrier` is gone.
-
-### Why the window (the bug it fixes)
-
-Messages delivered WHILE the summarizer runs land between `compact_started`
-and `compact_marker`. The old rule ended the chain at the marker, so those
-messages were outside the active region while the `messages_consumed` that
-acknowledged them (written after the marker) was inside — the walker resolved
-a consumption record referencing an id it had never seen and dropped the
-content silently. Measured on the root session: 22 compactions, 8 with
-stranded messages, 15 lost, 4 typed by a human. The live path was fine; only
-reconstruction (restart / fork / UI refetch) lost them, so this was pure
-live-vs-reconstruction drift.
-
-The window filter is equally load-bearing in the other direction: the
-summarizer's own `thinking` + `<summary>…` `assistant_text` + `usage` must NOT
-come back — the summary is already in the context as `compacted_resume`.
-
-### ⚠️ Do NOT encode the barrier as `compact_started.parentEid = null`
-
-This looks cleaner (termination collapses to the chain root, zero type
-knowledge) and it is WRONG. Two independent reasons, both verified:
-
-1. **A compaction is a 2-3 minute window whose outcome is unknown when
-   `compact_started` is written.** Real durations from the root session:
-   124s (1784053169510→1784053293730), 178s (1784222935672→1784223113791),
-   145s (1784829047832→1784829193473). If the daemon dies inside that window
-   there is no summary at all — but the chain root is already committed, so
-   the active region becomes `[compact_started, window messages]`, the agent
-   resumes with an empty context, `hasWorkContext` is false so a fresh
-   work_context gets injected, and it carries on like a newborn. No error, no
-   crash: **silent total context loss**, recoverable only by hand-editing
-   JSONL. Under self-bootstrap (dozens of restarts a day) this is a matter of
-   time. The type rule handles it for free: no marker ⇒ not a barrier ⇒ full
-   history stays reachable.
-2. **The type check has to exist anyway.** Logs written before
-   `compact_started` existed have a marker with no opener, and walking past
-   such a marker would drag pre-compact user messages back into the context.
-   That legacy branch is mandatory — so emitting `null` only ADDS a mechanism
-   on top of it, plus a migration pass over every existing session (otherwise
-   the chain runs to line 1 and a compacted session's whole 84MB history
-   floods back on the next restart). Strictly more code, strictly more risk.
-
-Orchestrator's framing after being talked out of it twice: encoding structure
-in links fits a JUMP (rollback, repair — you know the target when you write
-it). A compaction is an INTERVAL whose validity depends on a result you don't
-have yet. Don't express an undetermined fact as a link.
-
-### Repair is a chain jump, never a truncation
-
-`buildSessionRepair` returns `{ chainToEid, appendEvents }` (`SessionRepair`).
-The caller does `setChainHead(chainToEid)` + `appendBatch` — literally the
-rollback mechanism. `chainToEid: null` means append-only (orphan repair).
-Deleted: `EventStore.truncateAfterLine`, `readWithLineMap`,
-`readActiveWithLineMap`, the `physicalLines` array, and the event-index →
-file-line translation that produced FIX-1 cc#1 and FIX-8 R8-B#4. Poisoned
-events stay on disk and simply stop being reachable, so the evidence needed to
-debug a corruption survives it.
-
-**A truncating repair ALWAYS appends at least one event.** `setChainHead` is
-pure in-memory; the jump only reaches disk as the first appended event's
-`parentEid`. Both truncation strategies therefore append a `status` event
-("Session repaired: …") LAST — last so it can never split a run of
-tool_results into two user turns (the walker skips `status`, but position
-still matters for the tool_result collection loop). Without it, the repair of
-a session that resumes in pending-done (no orphan results, no replayed
-messages, status user-message suppressed) would evaporate on restart and loop
-forever.
-
-Messages in the dropped region are replayed (fresh eids) so
-`findUnconsumedMessages` re-delivers them. ALL of them, not just the ones
-without a `messages_consumed`: a message consumed into a turn the repair just
-dropped is exactly as absent as one that never arrived. Strategy 2 already did
-this; Strategy 0 (out-of-order) silently ate them.
-
-`buildSessionRepair` THROWS if the event it must chain to has no eid. Every
-event on an active chain is stamped (EventStore stamps on write, migrates
-legacy files on read), so that means the caller passed something that never
-came from a store. A repair that cannot express its jump would leave the
-poison in place and loop — better to ring.
-
-### Fork had its own copy of the boundary — three bugs, one of them irreversible
-
-`copySessionFrom` computed `findLastIndex(compact_marker) + slice()`. Now it
-calls `readActive` (fork means "wake up with the source's current context" —
-that IS readActive's definition). Fixed, each mutation-verified separately:
-
-1. **Rolled-back events were copied into the child.** A linear slice ignores
-   parentEid entirely. Empirically: source `readActive` = 2 events, fork
-   copied 4.
-2. **Window messages were dropped**, same root cause as the source-side leak.
-3. **The copied subset was NOT re-linked.** The active context is a FILTERED
-   subset, so the copied events' original parents (compact_started, the
-   summarizer output, a rolled-back branch) are absent from the child's file.
-   Copying links verbatim leaves a hole; everything older is stranded. The
-   copy now keeps SOURCE eids (identity survives) but re-chains parentEid.
-
-Also: the compaction boundary events are NOT copied. Only half of one can be
-(compact_started is outside the active region by definition), and a lone
-marker in the child reads as the legacy "unpaired marker" shape — so the child
-would discard exactly the window messages we just inherited, with nothing left
-in its file to ever recover them. That is the one genuinely irreversible
-version of this bug: the source recovers on restart, a fork never does.
-
-### No dangling-link handling — and nothing may produce one
-
-A `parentEid` pointing at an eid no line carries gets NO fallback. Same rule as
-`buildSessionRepair` refusing to repair orphan tool_results: a state the
-runtime cannot produce must not have code that quietly patches it, or the code
-becomes a silencer for real structural bugs. It shows up as "the events before
-it stop rendering", which is what we want.
-
-That premise is only true because a failed write now REWINDS the chain head
-(`rewindChainHead` in append/appendBatch). `stampEvent` advances
-`lastEventIds` before the write; on ENOSPC/EIO the event never lands, and the
-next event would then name a nonexistent parent and strand the session. An
-event that isn't on disk isn't in the chain.
-
-(An event with NO parentEid at all still ends chain-following and takes the
-rest linearly — that is the genuine root at index 0, and it is what lets a
-pre-eid log be read.)
-
-### Test notes
-
-- `src/rollback.test.ts` owns the walker + fork + repair-as-jump tests;
-  `src/jsonl-stress.test.ts` owns the pure repair-strategy tests.
-- Repair fixtures MUST carry eids now (`chained()` helper in both files, plus
-  `events.test.ts`) — a repair chains to an event, so an eid-less fixture is
-  not modelling production. That is a feature: it throws.
-- Mutation-verified, each fix individually: barrier back at `compact_marker`
-  (5 fail), no window type filter (5), unpaired started treated as a barrier
-  (2), fork's old linear slice (3), fork without re-link (2), fork without the
-  marker strip (2), no repair status event (2), no message replay (1), no
-  chain-head rewind (1).
-- Assertions about "the poison is gone" must read `readActive`, NOT the raw
-  log — repair no longer deletes. `readActiveSessionEvents` exists next to
-  `readSessionEvents` in integration.test.ts for exactly this.
-- A test that needs a genuinely truncated file (simulating a crash that ended
-  the log early) does the file surgery itself; the product has no such
-  operation any more. See the Phase-2 crash-recovery test in integration.test.ts.
-
-## Agent activity: live process state is asked for, never replayed (2026-07-25)
-
-"What is this agent doing" is now ONE explicit value the backend owns, pushed
-on change and asked for at connect. It replaced a boolean with three competing
-sources plus a 1.5s timer in the UI.
-
-### The rule that generates the design
-
-> **State is never derived from the event log. On connect the client ASKS;
-> while connected the server PUSHES.**
-
-The log records *"it became active at some past instant"*. Replaying that as
-*"it is active now"* is a category error — and the old code had a poll
-(`checkAgentStatus()` after every `processEventBatch`) whose ONLY job was to
-undo the error it had just made. That poll was the bug report.
-
-Note the exact inversion against pending messages (Task X): pending IS a
-projection of a persistent log, so a reducer over events is right there.
-Activity has no persistent representation at all. Same-looking code, opposite
-conclusion — the question to ask is "does this thing exist on disk?".
-
-### `AgentActivity = "idle" | "thinking" | "tool"` — asymmetric on purpose
-
-| state | meaning |
-|---|---|
-| `tool` | loop is executing tools — **the only state with an unclosed tool_call** |
-| `idle` | loop is parked on `queue.wait()` |
-| `thinking` | **explicitly the residual**: every other way the loop is alive |
-
-`tool` is the precise one because it is the one with an interrupt consequence
-(an interrupted tool needs a synthetic tool_result). `idle` is the empty one.
-`thinking` is *defined as the leftover*, which is what makes the following fall
-out as consequences rather than special cases:
-- the outer-retry backoff (up to 120s between API attempts) is `thinking`
-- session setup before the loop starts (MCP connect can take seconds) is `thinking`
-- a compaction turn is `thinking`
-
-**Known naming debt, deliberately not fixed**: a compaction runs 2-3 minutes
-and showing "Thinking..." across it is the same kind of lie this model removes.
-Adding `compacting` later is a pure carve-OUT of the residual, not a
-re-partition — cheap precisely because the residual is written down.
-
-**Rejected framing** (offered, vetoed by root): defining the states by "what
-feedback the user sees" (spinner vs tool card). That defines backend state in
-terms of frontend rendering — the same class of error as deriving state from
-the log. Add a UI affordance and the definition collapses.
-
-### Where it lives, and the one rule about writing it
-
-`TaskSession.activity` — dies with the session, so there is no second lifecycle
-to keep in sync and nothing to leak. "All tasks' states" is DERIVED at read
-time by walking tracker nodes that have a session.
-
-**Field write and broadcast must happen in the same function.** Two writers,
-because neither layer can reach the other:
-- `setActivity(state)` — closure inside `runProviderLoop` (loop transitions)
-- `setAgentActivity(ctx, projectId, taskId, session, state)` — `agent-lifecycle.ts`
-  (session birth/death)
-
-The tempting shortcut is to emit the event inside `handleImplicitYield` (which
-only has `queue` + `emit`) and write the field at its four call sites. That
-splits one source into two, and call site number five gets only one half. The
-setter is passed IN instead — `handleImplicitYield(queue, setActivity)`.
-
-### Transition points (each independently mutation-tested)
-
-1. `idle` — in `handleImplicitYield`, before `queue.wait()`. ONE site covering
-   four call paths (done resume / implicit-yield resume / explicit yield / end_turn).
-   **Announced only when the loop will ACTUALLY park** (`!queue.hasPending`):
-   with a message already queued, `wait()` resolves on the next microtask and
-   the agent never paused. This is not flicker-avoidance dressed up — it is
-   what makes `idle` mean "waiting for you" rather than "reached a yield
-   point", and both consumers depend on the stronger meaning (yield_external
-   wakes an external client on it; the UI re-fetches JSONL on it to expose
-   Edit/Rewind). It also kept two provider harnesses working unchanged: they
-   script the loop by counting idles, and an unconditional announce added a
-   phantom startup idle that consumed their "first idle" step.
-2. `idle` — the initial drain's blocking wait (`provider-shared.ts`, fresh start),
-   same `!queue.hasPending` rule. The fifth place the loop parks on the queue,
-   and it announced nothing — an agent waiting for its first message looked
-   busy to every client. It deliberately does NOT set `queue.idle`; that flag
-   is polled by test helpers as "the steady-state loop has settled", and
-   flipping it during startup lets a poller call a booting agent settled.
-   **Narrower than it looks**: `runAgentForNode` enqueues a `work_context`
-   message before the loop starts whenever the scope's `buildWorkContext`
-   returns content, so a matrix launch always has something queued and this
-   park is not reached. It fires for a scope with no work context (the hook is
-   optional), and on a resume that ends in a non-user message with nothing
-   recovered. Worth its one line — an agent genuinely stuck here is stuck
-   forever — but do not describe it as the common path.
-3. `thinking` — at the API-call block, OUTSIDE the outer-retry loop.
-4. `tool` — immediately before `Promise.all(executeTool)`.
-5. `null` — at all three sites that clear `node.session` (runAgentForNode's
-   finally, stopAgent, stopTask). Skipping any one leaves a permanent spinner
-   for a dead agent in every connected client.
-
-6. `thinking` — on the way OUT of idle, right where `queue.idle = false` sits.
-
-⚠️ **Point 6 was initially left out, with an argument that was wrong in an
-instructive way.** The reasoning was: every path leaving `handleImplicitYield`
-reaches the API block, so a second setter is unobservable — *the emitted event
-sequence is identical either way*. True about the event sequence, and
-irrelevant: **consumers read the STORED value, not the event stream.**
-`yield_external`'s fast path and the connect-time snapshot both ask
-`session.activity` directly. Without the transition, the whole wake window
-(drain → filter compact → buildUserTurn → emit its events) reports `idle` for
-a loop that is provably not parked — and the documented
-`send_user_message → yield_external` workflow lands exactly there, told "the
-agent stopped working" at the moment it started.
-
-The old code left idle TWICE here (`queue.idle = false` AND an `agent_active`
-event). Collapsing to one state kept only the flag — which by then had no
-production reader — so the migration silently dropped the half that mattered.
-
-**The structural fix is the dedupe, not the extra line.** `setActivity`
-early-returns when the state is unchanged, which makes "an extra setActivity
-call is harmless" a true statement. Before that, every transition point needed
-a per-site argument about whether its event would be redundant — and that is
-precisely the argument that went wrong. With dedupe, you write a transition
-wherever the loop changes what it is doing and never reason about it again.
-Dedupe against a LOCAL (not the session field) so the property also holds for a
-provider driven directly in a unit test, where there is no session.
-
-### Wire format
-
-- `{ type: "agent_activity", taskId, state: AgentActivity | null }` — ephemeral
-  delta. `null` = session gone. In `isPersistedByEmitEvent`'s broadcast-only
-  group; **it must never reach JSONL** — that is what makes "replaying history
-  can't fake-activate" structurally true instead of corrected afterwards.
-- `{ type: "agent_activity_snapshot", projectId, states }` — daemon → client on
-  SSE connect, alongside the existing initial `tree_updated` /
-  `pending_clarifications`. Sourced from `GET /projects/:id/agent/status`
-  (shape changed from `{idle[], active[]}` to `{states}`). **Sent even when
-  empty**: "nothing is running" is the message a client reconnecting after
-  everything stopped needs in order to drop stale entries.
-
-Delta rather than full-snapshot-per-change because building a snapshot needs
-the tracker and the provider loop has none — a hard constraint, not taste.
-
-### Frontend: mostly deletion
-
-Deleted: the `checkAgentStatus` poll and its `/agent/status` fetch; the
-`agent_start`/`agent_end` → activeAgents derivation; the `agent_active` /
-`agent_idle` event types; ActivityLog's 1.5s timer + `lastEntry?.type ===
-"tool_call"` guess; dead `useAgent.running`; dead `handlers.ts setActiveAgents`.
-
-Kept: `agent_start`/`agent_end` themselves (persisted lifecycle log; agent_start
-still reports provider/model), and `checkStatus` reduced to the provider/model
-fetch only.
-
-Added: `activityReducer` (pure) + `isWorking()` in event-handler.ts; one
-write-through ref + `dispatchActivity` in Plugin.tsx mirroring `dispatchPending`;
-`activeAgents = new Set(keys where isWorking)` derived ONCE, so the five
-existing consumers (tree spinner, tab spinner, TaskDetail ×2,
-OrchestratorDetail) did not change at all. ActivityLog takes `activity` and
-does `showThinking = activity === "thinking"`.
-
-Activity events bypass the viewed-session filter in `handleEvent` (activity is
-project-wide — the sidebar shows every task) and produce no log entries.
-
-### Two consumers that a grep for "activeAgents" does NOT find
-
-1. **`yield_external` subscribes to the `agent_idle` EVENT TYPE**
-   (`mcp-endpoint.ts` WAKE_SIGNALS). Deleting the type without migrating turns
-   every external `send → yield_external → get_logs` wake into a timeout,
-   silently. Now matched via a `wakeReason()` predicate on `agent_activity`
-   (`state === "idle" || state === null`). The reported reason string stays
-   `"agent_idle"` — that is the tool's EXTERNAL contract and is unrelated to
-   our internal event names. (Same file, ~15 lines apart: the fast path
-   `session.queue?.idle` returning the *string* `"agent_idle"` is a different
-   thing from the *event type* in WAKE_SIGNALS. Easy to conflate.)
-2. **`onAgentIdle`** (Edit/Rewind re-fetch — SSE events lack eid/parentEid, so
-   the buttons only appear after a JSONL refetch). Migrated to "the viewed task
-   stopped working", which now ALSO covers session end — an agent that finishes
-   with `done()` never goes idle, so its last messages used to stay uneditable.
-
-### Pre-existing bug found next door (fixed in its own commit)
-
-WAKE_SIGNALS still listed `agent_stopped` and `orchestration_completed` — names
-replaced by `agent_end` long ago, so they could never match. A stopped agent
-only ever woke an external client by timing out. Committed separately from the
-activity work so the two can be reverted independently.
-
-### Test notes
-
-- `src/agent-activity.test.ts` — real agent loop. The `tool` window is observed
-  FROM INSIDE a tool handler (`getSession(...).activity`), which is the direct
-  form of "there is an unclosed tool_call right now". Ordering assertions
-  collapse repeats so they pin ORDER, not announcement count.
-- Idle-detection in provider tests keys on
-  `event.type === "agent_activity" && event.state === "idle"` (was `agent_idle`).
-  Two harnesses in `anthropic-compatible-provider.test.ts` drive the loop this
-  way — they hang for the full test timeout if missed.
-- `web/ActivityLog-activity.test.tsx` renders with the LAST ENTRY being a
-  tool_call in every case, so `tool` vs `thinking` can only be distinguished by
-  the prop — the old heuristic would have gotten it right by accident.
-
-### Mutation results, and the test the mutation caught
-
-Every transition point was removed individually and the suite re-run. Each is
-caught by tests only its own path can reach:
-
-| removed | fails |
-|---|---|
-| `idle` in handleImplicitYield | parks-on-queue + 2 provider harnesses that script the loop by counting idles |
-| `idle` in the initial drain | the initial-drain test, alone |
-| `thinking` at the API block | thinking→tool→thinking, alone |
-| `tool` before tool execution | the in-tool observation + thinking→tool→thinking |
-| `null` at the 3 teardown sites | session-end, stopTask, stopAgent — one each |
-| `thinking` on the way out of idle | wake-window test, alone |
-
-**The initial-drain mutation caught a bug in my own test.** The first version
-used the normal scope, so `work_context` was queued, the drain never parked,
-the agent ran a turn and parked in `handleImplicitYield` instead — the test was
-named for one transition and measured another. It passed clean and failed under
-the WRONG mutation, which is exactly the "two tests covering for each other"
-shape. Fixed by launching with `buildWorkContext: () => null`.
-
-That is the argument for mutating per transition point as you add it rather
-than once at the end: a green test tells you nothing about WHICH line made it
-green.
-
-**Mutation testing cannot find a transition point that was never written.**
-The leave-idle gap (point 6) survived a full clean mutation sweep — nothing
-failed, because nothing existed to remove. It was caught by reading the comment
-that justified its absence. When a comment argues why some code is unnecessary,
-that argument is the thing to check; the tests around it are all consistent
-with it by construction.
-
-**Careless-git note**: reverting a mutation with `git checkout -- <file>` also
-reverts any UNCOMMITTED fix in the same file. Commit the fix before mutating
-it, or back the file up.
+
+---
+# Reference & Pitfalls
+---
+
+## System Prompt
+
+**7 chapters + Staying Alive + Closing** (v2, rewritten for 4.7-era calibration). Core framings:
+- Three engagement modes (§3 Dialogue): Upward / User / Autonomous — decision authority varies, reporting threshold constant
+- Silent deliberation named as canonical failure mode + self-check ("if the person above you would only learn what you decided by reading your thinking...")
+- Tests as **current** truth (§5): Intent → Tests → Arch hierarchy; task is certificate of intent change; "absent a task certifying intent change, tests ARE the intent"
+- Memory as calling convention (§6): callee-saved inheritance
+- "fork" is the only allowed parent/child context; everywhere else positional (task above / sub task / ancestor)
+
+### Authorship rule — what goes in prompt vs memory
+
+System prompt is **universal** across all matrix projects. Each project has its own `memory.md`. Agents in OTHER matrix projects see: shared system prompt + THEIR memory.md. They do NOT see our memory.md, and they do NOT need Matrix's implementation details.
+
+- **System prompt content**: principles, roles, tool semantics, communication patterns, task lifecycle, craft — things that apply to ANY project using Matrix.
+- **memory.md content**: matrix-internal implementation details, project-specific architecture, pitfalls, design decisions — things meaningful only within THIS project.
+
+**The one matrix-internal detail system prompt IS allowed to expose**: the file path where pre-compaction events are preserved. Agents must be able to retrieve lost context after compaction; without the path, a compacted agent has no way to read their own history. Everything else matrix-internal goes to memory.md.
+
+### Pitfall: "avoid internal" ≠ "delete the concept"
+
+Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", agents DELETE the whole concept. Wrong. "Avoid internal" means **strip implementation-specific words, keep the agent-experience concept**. Example: the §6 Session history section — don't delete the memory/compaction block; rewrite without `JSONL` / `checkpoint` / type names, but keep the file path agents operationally need. Preserve what agents experience; remove what only implementers reason about.
+
+### Editing discipline
+
+- Read the full prompt before editing. Prompt is for ALL Matrix users, not our project notebook.
+- Matrix-specific rules → memory.md (this file), not prompt.
+- Principle over rule: 4.7 generalizes from framings better than from rule lists. Prefer "tests are our current truth" (principle that generates behavior) over "don't contort arch for old tests" (rule specifying one behavior). Keep explicit rules only when they protect a product property (e.g., git worktree invariants) — those stay as-is.
+
+## Known Pitfalls
+
+- **memory.md**: Never `write_file` to append. Use `edit_file` or `echo >>`.
+- **Git worktrees**: `extensions.worktreeConfig` required. `core.hooksPath` absolute.
+- **Biome**: Typecheck BEFORE lint. No `!important`. No duplicate CSS properties.
+- **noUncheckedIndexedAccess**: Array index returns `T | undefined`.
+- **Daemon reload**: Commits don't auto-restart the daemon. Must manually restart after code changes.
+- **Concurrent ULID**: Use full `ulid()` (26 chars) — sliced ULIDs collide within same millisecond.
+- **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
+- **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
+- **Async JSONL writes**: `emitEvent` fire-and-forgets `eventStore.append()`. Flush before reading in tests.
+- **delete_task cascades**: Deletes all descendants AND session JSONL. Enforced: returns 400 with children.
+- **Abort signal leak**: After stop, old runAgentForNode settles async. catch/finally check `sessionWasReplaced` to suppress stale error events.
+- **TS6133 `_` prefix**: TypeScript's `noUnusedLocals` does NOT respect `_` prefix for local variables or destructured locals — only for function parameters. For unused destructured React state, use `const [, setX] = useState(...)` (skip the getter slot). For unused `const` locals, delete outright. The underscore-prefix hint in our prompts is a holdover that doesn't match TypeScript's actual behavior.
+- **`bun run check` auto-writes**: `bun run check` runs `biome check --write` and silently formats 70+ files. `bun run check:ci` is the non-write variant used by the pre-commit hook. When debugging lint, use `check:ci`. When committing formatting sweeps, use `check` and split format-only changes into a separate commit.
+- **Pre-commit hook: worktrees skip it, main enforces it (since 2026-07-24)**: `worktree-manager.ts` sets `core.hooksPath = /dev/null` per worktree, so `git commit` in a sub-task skips the hook entirely — intentional (sub-tasks commit often; a full typecheck+lint+test on each would be unusable). To verify the hook passes from a worktree, run `bash /path/to/main/.hooks/pre-commit` manually.
+  **CORRECTION of a long-standing false entry**: this note used to claim "only root-orchestrator commits on main are actually gated." That was WRONG — main had NO `core.hooksPath` set, so git looked in `.git/hooks/pre-commit`, which never existed (only `.sample` files). The tracked `.hooks/pre-commit` was orphaned; nothing pointed at it. **Nobody was ever gated, anywhere.** Every `--no-verify` on main was a no-op bypassing a gate that didn't exist. That is how 24 typecheck errors accumulated across several merges undetected. Fixed by running the install command the hook's own header documents: `git config core.hooksPath .hooks`. Verified it now fails on typecheck (exit 2). **This config is local (`.git/config`), NOT tracked — a fresh clone must run it again.** If onboarding friction matters later, move it into `.mxd/hooks/setup_worktree.sh`'s main-repo counterpart or a `postinstall` script.
+
+## Known Bugs (unfixed)
+
+- Manual compaction during yield → consecutive user messages → API 400. Scope: the deferred test.todo paths in "Compaction Asymmetry" (yield-side). The done-resume + compactOnly variant of this class is FIXED — see "FIX-3 … B-L9" (`pendingCompactDoneToolCall`); only the yield-side deferred paths remain.
+
+## Vertical Dependency Boundaries
+
+Three layers: daemon → provider loop → tool handler. executeTool is clean (pure dispatch). done() closes queue through closure (boundary violation, but structural). evaluate_script punctures all layers (intentional). TaskSession has three-way mutation. Full audit in `VERTICAL-BOUNDARY-AUDIT.md`.
+
+## Unresolved Design (prioritized)
+
+1. Message routing expansion (subtree + parent chain, not just direct parent/child)
+2. Folder/grouping feature (UI-only visual grouping, not tree structure)
+3. Tool search — dynamic tool discovery (draft exists, Anthropic has server-side `defer_loading` but user prefers client-side)
