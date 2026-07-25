@@ -35,6 +35,10 @@ import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { createCompactMessage } from "./queue-message-factory.ts";
 import { deliverMessage } from "./runtime/agent-lifecycle.ts";
+import {
+	type ApiMessage,
+	sendableRequestViolations,
+} from "./test-utils/api-message-rules.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { initTestProject } from "./test-utils/init-test-project.ts";
 import {
@@ -1296,12 +1300,13 @@ describe("Drift: duplicate yield in same turn", () => {
 	//   1. Extra yield → buildUserTurn pushed user message with extra tool_results
 	//   2. pendingYieldToolCall set → continue → yield wait → wake
 	//   3. Real yield → buildUserTurn pushed ANOTHER user message with real tool_result
-	//   → 2 consecutive user messages → API 400 "Messages must alternate roles"
-	// Fix: extras are now BUNDLED into the real-yield tool_result user turn (built
-	// when yield wakes up). pendingDuplicateYieldExtras carries them across the
-	// continue/wait boundary. Extras' tool_result events still emit to JSONL
-	// immediately (orphan prevention) — walker processes all yield tool_results
-	// into the same user turn matching live.
+	//   → 2 consecutive user messages, which was believed to be an API 400
+	//     ("Messages must alternate roles"). It is not — that rule does not exist.
+	// The bundling stayed anyway, for the reason that IS real: extras' tool_result
+	// events emit to JSONL immediately (orphan prevention) and sit adjacent to the
+	// real yield's, so reconstruction produces ONE user turn and the live path must
+	// match it. pendingDuplicateYieldExtras carries them across the continue/wait
+	// boundary. See memory.md — byte-identity, not role alternation.
 	test("2 yield calls in same turn: first real, extras no-op — restart ok", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
@@ -2461,17 +2466,14 @@ describe("Drift: compaction lifecycle", () => {
 		if (ctx) await teardownTestContext(ctx);
 	});
 
-	// Regression test: /compact triggered while agent is at pending-yield must NOT
-	// produce consecutive user messages (API 400 "Messages must alternate roles").
+	// /compact triggered while the agent is at pending-yield must complete.
 	//
-	// Bug history: two codepaths pushed user messages back-to-back:
-	//   1. handleImplicitYield returns {compactOnly:true}, provider-shared.ts
-	//      (pending-yield branch) pushed yield tool_result as user message.
-	//   2. Next loop iteration: compact path pushed summarization instruction
-	//      as another user message → consecutive user → API 400.
-	//
-	// Fix: defer the yield tool_result push via pendingCompactYieldToolCall; the
-	// compact path bundles tool_result + summarization text into ONE user turn.
+	// History: this was written as "must NOT produce consecutive user messages
+	// (API 400)". It DOES produce them now, deliberately — the yield tool_result
+	// is its own user message and the summarization instruction is another, and
+	// that is legal (measured; see memory.md). `pendingCompactYieldToolCall`,
+	// which existed to bundle them, is gone. The real guarantee is unchanged:
+	// the yield tool_use is answered and compaction completes.
 	//
 	// This bug only manifested when messages.length > 4 (below that threshold,
 	// the compact path bails out with "Context too short" and masks the bug).
@@ -3163,47 +3165,38 @@ describe("Drift: compaction lifecycle", () => {
 		expect(msgText).toContain(compactedResumeEvent.body.content);
 	}, 20000);
 
-	// Related class of bug (not yet fixed): compact arrives WITH regular messages
-	// in the same drain. When handleImplicitYield returns compactOnly=false BUT
-	// manualCompactRequested=true (queue had [regular_msg, compact_msg]), the yield
-	// path builds its normal user message (tool_result + queue content), then the
-	// compact path IMMEDIATELY pushes summarization as another user message →
-	// consecutive user → API 400.
+	// DELETED 2026-07-25 — a test.todo for a bug that does not exist.
 	//
-	// The same asymmetry fires for:
-	//   - pending-done + nonCompact + compact (all drained together)
-	//   - implicit-yield-resume + nonCompact + compact
-	//   - end_turn + nonCompact + compact
+	// It described: compact arriving WITH regular messages in the same drain, so
+	// the yield path builds [tool_result, queue content] and the compact path then
+	// pushes the summarization as a second user message → "consecutive user →
+	// API 400". Plus a "matching latent walker bug" producing the same shape.
 	//
-	// AND the walker has a matching latent bug: reading events
-	//   [tool_result, messages_consumed, summarization_request]
-	// produces TWO consecutive user messages. If daemon crashes mid-compaction,
-	// walker reconstruction produces API-invalid output.
-	//
-	// The right fix is structural: summarization_request should NOT create a
-	// separate user message — it should append to the user turn being built.
-	// This requires walker changes too. Deferred to follow-up work.
-	test.todo("compact + regular message in same drain during pending yield → no API 400", () => {
-		// See comment above: the walker has a matching latent bug. Fix requires
-		// restructuring summarization_request to append to the user turn being
-		// built instead of creating a separate user message.
-	});
+	// Both halves are the phantom. Consecutive user messages are legal, and the
+	// actual walker output for this case — user[tool_result, text, text] followed
+	// by the summarization turn — was run against production Anthropic and
+	// ACCEPTED: the tool_result leads its turn, so the yield is answered before
+	// anything else appears. There was never anything to implement. See memory.md
+	// "The Anthropic message-shape rules, MEASURED" (task 01KYCQ85).
 
-	// B-L9 (FIXED): pendingDoneToolCall + compactOnly. The pending-done resume path
-	// did NOT check compactOnly — it always pushed the done tool_result as its own
-	// user message, then the compact path pushed the summarization instruction as a
-	// SECOND consecutive user message → API 400 ("messages must alternate roles").
+	// A pending-done agent woken by /compact alone must complete compaction.
 	//
-	// Reaching it deterministically: drive the agent to done() (JSONL ends in a done
-	// tool_call orphan → pendingDoneToolCall on resume), then deliver a compact
-	// message via deliverMessage (which persists it to JSONL with an id, recoverable
-	// by findUnconsumedMessages on launch — unlike the /compact endpoint, which 404s
-	// for a non-running agent). The resume drains ONLY the compact → compactOnly=true
-	// → the fix defers the done tool_result via pendingCompactDoneToolCall so it and
-	// the summarization share ONE user turn. The mock's validateRequest rejects
-	// consecutive user roles, so the bug would surface as an error event + a missing
-	// compact_marker.
-	test("compact triggered while agent in pending-done (done resume) → single user turn, no API 400 (B-L9)", async () => {
+	// Reaching it deterministically (this part is the durable value of the test):
+	// drive the agent to done() (JSONL ends in a done tool_call orphan →
+	// pendingDoneToolCall on resume), then deliver a compact message via
+	// deliverMessage — a compact QueueMessage HAS an id, so it is persisted to
+	// JSONL and recovered by findUnconsumedMessages on the auto-launched resume,
+	// unlike the /compact endpoint which 404s for a non-running agent. The resume
+	// drains ONLY the compact → compactOnly=true.
+	//
+	// ⚠️ This was "B-L9". It was written against a phantom: the done tool_result
+	// and the summarization instruction landing in two user messages was believed
+	// to be an API 400 ("messages must alternate roles"), so
+	// `pendingCompactDoneToolCall` deferred the push to bundle them. Consecutive
+	// user messages are legal; the deferral is gone and the two ARE two messages
+	// now. What survives is the reachability trick above and the real
+	// guarantee: compaction completes and every request is sendable.
+	test("compact triggered while agent in pending-done (done resume) → compaction completes", async () => {
 		ctx = await setupTestContext();
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
@@ -3267,34 +3260,31 @@ describe("Drift: compaction lifecycle", () => {
 		// call was well-formed (validateRequest did not throw on consecutive user roles).
 		const start = Date.now();
 		let sawCompactMarker = false;
-		let sawAlternateError = false;
+		let errorMessage: string | undefined;
 		while (Date.now() - start < 12000) {
 			const events = await readSessionEvents(ctx, rootNodeId);
 			sawCompactMarker = events.some((e: Event) => e.type === "compact_marker");
-			sawAlternateError = events.some(
-				(e: Event) =>
-					e.type === "error" &&
-					typeof e.message === "string" &&
-					/alternate roles|must alternate/i.test(e.message),
-			);
-			if (sawCompactMarker || sawAlternateError) break;
+			// Watch for ANY error, not just the one fictional rule this used to
+			// grep for — a request the mock rejects for any reason should fail
+			// this test with the reason attached.
+			const err = events.find((e: Event) => e.type === "error");
+			errorMessage = err && "message" in err ? String(err.message) : undefined;
+			if (sawCompactMarker || errorMessage) break;
 			await new Promise((r) => setTimeout(r, 100));
 		}
 
-		// WITHOUT the fix: the compaction request has two consecutive user messages →
-		// MockValidationError ("messages must alternate roles") → error event, and
-		// compaction never completes (no compact_marker).
-		expect(sawAlternateError).toBe(false);
+		expect(errorMessage).toBeUndefined();
 		expect(sawCompactMarker).toBe(true);
 
-		// Explicit invariant over EVERY recorded request: no two consecutive same-role
-		// messages. validateRequest enforces this live (it's what would throw without
-		// the fix); asserting it over the history documents the bundling guarantee —
-		// the done tool_result and the summarization text share ONE user turn.
+		// This used to assert "no two consecutive same-role messages" over every
+		// recorded request, and that is a rule the API does not have — the done
+		// tool_result and the summarization text are now two user messages on
+		// purpose. Assert the invariant that IS real instead: every request we
+		// sent was a legal, sendable request.
 		for (const rec of ctx.mockAPI.getRequestHistory()) {
-			for (let i = 1; i < rec.messages.length; i++) {
-				expect(rec.messages[i]?.role === rec.messages[i - 1]?.role).toBe(false);
-			}
+			expect(
+				sendableRequestViolations(rec.messages as unknown as ApiMessage[]),
+			).toEqual([]);
 		}
 	}, 30000);
 });
@@ -3379,20 +3369,26 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 		);
 		expect(yieldResults.length).toBe(1);
 
-		// No role alternation errors
+		// Every request we sent was a legal, sendable request. (This used to
+		// assert role alternation, which is not a rule.)
 		for (const rec of ctx.mockAPI.getRequestHistory()) {
-			for (let i = 1; i < rec.messages.length; i++) {
-				expect(rec.messages[i]?.role === rec.messages[i - 1]?.role).toBe(false);
-			}
+			expect(
+				sendableRequestViolations(rec.messages as unknown as ApiMessage[]),
+			).toEqual([]);
 		}
 	}, 30000);
 
-	// ── R8-B#1(b): too-short compact with pending yield tool_result ──
-	// When /compact arrives during yield (compactOnly=true), the yield handler
-	// defers the tool_result to pendingCompactYieldToolCall. If the too-short
-	// branch fires next, it must consume the deferred tool_result — otherwise
-	// the assistant's yield tool_use has no result → API 400.
-	test("R8-B#1(b): too-short compact must consume pendingCompactYieldToolCall", async () => {
+	// ── too-short compact must still answer the yield tool_use ──
+	// When /compact arrives during yield (compactOnly=true) and the conversation
+	// is too short to compact, the yield's tool_result must still reach the next
+	// request — otherwise the assistant's yield tool_use has no answer → a REAL
+	// API 400 (the pairing rule).
+	//
+	// R8-B#1(b) discharged that by having the too-short branch consume a deferred
+	// `pendingCompactYieldToolCall`. The deferral is gone (see memory.md); the
+	// obligation is not — it is now discharged where the tool_result is emitted.
+	// This test is unchanged in what it guarantees.
+	test("too-short compact still answers the pending yield tool_use", async () => {
 		ctx = await setupTestContext();
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
@@ -3437,22 +3433,26 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
 
-		// Verify no error events about role alternation
+		// No error events at all — this used to grep only for "alternate roles",
+		// a rule that does not exist, which made it blind to the pairing failure
+		// it was actually guarding against.
 		const events = await readSessionEvents(ctx, rootNodeId);
-		const roleErrors = events.filter(
-			(e: Event) =>
-				e.type === "error" &&
-				typeof e.message === "string" &&
-				/alternate roles|must alternate/i.test(e.message),
-		);
-		expect(roleErrors.length).toBe(0);
+		expect(events.filter((e: Event) => e.type === "error")).toEqual([]);
 	}, 30000);
 
-	// ── R8-B#2: duplicate done() calls → permanent brick ──
-	// API returns 2 done tool_uses. Without fix, both exit as orphans → on resume,
-	// repair gives first an interrupted result, skips the last → second done has no
-	// result → API 400 on next wake → unrecoverable.
-	test("R8-B#2: duplicate done() calls — extras get tool_results, restart survives", async () => {
+	// ── duplicate done() calls → the session must survive a restart ──
+	// The API returns 2 done tool_uses. Both exit as orphans; on resume, repair
+	// gives the earlier one an interrupted result and skips the last (the
+	// intended orphan), so the resume is a DONE-resume and the agent gets its
+	// done-resume context back.
+	//
+	// FIX-5 R8-B#2 used to pre-empt all that by emitting tool_results for every
+	// done, because the repaired shape lands two tool_results in two separate
+	// user messages and that was believed to be an API 400. It is not — both
+	// messages open with tool_result blocks, so the answering run spans them
+	// (measured; see memory.md). That workaround cost the done-resume context,
+	// which is why this test now asserts the context is present.
+	test("duplicate done() calls — restart survives AND resumes as a done-resume", async () => {
 		ctx = await setupTestContext();
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
@@ -3493,25 +3493,47 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
 
-		// Verify: extra done(s) have tool_results in JSONL (orphan prevention)
+		// No "duplicate done" tool_results are written any more — the dones exit
+		// as orphans and repair handles them on the next launch.
 		const events = await readSessionEvents(ctx, rootNodeId);
-		const doneToolResults = events.filter(
+		const duplicateResults = events.filter(
 			(e: Event) =>
 				e.type === "tool_result" &&
 				e.tool === "mcp__mxd__done" &&
 				typeof e.content === "string" &&
 				e.content.includes("duplicate"),
 		);
-		// At least 1 extra done should have a "duplicate" tool_result
-		expect(doneToolResults.length).toBeGreaterThanOrEqual(1);
+		expect(duplicateResults.length).toBe(0);
 
-		// Restart and wake — must not brick
+		// Restart and wake — must not brick. This is the assertion the old
+		// mechanism existed to guarantee; it holds without it.
 		await ctx.app.shutdown();
 		await new Promise((r) => setTimeout(r, 100));
 		ctx.app = await recreateApp(ctx);
 		await sendMessage(ctx, wakeDoneInstruction("dup done restart ok"));
 		const status2 = await waitForDone(ctx);
 		expect(status2).toBe("verify");
+
+		// ⭐ The behavior the workaround was costing us: the resume is a
+		// DONE-resume, so the woken agent is told it previously called done()
+		// instead of getting a generic "you were interrupted" context.
+		// Re-emitting results for every done makes this string disappear.
+		const after = await readSessionEvents(ctx, rootNodeId);
+		const doneResumeResults = after.filter(
+			(e: Event) =>
+				e.type === "tool_result" &&
+				e.tool === "mcp__mxd__done" &&
+				typeof e.content === "string" &&
+				e.content.includes("You previously called done()"),
+		);
+		expect(doneResumeResults.length).toBeGreaterThanOrEqual(1);
+
+		// And every request we sent along the way was legal.
+		for (const rec of ctx.mockAPI.getRequestHistory()) {
+			expect(
+				sendableRequestViolations(rec.messages as unknown as ApiMessage[]),
+			).toEqual([]);
+		}
 	}, 30000);
 
 	// ── R8-B#11: duplicate-yield extras dropped on compactOnly wake ──
@@ -3588,21 +3610,20 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 		// Wait for compaction to complete
 		const start = Date.now();
 		let sawCompactMarker = false;
-		let sawAlternateError = false;
+		let errorMessage: string | undefined;
 		while (Date.now() - start < 12000) {
 			const events = await readSessionEvents(ctx, rootNodeId);
 			sawCompactMarker = events.some((e: Event) => e.type === "compact_marker");
-			sawAlternateError = events.some(
-				(e: Event) =>
-					e.type === "error" &&
-					typeof e.message === "string" &&
-					/alternate roles|must alternate/i.test(e.message),
-			);
-			if (sawCompactMarker || sawAlternateError) break;
+			// Watch for ANY error, not just the one fictional rule this used to
+			// grep for — a request the mock rejects for any reason should fail
+			// this test with the reason attached.
+			const err = events.find((e: Event) => e.type === "error");
+			errorMessage = err && "message" in err ? String(err.message) : undefined;
+			if (sawCompactMarker || errorMessage) break;
 			await new Promise((r) => setTimeout(r, 100));
 		}
 
-		expect(sawAlternateError).toBe(false);
+		expect(errorMessage).toBeUndefined();
 		expect(sawCompactMarker).toBe(true);
 
 		// After compaction, wake the agent and verify it can finish.
@@ -3612,11 +3633,14 @@ describe("FIX-5: too-short compact brick + duplicate-done brick", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
 
-		// Verify all requests alternate roles
+		// The point of this test is that the extras' tool_results are not dropped.
+		// Assert that directly against the real API contract — every tool_use in
+		// every request we sent was answered inside the leading tool_result run —
+		// rather than against role alternation, which is not a rule.
 		for (const rec of ctx.mockAPI.getRequestHistory()) {
-			for (let i = 1; i < rec.messages.length; i++) {
-				expect(rec.messages[i]?.role === rec.messages[i - 1]?.role).toBe(false);
-			}
+			expect(
+				sendableRequestViolations(rec.messages as unknown as ApiMessage[]),
+			).toEqual([]);
 		}
 	}, 30000);
 });

@@ -286,15 +286,17 @@ describe("Prefix validation: content mutations MUST throw", () => {
 			{ role: "assistant", content: [{ type: "text", text: "b" }] },
 			{ role: "user", content: "c" },
 		]);
-		// Try to swap roles at index 1 (which would violate role alternation anyway,
-		// but let's test what the prefix validator itself does)
+		// Swap the role at index 1 and check that the PREFIX VALIDATOR notices.
+		// (An earlier version of this comment worried the swap "would violate role
+		// alternation anyway" — there is no such rule; nothing else objects here,
+		// so the prefix validator is the only thing under test.)
 		expect(() =>
 			mock.createStream(
 				{
 					messages: [
 						{ role: "user", content: "a" },
-						// was assistant, now "user" — but Anthropic requires alternation.
-						// Constructing something valid that still has role diff at prefix:
+						// Same role as the primed prefix at this index, different content —
+						// the role diff the validator must catch:
 						{
 							role: "assistant",
 							content: [{ type: "text", text: "DIFFERENT" }],

@@ -426,13 +426,24 @@ constraint is the one rule 2 above already states, and it is checkable:
 > collection loop merges adjacent tool_results into ONE user message, so the live path must too.
 > It is UNNECESSARY when the message it would merge into is TRANSIENT.
 
-Which is why the three sites do not all resolve the same way. `pendingDuplicateYieldExtras` **must
-stay**: nothing separates the extras' results from the real yield's in JSONL (the walker skips
+Which is why the three sites did not all resolve the same way. `pendingDuplicateYieldExtras` **is
+still here**: nothing separates the extras' results from the real yield's in JSONL (the walker skips
 `message` events), so splitting the live push would require inventing a JSONL boundary event —
-strictly more machinery, not less. The two compaction deferrals **can collapse**: the summarization
-instruction is never persisted at all (`provider-shared.ts` "summarization_request event removed"),
-`messages.length = 0` on success, so that request is never reconstructed and there is nothing to
-stay byte-identical with. See *Compaction Asymmetry* and FIX-5 R8-B#11.
+strictly more machinery, not less. The two compaction deferrals **are gone** (2026-07-25): the
+summarization instruction is never persisted at all (`provider-shared.ts` "summarization_request
+event removed"), `messages.length = 0` on success, so that request is never reconstructed and there
+was nothing to stay byte-identical with. Both compactOnly sites now call one
+`emitAndPushCompactToolResult` generator that emits the tool_result and pushes its turn on the spot;
+the summarization instruction is pushed as its own user message. See *Compaction Asymmetry* and
+FIX-5 R8-B#11.
+
+⭐ **The obligation the deferrals discharged is NOT gone, only relocated** — the assistant's
+yield/done `tool_use` must still be answered before the request goes out, and that is the pairing
+rule, which is real. R8-B#11 and R8-B#1b existed for exactly that and both survive in substance:
+the extras still ride in the same turn as the real tool_result, just built where it is emitted
+instead of two branches later. **When you delete a mechanism built on a false premise, separate the
+premise from the obligation** — here the false premise (alternation) and the true obligation
+(pairing) were served by the same lines, and deleting on premise alone would have deleted both.
 
 Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn".
 
@@ -477,7 +488,7 @@ duplicate-yield extras in the compactOnly path (FIX-5 R8-B#11). The shape of wha
 where the queue had OTHER messages alongside the compact, so there was nothing empty to bundle the
 deferred tool_result into.
 
-**Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. ~~One user message with `[tool_result, text]` blocks → valid alternation.~~ **The unbundled form — `user[tool_result]` then `user[summarization]` — is equally valid** (measured). This deferral has no remaining justification: the summarization message is never persisted, so there is no byte-identity to preserve. Slated for collapse.
+**Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. ~~One user message with `[tool_result, text]` blocks → valid alternation.~~ **The unbundled form — `user[tool_result]` then `user[summarization]` — is equally valid** (measured). **COLLAPSED 2026-07-25** — `pendingCompactYieldToolCall` and `pendingCompactDoneToolCall` no longer exist; both compactOnly sites push the tool_result turn immediately via `emitAndPushCompactToolResult`.
 
 ~~**Pattern**: emit to JSONL for orphan prevention, defer messages[] push to merge with next user turn. Same as duplicate-yield fix (19995b9).~~ **Re-derived** — see the ⭐ block in *Duplicate Yield Handling*: deferral is a byte-identity device, and it is required only when the deferred tool_result is persisted next to another one. That is true of the duplicate-yield case and false of both compaction cases.
 
@@ -487,7 +498,7 @@ deferred tool_result into.
 the measured rules: `user[tool_result, text, text]` followed by the summarization user message —
 the tool_result leads its turn, so the yield is answered, and the following consecutive user
 message is fine. Verified verbatim against the live API. The `test.todo` in
-`drift-lifecycle.test.ts` describes a shape that works; it should be deleted, not implemented.
+`drift-lifecycle.test.ts` described a shape that works — **deleted 2026-07-25**, not implemented.
 
 ## API 400 → crash → repair-on-next-launch
 
@@ -799,13 +810,16 @@ orphan, not both). The compact-with-OTHER-messages (compactOnly=false) done case
 known-unfixed yield bug (still a test.todo). **Updates "Known Bugs": the done+compactOnly variant is
 now fixed; only the +other-messages variants (yield AND done) remain.**
 
-### Reachability trick for the B-L9 test
+### Reachability trick for the B-L9 test — ⭐ the durable half, still in use
 `/compact` endpoint 404s for a non-running (done/verify) agent, so it can't wake a pending-done agent.
 Instead: `deliverMessage(node, createCompactMessage())` — a compact QueueMessage HAS an id, so
 deliverMessage persists it to JSONL and findUnconsumedMessages recovers it on the auto-launched resume.
-The resume drains ONLY the compact → compactOnly=true. The mock's `validateRequest` throws on
+The resume drains ONLY the compact → compactOnly=true. ~~The mock's `validateRequest` throws on
 consecutive user roles, so the bug surfaces as an "alternate roles" error event + a missing
-compact_marker.
+compact_marker.~~ **That last sentence named the FICTION as the detector** — the mock no longer
+rejects consecutive user roles because the API never did. The test survives (the trick is what made
+it reachable at all); it now watches for ANY error event plus the missing compact_marker, which is
+strictly better and would have caught the pairing failure the old grep was blind to.
 
 ### Regression tests (all mutation-proofed — each fails when its fix is reverted)
 - `src/lifecycle-concurrency.test.ts` (new): cc#3 (throwing onDone → loop promise still settles +
@@ -843,6 +857,11 @@ so the assistant tool_use has a matching result.
 > walker. **So the trade-off recorded in the last sentence — the agent losing its done-resume
 > context and getting a generic interrupted resume — was paid for a bug that does not exist.**
 > Reverting is therefore a BEHAVIOR FIX, not a cleanup; do not treat it as a risky style revert.
+> **REVERTED 2026-07-25.** Duplicate dones exit as orphans again: repair gives the earlier one an
+> interrupted result and skips the last (the intended orphan), so the resume is a done-resume and
+> the woken agent gets its done-resume context back. `drift-lifecycle.test.ts` "duplicate done()
+> calls — restart survives AND resumes as a done-resume" pins the restored string; re-emitting
+> results for every done makes it disappear.
 
 Two done tool_calls both exited as orphans. On resume, repair placed the interrupted
 result AFTER lifecycle events (agent_end, done_notified). The walker tool_result
@@ -7078,6 +7097,13 @@ to pay for it.
 ## Known Pitfalls
 
 - **memory.md**: Never `write_file` to append. Use `edit_file` or `echo >>`.
+- **A generator called without `yield*` is a SILENT NO-OP.** `foo()` on a `function*` builds a
+  generator object and discards it — the body never runs. Legal TS, no diagnostic, no lint warning.
+  Extracting a `yield`-ing block into a helper (as `emitAndPushCompactToolResult` in
+  `provider-shared.ts`) and forgetting the `yield*` at ONE call site removes that whole effect from
+  the program while everything still compiles. Cost one full suite run to find; the symptom was an
+  unanswered `tool_use` reaching the API. **When a refactor extracts a generator, grep the call
+  sites for `yield*` before running anything.**
 - **Git worktrees**: `extensions.worktreeConfig` required. `core.hooksPath` absolute.
 - **Biome**: Typecheck BEFORE lint. No `!important`. No duplicate CSS properties.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`.

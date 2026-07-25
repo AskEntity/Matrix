@@ -886,8 +886,15 @@ function repairActiveRegion(
 		// formatBodyForAI's `default` branch rendered to an empty string — the
 		// repair reason silently vanished.) Only appended when the session does
 		// NOT resume in a pending control state: a trailing unresolved
-		// yield/done orphan must stay the last block, so appending a user
-		// message after it would break assistant→tool_result alternation.
+		// yield/done orphan must stay the last block, because a plain-text user
+		// message after it leaves that tool_use UNANSWERED — 400 "`tool_use` ids
+		// were found without `tool_result` blocks immediately after".
+		//
+		// This guard is REAL (verified against production Anthropic 2026-07-25).
+		// It used to say "would break assistant→tool_result alternation"; role
+		// alternation is a rule that does not exist, and the resemblance is a
+		// trap — nearby entries citing "alternation" are phantoms while this one
+		// is not. The rule that matters is PAIRING. See memory.md.
 		const lastKept = lastToolCallEvent(keptEvents);
 		const endsInPendingControl =
 			!!lastKept &&
@@ -1041,11 +1048,12 @@ function repairActiveRegion(
 
 	// Status message — a synthetic USER-role message that resumes the session
 	// with an API call. Skip it when the repaired session ends in an unresolved
-	// intended-orphan yield/done: that turn must stay last (assistant→tool_result
-	// alternation), and the session correctly resumes in its pending-yield /
-	// pending-done state instead of forcing an API call. Without this guard the
-	// intended-orphan skip above would be followed by a user message → invalid
-	// structure → API 400.
+	// intended-orphan yield/done: that turn must stay last (its tool_use would be
+	// left UNANSWERED by a plain-text user message — the PAIRING rule, not the
+	// fictional role-alternation one; see the twin comment above), and the session
+	// correctly resumes in its pending-yield / pending-done state instead of
+	// forcing an API call. Without this guard the intended-orphan skip above would
+	// be followed by a user message → invalid structure → API 400.
 	const endsInPendingControl =
 		intendedOrphanId !== null && !keptResultIds.has(intendedOrphanId);
 	if (!endsInPendingControl) {
