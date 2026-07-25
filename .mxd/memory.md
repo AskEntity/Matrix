@@ -1313,6 +1313,121 @@ agent-lifecycle.ts feeds repair the chain-walked active events, so rolled-back e
 
 src/rollback.test.ts: walkActiveChainIndices unit tests, EventStore integration tests, consistency tests (readActive + readFromLastCompactMarker + restart).
 
+## Which messages can be edited/rewound — three independent judgments (2026-07-25)
+
+`/edit` is one backend operation and Rewind is an Edit whose content did not change, so **one answer
+governs both buttons**. It is gated by three judgments, each a pure module at the plugin root, run
+by BOTH layers (frontend greys the button, backend returns 400 — the frontend can lag because SSE
+events carry no eid):
+
+| module | question | the limit is on |
+|---|---|---|
+| `agent-activity.ts` `isWorking` | is the agent busy right now? | TIME |
+| `run-start.ts` `messageStartsRun` | did the agent ever run FROM this message? | MEANING |
+| `rewind-point.ts` `hasRewindPoint` | is there a state left to return to? | HISTORY |
+
+`message-editability.ts` is the only place they meet. **Its checkable boundary: it has ZERO
+imports** — it CONSUMES three verdicts and COMPUTES none, and a test asserts that by reading the
+file. If it ever starts deciding something itself, that is when to split it.
+
+### ⚠️ TOMBSTONE: two people tried to unify these on the same day. Do not.
+
+Both attempts were the **same mistake — taking a PROPERTY of a thing for the thing itself**:
+
+- *"the gates are one invariant at two timescales"* — both relate to unclosed tool calls, one asks
+  "now" and one "at that position". Technically defensible and wrong: it explains a USER concept by
+  its IMPLEMENTATION consequence. An end user has no notion of an unmatched tool call.
+- *"the message is in the active chain, therefore it is rewindable"* — being in the context is a
+  property of a rewind target, not the thing itself.
+
+**API 400 is a symptom, not a reason.** Both framings leaned on it. Even if the API accepted a
+rollback to a message the agent never ran from, the operation would still be **empty** — it points
+at nothing. **Reasons must survive their failure mode disappearing.** The three judgments' only
+shared property is that all three grey the button, which is a fact about pixels.
+
+### The rule: which user turn PICKED THE MESSAGE UP
+
+The user's own phrasing is the concept — **only an independently sent message can be rewound** —
+and it is what the code and every user-visible string now say. "Run" only means something to
+someone who has read the provider loop.
+
+`buildUserTurn` packs `[...tool_results, ...queued messages]` into one turn. So **a turn carrying a
+tool_result is ANSWERING the agent's own previous output**; anything riding along in it did not
+start it. A turn with no tool_result exists *because* a message arrived. Both `messages_consumed`
+and the tool_results before it are persisted, so this is decidable from the log. Walk back from
+each `messages_consumed` to the turn boundary; unrecognised event types are SKIPPED, not treated as
+boundaries — detaching a tool_result from its consumption is the direction that wrongly calls a
+message editable.
+
+**`yield`/`done` are the rule's best instance, not its exception.** Their results are written *at
+wake*, by the very message being judged — so they are the message's CONSEQUENCE, not its cause:
+
+| tool_result | caused by | counts as prior work |
+|---|---|---|
+| bash, read_file, … | already in flight before the message | yes — the message's CAUSE |
+| yield, done | this message waking the agent | no — the message's CONSEQUENCE |
+
+**The direction of causation is the rule; comparing tool names is only how it is detected** — hence
+the predicate is named `isPriorWork`, not `isPark`. This exception was predicted to disappear under
+the new rule and instead **grew**: 1513 of 2161 newly-blocked messages (70%) were yield turns, and
+it is the DOMINANT shape for sub-agents, every one of which ends in `done()` and is later woken.
+
+Measured on a 3621-message session: editable 97.2% → 79.8%, and **NEW-only-editable = 0** — a
+one-way tightening that opens nothing the old rule blocked. The newly blocked were interjections
+during work ("不错", "不要这样", "联网"), which by the user's own definition were not independently
+sent. 20% describes the interaction style, not over-blocking.
+
+### ⭐ The evidence was being sampled at the wrong instant
+
+The first version tested for an unclosed tool_call at the message's **delivery** position. Real
+trace that broke it:
+
+```
+12:57:53  MESSAGE   你跑个bash
+12:58:01  MESSAGE   然后这条应该不能     ← arrived 10s BEFORE the tool_call
+12:58:11  CALL      mcp__mxd__bash
+12:58:49  MESSAGE   这条应该也不能回滚   ← arrived during bash
+12:58:57  RESULT    mcp__mxd__bash
+12:58:57  CONSUMED  2                    ← both picked up together
+```
+
+It blocked the second and **allowed the first**: at 12:58:01 the agent was thinking, composing the
+call, so nothing was outstanding yet.
+
+**The tombstone in `run-start.ts` must stay** — the next person's instinct is exactly "check for an
+unclosed tool_call at delivery". Part A had documented this window honestly and concluded the log
+could not do better: parking on `end_turn` writes no event and activity is deliberately never
+persisted, so "parked, waiting for you" and "waiting for the model" leave the identical trace —
+nothing. **Accurate about the DELIVERY moment, and irrelevant**: consumption leaves a trace, and
+consumption is what answers the question. *Looking for evidence at the wrong instant is what made
+the log look mute.*
+
+Two sizing errors worth carrying, both of the form *reasoning where observing was cheap*:
+- "the thinking gap is where the agent spends least of its wall-clock time" — true and beside the
+  point. **Wall-clock share ≠ share of user actions.** "Ask for something, then add one more thing
+  while it starts" is the most natural way to extend a request and lands squarely in that gap. It
+  was hit on the first real use.
+- "root's last 2000 lines contain no yield/done, so this is mainly a sub-agent problem" — the
+  observation was accurate and the generalisation was not; `tail -2000` reflects a recent habit,
+  not the session. The full log had 1513. **An accurate observation plus an over-broad
+  generalisation is harder to challenge than a guess, because it arrives with a number.** Check the
+  sampling window on every figure, including your own.
+
+### Tri-state, and one piece of scaffolding to DELETE rather than repurpose
+
+`messageStartsRun` returns `undefined` for an unconsumed message. That is not a new state — the
+tri-state already exists for the reachable case (an eid not on the active chain, cut away by an
+earlier rewind). Measured 0 of 3621 occurrences and the UI has no path to it (unconsumed messages
+are pending chips, not log entries): **do not write logic for that branch.**
+
+`processEventBatch(events, { fromActiveChain })` is **TEMPORARY**. It exists only because "Load
+earlier history" fetches the raw file, including abandoned rewind branches and pre-compaction
+history; annotating that would count a tool call from a branch nobody is on against an unrelated
+message. **A gate that answers wrongly is worse than one that says "I don't know"**, so a raw batch
+is not annotated at all. The real fix is server-side (mark active-chain membership in the response
+— NOT a second copy of the chain walk in the browser, which is what *One boundary* removed). When
+that lands, **delete the parameter, do not repurpose it.**
+
 ## One boundary: the active chain (2026-07-24)
 
 "Which events count" had FOUR independent implementations. Now there is one:
