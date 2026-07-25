@@ -693,8 +693,28 @@ of compacting until the context window rejects it. **It is not a consequence of 
 short path**, and reading it as one is how someone reverts that and gets the 400 back: the two used
 to be two independent `if`s — `manual && len <= 4` bailed out, `len > 4` ran the compaction — so
 `auto + len <= 4` already fell through BOTH and silently never compacted. Folding the manual case
-into the surviving condition changes the automatic path by zero bytes. This is the code-level half
-of `01KXNZHYSJFF0BVQJVPG2WC1RV` (the deadlock that crashed root on 2026-07-15); that ticket has the
+into the surviving condition changes the automatic path by zero bytes.
+
+⭐ **Why the floor is there at all, since "delete the magic 4" is the obvious reading of the
+paragraph above and it would reintroduce a worse bug.** Compaction sets `messages.length = 0` and
+pushes one `compacted_resume`, so a freshly compacted session sits at ~1 message. If the token count
+is STILL over threshold at that point — because the system prompt plus the tools plus the summary
+already exceed it — then with no floor the loop compacts again immediately, summarizes a
+one-message context, and repeats. The floor turns that into every ~3 turns instead of every turn.
+
+**So the floor is a PROXY, and a bad one: it does not prevent the loop, it slows it down, and the
+condition it is standing in for is "compacting will not reduce anything", which has nothing to do
+with how many messages there are.** That is why it produces the deadlock above — a count cannot
+distinguish "too small to be worth compacting" from "small but enormous".
+
+⚠️ **If you replace it, replace it with a measurement, not a smaller number.** Compact when over
+threshold; then if the post-compaction count is still over, **say so loudly and stop auto-compacting
+for that session** rather than looping. "Even a full compaction cannot get this under the limit" is
+a real configuration problem the user needs to see, and both of today's behaviours — silently
+looping without the floor, silently never compacting with it — hide it equally well.
+
+This is the code-level half of `01KXNZHYSJFF0BVQJVPG2WC1RV` (the deadlock that crashed root on
+2026-07-15); that ticket has the
 incident, this is the exact condition.
 
 **Compact messages never get `messages_consumed`.** `handleImplicitYield` filters them out of
