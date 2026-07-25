@@ -1963,8 +1963,32 @@ rules:
 4. **Every `tool_result` must answer a `tool_use` in the preceding assistant message.**
 
 And two things that are **LEGAL** and were long believed otherwise: **consecutive same-role messages**
-(user/user, user/user/user, assistant/assistant) and **empty content** (`""`, `[]`,
-`[{type:"text",text:""}]`).
+(user/user, user/user/user, assistant/assistant) and an **empty content array** (`[]`), plus a bare
+empty string as an assistant message's whole content.
+
+⚠️ **An empty or whitespace-only TEXT BLOCK is a different thing and is a 400 in every position, on
+either role.** Measured 2026-07-25: `[{type:"text",text:""}]` gives *"text content blocks must be
+non-empty"* and `[{type:"text",text:"  "}]` gives *"text content blocks must contain non-whitespace
+text"*, mid-conversation exactly as readily as at the tail; a bare `""` as a USER message's content
+is also rejected (*"user messages must have non-empty content"*). This file listed the block form as
+legal until that day — the legal case is the bare string on an assistant message, never a block
+wrapping one. It matters because `walker-golden.test.ts` pins the walker rebuilding an empty
+`assistant_text` as precisely that block, so anything that persists one bricks the session on every
+later request, and repair does not cover it. Nothing produces one today — both emit sites guard on
+truthiness (`if (partialText)`, `if (responseText)`) — but ⚠️ **whitespace-only passes both guards**,
+so a model whose first streamed token is a newline, interrupted right there, is the reachable path.
+
+⭐ **A `thinking` block is positionally identical to a text block, so the four rules above are the
+whole story and thinking needs no clause of its own.** Measured the same day against production with
+real signed thinking blocks: `[u, a[thinking], u]`, `[u, a[text, thinking], u]` and
+`[u, a[text], a[thinking], u]` are all accepted. Trailing, `a[thinking]` is rejected — but so is
+`a[text]`, and **the SAME assistant message is accepted when it is not last**, which is what makes it
+rule 2 rather than a rule about thinking. Only the error string differs: a trailing thinking block
+says *"The final block in an assistant message cannot be `thinking`"*, trailing text says *"does not
+support assistant message prefill"*. ⚠️ **Do not read that wording as a separate constraint.** It
+fires only where rule 2 already fires, and reading it as its own rule is how someone builds a repair
+step to strip thinking tails that were never the problem — which was proposed here and cancelled by
+this measurement.
 
 ⭐ **Consequence nothing else states: `buildUserTurn` packs `[...tool_results, ...queueMessages]` with
 tool_results FIRST, and that order is a real API requirement rather than style.** Put text before a
