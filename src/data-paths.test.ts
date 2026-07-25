@@ -327,29 +327,83 @@ describe("checkDataRootCollisions — path-based, not raw string", () => {
 	});
 });
 
-describe("source audit — ONLY data-paths.ts performs .slice(2) on dataRoot", () => {
-	test("no other src/ file slices a dataRoot string by 2", () => {
-		const srcDir = new URL("./", import.meta.url).pathname;
-		// Walk src/, flag any *.ts (non-test) that contains `dataRoot.slice(2)`.
-		// Only data-paths.ts is allowed to do this.
-		const offenders: string[] = [];
-		function walk(dir: string) {
-			for (const entry of readdirSync(dir)) {
-				const full = join(dir, entry);
-				if (statSync(full).isDirectory()) {
-					if (entry === "node_modules" || entry === "web") continue;
-					walk(full);
-					continue;
-				}
-				if (!entry.endsWith(".ts") || entry.endsWith(".test.ts")) continue;
-				if (full.endsWith("/data-paths.ts")) continue; // the ONE allowed
-				const content = readFileSync(full, "utf-8");
-				if (/dataRoot\.slice\(2\)/.test(content)) {
-					offenders.push(full.replace(srcDir, ""));
-				}
+/**
+ * Directories that are not our source. SUBTRACTION, not addition: this audit
+ * walks the whole repo and removes these, rather than naming the places to
+ * look. An include-list fails SILENTLY — new code simply is not covered and
+ * nothing anywhere says so — which is exactly what happened here.
+ */
+const AUDIT_PRUNE_DIRS = new Set([
+	"node_modules",
+	".git",
+	".worktrees", // each sub-agent worktree is a full second copy of the repo
+	"dist",
+	"out",
+	"coverage",
+	".cache",
+	"_vendor_shims",
+]);
+
+/** Every non-test .ts/.tsx in the repo, minus AUDIT_PRUNE_DIRS. */
+function auditableSourceFiles(root: string): string[] {
+	const files: string[] = [];
+	function walk(dir: string) {
+		for (const entry of readdirSync(dir)) {
+			const full = join(dir, entry);
+			if (statSync(full).isDirectory()) {
+				if (AUDIT_PRUNE_DIRS.has(entry)) continue;
+				walk(full);
+				continue;
 			}
+			if (!/\.tsx?$/.test(entry) || /\.test\.tsx?$/.test(entry)) continue;
+			files.push(full);
 		}
-		walk(srcDir);
+	}
+	walk(root);
+	return files;
+}
+
+describe("source audit — ONLY data-paths.ts performs .slice(2) on dataRoot", () => {
+	const REPO_ROOT = join(import.meta.dir, "..");
+
+	test("no file outside data-paths.ts slices a dataRoot string by 2", () => {
+		// This walked `src/` only, for years, while `.mxd/plugin/` — where
+		// dataRoot is DEFINED (`dataRoot: "@/plugin/matrix"` in index.ts) and
+		// where three files pass it around — sat outside its reach. Verified by
+		// experiment, not by reading: a `dataRoot.slice(2)` planted in
+		// `.mxd/plugin/scope-opts.ts` left the audit at 54 pass / 0 fail.
+		const offenders = auditableSourceFiles(REPO_ROOT)
+			.filter((f) => !f.endsWith("/src/data-paths.ts")) // the ONE allowed
+			.filter((f) => /dataRoot\.slice\(2\)/.test(readFileSync(f, "utf-8")))
+			.map((f) => f.slice(REPO_ROOT.length + 1));
 		expect(offenders).toEqual([]);
+	});
+
+	test("the walk actually reaches the plugin — where dataRoot is defined", () => {
+		// The guard half. Without it, pruning everything (or a walk root that
+		// resolves somewhere empty) passes the audit above with zero coverage,
+		// which is the failure this whole commit is about. Named files, not a
+		// count, so adding a plugin file does not rot it.
+		const files = auditableSourceFiles(REPO_ROOT).map((f) =>
+			f.slice(REPO_ROOT.length + 1),
+		);
+		expect(files).toContain(".mxd/plugin/index.ts");
+		expect(files).toContain(".mxd/plugin/scope-opts.ts");
+		expect(files).toContain(".mxd/plugin/runtime.ts");
+		expect(files).toContain("src/data-paths.ts");
+	});
+
+	test("the walk does NOT descend into pruned directories", () => {
+		// The other guard half: a prune that stops working turns this audit into
+		// a scan of every node_modules package on the machine, and `.worktrees`
+		// alone is a full second copy of this repo per running sub-agent.
+		// Relative paths only: this repo checkout IS itself inside a
+		// `.worktrees/` directory, so an absolute path always contains one.
+		const files = auditableSourceFiles(REPO_ROOT).map((f) =>
+			f.slice(REPO_ROOT.length + 1),
+		);
+		for (const pruned of AUDIT_PRUNE_DIRS) {
+			expect(files.some((f) => f.split("/").includes(pruned))).toBe(false);
+		}
 	});
 });

@@ -229,7 +229,7 @@ Browser → Daemon (static assets + SSE) + Worker (API forwarding)
 | src/event-converter.ts | walkEventsToMessages + EventConverterCallbacks |
 | src/task-tracker.ts | Task tree, node CRUD, tree.json persistence |
 | src/orchestrator-tools.ts | Every matrix tool definition + `buildAllToolDefs` (the external-MCP list is built from it) |
-| src/data-paths.ts | THE resolver for every path built from `dataRoot` — a grep test fails if a second site appears |
+| src/data-paths.ts | THE resolver for every path built from `dataRoot` — a grep test fails if a second site appears, ANYWHERE in the repo (it walked `src/` only until 2026-07-25, so the plugin was unguarded) |
 | src/done-payload.ts | `donePayloadSchema` — the one source for done() content, imports only zod |
 | src/task-index.ts | Orama hybrid search index (title / description / result) |
 | src/plugin-sdk.ts | The public `mxd/plugin-sdk` surface — thin re-exports, never a vendored copy |
@@ -3043,6 +3043,13 @@ through `ctx.config.dataRoot` and routes through `resolveDataRoot` in
 `src/data-paths.ts`. **The resolver stays the single source of truth** (the
 `data-paths.test.ts` "ONLY data-paths.ts performs .slice(2)" grep test still
 guards this).
+
+⚠️ **That parenthesis was FALSE for the plugin between this entry and
+2026-07-25** — the audit walked `src/` only, so the very file quoted above
+(`.mxd/plugin/index.ts`, which DEFINES `dataRoot`) sat outside it, along with
+`scope-opts.ts` and `runtime.ts`. Proven by planting, not by reading. The walk
+starts at the repo root now and the sentence is true again; the note stays
+because "a grep test guards this" is the kind of claim nobody re-checks.
 
 **Helper**: `projectTreeJsonPath(dataDir, projectId, dataRoot?)` in
 `data-paths.ts`, parallel to `projectTasksDir` / `projectDebugDir`. Used by
