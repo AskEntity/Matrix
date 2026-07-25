@@ -313,7 +313,8 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 ## Agent Lifecycle
 
 - Root and child agents use the same launch function: `runAgentForNode` in `agent-lifecycle.ts`
-- `done()` = two-phase: Phase 1 (agent-side: close queue, loop exits) → Phase 2 (daemon-side: status→verify/failed, task_complete, done_notified marker). Intended orphan like yield — no tool_result written.
+- `done()` = two-phase, and an intended orphan like yield (no tool_result written). Full contract and
+  its two hard-won invariants: *Two-Phase done() Lifecycle*, immediately below.
 - `yield()` = loop-level pause. Provider intercepts before executeTool.
 - `end_turn` = implicit yield, never implicit done.
 - `stopTask()` = per-task real interrupt (close queue + abort signal via `TaskSession.abortController`).
@@ -334,6 +335,21 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 - **Status**: `done("passed")` → verify → close_task → closed. `done("failed")` → failed.
 - **Phase 2 ordering**: session=null is irreversibility boundary. Phase 2 runs AFTER session cleanup.
 
+**Two invariants inside Phase 2, both learned the hard way** (records in FIX-3 cc#3 and B-M4;
+re-verified in `agent-lifecycle.ts` 2026-07-25):
+
+- **The loop promise settles on EVERY path.** Phase 2 is wrapped in try/catch/finally, and the
+  `agentLoopPromises.delete` + resolve live in the `finally`. A throw anywhere in Phase 2 is logged,
+  not rethrown — the task already did its work, and a Phase-2 hiccup must not be treated as agent
+  failure. Why it matters: `stopTask` awaits that promise with **no timeout**, so a leaked promise
+  hangs the stop forever.
+- **task_complete must be DURABLE before `done_notified` is written.** Both are awaited and the
+  parent's store flushed before the marker. The marker is the crash-recovery signal meaning "Phase 2
+  finished", so if it can land while task_complete has not, a crash in that window leaves the parent
+  waiting forever with nothing to re-deliver. The reverse window (marker written, crash before its
+  own flush) re-delivers on restart — a duplicate completion is recoverable, a lost one is not, and
+  that asymmetry is the whole reason for the ordering.
+
 ## Auto-Launch Failure = task_complete(failed)
 
 `deliverMessage` auto-launches a pending child via `ensureChildAgentRunning`. When `beforeChildLaunch` throws (e.g., missing hook file, worktree creation fails), the sender's yield would have hung forever — target never ran, so no done() ever fires, so no task_complete ever delivered.
@@ -349,15 +365,33 @@ Design rule: any code path that could silently hang a yielding parent MUST notif
 
 ## Duplicate Yield Handling
 
-API can return multiple yield tool_calls in the same assistant turn. Evolution:
+API can return multiple yield tool_calls in the same assistant turn.
 
-**Fix 1**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done. Earlier yield/done orphans are genuine repair targets. Architectural lesson: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call.
+**Current behavior.** Two rules, both live:
 
-**Fix 2 (superseded)**: Provider loop wrote no-op tool_results for extras as a SEPARATE user message. This caused a new bug: extras user message + real yield's user message → 2 consecutive user messages → API 400 "Messages must alternate roles".
+1. **Repair skips the INTENDED orphan, which is specifically the LAST tool_call** — not "any
+   yield/done". Earlier yield/done orphans in the same turn are genuine repair targets and do get
+   interrupted results.
+2. **Extras emit to JSONL immediately** (orphan prevention) **but their live-path construction is
+   DEFERRED** via `pendingDuplicateYieldExtras`. On yield wake they bundle into the SAME
+   `buildUserTurn` call as the real yield, producing ONE user message of
+   `[...extras, real, ...queue]`. That order is forced by JSONL: extras emit at yield-detection and
+   the real one at wake, so the walker reconstructs them in that order and the live path must match
+   or the two drift.
 
-**Fix 3 (current)**: Extras' tool_result events still emit to JSONL immediately (orphan prevention), but their live-path construction is DEFERRED via `pendingDuplicateYieldExtras`. On yield wake, extras bundle into the SAME `buildUserTurn` call as the real yield, producing ONE user message with `[...extras, real, ...queue]`. Order matches JSONL (extras emit at yield-detection, real emits at wake → walker reconstructs in that order → live must match).
+⭐ **The reusable pattern: emit to JSONL for orphan prevention, defer the `messages[]` push so it
+merges with the next user turn.** The same shape solves the compaction-asymmetry bugs — see
+*Compaction Asymmetry* and FIX-5 R8-B#11, which extends `pendingDuplicateYieldExtras` into the
+compactOnly path.
 
-Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn" regression-guard this.
+Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn".
+
+**How it got here** — rule 1 came first ("skip yield/done" was too broad; the invariant is "skip the
+INTENDED orphan"). The first attempt at rule 2 wrote the extras' no-op tool_results as a SEPARATE
+user message, which produced a *new* bug: extras message + the real yield's message = two
+consecutive user messages → API 400 "Messages must alternate roles". Worth keeping because the
+failure is instructive: fixing an orphan by adding a message is how you turn a repair problem into
+an alternation problem, and deferral is what avoids both.
 
 ## Compaction Asymmetry
 
