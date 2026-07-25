@@ -2386,39 +2386,76 @@ a fallback; it is the only path, and it has been load-bearing since embeddings l
 `stopAgent`'s loop-settlement await wait the full window. Real provider SDKs already respect abort;
 `abortableSleep(ms, req.signal)` brings mocks in line.
 
-## ⚠️ An ORT session in a Bun Worker makes that worker's exit fatal to the process
+## ⚠️ An ORT session dies with the thread it lives on — so it gets its own process
 
-Measured, and device-independent:
+**FIXED 2026-07-25.** The session now lives in a child process (`src/embedder-child.ts`), spawned by
+`src/embedder-client.ts`. Worker threads never load ORT. Keep it that way; the rest of this section
+is why, and what it cost to find out.
 
-| variant | result |
-|---|---|
-| import `@huggingface/transformers`, no session, then terminate | **survives** |
-| create session + infer, parent `terminate()`, device `cpu` | **exit 133** |
-| create session + infer, parent `terminate()`, device `webgpu` | **exit 133** |
-| create session + infer, worker calls `process.exit(0)` itself | **exit 133** |
-| create session + infer, `pipeline.dispose()` first, then terminate | **exit 133** |
+Measured one variable at a time, harness in `scripts/napi-repro/` (reproduces in ~2s):
 
-`panic: NAPI FATAL ERROR: Error::New napi_create_error`. **The trigger is not `terminate()` and not
-the device — it is an ORT InferenceSession existing in a Bun Worker when that thread exits.** So
-webgpu is not disqualified by it; cpu is equally affected. `MXD_DISABLE_EMBEDDINGS` is the test-side
-half of the same hazard.
+| where the session lives | thread ends by | result |
+|---|---|---|
+| worker thread, NO session (import only) | parent `terminate()` | **exit 0** |
+| worker thread | parent `terminate()`, device `cpu` | **exit 133** |
+| worker thread | parent `terminate()`, device `webgpu` | **exit 133** |
+| worker thread | worker's own `process.exit(0)` | **exit 133** |
+| worker thread, `dispose()` first | parent `terminate()` | **exit 133** |
+| **MAIN thread** | **`process.exit(0)`** | **exit 0** |
 
-⚠️ **This is what the "segfault" in the index bug report actually was**, not a memory blowup: init
-times out at 30s → the daemon terminates the worker → the old reconcile had already loaded the model
-unconditionally → NAPI abort kills the daemon. The 2.26GB RSS was a symptom sitting next to the
-cause. Grepping `daemon.err`: **13 of the last 20 process deaths carry this exact panic, at uptimes
-up to 18.4h — as far as that log goes back, this daemon has never once exited cleanly.** Exit 133 is
-indistinguishable from a real crash to launchd and to a human, which is why 13 of them went
-unremarked.
+`panic: NAPI FATAL ERROR: Error::New napi_create_error`. **The trigger is not `terminate()`, not the
+device, and not skipping `dispose()` — it is an ORT InferenceSession existing in a thread that is
+ENDING.** The last row is the whole fix: a process's main thread only ends when the process ends, and
+that path is clean. So give the session a process whose main thread owns it.
 
-⚠️ **The hash-keyed index change narrowed this as a SIDE EFFECT, and nothing in that diff shows it —
-so state the limit precisely or the next reader will conclude it is mostly handled.** The boot-time
-terminate disappears because init no longer times out, and lazy model loading means a steady-state
-boot never loads ORT at all, so a daemon that boots, does no index work and restarts now exits
-cleanly. **But the backfill runs in the worker, and so does every hybrid `search_tasks`, sidebar
-search and `create_task` related-tasks lookup. One search puts the daemon back in the hazard.**
-Someone re-eagerly loading the pipeline "since we need it anyway" would silently widen the window
-back, and no test would fail.
+**Upgrading does not help — measured, do not re-litigate.** bun 1.3.14 and transformers 4.2.0 are
+already the latest; `onnxruntime-node` 1.24.3 → **1.27.0 still exit 133**. The precedent that made
+this worth trying (a *different* bun worker-teardown crash that 1.3.7/1.3.8 → 1.3.14 did fix) does
+not extend to this one.
+
+**What it cost before the fix.** Grepping `daemon.err`: 13 of the last 20 process deaths carried this
+exact panic, at uptimes up to 18.4h — **as far as that log went back, this daemon had never once
+exited cleanly.** Three consequences, and the third is the expensive one:
+
+1. `releaseDataDirLock()` is sequenced AFTER worker teardown in `shutdown()`, so it had never run.
+   `.mxd.lock`'s steal-on-dead-PID path was not a fallback, it was the only path.
+2. Exit 133 is indistinguishable from a real crash to launchd and to a human — which is why 13 of
+   them went unremarked.
+3. It converted a slow startup into an unbootable machine: init exceeded the 30s budget → daemon
+   terminated the worker → the worker held a session → a recoverable "one plugin failed to load"
+   became a hard failure, 23 times over. **This is what the "segfault" in the index bug report
+   actually was**, not a memory blowup; the 2.26GB RSS was a symptom sitting next to the cause.
+
+**Why a child process and not the alternatives.** Main-thread inference is crash-safe by the table
+above but blocks the HTTP shell that the worker architecture exists to protect. The WASM backend
+avoids NAPI entirely, but transformers' node build has no `wasm` device (only `coreml, webgpu, cpu`)
+and its web build assumes browser semantics — it fetches models by URL and cannot read the local
+cache. "Never terminate a worker holding a session" trades a native abort for a leaked thread and
+disables worker restart, the daemon's own crash-recovery mechanism, exactly when a plugin is
+misbehaving.
+
+**The cost is small and partly negative.** Spawn + model load + verify: 939ms, once, then warm. A
+search-query embed: 63ms median vs ~59ms in-process — ~4ms of IPC. Batched indexing: 12.8ms/doc
+wall. And the parent process now burns **0.02s of user CPU** for work that used to run on the worker
+thread next to the agent loop — the boundary moved inference off the thread that serves agents.
+Vectors cross as structured clone (`serialization: "advanced"`), so no JSON cost for Float32Array.
+
+**Lifecycle is inherited, not managed.** When the thread that spawned it goes away, Bun closes the
+IPC channel and `disconnect` fires in the child, which exits. One mechanism covers worker terminate,
+worker restart and daemon shutdown, with no bookkeeping in the parent and no leaked 500MB process per
+restart. Deleting that handler is the quiet way to reintroduce a leak.
+
+⚠️ **The regression that would silently undo this is one line: a static `import ... from
+"@huggingface/transformers"` in any module a worker loads.** Everything keeps working until the next
+shutdown, which is exactly how this sat unexamined for two days. `src/embedder-client.test.ts` greps
+`task-index.ts`, `embedder-client.ts` and `orchestrator-tools.ts` for that shape and fails on it —
+mutation-verified by reintroducing the import. `embedding.ts` may name the package, but only inside a
+function body, where `import()` loads nothing until the child calls it.
+
+**`MXD_DISABLE_EMBEDDINGS` is no longer a crash guard, and its comments now say so.** It was the
+test-side half of this hazard; it is now just "run BM25-only", which `bun test` uses to skip a 500MB
+model load and a per-suite child spawn it has no assertions about. Unsetting it is safe, only slower.
+A mock pipeline still takes priority over it, so vector-path tests are unaffected.
 
 ## The self-bootstrap death chain, and the five worker-lifecycle bugs that formed it
 
