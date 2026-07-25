@@ -986,6 +986,15 @@ before 2026-07-25 was reached with an instrument that could not see `.mxd/plugin
 was silent in the direction that matters — a confident non-empty answer with the deciding file
 missing from it.
 
+⚠️ **Same family, and here the blind instrument is your own tool list: it is a frozen snapshot, not
+an inventory of what you can do.** The list you can see was frozen into `session_config` at session
+start; the daemon's handler registry holds more, and Anthropic dispatches any tool name to whatever
+handler exists. Root asserted "there is no WebSearch tool in this project" from reading its own
+56-entry list; `mcp__brave-search__brave_web_search` works, called by name. **"It is not in my list"
+is not evidence that it does not exist.** (Gotcha when you do call one: an unlisted tool has
+unconstrained argument types, so a numeric `count` arrives as a string and fails validation — pass
+the required argument alone.)
+
 ---
 # Events, JSONL & the Active Chain
 ---
@@ -1591,25 +1600,6 @@ assistant, and asserting the real rule would redden correct fixtures. So:
 Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
 fork is where a fiction starts producing evidence.
 
-**The class is not confined to code, and the cheapest instance to guard against is reading.** A
-short instruction was given a coherent interpretation that fit its words, and acting on that reading
-would have deleted 660 lines of this file; the reading was defended with "a revert restores anything
-lost", which is true and beside the point — **the revert restores the lines, not the hour.** Same
-shape as the two fictions above: a plausible account, held with more confidence than its evidence
-carried, silently lowering the bar for the check that would have caught it. ⭐ **When an instruction
-is short and the action it licenses is irreversible or expensive, one clarifying question is always
-cheaper than a confident reading.** The temptation is strongest exactly when the reading is
-coherent, because coherence feels like confirmation.
-
-⭐ **Fourth member, and the one you are most likely to commit while doing everything else right: a
-measurement that contradicts your plan is not a result to report afterwards — it is a reason to
-stop.** Mid-execution of that same deletion, the first rung was measured at 82 lines against an
-estimate of 310, which was already enough to refute the plan it was part of. The intent was to
-finish the cuts and report the discrepancy after. **Nothing about that is lazy or careless — it is
-the ordinary shape of finishing what you started**, which is exactly why it needs to be written
-down: the surprising number arrives while you are busy, and "I'll report it when I'm done" costs
-nothing to think and everything if the plan was wrong.
-
 **An over-strict test double bills you three ways, and the third leaves no artifact.** It creates
 complexity you pay for (the four mechanisms). It hides gaps — a fiction occupying the "role rules"
 slot stopped anyone asking what the real role rule was, so the true one got zero coverage and a
@@ -1648,6 +1638,50 @@ head they assert exactly what they always did. One did NOT get a head and is the
 dirty-JSONL scenario table claimed "the walker produces valid structure" for an *assistant-first*
 output. It does not, and **that is not hypothetical — a session was once permanently bricked by
 exactly that shape**, when a bare `compact_marker` left `readActive()` starting on an assistant turn.
+
+**Member 2: a plausible-but-wrong MECHANISM sets the verification bar.** Chasing the CoreML NaN
+above, a real published mechanism was found — ORT's CoreML provider defaults to the NeuralNetwork
+model format, which implicitly casts to FP16 — and an explanation was built that fitted both data
+points. **That is over-fitting to n=2 while carrying a citation.**
+
+> ⚠️ **A wrong mechanism does not merely fail to help — it LICENSES A WEAKER TEST, because a test's
+> adequacy is judged against the mechanism you currently believe.** "FP16 overflows on long inputs"
+> implies short inputs are safe, under which a single long probe is not merely adequate but
+> *well-chosen*. The weakened test then passes and confirms everything.
+
+This is a different failure from trusting a result you should have checked: here a **causal story**
+silently sets the bar, so the check that would have caught it is the one the story talked you out of
+needing. It was caught only because the falsification test was treated as the deliverable and the
+hypothesis as packaging.
+
+⭐ **And the end of the story is better shaped than "the mechanism was wrong", which is why it is
+worth the lines.** A *variant* of the hypothesis was proposed — that the conversion step itself is
+the bug rather than FP16's range — and **it is correct**: `coreml` + `dtype: "fp16"` is clean on
+every input, because there is nothing left to convert. The decision does not move an inch anyway.
+CoreML measured 84.2ms/doc at 382.6ms CPU/doc against webgpu's 56.5/3.8 in the same run, fp16 doubles
+the weights on disk and in memory, and **`webgpu` + `fp16` does not even load** (`Invalid
+ShaderModule "LayerNorm"`). So fp16 unlocks the device we reject and breaks the one we ship. **A
+correct mechanism that changes no decision is still worth establishing** — it is what tells you the
+rejection rests on measurement rather than on the wrong story you started with.
+
+**The class is not confined to code, and the cheapest instance to guard against is reading.** A
+short instruction was given a coherent interpretation that fit its words, and acting on that reading
+would have deleted 660 lines of this file; the reading was defended with "a revert restores anything
+lost", which is true and beside the point — **the revert restores the lines, not the hour.** Same
+shape as the two fictions above: a plausible account, held with more confidence than its evidence
+carried, silently lowering the bar for the check that would have caught it. ⭐ **When an instruction
+is short and the action it licenses is irreversible or expensive, one clarifying question is always
+cheaper than a confident reading.** The temptation is strongest exactly when the reading is
+coherent, because coherence feels like confirmation.
+
+⭐ **Fourth member, and the one you are most likely to commit while doing everything else right: a
+measurement that contradicts your plan is not a result to report afterwards — it is a reason to
+stop.** Mid-execution of that same deletion, the first rung was measured at 82 lines against an
+estimate of 310, which was already enough to refute the plan it was part of. The intent was to
+finish the cuts and report the discrepancy after. **Nothing about that is lazy or careless — it is
+the ordinary shape of finishing what you started**, which is exactly why it needs to be written
+down: the surprising number arrives while you are busy, and "I'll report it when I'm done" costs
+nothing to think and everything if the plan was wrong.
 
 ## The two providers
 
@@ -1988,14 +2022,129 @@ once per project after the tracker loads and wraps it in try/catch; matrix's imp
 to reconcile the index, and the runtime attaches no meaning to that. Its counterpart `seedTree` runs
 only on a fresh tree; this one runs every startup.
 
-**Staleness is the node's `updatedAt` string, stored per task in a sidecar** (`index-meta.json`,
-beside the binary `index.msp`). Reconcile reindexes iff `stored.indexedAt !== node.updatedAt` —
-string compare, no clock math — which **subsumes backfill**, because a never-indexed task has no
-`indexedAt` and is therefore stale. There is no separate "already backfilled" marker and none is
-needed. Reconcile also prunes documents for tasks that have left the tree, and it catches what
-`onDone` cannot: title and description edits, which fire no `done()`. Accepted edge: an edit landing
-in the same millisecond as an index write yields an equal string and is skipped until the next edit
-or restart.
+### Staleness is a per-document content hash, and `updatedAt` was why boots got slower over time
+
+⚠️ **Do not key staleness on `node.updatedAt`.** `task-tracker.ts` writes it in **16 places and only
+3 touch a field the index stores** (`updateTitle`, `updateDescription`, `appendResultRound`). A
+status transition, a cost update, assigning a worktree, or merely CREATING A CHILD — which bumps the
+**parent** — all marked a task stale. Two consequences explain the failure's shape: **the backlog
+grew with ACTIVITY rather than with content change, and it was only paid at boot**, so the longer
+the daemon stayed up the more expensive starting it became. Measured 2026-07-25: a full backfill
+took 4m13s against a 30s worker-init budget, and the daemon was unbootable for hours.
+
+Staleness is now `sha256(v1 | model | dtype | text)` **per document** (per field, per round), stored
+in the sidecar as `{h, e}`. ⚠️ **Per-document is not a detail**: a whole-task hash re-embeds every
+result round because one word of the title changed, and the root task has dozens of rounds. Model
+identity is inside the hash, so a model or dtype change invalidates everything — which costs nothing
+on the day it happens (the rebuild runs in the background) and prevents **mixing two vector spaces
+in one index, a state that does not fail but returns plausible wrong answers.**
+
+⚠️ **The second staleness clause is one-directional on purpose.** A document is stale if the hash
+differs, OR if it is stored without a real embedding (`e: false`) **and embeddings are now
+available**. Without that second clause the failure is permanent and silent: one offline first boot,
+or one run with `MXD_DISABLE_EMBEDDINGS`, writes zero vectors, the content hash calls them current
+forever, and the index serves keyword-only results with nothing anywhere reporting it. The reverse —
+embedded document, embeddings now disabled — is deliberately NOT stale, so turning embeddings off
+can never destroy vectors that already exist. Mutation-verified in both directions: making the
+clause symmetric fails exactly the "turning embeddings OFF does not destroy vectors" test.
+
+⚠️ **Migration treats "no hash" as UNKNOWN, not as stale.** An old sidecar has `indexedAt` and a flat
+id list; calling that stale would make **deploying this fix trigger the exact backfill it exists to
+prevent**, on every machine, on the next boot. The plan instead ADOPTS the current content's hash for
+documents the legacy entry already lists, without re-embedding — strictly no worse than what it
+replaces, because assuming those documents are current is precisely the claim `indexedAt` was
+already making. Documents the legacy entry does not list are genuinely absent and still get built.
+
+⭐ **The DB is persisted BEFORE the sidecar that claims it. Never the reverse.** Sidecar-first turns
+any failed `.msp` write into a silent permanent hole, because the sidecar says "indexed" and nothing
+ever revisits it. In the correct order every failure lands on "the sidecar is behind", which the next
+plan repairs — and **that is the whole reason an index write is safe to treat as loud-but-non-fatal.**
+Renaming a task must not fail because search could not be written, and that trade is only honest
+because the failure is recoverable.
+
+⚠️ **And the invariant then bites you on the repair path.** Because the sidecar can legitimately
+under-report the DB, the repair pass plans an `insert` for a document that is already there — and
+Orama's `insert` THROWS on a duplicate id. So the very failure the ordering exists to make
+recoverable would throw on the pass that recovers it. Fixed by removing before *every* insert, not
+only where the plan saw a prior document. Found by a test seeded with a legacy sidecar listing fewer
+ids than the index held; otherwise it surfaces only after a real crash in the write window.
+
+⚠️ **`onScopeResume` awaits the PLAN and nothing else, and the rule is categorical:
+anything that touches the `.msp` or the model is deferred — NOT "anything expensive."** `planIndex()`
+is pure (read the small sidecar, walk the tasks, hash each document, diff) and measured **12ms for
+1115 documents**. `applyIndexPlan()` loads the 21MB `.msp`, lazily loads the model at the first
+document that actually needs one, embeds and persists, on a module-level **serialized** background
+chain so seven projects cannot backfill concurrently. A cheapness judgement is something a future
+change gets wrong silently; a categorical rule can only be violated deliberately. This matters
+because `autoResumeProjects` awaits `onScopeResume` and the worker's `ready` waits on autoResume, so
+anything slow there spends the 30s init budget — and terminating the worker at that timeout is what
+took the daemon down.
+
+⭐ **Negative result, with its dependency, so it can be re-checked rather than inherited: do NOT
+batch embeddings across projects.** The expensive part, the model load, is *already* shared —
+`getEmbeddingPipeline()` is a module-level singleton and all projects live in one worker. Simulated
+on the real 7-project tree: 64 batches today, 57 if the small projects merged, **saving ~1-3s out of
+a 909s rebuild** while coupling the projects and breaking the clean per-project plan/apply split.
+**An optimisation for a case your fix eliminates is dead code that looks like foresight** — ask when
+the case occurs *after* the change, not before. This inverts completely if `getEmbeddingPipeline()`
+ever stops being a per-process singleton.
+
+**Batching is length-sorted, and the sort is most of the win.** A batch costs count × its longest
+member, so a 4000-char result round interleaved with 31 titles makes all 32 cost 4000. Measured on
+the real tree: tree order pads 1.49M chars to **4.74M char-equivalents (3.2× waste)**; length-sorted
+pads to 1.58M (1.1×).
+
+⚠️ **SYMPTOM, known and unfixed: the index is case-sensitive.** `"Uppercase Widget Title"` is found
+by `Uppercase` and `Widget` and **not** by `uppercase` or `widget` — the mandarin tokenizer does not
+lowercase. Pre-existing; fixing it re-tokenizes every stored document.
+
+### ⚠️ Choosing an embedding device: `auto` is the obvious answer and it silently corrupts the index
+
+On darwin, transformers.js resolves `device: "auto"` to `["coreml","webgpu","cpu"]`, so CoreML claims
+the graph — and **CoreML returns a 768-dim vector of NaN, L2 norm 0, for most inputs. Nothing
+raises.** `searchIndex`'s NaN-score guard then quietly redoes every query as pure BM25, so the
+product keeps working with semantic search deleted and no error anywhere. `auto` is also 7.4× slower
+than CPU.
+
+⭐ **The failure is deterministic per input and NOT monotonic in length**, and this table is the
+load-bearing part:
+
+| input | chars | result |
+|---|---|---|
+| `"reconcile "` | 10 | **all NaN** |
+| `"Fix session recovery bug"` | 24 | correct |
+| a repeated sentence | 336 | **all NaN** |
+
+A first pass drew only the 24- and 336-char cases and read it as a length threshold; **it was a
+coincidence of two strings, and a one-string probe would have shipped.** So `tryDevice` probes four
+inputs of different shapes through BOTH `embed` and `embedMany`, requiring every result finite,
+right-dimension and non-degenerate — batched separately, because **a batch is padded to its longest
+member, so a document that is finite alone is not necessarily finite in company.**
+
+⚠️ **Do not log `session.config.device`.** It reports the device that was REQUESTED, so it prints
+"coreml" just as confidently while emitting NaN. Log what was *proven*.
+
+⭐ **Non-monotonic forecloses the workarounds, which is why "we don't know why" is a complete result
+rather than an unfinished investigation.** A length threshold would invite chunking, capping, or
+probing at the boundary — any of which could be made to look like it works. With no cheap input
+property that predicts the verdict, rejecting the device is the only sound response.
+
+**Negative results on the CoreML knobs, so nobody spends the afternoon again**: `mlComputeUnits:
+CPUOnly` / `CPUAndGPU`, `modelFormat: MLProgram + mlComputeUnits: ALL`, and
+`allowLowPrecisionAccumulationOnGPU: "0"` — **every one still NaN.** MLProgram is the documented fix
+for the FP16 cast and is either not reachable through transformers.js or not sufficient; ORT ignores
+unknown option keys silently, so those two cannot be distinguished from here.
+
+⚠️ **"webgpu vs coreml" is not "GPU vs not-GPU."** Both reach the same Metal GPU — webgpu via Dawn,
+CoreML via its own compiler; CoreML's extra reach is the ANE. **There is no MPS execution provider in
+ONNX Runtime** (that is a PyTorch concept), verified from the installed library rather than recalled:
+`listSupportedBackends()` returns cpu / webgpu / coreml, and the dylib exports zero metal symbols.
+
+> ⭐ **webgpu is chosen for CPU CONTENTION, not for wall-clock — and on the real corpus it is 30%
+> SLOWER in wall-clock.** Full rebuild of 1115 documents / 1.49M chars: **cpu 697s wall / 3044s CPU;
+> webgpu 909s wall / 38.8s CPU.** 3044s of CPU is 4.4 cores saturated for twelve minutes next to
+> live agents, because the backfill runs alongside them. 38.8s is invisible. Anyone "optimising" this
+> back to wall-clock will pick cpu and starve the machine.
 
 Four gotchas, three of them environmental:
 
@@ -2156,11 +2305,47 @@ timer.** (`createTestToken` is HMAC only, 2-3ms — never the cause of a slow bo
 A stale lock whose PID is dead is stolen; a live PID errors out. It is opt-in (`lockDataDir: true`),
 because tests run concurrent daemons on isolated tempdirs. ⚠️ **It refuses even when the lock holds
 our own PID** — a second `createDaemon` in one process is a test bug or a double-init, and surfacing
-it beats tolerating it. Released in `shutdown()` after the workers are gone.
+it beats tolerating it. Release is sequenced in `shutdown()` after the workers are gone, **which
+means in practice it has almost never run** — see the next section. The steal-on-dead-PID path is not
+a fallback; it is the only path, and it has been load-bearing since embeddings landed.
 
 ⚠️ **Test mocks must honor the abort signal.** A mock doing `setTimeout(resolve, 10000)` makes
 `stopAgent`'s loop-settlement await wait the full window. Real provider SDKs already respect abort;
 `abortableSleep(ms, req.signal)` brings mocks in line.
+
+## ⚠️ An ORT session in a Bun Worker makes that worker's exit fatal to the process
+
+Measured, and device-independent:
+
+| variant | result |
+|---|---|
+| import `@huggingface/transformers`, no session, then terminate | **survives** |
+| create session + infer, parent `terminate()`, device `cpu` | **exit 133** |
+| create session + infer, parent `terminate()`, device `webgpu` | **exit 133** |
+| create session + infer, worker calls `process.exit(0)` itself | **exit 133** |
+| create session + infer, `pipeline.dispose()` first, then terminate | **exit 133** |
+
+`panic: NAPI FATAL ERROR: Error::New napi_create_error`. **The trigger is not `terminate()` and not
+the device — it is an ORT InferenceSession existing in a Bun Worker when that thread exits.** So
+webgpu is not disqualified by it; cpu is equally affected. `MXD_DISABLE_EMBEDDINGS` is the test-side
+half of the same hazard.
+
+⚠️ **This is what the "segfault" in the index bug report actually was**, not a memory blowup: init
+times out at 30s → the daemon terminates the worker → the old reconcile had already loaded the model
+unconditionally → NAPI abort kills the daemon. The 2.26GB RSS was a symptom sitting next to the
+cause. Grepping `daemon.err`: **13 of the last 20 process deaths carry this exact panic, at uptimes
+up to 18.4h — as far as that log goes back, this daemon has never once exited cleanly.** Exit 133 is
+indistinguishable from a real crash to launchd and to a human, which is why 13 of them went
+unremarked.
+
+⚠️ **The hash-keyed index change narrowed this as a SIDE EFFECT, and nothing in that diff shows it —
+so state the limit precisely or the next reader will conclude it is mostly handled.** The boot-time
+terminate disappears because init no longer times out, and lazy model loading means a steady-state
+boot never loads ORT at all, so a daemon that boots, does no index work and restarts now exits
+cleanly. **But the backfill runs in the worker, and so does every hybrid `search_tasks`, sidebar
+search and `create_task` related-tasks lookup. One search puts the daemon back in the hazard.**
+Someone re-eagerly loading the pipeline "since we need it anyway" would silently widen the window
+back, and no test would fail.
 
 ## The self-bootstrap death chain, and the five worker-lifecycle bugs that formed it
 
@@ -3250,7 +3435,16 @@ it are all consistent with it by construction.**
 
 ⚠️ **A test whose fixture cannot express the difference passes both ways.** Over-promotion of a glob
 was invisible because the fixture contained exactly one `src/`, so `src/*.ts` and `**/src/*.ts`
-returned the same files. And ⚠️ **a test that can fail for two different reasons cannot tell you
+returned the same files.
+
+⚠️ **The same defect in a PERFORMANCE fixture does not merely lose precision — it can reverse the
+sign.** A synthetic 64-document benchmark said webgpu was 18% *faster*; the real 1115-document corpus
+says it is 30% *slower*, because real documents have a long tail (p50 206 chars, p90 3988, max
+19284), attention is O(n²), and `feature-extraction` does not truncate. The synthetic set had no
+tail, so it measured a different workload and answered confidently. Same shape as the remount-cost
+error in the viewport section: **a fixture whose content is too cheap cannot answer the question at
+all, and the danger is that it answers anyway.** (The device decision survived only because a second
+number — CPU time, 3044s vs 38.8s — was measured on the real corpus too.) And ⚠️ **a test that can fail for two different reasons cannot tell you
 which one happened** — a guard's entire value is being legible on the day it fires, so narrow it to
 presence-only rather than asserting an exact list.
 
@@ -3310,6 +3504,13 @@ and mutate) and flakes inside the full suite. Real browsers hold strong refs per
 is fine. **Rule: never let a happy-dom test depend on MutationObserver delivery.** Route the tested
 behavior through a React effect and treat the MO path as a real-browser-only complement — and stub a
 no-op MutationObserver so the mutation proof targets the effect branch exactly.
+
+⚠️ **A constant-vector mock makes every hybrid-search assertion vacuous.** If the fake embedder
+returns the same vector for every text, every document scores cosine 1.0 against every query, the
+whole index comes back, and any assertion about *which* documents matched passes silently. Three
+tests were written that way and were measuring nothing. Return a text-derived vector so different
+texts are orthogonal. ⚠️ And **hybrid search embeds the QUERY through the same pipeline**, so an
+embed counter read *after* a search has counted the query too — snapshot before searching.
 
 ⚠️ **happy-dom does no layout, so geometry cannot be observed there.** It can still test the *causes*
 of geometry — DOM order, commit granularity, whether a callback ran — which is far better than
