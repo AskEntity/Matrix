@@ -281,23 +281,32 @@ export type Event = (
 /**
  * Whether emitEvent() should persist this event to JSONL.
  *
- * Returns false for:
- * - Truly ephemeral events (text_delta, usage, status, etc.) — broadcast only, never persisted
+ * This answers exactly one question — does THIS path write the event — and
+ * says nothing about whether some other writer does. `false` means "emitEvent
+ * broadcasts it and moves on", NOT "this type can never appear in a JSONL
+ * file": any caller holding an EventStore can append whatever it needs, and
+ * one does (see the `status` case below).
  *
- * Returns true for all other events, which are persisted by emitEvent to JSONL.
- * This includes provider events (assistant_text, tool_call, tool_result, compact_marker)
- * which flow through emitEvent via the provider's emit callback.
+ * Returns true for the rest, including provider events (assistant_text,
+ * tool_call, tool_result, compact_marker) which flow through emitEvent via the
+ * provider's emit callback.
  *
  * Uses an exhaustive switch — adding a new Event type without handling it here
  * causes a compile error (default: never check).
  */
 export function isPersistedByEmitEvent(event: Event): boolean {
 	switch (event.type) {
-		// Ephemeral — broadcast only, never persisted
+		// Broadcast only — emitEvent does not write these.
 		case "thinking_delta":
 		case "text_delta":
 		case "agent_idle":
 		case "agent_active":
+		// `status` is the exception worth knowing about: a repair writes one
+		// straight to the EventStore (see `repairStatusEvent`), because that
+		// event's parentEid is what makes the repair's chain jump durable. So a
+		// repaired session DOES have status lines in its JSONL. Don't turn this
+		// list into a "never appears on disk" invariant — the test would pass
+		// everywhere except on the rarest path.
 		case "status":
 		case "clarification_timeout":
 			return false;
@@ -692,6 +701,11 @@ function messagesToReplay(dropped: Event[]): Event[] {
  * else to say, and it leaves the repair visible in the activity log instead of
  * silently reshaping history. The walker skips `status` events, so it can
  * never affect the reconstructed conversation.
+ *
+ * Deliberately bypasses the emitEvent gate: `isPersistedByEmitEvent` returns
+ * false for `status`, and the repair path appends to the EventStore directly.
+ * That classifier is documented accordingly — it describes what emitEvent
+ * writes, not what may exist on disk.
  */
 function repairStatusEvent(taskId: string, reason: string): Event {
 	return {
