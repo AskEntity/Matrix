@@ -555,6 +555,19 @@ function MockShowcaseInner() {
 							</button>
 						</div>
 						<div className="mxd-panel-actions">
+							{/* Scroll-state controls stay leftmost — see the same block in
+							    Plugin.tsx for why (right-aligned flex row: an inserted child
+							    only moves the children before it). */}
+							{viewMode === "activity" && !autoScroll && (
+								<button
+									type="button"
+									className="mxd-scroll-follow-btn"
+									onClick={() => setAutoScroll(true)}
+								>
+									<IconArrowDown size={10} />
+									{t("activity.follow")}
+								</button>
+							)}
 							{viewMode === "activity" && !autoScroll && (
 								<button
 									type="button"
@@ -571,16 +584,6 @@ function MockShowcaseInner() {
 									contextWindow={tokenUsage.contextWindow}
 									onCompact={noop}
 								/>
-							)}
-							{viewMode === "activity" && !autoScroll && (
-								<button
-									type="button"
-									className="mxd-scroll-follow-btn"
-									onClick={() => setAutoScroll(true)}
-								>
-									<IconArrowDown size={10} />
-									{t("activity.follow")}
-								</button>
 							)}
 							{viewMode === "activity" && (
 								<button
