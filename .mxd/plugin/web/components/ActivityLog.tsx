@@ -16,6 +16,11 @@ import {
 import { useLocale } from "../i18n.ts";
 import { quoteButtonPosition, selectionQuoteText } from "../quote.ts";
 import { isNearBottom, scrollRange, scrollRangeShrank } from "../scroll.ts";
+import {
+	attributeScrollWrite,
+	type ScrollWriter,
+	startScrollAttributionSampler,
+} from "../scroll-attribution.ts";
 import { LogEntryView, ToolCard } from "./ToolCard.tsx";
 import { getEntryText } from "./tools/utils.ts";
 
@@ -257,7 +262,9 @@ export const ActivityLog = memo(function ActivityLog({
 					const next = prev + RENDER_BATCH;
 					// After React renders the new entries, restore scroll position
 					requestAnimationFrame(() => {
-						container.scrollTop = container.scrollHeight - scrollBottom;
+						attributeScrollWrite(container, "lazy-render-anchor", () => {
+							container.scrollTop = container.scrollHeight - scrollBottom;
+						});
 					});
 					return next;
 				});
@@ -272,10 +279,12 @@ export const ActivityLog = memo(function ActivityLog({
 	// Scroll to bottom using scrollTop instead of scrollIntoView.
 	// iOS Safari propagates scrollIntoView to ancestor containers even with overflow:hidden,
 	// pushing the input bar out of view.
-	const scrollToBottom = useCallback(() => {
+	const scrollToBottom = useCallback((who: ScrollWriter = "jump-request") => {
 		const el = logRef.current;
 		if (el) {
-			el.scrollTop = el.scrollHeight;
+			attributeScrollWrite(el, who, () => {
+				el.scrollTop = el.scrollHeight;
+			});
 			// scrollTop clamps to the max scroll offset, so we are at the
 			// bottom by construction — report without a forced layout read.
 			onAtBottomChangeRef.current?.(true);
@@ -311,7 +320,7 @@ export const ActivityLog = memo(function ActivityLog({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: fires on new content only — see above
 	useEffect(() => {
 		if (autoScrollRef.current) {
-			requestAnimationFrame(scrollToBottom);
+			requestAnimationFrame(() => scrollToBottom("follow-content"));
 		} else {
 			// New entries while the user is scrolled up: the distance from
 			// the bottom grew, so the scroll-to-bottom button's visibility
@@ -320,12 +329,16 @@ export const ActivityLog = memo(function ActivityLog({
 		}
 	}, [visible.length, scrollToBottom, reportAtBottom]);
 
+	// Dev-only (localStorage mxd-debug-scroll): notice offset changes that no
+	// writer claimed. Returns a no-op when tracing is off.
+	useEffect(() => startScrollAttributionSampler(() => logRef.current), []);
+
 	useEffect(() => {
 		const el = logRef.current;
 		if (!el) return;
 		const observer = new MutationObserver(() => {
 			if (autoScrollRef.current) {
-				requestAnimationFrame(scrollToBottom);
+				requestAnimationFrame(() => scrollToBottom("follow-stream"));
 			} else {
 				// Finer-grained complement to the visible.length effect above:
 				// catches streaming text growth (characterData) that changes
@@ -416,8 +429,11 @@ export const ActivityLog = memo(function ActivityLog({
 
 		if (wasLoading && !loadingOlderEvents && scrollAnchorRef.current !== null) {
 			const el = logRef.current;
+			const anchor = scrollAnchorRef.current;
 			if (el) {
-				el.scrollTop = el.scrollHeight - scrollAnchorRef.current;
+				attributeScrollWrite(el, "load-older-anchor", () => {
+					el.scrollTop = el.scrollHeight - anchor;
+				});
 			}
 			scrollAnchorRef.current = null;
 		}
