@@ -4501,6 +4501,23 @@ renders without running a real compaction.
   messages_consumed produces exactly ONE log entry (no duplicate).
   Mutation proofs documented per-test.
 
+## ⚠️ A user message renders where it was CONSUMED, not where it arrived (2026-07-25)
+
+A message typed during a tool call is **delivered** between the `tool_call` and its `tool_result`,
+but **consumed** with that tool's results — so in the activity log it renders **after the finished
+tool card**. Delivery order and rendered order are different things.
+
+This is a trap for anything that reasons about a message's position. The Edit/Rewind gate hit it
+first: judging "did the agent run from this message" off the RENDERED entries calls exactly the
+blocked case a run start, because by then the message appears after the tool it interrupted. So the
+annotation is computed in `processEventBatch` from the **raw batch**, never from the entries.
+Mutation-verified — swapping the input to the entries fails exactly two tests out of ~2760.
+
+It is also the only place the annotation is needed, for a reason worth knowing on its own:
+**an eid reaches the UI only through a JSONL fetch — SSE broadcasts carry none** (events are
+stamped at persist time, after the broadcast). A live-streamed entry therefore has no eid, hence no
+Edit/Rewind buttons, hence nothing to gate. Same fact drives the re-fetch below.
+
 ## Re-fetch JSONL when the viewed task stops working — Edit/Rewind buttons (2026-07-23)
 
 SSE-broadcast events lack `eid`/`parentEid` (stamped only at JSONL persist time in
@@ -4755,6 +4772,90 @@ trips `useExhaustiveDependencies` (ERROR-level, not warning). Adding it to deps 
 re-fire the insert every render (new fn identity each render) — a `biome-ignore` on
 the effect is the correct fix, matching the codebase convention. No CSS/i18n change
 (textarea was already capped+scrollable; fix is purely JS scroll).
+
+## Viewport position: 30 touchpoints, and the one predicate that guards them (2026-07-25)
+
+A full survey of everything that reads or writes the activity log's scroll position, done because
+the area "felt fragile and nobody could state the conditions". **The initial count was 9. The real
+count is 30**, in seven classes — including one nobody had listed: the browser's own CSS
+`overflow-anchor: auto` scroll anchoring, which silently absorbs top-of-list insertions (and which
+Safari does not implement).
+
+### The finding: guard the PROPERTY, not the enumeration of causes
+
+Two predicates were proposed on the *cause* side and both were killed by one measurement:
+
+- *"is the rendered content from the task being viewed"* (a view-parameter identity)
+- *"is the container non-scrollable"* (an emptiness proxy)
+
+Counter-example: an in-log search matching 40 entries leaves the container with 449px of range —
+fully scrollable — but `scrollTop` 1200 is clamped to 449, which IS the new bottom, so
+`isNearBottom` returns true and follow mode arms itself. Neither predicate catches it.
+
+**The predicate that works: `scrollRangeShrank(prev, current)` where range = `scrollHeight −
+clientHeight`.** All five measured failures share not emptiness but *the scrollable range got
+smaller and the browser pushed the offset to the new bottom*: tab-switch fetch gap (1549→0), three
+kinds of in-log search, and the composer auto-growing (viewport 572→537). Growth is deliberately
+NOT suspicious — streaming grows every frame, and a user scrolling back to the bottom mid-stream
+must still be able to re-arm follow.
+
+⭐ **Why this generalises and a cause-list does not**: this subsystem had already proven that the
+cause side cannot be enumerated — the survey started from "your nine are almost certainly
+incomplete" and ended at 30. Listing causes again would repeat the same error. `scrollRangeShrank`
+tests **the property that makes an observation meaningless**, so it covers causes nobody wrote
+down. The composer's auto-grow is the proof: not a view parameter, not anticipated, and it lands in
+the predicate for free. (It also collapsed two separately-catalogued classes — content-height
+changes inside the container and clientHeight changes outside it — into one. They were two classes
+only because they were sorted by *what changed*; sorted by *what it causes*, they are one thing.)
+
+### `autoScroll` vs `logAtBottom` — two concepts, one illegal coupling
+
+`logAtBottom`'s writers are all **observations**. `autoScroll`'s are one observation and six
+**intents**. That single observation-writing-intent (`handleScroll` reporting to both; the
+predicate's own comment admits "one predicate, two consumers") is the door every hijack came
+through. They must NOT be merged into one boolean — that would lose the "intent" concept the Follow
+button needs.
+
+Two halves of the same seam, fixed separately: the guard above rejects a **false observation** (a
+clamp after shrink); and the new-content effect no longer takes `autoScroll` as a dependency, which
+stops a **true observation from immediately executing** — the user scrolls into the 40px band,
+follow correctly arms, and previously the effect fired and yanked them the rest of the way
+mid-gesture. **Arming is not acting**, and "go to the bottom now" already has its own channel
+(the `scrollToBottomRequest` counter). The fix was a deletion, and the effect reads `autoScrollRef`
+so "responds to content, not to intent" is explicit rather than implied by a deps array.
+
+### Pitfalls that will look like oversights
+
+- **`prevScrollRangeRef` may ONLY be advanced by `handleScroll`.** Letting a geometry-reading effect
+  update it too makes the guard inert: effects run at commit, the clamp's scroll event is dispatched
+  by the browser *afterwards* (measured 14ms later), so the effect writes the new small value first
+  and the comparison becomes new-vs-new. **The danger is that it looks MORE thorough** — the next
+  person will read the single call site as a missed one.
+- **"Only trust real user scrolls" is unimplementable.** A clamp-dispatched scroll event has
+  `isTrusted === true` and is indistinguishable from a user's at the event layer. Written into the
+  predicate's docstring specifically to stop someone walking that road again.
+- **In a right-aligned flex row, inserting a child moves only the siblings BEFORE it.** So
+  conditionally-rendered controls belong *before* the persistent ones — cheaper than reserving
+  blank space and with no side effects. This is what made the header jump 71.3px when Follow
+  appeared. (First measured as "100.3px on the whole actions group" — a container's property read
+  as the content's. Same shape as the mistakes above, caught by re-measuring per child.)
+
+### Deleting an implementation that never worked
+
+`tabScrollStateRef` (per-tab scroll memory) **never functioned**: the save ran in a passive effect
+keyed on the task id, which runs *after* commit — by which time the list had emptied, the container
+had collapsed and `scrollTop` was clamped to 0. It saved a destroyed value, structurally. It was
+invisible because the follow-hijack it fed put you at the bottom anyway, which looked like normal
+follow behavior.
+
+Fixing the hijack exposed it, and "leave it as-is" turned out not to be an option — behavior would
+change either way. Made into an explicit three-way choice and reported: guard only (visible
+regression) / make restore actually work (decides a product question) / **delete the never-working
+implementation and write the current behavior down explicitly (zero user-visible change, measured
+8/8)**. Chose the third. **Deleting an implementation that never had an effect is not deciding the
+feature shouldn't exist — it is removing a lie.** The real feature needs an address that survives a
+refetch, which is the same requirement as message deep-linking and active-chain membership: all
+three want persisted event identity (`eid`) on every entry regardless of transport.
 
 ## Scroll-to-bottom button + happy-dom v20 MutationObserver WeakRef GC hazard (2026-07-07)
 
@@ -5079,6 +5180,34 @@ Action button gap reduced 6px→4px to fit within 58px (3×16px + 2×4px = 56px)
 Replaced `✎` unicode char with `<IconEdit size={12}/>` SVG pencil icon in LogEntryView
 user message action buttons. `IconEdit` added to `icons.tsx` (Lucide-style pencil path).
 
+## Blocked Edit/Rewind buttons: grey + explain, never hide (2026-07-25)
+
+The rule for which messages are editable is in Events/JSONL (*Which messages can be edited/rewound*).
+This is how a refusal is presented.
+
+**Blocked buttons stay, greyed and disabled, with the reason in `title`.** Copy is never gated. Two
+independent justifications, which is what makes the decision stable:
+
+1. **Semantic**: a silently vanishing control reads as broken — and the cases that most need an
+   explanation are exactly the ones left with no affordance to carry one.
+2. **Layout**: the row is ✎ ↺ ⧉. Hiding makes Copy change position, so a list has rows with two
+   buttons and rows with three. Greying keeps the column stable. This holds *even if* every
+   disappearance were explained.
+
+**Precedence: permanent outranks transient** — not "whichever the code tests first". Order:
+`unknown_message` → `no_rewind_point` → `did_not_start_run` → `agent_busy`. "Wait for the agent to
+stop" promises a remedy; on a permanently un-editable message the user waits, the agent stops, the
+button is still grey, and they cannot tell whether they waited wrong or the product is broken.
+**Never offer a remedy that will not work.** The rule generalises to any future reason.
+
+**Wording follows the user, not the loop.** Every visible string uses their framing — *"Not sent on
+its own — the agent picked this up along with work it was already doing, so there is no separate
+point here to go back to."* The internal token (`did_not_start_run`) stays, because it is part of
+the `/edit` response shape.
+
+**Keep the reason→string map exhaustive over the union** (`Record<EditBlockedReason, string>`), not
+partial-with-fallback: it is what caught the missing i18n key the moment a third reason was added.
+
 ## Rewind/Edit confirm dialog + rollback impact analysis (2026-07-24)
 
 Replaces `window.confirm` on Rewind with an in-app modal that reports **what the
@@ -5360,6 +5489,42 @@ Without messages_consumed, message with id is never rendered.
 
 ### Third-codepath drift fixed (commit 39e420b)
 `src/drift-initial-drain.test.ts` image-drift tests now pass. Initial drain delegates to `adapter.appendQueueMessagesToMessages`, which routes through the same `applyXxxQueueContent` function the walker uses. One function, two call sites, zero drift possible.
+
+## Guards need a two-sided mutation proof (2026-07-25)
+
+**Mutate in both directions, or the test suite will accept a guard that quietly kills the feature.**
+
+- **Over-loose** (delete the guard) — the side everyone tests. Usually caught.
+- **Over-strict** (make the guard block everything) — **almost never tested, and it is the typical
+  failure mode of a guard.** It turns no test red; it just makes some normal path silently stop
+  working.
+
+The number that makes this concrete: making a follow-mode effect never scroll — i.e. killing the
+entire follow feature — left **11 of 12 tests in that file green**, including four guard tests
+written the day before. A second case the same day: keying a rule on "alone in its turn" instead of
+"no prior work in its turn" failed **exactly one test out of 2775**, and only because someone had
+deliberately written the "two messages consumed together are BOTH editable" case.
+
+So: **when you add a guard, explicitly write a test for what it must NOT block, and verify that test
+still passes with the guard in place.** Without it the change ships fully green with the feature
+gone.
+
+## Test fixtures with unstable identity lose their resolution silently (2026-07-25)
+
+A fixture that regenerates entry ids on every render makes every rerender a full key change → whole
+subtree remounts → MutationObserver fires → if follow is on, *the remount itself* scrolls to the
+bottom. Which means the test can no longer see whether the code under test scrolled. It does not go
+red; it stops being able to distinguish.
+
+Fix: build the master array once and slice it, so entries keep their id / React key / DOM node
+across rerenders and adding items is an APPEND — which is also what production does. **Whenever a
+test asserts something about an effect, check that the fixture is not producing that effect
+itself.**
+
+Related, from the same area: **happy-dom does no layout**, so geometry cannot be observed there. It
+can still test the *causes* of geometry — DOM order, commit granularity, whether a callback ran —
+which is far better than dropping the test or mocking geometry brittlely. Anything genuinely about
+pixels has to be measured in a real browser.
 
 ## Test-is-Golden / ITA Philosophy
 
