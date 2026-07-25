@@ -155,7 +155,7 @@ Browser → Daemon (static assets + SSE) + Worker (API forwarding)
 | src/task-operations.ts | Shared CRUD operations (MCP + REST call these) |
 | src/provider-shared.ts | Run loop, ProviderAdapter, yield/done handling |
 | src/events.ts | Event types, formatBodyForAI, buildSessionRepair |
-| src/event-store.ts | JSONL EventStore (with truncateAfterLine) |
+| src/event-store.ts | JSONL EventStore — append-only; eid/parentEid chain, `setChainHead` for rollback+repair. Never truncates. |
 | src/event-converter.ts | walkEventsToMessages + EventConverterCallbacks |
 | src/task-tracker.ts | Task tree, node CRUD, tree.json persistence |
 
@@ -225,11 +225,12 @@ Design rule: any code path that could silently hang a yielding parent MUST notif
 
 ## JSONL Repair
 
-`buildSessionRepair()` in events.ts handles all repair:
-- **Orphan only** (tool_call without result): append interrupted results, no truncation
-- **Duplicate results** (>1 result for same tool_call): truncate from first duplicate + status message
-- `EventStore.truncateAfterLine(sessionId, lineIndex)`: rewrites file keeping lines 0..lineIndex
+`buildSessionRepair()` in events.ts handles all repair. It returns `{chainToEid, appendEvents}` and **never deletes anything** — the poison stays on disk and simply leaves the active chain, applied exactly like a rollback (`setChainHead(chainToEid)` then append).
+- **Orphan only** (tool_call without result): `chainToEid: null` — append interrupted results, nothing dropped
+- **Duplicate results / out-of-order**: chain back to the last good event + append (interrupted results, replayed messages from the dropped region, a status)
+- A repair carrying a `chainToEid` ALWAYS has ≥1 append event — `setChainHead` is pure in-memory, so the jump only reaches disk via the first appended event's parentEid
 - Repair runs in runAgentForNode before provider loop starts
+- **File truncation is gone** (`truncateAfterLine`, deleted 2026-07-24). Addressing events by file position produced two separate data-destroying bugs (FIX-1 cc#1, FIX-8 R8-B#4) and destroyed the evidence needed to debug the corruption. Read those FIX sections as history; the current shape is "One boundary: the active chain".
 
 ## enqueue === persist (single JSONL write path)
 
@@ -3119,6 +3120,14 @@ requests to a guarded path — the anti-distillation reading was correct as moti
 
 ## FIX-8 (2026-06-10) — EventStore truncation safety: malformed-line index + write-queue serialization
 
+> **HISTORY — the whole mechanism described below is deleted (2026-07-24).** `truncateAfterLine`,
+> `readWithLineMap` and the event-index→physical-line translation are gone; repair addresses
+> events by eid and applies as a chain jump. Both bugs below were symptoms of "address events by
+> file position", and deleting the position-addressing deleted the bug class. Kept because the
+> DIAGNOSIS is the reusable part: an index computed in one space and consumed in another is a
+> silent corruption engine, and it bit us twice before we removed the second space. See "One
+> boundary: the active chain".
+
 Two EventStore bugs that amplify corruption during crash recovery.
 
 ### R8-B#4 — Malformed lines shift truncation index
@@ -4527,16 +4536,17 @@ event-chain fields; `id` on MessageEvent is unchanged and independent.
 
 ### Mechanism
 - `EventStore.lastEventIds: Map<string, string|null>` — per-session chain head.
-- `stampEvent(sessionId, event)` — mutates event in-place (inline object literals, never reused
-  after emitEvent). Called inside the write queue (same microtask as appendFileSync).
-- `readWithLineMap` populates `lastEventIds` from the last event on read.
-- `truncateAfterLine` updates `lastEventIds` from the last kept line.
-- `copySessionFrom` preserves source eids, stamps synthetics + fork_marker with fresh eids
-  chaining from the last source event. Sets `lastEventIds` for the target session.
+- `stampEvent(sessionId, event)` — returns a persisted COPY with the chain fields first (it no
+  longer mutates the caller's object). Called inside the write queue (same microtask as
+  appendFileSync). A failed write REWINDS the head — an event not on disk must not be in the chain.
+- `read` populates `lastEventIds` from the last event on read.
+- `copySessionFrom` preserves source eids but RE-LINKS the copied subset into one contiguous
+  chain (the active context is a filtered subset, so the originals' parents aren't in the new
+  file). Stamps synthetics + fork_marker with fresh eids. Sets `lastEventIds` for the target.
 - `clear` deletes the session's `lastEventIds` entry.
 
 ### Auto-migration (old JSONL files)
-On first `readWithLineMap`, if the first event lacks `eid`, the entire file is migrated:
+On first `read`, if the first event lacks `eid`, the entire file is migrated:
 assign linear eid chain, atomic rewrite (temp + rename, same pattern as `tracker.save()`).
 Idempotent — skipped when first event already has `eid`. After migration, subsequent appends
 chain correctly (lastEventIds populated from the last migrated event).
@@ -4588,7 +4598,9 @@ User clicks Rewind to here on a user message, system rolls back, agent regenerat
 
 ### Core mechanism: readActive() chain-walks instead of linear slice
 
-Old readActive(): findLastIndex(compact_marker) + slice(). New readActive(): walkActiveChainIndices() from the last event via parentEid, stops at compact_marker. Without rollback, every event chains linearly (identical to old behavior). With rollback (setChainHead), the next event's parentEid jumps to the target event, rolled-back events are never visited.
+Old readActive(): findLastIndex(compact_marker) + slice(). New readActive(): walkActiveChainIndices() from the last event via parentEid. Without rollback, every event chains linearly (identical to old behavior). With rollback (setChainHead), the next event's parentEid jumps to the target event, rolled-back events are never visited.
+
+⚠️ **Where the walk STOPS was changed later the same day** — see "One boundary: the active chain (2026-07-24)" at the end of this file. It is no longer `compact_marker`; it is the `compact_started` of the last COMPLETED compaction, and inside that window only `type === "message"` survives. Read this section for the rollback mechanism; read that one for the boundary.
 
 ### Rollback mechanism: setChainHead (no marker event)
 
@@ -4596,9 +4608,13 @@ Old readActive(): findLastIndex(compact_marker) + slice(). New readActive(): wal
 
 **DELETED (2026-07-24)**: `rollback_marker` event type, `EventStore.appendRollback()`, frontend rollback_marker rendering (LogEntryView, event-handler, CSS). The marker was an implementation shortcut — parentEid jumps via setChainHead are simpler (one line vs. a full event write+flush).
 
-### Defensive chain-walk fallback (CRITICAL for backward compat)
+### ~~Defensive chain-walk fallback~~ — DELETED 2026-07-24
 
-If parentEid chain breaks (null on non-first event, or missing eid), walk falls back to linear traversal for preceding events. Handles external EventStore instances, old JSONL files, migration gaps. Without this fallback, 83 tests failed.
+This used to say: "if the parentEid chain breaks (null on a non-first event, or a parentEid naming a missing eid), fall back to linear traversal for preceding events. Without this fallback, 83 tests failed."
+
+Half of it survived and half of it was wrong. What survived: **an event with no parentEid stops chain-following, and everything before it is taken linearly** — that is the genuine chain root at index 0, and it is what makes a pre-eid log readable. That is a documented rule now, not a fallback.
+
+What was deleted: the *dangling-link* branch (a parentEid naming an eid no line carries). Coding around a state the runtime cannot produce hides bugs instead of surfacing them — the same reason `buildSessionRepair` refuses to repair orphan tool_results. Deleting it was only honest once the sole path that could produce a dangle was closed: `stampEvent` used to advance the chain head BEFORE the write, so a failed append (ENOSPC/EIO) left the next event pointing at an eid that never reached disk. `append`/`appendBatch` now rewind the head on write failure. **If you ever re-introduce a dangling-link fallback, you are papering over a writer bug — go find the writer.**
 
 ### REST endpoint
 
@@ -4610,7 +4626,7 @@ Edit/Rewind buttons on user messages (hover-reveal). i18n: activity.rollback / a
 
 ### Agent lifecycle / buildSessionRepair adaptation
 
-agent-lifecycle.ts uses readActiveWithLineMap (chain-walked) for repair instead of readWithLineMap (full). Rolled-back events excluded from repair analysis.
+agent-lifecycle.ts feeds repair the chain-walked active events, so rolled-back events are excluded from repair analysis. (`readActiveWithLineMap` / `readWithLineMap` / the physical-line translation were deleted on 2026-07-24 — repair now addresses events by eid and applies as a chain jump, not a file truncation.)
 
 ### Tests
 
