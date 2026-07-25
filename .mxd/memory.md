@@ -5071,13 +5071,71 @@ re-fire the insert every render (new fn identity each render) — a `biome-ignor
 the effect is the correct fix, matching the codebase convention. No CSS/i18n change
 (textarea was already capped+scrollable; fix is purely JS scroll).
 
-## Viewport position: 30 touchpoints, and the one predicate that guards them (2026-07-25)
+## Scroll-to-bottom button + happy-dom v20 MutationObserver WeakRef GC hazard (2026-07-07)
 
-A full survey of everything that reads or writes the activity log's scroll position, done because
-the area "felt fragile and nobody could state the conditions". **The initial count was 9. The real
-count is 30**, in seven classes — including one nobody had listed: the browser's own CSS
-`overflow-anchor: auto` scroll anchoring, which silently absorbs top-of-list insertions (and which
-Safari does not implement).
+Scroll-to-bottom button (↓, `.mxd-scroll-bottom-btn`) in `.mxd-panel-actions`, rendered
+immediately LEFT of the Compact ⌘ button (which lives inside TokenUsageBadge — NOT in
+AppFooter/InputBar). Shown when the activity log is scrolled >40px from the bottom.
+
+### Shape
+- `.mxd/plugin/web/scroll.ts` — pure `isNearBottom(scrollTop, scrollHeight, clientHeight,
+  threshold=NEAR_BOTTOM_THRESHOLD)`; the ONE predicate for both auto-follow re-engagement
+  (ActivityLog handleScroll, formerly inline `< 40`) and button visibility.
+- ActivityLog: new optional `onAtBottomChange?: (atBottom: boolean) => void` prop, ref-mirrored
+  (observer effects don't churn on unstable parent callbacks). Report sites: handleScroll (with
+  onAutoScrollChange, same value), `visible.length` effect else-branch (entry growth while
+  scrolled up — the DETERMINISTIC growth trigger), MutationObserver else-branch (streaming
+  characterData growth, real-browsers-only complement), scrollToBottom (reports true by
+  construction). One shared `reportAtBottom` callback.
+- Plugin.tsx: `logAtBottom` state ← onAtBottomChange; click = querySelector scrollTop=scrollHeight
+  (precedent: tab scroll save) + setAutoScroll(true) + optimistic setLogAtBottom(true).
+- Existing Follow pill (`!autoScroll`, right of badge) untouched — overlaps ~95% with the new
+  button (both show when scrolled up, both end in follow+bottom). Dedup is a user/UX call, not made here.
+
+### ⚠️ happy-dom v20 MutationObserver delivery dies under GC pressure
+`MutationObserverListener` stores its report callback as `new WeakRef((record) => this.report(record))`
+with NO strong reference to the arrow anywhere; Node dispatch does `mutationListener.callback.deref()`
+— after any GC pass the deref returns undefined and mutations are SILENTLY dropped (no error).
+Consequence: a test relying on MO callbacks passes in isolation (no GC between observe and mutation)
+and flakes in the full 250s suite (GC runs constantly). Real browsers hold strong refs per spec —
+production code using MO is fine; only happy-dom TESTS of MO paths are inherently flaky.
+**Rule: never let a happy-dom test depend on MutationObserver delivery.** Route the tested behavior
+through a React effect (deterministic) and treat the MO path as a real-browser-only complement
+(document, don't test). The scroll-report content-growth test additionally stubs a no-op
+MutationObserver so its mutation-proof targets exactly the effect branch.
+
+### Tests
+`web/scroll.test.ts` (10 pure), `web/ActivityLog-scroll-report.test.tsx` (5 — every report path +
+auto-follow-preserved + optional-prop), `web/Plugin-scroll-bottom-journey.test.tsx` (canonical
+journey: real daemon, seeded assistant_text + `usage` event so TokenUsageBadge/⌘ renders → DOM-order
+assertion "↓ before ⌘ in panel-actions"; scroll up → appears → click → bottom + hidden + Follow pill
+gone). Seeding a `usage` JSONL event (`{type:"usage", taskId, inputTokens, contextWindow, ts}`) is
+the trick to make the Compact button exist in harness tests. Mutation-verified: prop-wire drop →
+journey fails; handleScroll report drop → 2 scroll tests fail; effect else drop → content-growth
+test fails (exact, thanks to the MO stub).
+
+## Activity-log viewport position: 30 touch points, three clusters, and the culprit that was not in the scroll code (2026-07-25)
+
+A survey of everything that reads, writes or invalidates the activity log's scroll offset — done
+because the area "felt fragile and nobody could state the conditions" — found **30 touch points,
+not the 9 anyone could name**: 9 JS writers, 5 readers, 6 pieces of state, 6 content-height
+mutators inside the container, 6 clientHeight mutators outside it, 6 wholesale `logs` replacements,
+plus **the browser** (`overflow-anchor: auto`, which silently absorbs top-of-list insertions —
+load-bearing here, and not implemented by Safari; see below).
+
+They do NOT collapse into one mechanism, and forcing them to would be wrong. Three clusters:
+
+- **A — measuring or writing during a transitional state.** Produces the *unpredictable* symptoms,
+  because the transient's duration is a network variable.
+- **B — viewport position addressed by a perishable identity** (pixel offsets, a module-counter
+  entry id, a React component instance). Produces *deterministic* losses, each disguised as some
+  other feature behaving normally, which is why none of them were ever reported.
+- **C — conditional renders in a flex row.** Independent, cheap, cosmetic.
+
+Their common amplifier: `logs` is the whole viewed session's array, replaced wholesale on every
+refresh. **That amplifier turned out to be able to hurt users on its own** — see the causal chain
+below. "What time may I measure" and "what name do I remember a position by" are orthogonal
+questions; one mechanism cannot answer both.
 
 ### The finding: guard the PROPERTY, not the enumeration of causes
 
@@ -5136,7 +5194,12 @@ so "responds to content, not to intent" is explicit rather than implied by a dep
   conditionally-rendered controls belong *before* the persistent ones — cheaper than reserving
   blank space and with no side effects. This is what made the header jump 71.3px when Follow
   appeared. (First measured as "100.3px on the whole actions group" — a container's property read
-  as the content's. Same shape as the mistakes above, caught by re-measuring per child.)
+  as the content's. Same shape as the mistakes above, caught by re-measuring per child.) Fixed
+  by putting both scroll-state buttons leftmost; Follow also shares `requestScrollLogToBottom`
+  with ↓ so the two booleans flip in one batch instead of two.
+- **`scroll-attribution.ts`** is dev-only (`localStorage mxd-debug-scroll`): it tags every
+  programmatic write with who did it, plus a per-frame sampler for movement nobody claimed.
+  **Read its docstring before trusting it** — it has a documented blind spot (below).
 
 ### Deleting an implementation that never worked
 
@@ -5154,101 +5217,6 @@ implementation and write the current behavior down explicitly (zero user-visible
 feature shouldn't exist — it is removing a lie.** The real feature needs an address that survives a
 refetch, which is the same requirement as message deep-linking and active-chain membership: all
 three want persisted event identity (`eid`) on every entry regardless of transport.
-
-## Scroll-to-bottom button + happy-dom v20 MutationObserver WeakRef GC hazard (2026-07-07)
-
-Scroll-to-bottom button (↓, `.mxd-scroll-bottom-btn`) in `.mxd-panel-actions`, rendered
-immediately LEFT of the Compact ⌘ button (which lives inside TokenUsageBadge — NOT in
-AppFooter/InputBar). Shown when the activity log is scrolled >40px from the bottom.
-
-### Shape
-- `.mxd/plugin/web/scroll.ts` — pure `isNearBottom(scrollTop, scrollHeight, clientHeight,
-  threshold=NEAR_BOTTOM_THRESHOLD)`; the ONE predicate for both auto-follow re-engagement
-  (ActivityLog handleScroll, formerly inline `< 40`) and button visibility.
-- ActivityLog: new optional `onAtBottomChange?: (atBottom: boolean) => void` prop, ref-mirrored
-  (observer effects don't churn on unstable parent callbacks). Report sites: handleScroll (with
-  onAutoScrollChange, same value), `visible.length` effect else-branch (entry growth while
-  scrolled up — the DETERMINISTIC growth trigger), MutationObserver else-branch (streaming
-  characterData growth, real-browsers-only complement), scrollToBottom (reports true by
-  construction). One shared `reportAtBottom` callback.
-- Plugin.tsx: `logAtBottom` state ← onAtBottomChange; click = querySelector scrollTop=scrollHeight
-  (precedent: tab scroll save) + setAutoScroll(true) + optimistic setLogAtBottom(true).
-- Existing Follow pill (`!autoScroll`, right of badge) untouched — overlaps ~95% with the new
-  button (both show when scrolled up, both end in follow+bottom). Dedup is a user/UX call, not made here.
-
-### ⚠️ happy-dom v20 MutationObserver delivery dies under GC pressure
-`MutationObserverListener` stores its report callback as `new WeakRef((record) => this.report(record))`
-with NO strong reference to the arrow anywhere; Node dispatch does `mutationListener.callback.deref()`
-— after any GC pass the deref returns undefined and mutations are SILENTLY dropped (no error).
-Consequence: a test relying on MO callbacks passes in isolation (no GC between observe and mutation)
-and flakes in the full 250s suite (GC runs constantly). Real browsers hold strong refs per spec —
-production code using MO is fine; only happy-dom TESTS of MO paths are inherently flaky.
-**Rule: never let a happy-dom test depend on MutationObserver delivery.** Route the tested behavior
-through a React effect (deterministic) and treat the MO path as a real-browser-only complement
-(document, don't test). The scroll-report content-growth test additionally stubs a no-op
-MutationObserver so its mutation-proof targets exactly the effect branch.
-
-### Tests
-`web/scroll.test.ts` (10 pure), `web/ActivityLog-scroll-report.test.tsx` (5 — every report path +
-auto-follow-preserved + optional-prop), `web/Plugin-scroll-bottom-journey.test.tsx` (canonical
-journey: real daemon, seeded assistant_text + `usage` event so TokenUsageBadge/⌘ renders → DOM-order
-assertion "↓ before ⌘ in panel-actions"; scroll up → appears → click → bottom + hidden + Follow pill
-gone). Seeding a `usage` JSONL event (`{type:"usage", taskId, inputTokens, contextWindow, ts}`) is
-the trick to make the Compact button exist in harness tests. Mutation-verified: prop-wire drop →
-journey fails; handleScroll report drop → 2 scroll tests fail; effect else drop → content-growth
-test fails (exact, thanks to the MO stub).
-
-## Activity-log viewport position: 30 touch points, three clusters, and the one that isn't in the scroll code (2026-07-25)
-
-A survey of everything that reads, writes or invalidates the activity log's scroll offset found
-**30 touch points, not the 9 anyone could name**: 9 JS writers, 5 readers, 6 pieces of state,
-6 content-height mutators inside the container, 6 clientHeight mutators outside it, 6 wholesale
-`logs` replacements, plus **the browser** (`overflow-anchor: auto`, load-bearing here and not
-implemented by Safari — see below).
-
-They do NOT collapse into one mechanism, and forcing them to would be wrong. Three clusters:
-
-- **A — measuring or writing during a transitional state.** Produces the *unpredictable* symptoms,
-  because the transient's duration is a network variable.
-- **B — viewport position addressed by a perishable identity** (pixel offsets, a module-counter
-  entry id, a React component instance). Produces *deterministic* losses, each disguised as some
-  other feature behaving normally, which is why none of them were ever reported.
-- **C — conditional renders in a flex row.** Independent, cheap, cosmetic.
-
-Their common amplifier: `logs` is the whole viewed session's array, replaced wholesale on every
-refresh. **That amplifier turned out to be able to hurt users on its own** — see the causal chain
-below. "What time may I measure" and "what name do I remember a position by" are orthogonal
-questions; one mechanism cannot answer both.
-
-### What shipped
-
-- **`scrollRangeShrank(prev, current)`** (`scroll.ts`) gates follow INTENT in `handleScroll`.
-  `isNearBottom` answers "is it at the bottom" — right for the ↓ button, wrong for "does the user
-  want to follow", because the offset reaches the bottom on its own whenever the range shrinks and
-  the browser clamps. Measured cases that used to silently re-arm follow and then yank the user
-  down: task switch (range 1549→0), log search matching nothing / a few / **40 entries where it
-  still overflows (1549→449 — so "does it overflow" is NOT the discriminator)**, and the composer
-  growing (viewport 572→537). Growth is deliberately not suspicious: streaming grows the log every
-  frame and scrolling back down must still re-arm. `prevScrollRangeRef` may **only** be advanced by
-  `handleScroll` — effects that read geometry run at commit, BEFORE the browser dispatches the
-  clamp's scroll event, so letting them advance it hides the very shrink being detected.
-- **Arming is not acting.** `autoScroll` was a dependency of the new-content effect, so merely
-  re-arming follow ran it — and re-arming happens the instant a manual scroll comes within 40px of
-  the bottom, so the last stretch of the user's own gesture was completed for them mid-drag
-  (measured: 25px from the bottom → 0.5px two frames later). The flag is now read from the ref and
-  is not a dependency: that effect reacts to CONTENT, never to intent. "Go to the bottom now" is a
-  separate intent with its own channel (`scrollToBottomRequest`).
-- **Panel header ordering.** The row is right-aligned flex, so inserting a child moves the children
-  BEFORE it and leaves the rest alone. The Follow pill sat mid-row and shoved ⌘ + the token badge
-  71.3px sideways on every scroll-up; both scroll-state buttons are now leftmost. Follow also
-  shares `requestScrollLogToBottom` with ↓ so the two booleans flip in one batch instead of two.
-- **`scroll-attribution.ts`** — dev-only (`localStorage mxd-debug-scroll`), tags every programmatic
-  write with who did it, plus a per-frame sampler for movement nobody claimed. Read its docstring
-  before trusting it; it has a documented blind spot (below).
-- The per-tab `{scrollTop, follow}` map was **deleted, not repaired**: it never worked once (the
-  save ran in a passive effect, after the commit that swapped in the new filter, so scrollTop read
-  0 — measured 8/8 landing at the bottom). Whether task switching *should* remember your position
-  is a product question left open; answering it needs an address that survives a refetch.
 
 ### The symptom that was not in the scroll code at all
 
