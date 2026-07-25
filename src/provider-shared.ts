@@ -1488,28 +1488,27 @@ export async function* runProviderLoop(
 		}
 
 		// ── Pre-call compression: count tokens, inject summarization instruction if over threshold ──
-		if (manualCompactRequested && messages.length <= 4) {
-			// Context too short to compact. Do NOT emit compact_marker — a bare marker
-			// without session_config + compacted_resume after it would brick the session
-			// on restart (readActive() returns only post-marker events → starts with
-			// assistant → API 400 "first message must be role user" → permanent brick).
-			// Just emit a status and skip. (R8-B#1)
-			const s1: EventSpec = {
-				type: "status",
-				message: "Context is too short to compact",
-				ts: Date.now(),
-			};
-			emit?.(s1);
-			yield s1;
-			manualCompactRequested = false;
-			// R8-B#1b used to live here: consume the yield/done tool_result that the
-			// compactOnly path had deferred, so the assistant's tool_use would not
-			// reach the API unanswered. That obligation is REAL (it is the pairing
-			// rule) — it is just discharged earlier now, at the moment the
-			// tool_result is emitted, so there is nothing left to consume here.
-			continue;
-		}
-		if (messages.length > 4) {
+		//
+		// ONE compaction path, whatever the conversation looks like. `/compact`
+		// is user-initiated, so it enters unconditionally; the length floor
+		// binds only the AUTOMATIC trigger, where it keeps a session that has
+		// barely started from compacting itself on a token estimate.
+		//
+		// ⚠️ Do NOT re-add a short-circuit for a short conversation. There was
+		// one, and both versions of it were bugs — not because they were
+		// written carelessly, but because the second path could never be as
+		// correct as the first. v1 emitted `compact_started` + `compact_marker`
+		// WITHOUT rebuilding context, so on restart readActive() returned only
+		// post-marker events, the session began on an assistant turn and the
+		// API rejected it permanently. v2 emitted a status and `continue`d with
+		// nothing pushed, so the very next request went out ending on the
+		// assistant message the agent had just parked on — 400 "This model does
+		// not support assistant message prefill", reachable by a fresh agent
+		// whose first turn ends with end_turn. Shortness never caused either;
+		// being a SECOND path did. Summarizing a two-message conversation costs
+		// one API call and produces a near-useless summary — that is the price
+		// of the user asking, and it is cheaper than a third path.
+		if (manualCompactRequested || messages.length > 4) {
 			let tokenCount = estimatedInputTokens;
 			let isEstimated = true;
 

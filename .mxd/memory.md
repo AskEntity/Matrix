@@ -653,21 +653,49 @@ was tried, to avoid a repair path; it works, and it costs behavior — with ever
 detects a generic interrupted-resume instead of a done-resume, so the woken agent silently loses its
 done-resume context. Reverting it was a behavior fix, not a style cleanup.
 
-## Compaction: the two ways it bricks a session
+## Compaction: ONE path, and the two bricks a second one produced
 
-**A too-short compact must NOT emit `compact_marker`.** The `messages.length <= 4` branch used to
-emit `compact_started` + `compact_marker` without rebuilding context — no `session_config`, no
-`compacted_resume`. On restart, `readActive()` returns only post-marker events, so the session starts
-on an assistant turn, and the API rejects it permanently. The branch now emits only a status, resets
-`manualCompactRequested`, and — this is the part that is easy to drop — **consumes any pending
-yield/done tool_result and the duplicate-yield extras**, so the assistant's `tool_use` blocks have
-matching results.
+`/compact` enters the ordinary path unconditionally — `compact_started` → summarize →
+`compact_marker` → `session_config` → `compacted_resume` — whatever the conversation looks like. The
+`messages.length > 4` floor next to it binds **only the automatic token-threshold trigger**.
 
-⚠️ **That branch has a live, reachable hole that is NOT fixed**: it clears the flag and `continue`s
-with nothing pushed, so the next iteration sends a request whose last message is the ASSISTANT one,
-which really is a 400 (*"does not support assistant message prefill"*). A fresh agent whose first
-turn ends with `end_turn`, followed by `/compact`, reaches it with no other setup. Pinned by
-`src/reachable-400-snapshot.test.ts`, which asserts the CURRENT buggy shape.
+⚠️ **Do NOT add a short-circuit for a conversation that is "too short to be worth compacting".**
+There was one, twice, and each version bricked sessions in its own way:
+
+- v1 emitted `compact_started` + `compact_marker` **without rebuilding context**. `readActive()`
+  then returns only post-marker events, so the next launch starts on an ASSISTANT turn and every
+  request 400s — recoverable only by `reset_task`.
+- v2 (the fix for v1) emitted a status, cleared the flag and `continue`d with nothing pushed — so
+  the very next request ended on the assistant message the agent had parked on: 400 *"This model
+  does not support assistant message prefill"*. **A fresh agent whose first turn ends with
+  `end_turn`, then `/compact`, reached it with no other setup.**
+
+**Shortness caused neither. Being a SECOND PATH did** — v1's bug was the missing rebuild, and v2
+inherited the shape of the thing it was patching rather than the correctness of the path next to it.
+The cost of not having it is one API call and a near-useless summary when a human compacts a
+two-message session, which is the price of the user asking. `src/compact-short-session.test.ts` pins
+the journey and both brick properties (every request sendable; a `compact_marker` is never bare).
+
+⭐ **What made the deletion safe is worth more than the deletion: the branch's one real obligation
+had already moved out of it.** It used to consume the pending yield/done tool_result and the
+duplicate-yield extras — the **pairing** rule, which is real. That consumption now happens where the
+tool_result is EMITTED (`emitAndPushCompactToolResult`), so the ordinary path inherits it for free.
+Confirmed by shape rather than by reading: dropping the `yield*` at one call site reddens **8 tests
+in `drift-lifecycle.test.ts` alone**. **This is the worked example of *Deleting a mechanism built on
+a false premise: separate the PREMISE from the OBLIGATION*** — premise "too short to compact",
+obligation "answer the `tool_use`", and the deletion is only safe because the obligation was checked
+separately and found to live somewhere else.
+
+⚠️ **STANDING DEFECT of the automatic trigger, older than the deletion above and unchanged by it: a
+session with ≤4 messages cannot auto-compact no matter how large it is.** One giant tool result
+(`get_logs`) puts a 3-message session over the threshold, and it then keeps calling the API instead
+of compacting until the context window rejects it. **It is not a consequence of removing the manual
+short path**, and reading it as one is how someone reverts that and gets the 400 back: the two used
+to be two independent `if`s — `manual && len <= 4` bailed out, `len > 4` ran the compaction — so
+`auto + len <= 4` already fell through BOTH and silently never compacted. Folding the manual case
+into the surviving condition changes the automatic path by zero bytes. This is the code-level half
+of `01KXNZHYSJFF0BVQJVPG2WC1RV` (the deadlock that crashed root on 2026-07-15); that ticket has the
+incident, this is the exact condition.
 
 **Compact messages never get `messages_consumed`.** `handleImplicitYield` filters them out of
 `nonCompact` and only `nonCompact` is recorded, so on restart `findUnconsumedMessages` re-enqueues
@@ -1718,10 +1746,10 @@ Results split across several user messages are fine, in any order; `[R1, text]` 
 400 because the trailing text ended the run; `[text, R1]` is a 400 because block order inside the
 message matters.
 
-**Reachable, real and open**: `/compact` on a session with `messages.length <= 4` whose last message
-is an assistant turn sends a request ending in assistant → 400. A fresh agent whose first turn ends
-with `end_turn` reaches it with no other setup. `src/reachable-400-snapshot.test.ts` asserts the
-CURRENT buggy shape.
+**Rule 2's only production violator was a second compaction path for short sessions**, which sent a
+request ending on the assistant turn the agent had parked on. Writing the rules down is what turned
+it from an invisible gap into a red test; the path is deleted (see *Compaction: ONE path, and the
+two bricks a second one produced*) and `src/compact-short-session.test.ts` holds the shape.
 
 ⚠️ **Probing the real API: the `systemPreamble` trap.** Any probe against the OAuth endpoint must
 send the auth group's `systemPreamble` as the FIRST system block, or every call 429s. A first-pass
@@ -3826,10 +3854,6 @@ test files — see *Gates: a passing gate looks identical whether it read 8% or 
   already gone.
 
 ## Known bugs and open design
-
-**Open and reachable**: `/compact` on a session with `messages.length <= 4` whose last message is an
-assistant turn sends a request ending in assistant → 400 *"does not support assistant message
-prefill"*. Pinned by `src/reachable-400-snapshot.test.ts`, which asserts the CURRENT buggy shape.
 
 **Open design questions**, re-checked rather than carried forward:
 

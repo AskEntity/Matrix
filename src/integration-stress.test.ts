@@ -363,9 +363,9 @@ describe("Stress: compaction + restart", () => {
 		// messages are two messages again. What this test guards is unchanged:
 		// no error, compaction completes, the agent continues.
 		//
-		// The agent does enough work to exceed messages.length > 4, yields,
-		// then receives a compact-only message. After fix: no error, compact
-		// completes, agent continues to the next turn.
+		// The agent does a few turns of work, yields, then receives a
+		// compact-only message: no error, compaction completes, the agent
+		// continues to the next turn.
 		const instruction = JSON.stringify({
 			turns: [
 				{
