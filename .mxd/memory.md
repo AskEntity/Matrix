@@ -2810,6 +2810,15 @@ in unfamiliar areas.
 
 ## Durability at process boundaries (FU2)
 
+> **Verified 2026-07-25, every constant in this region still matches the code** —
+> `WORKER_INIT_TIMEOUT_MS` 30s, `STABLE_RESET_MS` 60s, `RESTART_BACKOFF_MS` [2,4,8,16,30]s,
+> `SSE_INITIAL_STATE_RETRY_MS` 200 × 15 attempts (= the 3s budget), `pendingRestartTimers`,
+> `sseEpoch`, `formatSseEventId`/`parseSseLastEventId`, `{ env: process.env }` on the Worker
+> constructor, `.mxd.lock`, and `arrayBuffer()` in scope-worker. Recorded as a **negative result**:
+> this region was never re-checked before, and now it has been, so the next pass can skip it unless
+> daemon.ts changed. FIX-6 (below) fixes bugs in the machinery this section builds — read them
+> together.
+
 Three tightly-coupled durability gaps closed so process exits + stops don't lose data:
 
 ### shutdown() + stopAgent loop settlement
