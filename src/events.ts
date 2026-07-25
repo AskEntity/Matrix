@@ -612,6 +612,40 @@ const NON_LAUNCHING_MESSAGE_SOURCES: ReadonlySet<QueueMessage["source"]> =
 	new Set(["interrupt"]);
 
 /**
+ * The event list the loop would see AFTER `runAgentForNode`'s repair step —
+ * without performing the repair.
+ *
+ * `buildSessionRepair` is a pure computation returning `{chainToEid,
+ * appendEvents}`; only its caller writes. So the launch decision can consult
+ * it for free, and must: repair is what turns an orphan `tool_call` into a
+ * user turn, and a truncating repair replays messages the raw log shows as
+ * already consumed.
+ *
+ * ⚠️ A throw means LAUNCH. `buildSessionRepair` throws when it cannot express
+ * its chain jump — an event with no eid, which means corrupt or hand-edited
+ * JSONL. That is a real structural problem, and `runAgentForNode` is where it
+ * gets reported. Swallowing it into "nothing to do" would turn a loud failure
+ * into a node that silently never comes back.
+ */
+function applyRepairInMemory(events: Event[]): Event[] {
+	let repair: SessionRepair | null;
+	try {
+		// taskId only lands on synthesized events, which stay in memory here.
+		repair = buildSessionRepair(events, "");
+	} catch {
+		return events;
+	}
+	if (!repair) return events;
+	if (!repair.chainToEid) return [...events, ...repair.appendEvents];
+	const cut = events.findIndex((e) => e.eid === repair.chainToEid);
+	// A chain target that is not in the list would mean repair and this walk
+	// disagree about the active region; keep the raw list rather than silently
+	// truncating to nothing.
+	if (cut < 0) return events;
+	return [...events.slice(0, cut + 1), ...repair.appendEvents];
+}
+
+/**
  * Would launching this agent produce an action, or would it just park?
  *
  * Answered from the log ALONE, deliberately: `runAgentForNode` connects MCP
@@ -630,8 +664,25 @@ const NON_LAUNCHING_MESSAGE_SOURCES: ReadonlySet<QueueMessage["source"]> =
  * pays full session construction for an agent that immediately parks.
  * `should-launch.test.ts` pins them against each other over a shape table.
  */
-export function shouldLaunchAgent(events: Event[]): boolean {
-	if (events.length === 0) return false;
+export function shouldLaunchAgent(rawEvents: Event[]): boolean {
+	if (rawEvents.length === 0) return false;
+
+	// 0. Apply what REPAIR would do — computed, not performed.
+	//
+	//    This is the boundary condition on the whole hoist, and it is not
+	//    "the steps before the loop only read the log". Two of them
+	//    MANUFACTURE input, and they are hoistable anyway for a different
+	//    reason: the manufacturing is computable without doing it.
+	//    `buildSessionRepair` returns `{chainToEid, appendEvents}` and the
+	//    CALLER writes — so asking it costs a pure computation.
+	//
+	//    It changes the answer, so skipping it is not conservative. A log
+	//    ending in an orphan `tool_call` reconstructs as trailing-assistant,
+	//    i.e. "do not launch"; repair's synthetic tool_results are what turn
+	//    it into a user tail. A truncating repair goes further and replays the
+	//    dropped region's messages, so a poisoned session's real tail is not
+	//    on disk at all.
+	const events = applyRepairInMemory(rawEvents);
 
 	// 1. Pending input DECIDES, and it decides in both directions.
 	//

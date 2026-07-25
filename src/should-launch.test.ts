@@ -468,6 +468,93 @@ describe("a log ending in thinking: park, and repair leaves it alone", () => {
 	});
 });
 
+describe("rule 0: repair is CONSULTED, not assumed", () => {
+	// The boundary condition on the whole hoist. `buildSessionRepair` is a pure
+	// computation — it returns what to append and the CALLER writes — so the
+	// launch decision can ask it for free. It must: repair changes the answer,
+	// and a truncating repair means the session's real tail is not on disk.
+
+	test("orphan tool_call: repair's synthetic result is what makes it launchable", () => {
+		// Raw, this reconstructs as trailing-ASSISTANT (a tool_call). It is
+		// repair's interrupted tool_result that turns it into a user tail.
+		const events = chain([...HEAD, text("working"), call("c1")]);
+		const raw = eventsToAnthropicMessages(events) as Array<{ role: string }>;
+		expect(raw[raw.length - 1]?.role).toBe("assistant");
+		expect(shouldLaunchAgent(events)).toBe(true);
+	});
+
+	test("a poisoned session whose real tail is not on disk", () => {
+		// Duplicate tool_result → repair chains back BEFORE it, dropping the
+		// trailing assistant_text with it. Read raw, the log ends on an
+		// assistant turn and looks parked; after repair the tail is a user
+		// turn and a request is owed.
+		//
+		// This is the case a predicate that only reads the raw log gets wrong,
+		// and gets wrong silently: the node simply never comes back.
+		const events = chain([
+			...HEAD,
+			text("working"),
+			call("c1"),
+			result("c1"),
+			result("c1"), // poison
+			text("carried on regardless"),
+		]);
+		const raw = eventsToAnthropicMessages(events) as Array<{ role: string }>;
+		expect(raw[raw.length - 1]?.role).toBe("assistant");
+
+		const repair = buildSessionRepair(events, T);
+		expect(repair?.chainToEid).toBeTruthy();
+		expect(shouldLaunchAgent(events)).toBe(true);
+		expect(loopWouldAct(events)).toBe(true);
+	});
+
+	test("a corrupt log that repair cannot express → launch, do not swallow", () => {
+		// buildSessionRepair throws when an event it must chain to has no eid.
+		// That is a real structural problem and runAgentForNode is where it
+		// gets reported; refusing to launch would turn a loud failure into a
+		// node that silently never returns.
+		const unstamped = [
+			{ type: "assistant_text", content: "hi", taskId: T, ts: 1 },
+			{
+				type: "tool_call",
+				toolCallId: "c1",
+				tool: "bash",
+				input: {},
+				taskId: T,
+				ts: 1,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "c1",
+				tool: "bash",
+				content: "a",
+				isError: false,
+				taskId: T,
+				ts: 1,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "c1",
+				tool: "bash",
+				content: "b",
+				isError: false,
+				taskId: T,
+				ts: 1,
+			},
+		] as Event[];
+		expect(() => buildSessionRepair(unstamped, T)).toThrow();
+		expect(() => shouldLaunchAgent(unstamped)).not.toThrow();
+		expect(shouldLaunchAgent(unstamped)).toBe(true);
+	});
+
+	test("consulting repair does not PERFORM it — the input is untouched", () => {
+		const events = chain([...HEAD, text("working"), call("c1")]);
+		const before = JSON.stringify(events);
+		shouldLaunchAgent(events);
+		expect(JSON.stringify(events)).toBe(before);
+	});
+});
+
 describe("rule 1b: a background process the restart killed", () => {
 	// Found by an existing restart test, not by reading: bgOrphan synthesis
 	// happens INSIDE runAgentForNode, so refusing to launch loses the
