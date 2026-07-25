@@ -79,6 +79,13 @@ of phase 2 you understand the material too well to see what is missing — which
 mechanism behind the "destroyed by understanding" rot. The person best placed to finish is the
 person least able to.
 
+**This is the ONLY legitimate reason to hand this work over.** "Running low on context" is not one:
+context is a compaction boundary, not a deadline — a compacted agent continues with a summary, and
+both this file and `memory.md` survive compaction by construction. The compacted original therefore
+strictly dominates a replacement, who would re-read the same documents *without* the summary and
+without any tacit judgement. See `memory.md` § *AI Agent Laziness Patterns* #8. Phase 3 is different
+in kind: there, not knowing the material is the requirement, not the cost.
+
 ---
 
 ## Checks — run ALL of these after EVERY change, not just in phase 1
