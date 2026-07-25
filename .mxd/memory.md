@@ -44,6 +44,53 @@ This is a product property of Matrix's commit model, not a policy preference. Br
 
 **Whoever introduces a change owns ALL consequences** (prompt, UI, tests, docs). Root never writes production code — delegates everything.
 
+## ⚠️ Writing This File — entries rot in three different ways
+
+Full reorganization procedure: `.mxd/memory-reorg.md`. What follows is what you need when **writing
+or updating an entry**, which is every session.
+
+**Three kinds of rot, three detectors, none substitutes for another:**
+
+| Kind | Is a correction written down somewhere? | What finds it |
+|---|---|---|
+| **Superseded** — a later change invalidated this | Yes — but filed under the change, never under the claim | Putting claim and correction in the same region |
+| **Drained** — a count/list quietly stopped being true | **No.** Nobody thinks they are correcting anything | Checking against the code, item by item |
+| **Destroyed by understanding** — a curator deleted it as redundant | Content was there until we removed it | Being forced to enumerate what you dropped |
+
+The drained kind has **no trigger at all**: a stale count and a fresh count look identical. Only a
+deliberate pass catches it, so the interval between passes is how long a wrong number survives.
+
+**Four roles content plays.** Know which one you are writing:
+- **Claims** ("it works like X") — few, must be maintained, **these are what rot**.
+- **Records** ("on date D we did X because Y") — many, **never rot**. Prefer this tense when you can.
+- **Symptoms** ("what you SEE when this bites") — **this is the retrieval key.** This file is
+  organized by cause but queried by symptom: the reader has "the buttons are missing", not
+  "the event type was renamed". Never delete a symptom as a redundant example of a mechanism you
+  have just understood — that is exactly when it looks redundant and exactly when it is needed.
+- **Negative results** ("checked, it is not that") — rare, and they stop the next person reopening
+  a closed question.
+
+**Rules:**
+1. **If code can answer it, point at it — don't snapshot it.** Interfaces, counts, file paths, file
+   lists. Write what code CANNOT answer: why it is shaped this way, what bit us, which rule is
+   load-bearing. "See the `test.todo`s in X" stays true; "3 remain" does not.
+2. **Name things by what they ARE, not where they came from.** A check called "the phase-1
+   invariant" gets switched off after phase 1 — which is exactly when it starts being useful.
+3. **Don't delete a refuted claim — mark it and point at what replaced it.** The old sentence is
+   usually the evidence for why the new design exists. Two riders: when you mark a whole section as
+   history, **name the parts of it that are still live**, or the banner becomes a new trap; and
+   remember a pointer can rot **from either end** — "trust me over that older section" has to be
+   re-checked whenever either end changes.
+4. **Anything probabilistic: one passing sample is not verification.** The complement of mutation
+   testing — that one makes a test fail on purpose, this one says a single green proves nothing.
+
+**Daily maintenance** (cheap, do it every time):
+- Changed an identifier? `grep` it in this file.
+- **Approved a side effect?** Grep for that too — reviewing is how the `agent_idle` behavior change
+  went unrecorded for months.
+- About to leave a sentence standing as CURRENT? Verify it first — moving a sentence under a
+  "current state" heading is **endorsing** it, not relocating it.
+
 ## Language Policy
 
 Code, task tree, and memory.md: English
