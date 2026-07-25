@@ -112,7 +112,10 @@ If a test is genuinely flaky, `bun test` it 5 times and read all 5 saved output 
 - If the tool result shows `<test_output saved at /tmp/mxd/exec-…>`, that file has everything. Read it.
 - If you want to re-investigate, rerun `bun test` again. Both files persist; read either.
 - If you're tempted to pipe "for context reasons": the bash tool's tiered output has already protected your context. Piping doesn't help — it only destroys.
-- ~2119 tests pass, 4 skip, 12 todo (as of 2026-04-18 after Fix A/B/C).
+- ~~~2119 tests pass, 4 skip, 12 todo (as of 2026-04-18 after Fix A/B/C).~~ **Don't record test
+  counts here** — they were already ~500 short within three months, and a stale count is
+  indistinguishable from a fresh one. `bun test` prints the current numbers; that is the only place
+  they are true.
 
 ## Architecture Overview
 
@@ -292,11 +295,16 @@ Manual `/compact` injects a summarization instruction as a user message. If the 
 
 Seven paths in `provider-shared.ts` have this shape. 3 are clean (`continue;` without pushing user msg). ~~1 is fixed. 3 are deferred via test.todo.~~
 
-**Current tally (verified — `drift-lifecycle.test.ts` has exactly ONE `test.todo` left):** 3 of the 4
-are fixed, 1 remains. Fixed since: the yield+compactOnly path below (304fccd), the **done**-resume +
-compactOnly variant (FIX-3 B-L9, `pendingCompactDoneToolCall`), and duplicate-yield extras in the
-compactOnly path (FIX-5 R8-B#11). **Still open**: compact arriving together with a regular message
-during a pending yield — that is the one test.todo, and it is the entry under *Known Bugs*.
+**Do not trust a count here — go read the source.** The open paths are exactly the `test.todo`s in
+`drift-lifecycle.test.ts`; that set shrinks over time and any number written down here starts
+rotting the day after. (It said "1 fixed, 3 deferred" for months while three of the four had been
+fixed — a stale count and a correct count look identical, which is why this is now a pointer.)
+
+Fixed so far, each recorded in its own entry: the yield+compactOnly path (304fccd), the
+**done**-resume + compactOnly variant (FIX-3 B-L9, `pendingCompactDoneToolCall`), and
+duplicate-yield extras in the compactOnly path (FIX-5 R8-B#11). The shape of what survives: paths
+where the queue had OTHER messages alongside the compact, so there was nothing empty to bundle the
+deferred tool_result into.
 
 **Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. One user message with `[tool_result, text]` blocks → valid alternation.
 
@@ -5108,7 +5116,31 @@ native binding regardless of file order. Verified: previously-poisonous orders
 
 `mxd` CLI globally installed via `bun link`. package.json `"bin": { "mxd": "src/cli.ts" }`, cli.ts has `#!/usr/bin/env bun` shebang.
 
-## Audit FU8 Dead-Code Sweep (2026-04-17)
+## Dead-code sweeps: what was deleted, and what deletion taught us
+
+Four sweeps merged (FU8, R7 [LOW], the Clear-All-Sessions removal, FIX-4b). They are pure
+RECORDS — "on date D we deleted X because Y" does not rot the way a claim does — so they are kept
+in full and only gathered together, because as separate top-level entries they were four places to
+look for the same question: *"is this thing still here, and if not, why not?"*
+
+**Re-verified while merging** (2026-07-25), since a deletion record is exactly the kind of entry
+that could have been quietly undone: `persistent-queue.ts`, `openai-compatible-provider.ts`,
+`web/components/icons.tsx`, `_cache_audit.ts`, `_token_audit.ts` and `RelocateBanner.tsx` are all
+still gone; `hasPendingYield`, `formatPendingSection`, `combineSystemPrompt`,
+`buildExternalJsonSchema`, `resetAuthDataCache`, `clarifyTimeoutMs` and `readWithLineMap` have zero
+occurrences. `truncateAfterLine` appears three times but only inside comments explaining why it was
+removed — the function is gone. **One claim from this era did NOT hold and is corrected in place**:
+FU8's "`scope: 'project'` union variant dropped" — see that bullet.
+
+⭐ **The one durable lesson across all four, from FIX-4b C8: "test-only" ≠ "dead".** An audit called
+`tool()` production-dead and asked for its removal. It IS test-only — and it has 23 call sites. That
+makes it live test INFRASTRUCTURE; deleting it would have been a risky 23-site migration that
+changed what those tests test, not a reclamation. The real violation was a genuine duplication
+sitting next to it (`stripZodMeta` + `shapeToJsonSchema` existed verbatim in two files), and fixing
+THAT was the actual win. **When an audit says "dead", check whether it means "unreferenced" or
+"only referenced by tests" — the second is a different claim with a different answer.**
+
+### Audit FU8 Dead-Code Sweep (2026-04-17)
 
 Consolidated cleanup of items flagged by the 12-audit review:
 
@@ -5130,7 +5162,7 @@ Consolidated cleanup of items flagged by the 12-audit review:
 
 Net: ~880 lines deleted, 0 test failures, no functional behavior change.
 
-### dataRoot Hardening (Audit FU5)
+#### dataRoot Hardening (Audit FU5)
 
 **One resolver, `src/data-paths.ts`**, owns every path built from `dataRoot`. Never compute `dataRoot.slice(2)` anywhere else — the grep test in `data-paths.test.ts` fails if a second site appears. `projectTasksDir`, `projectDebugDir`, `getTracker`, and `agent-lifecycle`'s debug snapshot all route through `resolveDataRoot(dataDir, projectId, dataRoot?)`.
 
@@ -5153,11 +5185,11 @@ Net: ~880 lines deleted, 0 test failures, no functional behavior change.
 - `src/runtime/helpers.ts` — re-exports `projectTasksDir`/`projectDebugDir` from data-paths.ts for existing callers (convenience barrel).
 - `src/runtime/agent-lifecycle.ts:~984` — passes `ctx.config.dataRoot` to `projectDebugDir` (was missing, debug snapshots landed at Matrix's path regardless of plugin).
 
-## Audit R7 [LOW] drift cleanup (2026-04-18)
+### Audit R7 [LOW] drift cleanup (2026-04-18)
 
 Four cosmetic items flagged by Audit R7 bundled in one commit:
 
-### pluginApiPrefix split: `src/plugin.ts` → `src/plugin-url.ts` (zero imports)
+#### pluginApiPrefix split: `src/plugin.ts` → `src/plugin-url.ts` (zero imports)
 
 `pluginApiPrefix(name)` moved to a standalone file with ZERO imports. Rationale:
 - `web/runtime-types.ts` (compiled to browser via `@mxd/types` importmap) re-exports `pluginApiPrefix` for plugin web code.
@@ -5169,15 +5201,15 @@ Regression guard: `src/plugin-url-namespace.test.ts` builds the shared module at
 
 JSDoc fix: the old `pluginApiPrefix` docstring claimed "shell wraps a plugin's authFetch so relative paths become prefixed automatically" — the opposite of the b42c9a2 design, which explicitly rejects a shell wrapper. New docstring reflects reality ("explicit prefix prepended by each call site; no shell wrapper, no hidden rewriting").
 
-### BackgroundProcess dead fields removed
+#### BackgroundProcess dead fields removed
 
 `stdout: string` and `stderr: string` on `BackgroundProcess` were zero-initialized and never read. Removed from `src/tools/bash.ts` (type + constructor) and from 4 test object literals in `src/anthropic-compatible-provider.test.ts`. The "kept for test harness compat" comment was stale — grep confirmed zero reads.
 
-### resetAuthDataCache deleted
+#### resetAuthDataCache deleted
 
 `resetAuthDataCache` in `src/auth.ts` became a deprecated no-op after FU4 removed the in-memory cache. Zero callers remained; deleted outright to prevent future code from importing it expecting cache-flush semantics.
 
-## Audit R7: "Clear All Sessions" feature deleted
+### "Clear All Sessions" deleted rather than repaired (2026-04-18)
 
 The project-wide `POST /projects/:id/sessions/clear` endpoint, its CLI subcommand (`mxd sessions clear`), the SettingsPanel danger-zone button, the `/clear` slash command, and `EventStore.clearAll()` are GONE. `handleClearSessions` (shell + plugin), `api.sessionsClear`, and the i18n strings (`settings.clearAllSessions*`, `confirm.clearSessions`) are deleted.
 
@@ -5194,6 +5226,74 @@ The project-wide `POST /projects/:id/sessions/clear` endpoint, its CLI subcomman
 - `clearSessionState` in `event-handler.ts` — frontend state cleanup helper, unrelated to the API
 
 Rule going forward: deletion is preferable to repair when a feature is duplicative AND the user explicitly wants it gone. Don't reach for "fix the URL bug" when the feature itself doesn't justify its surface area.
+
+### FIX-4b sweep + the biome gate (2026-06-05)
+
+Wave-3 audit cleanup. ~78 dead tests removed, net ~−4250 LOC across 22 files (+ new
+`src/zod-schema.ts`). `bun test` 2163 pass / 0 fail; `bun run check:ci` exits 0 (gate
+restored — `--no-verify` can be dropped on main). Committed as 3 deletion commits (grouped by
+non-overlapping file sets) + 1 format-only commit + this memory note.
+
+**C1 — Chat Completions provider deleted**: `openai-compatible-provider.ts` (893 LOC) +
+`.test.ts` (1624 LOC, 41 tests). Production-dead — `createProviderFromAuth`
+(runtime/helpers.ts) only builds Anthropic + OpenAIResponses. `eventsToOpenAIMessages` (the
+Chat-Completions event→message converter) lived ONLY there; `events.test.ts` exercised it in
+~36 tests (`describe("eventsToOpenAIMessages")` block + scattered `OpenAI:`-prefixed tests +
+dual Anthropic/OpenAI assertions) — all removed, Anthropic assertions preserved. Its
+pricing/context utils (getModelPricing/getContextWindow/clearContextWindowCache) were
+near-verbatim dups of the LIVE copies in anthropic-/openai-responses-compatible-provider.ts;
+anthropic-compatible-provider.test.ts imports resolve to the Anthropic copy. Closes draft
+01KN496YTW6HQNDWEKV0W99NQQ.
+
+**F-L1 — hasPendingYield deleted** (events.ts): zero production callers (re-verified post
+FIX-1/FIX-3 — FIX-1's repair rewrite uses its own `lastToolCallEvent`, not hasPendingYield).
+`hasPendingImplicitYield` is the LIVE sibling (provider-shared.ts:759) — kept. Removed its
+tests from events.test.ts + jsonl-stress.test.ts; the jsonl-stress tests that ALSO asserted
+`buildSessionRepair` kept those assertions (renamed to drop the dead-fn reference).
+
+**Tier-2 dead exports** (declaration-only, zero refs): formatPendingSection (events.ts),
+combineSystemPrompt (system-prompts.ts), buildExternalJsonSchema (tool-def.ts — the
+`buildExternalShape` it wrapped stays live in mcp-endpoint.ts), SerializedTreeNode (types.ts).
+
+**C6 — clarifyTimeoutMs vertical deleted**: a user-settable setting that did NOTHING.
+`getClarifyTimeoutMs` (resource-registry.ts) was never called, no clarify-timeout mechanism
+exists, and the SettingsPanel "Clarify Timeout (ms)" input lied. Removed config field+default,
+cli row + KNOWN_CONFIG_KEYS, resource-registry type + getter, SettingsPanel field, and i18n
+keys `settings.clarifyTimeout` + the now-orphaned `settings.noTimeout` (only the clarify field
+used it) in BOTH web/ and plugin i18n copies.
+
+**C3** — RelocateBanner.tsx deleted (orphan; only ref a stale "moved to shell" comment — it was
+NOT moved, relocate survives via CLI). **C9** — collapsed duplicate MCP_TOOL_PREFIX into
+MCP_PREFIX (plugin tool-names.ts). **A-F7** — deleted the unreachable `scopeOpts.get(id) ??
+{stubs}` fallback in routes/agent.ts `/restart` (createApp throws if buildScopeOpts missing) →
+explicit guard-throw. **C4** — deleted `_cache_audit.ts` + `_token_audit.ts` (standalone
+investigation scripts, zero importers, made real Anthropic API calls — a liability; recoverable
+from git history).
+
+**C8 — NARROWED (audit's "dead" was WRONG)**: the audit called `tool()` (tool-definition.ts)
+"production-dead (test-only)" and asked to delete it. `tool()` IS test-only but NOT dead — it's
+live test infrastructure with 23 call sites (anthropic/openai-responses provider tests,
+evaluate-script, tool-execution). Its `tool(name, desc, zodRawShape, handler)` signature is
+intentionally lightweight; the production builder `toToolDefinition(defineTool({params:
+ParamDefs}), auth)` is a heavier, different shape. Deleting `tool()` = a risky 23-site migration
+pulling auth/ParamDefs into unit tests that specifically test executeTool's Zod validation on the
+raw inputSchema — that changes what's tested, NOT reclamation. KEPT `tool()`. The REAL violation
+was the genuine duplication: `stripZodMeta` + `shapeToJsonSchema` existed verbatim in BOTH
+tool-def.ts and tool-definition.ts → extracted both to a new leaf `src/zod-schema.ts` (depends
+only on zod, no import cycle); both files import `shapeToJsonSchema` from it.
+**Lesson: "test-only" ≠ "dead." A test helper with N call sites is live infra; deleting it is
+test refactoring, not reclamation. Verify the actual violation (here: duplication) and fix THAT.**
+
+**biome gate**: main was failing `check:ci` with 4 format ERRORS (incl. event-store.ts K8
+`appendFileSync`) — the pre-commit hook had been bypassed via `--no-verify`. Ran `bun run check`
+(write, NO `--unsafe`) → auto-fixed format only → committed as a SEPARATE commit from the
+deletions. `check:ci` now exits 0. 35 lint WARNINGS remain (noNonNullAssertion + noExplicitAny —
+pre-existing, not auto-fixable, out of scope); warnings don't fail check:ci, only the format
+errors did. NOTE: the worktree pre-commit hook is /dev/null (hooksPath), so these commits skipped
+the hook locally — verify on main's gate after merge.
+
+**NOT touched**: mock-showcase (C2) — excluded, becoming a local plugin (draft
+01KTBZRFXD3A9J3JTKK38FH3WA).
 
 ## Content-hashed build pipeline (2026-04-18) — `Cache-Control: immutable` replaces `no-store`
 
@@ -5276,74 +5376,6 @@ addressable URLs are the web-native answer to this class of problem —
 the browser's cache is already an infinite content-addressable store if
 you feed it content-addressable URLs.
 
-## FIX-4b (2026-06-05) — dead-code sweep + biome gate restored
-
-Wave-3 audit cleanup. ~78 dead tests removed, net ~−4250 LOC across 22 files (+ new
-`src/zod-schema.ts`). `bun test` 2163 pass / 0 fail; `bun run check:ci` exits 0 (gate
-restored — `--no-verify` can be dropped on main). Committed as 3 deletion commits (grouped by
-non-overlapping file sets) + 1 format-only commit + this memory note.
-
-**C1 — Chat Completions provider deleted**: `openai-compatible-provider.ts` (893 LOC) +
-`.test.ts` (1624 LOC, 41 tests). Production-dead — `createProviderFromAuth`
-(runtime/helpers.ts) only builds Anthropic + OpenAIResponses. `eventsToOpenAIMessages` (the
-Chat-Completions event→message converter) lived ONLY there; `events.test.ts` exercised it in
-~36 tests (`describe("eventsToOpenAIMessages")` block + scattered `OpenAI:`-prefixed tests +
-dual Anthropic/OpenAI assertions) — all removed, Anthropic assertions preserved. Its
-pricing/context utils (getModelPricing/getContextWindow/clearContextWindowCache) were
-near-verbatim dups of the LIVE copies in anthropic-/openai-responses-compatible-provider.ts;
-anthropic-compatible-provider.test.ts imports resolve to the Anthropic copy. Closes draft
-01KN496YTW6HQNDWEKV0W99NQQ.
-
-**F-L1 — hasPendingYield deleted** (events.ts): zero production callers (re-verified post
-FIX-1/FIX-3 — FIX-1's repair rewrite uses its own `lastToolCallEvent`, not hasPendingYield).
-`hasPendingImplicitYield` is the LIVE sibling (provider-shared.ts:759) — kept. Removed its
-tests from events.test.ts + jsonl-stress.test.ts; the jsonl-stress tests that ALSO asserted
-`buildSessionRepair` kept those assertions (renamed to drop the dead-fn reference).
-
-**Tier-2 dead exports** (declaration-only, zero refs): formatPendingSection (events.ts),
-combineSystemPrompt (system-prompts.ts), buildExternalJsonSchema (tool-def.ts — the
-`buildExternalShape` it wrapped stays live in mcp-endpoint.ts), SerializedTreeNode (types.ts).
-
-**C6 — clarifyTimeoutMs vertical deleted**: a user-settable setting that did NOTHING.
-`getClarifyTimeoutMs` (resource-registry.ts) was never called, no clarify-timeout mechanism
-exists, and the SettingsPanel "Clarify Timeout (ms)" input lied. Removed config field+default,
-cli row + KNOWN_CONFIG_KEYS, resource-registry type + getter, SettingsPanel field, and i18n
-keys `settings.clarifyTimeout` + the now-orphaned `settings.noTimeout` (only the clarify field
-used it) in BOTH web/ and plugin i18n copies.
-
-**C3** — RelocateBanner.tsx deleted (orphan; only ref a stale "moved to shell" comment — it was
-NOT moved, relocate survives via CLI). **C9** — collapsed duplicate MCP_TOOL_PREFIX into
-MCP_PREFIX (plugin tool-names.ts). **A-F7** — deleted the unreachable `scopeOpts.get(id) ??
-{stubs}` fallback in routes/agent.ts `/restart` (createApp throws if buildScopeOpts missing) →
-explicit guard-throw. **C4** — deleted `_cache_audit.ts` + `_token_audit.ts` (standalone
-investigation scripts, zero importers, made real Anthropic API calls — a liability; recoverable
-from git history).
-
-**C8 — NARROWED (audit's "dead" was WRONG)**: the audit called `tool()` (tool-definition.ts)
-"production-dead (test-only)" and asked to delete it. `tool()` IS test-only but NOT dead — it's
-live test infrastructure with 23 call sites (anthropic/openai-responses provider tests,
-evaluate-script, tool-execution). Its `tool(name, desc, zodRawShape, handler)` signature is
-intentionally lightweight; the production builder `toToolDefinition(defineTool({params:
-ParamDefs}), auth)` is a heavier, different shape. Deleting `tool()` = a risky 23-site migration
-pulling auth/ParamDefs into unit tests that specifically test executeTool's Zod validation on the
-raw inputSchema — that changes what's tested, NOT reclamation. KEPT `tool()`. The REAL violation
-was the genuine duplication: `stripZodMeta` + `shapeToJsonSchema` existed verbatim in BOTH
-tool-def.ts and tool-definition.ts → extracted both to a new leaf `src/zod-schema.ts` (depends
-only on zod, no import cycle); both files import `shapeToJsonSchema` from it.
-**Lesson: "test-only" ≠ "dead." A test helper with N call sites is live infra; deleting it is
-test refactoring, not reclamation. Verify the actual violation (here: duplication) and fix THAT.**
-
-**biome gate**: main was failing `check:ci` with 4 format ERRORS (incl. event-store.ts K8
-`appendFileSync`) — the pre-commit hook had been bypassed via `--no-verify`. Ran `bun run check`
-(write, NO `--unsafe`) → auto-fixed format only → committed as a SEPARATE commit from the
-deletions. `check:ci` now exits 0. 35 lint WARNINGS remain (noNonNullAssertion + noExplicitAny —
-pre-existing, not auto-fixable, out of scope); warnings don't fail check:ci, only the format
-errors did. NOTE: the worktree pre-commit hook is /dev/null (hooksPath), so these commits skipped
-the hook locally — verify on main's gate after merge.
-
-**NOT touched**: mock-showcase (C2) — excluded, becoming a local plugin (draft
-01KTBZRFXD3A9J3JTKK38FH3WA).
-
 ## bun 1.3.7–1.3.8 SIGTRAP on worker teardown — RESOLVED 2026-07-02: global bun upgraded to 1.3.14
 
 RESOLUTION (root, same day): minimal 7-line repro (spawn Worker → terminate → exit 133) confirmed
@@ -5380,6 +5412,11 @@ logs: `~/Library/Logs/DiagnosticReports/bun-2026-07-02-*.ips`.
   base, plus scoped `bun test ./<files>` on non-worker test files.
 
 ## typecheck gate restored — every one of the 24 errors was a cast/hack, not a real type problem (2026-07-24)
+
+> **Second time.** *Dead-code sweeps* § FIX-4b records the same story for biome three months
+> earlier: gate found bypassed, errors accumulated behind it, cleared in one pass. Two independent
+> recurrences of one failure mode is the argument of § *Why this kept happening* below — the problem
+> was never the specific errors, it was that a checked-in hook file is not an enforced hook.
 
 `bun run typecheck` had accumulated 24 errors across ~6 merges, undetected because
 nothing was ever gated (see the `core.hooksPath` correction in Known Pitfalls — the
@@ -5534,12 +5571,11 @@ Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", 
 
 ## Known Bugs (unfixed)
 
-- Manual compaction during yield → consecutive user messages → API 400. **Exactly one path remains**
-  (verified: one `test.todo` in `drift-lifecycle.test.ts`, "compact + regular message in same drain
-  during pending yield"). The compact-ONLY variants — yield-side and done-side — and the
-  duplicate-yield-extras variant are all fixed; see *Compaction Asymmetry* for the tally and which
-  fix closed which. The surviving case needs compact and a regular message to arrive in the SAME
-  drain, which is why it survived: every other path had an empty queue to bundle into.
+- Manual compaction during yield → consecutive user messages → API 400. **The live list of open
+  paths is the `test.todo` set in `drift-lifecycle.test.ts`** — read it rather than trusting a count
+  here. Shape of what remains: compact arriving in the SAME drain as a regular message, so there is
+  no empty queue to bundle the deferred tool_result into. The compact-ONLY variants (yield-side and
+  done-side) and the duplicate-yield-extras variant are fixed; see *Compaction Asymmetry*.
 
 ## Vertical Dependency Boundaries
 
