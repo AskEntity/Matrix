@@ -2532,214 +2532,133 @@ visually confirm a new log-entry card renders without running a real agent.
 # Auth & External API
 ---
 
-## Stateless HTTP MCP Endpoint
+## Auth is always on, and the anonymous surface is four things
 
-POST `/mcp` — MCP Streamable HTTP transport for external clients. Stateless: no attach_to, no session state. 6 tools: list_projects, get_tree, get_task, get_logs (both), send_user_message, yield_external (external-only). ToolDef `availability: "internal" | "external" | "both"` on every tool. Workflow: send_user_message → yield_external → get_logs.
+There is **no auth-disabled mode and no opt-out.** The `autoInitAuth` parameter was deleted, every
+`createDaemon` unconditionally runs `ensureAuthInitialized`, and the middleware's "no jwtSecret →
+skip" branch is gone: an anonymous request to a non-skip path is ALWAYS 401. Tests mint a token
+rather than disabling auth. Production binds `127.0.0.1` unless `MXD_BIND_HOST` is set — the old
+`*:7433` default was LAN-reachable during the bootstrap window.
 
-## Anti-pattern: Conflating Attached-Observer with Peer-Project
+⚠️ **`readAuthData` throws on a parse failure, an empty file or a read error**, returning `{}` only
+for ENOENT (fresh install). And `writeAuthData` writes to a temp sibling and renames, so a crash
+mid-write cannot leave a truncated or empty `auth.json` — which, before auth became mandatory, was
+a file state that silently disabled auth entirely.
 
-**Lesson**: Layer 1 (attached external client, asymmetric) and Layer 2 (peer project, symmetric) are different relationships. Same wire format ≠ same semantic. Check symmetry before unifying.
+**Exactly four ways a request skips auth. This is the whole list**, and understating it is the wrong
+direction for an auth note to be wrong in:
 
-## Auth
-
-Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_key>` → encrypted JWT → paste to browser. CLI auto-auth via `signCLIToken()`.
-
-## Auth/Resource Split
-
-- `tool-auth.ts`: Auth opaque type. `checkPermission(auth, mode, resource)`. Modes: project, exact, subtree, family, root, human.
-- `resource-registry.ts`: Global handle-based functions (`R.getTracker`, `R.emit`, etc.). No closures.
-- `tool-def.ts`: ParamDecl with `bind`. Handler signature: `handler(args, auth, toolCallId)`.
-- All 32 tools use ToolDef + auth + global functions. Zero closure-based handlers.
-
-## AuthGroup Discriminated Union
-
-`AuthGroup = AnthropicAuthGroup | OpenAIAuthGroup` — discriminated on `provider`. `systemPreamble?: string` on Anthropic. System blocks always `ttl: "1h"`.
-
-## Auth Hardening (Audit FU4)
-
-### Defaults that close the "LAN-open window"
-- Fresh daemon auto-initializes `auth.json` with `jwtSecret` + `secretVersion=1`
-  during `createDaemon`. ~~Production callers get this by default; tests opt out
-  via `createDaemon({ autoInitAuth: false })`.~~ **There is no opt-out** — the
-  parameter was deleted in Audit R7 P1.3 and auth is now unconditionally on for
-  every daemon boot, tests included (they mint a token instead; see the migration
-  note in that entry). This bullet contradicted P1.3 in the same file.
-- Production entry binds `127.0.0.1` unless `MXD_BIND_HOST` is set. Previous
-  default `*:7433` was LAN-reachable during the bootstrap window.
-
-### JWT claims
-- `sub: "cli" | "session" | "stream"`. `/events` accepts only `stream`;
-  REST accepts only `cli`/`session`. Subject restriction lives in
-  `verifyJWT(authPath, token, allowedSubjects)`.
-- `sv`: secretVersion. `bumpSecretVersion` (POST /auth/logout) rotates it,
-  invalidating every outstanding token. Legacy `sv`-less tokens always fail.
-- Session 30d, CLI 5min, stream 5min.
-
-### No auth cache
-Prior `authDataCache` caused "user ran `mxd auth` but running daemon
-never re-read auth.json" (Audit L H3). Cache removed; `readAuthData`
-reads from disk on every call (local JSON, cost negligible).
-`resetAuthDataCache()` kept as deprecated no-op for test compat.
-
-### SSE stream tokens (Audit G M1 + M4)
-- Frontend calls `POST /auth/stream-token` (Authorization: Bearer session)
-  before every EventSource (re)connect → 5min stream token in `?token=`.
-- Heartbeat re-verifies the token; on expire/revoke, emits named event
-  `auth_expired` and closes the stream. Watchdog in `useSSE` bumps
-  reconnectKey → re-fetch stream token → fresh EventSource.
-- Long-lived session token never appears in URL / proxy logs / history.
-
-### Auth middleware exact-skip
-~~Skip set: `{ "/", "/auth/status", "/auth/logout" }` + static `/vendor/` `/app/` prefixes.~~
-**SUPERSEDED twice** — see *The anonymous surface* under Audit R7 P1 for the current list, which is
-one exact path plus two prefixes plus a GET-only frontend-path predicate. The durable half of this
-entry: replacing a `startsWith("/auth/")` skip with an EXACT set (Audit J H1), because the prefix
-form would silently exempt any future `/auth/*` route someone added. Regression guard:
-`GET /auth/bogus` → 401.
-
-### Case-insensitive Bearer
-`extractBearerToken` uses `/^Bearer[ \t]+(.+)$/i`. RFC 7235 mandates
-case-insensitive scheme. `bearer`, `BeArEr`, `Bearer` all accepted.
-
-### API-key masking
-- `maskConfig(config)` replaces every `authGroups.*.{apiKey, oauthToken,
-  accessToken, refreshToken}` with `prefix…last4`. Applied on:
-  GET /config/global, GET /projects/:id/config/all (global + resolved),
-  PATCH /config/global response.
-- `mergeAuthGroups` on PATCH preserves plaintext when client echoes a
-  masked value (UI didn't touch the field). Keeps the "save entire
-  authGroups object" pattern safe.
-
-### Destructive-tool permission (Audit G H1)
-`orchestrator-tools.ts` helper `requireSubtreePermission(auth, projectId,
-nodeId, opName)` applied at handler entry for:
-- update_task (ALL mutations, not just reparent)
-- close_task, delete_task, reset_task
-- create_folder (vs parent), delete_folder, rename_folder (vs owning task)
-Folders resolve to nearest task ancestor. reorder_tasks + fork_task_context
-had the check already — now consistent across the destructive suite.
-
-### Upstream error classification (Audit L H5)
-`classifyUpstreamError(e)` / `formatUpstreamError(e, prefix)` in
-`tool-execution.ts`: provider-agnostic mapping of {status, keyword} →
-{auth, rate_limit, credits, invalid_request, upstream_down, network,
-other} + one-line curated headline. Raw message preserved (trimmed to
-300 chars) for debugging. Used by `runAgentForNode` catch + provider
-outer-retry emit — users no longer see raw Anthropic JSON blobs.
-
-## auth.json file mode — 0o600 + chmod-on-init
-
-`src/auth.ts:writeAuthData` passes `{mode: 0o600}` to `writeFile`. Legacy files get a one-time upgrade via `ensureSecureFileMode` called at the top of `ensureAuthInitialized` (daemon boot).
-
-**Non-obvious POSIX detail**: Node's `fs.writeFile(path, data, {mode})` only honors `mode` on file CREATION (O_CREAT). Overwriting an existing file preserves whatever mode the inode already has — the `mode` option is silently ignored. This is why two paths are needed:
-- `{mode: 0o600}` on writeFile → secures NEW files
-- `chmod` on init for loose existing files → one-shot upgrade path
-
-Without the chmod pass, any auth.json created by an older Matrix version stays at 0o644 forever, even after every `bumpSecretVersion` rewrite. `jwtSecret` remains world-readable → any local user can forge CLI/session/stream tokens.
-
-**Chmod mask**: `(mode & 0o077) !== 0` — fires only if any group/other permission bit is set. Deliberately preserves user-hardened 0o400 (read-only) files untouched.
-
-**Tests**: POSIX-only via `describe.skipIf(process.platform === "win32")`. Five tests cover fresh creation, legacy upgrade, mask coverage (0o640/604/660/666), idempotency, and 0o400 preservation. Mutation-tested: removing either the mode option or the chmod pass makes a test fail.
-
-## Audit R7 P1 — critical security hardening (2026-04-18)
-
-Four items landed together. All fixed behaviors the audit verified live in session 01KPFE6HSZ2TWD3G034D5J0BNW.
-
-### P1.1 — `/auth/logout` requires a valid token
-- `src/daemon.ts` `SKIP_EXACT`: `/auth/logout` removed. Only `/`, `/auth/status`, `/vendor/`, `/app/` remain anonymous.
-- Previous behavior: any drive-by webpage could POST `/auth/logout` and force `bumpSecretVersion`, logging out every active user (CSRF DoS).
-- Handler's own JSDoc already documented the intended 401 behavior; code now agrees.
-- Regression test: `daemon-auth.test.ts` "POST /auth/logout rejects anonymous callers" — asserts 401 + `secretVersion` unchanged.
-
-### P1.3 — auth-disabled mode removed entirely (user: "never allow auth-disabled")
-- `createDaemon({ autoInitAuth })` parameter **deleted**. Every daemon boot unconditionally runs `ensureAuthInitialized`.
-- Middleware `if (!hasJwtSecret) skip` branch **deleted**. Anonymous request to a non-skip path is ALWAYS 401.
-- `hasJwtSecret` no longer imported in daemon.ts; remains exported for other callers (cli.ts).
-- `readAuthData` in `src/auth.ts` throws on parse failure / empty file / read error. ENOENT (first boot) still returns `{}` so `ensureAuthInitialized` can create the file.
-- `writeAuthData` now uses **atomic rename**: write to `.auth.json.tmp.<pid>.<ts>.<rand>` → POSIX rename over `auth.json`. Crash mid-write (bumpSecretVersion, ensureAuthInitialized) leaves the original file intact — never a truncated/empty auth.json that would have silently disabled auth pre-P1.3.
-- `/auth/status` always reports `enabled: true` (field preserved for backward compat with older browser bundles).
-- `/auth/logout` / `/auth/stream-token` handlers dropped their `!hasJwtSecret` no-op branches.
-- `/events` heartbeat unconditionally re-verifies the stream token.
-
-### P1.4 — server rejects credential fields on per-project PATCH
-- `PATCH /projects/:id/config` and `PATCH /projects/:id/config/repo` return 400 if body contains `authGroups` or `defaultAuth`. Helper: `rejectCredentialFields`.
-- Previously only the CLI (`src/cli.ts`) enforced `GLOBAL_ONLY_FIELDS`. A non-friendly HTTP client could PATCH a project's config with their own `authGroups` → next agent run uses attacker's credentials.
-- `maskConfig` generalized to `Partial<MatrixConfig>` so all three-layer views (global, repo, local, resolved) mask authGroups uniformly. Defense in depth: even if an attacker writes authGroups directly to on-disk config JSON, GET endpoints mask plaintext.
-- `GET /projects/:id/config` now also applies `maskConfig` to the local layer.
-
-### P1.5 — UI logout is a two-step server-side-first sequence
-- `web/ShellApp.tsx:handleLogout` is now async: `await authFetch('/auth/logout', {method:'POST'})` → `clearToken()` → reload.
-- Server-side `bumpSecretVersion` invalidates the token before local clear. Without this step a session JWT remains valid for up to 30d on the server; a stolen localStorage copy could be replayed from another browser.
-- POST failure (expired token, network down) still falls through to local clear + reload — user's intent to end the session is unconditional.
-- Regression test: `ShellApp.test.tsx` "handleLogout calls POST /auth/logout BEFORE clearing local token" — exercises the exact sequence: authFetch POST 200, secretVersion bumped, old token now rejected as 401.
-
-### Test migration (P1.3)
-After auth became always-on, every test that went through `daemon.fetch` against a protected endpoint had to mint a token. Pattern:
-
-```ts
-const token = await createTestToken(join(dataDir, "auth.json"));  // mints BEFORE createDaemon
-const daemon = await createDaemon({ dataDir });                    // secretVersion matches
-```
-
-Helper: `src/test-utils/auth-helper.ts` → `createTestToken(authPath, { sub?: "session" | "cli" | "stream" })`. Also `withAuth(token, extra?)` for building headers.
-
-Per-test pattern varies — a small `authed(daemon, token)` wrapper that attaches `Authorization: Bearer` is common. `src/test-utils/daemon-harness.ts` does this internally and exposes `fetch` pre-wrapped.
-
-Migrated files: `daemon.test.ts`, `daemon-auth.test.ts`, `daemon-bootstrap.test.ts`, `daemon-plugin-ui.test.ts`, `plugin-url-namespace.test.ts`, `daemon-harness.ts`, `web/ShellApp.test.tsx`. Lines migrated: ~200 across 7 files, within scope budget.
-
-### The anonymous surface (verified 2026-07-25 — this is the whole list)
-
-Four ways a request skips auth, and `SKIP_EXACT` is now only the first:
-
-1. `SKIP_EXACT` = **`{"/auth/status"}`**, one entry. The login page must be able to ask "am I
+1. `SKIP_EXACT`, which is **one entry**: `/auth/status`. The login page must be able to ask "am I
    authenticated?" before it has a token.
-2. `/vendor/` and `/app/` prefixes — compiled bundles, no secrets.
-3. **`GET` + `isFrontendPath(path)`** — `/` exact, OR the first path segment is a **currently
-   registered project id**. This is the biggest part of the surface and the least obvious: after
-   Task Y, tasks live at `/<projectId>/<scope>/<taskPath>`, browsers do not send `Authorization` on
-   navigation, so a refresh on such a URL must reach the shell. The shell itself is
-   auth-content-free and every API call it makes is gated by this same middleware. Unregistered
-   first segments fall through to a clean 404. See *Task Y SPA fallback* for the `pm.has` predicate
-   and why it is not a ULID regex.
-4. Nothing else. **Everything under `/auth/*` other than `/auth/status` requires a token** —
-   regression test `/auth/bogus` → 401, which exists because a former `startsWith("/auth/")` skip
-   would have silently exempted any future `/auth/*` route.
+2. The `/vendor/` and `/app/` prefixes — compiled bundles, no secrets.
+3. **`GET` + `isFrontendPath(path)`** — `/` exactly, or a first path segment that is a **currently
+   registered project id**. This is the largest and least obvious part of the surface: tasks live at
+   `/<projectId>/<scope>/<taskPath>`, browsers do not send `Authorization` on navigation, and a
+   refresh on such a URL must reach the shell. The shell itself is auth-content-free and every API
+   call it then makes goes through this same middleware. Unregistered first segments fall through
+   to a clean 404.
+4. Nothing else. **Everything under `/auth/*` except `/auth/status` requires a token**, guarded by a
+   regression test asserting `GET /auth/bogus` → 401 — which exists because a former
+   `startsWith("/auth/")` skip would have silently exempted any future `/auth/*` route.
 
-**Method-gated on purpose**: item 3 is `GET` only. POST/PATCH to a frontend-shaped path stays
-401 — those are not legitimate SPA paths, and an honest 401 beats accidentally serving HTML.
+⚠️ **Item 3 is `GET`-only on purpose.** POST/PATCH to a frontend-shaped path stays 401; those are not
+legitimate SPA paths, and an honest 401 beats accidentally serving HTML.
 
-~~Earlier descriptions of this set said `{"/", "/auth/status", "/auth/logout"}`, and later
-`{"/", "/auth/status"}` + prefixes.~~ Both are superseded: `/auth/logout` was removed by P1.1 (it
-was CSRF-abusable — any drive-by page could force a `bumpSecretVersion` and log everyone out), and
-`/` moved out of `SKIP_EXACT` into `isFrontendPath` when Task Y made project paths server-visible.
-Reading either old list understates the anonymous surface, which is exactly the wrong direction for
-an auth note to be wrong in.
+⚠️ **The predicate is `pm.has(firstSegment)`, not a ULID regex, and it is deliberately the SAME
+predicate used by the SPA-fallback wildcard** (`app.get("*")`). One predicate, one answer — there is
+no way to get "auth bypassed but the wildcard 404s". A regex was considered and rejected: a
+project's *existence* is the correctness condition, not its id format, and under a regex a stale or
+deleted id would load a broken SPA that immediately 404s on its own data fetches instead of 404ing
+cleanly. Backend route names never collide with project ids because ULIDs are 26 chars of base32.
 
-## Audit R7 P2 — CLI onboarding fixes (2026-04-18)
+⚠️ **`/auth/logout` requires a valid token.** It was in the skip list, so any drive-by page could POST
+it and force a `bumpSecretVersion`, logging out every active user — CSRF denial of service. The
+handler's own docstring already described the 401 behavior; the code just did not agree.
 
-Two independent CLI fixes, both in `src/cli.ts`, landed as separate commits for per-fix revert granularity. Both pinch points were filed by five+ independent auditors — onboarding-critical.
+## Tokens, credentials and the destructive-tool gate
 
-### P2.1 — `mxd config auth add` auto-promotes first group to defaultAuth
+JWTs carry `sub` (`"cli" | "session" | "stream"`) and `sv` (secret version). `/events` accepts only
+`stream`; REST accepts only `cli`/`session`; a token with no `sv` always fails. `bumpSecretVersion`
+(POST `/auth/logout`) rotates it and invalidates every outstanding token. Lifetimes: session 30d,
+CLI 5min, stream 5min. `extractBearerToken` matches `/^Bearer[ \t]+(.+)$/i` because RFC 7235 makes
+the scheme case-insensitive.
 
-Fresh users run `mxd config auth add anthropic --key sk-ant-...` and the README implies that's it. Before P2.1 the command only wrote `authGroups[name]`; `cfg.defaultAuth` stayed `""` and the next `mxd send` threw `"No auth group configured. Add an auth group in Settings > Global > Auth Groups and set defaultAuth."` Provider resolution reads `cfg.defaultAuth` — add-without-promote was a half-command.
+⚠️ **There is no auth cache, and do not add one back.** A previous `authDataCache` produced "the user
+ran `mxd auth` but the running daemon never re-read `auth.json`". `readAuthData` hits disk on every
+call; it is a small local JSON file and the cost is negligible against that failure mode.
 
-Fix in `handleConfigAuth`'s add branch: on the final save, if `cfg.defaultAuth` is empty, set it to the group being added. If already set (user adding a second provider), leave it alone and hint at `mxd config set defaultAuth <name> --global` to switch — we never silently clobber an existing pick.
+**The long-lived session token never appears in a URL.** The frontend POSTs `/auth/stream-token`
+(with the session Bearer) before every EventSource connect and passes the resulting 5-minute token
+as `?token=`; the SSE heartbeat re-verifies it and, on expiry or revocation, emits a named
+`auth_expired` event and closes the stream, which the client's watchdog turns into a fresh token and
+a new EventSource. **`mxd watch` must do the same** — its own `sub: "cli"` token is rejected by
+`/events`, producing a 401 → reconnect → 401 loop forever, and each reconnect must re-mint rather
+than reuse a possibly-revoked token.
 
-Output strings are semantic signals: `"Set as default."` on promote, `"Current default is \"<prior>\"; run \`mxd config set defaultAuth <name> --global\` to switch."` on leave-alone. Tests assert the first loosely (`toLowerCase().includes("set as default")`) so future rewording doesn't flake; they assert the second via `toContain("openai") + toMatch(/switch|defaultAuth/i)`.
+⚠️ **Credentials are masked on read and protected on write, in three places.** `maskConfig` replaces
+every `authGroups.*.{apiKey, oauthToken, accessToken, refreshToken}` with `prefix…last4` on every
+config view including the resolved and local layers; `mergeAuthGroups` preserves the plaintext when
+a client echoes back a masked value, which is what keeps the UI's "save the entire authGroups
+object" pattern safe; and `PATCH /projects/:id/config` and `/config/repo` **return 400 if the body
+contains `authGroups` or `defaultAuth`**. That last one was CLI-only enforcement before, so a
+non-friendly HTTP client could put its own credentials into a project's config and the next agent
+run would use them.
 
-### P2.2 — `mxd watch` mints a stream token before opening /events
+⚠️ **UI logout is server-first, and the order is the point**: `await authFetch('/auth/logout')` →
+`clearToken()` → reload. Clearing locally first leaves the session JWT valid on the server for up to
+30 days, so a stolen `localStorage` copy replays from another browser. If the POST fails the local
+clear still happens — the user's intent to end the session is unconditional.
 
-After Audit R7 P1.3 auth is always on; `/events` middleware accepts only `sub=stream` JWTs. The CLI's own `sub=cli` token (what old `mxd watch` sent as `?token=...`) is rejected → 401 → reconnect → 401 loop forever.
+⚠️ **`auth.json` needs BOTH a mode on write and a chmod on init, because of a POSIX detail that
+looks like a bug.** Node's `fs.writeFile(path, data, {mode})` only honors `mode` on file CREATION
+(`O_CREAT`); overwriting an existing file silently preserves whatever mode the inode already has. So
+`{mode: 0o600}` secures new files, and `ensureSecureFileMode` at daemon boot upgrades loose existing
+ones. Without the chmod pass, an `auth.json` created by an older version stays `0o644` forever even
+after every rewrite, leaving `jwtSecret` world-readable and forgeable by any local user. The mask is
+`(mode & 0o077) !== 0`, which fires only on a group/other bit and therefore leaves a user-hardened
+`0o400` alone.
 
-Fix mirrors `.mxd/plugin/web/hooks.ts`'s `useSSE`:
-1. New helper `fetchStreamToken()` next to `getCLIToken()`: POST `/auth/stream-token` with CLI Bearer → return 5min stream token. On any failure → null (caller falls through to tokenless GET /events → server 401s → existing reconnect backoff handles it).
-2. `watchProject.connect()` calls `fetchStreamToken()` each reconnect iteration instead of `getCLIToken()`. Recursive reconnect structure naturally re-mints — never reuse a stale/revoked token across reconnects.
+**Destructive tools check `requireSubtreePermission` at handler entry**: `update_task` (all
+mutations, not only reparent), `close_task`, `delete_task`, `reset_task`, and the three folder tools
+(resolving a folder to its nearest task ancestor). `reorder_tasks` and `fork_task_context` already
+had it; the point was making the whole destructive suite consistent.
 
-Stream token rides in `?token=` on `/events`; CLI Bearer rides as `Authorization` header on the POST. Long-lived token never appears in proxy logs / shell history / `ps`-visible argv.
+**Upstream errors are classified before they reach a user.** `classifyUpstreamError` maps
+`{status, keyword}` to `auth / rate_limit / credits / invalid_request / upstream_down / network /
+other` with a one-line headline, keeping the raw message (trimmed to 300 chars) for debugging.
+Users no longer see raw Anthropic JSON blobs.
 
-**Test gotcha (macOS)**: `mkdtemp(tmpdir())` returns `/var/folders/...` but `process.cwd()` inside the spawned subprocess returns the resolved `/private/var/folders/...`. `resolveCurrentProject`'s string compare fails; CLI exits 1 with "No project found for current directory" before ever reaching the stream-token flow. Fix in test setup: `realpathSync(await mkdtemp(...))` for both dataDir and fakeHome, so the project is registered with the path the CLI's `cwd` actually resolves to.
+**Layering**: `tool-auth.ts` owns the opaque `Auth` type and `checkPermission(auth, mode, resource)`;
+`resource-registry.ts` owns handle-based global functions (`R.getTracker`, `R.emit`) with no
+closures; `tool-def.ts` owns `ParamDecl` with `bind`, so bound params are hidden from the agent and
+filled automatically. Every tool is a `ToolDef` with an auth-aware handler — there are no
+closure-based handlers left. `AuthGroup` is a discriminated union on `provider`.
 
-**Mutation-verified**: all 6 tests (3 per fix, in `src/cli-audit-r7-p2_1.test.ts` and `src/cli-audit-r7-p2_2.test.ts`) fail when the fix line is reverted. Test 3 of P2.2 especially — stdout shows `"Reconnecting in 2s... (attempt 1)"` without the fix, exactly the 401-loop symptom users reported.
+## The external MCP endpoint
+
+`POST /api/matrix/mcp` is a stateless MCP Streamable HTTP transport for external clients — no
+attach, no session state. Six tools, gated by `availability: "internal" | "external" | "both"` on
+every ToolDef. The intended workflow is `send_user_message` → `yield_external` → `get_logs`.
+`get_logs` is `"external"` rather than `"both"` because agents do not need to read each other's
+JSONL.
+
+⚠️ **Anti-pattern this endpoint taught us: an attached external observer and a peer project are
+different relationships.** Layer 1 is asymmetric (an observer attached to a running agent); layer 2
+is symmetric (two projects as peers). **The same wire format does not make them the same semantic** —
+check symmetry before unifying two things that look alike on the wire.
+
+## CLI onboarding
+
+⚠️ **`mxd config auth add` auto-promotes the first group to `defaultAuth`.** Provider resolution
+reads `cfg.defaultAuth`, so add-without-promote was a half-command: a fresh user followed the README,
+ran `mxd config auth add anthropic --key …`, and the next `mxd send` threw "No auth group
+configured". Adding a *second* provider leaves the existing default alone and prints how to switch —
+we never silently clobber an existing pick.
+
+⚠️ **macOS test gotcha**: `mkdtemp(tmpdir())` returns `/var/folders/…` while a spawned subprocess's
+`process.cwd()` returns the resolved `/private/var/folders/…`. `resolveCurrentProject` compares
+strings, fails, and the CLI exits with "No project found for current directory" long before reaching
+whatever you were testing. Wrap fixture paths in `realpathSync`.
 
 ---
 # Web UI — Routing, State & Event Handling
