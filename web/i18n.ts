@@ -181,6 +181,10 @@ const en: Translations = {
 	"settings.addAuthGroup": "Add auth group",
 	"settings.authName": "Name",
 	"settings.authProvider": "Provider",
+	// Brand names. They go through t() like every other visible string and
+	// simply carry the same value in every locale — same as "header.title".
+	"settings.providerAnthropic": "Anthropic",
+	"settings.providerOpenAI": "OpenAI",
 	"settings.apiKey": "API Key",
 	"settings.oauthToken": "OAuth Token",
 	"settings.systemPreamble": "System Preamble",
@@ -489,6 +493,9 @@ const zh: Translations = {
 	"settings.addAuthGroup": "添加认证组",
 	"settings.authName": "名称",
 	"settings.authProvider": "提供商",
+	// Brand names — same value in every locale, see the EN table.
+	"settings.providerAnthropic": "Anthropic",
+	"settings.providerOpenAI": "OpenAI",
 	"settings.apiKey": "API 密钥",
 	"settings.oauthToken": "OAuth 令牌",
 	"settings.systemPreamble": "系统前言",

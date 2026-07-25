@@ -294,8 +294,8 @@ function AuthGroupEditor({
 						setProvider(e.target.value as "anthropic" | "openai")
 					}
 				>
-					<option value="anthropic">Anthropic</option>
-					<option value="openai">OpenAI</option>
+					<option value="anthropic">{t("settings.providerAnthropic")}</option>
+					<option value="openai">{t("settings.providerOpenAI")}</option>
 				</select>
 			</label>
 			<label className="mxd-settings-field">

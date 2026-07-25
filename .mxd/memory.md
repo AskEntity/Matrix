@@ -229,7 +229,7 @@ Browser → Daemon (static assets + SSE) + Worker (API forwarding)
 | src/event-converter.ts | walkEventsToMessages + EventConverterCallbacks |
 | src/task-tracker.ts | Task tree, node CRUD, tree.json persistence |
 | src/orchestrator-tools.ts | Every matrix tool definition + `buildAllToolDefs` (the external-MCP list is built from it) |
-| src/data-paths.ts | THE resolver for every path built from `dataRoot` — a grep test fails if a second site appears |
+| src/data-paths.ts | THE resolver for every path built from `dataRoot` — a grep test fails if a second site appears, ANYWHERE in the repo (it walked `src/` only until 2026-07-25, so the plugin was unguarded) |
 | src/done-payload.ts | `donePayloadSchema` — the one source for done() content, imports only zod |
 | src/task-index.ts | Orama hybrid search index (title / description / result) |
 | src/plugin-sdk.ts | The public `mxd/plugin-sdk` surface — thin re-exports, never a vendored copy |
@@ -327,6 +327,12 @@ documented `glob: "*.ts"` example matched only the top level. Both are fixed. Bu
 "grepped it, nothing points there" conclusion reached before that date proves less than it looks
 like**, and the failure was silent in the direction that matters: a confident non-empty answer with
 the deciding file missing from it. See the two `search` entries in Core Mechanisms.
+
+⚠️ **"Fixed" means fixed in the SOURCE. Your `search` is the running daemon's, not your worktree's**
+— so it stays blind until a restart, and it was still blind hours after those commits landed
+(measured). Before trusting a by-name survey, spend one call proving your instrument sees a file you
+already know exists. Full measurement and why the fixer is the likeliest victim: *Two gates whose
+names were wider than their scope*.
 
 This bound is not hypothetical — the counter-evidence is in *Agent activity: live process state*
 (Agent Loop region), § "Two consumers that a grep for `activeAgents` does NOT find". Deleting the
@@ -867,6 +873,10 @@ place for it, because a gate's silence is read as a verdict on the whole repo.
 Recorded here rather than as drafts because the task above said it would open the tickets; the
 measurements are the part that would otherwise be lost.
 
+✅ **BOTH FIXED the same day** — see *Two gates whose names were wider than their scope*, directly
+below, for what the fixes turned on and for the census that answers "is there a third". The
+measurements above stay as the record of what they read before.
+
 **The cause differs and that changes the detector.** These two scopes are *written down*
 (`-maxdepth 1`, a walk root) — the opposite of the invisible-default class. They are readable, and
 nobody reads them, because a gate that passes looks identical whether it checked 8% or 100%.
@@ -943,6 +953,145 @@ putting the SAME filename (`rebuild.ts`) in both `build/` and `src/`, so one pat
 candidates and the directory is the only thing separating them. Same lesson as the over-promotion
 fixture in the entry above: **a test whose fixture cannot express the difference passes both
 ways** — and the tell is a mutation you expected to catch it surviving.
+
+## Two gates whose names were wider than their scope — fixed, plus the census (2026-07-25)
+
+The two GATES the entry above filed. Both are now subtractions: `scripts/check-i18n.sh` walks every
+non-test `.tsx` minus a named prune list (4 → 31 files), and `src/data-paths.test.ts`'s source audit
+walks the repo root instead of `src/`. Read the two files for the current lists; what follows is
+what the source cannot tell you.
+
+### ⭐ In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand
+
+> The tools an agent calls belong to the **running daemon**, not to anybody's worktree. So
+> *"I just fixed X, therefore I can use X"* is **false until the daemon restarts** — and it is false
+> for every other agent running at the same time, too.
+
+Measured from inside this task, hours after `search`'s two fixes had landed on main:
+
+| call | result |
+|---|---|
+| `search("ErrorBoundary", glob: "**/*.tsx")` | `(no matches)` |
+| `grep -rn 'ErrorBoundary' --include='*.tsx'` | **10 hits, including the file that DEFINES it** |
+| `search("SettingsPanel", glob: "*.tsx")` | `(no matches)`, with `web/components/SettingsPanel.tsx` sitting right there |
+
+Both of `search`'s bugs were still live in the instrument while the repo's source had been correct
+for hours.
+
+**This makes the blind-instrument trap strictly harder to avoid than it looks**, because of who
+walks into it: *the person who fixed the tool is the person with the most reason to believe it
+works.* `01KYCV43JAZ` wrote down "a completeness survey run with a blind instrument returns a
+confident, wrong 'that's all of them'" — and ran its own survey on the blind instrument, having
+just fixed the source in its worktree. The warning and the violation are in the same task.
+
+**Corollary about rules**: the tool description says *"ALWAYS use this for search tasks — NEVER
+invoke grep or rg via bash"*, and that rule has an unstated premise — that the tool works. Following
+a rule after its premise has failed is walking off a cliff on instruction. **The measurement above
+IS the compliant behaviour**: check the premise, then follow or don't. Note this is the same shape
+recorded under *`search` tool: a hidden directory is not a boring directory* — a rule that
+suppresses a redundant check also suppresses the only detector its failure mode has — arriving from
+a third direction.
+
+### The acceptance criterion was a planting experiment, not a green suite
+
+`01KYCV43JAZ` proved the data-paths audit dead by planting `dataRoot.slice(2)` in
+`.mxd/plugin/scope-opts.ts` and watching it stay at **54 pass / 0 fail**. That is the test the FIX
+had to pass too, and it was run in both directions: plant re-verified dead against the old audit
+(54/0 again, with a byte-literal `dataRoot.slice(2)` so the regex itself was never the excuse), then
+plant → **1 test red, naming `.mxd/plugin/scope-opts.ts`**, then plant removed → green.
+
+> **When a check is known dead, "the suite passes" is not evidence the fix worked** — the suite
+> passed while it was dead. The evidence is the round trip. A test whose value is entirely in the
+> day it fires must be made to fire on purpose at least once.
+
+### An unqualified pass is worse than a narrow scope
+
+`i18n check passed — no bare strings found in JSX` was printed from inside the pre-commit hook while
+reading 8% of the UI, and root quoted "i18n: 0" all day as a gate result. The scope was one readable
+line; nobody read it, because **a gate that passes looks identical whether it read 8% or 100%**.
+
+So the pass message carries the file count now (`scanned 31 JSX file(s)`), and **scanning 0 files is
+a failure, not a pass**. The count is the detector: re-narrowing to `-maxdepth 1` drops it to 4 in
+front of whoever commits next. A test pins the same property in non-rotting form — *scanned must
+exceed the number of non-test `.tsx` directly under `web/`*, both sides measured, so the historical
+bug reports as `Expected: > 4, Received: 4`.
+
+### ⭐ A partial-hit gate plus a fix-only-what-it-flagged policy produces incoherent output
+
+`ErrorBoundary.tsx` has 6 user-visible strings. The heuristic is single-line, so it flagged **1**.
+Fixing that one leaves a component that is half translated and half English — worse than untouched,
+and it looks *handled*.
+
+> **The unit of repair is the coherent unit, not the flagged line.** A gate that catches a subset
+> tells you WHERE to look, not WHAT to fix.
+
+The judgement is per-case, and the same round declined the other direction on purpose: `Plugin.tsx`'s
+flagged line was fixed alone, because its "coherent unit" is an 1800-line file containing an entire
+untranslated production-mode screen — fixing one neighbour there reproduces the same incoherence one
+level up. Small self-contained component ⇒ fix the component. Large file ⇒ fix the line and file the
+rest (draft `01KYCYSPVYPW0SGCX2YMK59875` carries the measurement).
+
+### Repair notes worth keeping
+
+- **6 of the first widened run's 11 hits were `) => Promise<void>;`** — `=>` plus ` Promise` plus
+  `<` reads as `>text<`. Guard is `(^|[^=])>`: in real JSX the character before a closing `>` is an
+  identifier char, a quote, `}`, `/` or a space, never `=`. **This is the shape a lazy agent would
+  use as cover for loosening the rule**, so the reasoning was surfaced upward before it was applied,
+  and it is pinned in BOTH directions (an arrow type must NOT report; real JSX text, including a `>`
+  in column 0, MUST).
+- **Brand names go through `t()` with the same value in every locale**, which is what
+  `"header.title": "Matrix"` has always done. An exemption mechanism was considered and rejected:
+  a hand-maintained exempt list is the entry point for the next fictional rule, and the existing
+  convention already answers the case.
+- Attribution: the old script `cat`-ed every file together, so a violation named no file. Fine at 4
+  files, useless at 31.
+
+### Is there a third? — ONE, and it is in the hook itself
+
+Everything grepped, with hit counts, so the next person can judge how complete "found them all" is.
+**Run with bash `grep -rn`, deliberately, for the reason at the top of this entry.** All counts
+exclude `node_modules/` and `.worktrees/`.
+
+| # | searched | hits | verdict |
+|---|---|---|---|
+| 1 | `readdirSync\|readdir(` in `*.test.ts(x)` | 6 files | 4 walk temp dirs / fixtures (auth, debug-snapshot ×2, durability) — not source audits. The 2 that walk the repo are the ones fixed here. |
+| 2 | `Bun.Glob\|.scanSync(\|.scan(` in tests | 1 file | provider test — matches are prose about the tool bugs. Not a gate. |
+| 3 | `ls-files\|execSync` in tests | 0 | — |
+| 4 | `readFileSync` + `import.meta.dir\|url` in tests | 2 files | data-paths (fixed) + web-builder (reads BUILD OUTPUT, single-file claims). |
+| 5 | `Bun.file(` on a source path in tests | 0 | — |
+| 6 | test FILENAMES matching `audit\|check\|verify\|guard\|invariant\|boundary\|lint` | 11 of 140 | all behavioural; none makes a repo-wide file-scope claim. "Audit" in the name means it came from an audit round. |
+| 7 | `describe(` names matching `audit\|only \|no other\|zero \|never \|source ` | 20 | only data-paths' was a filesystem-scope claim. |
+| 8 | `toEqual([])\|toHaveLength(0)\|toBe(0)` near `offend\|import\|occurr\|match` | 1 | data-paths', the one fixed. |
+| 9 | gate LOCATIONS: `.github/`, `.gitlab-ci.yml` | **0** | **there is no CI.** The pre-commit hook is the only gate runner in this repo. |
+| 10 | `package.json` scripts | 4 | `test` = bun test (all) ✓ · `check`/`check:ci` = biome `includes:["**","!…"]` ✓ · `typecheck` = tsc with `exclude` and no `include` ✓ · `postinstall` not a gate. |
+| 11 | `.hooks/pre-commit`, every step | 4 | typecheck ✓ · check:ci ✓ · check-i18n.sh (fixed) · **`bun test --bail` on 5 named files** ← the third one. |
+
+**NEGATIVE RESULT, worth as much as the positive one: file-scope claims in this repo are made in
+exactly two places** — a `readdirSync` walk in a test, or a config's include/exclude. Everything
+else that reads a file reads a file it names, where the scope IS the claim
+(`message-editability.test.ts` asserting one file has zero imports is correct by construction). Do
+not go looking again; look at rows 1, 4 and 8 if the question comes back.
+
+**Two things verified by measurement rather than assumed**, because both are exactly the kind of
+"surely it covers everything" that this whole family feeds on:
+- `tsc --noEmit --listFiles` puts **54** `.mxd/plugin/` files in its program. tsconfig has `exclude`
+  and no `include`, so it really is a subtraction.
+- `.hooks/pre-commit` runs 5 of **140** tracked test files (3.6%), then prints `All checks passed.`
+  Same shape as the i18n gate — an addition list plus a claim wider than what it read.
+
+⚠️ **The hook's test subset is NOT the same fix, and that matters.** The other two cost nothing to
+turn into subtractions; a full `bun test` is ~270-300s per commit, so **subtraction is genuinely
+infeasible here, on performance** — which is the exception the design rule explicitly leaves open,
+and saying it out loud is the point. The remedy is the other half of the i18n fix: say what you ran.
+Filed as **01KYCYSPVYPW0SGCX2YMK59874**, with the sharper question attached — the only gate runner in
+a repo with no CI executes 3.6% of its tests, and per *What is actually gated* it does not run in
+worktrees or on clean merges at all.
+
+Also filed, not fixed: **01KYCYSPVYPW0SGCX2YMK59875** (the i18n heuristic's DEPTH is an addition list
+of one syntactic form — scope fixed, depth untouched) and **01KYCYTJ2TC72AR8RDZGF9HMBZ** (the
+data-paths audit's PATTERN is one spelling: `dataRoot.substring(2)` passes silently). Both are the
+same class along a different axis, which is the thing to notice: **"scope" is only one of the
+dimensions an addition list can hide in.**
 
 ## FIX-3 (2026-06-05) — lifecycle + provider concurrency: Phase-2 leak, done ordering, launch race, abort-sleep, done+compact
 
@@ -3093,6 +3242,13 @@ through `ctx.config.dataRoot` and routes through `resolveDataRoot` in
 `src/data-paths.ts`. **The resolver stays the single source of truth** (the
 `data-paths.test.ts` "ONLY data-paths.ts performs .slice(2)" grep test still
 guards this).
+
+⚠️ **That parenthesis was FALSE for the plugin between this entry and
+2026-07-25** — the audit walked `src/` only, so the very file quoted above
+(`.mxd/plugin/index.ts`, which DEFINES `dataRoot`) sat outside it, along with
+`scope-opts.ts` and `runtime.ts`. Proven by planting, not by reading. The walk
+starts at the repo root now and the sentence is true again; the note stays
+because "a grep test guards this" is the kind of claim nobody re-checks.
 
 **Helper**: `projectTreeJsonPath(dataDir, projectId, dataRoot?)` in
 `data-paths.ts`, parallel to `projectTasksDir` / `projectDebugDir`. Used by

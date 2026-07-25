@@ -23,6 +23,7 @@ const en: Translations = {
 	"project.cancel": "Cancel",
 	"project.pathPlaceholder": "/absolute/path/to/project",
 	"project.noProjects": "No projects",
+	"project.noneSelected": "No project selected",
 	"project.remove": "Remove project",
 	"project.addProject": "Add project",
 	"project.settings": "Project settings",
@@ -387,6 +388,13 @@ const en: Translations = {
 	"tools.edit_file": "Edit File",
 	"tools.list_files": "List Files",
 	"tools.search": "Search",
+
+	// Error boundary
+	"error.title": "Something went wrong",
+	"error.unexpected": "An unexpected error occurred.",
+	"error.reload": "Reload",
+	"error.hideStack": "▾ Hide stack trace",
+	"error.showStack": "▸ Show stack trace",
 };
 
 const zh: Translations = {
@@ -402,6 +410,7 @@ const zh: Translations = {
 	"project.cancel": "取消",
 	"project.pathPlaceholder": "/绝对路径/到/项目",
 	"project.noProjects": "暂无项目",
+	"project.noneSelected": "未选择项目",
 	"project.remove": "移除项目",
 	"project.addProject": "添加项目",
 	"project.settings": "项目设置",
@@ -753,6 +762,13 @@ const zh: Translations = {
 	"tools.edit_file": "编辑文件",
 	"tools.list_files": "列出文件",
 	"tools.search": "搜索",
+
+	// Error boundary
+	"error.title": "出错了",
+	"error.unexpected": "发生了意外错误。",
+	"error.reload": "重新加载",
+	"error.hideStack": "▾ 隐藏堆栈",
+	"error.showStack": "▸ 显示堆栈",
 };
 
 const translations: Record<Locale, Translations> = { en, zh };
