@@ -4,7 +4,11 @@ The full procedure for a periodic memory reorganization. **You do not need this 
 — that is `memory.md` § *Writing This File*. You need this when the append zone has grown past the
 point where related material can be found together.
 
-First run: 2026-07-25, 5448 lines / 146 sections → 119 sections, 18 commits.
+Runs so far: **2026-07-25 phases 1-2**, 5,448 lines / 146 sections → 119, 18 commits. **2026-07-25
+phase 3 (condense)**, 7,616 → 3,797 lines and 136 → 81 sections across 17 regions, 24 commits,
+leaving zero `SUPERSEDED` banners and zero strikethroughs. **2026-07-25 phase 4**, six connective
+repairs. (The line count rose between the two runs because ordinary work continued — see
+`memory.md` on this file having a rate rather than a size.)
 
 ---
 
@@ -67,15 +71,42 @@ once and never need the whole file in your head.
   time for the merge direction; that same order puts the most stale text where it is read first.
   Two sorts, two purposes, no conflict.
 - **Merge duplicated TEXT, never facts.** Every fact, correction and lesson must still be findable.
-- A refuted claim becomes a pointer, not a deletion. See `memory.md` § *Writing This File* rule 3.
+- ⚠️ **A refuted claim is DELETED unless it can be written as a guardrail.** This reverses what this
+  document said on its first run (*"a refuted claim becomes a pointer, not a deletion"*), and the
+  reversal is the whole reason phase 3 exists — that instruction is what turned `memory.md` into a
+  changelog of old claims, strikethroughs, corrections and pointers, which every agent then paid for
+  on every launch. The live rule is in `memory.md` § *⚠️ Writing this file*: a past state earns its
+  lines only when a reader without it could not justify the current design or would reintroduce the
+  old one, and then it is written as *"do not change Z back to Y; Y silently loses W"*. **If you
+  cannot write that sentence, delete the old state.**
 
-### Phase 3 — Read through
+### Phase 3 — Condense
+
+**Phases 1-3 move and merge; they do not shrink much.** Measured on the most chronicle-dense region:
+everything explicitly marked as history was **175 of 896 lines, 20%**. So a file that has grown too
+expensive is not fixed by tidying its writing — the rest only comes out by removing things it
+currently says.
+
+- **Be given a target COMPOSITION, not a target line count.** The remaining material has no
+  principled ordering among itself, so a number leaves you guessing which category to cut. "Keep the
+  looks-wrong-but-is-right entries and the operating procedure, drop the design rationale for things
+  nobody would simplify" is executable and checkable; "get to N lines" is not.
+- **Phase 1's `comm -23` invariant does not apply — you are deleting.** Its replacement is a
+  per-section disposition list in each commit message. That enumeration is the ONLY thing that keeps
+  the "destroyed by understanding" rot detectable from the inside.
+- ⚠️ **Sample your own marks before quoting them.** A curator marking their own entries as
+  must-keep overstates the protected share: measured, 20 self-marked items tested against the
+  criterion passed 11, borderline 3, **failed 5** — all five craft or method rather than
+  looks-wrong-but-is-right. About a third too high, in the direction that favoured the curator's own
+  position.
+
+### Phase 4 — Read through
 
 Connective repair only: transitions, pointers that no longer resolve, sections that now read as
 orphans. **No new merges** — note them and report instead.
 
-⭐ **Phase 3 must be done by an agent with a clean context, NOT by whoever did phase 2.** By the end
-of phase 2 you understand the material too well to see what is missing — which is precisely the
+⭐ **Phase 4 must be done by an agent with a clean context, NOT by whoever did phases 1-3.** By the
+end of them you understand the material too well to see what is missing — which is precisely the
 mechanism behind the "destroyed by understanding" rot. The person best placed to finish is the
 person least able to.
 
@@ -83,7 +114,7 @@ person least able to.
 context is a compaction boundary, not a deadline — a compacted agent continues with a summary, and
 both this file and `memory.md` survive compaction by construction. The compacted original therefore
 strictly dominates a replacement, who would re-read the same documents *without* the summary and
-without any tacit judgement. See `memory.md` § *Where agents predictably go wrong* #5. Phase 3 is different
+without any tacit judgement. See `memory.md` § *Where agents predictably go wrong* #5. Phase 4 is different
 in kind: there, not knowing the material is the requirement, not the cost.
 
 ---
@@ -91,12 +122,12 @@ in kind: there, not knowing the material is the requirement, not the cost.
 ## Checks — run ALL of these after EVERY change, not just in phase 1
 
 Naming them "the phase-1 invariants" is how you switch them off at the moment they start mattering.
-In phase 1 the structural checks are cheap and useless (moving cannot break structure). In phase 2
-they are cheap and **necessary** (merging can).
+In phase 1 the structural checks are cheap and useless (moving cannot break structure). In phases 2
+and 3 they are cheap and **necessary** (merging and deleting can).
 
 ```bash
 # 1. information loss
-comm -23 <(sort BEFORE) <(sort AFTER)      # phase 1: empty. phase 2: enumerable.
+comm -23 <(sort BEFORE) <(sort AFTER)      # phase 1: empty. phases 2-3: enumerable.
 
 # 2. section conservation — catches a section absorbed into another
 grep -c '^## ' memory.md
