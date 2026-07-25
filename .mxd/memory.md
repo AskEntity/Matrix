@@ -78,7 +78,7 @@ bun run check         # biome lint + format
 
 The bash tool (FU9) already does everything decoration would do, and better:
 - Merges stdout+stderr via `(cmd) 2>&1` wrapper → `2>&1` is redundant.
-- Tiers large output: head 5KB + banner + tail 5KB + banner + **full file preserved** at `/tmp/mxd/exec-<id>.out` → `| head` / `| tail` are redundant AND destructive.
+- Tiers large output: head 5KB + banner + tail 5KB + banner + **full file preserved** on disk, with the exact path printed in the tool result → `| head` / `| tail` are redundant AND destructive.
 - Output file persists across turns → `> /tmp/out.log` is redundant.
 
 **Piping is not "harmless size reduction". Piping is CATASTROPHIC DATA LOSS.** A pipe consumes the stream; bytes that go through your pipe never reach the bash tool. Whatever `head`/`tail`/`grep` didn't match is **gone from the Universe** — not in the output, not on disk, not recoverable. If the failure details are in the 50 lines you trimmed, you just burned them.
@@ -109,7 +109,11 @@ If a test is genuinely flaky, `bun test` it 5 times and read all 5 saved output 
 ### Rules summary
 
 - **Every test run is `bun test`, full stop.**
-- If the tool result shows `<test_output saved at /tmp/mxd/exec-…>`, that file has everything. Read it.
+- If the tool result shows `<test_output saved at …>`, that file has everything. Read it. **Copy the
+  path out of the tool result — do not type one from memory.** The directory is `mxd/` under the OS
+  temp dir, which is NOT `/tmp` on macOS (it is the per-user `$TMPDIR`, e.g.
+  `/var/folders/…/T/mxd/`). This file used to say `/tmp/mxd/`; on a Mac that path exists and is
+  EMPTY, so following it produces "the tool lied to me" instead of the output you wanted.
 - If you want to re-investigate, rerun `bun test` again. Both files persist; read either.
 - If you're tempted to pipe "for context reasons": the bash tool's tiered output has already protected your context. Piping doesn't help — it only destroys.
 - ~~~2119 tests pass, 4 skip, 12 todo (as of 2026-04-18 after Fix A/B/C).~~ **Don't record test
@@ -346,15 +350,19 @@ All bind params hidden from agent, auto-bound. `create_task`/`create_folder` par
 
 Defensive-instinct-as-tool-design. AI piped/redirected because context was at risk; now context is bounded by the tool, so the instinct has nothing to act on.
 
+**`<tmp>` below means `os.tmpdir()`**, i.e. `MXD_TMP_DIR = join(tmpdir(), "mxd")` in
+`src/tools/bash.ts`. It is **not** `/tmp` on macOS — it is the per-user `$TMPDIR` under
+`/var/folders/…/T/`. Never type the path from memory; the tool result prints the real one.
+
 ### Tiered display (merged mode, default)
 - `<1024 bytes` → inline only, no file saved
-- `1024..10240` → full inline + top/bottom banner + file kept at `/tmp/mxd/exec-<id>.out`
+- `1024..10240` → full inline + top/bottom banner + file kept at `<tmp>/mxd/exec-<id>.out`
 - `>10240` → head 5KB + `... [N bytes / M lines truncated] ...` + tail 5KB + banner + read hint; file kept
 - Boundary: `head_budget + tail_budget >= total` naturally shows full (no special-case for size===10240)
 - Truncation: byte-aware + newline alignment via `Buffer.lastIndexOf(0x0a, budget-1)` / `Buffer.indexOf(0x0a, total-budget)`. No newline in window → hard byte cut + "mid-line cut" annotation.
 
 ### Separate mode (opt-in `separate: true`)
-Two files: `/tmp/mxd/exec-<id>.stdout` + `.stderr`. Budget allocation in the large case: if one stream is trivial (≤5KB), show it in full and give the other `BUDGET - trivial_size` split head/tail; else each gets 2.5k+2.5k. Continuous at boundary (stderr=5120 → both 5KB; stderr=5121 → stdout 2.5k+2.5k).
+Two files: `<tmp>/mxd/exec-<id>.stdout` + `.stderr`. Budget allocation in the large case: if one stream is trivial (≤5KB), show it in full and give the other `BUDGET - trivial_size` split head/tail; else each gets 2.5k+2.5k. Continuous at boundary (stderr=5120 → both 5KB; stderr=5121 → stdout 2.5k+2.5k).
 
 ### Stream merging
 `bash -c "(cmd) 2>&1"` wrapping. AI-written `2>&1` inside `cmd` becomes a harmless redundant no-op. Bash's own stderr (pre-subshell syntax errors, rare) is `stderr: "ignore"` at Bun.spawn level — acceptable tradeoff for clean single-file output.
@@ -363,7 +371,7 @@ Two files: `/tmp/mxd/exec-<id>.stdout` + `.stderr`. Budget allocation in the lar
 One `formatBashResult` function. The `content` field of `background_complete` queue messages is byte-identical to what `parseForegroundResult` returns when the same command runs foreground.
 
 ### Directory rename
-`/tmp/mxd-bg/` → `/tmp/mxd/`. The dir is no longer bg-specific (foreground commands save there too). `BackgroundProcess.separate: boolean` is the new mode discriminator; `stdoutPath` holds the `.out` file in merged mode (misleading name, kept for API compat).
+`mxd-bg/` → `mxd/` under the OS temp dir. The dir is no longer bg-specific (foreground commands save there too). `BackgroundProcess.separate: boolean` is the new mode discriminator; `stdoutPath` holds the `.out` file in merged mode (misleading name, kept for API compat).
 
 ### Pure-function exports for testing
 `formatMergedOutput(path, exitCode)`, `formatSeparateOutput(so, se, exitCode)`, `truncateMiddle(buf, headBudget, tailBudget)`, `allocateSeparateBudget(stdoutSize, stderrSize)` — all exported from `src/tools/bash.ts` so tests hit them directly without spawning subshells.
