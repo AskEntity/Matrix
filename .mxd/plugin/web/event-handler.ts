@@ -5,6 +5,7 @@ import { TOOL_YIELD } from "../tool-names.ts";
 // ID generation — crypto.randomUUID() for local UI state
 import {
 	type AgentActivity,
+	bindEntryId,
 	createLogEntry,
 	getLogTaskId,
 	type IncomingEvent,
@@ -204,6 +205,14 @@ type UpdateOp =
 			taskId: string | undefined;
 			text: string;
 			ts?: number;
+			/**
+			 * The persisted block's eid. The entry usually already exists —
+			 * `text_delta` built it before this event was written — so this
+			 * BINDS the eid to the id that entry already has, instead of
+			 * deriving a new one. That is what keeps the key stable across
+			 * the moment a streamed block closes.
+			 */
+			eid?: string;
 	  }
 	| {
 			/**
@@ -237,6 +246,8 @@ type UpdateOp =
 			text: string;
 			signature: string;
 			ts?: number;
+			/** See replace_text.eid. */
+			eid?: string;
 	  }
 	| {
 			/** Monotonic extend for partial thinking snapshots — see extend_text. */
@@ -251,6 +262,8 @@ type UpdateOp =
 			savedTokens: number;
 			taskId: string | undefined;
 			ts?: number;
+			/** eid of the compact_marker this entry stands for. */
+			eid?: string;
 	  }
 	| {
 			type: "resolve_tool";
@@ -266,6 +279,12 @@ type UpdateOp =
 			backgroundId?: string;
 			backgroundCommand?: string;
 			resultTs: number;
+			/**
+			 * eid of the tool_result. Only used when no tool_call is found —
+			 * a resolved pair keeps the tool_call's eid, because the pair IS
+			 * that entry with its result filled in.
+			 */
+			eid?: string;
 	  }
 	| {
 			type: "remove_tool";
@@ -557,7 +576,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				p.taskId ?? undefined,
 				ts,
 			);
-			return uiEvent ? createLogEntry(uiEvent) : null;
+			return uiEvent
+				? createLogEntry({ ...uiEvent, ...(p.eid ? { eid: p.eid } : {}) })
+				: null;
 		}
 		// User messages (or no source): render as message
 		return createLogEntry({
@@ -647,6 +668,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							input: msg.input ?? {},
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					],
 					updates: [],
@@ -681,6 +703,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							backgroundId: msg.backgroundId,
 							backgroundCommand: msg.backgroundCommand,
 							resultTs: msg.ts,
+							eid: msg.eid,
 						},
 					],
 					sideEffects: msg.backgroundId
@@ -749,6 +772,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							text: msg.thinking,
 							signature: msg.signature,
 							ts: msg.ts,
+							eid: msg.eid,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -804,6 +828,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							taskId: msg.taskId,
 							text: msg.content,
 							ts: msg.ts,
+							eid: msg.eid,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -843,6 +868,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							type: "compact_started",
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					],
 					updates: [],
@@ -865,6 +891,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							savedTokens: msg.savedTokens,
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -878,6 +905,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							sourceTaskId: msg.sourceTaskId,
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					],
 					updates: [],
@@ -899,6 +927,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							content: "▶ Agent started",
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					);
 				}
@@ -926,6 +955,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							content: "⏹ Agent stopped",
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					);
 				}
@@ -986,7 +1016,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						);
 						if (uiEvent) {
 							return {
-								entries: [createLogEntry(uiEvent)],
+								entries: [createLogEntry({ ...uiEvent, eid: msg.eid })],
 								updates: [],
 								sideEffects: NO_SIDE_EFFECTS,
 							};
@@ -1031,7 +1061,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					);
 					if (uiEvent) {
 						return {
-							entries: [createLogEntry(uiEvent)],
+							entries: [createLogEntry({ ...uiEvent, eid: msg.eid })],
 							updates: [],
 							sideEffects: NO_SIDE_EFFECTS,
 						};
@@ -1054,6 +1084,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							},
 							taskId: msg.taskId ?? "",
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					],
 					updates: [],
@@ -1094,6 +1125,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							message: msg.message,
 							taskId: msg.taskId ?? "",
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					],
 					updates: [],
@@ -1141,8 +1173,18 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					const e = entries[i];
 					if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
 						const updated = [...entries];
+						// The block closing gives this entry its durable name. Bind
+						// rather than re-derive: the entry already has an id, and
+						// changing it here would remount it at the end of every
+						// streamed block.
+						if (op.eid) bindEntryId(op.eid, e.id);
 						// Use persisted event's ts so refresh matches JSONL reconstruction
-						updated[i] = { ...e, content: op.text, ts: op.ts ?? e.ts };
+						updated[i] = {
+							...e,
+							content: op.text,
+							ts: op.ts ?? e.ts,
+							...(op.eid ? { eid: op.eid } : {}),
+						};
 						return updated;
 					}
 					// Skip thinking entries — they interleave with text in the same turn
@@ -1157,6 +1199,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						content: op.text,
 						taskId: op.taskId ?? "",
 						ts: op.ts ?? Date.now(),
+						eid: op.eid,
 					}),
 				];
 			}
@@ -1194,12 +1237,15 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					const e = entries[i];
 					if (e && e.type === "thinking" && e.taskId === op.taskId) {
 						const updated = [...entries];
+						// See replace_text: bind, don't re-derive.
+						if (op.eid) bindEntryId(op.eid, e.id);
 						updated[i] = {
 							...e,
 							thinking: op.text,
 							signature: op.signature,
 							// Use persisted event's ts so refresh matches JSONL reconstruction
 							ts: op.ts ?? e.ts,
+							...(op.eid ? { eid: op.eid } : {}),
 						};
 						return updated;
 					}
@@ -1217,6 +1263,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						signature: op.signature,
 						taskId: op.taskId ?? "",
 						ts: op.ts ?? Date.now(),
+						eid: op.eid,
 					}),
 				];
 			}
@@ -1305,6 +1352,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					savedTokens: op.savedTokens,
 					taskId: op.taskId ?? "",
 					ts: op.ts ?? Date.now(),
+					eid: op.eid,
 				});
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
@@ -1327,21 +1375,29 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					const e = entries[i];
 					if (e && e.type === "tool_call" && e.toolCallId === op.toolCallId) {
 						const updated = [...entries];
-						updated[i] = createLogEntry({
-							type: "tool_pair",
-							tool: e.tool,
-							toolCallId: e.toolCallId,
-							input: e.input,
-							resultContent: op.resultContent,
-							isError: op.isError,
-							images: op.images,
-							pending: op.pending,
-							backgroundId: op.backgroundId,
-							backgroundCommand: op.backgroundCommand,
-							resultTs: op.resultTs,
-							taskId: e.taskId,
-							ts: e.ts,
-						});
+						// Same entry, now with its result — so it keeps its id and
+						// its eid (the tool_call's). Handing it a fresh id would
+						// remount the card the instant the result lands, which is
+						// exactly when a user might have it expanded to watch.
+						updated[i] = createLogEntry(
+							{
+								type: "tool_pair",
+								tool: e.tool,
+								toolCallId: e.toolCallId,
+								input: e.input,
+								resultContent: op.resultContent,
+								isError: op.isError,
+								images: op.images,
+								pending: op.pending,
+								backgroundId: op.backgroundId,
+								backgroundCommand: op.backgroundCommand,
+								resultTs: op.resultTs,
+								taskId: e.taskId,
+								ts: e.ts,
+								eid: e.eid,
+							},
+							e.id,
+						);
 						return updated;
 					}
 				}
@@ -1361,6 +1417,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						backgroundCommand: op.backgroundCommand,
 						resultTs: op.resultTs,
 						ts: op.resultTs,
+						eid: op.eid,
 					}),
 				];
 			}

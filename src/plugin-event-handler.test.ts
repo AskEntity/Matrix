@@ -4478,3 +4478,214 @@ describe("processEventBatch: run-start annotation", () => {
 		expect(msg?.startsRun).toBeUndefined();
 	});
 });
+
+// ── Entry identity: the log is rebuilt wholesale, keys must not change ──
+//
+// Every refetch (reconnect, load-earlier, post-rollback) replaces the whole
+// entries array. When the ids came from a counter, every key changed and
+// React remounted the entire list — observed in a real session as ONE
+// MutationObserver batch with `added: 82, removed: 82`, against `removed: 1`
+// for a normal in-place update in the same trace. That empties the container
+// for a frame, and the scroll offset does not survive it.
+describe("event-handler: entry id is derived from the event's eid", () => {
+	function batch(): IncomingEvent[] {
+		return [
+			{
+				type: "message",
+				id: "m1",
+				body: { source: "user", id: "m1", ts: 1, content: "go" },
+				taskId: "root",
+				ts: 1,
+				eid: "eid-msg",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m1"],
+				taskId: "root",
+				ts: 2,
+				eid: "eid-consumed",
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				input: { command: "ls" },
+				taskId: "root",
+				ts: 3,
+				eid: "eid-call",
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				content: "ok",
+				isError: false,
+				taskId: "root",
+				ts: 4,
+				eid: "eid-result",
+			},
+			{
+				type: "assistant_text",
+				content: "done",
+				taskId: "root",
+				ts: 5,
+				eid: "eid-text",
+			},
+		] as unknown as IncomingEvent[];
+	}
+
+	function runBatch(events: IncomingEvent[]): LogEntry[] {
+		const { deps } = makeDeps();
+		let captured: LogEntry[] = [];
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			captured = typeof u === "function" ? u([]) : u;
+		});
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+		processEventBatch(events, { fromActiveChain: true });
+		return captured;
+	}
+
+	/** Deps whose setLogs actually accumulates, like React state does. */
+	function makeLiveDeps() {
+		const box = { current: [] as LogEntry[] };
+		const { deps, ...rest } = makeDeps();
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			box.current = typeof u === "function" ? u(box.current) : u;
+		});
+		return { deps, box, ...rest };
+	}
+
+	it("THE property: rebuilding the same log produces the same ids", () => {
+		const first = runBatch(batch());
+		const second = runBatch(batch());
+
+		expect(first.length).toBeGreaterThan(0);
+		expect(second.map((e) => e.id)).toEqual(first.map((e) => e.id));
+		// …and it is the eid that carries the identity, not the position.
+		expect(second.map((e) => e.eid)).toEqual(first.map((e) => e.eid));
+	});
+
+	it("a rebuild that gained one event keeps every existing id", () => {
+		const before = runBatch(batch());
+		const after = runBatch([
+			...batch(),
+			{
+				type: "assistant_text",
+				content: "and more",
+				taskId: "root",
+				ts: 6,
+				eid: "eid-text-2",
+			},
+		] as unknown as IncomingEvent[]);
+
+		// This is the shape of every refetch: the log grew by one. Everything
+		// that already existed must reconcile; only the new entry is new.
+		expect(after.slice(0, before.length).map((e) => e.id)).toEqual(
+			before.map((e) => e.id),
+		);
+	});
+
+	it("distinct eids get distinct ids", () => {
+		const entries = runBatch(batch());
+		const ids = entries.map((e) => e.id);
+		expect(new Set(ids).size).toBe(ids.length);
+	});
+
+	// The other half of the guard: deriving ids from eid must NOT collapse
+	// entries that have no eid. Two streamed blocks with nothing to name them
+	// are still two entries, and a duplicate React key is a hard error.
+	it("entries with no eid still get distinct ids", () => {
+		const entries = runBatch([
+			{ type: "text_delta", content: "a", taskId: "root", ts: 1 },
+			{
+				type: "tool_call",
+				tool: "x",
+				toolCallId: "t1",
+				input: {},
+				taskId: "root",
+				ts: 2,
+			},
+			{ type: "text_delta", content: "b", taskId: "root", ts: 3 },
+		] as unknown as IncomingEvent[]);
+		const ids = entries.map((e) => e.id);
+		expect(ids.length).toBe(3);
+		expect(new Set(ids).size).toBe(3);
+	});
+
+	it("a streamed block keeps its id when it closes, and a rebuild finds it", () => {
+		// The one entry that exists before its event does: text_delta builds
+		// it, and it only learns its eid when the block closes. Binding —
+		// rather than re-deriving — is what stops the key changing at the end
+		// of every block.
+		const { deps, box } = makeLiveDeps();
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		handleEvent({
+			type: "text_delta",
+			content: "hel",
+			taskId: "root",
+			ts: 1,
+		} as unknown as IncomingEvent);
+		const streamingId = box.current[0]?.id;
+		expect(streamingId).toBeDefined();
+		expect(box.current[0]?.eid).toBeUndefined();
+
+		handleEvent({
+			type: "assistant_text",
+			content: "hello",
+			taskId: "root",
+			ts: 2,
+			eid: "eid-block",
+		} as unknown as IncomingEvent);
+
+		expect(box.current[0]?.id).toBe(streamingId as number);
+		expect(box.current[0]?.eid).toBe("eid-block");
+
+		// A later wholesale rebuild reconstructs it from the persisted event
+		// alone and must land on the same id.
+		const rebuilt = runBatch([
+			{
+				type: "assistant_text",
+				content: "hello",
+				taskId: "root",
+				ts: 2,
+				eid: "eid-block",
+			},
+		] as unknown as IncomingEvent[]);
+		expect(rebuilt[0]?.id).toBe(streamingId as number);
+	});
+
+	it("a tool card keeps its id when its result arrives", () => {
+		// resolve_tool replaces the entry in place — same log entry, now with
+		// its result. A fresh id here remounts the card at the moment a user
+		// is most likely to have it expanded.
+		const { deps, box } = makeLiveDeps();
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		handleEvent({
+			type: "tool_call",
+			tool: "mcp__mxd__bash",
+			toolCallId: "tc9",
+			input: { command: "ls" },
+			taskId: "root",
+			ts: 1,
+			eid: "eid-call-9",
+		} as unknown as IncomingEvent);
+		const callId = box.current[0]?.id;
+
+		handleEvent({
+			type: "tool_result",
+			tool: "mcp__mxd__bash",
+			toolCallId: "tc9",
+			content: "ok",
+			isError: false,
+			taskId: "root",
+			ts: 2,
+			eid: "eid-result-9",
+		} as unknown as IncomingEvent);
+
+		expect(box.current[0]?.type).toBe("tool_pair");
+		expect(box.current[0]?.id).toBe(callId as number);
+		expect(box.current[0]?.eid).toBe("eid-call-9");
+	});
+});
