@@ -509,7 +509,81 @@ describe("Interrupt: end the turn, keep the session", () => {
 		expect(tracker.getTask(nodeId)?.status).toBe("verify");
 	}, 30000);
 
-	// ── 9. Interrupting a thinking turn ──
+	// ── 9. Interrupting a `thinking` turn ──
+	//
+	// The other half of the state table, and the one the design argument was
+	// about. `delay_ms` gives the mock a window where it is mid-stream, and the
+	// mock honors the request's abort signal inside that window exactly as the
+	// SDK does — so this drives the real path: the composed turn signal aborts
+	// the call, the catch recognises an interrupt (rather than treating an abort
+	// error as non-transient and taking the agent down with it), and the loop
+	// parks instead of dying.
+	test("interrupting a thinking turn parks the agent instead of killing it", async () => {
+		ctx = await setupEmissionTestContext();
+		const nodeId = await rootId(ctx);
+
+		await startAgent(
+			ctx,
+			JSON.stringify({
+				turns: [
+					{
+						delay_ms: 8000,
+						blocks: [{ type: "text", text: "This never arrives." }],
+					},
+					{
+						blocks: [
+							{ type: "text", text: "Picked up after the interrupt." },
+							{
+								type: "tool_use",
+								name: "mcp__mxd__done",
+								input: { status: "passed", result: "resumed" },
+							},
+						],
+					},
+				],
+			}),
+		);
+
+		await waitForActivity(ctx, nodeId, "thinking");
+		const liveSession = session(ctx, nodeId);
+		expect(interruptTask(ctx.app.ctx, ctx.projectId, nodeId)).toBe(true);
+
+		// Parked, not dead: the loop reaches the queue rather than unwinding.
+		await waitForIdle(ctx);
+		expect(session(ctx, nodeId)).toBe(liveSession);
+		expect(liveSession.queue.isClosed).toBe(false);
+
+		// The abandoned turn left nothing to repair and no error event.
+		const events = await readSessionEvents(ctx, nodeId);
+		expect(events.some((e) => e.type === "error")).toBe(false);
+		expect(
+			buildSessionRepair(readActiveEvents(ctx, nodeId), nodeId),
+		).toBeNull();
+		// The turn genuinely never landed. Assert on the EVENT TYPE, not on the
+		// serialized log: the mock instruction is itself the user's message, so
+		// it carries this turn's script verbatim and a substring search over the
+		// whole log matches it for entirely the wrong reason.
+		expect(
+			events.some(
+				(e) =>
+					e.type === "assistant_text" &&
+					e.content.includes("This never arrives"),
+			),
+		).toBe(false);
+
+		// ⚠️ "…and then carries on when the user says something" is NOT asserted
+		// here, and the reason is worth knowing: with nothing streamed, the park
+		// leaves messages[] ending in the turn's own user message, so the wake
+		// appends a SECOND user message. The live API accepts consecutive user
+		// messages (measured, 2026-07-25); `ValidatingMockAPI.validateRequest`
+		// rejects them with "Messages must alternate roles", a constraint that
+		// was never verified against the API. So this path is exercisable in
+		// production and not against the mock. The `tool`-state sibling above
+		// ("the SAME agent continues on the next message") covers the carry-on
+		// behaviour, because tool_results make the trailing turn a working
+		// context that the wake merges into.
+	}, 30000);
+
 	test("interrupting an idle agent is a no-op, not an error", async () => {
 		ctx = await setupEmissionTestContext();
 		const nodeId = await rootId(ctx);
