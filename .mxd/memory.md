@@ -3191,526 +3191,156 @@ bisect step.
 # Build, Tooling & Housekeeping
 ---
 
-## CLI Installation
-
-`mxd` CLI globally installed via `bun link`. package.json `"bin": { "mxd": "src/cli.ts" }`, cli.ts has `#!/usr/bin/env bun` shebang.
-
-## Dead-code sweeps: what was deleted, and what deletion taught us
-
-Four sweeps merged (FU8, R7 [LOW], the Clear-All-Sessions removal, FIX-4b). They are pure
-RECORDS — "on date D we deleted X because Y" does not rot the way a claim does — so they are kept
-in full and only gathered together, because as separate top-level entries they were four places to
-look for the same question: *"is this thing still here, and if not, why not?"*
-
-**Re-verified while merging** (2026-07-25), since a deletion record is exactly the kind of entry
-that could have been quietly undone: `persistent-queue.ts`, `openai-compatible-provider.ts`,
-`web/components/icons.tsx`, `_cache_audit.ts`, `_token_audit.ts` and `RelocateBanner.tsx` are all
-still gone; `hasPendingYield`, `formatPendingSection`, `combineSystemPrompt`,
-`buildExternalJsonSchema`, `resetAuthDataCache`, `clarifyTimeoutMs` and `readWithLineMap` have zero
-occurrences. `truncateAfterLine` appears three times but only inside comments explaining why it was
-removed — the function is gone. **One claim from this era did NOT hold and is corrected in place**:
-FU8's "`scope: 'project'` union variant dropped" — see that bullet.
-
-⭐ **The one durable lesson across all four, from FIX-4b C8: "test-only" ≠ "dead".** An audit called
-`tool()` production-dead and asked for its removal. It IS test-only — and it has 23 call sites. That
-makes it live test INFRASTRUCTURE; deleting it would have been a risky 23-site migration that
-changed what those tests test, not a reclamation. The real violation was a genuine duplication
-sitting next to it (`stripZodMeta` + `shapeToJsonSchema` existed verbatim in two files), and fixing
-THAT was the actual win. **When an audit says "dead", check whether it means "unreferenced" or
-"only referenced by tests" — the second is a different claim with a different answer.**
-
-### Audit FU8 Dead-Code Sweep (2026-04-17)
-
-Consolidated cleanup of items flagged by the 12-audit review:
-
-- **Shared `src/version.ts`** for VERSION + GIT_HASH — was duplicated in daemon.ts + runtime.ts.
-- **Worker-side SSE ring buffer deleted** — daemon owns SSE (seqId, buffer, fanout). Worker just calls `onBroadcast`; daemon serializes + fans out. Removes triple-JSON-serialize path.
-- **`ctx.sseClients` removed from RuntimeContext** — worker never had SSE clients attached.
-- **`persistent-queue.ts` deleted** — dead code that bypassed the unified `projects/<id>/` storage layout.
-- ~~**`scope: "project"` union variant dropped** from PluginManifest (only "global" is implemented). Re-introduce via task when a real per-project plugin appears.~~ **It came back**, exactly as anticipated — `PluginManifest.scope` is `"global" | "project"` again since additive dual-lens routing. See *Additive project-scoped plugin routing*. Left visible because the removal-then-return is the honest record of a correct call: deleting an unimplemented union member and re-adding it when a real case arrived cost nothing, and is what anti-pattern #6 asks for.
-- **`family` PermissionMode dropped** (zero call sites). `send_message` still walks parent/child manually; when we finally apply a shared mode there, re-introduce.
-- **`@mxd/types` is now the plugin's single source** of TaskNode / FolderNode / TreeNode / TaskStatus / isFolder / isTask — `.mxd/plugin/web/types.ts` re-exports from it instead of redeclaring. `src/types.ts` is the one truth.
-- **Shell icon set reduced** from 19 to 7 in `web/icons.tsx`. `web/components/icons.tsx` (381 lines duplicated from plugin) deleted.
-- **`DaemonConfig` renamed to `RuntimeConfig`** in `runtime/context.ts` — the type configures the worker runtime, not the daemon. Old name re-exported from `runtime.ts` as a type alias for back-compat.
-- **`SystemPrompt` type moved** to `runtime/context.ts` (plugin-agnostic); `system-prompts.ts` re-exports for back-compat.
-- **ShellApp tests made hermetic** — no more `resolve(".")` (CWD-dependent). Tests derive matrix-repo path from `import.meta.url`.
-- **`_isYield` field removed** from yield prefab — yield detection is by name.
-- **`buildMatrixScopeOpts` fallback dropped** from scope-worker — plugin contract is `buildScopeOpts` or `default`.
-- **`worker-api.ts` reduced** to `SyncMap` + `SyncMessage` (everything else was declared-and-never-imported).
-- **JSDoc cleanups**: orphan comments on ScopeOpts/BaseDoneData, duplicate JSDoc on computeDepth + RunAgentOpts, "extracted for plugin reuse" that was never exported, `stripEventForUI` transitional-fix note.
-
-Net: ~880 lines deleted, 0 test failures, no functional behavior change.
-
-#### dataRoot Hardening (Audit FU5)
-
-**One resolver, `src/data-paths.ts`**, owns every path built from `dataRoot`. Never compute `dataRoot.slice(2)` anywhere else — the grep test in `data-paths.test.ts` fails if a second site appears. `projectTasksDir`, `projectDebugDir`, `getTracker`, and `agent-lifecycle`'s debug snapshot all route through `resolveDataRoot(dataDir, projectId, dataRoot?)`.
-
-**Three lines of defence**:
-1. Strict regex at input boundary — `DATA_ROOT_PATTERN = /^@(\/[A-Za-z0-9_-]+)*$/`, `PROJECT_ID_PATTERN = /^[A-Za-z0-9_-]+$/`. Run at daemon startup (`validatePluginManifest`) and at every `resolveDataRoot` call.
-2. ONE resolver — any traversal must pass regex AND the post-resolve invariant.
-3. Post-resolve invariant — `resolved.startsWith(projectRoot)` check inside `resolveDataRoot`. Belt to the regex's braces. If someone ever relaxes the regex, this still rejects traversal.
-
-**Before**: `resolveDataRoot("@/../etc")` returned `dataDir/etc` — cross-plugin attack (reported: Audit H F1, Audit C H4). Four inline `.slice(2)` sites meant every fix had to touch four files.
-
-**Malformed manifest is fatal at startup**, not a warning. `src/daemon.ts` separates import errors (recoverable, skip plugin) from validation errors (unrecoverable, throw). A malicious plugin with `dataRoot: "@/../etc"` cannot be silently skipped while its legitimate siblings run.
-
-**Lazy dir creation respects dataRoot**. `daemon.ts`, `project-manager.ts`, `runtime.ts` used to eagerly `mkdir projects/<id>/tasks` + `projects/<id>/debug` — hardcoded Matrix's `@` layout. Deleted. `EventStore` constructor and `TaskTracker.save` mkdir on first write, at the owning plugin's dataRoot. For Matrix this is a no-op behavior change; for any plugin with `dataRoot !== "@"` it moves the dirs to the right place.
-
-**Why path-based collision check still runs after validation**: validation alone catches `"@/foo/.."` (regex rejects). Defence in depth — `checkDataRootCollisions` also resolves both roots against a canonical `dataDir`/`projectId` and compares paths. If anyone ever relaxes the regex, the collision check still catches structural duplicates.
-
-**Key files**:
-- `src/data-paths.ts` — single source of truth (validators + resolver + task/debug dirs).
-- `src/plugin.ts` — imports validators from data-paths.ts; delegates path resolution; keeps `effectiveDataRoot` (normalizes defaults) + `checkDataRootCollisions`.
-- `src/runtime/helpers.ts` — re-exports `projectTasksDir`/`projectDebugDir` from data-paths.ts for existing callers (convenience barrel).
-- `src/runtime/agent-lifecycle.ts:~984` — passes `ctx.config.dataRoot` to `projectDebugDir` (was missing, debug snapshots landed at Matrix's path regardless of plugin).
-
-### Audit R7 [LOW] drift cleanup (2026-04-18)
-
-Four cosmetic items flagged by Audit R7 bundled in one commit:
-
-#### pluginApiPrefix split: `src/plugin.ts` → `src/plugin-url.ts` (zero imports)
-
-`pluginApiPrefix(name)` moved to a standalone file with ZERO imports. Rationale:
-- `web/runtime-types.ts` (compiled to browser via `@mxd/types` importmap) re-exports `pluginApiPrefix` for plugin web code.
-- Before the split: `plugin.ts` imported `data-paths.ts` which imports `node:path`. Bun's `target: "browser"` polyfilled the entire `node:path` module (~10 KB of assertPath/normalize/resolve/join/...) into every plugin's first-load bundle.
-- Built `runtime-types.js` size: **10,293 B → 281 B (37× reduction)**.
-- Server callers (cli, daemon, tests) import from `./plugin-url.ts` directly — one canonical location, no re-export. **Corrects the earlier "Plugin URL Namespace" memory entry that listed `src/plugin.ts` as the home.**
-
-Regression guard: `src/plugin-url-namespace.test.ts` builds the shared module at test time and asserts `runtime-types.js < 500 bytes`. Any future re-introduction of a `node:*` transitive dep (or other server-only import) into `web/runtime-types.ts`'s graph will exceed the threshold and fail loud.
-
-JSDoc fix: the old `pluginApiPrefix` docstring claimed "shell wraps a plugin's authFetch so relative paths become prefixed automatically" — the opposite of the b42c9a2 design, which explicitly rejects a shell wrapper. New docstring reflects reality ("explicit prefix prepended by each call site; no shell wrapper, no hidden rewriting").
-
-#### BackgroundProcess dead fields removed
-
-`stdout: string` and `stderr: string` on `BackgroundProcess` were zero-initialized and never read. Removed from `src/tools/bash.ts` (type + constructor) and from 4 test object literals in `src/anthropic-compatible-provider.test.ts`. The "kept for test harness compat" comment was stale — grep confirmed zero reads.
-
-#### resetAuthDataCache deleted
-
-`resetAuthDataCache` in `src/auth.ts` became a deprecated no-op after FU4 removed the in-memory cache. Zero callers remained; deleted outright to prevent future code from importing it expecting cache-flush semantics.
-
-### "Clear All Sessions" deleted rather than repaired (2026-04-18)
-
-The project-wide `POST /projects/:id/sessions/clear` endpoint, its CLI subcommand (`mxd sessions clear`), the SettingsPanel danger-zone button, the `/clear` slash command, and `EventStore.clearAll()` are GONE. `handleClearSessions` (shell + plugin), `api.sessionsClear`, and the i18n strings (`settings.clearAllSessions*`, `confirm.clearSessions`) are deleted.
-
-**Why deleted**: User decided deletion over repair (post-audit-R7 discussion). Repair would have required an architectural call on whether shell should know plugin URL prefixes; the feature itself has no unique use case:
-- `reset_task` already handles per-task reset
-- Delete-project + re-add covers "fresh start for this project"
-- Per-task `POST /projects/:id/tasks/:nodeId/sessions/clear` (called from OrchestratorDetail / TaskDetail "Clear Session" buttons) remains and handles per-task reset
-
-**Kept (do NOT confuse with the deleted feature)**:
-- `EventStore.clear(sessionId)` — per-session JSONL delete (used by per-task clear route)
-- `POST /projects/:id/sessions/prune` — prunes oldest JSONL files (used by autoResumeProjects + `mxd sessions prune` CLI)
-- `POST /projects/:id/tasks/:nodeId/sessions/clear` — per-task clear, the `reset_task`-equivalent for the UI
-- `taskSessionsClear` in `.mxd/plugin/web/api.ts` — calls the per-task route
-- `clearSessionState` in `event-handler.ts` — frontend state cleanup helper, unrelated to the API
-
-Rule going forward: deletion is preferable to repair when a feature is duplicative AND the user explicitly wants it gone. Don't reach for "fix the URL bug" when the feature itself doesn't justify its surface area.
-
-### FIX-4b sweep + the biome gate (2026-06-05)
-
-Wave-3 audit cleanup. ~78 dead tests removed, net ~−4250 LOC across 22 files (+ new
-`src/zod-schema.ts`). `bun test` 2163 pass / 0 fail; `bun run check:ci` exits 0 (gate
-restored — `--no-verify` can be dropped on main). Committed as 3 deletion commits (grouped by
-non-overlapping file sets) + 1 format-only commit + this memory note.
-
-**C1 — Chat Completions provider deleted**: `openai-compatible-provider.ts` (893 LOC) +
-`.test.ts` (1624 LOC, 41 tests). Production-dead — `createProviderFromAuth`
-(runtime/helpers.ts) only builds Anthropic + OpenAIResponses. `eventsToOpenAIMessages` (the
-Chat-Completions event→message converter) lived ONLY there; `events.test.ts` exercised it in
-~36 tests (`describe("eventsToOpenAIMessages")` block + scattered `OpenAI:`-prefixed tests +
-dual Anthropic/OpenAI assertions) — all removed, Anthropic assertions preserved. Its
-pricing/context utils (getModelPricing/getContextWindow/clearContextWindowCache) were
-near-verbatim dups of the LIVE copies in anthropic-/openai-responses-compatible-provider.ts;
-anthropic-compatible-provider.test.ts imports resolve to the Anthropic copy. Closes draft
-01KN496YTW6HQNDWEKV0W99NQQ.
-
-**F-L1 — hasPendingYield deleted** (events.ts): zero production callers (re-verified post
-FIX-1/FIX-3 — FIX-1's repair rewrite uses its own `lastToolCallEvent`, not hasPendingYield).
-`hasPendingImplicitYield` is the LIVE sibling (provider-shared.ts:759) — kept. Removed its
-tests from events.test.ts + jsonl-stress.test.ts; the jsonl-stress tests that ALSO asserted
-`buildSessionRepair` kept those assertions (renamed to drop the dead-fn reference).
-
-**Tier-2 dead exports** (declaration-only, zero refs): formatPendingSection (events.ts),
-combineSystemPrompt (system-prompts.ts), buildExternalJsonSchema (tool-def.ts — the
-`buildExternalShape` it wrapped stays live in mcp-endpoint.ts), SerializedTreeNode (types.ts).
-
-**C6 — clarifyTimeoutMs vertical deleted**: a user-settable setting that did NOTHING.
-`getClarifyTimeoutMs` (resource-registry.ts) was never called, no clarify-timeout mechanism
-exists, and the SettingsPanel "Clarify Timeout (ms)" input lied. Removed config field+default,
-cli row + KNOWN_CONFIG_KEYS, resource-registry type + getter, SettingsPanel field, and i18n
-keys `settings.clarifyTimeout` + the now-orphaned `settings.noTimeout` (only the clarify field
-used it) in BOTH web/ and plugin i18n copies.
-
-**C3** — RelocateBanner.tsx deleted (orphan; only ref a stale "moved to shell" comment — it was
-NOT moved, relocate survives via CLI). **C9** — collapsed duplicate MCP_TOOL_PREFIX into
-MCP_PREFIX (plugin tool-names.ts). **A-F7** — deleted the unreachable `scopeOpts.get(id) ??
-{stubs}` fallback in routes/agent.ts `/restart` (createApp throws if buildScopeOpts missing) →
-explicit guard-throw. **C4** — deleted `_cache_audit.ts` + `_token_audit.ts` (standalone
-investigation scripts, zero importers, made real Anthropic API calls — a liability; recoverable
-from git history).
-
-**C8 — NARROWED (audit's "dead" was WRONG)**: the audit called `tool()` (tool-definition.ts)
-"production-dead (test-only)" and asked to delete it. `tool()` IS test-only but NOT dead — it's
-live test infrastructure with 23 call sites (anthropic/openai-responses provider tests,
-evaluate-script, tool-execution). Its `tool(name, desc, zodRawShape, handler)` signature is
-intentionally lightweight; the production builder `toToolDefinition(defineTool({params:
-ParamDefs}), auth)` is a heavier, different shape. Deleting `tool()` = a risky 23-site migration
-pulling auth/ParamDefs into unit tests that specifically test executeTool's Zod validation on the
-raw inputSchema — that changes what's tested, NOT reclamation. KEPT `tool()`. The REAL violation
-was the genuine duplication: `stripZodMeta` + `shapeToJsonSchema` existed verbatim in BOTH
-tool-def.ts and tool-definition.ts → extracted both to a new leaf `src/zod-schema.ts` (depends
-only on zod, no import cycle); both files import `shapeToJsonSchema` from it.
-**Lesson: "test-only" ≠ "dead." A test helper with N call sites is live infra; deleting it is
-test refactoring, not reclamation. Verify the actual violation (here: duplication) and fix THAT.**
-
-**biome gate**: main was failing `check:ci` with 4 format ERRORS (incl. event-store.ts K8
-`appendFileSync`) — the pre-commit hook had been bypassed via `--no-verify`. Ran `bun run check`
-(write, NO `--unsafe`) → auto-fixed format only → committed as a SEPARATE commit from the
-deletions. `check:ci` now exits 0. 35 lint WARNINGS remain (noNonNullAssertion + noExplicitAny —
-pre-existing, not auto-fixable, out of scope); warnings don't fail check:ci, only the format
-errors did. NOTE: the worktree pre-commit hook is /dev/null (hooksPath), so these commits skipped
-the hook locally — verify on main's gate after merge.
-
-**NOT touched**: mock-showcase (C2) — excluded, becoming a local plugin (draft
-01KTBZRFXD3A9J3JTKK38FH3WA).
-
-## Content-hashed build pipeline (2026-04-18) — `Cache-Control: immutable` replaces `no-store`
-
-**What shipped**: every asset `buildWebAssets` emits carries its content hash
-in the filename. `main-a1b2c3d4.js`, `react-7h8j9kml.js`, `styles-q2w3e4r5.css`.
-Served with `Cache-Control: public, max-age=31536000, immutable`. HTML that
-references them is served with `Cache-Control: no-cache, must-revalidate` so
-the browser always asks "is there a new index?" and never asks "is the
-hashed JS still fresh?".
-
-**Why**: Task Y SPA fallback memorized the deferred cache-hygiene problem —
-"browser caches old `/app/web/main.js` after daemon restart". Two
-options: `Cache-Control: no-store` (band-aid — works but every reload
-re-downloads the ~MB shell) vs content hash (standard web pattern —
-cache win is preserved, and stale content is impossible because stale
-URLs literally don't exist on disk). User ordered the second.
-
-**Mechanism**:
-- `Bun.build({ naming: "[name]-[hash].[ext]" })` for vendor shims,
-  shared modules, and plugins.
-- `Bun.build({ naming: "[dir]/[name]-[hash].[ext]" })` for the shell
-  entry — preserves the `web/` subdir.
-- CSS goes through `hashRename(sourcePath, outDir, logicalBasename)`
-  which reads bytes, computes `Bun.hash → base36 → low 8 chars`, copies
-  to `<logicalBasename>-<hash>.<ext>`. Same shape as Bun.build's own
-  hashes so URLs look uniform.
-- `manifest: Record<string, string>` — logical URL → hashed URL. Populated
-  for every asset. Used by `generateIndexHTML` to emit the correct
-  `<script>`/`<link>`/importmap hrefs.
-- `importmap.imports` is sourced from `manifest` — so every bare
-  specifier (`react`, `@mxd/auth-context`, etc.) resolves through the
-  importmap to a hashed URL. If the manifest is missing an entry, build
-  throws (`Vendor shim ${specifier} missing from manifest`) instead of
-  silently emitting a bare URL that would 404.
-
-**Cache header semantic**:
-- Hashed asset URL changes iff content changes → `immutable` is safe.
-- HTML URL (`/` and every SPA-fallback path) is stable → `no-cache`
-  forces revalidation on every navigation. Daemon rebuild → next index
-  fetch learns the new hashed asset URLs → browser downloads them
-  fresh. No orphan references, no band-aid.
-
-**Determinism**: `Bun.hash` on content bytes is pure. Two builds of the
-same source produce identical hashes → identical filenames → identical
-HTML → byte-identical deployments. Changed source → different hash →
-different filename → automatic cache bust.
-
-**Tests** (`src/web-builder.test.ts`, 18 tests, including):
-- Every importmap entry is a hashed URL
-- Every logical asset URL has a manifest entry pointing at a hashed URL
-- Two builds of same input produce identical hashes
-- Changed shell source produces a different shell hash
-- CSS content change produces a different CSS hash
-- Plugin output is hashed; hashed file exists on disk
-
-**Tests updated** (dropped hardcoded `/app/web/main.js` references):
-- `src/daemon-bootstrap.test.ts:244` → regex match against
-  `/app/web/main-[a-z0-9]{8}\.js`
-- `web/ShellApp.test.tsx:60,61,78,82` → extract hashed URLs from HTML,
-  fetch those; also assert `Cache-Control: immutable` on assets +
-  `no-cache` on HTML.
-- `src/plugin-url-namespace.test.ts` runtime-types.js size regression
-  → look up hashed path via manifest instead of `vendor/shared/runtime-types.js`.
-
-**What NOT to do**:
-- Don't add `Cache-Control: no-store` anywhere as a fallback. Either
-  the URL is content-addressable (immutable) or it's the index (no-cache).
-  `no-store` is the band-aid the hashing design replaced.
-- Don't hardcode logical asset URLs (`/app/web/main.js`) in production
-  code — only the manifest knows the real hashed URL.
-- Don't assume Bun.build hash width matches our manual CSS hash width
-  blindly; the test regex `[a-z0-9]{8}` pins the shape. Bun could widen
-  it in a future version — if so, update `shortContentHash` to match
-  and re-run the shape tests.
-
-**Anti-pattern avoided**: my first instinct was to write `no-store` +
-add a query-string cache buster `?v=abc123`. Both are cargo-cult. Query
-strings defeat CDN caching; `no-store` wastes bandwidth. Content-
-addressable URLs are the web-native answer to this class of problem —
-the browser's cache is already an infinite content-addressable store if
-you feed it content-addressable URLs.
-
-## bun 1.3.7–1.3.8 SIGTRAP on worker teardown — RESOLVED 2026-07-02: global bun upgraded to 1.3.14
-
-RESOLUTION (root, same day): minimal 7-line repro (spawn Worker → terminate → exit 133) confirmed
-the crash class independent of tests. Version matrix via isolated installs: 1.3.0 OK · 1.3.7 BAD ·
-1.3.8 BAD · **1.3.14 (latest) FIXED**. Global `bun upgrade` run (user-blessed) → 1.3.14; repro
-survives; full suite on main under 1.3.14 = **2305 pass / 0 fail** (baseline restored). The running
-daemon (started Jun 17, pre-upgrade image) was never exposed; next restart boots 1.3.14 = safe.
-Isolated pins ~/.bun-pin (1.3.7), ~/.bun-130, ~/.bun-latest are deletable. The interim scoped-gate
-below is no longer needed — kept for the record of the era.
-
-### Original diagnosis (markdown task 01KWHXMB, before resolution)
-
-**Any test file that terminates a Bun Worker crashes the whole `bun test` process** with
-SIGTRAP (exit 133) on bun v1.3.8. Native bug inside bun, NOT repo code: macOS crash report
-shows libmalloc abort `BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED_WAS_NOT_ALLOCATED`
-in `_pthread_tsd_cleanup` → `pthread_exit` (TSD double-free on worker-thread exit). Crash
-logs: `~/Library/Logs/DiagnosticReports/bun-2026-07-02-*.ips`.
-
-- Reproduced on the markdown branch, its clean base commit (stash), AND the main checkout —
-  identical crash, so no branch's code is the cause. User presumably upgraded bun since the
-  last green run (package.json pins no engines; only ~/.bun/bin/bun 1.3.8 on machine).
-- Confirmed on `web/ShellApp.test.tsx` AND `src/daemon-integration.test.ts` (no happy-dom
-  involved) — the trigger is worker terminate, i.e. every daemon/worker test file.
-- The crashing file runs FIRST in a full `bun test`, so the full suite verifies ~3 tests
-  before dying. **"bun test passed" claims from this era are meaningless — check exit code.**
-- Production daemon runs the same bun 1.3.8 and terminates workers on restart/shutdown —
-  same crash class may hit the live daemon.
-- Same environment refresh also drifted node_modules: 5 pre-existing `tsc` errors in
-  `_vendor_shims/*` (@types/react caret bump exposes missing internal props) + 2 biome
-  format errors on `_vendor_shims/react{,-dom}.ts` + 61 lint warnings. All verified
-  identical on clean base — NOT from any branch's diff.
-- Orchestrator owns the fix (isolated older-bun pin to restore the gate, then user decision
-  on downgrade). Interim per-task gate: typecheck + check:ci with zero NEW diagnostics vs
-  base, plus scoped `bun test ./<files>` on non-worker test files.
-
-## typecheck gate restored — every one of the 24 errors was a cast/hack, not a real type problem (2026-07-24)
-
-> **Second time.** *Dead-code sweeps* § FIX-4b records the same story for biome three months
-> earlier: gate found bypassed, errors accumulated behind it, cleared in one pass. Two independent
-> recurrences of one failure mode is the argument of § *Why this kept happening* below — the problem
-> was never the specific errors, it was that a checked-in hook file is not an enforced hook.
-
-`bun run typecheck` had accumulated 24 errors across ~6 merges, undetected because
-nothing was ever gated (see the `core.hooksPath` correction in Known Pitfalls — the
-hook was never installed on main; every `--no-verify` was a no-op on a hook that did
-not exist). Cleared them; the FULL `bash .hooks/pre-commit` (typecheck + check:ci +
-check-i18n.sh + the fast test subset) now exits 0. `bun test` 2654 pass / 0 fail
-(2650 on my fork point + 4 from main's rollback-impact work, merged in).
-
-**The headline: zero `as unknown as` were added. All 24 fixes DELETED a cast or a
-hack** — every error was a workaround for a type the code already had correctly.
-
-### The four patterns (each a reusable diagnosis)
-
-**1. `(node as Record<string, unknown>).status = …` in test fixtures (17 errors,
-`search-format.test.ts`)** — `TaskNode.status` / `.resultRounds` are ordinary typed,
-writable fields; `addChild` returns a real `TaskNode`. The cast was never needed for
-ANY reason. Replaced with the tracker's public API (`tracker.updateStatus(id, status)`,
-`tracker.appendResultRound(id, {result})`), which also stops the test from doing the
-external-mutation-of-tracker-managed-nodes thing draft 01KNWKZVHP flags.
-**Diagnosis rule: a `Record<string, unknown>` cast on a domain object in a TEST is
-almost always a fixture-seeding shortcut, not a type problem. Look for the setter.**
-
-**2. `(db as Record<string, unknown>).tokenizer = …` (`task-index.ts`)** — Orama's
-`AnyOrama` includes `Internals` which declares `tokenizer: Tokenizer`, and
-`@orama/tokenizers/mandarin`'s `createTokenizer()` returns a `DefaultTokenizer`
-(assignable). `db.tokenizer = createTokenizer()` typechecks directly. TS2352 fires
-because `AnyOrama` has no index signature — that error means "this isn't a bag of
-unknowns", i.e. **the type is more precise than the cast assumed. Read the .d.ts
-before laundering through `unknown`.**
-
-**3. `.filter(Boolean)` does NOT narrow in TypeScript** (`.mxd/plugin/runtime.ts`
-search endpoint) — `map(… | null).filter(Boolean)` still has type `(T | null)[]`, so
-every later `hit.x` is "possibly null". Fixed with `flatMap` (`return []` to drop,
-`return [value]` to keep), which infers the narrowed element type with no predicate
-and no `!`. A `(x): x is NonNullable<typeof x> =>` predicate also works; flatMap reads
-better. **Never "fix" this class with `!` — the compiler is right that filter(Boolean)
-told it nothing.**
-
-**4. Reading a variant-only field off the `Event` union** (`event-id.test.ts`) —
-`id` lives on `MessageEvent`, not on `Event`. Narrow on the `type` discriminant
-(`expect(stored?.type).toBe("message"); if (stored?.type !== "message") throw …`),
-which makes the test STRONGER (it now also asserts the event round-trips as a message
-event). Note `Event` is `(A|B|…) & {traceId?; eid?; parentEid?}` and TS still narrows
-the union through that intersection fine.
-
-### Process notes
-- **The `noUnusedLocals` cases were real** (`child2`, the `searchIndexSync` import) —
-  delete outright; `_` prefix does NOT satisfy `noUnusedLocals` for locals/imports
-  (only for function params), as noted in Known Pitfalls.
-- **Mutation-verified the one production behavior change**: reverting the flatMap
-  drop-branch to emit a ghost entry fails `src/search-endpoint.test.ts` "excludes
-  deleted tasks" — so that branch is genuinely guarded, the refactor didn't hollow it.
-- **`check:ci` exits 0 with ~158 warnings** (noNonNullAssertion / noExplicitAny).
-  Warnings never fail the gate; only format/lint ERRORS do. Don't "fix" the warning
-  count in a gate-restoration pass — biome's suggested `!` → `?.` autofix is marked
-  *unsafe* and silently changes assertion semantics in tests.
-
-### ⚠️ The gate does not cover merges
-
-Established here, but it is a CURRENT-STATE fact rather than part of this record, so it lives in
-*What is actually gated (and what isn't)* (Reference & Pitfalls) — one place, with the coverage
-table and the fresh-clone caveat. Short version: `git merge --no-ff` with a clean auto-commit fires
-`pre-merge-commit`, which does not exist, so root's dominant path is ungated while a CONFLICTING
-merge is gated. Deliberately not fixed: the branch model requires intermediate merges to be allowed
-to not typecheck.
-
-### Why this kept happening (the actual root cause)
-NOT "root bypassed the gate" — there was no gate to bypass (see *What is actually
-gated*). The failure was that a *tracked* `.hooks/pre-commit`
-existed, was referenced in memory as if it were active, and nothing pointed at it. The
-generalizable lesson: **a checked-in hook file is not an enforced hook.** Enforcement
-lives in untracked local config (`.git/config` → `core.hooksPath`), so it silently
-does not survive a fresh clone, and its absence looks identical to compliance — the
-only observable difference is errors quietly accumulating. If you rely on a hook,
-assert it is wired (`git config core.hooksPath`) rather than assuming the file's
-presence means anything.
-
-**Orphan found while clearing this** (drafted as 01KYB46KTM, NOT fixed here):
-`searchIndexSync` in `task-index.ts` now has zero production callers — 01KY7TQXPP
-explicitly kept it for the then-sync `buildWorkContext`, then 01KY83C8BV made that
-hook async and switched it to `searchIndex`, and nobody reclaimed the sync variant.
-Only its own 6 tests use it. Deleting a public export is a separate, separately
-revertable decision from restoring a gate — so it was drafted, not silently swept in.
+## Deleting code
+
+⭐ **"Test-only" is not "dead", and conflating them turns a cleanup into a risky migration.** An
+audit called `tool()` (in `tool-definition.ts`) production-dead and asked for its removal. It IS
+test-only — and it has 23 call sites, which makes it live test INFRASTRUCTURE. Deleting it would
+have been a 23-site migration that pulls auth and ParamDefs into unit tests written specifically to
+test `executeTool`'s Zod validation against a raw inputSchema; that changes what those tests test
+rather than reclaiming anything. **The real violation was sitting next to it** — `stripZodMeta` and
+`shapeToJsonSchema` existed verbatim in two files — and extracting those to a leaf module was the
+actual win. **When an audit says "dead", check whether it means "unreferenced" or "only referenced
+by tests"; the second is a different claim with a different answer.**
+
+**Names that no longer exist, so you do not go looking** (re-verified 2026-07-25, since a deletion
+record is the entry most likely to have been quietly undone): `persistent-queue.ts`,
+`openai-compatible-provider.ts` (the whole Chat Completions path, with `eventsToOpenAIMessages`),
+`hasPendingYield`, `truncateAfterLine` / `readWithLineMap` / `readActiveWithLineMap`,
+`formatPendingSection`, `combineSystemPrompt`, `buildExternalJsonSchema`, `resetAuthDataCache`,
+`clarifyTimeoutMs` and its whole config-through-UI vertical, `rollback_marker` / `appendRollback`,
+`await_background`, `stripEventForUI`, `RelocateBanner.tsx`, the `_cache_audit.ts` / `_token_audit.ts`
+scripts. ⚠️ **False positive to expect while checking**: a deleted function often still appears in
+comments that explain its deletion, so a bare grep count is not the answer.
+
+⭐ **Deletion beats repair when a feature is duplicative AND the user wants it gone.** Project-wide
+"Clear All Sessions" (endpoint, CLI subcommand, settings button, slash command, `EventStore.clearAll`)
+was deleted rather than fixed, because repairing it needed an architectural decision about whether the
+shell may know plugin URL prefixes, and the feature had no unique use case — `reset_task` covers
+per-task reset, delete-and-re-add covers a project reset. ⚠️ **Do not confuse it with what was KEPT**:
+`EventStore.clear(sessionId)` (per-session), `POST /projects/:id/sessions/prune` (used by
+autoResume and the CLI), the per-task `sessions/clear` route behind the UI's "Clear Session" button,
+and the frontend's unrelated `clearSessionState` helper.
+
+## The build pipeline is content-addressed
+
+Every asset carries its content hash in its filename (`main-a1b2c3d4.js`) and is served
+`Cache-Control: public, max-age=31536000, immutable`. The HTML referencing them is
+`no-cache, must-revalidate`, so the browser always asks whether there is a new index and never asks
+whether the hashed JS is fresh. A daemon rebuild changes the hashed URLs, the next navigation learns
+them, and stale content is **impossible because stale URLs do not exist on disk**.
+
+⚠️ **Do not add `Cache-Control: no-store` anywhere as a fallback**, and do not add a query-string
+cache buster. Both are the cargo-cult reflex this design replaced: `no-store` re-downloads the whole
+shell on every reload, and query strings defeat CDN caching. Either a URL is content-addressable
+(immutable) or it is the index (no-cache).
+
+⚠️ **Never hardcode a logical asset URL** like `/app/web/main.js` — only the manifest knows the real
+hashed path. The importmap is built from that same manifest, and the build **throws** if an entry is
+missing rather than emitting a bare specifier that would 404 at runtime.
+
+⚠️ **A test pins the hash SHAPE with `[a-z0-9]{8}`.** Bun could widen its hash in a future version;
+if it does, the manual CSS hash helper must be updated to match, and that test is what will tell you.
+
+## Type errors that were all casts, and the gate that never ran
+
+Twenty-four `tsc` errors accumulated across six merges. **Every one of them was a workaround for a
+type the code already had correctly — zero `as unknown as` were added to fix them, all 24 fixes
+DELETED a cast or a hack.** Four patterns, each a reusable diagnosis:
+
+- ⚠️ **`(node as Record<string, unknown>).status = …` in a test fixture** — the field is ordinary,
+  typed and writable. **A `Record<string, unknown>` cast on a domain object in a TEST is almost
+  always a fixture-seeding shortcut, not a type problem. Look for the setter.**
+- ⚠️ **A cast that fails with TS2352 means the type is MORE precise than you assumed, not less.**
+  `(db as Record<string, unknown>).tokenizer = …` errored because `AnyOrama` has no index
+  signature — and it declares `tokenizer` outright, so the plain assignment typechecks. **Read the
+  `.d.ts` before laundering through `unknown`.**
+- ⚠️ **`.filter(Boolean)` does NOT narrow.** `map(… | null).filter(Boolean)` still has type
+  `(T | null)[]`, so every later access is "possibly null". Use `flatMap` (`return []` to drop,
+  `return [v]` to keep), which infers the narrowed element type with no predicate. **Never "fix"
+  this with `!` — the compiler is right that `filter(Boolean)` told it nothing.**
+- ⚠️ **Reading a variant-only field off a union**: narrow on the `type` discriminant instead of
+  casting. The narrowing usually makes the test STRONGER, since it now also asserts the event
+  round-trips as that variant.
+
+Two adjacent facts: `noUnusedLocals` cases are real, so delete them (a `_` prefix does not satisfy it
+for locals or imports, only for function params); and `check:ci` exits 0 with ~158 warnings, because
+warnings never fail the gate — **do not "fix" the warning count during a gate restoration**, since
+biome's suggested `!` → `?.` autofix is marked unsafe and silently changes assertion semantics.
+
+⚠️ **Why 24 errors accumulated is the more important half, and it is not "someone bypassed the
+gate".** There was no gate to bypass — see *What is actually gated*. A **tracked** `.hooks/pre-commit`
+existed and was referenced in this file as if it were active, while nothing pointed at it.
+
+## Two smaller standing facts
+
+`mxd` is installed globally via `bun link`; `package.json` has `"bin": { "mxd": "src/cli.ts" }` and
+the CLI carries a `#!/usr/bin/env bun` shebang.
+
+⚠️ **If `bun test` ever dies mid-suite, check the EXIT CODE rather than the summary.** Bun 1.3.7-1.3.8
+had a native bug that killed the whole test process with SIGTRAP (exit 133) on any Worker teardown —
+a libmalloc double-free in `pthread_exit` — so the crashing file ran first and "3 tests passed" was
+meaningless while every claim of a green suite from that era was worthless. Fixed by upgrading to
+1.3.14. The generalisable part is the check, and that a minimal 7-line repro (spawn a Worker,
+terminate, observe exit 133) plus a version matrix over isolated installs settled in minutes what
+days of test-level debugging could not.
 
 ---
 # Reference & Pitfalls
 ---
 
-## System Prompt
+## Editing the system prompt
 
-**7 chapters + Staying Alive + Closing** (v2, rewritten for 4.7-era calibration). Core framings:
-- Three engagement modes (§3 Dialogue): Upward / User / Autonomous — decision authority varies, reporting threshold constant
-- Silent deliberation named as canonical failure mode + self-check ("if the person above you would only learn what you decided by reading your thinking...")
-- Tests as **current** truth (§5): Intent → Tests → Arch hierarchy; task is certificate of intent change; "absent a task certifying intent change, tests ARE the intent"
-- Memory as calling convention (§6): callee-saved inheritance
-- "fork" is the only allowed parent/child context; everywhere else positional (task above / sub task / ancestor)
+The system prompt is **universal** across every project that uses Matrix. Each project has its own
+`memory.md`, and agents elsewhere see the shared prompt plus THEIR memory — never ours. So:
 
-### Authorship rule — what goes in prompt vs memory
+- **Prompt**: principles, roles, tool semantics, communication patterns, task lifecycle, craft —
+  anything true for any project using Matrix.
+- **This file**: matrix-internal implementation, architecture, pitfalls, design decisions.
 
-System prompt is **universal** across all matrix projects. Each project has its own `memory.md`. Agents in OTHER matrix projects see: shared system prompt + THEIR memory.md. They do NOT see our memory.md, and they do NOT need Matrix's implementation details.
+**The one matrix-internal detail the prompt is allowed to expose is the path where pre-compaction
+events are preserved**, because a compacted agent otherwise has no way to read its own history.
 
-- **System prompt content**: principles, roles, tool semantics, communication patterns, task lifecycle, craft — things that apply to ANY project using Matrix.
-- **memory.md content**: matrix-internal implementation details, project-specific architecture, pitfalls, design decisions — things meaningful only within THIS project.
+⚠️ **Pitfall: "avoid internal" does NOT mean "delete the concept".** Told to strip matrix-internal
+detail, agents delete the whole section. It means strip implementation-specific words and keep the
+agent-experience concept — rewrite without `JSONL`, `checkpoint` and type names, keep the file path
+agents operationally need. **Preserve what agents experience; remove what only implementers reason
+about.**
 
-**The one matrix-internal detail system prompt IS allowed to expose**: the file path where pre-compaction events are preserved. Agents must be able to retrieve lost context after compaction; without the path, a compacted agent has no way to read their own history. Everything else matrix-internal goes to memory.md.
+Read the full prompt before editing it; it is for all Matrix users, not our project notebook. Prefer
+a principle that generates behavior ("tests are our current truth") over a rule specifying one
+behavior ("don't contort architecture for old tests"). Keep explicit rules only where they protect a
+product property, such as the git worktree invariants.
 
-### Pitfall: "avoid internal" ≠ "delete the concept"
+⚠️ **The prompt contradicts itself across sessions and nothing catches it.** Prompt edits rot the
+same three ways this file does, but the **superseded** kind is worse there because of the carrier.
+This file has regions and topical adjacency, so putting a claim next to its refutation is a move you
+can actually perform, and performing it is what makes the contradiction visible. **A prompt has no
+such mechanism** — it is one linear argument, and two sentences sixty lines apart are never brought
+together by anything. It does not present as a conflict either: **both sentences are individually
+true and well written**, and they only cancel when someone holds both at once, which is exactly what
+the linear form prevents. Observed in two commits one session apart, same file, same author: one
+added *"every unfinished break is state you carry, in a context that runs out"*, and the other
+existed to establish *"compaction is a continuation, not a stopping point"* — i.e. to deny the wall
+the first had just asserted. No gate can see this: the prompt is a template literal, so typecheck
+and biome only prove it parses, and the one test touching its content greps for hardcoded branch
+names.
 
-Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", agents DELETE the whole concept. Wrong. "Avoid internal" means **strip implementation-specific words, keep the agent-experience concept**. Example: the §6 Session history section — don't delete the memory/compaction block; rewrite without `JSONL` / `checkpoint` / type names, but keep the file path agents operationally need. Preserve what agents experience; remove what only implementers reason about.
+> **Before editing the prompt, read the recent prompt DIFFS, not just the current text**
+> (`git log -p -5 -- src/system-prompts.ts`). The current text tells you what the prompt says; the
+> recent diffs tell you what it has just *started* saying, which is the only place a fresh
+> contradiction can come from. Afterwards, grep the file for the concept you leaned on and read
+> every hit — the sentence that cancels yours will not share your wording.
 
-### Editing discipline
-
-- Read the full prompt before editing. Prompt is for ALL Matrix users, not our project notebook.
-- Matrix-specific rules → memory.md (this file), not prompt.
-- Principle over rule: 4.7 generalizes from framings better than from rule lists. Prefer "tests are our current truth" (principle that generates behavior) over "don't contort arch for old tests" (rule specifying one behavior). Keep explicit rules only when they protect a product property (e.g., git worktree invariants) — those stay as-is.
-
-### The prompt contradicts itself across sessions, and nothing catches it
-
-Prompt edits rot the same three ways this file does (§ *Writing This File*), but the **superseded**
-kind — correction exists, filed away from the claim — is worse here because of the carrier.
-`memory.md` has regions and topical adjacency, so putting a claim next to its refutation is a move
-you can actually perform, and performing it is what makes the contradiction visible. **A prompt has
-no such mechanism.** It is one linear argument; two sentences sixty lines apart are never brought
-together by anything. And it does not present as a conflict — **both sentences are individually true
-and well written.** They only cancel when someone holds both at once, which is precisely what the
-linear form prevents.
-
-Observed 2026-07-25, two commits one session apart, same file, same author:
-- `be9707f9` added to §5 Refactoring: *"every unfinished break is state you carry, in a context that
-  runs out"* — true as written, there to explain why a half-broken tree is expensive for an agent.
-- `91ba03b5` existed to establish §6's *"compaction is a continuation, not a stopping point"* — i.e.
-  to deny the wall the earlier sentence had just asserted. Fixed to "exactly the kind of state a
-  compaction blurs", which keeps the cost claim and drops the wall.
-
-No gate can see this. The prompt is a template literal; typecheck and biome only prove it parses and
-is formatted, and the sole test touching its content greps for hardcoded git branch names.
-
-**Rule: before editing the prompt, read the recent prompt DIFFS, not just the current text** —
-`git log -p -5 -- src/system-prompts.ts`. The current text tells you what the prompt says; the
-recent diffs tell you what it has just *started* saying, which is the only place a fresh
-contradiction can have come from. After landing an edit, grep the file for the concept you leaned on
-(here, `context`) and read every hit: the sentence that cancels yours will not share your wording.
-
-**Why this step gets skipped**, from the same pair of sessions: the round that INTRODUCED the
+⚠️ **Why that step gets skipped**, from the same pair of sessions: the round that INTRODUCED the
 contradiction was required to re-read all 436 lines after editing and substituted a targeted grep,
-reasoning verbatim *"rather than burn context re-reading 436 lines verbatim"* — while sitting at
-zero compactions. The round that CAUGHT it did the full read, and the full read is also what found a
-second, subtler collision (§5 Text's "if you lack context … delegate to a sub task" reads as a
-licensed handoff once §6 forbids handing off for context reasons). So the proximate cause of the
-contradiction surviving a whole session was laziness pattern #8: a verification step narrowed to
-protect a budget that was not under pressure. This rule is worth exactly as much as the willingness
-to pay for it.
+reasoning *"rather than burn context re-reading 436 lines verbatim"* — while sitting at zero
+compactions. The round that CAUGHT it did the full read, and the full read also found a second,
+subtler collision. **This rule is worth exactly as much as the willingness to pay for it.**
 
-## Known Pitfalls
+## What is actually gated (and what is not)
 
-- **memory.md**: Never `write_file` to append. Use `edit_file` or `echo >>`.
-- **A generator called without `yield*` is a SILENT NO-OP. After extracting a `yield`-ing block into
-  a helper, grep every call site for `yield*` before running anything.** `foo()` on a `function*`
-  builds a generator object and discards it — the body never runs. Nothing catches this: it is legal
-  TS with no diagnostic and no lint warning, because the call genuinely does return a generator and
-  the type system has no opinion about whether anyone iterates it. Omit it at one site and that
-  entire effect leaves the program while the build stays clean. Observed cost: two missing `yield*`
-  meant a `tool_result` reached neither JSONL nor `messages[]`, so requests went out with an
-  unanswered `tool_use` (8 tests). See `emitAndPushCompactToolResult` in `provider-shared.ts`, whose
-  docstring carries the warning at the definition.
-- **Git worktrees**: `extensions.worktreeConfig` required. `core.hooksPath` absolute.
-- **Biome**: Typecheck BEFORE lint. No `!important`. No duplicate CSS properties.
-- **noUncheckedIndexedAccess**: Array index returns `T | undefined`.
-- **Daemon reload**: Commits don't auto-restart the daemon. Must manually restart after code changes.
-- ~~**`search` tool silently skips `.mxd/`** (verified 2026-07-25): with the default path it
-  never walks hidden directories, and in THIS repo `.mxd/plugin/` is production code — every
-  ScopeOpts hook, every plugin REST route, the whole plugin UI. `search("buildMatrixScopeOpts")`
-  returns 4 files and omits `.mxd/plugin/scope-opts.ts`, which is where it is DEFINED. The
-  pattern is fine; passing `path: ".mxd"` explicitly finds it. **This makes the "grep for the
-  name as a string before you rename or delete" rule (Refactoring Philosophy) return a false
-  negative with the tool the description tells you to always use.** Until fixed (draft
-  01KYCQTGQZ), verify by-name references with `grep -rn` via bash, not with `search`.~~
-  **FIXED same day (01KYCQTGQZ) — hidden dirs are searched now; the workaround advice above is
-  obsolete.** The claim is kept because it is the clearest statement of the symptom, and
-  because the DETECTION lesson generalises to any silent under-report: see
-  § *`search` tool: a hidden directory is not a boring directory*. ~~⚠️ **One sibling bug in the
-  same tool is still OPEN and still produces silent false negatives**: `glob: "*.ts"` — the
-  example in the tool's own description — matches nothing below the top level, because `*`
-  does not cross `/` in Bun.Glob (**01KYCS0BH6**). Until that lands, pass `**/*.ts`.~~
-  **ALSO FIXED (01KYCS0BH6), and `list_files` had both defects too (01KYCV43JAZ, same day).**
-  Nothing in this bullet is live any more: a pattern with no `/` means "at any depth" in BOTH
-  tools, and both walk hidden directories. The
-  workarounds above (`grep -rn` via bash, `**/*.ts`) are obsolete in both tools. Whether the
-  three together were the whole class was surveyed — the answer, and how far it reached, is in
-  § *`list_files` had both of `search`'s bugs*.
-- **Concurrent ULID**: Use full `ulid()` (26 chars) — sliced ULIDs collide within same millisecond.
-- **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
-- **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
-- ~~**Async JSONL writes**: `emitEvent` fire-and-forgets `eventStore.append()`. Flush before reading
-  in tests.~~ **FALSE since 2026-07-25.** `append(sessionId, event): Event` is fully SYNCHRONOUS and
-  returns the persisted copy; `emitEvent` writes first and broadcasts that. Verified in code, not
-  inferred: `src/runtime/event-system.ts:113` is `persisted = eventStore.append(...)` with no await
-  and no `.catch()`. The synchrony is load-bearing — it is what makes `rewindChainHead` correct on a
-  failed write — so do NOT "restore" the async form. See § *Every transport carries the event's name
-  (eid)*. Flushing before reading is now belt-and-braces rather than required; harmless to keep in
-  existing tests, unnecessary in new ones.
-  **This bullet is a specimen worth noticing**: it was made false by our OWN change, the same
-  afternoon, and nothing anywhere contradicted it — the change was recorded in a new section while
-  the stale claim sat in the list every agent reads on every start. That is the *drained* rot class
-  with a same-day fuse, and the only reason it was caught is that a curation pass happened to read
-  the neighbouring bullet.
-- **delete_task cascades**: Deletes all descendants AND session JSONL. Enforced: returns 400 with children.
-- **Abort signal leak**: After stop, old runAgentForNode settles async. catch/finally check `sessionWasReplaced` to suppress stale error events.
-- **TS6133 `_` prefix**: TypeScript's `noUnusedLocals` does NOT respect `_` prefix for local variables or destructured locals — only for function parameters. For unused destructured React state, use `const [, setX] = useState(...)` (skip the getter slot). For unused `const` locals, delete outright. The underscore-prefix hint in our prompts is a holdover that doesn't match TypeScript's actual behavior.
-- **`bun run check` auto-writes**: `bun run check` runs `biome check --write` and silently formats 70+ files. `bun run check:ci` is the non-write variant used by the pre-commit hook. When debugging lint, use `check:ci`. When committing formatting sweeps, use `check` and split format-only changes into a separate commit.
-- **Pre-commit hook**: see *What is actually gated* below — it needs more than a bullet.
-
-## What is actually gated (and what isn't)
-
-**Verified 2026-07-25.** Answer this before assuming a green result means anything.
+Answer this before assuming a green result means anything.
 
 | path | hook git looks for | gated? |
 |---|---|---|
@@ -3719,62 +3349,69 @@ to pay for it.
 | a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | ✅ yes |
 | any commit inside a sub-task worktree | none (`core.hooksPath=/dev/null`) | ❌ no, by design |
 
-Current config, checked: main's `.git/config` has `core.hooksPath = .hooks`; worktrees have
-`/dev/null`; `.hooks/` contains **only** `pre-commit`.
+⚠️ **The clean merge — root's dominant path — is NOT gated, while the conflicting merge IS.** That is
+backwards from intuition, and it is why "the hook passed" says very little about an integration.
+Deliberately not fixed by adding `pre-merge-commit`: the branch model REQUIRES that intermediate
+merges be allowed to not typecheck, and gating every merge would just re-establish the routine
+`--no-verify` habit that hid 24 errors before. The options if it ever needs closing are to keep
+merges ungated and run `bash .hooks/pre-commit` by hand once per integration, to add the hook and
+accept `--no-verify` on intermediate merges, or to move enforcement off the commit hook entirely.
 
-Three consequences, none obvious:
+**Worktrees skip the hook on purpose** — sub-tasks commit constantly and a full typecheck plus lint
+plus tests on each would be unusable. To check the gate from a worktree, run
+`bash /path/to/main/.hooks/pre-commit` manually.
 
-1. **The clean merge — root's dominant path — is NOT gated, while the conflicting merge IS.** That
-   is backwards from intuition and it is why "the hook passed" says very little about an
-   integration. Deliberately not fixed by adding `pre-merge-commit`: the branch model REQUIRES that
-   intermediate merges be allowed to not typecheck, and gating every merge would just re-establish
-   the routine-`--no-verify` habit that hid 24 errors before. The options if this ever needs
-   closing are (a) leave merges ungated and keep running `bash .hooks/pre-commit` by hand once per
-   integration, (b) add the hook and accept `--no-verify` on intermediate merges, (c) move
-   enforcement off the commit hook entirely (CI, or a preflight subcommand).
-2. **Worktrees skip the hook on purpose.** Sub-tasks commit constantly; a full typecheck + lint +
-   test on each would be unusable. To check the gate from a worktree, run
-   `bash /path/to/main/.hooks/pre-commit` manually.
-3. ⚠️ **`core.hooksPath` is LOCAL config (`.git/config`), not tracked.** A fresh clone is ungated
-   again and looks identical to a gated one. Install with `git config core.hooksPath .hooks`. If
-   that onboarding step ever bites, it belongs in a `postinstall` script or in the main-repo
-   counterpart of `.mxd/hooks/setup_worktree.sh` — nobody will remember to run it by hand.
+⚠️ **`core.hooksPath` is LOCAL config (`.git/config`) and is not tracked, so a fresh clone is ungated
+again and looks identical to a gated one.** Install with `git config core.hooksPath .hooks`.
 
-**A checked-in hook file is not an enforced hook.** For years `.hooks/pre-commit` existed, was
-referenced in this file as if active, and nothing pointed at it — git was looking in
-`.git/hooks/pre-commit`, which held only `.sample` files. **Nobody was gated anywhere**, every
-`--no-verify` was a no-op against a gate that did not exist, and the absence looked exactly like
-compliance. The only way to know is to assert it: `git config core.hooksPath`. (Superseded by this
-section: an older note claiming "only root's commits on main are gated" — that was never true.)
+> ⭐ **A checked-in hook file is not an enforced hook.** For a long time `.hooks/pre-commit` existed,
+> was referenced as if active, and nothing pointed at it — git was looking in `.git/hooks/`, which
+> held only `.sample` files. **Nobody was gated anywhere**, every `--no-verify` was a no-op against a
+> gate that did not exist, and the absence looked exactly like compliance. The only way to know is to
+> assert it: `git config core.hooksPath`.
 
-## Known Bugs (unfixed)
+The hook itself runs typecheck, `check:ci`, `check-i18n.sh`, and `bun test --bail` on **5 of 140**
+test files — see *Gates: a passing gate looks identical whether it read 8% or 100%*.
 
-- ~~Manual compaction during yield → consecutive user messages → API 400.~~ **NOT A BUG — RESOLVED
-  BY MEASUREMENT 2026-07-25.** Consecutive user messages are legal; the remaining `test.todo` in
-  `drift-lifecycle.test.ts` describes a shape that works (verified through the real walker and
-  against the live API). See *The Anthropic message-shape rules, MEASURED*.
-- **Reachable, real, and open**: `/compact` on a session with `messages.length <= 4` whose last
-  message is an assistant turn sends a request ending in assistant → 400 *"does not support
-  assistant message prefill"*. A fresh agent whose first turn ends with `end_turn` reaches it with
-  no further setup. Pinned by `src/reachable-400-snapshot.test.ts` (a BEHAVIOR SNAPSHOT — it
-  asserts the CURRENT, buggy shape).
+## Known pitfalls
 
-## Vertical Dependency Boundaries
+- **This file**: never `write_file` to append. Use `edit_file` or `echo >>`.
+- ⚠️ **A generator called without `yield*` is a SILENT NO-OP.** After extracting a `yield`-ing block
+  into a helper, grep every call site for `yield*`. `foo()` on a `function*` builds a generator
+  object and discards it — the body never runs. **Nothing catches this**: legal TS, no diagnostic, no
+  lint warning, because the call genuinely returns a generator and the type system has no opinion
+  about whether anyone iterates it. Observed cost: two missing `yield*` meant a tool_result reached
+  neither JSONL nor `messages[]`, so requests went out with an unanswered `tool_use`.
+- **Git worktrees**: `extensions.worktreeConfig` required; `core.hooksPath` absolute.
+- **Biome**: typecheck BEFORE lint. No `!important`. No duplicate CSS properties. ⚠️ `bun run check`
+  runs `--write` and silently formats 70+ files — use `check:ci` when debugging, and split a
+  format-only sweep into its own commit.
+- **`noUncheckedIndexedAccess`**: an array index returns `T | undefined`.
+- ⚠️ **TS6133 and the `_` prefix**: `noUnusedLocals` does NOT respect a leading underscore for local
+  variables or destructured locals — only for function parameters. For unused destructured React
+  state use `const [, setX] = useState(...)`; for an unused `const`, delete it.
+- **Commits do not restart the daemon.** Restart it manually after code changes — and remember the
+  tools you call belong to the running daemon, not to your worktree.
+- **Concurrent ULID**: use the full 26-char `ulid()`. Sliced ULIDs collide within one millisecond.
+- **Provider queue close**: check `queue.isClosed` after tool execution and `return` immediately.
+- ⚠️ **Never modify your own JSONL from inside an agent.** The current tool_call has no result yet, so
+  you will read it as a false orphan.
+- ⚠️ **`delete_task` cascades** to all descendants AND their session JSONL. It returns 400 if the task
+  has children, which is the only thing standing between a misclick and unrecoverable loss.
+- ⚠️ **Abort-signal leak**: after a stop, the old `runAgentForNode` settles asynchronously. The catch
+  and finally check `sessionWasReplaced` to suppress stale error events from a session that is
+  already gone.
 
-Three layers: daemon → provider loop → tool handler. executeTool is clean (pure dispatch). done() closes queue through closure (boundary violation, but structural). evaluate_script punctures all layers (intentional). TaskSession has three-way mutation. Full audit in `VERTICAL-BOUNDARY-AUDIT.md`.
+## Known bugs and open design
 
-## Unresolved Design (prioritized)
+**Open and reachable**: `/compact` on a session with `messages.length <= 4` whose last message is an
+assistant turn sends a request ending in assistant → 400 *"does not support assistant message
+prefill"*. Pinned by `src/reachable-400-snapshot.test.ts`, which asserts the CURRENT buggy shape.
 
-⚠️ **This list had gone stale in two of three entries** — a list of open problems is the single
-easiest thing in this file to leave behind, because closing a problem happens in a task that has no
-reason to come back here. Re-checked against the code:
+**Open design questions**, re-checked rather than carried forward:
 
-1. ~~Message routing expansion (subtree + parent chain, not just direct parent/child)~~
-   **HALF DONE.** The parent chain shipped: `send_message` walks `getTaskAbove` upward, so any
-   ancestor is reachable, and the tool description says so. **Subtree routing did not** — you can
-   still only reach DIRECT sub tasks, not arbitrary descendants. That half is what remains open.
-2. ~~Folder/grouping feature (UI-only visual grouping, not tree structure)~~ **SHIPPED**, and then
-   generalized — see *The node model*. Folders exist, have zero behavior by design, and the
-   "resist feature creep" constraint on them is recorded there.
-3. Tool search — dynamic tool discovery. **Still open.** A draft exists; Anthropic has a server-side
-   `defer_loading`, but the user prefers a client-side design.
+- **Subtree message routing.** The parent chain shipped — `send_message` walks upward through
+  `getTaskAbove`, so any ancestor is reachable — but you can still only reach DIRECT sub tasks, not
+  arbitrary descendants. That half is what remains open.
+- **Tool search** — dynamic tool discovery instead of sending every tool. Anthropic has a server-side
+  `defer_loading`; the user prefers a client-side design.
