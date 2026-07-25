@@ -260,6 +260,79 @@ function validateCacheTtlOrder(
 	}
 }
 
+/**
+ * The tool_use/tool_result pairing rule as MEASURED against the real Anthropic
+ * API on 2026-07-25 (task 01KYCQ85, probes F/F4-F13, G, H, I, N, O).
+ *
+ * Flatten the user messages following an assistant-with-tool_use into one block
+ * stream. Take the MAXIMAL LEADING RUN of `tool_result` blocks — it may cross
+ * message boundaries freely, but ANY non-tool_result block ends it (including a
+ * trailing text block in an otherwise-fine message, and including a plain-string
+ * user message). Every tool_use must be answered inside that run; every
+ * tool_result inside it must answer a tool_use of that assistant message.
+ *
+ * Fits all 13 measured data points; the old message-granular rule fits 9.
+ */
+function validatePairingRealRule(messages: MessageParam[]): void {
+	for (let i = 0; i < messages.length; i++) {
+		const msg = messages[i];
+		if (!msg || msg.role !== "assistant") continue;
+
+		const toolUseIds = new Set<string>();
+		if (Array.isArray(msg.content)) {
+			for (const block of msg.content) {
+				if (
+					block &&
+					typeof block === "object" &&
+					"type" in block &&
+					block.type === "tool_use" &&
+					"id" in block
+				) {
+					toolUseIds.add(block.id as string);
+				}
+			}
+		}
+		if (toolUseIds.size === 0) continue;
+
+		// Maximal leading run of tool_result blocks across following user messages.
+		const answered = new Set<string>();
+		outer: for (let j = i + 1; j < messages.length; j++) {
+			const next = messages[j];
+			if (!next || next.role !== "user") break;
+			if (!Array.isArray(next.content)) break; // plain string ends the run
+			for (const block of next.content) {
+				const isToolResult =
+					block &&
+					typeof block === "object" &&
+					"type" in block &&
+					block.type === "tool_result";
+				if (!isToolResult) break outer; // any other block ends the run
+				const id = (block as { tool_use_id: string }).tool_use_id;
+				if (answered.has(id)) {
+					throw new MockValidationError(
+						`Duplicate tool_result for tool_use_id '${id}' after assistant at index ${i}`,
+					);
+				}
+				if (!toolUseIds.has(id)) {
+					throw new MockValidationError(
+						`Unexpected tool_result for tool_use_id '${id}' — no matching tool_use in assistant at index ${i}. ` +
+							"Real API: 'Each `tool_result` block must have a corresponding `tool_use` block in the previous message.'",
+					);
+				}
+				answered.add(id);
+			}
+		}
+		for (const id of toolUseIds) {
+			if (!answered.has(id)) {
+				throw new MockValidationError(
+					`Missing tool_result for tool_use_id '${id}' (assistant at index ${i}). ` +
+						"Real API: '`tool_use` ids were found without `tool_result` blocks immediately after.'",
+				);
+			}
+		}
+	}
+}
+
 function validateRequest(messages: MessageParam[]): void {
 	if (messages.length === 0) {
 		throw new MockValidationError("Messages array must not be empty");
@@ -272,13 +345,38 @@ function validateRequest(messages: MessageParam[]): void {
 		);
 	}
 
+	// ── EXPERIMENT (task 01KYCQ85, round 1 — data collection, NOT a shipped change) ──
+	// MXD_MOCK_EXP is read at call time:
+	//   unset / "0" → current behavior (fictional alternation rule, no last-must-be-user)
+	//   "A" → alternation check REMOVED
+	//   "B" → A + last-message-must-be-user (the REAL rule the mock never had)
+	//   "C" → B + pairing check replaced by the empirically-measured prefix rule
+	const EXP = process.env.MXD_MOCK_EXP ?? "0";
+
 	// 2. Strict alternation: user/assistant/user/assistant...
-	for (let i = 1; i < messages.length; i++) {
-		const prev = messages[i - 1];
-		const curr = messages[i];
-		if (prev?.role === curr?.role) {
+	// MEASURED 2026-07-25 against the real API: this rule DOES NOT EXIST.
+	// user/user, user/user/user and assistant/assistant are all ACCEPTED.
+	if (EXP === "0") {
+		for (let i = 1; i < messages.length; i++) {
+			const prev = messages[i - 1];
+			const curr = messages[i];
+			if (prev?.role === curr?.role) {
+				throw new MockValidationError(
+					`Messages must alternate roles. Found consecutive '${curr?.role}' at index ${i - 1} and ${i}`,
+				);
+			}
+		}
+	}
+
+	// 2b. REAL rule the mock never had: the conversation must END with a user message.
+	// Real API: 400 "This model does not support assistant message prefill.
+	// The conversation must end with a user message."
+	if (EXP === "B" || EXP === "C") {
+		const last = messages[messages.length - 1];
+		if (last?.role !== "user") {
 			throw new MockValidationError(
-				`Messages must alternate roles. Found consecutive '${curr?.role}' at index ${i - 1} and ${i}`,
+				`Conversation must end with a user message, got '${last?.role}' at index ${messages.length - 1}. ` +
+					"Real API: 'This model does not support assistant message prefill.'",
 			);
 		}
 	}
@@ -301,6 +399,11 @@ function validateRequest(messages: MessageParam[]): void {
 				`Message at index ${i} has empty content array`,
 			);
 		}
+	}
+
+	if (EXP === "C") {
+		validatePairingRealRule(messages);
+		return;
 	}
 
 	// 4. tool_use/tool_result pairing

@@ -6296,3 +6296,101 @@ reason to come back here. Re-checked against the code:
    "resist feature creep" constraint on them is recorded there.
 3. Tool search — dynamic tool discovery. **Still open.** A draft exists; Anthropic has a server-side
    `defer_loading`, but the user prefers a client-side design.
+
+---
+
+## The Anthropic message-shape rules, MEASURED (2026-07-25) — and the fictional one we built on
+
+⚠️ **`ValidatingMockAPI` enforced a role-alternation rule that DOES NOT EXIST.** 628 occurrences of
+"Messages must alternate roles" in our JSONL history; **every one came from our own mock, none from
+the API.** Four mechanisms, one `test.todo` and one memory "⭐ reusable pattern" were built to avoid
+a 400 that cannot happen. Full audit + per-mechanism verdicts: task **01KYCQ856M3Z6F4EN247C4GW69**.
+
+### The rules, as measured against production Anthropic (19 shapes, OAuth, `claude-opus-5`)
+
+1. **First message must be `user`.** (mock had it ✅)
+2. **The conversation must END with a `user` message.** Ending on assistant →
+   400 *"This model does not support assistant message prefill."* (mock did NOT have it ❌)
+3. **The tool-answering rule — and it is NOT "in the next message":**
+
+   > Flatten the user messages after an assistant-with-`tool_use` into one block stream. Take the
+   > **maximal LEADING run of `tool_result` blocks**. It crosses message boundaries freely; **any
+   > non-`tool_result` block ends it** — including a *trailing* text block in an otherwise-fine
+   > message, and including a plain-string user message. Every `tool_use` must be answered inside
+   > that run.
+
+4. **Every `tool_result` must answer a `tool_use` in the preceding assistant message** (orphan →
+   400). (mock had it ✅)
+5. **Consecutive same-role messages are LEGAL** — user/user, user/user/user, and assistant/assistant
+   all accepted. (mock forbade ❌ — the fiction)
+6. **Empty content is LEGAL** — `""`, `[]`, and `[{type:"text",text:""}]` all accepted. (mock
+   forbade ❌ — a second, unnoticed fiction)
+
+Consequences of rule 3 that nothing tests today:
+- results **split across several user messages** are fine (`[R1] [R2] [R3,text]` ✅), in **any order**
+- `[R1, text]` then `[R2, …]` is **400** — the trailing text ended the run before R2
+- `[text, R1]` is **400** — block ORDER inside the message matters
+- ⭐ **`buildUserTurn` packs `[...tool_results, ...queueMessages]`, tool_results FIRST. That order is
+  a real API requirement, not style.** Put text before a tool_result, or between two batches of
+  them, and you get a production 400 with a fully green suite.
+
+### Reachable bug this exposed (BEHAVIOR SNAPSHOT test, `src/reachable-400-snapshot.test.ts`)
+
+`provider-shared.ts` "context too short to compact" (`manualCompactRequested && messages.length <= 4`):
+a fresh agent whose first turn ends with `end_turn` has `messages = [user, assistant]`; `/compact`
+takes the compactOnly path → `continue` → the too-short branch clears the flag and `continue`s with
+nothing to push → next iteration sends a request **ending in assistant** → 400. Reproduced
+end-to-end through the real agent loop; the agent crashes. **No new code needed to reach it.**
+
+### ⭐ The general lesson — how a fictional rule gets installed
+
+`jsonl-stress.test.ts`'s `assertStructurallyValidApiMessages` wrote down BOTH rules in the same
+comment, then chose:
+
+> *"We don't assert the trailing-role rule because some walker outputs are intermediate and meant to
+> be extended. We DO assert the alternation and structural shape."*
+
+**That reasoning is correct.** Some walker outputs genuinely are conversation *prefixes* that end on
+assistant; asserting the real rule would redden correct fixtures. So:
+
+> **An inconvenient TRUE assertion + a conveniently-green FALSE one ⇒ the false one gets installed,
+> and is then believed as fact.** The fiction does not win on persuasiveness — it wins on **not
+> causing trouble**. Once it lives inside a `throw` it starts MANUFACTURING EVIDENCE: 628 error
+> strings from the rule that was *executed*, 0 from the rule that was merely *documented*. **The
+> knowledge was never lost; the enforcement was.**
+
+**Detector — do not audit whether the assertions are correct** (that comment was entirely correct).
+Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
+fork is where the fiction starts producing evidence.
+
+**The name is the other tell.** `assertStructurallyValidApiMessages` fuses two different predicates:
+*structurally valid* (a prefix property) and *API messages* (a sendable-request property). The code
+can only be one of them, so it silently became the weaker one plus a fictional bonus — 2 of its 5
+listed rules fictional, 1 true but deliberately unasserted. **A name that claims "valid" without
+saying valid-for-what will drift to "matches what we imagined".** The way out is two predicates:
+a *prefix* check (rules 1, 3-restricted-to-non-final-assistants, 4) and a *sendable* check (all of
+1-4). Only the second asserts trailing-role.
+
+Sibling entries, same family: *"a real error message + an unverified attribution beats a pure guess,
+because it arrives wearing evidence's clothes"* — the phrase that propagated this one was an
+offhand "(matches real Anthropic)" that nobody checked. And *"an accurate observation + an
+over-broad generalisation is harder to challenge than a guess, because it arrives with a number"*
+(Which messages can be edited/rewound).
+
+### Probing the real API: the `systemPreamble` trap
+
+Any probe against the OAuth endpoint **must send the auth group's `systemPreamble` as the FIRST
+system block**, or every call 429s. A first-pass probe that omitted it produced a wall of rate
+limits that reads exactly like validation failure — nearly yielding the opposite conclusion. Probes
+live in `/tmp/alt-probe/` (`probe2.ts`-`probe6.ts` = API shapes, `walker-shapes.ts` = runs disputed
+shapes through the real walker and checks them against the measured rule). They read `oauthToken`
+from config and never print it.
+
+### Experiment result, for whoever ships the mock fix
+
+`MXD_MOCK_EXP` in `mock-anthropic-api.ts` gates the realistic rules (default = unchanged shipped
+behavior). Full `bun test` per variant: **A** (drop alternation) 2774/2 — one is the mock's own
+self-test of the fiction, one a known teardown flake that did not recur; **B** (+ trailing-role)
+2776/1; **C** (+ the real prefix pairing rule) 2776/1. In every variant **the only real failure is
+the mock's self-test of the fictional rule.** So the realistic mock is a drop-in: nothing depended
+on the fiction, and the true rules cost nothing to adopt — they were simply never asked for.
