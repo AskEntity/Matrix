@@ -294,7 +294,7 @@ const en: Translations = {
 	"activity.editBlockedBusy":
 		"The agent is working — stop it before editing this message.",
 	"activity.editBlockedMidRun":
-		"Sent while the agent was already working. The agent's run started from an earlier message, so there is nothing to regenerate from here.",
+		"Not sent on its own — the agent picked this up along with work it was already doing, so there is no separate point here to go back to.",
 	"activity.editBlockedNoRewindPoint":
 		"The history around this message was summarized away when the context was compacted — there is no state left to return to.",
 	"activity.editBlockedUnknown":
@@ -655,7 +655,7 @@ const zh: Translations = {
 	"activity.editBlockedBusy":
 		"agent 正在工作 —— 先让它停下来才能编辑这条消息。",
 	"activity.editBlockedMidRun":
-		"这条消息是在 agent 已经在工作时发出的。agent 这一轮是由更早的消息启动的，所以这里没有可以重新生成的起点。",
+		"这条不是独立发出的 —— agent 是把它和手上已经在做的活一起收进去的，所以这里没有一个单独的起点可以回到。",
 	"activity.editBlockedNoRewindPoint":
 		"这条消息周围的历史在上下文压缩时已经被总结掉了 —— 没有可以回到的状态。",
 	"activity.editBlockedUnknown":

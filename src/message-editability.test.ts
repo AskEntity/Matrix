@@ -38,70 +38,124 @@ import { ulid } from "./ulid.ts";
 
 const TASK = "task-1";
 
-function call(id: string, tool = "mcp__mxd__bash", taskId = TASK): RunEvent {
-	return { type: "tool_call", tool, toolCallId: id, taskId };
+function call(tool = "mcp__mxd__bash", taskId = TASK): RunEvent {
+	return { type: "tool_call", tool, taskId };
 }
-function result(id: string, tool = "mcp__mxd__bash", taskId = TASK): RunEvent {
-	return { type: "tool_result", tool, toolCallId: id, taskId };
+function result(tool = "mcp__mxd__bash", taskId = TASK): RunEvent {
+	return { type: "tool_result", tool, taskId };
 }
-function userMsg(eid: string, taskId = TASK): RunEvent {
-	return { type: "message", eid, taskId };
+function text(taskId = TASK): RunEvent {
+	return { type: "assistant_text", taskId };
+}
+/** A delivered user message. `eid` doubles as its queue id for readability. */
+function msg(eid: string, taskId = TASK): RunEvent {
+	return { type: "message", id: eid, eid, taskId };
+}
+/** The turn that picked those messages up. */
+function consumed(eids: string[], taskId = TASK): RunEvent {
+	return { type: "messages_consumed", messageIds: eids, taskId };
 }
 
-describe("run-start: did this message start a run?", () => {
-	test("a message on a parked agent starts a run", () => {
-		const log = [call("t1"), result("t1"), userMsg("m1")];
+describe("run-start: was this message sent on its own?", () => {
+	test("a message the agent picked up by itself was sent on its own", () => {
+		// Nothing to answer: the turn exists because the message arrived.
+		const log = [text(), msg("m1"), consumed(["m1"])];
 		expect(messageStartsRun(log, "m1")).toBe(true);
 	});
 
-	test("a message delivered inside a tool call does not", () => {
-		// The user typed while bash was still running: the message event is
-		// written between the call and its result.
-		const log = [call("t1"), userMsg("m1"), result("t1")];
+	test("SHAPE 1 — typed in the thinking gap, before the tool_call is written", () => {
+		// The live failure this rule was rewritten for (2026-07-25): the user
+		// asked for a bash run, then added one more thing while the agent was
+		// still composing the call. At DELIVERY there was no outstanding tool
+		// call — which is why the old proxy called it editable — but it was
+		// picked up together with that bash's result, so it plainly wasn't
+		// sent on its own.
+		const log = [
+			msg("m1"),
+			consumed(["m1"]), // "run a bash for me" — starts the run
+			msg("m2"), // "…and one more thing" — arrives BEFORE the call
+			call(),
+			result(),
+			consumed(["m2"]),
+		];
+		expect(messageStartsRun(log, "m1")).toBe(true);
+		expect(messageStartsRun(log, "m2")).toBe(false);
+	});
+
+	test("typed while the tool was running is blocked the same way", () => {
+		const log = [call(), msg("m1"), result(), consumed(["m1"])];
 		expect(messageStartsRun(log, "m1")).toBe(false);
 	});
 
-	test("yield is the park, so a message after it starts a run", () => {
-		// yield's tool_call is deliberately left unanswered while the loop
-		// waits. That is the cleanest "agent is parked, user is talking"
-		// case there is — the rule's best instance, not its exception.
-		const log = [call("y1", TOOL_YIELD), userMsg("m1")];
+	test("SHAPE 2 — two messages onto a parked agent: BOTH were sent on their own", () => {
+		// They share a turn, and that is irrelevant: the turn answers nothing.
+		// Rewinding to the first replaces both; rewinding to the second keeps
+		// the first and redoes it. Both are meaningful, so neither is blocked.
+		// Guards the over-strict direction — a rule keyed on "alone in its
+		// turn" would fail here and still pass every blocking test.
+		const log = [text(), msg("m1"), msg("m2"), consumed(["m1", "m2"])];
 		expect(messageStartsRun(log, "m1")).toBe(true);
+		expect(messageStartsRun(log, "m2")).toBe(true);
 	});
 
-	test("done is a park too", () => {
-		const log = [call("d1", TOOL_DONE), userMsg("m1")];
-		expect(messageStartsRun(log, "m1")).toBe(true);
-	});
-
-	test("a real tool alongside yield still counts as running", () => {
-		// The loop answers yield with a no-op result when other tools ran in
-		// the same turn, so bash here is genuinely still outstanding.
+	test("SHAPE 3 — waking an agent parked on done(): sent on its own", () => {
+		// The dominant shape for sub-agents: every task ends in done() and is
+		// later woken by a message. done's tool_result is written AT WAKE, so
+		// it is this message's consequence, not work that preceded it. The
+		// most independent message there is.
 		const log = [
-			call("t1"),
-			call("y1", TOOL_YIELD),
-			userMsg("m1"),
-			result("t1"),
+			call(TOOL_DONE),
+			msg("m1"),
+			result(TOOL_DONE),
+			consumed(["m1"]),
+		];
+		expect(messageStartsRun(log, "m1")).toBe(true);
+	});
+
+	test("waking an agent parked on yield(): same", () => {
+		const log = [
+			call(TOOL_YIELD),
+			msg("m1"),
+			result(TOOL_YIELD),
+			consumed(["m1"]),
+		];
+		expect(messageStartsRun(log, "m1")).toBe(true);
+	});
+
+	test("a park's result alongside a real one still counts as prior work", () => {
+		// yield called next to real tools gets a no-op result; the real tool
+		// genuinely ran, so its result is the message's cause.
+		const log = [
+			call(),
+			call(TOOL_YIELD),
+			msg("m1"),
+			result(),
+			result(TOOL_YIELD),
+			consumed(["m1"]),
 		];
 		expect(messageStartsRun(log, "m1")).toBe(false);
 	});
 
-	test("one of two parallel calls finishing is not enough", () => {
+	test("a status event between the result and the consumption doesn't detach them", () => {
+		// Unrecognised events must not end the turn: detaching a tool_result
+		// is the direction that wrongly calls a message editable.
 		const log = [
-			call("t1"),
-			call("t2"),
-			result("t1"),
-			userMsg("m1"),
-			result("t2"),
+			call(),
+			msg("m1"),
+			result(),
+			{ type: "status", taskId: TASK },
+			consumed(["m1"]),
 		];
 		expect(messageStartsRun(log, "m1")).toBe(false);
 	});
 
-	test("a sibling task's open call says nothing about this task", () => {
+	test("a sibling task's turn says nothing about this one", () => {
 		const log = [
-			call("t1", "mcp__mxd__bash", "other-task"),
-			userMsg("m1"),
-			result("t1", "mcp__mxd__bash", "other-task"),
+			call("mcp__mxd__bash", "other-task"),
+			result("mcp__mxd__bash", "other-task"),
+			msg("m1"),
+			consumed(["m1"]),
+			{ type: "messages_consumed", messageIds: ["x"], taskId: "other-task" },
 		];
 		expect(messageStartsRun(log, "m1")).toBe(true);
 	});
@@ -109,18 +163,28 @@ describe("run-start: did this message start a run?", () => {
 	test("an eid that names no message is undefined, not false", () => {
 		// "we can't tell" — a different answer from "no", and it gets its
 		// own refusal.
-		expect(messageStartsRun([call("t1"), userMsg("m1")], "nope")).toBe(
+		expect(messageStartsRun([msg("m1"), consumed(["m1"])], "nope")).toBe(
 			undefined,
 		);
 	});
 
+	test("a message no turn has picked up yet has no answer", () => {
+		// Delivered but not consumed: the agent has not looked at it, so
+		// whether it started anything is not yet decided.
+		expect(messageStartsRun([msg("m1")], "m1")).toBe(undefined);
+	});
+
 	test("one pass answers for every message in the log", () => {
 		const starts = messageRunStarts([
-			userMsg("m1"),
-			call("t1"),
-			userMsg("m2"),
-			result("t1"),
-			userMsg("m3"),
+			msg("m1"),
+			consumed(["m1"]),
+			call(),
+			msg("m2"),
+			result(),
+			consumed(["m2"]),
+			text(),
+			msg("m3"),
+			consumed(["m3"]),
 		]);
 		expect([...starts]).toEqual([
 			["m1", true],
@@ -339,7 +403,7 @@ describe("POST /edit enforces the gate", () => {
 		});
 	}
 
-	/** [assistant turn] → yield → user message. The 97% shape. */
+	/** [assistant turn] → yield → user message → wake. The common shape. */
 	function parkedThenMessage(taskId: string): Event[] {
 		const ts = Date.now();
 		return [
@@ -359,11 +423,21 @@ describe("POST /edit enforces the gate", () => {
 				taskId,
 				ts: ts + 2,
 			},
-			{ type: "messages_consumed", messageIds: ["m1"], taskId, ts: ts + 3 },
+			// Written at wake, by the very message that woke it.
+			{
+				type: "tool_result",
+				tool: TOOL_YIELD,
+				toolCallId: "y1",
+				content: "resumed.",
+				isError: false,
+				taskId,
+				ts: ts + 3,
+			},
+			{ type: "messages_consumed", messageIds: ["m1"], taskId, ts: ts + 4 },
 		];
 	}
 
-	/** bash starts → user types → bash finishes. The 2% shape. */
+	/** bash starts → user types → bash finishes. */
 	function midToolMessage(taskId: string): Event[] {
 		const ts = Date.now();
 		return [
@@ -402,14 +476,14 @@ describe("POST /edit enforces the gate", () => {
 		expect(res.status).toBe(200);
 	});
 
-	test("a message sent mid-tool-call is refused, agent idle or not", async () => {
+	test("a message the agent swept up mid-tool-call is refused", async () => {
 		const { eids } = await seed(midToolMessage);
 		const res = await edit(eids[0] as string);
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as { reason: string; error: string };
 		expect(body.reason).toBe("did_not_start_run");
 		// The sentence has to explain, not just refuse.
-		expect(body.error).toMatch(/already working|never started/i);
+		expect(body.error).toMatch(/on its own/i);
 	});
 
 	test("a working agent blocks even an otherwise editable message", async () => {

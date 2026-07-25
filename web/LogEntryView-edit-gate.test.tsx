@@ -128,7 +128,7 @@ describe("Edit/Rewind buttons under the gate", () => {
 		}
 	});
 
-	test("a message that started no run says so instead, even while busy", async () => {
+	test("a message that was not sent on its own says so instead, even while busy", async () => {
 		// The permanent reason wins: telling this user to wait would send
 		// them off to watch a button that is never going to light up.
 		const { div, unmount } = await renderUserMessage({
@@ -138,7 +138,7 @@ describe("Edit/Rewind buttons under the gate", () => {
 		try {
 			for (const b of gatedButtons(div)) {
 				expect(b.disabled).toBe(true);
-				expect(b.title).toMatch(/already working/i);
+				expect(b.title).toMatch(/on its own/i);
 				expect(b.title).not.toMatch(/stop it/i);
 			}
 		} finally {
