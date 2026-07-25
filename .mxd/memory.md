@@ -5036,3 +5036,164 @@ stays exact for every other field instead of weakening to `toMatchObject`.
 `emission-harness`): all 12 lines of the produced session file — message,
 work_context, session_config, agent_start, messages_consumed, assistant_text,
 tool_call, usage … — start with `{"eid":"…","parentEid":…`, chain visibly linear.
+
+## One boundary: the active chain (2026-07-24)
+
+"Which events count" had FOUR independent implementations. Now there is one:
+`walkActiveChainIndices` (events.ts). `readActive`, `readFromLastCompactMarker`
+and `copySessionFrom` all go through it; repair and rollback both express
+"these events stop counting" the same way — a `parentEid` jump. Nothing
+addresses events by file position any more, and nothing deletes.
+
+### The rule
+
+> The active chain ends at the `compact_started` of the last COMPLETED
+> compaction. Inside that compaction's window, only `type === "message"`
+> survives.
+
+One backward scan does both jobs. `parentEid` always points at an earlier
+position, so scanning backward IS the lookup — no eid→index map (O(result)
+memory), and a cycle is structurally impossible because `i` only decreases.
+Walking back: a `compact_marker` opens the window, its `compact_started`
+closes the walk. `compact_marker` is always kept (walker treats it as
+structural; `readFromLastCompactMarker` slices the UI log at it;
+`buildSessionRepair` needs it to scope). `includeBarrier` is gone.
+
+### Why the window (the bug it fixes)
+
+Messages delivered WHILE the summarizer runs land between `compact_started`
+and `compact_marker`. The old rule ended the chain at the marker, so those
+messages were outside the active region while the `messages_consumed` that
+acknowledged them (written after the marker) was inside — the walker resolved
+a consumption record referencing an id it had never seen and dropped the
+content silently. Measured on the root session: 22 compactions, 8 with
+stranded messages, 15 lost, 4 typed by a human. The live path was fine; only
+reconstruction (restart / fork / UI refetch) lost them, so this was pure
+live-vs-reconstruction drift.
+
+The window filter is equally load-bearing in the other direction: the
+summarizer's own `thinking` + `<summary>…` `assistant_text` + `usage` must NOT
+come back — the summary is already in the context as `compacted_resume`.
+
+### ⚠️ Do NOT encode the barrier as `compact_started.parentEid = null`
+
+This looks cleaner (termination collapses to the chain root, zero type
+knowledge) and it is WRONG. Two independent reasons, both verified:
+
+1. **A compaction is a 2-3 minute window whose outcome is unknown when
+   `compact_started` is written.** Real durations from the root session:
+   124s (1784053169510→1784053293730), 178s (1784222935672→1784223113791),
+   145s (1784829047832→1784829193473). If the daemon dies inside that window
+   there is no summary at all — but the chain root is already committed, so
+   the active region becomes `[compact_started, window messages]`, the agent
+   resumes with an empty context, `hasWorkContext` is false so a fresh
+   work_context gets injected, and it carries on like a newborn. No error, no
+   crash: **silent total context loss**, recoverable only by hand-editing
+   JSONL. Under self-bootstrap (dozens of restarts a day) this is a matter of
+   time. The type rule handles it for free: no marker ⇒ not a barrier ⇒ full
+   history stays reachable.
+2. **The type check has to exist anyway.** Logs written before
+   `compact_started` existed have a marker with no opener, and walking past
+   such a marker would drag pre-compact user messages back into the context.
+   That legacy branch is mandatory — so emitting `null` only ADDS a mechanism
+   on top of it, plus a migration pass over every existing session (otherwise
+   the chain runs to line 1 and a compacted session's whole 84MB history
+   floods back on the next restart). Strictly more code, strictly more risk.
+
+Orchestrator's framing after being talked out of it twice: encoding structure
+in links fits a JUMP (rollback, repair — you know the target when you write
+it). A compaction is an INTERVAL whose validity depends on a result you don't
+have yet. Don't express an undetermined fact as a link.
+
+### Repair is a chain jump, never a truncation
+
+`buildSessionRepair` returns `{ chainToEid, appendEvents }` (`SessionRepair`).
+The caller does `setChainHead(chainToEid)` + `appendBatch` — literally the
+rollback mechanism. `chainToEid: null` means append-only (orphan repair).
+Deleted: `EventStore.truncateAfterLine`, `readWithLineMap`,
+`readActiveWithLineMap`, the `physicalLines` array, and the event-index →
+file-line translation that produced FIX-1 cc#1 and FIX-8 R8-B#4. Poisoned
+events stay on disk and simply stop being reachable, so the evidence needed to
+debug a corruption survives it.
+
+**A truncating repair ALWAYS appends at least one event.** `setChainHead` is
+pure in-memory; the jump only reaches disk as the first appended event's
+`parentEid`. Both truncation strategies therefore append a `status` event
+("Session repaired: …") LAST — last so it can never split a run of
+tool_results into two user turns (the walker skips `status`, but position
+still matters for the tool_result collection loop). Without it, the repair of
+a session that resumes in pending-done (no orphan results, no replayed
+messages, status user-message suppressed) would evaporate on restart and loop
+forever.
+
+Messages in the dropped region are replayed (fresh eids) so
+`findUnconsumedMessages` re-delivers them. ALL of them, not just the ones
+without a `messages_consumed`: a message consumed into a turn the repair just
+dropped is exactly as absent as one that never arrived. Strategy 2 already did
+this; Strategy 0 (out-of-order) silently ate them.
+
+`buildSessionRepair` THROWS if the event it must chain to has no eid. Every
+event on an active chain is stamped (EventStore stamps on write, migrates
+legacy files on read), so that means the caller passed something that never
+came from a store. A repair that cannot express its jump would leave the
+poison in place and loop — better to ring.
+
+### Fork had its own copy of the boundary — three bugs, one of them irreversible
+
+`copySessionFrom` computed `findLastIndex(compact_marker) + slice()`. Now it
+calls `readActive` (fork means "wake up with the source's current context" —
+that IS readActive's definition). Fixed, each mutation-verified separately:
+
+1. **Rolled-back events were copied into the child.** A linear slice ignores
+   parentEid entirely. Empirically: source `readActive` = 2 events, fork
+   copied 4.
+2. **Window messages were dropped**, same root cause as the source-side leak.
+3. **The copied subset was NOT re-linked.** The active context is a FILTERED
+   subset, so the copied events' original parents (compact_started, the
+   summarizer output, a rolled-back branch) are absent from the child's file.
+   Copying links verbatim leaves a hole; everything older is stranded. The
+   copy now keeps SOURCE eids (identity survives) but re-chains parentEid.
+
+Also: the compaction boundary events are NOT copied. Only half of one can be
+(compact_started is outside the active region by definition), and a lone
+marker in the child reads as the legacy "unpaired marker" shape — so the child
+would discard exactly the window messages we just inherited, with nothing left
+in its file to ever recover them. That is the one genuinely irreversible
+version of this bug: the source recovers on restart, a fork never does.
+
+### No dangling-link handling — and nothing may produce one
+
+A `parentEid` pointing at an eid no line carries gets NO fallback. Same rule as
+`buildSessionRepair` refusing to repair orphan tool_results: a state the
+runtime cannot produce must not have code that quietly patches it, or the code
+becomes a silencer for real structural bugs. It shows up as "the events before
+it stop rendering", which is what we want.
+
+That premise is only true because a failed write now REWINDS the chain head
+(`rewindChainHead` in append/appendBatch). `stampEvent` advances
+`lastEventIds` before the write; on ENOSPC/EIO the event never lands, and the
+next event would then name a nonexistent parent and strand the session. An
+event that isn't on disk isn't in the chain.
+
+(An event with NO parentEid at all still ends chain-following and takes the
+rest linearly — that is the genuine root at index 0, and it is what lets a
+pre-eid log be read.)
+
+### Test notes
+
+- `src/rollback.test.ts` owns the walker + fork + repair-as-jump tests;
+  `src/jsonl-stress.test.ts` owns the pure repair-strategy tests.
+- Repair fixtures MUST carry eids now (`chained()` helper in both files, plus
+  `events.test.ts`) — a repair chains to an event, so an eid-less fixture is
+  not modelling production. That is a feature: it throws.
+- Mutation-verified, each fix individually: barrier back at `compact_marker`
+  (5 fail), no window type filter (5), unpaired started treated as a barrier
+  (2), fork's old linear slice (3), fork without re-link (2), fork without the
+  marker strip (2), no repair status event (2), no message replay (1), no
+  chain-head rewind (1).
+- Assertions about "the poison is gone" must read `readActive`, NOT the raw
+  log — repair no longer deletes. `readActiveSessionEvents` exists next to
+  `readSessionEvents` in integration.test.ts for exactly this.
+- A test that needs a genuinely truncated file (simulating a crash that ended
+  the log early) does the file surgery itself; the product has no such
+  operation any more. See the Phase-2 crash-recovery test in integration.test.ts.

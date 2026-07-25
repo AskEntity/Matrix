@@ -592,33 +592,44 @@ function lastToolCallEvent(events: Event[]): ToolCallEvent | null {
 	return null;
 }
 
+/** What a repair does: jump the chain back to `chainToEid`, then append. */
+export interface SessionRepair {
+	/**
+	 * The event the repaired chain must point at — the last event the repair
+	 * keeps. `null` means "no jump": the repair only appends (missing
+	 * tool_results for orphaned calls), nothing is dropped.
+	 *
+	 * The caller applies it exactly like a rollback: `setChainHead(chainToEid)`
+	 * then append. `setChainHead` is pure in-memory, so the jump only becomes
+	 * durable when the first appended event is written carrying it as its
+	 * parentEid — which is why a repair with a `chainToEid` ALWAYS has at least
+	 * one append event.
+	 */
+	chainToEid: string | null;
+	/** Interrupted tool_results, replayed messages, and the repair status. */
+	appendEvents: Event[];
+}
+
 /**
  * Inspect a session's events and determine if repair is needed.
  * Finds the last complete assistant turn (all tool_calls have exactly one
  * valid tool_result, no duplicates). Everything after it is the "tail"
  * that may contain poison (duplicate tool_results, orphaned calls, etc.).
  *
- * COMPACT-BOUNDARY SAFETY (the index-space bug): analysis AND truncation are
- * scoped to the ACTIVE region — events after the last `compact_marker`. The
- * returned `truncateAfterIndex` is an EVENT-ARRAY index into the passed
- * `events` array. Callers must translate this to a PHYSICAL JSONL line number
- * (via `EventStore.readWithLineMap()`) before calling `truncateAfterLine`,
- * because malformed lines (from crash-mid-append) shift the mapping between
- * event-array indices and physical file lines (R8-B#4). The previous version
- * computed indices against the post-compact slice (`readActive`) but truncated
- * by physical line — for a compacted session that sliced off the compact_marker,
- * the post-compact session_config, and the summary, then appended interrupted
- * results referencing tool_calls that had just been truncated away. The result
- * was an unrecoverable session (orphan tool_results → API 400 → repair returns
- * null → crash loop). Pass the FULL event log (`EventStore.read`), NOT
- * `readActive`: this function finds the boundary itself.
+ * Repair NEVER deletes anything. The poisoned events stay on disk and simply
+ * leave the active chain, exactly like a rolled-back branch. The old shape
+ * returned an index the caller translated into a physical JSONL line for
+ * `truncateAfterLine`; that translation was the source of two separate
+ * data-destroying bugs (FIX-1 cc#1 sliced across a compact boundary, FIX-8
+ * R8-B#4 mis-cut whenever a crash-torn line shifted the mapping) and it
+ * destroyed the very evidence needed to debug the corruption.
  *
- * Returns null if no repair needed, otherwise returns:
- * - truncateAfterIndex: event-array index to truncate after (keep events 0..index inclusive).
- *   This is relative to the `events` array passed in — NOT a physical JSONL line number.
- *   Callers that need a physical line (for truncateAfterLine) must translate via the
- *   physical-line map from EventStore.readWithLineMap().
- * - appendEvents: events to append after truncation (interrupted tool_results + status message)
+ * COMPACT-BOUNDARY SAFETY: analysis is scoped to the region after the last
+ * `compact_marker`. The marker, the post-compact session_config, the summary,
+ * and the messages stranded in the compaction window are all load-bearing for
+ * a compacted session's resume and must never be dropped.
+ *
+ * Returns null when no repair is needed.
  *
  * This replaces findOrphanedToolCalls, findOrphanedBackgroundProcesses, and
  * the in-memory auto-recovery in provider-shared.ts — a single mechanism for
@@ -628,41 +639,77 @@ export function buildSessionRepair(
 	events: Event[],
 	taskId: string,
 	opts?: { reason?: string },
-): {
-	truncateAfterIndex: number;
-	appendEvents: Event[];
-} | null {
+): SessionRepair | null {
 	if (events.length === 0) return null;
-	// Scope to the active region (after the last compact_marker). Truncation
-	// must NEVER cross the boundary — the marker, post-compact session_config,
-	// and summary are load-bearing for a compacted session's resume.
 	const lastCompactMarker = events.findLastIndex(
 		(e) => e.type === "compact_marker",
 	);
 	const offset = lastCompactMarker < 0 ? 0 : lastCompactMarker + 1;
 	const active = offset === 0 ? events : events.slice(offset);
-	const repair = repairActiveRegion(active, taskId, opts);
-	if (!repair) return null;
-	// Translate the active-relative truncation index back to a physical line.
+	// Chain targets are eids, so the active-region slice needs no index
+	// translation on the way out.
+	return repairActiveRegion(active, taskId, opts);
+}
+
+/**
+ * The eid the repaired chain points at. Every event on an active chain is
+ * stamped — `EventStore` stamps on write and migrates eid-less files on first
+ * read — so a missing eid means these events never came from a store. Fail
+ * loudly: a repair that cannot express its jump would silently leave the
+ * poison in place and loop.
+ */
+function chainTarget(events: Event[], lastKeptIndex: number): string {
+	const eid = events[lastKeptIndex]?.eid;
+	if (!eid) {
+		throw new Error(
+			`buildSessionRepair: event at index ${lastKeptIndex} has no eid — a repair chains to an event, so every event must be stamped.`,
+		);
+	}
+	return eid;
+}
+
+/**
+ * Messages in the region the repair drops off the chain.
+ *
+ * Those events stay on disk but leave the active context, and the
+ * `messages_consumed` records that acknowledged them leave with them — so
+ * from the agent's point of view every message in there is undelivered again.
+ * Re-appending puts them back on the chain (with fresh eids), where
+ * `findUnconsumedMessages` picks them up on resume.
+ *
+ * ALL messages are replayed, not only the ones that never had a
+ * `messages_consumed`: a message consumed into a turn the repair just dropped
+ * is exactly as absent from the context as one that never arrived.
+ */
+function messagesToReplay(dropped: Event[]): Event[] {
+	return dropped.filter((e) => e.type === "message" && !!e.id && !!e.body);
+}
+
+/**
+ * The event that makes a repair's chain jump durable. `setChainHead` is pure
+ * in-memory; the jump only reaches disk on the next write. Appending this
+ * status guarantees there IS a next write even when the repair has nothing
+ * else to say, and it leaves the repair visible in the activity log instead of
+ * silently reshaping history. The walker skips `status` events, so it can
+ * never affect the reconstructed conversation.
+ */
+function repairStatusEvent(taskId: string, reason: string): Event {
 	return {
-		truncateAfterIndex: repair.truncateAfterIndex + offset,
-		appendEvents: repair.appendEvents,
-	};
+		type: "status",
+		message: `Session repaired: ${reason}`,
+		taskId,
+		ts: Date.now(),
+	} as Event;
 }
 
 /**
  * Core repair analysis over a single active region (no compact_marker inside).
- * Indices returned are relative to the passed `events` array; the
- * `buildSessionRepair` wrapper translates them to physical line space.
  */
 function repairActiveRegion(
 	events: Event[],
 	taskId: string,
 	opts?: { reason?: string },
-): {
-	truncateAfterIndex: number;
-	appendEvents: Event[];
-} | null {
+): SessionRepair | null {
 	if (events.length === 0) return null;
 
 	// Collect tool_call → tool info and tool_result counts
@@ -794,6 +841,10 @@ function repairActiveRegion(
 			} as Event);
 		}
 
+		// Messages from the dropped region come back so they can be delivered
+		// again — see messagesToReplay.
+		appendEvents.push(...messagesToReplay(events.slice(truncateAt + 1)));
+
 		// Status message — a synthetic USER-role message (createUserMessage),
 		// so formatBodyForAI + UI materialization actually surface its content.
 		// (The old `source: "system" as never` cast produced a body that
@@ -809,7 +860,7 @@ function repairActiveRegion(
 			!keptResults.has(lastKept.toolCallId);
 		if (opts?.reason && !endsInPendingControl) {
 			const statusMsg = createUserMessage(
-				`Session repaired: ${opts.reason}. Out-of-order events truncated.`,
+				`Session repaired: ${opts.reason}. Out-of-order events dropped from the chain.`,
 			);
 			appendEvents.push({
 				type: "message",
@@ -820,7 +871,15 @@ function repairActiveRegion(
 			} as Event);
 		}
 
-		return { truncateAfterIndex: truncateAt, appendEvents };
+		// Last, so it can never split a run of tool_results into two user turns.
+		appendEvents.push(
+			repairStatusEvent(
+				taskId,
+				opts?.reason ?? "out-of-order events dropped from the chain",
+			),
+		);
+
+		return { chainToEid: chainTarget(events, truncateAt), appendEvents };
 	}
 
 	// Two different repair strategies:
@@ -855,7 +914,7 @@ function repairActiveRegion(
 		}
 
 		return {
-			truncateAfterIndex: events.length - 1, // no truncation — keep everything
+			chainToEid: null, // nothing dropped — append-only repair
 			appendEvents,
 		};
 	}
@@ -942,16 +1001,8 @@ function repairActiveRegion(
 		} as Event);
 	}
 
-	// Preserve unconsumed messages from the truncated region.
-	// These were delivered to JSONL but will be lost by truncation.
-	// Re-append them so findUnconsumedMessages can recover them.
-	// (messages_consumed entries for these are also truncated, so they
-	// become unconsumed again — exactly what we want.)
-	for (const e of truncatedRegion) {
-		if (e.type === "message" && e.id && e.body) {
-			appendEvents.push(e);
-		}
-	}
+	// Messages from the dropped region come back — see messagesToReplay.
+	appendEvents.push(...messagesToReplay(truncatedRegion));
 
 	// Status message — a synthetic USER-role message that resumes the session
 	// with an API call. Skip it when the repaired session ends in an unresolved
@@ -983,8 +1034,16 @@ function repairActiveRegion(
 		} as Event);
 	}
 
+	// Last, so it can never split a run of tool_results into two user turns.
+	appendEvents.push(
+		repairStatusEvent(
+			taskId,
+			opts?.reason ?? "duplicate tool results dropped from the chain",
+		),
+	);
+
 	return {
-		truncateAfterIndex: lastGoodIndex,
+		chainToEid: chainTarget(events, lastGoodIndex),
 		appendEvents,
 	};
 }
@@ -992,101 +1051,100 @@ function repairActiveRegion(
 // ── Active chain walk ──
 
 /**
- * Walk the parentEid chain from the last event to reconstruct the active
- * event sequence. Returns event-array INDICES (into the passed `events`
- * array) in chronological order (ascending).
+ * The active event sequence: everything the agent's context is built from.
+ * Returns event-array INDICES (into the passed `events` array) in
+ * chronological order (ascending).
  *
- * Algorithm:
- * 1. Build eid→index map
- * 2. Start from the last event, follow parentEid backward
- * 3. Stop at compact_marker or when parentEid is null (first event)
- * 4. Collect visited indices, reverse to chronological order
+ * ONE backward scan doing two things at once:
  *
- * WITHOUT rollback, every event chains linearly (each parentEid points to
- * the previous event) → the walk visits every event in order.
+ * 1. FOLLOW THE CHAIN. `parentEid` always points at an EARLIER position, so
+ *    scanning backward is both the lookup and the traversal — no eid→index
+ *    map, O(result) memory, and a cycle is structurally impossible because
+ *    `i` only ever decreases. Without rollback every event chains linearly,
+ *    so this is every event. After a rollback (`setChainHead`) the next
+ *    event's parentEid jumps back over the abandoned branch, which the scan
+ *    then never accepts.
  *
- * WITH rollback (setChainHead), the next event's parentEid jumps back to
- * the target event, skipping all rolled-back events between the target and
- * the new event.
+ * 2. CUT AT THE LAST COMPLETED COMPACTION. Walking backward, a
+ *    `compact_marker` opens the compaction window and its `compact_started`
+ *    closes the walk. Inside that window ONLY `message` events survive:
  *
- * CHAIN BREAK FALLBACK: if parentEid is null/missing on a NON-first event
- * (broken chain from external writers, migration gaps, etc.), fall back to
- * linear traversal for all preceding events. This ensures the function
- * degrades gracefully — a broken chain never loses events, it just can't
- * skip rolled-back ones in the broken region.
+ *      - Messages delivered while the summarizer runs land there. They belong
+ *        to the post-compact context: the `messages_consumed` written AFTER
+ *        the marker references them, and the walker materializes them into
+ *        that user turn. Ending the chain at the marker (the old rule) left a
+ *        consumption record pointing at an id the walker had never seen — the
+ *        content vanished with no error at all. Measured on the root session:
+ *        22 compactions, 8 with stranded messages, 15 lost, 4 typed by the
+ *        user.
+ *      - The summarizer's own output (`thinking`, the `<summary>…`
+ *        `assistant_text`, `usage`) must NOT come back — the summary is
+ *        already in the context as the `compacted_resume` message after the
+ *        marker.
  *
- * @param includeBarrier  If true, include the terminating compact_marker
- *   in the result. Default false (matches readActive semantics).
+ *    An UNPAIRED `compact_started` is NOT a barrier. A compaction takes
+ *    minutes (124s / 178s / 145s on the three real root compactions); if the
+ *    daemon dies inside that window there is no summary at all, so the
+ *    pre-compact history must stay reachable. That is also why the barrier
+ *    cannot be encoded as `compact_started.parentEid = null` at emission
+ *    time — the outcome isn't known yet. See memory.md.
+ *
+ *    A `compact_marker` with NO `compact_started` before it (logs written
+ *    before compact_started existed) keeps the old semantic: the marker ends
+ *    the chain. That is why window messages are BUFFERED and only committed
+ *    once the opening `compact_started` is actually found.
+ *
+ *    The `compact_marker` itself is always kept: the walker treats it as a
+ *    structural no-op, `readFromLastCompactMarker` slices the UI log at it,
+ *    and `buildSessionRepair` needs it to know where the repairable region
+ *    starts.
+ *
+ * An event with NO parentEid ends the walk's chain-following: whatever comes
+ * before it is taken linearly. That is the genuine chain root at index 0, and
+ * it is also what makes a log written before eids existed readable.
+ *
+ * There is deliberately NO handling for a parentEid that points at an eid no
+ * line carries. Every writer chains through `stampEvent`, and a fork re-links
+ * the subset it copies, so a dangling link means the file's structure is
+ * broken — we want that to show (the events before it stop rendering), not to
+ * be quietly patched over by a fallback. Same rule as `buildSessionRepair`
+ * refusing to repair orphan tool_results.
  */
-export function walkActiveChainIndices(
-	events: Event[],
-	includeBarrier = false,
-): number[] {
-	if (events.length === 0) return [];
+export function walkActiveChainIndices(events: Event[]): number[] {
+	const kept: number[] = [];
+	/** Buffered window `message` indices; non-null ⇔ inside a compaction window. */
+	let window: number[] | null = null;
+	/**
+	 * The eid the walk is looking for. `null` means "take the next event
+	 * whatever it is" — the state at the head of the walk, and after an event
+	 * that carries no parentEid.
+	 */
+	let wanted: string | null = null;
 
-	// Build eid→index map (last writer wins if duplicates — shouldn't happen)
-	const eidToIndex = new Map<string, number>();
-	for (let i = 0; i < events.length; i++) {
+	for (let i = events.length - 1; i >= 0; i--) {
 		const e = events[i] as Event;
-		if (e.eid) eidToIndex.set(e.eid, i);
+
+		if (wanted !== null && e.eid !== wanted) continue; // not on the chain
+		wanted = e.parentEid ?? null;
+
+		if (window === null) {
+			kept.push(i);
+			// Walking backward, the marker is the window's far edge.
+			if (e.type === "compact_marker") window = [];
+			continue;
+		}
+		if (e.type === "compact_started") {
+			// Completed compaction: its window messages are part of the active
+			// context, everything older has been summarized away.
+			kept.push(...window);
+			window = null;
+			break;
+		}
+		if (e.type === "message") window.push(i);
 	}
+	// window !== null here means a marker with no opening compact_started:
+	// the buffered messages are discarded and the marker stays the barrier.
 
-	// Walk from last event via parentEid
-	const visited: number[] = [];
-	let currentIndex = events.length - 1;
-	let current: Event | undefined = events[currentIndex];
-
-	while (current) {
-		const isBarrier = current.type === "compact_marker";
-		if (isBarrier && !includeBarrier) {
-			// Don't include compact_marker itself
-			break;
-		}
-		visited.push(currentIndex);
-		if (isBarrier) break; // included above, stop walking
-
-		// Follow parentEid
-		if (current.parentEid === null || current.parentEid === undefined) {
-			// null/undefined parentEid at index 0 is normal (first event).
-			// At any other index it means a chain break — fall back to linear
-			// for all preceding events.
-			if (currentIndex > 0) {
-				linearFallback(events, currentIndex - 1, visited, includeBarrier);
-			}
-			break;
-		}
-		const parentIndex = eidToIndex.get(current.parentEid);
-		if (parentIndex === undefined) {
-			// parentEid points to a missing eid — chain break, linear fallback
-			linearFallback(events, currentIndex - 1, visited, includeBarrier);
-			break;
-		}
-		current = events[parentIndex];
-		currentIndex = parentIndex;
-	}
-
-	// Reverse to chronological order (ascending indices)
-	visited.reverse();
-	return visited;
-}
-
-/**
- * Linear fallback: include all events from `fromIndex` down to 0 (or the
- * last compact_marker, whichever comes first). Used when the parentEid chain
- * breaks and we can't trust the chain for preceding events.
- */
-function linearFallback(
-	events: Event[],
-	fromIndex: number,
-	visited: number[],
-	includeBarrier: boolean,
-): void {
-	for (let j = fromIndex; j >= 0; j--) {
-		const e = events[j] as Event;
-		if (e.type === "compact_marker") {
-			if (includeBarrier) visited.push(j);
-			break;
-		}
-		visited.push(j);
-	}
+	kept.reverse();
+	return kept;
 }

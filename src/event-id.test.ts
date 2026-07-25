@@ -219,26 +219,6 @@ describe("JSONL event eid + parentEid", () => {
 		expect(all[1]!.parentEid).toBe(migrated[0]!.eid);
 	});
 
-	// ── truncation updates lastEventId ──
-
-	test("truncation updates eid chain — next append chains from last kept event", async () => {
-		await store.append("s1", makeEvent("session_config"));
-		await store.append("s1", makeEvent("assistant_text"));
-		await store.append("s1", makeEvent("tool_call"));
-
-		const beforeTrunc = store.read("s1");
-		// Keep first 2 events (lines 0,1), truncate event at line 2
-		await store.truncateAfterLine("s1", 1);
-
-		// Append after truncation
-		await store.append("s1", makeEvent("error"));
-
-		const afterTrunc = store.read("s1");
-		expect(afterTrunc).toHaveLength(3);
-		// New event chains from the second (last kept) event
-		expect(afterTrunc[2]!.parentEid).toBe(beforeTrunc[1]!.eid);
-	});
-
 	// ── copySessionFrom stamps synthetic events ──
 
 	test("copySessionFrom preserves source eids and stamps synthetics + fork_marker", async () => {
@@ -277,19 +257,6 @@ describe("JSONL event eid + parentEid", () => {
 		const afterAppend = store.read("tgt");
 		const last = afterAppend[afterAppend.length - 1]!;
 		expect(last.parentEid).toBe(forkMarker.eid);
-	});
-
-	// ── readWithLineMap returns correct physical lines ──
-
-	test("readWithLineMap returns events with eids and correct physical lines", async () => {
-		await store.append("s1", makeEvent("session_config"));
-		await store.append("s1", makeEvent("assistant_text"));
-
-		const { events, physicalLines } = store.readWithLineMap("s1");
-		expect(events).toHaveLength(2);
-		expect(physicalLines).toEqual([0, 1]);
-		expect(events[0]!.eid).toMatch(EID_PATTERN);
-		expect(events[1]!.eid).toMatch(EID_PATTERN);
 	});
 
 	// ── eid does NOT collide with MessageEvent.id ──

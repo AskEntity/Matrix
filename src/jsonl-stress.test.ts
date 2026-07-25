@@ -33,6 +33,8 @@ import {
 	findUnconsumedMessages,
 	formatEventForAI,
 	hasPendingImplicitYield,
+	type SessionRepair,
+	walkActiveChainIndices,
 } from "./events.ts";
 import { TOOL_DONE, TOOL_YIELD } from "./tool-names.ts";
 
@@ -1282,6 +1284,15 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 			body: { source: "compacted_resume", id: "summary-1", ts, content },
 		}) as Event;
 
+	const userMessage = (id: string, content: string, ts = 0): Event =>
+		({
+			type: "message",
+			id,
+			taskId: "t1",
+			ts,
+			body: { source: "user", id, ts, content },
+		}) as Event;
+
 	/** Count tool_results per callId — detects duplicates. */
 	function resultCounts(events: Event[]): Map<string, number> {
 		const m = new Map<string, number>();
@@ -1299,15 +1310,34 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 			if (e.type === "tool_result" && !callIds.has(e.toolCallId)) return true;
 		return false;
 	}
-	/** Apply a repair the way EventStore does: keep physical lines 0..idx, then append. */
-	function applyRepair(
-		events: Event[],
-		repair: { truncateAfterIndex: number; appendEvents: Event[] },
-	): Event[] {
-		return [
-			...events.slice(0, repair.truncateAfterIndex + 1),
-			...repair.appendEvents,
-		];
+	/** Stamp a linear eid/parentEid chain, exactly like EventStore.append. */
+	function chained(events: Event[]): Event[] {
+		let prev: string | null = null;
+		return events.map((e, i) => {
+			const eid = `e${i}`;
+			const stamped = { ...e, eid, parentEid: prev } as Event;
+			prev = eid;
+			return stamped;
+		});
+	}
+
+	/**
+	 * Apply a repair the way runAgentForNode does — setChainHead(chainToEid)
+	 * then append — and return what the agent would actually resume with.
+	 *
+	 * Nothing is removed from the log: the dropped events stay exactly where
+	 * they were and simply stop being reachable, so "gone" below always means
+	 * "gone from the active chain", never "erased from disk".
+	 */
+	function applyRepair(events: Event[], repair: SessionRepair): Event[] {
+		const full = [...events];
+		let prev = repair.chainToEid ?? events[events.length - 1]?.eid ?? null;
+		repair.appendEvents.forEach((e, i) => {
+			const eid = `repair-${i}`;
+			full.push({ ...e, eid, parentEid: prev } as Event);
+			prev = eid;
+		});
+		return walkActiveChainIndices(full).map((i) => full[i] as Event);
 	}
 	/** Reconstruction over the post-marker (active) region only. */
 	function activeOf(events: Event[]): Event[] {
@@ -1343,8 +1373,8 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 
 	// A genuine duplicate AFTER the marker truncates ONLY the poison; the index
 	// is a PHYSICAL line that keeps the boundary, post-compact config + summary.
-	test("cc#1: duplicate AFTER compact_marker — physical index lands on the good result, marker/config/summary survive", () => {
-		const events: Event[] = [
+	test("cc#1: duplicate AFTER compact_marker — the chain lands on the good result, marker/config/summary survive", () => {
+		const events: Event[] = chained([
 			sessionConfig(0), // 0 pre-compact config
 			assistantText("old turn", 1), // 1
 			compactMarker(2), // 2 boundary
@@ -1358,20 +1388,22 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 				ts: 9,
 				isError: true,
 			}), // 9 poison
-		];
+		]);
 		const repair = buildSessionRepair(events, "t1");
 		expect(repair).not.toBeNull();
 		if (!repair) return;
-		// Physical index lands exactly on tc-A's GOOD result (line 8) — NOT an
-		// active-relative index (which would have been ~4 and sliced the marker).
-		const keptLast = events[repair.truncateAfterIndex];
+		// The chain lands exactly on tc-A's GOOD result — an eid, so no index
+		// space to get wrong and no way to reach across the compact boundary.
+		const keptLast = events.find((e) => e.eid === repair.chainToEid);
 		expect(keptLast?.type).toBe("tool_result");
 		expect((keptLast as { toolCallId: string }).toolCallId).toBe("tc-A");
 		expect((keptLast as { content: string }).content).toBe("ok");
 
 		const final = applyRepair(events, repair);
+		// The boundary, the post-compact session_config and the summary are all
+		// still in the resumed context.
 		expect(final.some((e) => e.type === "compact_marker")).toBe(true);
-		expect(final.filter((e) => e.type === "session_config").length).toBe(2);
+		expect(final.some((e) => e.type === "session_config")).toBe(true);
 		expect(
 			final.some(
 				(e) =>
@@ -1395,7 +1427,7 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 	// crash loop. The fix must produce NO orphan result, and re-running repair
 	// on the repaired log must be a no-op.
 	test("F-H2: poison followed by a complete tool turn → no orphan result, second pass is a no-op", () => {
-		const events: Event[] = [
+		const events: Event[] = chained([
 			compactMarker(0),
 			sessionConfig(1),
 			compactedResume("summary", 2),
@@ -1410,7 +1442,7 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 			assistantText("turn B", 8),
 			toolCall("tc-B", "mcp__mxd__bash", {}, 9),
 			toolResult("tc-B", "mcp__mxd__bash", "ok", { ts: 10 }),
-		];
+		]);
 		const repair = buildSessionRepair(events, "t1");
 		expect(repair).not.toBeNull();
 		if (!repair) return;
@@ -1437,7 +1469,7 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 	// interrupted result) AND skip the trailing status user message (which would
 	// break assistant→tool_result alternation + the pending-done resume).
 	test("B-L8: kept-region done() orphan keeps no result and no trailing user message", () => {
-		const events: Event[] = [
+		const events: Event[] = chained([
 			compactMarker(0),
 			sessionConfig(1),
 			compactedResume("summary", 2),
@@ -1449,7 +1481,7 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 				ts: 7,
 				isError: true,
 			}), // poison after done
-		];
+		]);
 		const repair = buildSessionRepair(events, "t1");
 		expect(repair).not.toBeNull();
 		if (!repair) return;
@@ -1472,6 +1504,36 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 		expect(buildSessionRepair(final, "t1")).toBeNull();
 	});
 
+	// ── Messages in the dropped region survive BOTH strategies ──
+
+	// Strategy 2 (duplicate results) always re-appended them; Strategy 0
+	// (out-of-order events) never did — it dropped a whole span of the log and
+	// silently took any user message inside it along. Both regions are equally
+	// gone from the agent's context, so both must replay their messages.
+	test("out-of-order repair replays the messages in the region it drops", () => {
+		const events: Event[] = chained([
+			toolCall("tc-A", "mcp__mxd__bash", {}, 0),
+			toolResult("tc-A", "mcp__mxd__bash", "ok", { ts: 1 }),
+			toolCall("y1", TOOL_YIELD, {}, 2),
+			toolCall("y2", TOOL_YIELD, {}, 3),
+			toolResult("y2", TOOL_YIELD, "resumed.", { ts: 4 }),
+			userMessage("m-lost", "please also check X", 5),
+			assistantText("new turn", 6),
+			toolCall("y3", TOOL_YIELD, {}, 7),
+			toolResult("y1", TOOL_YIELD, "resumed.", { ts: 8 }), // out of order
+		]);
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).not.toBeNull();
+		if (!repair) return;
+		const replayed = repair.appendEvents.filter(
+			(e) => e.type === "message" && e.id === "m-lost",
+		);
+		expect(replayed.length).toBe(1);
+		// And it is undelivered again, so resume actually hands it to the agent.
+		const final = applyRepair(events, repair);
+		expect(findUnconsumedMessages(final).map((m) => m.id)).toContain("m-lost");
+	});
+
 	// ── D#1: repair status message reaches the agent (not an empty string) ──
 
 	// Out-of-order tool_result triggers Strategy 0 with a reason. The status
@@ -1479,7 +1541,7 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 	// `source: "system" as never` body rendered to "" via formatBodyForAI's
 	// default branch, silently dropping the repair reason.
 	test("D#1: repair status message is a visible user message, not an empty system body", () => {
-		const events: Event[] = [
+		const events: Event[] = chained([
 			toolCall("tc-A", "mcp__mxd__bash", {}, 0),
 			toolResult("tc-A", "mcp__mxd__bash", "ok", { ts: 1 }), // clean turn first
 			toolCall("y1", TOOL_YIELD, {}, 2),
@@ -1488,7 +1550,7 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 			assistantText("new turn", 5),
 			toolCall("y3", TOOL_YIELD, {}, 6),
 			toolResult("y1", TOOL_YIELD, "resumed.", { ts: 7 }), // out of order
-		];
+		]);
 		const repair = buildSessionRepair(events, "t1", {
 			reason: "test-reason-42",
 		});

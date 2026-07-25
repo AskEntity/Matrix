@@ -173,11 +173,17 @@ export class EventStore {
 	 */
 	append(sessionId: string, event: Event): Promise<void> {
 		return this.enqueueWrite(sessionId, () => {
+			const headBeforeWrite = this.lastEventIds.get(sessionId) ?? null;
 			const stamped = this.stampEvent(sessionId, event);
 			try {
 				appendFileSync(this.path(sessionId), `${JSON.stringify(stamped)}\n`);
-			} catch {
-				/* non-fatal — don't break caller if write fails */
+			} catch (e) {
+				// The event never reached disk, so the chain must not point at it:
+				// the next event's parentEid would name an eid no line carries, and
+				// the walk (which has no dangling-link fallback, by design) would
+				// stop dead there and strand the whole session. Non-fatal for the
+				// caller either way.
+				this.rewindChainHead(sessionId, headBeforeWrite, e);
 			}
 			return Promise.resolve();
 		});
@@ -187,18 +193,29 @@ export class EventStore {
 	appendBatch(sessionId: string, events: Event[]): Promise<void> {
 		if (events.length === 0) return Promise.resolve();
 		return this.enqueueWrite(sessionId, () => {
+			const headBeforeWrite = this.lastEventIds.get(sessionId) ?? null;
 			const stamped = events.map((e) => this.stampEvent(sessionId, e));
 			const lines = `${stamped.map((e) => JSON.stringify(e)).join("\n")}\n`;
 			try {
 				appendFileSync(this.path(sessionId), lines);
 			} catch (e) {
-				console.warn(
-					`[EventStore] Failed to append events for session ${sessionId}:`,
-					e,
-				);
+				this.rewindChainHead(sessionId, headBeforeWrite, e);
 			}
 			return Promise.resolve();
 		});
+	}
+
+	/** Undo a stamp whose write failed — see the call sites in append/appendBatch. */
+	private rewindChainHead(
+		sessionId: string,
+		head: string | null,
+		cause: unknown,
+	): void {
+		this.lastEventIds.set(sessionId, head);
+		console.warn(
+			`[EventStore] Failed to append events for session ${sessionId}:`,
+			cause,
+		);
 	}
 
 	/**
@@ -215,36 +232,25 @@ export class EventStore {
 		this.lastEventIds.set(sessionId, eid);
 	}
 
-	/** Read all events for a session */
-	read(sessionId: string): Event[] {
-		return this.readWithLineMap(sessionId).events;
-	}
-
 	/**
-	 * Read all events for a session, returning both parsed events AND their
-	 * physical 0-based line numbers in the JSONL file. Malformed and blank
-	 * lines are skipped but their physical positions are consumed — so
-	 * `physicalLines[i]` gives the exact file line of `events[i]`.
+	 * Read all events for a session. Malformed and blank lines are skipped.
 	 *
-	 * Use this when the physical line number matters (e.g., before calling
-	 * `truncateAfterLine`, which operates on raw file lines).
+	 * Physical line numbers are deliberately NOT surfaced: nothing operates on
+	 * file positions any more. Repair and rollback both address events by eid,
+	 * so the event-index-vs-file-line translation that once produced silent
+	 * data loss (FIX-8 R8-B#4) has no place left to happen.
 	 */
-	readWithLineMap(sessionId: string): {
-		events: Event[];
-		physicalLines: number[];
-	} {
+	read(sessionId: string): Event[] {
 		const p = this.path(sessionId);
-		if (!existsSync(p)) return { events: [], physicalLines: [] };
+		if (!existsSync(p)) return [];
 		const text = readFileSync(p, "utf-8");
 		const events: Event[] = [];
-		const physicalLines: number[] = [];
 		const rawLines = text.split("\n");
 		for (let i = 0; i < rawLines.length; i++) {
 			const line = rawLines[i];
 			if (!line) continue;
 			try {
 				events.push(JSON.parse(line) as Event);
-				physicalLines.push(i);
 			} catch {
 				console.warn(
 					`[EventStore] Skipping malformed JSONL line ${i} in session ${sessionId}`,
@@ -265,7 +271,7 @@ export class EventStore {
 			this.lastEventIds.set(sessionId, lastEvent.eid ?? null);
 		}
 
-		return { events, physicalLines };
+		return events;
 	}
 
 	/**
@@ -302,37 +308,18 @@ export class EventStore {
 	 * Read active events for provider message reconstruction.
 	 *
 	 * Walks the parentEid chain from the last event backward, collecting only
-	 * events reachable via the chain. Stops at compact_marker (excluded).
+	 * events reachable via the chain, then cuts at the last completed
+	 * compaction (see `walkActiveChainIndices`).
 	 *
-	 * Without rollback: every event chains linearly → same result as the old
-	 * `findLastIndex(compact_marker) + slice()`.
+	 * Without rollback: every event chains linearly → the whole log up to the
+	 * compaction boundary.
 	 *
 	 * With rollback (setChainHead): the new event's parentEid jumps back to
 	 * the target event, so rolled-back events are never visited.
 	 */
 	readActive(sessionId: string): Event[] {
 		const all = this.read(sessionId);
-		const activeIndices = walkActiveChainIndices(all, false);
-		return activeIndices.map((i) => all[i] as Event);
-	}
-
-	/**
-	 * Read active events with their physical line numbers (for repair).
-	 * Same chain-walk as readActive, but also returns the physical JSONL
-	 * line of each event so callers can translate event-array indices to
-	 * file positions for truncateAfterLine.
-	 */
-	readActiveWithLineMap(sessionId: string): {
-		events: Event[];
-		physicalLines: number[];
-	} {
-		const { events: all, physicalLines: allPhysical } =
-			this.readWithLineMap(sessionId);
-		const activeIndices = walkActiveChainIndices(all, false);
-		return {
-			events: activeIndices.map((i) => all[i] as Event),
-			physicalLines: activeIndices.map((i) => allPhysical[i] as number),
-		};
+		return walkActiveChainIndices(all).map((i) => all[i] as Event);
 	}
 
 	/**
@@ -345,15 +332,16 @@ export class EventStore {
 	 * is included in the result.
 	 *
 	 * For forked sessions, pre-fork events (copies of the parent's history) are
-	 * excluded: fork_marker acts as a barrier just like compact_marker.
+	 * excluded: fork_marker acts as a barrier here (it is NOT a chain-walk
+	 * barrier — a forked session's context legitimately includes the inherited
+	 * history).
 	 */
 	readFromLastCompactMarker(sessionId: string): {
 		events: Event[];
 		hasOlderEvents: boolean;
 	} {
 		const all = this.read(sessionId);
-		// Chain-walk including compact_marker (the barrier itself is part of the UI log)
-		const activeIndices = walkActiveChainIndices(all, true);
+		const activeIndices = walkActiveChainIndices(all);
 		const activeEvents = activeIndices.map((i) => all[i] as Event);
 
 		// Find the barrier in the active chain
@@ -410,52 +398,14 @@ export class EventStore {
 	}
 
 	/**
-	 * Truncate a session's JSONL file, keeping only lines 0..lineIndex (inclusive).
-	 * Everything after lineIndex is removed.
-	 *
-	 * Serialized through the per-session write queue: any pending writes complete
-	 * before truncation, and any writes enqueued after truncation wait for it.
-	 * The generation guard also applies — if clear() runs while truncation is
-	 * queued, the truncation is silently dropped (correct: nothing to truncate).
-	 */
-	truncateAfterLine(sessionId: string, lineIndex: number): Promise<void> {
-		return this.enqueueWrite(sessionId, () => {
-			const p = this.path(sessionId);
-			if (!existsSync(p)) return Promise.resolve();
-
-			const text = readFileSync(p, "utf-8");
-			const lines = text.split("\n");
-			// Remove trailing empty line from split
-			if (lines.length > 0 && lines[lines.length - 1] === "") {
-				lines.pop();
-			}
-
-			if (lineIndex >= lines.length - 1) return Promise.resolve(); // nothing to truncate
-
-			const kept = lines.slice(0, lineIndex + 1);
-			writeFileSync(p, `${kept.join("\n")}\n`);
-
-			// Update lastEventIds from the last kept line so subsequent
-			// appends chain correctly after truncation.
-			const lastLine = kept[kept.length - 1];
-			if (lastLine) {
-				try {
-					const parsed = JSON.parse(lastLine) as Event;
-					this.lastEventIds.set(sessionId, parsed.eid ?? null);
-				} catch {
-					// Malformed last line — invalidate; next read will re-sync.
-					this.lastEventIds.delete(sessionId);
-				}
-			} else {
-				this.lastEventIds.delete(sessionId);
-			}
-			return Promise.resolve();
-		});
-	}
-
-	/**
 	 * Copy events from a source session to a target session, then append a fork_marker.
-	 * Only copies events after the last compact_marker (active context) from the source.
+	 * Copies the source's ACTIVE context — `readActive`, the same boundary the
+	 * source agent's own conversation is built from. Fork means "wake up with
+	 * the source's current context", so it must not compute its own answer to
+	 * "which events count": doing that used to leak rolled-back events into the
+	 * child (a plain slice ignores parentEid jumps entirely) and drop the
+	 * messages stranded in the source's last compaction window.
+	 *
 	 * Target must NOT already have a session file — call has() first to check.
 	 *
 	 * Like unix fork(): the child "wakes up" from a fork_task_context call.
@@ -492,13 +442,19 @@ export class EventStore {
 		// Flush pending writes so we get all events including the current turn's tool_calls
 		await this.flushSession(sourceId);
 
-		// Read source events, find last compact_marker to only copy active context
-		const allEvents = this.read(sourceId);
-		const lastMarker = allEvents.findLastIndex(
-			(e) => e.type === "compact_marker",
+		// The child inherits the source's CONTENT, not its file structure. A
+		// compaction boundary describes where the SOURCE's log was cut, and only
+		// half of one can even be copied: `compact_started` sits outside the
+		// active region by definition. A lone `compact_marker` in the child
+		// would read as an unpaired marker — the legacy shape — so the child's
+		// own walk would discard exactly the window messages we just went to the
+		// trouble of inheriting, with no `compact_started` left anywhere in its
+		// file to ever recover them. That is the one genuinely irreversible
+		// version of this bug, which is why the boundary events are dropped and
+		// the inherited context becomes one flat run.
+		const activeEvents = this.readActive(sourceId).filter(
+			(e) => e.type !== "compact_marker" && e.type !== "compact_started",
 		);
-		const activeEvents =
-			lastMarker === -1 ? allEvents : allEvents.slice(lastMarker + 1);
 
 		// Detect orphaned tool_calls (tool_call without matching tool_result)
 		const toolCallIds = new Map<string, string>(); // id → tool name
@@ -577,12 +533,21 @@ export class EventStore {
 			});
 		}
 
-		// Write: active events → synthetic events → fork_marker
-		// Active events already have eids from the source session (via read
-		// → migration). Stamp synthetic events + fork_marker with fresh eids
-		// chaining from the last active event.
-		const lastActive = activeEvents[activeEvents.length - 1];
-		let prevEid: string | null = lastActive?.eid ?? null;
+		// Write: active events → synthetic events → fork_marker.
+		//
+		// The copied events keep their SOURCE eids (identity survives the fork)
+		// but are RE-LINKED into one contiguous chain: the active context is a
+		// filtered subset of the source log, so their original parents (the
+		// source's compact_started, a rolled-back branch, the event before the
+		// window) are not in this file. Leaving those links would strand
+		// everything before the first hole.
+		let prevEid: string | null = null;
+		const chainedActive = activeEvents.map((e) => {
+			const eid = e.eid ?? generateEid();
+			const linked = withChainFields(e, eid, prevEid);
+			prevEid = eid;
+			return linked;
+		});
 
 		const stampedSynthetics = syntheticEvents.map((e) => {
 			const eid = generateEid();
@@ -608,15 +573,8 @@ export class EventStore {
 		);
 
 		const allLines: string[] = [];
-		for (const e of activeEvents) {
-			// Copied verbatim — the fork preserves source identity. Rebuilt only
-			// to put the chain fields first, so every line of this brand-new
-			// file has the same shape (the source file may predate that order).
-			allLines.push(
-				JSON.stringify(
-					e.eid ? withChainFields(e, e.eid, e.parentEid ?? null) : e,
-				),
-			);
+		for (const e of chainedActive) {
+			allLines.push(JSON.stringify(e));
 		}
 		for (const e of stampedSynthetics) {
 			allLines.push(JSON.stringify(e));
