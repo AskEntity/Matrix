@@ -2445,20 +2445,22 @@ describe("jsSearch: hidden directories", () => {
 		return result.split("\n").filter(Boolean);
 	}
 
+	// These two own ONE question — does the walker descend into a dot directory —
+	// so they assert presence, not an exact file list. Which directories are
+	// EXCLUDED is the next three tests' business; asserting it here too would make
+	// a failure ambiguous between "stopped walking" and "stopped excluding".
 	test("default path finds a definition inside a hidden directory", async () => {
-		expect(await matchedFiles()).toEqual([
-			".mxd/plugin/scope-opts.ts",
-			"src/caller.ts",
-		]);
+		const files = await matchedFiles();
+		expect(files).toContain(".mxd/plugin/scope-opts.ts");
+		expect(files).toContain("src/caller.ts");
 	});
 
 	test("glob branch descends into hidden directories too", async () => {
 		// Separate scanSync call site from the no-glob branch above — fixing one
 		// and not the other leaves half the tool lying.
-		expect(await matchedFiles({ glob: "**/*.ts" })).toEqual([
-			".mxd/plugin/scope-opts.ts",
-			"src/caller.ts",
-		]);
+		const files = await matchedFiles({ glob: "**/*.ts" });
+		expect(files).toContain(".mxd/plugin/scope-opts.ts");
+		expect(files).toContain("src/caller.ts");
 	});
 
 	test(".worktrees/ stays excluded — each worktree is a whole second copy of the repo", async () => {
