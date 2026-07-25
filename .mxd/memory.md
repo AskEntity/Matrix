@@ -597,26 +597,51 @@ and writes `session_config` before it looks at the conversation.
 task's own warning was *"if the number does not move, something other than agent sessions is
 spawning them, and that matters more than this fix"*:
 
-| | |
-|---|---|
-| dormant nodes auto-resumed at one boot (21:39:02, within one second) | **13** |
-| of those, that did any work | **0** — every one parked |
-| that spawned MCP subprocesses | **8** (the matrix-scope ones; group-chat and story1001 scopes do not enable MCP, which is what makes 13 launches cost 8 sessions' worth) |
-| resulting subprocesses | **32 = 8 × 4** — exactly 4 per session, MCP being configured GLOBALLY so every session connects all of them |
-| resident | **1.58 GB**, ~202 MB per dormant agent |
-| still resident 85 minutes later | **unchanged** — a parked session never ends, so these are held for the daemon's life |
+| | | source |
+|---|---|---|
+| nodes auto-resumed at one boot (21:39:02, within one second) | **14** | the daemon log's `Auto-resuming` lines |
+| of those, that did any work | **0** — every one parked | their JSONL: no event after `agent_start` |
+| sessions that spawned MCP | **8** (only matrix-scope nodes connect MCP — the group-chat and story1001 scopes do not, which is what makes 14 launches cost 8 sessions' worth; 9 of the 14 were matrix-scope, so one did not get that far and is unexplained) | `ps` |
+| resulting subprocesses | **32 = 8 × 4** — exactly 4 per session, MCP being configured GLOBALLY so every session connects all of them | `ps` |
+| resident | **1.58 GB**, ~202 MB per dormant agent | `ps` |
+| still resident 85 minutes later | **unchanged** — a parked session never ends, so these are held for the daemon's life | `ps` |
+
+⚠️ The source column is not decoration. An earlier draft said 13, from counting the LAST
+`agent_start` per session file — which silently drops any node that started more than once, and root
+had. **Counting per-file gives you "sessions that have ever started", not "started at this boot"**,
+and the two agree until exactly the node you most care about restarts.
 
 Every process in the daemon's descendant tree was attributed to a session, so there is no other
-spawner. With the predicate all 13 are refused, taking the boot batch to zero.
-`scripts/survey-resume.ts` re-derives the decision on the current tree.
+spawner.
+
+**AFTER, measured on the first boot of the merged code: `launched 0/N` on every project — zero
+sessions created, across 8 projects and 10 resumable nodes, with nothing launching and then
+parking.** Root is in that list; it is alive because a human's message woke it, which is the design
+working rather than an exception. The MCP subprocesses alive at that moment belong to the agents a
+human was talking to, and the auto-resume boot batch is **32 → 0**.
+`scripts/survey-resume.ts` re-derives the decision from the tree; `scripts/measure-daemon-tree.sh`
+reports it.
+
+⚠️ **Take that number from the daemon's own `[autoResume] … launched X/N` line, never from the
+process tree.** `ps` carries no causal information: a session started by a user message and one
+started by auto-resume are byte-identical in it. The measuring script originally split the tree by
+"started within 30s of the daemon" as a proxy for "auto-resume made this", and on the very first
+boot after the fix it reported **`4 proc / 0.54 GB = 1 session`** for an agent the user had started
+14 seconds after boot — auto-resume's real cost was zero. **It reported the RELOCATED cost as the
+ELIMINATED cost**, which is precisely the confusion this measurement exists to prevent, and it
+reported it as a plausible number rather than as an error. The proxy had been written against a boot
+where nothing else was happening, i.e. validated in exactly the condition where it cannot fail —
+**a heuristic tested only where it works reads as verified.** ⚠️ Second-order: the log line can LAG,
+because the daemon's stdout is block-buffered when redirected to a file, so an empty autoResume
+block means "not flushed yet", NOT "launched nothing". The script says so instead of printing 0.
 
 ⚠️ **The cost did not vanish; it MOVED — onto the path where a parent is waiting for its children,
 which is the one place it is felt.** A parent used to be launched at boot and sit parked, so a
 child's `task_complete` merely woke a live agent: microseconds. Now the parent is refused, so that
 same `task_complete` has to LAUNCH it — worktree checks, MCP connect, work_context, `session_config`.
 That is the intended trade, paying when work actually arrives instead of at every boot, and it is
-invisible in the headline number: "13 of 13 refused, 1.58 GB" says nothing about where the 1.58 GB
-went when it was needed. First observed as `MULTI1` (3 children → crash → restart → all complete →
+invisible in every number above: "32 → 0" says what stopped being spent at boot and nothing about
+where it goes when it IS needed. First observed as `MULTI1` (3 children → crash → restart → all complete →
 parent done) blowing its 45s budget on a contended run and passing in 15s alone — its budget now
 covers a cold launch that was not previously in it, so **this is where a load-related flake will
 surface first**, and reading it as contention alone would miss that the path genuinely got longer.
