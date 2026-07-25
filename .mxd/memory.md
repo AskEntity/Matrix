@@ -713,9 +713,12 @@ second tool is what turned two bug reports into a class.
 **What makes this class invisible is that there is no line to review.** Nothing anywhere said "skip
 hidden directories" or "match only the top level" — the semantic lived in a library's default, i.e.
 in the *absence* of an argument, and code review cannot catch an absence. Hence the discipline now
-in place at every walker: **pass every option you depend on explicitly, even when you agree with the
-default.** `dot: true, onlyFiles: true` on a call whose behavior is unchanged is not noise; it is
-the semantic becoming visible.
+in place at every walker: **decide every behaviour you depend on explicitly, even when you agree
+with what you would have got for free.** Stating a choice you were already getting by default is not
+noise; it is the semantic becoming visible and therefore reviewable. The hand-rolled walk that
+replaced these `scanSync` calls follows the same rule from the other side — it now *chooses* its
+symlink handling, its skip set and its sort rather than inheriting any of them, and each of those
+choices has a test.
 
 The second-order damage is why this is worth a section rather than a commit message: for as long as
 such a bug lives, **the tool's own description is teaching agents the wrong rule.** `list_files`'s
@@ -724,7 +727,7 @@ silently meaning something else. The defect was never that `*.json` returned the
 it was that a reader **generalises from the neighbours**. Both tools now state the rule rather than
 implying it.
 
-### Four things in the fix that will look like oversights
+### Four things that will look like oversights
 
 1. ⚠️ **The 500-file cap counts files we KEEP, never files we walked past.** Not an optimisation — a
    correctness requirement, and now structurally guaranteed by pruning at descent (below) rather
