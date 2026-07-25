@@ -986,20 +986,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			// --- Lifecycle events ---
 
 			case "agent_start": {
-				const entries: LogEntry[] = [];
-				if (msg.resume) {
-					entries.push(
-						createLogEntry({
-							type: "lifecycle",
-							content: "▶ Agent started",
-							taskId: msg.taskId,
-							ts: msg.ts,
-							eid: msg.eid,
-						}),
-					);
-				}
+				// No log entry. The event is still emitted, persisted and
+				// processed — only its rendered line is gone. `▶ Agent started`
+				// used to mean "the daemon restarted and this agent came back",
+				// and it stopped meaning that once an agent was only launched
+				// when work was outstanding: the cause is now overwhelmingly a
+				// message, which is rendered immediately below it anyway.
 				return {
-					entries,
+					entries: [],
 					updates: [],
 					// Lifecycle events report which provider/model a run used —
 					// they no longer say anything about activity. Deriving
@@ -1014,20 +1008,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			}
 
 			case "agent_end": {
-				const entries: LogEntry[] = [];
-				if (msg.reason === "stopped") {
-					entries.push(
-						createLogEntry({
-							type: "lifecycle",
-							content: "⏹ Agent stopped",
-							taskId: msg.taskId,
-							ts: msg.ts,
-							eid: msg.eid,
-						}),
-					);
-				}
+				// No log entry — see agent_start. The stats below are the whole
+				// reason this case still exists: they are what the token badge
+				// reads.
 				return {
-					entries,
+					entries: [],
 					updates: [],
 					sideEffects: () => {
 						if (msg.stats?.turns !== undefined) setLastTurns(msg.stats.turns);
@@ -1632,10 +1617,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			}
 		}
 
-		// Collapse consecutive session lifecycle entries (resumed/stopped) with no
-		// meaningful content between them. Keep only the last one in each run.
-		entries = collapseLifecycleEntries(entries);
-
 		setLogs(entries);
 		for (const fn of deferredSideEffects) fn();
 		// No status re-fetch here any more. This used to end with
@@ -1646,44 +1627,17 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// is nothing to correct.
 	}
 
-	/** Entry types that count as "meaningful content" — NOT lifecycle noise. */
-	function isMeaningfulEntry(e: LogEntry): boolean {
-		// lifecycle entries (session resumed, agent stopped) are not meaningful
-		if (e.type === "lifecycle") return false;
-		// All other types are meaningful content
-		return true;
-	}
-
-	/**
-	 * Scan entries and collapse runs of consecutive lifecycle-only entries
-	 * (session resumed / agent stopped) into just the last one in each run.
-	 */
-	function collapseLifecycleEntries(entries: LogEntry[]): LogEntry[] {
-		if (entries.length === 0) return entries;
-
-		const result: LogEntry[] = [];
-		let lastLifecycleIdx = -1; // index in result of last lifecycle entry in current run
-
-		for (const entry of entries) {
-			if (!isMeaningfulEntry(entry)) {
-				// This is a lifecycle entry
-				if (lastLifecycleIdx >= 0) {
-					// Replace the previous lifecycle entry in the current run
-					result[lastLifecycleIdx] = entry;
-				} else {
-					// Start a new lifecycle run
-					lastLifecycleIdx = result.length;
-					result.push(entry);
-				}
-			} else {
-				// Meaningful content — break any lifecycle run
-				lastLifecycleIdx = -1;
-				result.push(entry);
-			}
-		}
-
-		return result;
-	}
+	// A `collapseLifecycleEntries` pass used to run over `entries` here,
+	// folding runs of consecutive lifecycle entries down to the last one. It
+	// existed because a restart wrote `▶ Agent started` / `⏹ Agent stopped`
+	// pairs with nothing between them, and a dormant session rendered dozens
+	// of them in a row. Those two lines are gone, so its premise is gone; the
+	// only lifecycle entry left is the interrupt notice, and one cannot follow
+	// another — the notice is written AT the park, so a second one needs the
+	// agent to have woken, which needs a message, which renders and breaks the
+	// run. Do not restore it for a new lifecycle producer either: it replaced
+	// in place (`result[first] = last`), so two distinct entries came out as
+	// one, carrying the last one's content at the first one's timestamp.
 
 	// --- Main handler ---
 
