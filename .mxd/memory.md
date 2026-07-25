@@ -494,6 +494,95 @@ The "don't pipe" guidance lives in the bash tool's `description` field (`src/too
 ### Architectural framing the task demonstrated
 When AI repeatedly does X (pipe/redirect/`| head`), ask: is the motivation legitimate? If yes (context protection IS legitimate), make the tool satisfy it naturally — don't enforce against it. Rule suppression leaks at edges; tool-level satisfaction closes the loop. If you find yourself adding parser/rejection/warning to the new tool, you drifted — the point is to make shortcuts unnecessary, not forbidden.
 
+## `search` tool: a hidden directory is not a boring directory (2026-07-25)
+
+`src/tools/search.ts` passed no `dot` option to `Bun.Glob.scanSync`, whose default is
+`dot: false` — so the walker never descended into ANY hidden directory. In this repo that
+is `.mxd/plugin/`: every ScopeOpts hook, every plugin REST route, the entire plugin UI —
+**17,862 lines across 54 files, i.e. 34% of all non-test source** (the task that filed this
+said "half"; measured, it is a third, and the whole UI). Invisible to the primary search
+tool. Fixed by `dot: true` at both scanSync call sites (the glob branch and the no-glob
+branch — fixing one and not the other leaves half the tool lying, so both are pinned
+separately).
+
+**`DEFAULT_SKIP_DIRS` is now the ONLY thing that decides what a search ignores**, which is
+what the code always claimed: `.git/` and `.worktrees/` were already listed *explicitly*,
+so `dot: false` was never anyone's intent — just a library default leaking through an
+option nobody passed. It is exported now, and a test pins it against its prose copy in the
+`excluded_dirs` param description. (Prose copies of lists are the "drained" rot from
+§ *Writing This File*: a stale list and a fresh list read identically.)
+
+⚠️ **`.worktrees/` in that list is load-bearing, costs nothing today, and therefore needs
+an assertion.** Each sub-agent worktree is a full second copy of the repo — measured 63,975
+files across 3 live worktrees — so dropping it makes one search from main scan every file
+4× and report every hit 4×. The guard test exists for the day someone "tidies" the list;
+it will not fail before then, which is the entire point.
+
+Two adjacent findings filed rather than swept in: **01KYCS0BH6** (`glob: "*.ts"` — the
+example in the tool's OWN description — returns nothing, because `*` does not cross `/` in
+Bun.Glob) and **01KYCS1552** (the skip list is applied AFTER the walk, so every excluded
+dir is enumerated then discarded; `dot: true` made that ~4× worse from main).
+
+### ⭐ How it was caught, and why that was the only way it could have been
+
+The failure mode is silent **by construction**: "no matches" and "never looked" produce a
+byte-identical tool_result. Nothing in a search result carries evidence that the search
+happened. So it can never be caught by inspecting the answer — only by a **collision with
+something you independently already know**.
+
+Forensic record, session 01KYCNHX9JAM, 13:01:04 → 13:01:55 (read out of its JSONL):
+
+| time | event |
+|---|---|
+| 13:01:04 | `search("formatTieredHits\|Related past tasks")` → a long, confident answer spanning 3 `src/` files. It silently omitted `.mxd/plugin/scope-opts.ts`, which holds the literal header string `[Related past tasks]` AND the second formatter. **The agent did not blink** — 2s later it was reading one of the returned files. |
+| 13:01:42 | `search("formatRelatedTasks\|RELATED_TASKS_CHAR_LIMIT")` → `(no matches)`. It had read that file 5 events earlier, and the thinking in the very same turn says *"I see there's a separate `formatRelatedTasks` function in scope-opts.ts"*. The answer was not incomplete, it was **impossible**. |
+| 13:01:47 | `bash grep -rn` — 4s after the empty result, reflexively, with no hypothesis stated. |
+| 13:01:55 | the hypothesis finally forms: *"seems to be skipping dotted directories"* — 7s AFTER grep had already proved it. The distrust was procedural, not analytical: the fallback fired first, the explanation came later. |
+
+Three things worth carrying:
+
+1. **The empty result is the detectable one; the partial result is the dangerous one.**
+   Same bug, same tool, same agent, 38 seconds apart: the non-empty answer went
+   unchallenged, the empty answer got double-checked. An under-report is only conspicuous
+   when it takes *everything* away — which is the case that matters least.
+2. **Detection needed an independently-held fact at that exact instant.** Search for
+   something you do NOT already know exists — "are there other callers of X?" — and a false
+   `(no matches)` is indistinguishable from the truth AND confirms your hypothesis, which is
+   the most comfortable answer there is. That is precisely the rename/delete check
+   § *Refactoring Philosophy* tells you to run.
+3. **The check that caught it is the one the tool description forbids** ("ALWAYS use this
+   for search tasks — NEVER invoke grep or rg via bash"), and the suppression had already
+   worked once that same minute. Sibling of the bash-tool framing directly above: a rule
+   that suppresses a redundant check also suppresses the only detector its failure mode has.
+   For as long as the bug lived, **an agent that obeyed the instruction got the wrong answer
+   and one that disobeyed got the right one** — which is not just a bad outcome, it is
+   training every agent that reads a tool description to discount it. If a description tells
+   agents to stop cross-checking, the tool has to earn it.
+
+### Test notes
+
+`src/anthropic-compatible-provider.test.ts` → `describe("jsSearch: hidden directories")`,
+next to the pre-existing `describe("jsSearch")`. **Yes, that file** — search's tests have
+always lived in the provider test file, and keeping them together beat giving `search` a
+second home.
+
+Mutations, each a full `bun test`:
+
+| mutation | fails |
+|---|---|
+| the bug itself (no `dot: true`, both sites) | the 2 walker tests + `excluded_dirs: []`. The 3 guards stay green — which is what makes them guards, not coverage. |
+| `.worktrees/` dropped from `DEFAULT_SKIP_DIRS` | the `.worktrees` guard + the description test, and nothing else. |
+
+Per-site attribution comes free rather than from a third mutation: the two walker tests are
+path-disjoint (one passes a `glob`, one does not), so each can only be reporting on its own
+`scanSync` call.
+
+⚠️ **The first cut of the two walker tests asserted an EXACT file list, and the `.worktrees`
+mutation tripped them too** — three extra red tests all naming the wrong cause. Narrowed to
+presence-only. **A test that can fail for two different reasons cannot tell you which one
+happened**, and a guard's entire value is being legible on the one day it fires. The exact
+list survives in `excluded_dirs: []`, where enumerating everything IS the claim.
+
 ## FIX-3 (2026-06-05) — lifecycle + provider concurrency: Phase-2 leak, done ordering, launch race, abort-sleep, done+compact
 
 Five concurrency bugs in `agent-lifecycle.ts` + `provider-shared.ts`. Each is a "the loop/parent
@@ -6382,14 +6471,21 @@ to pay for it.
 - **Biome**: Typecheck BEFORE lint. No `!important`. No duplicate CSS properties.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`.
 - **Daemon reload**: Commits don't auto-restart the daemon. Must manually restart after code changes.
-- **`search` tool silently skips `.mxd/`** (verified 2026-07-25): with the default path it
+- ~~**`search` tool silently skips `.mxd/`** (verified 2026-07-25): with the default path it
   never walks hidden directories, and in THIS repo `.mxd/plugin/` is production code — every
   ScopeOpts hook, every plugin REST route, the whole plugin UI. `search("buildMatrixScopeOpts")`
   returns 4 files and omits `.mxd/plugin/scope-opts.ts`, which is where it is DEFINED. The
   pattern is fine; passing `path: ".mxd"` explicitly finds it. **This makes the "grep for the
   name as a string before you rename or delete" rule (Refactoring Philosophy) return a false
   negative with the tool the description tells you to always use.** Until fixed (draft
-  01KYCQTGQZ), verify by-name references with `grep -rn` via bash, not with `search`.
+  01KYCQTGQZ), verify by-name references with `grep -rn` via bash, not with `search`.~~
+  **FIXED same day (01KYCQTGQZ) — hidden dirs are searched now; the workaround advice above is
+  obsolete.** The claim is kept because it is the clearest statement of the symptom, and
+  because the DETECTION lesson generalises to any silent under-report: see
+  § *`search` tool: a hidden directory is not a boring directory*. ⚠️ **One sibling bug in the
+  same tool is still OPEN and still produces silent false negatives**: `glob: "*.ts"` — the
+  example in the tool's own description — matches nothing below the top level, because `*`
+  does not cross `/` in Bun.Glob (**01KYCS0BH6**). Until that lands, pass `**/*.ts`.
 - **Concurrent ULID**: Use full `ulid()` (26 chars) — sliced ULIDs collide within same millisecond.
 - **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
