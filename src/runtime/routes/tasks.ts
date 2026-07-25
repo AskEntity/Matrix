@@ -17,6 +17,7 @@ import {
 import { isTask, stripSession, type TreeNode } from "../../types.ts";
 import {
 	deliverMessage,
+	interruptTask,
 	runAgentForNode,
 	stopTask,
 } from "../agent-lifecycle.ts";
@@ -701,6 +702,30 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 			return c.json({ error: "No running agent for this task" }, 404);
 		}
 		return c.json({ ok: true });
+	});
+
+	// Interrupt the current turn WITHOUT tearing the session down. See
+	// interruptTask — this is what the UI's stop button calls; the /stop route
+	// above stays for the lifecycle paths (reset / delete / close) that really
+	// do want the session gone.
+	//
+	// Returns 200 either way: `interrupted: false` means there was nothing to
+	// interrupt (already idle, or no session). That is not a client error — the
+	// button and the state it reads are always allowed to be a frame apart, and
+	// answering 404 would make a harmless double-press look like a failure.
+	app.post("/projects/:id/tasks/:nodeId/interrupt", async (c) => {
+		const project = ctx.pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const nodeId = c.req.param("nodeId");
+		const tracker = await getTracker(ctx, project.id);
+		const node = tracker.getTask(nodeId);
+		if (!node) {
+			return c.json({ error: "Task not found" }, 404);
+		}
+		const interrupted = interruptTask(ctx, project.id, nodeId);
+		return c.json({ ok: true, interrupted });
 	});
 
 	// Clear session (JSONL events) for a single task

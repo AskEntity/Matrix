@@ -26,6 +26,7 @@ import {
 	allocateSeparateBudget,
 	cleanupSessionBackgroundProcesses,
 	executeBashWithTimeout,
+	type ForegroundExecution,
 	formatMergedOutput,
 	formatSeparateOutput,
 	truncateMiddle,
@@ -38,7 +39,7 @@ function makeBgMap() {
 }
 
 function makeFgMap() {
-	return new Map<string, { resolve: () => void; command: string }>();
+	return new Map<string, ForegroundExecution>();
 }
 
 const TMP_ROOT = "/tmp/mxd-test-bash";

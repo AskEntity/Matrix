@@ -20,6 +20,30 @@ import { ulid } from "../ulid.ts";
  */
 const MXD_TMP_DIR = join(tmpdir(), "mxd");
 
+/**
+ * First line of an interrupted command's tool_result. The output the command
+ * produced before it was stopped follows it, in the normal format.
+ *
+ * Deliberately NOT the "interrupted by daemon restart" wording that
+ * `buildSessionRepair` synthesizes: that one is a guess made after the fact by
+ * a process that wasn't there, and it is false whenever a user pressed stop.
+ * This one is written by the code that did the stopping.
+ */
+export const INTERRUPTED_BY_USER =
+	"[Command terminated: interrupted by user. Output produced before the interrupt follows.]";
+
+/**
+ * A foreground command that can be reached from outside while it runs.
+ * Two verbs, opposite outcomes for the command itself — see TaskSession.
+ */
+export interface ForegroundExecution {
+	/** Move to background. The command KEEPS RUNNING. */
+	resolve: () => void;
+	/** The user pressed stop: TERMINATE, reporting the output produced so far. */
+	interrupt: () => void;
+	command: string;
+}
+
 function ensureTmpDir(): void {
 	if (!existsSync(MXD_TMP_DIR)) {
 		mkdirSync(MXD_TMP_DIR, { recursive: true });
@@ -559,7 +583,7 @@ export async function executeBashWithTimeout(
 	queue: MessageQueue | undefined,
 	toolCallId?: string,
 	bgMap?: Map<string, BackgroundProcess>,
-	fgMap?: Map<string, { resolve: () => void; command: string }>,
+	fgMap?: Map<string, ForegroundExecution>,
 	separate = false,
 ): Promise<{
 	content: string;
@@ -816,17 +840,23 @@ export async function executeBashWithTimeout(
 		);
 	});
 
-	// External signal: allows moveToBackground() to interrupt the foreground wait
+	// External signals: two different verbs on the same running command.
+	//   resolve()   — move to background. The command KEEPS RUNNING; the agent
+	//                 gets a background id and is told to yield for the result.
+	//   interrupt() — the user pressed stop. The command is TERMINATED, and the
+	//                 output it already produced comes back as its result.
+	// Both are registered under one key so whoever holds the session can reach a
+	// running foreground execution without knowing anything about bash.
 	// Use toolCallId as key when available (allows frontend to reference via tool_call event ID)
 	const fgKey = toolCallId ?? execId;
-	const externalSignalPromise = new Promise<{
-		timedOut: true;
-		reason: BackgroundReason;
-	}>((resolve) => {
+	const externalSignalPromise = new Promise<
+		{ timedOut: true; reason: BackgroundReason } | { interrupted: true }
+	>((resolve) => {
 		if (sessionId && fgMap) {
 			const key = `${sessionId}:${fgKey}`;
 			fgMap.set(key, {
 				resolve: () => resolve({ timedOut: true, reason: "user" }),
+				interrupt: () => resolve({ interrupted: true }),
 				command,
 			});
 		}
@@ -841,6 +871,24 @@ export async function executeBashWithTimeout(
 	// Clean up the foreground execution tracking
 	if (sessionId && fgMap) {
 		fgMap.delete(`${sessionId}:${fgKey}`);
+	}
+
+	if ("interrupted" in result) {
+		// Terminate, then report through the SAME formatter a normal completion
+		// uses. The output file is already on disk, so "what it printed before it
+		// was stopped" costs nothing to include — and NOT including it is the
+		// expensive option: a model told only "interrupted" knows it ran a command
+		// and lost the result, which invites re-running something that already had
+		// side effects. An interrupt stops the work; it does not erase what
+		// already happened.
+		proc.kill();
+		const exitCode = await proc.exited;
+		const parsed = parseForegroundResult(exitCode);
+		return {
+			...parsed,
+			content: `${INTERRUPTED_BY_USER}\n${parsed.content}`,
+			isError: true,
+		};
 	}
 
 	if (!result.timedOut) {

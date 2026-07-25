@@ -7,6 +7,7 @@ import { resetResourceRegistry } from "./resource-registry.ts";
 import { broadcast } from "./runtime/event-system.ts";
 import { getEventStore, getTracker } from "./runtime/helpers.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
+import { TurnInterrupt } from "./turn-interrupt.ts";
 import { ulid } from "./ulid.ts";
 
 // ── Helpers ──
@@ -558,6 +559,7 @@ function attachActiveSession(projectId: string, taskId: string): void {
 	node.session = {
 		queue,
 		abortController: new AbortController(),
+		interrupt: new TurnInterrupt(),
 		loopTraceId: "test-trace",
 		depth: 0,
 		backgroundProcesses: new Map(),
