@@ -72,9 +72,19 @@ deliberate pass catches it, so the interval between passes is how long a wrong n
   a closed question.
 
 **Rules:**
-1. **If code can answer it, point at it — don't snapshot it.** Interfaces, counts, file paths, file
-   lists. Write what code CANNOT answer: why it is shaped this way, what bit us, which rule is
-   load-bearing. "See the `test.todo`s in X" stays true; "3 remain" does not.
+1. **If something else is the authoritative source, point at it — don't snapshot it.** Interfaces,
+   counts, file paths, file lists — and equally another task's `done()` result, a config value, an
+   upstream doc. Write what the source CANNOT answer: why it is shaped this way, what bit us, which
+   rule is load-bearing. "See the `test.todo`s in X" stays true; "3 remain" does not.
+   ⚠️ **Not "code" — any authoritative source.** Reading the rule as "documentation vs code" is how
+   a hand-compressed copy of two task results ended up in a task description, written before those
+   tasks had even finished. The shape was recognisable and the rule still did not fire, because its
+   perceived scope was too narrow.
+   ⚠️ **A MEASUREMENT is not a snapshot — it is a record, and deleting it destroys evidence.**
+   "99.8% cache hit (582 creation / 362K read)" is the proof that four specific fixes worked and
+   stays true about the moment it describes. What rots is stating it in the present tense, so a
+   reader takes it for today's number. Date it, say what it measured, and say where the current
+   value actually lives. **Delete claims; keep measurements.**
 2. **Name things by what they ARE, not where they came from.** A check called "the phase-1
    invariant" gets switched off after phase 1 — which is exactly when it starts being useful.
 3. **Don't delete a refuted claim — mark it and point at what replaced it.** The old sentence is
@@ -1313,6 +1323,121 @@ agent-lifecycle.ts feeds repair the chain-walked active events, so rolled-back e
 
 src/rollback.test.ts: walkActiveChainIndices unit tests, EventStore integration tests, consistency tests (readActive + readFromLastCompactMarker + restart).
 
+## Which messages can be edited/rewound — three independent judgments (2026-07-25)
+
+`/edit` is one backend operation and Rewind is an Edit whose content did not change, so **one answer
+governs both buttons**. It is gated by three judgments, each a pure module at the plugin root, run
+by BOTH layers (frontend greys the button, backend returns 400 — the frontend can lag because SSE
+events carry no eid):
+
+| module | question | the limit is on |
+|---|---|---|
+| `agent-activity.ts` `isWorking` | is the agent busy right now? | TIME |
+| `run-start.ts` `messageStartsRun` | did the agent ever run FROM this message? | MEANING |
+| `rewind-point.ts` `hasRewindPoint` | is there a state left to return to? | HISTORY |
+
+`message-editability.ts` is the only place they meet. **Its checkable boundary: it has ZERO
+imports** — it CONSUMES three verdicts and COMPUTES none, and a test asserts that by reading the
+file. If it ever starts deciding something itself, that is when to split it.
+
+### ⚠️ TOMBSTONE: two people tried to unify these on the same day. Do not.
+
+Both attempts were the **same mistake — taking a PROPERTY of a thing for the thing itself**:
+
+- *"the gates are one invariant at two timescales"* — both relate to unclosed tool calls, one asks
+  "now" and one "at that position". Technically defensible and wrong: it explains a USER concept by
+  its IMPLEMENTATION consequence. An end user has no notion of an unmatched tool call.
+- *"the message is in the active chain, therefore it is rewindable"* — being in the context is a
+  property of a rewind target, not the thing itself.
+
+**API 400 is a symptom, not a reason.** Both framings leaned on it. Even if the API accepted a
+rollback to a message the agent never ran from, the operation would still be **empty** — it points
+at nothing. **Reasons must survive their failure mode disappearing.** The three judgments' only
+shared property is that all three grey the button, which is a fact about pixels.
+
+### The rule: which user turn PICKED THE MESSAGE UP
+
+The user's own phrasing is the concept — **only an independently sent message can be rewound** —
+and it is what the code and every user-visible string now say. "Run" only means something to
+someone who has read the provider loop.
+
+`buildUserTurn` packs `[...tool_results, ...queued messages]` into one turn. So **a turn carrying a
+tool_result is ANSWERING the agent's own previous output**; anything riding along in it did not
+start it. A turn with no tool_result exists *because* a message arrived. Both `messages_consumed`
+and the tool_results before it are persisted, so this is decidable from the log. Walk back from
+each `messages_consumed` to the turn boundary; unrecognised event types are SKIPPED, not treated as
+boundaries — detaching a tool_result from its consumption is the direction that wrongly calls a
+message editable.
+
+**`yield`/`done` are the rule's best instance, not its exception.** Their results are written *at
+wake*, by the very message being judged — so they are the message's CONSEQUENCE, not its cause:
+
+| tool_result | caused by | counts as prior work |
+|---|---|---|
+| bash, read_file, … | already in flight before the message | yes — the message's CAUSE |
+| yield, done | this message waking the agent | no — the message's CONSEQUENCE |
+
+**The direction of causation is the rule; comparing tool names is only how it is detected** — hence
+the predicate is named `isPriorWork`, not `isPark`. This exception was predicted to disappear under
+the new rule and instead **grew**: 1513 of 2161 newly-blocked messages (70%) were yield turns, and
+it is the DOMINANT shape for sub-agents, every one of which ends in `done()` and is later woken.
+
+Measured on a 3621-message session: editable 97.2% → 79.8%, and **NEW-only-editable = 0** — a
+one-way tightening that opens nothing the old rule blocked. The newly blocked were interjections
+during work ("不错", "不要这样", "联网"), which by the user's own definition were not independently
+sent. 20% describes the interaction style, not over-blocking.
+
+### ⭐ The evidence was being sampled at the wrong instant
+
+The first version tested for an unclosed tool_call at the message's **delivery** position. Real
+trace that broke it:
+
+```
+12:57:53  MESSAGE   你跑个bash
+12:58:01  MESSAGE   然后这条应该不能     ← arrived 10s BEFORE the tool_call
+12:58:11  CALL      mcp__mxd__bash
+12:58:49  MESSAGE   这条应该也不能回滚   ← arrived during bash
+12:58:57  RESULT    mcp__mxd__bash
+12:58:57  CONSUMED  2                    ← both picked up together
+```
+
+It blocked the second and **allowed the first**: at 12:58:01 the agent was thinking, composing the
+call, so nothing was outstanding yet.
+
+**The tombstone in `run-start.ts` must stay** — the next person's instinct is exactly "check for an
+unclosed tool_call at delivery". Part A had documented this window honestly and concluded the log
+could not do better: parking on `end_turn` writes no event and activity is deliberately never
+persisted, so "parked, waiting for you" and "waiting for the model" leave the identical trace —
+nothing. **Accurate about the DELIVERY moment, and irrelevant**: consumption leaves a trace, and
+consumption is what answers the question. *Looking for evidence at the wrong instant is what made
+the log look mute.*
+
+Two sizing errors worth carrying, both of the form *reasoning where observing was cheap*:
+- "the thinking gap is where the agent spends least of its wall-clock time" — true and beside the
+  point. **Wall-clock share ≠ share of user actions.** "Ask for something, then add one more thing
+  while it starts" is the most natural way to extend a request and lands squarely in that gap. It
+  was hit on the first real use.
+- "root's last 2000 lines contain no yield/done, so this is mainly a sub-agent problem" — the
+  observation was accurate and the generalisation was not; `tail -2000` reflects a recent habit,
+  not the session. The full log had 1513. **An accurate observation plus an over-broad
+  generalisation is harder to challenge than a guess, because it arrives with a number.** Check the
+  sampling window on every figure, including your own.
+
+### Tri-state, and one piece of scaffolding to DELETE rather than repurpose
+
+`messageStartsRun` returns `undefined` for an unconsumed message. That is not a new state — the
+tri-state already exists for the reachable case (an eid not on the active chain, cut away by an
+earlier rewind). Measured 0 of 3621 occurrences and the UI has no path to it (unconsumed messages
+are pending chips, not log entries): **do not write logic for that branch.**
+
+`processEventBatch(events, { fromActiveChain })` is **TEMPORARY**. It exists only because "Load
+earlier history" fetches the raw file, including abandoned rewind branches and pre-compaction
+history; annotating that would count a tool call from a branch nobody is on against an unrelated
+message. **A gate that answers wrongly is worse than one that says "I don't know"**, so a raw batch
+is not annotated at all. The real fix is server-side (mark active-chain membership in the response
+— NOT a second copy of the chain walk in the browser, which is what *One boundary* removed). When
+that lands, **delete the parameter, do not repurpose it.**
+
 ## One boundary: the active chain (2026-07-24)
 
 "Which events count" had FOUR independent implementations. Now there is one:
@@ -1436,6 +1561,42 @@ marker in the child reads as the legacy "unpaired marker" shape — so the child
 would discard exactly the window messages we just inherited, with nothing left
 in its file to ever recover them. That is the one genuinely irreversible
 version of this bug: the source recovers on restart, a fork never does.
+
+### ⚠️ Being ON the active chain ≠ being a legal rewind target (2026-07-25)
+
+The most expensive corollary of this design, found by the Edit/Rewind gate. **The active chain is
+NOT a uniform `parentEid` chain — it is a CONSTRUCTED sequence.** After the compaction point,
+array order and chain order are the same thing. The window messages are **spliced in** by the
+walker: adjacent in the resulting array, but their parent links point into the region the summary
+replaced.
+
+Rewinding is a pure parent-link operation (`setChainHead(target.parentEid)`). So **it is only
+defined on the segment where construction order and chain order agree** — which excludes exactly
+the window messages.
+
+Measured (seed a completed compaction, rewind to the window message, read `readActive` back):
+
+```
+active BEFORE: [message:m-window, compact_marker, message:m-after, messages_consumed]
+window msg's parentEid points at: compact_started
+active AFTER : [assistant_text, compact_started, message:m-edited]
+pre-compact history resurrected? true
+summary still present?           false
+```
+
+Mechanism: the walk only treats `compact_started` as a barrier **once it has already passed a
+`compact_marker`** (`window !== null`). With `window === null` it is an ordinary event — pushed,
+and the walk continues. Set the chain head to a window message and the backward walk never meets a
+marker, so the window mechanism never arms and it runs to the first line of the file. On a real
+session that is the entire summarized-away history returning at once, with the summary stranded on
+the abandoned branch.
+
+**Making the window messages visible was correct** — they genuinely are context, and that is what
+this section's window rule is for. Reading *visible* as *operable* is the error. A separate
+predicate (`hasRewindPoint`, `.mxd/plugin/rewind-point.ts`) answers "is there a state left to
+return to", and its mutation test fails on the DAMAGE — it asserts the resurrected history is
+absent by name — so anyone who tries to relax that limit sees what they just did rather than a bare
+status code.
 
 ### No dangling-link handling — and nothing may produce one
 
@@ -4350,6 +4511,23 @@ renders without running a real compaction.
   messages_consumed produces exactly ONE log entry (no duplicate).
   Mutation proofs documented per-test.
 
+## ⚠️ A user message renders where it was CONSUMED, not where it arrived (2026-07-25)
+
+A message typed during a tool call is **delivered** between the `tool_call` and its `tool_result`,
+but **consumed** with that tool's results — so in the activity log it renders **after the finished
+tool card**. Delivery order and rendered order are different things.
+
+This is a trap for anything that reasons about a message's position. The Edit/Rewind gate hit it
+first: judging "did the agent run from this message" off the RENDERED entries calls exactly the
+blocked case a run start, because by then the message appears after the tool it interrupted. So the
+annotation is computed in `processEventBatch` from the **raw batch**, never from the entries.
+Mutation-verified — swapping the input to the entries fails exactly two tests out of ~2760.
+
+It is also the only place the annotation is needed, for a reason worth knowing on its own:
+**an eid reaches the UI only through a JSONL fetch — SSE broadcasts carry none** (events are
+stamped at persist time, after the broadcast). A live-streamed entry therefore has no eid, hence no
+Edit/Rewind buttons, hence nothing to gate. Same fact drives the re-fetch below.
+
 ## Re-fetch JSONL when the viewed task stops working — Edit/Rewind buttons (2026-07-23)
 
 SSE-broadcast events lack `eid`/`parentEid` (stamped only at JSONL persist time in
@@ -4604,6 +4782,90 @@ trips `useExhaustiveDependencies` (ERROR-level, not warning). Adding it to deps 
 re-fire the insert every render (new fn identity each render) — a `biome-ignore` on
 the effect is the correct fix, matching the codebase convention. No CSS/i18n change
 (textarea was already capped+scrollable; fix is purely JS scroll).
+
+## Viewport position: 30 touchpoints, and the one predicate that guards them (2026-07-25)
+
+A full survey of everything that reads or writes the activity log's scroll position, done because
+the area "felt fragile and nobody could state the conditions". **The initial count was 9. The real
+count is 30**, in seven classes — including one nobody had listed: the browser's own CSS
+`overflow-anchor: auto` scroll anchoring, which silently absorbs top-of-list insertions (and which
+Safari does not implement).
+
+### The finding: guard the PROPERTY, not the enumeration of causes
+
+Two predicates were proposed on the *cause* side and both were killed by one measurement:
+
+- *"is the rendered content from the task being viewed"* (a view-parameter identity)
+- *"is the container non-scrollable"* (an emptiness proxy)
+
+Counter-example: an in-log search matching 40 entries leaves the container with 449px of range —
+fully scrollable — but `scrollTop` 1200 is clamped to 449, which IS the new bottom, so
+`isNearBottom` returns true and follow mode arms itself. Neither predicate catches it.
+
+**The predicate that works: `scrollRangeShrank(prev, current)` where range = `scrollHeight −
+clientHeight`.** All five measured failures share not emptiness but *the scrollable range got
+smaller and the browser pushed the offset to the new bottom*: tab-switch fetch gap (1549→0), three
+kinds of in-log search, and the composer auto-growing (viewport 572→537). Growth is deliberately
+NOT suspicious — streaming grows every frame, and a user scrolling back to the bottom mid-stream
+must still be able to re-arm follow.
+
+⭐ **Why this generalises and a cause-list does not**: this subsystem had already proven that the
+cause side cannot be enumerated — the survey started from "your nine are almost certainly
+incomplete" and ended at 30. Listing causes again would repeat the same error. `scrollRangeShrank`
+tests **the property that makes an observation meaningless**, so it covers causes nobody wrote
+down. The composer's auto-grow is the proof: not a view parameter, not anticipated, and it lands in
+the predicate for free. (It also collapsed two separately-catalogued classes — content-height
+changes inside the container and clientHeight changes outside it — into one. They were two classes
+only because they were sorted by *what changed*; sorted by *what it causes*, they are one thing.)
+
+### `autoScroll` vs `logAtBottom` — two concepts, one illegal coupling
+
+`logAtBottom`'s writers are all **observations**. `autoScroll`'s are one observation and six
+**intents**. That single observation-writing-intent (`handleScroll` reporting to both; the
+predicate's own comment admits "one predicate, two consumers") is the door every hijack came
+through. They must NOT be merged into one boolean — that would lose the "intent" concept the Follow
+button needs.
+
+Two halves of the same seam, fixed separately: the guard above rejects a **false observation** (a
+clamp after shrink); and the new-content effect no longer takes `autoScroll` as a dependency, which
+stops a **true observation from immediately executing** — the user scrolls into the 40px band,
+follow correctly arms, and previously the effect fired and yanked them the rest of the way
+mid-gesture. **Arming is not acting**, and "go to the bottom now" already has its own channel
+(the `scrollToBottomRequest` counter). The fix was a deletion, and the effect reads `autoScrollRef`
+so "responds to content, not to intent" is explicit rather than implied by a deps array.
+
+### Pitfalls that will look like oversights
+
+- **`prevScrollRangeRef` may ONLY be advanced by `handleScroll`.** Letting a geometry-reading effect
+  update it too makes the guard inert: effects run at commit, the clamp's scroll event is dispatched
+  by the browser *afterwards* (measured 14ms later), so the effect writes the new small value first
+  and the comparison becomes new-vs-new. **The danger is that it looks MORE thorough** — the next
+  person will read the single call site as a missed one.
+- **"Only trust real user scrolls" is unimplementable.** A clamp-dispatched scroll event has
+  `isTrusted === true` and is indistinguishable from a user's at the event layer. Written into the
+  predicate's docstring specifically to stop someone walking that road again.
+- **In a right-aligned flex row, inserting a child moves only the siblings BEFORE it.** So
+  conditionally-rendered controls belong *before* the persistent ones — cheaper than reserving
+  blank space and with no side effects. This is what made the header jump 71.3px when Follow
+  appeared. (First measured as "100.3px on the whole actions group" — a container's property read
+  as the content's. Same shape as the mistakes above, caught by re-measuring per child.)
+
+### Deleting an implementation that never worked
+
+`tabScrollStateRef` (per-tab scroll memory) **never functioned**: the save ran in a passive effect
+keyed on the task id, which runs *after* commit — by which time the list had emptied, the container
+had collapsed and `scrollTop` was clamped to 0. It saved a destroyed value, structurally. It was
+invisible because the follow-hijack it fed put you at the bottom anyway, which looked like normal
+follow behavior.
+
+Fixing the hijack exposed it, and "leave it as-is" turned out not to be an option — behavior would
+change either way. Made into an explicit three-way choice and reported: guard only (visible
+regression) / make restore actually work (decides a product question) / **delete the never-working
+implementation and write the current behavior down explicitly (zero user-visible change, measured
+8/8)**. Chose the third. **Deleting an implementation that never had an effect is not deciding the
+feature shouldn't exist — it is removing a lie.** The real feature needs an address that survives a
+refetch, which is the same requirement as message deep-linking and active-chain membership: all
+three want persisted event identity (`eid`) on every entry regardless of transport.
 
 ## Scroll-to-bottom button + happy-dom v20 MutationObserver WeakRef GC hazard (2026-07-07)
 
@@ -4928,6 +5190,34 @@ Action button gap reduced 6px→4px to fit within 58px (3×16px + 2×4px = 56px)
 Replaced `✎` unicode char with `<IconEdit size={12}/>` SVG pencil icon in LogEntryView
 user message action buttons. `IconEdit` added to `icons.tsx` (Lucide-style pencil path).
 
+## Blocked Edit/Rewind buttons: grey + explain, never hide (2026-07-25)
+
+The rule for which messages are editable is in Events/JSONL (*Which messages can be edited/rewound*).
+This is how a refusal is presented.
+
+**Blocked buttons stay, greyed and disabled, with the reason in `title`.** Copy is never gated. Two
+independent justifications, which is what makes the decision stable:
+
+1. **Semantic**: a silently vanishing control reads as broken — and the cases that most need an
+   explanation are exactly the ones left with no affordance to carry one.
+2. **Layout**: the row is ✎ ↺ ⧉. Hiding makes Copy change position, so a list has rows with two
+   buttons and rows with three. Greying keeps the column stable. This holds *even if* every
+   disappearance were explained.
+
+**Precedence: permanent outranks transient** — not "whichever the code tests first". Order:
+`unknown_message` → `no_rewind_point` → `did_not_start_run` → `agent_busy`. "Wait for the agent to
+stop" promises a remedy; on a permanently un-editable message the user waits, the agent stops, the
+button is still grey, and they cannot tell whether they waited wrong or the product is broken.
+**Never offer a remedy that will not work.** The rule generalises to any future reason.
+
+**Wording follows the user, not the loop.** Every visible string uses their framing — *"Not sent on
+its own — the agent picked this up along with work it was already doing, so there is no separate
+point here to go back to."* The internal token (`did_not_start_run`) stays, because it is part of
+the `/edit` response shape.
+
+**Keep the reason→string map exhaustive over the union** (`Record<EditBlockedReason, string>`), not
+partial-with-fallback: it is what caught the missing i18n key the moment a third reason was added.
+
 ## Rewind/Edit confirm dialog + rollback impact analysis (2026-07-24)
 
 Replaces `window.confirm` on Rewind with an in-app modal that reports **what the
@@ -5209,6 +5499,42 @@ Without messages_consumed, message with id is never rendered.
 
 ### Third-codepath drift fixed (commit 39e420b)
 `src/drift-initial-drain.test.ts` image-drift tests now pass. Initial drain delegates to `adapter.appendQueueMessagesToMessages`, which routes through the same `applyXxxQueueContent` function the walker uses. One function, two call sites, zero drift possible.
+
+## Guards need a two-sided mutation proof (2026-07-25)
+
+**Mutate in both directions, or the test suite will accept a guard that quietly kills the feature.**
+
+- **Over-loose** (delete the guard) — the side everyone tests. Usually caught.
+- **Over-strict** (make the guard block everything) — **almost never tested, and it is the typical
+  failure mode of a guard.** It turns no test red; it just makes some normal path silently stop
+  working.
+
+The number that makes this concrete: making a follow-mode effect never scroll — i.e. killing the
+entire follow feature — left **11 of 12 tests in that file green**, including four guard tests
+written the day before. A second case the same day: keying a rule on "alone in its turn" instead of
+"no prior work in its turn" failed **exactly one test out of 2775**, and only because someone had
+deliberately written the "two messages consumed together are BOTH editable" case.
+
+So: **when you add a guard, explicitly write a test for what it must NOT block, and verify that test
+still passes with the guard in place.** Without it the change ships fully green with the feature
+gone.
+
+## Test fixtures with unstable identity lose their resolution silently (2026-07-25)
+
+A fixture that regenerates entry ids on every render makes every rerender a full key change → whole
+subtree remounts → MutationObserver fires → if follow is on, *the remount itself* scrolls to the
+bottom. Which means the test can no longer see whether the code under test scrolled. It does not go
+red; it stops being able to distinguish.
+
+Fix: build the master array once and slice it, so entries keep their id / React key / DOM node
+across rerenders and adding items is an APPEND — which is also what production does. **Whenever a
+test asserts something about an effect, check that the fixture is not producing that effect
+itself.**
+
+Related, from the same area: **happy-dom does no layout**, so geometry cannot be observed there. It
+can still test the *causes* of geometry — DOM order, commit granularity, whether a callback ran —
+which is far better than dropping the test or mocking geometry brittlely. Anything genuinely about
+pixels has to be measured in a real browser.
 
 ## Test-is-Golden / ITA Philosophy
 

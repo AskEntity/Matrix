@@ -171,6 +171,14 @@ next lookup.
   moved** — not with the sentence's age alone. The newest region checked out entirely clean because
   its entries were written by the same tasks, in the same sessions, as the code they describe. This
   is why the oldest sections are worth reordering first: it front-loads the finds.
+- **"If code can answer it, point at it" is too narrow — it is any AUTHORITATIVE SOURCE.** Another
+  task's `done()` result, a config value, an upstream doc. The narrow reading is not hypothetical:
+  a hand-compressed copy of two task results was written into a task description — by someone who
+  had stated the rule that same day — because its perceived scope was "documentation vs code".
+- **Delete claims; keep measurements.** A measurement ("99.8% cache hit, 582 creation / 362K read")
+  is a RECORD: it stays true about the moment it describes and it is the evidence that a fix worked.
+  Applying the no-snapshots rule to it destroys evidence. What rots is the present tense — date it,
+  say what it measured, say where today's value lives.
 - **Understating a security surface is worse than overstating it.** The auth middleware's skip list
   was described twice, both times smaller than reality, because a later change (frontend paths
   becoming server-visible) enlarged the anonymous surface without touching either auth entry. When
