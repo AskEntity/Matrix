@@ -1601,6 +1601,15 @@ is short and the action it licenses is irreversible or expensive, one clarifying
 cheaper than a confident reading.** The temptation is strongest exactly when the reading is
 coherent, because coherence feels like confirmation.
 
+⭐ **Fourth member, and the one you are most likely to commit while doing everything else right: a
+measurement that contradicts your plan is not a result to report afterwards — it is a reason to
+stop.** Mid-execution of that same deletion, the first rung was measured at 82 lines against an
+estimate of 310, which was already enough to refute the plan it was part of. The intent was to
+finish the cuts and report the discrepancy after. **Nothing about that is lazy or careless — it is
+the ordinary shape of finishing what you started**, which is exactly why it needs to be written
+down: the surprising number arrives while you are busy, and "I'll report it when I'm done" costs
+nothing to think and everything if the plan was wrong.
+
 **An over-strict test double bills you three ways, and the third leaves no artifact.** It creates
 complexity you pay for (the four mechanisms). It hides gaps — a fiction occupying the "role rules"
 slot stopped anyone asking what the real role rule was, so the true one got zero coverage and a
@@ -3451,6 +3460,18 @@ The system prompt is **universal** across every project that uses Matrix. Each p
 - **Prompt**: principles, roles, tool semantics, communication patterns, task lifecycle, craft —
   anything true for any project using Matrix.
 - **This file**: matrix-internal implementation, architecture, pitfalls, design decisions.
+
+⚠️ **The limit on that rule, established by trying it: the craft lessons in this file cannot be
+relocated to the prompt, and the attempt is the proof.** It looks correct — "universal lessons belong
+in the universal prompt" follows directly from the split above — and it was executed far enough to
+measure. Applying "when in doubt keep the local instance" shrank the movable part from an estimated
+310 lines to **82**, because **each rule here is welded to the specific thing that happened, and the
+weld is what makes it work.** A craft rule in the prompt with no evidence is a platitude every agent
+reads past; the same rule sitting next to the afternoon it cost is an argument. Separating them
+leaves a platitude there and a stranded anecdote here, and neither half does the job the whole did.
+The general-moves/local-stays split is still right for a genuine **duplicate** — where the prompt
+already states the principle and this file repeats it. It fails here because there is no duplicate:
+the prompt has the principle and this file has the only evidence for it.
 
 **The one matrix-internal detail the prompt is allowed to expose is the path where pre-compaction
 events are preserved**, because a compacted agent otherwise has no way to read its own history.
