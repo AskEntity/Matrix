@@ -9,6 +9,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { isWorking } from "../agent-activity.ts";
 import { isProductionProject } from "../production.ts";
 import { api } from "./api.ts";
 import { useAuthFetch } from "./auth.ts";
@@ -50,7 +51,6 @@ import {
 	type ActivityMap,
 	activityReducer,
 	createEventHandler,
-	isWorking,
 	type PendingAction,
 	type PendingMessage,
 	pendingReducer,

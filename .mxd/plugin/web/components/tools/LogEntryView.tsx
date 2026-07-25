@@ -14,7 +14,7 @@ import {
 	TOOL_BASH,
 	TOOL_DONE,
 	TOOL_YIELD,
-} from "../../tool-names.ts";
+} from "../../../tool-names.ts";
 import { Card } from "../Card.tsx";
 import { ImageLightbox } from "../ImageLightbox.tsx";
 import { IconEdit } from "../icons.tsx";

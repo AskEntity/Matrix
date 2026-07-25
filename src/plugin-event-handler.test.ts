@@ -1,12 +1,12 @@
 import { describe, expect, it, mock } from "bun:test";
 import type React from "react";
+import { isWorking } from "../.mxd/plugin/agent-activity.ts";
 import {
 	type ActivityAction,
 	type ActivityMap,
 	activityReducer,
 	createEventHandler,
 	type EventHandlerDeps,
-	isWorking,
 	type PendingAction,
 	type PendingMessage,
 	pendingReducer,

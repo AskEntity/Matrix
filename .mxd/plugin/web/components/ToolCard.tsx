@@ -19,7 +19,7 @@ import {
 	TOOL_SEND_MESSAGE_TO_CHILD,
 	TOOL_SEND_MESSAGE_TO_PROJECT,
 	TOOL_UPDATE_TASK,
-} from "../tool-names.ts";
+} from "../../tool-names.ts";
 import { Card } from "./Card.tsx";
 import { MCP_CARD_BODY_TOOLS, McpToolCardBody } from "./tools/McpToolCard.tsx";
 import { ToolResultImages } from "./tools/ToolResultImages.tsx";

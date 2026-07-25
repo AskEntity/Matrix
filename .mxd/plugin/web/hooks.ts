@@ -169,6 +169,16 @@ export type LogEntry = UIEvent & {
 	expanded?: boolean;
 	/** Per-turn token/cache breakdown, attached from usage events. */
 	cacheInfo?: CacheInfo;
+	/**
+	 * For user messages: did this message start a run of the agent? Decided
+	 * from the DELIVERY order of the raw events (see run-start.ts) and
+	 * attached in processEventBatch, because by the time a message reaches
+	 * the log it has been reordered to where it was consumed.
+	 *
+	 * Absent when unknown — including on every live SSE entry, which carries
+	 * no eid to decide about. Those show no Edit/Rewind buttons anyway.
+	 */
+	startsRun?: boolean;
 };
 
 let logIdCounter = 0;
