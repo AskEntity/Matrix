@@ -398,7 +398,7 @@ The API can return several `yield` tool_calls in the same assistant turn. Two ru
 
 1. **Repair skips the INTENDED orphan, which is specifically the LAST tool_call** — not "any
    yield/done". Earlier yield/done orphans in the same turn are genuine repair targets and do get
-   interrupted results. The first version of this rule said "skip yield/done", which was too broad.
+   interrupted results.
 2. **Extras emit to JSONL immediately** (orphan prevention) **but their live-path construction is
    DEFERRED** via `pendingDuplicateYieldExtras`. On yield wake they bundle into the same
    `buildUserTurn` call as the real yield, producing ONE user message of
@@ -1859,7 +1859,8 @@ Four gotchas, three of them environmental:
   scope; loading it registers the NAPI backend, and worker teardown then hits
   `NAPI FATAL ERROR: Error::New napi_create_error` → SIGTRAP → **the whole test process dies.** The
   env var short-circuits the pipeline so the backend is never registered. It must be passed to
-  workers via the Worker constructor's `env` option (see *Bun Worker env isolation*); a
+  workers via the Worker constructor's `env` option (see *Two transport bugs that corrupt
+  silently*, Daemon region — a `bunfig.toml [test.env]` entry does NOT reach a Worker); a
   `bunfig.toml [test.env]` entry alone does not reach them. Priority is explicit mock > env var >
   lazy load, so a test can still exercise hybrid paths with a mock while the var is set.
 - ⚠️ **`sharp`/`libvips`**: Bun's global cache puts libvips at a versioned path sharp cannot find.
@@ -2211,8 +2212,8 @@ An out-of-tree plugin imports `mxd/plugin-sdk` — a subpath of the real `mxd` p
 `exports` map — rather than counting `../`s. Bare-specifier resolution walks up `node_modules`, so it
 is depth-independent and works inside the plugin's own worktree with no dev symlink.
 
-⚠️ **Chosen over `@mxd/plugin-sdk` on purpose.** The `@mxd/*` names are BROWSER virtual modules
-(tsconfig paths + importmap), a different mechanism; a server package reusing that prefix would
+⚠️ **Chosen over `@mxd/plugin-sdk` on purpose**: the `@mxd/*` names are BROWSER virtual modules
+(tsconfig paths + importmap), a different mechanism, and a server package reusing that prefix would
 falsely imply kinship.
 
 ⭐ **It must stay a thin re-export and must never become a vendored copy.** Bun and Node dedupe
@@ -2295,10 +2296,9 @@ direction for an auth note to be wrong in:
 2. The `/vendor/` and `/app/` prefixes — compiled bundles, no secrets.
 3. **`GET` + `isFrontendPath(path)`** — `/` exactly, or a first path segment that is a **currently
    registered project id**. This is the largest and least obvious part of the surface: tasks live at
-   `/<projectId>/<scope>/<taskPath>`, browsers do not send `Authorization` on navigation, and a
-   refresh on such a URL must reach the shell. The shell itself is auth-content-free and every API
-   call it then makes goes through this same middleware. Unregistered first segments fall through
-   to a clean 404.
+   `/<projectId>/<scope>/<taskPath>`, browsers do not send `Authorization` on navigation, so a
+   refresh must reach the shell — which is auth-content-free, and every API call it then makes goes
+   through this same middleware. Unregistered first segments 404 cleanly.
 4. Nothing else. **Everything under `/auth/*` except `/auth/status` requires a token**, guarded by a
    regression test asserting `GET /auth/bogus` → 401 — which exists because a former
    `startsWith("/auth/")` skip would have silently exempted any future `/auth/*` route.
@@ -2699,9 +2699,9 @@ it lands wherever the intermediate geometry allowed (0 in one capture, 191 in an
 
 **The lazy-render anchor is an accomplice, not the cause**, and the arithmetic proves it: it captured
 `scrollBottom = 8978 − 191 = 8787` against a `scrollHeight` of 8809-8978, so the offset was already
-near the top when it ran. It **observed and reproduced** a position that was lost before it existed;
-it did not compute a wrong one. That is what turns a one-frame flicker into a stuck state, and it is
-why there is nothing to fix in the anchor. **Fix the keys.**
+near the top when it ran. It **observed and reproduced** a position that was lost before it
+existed rather than computing a wrong one — which is what turns a one-frame flicker into a stuck
+state, and why there is nothing to fix in the anchor. **Fix the keys.**
 
 ⚠️ **CORRECTION: "a wholesale replacement does not move the offset" is FALSE**, and an earlier round
 measured it four times and concluded otherwise. The measurements were honest; the fixture held ~60-80
@@ -2714,16 +2714,10 @@ cheap content cannot answer the question at all.**
 
 The per-frame probe classified that exact jump as `range UNCHANGED → scroll anchoring or user — NOT
 a clamp`. Wrong: the range collapsed and refilled **inside one frame**. Worse, `scrollHeight` never
-dipped in any sample — read literally, that refutes "the container collapsed", and it does not:
-
-```
-t=87032  dom-mutation ...
-         <- 267ms, ZERO samples (~16 expected at 60fps)
-t=87299  dom-mutation  added:82 removed:82
-```
-
-The main thread was blocked solid for 267ms rebuilding 82 entries, so every rAF callback and observer
-microtask queued behind it. **"No dip in the samples" is not "no dip."**
+dipped in any sample — read literally that refutes "the container collapsed", and it does not, because
+**between the two DOM mutations there are 267ms containing ZERO samples where ~16 were due at 60fps.**
+The main thread was blocked solid rebuilding 82 entries, so every rAF callback and observer microtask
+queued behind it. **"No dip in the samples" is not "no dip."**
 
 ⚠️ **That is a systematic bias, not an edge case: the operations that cause large displacement are
 exactly the operations that block the main thread long enough to hide themselves.** A per-frame
@@ -3011,10 +3005,9 @@ Four ways this fails silently, all observed:
   production goes through postMessage; the structural differences at process boundaries are never
   exercised.
 
-**Minimum bar**: cross the real process boundary (spawn a real daemon and HTTP-call it if the
-feature is about daemon behavior); run the journey by hand before `done("passed")`, and if you
-cannot describe the concrete steps and what you observed, you have not verified it; and test every
-observable consequence, not the first one. **"2003 tests pass" is not a merge gate. "I ran the
+**Minimum bar**: cross the real process boundary; run the journey by hand before `done("passed")`,
+and if you cannot describe the concrete steps and what you observed, you have not verified it; test
+every observable consequence, not the first one. **"2003 tests pass" is not a merge gate. "I ran the
 feature the way a user would and it worked" is.**
 
 ## ⚠️ Every `throw` in a test double must quote the real error it mirrors
