@@ -4374,3 +4374,48 @@ it.** The fix is a positive control inside the same test — after asserting fol
 the clamp, grow the range back and scroll for real, and require that one to re-arm. Verified the way
 this repo requires: with the `!shrank` guard mutated away, both tests fail on the negative assertion;
 restored, both pass, and 2973 → 2973 with 0 fail across the suite.
+
+---
+
+## Deleting a mechanism whose premise YOUR OWN change just voided — and what happens to its tests
+
+Worked example (2026-07-25) for the rule stated under *Deleting a mechanism built on a false
+premise: separate the PREMISE from the OBLIGATION*, and the first instance where all three checks
+came out "delete". The activity log stopped rendering `▶ Agent started` / `⏹ Agent stopped` —
+`agent_start` and `agent_end` are still emitted, persisted and processed, and **both `case` bodies
+in `.mxd/plugin/web/event-handler.ts` still exist for their `sideEffects` alone**: one sets the
+provider/model display, the other the five values behind the token badge. ⚠️ Deleting a whole
+`case` because its visible output is gone blanks those with nothing red and no visible connection
+to a commit about hiding two lines.
+
+Removing the two `entries.push` calls also killed `collapseLifecycleEntries`, which folded runs of
+consecutive lifecycle entries down to the last one:
+
+- **Premise** — "restart bookkeeping produces runs of visual noise" — void, because that noise IS
+  what the change removes.
+- **Obligation** — empty. The sole remaining `type: "lifecycle"` producer is the interrupt notice,
+  and two of those cannot become adjacent: the notice is written AT the park, so a second one needs
+  the agent to have woken, which needs a message, which renders between them.
+- **Cost** — real, which is what makes "harmless, leave it" wrong here. It replaced in place
+  (`result[first] = last`), so the day a second lifecycle producer arrived, two distinct entries
+  would have rendered as one, carrying the last one's content at the **first one's timestamp**. Not
+  a neutral leftover; a latent wrong answer parked in the code waiting for a new caller.
+
+⭐ **The transferable half is what happens to the dead mechanism's TESTS, and the honest-looking
+move is the wrong one.** Four tests covered the collapse. They were not assertions that the deleted
+lines render, so *"invert rather than delete"* — the right rule for the tests of a removed feature —
+does not reach them: with no producer left they would assert "nothing collapsed because nothing was
+produced", which passes against every implementation including a deleted one. Three options, one
+right: delete mechanism and tests together; keep both and RE-AIM the tests at the surviving
+producer; or keep the mechanism with no coverage. **Re-aiming is the trap**, because it silently
+pins, as intended behaviour, whatever the mechanism happens to do to a producer it was never
+designed for — here "collapse two distinct user interrupts into one, at the wrong timestamp",
+chosen by nobody and thereafter defended by a test.
+
+⚠️ **A guard on an unreachable state has to say IN THE TEST that it is a contract test, or the next
+reader deletes it.** The replacement pins "processEventBatch does not collapse lifecycle entries" as
+a property of the whole `lifecycle` category, which will get producers that do not exist yet — it is
+not a scenario, because today's scenario cannot occur, and someone reading it as one will try to
+reproduce it, fail, and conclude the test is wrong. It asserts both entries' **timestamps** rather
+than their count, because the failure being guarded is content-and-position substitution, and a
+count assertion passes against a collapse that kept two entries for some other reason.
