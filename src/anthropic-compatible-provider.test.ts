@@ -88,12 +88,13 @@ async function executeTool(
 	testNode.cwd = cwd;
 	if (fallbackCwd) testNode.worktreePath = fallbackCwd;
 	// Build default session, then merge any caller-provided session data (maps, etc.)
-	const defaultSession = {
+	const defaultSession: import("./types.ts").TaskSession = {
 		queue: queue ?? new MessageQueue(),
 		abortController: new AbortController(),
 		loopTraceId: "test-trace-id",
 		depth: 0,
 		backgroundProcesses: new Map(),
+		activity: "thinking",
 		foregroundExecutions: new Map(),
 	};
 	const callerSession = getSession?.(realTaskId);
@@ -1969,6 +1970,7 @@ describe("done tool", () => {
 			loopTraceId: "test-trace-id",
 			depth: 0,
 			backgroundProcesses: new Map(),
+			activity: "thinking",
 			foregroundExecutions: new Map(),
 		};
 
@@ -2737,12 +2739,13 @@ describe("Event deterministic verification", () => {
 	test("implicit yield: end_turn → queue.wait → queue drain → continue", async () => {
 		const testDir = join(tmpDir, "implicit-yield");
 		const emittedEvents: EventSpec[] = [];
-		// Detect idle state via emit callback — handleImplicitYield emits agent_idle
-		// synchronously before queue.wait(), so enqueuing here resolves the wait immediately.
+		// Detect idle via the emit callback — handleImplicitYield announces
+		// `agent_activity: idle` synchronously before queue.wait(), so enqueuing
+		// here resolves the wait immediately.
 		let idleCount = 0;
 		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
-			if (event.type === "agent_idle") {
+			if (event.type === "agent_activity" && event.state === "idle") {
 				idleCount++;
 				if (idleCount === 1) {
 					// First idle: inject a message to wake the agent
@@ -3617,7 +3620,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 		// close queue on second idle (end_turn after wake).
 		const emit = (event: EventSpec) => {
 			emittedEvents.push(event);
-			if (event.type === "agent_idle") {
+			if (event.type === "agent_activity" && event.state === "idle") {
 				idleCount++;
 				if (idleCount === 1) {
 					// First idle = yield waiting. Enqueue two messages simultaneously.

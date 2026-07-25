@@ -2314,8 +2314,7 @@ describe("isPersistedByEmitEvent", () => {
 	test("ephemeral events return false", () => {
 		const ephemeralTypes: Event["type"][] = [
 			"text_delta",
-			"agent_idle",
-			"agent_active",
+			"agent_activity",
 			"status",
 			"clarification_timeout",
 		];
@@ -2372,8 +2371,7 @@ describe("isPersistedByEmitEvent", () => {
 			"tool_result",
 			"text_delta",
 			"usage",
-			"agent_idle",
-			"agent_active",
+			"agent_activity",
 			"status",
 			"clarification_timeout",
 			"compact_started",

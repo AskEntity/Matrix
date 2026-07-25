@@ -1,8 +1,12 @@
 import { describe, expect, it, mock } from "bun:test";
 import type React from "react";
 import {
+	type ActivityAction,
+	type ActivityMap,
+	activityReducer,
 	createEventHandler,
 	type EventHandlerDeps,
+	isWorking,
 	type PendingAction,
 	type PendingMessage,
 	pendingReducer,
@@ -23,12 +27,18 @@ function makeDeps() {
 	// messages_consumed's materialize path (which reads via
 	// getPendingMessages) behaves identically to production.
 	const pendingBox = { current: [] as PendingMessage[] };
+	// Real activity state driven by activityReducer, same shape as production's
+	// write-through ref: dispatch mutates the box synchronously so a handler
+	// reading getAgentActivity in the same tick sees the applied value.
+	const activityBox = { current: {} as ActivityMap };
 	return {
 		deps: {
 			updateFromWS: mock(() => {}),
 			setRootNodeId: mock(() => {}),
-			setActiveAgents: mock(() => {}),
-			checkAgentStatus: mock(() => {}),
+			dispatchActivity: mock((action: ActivityAction) => {
+				activityBox.current = activityReducer(activityBox.current, action);
+			}),
+			getAgentActivity: () => activityBox.current,
 			setAgentProvider: mock(() => {}),
 			setAgentModel: mock(() => {}),
 			setLogs: mock((updater: React.SetStateAction<LogEntry[]>) => {
@@ -55,6 +65,7 @@ function makeDeps() {
 		},
 		logs,
 		pendingBox,
+		activityBox,
 	};
 }
 
@@ -2726,153 +2737,163 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 });
 
 // ============================================================
-// activeAgents global updates (not filtered by viewed session)
+// Agent activity (pushed state, never reconstructed from the log)
 // ============================================================
+//
+// This block replaces the old "activeAgents global updates" suite, which
+// tested three competing sources: agent_start/agent_end derivation, the
+// agent_active/agent_idle pair, and a status poll that ran after every batch
+// to undo what replaying history had wrongly done. The poll's existence WAS
+// the bug report; these tests pin the model that makes it unnecessary.
 
-describe("event-handler activeAgents global updates", () => {
-	function makeDepsWithActiveAgents(initial: Set<string> = new Set()) {
-		const { deps, logs } = makeDeps();
-		const activeAgents = new Set<string>(initial);
-		const typedDeps = deps as unknown as EventHandlerDeps;
-		typedDeps.setActiveAgents = ((
-			updater: React.SetStateAction<Set<string>>,
-		) => {
-			const result =
-				typeof updater === "function" ? updater(activeAgents) : updater;
-			activeAgents.clear();
-			for (const id of result) activeAgents.add(id);
-		}) as EventHandlerDeps["setActiveAgents"];
-		return { deps: typedDeps, logs, activeAgents };
-	}
+describe("activityReducer (pure)", () => {
+	it("RESET replaces the whole map", () => {
+		const state = { a: "thinking" as const, b: "tool" as const };
+		expect(
+			activityReducer(state, { type: "RESET", states: { c: "idle" } }),
+		).toEqual({
+			c: "idle",
+		});
+	});
 
-	it("handleEvent: agent_active for non-viewed task still updates activeAgents", () => {
-		const { deps, activeAgents } = makeDepsWithActiveAgents();
+	it("RESET with an empty snapshot clears everything — 'nothing is running' is a message", () => {
+		const state = { a: "thinking" as const };
+		expect(activityReducer(state, { type: "RESET", states: {} })).toEqual({});
+	});
+
+	it("SET adds and updates one task, leaving the others alone", () => {
+		const state = { a: "thinking" as const };
+		const withB = activityReducer(state, {
+			type: "SET",
+			taskId: "b",
+			state: "tool",
+		});
+		expect(withB).toEqual({ a: "thinking", b: "tool" });
+		expect(
+			activityReducer(withB, { type: "SET", taskId: "a", state: "idle" }),
+		).toEqual({ a: "idle", b: "tool" });
+	});
+
+	it("SET null REMOVES the entry — absent means no agent, which is not idle", () => {
+		const state = { a: "thinking" as const, b: "idle" as const };
+		const next = activityReducer(state, {
+			type: "SET",
+			taskId: "a",
+			state: null,
+		});
+		expect(next).toEqual({ b: "idle" });
+		expect("a" in next).toBe(false);
+	});
+
+	it("does not mutate the input state", () => {
+		const state = { a: "thinking" as const };
+		activityReducer(state, { type: "SET", taskId: "b", state: "tool" });
+		activityReducer(state, { type: "SET", taskId: "a", state: null });
+		expect(state).toEqual({ a: "thinking" });
+	});
+});
+
+describe("isWorking", () => {
+	it("thinking and tool are working; idle and absent are not", () => {
+		expect(isWorking("thinking")).toBe(true);
+		expect(isWorking("tool")).toBe(true);
+		expect(isWorking("idle")).toBe(false);
+		expect(isWorking(undefined)).toBe(false);
+	});
+});
+
+describe("event-handler agent activity", () => {
+	it("handleEvent: agent_activity for a NON-viewed task still updates the map", () => {
+		// The sidebar shows a spinner for every task, so activity must bypass
+		// the viewed-session filter that drops other tasks' log events.
+		const { deps: raw, activityBox } = makeDeps();
+		const deps = raw as unknown as EventHandlerDeps;
 		deps.getViewedSessionId = () => "task-1";
-
 		const { handleEvent } = createEventHandler(deps);
 
 		handleEvent({
-			type: "agent_active",
+			type: "agent_activity",
 			taskId: "task-2",
+			state: "tool",
 			ts: 1000,
 		});
 
-		expect(activeAgents.has("task-2")).toBe(true);
+		expect(activityBox.current).toEqual({ "task-2": "tool" });
 	});
 
-	it("handleEvent: agent_idle for non-viewed task removes from activeAgents", () => {
-		const { deps, activeAgents } = makeDepsWithActiveAgents(
-			new Set(["task-2"]),
+	it("handleEvent: agent_activity with state null removes the task", () => {
+		const { deps, activityBox } = makeDeps();
+		const { handleEvent } = createEventHandler(
+			deps as unknown as EventHandlerDeps,
 		);
-		deps.getViewedSessionId = () => "task-1";
-
-		const { handleEvent } = createEventHandler(deps);
 
 		handleEvent({
-			type: "agent_idle",
+			type: "agent_activity",
 			taskId: "task-2",
-			ts: 1000,
-		});
-
-		expect(activeAgents.has("task-2")).toBe(false);
-	});
-
-	it("handleEvent: agent_stopped for non-viewed task removes from activeAgents", () => {
-		const { deps, activeAgents } = makeDepsWithActiveAgents(
-			new Set(["task-2"]),
-		);
-		deps.getViewedSessionId = () => "task-1";
-
-		const { handleEvent } = createEventHandler(deps);
-
-		handleEvent({
-			type: "agent_end",
-			reason: "stopped",
-			taskId: "task-2",
-			ts: 1000,
-		});
-
-		expect(activeAgents.has("task-2")).toBe(false);
-	});
-
-	it("handleEvent: orchestration_started for non-viewed task adds to activeAgents", () => {
-		const { deps, activeAgents } = makeDepsWithActiveAgents();
-		deps.getViewedSessionId = () => "task-1";
-
-		const { handleEvent } = createEventHandler(deps);
-
-		handleEvent({
-			type: "agent_start",
-			taskId: "task-2",
-			resume: false,
-			model: "claude-sonnet",
-			provider: "anthropic",
-			ts: 1000,
-		});
-
-		expect(activeAgents.has("task-2")).toBe(true);
-	});
-
-	it("handleEvent: orchestration_completed for non-viewed task removes from activeAgents", () => {
-		const { deps, activeAgents } = makeDepsWithActiveAgents(
-			new Set(["task-2"]),
-		);
-		deps.getViewedSessionId = () => "task-1";
-
-		const { handleEvent } = createEventHandler(deps);
-
-		handleEvent({
-			type: "agent_end",
-			reason: "done_passed",
-			taskId: "task-2",
-			ts: 1000,
-		});
-
-		expect(activeAgents.has("task-2")).toBe(false);
-	});
-
-	it("handleEvent: non-viewed task events do NOT create log entries", () => {
-		const { deps } = makeDepsWithActiveAgents();
-		let capturedLogs: LogEntry[] = [];
-		deps.setLogs = ((updater: React.SetStateAction<LogEntry[]>) => {
-			capturedLogs = typeof updater === "function" ? updater([]) : updater;
-		}) as EventHandlerDeps["setLogs"];
-		deps.getViewedSessionId = () => "task-1";
-
-		const { handleEvent } = createEventHandler(deps);
-
-		// These should update activeAgents but NOT create log entries
-		handleEvent({
-			type: "agent_start",
-			taskId: "task-2",
-			resume: true,
-			model: "claude-sonnet",
-			provider: "anthropic",
+			state: "thinking",
 			ts: 1000,
 		});
 		handleEvent({
-			type: "agent_end",
-			reason: "stopped",
+			type: "agent_activity",
 			taskId: "task-2",
+			state: null,
 			ts: 2000,
 		});
 
-		// setLogs should never have been called (events filtered by taskId)
-		expect(capturedLogs.length).toBe(0);
+		expect(activityBox.current).toEqual({});
 	});
 
-	it("processEventBatch: calls checkAgentStatus after processing to reset stale activeAgents", () => {
-		const { deps } = makeDepsWithActiveAgents();
-		// Track checkAgentStatus calls
-		let checkCalled = 0;
-		deps.checkAgentStatus = () => {
-			checkCalled++;
-		};
+	it("handleEvent: agent_activity_snapshot replaces the whole map", () => {
+		const { deps, activityBox } = makeDeps();
+		const { handleEvent } = createEventHandler(
+			deps as unknown as EventHandlerDeps,
+		);
 
-		const { processEventBatch } = createEventHandler(deps);
+		handleEvent({
+			type: "agent_activity",
+			taskId: "stale",
+			state: "thinking",
+			ts: 1000,
+		});
+		handleEvent({
+			type: "agent_activity_snapshot",
+			states: { fresh: "tool" },
+		});
 
-		// Process events that include orchestration_started (would add to activeAgents)
-		// but the agent is actually stopped
+		expect(activityBox.current).toEqual({ fresh: "tool" });
+	});
+
+	it("handleEvent: activity events produce NO log entries", () => {
+		const { deps, logs } = makeDeps();
+		const { handleEvent } = createEventHandler(
+			deps as unknown as EventHandlerDeps,
+		);
+
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-1",
+			state: "thinking",
+			ts: 1000,
+		});
+		handleEvent({ type: "agent_activity_snapshot", states: {} });
+
+		expect(logs.length).toBe(0);
+	});
+});
+
+describe("event-handler: replaying history must not fake-activate (Verification 1)", () => {
+	it("processEventBatch over historical agent_start with NO agent_end leaves activity EMPTY", () => {
+		// THE regression this whole model exists for. A JSONL session that was
+		// interrupted ends with agent_start and no agent_end. The old handler
+		// derived "running" from agent_start, so replaying it lit the UI up for
+		// a long-dead agent — and a status poll after every batch existed only
+		// to undo that. Activity now arrives on an ephemeral event that can
+		// never be in JSONL, so the batch cannot touch it. No poll, no undo.
+		const { deps, activityBox } = makeDeps();
+		const { processEventBatch } = createEventHandler(
+			deps as unknown as EventHandlerDeps,
+		);
+
 		processEventBatch([
 			{
 				type: "agent_start",
@@ -2888,16 +2909,173 @@ describe("event-handler activeAgents global updates", () => {
 				taskId: "task-1",
 				ts: 2000,
 			},
-			{
-				type: "agent_end",
-				reason: "stopped",
-				taskId: "task-1",
-				ts: 3000,
-			},
 		]);
 
-		// checkAgentStatus should have been called to reset stale state
-		expect(checkCalled).toBeGreaterThan(0);
+		expect(activityBox.current).toEqual({});
+	});
+
+	it("a live agent survives a batch replay that contains its own agent_end", () => {
+		// The mirror image: an agent that is running NOW, whose log contains a
+		// PAST agent_end. Deriving from the log would clear it; the map is only
+		// ever written by live activity events, so it stands.
+		const { deps, activityBox } = makeDeps();
+		const { handleEvent, processEventBatch } = createEventHandler(
+			deps as unknown as EventHandlerDeps,
+		);
+
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-1",
+			state: "thinking",
+			ts: 5000,
+		});
+		processEventBatch([
+			{
+				type: "agent_start",
+				taskId: "task-1",
+				resume: true,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 1000,
+			},
+			{ type: "agent_end", reason: "stopped", taskId: "task-1", ts: 2000 },
+		]);
+
+		expect(activityBox.current).toEqual({ "task-1": "thinking" });
+	});
+
+	it("live agent_start/agent_end do not touch activity either", () => {
+		const { deps, activityBox } = makeDeps();
+		const { handleEvent } = createEventHandler(
+			deps as unknown as EventHandlerDeps,
+		);
+
+		handleEvent({
+			type: "agent_start",
+			taskId: "task-1",
+			resume: false,
+			model: "claude-sonnet",
+			provider: "anthropic",
+			ts: 1000,
+		});
+		expect(activityBox.current).toEqual({});
+
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-1",
+			state: "thinking",
+			ts: 2000,
+		});
+		handleEvent({
+			type: "agent_end",
+			reason: "done_passed",
+			taskId: "task-1",
+			ts: 3000,
+		});
+		// agent_end reports run stats, not activity — only the backend's own
+		// `state: null` broadcast removes a task.
+		expect(activityBox.current).toEqual({ "task-1": "thinking" });
+	});
+});
+
+describe("event-handler onAgentIdle (Edit/Rewind re-fetch)", () => {
+	function setup(viewed: string | null) {
+		const { deps: raw, activityBox } = makeDeps();
+		const deps = raw as unknown as EventHandlerDeps;
+		const idleCalls: string[] = [];
+		deps.getViewedSessionId = () => viewed;
+		deps.onAgentIdle = (taskId: string) => idleCalls.push(taskId);
+		const { handleEvent } = createEventHandler(deps);
+		return { handleEvent, idleCalls, activityBox };
+	}
+
+	it("fires when the VIEWED task stops working (thinking → idle)", () => {
+		const { handleEvent, idleCalls } = setup("task-1");
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-1",
+			state: "thinking",
+			ts: 1000,
+		});
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-1",
+			state: "idle",
+			ts: 2000,
+		});
+		expect(idleCalls).toEqual(["task-1"]);
+	});
+
+	it("fires on session END too — done() never goes idle", () => {
+		// An agent that finishes with done() goes straight from working to no
+		// session. Before, only agent_idle triggered the re-fetch, so the last
+		// messages of a completed task never got their eid and stayed
+		// uneditable.
+		const { handleEvent, idleCalls } = setup("task-1");
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-1",
+			state: "tool",
+			ts: 1000,
+		});
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-1",
+			state: null,
+			ts: 2000,
+		});
+		expect(idleCalls).toEqual(["task-1"]);
+	});
+
+	it("does NOT fire for a task that is not being viewed", () => {
+		const { handleEvent, idleCalls } = setup("task-1");
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-2",
+			state: "thinking",
+			ts: 1000,
+		});
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-2",
+			state: "idle",
+			ts: 2000,
+		});
+		expect(idleCalls).toEqual([]);
+	});
+
+	it("does NOT fire on transitions between working states (thinking → tool)", () => {
+		const { handleEvent, idleCalls } = setup("task-1");
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-1",
+			state: "thinking",
+			ts: 1000,
+		});
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-1",
+			state: "tool",
+			ts: 2000,
+		});
+		expect(idleCalls).toEqual([]);
+	});
+
+	it("does NOT fire when a task that was already idle reports idle again", () => {
+		const { handleEvent, idleCalls } = setup("task-1");
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-1",
+			state: "idle",
+			ts: 1000,
+		});
+		handleEvent({
+			type: "agent_activity",
+			taskId: "task-1",
+			state: "idle",
+			ts: 2000,
+		});
+		expect(idleCalls).toEqual([]);
 	});
 });
 

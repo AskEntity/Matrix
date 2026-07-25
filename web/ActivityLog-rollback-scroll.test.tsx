@@ -99,7 +99,7 @@ async function setup() {
 					nodeMap: new Map(),
 					autoScroll: opts.autoScroll ?? false,
 					onAutoScrollChange: () => {},
-					isActive: false,
+					activity: undefined,
 					projectId: "proj-1",
 					onEdit: () => {},
 					onRollback: () => {},

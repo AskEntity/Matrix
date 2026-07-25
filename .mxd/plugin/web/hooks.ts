@@ -3,6 +3,7 @@ import { api } from "./api.ts";
 import { useAuthFetch, useGetToken } from "./auth.ts";
 
 export type {
+	AgentActivity,
 	GeneralNode,
 	TaskNode,
 	TaskStatus,
@@ -10,7 +11,7 @@ export type {
 } from "./types.ts";
 export { isFolder, isGeneral, isTask } from "./types.ts";
 
-import type { Event, TreeNode } from "./types.ts";
+import type { AgentActivity, Event, TreeNode } from "./types.ts";
 
 export type { Event } from "./types.ts";
 
@@ -116,6 +117,17 @@ export type SSEOnlyEvent =
 			type: "tree_updated";
 			nodes: TreeNode[];
 			rootNodeId?: string;
+	  }
+	| {
+			/**
+			 * Full activity map, pushed by the daemon when an SSE stream opens.
+			 * The "ASK" half of the model: a client that was disconnected across
+			 * any number of transitions lands on the truth here instead of on
+			 * whatever the last delta it happened to receive said. An EMPTY
+			 * `states` is meaningful — it says "nothing is running".
+			 */
+			type: "agent_activity_snapshot";
+			states: Record<string, AgentActivity>;
 	  }
 	| {
 			type: "pending_clarifications";
@@ -341,35 +353,32 @@ export function useTasks(
 
 export function useAgent(projectId: string) {
 	const authFetch = useAuthFetch();
-	const [activeAgents, setActiveAgents] = useState<Set<string>>(new Set());
-	const running = activeAgents.size > 0;
 	const [provider, setProvider] = useState<string | null>(null);
 	const [model, setModel] = useState<string | null>(null);
 
+	/**
+	 * Fetches which provider/model this project is configured with — config,
+	 * not live state, which is why it may be polled at will.
+	 *
+	 * It used to ALSO pull `/agent/status` into an `activeAgents` set, and that
+	 * poll existed to paper over a bug: replaying historical events made the UI
+	 * believe stopped agents were running, so something had to overwrite the
+	 * result afterwards. Activity now arrives as its own pushed state and can
+	 * never be reconstructed from the log, so there is nothing left to correct.
+	 */
 	const checkStatus = useCallback(async () => {
 		if (!projectId) {
-			setActiveAgents(new Set());
 			setProvider(null);
 			setModel(null);
 			return;
 		}
 		try {
-			// Fetch per-agent idle/active status
-			const statusRes = await authFetch(api.agentStatus(projectId));
-			if (statusRes.ok) {
-				const statusData = (await statusRes.json()) as {
-					idle: string[];
-					active: string[];
-				};
-				setActiveAgents(new Set(statusData.active));
-			}
-			// Fetch provider/model from legacy endpoint
 			const res = await authFetch(api.agent(projectId));
 			const data = await res.json();
 			if (data.provider) setProvider(data.provider);
 			if (data.model) setModel(data.model);
 		} catch (e) {
-			console.warn("[useAgent] Failed to check agent status:", e);
+			console.warn("[useAgent] Failed to fetch provider/model:", e);
 		}
 	}, [authFetch, projectId]);
 
@@ -389,7 +398,8 @@ export function useAgent(projectId: string) {
 				body: JSON.stringify({ content: opts.prompt }),
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
-			// The orchestration_started SSE event will add the root to activeAgents
+			// The agent's own activity broadcast lights the UI up — no local
+			// guess about what the backend is about to do.
 		},
 		[authFetch, projectId],
 	);
@@ -398,15 +408,11 @@ export function useAgent(projectId: string) {
 		const res = await authFetch(api.stop(projectId), {
 			method: "POST",
 		});
-		if (!res.ok) {
-			// 404 means session already gone — reset UI running state to match.
-			if (res.status === 404) {
-				setActiveAgents(new Set());
-				return;
-			}
+		// 404 means the session was already gone; the backend broadcast the
+		// end of it either way, so there is no local state to reconcile.
+		if (!res.ok && res.status !== 404) {
 			throw new Error((await res.json()).error);
 		}
-		// agent_stopped WS event will clear activeAgents via checkStatus
 	}, [authFetch, projectId]);
 
 	const continueTask = useCallback(
@@ -513,9 +519,6 @@ export function useAgent(projectId: string) {
 	);
 
 	return {
-		running,
-		activeAgents,
-		setActiveAgents,
 		provider,
 		setProvider,
 		model,

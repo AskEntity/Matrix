@@ -159,6 +159,16 @@ export class MessageQueue {
 	/** Whether this agent is currently idle (waiting for messages). */
 	idle = false;
 
+	/**
+	 * Whether `wait()` would return without parking. Callers use it to answer
+	 * "is the loop about to actually wait for input?" — announcing an idle
+	 * state for a wait that resolves on the next microtask reports a pause
+	 * that never happened.
+	 */
+	get hasPending(): boolean {
+		return this.messages.length > 0;
+	}
+
 	/** Optional callback fired whenever a message is enqueued (before delivery to waiter or array). */
 	onEnqueue?: (msg: QueueMessage) => void;
 

@@ -28,7 +28,12 @@ import { buildJsonTools, type ToolDefinition } from "../tool-definition.ts";
 import { formatUpstreamError } from "../tool-execution.ts";
 import { MCP_SERVER_NAME } from "../tool-names.ts";
 import { cleanupSessionBackgroundProcesses } from "../tools/index.ts";
-import { type AgentResult, isTask, type TaskSession } from "../types.ts";
+import {
+	type AgentActivity,
+	type AgentResult,
+	isTask,
+	type TaskSession,
+} from "../types.ts";
 import { ulid } from "../ulid.ts";
 import type { RuntimeContext, ScopeOpts } from "./context.ts";
 import {
@@ -300,6 +305,36 @@ export async function runChildCore(
 // ---------------------------------------------------------------------------
 
 /**
+ * THE lifecycle-side writer of agent activity: stores the state on the session
+ * AND broadcasts it, in one call — the same contract as `setActivity` inside
+ * the provider loop, which owns the transitions the loop itself makes. Two
+ * functions because the loop cannot reach `ctx` and this cannot reach the
+ * loop; one rule: never write the field without broadcasting.
+ *
+ * `state: null` means the session is gone. It is not optional politeness:
+ * without it the last state a task broadcast (thinking, or tool) stays in
+ * every client's map forever — a spinner for an agent that died. This is why
+ * all three places that clear `node.session` call it.
+ *
+ * The event is ephemeral, so nothing here ever reaches JSONL.
+ */
+function setAgentActivity(
+	ctx: RuntimeContext,
+	projectId: string,
+	taskId: string,
+	session: TaskSession | undefined,
+	state: AgentActivity | null,
+): void {
+	if (session && state) session.activity = state;
+	emitEvent(ctx, projectId, {
+		type: "agent_activity",
+		taskId,
+		state,
+		ts: Date.now(),
+	});
+}
+
+/**
  * Stop a running agent and clean up all associated state.
  * Single path for all stop operations (explicit stop, restart, project delete).
  *
@@ -354,6 +389,7 @@ export async function stopAgent(
 			node.session.abortController.abort();
 			cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
 			node.session = undefined;
+			setAgentActivity(ctx, projectId, node.id, undefined, null);
 		}
 	}
 
@@ -438,6 +474,7 @@ export async function stopTask(
 	node.session.abortController.abort();
 	cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
 	node.session = undefined;
+	setAgentActivity(ctx, projectId, nodeId, undefined, null);
 
 	// Await loop exit — ensures finally block (agent_end, MCP disconnect,
 	// Phase 2 done) has completed before we return. Without this, callers
@@ -803,11 +840,20 @@ export async function runAgentForNode(
 			abortController,
 			loopTraceId,
 			depth,
+			// The loop hasn't started; setup (MCP connect, JSONL repair, work
+			// context) runs first and can take seconds. That is the residual —
+			// alive, not parked on the queue, no unclosed tool_call — so it is
+			// `thinking`. See AgentActivity.
+			activity: "thinking",
 			backgroundProcesses: new Map(),
 			foregroundExecutions: new Map(),
 		};
 		node.session = taskSession;
 		ownSession = taskSession;
+		// Announce the session the moment it exists, not when the loop gets
+		// around to its first transition: a client watching a task it just
+		// started must see it come alive during setup, not after.
+		setAgentActivity(ctx, project.id, nodeId, taskSession, "thinking");
 
 		// getSession lookup: find session from tracker by sessionId
 		const getSession = (sid: string) => tracker.getTask(sid)?.session;
@@ -1096,6 +1142,7 @@ export async function runAgentForNode(
 		if (notReplaced && finalNode?.session) {
 			cleanupSessionBackgroundProcesses(finalNode.session.backgroundProcesses);
 			finalNode.session = undefined;
+			setAgentActivity(ctx, project.id, nodeId, undefined, null);
 		}
 		await mcpManager?.disconnectAll();
 

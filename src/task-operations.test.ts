@@ -676,6 +676,7 @@ describe("resetTaskOp", () => {
 			loopTraceId: "test-trace-id",
 			depth: 1,
 			backgroundProcesses: new Map(),
+			activity: "thinking",
 			foregroundExecutions: new Map(),
 		};
 

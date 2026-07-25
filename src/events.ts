@@ -6,6 +6,7 @@ import {
 import type { EventImageData, PendingState } from "./shared-types.ts";
 import type { JsonTool } from "./tool-definition.ts";
 import { TOOL_DONE, TOOL_YIELD } from "./tool-names.ts";
+import type { AgentActivity } from "./types.ts";
 
 export type { EventImageData, PendingState } from "./shared-types.ts";
 
@@ -158,8 +159,26 @@ export type Event = (
 	// Ephemeral events — broadcast over WS but not persisted to JSONL
 	| { type: "thinking_delta"; thinking: string; taskId: string; ts: number }
 	| { type: "text_delta"; content: string; taskId: string; ts: number }
-	| { type: "agent_idle"; taskId: string; ts: number }
-	| { type: "agent_active"; taskId: string; ts: number }
+	| {
+			/**
+			 * The agent's activity changed. THE one event carrying activity —
+			 * it replaced the agent_idle/agent_active pair, which only ever
+			 * covered "parked on the queue or not" and left the UI guessing at
+			 * the rest from log shape and timers.
+			 *
+			 * Ephemeral BY DESIGN, not by accident: it must never reach JSONL.
+			 * Replaying a log of past activity changes would reconstruct a
+			 * past "active" as a present one — the exact category error this
+			 * event exists to kill. Keeping it out of JSONL makes that
+			 * structurally impossible rather than something a poll corrects
+			 * after the fact.
+			 */
+			type: "agent_activity";
+			taskId: string;
+			/** null = the session ended; the task has no agent at all. */
+			state: AgentActivity | null;
+			ts: number;
+	  }
 	| { type: "status"; message: string; taskId: string; ts: number }
 	| {
 			type: "clarification_timeout";
@@ -299,8 +318,10 @@ export function isPersistedByEmitEvent(event: Event): boolean {
 		// Broadcast only — emitEvent does not write these.
 		case "thinking_delta":
 		case "text_delta":
-		case "agent_idle":
-		case "agent_active":
+		// agent_activity is live process state, not history. Persisting it
+		// would let a replay of the log resurrect a past "active" as a
+		// present one — see the type's own comment.
+		case "agent_activity":
 		// `status` is the exception worth knowing about: a repair writes one
 		// straight to the EventStore (see `repairStatusEvent`), because that
 		// event's parentEid is what makes the repair's chain jump durable. So a

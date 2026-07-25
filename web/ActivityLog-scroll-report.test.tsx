@@ -137,7 +137,7 @@ async function renderLog(opts: {
 					autoScroll,
 					onAutoScrollChange: (v: boolean) => autoScrollCalls.push(v),
 					onAtBottomChange,
-					isActive: false,
+					activity: undefined,
 					projectId: "proj-1",
 				}),
 			),

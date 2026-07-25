@@ -1139,9 +1139,9 @@ describe("walker: skipped events", () => {
 		expect(msgs.length).toBe(1);
 	});
 
-	test("lifecycle events skipped (agent_idle, status, error)", () => {
+	test("lifecycle events skipped (agent_activity, status, error)", () => {
 		const events: Event[] = [
-			{ type: "agent_idle", taskId: "", ts: 0 },
+			{ type: "agent_activity", state: "idle", taskId: "", ts: 0 },
 			{ type: "status", message: "x", taskId: "", ts: 0 },
 			{ type: "error", message: "x", taskId: "", ts: 0 },
 			assistantTextEvent("hi"),

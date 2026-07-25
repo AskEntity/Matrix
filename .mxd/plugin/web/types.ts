@@ -15,6 +15,7 @@ import type { GeneralNode } from "@mxd/types";
 import { isGeneral, type TreeNode } from "@mxd/types";
 
 export {
+	type AgentActivity,
 	type BaseTaskNode,
 	type Event,
 	type GeneralNode,

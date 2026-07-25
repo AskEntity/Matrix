@@ -72,7 +72,6 @@ interface ActionHandlerDeps {
 			>
 		>
 	>;
-	setActiveAgents: React.Dispatch<React.SetStateAction<Set<string>>>;
 	setOlderEventsAvailable: React.Dispatch<
 		React.SetStateAction<Map<string, { hasOlder: boolean; oldestTs: number }>>
 	>;

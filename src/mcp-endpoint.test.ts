@@ -561,6 +561,7 @@ function attachActiveSession(projectId: string, taskId: string): void {
 		loopTraceId: "test-trace",
 		depth: 0,
 		backgroundProcesses: new Map(),
+		activity: "thinking",
 		foregroundExecutions: new Map(),
 	};
 }

@@ -197,17 +197,33 @@ function buildExternalOnlyToolDefs(ctx: RuntimeContext): AnyToolDef[] {
 					};
 				};
 
-				// Wake signals — agent paused or stopped. Matched against
-				// `event.type`, so this set is coupled to the LIVE event-type
-				// names: a rename in the runtime silently turns every wake into
-				// a timeout. `agent_stopped` / `orchestration_completed` sat here
-				// long after they were replaced by `agent_end`, so a stopped agent
-				// only ever woke an external client by timing out.
-				const WAKE_SIGNALS = new Set([
-					"agent_idle",
-					"done_notified",
-					"agent_end",
-				]);
+				// Wake signals — agent paused or stopped. Matched against the
+				// LIVE event stream, so this is coupled to event-type names: a
+				// rename in the runtime silently turns every wake into a
+				// timeout. `agent_stopped` / `orchestration_completed` sat here
+				// long after they were replaced by `agent_end`, so a stopped
+				// agent only ever woke an external client by timing out.
+				const WAKE_EVENT_TYPES = new Set(["done_notified", "agent_end"]);
+
+				/**
+				 * Returns the `reason` string to report, or null if this event
+				 * is not a wake. `agent_activity` carries every pause now (it
+				 * replaced the agent_idle event), but only the states that mean
+				 * "the agent stopped working" count: parked on the queue, or
+				 * session gone.
+				 *
+				 * The reported reason stays `"agent_idle"` — that string is the
+				 * EXTERNAL contract of this tool (the already-idle fast path
+				 * above returns the same one) and has nothing to do with our
+				 * internal event names.
+				 */
+				const wakeReason = (event: { type: string }): string | null => {
+					if (event.type === "agent_activity") {
+						const { state } = event as { state?: string | null };
+						return state === "idle" || state == null ? "agent_idle" : null;
+					}
+					return WAKE_EVENT_TYPES.has(event.type) ? event.type : null;
+				};
 
 				// ── Fast path: agent already idle/stopped/done ──
 				// If the agent isn't actively running, return immediately.
@@ -236,10 +252,10 @@ function buildExternalOnlyToolDefs(ctx: RuntimeContext): AnyToolDef[] {
 
 					const unsub = subscribeToEvents(ctx, projectId, (event) => {
 						if (event.taskId !== taskId) return;
-						const eventType = event.type as string;
-						if (WAKE_SIGNALS.has(eventType)) {
+						const reason = wakeReason(event as { type: string });
+						if (reason) {
 							// Small delay to let Phase 2 (status update) complete
-							setTimeout(() => finish(eventType), 50);
+							setTimeout(() => finish(reason), 50);
 						}
 					});
 

@@ -12,11 +12,51 @@ export type TaskStatus =
 	| "closed";
 
 /**
+ * What the agent loop is doing right now.
+ *
+ * THE source of truth for "is this agent busy". Nothing derives it from the
+ * event log: a log records that the agent BECAME active at some past moment,
+ * replaying it tells you nothing about NOW. Activity is live process state,
+ * so it lives on the live process state (TaskSession) — no session, no state.
+ *
+ * The three values are not symmetric, and the asymmetry is the point:
+ *
+ * - `tool` is the precisely defined one: the loop is executing tools. It is
+ *   the ONLY state with an unclosed tool_call, which is exactly what an
+ *   interrupt has to repair (write an interrupted tool_result). Everything
+ *   downstream that must special-case interruption keys on this.
+ * - `idle` is the empty one: the loop is parked on `queue.wait()`. Nothing is
+ *   happening; a message wakes it.
+ * - `thinking` is EXPLICITLY THE RESIDUAL — every other way the loop can be
+ *   alive. Today that means: an API call in flight, the outer-retry backoff
+ *   between attempts, and session setup before the loop starts.
+ *
+ * Stating the residual explicitly means a future "busy" case has an obvious
+ * home instead of a fresh argument.
+ *
+ * Known naming debt: `thinking` will outgrow its name. A compaction turn runs
+ * 2-3 minutes and rendering "Thinking..." across it is the same kind of lie
+ * this model exists to remove. Adding `compacting` later is a pure carve-OUT
+ * of the residual, not a re-partition — which is why the residual is written
+ * down here rather than left implicit.
+ */
+export type AgentActivity = "idle" | "thinking" | "tool";
+
+/**
  * Runtime-only session state attached to a TaskNode while its agent is running.
  * NOT serialized to disk — rebuilt at agent launch, cleared at agent stop.
  */
 export interface TaskSession {
 	queue: MessageQueue;
+	/**
+	 * What the loop is doing right now (see AgentActivity). Written ONLY by
+	 * the two setters that also broadcast the change — `setActivity` inside
+	 * runProviderLoop for loop transitions, `setAgentActivity` in
+	 * agent-lifecycle for session birth/death. Never write it directly: a
+	 * write that doesn't broadcast makes the stored state and the clients
+	 * disagree, which is the failure this whole model removes.
+	 */
+	activity: AgentActivity;
 	/** Abort controller for cancelling in-flight API calls. */
 	abortController: AbortController;
 	/**

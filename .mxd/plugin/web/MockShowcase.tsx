@@ -35,11 +35,13 @@ import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
 import {
 	createEventHandler,
 	type EventHandlerDeps,
+	isWorking,
 	type PendingAction,
 	type PendingMessage,
 	pendingReducer,
 } from "./event-handler.ts";
 import {
+	type AgentActivity,
 	type IncomingEvent,
 	isTask,
 	type LogEntry,
@@ -88,7 +90,19 @@ function MockShowcaseInner() {
 	const [nodes, setNodes] = useState<TreeNode[]>([]);
 	const [rootNodeId, setRootNodeId] = useState<string | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
-	const [activeAgents, setActiveAgents] = useState<Set<string>>(new Set());
+	// Mirrors production: activity is a pushed map, `activeAgents` is derived
+	// from it in one place. The showcase seeds it directly instead of
+	// receiving broadcasts.
+	const [agentActivity, setAgentActivity] = useState<
+		Record<string, AgentActivity>
+	>({});
+	const activeAgents = useMemo(() => {
+		const set = new Set<string>();
+		for (const [taskId, state] of Object.entries(agentActivity)) {
+			if (isWorking(state)) set.add(taskId);
+		}
+		return set;
+	}, [agentActivity]);
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [loading, setLoading] = useState(true);
@@ -169,8 +183,8 @@ function MockShowcaseInner() {
 		const deps: EventHandlerDeps = {
 			updateFromWS: () => {},
 			setRootNodeId,
-			setActiveAgents,
-			checkAgentStatus: () => {},
+			dispatchActivity: () => {},
+			getAgentActivity: () => ({}),
 			setAgentProvider: () => {},
 			setAgentModel: () => {},
 			setLogs,
@@ -234,7 +248,10 @@ function MockShowcaseInner() {
 						n.id !== data.rootNodeId,
 				);
 				if (inProgressTask)
-					setActiveAgents(new Set([data.rootNodeId, inProgressTask.id]));
+					setAgentActivity({
+						[data.rootNodeId]: "thinking",
+						[inProgressTask.id]: "tool",
+					});
 				setLoading(false);
 			})
 			.catch((e) => {
@@ -610,7 +627,9 @@ function MockShowcaseInner() {
 								nodeMap={nodeMap}
 								autoScroll={autoScroll}
 								onAutoScrollChange={setAutoScroll}
-								isActive={viewedTaskId ? activeAgents.has(viewedTaskId) : false}
+								activity={
+									viewedTaskId ? agentActivity[viewedTaskId] : undefined
+								}
 								projectId=""
 								onTaskNavigate={handleTaskNavigate}
 								projectMap={mockProjectMap}

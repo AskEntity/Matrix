@@ -46,7 +46,11 @@ import {
 } from "./components/TaskTree.tsx";
 import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
 import {
+	type ActivityAction,
+	type ActivityMap,
+	activityReducer,
 	createEventHandler,
+	isWorking,
 	type PendingAction,
 	type PendingMessage,
 	pendingReducer,
@@ -552,6 +556,29 @@ function ProjectContent({
 		setPendingMessages(next);
 	}, []);
 	const getPendingMessages = useCallback(() => pendingMessagesRef.current, []);
+	// Agent activity: pushed by the backend, never rebuilt from the log.
+	// Same write-through shape as pending above — ref for synchronous reads
+	// inside event handling, state to trigger the render.
+	const agentActivityRef = useRef<ActivityMap>({});
+	const [agentActivity, setAgentActivity] = useState<ActivityMap>({});
+	const dispatchActivity = useCallback((action: ActivityAction) => {
+		const next = activityReducer(agentActivityRef.current, action);
+		agentActivityRef.current = next;
+		setAgentActivity(next);
+	}, []);
+	const getAgentActivity = useCallback(() => agentActivityRef.current, []);
+	/**
+	 * The ONE derivation of "this agent is busy" — sidebar spinners, tab
+	 * indicators, TaskDetail and the activity log all read this instead of
+	 * each deciding what counts as active.
+	 */
+	const activeAgents = useMemo(() => {
+		const set = new Set<string>();
+		for (const [taskId, state] of Object.entries(agentActivity)) {
+			if (isWorking(state)) set.add(taskId);
+		}
+		return set;
+	}, [agentActivity]);
 	const [pendingClarifications, setPendingClarifications] = useState<
 		{
 			id: string;
@@ -670,8 +697,6 @@ function ProjectContent({
 		updateFromWS,
 	} = useTasks(projectId, setRootNodeId);
 	const {
-		activeAgents,
-		setActiveAgents,
 		provider: agentProvider,
 		setProvider: setAgentProvider,
 		model: agentModel,
@@ -746,11 +771,12 @@ function ProjectContent({
 			? (nodeMap.get(selectedTaskId) ?? null)
 			: null;
 
-	// Per-agent active state: check if the currently viewed agent is active
+	// What the viewed agent is doing right now — undefined when that task has
+	// no agent at all. Passed down whole rather than as a boolean: the log
+	// needs `thinking` vs `tool` to decide whether a spinner or the tool card
+	// is the right feedback, and it must not go back to guessing from timers.
 	const viewedTaskId = isOrchestratorNode ? rootNodeId : selectedTaskId;
-	const isSelectedTaskActive = viewedTaskId
-		? activeAgents.has(viewedTaskId)
-		: false;
+	const viewedActivity = viewedTaskId ? agentActivity[viewedTaskId] : undefined;
 
 	const addLog = useCallback((event: UIEvent) => {
 		setLogs((prev) => [...prev, createLogEntry(event)]);
@@ -915,8 +941,8 @@ function ProjectContent({
 				updateFromWS,
 				setRootNodeId,
 				setOlderEventsAvailable,
-				setActiveAgents,
-				checkAgentStatus: checkStatus,
+				dispatchActivity,
+				getAgentActivity,
 				setAgentProvider,
 				setAgentModel,
 				setLogs,
@@ -936,8 +962,8 @@ function ProjectContent({
 			}),
 		[
 			updateFromWS,
-			setActiveAgents,
-			checkStatus,
+			dispatchActivity,
+			getAgentActivity,
 			setAgentProvider,
 			setAgentModel,
 			dispatchPending,
@@ -1320,7 +1346,6 @@ function ProjectContent({
 				setIsCreatingTask,
 				setTokenUsage,
 				setBackgroundProcesses,
-				setActiveAgents,
 				setOlderEventsAvailable,
 				start,
 				stop,
@@ -1351,7 +1376,6 @@ function ProjectContent({
 			clearTaskSession,
 			refreshTasks,
 			t,
-			setActiveAgents,
 			authFetch,
 			setSelectedTaskId,
 		],
@@ -1977,7 +2001,7 @@ function ProjectContent({
 								autoScroll={autoScroll}
 								onAutoScrollChange={setAutoScroll}
 								onAtBottomChange={setLogAtBottom}
-								isActive={isSelectedTaskActive}
+								activity={viewedActivity}
 								projectId={projectId}
 								olderEventsAvailable={olderEventsAvailable}
 								loadingOlderEvents={loadingOlderEvents}

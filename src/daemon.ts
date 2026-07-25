@@ -1952,6 +1952,31 @@ export async function createDaemon(opts: {
 								);
 							}
 						}
+						// Current agent activity. Clients never rebuild this from
+						// the event log — they ask once here and are pushed every
+						// change afterwards. ALWAYS sent, including when empty:
+						// an empty snapshot is the message "nothing is running",
+						// and a client reconnecting after everything stopped needs
+						// to hear it to drop its stale entries.
+						const activityResp = workerName
+							? await forwardToWorker(
+									workerName,
+									new Request(
+										`http://localhost/projects/${projectId}/agent/status`,
+										{ headers: request.headers },
+									),
+								)
+							: null;
+						if (activityResp?.ok) {
+							const { states } = (await activityResp.json()) as {
+								states?: Record<string, string>;
+							};
+							controller.enqueue(
+								sseEncoder.encode(
+									`data: ${JSON.stringify({ type: "agent_activity_snapshot", projectId, states: states ?? {} })}\n\n`,
+								),
+							);
+						}
 					} catch {}
 				}
 

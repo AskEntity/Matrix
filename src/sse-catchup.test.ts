@@ -529,4 +529,28 @@ describe("SSE catch-up across restarts (Audit FU3)", () => {
 		);
 		expect(treeB).not.toBeNull();
 	}, 40_000);
+
+	// ── Agent activity: the connect-time ASK ──
+
+	test("the initial payload carries an agent_activity_snapshot", async () => {
+		// Activity is pushed state that clients are forbidden from rebuilding
+		// from the event log, so a connecting client MUST be told the current
+		// map. Sent unconditionally, including when empty — "nothing is
+		// running" is the message a client reconnecting after everything
+		// stopped needs in order to drop its stale entries.
+		tempDir = await mkdtemp(join(tmpdir(), "sse-fu3-activity-"));
+		const { dataDir, authPath } = await setupSseProject(tempDir);
+		const streamToken = await createTestToken(authPath, { sub: "stream" });
+		const daemon = await boot(dataDir);
+
+		const client = track(await openEvents(daemon, streamToken));
+		const snapshot = await client.waitFor(
+			(f) => frameType(f) === "agent_activity_snapshot",
+			10_000,
+		);
+		expect(snapshot).not.toBeNull();
+		const data = snapshot ? frameData(snapshot) : null;
+		expect(data?.projectId).toBe(PROJECT_ID);
+		expect(data?.states).toEqual({});
+	}, 40_000);
 });

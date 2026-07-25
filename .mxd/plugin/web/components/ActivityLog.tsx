@@ -7,7 +7,12 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { getLogTaskId, type LogEntry, type TreeNode } from "../hooks.ts";
+import {
+	type AgentActivity,
+	getLogTaskId,
+	type LogEntry,
+	type TreeNode,
+} from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { quoteButtonPosition, selectionQuoteText } from "../quote.ts";
 import { isNearBottom } from "../scroll.ts";
@@ -40,7 +45,7 @@ export const ActivityLog = memo(function ActivityLog({
 	autoScroll,
 	onAutoScrollChange,
 	onAtBottomChange,
-	isActive,
+	activity,
 	projectId,
 	olderEventsAvailable,
 	loadingOlderEvents,
@@ -67,7 +72,13 @@ export const ActivityLog = memo(function ActivityLog({
 	 * Fired on scroll, on content growth, and after auto-follow scrolls.
 	 */
 	onAtBottomChange?: (atBottom: boolean) => void;
-	isActive: boolean;
+	/**
+	 * What the viewed task's agent is doing; undefined when it has no agent.
+	 * The backend's own answer — the log used to infer this from a 1.5s
+	 * silence timer plus "is the last entry a tool_call", which guessed at
+	 * runtime state from the shape of the log.
+	 */
+	activity?: AgentActivity;
 	projectId: string;
 	olderEventsAvailable?: Map<string, { hasOlder: boolean; oldestTs: number }>;
 	loadingOlderEvents?: boolean;
@@ -95,16 +106,18 @@ export const ActivityLog = memo(function ActivityLog({
 	const logRef = useRef<HTMLDivElement>(null);
 
 	const [searchText, setSearchText] = useState("");
-	const lastEventTimeRef = useRef(Date.now());
-	const entriesRef = useRef(entries);
-	entriesRef.current = entries;
 	const autoScrollRef = useRef(autoScroll);
 	autoScrollRef.current = autoScroll;
 	// Ref-mirrored so scrollToBottom / observers don't need it in their deps
 	// (an unstable parent callback must not churn the MutationObserver).
 	const onAtBottomChangeRef = useRef(onAtBottomChange);
 	onAtBottomChangeRef.current = onAtBottomChange;
-	const [showThinking, setShowThinking] = useState(false);
+	// No timer, no inspection of the last entry: the backend says what the
+	// agent is doing. `tool` keeps the indicator hidden because the tool card
+	// is already showing progress — which the old code approximated by
+	// checking whether the last log entry happened to be a tool_call.
+	const isActive = activity !== undefined && activity !== "idle";
+	const showThinking = activity === "thinking";
 
 	// ── Load-earlier scroll anchor ────────────────────────────────────────
 	// Bottom-relative distance captured before the load starts. After the
@@ -280,7 +293,6 @@ export const ActivityLog = memo(function ActivityLog({
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new visible entries
 	useEffect(() => {
-		lastEventTimeRef.current = Date.now();
 		if (autoScroll) {
 			requestAnimationFrame(scrollToBottom);
 		} else {
@@ -290,22 +302,6 @@ export const ActivityLog = memo(function ActivityLog({
 			reportAtBottom();
 		}
 	}, [visible.length, autoScroll, scrollToBottom, reportAtBottom]);
-
-	// Show "Thinking..." when agent is active but no events for 1.5s
-	useEffect(() => {
-		if (!isActive) {
-			setShowThinking(false);
-			return;
-		}
-		const id = setInterval(() => {
-			const currentEntries = entriesRef.current;
-			const lastEntry = currentEntries[currentEntries.length - 1];
-			const hasToolInProgress = lastEntry?.type === "tool_call";
-			const elapsed = Date.now() - lastEventTimeRef.current;
-			setShowThinking(isActive && !hasToolInProgress && elapsed > 1500);
-		}, 500);
-		return () => clearInterval(id);
-	}, [isActive]);
 
 	useEffect(() => {
 		const el = logRef.current;

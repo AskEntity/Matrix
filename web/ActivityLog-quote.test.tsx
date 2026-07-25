@@ -111,7 +111,7 @@ async function renderLog(opts?: { withQuoteCallback?: boolean }) {
 				nodeMap: new Map(),
 				autoScroll: false,
 				onAutoScrollChange: () => {},
-				isActive: false,
+				activity: undefined,
 				projectId: "proj-1",
 				onQuoteText,
 			}),

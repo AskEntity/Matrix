@@ -7,7 +7,7 @@ import {
 // SystemPrompt import removed — scope opts come from ctx.scopeOpts
 import { moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
-import { isTask } from "../../types.ts";
+import { type AgentActivity, isTask } from "../../types.ts";
 import {
 	handleClarifyResponse,
 	runAgentForNode,
@@ -48,30 +48,31 @@ export function registerAgentRoutes(app: Hono, ctx: RuntimeContext) {
 		});
 	});
 
-	// Agent idle/active status for all tasks in a project
+	// Current agent activity for every task in the project.
+	//
+	// This is the "ASK" half of the model: clients never reconstruct activity
+	// from the event log, they ask once at connect time and are pushed every
+	// change after that. The daemon calls this when an SSE stream opens and
+	// forwards the answer as the initial `agent_activity_snapshot` — so a
+	// browser that was disconnected across any number of transitions lands on
+	// the truth instead of on whatever the last event it happened to see said.
+	//
+	// A task with no session simply has no entry: absence means "no agent",
+	// which is a different thing from `idle` ("agent alive, waiting for you").
 	app.get("/projects/:id/agent/status", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		const idle: string[] = [];
-		const active: string[] = [];
+		const states: Record<string, AgentActivity> = {};
 		const tracker = ctx.trackers.get(project.id);
 		if (tracker) {
-			// All agent queues are on session of tracker nodes
 			for (const node of tracker.allNodes()) {
 				if (!isTask(node)) continue;
-				const queue = node.session?.queue;
-				if (queue) {
-					if (queue.idle) {
-						idle.push(node.id);
-					} else {
-						active.push(node.id);
-					}
-				}
+				if (node.session) states[node.id] = node.session.activity;
 			}
 		}
-		return c.json({ idle, active });
+		return c.json({ states });
 	});
 
 	// Stop a running agent
