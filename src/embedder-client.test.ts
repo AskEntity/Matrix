@@ -14,35 +14,88 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const SRC = new URL("./", import.meta.url).pathname;
 
+/** A static import is what loads the module. `await import(...)` does not. */
+const STATIC_TRANSFORMERS_IMPORT =
+	/^\s*import\s[^;]*from\s+["']@huggingface\/transformers["']/m;
+
+/**
+ * Files permitted to statically import the package. **Empty, and it should
+ * stay that way** — even `embedder-child.ts` reaches ORT lazily, through
+ * `embedding.ts`.
+ *
+ * If one is ever genuinely needed, adding it here is fine: an entry is a
+ * documented exception with a reason next to it. What must not happen is the
+ * inverse — a checker that lists what it COVERS, because such a list silently
+ * stops covering things (a module gains the property and is never added), and
+ * it cannot tell "we chose not to check this" from "this evaporated".
+ */
+const STATIC_IMPORT_EXEMPT: string[] = [];
+
+/** Every `.ts` under src/, recursively, as paths relative to src/. */
+function allSourceFiles(dir = SRC, prefix = ""): string[] {
+	const out: string[] = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+		if (entry.isDirectory()) {
+			out.push(...allSourceFiles(join(dir, entry.name), rel));
+		} else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
+			out.push(rel);
+		}
+	}
+	return out;
+}
+
 describe("embedder: ORT stays off worker threads", () => {
 	/**
-	 * The regression that matters. `task-index.ts` runs ON a worker thread, so
-	 * if it (or anything it imports at module scope) pulls in
-	 * `@huggingface/transformers`, the session is back on the worker and the
-	 * abort returns — silently, because everything still works until shutdown.
+	 * The regression that matters, and the reason this walks rather than lists.
 	 *
-	 * `embedding.ts` is allowed to name the package, but only inside a
-	 * function: `import()` in a function body does not load anything until
-	 * called, and the only caller is the child process.
+	 * `task-index.ts` runs ON a worker thread, so if it — or anything it
+	 * imports at module scope — pulls in `@huggingface/transformers`, the
+	 * session is back on the worker and the abort returns. Silently: everything
+	 * keeps working until the next shutdown, which is how this sat unexamined
+	 * for two days.
+	 *
+	 * Reachability is transitive and nobody maintains it by hand. The first
+	 * version of this test named three files; `orchestrator-tools.ts` was on it
+	 * only because it happens to reach the index today, which is exactly the
+	 * kind of fact that changes without anyone noticing. So the check is a
+	 * SUBTRACTION over all of src/ instead — it cannot drain, and a new module
+	 * is covered the moment it exists.
 	 */
-	test("no module the worker loads statically imports @huggingface/transformers", () => {
-		const workerReachable = [
-			"task-index.ts",
-			"embedder-client.ts",
-			"orchestrator-tools.ts",
-		];
-		for (const file of workerReachable) {
-			const src = readFileSync(join(SRC, file), "utf-8");
-			// A static import is `import ... from "@huggingface/transformers"`.
-			// A lazy one is `await import("@huggingface/transformers")`.
-			const staticImport =
-				/^\s*import\s[^;]*from\s+["']@huggingface\/transformers["']/m;
-			expect(staticImport.test(src)).toBe(false);
+	test("NO file in src/ statically imports @huggingface/transformers", () => {
+		const offenders = allSourceFiles()
+			.filter((f) => !STATIC_IMPORT_EXEMPT.includes(f))
+			.filter((f) =>
+				STATIC_TRANSFORMERS_IMPORT.test(readFileSync(join(SRC, f), "utf-8")),
+			);
+		expect(offenders).toEqual([]);
+	});
+
+	/** The walk is worthless if it silently covers nothing. */
+	test("the walk actually reaches the modules this is about", () => {
+		const files = allSourceFiles();
+		expect(files.length).toBeGreaterThan(50);
+		expect(files).toContain("task-index.ts");
+		expect(files).toContain("embedder-child.ts");
+		expect(files).toContain("runtime/scope-worker.ts"); // nested dirs too
+	});
+
+	/**
+	 * A name in an explicit list that no longer exists must be an ERROR, not a
+	 * shrug. Found the hard way elsewhere tonight: the pre-commit hook named
+	 * five test files and ran four — one had been deleted four days after being
+	 * listed, and the runner exits 0 on a path that is not there. A checker
+	 * that tolerates a missing entry cannot distinguish "we chose not to check
+	 * this" from "this evaporated".
+	 */
+	test("every exemption names a file that exists", () => {
+		for (const f of STATIC_IMPORT_EXEMPT) {
+			expect(existsSync(join(SRC, f))).toBe(true);
 		}
 	});
 
