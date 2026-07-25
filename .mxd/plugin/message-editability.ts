@@ -14,10 +14,11 @@
  *      second, because it rewrites the conversation the agent is reasoning
  *      from. What the user needs to hear: *wait*.
  *
- *   `messageStartsRun` (run-start.ts) — did this message start a run? A limit
- *      in MEANING. Not "unsafe": undefined. The agent never ran from this
- *      message, so "run again from here" doesn't name anything. What the user
- *      needs to hear: *this one isn't a starting point*.
+ *   `messageStartsRun` (run-start.ts) — was this message sent on its own, or
+ *      swept into work already under way? A limit in MEANING. Not "unsafe":
+ *      undefined. The agent never ran from this message, so "run again from
+ *      here" doesn't name anything. What the user needs to hear: *this one
+ *      wasn't sent on its own*.
  *
  *   `hasRewindPoint` (rewind-point.ts) — is there a state to go back to? A
  *      limit in HISTORY. The message is in the conversation, but a compaction
@@ -59,8 +60,11 @@
 /** Why the buttons are grey. Each reason is its own sentence to the user. */
 export type EditBlockedReason =
 	/**
-	 * PERMANENT. The message landed inside a run that was already going, so
-	 * there is nothing to regenerate from here.
+	 * PERMANENT. The message wasn't sent on its own — the agent picked it up
+	 * along with work already under way, so there is nothing to re-run from.
+	 *
+	 * (The token stays `did_not_start_run` because it is part of the /edit
+	 * response shape. Every string a user reads uses their words instead.)
 	 */
 	| "did_not_start_run"
 	/**
@@ -115,7 +119,7 @@ export function editRefusalMessage(reason: EditBlockedReason): string {
 		case "agent_busy":
 			return "The agent is working. Stop it first, then edit.";
 		case "did_not_start_run":
-			return "This message arrived while the agent was already working, so it never started a run — there is nothing to regenerate from here.";
+			return "This message wasn't sent on its own — the agent picked it up along with work it was already doing, so there is no separate point here to go back to.";
 		case "no_rewind_point":
 			return "The history around this message was summarized away by a context compaction, so there is no state left to return to.";
 		case "unknown_message":

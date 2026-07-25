@@ -141,13 +141,27 @@ describe("Plugin — a message typed mid-tool-call cannot be edited", () => {
 				eid: "bbbb00000002",
 				parentEid: "bbbb00000001",
 			},
+			// The park's result is written AT WAKE, by the message that woke
+			// it — so it rides in that message's own turn and must not count
+			// as work the agent was already doing.
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__yield",
+				toolCallId: "y-1",
+				content: "resumed.",
+				isError: false,
+				taskId: rootNodeId,
+				ts: 1001,
+				eid: "bbbb0000000a",
+				parentEid: "bbbb00000002",
+			},
 			{
 				type: "messages_consumed",
 				messageIds: ["um-parked"],
 				taskId: rootNodeId,
 				ts: 1001,
 				eid: "bbbb00000003",
-				parentEid: "bbbb00000002",
+				parentEid: "bbbb0000000a",
 			},
 			{
 				type: "tool_call",
@@ -340,7 +354,7 @@ describe("Plugin — a message typed mid-tool-call cannot be edited", () => {
 			expect(midActions).toHaveLength(2);
 			for (const b of midActions) {
 				expect(b.disabled).toBe(true);
-				expect(b.title).toMatch(/already working/i);
+				expect(b.title).toMatch(/on its own/i);
 			}
 
 			// Allowed: the message that woke the agent keeps working buttons.
