@@ -53,6 +53,25 @@ export const DEFAULT_SKIP_DIRS = [
 ];
 
 /**
+ * A glob with no `/` in it is a FILENAME pattern, and a filename pattern means
+ * "at any depth" — that is what `--glob '*.ts'` means to ripgrep, what this
+ * tool's description promises, and what every caller typing `*.ts` is saying.
+ * Bun.Glob disagrees: `*` never crosses `/`, so an un-normalized `*.ts` matched
+ * only files sitting directly in `path` and a repo-rooted search answered
+ * `(no matches)`.
+ *
+ * A glob that DOES contain `/` is a PATH pattern and is passed through
+ * untouched: `src/*.ts` stays anchored at the search root and must not start
+ * reaching `deep/src/inner.ts`. Same split ripgrep makes.
+ *
+ * Promoting loses nothing — `**` matches zero directories too, so `**​/*.ts` is
+ * a strict superset of `*.ts` and still returns the top-level file.
+ */
+export function normalizeSearchGlob(glob: string): string {
+	return glob.includes("/") ? glob : `**/${glob}`;
+}
+
+/**
  * Pure JS search implementation using Bun.Glob + RegExp.
  * Replaces external rg/grep dependency for cross-platform reliability.
  */
@@ -108,7 +127,7 @@ export async function jsSearch(opts: {
 		// `dot: true` — Bun.Glob otherwise refuses to descend into ANY hidden directory,
 		// which silently hides all of .mxd/ (production code here). What a search ignores
 		// is DEFAULT_SKIP_DIRS' decision alone; the walker must reach everything else.
-		const g = new Bun.Glob(glob);
+		const g = new Bun.Glob(normalizeSearchGlob(glob));
 		files = Array.from(
 			g.scanSync({ cwd: absSearchPath, onlyFiles: true, dot: true }),
 		);

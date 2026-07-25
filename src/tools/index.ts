@@ -10,5 +10,6 @@ export { buildBuiltinToolDefs, resolvePath } from "./definitions.ts";
 export {
 	DEFAULT_SKIP_DIRS,
 	jsSearch,
+	normalizeSearchGlob,
 	truncateSearchOutput,
 } from "./search.ts";

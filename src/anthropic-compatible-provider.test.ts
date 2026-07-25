@@ -42,6 +42,7 @@ import {
 	getBackgroundStatus,
 	jsSearch,
 	killBackgroundProcess,
+	normalizeSearchGlob,
 	resolvePath,
 	truncateSearchOutput,
 } from "./tools/index.ts";
@@ -2511,6 +2512,86 @@ describe("jsSearch: hidden directories", () => {
 			.map((s) => s.trim())
 			.filter(Boolean);
 		expect(documented.sort()).toEqual([...skipped].sort());
+	});
+});
+
+/**
+ * A glob with no `/` in it is a FILENAME pattern, and a filename pattern means
+ * "at any depth".
+ *
+ * `*.ts` is the example printed in this tool's OWN description, and it is what
+ * ripgrep's `--glob` means — but `*` does not cross `/` in Bun.Glob, so the tool
+ * documented one semantic and implemented another. From a repo root the answer
+ * was `(no matches)`: the same silent false negative as the hidden-directory
+ * bug, in the same tool, on the far more frequently typed input.
+ *
+ * A glob that DOES contain `/` is a PATH pattern and must stay anchored at the
+ * search root — that half is what a too-wide normalization would break, and it
+ * cannot break by forgetting to normalize, so it needs its own test.
+ */
+describe("jsSearch: glob depth", () => {
+	let tempDir: string;
+	const SYMBOL = "jsSearch";
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-search-glob-"));
+		await mkdir(join(tempDir, "src"), { recursive: true });
+		await mkdir(join(tempDir, "deep", "src"), { recursive: true });
+		await writeFile(join(tempDir, "top.ts"), `${SYMBOL}();\n`);
+		await writeFile(join(tempDir, "src", "top.ts"), `${SYMBOL}();\n`);
+		// A second `src/` one level down: the probe for over-promotion. `src/*.ts`
+		// must not reach it; `**​/src/*.ts` would.
+		await writeFile(join(tempDir, "deep", "src", "inner.ts"), `${SYMBOL}();\n`);
+	});
+
+	afterAll(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	async function matchedFiles(glob: string): Promise<string[]> {
+		const result = await jsSearch({
+			pattern: SYMBOL,
+			searchPath: ".",
+			glob,
+			outputMode: "files_with_matches",
+			headLimit: 50,
+			caseInsensitive: false,
+			cwd: tempDir,
+		});
+		return result.split("\n").filter(Boolean);
+	}
+
+	test("a glob with no slash matches at any depth", async () => {
+		expect(await matchedFiles("*.ts")).toContain("src/top.ts");
+	});
+
+	test("…and still matches the top level — promotion loses nothing", async () => {
+		// `**​/` matches zero directories too, so promoting is a strict superset.
+		// Separate from the test above because it is a separate property: this one
+		// is what would regress if `**​/` ever stopped collapsing, and that failure
+		// has nothing to do with whether nested files are reached.
+		expect(await matchedFiles("*.ts")).toContain("top.ts");
+	});
+
+	test("a glob containing a slash stays anchored at the search root", async () => {
+		const files = await matchedFiles("src/*.ts");
+		// Two-sided: it must still find the anchored file, so this cannot pass by
+		// matching nothing at all.
+		expect(files).toContain("src/top.ts");
+		expect(files).not.toContain("deep/src/inner.ts");
+	});
+
+	test("the rule is on the slash, not on the leading star", () => {
+		// Stated at the string level because two of these have no behavioral
+		// symptom to assert: `**​/**​/*.ts` returns the same files as `**​/*.ts`, so
+		// a doubly-promoted glob is invisible from the outside.
+		expect(normalizeSearchGlob("*.ts")).toBe("**/*.ts");
+		expect(normalizeSearchGlob("**/*.ts")).toBe("**/*.ts");
+		expect(normalizeSearchGlob("src/*.ts")).toBe("src/*.ts");
+		// This is the one that earns the test: it is the shape the fixture above
+		// has no file for, and "promote patterns that start with a bare `*`" is a
+		// plausible enough reading of the rule to write by accident.
+		expect(normalizeSearchGlob("*/top.ts")).toBe("*/top.ts");
 	});
 });
 
