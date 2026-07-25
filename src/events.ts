@@ -493,22 +493,180 @@ export function findUnconsumedMessages(events: Event[]): QueueMessage[] {
 }
 
 /**
+ * Whose turn does the log end on?
+ *
+ * One backward walk answering every "what state did this session die in"
+ * question, so the answers cannot drift apart. `hasPendingImplicitYield`,
+ * `shouldLaunchAgent` and the trailing-thinking repair are all built on it.
+ *
+ * The walk stops at the first event that DECIDES a role in the reconstructed
+ * conversation, mirroring `walkEventsToMessages`: tool_results and consumed
+ * messages become user messages, assistant_text and tool_calls become
+ * assistant messages, and everything else (usage, lifecycle, status,
+ * session_config, deferred `message` events) contributes nothing.
+ *
+ * `thinking` is TRANSPARENT, and that is the subtle part. Reaching it before
+ * any `assistant_text` or `tool_call` is precisely what "this turn produced
+ * only thinking" means — the model thought and died before it spoke. Such a
+ * turn answered nothing, so the walk continues to whatever it was failing to
+ * answer, and `thinkingOnlyFrom` reports where the dead turn starts so repair
+ * can drop it.
+ */
+function classifyTail(events: Event[]): {
+	kind: "user" | "assistant" | "orphan_tool_call" | "empty";
+	/** Start index of a trailing thinking-only turn, or -1 if there is none. */
+	thinkingOnlyFrom: number;
+} {
+	let thinkingFrom = -1;
+	for (let i = events.length - 1; i >= 0; i--) {
+		const e = events[i] as Event;
+		switch (e.type) {
+			case "thinking":
+				// Walking backwards, so this keeps moving to the EARLIEST
+				// thinking of the trailing run.
+				thinkingFrom = i;
+				break;
+			// The model spoke, or called a tool. Either way the turn had real
+			// content, so any thinking we walked past belongs to it.
+			case "assistant_text":
+				return { kind: "assistant", thinkingOnlyFrom: -1 };
+			case "tool_call":
+				// Unanswered by construction: its tool_result would sit after
+				// it and we would have stopped there first.
+				return { kind: "orphan_tool_call", thinkingOnlyFrom: -1 };
+			case "tool_result":
+			case "messages_consumed":
+			case "budget_warning":
+				return { kind: "user", thinkingOnlyFrom: thinkingFrom };
+			case "message":
+				// An id marks the deferred two-phase path (materialized by
+				// messages_consumed). Without one the walker renders it
+				// directly as a user message.
+				if (!e.id) return { kind: "user", thinkingOnlyFrom: thinkingFrom };
+				break;
+			default:
+				break;
+		}
+	}
+	return { kind: "empty", thinkingOnlyFrom: thinkingFrom };
+}
+
+/**
  * Check if the session ended in implicit yield (end_turn — model stopped without tool calls).
  * This happens when the daemon crashes while the agent is in handleImplicitYield,
  * waiting for messages after an end_turn response.
  *
- * Detection: the last provider content event (assistant_text, tool_call, tool_result)
- * is assistant_text, and no tool_call follows it. This means the model ended its turn
- * naturally and the agent was waiting for new messages when it died.
+ * Detection: the last event deciding a role is an `assistant_text`. The model
+ * ended its turn naturally and the agent was waiting for new messages when it
+ * died.
+ *
+ * ⚠️ **A `messages_consumed` after that `assistant_text` means NO pending
+ * yield.** An assistant turn is only a park if nothing has arrived since; a
+ * consumption says a message was drained INTO a turn, so the agent was
+ * working, not waiting. This walk used to skip straight over consumptions and
+ * report the park from before the message — and because `isYieldResume` is
+ * evaluated first and gates `isInterruptedResume` off, the loop then parked on
+ * a conversation ending in an unanswered user message. The message was
+ * silently never answered, and the window is a whole API call wide.
  */
 export function hasPendingImplicitYield(events: Event[]): boolean {
-	// Walk backwards to find the last provider content event
-	for (let i = events.length - 1; i >= 0; i--) {
-		const e = events[i] as Event;
-		if (e.type === "assistant_text") return true;
-		if (e.type === "tool_call" || e.type === "tool_result") return false;
+	return classifyTail(events).kind === "assistant";
+}
+
+/**
+ * Message sources that do NOT justify launching an agent.
+ *
+ * Everything else does: on resume `findUnconsumedMessages` re-enqueues every
+ * unconsumed message, and `queue.wait()` returns immediately on a non-empty
+ * queue, so any of them produces a real turn. That is the behaviour this set
+ * subtracts FROM, which is why it is a subtraction with one named member and
+ * not a list of "quiet-ish" sources to be extended by guesswork.
+ *
+ * ⚠️ It cannot be derived from the `quiet` enqueue option. `quiet` is an
+ * argument to `enqueue` describing one moment — do not wake the waiter — and
+ * it is not part of the message, so it does not survive to JSONL. After a
+ * restart the quietness of a `tree_change` simply does not exist any more.
+ * `source` does, and it already decides the text the model reads and how the
+ * UI materialises the message; letting it decide this too keeps one fact in
+ * one place.
+ *
+ * `interrupt` qualifies because it is the only message the loop writes ABOUT
+ * ITSELF rather than delivering as input. Nobody sent it and it asks for
+ * nothing, so waking an agent to read it is the loop talking to itself.
+ */
+const NON_LAUNCHING_MESSAGE_SOURCES: ReadonlySet<QueueMessage["source"]> =
+	new Set(["interrupt"]);
+
+/**
+ * Would launching this agent produce an action, or would it just park?
+ *
+ * Answered from the log ALONE, deliberately: `runAgentForNode` connects MCP
+ * servers, builds work context and writes `session_config` before it ever
+ * looks at the conversation, and that construction is the entire cost. A node
+ * that will only park must be refused before any of it happens. (Measured
+ * 2026-07-25: 4 MCP subprocesses and ~202 MB per dormant session.)
+ *
+ * ⚠️ **`status` is not the question.** These nodes sit at `in_progress` for
+ * weeks; the status says nothing about whether work is outstanding. What
+ * decides it is the shape of the log.
+ *
+ * This is an EXTRACTION of what the provider loop already does on resume, not
+ * a second opinion about it. If the two disagree the loop wins and this
+ * function is wrong — either it refuses a launch that would have worked, or it
+ * pays full session construction for an agent that immediately parks.
+ * `should-launch.test.ts` pins them against each other over a shape table.
+ */
+export function shouldLaunchAgent(events: Event[]): boolean {
+	if (events.length === 0) return false;
+
+	// 1. Pending input DECIDES, and it decides in both directions.
+	//
+	//    Any unconsumed message is re-enqueued on resume and wakes the loop
+	//    immediately, so one real message means work. But when the only thing
+	//    waiting is an `interrupt` notice, that is a positive statement about
+	//    how the session ended — the user stopped it, right here — and it must
+	//    OUTRANK the turn shape below.
+	//
+	//    ⚠️ This is why the check cannot be reordered after the turn-shape
+	//    rule. An interrupt that lands before anything streamed leaves
+	//    `messages_consumed → message(interrupt)`, and the consumption alone
+	//    reads as a turn that owes an answer. Nothing else in the log
+	//    distinguishes that from a daemon death mid-API-call, which is the
+	//    entire reason the notice is written.
+	const unconsumed = findUnconsumedMessages(events);
+	if (unconsumed.length > 0) {
+		return unconsumed.some((m) => !NON_LAUNCHING_MESSAGE_SOURCES.has(m.source));
 	}
-	return false;
+
+	// 2. Parked on an intended orphan — an unanswered yield()/done() is the
+	//    agent having stopped ITSELF. It resumes by waiting for a message, and
+	//    step 1 already established there is none.
+	const lastToolCall = events.findLast((e) => e.type === "tool_call");
+	if (lastToolCall?.type === "tool_call") {
+		const answered = events.some(
+			(e) =>
+				e.type === "tool_result" && e.toolCallId === lastToolCall.toolCallId,
+		);
+		if (
+			!answered &&
+			(lastToolCall.tool === TOOL_YIELD || lastToolCall.tool === TOOL_DONE)
+		) {
+			return false;
+		}
+	}
+
+	// 3. Whose turn is it?
+	//
+	//    - `user`: the model still owes an answer. This is the ONE state that
+	//      resumes straight into an API call (`isInterruptedResume`).
+	//    - `orphan_tool_call`: died mid tool execution. Repair answers the call
+	//      with a synthetic tool_result, which is a user turn — so, work. Every
+	//      tool-using turn passes through this state, which is why it cannot be
+	//      treated as "stopped".
+	//    - `assistant`: the model spoke and is waiting for us. Parks.
+	//    - `empty`: nothing but lifecycle noise. Launching buys nothing.
+	const { kind } = classifyTail(events);
+	return kind === "user" || kind === "orphan_tool_call";
 }
 
 /**
@@ -829,8 +987,38 @@ function repairActiveRegion(
 		if (resultCount === 0) orphanCallIds.push(callId);
 	}
 
-	if (!hasDuplicates && orphanCallIds.length === 0 && outOfOrderIndex === -1)
+	if (!hasDuplicates && orphanCallIds.length === 0 && outOfOrderIndex === -1) {
+		// Nothing structurally broken. One shape still needs repairing: a
+		// TRAILING TURN THAT PRODUCED ONLY THINKING.
+		//
+		// The daemon died between the thinking block closing and the first text
+		// delta. The model thought and never spoke, so the turn answered
+		// nothing — but the walker collapses `thinking` into an assistant
+		// message, so the conversation reads as "the model has replied" and the
+		// agent parks on a user message it never answered. Dropping the dead
+		// turn puts the conversation back on the user turn it was failing to
+		// answer, and the resume re-runs it.
+		//
+		// Only reached when nothing else is wrong: a session with orphans or
+		// duplicates has a more severe problem, and those strategies own it.
+		const { thinkingOnlyFrom } = classifyTail(events);
+		if (thinkingOnlyFrom > 0) {
+			return {
+				chainToEid: chainTarget(events, thinkingOnlyFrom - 1),
+				// A chain jump is pure in-memory state — it only reaches disk as
+				// the next appended event's parentEid, so a truncating repair
+				// must always append something.
+				appendEvents: [
+					repairStatusEvent(
+						taskId,
+						opts?.reason ??
+							"turn produced only thinking before the daemon stopped — re-running it",
+					),
+				],
+			};
+		}
 		return null;
+	}
 
 	// Strategy 0: OUT-OF-ORDER tool_results — truncate from the problematic tool_call.
 	// This is the most severe case: two agent loops wrote interleaved events.

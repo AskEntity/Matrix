@@ -11,7 +11,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { EventStore } from "../src/event-store.ts";
-import { type Event, findUnconsumedMessages } from "../src/events.ts";
+import {
+	type Event,
+	findUnconsumedMessages,
+	shouldLaunchAgent,
+} from "../src/events.ts";
 
 const ROOT = join(homedir(), ".mxd", "projects");
 const TAIL = Number(process.argv[2] ?? 10);
@@ -28,6 +32,7 @@ const CONTENT = new Set([
 ]);
 
 let total = 0;
+let launches = 0;
 for (const projectId of readdirSync(ROOT)) {
 	const pluginDir = join(ROOT, projectId, "plugin");
 	if (!existsSync(pluginDir)) continue;
@@ -79,7 +84,12 @@ for (const projectId of readdirSync(ROOT)) {
 			console.log(`   active=${active.length} lastEventAge=${ageH}h`);
 			console.log(`   content tail: ${contentTail || "(no content events)"}`);
 			console.log(`   unconsumed:   ${srcStr}`);
+			const launch = shouldLaunchAgent(active);
+			if (launch) launches++;
+			console.log(`   VERDICT:      ${launch ? "LAUNCH" : "park"}`);
 		}
 	}
 }
-console.log(`\n\nTOTAL in_progress task nodes: ${total}`);
+console.log(
+	`\n\nTOTAL in_progress task nodes: ${total} — would launch: ${launches}`,
+);
