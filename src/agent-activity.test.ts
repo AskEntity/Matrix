@@ -351,6 +351,19 @@ describe("Agent activity: three states, one source", () => {
 		// The fifth place the loop parks on the queue, and the only one outside
 		// handleImplicitYield. It used to announce nothing at all, so an agent
 		// waiting for its first message looked busy to every client.
+		//
+		// Reaching it takes care: a launch normally enqueues a work_context
+		// message before the loop starts, and with something already queued the
+		// drain does not park (and correctly says nothing). `buildWorkContext`
+		// is optional on ScopeOpts, so a scope without one launches into a
+		// genuinely empty queue — that is the state under test.
+		//
+		// An earlier version of this test used the normal scope and passed
+		// anyway: the agent ran a turn, ended it, and parked in
+		// handleImplicitYield instead. It was named for the initial drain and
+		// measured a different transition. Mutation testing is what exposed it,
+		// which is the argument for doing it per transition point rather than
+		// once at the end.
 		ctx = await setupTestContext();
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const child = tracker.addChild(tracker.rootNodeId, "Empty", "no messages");
@@ -365,6 +378,7 @@ describe("Agent activity: three states, one source", () => {
 		const { runAgentForNode } = await import("./runtime/agent-lifecycle.ts");
 		void runAgentForNode(ctx.app.ctx, project, tracker, child.id, {
 			...scopeOpts,
+			buildWorkContext: () => null,
 		});
 
 		await waitFor(
@@ -372,7 +386,7 @@ describe("Agent activity: three states, one source", () => {
 			() =>
 				`stored=${storedState(ctx, child.id)} seen=${statesFor(ctx, child.id)}`,
 		);
-		expect(statesFor(ctx, child.id)).toContain("idle");
+		expect(statesFor(ctx, child.id)).toEqual(["thinking", "idle"]);
 	}, 20000);
 
 	test("session end broadcasts state null and drops the task from the snapshot", async () => {
@@ -401,6 +415,63 @@ describe("Agent activity: three states, one source", () => {
 			states: Record<string, AgentActivity>;
 		};
 		expect(rootId in states).toBe(false);
+	}, 20000);
+
+	test("stopping one task broadcasts null for it (stopTask teardown)", async () => {
+		// Three places clear node.session and each must announce it. This is
+		// the stopTask one: it clears the session ITSELF and then awaits the
+		// loop, so runAgentForNode's finally sees a replaced session and skips
+		// its own teardown — the announcement cannot be inherited from there.
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+
+		await postMessage(
+			ctx,
+			rootId,
+			JSON.stringify({ blocks: [{ type: "text", text: "parking" }] }),
+		);
+		await waitFor(
+			() => storedState(ctx, rootId) === "idle",
+			() => `stored=${storedState(ctx, rootId)}`,
+		);
+
+		const resp = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${rootId}/stop`,
+			{ method: "POST" },
+		);
+		expect(resp.status).toBe(200);
+
+		const states = statesFor(ctx, rootId);
+		expect(states[states.length - 1]).toBe(null);
+		expect(storedState(ctx, rootId)).toBeUndefined();
+	}, 20000);
+
+	test("stopping the project broadcasts null for it (stopAgent teardown)", async () => {
+		// The third site: the project-wide stop loops over every running node
+		// and clears each session.
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+
+		await postMessage(
+			ctx,
+			rootId,
+			JSON.stringify({ blocks: [{ type: "text", text: "parking" }] }),
+		);
+		await waitFor(
+			() => storedState(ctx, rootId) === "idle",
+			() => `stored=${storedState(ctx, rootId)}`,
+		);
+
+		const resp = await ctx.app.app.request(`/projects/${ctx.projectId}/stop`, {
+			method: "POST",
+		});
+		expect(resp.status).toBe(200);
+
+		const states = statesFor(ctx, rootId);
+		expect(states[states.length - 1]).toBe(null);
+		expect(storedState(ctx, rootId)).toBeUndefined();
 	}, 20000);
 
 	test("a task with no agent has NO entry — absence is not `idle`", async () => {

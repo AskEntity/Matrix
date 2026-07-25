@@ -5292,12 +5292,18 @@ setter is passed IN instead — `handleImplicitYield(queue, setActivity)`.
    script the loop by counting idles, and an unconditional announce added a
    phantom startup idle that consumed their "first idle" step.
 2. `idle` — the initial drain's blocking wait (`provider-shared.ts`, fresh start),
-   same `!queue.hasPending` rule. **This was a genuine bug**: the fifth place
-   the loop parks on the queue, and it announced nothing — an agent launched
-   with an empty queue waited for input while every client showed it running.
-   It deliberately does NOT set `queue.idle`; that flag is polled by test
-   helpers as "the steady-state loop has settled", and flipping it during
-   startup lets a poller call a booting agent settled.
+   same `!queue.hasPending` rule. The fifth place the loop parks on the queue,
+   and it announced nothing — an agent waiting for its first message looked
+   busy to every client. It deliberately does NOT set `queue.idle`; that flag
+   is polled by test helpers as "the steady-state loop has settled", and
+   flipping it during startup lets a poller call a booting agent settled.
+   **Narrower than it looks**: `runAgentForNode` enqueues a `work_context`
+   message before the loop starts whenever the scope's `buildWorkContext`
+   returns content, so a matrix launch always has something queued and this
+   park is not reached. It fires for a scope with no work context (the hook is
+   optional), and on a resume that ends in a non-user message with nothing
+   recovered. Worth its one line — an agent genuinely stuck here is stuck
+   forever — but do not describe it as the common path.
 3. `thinking` — at the API-call block, OUTSIDE the outer-retry loop.
 4. `tool` — immediately before `Promise.all(executeTool)`.
 5. `null` — at all three sites that clear `node.session` (runAgentForNode's
@@ -5381,3 +5387,27 @@ activity work so the two can be reverted independently.
 - `web/ActivityLog-activity.test.tsx` renders with the LAST ENTRY being a
   tool_call in every case, so `tool` vs `thinking` can only be distinguished by
   the prop — the old heuristic would have gotten it right by accident.
+
+### Mutation results, and the test the mutation caught
+
+Every transition point was removed individually and the suite re-run. Each is
+caught by tests only its own path can reach:
+
+| removed | fails |
+|---|---|
+| `idle` in handleImplicitYield | parks-on-queue + 2 provider harnesses that script the loop by counting idles |
+| `idle` in the initial drain | the initial-drain test, alone |
+| `thinking` at the API block | thinking→tool→thinking, alone |
+| `tool` before tool execution | the in-tool observation + thinking→tool→thinking |
+| `null` at the 3 teardown sites | session-end, stopTask, stopAgent — one each |
+
+**The initial-drain mutation caught a bug in my own test.** The first version
+used the normal scope, so `work_context` was queued, the drain never parked,
+the agent ran a turn and parked in `handleImplicitYield` instead — the test was
+named for one transition and measured another. It passed clean and failed under
+the WRONG mutation, which is exactly the "two tests covering for each other"
+shape. Fixed by launching with `buildWorkContext: () => null`.
+
+That is the argument for mutating per transition point as you add it rather
+than once at the end: a green test tells you nothing about WHICH line made it
+green.
