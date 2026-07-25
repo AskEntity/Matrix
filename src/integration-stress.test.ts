@@ -346,7 +346,7 @@ describe("Stress: compaction + restart", () => {
 		Bun.spawnSync(["rm", "-rf", tmpDir]);
 	});
 
-	test("COMPACT2: manual compact during yield completes without consecutive user messages", async () => {
+	test("COMPACT2: manual compact during yield completes", async () => {
 		ctx = await setupTestContext();
 		// NOTE: enablePrefixValidation() NOT called — after compaction,
 		// messages[] resets to 1 message which breaks the mock's strict
@@ -354,13 +354,14 @@ describe("Stress: compaction + restart", () => {
 		// not a production concern (Anthropic's actual cache validates at the
 		// breakpoint level, not whole-prefix identity across compactions).
 
-		// Regression test: previously, manual compaction triggered during a
-		// pending yield created two consecutive user messages (yield tool_result
-		// + summarization instruction) → API 400 "Messages must alternate roles".
-		//
-		// Fix (commit 304fccd): defer the yield tool_result via
-		// pendingCompactYieldToolCall. The compact path bundles tool_result +
-		// summarization text into ONE user message with two blocks.
+		// Manual compaction triggered during a pending yield produces two
+		// consecutive user messages (yield tool_result + summarization
+		// instruction). That was believed to be an API 400 ("Messages must
+		// alternate roles") and commit 304fccd deferred the tool_result via
+		// pendingCompactYieldToolCall to bundle them into one turn. The rule does
+		// not exist (measured; see memory.md), the deferral is gone, and the two
+		// messages are two messages again. What this test guards is unchanged:
+		// no error, compaction completes, the agent continues.
 		//
 		// The agent does enough work to exceed messages.length > 4, yields,
 		// then receives a compact-only message. After fix: no error, compact

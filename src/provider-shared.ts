@@ -66,6 +66,15 @@ export { executeTool, isTransientAPIError } from "./tool-execution.ts";
 const DEFAULT_MAX_TOKENS = 128000;
 
 /**
+ * Synthetic tool_result contents. Both are written to JSONL and must therefore
+ * be byte-identical everywhere they are produced — the walker replays whatever
+ * landed on disk, so a second spelling anywhere is a live/reconstruction drift.
+ */
+const DUPLICATE_YIELD_IGNORED =
+	"yield() ignored — duplicate yield in same turn. Only the first yield is used.";
+const COMPACT_REQUESTED_RESULT = "Manual compaction requested";
+
+/**
  * Sleep for `ms`, resolving early if `signal` aborts. After it resolves, callers
  * check `signal.aborted` to decide whether the timer elapsed normally or the wait
  * was cut short by a stop/reset. The inner per-call retry already does this; the
@@ -747,29 +756,79 @@ export async function* runProviderLoop(
 	// the agent was in yield state when the daemon restarted. We restore this at loop level
 	// instead of writing a synthetic orphan result — yield is a loop-level pause, not a JS await.
 	let pendingYieldToolCall: { id: string; name: string } | null = null;
-	// Extra yield tool_uses from the same turn — their tool_results must be bundled into
-	// the REAL yield's user turn (not pushed as a separate user message) to avoid
-	// consecutive user messages violating the API's role-alternation rule.
+	// Extra yield tool_uses from the same turn. Their tool_results are emitted to
+	// JSONL at yield-detection time and the REAL yield's at wake — with NOTHING
+	// between them that the walker's collection loop breaks on. So reconstruction
+	// yields ONE user message containing all of them, and the live path must build
+	// the same one turn or the two drift.
+	//
+	// ⚠️ That byte-identity is the reason, NOT role alternation (which does not
+	// exist — see memory.md "The Anthropic message-shape rules, MEASURED"). The
+	// distinction decides whether a deferral is needed at all: required when the
+	// deferred tool_result is PERSISTED and lands ADJACENT to another, unnecessary
+	// when the message it would merge into is TRANSIENT. That is why this one stays
+	// and the two compaction deferrals are gone.
 	let pendingDuplicateYieldExtras: Array<{ id: string; name: string }> = [];
-	// Yield tool_call that needs its tool_result bundled into the summarization user
-	// message (compactOnly path). Set when compact arrives during a pending yield.
-	// The yield tool_result is emitted to JSONL immediately (orphan prevention), but
-	// the messages[] push is DEFERRED until the compact path builds the summarization
-	// turn — otherwise we'd have two consecutive user messages (yield tool_result,
-	// then summarization instruction) violating API role alternation.
-	let pendingCompactYieldToolCall: { id: string; name: string } | null = null;
 	// Detect pending done from JSONL: if last tool_call is done with no matching result,
 	// the agent called done() and the loop exited (done is an intended orphan).
 	// On wake, write a synthetic tool_result so the message history is well-formed.
 	let pendingDoneToolCall: { id: string; name: string } | null = null;
-	// Done tool_call whose tool_result must be bundled into the summarization user
-	// message (compactOnly done-resume). The done analog of pendingCompactYieldToolCall:
-	// when the ONLY wake message during a done-resume is /compact, pushing the done
-	// tool_result as its own user message AND letting the compact path push the
-	// summarization instruction yields two consecutive user messages → API 400. The
-	// tool_result is emitted to JSONL immediately (orphan prevention); its messages[]
-	// push is DEFERRED until the compact path builds the summarization turn. (B-L9)
-	let pendingCompactDoneToolCall: { id: string; name: string } | null = null;
+	/**
+	 * A pending yield/done was woken by /compact and nothing else. Emit its
+	 * tool_result (orphan prevention — the assistant's tool_use must be answered,
+	 * which IS a real API rule) and push the matching user turn immediately.
+	 *
+	 * Any duplicate-yield extras ride along in the SAME turn: their tool_results
+	 * were emitted to JSONL earlier and sit adjacent to this one, so that is the
+	 * single user message reconstruction will produce.
+	 *
+	 * The summarization instruction deliberately does NOT join this turn. It is
+	 * never persisted, so a turn containing it is one the walker can never
+	 * rebuild — bundling them was the only arrangement guaranteed to drift.
+	 *
+	 * ⚠️ CALL WITH `yield*`. Calling it bare compiles fine, produces no
+	 * diagnostic, and does NOTHING — the generator body never runs, the
+	 * tool_result never reaches JSONL or messages[], and the next request goes
+	 * out with an unanswered tool_use. (Cost one full suite run to find; the
+	 * mock's pairing check is what caught it.)
+	 */
+	function* emitAndPushCompactToolResult(
+		id: string,
+		name: string,
+	): Generator<EventSpec> {
+		const evt: EventSpec = {
+			type: "tool_result",
+			tool: name,
+			toolCallId: id,
+			content: COMPACT_REQUESTED_RESULT,
+			isError: false,
+			ts: Date.now(),
+		};
+		emit?.(evt);
+		yield evt;
+
+		const turn = adapter.buildUserTurn({
+			toolUses: [
+				...pendingDuplicateYieldExtras.map((e) => ({
+					id: e.id,
+					name: e.name,
+					input: {},
+				})),
+				{ id, name, input: {} },
+			],
+			execResults: [
+				...pendingDuplicateYieldExtras.map(() => ({
+					content: DUPLICATE_YIELD_IGNORED,
+					isError: false,
+				})),
+				{ content: COMPACT_REQUESTED_RESULT, isError: false },
+			],
+			queueMessages: [],
+		});
+		for (const msg of turn) messages.push(msg);
+		pendingDuplicateYieldExtras = [];
+	}
+
 	// Detect pending implicit yield from JSONL: last provider content event is assistant_text
 	// (no tool_call after it). The model ended its turn naturally (end_turn) and the agent
 	// was in handleImplicitYield waiting for messages when it died. On resume, bypass to
@@ -995,30 +1054,24 @@ export async function* runProviderLoop(
 			}
 
 			if (doneResumeResult.compactOnly) {
-				// B-L9: the ONLY wake message was /compact. Emit the done tool_result
-				// (orphan prevention) with the same "Manual compaction requested" content
-				// the compact path bundles, then DEFER the messages[] push via
-				// pendingCompactDoneToolCall so the summarization instruction shares ONE
-				// user turn — pushing the done tool_result as its own user message here,
-				// then letting the compact block push the summarization, made two
-				// consecutive user messages → API 400. Mirrors the pendingCompactYieldToolCall
-				// fix on the yield path. Order matches JSONL: this tool_result event is
-				// emitted FIRST here; the summarization instruction is pushed by the
-				// compact block.
-				const compactDoneEvt: EventSpec = {
-					type: "tool_result",
-					tool: pendingDoneToolCall.name,
-					toolCallId: pendingDoneToolCall.id,
-					content: "Manual compaction requested",
-					isError: false,
-					ts: Date.now(),
-				};
-				emit?.(compactDoneEvt);
-				yield compactDoneEvt;
-				pendingCompactDoneToolCall = {
-					id: pendingDoneToolCall.id,
-					name: pendingDoneToolCall.name,
-				};
+				// The ONLY wake message was /compact. Emit the done tool_result
+				// (orphan prevention) and push its user turn RIGHT HERE.
+				//
+				// This used to be deferred via `pendingCompactDoneToolCall` so the
+				// summarization instruction could share ONE user turn, on the belief
+				// that two consecutive user messages were an API 400 (B-L9). They are
+				// not — measured against production Anthropic, see memory.md "The
+				// Anthropic message-shape rules, MEASURED". The deferral is gone.
+				//
+				// Pushing here is not merely allowed, it is the byte-identical
+				// choice: this tool_result IS persisted, and on reconstruction the
+				// walker turns it into exactly this user message. The summarization
+				// instruction, by contrast, is never persisted at all — so bundling
+				// the two was the one arrangement the walker could never reproduce.
+				yield* emitAndPushCompactToolResult(
+					pendingDoneToolCall.id,
+					pendingDoneToolCall.name,
+				);
 				pendingDoneToolCall = null;
 				continue;
 			}
@@ -1176,27 +1229,16 @@ export async function* runProviderLoop(
 				// Emit yield tool_result before compaction to avoid orphan tool_call in JSONL.
 				// Without this, the yield tool_call remains unpaired → on resume, converter
 				// finds tool_use without tool_result → duplicate tool_result blocks → API 400.
-				const compactYieldEvt: EventSpec = {
-					type: "tool_result",
-					tool: pendingYieldToolCall.name,
-					toolCallId: pendingYieldToolCall.id,
-					content: "Manual compaction requested",
-					isError: false,
-					ts: Date.now(),
-				};
-				emit?.(compactYieldEvt);
-				yield compactYieldEvt;
-				// DEFER the messages[] push: pushing a user message here would produce
-				// two consecutive user messages (this tool_result + summarization
-				// instruction) violating API role alternation. Instead, carry the
-				// yield tool_call forward via pendingCompactYieldToolCall; the compact
-				// path bundles it into the SAME user turn as the summarization text.
-				// Order must match JSONL: this tool_result event was emitted FIRST here,
-				// then the summarization instruction is pushed to messages[]. Live path must match.
-				pendingCompactYieldToolCall = {
-					id: pendingYieldToolCall.id,
-					name: pendingYieldToolCall.name,
-				};
+				// (That one IS real — it is the pairing rule.)
+				//
+				// The messages[] push used to be DEFERRED here via
+				// `pendingCompactYieldToolCall` (commit 304fccd) to keep the
+				// summarization instruction in the same user turn. See the done-side
+				// twin above for why that is gone.
+				yield* emitAndPushCompactToolResult(
+					pendingYieldToolCall.id,
+					pendingYieldToolCall.name,
+				);
 				pendingYieldToolCall = null;
 				continue;
 			}
@@ -1208,8 +1250,10 @@ export async function* runProviderLoop(
 			// additional text blocks in the same user message.
 			//
 			// If the API returned duplicate yield tool_uses in the same turn, bundle
-			// the extras' tool_results INTO THIS SAME user turn. Pushing them as a
-			// separate user message earlier would produce consecutive user roles → API 400.
+			// the extras' tool_results INTO THIS SAME user turn — that is the single
+			// message reconstruction produces from the adjacent JSONL tool_results,
+			// so the live path must match it. (Byte-identity, not role alternation;
+			// see the detection site.)
 			const yieldContent = "resumed.";
 			const realYieldToolUse: ProviderToolUse = {
 				id: pendingYieldToolCall.id,
@@ -1228,8 +1272,7 @@ export async function* runProviderLoop(
 				}));
 			const extraYieldExecs: ToolResult[] = pendingDuplicateYieldExtras.map(
 				() => ({
-					content:
-						"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
+					content: DUPLICATE_YIELD_IGNORED,
 					isError: false,
 				}),
 			);
@@ -1459,57 +1502,11 @@ export async function* runProviderLoop(
 			emit?.(s1);
 			yield s1;
 			manualCompactRequested = false;
-
-			// If a yield/done tool_result was deferred for the compaction path
-			// (pendingCompactYieldToolCall / pendingCompactDoneToolCall), we must
-			// consume it now. The tool_result was already emitted to JSONL (orphan
-			// prevention); we need to push it to messages[] so the next API call
-			// has a complete user turn. Without this, the assistant's tool_use has
-			// no matching result → API 400 "has tool_use but no following user
-			// message with tool_results". (R8-B#1b)
-			const pendingCompactToolCall =
-				pendingCompactYieldToolCall ?? pendingCompactDoneToolCall;
-			if (pendingCompactToolCall) {
-				// Include duplicate-yield extras if any (R8-B#11 overlap with B#1b)
-				const extraYieldToolUses: ProviderToolUse[] =
-					pendingDuplicateYieldExtras.map((e) => ({
-						id: e.id,
-						name: e.name,
-						input: {},
-					}));
-				const extraYieldExecs: ToolResult[] = pendingDuplicateYieldExtras.map(
-					() => ({
-						content:
-							"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
-						isError: false,
-					}),
-				);
-
-				const toolResultMsgs = adapter.buildUserTurn({
-					toolUses: [
-						...extraYieldToolUses,
-						{
-							id: pendingCompactToolCall.id,
-							name: pendingCompactToolCall.name,
-							input: {},
-						},
-					],
-					execResults: [
-						...extraYieldExecs,
-						{
-							content: "Manual compaction requested",
-							isError: false,
-						},
-					],
-					queueMessages: [],
-				});
-				for (const msg of toolResultMsgs) {
-					messages.push(msg);
-				}
-				pendingCompactYieldToolCall = null;
-				pendingCompactDoneToolCall = null;
-				pendingDuplicateYieldExtras = [];
-			}
+			// R8-B#1b used to live here: consume the yield/done tool_result that the
+			// compactOnly path had deferred, so the assistant's tool_use would not
+			// reach the API unanswered. That obligation is REAL (it is the pairing
+			// rule) — it is just discharged earlier now, at the moment the
+			// tool_result is emitted, so there is nothing left to consume here.
 			continue;
 		}
 		if (messages.length > 4) {
@@ -1561,81 +1558,20 @@ export async function* runProviderLoop(
 				};
 				emit?.(cs2);
 				yield cs2;
-				// Inject summarization instruction as a user message.
-				// If a pending compactOnly tool_call (yield OR done) is carried forward,
-				// bundle its tool_result INTO THIS SAME user message — otherwise we'd emit
-				// two consecutive user messages (tool_result + this one) → API 400.
-				// Yield and done are mutually exclusive (a resume ends in one orphan, not
-				// both), so at most one is set. (B-L9 adds the done case.)
+				// Inject summarization instruction as its own user message.
+				//
+				// This used to bundle a deferred yield/done tool_result into the SAME
+				// message, on the belief that two consecutive user messages were an
+				// API 400. They are not (measured — see memory.md). The tool_result
+				// is now pushed where it is emitted, which is also the only place the
+				// walker can reproduce it: the summarization instruction is never
+				// persisted, so any turn containing it is unreconstructible by
+				// definition.
 				const summarizationInstruction = request.buildSummarizationPrompt!();
-				const pendingCompactToolCall =
-					pendingCompactYieldToolCall ?? pendingCompactDoneToolCall;
-				if (pendingCompactToolCall) {
-					// Build a structured user message: [tool_result, text] via the
-					// walker-delegating buildUserTurn. Walker is the single source of
-					// truth for tool_result user messages → live and reconstruction
-					// produce byte-identical output.
-					//
-					// If duplicate-yield extras are pending (R8-B#11), bundle their
-					// tool_results into the SAME user turn. The extras' tool_result
-					// events were already emitted to JSONL (orphan prevention at
-					// yield-detection time); without bundling here, the assistant's
-					// extra tool_uses have no matching result in the user turn →
-					// API 400 during the compaction call.
-					const extraYieldToolUses: ProviderToolUse[] =
-						pendingDuplicateYieldExtras.map((e) => ({
-							id: e.id,
-							name: e.name,
-							input: {},
-						}));
-					const extraYieldExecs: ToolResult[] = pendingDuplicateYieldExtras.map(
-						() => ({
-							content:
-								"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
-							isError: false,
-						}),
-					);
-
-					const bundledMsgs = adapter.buildUserTurn({
-						toolUses: [
-							...extraYieldToolUses,
-							{
-								id: pendingCompactToolCall.id,
-								name: pendingCompactToolCall.name,
-								input: {},
-							},
-						],
-						execResults: [
-							...extraYieldExecs,
-							{
-								content: "Manual compaction requested",
-								isError: false,
-							},
-						],
-						queueMessages: [],
-					});
-					// The buildUserTurn output is a single user message with
-					// tool_result blocks. Extend its content array with the
-					// summarization text so all blocks share the same user turn.
-					for (const msg of bundledMsgs) {
-						const m = msg as { role: string; content: unknown };
-						if (m.role === "user" && Array.isArray(m.content)) {
-							(m.content as Array<{ type: string; text: string }>).push({
-								type: "text",
-								text: summarizationInstruction,
-							});
-						}
-						messages.push(m);
-					}
-					pendingCompactYieldToolCall = null;
-					pendingCompactDoneToolCall = null;
-					pendingDuplicateYieldExtras = [];
-				} else {
-					(messages as Array<{ role: string; content: string }>).push({
-						role: "user",
-						content: summarizationInstruction,
-					});
-				}
+				(messages as Array<{ role: string; content: string }>).push({
+					role: "user",
+					content: summarizationInstruction,
+				});
 				// summarization_request event removed — instruction is part of compact_started
 				compactionPending = true;
 				preCompactTokenCount = adapter.supportsTokenCounting
@@ -1986,10 +1922,17 @@ export async function* runProviderLoop(
 
 			// Handle duplicate yield calls in same turn.
 			// Extras MUST be bundled into the real yield's user turn (built when the
-			// yield wakes up) — NOT pushed as a separate user message here. Otherwise
-			// messages[] ends up with two consecutive user messages: the extras user
-			// message pushed now, then the real yield's user message pushed on wake.
-			// That violates API role-alternation and fails with 400.
+			// yield wakes up) — NOT pushed as a separate user message here.
+			//
+			// The reason is live/walker BYTE-IDENTITY, not role alternation (which
+			// does not exist — the two-consecutive-user shape this used to cite is
+			// accepted by the API). The extras' tool_results are emitted to JSONL
+			// below and the real yield's at wake, with nothing between them that the
+			// walker's collection loop breaks on — so reconstruction produces ONE
+			// user message and the live path must produce the same one. Splitting
+			// would require inventing a JSONL boundary event: more machinery, not
+			// less. See memory.md, and contrast with the two compaction deferrals
+			// that were removed because the turn they merged into is transient.
 			const extraYields = toolUses.filter(
 				(tu) => tu.name === TOOL_YIELD && tu.id !== yieldToolUse.id,
 			);
@@ -2007,8 +1950,7 @@ export async function* runProviderLoop(
 						type: "tool_result" as const,
 						tool: tu.name,
 						toolCallId: tu.id,
-						content:
-							"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
+						content: DUPLICATE_YIELD_IGNORED,
 						isError: false,
 						ts: Date.now(),
 					};
@@ -2094,48 +2036,26 @@ export async function* runProviderLoop(
 			const doneIndex = toolUses.indexOf(doneToolUse);
 			const doneToolResult = execResults[doneIndex] as ToolResult | undefined;
 			if (doneToolResult && !doneToolResult.isError) {
-				// Handle duplicate done calls in the same turn (R8-B#2).
-				// Emit tool_results for ALL dones (extras AND the winner) so that
-				// NO orphans remain in JSONL. Without this, the winner exits as an
-				// intended orphan → on resume, repair adds an interrupted result
-				// AFTER lifecycle events (agent_end, done_notified) → the walker's
-				// tool_result collection loop breaks at those lifecycle events →
-				// two separate user messages → API 400 "consecutive user" → permanent
-				// brick. Emitting ALL results avoids repair entirely.
+				// Duplicate done() calls in the same turn need NO special handling.
 				//
-				// Trade-off: with all results emitted, resume detects
-				// isInterruptedResume (not pendingDoneToolCall), so the agent gets
-				// a normal interrupted resume instead of the special done-resume
-				// context. This is acceptable — correctness over ideal UX.
-				const extraDones = toolUses.filter(
-					(tu) => tu.name === TOOL_DONE && tu.id !== doneToolUse.id,
-				);
-				if (extraDones.length > 0) {
-					// Emit extras' results first
-					for (const tu of extraDones) {
-						const evt: EventSpec = {
-							type: "tool_result" as const,
-							tool: tu.name,
-							toolCallId: tu.id,
-							content:
-								"done() ignored — duplicate done in same turn. Only the first done is used.",
-							isError: false,
-							ts: Date.now(),
-						};
-						if (emit) emit(evt);
-					}
-					// Emit winner's result too — prevents it from being an orphan
-					// that repair would place after lifecycle events
-					const winnerResultEvt: EventSpec = {
-						type: "tool_result" as const,
-						tool: doneToolUse.name,
-						toolCallId: doneToolUse.id,
-						content: "done() processed successfully.",
-						isError: false,
-						ts: Date.now(),
-					};
-					if (emit) emit(winnerResultEvt);
-				}
+				// FIX-5 R8-B#2 used to emit tool_results for every done here, to keep
+				// repair from placing an interrupted result after the lifecycle events
+				// (agent_end, done_notified) — which splits the walker's tool_result
+				// collection loop into two user messages. That split is REAL; the 400
+				// attributed to it was not. `user[tool_result] user[tool_result]` is
+				// accepted: both messages open with tool_result blocks, so the answering
+				// run spans them. Measured; see memory.md.
+				//
+				// Removing it is a BEHAVIOR FIX, not a cleanup. That workaround had a
+				// documented cost — every done tool_call answered means the resume sees
+				// isInterruptedResume instead of pendingDoneToolCall, so a woken agent
+				// got a generic "you were interrupted" context instead of its
+				// done-resume context. That cost bought nothing.
+				//
+				// What happens now: the last done stays an intended orphan (repair skips
+				// it) and the earlier one gets an interrupted result appended. Both are
+				// answered before any non-tool_result block, and the resume correctly
+				// detects a pending done.
 
 				const doneInput = doneToolUse.input as { status?: string } | undefined;
 				doneExitReason =
