@@ -1,7 +1,19 @@
 import { memo, useCallback, useState } from "react";
+import { isWorking } from "../../../agent-activity.ts";
+import {
+	type EditBlockedReason,
+	editVerdict,
+} from "../../../message-editability.ts";
+import {
+	isBuiltinTool,
+	TOOL_BASH,
+	TOOL_DONE,
+	TOOL_YIELD,
+} from "../../../tool-names.ts";
 import { api } from "../../api.ts";
 import { useAuthFetch } from "../../auth.ts";
 import {
+	type AgentActivity,
 	type CacheInfo,
 	formatTime,
 	getLogTaskId,
@@ -9,12 +21,6 @@ import {
 	type TreeNode,
 } from "../../hooks.ts";
 import { useLocale } from "../../i18n.ts";
-import {
-	isBuiltinTool,
-	TOOL_BASH,
-	TOOL_DONE,
-	TOOL_YIELD,
-} from "../../tool-names.ts";
 import { Card } from "../Card.tsx";
 import { ImageLightbox } from "../ImageLightbox.tsx";
 import { IconEdit } from "../icons.tsx";
@@ -29,6 +35,21 @@ import {
 	isTitleOnly,
 	summarizeToolResult,
 } from "./utils.ts";
+
+/**
+ * One sentence per reason. Deliberately not collapsed into a generic
+ * "can't edit this": the two permanent reasons and the transient one call
+ * for completely different responses from the user.
+ */
+const BLOCKED_TITLE_KEY: Record<EditBlockedReason, string> = {
+	agent_busy: "activity.editBlockedBusy",
+	did_not_start_run: "activity.editBlockedMidRun",
+	// The UI can't reach this one yet — it always passes hasRewindPoint:true,
+	// because the log it renders is already sliced at the compaction barrier.
+	// The backend can, and will say the same thing.
+	no_rewind_point: "activity.editBlockedNoRewindPoint",
+	unknown_message: "activity.editBlockedUnknown",
+};
 
 /** Outer wrapper: timestamp + badge + card */
 function LogEntryWrapper({
@@ -114,6 +135,7 @@ export const LogEntryView = memo(function LogEntryView({
 	onRollback,
 	onEdit,
 	editingEid,
+	activity,
 }: {
 	entry: LogEntry;
 	nodeMap: Map<string, TreeNode>;
@@ -128,6 +150,8 @@ export const LogEntryView = memo(function LogEntryView({
 	onEdit?: (eid: string, content: string) => void;
 	/** eid of the message currently loaded in the composer for editing — marked in the log. */
 	editingEid?: string | null;
+	/** What this task's agent is doing — one half of the Edit/Rewind gate. */
+	activity?: AgentActivity;
 }) {
 	const authFetch = useAuthFetch();
 	const [movingToBg, setMovingToBg] = useState(false);
@@ -683,6 +707,24 @@ export const LogEntryView = memo(function LogEntryView({
 	if (entry.type === "message" && entry.body.source === "user") {
 		const eid = (entry as { eid?: string }).eid;
 		const isEditing = !!eid && eid === editingEid;
+		// Edit and Rewind are the same backend operation, so one verdict
+		// governs both. A blocked message keeps its buttons — greyed, with
+		// the reason on hover. Making them vanish leaves the user with no
+		// way to find out why, and the two reasons need different answers:
+		// one is "wait", the other is "this message isn't a starting point".
+		const verdict = editVerdict({
+			startsRun: entry.startsRun,
+			// The log the UI renders is already sliced at the compaction
+			// barrier, so every message it shows sits past the splice and
+			// has somewhere to rewind to. (After "Load earlier history" the
+			// batch is the raw file instead — those entries get no
+			// `startsRun` at all, and `unknown_message` outranks this.)
+			hasRewindPoint: true,
+			agentBusy: isWorking(activity),
+		});
+		const blockedTitle = verdict.editable
+			? null
+			: t(BLOCKED_TITLE_KEY[verdict.reason]);
 		return (
 			<>
 				<div
@@ -697,8 +739,11 @@ export const LogEntryView = memo(function LogEntryView({
 							{onEdit && eid && (
 								<button
 									type="button"
-									className="mxd-user-msg-action"
-									title={t("activity.editButton")}
+									className={`mxd-user-msg-action${
+										blockedTitle ? " mxd-user-msg-action--blocked" : ""
+									}`}
+									title={blockedTitle ?? t("activity.editButton")}
+									disabled={!!blockedTitle}
 									onClick={() =>
 										onEdit(
 											eid,
@@ -718,8 +763,11 @@ export const LogEntryView = memo(function LogEntryView({
 							{onRollback && eid && (
 								<button
 									type="button"
-									className="mxd-user-msg-action"
-									title={t("activity.rollback")}
+									className={`mxd-user-msg-action${
+										blockedTitle ? " mxd-user-msg-action--blocked" : ""
+									}`}
+									title={blockedTitle ?? t("activity.rollback")}
+									disabled={!!blockedTitle}
 									onClick={() =>
 										onRollback(
 											eid,

@@ -12,6 +12,7 @@
 import { pluginApiPrefix } from "@mxd/types";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isWorking } from "../agent-activity.ts";
 import { useAuthFetch } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
 import { BackgroundProcessBar } from "./components/BackgroundProcessBar.tsx";
@@ -35,7 +36,6 @@ import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
 import {
 	createEventHandler,
 	type EventHandlerDeps,
-	isWorking,
 	type PendingAction,
 	type PendingMessage,
 	pendingReducer,

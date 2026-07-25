@@ -2436,6 +2436,21 @@ h6.mxd-md-h {
 .mxd-user-msg-action:hover {
 	color: var(--accent);
 }
+/*
+ * Blocked Edit/Rewind. The button stays — it keeps its place in the row and
+ * carries the reason in its tooltip. Removing it would leave the user with a
+ * gap where an affordance used to be and no way to find out why.
+ */
+.mxd-user-msg-action--blocked {
+	cursor: not-allowed;
+	opacity: 0.35;
+}
+.mxd-event-user_message:hover .mxd-user-msg-action--blocked {
+	opacity: 0.35;
+}
+.mxd-user-msg-action--blocked:hover {
+	color: var(--text-faint);
+}
 
 .mxd-tool-result-images {
 	display: flex;

@@ -9,6 +9,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { isWorking } from "../agent-activity.ts";
 import { isProductionProject } from "../production.ts";
 import { api } from "./api.ts";
 import { useAuthFetch } from "./auth.ts";
@@ -50,7 +51,6 @@ import {
 	type ActivityMap,
 	activityReducer,
 	createEventHandler,
-	isWorking,
 	type PendingAction,
 	type PendingMessage,
 	pendingReducer,
@@ -972,11 +972,15 @@ function ProjectContent({
 		],
 	);
 
-	/** Process event response: update logs and track which sessions have older events */
+	/**
+	 * Process event response: update logs and track which sessions have older
+	 * events. Every caller of this fetches with `after=compact`, which the
+	 * server answers by chain-walking — so these events ARE the conversation.
+	 */
 	const processEventResponse = useCallback(
 		(data: { events?: IncomingEvent[]; hasOlderEvents?: boolean }) => {
 			if (data.events && data.events.length > 0) {
-				processEventBatch(data.events);
+				processEventBatch(data.events, { fromActiveChain: true });
 
 				// Track per-session older events availability
 				if (data.hasOlderEvents) {
@@ -1674,6 +1678,11 @@ function ProjectContent({
 						events?: IncomingEvent[];
 					};
 					if (fullData.events && fullData.events.length > 0) {
+						// Raw file, not the active chain: it deliberately holds
+						// summarized-away history and abandoned rewind branches
+						// so the user can read them. Not annotated — the server
+						// is the only side that knows which of these events the
+						// conversation still contains.
 						processEventBatch(fullData.events);
 					}
 					// Update older events availability

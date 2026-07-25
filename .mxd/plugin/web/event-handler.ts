@@ -1,4 +1,7 @@
 import type React from "react";
+import { isWorking } from "../agent-activity.ts";
+import { messageRunStarts } from "../run-start.ts";
+import { TOOL_YIELD } from "../tool-names.ts";
 // ID generation — crypto.randomUUID() for local UI state
 import {
 	type AgentActivity,
@@ -10,7 +13,6 @@ import {
 	type TreeNode,
 	type UIEvent,
 } from "./hooks.ts";
-import { TOOL_YIELD } from "./tool-names.ts";
 import type { QueueMessage } from "./types.ts";
 
 // ── Pending messages: events-derived view, not mutable state ──
@@ -184,14 +186,9 @@ export function activityReducer(
 	return next;
 }
 
-/**
- * Is this agent doing something, as opposed to waiting for input or absent?
- * The ONE derivation of "active" — spinners, tab indicators and the task tree
- * all resolve through it rather than each deciding for themselves.
- */
-export function isWorking(state: AgentActivity | undefined): boolean {
-	return state !== undefined && state !== "idle";
-}
+// `isWorking` — the ONE derivation of "active", shared by spinners, tab
+// indicators, the task tree AND the backend's edit gate — moved to
+// `../agent-activity.ts` when the gate needed it. Imported above.
 
 // --- Update operations for in-place entry mutations ---
 
@@ -1411,8 +1408,30 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	/**
 	 * Process a batch of events (used for REST-fetched event history on page load/reconnect).
 	 * Resets all state and reprocesses from scratch through the unified processEvent path.
+	 *
+	 * `fromActiveChain` says whether these events ARE the conversation (the
+	 * `after=compact` fetch, which the server chain-walks) or the raw file
+	 * ("Load earlier history", which deliberately includes summarized-away
+	 * history and abandoned rewind branches so the user can read them). Only
+	 * the first kind can be annotated with run starts — in the raw file a
+	 * tool call from a branch nobody is on would count against a message that
+	 * has nothing to do with it. A gate that answers wrongly is worse than
+	 * one that says "I don't know", so on a raw batch we decline.
+	 *
+	 * ⚠️ TEMPORARY. This flag exists ONLY because "Load earlier history"
+	 * hands us the raw file and the client has no way to tell which of those
+	 * events the conversation still contains. The real fix is server-side:
+	 * mark active-chain membership in the response, so the client receives
+	 * the answer instead of guessing at the algorithm (a second copy of the
+	 * chain walk in the browser is exactly what "One boundary: the active
+	 * chain" removed). **When that lands, this parameter should be DELETED,
+	 * not repurposed** — it is scaffolding around a hole, and scaffolding
+	 * outlives holes unless whoever fills the hole takes it down.
 	 */
-	function processEventBatch(events: IncomingEvent[]): void {
+	function processEventBatch(
+		events: IncomingEvent[],
+		opts?: { fromActiveChain?: boolean },
+	): void {
 		// Reset per-batch state — reprocessing from scratch. Pending reducer
 		// also resets to []; message events in the batch will re-populate it.
 		toolCallToolNames.clear();
@@ -1464,6 +1483,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// Collapse consecutive session lifecycle entries (resumed/stopped) with no
 		// meaningful content between them. Keep only the last one in each run.
 		entries = collapseLifecycleEntries(entries);
+		if (opts?.fromActiveChain) entries = annotateRunStarts(entries, events);
 
 		setLogs(entries);
 		for (const fn of deferredSideEffects) fn();
@@ -1473,6 +1493,33 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// overwrite that. Nothing in this batch can touch activity now — it
 		// comes only from ephemeral events that never enter JSONL — so there
 		// is nothing to correct.
+	}
+
+	/**
+	 * Mark which user-message entries started a run (run-start.ts).
+	 *
+	 * Decided from `events` — the RAW batch in delivery order — not from the
+	 * entries, because a message typed mid-tool-call is delivered inside the
+	 * tool's window but rendered after the finished tool card. Reading the
+	 * rendered order would call exactly the blocked case a run start.
+	 *
+	 * The batch is the only place this can be done, and the only place it
+	 * needs to be: an eid reaches the UI only through a JSONL fetch (SSE
+	 * broadcasts carry none), so an entry without one shows no buttons.
+	 */
+	function annotateRunStarts(
+		entries: LogEntry[],
+		events: IncomingEvent[],
+	): LogEntry[] {
+		const starts = messageRunStarts(events);
+		if (starts.size === 0) return entries;
+		return entries.map((entry) => {
+			if (entry.type !== "message") return entry;
+			const eid = (entry as { eid?: string }).eid;
+			if (!eid) return entry;
+			const startsRun = starts.get(eid);
+			return startsRun === undefined ? entry : { ...entry, startsRun };
+		});
 	}
 
 	/** Entry types that count as "meaningful content" — NOT lifecycle noise. */

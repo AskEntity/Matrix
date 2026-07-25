@@ -1,6 +1,11 @@
 /**
  * Matrix tool name constants — plugin-local copy.
  * These are Matrix-specific (mcp__mxd__*). Other plugins have their own tool names.
+ *
+ * Lives at the plugin root, not under `web/`: a tool name is a fact about
+ * matrix's agent, not about the browser. The UI reads these, and so does
+ * `message-editability.ts`, which the plugin's worker-side `/edit` route runs.
+ * Zero imports, so it is safe in both.
  */
 
 const MCP_PREFIX = "mcp__mxd__";

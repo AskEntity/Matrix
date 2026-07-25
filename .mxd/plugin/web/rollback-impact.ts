@@ -10,7 +10,7 @@
  * user what will NOT be undone. Pure: no DOM, no React, no fetch.
  */
 
-import { stripMcpPrefix } from "./tool-names.ts";
+import { stripMcpPrefix } from "../tool-names.ts";
 
 /** Minimal structural shape this analysis needs from a LogEntry. */
 export type ImpactEntry = {

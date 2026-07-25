@@ -41,7 +41,7 @@ import {
 	TOOL_UPDATE_TASK,
 	TOOL_WRITE_FILE,
 	TOOL_YIELD,
-} from "./tool-names.ts";
+} from "../tool-names.ts";
 import type { Event, QueueMessage } from "./types.ts";
 
 // ── Display data types ──
