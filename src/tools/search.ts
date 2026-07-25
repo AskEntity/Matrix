@@ -53,6 +53,40 @@ export const DEFAULT_SKIP_DIRS = [
 ];
 
 /**
+ * Is this walk-relative path inside one of `skipDirs`? Each entry ends with `/`,
+ * so a name is only matched as a whole path segment — `build/` never matches
+ * `rebuild.ts`.
+ *
+ * ONE predicate, two walkers (`search` and `list_files`). A second copy would
+ * drift silently: nothing compares them, and both would keep answering.
+ */
+export function isInSkippedDir(
+	relPath: string,
+	skipDirs: readonly string[],
+): boolean {
+	return skipDirs.some(
+		(prefix) => relPath.startsWith(prefix) || relPath.includes(`/${prefix}`),
+	);
+}
+
+/**
+ * The default skips, minus any directory the caller's pattern NAMES.
+ *
+ * `search` lets you reach a skipped directory by pointing `path` into it, or by
+ * passing `excluded_dirs: []`. `list_files` takes a pattern and nothing else, so
+ * without this rule the skip list would remove an ability with no replacement:
+ * `list_files("node_modules/zod/**")` would answer "(no files)".
+ *
+ * The rule is: you named it, you get it. Comparing against the trailing-slash
+ * form is what keeps it from firing by accident — a pattern hunting for
+ * `*build*.ts` does not contain `build/`. When it does fire wrongly it hands over
+ * MORE files than expected, never fewer, which is the recoverable direction.
+ */
+export function skipDirsForPattern(pattern: string): string[] {
+	return DEFAULT_SKIP_DIRS.filter((dir) => !pattern.includes(dir));
+}
+
+/**
  * A glob with no `/` in it is a FILENAME pattern, and a filename pattern means
  * "at any depth" — that is what `--glob '*.ts'` means to ripgrep, what this
  * tool's description promises, and what every caller typing `*.ts` is saying.
@@ -147,13 +181,7 @@ export async function jsSearch(opts: {
 			? excludedDirs.map((d) => (d.endsWith("/") ? d : `${d}/`))
 			: DEFAULT_SKIP_DIRS;
 		if (skipDirs.length > 0) {
-			files = files.filter(
-				(f) =>
-					!skipDirs.some(
-						(prefix) =>
-							f.startsWith(prefix) || f.includes(`/${prefix.slice(0, -1)}/`),
-					),
-			);
+			files = files.filter((f) => !isInSkippedDir(f, skipDirs));
 		}
 	}
 

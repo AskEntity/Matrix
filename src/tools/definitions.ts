@@ -6,7 +6,7 @@ import * as R from "../resource-registry.ts";
 import { defineTool } from "../tool-def.ts";
 import { executeBackgroundTool } from "./background.ts";
 import { executeBashWithTimeout } from "./bash.ts";
-import { jsSearch } from "./search.ts";
+import { isInSkippedDir, jsSearch, skipDirsForPattern } from "./search.ts";
 
 /** Resolve a path relative to cwd if not absolute. */
 export function resolvePath(p: string, cwd: string): string {
@@ -413,8 +413,20 @@ const listFilesTool = defineTool({
 		const pattern = args.pattern ?? "*";
 		try {
 			const glob = new Bun.Glob(pattern);
+			const skipDirs = skipDirsForPattern(pattern);
 			const files: string[] = [];
-			for await (const file of glob.scan({ cwd, dot: false })) {
+			// Both options are passed explicitly rather than inherited from Bun's
+			// defaults. `dot` defaults to FALSE, which hid every file under `.mxd/` —
+			// production code in this repo. What this tool ignores is
+			// DEFAULT_SKIP_DIRS' decision alone.
+			//
+			// The filter runs INSIDE the loop so the cap counts files we KEEP.
+			// Filtering after the cap is not a slower version of the same answer, it
+			// is a different and worse one: measured from the main checkout,
+			// `**/*.ts` filled 323 of its 500 slots with `.worktrees/` copies of the
+			// same files and never reached `web/`, `scripts/` or `.mxd/` at all.
+			for await (const file of glob.scan({ cwd, dot: true, onlyFiles: true })) {
+				if (isInSkippedDir(file, skipDirs)) continue;
 				files.push(file);
 				if (files.length >= 500) break;
 			}
