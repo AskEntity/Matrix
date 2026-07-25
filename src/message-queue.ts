@@ -156,7 +156,20 @@ export class MessageQueue {
 		return this.closed;
 	}
 
-	/** Whether this agent is currently idle (waiting for messages). */
+	/**
+	 * Whether a waiter is currently parked on THIS QUEUE.
+	 *
+	 * ⚠️ This is NOT "the agent has stopped working" — do not unify it with
+	 * `TaskSession.activity === "idle"`, which is the agent's own report of
+	 * what it is doing and is what every consumer of agent state reads. The
+	 * two are close but not equal: the initial drain parks a waiter here
+	 * without touching this flag (test helpers poll it as "the steady-state
+	 * loop has settled", and flipping it during startup would let a poller
+	 * call a still-booting agent settled).
+	 *
+	 * Nothing in production reads this any more; its remaining callers are
+	 * test synchronization helpers.
+	 */
 	idle = false;
 
 	/**

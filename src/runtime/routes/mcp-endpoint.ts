@@ -229,13 +229,24 @@ function buildExternalOnlyToolDefs(ctx: RuntimeContext): AnyToolDef[] {
 				// If the agent isn't actively running, return immediately.
 				// Without this, yield_external would deadlock waiting for
 				// an event that was already emitted before we subscribed.
+				//
+				// MUST use the same predicate as `wakeReason` above: this and
+				// the subscription are ONE consumer answering ONE question
+				// ("has the agent stopped working?") and the answer must not
+				// depend on which side of the subscribe the caller arrived on.
+				// It used to read `session.queue?.idle` — equivalent back when
+				// idle was announced unconditionally, but no longer: with a
+				// message already queued the loop does not park, so queue.idle
+				// can be true while the agent is still working. An early caller
+				// would have been told "idle" and returned; a late one would
+				// have correctly kept waiting.
 				const session = node.session;
 				if (!session) {
 					// No session = agent not running (never started, or stopped)
 					return result("not_running");
 				}
-				if (session.queue?.idle) {
-					// Agent is in yield/idle state — already paused
+				if (session.activity === "idle") {
+					// Parked on the queue — already paused, waiting for input.
 					return result("agent_idle");
 				}
 

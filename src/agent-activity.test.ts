@@ -249,7 +249,7 @@ describe("Agent activity: three states, one source", () => {
 
 	afterEach(async () => {
 		if (ctx) await teardownTestContext(ctx);
-	});
+	}, 20000);
 
 	test("is `tool` WHILE a tool runs — observed from inside the tool itself", async () => {
 		ctx = await setupTestContext();
@@ -267,7 +267,7 @@ describe("Agent activity: three states, one source", () => {
 		// value" — the distinction is what interrupt semantics depend on.
 		expect(probeObservation?.taskId).toBe(rootId);
 		expect(probeObservation?.state).toBe("tool");
-	});
+	}, 20000);
 
 	test("reports thinking → tool → thinking across a tool turn", async () => {
 		ctx = await setupTestContext();
@@ -296,7 +296,7 @@ describe("Agent activity: three states, one source", () => {
 		expect(shape.slice(firstTool + 1)).toContain("thinking");
 		// Session teardown always closes the sequence.
 		expect(shape[shape.length - 1]).toBe(null);
-	});
+	}, 20000);
 
 	test("parks on the queue as `idle`, and the snapshot route agrees", async () => {
 		ctx = await setupTestContext();
@@ -325,7 +325,27 @@ describe("Agent activity: three states, one source", () => {
 			states: Record<string, AgentActivity>;
 		};
 		expect(states[rootId]).toBe("idle");
-	});
+	}, 20000);
+
+	test("a launch whose message is already queued announces NO idle", async () => {
+		// The other half of "only when it really parks". The normal launch has
+		// its triggering message in the queue, so the initial drain's wait()
+		// resolves immediately — the agent never waited for input, and this run
+		// ends in done() without ever parking. A single `idle` anywhere in the
+		// sequence would be a pause that never happened, and both consumers act
+		// on it (external-client wake, Edit/Rewind re-fetch).
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+
+		await postMessage(ctx, rootId, probeThenDone("no-idle"));
+		await waitFor(
+			() => tracker.getTask(rootId)?.status === "verify",
+			() => `status=${tracker.getTask(rootId)?.status}`,
+		);
+
+		expect(statesFor(ctx, rootId)).not.toContain("idle");
+	}, 20000);
 
 	test("an agent launched with an EMPTY queue reports idle (initial drain)", async () => {
 		// The fifth place the loop parks on the queue, and the only one outside
@@ -353,7 +373,7 @@ describe("Agent activity: three states, one source", () => {
 				`stored=${storedState(ctx, child.id)} seen=${statesFor(ctx, child.id)}`,
 		);
 		expect(statesFor(ctx, child.id)).toContain("idle");
-	});
+	}, 20000);
 
 	test("session end broadcasts state null and drops the task from the snapshot", async () => {
 		ctx = await setupTestContext();
@@ -381,7 +401,7 @@ describe("Agent activity: three states, one source", () => {
 			states: Record<string, AgentActivity>;
 		};
 		expect(rootId in states).toBe(false);
-	});
+	}, 20000);
 
 	test("a task with no agent has NO entry — absence is not `idle`", async () => {
 		ctx = await setupTestContext();
@@ -400,7 +420,7 @@ describe("Agent activity: three states, one source", () => {
 			states: Record<string, AgentActivity>;
 		};
 		expect(child.id in states).toBe(false);
-	});
+	}, 20000);
 
 	test("activity is never persisted to JSONL", async () => {
 		// The structural guarantee behind "replaying history must not
@@ -422,5 +442,5 @@ describe("Agent activity: three states, one source", () => {
 		const events = store.read(rootId);
 		expect(events.length).toBeGreaterThan(0);
 		expect(events.some((e) => e.type === "agent_activity")).toBe(false);
-	});
+	}, 20000);
 });

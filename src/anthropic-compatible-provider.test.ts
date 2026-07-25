@@ -31,6 +31,7 @@ import { TaskTracker } from "./task-tracker.ts";
 import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
 import { toToolDefinition } from "./tool-def.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
+import { TOOL_YIELD } from "./tool-names.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
 import { buildBuiltinToolDefs } from "./tools/definitions.ts";
@@ -2858,6 +2859,88 @@ describe("Event deterministic verification", () => {
 			return false;
 		});
 		expect(queueReconstructed).toBeDefined();
+	});
+
+	test("idle is announced ONLY when the loop actually parks on the queue", async () => {
+		// `idle` means "waiting for you", not "reached a yield point". When a
+		// message is already queued, wait() resolves on the next microtask and
+		// the agent never paused — announcing idle there reports a pause that
+		// did not happen, and both consumers act on it: yield_external wakes an
+		// external client, and the UI re-fetches JSONL to expose Edit/Rewind.
+		//
+		// This run passes through THREE queue-wait points and must announce
+		// exactly ONE idle:
+		//   1. initial drain     — prompt already queued  → no announce
+		//   2. explicit yield    — message enqueued below → no announce
+		//   3. end_turn          — queue empty            → ANNOUNCE
+		const testDir = join(tmpDir, "idle-only-when-parked");
+		const idleAnnouncements: number[] = [];
+		let sawYieldToolCall = false;
+
+		const emit = (event: EventSpec) => {
+			if (event.type === "tool_call" && event.tool === TOOL_YIELD) {
+				// Enqueue BEFORE the loop reaches its yield park. Emit callbacks
+				// run synchronously inside the loop, so this is deterministic:
+				// the message is in the queue when handleImplicitYield asks.
+				sawYieldToolCall = true;
+				queue.enqueue({
+					source: "user",
+					id: "wake-during-yield",
+					ts: 0,
+					content: "already waiting for you",
+				});
+			}
+			if (event.type === "agent_activity" && event.state === "idle") {
+				idleAnnouncements.push(callCount);
+				// The only genuine park — end the run.
+				queue.close();
+			}
+		};
+
+		let callCount = 0;
+		const provider = createMockedProvider(() => {
+			callCount++;
+			if (callCount === 1) {
+				// Yield alone → loop-level pause → handleImplicitYield, with the
+				// message the emit callback just enqueued already waiting.
+				return createMockStream(
+					buildAnthropicResponse({
+						toolUses: [{ id: "y1", name: TOOL_YIELD, input: {} }],
+						stopReason: "tool_use",
+					}),
+					[],
+				);
+			}
+			// end_turn with nothing queued → the real park.
+			return createMockStream(
+				buildAnthropicResponse({
+					text: "nothing left to do",
+					stopReason: "end_turn",
+				}),
+				["nothing left to do"],
+			);
+		});
+
+		const queue = queueWithPrompt("Start working", testDir);
+		const session = provider.stream({
+			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
+			buildWorkContext: () => null,
+			buildSummarizationPrompt: () => "Summarize the conversation.",
+			emit,
+			queue,
+		});
+
+		let result = await session.next();
+		while (!result.done) {
+			result = await session.next();
+		}
+
+		expect(sawYieldToolCall).toBe(true);
+		// Two turns ran, so the loop passed the yield park and kept going.
+		expect(callCount).toBe(2);
+		// Exactly one announcement, and it came from the second turn's
+		// end_turn — not from the initial drain, not from the yield.
+		expect(idleAnnouncements).toEqual([2]);
 	});
 
 	test("multiple parallel tool calls: 3 tool_use blocks → 3 tool_results", async () => {
