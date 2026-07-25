@@ -735,16 +735,27 @@ it, or back the file up.
 - Repair runs in runAgentForNode before provider loop starts
 - **File truncation is gone** (`truncateAfterLine`, deleted 2026-07-24). Addressing events by file position produced two separate data-destroying bugs (FIX-1 cc#1, FIX-8 R8-B#4) and destroyed the evidence needed to debug the corruption. Read those FIX sections as history; the current shape is "One boundary: the active chain".
 
+Full account: *One boundary: the active chain*, at the end of this region. This entry is the index card.
+
+### Scope: what it deliberately does NOT repair
+
+**Orphan `tool_result`** (a result with no matching call). The runtime cannot produce one, so
+repairing it would mask a real bug instead of fixing a real state. Same rule as "no dangling-link
+handling" further down this region — a state the runtime cannot produce must not have code that
+quietly patches it, or that code becomes a silencer.
+
+Original wording of this scope statement, kept because it enumerates the three cases: *"Repairs:
+orphan tool_call → synthetic result, duplicate tool_result → truncate, out-of-order → truncate.
+Does NOT repair orphan tool_result — can't be produced by runtime, masking hides bugs."*
+**The two `truncate`s are SUPERSEDED** — since 2026-07-24 both are a `chainToEid` jump and nothing
+is truncated. The scope claim itself still holds.
+
 ## enqueue === persist (single JSONL write path)
 
 `MessageQueue.enqueue(msg)` synchronously calls `onPersist(msg)` before delivery. ONE way queue messages reach JSONL.
 - `replay: true` — skip onPersist (already in JSONL). `quiet: true` — suppress wake, NOT persistence.
 - **traceId**: has traceId = produced by agent loop run. No traceId = external to any run.
 - **Pitfall**: `createApp()` does NOT call `autoResumeProjects()`. Tests must call it explicitly.
-
-## buildSessionRepair Scope Boundary
-
-Repairs: orphan tool_call → synthetic result, duplicate tool_result → truncate, out-of-order → truncate. Does NOT repair orphan tool_result — can't be produced by runtime, masking hides bugs.
 
 ## JSONL Lifecycle Refactor
 
@@ -860,13 +871,30 @@ the file: both FAIL on main, both PASS with the fix.
 
 ## FIX-1 (2026-06-05) — buildSessionRepair corrupted COMPACTED sessions (index-space + orphan results)
 
+> **HISTORY — the machine these bugs lived in is deleted (2026-07-24).** `buildSessionRepair`
+> computes no index at all now: it returns `{chainToEid, appendEvents}` and the caller applies it as
+> a chain jump. cc#1 and F-H2 below diagnose a mechanism that no longer exists. Kept because the
+> DIAGNOSIS is the reusable part — see FIX-8's banner for the same lesson, and *One boundary: the
+> active chain* for the current shape.
+> **Still LIVE, do not read as history**: B-L8's intended-orphan rule (skip yield/done only when it
+> is the LAST tool_call), the `endsInPendingControl` guard on the synthetic user message, and D#1
+> (`source: "system"` renders to an empty string).
+
 CRITICAL data-corruption fix. Both audits (matrix F-H2 + cc#1) independently hit it. The repair
 path could permanently brick any *compacted* session (recoverable only by `reset_task`). Four
 facets, one subsystem (`src/events.ts buildSessionRepair`, call site `agent-lifecycle.ts:~801`).
 
-**This SUPERSEDES the "JSONL Repair" and "buildSessionRepair Scope Boundary" sections above.** The
+~~**This SUPERSEDES the "JSONL Repair" and "buildSessionRepair Scope Boundary" sections above.** The
 key claim that changed: `buildSessionRepair` now takes the **FULL** event log and returns a
-**PHYSICAL** line index. Read those older sections with this correction in mind.
+**PHYSICAL** line index. Read those older sections with this correction in mind.~~
+
+⚠️ **SUPERSEDED, and now pointing the wrong way — do NOT follow it.** "JSONL Repair" has since been
+rewritten to the current `{chainToEid, appendEvents}` contract, so "correcting" it with the
+struck-through claim would re-introduce physical-line addressing — precisely the bug class that was
+deleted. The sentence stays visible because it records what the API looked like between 2026-06-05
+and 2026-07-24, and because it is the clearest example in this file of a superseding pointer
+outliving its own truth: **a pointer that says "trust me over that older section" has to be
+re-checked every time either end changes.**
 
 ### cc#1 — index-space mismatch (root cause)
 `buildSessionRepair` computed `truncateAfterIndex` against `readActive()` (post-`compact_marker`
@@ -1007,10 +1035,20 @@ This is intentional — eid/parentEid are persistence-layer concerns for future 
 UI doesn't need them. The SSE-broadcast event object may gain eid/parentEid via mutation IF
 a subscriber holds a reference past the broadcast call, but no subscriber does this.
 
+**SUPERSEDED (2026-07-24)** — that last caveat is gone entirely: `stampEvent` returns a copy and
+never mutates the caller's object. See § *Head-ordered lines* below. The first half (SSE carries no
+chain fields, deliberately) still holds, and is why the frontend has to re-fetch JSONL before it can
+offer Edit/Rewind.
+
 ### Walker unchanged (current stage)
 `event-converter.ts` walker is linear — it scans events sequentially. eid/parentEid are purely
 data at this stage. Future rollback/branching will make the walker "walk from leaf along
 parentEid" instead of linear scan.
+
+**SUPERSEDED (2026-07-22)** — the future in that paragraph arrived. `readActive` chain-walks via
+`walkActiveChainIndices`; eid/parentEid are load-bearing, not "purely data". See *Message rollback
+via parentEid chain-walk* and *One boundary: the active chain*. (The walker itself — the
+event→message converter — is still linear; what changed is which events reach it.)
 
 ### Event type
 Both fields are optional on the `Event` union's trailing intersection (`& { traceId?; eid?;
@@ -1018,60 +1056,7 @@ parentEid? }`). Optional because callers create events without them; EventStore 
 After persistence (in JSONL), they're always present. After migration, they're present on all
 old events too.
 
-## Message rollback via parentEid chain-walk (2026-07-22, simplified 2026-07-24)
-
-User clicks Rewind to here on a user message, system rolls back, agent regenerates. Claude Code /rewind equivalent.
-
-### Core mechanism: readActive() chain-walks instead of linear slice
-
-Old readActive(): findLastIndex(compact_marker) + slice(). New readActive(): walkActiveChainIndices() from the last event via parentEid. Without rollback, every event chains linearly (identical to old behavior). With rollback (setChainHead), the next event's parentEid jumps to the target event, rolled-back events are never visited.
-
-⚠️ **Where the walk STOPS was changed later the same day** — see "One boundary: the active chain (2026-07-24)" at the end of this file. It is no longer `compact_marker`; it is the `compact_started` of the last COMPLETED compaction, and inside that window only `type === "message"` survives. Read this section for the rollback mechanism; read that one for the boundary.
-
-### Rollback mechanism: setChainHead (no marker event)
-
-`EventStore.setChainHead(sessionId, eid)` — one line: `this.lastEventIds.set(sessionId, eid)`. Pure in-memory. The NEXT event appended via `stampEvent` gets `parentEid = eid`, creating the chain jump. No intermediate `rollback_marker` event — the jump is carried by the first post-rollback event itself. `/edit` endpoint: `setChainHead(nodeId, rollbackTargetEid)` → `deliverMessage(newContent)` → stampEvent auto-sets parentEid.
-
-**DELETED (2026-07-24)**: `rollback_marker` event type, `EventStore.appendRollback()`, frontend rollback_marker rendering (LogEntryView, event-handler, CSS). The marker was an implementation shortcut — parentEid jumps via setChainHead are simpler (one line vs. a full event write+flush).
-
-### ~~Defensive chain-walk fallback~~ — DELETED 2026-07-24
-
-This used to say: "if the parentEid chain breaks (null on a non-first event, or a parentEid naming a missing eid), fall back to linear traversal for preceding events. Without this fallback, 83 tests failed."
-
-Half of it survived and half of it was wrong. What survived: **an event with no parentEid stops chain-following, and everything before it is taken linearly** — that is the genuine chain root at index 0, and it is what makes a pre-eid log readable. That is a documented rule now, not a fallback.
-
-What was deleted: the *dangling-link* branch (a parentEid naming an eid no line carries). Coding around a state the runtime cannot produce hides bugs instead of surfacing them — the same reason `buildSessionRepair` refuses to repair orphan tool_results. Deleting it was only honest once the sole path that could produce a dangle was closed: `stampEvent` used to advance the chain head BEFORE the write, so a failed append (ENOSPC/EIO) left the next event pointing at an eid that never reached disk. `append`/`appendBatch` now rewind the head on write failure. **If you ever re-introduce a dangling-link fallback, you are papering over a writer bug — go find the writer.**
-
-### REST endpoint
-
-POST /api/matrix/projects/:id/tasks/:nodeId/edit (plugin route). Validates targetEid (exists, user message, after compact_marker). Stops agent, setChainHead, delivers new message via deliverMessage.
-
-### Frontend
-
-Edit/Rewind buttons on user messages (hover-reveal). i18n: activity.rollback / activity.rollbackConfirm (EN + ZH).
-
-### Agent lifecycle / buildSessionRepair adaptation
-
-agent-lifecycle.ts feeds repair the chain-walked active events, so rolled-back events are excluded from repair analysis. (`readActiveWithLineMap` / `readWithLineMap` / the physical-line translation were deleted on 2026-07-24 — repair now addresses events by eid and applies as a chain jump, not a file truncation.)
-
-### Tests
-
-src/rollback.test.ts: walkActiveChainIndices unit tests, EventStore integration tests, consistency tests (readActive + readFromLastCompactMarker + restart).
-
-## /rollback endpoint DELETED — /edit is the single path (2026-07-23)
-
-The standalone `/rollback` REST endpoint in `.mxd/plugin/runtime.ts` (~100 lines) and the
-`taskRollback` URL builder in `.mxd/plugin/web/api.ts` are deleted. Frontend (`Plugin.tsx
-handleRollback`) already calls `api.taskEdit` exclusively — the `/edit` endpoint combines
-rollback + message delivery atomically and fully supersedes `/rollback`.
-
-**Edit/Rewind consistency verified** across three scenarios via 6 integration tests in
-`src/rollback.test.ts`: readActive immediately, page refresh (readFromLastCompactMarker),
-daemon restart (fresh EventStore). All produce byte-identical event sequences. Multiple
-consecutive rollbacks: only the latest branch visible. Chain-walk via parentEid is
-deterministic on persisted JSONL — no in-memory state.
-
-## JSONL lines serialize eid/parentEid FIRST (2026-07-24)
+### Head-ordered lines: eid/parentEid serialize FIRST (2026-07-24)
 
 Every line `EventStore` writes now starts with the chain links:
 
@@ -1086,7 +1071,7 @@ so pre-change lines (chain fields at the tail) read back identically. Old files
 are NOT rewritten; head-ordered and tail-ordered lines coexist inside one file
 with zero effect (pinned by a test).
 
-### The mechanism, and the trap in the obvious version
+#### The mechanism, and the trap in the obvious version
 
 `stampEvent` no longer hangs fields on the caller's object — it returns a
 persisted copy built by module-level `withChainFields(event, eid, parentEid)`.
@@ -1107,7 +1092,7 @@ reverting to the naive spread fails exactly one test —
 `event-id.test.ts` "re-appending an event that already carries eid gets a FRESH
 chain".
 
-### Consequence: append/appendBatch no longer mutate the caller's event
+#### Consequence: append/appendBatch no longer mutate the caller's event
 
 Production never read `.eid` off an object it handed to the store (`emitEvent`
 broadcasts to SSE *before* persisting; every eid consumer — frontend rollback,
@@ -1121,13 +1106,66 @@ because the literal was mutated to carry the chain fields. 9 such assertions
 `stripChainFields()` (`src/test-utils/strip-chain-fields.ts`) — the assertion
 stays exact for every other field instead of weakening to `toMatchObject`.
 
-### Verification
+#### Verification
 
 `bun test` green; typecheck error count unchanged (24, all pre-existing, owned by
 01KYB3MJ); `check:ci` exit 0. Eyeball check via a real agent run (mock provider,
 `emission-harness`): all 12 lines of the produced session file — message,
 work_context, session_config, agent_start, messages_consumed, assistant_text,
 tool_call, usage … — start with `{"eid":"…","parentEid":…`, chain visibly linear.
+
+## Message rollback via parentEid chain-walk (2026-07-22, simplified 2026-07-24)
+
+User clicks Rewind to here on a user message, system rolls back, agent regenerates. Claude Code /rewind equivalent.
+
+### Core mechanism: readActive() chain-walks instead of linear slice
+
+Old readActive(): findLastIndex(compact_marker) + slice(). New readActive(): walkActiveChainIndices() from the last event via parentEid. Without rollback, every event chains linearly (identical to old behavior). With rollback (setChainHead), the next event's parentEid jumps to the target event, rolled-back events are never visited.
+
+⚠️ **Where the walk STOPS was changed later the same day** — see "One boundary: the active chain (2026-07-24)" at the end of this region. It is no longer `compact_marker`; it is the `compact_started` of the last COMPLETED compaction, and inside that window only `type === "message"` survives. Read this section for the rollback mechanism; read that one for the boundary.
+
+### Rollback mechanism: setChainHead (no marker event)
+
+`EventStore.setChainHead(sessionId, eid)` — one line: `this.lastEventIds.set(sessionId, eid)`. Pure in-memory. The NEXT event appended via `stampEvent` gets `parentEid = eid`, creating the chain jump. No intermediate `rollback_marker` event — the jump is carried by the first post-rollback event itself. `/edit` endpoint: `setChainHead(nodeId, rollbackTargetEid)` → `deliverMessage(newContent)` → stampEvent auto-sets parentEid.
+
+**DELETED (2026-07-24)**: `rollback_marker` event type, `EventStore.appendRollback()`, frontend rollback_marker rendering (LogEntryView, event-handler, CSS). The marker was an implementation shortcut — parentEid jumps via setChainHead are simpler (one line vs. a full event write+flush).
+
+### ~~Defensive chain-walk fallback~~ — DELETED 2026-07-24
+
+This used to say: "if the parentEid chain breaks (null on a non-first event, or a parentEid naming a missing eid), fall back to linear traversal for preceding events. Without this fallback, 83 tests failed."
+
+Half of it survived and half of it was wrong. What survived: **an event with no parentEid stops chain-following, and everything before it is taken linearly** — that is the genuine chain root at index 0, and it is what makes a pre-eid log readable. That is a documented rule now, not a fallback.
+
+What was deleted: the *dangling-link* branch (a parentEid naming an eid no line carries). Coding around a state the runtime cannot produce hides bugs instead of surfacing them — the same reason `buildSessionRepair` refuses to repair orphan tool_results. Deleting it was only honest once the sole path that could produce a dangle was closed: `stampEvent` used to advance the chain head BEFORE the write, so a failed append (ENOSPC/EIO) left the next event pointing at an eid that never reached disk. `append`/`appendBatch` now rewind the head on write failure. **If you ever re-introduce a dangling-link fallback, you are papering over a writer bug — go find the writer.**
+
+### REST endpoint
+
+POST /api/matrix/projects/:id/tasks/:nodeId/edit (plugin route). Validates targetEid (exists, user message, after compact_marker). Stops agent, setChainHead, delivers new message via deliverMessage.
+
+### `/rollback` deleted — `/edit` is the single path (2026-07-23)
+
+The standalone `/rollback` REST endpoint in `.mxd/plugin/runtime.ts` (~100 lines) and the
+`taskRollback` URL builder in `.mxd/plugin/web/api.ts` are deleted. Frontend (`Plugin.tsx
+handleRollback`) already calls `api.taskEdit` exclusively — the `/edit` endpoint combines
+rollback + message delivery atomically and fully supersedes `/rollback`.
+
+**Edit/Rewind consistency verified** across three scenarios via 6 integration tests in
+`src/rollback.test.ts`: readActive immediately, page refresh (readFromLastCompactMarker),
+daemon restart (fresh EventStore). All produce byte-identical event sequences. Multiple
+consecutive rollbacks: only the latest branch visible. Chain-walk via parentEid is
+deterministic on persisted JSONL — no in-memory state.
+
+### Frontend
+
+Edit/Rewind buttons on user messages (hover-reveal). i18n: activity.rollback / activity.rollbackConfirm (EN + ZH).
+
+### Agent lifecycle / buildSessionRepair adaptation
+
+agent-lifecycle.ts feeds repair the chain-walked active events, so rolled-back events are excluded from repair analysis. (`readActiveWithLineMap` / `readWithLineMap` / the physical-line translation were deleted on 2026-07-24 — repair now addresses events by eid and applies as a chain jump, not a file truncation.)
+
+### Tests
+
+src/rollback.test.ts: walkActiveChainIndices unit tests, EventStore integration tests, consistency tests (readActive + readFromLastCompactMarker + restart).
 
 ## One boundary: the active chain (2026-07-24)
 
