@@ -105,6 +105,30 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
 // ── Implicit yield (end_turn with queue) ──
 
 /**
+ * Leave the "you were cut off" mark on the log, at the park.
+ *
+ * Written HERE and not by `interruptTask` for two reasons. The loop is the only
+ * thing that knows the turn has actually ended — `interruptTask` only knows it
+ * asked. And nothing but the provider loop may write to JSONL after a yield, so
+ * the request side has no legal way to persist this.
+ *
+ * `quiet` so it cannot wake the park it is being written into, and so it stays
+ * unconsumed: that is precisely what makes it visible to `shouldLaunchAgent` on
+ * the next boot. A consumed message would leave the log looking like a turn
+ * that owes an answer.
+ *
+ * Best-effort. A closed queue (stop racing the interrupt) means the session is
+ * being torn down and there is nobody left to tell.
+ */
+function writeInterruptNotice(queue: MessageQueue): void {
+	try {
+		queue.enqueue(createInterruptNotice(), { quiet: true });
+	} catch {
+		/* queue closed — teardown won the race, nothing to annotate */
+	}
+}
+
+/**
  * Shared implicit yield logic: wait for messages on queue, format them, emit events.
  * Returns the formatted messages and images, or null if queue was closed.
  *
@@ -134,30 +158,6 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
  * Consumers depend on the stronger meaning: yield_external wakes an external
  * client on it, and the UI re-fetches JSONL on it to expose Edit/Rewind.
  */
-/**
- * Leave the "you were cut off" mark on the log, at the park.
- *
- * Written HERE and not by `interruptTask` for two reasons. The loop is the only
- * thing that knows the turn has actually ended — `interruptTask` only knows it
- * asked. And nothing but the provider loop may write to JSONL after a yield, so
- * the request side has no legal way to persist this.
- *
- * `quiet` so it cannot wake the park it is being written into, and so it stays
- * unconsumed: that is precisely what makes it visible to `shouldLaunchAgent` on
- * the next boot. A consumed message would leave the log looking like a turn
- * that owes an answer.
- *
- * Best-effort. A closed queue (stop racing the interrupt) means the session is
- * being torn down and there is nobody left to tell.
- */
-function writeInterruptNotice(queue: MessageQueue): void {
-	try {
-		queue.enqueue(createInterruptNotice(), { quiet: true });
-	} catch {
-		/* queue closed — teardown won the race, nothing to annotate */
-	}
-}
-
 async function handleImplicitYield(
 	queue: MessageQueue,
 	setActivity: (state: AgentActivity) => void,
