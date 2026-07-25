@@ -6690,3 +6690,75 @@ Also, twice in one session, a first measurement measured the wrong element: `log
 "load earlier" bar, not an entry, so "the first node is still attached" was true on a build that
 remounts everything. Same shape as the viewport task's container-vs-content error. **Check what your
 selector actually points at before believing a null result.**
+
+## `search`: a glob with no slash is a FILENAME pattern (2026-07-25)
+
+`src/tools/search.ts` handed the caller's `glob` to `Bun.Glob` verbatim. `*` never crosses `/`
+there, so `*.ts` — **the example printed in the tool's own description**, and what ripgrep's
+`--glob` means — matched only files sitting directly in `path`, i.e. `(no matches)` from a repo
+root. The tool documented one semantic and implemented another.
+
+`normalizeSearchGlob(glob)`: no `/` in the glob ⇒ it is a filename pattern ⇒ promote to
+`**/<glob>`. A glob containing `/` is a PATH pattern and passes through untouched, so `src/*.ts`
+stays anchored at the search root. Same split ripgrep makes.
+
+**Promoting loses nothing** — `**` matches zero directories too (measured: `**/*.ts` returns the
+top-level `top.ts` as well as nested ones). So the new behavior is a strict superset of the old
+and cannot take a result away from anyone.
+
+### ⭐ "That caller cannot exist, because the behavior never worked"
+
+The standard objection to changing a semantic is "some caller depends on the old one". Here it
+was answered by a fact rather than a judgement: a caller who genuinely wanted top-level-only
+would have been getting an **empty result almost every time**, so they cannot exist.
+**A semantic that has never worked has no users.** Worth keeping as a test for whether a
+backward-compatibility worry is real or imagined — it is cheap to check (what did the old path
+actually return?) and it settles the question outright instead of trading intuitions.
+
+### The empty-result/partial-result split is NOMINAL here
+
+The hidden-directory entry above concluded "the empty result is the detectable one; the partial
+result is the dangerous one". This bug produces empty results, which sounds like the good side.
+It is not, because of that entry's *second* point: detection needs a fact you independently hold
+at that instant. `glob: "*.ts"` is typed precisely when you are asking **"where does this symbol
+appear?"** — the case where you do NOT already know the answer, so a false `(no matches)` is
+indistinguishable from the truth and confirms the hypothesis. Filing a bug under "detectable"
+because of its output SHAPE is not the same as it being detectable in the situations it occurs in.
+
+### Test notes — `describe("jsSearch: glob depth")`, next to the hidden-dir block
+
+Same file as the rest of search's tests (`anthropic-compatible-provider.test.ts`) — see the
+hidden-dir entry for why that is deliberate. Three behavioral tests + one string test.
+
+| mutation | fails |
+|---|---|
+| the bug (`new Bun.Glob(glob)`) | the depth test, alone |
+| always prepend `**/` | anchored + string |
+| `startsWith("**/") ? glob : …` | anchored + string |
+| `startsWith("*") && !startsWith("**")` | string ALONE, on its `*/top.ts` line |
+
+⚠️ **The two PRE-EXISTING slash-glob tests do NOT catch over-promotion, though they look like
+they would.** Their fixtures contain exactly one `src/`, so `src/*.ts` and `**/src/*.ts` return
+the same files. Over-promotion is only observable against a fixture with the SAME directory name
+at two depths — hence `deep/src/inner.ts`. I assumed those tests covered it and the mutation run
+said otherwise: **a test whose fixture cannot express the difference passes both ways.**
+
+The string test (`normalizeSearchGlob` directly) exists because two of its four cases have no
+behavioral symptom at all: `**/**/*.ts` returns exactly the same files as `**/*.ts`, so a
+doubly-promoted glob is invisible from the outside. It earns its place on one line — `*/top.ts`
+— which is the shape no fixture covers and which the last mutation above breaks alone.
+
+### Correction to Known Pitfalls
+
+The ⚠️ under *Known Pitfalls* saying this bug is still OPEN and to "pass `**/*.ts`" until it
+lands is now **outdated** — `*.ts` and `*.{ts,tsx}` both work at any depth. The neighbouring
+claim in the hidden-dir entry ("Two adjacent findings filed rather than swept in: 01KYCS0BH6 …")
+is history, not a live warning: 01KYCS0BH6 is this fix. **01KYCS1552 (the skip list is applied
+after the walk) is still open** and was deliberately not touched here — `normalizeSearchGlob` is
+a pure string transform applied before the walker is constructed, so it survives any rewrite of
+the walk itself.
+
+**Filed, not swept in: 01KYCV43JAZ** — `list_files` has BOTH bugs this tool just had.
+Measured: `dot: false` hides 29 `.ts` files under `.mxd/plugin/` from it, and its own documented
+`"*.json"` example returns 3 files where `**/*.json` returns 329. Not a one-word fix, because
+`list_files` has no skip list, so `dot: true` there would start walking `.git/` and `.worktrees/`.
