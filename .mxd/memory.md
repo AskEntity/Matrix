@@ -1542,6 +1542,12 @@ nearly yielded the opposite conclusion.
 > for everything downstream of it, because a check is only ever judged adequate against the
 > explanation you currently believe.**
 
+⭐ **What installs a fiction here is never a guess. It is something that LOOKS like evidence** — a
+real error message carrying an unverified attribution, or a real published mechanism fitted to two
+data points. **A guess invites checking; a citation suppresses it.** That is why the sourced-looking
+story is the one that survives unchallenged long enough to become load-bearing, and it is why the
+detectors below are all about provenance rather than about plausibility.
+
 **Member 1: an ENFORCED fiction manufactures its own evidence.** `ValidatingMockAPI` enforced a
 role-alternation rule that does not exist. Our JSONL history contains **628 occurrences of "Messages
 must alternate roles" — every one from our own mock and none from the API.** Four production
