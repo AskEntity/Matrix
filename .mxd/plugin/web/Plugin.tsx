@@ -1911,6 +1911,26 @@ function ProjectContent({
 							</button>
 						</div>
 						<div className="mxd-panel-actions">
+							{/*
+							 * Follow and ↓ are the ONLY children here that toggle with the
+							 * scroll position, so they stay LEFTMOST. This is a right-aligned
+							 * flex row: inserting a child moves the children BEFORE it and
+							 * leaves the ones after it alone. With Follow sitting between the
+							 * token badge and ⚡, its appearance pushed ⌘ and the badge left by
+							 * a measured 71.3px every time the user scrolled away from the
+							 * bottom. Keep any future scroll-state control in front of the
+							 * persistent ones (web/panel-actions-order.test.tsx pins this).
+							 */}
+							{viewMode === "activity" && !autoScroll && (
+								<button
+									type="button"
+									className="mxd-scroll-follow-btn"
+									onClick={requestScrollLogToBottom}
+								>
+									<IconArrowDown size={10} />
+									{t("activity.follow")}
+								</button>
+							)}
 							{viewMode === "activity" && !logAtBottom && (
 								<button
 									type="button"
@@ -1936,16 +1956,6 @@ function ProjectContent({
 									/>
 								) : null;
 							})()}
-							{viewMode === "activity" && !autoScroll && (
-								<button
-									type="button"
-									className="mxd-scroll-follow-btn"
-									onClick={() => setAutoScroll(true)}
-								>
-									<IconArrowDown size={10} />
-									{t("activity.follow")}
-								</button>
-							)}
 							{viewMode === "activity" && (
 								<button
 									type="button"
