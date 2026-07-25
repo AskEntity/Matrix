@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import type React from "react";
 import { isWorking } from "../.mxd/plugin/agent-activity.ts";
+import { messageRunStarts, type RunEvent } from "../.mxd/plugin/run-start.ts";
 import {
 	type ActivityAction,
 	type ActivityMap,
@@ -4687,5 +4688,169 @@ describe("event-handler: entry id is derived from the event's eid", () => {
 		expect(box.current[0]?.type).toBe("tool_pair");
 		expect(box.current[0]?.id).toBe(callId as number);
 		expect(box.current[0]?.eid).toBe("eid-call-9");
+	});
+});
+
+// ── Run-start is decided once, in event order ──
+//
+// The annotation used to be a second pass over the raw batch, which meant a
+// live SSE entry could never have it: the live path sees one event at a time
+// and never holds the batch. Deciding it where events are already being read
+// in order gives both paths the same answer from the same rule — and is what
+// lets the log stop being re-fetched from JSONL just to light up two buttons.
+describe("event-handler: run-start annotation in event order", () => {
+	/** Three shapes in one log: a plain send, one swept into a bash turn, two woken from a park. */
+	function mixedLog(): IncomingEvent[] {
+		const msg = (id: string, eid: string, ts: number, content: string) => ({
+			type: "message",
+			id,
+			body: { source: "user", id, ts, content },
+			taskId: "root",
+			ts,
+			eid,
+		});
+		return [
+			msg("m1", "e1", 1, "go"),
+			{
+				type: "messages_consumed",
+				messageIds: ["m1"],
+				taskId: "root",
+				ts: 2,
+				eid: "c1",
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc",
+				input: { command: "ls" },
+				taskId: "root",
+				ts: 3,
+				eid: "tc",
+			},
+			msg("m2", "e2", 4, "and also this"),
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc",
+				content: "ok",
+				isError: false,
+				taskId: "root",
+				ts: 5,
+				eid: "tr",
+			},
+			// An unrecognised event between the result and the consumption must
+			// not detach them — detaching is the direction that wrongly calls a
+			// message editable.
+			{ type: "status", message: "…", taskId: "root", ts: 6, eid: "st" },
+			{
+				type: "messages_consumed",
+				messageIds: ["m2"],
+				taskId: "root",
+				ts: 7,
+				eid: "c2",
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__yield",
+				toolCallId: "ty",
+				input: {},
+				taskId: "root",
+				ts: 8,
+				eid: "ty",
+			},
+			msg("m3", "e3", 9, "wake up"),
+			msg("m4", "e4", 10, "one more"),
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__yield",
+				toolCallId: "ty",
+				content: "resumed.",
+				isError: false,
+				taskId: "root",
+				ts: 11,
+				eid: "tyr",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m3", "m4"],
+				taskId: "root",
+				ts: 12,
+				eid: "c3",
+			},
+		] as unknown as IncomingEvent[];
+	}
+
+	function annotatedByBatch(events: IncomingEvent[]): Map<string, boolean> {
+		const { deps } = makeDeps();
+		let captured: LogEntry[] = [];
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			captured = typeof u === "function" ? u([]) : u;
+		});
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+		processEventBatch(events, { fromActiveChain: true });
+		const out = new Map<string, boolean>();
+		for (const e of captured) {
+			if (e.type === "message" && e.eid && e.startsRun !== undefined) {
+				out.set(e.eid, e.startsRun);
+			}
+		}
+		return out;
+	}
+
+	// THE lock: two entry points, one rule. Reading a whole log at once and
+	// watching it arrive one event at a time must not be able to disagree.
+	it("agrees with a one-shot pass over the same log, key for key", () => {
+		const events = mixedLog();
+		const inOrder = annotatedByBatch(events);
+		const oneShot = messageRunStarts(events as unknown as RunEvent[]);
+
+		expect(inOrder.size).toBeGreaterThan(0);
+		expect([...inOrder.entries()].sort()).toEqual(
+			[...oneShot.entries()].sort(),
+		);
+	});
+
+	it("the three shapes come out as expected", () => {
+		const m = annotatedByBatch(mixedLog());
+		expect(m.get("e1")).toBe(true); // sent on its own
+		expect(m.get("e2")).toBe(false); // swept into a bash turn
+		expect(m.get("e3")).toBe(true); // woke a parked agent…
+		expect(m.get("e4")).toBe(true); // …together with the one before it
+	});
+
+	it("a live SSE message is annotated as it is consumed", () => {
+		// The reason the log no longer needs re-fetching when the agent stops.
+		const box = { current: [] as LogEntry[] };
+		const { deps } = makeDeps();
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			box.current = typeof u === "function" ? u(box.current) : u;
+		});
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		for (const evt of mixedLog()) handleEvent(evt);
+
+		const byEid = new Map(
+			box.current
+				.filter((e) => e.type === "message" && e.eid)
+				.map((e) => [e.eid as string, e.startsRun]),
+		);
+		expect(byEid.get("e1")).toBe(true);
+		expect(byEid.get("e2")).toBe(false);
+		expect(byEid.get("e3")).toBe(true);
+		expect(byEid.get("e4")).toBe(true);
+	});
+
+	it("a raw-file batch is still not annotated", () => {
+		// Unchanged reason: the file holds abandoned rewind branches, and a
+		// tool call from a branch nobody is on would count against a message
+		// that has nothing to do with it.
+		const { deps } = makeDeps();
+		let captured: LogEntry[] = [];
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			captured = typeof u === "function" ? u([]) : u;
+		});
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+		processEventBatch(mixedLog());
+		for (const e of captured) expect(e.startsRun).toBeUndefined();
 	});
 });

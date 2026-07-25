@@ -126,8 +126,12 @@ function isPriorWork(tool: string | undefined): boolean {
  * deferred `message` events themselves) is skipped: an unrecognised event
  * between a tool_result and the consumption must not detach them, because
  * detaching them is the direction that wrongly calls a message editable.
+ *
+ * Exported because a consumer reading events in ORDER (the UI, which sees
+ * them arrive one at a time) has to recognise the same boundary in order to
+ * know what the current turn contains.
  */
-function endsTurnLookingBack(type: string): boolean {
+export function endsTurnLookingBack(type: string): boolean {
 	return (
 		type === "tool_call" ||
 		type === "assistant_text" ||
@@ -142,9 +146,26 @@ function endsTurnLookingBack(type: string): boolean {
 }
 
 /**
+ * Is this user turn answering work that was already under way?
+ *
+ * `turn` is the events between the previous turn boundary and the
+ * `messages_consumed` — everything the turn is made of except the consumption
+ * record itself. A single prior-work tool_result is enough: the turn had
+ * something to answer, so nothing riding along in it started anything.
+ *
+ * THE rule. Both ways of reaching it — a pass over a whole log, and a UI
+ * watching events arrive one at a time — call this, so there is one statement
+ * of it to get right. (Two implementations of "was this sent on its own"
+ * would drift into a button that lies in one direction or the other, which is
+ * the failure this module exists to prevent.)
+ */
+export function turnAnswersPriorWork(turn: readonly RunEvent[]): boolean {
+	return turn.some((e) => e.type === "tool_result" && isPriorWork(e.tool));
+}
+
+/**
  * One pass over a log: for every message carrying an eid, whether it was sent
- * on its own. THE walk — the single-message lookup below and the UI's bulk
- * annotation both go through it, so there is one traversal to get right.
+ * on its own. The single-message lookup below goes through it too.
  *
  * Scoped per task: a sibling agent's turns say nothing about this one.
  *
@@ -184,20 +205,16 @@ export function messageRunStarts(
 			const consumed = events[indices[k] as number] as RunEvent;
 			if (consumed.type !== "messages_consumed" || !consumed.messageIds?.length)
 				continue;
-			// Walk back to the start of this user turn and ask what it is
-			// answering. A park's result points the other way — see isPriorWork.
-			let answersPriorWork = false;
+			// Collect this user turn — back to the previous boundary — and ask
+			// what it is answering. A park's result points the other way; see
+			// isPriorWork.
+			const turn: RunEvent[] = [];
 			for (let j = k - 1; j >= 0; j--) {
 				const p = events[indices[j] as number] as RunEvent;
-				if (p.type === "tool_result") {
-					if (isPriorWork(p.tool)) {
-						answersPriorWork = true;
-						break;
-					}
-					continue;
-				}
 				if (endsTurnLookingBack(p.type)) break;
+				turn.push(p);
 			}
+			const answersPriorWork = turnAnswersPriorWork(turn);
 			for (const id of consumed.messageIds) {
 				const eid = eidOf.get(id);
 				if (eid) starts.set(eid, !answersPriorWork);
