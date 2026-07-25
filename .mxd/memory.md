@@ -2972,275 +2972,220 @@ nulls.**
 # Testing
 ---
 
-## Integration Test Framework
-
-**This is the strongest verification framework in this codebase. Use it any time you make a claim about agent-observable behavior.**
-
-**Policy — MUST use integration tests when**:
-- A prompt, tool description, or user-facing string promises a specific shape ("output is bounded ~10KB", "stdout and stderr are labeled separately", "the file path appears at top and bottom", etc.)
-- A change affects what the LLM sees in a tool_result, system prompt, or message
-- A behavior crosses the agent-loop / tool-execution / JSONL / mock-reply boundary
-
-Unit tests verify internal logic (a formatter function returns X). Integration tests verify **what the LLM actually observes when driving the full stack**. Those are different contracts. A formatter unit test doesn't prove the LLM sees the promised shape through MCP wrapping + tool_result persistence + mock-reply path — the gap between them is where prompt/code drift silently lies. The LLM then builds strategy on a lie, and no unit test catches it.
-
-When a prompt says "X", there MUST be a test that:
-1. Constructs a mock instruction / real tool invocation trigger
-2. Runs the full agent loop with `ValidatingMockAPI`
-3. Observes the tool_result the mock receives
-4. Asserts the observed content matches the X claim literally
-
-Drift between prompt claims and tool reality is a **silent failure mode**. Integration tests are the only guard against it.
-
-**Framework components**:
-- `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation, **strict tool-error mode**.
-- Mock DSL: `{"blocks": [...]}` or `{"turns": [...]}` with assert/capture.
-- `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
-- Test counts are not recorded here — `bun test` prints them and any number written down starts
-  rotting immediately. (This bullet used to say "~1976 tests, 4 skipped".)
-
-## ⚠️ Every `throw` in a test double must quote the real error it mirrors (2026-07-25)
-
-**Rule, for ANY test double — not just `ValidatingMockAPI`:** when a fake rejects something on the
-grounds that the real system would reject it, the rejection message must carry **the real system's
-own error string**. If you cannot quote it, you have not verified it, and it does not belong in a
-predicate named after the real system.
-
-**Why this rule and not "be careful":** it moves the failure to the moment of WRITING. The claim
-that cost us four production mechanisms propagated as a parenthesis in a bug report — *"Error from
-ValidatingMockAPI (matches real Anthropic)"* — which nobody ever checked. Under this rule the author
-would have gone looking for the API's wording, found none, and stopped there. **A rule is worth
-what its failure mode is worth, not what it says.**
-
-**Corollary — separate OUR expectations from THEIR rules, by name.** A check we want but the API
-does not enforce is fine; it just may not live inside something called `validateRequest` /
-`assertValidApiMessages`. Give it its own name (`assertNoEmptyContent`) and let tests opt in. **A
-style rule hidden inside an API-validity predicate gets cited later as API behavior** — that is
-precisely how the alternation fiction became a documented fact.
-
-**Corollary — a fake that is STRICTER than the real system is not "safe".** It manufactures phantom
-bugs, and phantom bugs get fixed with real complexity. Strictness in a test double is not a
-conservative choice; it is an unverified claim about the system under test.
-
-Detection heuristic for auditing an existing double: **do not audit whether the assertions are
-correct — ask whether the rule being ENFORCED is the same rule that is DOCUMENTED.** Where those two
-fork is where a fiction starts producing evidence. Full case study: *The Anthropic message-shape
-rules, MEASURED*.
-
-**Fix the double BEFORE the code it guards, and treat that ordering as the point of the work.** A
-faithful double pays for itself immediately, on the very change that installs it — while a
-too-loose one lets a real defect through in the same window. Measured inside a single task: after
-`ValidatingMockAPI` was made to mirror the API, the next commit extracted a `yield`-ing block into a
-generator and omitted `yield*` at both call sites. Legal TS, zero diagnostics, and the whole effect
-silently gone — requests went out with an unanswered `tool_use`. **8 tests caught it, all of them
-via the pairing rule that had just been added; under the previous double every one of them would
-have been green.** The report even quoted the real API string, because the double's own rule says
-every throw must. **The reason to fix the double first is not tidiness — it is that you are about to
-be the one it catches.**
-
-## Canonical user journey test is MANDATORY
-
-If the feature's name or description describes a user action — "fresh-install bootstrap", "sidebar toggle on desktop", "auto-save preserves output", "production mode blocks agent" — there MUST be a test that **performs that exact user action and asserts the user-observable result**. Testing subcomponents, supporting algorithms, and edge cases does not substitute.
-
-The canonical user path IS the feature; everything else is scaffolding around it.
-
-**Diagnostic**: open your test file. Is there a test whose whole shape is "do user-action X, observe X works for the user"? If no, the feature is untested — even if thousands of other tests pass.
-
-**Typical silent failures** (tests green, production fails):
-- **Test config ≠ production config.** Test calls `createDaemon({ installRoot: fake })` directly; production path is `import.meta.main` with different flags. Only one path tested.
-- **Subcomponents tested individually, not the chain.** `findProjectRoot` ✓, `onProjectInit` ✓, `markProduction` ✓ — but no test that starts a real daemon and watches the whole flow run.
-- **Partial-chain assertion.** "Marker written ✓" — and done. But GET /projects response, UI reading the flag, backend guarding agent ops — all unverified. The chain breaks after the first green check and no test looks.
-- **Mocks matching the test, not reality.** Mock `onBroadcast` as in-process no-op; production goes through postMessage. Structural differences at process boundaries never exercised.
-
-**Minimum bar for "feature works"**:
-1. Real process boundary: if the feature is about daemon behavior, spawn a real daemon (`Bun.spawn(["bun", "src/daemon.ts"], { env: { MXD_DATA_DIR: fakeDataDir, ... } })`) and HTTP-call it.
-2. Manual smoke: before calling `done("passed")`, run the canonical user journey by hand. If you can't describe the concrete steps you took and what you observed, you haven't verified the feature.
-3. All observable consequences: if the feature involves UI, test UI (happy-dom render + assertion). If it involves backend guards, test the guard fires with a 403. If it involves marker files, test the marker affects all downstream consumers.
-
-**The rule of thumb**: "2003 tests pass" is not a merge gate. "I ran the feature the way a user would and it worked" is.
-
-## Test harness: broadcast payload cloneability (structuredClone wrapper)
-
-`createMatrixApp` (src/test-utils/create-matrix-app.ts) wraps `ctx.onBroadcast` with a `structuredClone({projectId, event})` call. Every broadcast payload MUST be structured-clone compatible — production's postMessage boundary (worker → shell) will reject anything else.
-
-**Why this exists**: FU8 deleted a triple-JSON-serialize step that was silently dropping non-cloneable fields (functions, `AbortController`, live class instances). `broadcastTreeUpdate` had relied on that accidental sanitization to pass `tracker.allNodes()` with live `TaskSession` attached. Post-FU8, production threw `DataCloneError` on every tree mutation. No integration test caught it because none of them exercise `structuredClone`.
-
-**Invariant**: every broadcast site MUST either construct a plain object, or explicitly strip runtime-only fields. `broadcastTreeUpdate` now runs `.map((n) => isFolder(n) ? n : stripSession(n))`. If you add a new broadcast site and pass live objects through, the harness fails the first test with `DataCloneError: The object can not be cloned`.
-
-**Regression test**: `src/broadcast-strip-session.test.ts` pins the positive invariant (fix works) and the mutation-proof (unstripped broadcast throws). Removing the `.map(...stripSession)` in event-system.ts makes both the unit test AND every integration test that creates a task fail loudly.
-
-## Test harness: strict tool-error mode
-
-`ValidatingMockAPI.enableStrictToolErrors(allowlist?)` — when enabled, any `is_error: true` tool_result that reaches the mock throws `MockValidationError("Unsurfaced tool error: ...")`. That propagates back through `client.messages.stream` and surfaces as a test failure. Default-off to keep individual tests opt-in.
-
-**Three ways a test opts a specific error out**:
-1. **Turn assert with `isError: true`** — if a turn's `assert` array has `{ block: N, type: "tool_result", isError: true }`, block N is pre-acknowledged. Tests that already express intent through asserts get strict coverage for free.
-2. **Global allowlist entry** — pass `[{ tool: "mcp__mxd__bash", contains: "..." }]` to `enableStrictToolErrors`. Tool + contains are ANDed; omit either to match any.
-3. **Per-test disable** — `mockAPI.disableStrictToolErrors()` inside an individual test. Used by drift-test scenarios that intentionally invoke error tools (bash with nonexistent command, read_file on missing path) to exercise `is_error` round-trip through JSONL. Strict mode is orthogonal to what those tests assert.
-
-**Default allowlist** (`ValidatingMockAPI.DEFAULT_ERROR_ALLOWLIST`): `{ contains: "Tool execution was interrupted by daemon restart" }` — covers the `buildSessionRepair` synthetic tool_result for orphaned tool_calls on restart. This is a system contract, not a bug. Restart tests legitimately trigger it.
-
-Called with no argument → uses defaults. Called with explicit array → no defaults merged; caller takes full control.
-
-**Where enabled** (2026-04-17 rollout):
-- `setupTestContext` in `src/integration.test.ts`
-- `setupEmissionTestContext` in `src/test-utils/emission-harness.ts`
-- Every drift test's local mock construction: `drift-lifecycle`, `drift-initial-drain`, `drift-message-sources`, `drift-thinking`, `drift-tool-lifecycle`
-- `integration-stress`, `invariant`, `debug-snapshot-integration`, `plugin-hooks`, `plugin-custom-scope`
-
-**Not enabled** (yet): `openai-responses-integration.test.ts` — uses a separate `ValidatingMockResponsesAPI` class that doesn't have strict-mode wired in. Follow-up.
-
-**Motivation**: the stripSession regression caused every `create_task`/`update_task`/`delete_task`/etc. to return `is_error: true` to the agent. Dozens of tests hit those tools; none failed because nothing asserted the error state. Strict mode + structuredClone wrapper now cover that class of bug from two independent angles.
-
-## Test Architecture: Drift vs Correctness Invariants
-
-Two distinct test classes protect against different bug classes. Learned via mutation testing during the caption-bug unification audit.
-
-### Drift invariant (prefix-validation integration tests)
-Full agent loop + restart + `ValidatingMockAPI.enablePrefixValidation()`. Catch when **live path diverges from reconstruction path** — two independent codepaths producing different bytes.
-
-**Blind spot after unification**: live path delegates to walker → live and reconstruction SHARE the walker. A walker bug makes both paths "consistently wrong" → validation passes. **Experimentally confirmed**: removing caption from walker → all 27 integration prefix-validation tests still pass.
-
-What drift tests DO catch:
-- Accidental creation of parallel user-message-construction paths
-- Bugs in non-walker paths: initial drain, buildSessionRepair, compaction rebuild, cache control construction
-- EventStore/JSONL corruption
-- System/tools presence asymmetry (fixed a gap: previously silently passed when dropping system/tools mid-conversation)
-
-Files:
-- `src/drift-tool-lifecycle.test.ts` — tool lifecycle
-- `src/drift-message-sources.test.ts` — every QueueMessage source type
-- `src/drift-lifecycle.test.ts` — yield/done/fork/compact transitions
-- `src/integration.test.ts` Bug repro suite — original caption bug regressions
-
-### Correctness invariant (golden snapshot unit tests)
-Direct invocation of `eventsToAnthropicMessages(events)`, assert exact output bytes. Catch when **walker callbacks produce wrong output** (even if consistently wrong across both paths). Fast (~90-150ms per file).
-
-Example: if walker's `onConsumedMessages` lacked caption, both paths would miss it → drift tests pass, golden test catches it by asserting `[{text}, {image}, {caption}]` is the expected output.
-
-Mutation-tested rigorously: every mutation (remove caption idle/working, drop is_error, add is_error to image tool_result, swap block order, break string↔array invariant, drop interleaved text, remove caller field) is caught by at least one test.
-
-Files:
-(Per-file test counts used to be listed here and have been dropped — they were wrong within weeks
-and a stale count reads exactly like a fresh one. What each file COVERS is the durable part and is
-what you actually need to pick a file; `bun test` counts them.)
-
-- `src/walker-golden.test.ts` — core walker correctness
-- `src/drift-infra-audit.test.ts` — golden output + mock-validator mutation tests
-- `src/drift-tool-lifecycle.test.ts` — tool lifecycle (golden half)
-- `src/drift-lifecycle.test.ts` — yield/done/fork/compact (golden half)
-
-### Principle
-- Prefix validation tests **convergence** between paths (drift detection)
-- Golden snapshots test **correctness** of the path itself
-- After unification, correctness can't be inferred from convergence — both needed
-- **Don't silently lose coverage when removing duplication.** Unifying two paths into one shifts responsibility: correctness tests must re-establish coverage that drift tests provided.
-
-### Gotcha for golden snapshot authors
-User `message` events with `id` are DEFERRED by walker — only materialize via `messages_consumed`. Helper pattern:
-```ts
-function userPromptEvents(id, content, ts, images?): Event[] {
-  return [
-    { type: "message", id, taskId: "", body: {source:"user", id, ts, content, images}, ts },
-    { type: "messages_consumed", messageIds: [id], taskId: "", ts: ts+1 },
-  ];
-}
-```
-Without messages_consumed, message with id is never rendered.
-
-### Third-codepath drift fixed (commit 39e420b)
-`src/drift-initial-drain.test.ts` image-drift tests now pass. Initial drain delegates to `adapter.appendQueueMessagesToMessages`, which routes through the same `applyXxxQueueContent` function the walker uses. One function, two call sites, zero drift possible.
-
-## Guards need a two-sided mutation proof (2026-07-25)
-
-**Mutate in both directions, or the test suite will accept a guard that quietly kills the feature.**
-
-- **Over-loose** (delete the guard) — the side everyone tests. Usually caught.
-- **Over-strict** (make the guard block everything) — **almost never tested, and it is the typical
-  failure mode of a guard.** It turns no test red; it just makes some normal path silently stop
-  working.
-
-The number that makes this concrete: making a follow-mode effect never scroll — i.e. killing the
-entire follow feature — left **11 of 12 tests in that file green**, including four guard tests
-written the day before. A second case the same day: keying a rule on "alone in its turn" instead of
-"no prior work in its turn" failed **exactly one test out of 2775**, and only because someone had
-deliberately written the "two messages consumed together are BOTH editable" case.
-
-So: **when you add a guard, explicitly write a test for what it must NOT block, and verify that test
-still passes with the guard in place.** Without it the change ships fully green with the feature
-gone.
-
-## Test fixtures with unstable identity lose their resolution silently (2026-07-25)
-
-A fixture that regenerates entry ids on every render makes every rerender a full key change → whole
-subtree remounts → MutationObserver fires → if follow is on, *the remount itself* scrolls to the
-bottom. Which means the test can no longer see whether the code under test scrolled. It does not go
-red; it stops being able to distinguish.
-
-Fix: build the master array once and slice it, so entries keep their id / React key / DOM node
-across rerenders and adding items is an APPEND — which is also what production does. **Whenever a
-test asserts something about an effect, check that the fixture is not producing that effect
-itself.**
-
-Related, from the same area: **happy-dom does no layout**, so geometry cannot be observed there. It
-can still test the *causes* of geometry — DOM order, commit granularity, whether a callback ran —
-which is far better than dropping the test or mocking geometry brittlely. Anything genuinely about
-pixels has to be measured in a real browser.
-
-## Test-is-Golden / ITA Philosophy
-
-Three layers: Intention → Test → Architecture. Three mutations guard each layer:
-- **Intention Mutation**: is this behavior what users actually want?
-- **Test Mutation**: do tests catch code changes?
-- **Architecture Mutation**: can the code evolve?
-
-Tests are the single source of truth. Bottom-up: write tests → find simplest architecture that passes them. Architecture is replaceable long-term, improved short-term. Reject spec-driven development.
-
-## bun test cross-file React breakage: root cause is react-dom scheduler binding — FIXED via preload (2026-07-02)
-
-**Supersedes the "Test pollution gotcha (pre-existing, not Fix C)" entry and the Task Y
-"ShellApp integration tests — DELETED" workaround rationale.** The "happy-dom state
-surviving GlobalRegistrator cycles" theory was wrong, and the class is now FIXED, not
-worked around.
-
-### Actual mechanism (probe-bisected, 2-file repros)
-react-dom is a process-wide singleton; its scheduler picks timer machinery
-(MessageChannel etc.) at FIRST IMPORT. If the first `import("react-dom/client")` in a
-`bun test` process happens INSIDE a registered happy-dom environment, the scheduler
-binds that window's machinery; when that file's afterAll runs
-`GlobalRegistrator.unregister()`, scheduled render work stops flushing → EVERY
-subsequent test file's React renders produce nothing (fast assertion fails + 5s render
-timeouts). If the first import happens under plain bun globals, the binding is
-bun-native and immortal — all later register/unregister cycles are harmless.
-
-- bun's test-file order is filesystem-dependent (NOT alphabetical, NOT mtime). Baseline
-  was green only because web/ShellApp.test.tsx happened to run first (its react-dom
-  import path was benign); adding 4 new web test files reshuffled the order, put a new
-  file in pole position, and 52 tests across 11 web files failed. Any file addition
-  could have re-rolled this dice — the landmine was latent, not caused by any file's
-  content.
-- Red herrings eliminated by probes: matchMedia mocks (assign OR call), happy-dom
-  register options (width/height), IS_REACT_ACT_ENVIRONMENT — none of them matter. A
-  minimal register→import-react-dom→render→unregister file poisons; the identical file
-  with a TOP-LEVEL react-dom import stays benign.
-- Bisect trap to remember: a sed-mangled probe whose beforeAll THROWS never registers
-  happy-dom → the paired victim file runs clean → looks like "mutation fixed it".
-  Validate probe files pass on their own before trusting a bisect step.
-
-### Fix (the ONE mechanism)
-`bunfig.toml [test] preload = ["./src/test-utils/preload.ts"]` — the preload just does
-`import "react-dom/client"` once per process, before any test file, guaranteeing the
-native binding regardless of file order. Verified: previously-poisonous orders
-(journey-first, targetNodeId-first, url-task-id-first) all green; full suite 2419/0.
-
-### Consequences
-- happy-dom + GlobalRegistrator register/unregister per file is SAFE now. Subset runs
-  (`bun test web/A.tsx web/B.tsx`) are no longer order-flaky for this reason.
-- matchMedia mocks in test files are innocent; keep them if a test needs desktop
-  viewport (or use `GlobalRegistrator.register({ width, height })` — happy-dom's real
-  matchMedia evaluates min/max-width correctly against it).
-- Do NOT remove the preload "because tests pass without it locally" — passing depends
-  on file order, which depends on the filesystem. The preload is what makes order
-  irrelevant.
+## Three layers: intention → tests → architecture
+
+Tests are the single source of truth, and each layer can be challenged by the layer above but never
+captured by the layer below. Three mutations guard them: is this behavior what users actually want
+(intention); do the tests catch code changes (test); can the code evolve (architecture). Work
+bottom-up — write tests, then find the simplest architecture that passes them.
+
+## Integration tests are mandatory when a promise crosses a layer
+
+**Use an integration test — full agent loop, `ValidatingMockAPI`, observe what the mock receives —
+whenever:**
+
+- a prompt, tool description or user-facing string promises a specific SHAPE ("output is bounded
+  ~10KB", "stdout and stderr are labeled separately", "the path appears at top and bottom");
+- a change affects what the LLM sees in a tool_result, system prompt or message;
+- the behavior crosses the agent-loop / tool-execution / JSONL / mock-reply boundary.
+
+A unit test proves a formatter returns X. **It does not prove the LLM observes X through MCP
+wrapping plus tool_result persistence plus the mock-reply path**, and the gap between those two is
+where prompt/code drift silently lives. The LLM then builds strategy on the lie, and no unit test
+catches it. If a prompt says "X", something must construct the real invocation, run the full loop,
+and assert the observed content matches X literally.
+
+## The canonical user journey test is MANDATORY
+
+If the feature's name describes a user action — "fresh-install bootstrap", "sidebar toggle on
+desktop", "auto-save preserves output" — there **must** be a test that performs that exact action
+and asserts the user-observable result. Testing subcomponents, supporting algorithms and edge cases
+does not substitute. **The canonical path IS the feature; everything else is scaffolding.**
+
+**Diagnostic**: open your test file. Is there a test whose whole shape is "do user-action X, observe
+X works for the user"? If not, the feature is untested no matter how many other tests pass.
+
+Four ways this fails silently, all observed:
+
+- **Test config ≠ production config.** The test calls `createDaemon({installRoot: fake})` directly
+  while production goes through `import.meta.main` with different flags. Only one path is tested.
+- **Subcomponents tested individually, never the chain.** Three green units and no test that starts
+  a real daemon and watches the whole flow.
+- **Partial-chain assertion.** "Marker written ✓" — and the GET response, the UI reading the flag,
+  and the backend guard are all unverified. The chain breaks after the first green check and no test
+  looks.
+- **Mocks matching the test rather than reality.** An in-process no-op `onBroadcast` where
+  production goes through postMessage; the structural differences at process boundaries are never
+  exercised.
+
+**Minimum bar**: cross the real process boundary (spawn a real daemon and HTTP-call it if the
+feature is about daemon behavior); run the journey by hand before `done("passed")`, and if you
+cannot describe the concrete steps and what you observed, you have not verified it; and test every
+observable consequence, not the first one. **"2003 tests pass" is not a merge gate. "I ran the
+feature the way a user would and it worked" is.**
+
+## ⚠️ Every `throw` in a test double must quote the real error it mirrors
+
+**When a fake rejects something on the grounds that the real system would, the rejection message must
+carry the real system's own error string. If you cannot quote it, you have not verified it, and it
+does not belong in a predicate named after the real system.**
+
+This rule exists because it moves the failure to the moment of WRITING. The claim that cost us four
+production mechanisms propagated as a parenthesis in a bug report — *"Error from ValidatingMockAPI
+(matches real Anthropic)"* — which nobody ever checked. Under this rule the author goes looking for
+the API's wording, finds none, and stops there. **A rule is worth what its failure mode is worth,
+not what it says.**
+
+Three corollaries:
+
+- **Separate OUR expectations from THEIR rules, by name.** A check we want but the API does not
+  enforce is fine; it just may not live inside something called `validateRequest` or
+  `assertValidApiMessages`. Give it its own name and let tests opt in. **A style rule hidden inside
+  an API-validity predicate gets cited later as API behavior** — that is exactly how the alternation
+  fiction became a documented fact.
+- **A fake that is STRICTER than the real system is not "safe".** It manufactures phantom bugs, and
+  phantom bugs get fixed with real complexity. Strictness in a double is an unverified claim about
+  the system under test.
+- ⭐ **Fix the double BEFORE the code it guards, and treat that ordering as the point.** A faithful
+  double pays for itself on the very change that installs it. Measured inside one task: right after
+  `ValidatingMockAPI` was made to mirror the API, the next commit extracted a `yield`-ing block into
+  a generator and omitted `yield*` at both call sites — legal TS, zero diagnostics, the whole effect
+  silently gone, requests going out with an unanswered `tool_use`. **8 tests caught it, all via the
+  pairing rule that had just been added; under the previous double every one of them would have been
+  green.** The reason to fix the double first is not tidiness — it is that you are about to be the
+  one it catches.
+
+## Two harnesses that exist because a whole bug class was invisible
+
+⚠️ **`createMatrixApp` wraps `ctx.onBroadcast` in `structuredClone`, and every broadcast payload must
+survive it**, because production's worker→shell postMessage boundary will reject anything else. This
+exists because a sweep deleted a triple-JSON-serialize step that had been *accidentally* sanitizing
+payloads — `broadcastTreeUpdate` was passing `tracker.allNodes()` with live `TaskSession` attached
+and relying on that accident. Post-sweep, production threw `DataCloneError` on every tree mutation
+and **no integration test caught it, because none of them exercised `structuredClone`.** Every
+broadcast site must either construct a plain object or explicitly strip runtime-only fields.
+
+⚠️ **`ValidatingMockAPI.enableStrictToolErrors()` fails a test on any unacknowledged `is_error`
+tool_result.** Same regression is why: the missing `stripSession` made every
+`create_task`/`update_task`/`delete_task` return `is_error` to the agent, dozens of tests invoked
+those tools, and **not one failed, because nothing asserted the error state.** Opt out three ways: a
+turn `assert` with `isError: true` (so tests that already express intent get coverage for free), a
+global allowlist entry, or per-test disable for scenarios that deliberately invoke error tools. The
+default allowlist contains the repair path's "Tool execution was interrupted by daemon restart",
+which is a system contract rather than a bug.
+
+## Drift tests and correctness tests catch different things — and unification created a blind spot
+
+**Drift invariant** (prefix-validation integration tests): full agent loop plus restart, asserting
+the live path and the reconstruction path produce identical bytes. It catches accidental parallel
+construction paths, bugs in the non-walker paths (initial drain, session repair, compaction rebuild,
+cache-control construction), and JSONL corruption.
+
+**Correctness invariant** (golden snapshots): invoke the walker directly and assert exact output
+bytes.
+
+⚠️ **After the live path was unified to delegate to the walker, drift tests stopped being able to
+catch walker bugs — and this was confirmed experimentally, not reasoned.** Removing the caption
+handling from the walker leaves **all 27 integration prefix-validation tests passing**, because both
+paths are now consistently wrong. The golden snapshot catches it by asserting the expected
+`[text, image, caption]` output.
+
+> ⭐ **Do not silently lose coverage when removing duplication.** Unifying two paths shifts
+> responsibility: convergence tests can no longer establish correctness, so correctness tests must
+> re-establish what the drift tests used to provide.
+
+⚠️ **Golden-snapshot gotcha**: a user `message` event carrying an `id` is DEFERRED by the walker and
+materializes only via `messages_consumed`. Without the consumption event it never renders, and your
+fixture is silently testing nothing.
+
+## Mutation testing: what to keep, and the two shapes it misses
+
+**Keep every mutation that surprised you; cut every mutation that confirmed what you expected.** The
+confirming ones are verification records — "reverting X fails test Y" — and belong in a commit
+message. The surprising ones are discoveries about the test suite and are recorded nowhere else. The
+tell is the sentence next to the table: *"I expected this to fail and it did not, because…"*
+
+⚠️ **Guards need a two-sided mutation proof.** Everyone mutates the over-loose direction (delete the
+guard). Almost nobody mutates the over-strict one — **and over-strict is the typical way a guard
+fails**, because it reddens nothing and just silently stops a normal path working. Making a
+follow-mode effect never scroll, i.e. killing the entire feature, left **11 of 12 tests in that file
+green**, including four guard tests written the day before. So when you add a guard, explicitly write
+a test for what it must NOT block and verify that test still passes with the guard in place.
+
+⚠️ **Mutation testing cannot find a transition point that was never written.** A missing
+`setActivity` on the way out of idle survived a full clean sweep — nothing failed, because nothing
+existed to remove. It was caught by reading the comment that argued for its absence. **When a
+comment argues why some code is unnecessary, that argument is the thing to check; the tests around
+it are all consistent with it by construction.**
+
+⚠️ **A test whose fixture cannot express the difference passes both ways.** Over-promotion of a glob
+was invisible because the fixture contained exactly one `src/`, so `src/*.ts` and `**/src/*.ts`
+returned the same files. And ⚠️ **a test that can fail for two different reasons cannot tell you
+which one happened** — a guard's entire value is being legible on the day it fires, so narrow it to
+presence-only rather than asserting an exact list.
+
+⚠️ **Careless-git note**: reverting a mutation with `git checkout -- <file>` also reverts any
+UNCOMMITTED fix in the same file. Commit the fix before mutating it.
+
+## Test fixtures and harness traps
+
+⚠️ **A fixture with unstable identity silently loses its resolution.** If it regenerates entry ids on
+every render, every rerender is a full key change, the subtree remounts, MutationObserver fires, and
+— with follow mode on — *the remount itself* scrolls to the bottom. The test does not go red; it
+stops being able to see whether the code under test scrolled. Build the master array once and slice
+it, which is also what production does. **Whenever a test asserts something about an effect, check
+that the fixture is not producing that effect itself.**
+
+⚠️ **An unfaithful double does not only make tests lie — it makes the missing test unthinkable.**
+"Interrupt an agent mid-generation" had never been executed by any test in this suite, and not
+because anyone skipped it: `createMockAnthropicStream` ignored the request's AbortSignal outright, so
+every test that aborted mid-stream passed through a road that was open and led to the OPPOSITE of
+production. Nothing fails, nothing is marked todo; the behaviour simply is not the product's. Nobody
+writes "assert the abort actually aborts" when the harness cannot express the difference.
+
+⚠️ **`activity === "thinking"` does NOT mean a request is in flight.** A session is BORN thinking
+(setup is the residual state too), so a test that waits for `thinking` and then interrupts can land
+before the first API call exists — and it **passes every park assertion while testing nothing about
+aborting a request**. Key on `mockAPI.getRequestHistory().length >= 1`.
+
+⚠️ **happy-dom does no layout, so geometry cannot be observed there.** It can still test the *causes*
+of geometry — DOM order, commit granularity, whether a callback ran — which is far better than
+dropping the test or mocking geometry brittlely. Anything genuinely about pixels needs a real
+browser.
+
+Three smaller traps that each cost real time:
+
+- `await waitFor(() => x === null || true)` polls NOTHING (always true) and asserts before React
+  commits. Poll the real condition.
+- `expect(domNode).toBeNull()` prints the node **with its React fiber graph** on failure: one
+  assertion produced a **227MB** log and a 60s test. Compare booleans in DOM tests.
+- **A bare "timed out waiting for X" tells you nothing.** Dump the last few events alongside it —
+  that turned two blind reruns into one answer.
+
+## ⚠️ `bunfig.toml`'s preload is load-bearing; do not remove it
+
+`preload = ["./src/test-utils/preload.ts"]` does one thing: `import "react-dom/client"` once per
+process, before any test file.
+
+react-dom is a process-wide singleton and its scheduler binds to whatever timer machinery exists at
+**first import**. If that first import happens inside a registered happy-dom environment, the
+scheduler binds that window's machinery — and when that file's `afterAll` calls
+`GlobalRegistrator.unregister()`, scheduled render work stops flushing for **every subsequent test
+file in the process**: fast assertions fail and renders time out at 5s. If the first import happens
+under plain bun globals the binding is bun-native and immortal, and all later register/unregister
+cycles are harmless.
+
+⚠️ **`bun test`'s file order is filesystem-dependent — not alphabetical, not mtime — so this is a
+latent landmine that any file addition can re-roll.** The baseline was green only because a benign
+file happened to run first; adding four web test files reshuffled the order and produced 52 failures
+across 11 files. **Do not remove the preload "because tests pass without it locally"**: passing
+depends on file order, which depends on the filesystem. The preload is what makes order irrelevant.
+
+Red herrings eliminated by probe, so nobody re-investigates: matchMedia mocks, happy-dom register
+options, and `IS_REACT_ACT_ENVIRONMENT` are all innocent. ⚠️ And one bisect trap: a mangled probe
+file whose `beforeAll` THROWS never registers happy-dom, so the paired victim file runs clean and it
+looks like the mutation fixed the problem. Validate that a probe passes on its own before trusting a
+bisect step.
 
 ---
 # Build, Tooling & Housekeeping
