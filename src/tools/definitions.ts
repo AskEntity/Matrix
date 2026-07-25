@@ -451,7 +451,8 @@ const searchTool = defineTool({
 		glob: {
 			schema: z.string().optional(),
 			decl: { kind: "optional" },
-			description: 'File glob filter (e.g. "*.ts", "*.{ts,tsx}")',
+			description:
+				'File glob filter. No "/" matches at any depth (e.g. "*.ts", "*.{ts,tsx}"); with a "/" it is a path anchored at `path` (e.g. "src/*.ts" matches src/a.ts but not src/sub/b.ts).',
 		},
 		context: {
 			schema: z.number().optional(),
