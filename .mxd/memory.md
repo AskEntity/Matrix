@@ -1437,6 +1437,13 @@ Layout: `projects/<id>/debug/<taskId>/<traceId>/last.json`. Each `runAgentForNod
 
 Caused by **Anthropic occasionally routing our OAuth traffic to what was then the unreleased Opus 4.7 tokenizer/model**. NOT a Matrix bug. The previous hypothesis ("server-side system prompt injection") was wrong — corrected via bit-exact replay experiment.
 
+> **Sibling case**: this and *Fable-class connector-text summarization* (below) are the same class —
+> the server did something it did not disclose, and the client's own records are the only way to
+> catch it. Here the model was swapped while `response.model` kept reporting the declared one; there
+> the reply text was rewritten while the original stayed encrypted in a signature. Both were found
+> by comparing what we sent/stored against what came back, and in both the first hypothesis was
+> wrong. If you are ever debugging "the API behaved impossibly", read both before theorizing.
+
 **Proof method** (task 01KPC6VS500NNABTTC5606A8P9):
 1. Reset worktree to commit 8e49c1a (2026-04-04, the commit running when miss was observed)
 2. Captured two JSONL states around the transition: reqA at ts=1775332443540 (20:54:03 PT, 220,712 tokens observed), reqB at ts=1775333012661 (21:03:32 PT, 284,800 tokens observed, 0 cache_read)
@@ -1475,11 +1482,20 @@ Opus 4.7 GA was 2026-04-16 — **12 days AFTER our observation**. During that pe
 
 ## OpenAI Provider
 
-- Chat Completions (`OpenAICompatibleProvider`) is dead code — not wired into production.
-- `createProviderFromAuth` always creates `OpenAIResponsesCompatibleProvider` for OpenAI auth.
+- **There is ONE OpenAI provider: `OpenAIResponsesCompatibleProvider`.** `createProviderFromAuth`
+  always builds it for OpenAI auth.
+  ~~Chat Completions (`OpenAICompatibleProvider`) is dead code — not wired into production.~~
+  **That file no longer exists** — `src/openai-compatible-provider.ts` and its 1624-line test were
+  deleted in the FIX-4b sweep along with `eventsToOpenAIMessages`. Do not go looking for a
+  "Chat Completions path"; there isn't one to compare against.
 - Responses `streamResponsesAPI` has inner retry (5 attempts, exponential backoff) matching Anthropic. `retryDelayMs` param for fast tests.
 - Function tool definitions include `strict: false` in outgoing payload.
 - **Tool input Zod validation**: `executeTool` validates all built-in tool inputs against Zod schema. Rejects invalid types at schema boundary. External MCP tools (empty `inputSchema {}`) skip validation.
+
+### SDK
+
+Both providers use the `openai` npm package. `DebugSnapshot.body` === the exact object passed to the
+SDK. `ChatCompletionMessageToolCall` is a union — filter on `tc.type === "function"`.
 
 ## Hidden Tools via Anthropic Free-Form Name Sampling
 
@@ -1493,10 +1509,6 @@ Opus 4.7 GA was 2026-04-16 — **12 days AFTER our observation**. During that pe
 - Anthropic agents: can invoke create_folder, delete_folder, etc. by name even in sessions where those tools weren't frozen in
 - OpenAI agents: must see the tool in their list to call it
 - This is WHY compact-refresh-tools fix is OpenAI-critical, Anthropic-nice-to-have
-
-## OpenAI SDK Migration
-
-Both providers use `openai` npm package (v6.34.0). `DebugSnapshot.body` === exact object passed to SDK. `ChatCompletionMessageToolCall` is union — filter `tc.type === "function"`.
 
 ## Thinking Block Provider Filtering
 
@@ -1641,94 +1653,129 @@ final content, not per-token granularity).
 - `src/openai-responses-compatible-provider.ts` — 1 line changed (`export function createOpenAIResponsesAdapter`)
 - `src/test-utils/mock-openai-responses-api.ts` — +10 lines (delta emission)
 
-## fable-5/mythos-5: old SDK gets replies downgraded to signed thinking blocks (2026-06-09)
+## Fable-class connector-text summarization: the model's context ≠ what the client stores (2026-06-09/10)
 
-**Symptom**: assistant turns WITH thinking stored as `[thinking, thinking, tool_use]` — the
-second "thinking" block is a server-generated SUMMARY of the visible reply (sometimes English
-paraphrase of a Chinese reply), WITH signature. User-visible replies vanish into the thinking
-fold in UI. Reported by story1001, reproduced in root's own session.
+Three entries merged: the symptom plus a hypothesis that turned out wrong, the canary experiment
+that proved the actual mechanism, and the official doc that named it. Only the last is
+authoritative — the first two are kept for the forensic techniques, which are model-agnostic and
+have been reused since.
 
-**Root cause — NOT a matrix bug**: claude-fable-5's visible output passes through a server-side
-filter/summarizer model and carries a signature ("thinking verification hash chains", see new
-SDK BetaFallbackBlock docs). The server sniffs client SDK version (x-stainless headers); old
-SDKs (0.78) are served a COMPAT format where signed content is downgraded to thinking blocks —
-the only block type old clients reliably round-trip with signatures. SDK accumulator and walker
-faithfully reproduce server blocks; verified via debug `last-response.json` (raw finalMessage):
-the "second thinking" was a 135-char compressed paraphrase of a ~300-char actual reply.
+⚠️ **Scope**: this is Fable-class behavior; Matrix has been on opus-class since. Treat the mechanism
+as dormant rather than gone, and the techniques as permanently useful.
 
-**Fix attempt**: @anthropic-ai/sdk 0.78.0 → 0.104.0 (commit a61d341). One-sample post-restart
-verification passed, then the pattern RECURRED (23:17+, multiple sessions incl. the verifying
-turn itself) — SDK version is NOT the discriminator. Update kept (new model types, harmless).
+### What it is (official — AWS Bedrock `claude-messages-adaptive-thinking.html`)
 
-**CORRECTED diagnosis (2026-06-09 23:35)**: signature field length is content-proportional
-(364..14756 chars, ~2-4x displayed text; opus-era thinking already did this) → signature carries
-an ENCRYPTED payload of the original content. fable-5 intermittently applies the same protection
-to the VISIBLE REPLY: displayed text = server-rewritten paraphrase in a second thinking block,
-original never leaves Anthropic in readable form. User's read: anti-distillation. Client-side
-unfixable; options = tolerate / report upstream / switch back to opus-4-8. Historical JSONL keeps
-the summarized turns (accurate record of what the server sent) — no retroactive repair.
+Text emitted BETWEEN tool calls ("connector text") is **summarized server-side and returned as a
+thinking block** — standard thinking shape, no new content-block type, with the signature carrying
+the encrypted original. **"No customer opt-in or opt-out."** SDK version is irrelevant, exactly as
+measured.
 
-**Diagnosis pattern (reusable)**: when block types look wrong, read the per-traceId
-`debug/<taskId>/<traceId>/last-response.json` (raw server response, written before tool exec —
-a bash call can read its OWN turn's response). That separates server-sent vs client-corrupted
-in one step.
+The scope rules explain why it looked intermittent:
+- applies only AFTER a tool_result exists in the conversation,
+- SHORT text segments may pass through unsummarized,
+- **final assistant answers — text after all tool use is done, i.e. an end_turn — are UNAFFECTED and
+  stay plain text.**
 
-**Known follow-up gaps (untouched, wait for real data — anti-pattern #6)**:
-1. `fallback` block (server-side model fallback on refusal): buildResponseEvents has no branch →
-   not persisted to JSONL → post-restart walker omits it → per SDK docs the thinking hash chains
-   flanking the boundary can't verify → request rejected. Only fires when a fallback hop occurs.
-2. New stop_reasons (`refusal`, `pause_turn`, `compaction`, `model_context_window_exceeded`):
-   getStopReason maps all non-end_turn to "tool_use".
-3. SDK pin is caret (`^0.104.0`) — fine for now; fable-era servers change behavior by SDK
-   version, so future "weird block" bugs should check SDK gap FIRST.
+Echo-back: pass the thinking blocks back unchanged; the signature is validated, and stripped if sent
+to a different model.
 
-## fable-5 hidden-channel CONFIRMED: model context ≠ client-visible messages (2026-06-09 canary experiment)
+**How it presents** (this is what to look for if it ever recurs): assistant turns WITH thinking are
+stored as `[thinking, thinking, tool_use]`, where the SECOND "thinking" block is a server-generated
+summary of what should have been the visible reply — sometimes an English paraphrase of a Chinese
+reply — carrying a signature. In the UI the user's reply vanishes into the thinking fold. First
+reported by story1001, then reproduced in root's own session. **Matrix is faithful here**: the SDK
+accumulator and the walker reproduce whatever blocks the server sent; nothing on our side reshaped
+them. Confirmed by reading the raw `last-response.json` — a 135-char compressed paraphrase standing
+in for a ~300-char actual reply.
 
-Two-sided experimental proof (this session, ~23:50):
-1. **Setup turn**: a 12-digit random canary written ONLY in visible reply text (kept out of
-   all tool inputs). Turn got downgraded: client-side JSONL stored a 132-char paraphrase that
-   mentions "这串随机数" but DROPS the digits. Canary existed NOWHERE client-side.
-2. **Recall turn**: next-turn agent recalled the full canary verbatim from its context, recall
-   claim recorded in the tool input (timestamped before any read). All 4 JSONL occurrences of
-   the canary are from post-recall commands.
+Fable 5 launched 2026-06-09 (public Mythos-class with a safeguard layer; classifiers route
+cybersecurity / bio-chem / distillation requests to a guarded path — which makes the
+anti-distillation reading correct as motive).
 
-**Conclusion**: the signature field's encrypted payload is decrypted server-side on echo-back
-and the ORIGINAL content is reconstituted into the model's effective context. The model sees
-its own originals; the client/user only ever has the server-rewritten summaries. Implications:
-- "context = messages[]" is FALSE on fable-5 — the model cannot detect the divergence from
-  inside; only comparison against client-side records (JSONL/debug snapshots) reveals it.
-- The thinking-block packaging for old SDKs is the compat envelope that guarantees ciphertext
-  round-trip (old clients faithfully echo thinking+signature) — model continuity survives.
-- Anti-distillation reading (user's): full-fidelity outputs never exist client-side.
-- **Agent-side caveat**: an agent's "memory" of its own past replies is NOT evidence of what
-  the user saw. When verifying user-visible behavior, check JSONL/debug snapshots, never trust
-  introspection of own context.
-- Experiment protocol (reusable): canary in visible-text-only → next-turn recall recorded in
-  tool input BEFORE any read → grep client records. Tool inputs are the only generation-time
-  verbatim side channel (must be executed as written).
+### Operational mitigation: end the turn, don't call yield()
 
-## fable-5 FINAL: "Connector text summarization (beta)" — official doc found (2026-06-10)
+Replying and then calling `yield()` in the same turn makes the reply *connector* text (text followed
+by a tool_use) → summarized away. Matrix already treats **end_turn as an implicit yield**, with
+identical pause semantics. So an agent whose last action is a user-facing reply should **end its
+turn** rather than call yield(); the reply then survives as plain text. Explicit yield() is still
+fine when no user-facing prose precedes it.
 
-AWS Bedrock doc (claude-messages-adaptive-thinking.html) documents the whole phenomenon:
-- Text emitted BETWEEN tool calls ("connector text") on Fable 5 is **summarized server-side
-  and returned as a thinking block** (standard thinking shape, signature carries encrypted
-  original). "No new content block type." **"No customer opt-in or opt-out"** — SDK version
-  irrelevant, exactly as measured.
-- Scope rules explain the intermittency: applies only AFTER a tool_result exists in the
-  conversation; SHORT text segments may pass through unsummarized; **final assistant answers
-  (after all tool use is complete, i.e. end_turn text) are UNAFFECTED and remain plain text**.
-- Echo-back: pass the thinking blocks back unchanged (signature validated; stripped if sent
-  to a different model). Model-side context gets decrypted originals (canary-proven).
+### The proof: the signature carries the original, decrypted server-side
 
-**Operational mitigation for matrix agents**: reply-then-yield() in one turn makes the reply
-connector text (text followed by tool_use) → summarized away. Matrix already treats
-**end_turn as implicit yield** — identical pause semantics. Agents whose last action is a
-user-facing reply should END TURN instead of calling yield(); the reply then survives as
-plain text. Explicit yield() still fine when no user-facing prose precedes it.
+Two-sided canary experiment (2026-06-09 ~23:50):
 
-Supersedes the uncertainty in the two entries above. Fable 5 launched 2026-06-09 (public
-Mythos-class with safeguard layer; classifiers route cybersecurity/bio-chem/distillation
-requests to a guarded path — the anti-distillation reading was correct as motive).
+1. **Setup turn** — a 12-digit random canary written ONLY in visible reply text, kept out of every
+   tool input. The turn was downgraded: client-side JSONL stored a 132-char paraphrase that mentions
+   "这串随机数" but DROPS the digits. The canary existed NOWHERE client-side.
+2. **Recall turn** — the next turn's agent recalled the full canary verbatim from its context, with
+   the recall claim recorded in a tool input (timestamped before any read). All 4 later JSONL
+   occurrences of the canary come from post-recall commands.
+
+**Conclusion**: the signature's encrypted payload is decrypted server-side on echo-back and the
+ORIGINAL content is reconstituted into the model's effective context. The model sees its own
+originals; the client and the user only ever hold server-rewritten summaries.
+
+- **"context = messages[]" is FALSE** under this mechanism, and **the model cannot detect the
+  divergence from inside** — only comparison against client-side records reveals it.
+- The thinking-block packaging is a compat envelope that guarantees the ciphertext round-trips (old
+  clients faithfully echo thinking + signature), so model continuity survives.
+- Corroborating measurement: signature length is content-proportional (observed 364…14756 chars,
+  ~2-4× the displayed text; opus-era thinking already did this) — consistent with an encrypted
+  payload of the original rather than a checksum.
+- Historical JSONL keeps the summarized turns. That is an accurate record of what the server sent;
+  there is nothing to repair retroactively.
+
+### Forensic techniques (model-agnostic, keep these)
+
+- ⭐ **An agent's memory of its own past replies is NOT evidence of what the user saw.** When
+  verifying user-visible behavior, read JSONL / debug snapshots. Never trust introspection of your
+  own context. This is the single most transferable thing in this entry — it applies to any
+  divergence between what a model believes it emitted and what was persisted.
+- **Canary protocol**: put a unique token in visible text ONLY → have the next turn record its
+  recall inside a tool input BEFORE any read → grep the client-side records. Tool inputs are the
+  only generation-time verbatim side channel, because they must be executed as written.
+- **Raw-response snapshot**: when block types look wrong, read the per-traceId
+  `debug/<taskId>/<traceId>/last-response.json` — the raw server response, written before tool
+  execution, so a bash call can read its OWN turn's response. Separates "server sent this" from
+  "we corrupted it" in one step.
+- Two more in the same family, recorded in *fable silent-turn → silent idle* (Agent Loop region):
+  **base64-decoding a thinking block's `signature`** reveals which model actually served the turn,
+  independent of `response.model` (which can lie under silent routing); and **a clean `usage` event
+  proves the API turn completed**, which distinguishes "the upstream ended the turn oddly" from "we
+  were cut off mid-stream" — the latter would have orphaned the turn and triggered repair on resume.
+
+### Known gaps this exposed, deliberately NOT closed (anti-pattern #6 — wait for real data)
+
+1. **`fallback` block** (server-side model fallback on refusal): `buildResponseEvents` has no branch
+   → not persisted to JSONL → the post-restart walker omits it → per the SDK docs the thinking hash
+   chains flanking the boundary then cannot verify → request rejected. Only fires if a fallback hop
+   actually occurs.
+2. **New stop_reasons** (`refusal`, `pause_turn`, `compaction`, `model_context_window_exceeded`):
+   `getStopReason` maps everything non-`end_turn` to `"tool_use"`. See *fable silent-turn → silent
+   idle* for what that costs when an anomalous stop happens.
+3. **Check the SDK version first** on any future "weird block" bug — Fable-era servers changed
+   behavior by SDK version, so a version gap is a cheap thing to rule out early.
+   (This item used to read "SDK pin is a caret (`^0.104.0`), fine for now". It is no longer a caret:
+   package.json pins `@anthropic-ai/sdk` EXACT at `0.104.0`. Same reason `zod` is pinned exact —
+   see the plugin SDK's zod-identity note.)
+
+### The hypothesis that was wrong, and why it is kept
+
+The first diagnosis was **SDK-version sniffing**: the server reads `x-stainless` headers and serves
+old SDKs (0.78) a compat format in which signed content is downgraded to thinking blocks. It was
+plausible, it matched the observed block shape, and it produced an action: bump
+`@anthropic-ai/sdk` 0.78.0 → 0.104.0 (commit a61d341, kept — new model types, harmless).
+
+**One post-restart sample verified clean, and the pattern then recurred within the hour** — in
+multiple sessions, including the very turn that had "verified" the fix.
+
+Two things worth carrying out of that:
+- A single passing sample after a fix is not verification when the phenomenon is *intermittent by
+  design*. The scope rules above say short segments may pass through unsummarized — so a clean
+  sample was always available regardless of the fix.
+- The official doc later stated "no customer opt-in or opt-out", which is the same fact the
+  recurrence had already demonstrated. The measurement was right before the documentation existed;
+  what was wrong was the *causal story* attached to it.
 
 ---
 # Data Model & Storage
