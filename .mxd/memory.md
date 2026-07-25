@@ -1294,513 +1294,258 @@ drift or unexplained cache miss.
 # Providers & API
 ---
 
-## 70K Post-Restart Cache Miss (RESOLVED — correct diagnosis 2026-04-16, bit-exact proof)
-
-Caused by **Anthropic occasionally routing our OAuth traffic to what was then the unreleased Opus 4.7 tokenizer/model**. NOT a Matrix bug. The previous hypothesis ("server-side system prompt injection") was wrong — corrected via bit-exact replay experiment.
-
-> **Sibling case**: this and *Fable-class connector-text summarization* (below) are the same class —
-> the server did something it did not disclose, and the client's own records are the only way to
-> catch it. Here the model was swapped while `response.model` kept reporting the declared one; there
-> the reply text was rewritten while the original stayed encrypted in a signature. Both were found
-> by comparing what we sent/stored against what came back, and in both the first hypothesis was
-> wrong. If you are ever debugging "the API behaved impossibly", read both before theorizing.
-
-**Proof method** (task 01KPC6VS500NNABTTC5606A8P9):
-1. Reset worktree to commit 8e49c1a (2026-04-04, the commit running when miss was observed)
-2. Captured two JSONL states around the transition: reqA at ts=1775332443540 (20:54:03 PT, 220,712 tokens observed), reqB at ts=1775333012661 (21:03:32 PT, 284,800 tokens observed, 0 cache_read)
-3. Added `MXD_CAPTURE_BODY` env hook to intercept `client.messages.stream` → save request body to file
-4. Added `MXD_REPLAY_DATA_DIR` + `MXD_REPLAY_PORT` to run April-4 daemon against replay JSONL
-5. Daemon's own buildSessionRepair + walker + adapter.callAPI produced bit-identical request bodies to what was sent April 4
-6. Called today's count_tokens API with those captured bodies
-
-**Results — bit-exact match**:
-| Body | Model | Historical | Today | Match |
-|------|-------|------------|-------|-------|
-| reqA | opus-4-6 | 220,712 | 220,712 | **bit-exact** |
-| reqB | opus-4-7 | 284,800 | 284,800 | **bit-exact** |
-
-Cross-validation (same body, two tokenizers today): reqA on 4.6 = 220,712, reqA on 4.7 = 284,471. Pure tokenizer ratio = 1.2889x = **+28.9%** on identical content.
-
-**What this proves**: Two different tokenizers were used on the same session 9 minutes apart:
-- 20:54:03 PT: tokenizer matches today's opus-4-6 output exactly → 220,712
-- 21:03:32 PT (9m 29s later, same session, ~1K new events): tokenizer matches today's opus-4-7 output exactly → 284,800
-- `response.model` continued reporting "claude-opus-4-6" — the swap was client-invisible
-
-Since tokenizers are typically bound to model weights (embedding layer dimensions match vocabulary), this strongly suggests the underlying model was swapped to opus-4-7 during that window. Other interpretations are possible (e.g., preprocessor-only swap) but less likely. Bottom line: **we suspect we were hot-routed to opus-4-7 while declaring opus-4-6**.
-
-Opus 4.7 GA was 2026-04-16 — **12 days AFTER our observation**. During that period, Anthropic occasionally routed our requests to opus-4-7 while we declared model="claude-opus-4-6". Routing was sporadic (per-account, per-session) and generally undetectable client-side — the only reliable signal is a cache-miss event where the tokenizer signature shifts. Billing semantics are unknown.
-
-**Intermediate gotcha**: On first replay attempt, daemon produced 210,197 (not 220,712). Gap = 10,515 tokens = compacted_resume content. Root cause: commit c5722b6 (2026-04-12) changed `type: "compacted_resume"` event shape → `type: "message" + body.source: "compacted_resume"`. Migration rewrote old events. April-4 walker deferred new-format (has `id`, no `messages_consumed`) and dropped the content. Pre-migration backup at `~/.mxd copy/sessions/.../events.jsonl.bak` (2026-04-03 18:48) confirmed old format. Fix: 10-line patch to April-4 walker.
-
-**Lesson**: our JSONL is a log — it survives through format migrations but loses bit-fidelity against the code that wrote it. For reproducibility, preserve pre-migration snapshots when changing persisted event shapes.
-
-**Observable side effects when routed to 4.7**:
-- Unexplained cache misses when tokenizer differed between prefix-write and new-call
-- ~29% higher input token counts vs 4.6 baseline for same content
-- Possibly different response quality/style (not measured — indistinguishable from normal opus-4-6 variance unless compared side-by-side)
-
-**Why this matters**: Silent model routing means `response.model` cannot be trusted as ground truth for which model actually served a request. A client declaring model X may receive model Y's output without any disclosed indicator. Tokenizer ratio is the most reliable post-hoc signal, but only visible at cache-transition moments.
-
-## OpenAI Provider
-
-- **There is ONE OpenAI provider: `OpenAIResponsesCompatibleProvider`.** `createProviderFromAuth`
-  always builds it for OpenAI auth.
-  ~~Chat Completions (`OpenAICompatibleProvider`) is dead code — not wired into production.~~
-  **That file no longer exists** — `src/openai-compatible-provider.ts` and its 1624-line test were
-  deleted in the FIX-4b sweep along with `eventsToOpenAIMessages`. Do not go looking for a
-  "Chat Completions path"; there isn't one to compare against.
-- Responses `streamResponsesAPI` has inner retry (5 attempts, exponential backoff) matching Anthropic. `retryDelayMs` param for fast tests.
-- Function tool definitions include `strict: false` in outgoing payload.
-- **Tool input Zod validation**: `executeTool` validates all built-in tool inputs against Zod schema. Rejects invalid types at schema boundary. External MCP tools (empty `inputSchema {}`) skip validation.
-
-### SDK
-
-Both providers use the `openai` npm package. `DebugSnapshot.body` === the exact object passed to the
-SDK. `ChatCompletionMessageToolCall` is a union — filter on `tc.type === "function"`.
-
-## Hidden Tools via Anthropic Free-Form Name Sampling
-
-**Matrix's tools list frozen in session_config** defines what the LLM sees in its tool inventory. But the DAEMON's handler registry has every registered tool.
-
-**Anthropic API** uses free-form tool name generation — server dispatches any name to whatever handler exists. Agents can invoke tools NOT in their tools list (e.g., `evaluate_script` is intentionally hidden from session_config). If you know a tool's name, you can call it.
-
-**OpenAI Responses API** uses schema-constrained sampling — the model's probability distribution is masked to only tool names in the provided tools array. Agents CANNOT call tools not in session_config on OpenAI. `strict: false` on Responses only relaxes optional-field validation, not tool-name enforcement.
-
-**Operational consequences**:
-- Anthropic agents: can invoke create_folder, delete_folder, etc. by name even in sessions where those tools weren't frozen in
-- OpenAI agents: must see the tool in their list to call it
-- This is WHY compact-refresh-tools fix is OpenAI-critical, Anthropic-nice-to-have
-
-## Thinking Block Provider Filtering
-
-Thinking events have `provider?: string`. Switching providers automatically drops stale thinking blocks (provider mismatch → filtered). OpenAI walker ignores thinking entirely.
-
-## LLM Facility — stateless single-turn LLM for plugins (2026-04-23)
-
-`src/llm.ts` — a thin, provider-agnostic wrapper around the existing provider
-adapters. For plugins that need individual LLM calls outside the agent loop
-(pipelines, one-shot generation, classifiers). **Strictly single-turn, no
-tools, no session state.**
-
-### Surface
-
-```ts
-createLLM({ authGroup, model, defaultThinkingEffort? }): LLMClient
-runLLM(config, req): Promise<LLMResult>
-streamLLM(config, req): AsyncIterable<LLMChunk>
-```
-
-`LLMChunk`:
-```ts
-| { type: "text_delta"; delta: string }
-| { type: "thinking_delta"; delta: string }  // Anthropic only in v1
-| { type: "final"; text; thinking?; usage; stopReason }
-```
-
-`LLMRequest`: `{ system?, user? | messages?, maxTokens?, thinkingEffort?, signal? }`
-— exactly one of `user` / `messages`. No image input, no tool_use.
-
-### Plugin idiom
-
-```ts
-import { createLLM } from "matrix/src/llm.ts";
-import { resolveAuthGroup } from "matrix/src/config.ts";
-
-const authGroup = resolveAuthGroup(effectiveCfg);
-if (!authGroup) throw new Error("No auth group configured");
-const llm = createLLM({
-  authGroup,
-  model: effectiveCfg.model,
-  defaultThinkingEffort: effectiveCfg.thinkingEffort,  // plugin resolves once
-});
-const { text } = await llm.run({ system: "...", user: "..." });
-```
-
-**Plugin resolves from MatrixConfig itself**. The facility stays decoupled
-from `MatrixConfig`/`RuntimeContext` shape — it only knows `AuthGroup`, model
-string, and thinking effort number. Per-call `thinkingEffort` overrides the
-default; unset → uses `defaultThinkingEffort` → unset → 0 (no thinking).
-
-### Reuse strategy (audit-driven)
-
-Leverages existing runtime aggressively — the facility is ~180 LOC of wiring
-over existing adapter code:
-
-1. **`adapter.callAPI`** (reuse) — already yields `text_delta`/`thinking_delta`
-   and returns the raw SDK response. Facility drives it, normalizes chunks,
-   extracts `final`. Two factory functions exposed via `export`:
-   `createAnthropicAdapter`, `createOpenAIResponsesAdapter`.
-2. **`adapter.buildResponseEvents(response, false)`** (reuse for Anthropic
-   thinking extraction) — filter for `type: "thinking" && !redacted` events,
-   concat. Redacted blocks dropped silently.
-3. **`adapter.getTokenUsage` / `computeCost` / `getResponseText`** (reuse).
-4. **`requestToRoleList`** — single helper maps `LLMRequest` to
-   `[{role, content: string}]`. Both Anthropic's `MessageParam` and Matrix's
-   OpenAI `HistoryMessage` accept this shape natively — no
-   `buildAnthropicMessages`/`buildOpenAIMessages` wrappers needed.
-5. **OpenAI reasoning extraction** — NEW code (~15 lines). No existing
-   walker emits reasoning events for OpenAI Responses (only `message` and
-   `function_call` surface in `buildResponseEvents`). Walks
-   `response.output[].type === "reasoning"` items directly for `final.thinking`.
-6. **Stop reason mapping** — NEW (~20 lines total across both providers).
-   `adapter.getStopReason` returns `"end_turn" | "tool_use"` — too coarse
-   for facility (can't distinguish `max_tokens`). Facility maps explicitly.
-7. **SDK client construction** — DUPLICATED from provider class
-   constructors (~40 lines). Not extracted this round (scope). Beta headers
-   and timeout match `AnthropicCompatibleProvider` exactly. Note: any
-   future change to beta headers must update BOTH the class constructor
-   AND `createAnthropicClient` in `src/llm.ts`.
-
-### Error / retry / abort
-
-- Transient errors auto-retried by the SDK (5 attempts × exponential
-  backoff), inherited from `callAPI`. No outer retry — caller can layer
-  their own if they want more.
-- Non-transient errors (401, 400) throw immediately.
-- `signal.abort()` throws from the SDK; propagates as a thrown error from
-  `run()` / mid-iteration in `stream()`.
-- No `error` chunk in v1. Errors are exceptions.
-- `max_tokens` hit → text still returned; `stopReason: "max_tokens"`
-  signals truncation. Does NOT throw.
-
-### What's NOT pulled in (by design)
-
-Agent-loop concerns stay out: MessageQueue, JSONL EventStore, MCP tools,
-`runProviderLoop`, compaction, budget, work context, debug snapshot,
-session_config, session identity (fresh random sessionId per call — it's
-used only for mock test-conversation keying inside `adapter.callAPI`'s
-side channel, never visible to production).
-
-`cache_control` breakpoints still emitted by `callAPI` on every call. 
-Harmless for single-shot (nothing repeats to hit the cache), just a few
-extra bytes per request.
-
-### systemPreamble is honored
-
-`AnthropicAuthGroup.systemPreamble` is passed through to
-`createAnthropicAdapter` opts → prepended as first system block. A plugin
-using the facility sees the same preamble an agent-loop call would. OpenAI
-has no equivalent; `OpenAIAuthGroup` has no `systemPreamble` field.
-
-### Testing discipline
-
-Mocks must set `sessionId` for Anthropic (ValidatingMockAPI requires it
-for conversation keying). Facility generates a fresh ULID internally and
-passes it to `adapter.callAPI`, which writes it onto
-`client._currentSessionId` (side channel). Mock picks it up from there.
-
-OpenAI mock intercepts `globalThis.fetch` globally — facility has nothing
-to configure; construction via `createLLM` with the mock fetch installed
-just works.
-
-Anthropic test pattern uses `_createLLMFromAnthropicClient(mockClient, ...)`
-— test-only internal export that bypasses `createAnthropicClient`'s
-credential resolution. Do not import from production code.
-
-### OpenAI Responses mock: `response.output_text.delta`
-
-`ValidatingMockResponsesAPI.buildTurnResponse` now emits a single
-`response.output_text.delta` event per text block (between `content_part.added`
-and `response.completed`). Real Responses API streams the output_text via one
-or more delta events; the mock produces one delta carrying the whole text.
-This makes the mock more accurate without breaking existing tests (they check
-final content, not per-token granularity).
-
-### Files
-
-- `src/llm.ts` — ~560 LOC (incl. JSDoc)
-- `src/llm.test.ts` — 18 tests, all providers × run/stream × error/abort paths
-- `src/anthropic-compatible-provider.ts` — 1 line changed (`export function createAnthropicAdapter`)
-- `src/openai-responses-compatible-provider.ts` — 1 line changed (`export function createOpenAIResponsesAdapter`)
-- `src/test-utils/mock-openai-responses-api.ts` — +10 lines (delta emission)
-
-## Fable-class connector-text summarization: the model's context ≠ what the client stores (2026-06-09/10)
-
-Three entries merged: the symptom plus a hypothesis that turned out wrong, the canary experiment
-that proved the actual mechanism, and the official doc that named it. Only the last is
-authoritative — the first two are kept for the forensic techniques, which are model-agnostic and
-have been reused since.
-
-⚠️ **Scope**: this is Fable-class behavior; Matrix has been on opus-class since. Treat the mechanism
-as dormant rather than gone, and the techniques as permanently useful.
-
-### What it is (official — AWS Bedrock `claude-messages-adaptive-thinking.html`)
-
-Text emitted BETWEEN tool calls ("connector text") is **summarized server-side and returned as a
-thinking block** — standard thinking shape, no new content-block type, with the signature carrying
-the encrypted original. **"No customer opt-in or opt-out."** SDK version is irrelevant, exactly as
-measured.
-
-The scope rules explain why it looked intermittent:
-- applies only AFTER a tool_result exists in the conversation,
-- SHORT text segments may pass through unsummarized,
-- **final assistant answers — text after all tool use is done, i.e. an end_turn — are UNAFFECTED and
-  stay plain text.**
-
-Echo-back: pass the thinking blocks back unchanged; the signature is validated, and stripped if sent
-to a different model.
-
-**How it presents** (this is what to look for if it ever recurs): assistant turns WITH thinking are
-stored as `[thinking, thinking, tool_use]`, where the SECOND "thinking" block is a server-generated
-summary of what should have been the visible reply — sometimes an English paraphrase of a Chinese
-reply — carrying a signature. In the UI the user's reply vanishes into the thinking fold. First
-reported by story1001, then reproduced in root's own session. **Matrix is faithful here**: the SDK
-accumulator and the walker reproduce whatever blocks the server sent; nothing on our side reshaped
-them. Confirmed by reading the raw `last-response.json` — a 135-char compressed paraphrase standing
-in for a ~300-char actual reply.
-
-Fable 5 launched 2026-06-09 (public Mythos-class with a safeguard layer; classifiers route
-cybersecurity / bio-chem / distillation requests to a guarded path — which makes the
-anti-distillation reading correct as motive).
-
-### Operational mitigation: end the turn, don't call yield()
-
-Replying and then calling `yield()` in the same turn makes the reply *connector* text (text followed
-by a tool_use) → summarized away. Matrix already treats **end_turn as an implicit yield**, with
-identical pause semantics. So an agent whose last action is a user-facing reply should **end its
-turn** rather than call yield(); the reply then survives as plain text. Explicit yield() is still
-fine when no user-facing prose precedes it.
-
-### The proof: the signature carries the original, decrypted server-side
-
-Two-sided canary experiment (2026-06-09 ~23:50):
-
-1. **Setup turn** — a 12-digit random canary written ONLY in visible reply text, kept out of every
-   tool input. The turn was downgraded: client-side JSONL stored a 132-char paraphrase that mentions
-   "这串随机数" but DROPS the digits. The canary existed NOWHERE client-side.
-2. **Recall turn** — the next turn's agent recalled the full canary verbatim from its context, with
-   the recall claim recorded in a tool input (timestamped before any read). All 4 later JSONL
-   occurrences of the canary come from post-recall commands.
-
-**Conclusion**: the signature's encrypted payload is decrypted server-side on echo-back and the
-ORIGINAL content is reconstituted into the model's effective context. The model sees its own
-originals; the client and the user only ever hold server-rewritten summaries.
-
-- **"context = messages[]" is FALSE** under this mechanism, and **the model cannot detect the
-  divergence from inside** — only comparison against client-side records reveals it.
-- The thinking-block packaging is a compat envelope that guarantees the ciphertext round-trips (old
-  clients faithfully echo thinking + signature), so model continuity survives.
-- Corroborating measurement: signature length is content-proportional (observed 364…14756 chars,
-  ~2-4× the displayed text; opus-era thinking already did this) — consistent with an encrypted
-  payload of the original rather than a checksum.
-- Historical JSONL keeps the summarized turns. That is an accurate record of what the server sent;
-  there is nothing to repair retroactively.
-
-### Forensic techniques (model-agnostic, keep these)
-
-- ⭐ **An agent's memory of its own past replies is NOT evidence of what the user saw.** When
-  verifying user-visible behavior, read JSONL / debug snapshots. Never trust introspection of your
-  own context. This is the single most transferable thing in this entry — it applies to any
-  divergence between what a model believes it emitted and what was persisted.
-- **Canary protocol**: put a unique token in visible text ONLY → have the next turn record its
-  recall inside a tool input BEFORE any read → grep the client-side records. Tool inputs are the
-  only generation-time verbatim side channel, because they must be executed as written.
-- **Raw-response snapshot**: when block types look wrong, read the per-traceId
-  `debug/<taskId>/<traceId>/last-response.json` — the raw server response, written before tool
-  execution, so a bash call can read its OWN turn's response. Separates "server sent this" from
-  "we corrupted it" in one step.
-- Two more in the same family, recorded in *fable silent-turn → silent idle* (Agent Loop region):
-  **base64-decoding a thinking block's `signature`** reveals which model actually served the turn,
-  independent of `response.model` (which can lie under silent routing); and **a clean `usage` event
-  proves the API turn completed**, which distinguishes "the upstream ended the turn oddly" from "we
-  were cut off mid-stream" — the latter would have orphaned the turn and triggered repair on resume.
-
-### Known gaps this exposed, deliberately NOT closed (anti-pattern #6 — wait for real data)
-
-1. **`fallback` block** (server-side model fallback on refusal): `buildResponseEvents` has no branch
-   → not persisted to JSONL → the post-restart walker omits it → per the SDK docs the thinking hash
-   chains flanking the boundary then cannot verify → request rejected. Only fires if a fallback hop
-   actually occurs.
-2. **New stop_reasons** (`refusal`, `pause_turn`, `compaction`, `model_context_window_exceeded`):
-   `getStopReason` maps everything non-`end_turn` to `"tool_use"`. See *fable silent-turn → silent
-   idle* for what that costs when an anomalous stop happens.
-3. **Check the SDK version first** on any future "weird block" bug — Fable-era servers changed
-   behavior by SDK version, so a version gap is a cheap thing to rule out early.
-   (This item used to read "SDK pin is a caret (`^0.104.0`), fine for now". It is no longer a caret:
-   package.json pins `@anthropic-ai/sdk` EXACT at `0.104.0`. Same reason `zod` is pinned exact —
-   see the plugin SDK's zod-identity note.)
-
-### The hypothesis that was wrong, and why it is kept
-
-The first diagnosis was **SDK-version sniffing**: the server reads `x-stainless` headers and serves
-old SDKs (0.78) a compat format in which signed content is downgraded to thinking blocks. It was
-plausible, it matched the observed block shape, and it produced an action: bump
-`@anthropic-ai/sdk` 0.78.0 → 0.104.0 (commit a61d341, kept — new model types, harmless).
-
-**One post-restart sample verified clean, and the pattern then recurred within the hour** — in
-multiple sessions, including the very turn that had "verified" the fix.
-
-Two things worth carrying out of that:
-- A single passing sample after a fix is not verification when the phenomenon is *intermittent by
-  design*. The scope rules above say short segments may pass through unsummarized — so a clean
-  sample was always available regardless of the fix.
-- The official doc later stated "no customer opt-in or opt-out", which is the same fact the
-  recurrence had already demonstrated. The measurement was right before the documentation existed;
-  what was wrong was the *causal story* attached to it.
-
-## The Anthropic message-shape rules, MEASURED (2026-07-25) — and the fictional one we built on
-
-⚠️ **`ValidatingMockAPI` enforced a role-alternation rule that DOES NOT EXIST.** 628 occurrences of
-"Messages must alternate roles" in our JSONL history; **every one came from our own mock, none from
-the API.** Four mechanisms, one `test.todo` and one memory "⭐ reusable pattern" were built to avoid
-a 400 that cannot happen. Full audit + per-mechanism verdicts: task **01KYCQ856M3Z6F4EN247C4GW69**.
-
-### The rules, as measured against production Anthropic (19 shapes, OAuth, `claude-opus-5`)
-
-1. **First message must be `user`.** (mock had it ✅)
-2. **The conversation must END with a `user` message.** Ending on assistant →
-   400 *"This model does not support assistant message prefill."* (mock did NOT have it ❌)
-3. **The tool-answering rule — and it is NOT "in the next message":**
-
-   > Flatten the user messages after an assistant-with-`tool_use` into one block stream. Take the
-   > **maximal LEADING run of `tool_result` blocks**. It crosses message boundaries freely; **any
-   > non-`tool_result` block ends it** — including a *trailing* text block in an otherwise-fine
-   > message, and including a plain-string user message. Every `tool_use` must be answered inside
-   > that run.
-
-4. **Every `tool_result` must answer a `tool_use` in the preceding assistant message** (orphan →
-   400). (mock had it ✅)
-5. **Consecutive same-role messages are LEGAL** — user/user, user/user/user, and assistant/assistant
-   all accepted. (mock forbade ❌ — the fiction)
-6. **Empty content is LEGAL** — `""`, `[]`, and `[{type:"text",text:""}]` all accepted. (mock
-   forbade ❌ — a second, unnoticed fiction)
-
-Consequences of rule 3 that nothing tests today:
-- results **split across several user messages** are fine (`[R1] [R2] [R3,text]` ✅), in **any order**
-- `[R1, text]` then `[R2, …]` is **400** — the trailing text ended the run before R2
-- `[text, R1]` is **400** — block ORDER inside the message matters
-- ⭐ **`buildUserTurn` packs `[...tool_results, ...queueMessages]`, tool_results FIRST. That order is
-  a real API requirement, not style.** Put text before a tool_result, or between two batches of
-  them, and you get a production 400 with a fully green suite.
-
-### Reachable bug this exposed (BEHAVIOR SNAPSHOT test, `src/reachable-400-snapshot.test.ts`)
-
-`provider-shared.ts` "context too short to compact" (`manualCompactRequested && messages.length <= 4`):
-a fresh agent whose first turn ends with `end_turn` has `messages = [user, assistant]`; `/compact`
-takes the compactOnly path → `continue` → the too-short branch clears the flag and `continue`s with
-nothing to push → next iteration sends a request **ending in assistant** → 400. Reproduced
-end-to-end through the real agent loop; the agent crashes. **No new code needed to reach it.**
-
-### ⭐ The general lesson — how a fictional rule gets installed
-
-`jsonl-stress.test.ts`'s `assertStructurallyValidApiMessages` wrote down BOTH rules in the same
-comment, then chose:
+## The server can do things it does not disclose, and only our own records catch it
+
+Twice now, the API has behaved in a way that is invisible from inside a single response, and both
+times the only detector was **comparing what we sent and stored against what came back.** Both times
+the first hypothesis was wrong and plausible. If you are ever debugging "the API behaved
+impossibly", read both before theorizing.
+
+### `response.model` cannot be trusted as ground truth
+
+A session showed a 70K-token cache miss with no explanation. Bit-exact replay settled it: two
+requests 9 minutes apart in one session were tokenized by two different tokenizers. The earlier
+request matched today's opus-4-6 output exactly (220,712 tokens); the later one matched opus-4-7
+exactly (284,800). Same body on the two tokenizers today: 220,712 versus 284,471, a pure ratio of
+**+28.9% on identical content**. Throughout, `response.model` kept reporting the declared model —
+the swap was entirely client-invisible, and opus-4-7 was not GA for another 12 days.
+
+> **A client declaring model X may receive model Y's output with no disclosed indicator.** The
+> tokenizer ratio is the most reliable post-hoc signal, and it is only visible at a cache-transition
+> moment.
+
+Observable side effects when this happens: unexplained cache misses whenever the tokenizer differed
+between prefix-write and the new call, and ~29% higher input-token counts for the same content.
+
+⭐ **Forensic technique, model-agnostic: base64-decode a thinking block's `signature` — it embeds the
+serving model name**, independently of `response.model`. That is how "8 of 8 silent turns were served
+by a different model, 0 of 9,800 normal ones were" got established.
+
+⚠️ **Lesson from the replay itself: our JSONL survives format migrations but loses bit-fidelity
+against the code that wrote it.** The first replay attempt came out 10,515 tokens short because a
+later commit had changed the shape of one event type and a migration rewrote the old events, so the
+old walker dropped their content. **When you change a persisted event shape, preserve a pre-migration
+snapshot** — reproducibility against historical sessions depends on it.
+
+### Connector text is summarized server-side, and the model still sees the original
+
+⚠️ **Scope: this is Fable-class behavior and Matrix has been on opus-class since. Treat the mechanism
+as dormant rather than gone, and the techniques as permanently useful.**
+
+Officially documented (AWS Bedrock, adaptive thinking): text emitted BETWEEN tool calls — "connector
+text" — is **summarized server-side and returned as a thinking block**, standard thinking shape, no
+new content-block type, with the signature carrying the encrypted original. **"No customer opt-in or
+opt-out."** SDK version is irrelevant.
+
+The scope rules explain why it looked intermittent: it applies only AFTER a tool_result exists in
+the conversation; SHORT segments may pass through unsummarized; and **a final assistant answer —
+text after all tool use, i.e. an `end_turn` — is UNAFFECTED and stays plain text.**
+
+**How it presents**, which is what to look for if it recurs: assistant turns stored as
+`[thinking, thinking, tool_use]`, where the SECOND thinking block is a server-generated summary of
+what should have been the visible reply — sometimes an English paraphrase of a Chinese one — carrying
+a signature. In the UI the user's reply vanishes into the thinking fold. **Matrix is faithful here**:
+the SDK accumulator and the walker reproduce whatever blocks the server sent, confirmed by reading a
+raw response where a 135-char paraphrase stood in for a ~300-char actual reply.
+
+⚠️ **Operational mitigation: an agent whose last action is a user-facing reply should END ITS TURN
+rather than call `yield()`.** Replying and then calling yield in the same turn makes the reply
+*connector* text and it is summarized away. Matrix treats `end_turn` as an implicit yield with
+identical pause semantics, so nothing is lost. Explicit `yield()` is fine when no user-facing prose
+precedes it.
+
+⭐ **The proof, and the reason it matters beyond this one mechanism.** A 12-digit canary was written
+only in visible reply text and kept out of every tool input. The client-side JSONL stored a
+paraphrase that mentioned "这串随机数" and **dropped the digits** — the canary existed nowhere
+client-side. The next turn's agent then recalled the full canary verbatim from its context, with the
+recall recorded in a tool input timestamped before any read. So the signature's encrypted payload is
+decrypted server-side on echo-back and the ORIGINAL is reconstituted into the model's effective
+context.
+
+> **"Context = `messages[]`" is FALSE under this mechanism, and the model cannot detect the
+> divergence from inside.** The model sees its own originals; the client and the user hold only
+> server-rewritten summaries.
+
+⭐ **An agent's memory of its own past replies is NOT evidence of what the user saw.** When verifying
+user-visible behavior, read the JSONL or a debug snapshot. Never trust introspection of your own
+context. This is the single most transferable thing here — it applies to any divergence between what
+a model believes it emitted and what was persisted.
+
+Three forensic techniques worth keeping, all model-agnostic:
+
+- **Canary protocol**: put a unique token in visible text ONLY, have the next turn record its recall
+  inside a TOOL INPUT before any read, then grep the client-side records. Tool inputs are the only
+  generation-time verbatim side channel, because they must be executed as written.
+- **Raw-response snapshot**: when block types look wrong, read
+  `debug/<taskId>/<traceId>/last-response.json` — written before tool execution, so a bash call can
+  read its OWN turn's response. Separates "the server sent this" from "we corrupted it" in one step.
+- **A clean `usage` event proves the API turn completed**, which rules out a mid-stream process
+  suspension (that would orphan the turn and trigger repair on resume). So `clean usage +
+  thinking-only shape` is an upstream silent turn, not a laptop-close.
+
+⚠️ **The first diagnosis was wrong, and it is worth knowing how.** It was SDK-version sniffing —
+plausible, matching the observed block shape, and it produced an action (an SDK bump, kept, harmless).
+One post-restart sample verified clean, and the pattern recurred within the hour. **A single passing
+sample is not verification when the phenomenon is intermittent by design** — the scope rules
+guarantee a clean sample is always available regardless of the fix. The measurement was right before
+the documentation existed; what was wrong was the causal story attached to it.
+
+**Two gaps deliberately left open** (waiting for real data rather than building for imagined cases):
+`buildResponseEvents` has no branch for a server-side `fallback` block, so a fallback hop would not
+be persisted and the post-restart walker would omit it, breaking the thinking hash chain; and
+`getStopReason` maps every non-`end_turn` reason to `"tool_use"` — see *An anomalous stop idles the
+agent silently* for what that costs.
+
+## The Anthropic message-shape rules, MEASURED
+
+Measured against production Anthropic (19 shapes, OAuth, opus-class). These four are the API's actual
+rules:
+
+1. **The first message must be `user`.**
+2. **The conversation must END with a `user` message.** Ending on assistant → 400 *"This model does
+   not support assistant message prefill."*
+3. **The tool-answering rule, which is NOT "in the next message":** flatten the user messages after
+   an assistant-with-`tool_use` into one block stream and take the **maximal LEADING run of
+   `tool_result` blocks.** It crosses message boundaries freely; **any non-`tool_result` block ends
+   it**, including a *trailing* text block in an otherwise-fine message and including a plain-string
+   user message. Every `tool_use` must be answered inside that run.
+4. **Every `tool_result` must answer a `tool_use` in the preceding assistant message.**
+
+And two things that are **LEGAL** and were long believed otherwise: **consecutive same-role messages**
+(user/user, user/user/user, assistant/assistant) and **empty content** (`""`, `[]`,
+`[{type:"text",text:""}]`).
+
+⭐ **Consequence nothing else states: `buildUserTurn` packs `[...tool_results, ...queueMessages]` with
+tool_results FIRST, and that order is a real API requirement rather than style.** Put text before a
+tool_result, or between two batches of them, and you get a production 400 with a fully green suite.
+Results split across several user messages are fine, in any order; `[R1, text]` then `[R2, …]` is a
+400 because the trailing text ended the run; `[text, R1]` is a 400 because block order inside the
+message matters.
+
+**Reachable, real and open**: `/compact` on a session with `messages.length <= 4` whose last message
+is an assistant turn sends a request ending in assistant → 400. A fresh agent whose first turn ends
+with `end_turn` reaches it with no other setup. `src/reachable-400-snapshot.test.ts` asserts the
+CURRENT buggy shape.
+
+⚠️ **Probing the real API: the `systemPreamble` trap.** Any probe against the OAuth endpoint must
+send the auth group's `systemPreamble` as the FIRST system block, or every call 429s. A first-pass
+probe that omitted it produced a wall of rate limits that reads exactly like validation failure and
+nearly yielded the opposite conclusion.
+
+## ⭐ Plausible and wrong: how this project fools itself
+
+> **The expensive failures here have not been mistakes that looked like mistakes. They have been
+> well-written, well-evidenced, plausible things that were wrong — and each one then LOWERED the bar
+> for everything downstream of it, because a check is only ever judged adequate against the
+> explanation you currently believe.**
+
+**Member 1: an ENFORCED fiction manufactures its own evidence.** `ValidatingMockAPI` enforced a
+role-alternation rule that does not exist. Our JSONL history contains **628 occurrences of "Messages
+must alternate roles" — every one from our own mock and none from the API.** Four production
+mechanisms, one `test.todo` and one memory entry filed as a "reusable pattern" were built to avoid a
+400 that cannot happen.
+
+How it got installed is the instructive part. The helper's own comment wrote down BOTH rules and then
+chose:
 
 > *"We don't assert the trailing-role rule because some walker outputs are intermediate and meant to
 > be extended. We DO assert the alternation and structural shape."*
 
 **That reasoning is correct.** Some walker outputs genuinely are conversation *prefixes* that end on
-assistant; asserting the real rule would redden correct fixtures. So:
+assistant, and asserting the real rule would redden correct fixtures. So:
 
-> **An inconvenient TRUE assertion + a conveniently-green FALSE one ⇒ the false one gets installed,
-> and is then believed as fact.** The fiction does not win on persuasiveness — it wins on **not
-> causing trouble**. Once it lives inside a `throw` it starts MANUFACTURING EVIDENCE: 628 error
-> strings from the rule that was *executed*, 0 from the rule that was merely *documented*. **The
+> ⚠️ **An inconvenient TRUE assertion plus a conveniently-green FALSE one means the false one gets
+> installed, and is then believed as fact. The fiction does not win on persuasiveness — it wins on
+> not causing trouble.** Once it lives inside a `throw` it starts MANUFACTURING EVIDENCE: 628 error
+> strings from the rule that was *executed*, zero from the rule that was merely *documented*. **The
 > knowledge was never lost; the enforcement was.**
 
-**Detector — do not audit whether the assertions are correct** (that comment was entirely correct).
+⚠️ **Detector — do not audit whether the assertions are correct.** That comment was entirely correct.
 Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
-fork is where the fiction starts producing evidence.
+fork is where a fiction starts producing evidence.
 
-### An over-strict test double bills you in THREE ways, and the third is the quiet one
+**An over-strict test double bills you three ways, and the third leaves no artifact.** It creates
+complexity you pay for (the four mechanisms). It hides gaps — a fiction occupying the "role rules"
+slot stopped anyone asking what the real role rule was, so the true one got zero coverage and a
+reachable production 400 sat there unnoticed. And ⭐ **it VETOES correct code**: interrupting an agent
+before it emits anything, parking it, then sending another message produces `[…, user, user]` —
+legal, and the old mock rejected it, so the correct implementation could not be tested, the test was
+truncated at the park, and a comment was left saying the constraint was unverified. **Nothing was
+red. The feature simply acquired a reputation for being hard to test.** The first two produce
+artifacts you can go find; the third produces *absence*. **Ask what your test double has made people
+give up on, not only what it has made them build.**
 
-1. **It creates complexity you pay for.** Four `pending*` mechanisms, a `test.todo`, and a memory
-   entry filed as a ⭐ reusable pattern — all to dodge a 400 that cannot happen.
-2. **It hides gaps.** A fiction occupying the "role rules" slot stops anyone asking what the real
-   role rule is, so the true one (last message must be user) got zero coverage and a reachable
-   production 400 sat there unnoticed.
-3. ⭐ **It VETOES correct code — and this one never looks like a bug.** Found the same day by
-   01KYBB2Z: interrupting an agent before it emits anything, parking it, then sending another
-   message produces `[…, user, user]`. Legal; the old mock rejected it. So the correct
-   implementation could not be tested, the test was truncated at the park, and a comment was left
-   saying the mock's constraint was unverified. **Nothing was red. The feature simply acquired a
-   reputation for being "hard to test".**
+**The name was the other tell.** `assertStructurallyValidApiMessages` fused two different predicates
+— *structurally valid* (a prefix property) and *API messages* (a sendable-request property) — and
+code can only be one of them, so it silently became the weaker one plus a fictional bonus. **A name
+that claims "valid" without saying valid-for-what will drift to "matches what we imagined."** The fix
+was a new *concept*, not a stricter assertion: `wellFormedPrefixViolations` (first-must-be-user;
+pairing, but an answering run that RUNS OFF THE END of the array is incomplete rather than broken;
+orphan tool_results are violations at any position) and `sendableRequestViolations` (all of that plus
+trailing-role plus the last assistant's tool_uses answered by now). Note the trap's second half: the
+PAIRING rule has the same intermediate-state problem the trailing-role rule has, so whoever tried to
+assert the true rules with only one predicate available would have gone red on correct fixtures
+*twice*. **Courage was not the missing ingredient; the concept was.**
 
-The first two produce artifacts you can go find — code, a todo, a crash. The third produces
-*absence*: a test that stops early, a scope quietly trimmed, an approach abandoned as awkward.
-**Ask what your test double has been making people give up on**, not only what it has made them
-build. A fiction's cheapest victims are the ones that were never written down.
+⭐ **Zero existing tests went red when the true rules were added, and that is the finding rather than
+a disappointment.** `validateRequest` only ever sees requests the loop actually decided to send, and
+the loop only sends when its state is right — except on the one reachable bug, which had no test at
+all. **The fiction was not masking existing tests. It was masking the fact that nobody had written
+the missing one.** A gap does not turn red; it stays invisible until someone goes looking, which is
+why the probe had to be written by hand rather than discovered by running the suite.
 
-**The name is the other tell.** `assertStructurallyValidApiMessages` fuses two different predicates:
-*structurally valid* (a prefix property) and *API messages* (a sendable-request property). The code
-can only be one of them, so it silently became the weaker one plus a fictional bonus — 2 of its 5
-listed rules fictional, 1 true but deliberately unasserted. **A name that claims "valid" without
-saying valid-for-what will drift to "matches what we imagined".** The way out is two predicates:
-a *prefix* check and a *sendable* check. **Shipped as `src/test-utils/api-message-rules.ts`:**
-`wellFormedPrefixViolations` (first-must-be-user; pairing, but an answering run that simply RUNS OFF
-THE END of the array is incomplete rather than broken; orphan tool_results are violations at any
-position) and `sendableRequestViolations` (all of that, plus trailing-role, plus the last
-assistant's tool_uses must be answered by now). `ValidatingMockAPI.validateRequest` is the sendable
-one; `jsonl-stress.test.ts`'s helper is the prefix one, renamed `assertWellFormedPrefix`.
-`emptyContentViolations` holds the non-rule, opt-in, under a name that says it is ours.
+What DID go red was swapping the fused helper for the two real predicates: 10 tests, **every one a
+fixture that could never be sent to the API, and none fixed by loosening a rule** — six walker
+fixtures produced assistant-first output because they only cared about the assistant/tool region, and
+four prefix-byte-comparison fixtures opened with an orphan `tool_result`. Given a real conversation
+head they assert exactly what they always did. One did NOT get a head and is the interesting one: a
+dirty-JSONL scenario table claimed "the walker produces valid structure" for an *assistant-first*
+output. It does not, and **that is not hypothetical — a session was once permanently bricked by
+exactly that shape**, when a bare `compact_marker` left `readActive()` starting on an assistant turn.
 
-**Note the second half of the trap**: the PAIRING rule has the same intermediate-state problem the
-trailing-role rule has (an assistant's tool_results legitimately arrive after the prefix ends). So
-whoever tried to assert the true rules with only one predicate available would have gone red on
-correct fixtures *twice*, not once. **Courage was not the missing ingredient; the concept was.**
-That is what makes this a structural failure rather than a lapse — and it is why the fix is a new
-type of assertion, not a stricter one.
+## The two providers
 
-Sibling entries, same family: *"a real error message + an unverified attribution beats a pure guess,
-because it arrives wearing evidence's clothes"* — the phrase that propagated this one was an
-offhand "(matches real Anthropic)" that nobody checked. And *"an accurate observation + an
-over-broad generalisation is harder to challenge than a guess, because it arrives with a number"*
-(Which messages can be edited/rewound).
+**There is ONE OpenAI provider: `OpenAIResponsesCompatibleProvider`.** The Chat Completions provider
+and its 1624-line test were deleted along with `eventsToOpenAIMessages`; **do not go looking for a
+"Chat Completions path" to compare against — there isn't one.** Both providers use the `openai` npm
+package, and `ChatCompletionMessageToolCall` is a union, so filter on `tc.type === "function"`.
+`DebugSnapshot.body` is exactly the object passed to the SDK.
 
-### Probing the real API: the `systemPreamble` trap
+`executeTool` validates every built-in tool's input against its Zod schema at the boundary; external
+MCP tools have an empty `inputSchema` and skip validation.
 
-Any probe against the OAuth endpoint **must send the auth group's `systemPreamble` as the FIRST
-system block**, or every call 429s. A first-pass probe that omitted it produced a wall of rate
-limits that reads exactly like validation failure — nearly yielding the opposite conclusion. Probes
-live in `/tmp/alt-probe/` (`probe2.ts`-`probe6.ts` = API shapes, `walker-shapes.ts` = runs disputed
-shapes through the real walker and checks them against the measured rule). They read `oauthToken`
-from config and never print it.
+⚠️ **Anthropic and OpenAI differ on whether an agent can call a tool that is not in its frozen list,
+and the difference is not cosmetic.** Anthropic uses free-form tool-name generation and the server
+dispatches any name to whatever handler exists — which is why `evaluate_script` can be hidden from
+`session_config` and still be callable if you know its name. **OpenAI Responses uses
+schema-constrained sampling**, masking the distribution to the supplied tool names, so an agent
+physically cannot call a tool it cannot see. `strict: false` relaxes optional-field validation, not
+tool-name enforcement. This is why refreshing tools at compaction is correctness-critical on OpenAI
+and merely nice on Anthropic.
 
-### What the measurement cost, and the one number that reframes it
+**Thinking events carry a `provider` field**, so switching providers automatically drops stale
+thinking blocks on mismatch. The OpenAI walker ignores thinking entirely.
 
-Full `bun test` with the mock progressively made realistic (env-gated during the experiment, now
-shipped): **A** (drop alternation) 2774/2 — one is the mock's own self-test of the fiction, one a
-known teardown flake that did not recur; **B** (+ trailing-role) 2776/1; **C** (+ the real pairing
-rule) 2776/1. In every variant **the only real failure was the mock's self-test of the fictional
-rule.** The realistic mock was a drop-in: nothing depended on the fiction and the true rules cost
-nothing to adopt — they were simply never asked for.
+## The LLM facility — single-turn, no tools, no session
 
-⭐ **Zero existing tests went red when the true rule was added, and that is the finding, not a
-disappointment.** The expectation going in was "some tests will red, and those reds are assets".
-They didn't, because `validateRequest` only ever sees requests the loop actually decided to send —
-and the loop only sends when its state is right, *except* on the one reachable bug, which had no
-test at all. **The fiction was not masking existing tests. It was masking the fact that nobody had
-written the missing one.** A gap does not turn red; it stays invisible until someone goes looking,
-which is why the probe had to be written by hand rather than discovered by running the suite.
+`src/llm.ts` wraps the existing provider adapters for plugins that need one-shot calls outside the
+agent loop (`createLLM({authGroup, model, defaultThinkingEffort})` → `run` / `stream`). It is
+strictly single-turn: no tools, no session state, no image input. It reuses `adapter.callAPI`,
+`buildResponseEvents`, `getTokenUsage` and `computeCost`, so it is mostly wiring; the plugin resolves
+`AuthGroup` and model from `MatrixConfig` itself, keeping the facility decoupled from config shape.
+Errors are exceptions (no error chunk), transient ones are retried by the SDK, and hitting
+`max_tokens` returns the text with `stopReason: "max_tokens"` rather than throwing.
 
-### What DID go red: swapping the fused helper for the two real predicates (10 tests)
+⚠️ **SDK client construction is DUPLICATED from the provider class constructors, and this is the one
+thing here that will bite someone.** Beta headers and timeout are hand-matched to
+`AnthropicCompatibleProvider`. **Any future change to beta headers must update BOTH the class
+constructor AND `createAnthropicClient` in `src/llm.ts`** — nothing enforces it, and the failure
+would be OAuth breaking for plugin calls only.
 
-Splitting `assertStructurallyValidApiMessages` into prefix/sendable and giving both the measured
-rules turned 10 tests red. **Every one was a fixture that could never be sent to the API, and none
-of them was fixed by loosening a rule** — they were fixed by making the fixture a real
-conversation. Two shapes:
-
-- **6 walker fixtures produced assistant-first output** — no leading user message, because the
-  fixture only cared about the assistant/tool region. Given a `user` head, they assert exactly what
-  they always did.
-- **4 prefix-byte-comparison fixtures opened with an orphan `tool_result`** — no assistant carrying
-  the matching `tool_use`, because those tests are about byte diffing, not conversation validity.
-  Given a real head, likewise unchanged.
-
-One did NOT get a head, and it is the interesting one: the dirty-JSONL scenario table contained
-`orphan assistant_text with no user message before it` under the blanket claim *"walker produces
-valid structure"*. It doesn't — that output is assistant-first and the API rejects it. Moved to its
-own BEHAVIOR SNAPSHOT. **Not hypothetical**: FIX-5 R8-B#1 records a session permanently bricked by
-exactly this shape (a bare `compact_marker` left `readActive()` starting on an assistant turn),
-quoting the same API error.
-
-⭐ **The count that says how far this went.** The old helper's own comment listed five things it
-was about. Of the FOUR rules the API actually has, it enforced **none**: never checked
-first-must-be-user, explicitly skipped trailing-role, never checked pairing or orphans. What it did
-enforce was role-is-one-of-two (a type constraint) plus the two fictions. **A helper named
-`assertStructurallyValidApiMessages`, called from 10 sites, enforced zero real API rules for
-months** — and looked like coverage the whole time. That is the shape to watch for: not a wrong
-assertion, but a *confident name over a predicate nobody re-derived from the source of truth*.
+⚠️ **Anthropic test mocks must set `sessionId`.** `ValidatingMockAPI` keys conversations by it; the
+facility generates a fresh ULID internally and writes it onto `client._currentSessionId` as a side
+channel, which is where the mock picks it up. `systemPreamble` is honored and passed through as the
+first system block; OpenAI has no equivalent field.
 
 ---
 # Data Model & Storage
