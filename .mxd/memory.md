@@ -1231,83 +1231,64 @@ to the entries fails exactly two tests out of ~2760.
 # Cache & Drift Prevention
 ---
 
-## Session Config + Cache
+## Prompt cache: what is frozen, what refreshes, and what breaks a prefix
 
-`session_config` event at JSONL start: tools, systemStable, systemVariable. Frozen between compactions for cache stability. Anthropic cache: 3 breakpoints (tools, systemVariable, 2nd-to-last user message).
+A `session_config` event at the start of the JSONL holds the tools, `systemStable` and
+`systemVariable` for the session. It is **frozen between compactions**, and that freeze is the whole
+cache strategy: on resume everything is read back from the stored config rather than recomputed, so
+the prefix is byte-identical and hits. The one refresh point is compaction — see *The Agent Loop* §
+compaction, which also explains why the refresh is a correctness issue on OpenAI and only a DX issue
+on Anthropic.
 
-## Session Config Refresh at Compact
+⚠️ **The Anthropic prefix order is tools → system → messages, not system → tools → messages.** A
+tools mismatch is therefore a miss on the *entire* prefix, system and messages included. This is why
+tools are frozen at all: MCP servers connect asynchronously, so registration order is
+non-deterministic and an unfrozen tools array would reshuffle itself between runs. Freezing them as
+a provider-agnostic `JsonTool` (`{name, description, jsonSchema}`) in `session_config`, and emitting
+that event from `runProviderLoop` **after** tools are ready rather than from `agent-lifecycle` (where
+it captured `tools: []`), took restart to **99.8% cache hit and fork to 100%** — measured 2026-04,
+582 creation / 362K read and 0 creation / 365K read. That pair of numbers is the evidence those
+fixes work; for today's rate read `cache_creation` / `cache_read` off a real `usage` event.
 
-**Compact is the refresh boundary** for session-scoped config. After compaction wipes messages[] (cache already lost), session_config is re-emitted with CURRENT values:
-- `tools`: rebuilt from `request.mcpToolDefs` (picks up tools added to orchestrator-tools.ts since session start)
-- `systemStable` / `systemVariable`: refreshed from `request.refreshSystemPrompt()`
-- `request.systemPrompt` also updated (next API call reads from here, not just the emitted event)
-- `cacheTtl`: **intentionally frozen** (fork inheritance semantic preserved, see draft 01KNFCWDEYR1114TZCNXNCMW4Z for opt-in refresh)
+Three cache breakpoints: tools, `systemVariable`, and the **last** user message. ⚠️ **Last, not
+second-to-last.** The last message sent to the API is always a user message, and Anthropic's
+20-block lookback caches everything before it; the previous second-to-last strategy caused a full
+miss whenever only one user message existed, which is exactly the post-compaction restart case.
 
-**Without compact (normal resume)**: everything stays frozen from storedConfig → byte-identical prefix → cache hit.
+⚠️ **Never add a per-request `anthropic-beta` header.** It overrides the client's `defaultHeaders`,
+including the OAuth header (`oauth-2025-04-20`), and silently breaks OAuth mode. Extended cache TTL
+is GA and needs no beta header. Also note `{type: "ephemeral"}` and `{type: "ephemeral", ttl: "1h"}`
+are **different cache entries** — the TTL is part of prefix identity. `cacheTtl` lives in
+`session_config` (root `"1h"`, regular children unset = 5 min) and is inherited through fork, which
+is why it is deliberately NOT refreshed at compaction.
 
-**Why this invariant matters**:
-- Anthropic: frozen tools are a DX issue (model can still invoke tools by name — agents CAN work around via knowledge)
-- OpenAI Responses: frozen tools are CORRECTNESS-critical (schema-constrained sampling — agents physically cannot call tools not in tools array)
-- System prompt: always should match current memory.md + principles after compact (prompt evolution becomes visible)
+⚠️ **Multiline queue content must stay ONE text block.** `buildToolResultsMessage` and
+`buildImplicitYieldMessage` used to split queue messages on `\n` into separate blocks, while JSONL
+reconstruction merged them back into one — a guaranteed prefix mismatch on every resume.
 
-**Bug found by mutation testing**: initial fix refreshed the emitted session_config event but forgot to update `request.systemPrompt`. Next API call read stale value. Strong test (Invariant A) caught it — "test your tests" principle applied.
+**Known residual, low priority**: `addAssistantMessage` stores the raw API response content in the
+SDK's key order, while JSONL reconstruction uses our manual key order. They happen to agree today
+(`{type, id, name, input, caller}` on both paths), so within a session `messages[]` is consistent.
+If the SDK ever changes key order this breaks silently.
 
-**Test approach**: pre-seed JSONL with BOGUS session_config (wrong prompt, wrong tools), run agent to compact, verify post-compact emitted session_config contains CURRENT values (not bogus). Provider-agnostic, no mock instruction dependencies.
+## The live path has no construction logic of its own
 
-See: commit 0d8cda0, test file `src/drift-lifecycle.test.ts`, ValidatingMockAPI helpers `getToolNames()` + `getSystemText()`.
+`buildUserTurn` delegates to the walker's callbacks, so there is exactly one implementation per
+provider of "how a user turn is built", and the initial drain goes through
+`adapter.appendQueueMessagesToMessages` for the same reason. **The live path therefore cannot drift
+from JSONL reconstruction, structurally rather than by discipline** — which is the fix for the
+caption bug, where two independent constructions disagreed about whether an image carried its
+caption. If you are tempted to inline a bit of turn-building "just here", that is the thing being
+prevented.
 
-## Cache TTL
+The yield and done tool_results are the two fixed strings the resume path writes: `"resumed."` for
+yield, and for done `"You previously called done(). New messages woke you up:"` plus the working
+directory. Queue messages ride as separate text blocks after them, never embedded twice.
 
-- `SessionConfigEvent.cacheTtl?: "1h"` — stored in session_config, inherited via fork.
-- Root = `"1h"`, regular children = `undefined` (5min default).
-- On resume, `cacheTtl` from stored session_config (not recomputed) — preserves fork inheritance.
-- ALL breakpoints (system, tools, messages) use consistent TTL. Extended cache TTL (1h) is GA — no beta header needed.
-- **PITFALL**: Never add per-request `anthropic-beta` headers — they override client's `defaultHeaders` (including OAuth header `oauth-2025-04-20`), breaking OAuth mode.
-- `{type: "ephemeral"}` and `{type: "ephemeral", ttl: "1h"}` are DIFFERENT cache entries — TTL is part of prefix identity.
-- `AgentRequest.isOrchestrator` replaced with `cacheTtl?: "1h"`. Same on ProviderAdapter.callAPI.
-- Prefix validation: system+tools strict JSON compare; message breakpoint position can move but value must match; all other messages compared with cache_control included.
-
-## Cache Architecture
-
-### Anthropic Cache Prefix Order
-**tools → system → messages** (NOT system → tools → messages). Tools mismatch = entire prefix miss (including system and messages).
-
-### Cache Fixes Applied
-1. **Multiline split fix**: `buildToolResultsMessage` and `buildImplicitYieldMessage` split queue messages by `\n` into individual text blocks. JSONL reconstruction merged them back into one. Fix: keep as single text block.
-2. **JsonTool golden source**: `{name, description, jsonSchema}` — provider-agnostic. Frozen in session_config. Resume uses frozen tools → byte-identical → cache hit.
-3. **session_config tools=[] fix**: Moved session_config emission from agent-lifecycle to runProviderLoop (after tools are ready).
-4. **MCP tool ordering**: MCP servers connect asynchronously → tool registration order non-deterministic. Frozen tools solve this.
-
-### Cache results — measured once, when the four fixes landed
-- Restart: 99.8% cache hit (582 creation / 362K read)
-- Fork: 100% cache hit (0 creation / 365K read)
-
-These are a **dated measurement**, not a current reading: they are the evidence that the four fixes
-above worked, and they stay true as a record of that moment. Do NOT read them as "our cache hit rate
-is 99.8%" — nothing re-measures them, and a prefix change would move them without touching this
-file. If you need today's number, read `cache_creation` / `cache_read` off a real `usage` event.
-
-### Message Cache Breakpoint
-Breakpoint on **last** user message (not second-to-last). Last message sent to API is always user role. Anthropic's 20-block lookback caches all preceding history. Previous "second-to-last" strategy caused full miss when only 1 user message existed (post-compaction with no new user input before restart).
-
-### Remaining Cache Concern
-`addAssistantMessage` stores raw API response content (SDK key order). JSONL reconstruction uses our manual key order. Within a session this is consistent (messages[] grows in memory). But the two key orders are `{type, id, name, input, caller}` (both paths currently). If SDK ever changes key order, this would break. Low priority — currently not causing issues.
-
-### yield/done tool_result
-- yield: `"resumed."` — queue messages delivered as separate text blocks
-- done resume: `"You previously called done(). New messages woke you up:"` + working directory — queue messages as separate text blocks (no duplicate embedding)
-- Deleted: `buildYieldPendingSection`, `pendingClarifications` counter
-
-### await_background Deleted
-await blocked entire agent loop. yield is the one path — accepts all message types. -360 lines.
-
-## Pre-API-Call Debug Snapshot (v2: per-traceId epoch)
-
-Layout: `projects/<id>/debug/<taskId>/<traceId>/last.json`. Each `runAgentForNode` gets unique `loopTraceId`. Restart → new dir → old snapshot preserved. `rollOldTraceIdDirs` keeps 10 most recent. Post-mortem: diff two newest traceId dirs' `last.json` files to find drift.
-
-## Live/Reconstruction Drift Fix — Caption Bug
-
-`buildUserTurn` now delegates to walker callbacks (single source of truth per provider). Live path has no independent construction logic — can't drift from JSONL reconstruction. Initial drain also delegates via `adapter.appendQueueMessagesToMessages`. Dead ToolResult fields (`formattedQueueMessages`, `consumedMessageIds`, `consumedQueueMessages`) removed.
+**Pre-API-call debug snapshots** land at `projects/<id>/debug/<taskId>/<traceId>/last.json`, one
+directory per `runAgentForNode`, ten most recent kept. A restart makes a new traceId directory, so
+the previous snapshot survives — diffing the two newest `last.json` files is the post-mortem for any
+drift or unexplained cache miss.
 
 ---
 # Providers & API
@@ -1825,441 +1806,178 @@ assertion, but a *confident name over a predicate nobody re-derived from the sou
 # Data Model & Storage
 ---
 
-## Image Handling
+## Where a project's data lives, and why it is in two places
 
-- **Pixel dimension guard**: `getImageDimensions(buffer)` in `src/image-dimensions.ts` parses PNG/JPEG headers. read_file rejects >8000px per dimension.
-- **Provider-level byte size**: `validateImage?` on `ProviderAdapter`. Anthropic: 5MB decoded. OpenAI: 20MB decoded. Four filter points in `runProviderLoop`.
-- **Streaming text partial**: `ctx.streamingText: Map<string, string>` tracks text_delta. Batch events endpoint injects synthetic `assistant_text` with `partial: true`.
+**`<repo>/.mxd/`** is tracked in the project's own repo: `config.json` (repo-scope), `memory.md`,
+`hooks/`, and `plugin/` if the project ships one.
 
-## TaskNode Serialization — stripSession()
-
-`JSON.stringify(TaskNode)` must NEVER include `session` (runtime-only: messages[], allTools, queue, abortController). Use `stripSession(node)` from `types.ts`. All four MCP tools that return TaskNode now use it: `get_tree`, `get_task`, `create_task`, `update_task`.
-
-**Bug found**: create_task and update_task were missing the strip. A forked task (700K+ tokens in messages[]) updating its own description produced a 2.95MB tool_result → context doubled from 735K to 1.75M → API rejected. get_tree and get_task already had manual `const { session, ...rest }` — unified to `stripSession()`.
-
-## Unified Storage Layout
-
-⚠️ **The `~/.mxd/projects/<id>/` paths below are SUPERSEDED** — matrix's runtime files moved into a
-plugin-namespaced subdirectory (`projects/<id>/plugin/matrix/…`). See § *Current layout* at the end
-of this section for what is true today. Everything else here — the two-places split, the reasoning
-for each, and three-layer config — is unchanged.
-
-Per-project information lives in two places with different roles.
-
-**`<repo>/.mxd/`** — tracked in the project repo. Things the project's source owns:
-- `config.json` — repo-scope config (see three-layer config below)
-- `plugin/` — optional; present only if this project ships a Matrix plugin
-- `memory.md` — the project's durable memory
-
-**`~/.mxd/`** — daemon runtime state on this machine, never in git:
-- top-level: global-scope config + runtime artifacts (auth, lock file, web build cache, project registry)
-- `projects/<projectId>/`:
-  - `config.json` — local-scope config override
-  - `tree.json` — the project's task tree with all tasks. **Deliberately NOT in the repo** because the tree mutates constantly; committing would pollute history.
-  - `tasks/<taskId>.jsonl` — one file per task session; the complete agent conversation as JSONL.
-
-Three-layer config (merged at runtime, later overrides earlier): global `~/.mxd/config.json` < repo `<repo>/.mxd/config.json` < local `~/.mxd/projects/<id>/config.json`.
-
-### Path helper
-- ~~`projectTasksDir(dataDir, projectId)` in `daemon/helpers.ts` = `{dataDir}/projects/{projectId}/tasks/`.~~
-  **SUPERSEDED twice**: the resolver moved to `src/data-paths.ts` (dataRoot hardening — and there is
-  a grep test that FAILS if a second site ever computes these paths), and the path itself gained the
-  plugin namespace. Every path built from `dataRoot` goes through that one resolver now.
-- `getEventStore` uses this. Tests use `join(dataDir, "projects", projectId, "tasks")` directly.
-
-### File extension
-- `.jsonl` (was `.events.jsonl` — the `.events` prefix was redundant).
-- `EventStore.listSessions()` filters `.jsonl` and strips with `/\.jsonl$/`.
-- `pruneSessionFiles` filters `.jsonl`.
-
-### Why
-- "sessions" was the wrong word — Matrix's unit of work is a task; each JSONL file is one task's history.
-- Project = single folder: back up / move / delete = one operation, not two.
-- `debug/` directory created per-project for future drift snapshots and investigation artifacts.
-
-### Current layout: plugin-namespaced (supersedes the paths above)
-
-Matrix's per-project runtime data lives in a plugin-namespaced subdirectory,
-matching the shape every other plugin uses. Completes the "matrix is just a
-plugin" framing started in P2 (dataRoot infrastructure).
-
-#### Layout
+**`~/.mxd/`** is daemon runtime state on this machine and is never in git: global config, auth, the
+lock file, the web build cache, the project registry, and per project a `config.json` plus a
+plugin-namespaced data root.
 
 ```
 ~/.mxd/projects/<projectId>/
-├── config.json      (daemon-owned)
-└── plugin/matrix/
+├── config.json               (daemon-owned)
+└── plugin/matrix/            (from the manifest's dataRoot: "@/plugin/matrix")
     ├── tree.json
-    ├── tasks/<taskId>.jsonl
+    ├── tasks/<taskId>.jsonl  (one file per task, the complete conversation)
     └── debug/<taskId>/<traceId>/last.json
 ```
 
-A future `story1001` plugin with `dataRoot` defaulting to `@/plugin/story1001`
-parks its own data at `projects/<id>/plugin/story1001/`, right next to matrix.
-No top-level collision possible.
+⚠️ **`tree.json` is deliberately NOT in the repo.** The tree mutates constantly and committing it
+would pollute history. It has been listed under `<repo>/.mxd/` in this file before, wrongly, and
+that listing contradicted the layout above.
 
-#### Mechanism
+The namespace exists so a second plugin's data parks beside matrix's rather than colliding at the
+top level, and it completes the "matrix is just a plugin" framing. Config merges in three layers,
+later overriding earlier: global `~/.mxd/config.json` < repo `<repo>/.mxd/config.json` < local
+`~/.mxd/projects/<id>/config.json`.
 
-Driven by **matrix's manifest** in `.mxd/plugin/index.ts`:
-`dataRoot: "@/plugin/matrix"`. All path construction — `getTracker`,
-`getEventStore`, `projectDebugDir`, `projectTreeJsonPath` — reads this
-through `ctx.config.dataRoot` and routes through `resolveDataRoot` in
-`src/data-paths.ts`. **The resolver stays the single source of truth** (the
-`data-paths.test.ts` "ONLY data-paths.ts performs .slice(2)" grep test still
-guards this).
+**`src/data-paths.ts` is the ONE place that resolves a path from `dataRoot`.** Never compute
+`dataRoot.slice(2)` anywhere else; a grep test fails if a second site appears, and it now walks the
+repo root rather than `src/` (it walked only `src/` until 2026-07-25, so the very file that DEFINES
+`dataRoot` sat outside it — proven by planting, not by reading). Three lines of defence, and each
+one is there because the previous one might be relaxed:
 
-⚠️ **That parenthesis was FALSE for the plugin between this entry and
-2026-07-25** — the audit walked `src/` only, so the very file quoted above
-(`.mxd/plugin/index.ts`, which DEFINES `dataRoot`) sat outside it, along with
-`scope-opts.ts` and `runtime.ts`. Proven by planting, not by reading. The walk
-starts at the repo root now and the sentence is true again; the note stays
-because "a grep test guards this" is the kind of claim nobody re-checks.
+1. A strict regex at the input boundary (`/^@(\/[A-Za-z0-9_-]+)*$/`), checked at daemon startup and
+   at every resolve.
+2. One resolver, so a fix touches one file. There used to be four inline `.slice(2)` sites.
+3. A post-resolve invariant that the result is still inside the project root. ⚠️ Keep this even
+   though the regex already rejects traversal — `resolveDataRoot("@/../etc")` used to return
+   `dataDir/etc`, which is a cross-plugin attack, and belt-and-braces here is cheap.
 
-**Helper**: `projectTreeJsonPath(dataDir, projectId, dataRoot?)` in
-`data-paths.ts`, parallel to `projectTasksDir` / `projectDebugDir`. Used by
-`runtime/helpers.ts:getTracker`.
+⚠️ **A malformed manifest is FATAL at startup, not a warning.** Import errors are recoverable (skip
+the plugin); validation errors are not. A malicious plugin declaring `dataRoot: "@/../etc"` must not
+be silently skipped while its legitimate siblings run.
 
-#### Gotchas
+**Directory creation is lazy and happens at the owning plugin's data root.** The daemon used to
+eagerly `mkdir projects/<id>/tasks`, which hardcoded matrix's layout; `EventStore`'s constructor and
+`TaskTracker.save` now mkdir on first write. `tracker.save()` writes a temp sibling then renames,
+because POSIX rename is atomic and a crash mid-write must leave the old `tree.json` intact rather
+than truncated.
 
-- **CLI tools that read JSONL directly** (e.g. `resolveTaskJsonlPath` in
-  `cli-analyze-cache.ts`) must call `projectTasksDir(dataDir, projectId,
-  "@/plugin/matrix")` — not hardcode the `projects/<id>/tasks/` path. Matrix
-  is the only consumer of that helper today, so embedding the dataRoot string
-  is fine; if more plugins need similar post-hoc tools, pass it as an arg.
-- **In-process test harnesses** (`createApp` called without `dataRoot`) use
-  the project-root layout by design. They exercise runtime semantics, not
-  the matrix-plugin manifest layout. Tests that hardcode `projects/<id>/
-  tree.json` in those harnesses stay correct.
-- **Daemon-level tests** go through `createDaemon` → plugin discovery reads
-  the manifest → matrix's `@/plugin/matrix` takes effect. A daemon-level
-  test that hardcodes old paths will break; use `projectTreeJsonPath` with
-  `ctx.config.dataRoot` (as done in `src/integration.test.ts` root-branch
-  persistence test).
+Two gotchas that are not visible from the layout: a CLI tool reading JSONL directly must pass
+`"@/plugin/matrix"` to `projectTasksDir` rather than hardcoding `projects/<id>/tasks/`; and
+in-process test harnesses (`createApp` with no `dataRoot`) use the project-root layout by design,
+because they exercise runtime semantics rather than matrix's manifest — a daemon-level test goes
+through plugin discovery and does see the namespace.
 
-## DEFAULT_CONFIG Immutability
+## The node model: TaskNode | GeneralNode
 
-`Object.freeze`d at module load. `createApp()` defensive-clones. PATCH never mutates. **Lesson**: module-level constants MUST be frozen.
+Runtime exposes exactly two node kinds, discriminated by a **required** `type: string` with no
+`undefined` fallback.
 
-## Default Branch
+- **TaskNode** (`type: "task"`) is launchable: session, git branch, lifecycle.
+- **GeneralNode** (any other string) is pure metadata plus tree position — no session, no lifecycle,
+  no agent. Matrix uses `"folder"` as its only flavour; another plugin could define `"chapter"`
+  without touching runtime code.
 
-Root node stores branch at init. `baseBranch` required on worktree create (no fallback). Child worktrees branch from parent's branch.
+`isTask` / `isGeneral` are runtime-exported type guards. **`isFolder` is matrix-plugin-local**, in
+`orchestrator-tools.ts` for the backend and `.mxd/plugin/web/types.ts` for the frontend, because
+"folder" is a matrix convention and not a runtime kind. There is no `FolderNode` type. The MCP tools
+keep their user-facing names (`create_folder` etc.) and are sugar over one general-node API,
+`tracker.addGeneralNode(title, parentId, type, metadata?)`, which throws on `"task"`.
 
-## The node model: TaskNode | GeneralNode (P3, + folders, + the later field promotions)
+`status` and `metadata` live on **`BaseTaskNode`**, not on matrix's `TaskNode`. `status` is genuinely
+runtime-generic — `createNode` inits it, `updateStatus` mutates it, `load()` migrates it, and the
+default `shouldResume` keys on `in_progress` — so a plugin whose nodes are launchable inherits it and
+must not re-declare it. `metadata` is opaque: the runtime never reads it, only round-trips it.
+Persistence is free, because `save()` spreads all non-session fields and `load()` casts the raw
+object through; so is exposure through `get_task` / `get_tree`, because `stripSession` spreads
+everything.
 
-Three entries merged, in the order they happened: folders (matrix's first non-task node), P3 (which
-generalized them into `GeneralNode`), and the 2026-06-07 promotion of `status` / `metadata` up to
-`BaseTaskNode`. Read top-down; the folder notes near the end are still live design constraints, only
-their type names changed.
+⚠️ **`tracker.setMetadata` REPLACES the whole object; it does not merge.** To update one key, read
+and spread. Same on the REST write path: `PATCH` with `metadata` absent leaves it untouched, but
+`PATCH` with a `metadata` object omitting a key makes that key DISAPPEAR. The caller sends the
+complete merged object. Deliberately **no** `metadata` param on MCP `create_task`/`update_task` —
+the only consumer is a plugin's REST UI, and an agent-facing opaque-metadata param is an imagined
+need.
 
-Runtime exposes exactly two node kinds. Discriminator is `type: string`,
-required on every node, no `undefined` fallback.
+⚠️ **`load()` throws on a node with a missing `type`.** Every save writes it explicitly, so a
+typeless node means corrupted `tree.json` or a bug — not "legacy data" to be tolerated.
 
-- **TaskNode** (`type: "task"`): launchable, has session + git branch +
-  status + lifecycle. Matrix's actual work units.
-- **GeneralNode** (`type: string`, anything except `"task"`): pure metadata
-  + tree position, no session, no lifecycle, no agent. Optional
-  `metadata?: Record<string, unknown>` — opaque to runtime, plugin-owned.
-  NO `plugin` field — each tree.json belongs to exactly one plugin by
-  construction; plugin identity is implicit.
+⚠️ **Folders must stay at ZERO behavior, forever.** Persistent tasks started as "just a flag" and
+grew into a disaster; this is the same shape. Every lifecycle operation (launch, done, close, reset,
+send_message) rejects folders at its entry point.
 
-Matrix uses `type: "folder"` as its only GeneralNode flavor today. A
-future plugin in its own project could define its own types
-(`"chapter"`, `"note"`, …) without touching runtime code.
+⚠️ **`parentId` and task ownership are different questions, and 56 call sites had to be sorted into
+the two.** `parentId` is tree structure — UI, reparent, delete. `getTaskAbove()` / `getTasksBelow()`
+are task ownership — message routing, worktree branching, `task_complete` delivery — and **folders
+are transparent to ownership**. The one bug this audit found: a REST reorder endpoint used
+`getTask()` where it needed `get()`, because folders have children too.
 
-### Type guards
+⚠️ **Use the POSITIVE type guard when destructuring after a guard.** `if (isGeneral(node)) return
+node; const {session, ...rest} = node;` started failing TS2700 once `status`/`metadata` moved up,
+because the negative narrowing collapsed `TaskNode` to `never`. `if (!isTask(node)) return node;`
+gives a concretely-narrowed `TaskNode` and identical runtime behavior.
 
-`src/types.ts` exports:
-- `isTask(node)` — narrows to `TaskNode`, `node.type === "task"`.
-- `isGeneral(node)` — narrows to `GeneralNode`, `node.type !== "task"`.
+**Two hooks, two moments**: `seedTree(tracker, projectId)` runs once, only when a project's tree is
+first created, and is the worker-side complement to the daemon-side `onProjectInit` (which can
+create FILES but has no tracker, so it cannot create initial NODES). `onScopeResume` runs on every
+startup. Hooks receive `projectId` as well as `projectPath`, because a data-driven plugin needs the
+registry id to find its per-project data root while matrix only needs the checkout.
 
-`isFolder` is **matrix-plugin-local**, not runtime-exported. Lives in two
-places:
-- `src/orchestrator-tools.ts` — backend (matrix's MCP tool handlers).
-- `.mxd/plugin/web/types.ts` — frontend (tree UI, drag/drop, icons).
-Both are `(node) => isGeneral(node) && node.type === "folder"`.
+⚠️ **`JSON.stringify(TaskNode)` must NEVER include `session`** — it holds `messages[]`, `allTools`,
+the queue and an AbortController. Use `stripSession`. The failure is spectacular rather than subtle:
+a forked task with 700K tokens in `messages[]` updated its own description, produced a **2.95MB
+tool_result**, and doubled its own context from 735K to 1.75M until the API rejected it. Two of the
+four MCP tools returning a node were missing the strip.
 
-### Tracker API
+**`DEFAULT_CONFIG` is `Object.freeze`d at module load** and `createApp()` defensive-clones it.
+Module-level constants must be frozen; a PATCH handler that mutates one poisons every later reader
+in the process.
 
-`TaskTracker.addGeneralNode(title, parentId, type, metadata?)` — one
-method covers every non-task node. Rejects `type === "task"`. Matrix
-callers pass `"folder"`; tests for other plugins can pass any string.
+**`baseBranch` is required when creating a worktree — no fallback.** The root node stores its branch
+at init and child worktrees branch from the parent's branch.
 
-### MCP tools
+## The REST boundary must reuse the shared op, not re-implement it
 
-User-facing tool names unchanged: `create_folder`, `delete_folder`,
-`rename_folder`. Internals call `tracker.addGeneralNode(title, parent,
-"folder")`. Matrix-specific syntactic sugar on the general-node API.
-Agents cannot create generic GeneralNodes via MCP; matrix-plugin
-decides what kinds its agents can create.
+> **A REST route that touches a task lifecycle resource — session, JSONL, worktree, config — MUST
+> route through the same shared op the MCP path uses, or replicate its guard exactly.** Where they
+> drift, the REST side silently re-introduces a solved bug.
 
-### Invariants locked in
+That rule came from five bugs found together, all of them silent data loss rather than a crash, and
+the four that generalise are worth knowing individually:
 
-- `TaskNode.type: "task"` — required, not optional (breaks `undefined`
-  fallback idioms).
-- `GeneralNode.type: string` — any string except `"task"`.
-- `TaskTracker.addGeneralNode` throws if called with `"task"`.
-- `TaskTracker.load()` throws on a node with missing `type`. Every save
-  writes `type` explicitly — a typeless node means corrupted tree.json
-  or a bug, not "legacy data".
-- Runtime never reads `metadata` — it's opaque plugin data.
+⚠️ **`c.json` does NOT throw on a live `session`.** SSE's `structuredClone` is *forced* to strip it,
+so the SSE path was safe by accident and every REST route returning a node was serializing the whole
+queue, conversation and AbortController over the wire. One `serializeNode` helper now wraps every
+node response. **The lesson is that one transport's safety came from a constraint the other
+transport did not have.**
 
-### What did NOT change
+⚠️ **Worktree removal must use the STORED path and branch, never a re-slugified title.** Close,
+reset and delete used `wm.remove(node.id, slugify(node.title))`; a title can change after creation,
+so re-slugifying computes a different path and the real worktree is orphaned forever.
+`removeByPath(worktreePath, branch)` removes exactly what was stored.
 
-- tree.json serialization format (other than `type` now present on task
-  entries, which was previously absent).
-- MCP tool names (`create_folder` etc. preserved — matrix-plugin surface).
-- Folder UX / UI rendering / drag-and-drop / lifecycle rejection.
-- `getTaskAbove` / `getTasksBelow` / transparent ownership walks.
+⚠️ **A config write must never be able to wipe credentials**, and it took three fixes because there
+were three doors. `PATCH /config/global` rejects null for any top-level field (global config is a
+COMPLETE config, so `delete next[k]` wrote an incomplete one). `createDaemon` RETHROWS a load
+failure instead of falling back to `{...DEFAULT_CONFIG}` — the silent fallback booted with empty
+`authGroups`, and the next save overwrote the on-disk credentials with nothing. And
+`loadGlobalConfig` distinguishes ENOENT (fresh install → defaults) from a read error or invalid JSON
+(throw), because the old single catch returned defaults for a CORRUPT file too, which is the same
+credential-wipe path with a different trigger.
 
-### Tests
+⚠️ **`delete_task` must stop and await the running loop before cleanup.** It did neither what close
+does (reject `in_progress`) nor what reset does (await loop exit) — it went straight to removing the
+worktree under a live process, destroying unmerged work, and a pending `done()` then read
+`getTask() === undefined` in Phase 2 and hung the parent forever. Semantic chosen: reset-style
+("deleting a running task stops it first"), not close-style (reject).
 
-`src/general-node.test.ts` — 10 tests exercising a probe-typed
-GeneralNode (`type: "probe"`) through save/load, ownership walks,
-tracker helpers. Proves generalization works outside matrix's
-folder-only world.
+Same family, different layer — five lifecycle guards that were simply missing: the **root node**
+cannot be deleted, closed or reset (it is the tree anchor); `updateTaskOp` rejects `status: "closed"`
+and `status: "failed"`, because both are terminal states needing cleanup that a plain PATCH bypasses,
+leaking worktrees or orphaning Phase 2 (use `closeTaskOp`, or let `done("failed")` set it through
+`tracker.updateStatus`); REST `/message` and `/clarify` canonicalize a task-id prefix to the full id,
+validate the node exists and is a task rather than a folder, and reject `draft` the way MCP
+`send_message` always did.
 
-### Folders — matrix's only GeneralNode flavor
+## Images
 
-Folders came first (as their own node kind) and P3 above generalized them. The design notes here are
-all still live; only the type names moved.
-
-~~`TreeNode = TaskNode | FolderNode` discriminated union. FolderNode: only id, title, parentId, children, type:"folder".~~
-**There is no `FolderNode` type.** It is `TreeNode = TaskNode | GeneralNode`, and a folder is a
-`GeneralNode` whose `type` happens to be `"folder"` — a matrix-plugin convention, not a runtime kind.
-`isFolder` is plugin-local in two places (`src/orchestrator-tools.ts` for the backend,
-`.mxd/plugin/web/types.ts` for the frontend), NOT exported by the runtime.
-No status, no session, no lifecycle. Zero behavior — pure grouping.
-
-#### Key Design
-- **Tree structure vs task ownership**: `parentId` = tree structure (UI, reparent, delete). `getTaskAbove()`/`getTasksBelow()` = task ownership (message routing, worktree branching, task_complete delivery). Folders are transparent to ownership.
-- **MCP tools**: `create_folder`, `delete_folder` (must be empty), `rename_folder` — separate from task tools.
-- **56 parentId references audited**: each categorized as tree-structure or task-ownership. Task ownership uses getTaskAbove.
-- **Lifecycle rejection**: all lifecycle operations (launch, done, close, reset, send_message) reject folders at entry point.
-- **MUST resist feature creep**: persistent tasks started as "just a flag" and grew into a disaster. Folder stays at ZERO behavior forever.
-- **getTask() vs get() audit**: All production `getTask()` calls audited. One bug fixed: REST reorder endpoint used `getTask()` → `get()` (folders have children too). All others correct — they access task-specific properties (session, worktree, branch, status).
-
-### Later: fields promoted to BaseTaskNode, SET methods, seedTree (2026-06-07)
-
-Pushes the genuinely runtime-generic node fields UP to `BaseTaskNode` and gives
-plugins the SET path + project context they need to drive launchable nodes —
-without re-declaring runtime fields or mutating the live tracker. Surfaced by the
-dchat out-of-tree 试水 (Wall #2 + interface-gap D). Matrix's own `TaskNode` +
-every status-driven path is byte-for-byte unchanged (regression bar held: full
-`bun test` green, 2179→2189 with the new tests).
-
-#### `status` + `metadata` moved to `BaseTaskNode` (`src/types.ts`)
-- `status: TaskStatus` is now on `BaseTaskNode`, NOT only on matrix's `TaskNode`.
-  It IS runtime-generic: `createNode` inits it, `updateStatus` mutates it, `load()`
-  migrates it, and the default `shouldResume` keys on `status === "in_progress"`.
-  A plugin whose nodes are launchable inherits it — it must not re-declare it.
-- `metadata?: Record<string, unknown>` added to `BaseTaskNode` (parallel to the
-  one `GeneralNode` already had — it's exactly the LAUNCHABLE node that needs
-  per-node plugin config). Runtime NEVER reads it; only round-trips via save/load.
-- Persistence is automatic: `save()` spreads all non-session task fields, `load()`
-  casts the raw task object through untouched — so `metadata` round-trips with zero
-  new code. The status-node load branch already migrated `status` ("passed"→"verify").
-
-#### TaskTracker SET methods (`src/task-tracker.ts`)
-- `CreateNodeOpts` type now carries `metadata?`; `addChild`/`addTask`/`createNode`
-  thread it into the node literal (`...(opts?.metadata !== undefined ? {metadata} : {})`
-  — absent, not `{}`, when unset).
-- `setMetadata(nodeId, metadata)` — plugin-safe SET path; **REPLACES** the whole
-  metadata object (to update one key, read+spread), bumps `updatedAt` for tasks,
-  works for general nodes too. This replaces "mutate the live tracker directly".
-- `load()` now returns `boolean` (`true` = fresh tree just created, `false` =
-  loaded existing). Backward-compatible — every existing caller ignores the return.
-
-#### Gotcha: moving status/metadata up tightened TaskNode⊆GeneralNode structural overlap
-`save()`'s `if (isGeneral(node)) return node; const {session, ...rest} = node;`
-started failing TS2700 ("Rest types may only be created from object types") because
-the negative `isGeneral` narrowing collapsed `TaskNode` to `never`. Fix: use the
-POSITIVE guard — `if (!isTask(node)) return node;` — so the narrowed type is
-concretely `TaskNode`. Same runtime behavior. (Lesson: prefer positive type-guard
-narrowing for destructure-after-guard when the union members overlap structurally.)
-
-#### Hooks get `projectId` (gap D-C) — `src/runtime/context.ts` + `agent-lifecycle.ts`
-`buildWorkContext` / `buildSummarizationPrompt` / `buildDoneResumeContext` now
-receive `(node, projectPath, projectId)`. `projectPath` is the git checkout;
-`projectId` is the registry id a data-driven plugin needs to locate its per-project
-dataRoot (`~/.mxd/projects/<projectId>/...`) — matrix uses projectPath, dchat needs
-projectId. Adding a TRAILING param is type-backward-compatible: existing impls that
-take fewer args (matrix's, the story-scope tests') stay assignable. Three call sites
-in `agent-lifecycle.ts` pass `project.id` (initial work-context inject ~907, the
-compact re-arm `setBeforeFirstMessage` ~914, the AgentRequest closure ~1017).
-The default `shouldResume` in `runtime.ts resumeScope` retyped `(n: TaskNode)` →
-`(n: BaseTaskNode)` to reflect the now-generic `status`.
-
-#### `seedTree` — worker-side tree-init hook (gap D-B) — `ScopeOpts` + `getTracker`
-`onProjectInit` (PluginManifest, `src/plugin.ts`) runs DAEMON-side where there is
-NO tracker → it can create FILES but not initial tree NODES. The complement is
-`ScopeOpts.seedTree?(tracker, projectId)`, called once from `getTracker`
-(`runtime/helpers.ts`) the first time a project's tree is created (`load()` returned
-`true`), AFTER scope-opts registration, then `tracker.save()`. The plugin seeds its
-starting nodes via `addChild`/`addGeneralNode`/`setMetadata`. Fires exactly once —
-tree.json then exists, so reloads return `false` and never re-seed. Matrix has no
-seedTree → no-op. (`markReady()` does NOT auto-run autoResume, so in tests the seed
-fires deterministically on the first explicit `getTracker`.)
-
-#### Tests
-- `src/task-tracker.test.ts` "node-model generalization" (8 unit): addChild/addTask
-  metadata, metadata-absent-not-`{}`, setMetadata REPLACE (the `extra` key
-  disappearing proves replace≠merge), setMetadata on general nodes + throws-on-missing,
-  metadata+status save/load round-trip, `load()` fresh→true / existing→false.
-- `src/plugin-custom-scope.test.ts` "Node-model generalization (plugin integration)"
-  (2 integration): (a) a non-matrix scope's `buildWorkContext` reads `node.metadata`
-  + receives `projectId`, exercising addChild-metadata + setMetadata + round-trip
-  end-to-end through a real agent run; (b) `seedTree` seeds 2 nodes with metadata on
-  a fresh tree exactly once (custom `buildScopeOpts` passed via `setupTestContext`).
-- **Mutation-verified**: setMetadata replace→merge fails the REPLACE test; dropping
-  `projectId` at the initial-inject call site (~907) fails the integration test.
-  (Mutating the AgentRequest-closure site ~1017 instead did NOT fail it — that path
-  only fires on compaction; the integration test covers the fresh-inject path.)
-
-## FIX-2 (2026-06-05) — REST boundary must use the same shared-op discipline as MCP
-
-Five bugs, one theme: REST/HTTP routes bypassed fixes the MCP/shared ops already had. Failure
-mode is silent data loss/leak, not a crash. Rule going forward: **a REST route that touches a
-task lifecycle resource (session, JSONL, worktree, config) MUST route through the same shared op
-the MCP path uses, or replicate its guard exactly.** Where they drift, the REST side silently
-re-introduces a solved bug.
-
-### cc#2 — `/sessions/clear` must await loop exit before clearing JSONL
-`runtime/routes/tasks.ts` sessions/clear inlined a stop that closed the queue but did NOT await
-the agent loop's exit (unlike `resetTaskOp`/`stopTask`). The loop's `finally` (agent_end, orphan
-repair, Phase 2) then re-polluted the JSONL right after the clear — the "clear-race" the project's
-own `integration.test.ts` documents as a BUG PATH. Fix: `if (node.session) await stopTask(...)`
-else `await ctx.agentLoopPromises.get(nodeId)` (launchingNodes gap), THEN clear. The EventStore
-generation guard handles stopTask's own fire-and-forget agent_end append racing the clear.
-
-### cc#5 — REST node responses MUST stripSession
-`c.json` does NOT throw on the live `session` (unlike SSE's `structuredClone`, which is FORCED to
-strip). So every REST route returning a node serialized the whole queue/conversation/AbortController
-over the wire. One shared `serializeNode(node)` helper in tasks.ts (`isTask(n) ? stripSession(n) : n`)
-now wraps ALL node responses: GET /tasks (`.map`), POST /tasks (task + folder), PATCH, and all 3
-continue returns. Mirrors the existing MCP `stripSession` discipline (get_tree/get_task/etc.).
-
-### cc#4 — config null-delete + corrupt config must never wipe credentials (two layers)
-- **PATCH /config/global** now rejects null/undefined for ANY top-level field (400). Global config
-  is a COMPLETE MatrixConfig — no optional fields — so `delete next[k]` on null wrote an incomplete
-  config. Per-auth-group deletion still goes through `{ authGroups: { name: ... } }` (object value,
-  not rejected).
-- **`createDaemon`** no longer catches a load failure into `{ ...DEFAULT_CONFIG }` — it RETHROWS.
-  Silent DEFAULT_CONFIG booted with empty authGroups, and the next `saveGlobalConfig` overwrote the
-  on-disk credentials with nothing. Fail boot loudly → on-disk config preserved.
-- **`loadGlobalConfig`** now distinguishes ENOENT (fresh install → defaults) from read-error /
-  invalid-JSON (throw). The old single catch returned defaults for a CORRUPT file too — same
-  credential-wipe path. ENOENT-only return keeps fresh install working.
-
-### B-H1 — delete_task must stop+await the live loop before cleanup (reset-style)
-`deleteTaskOp` did NEITHER close's "reject in_progress" NOR reset's "await loop exit" — it called
-`cleanupTaskResources` (close queue, `git worktree remove --force`, clearEventStore) WITHOUT
-aborting/awaiting the loop. Destroyed unmerged work, removed a worktree under a running process,
-and a pending done() then read getTask=undefined in Phase 2 → parent hangs forever. Fix: added
-optional `stopTask`/`awaitLoopExit` callbacks to `deleteTaskOp` (mirroring resetTaskOp) + wired
-them in BOTH the MCP (orchestrator-tools) and REST (tasks.ts) delete handlers. Semantic chosen:
-reset-style ("delete a running task = stop it, then delete"), not close-style (reject).
-
-### cc#6 — worktree removal must use STORED path+branch, never a re-slugified title
-close/reset/delete removed worktrees via `wm.remove(node.id, slugify(node.title))`. The title can
-change after creation (`mxd/<id>/<oldSlug>`), so re-slugifying the CURRENT title computes a
-different path/branch → the real worktree is orphaned forever. Fix:
-- New `WorktreeManager.removeByPath(worktreePath, branch)` — removes the EXACT stored values, no
-  recomputation. (`remove(taskId, slug)` kept, now delegates to it; still used by its own test.)
-- `removeWorktree` callback signature changed `(taskId, slug)` → `(taskId, worktreePath, branch)`.
-  Ops pass `node.worktreePath`/`node.branch` (already inside the `if (worktreePath && branch)`
-  guard, so type-clean). MCP wirings call `removeByPath(worktreePath, branch)`; the REST delete
-  callback still uses param-1 (taskId) to look up the node for `onTaskDelete`.
-- `.mxd/plugin/scope-opts.ts onTaskDelete` (the REST worktree hook) likewise uses
-  `node.worktreePath`/`node.branch` instead of `slugify(node.title)`.
-
-### Tests (all mutation-verified)
-- `src/rest-boundary.test.ts` (new): session leak (GET/PATCH strip), clear-race (session +
-  launchingNodes-gap), delete-race (loop awaited before cleanup), delete stops queue+session.
-  The race tests use a 50ms-delayed simulated loop write — reverting the await makes JSONL reappear.
-- `src/task-operations.test.ts`: close/reset/delete removeWorktree gets the STORED path+branch
-  after a rename (cc#6).
-- `src/worktree-manager.test.ts`: removeByPath removes exact path+branch; re-slugified remove
-  orphans the worktree (demonstrates cc#6 directly).
-- `src/config.test.ts`: loadGlobalConfig ENOENT→defaults, missing-field→throw, corrupt-JSON→throw.
-- `src/daemon.test.ts`: PATCH null-delete → 400 (credentials preserved); createDaemon on
-  corrupt/incomplete config → throws, on-disk config untouched.
-
-## Node metadata write-path over REST — create + update (2026-06-08)
-
-Exposed plugin-owned `metadata` editing over REST on BOTH paths. The tracker
-primitives existed since the node-model task (`addChild` opts.metadata +
-`setMetadata`) but NO REST/MCP path reached them — nodes could neither be born
-with metadata nor have it edited:
-- POST  `/projects/:id/tasks`          body `metadata?` → `createTaskOp` → `addChild(parent, title, desc, { metadata })`
-- PATCH `/projects/:id/tasks/:nodeId`  body `metadata?` → `updateTaskOp` → `tracker.setMetadata(nodeId, metadata)`
-
-### REPLACE, never deep-merge
-`tracker.setMetadata` replaces the WHOLE object; `updateTaskOp` does NOT merge —
-the caller (plugin UI) reads current metadata and sends the complete merged
-object. PATCH with `metadata` absent (`undefined`) = "leave existing untouched"
-(guarded by `if (updates.metadata !== undefined)`); PATCH `metadata: {...}` with
-a key omitted = that key DISAPPEARS. Mirrors the color/status/title handlers in
-the one shared `updateTaskOp` (and `createOpts.metadata` mirrors budgetUsd/draft).
-
-### No new auth, no MCP
-- REST relies on the daemon-level auth middleware (Bearer). The MCP path's
-  `requireSubtreePermission` is a different layer — no new guard added.
-- MCP `create_task`/`update_task` deliberately NOT given a `metadata` param: the
-  only consumer is dchat's REST UI; an agent-facing opaque-metadata param is an
-  imagined need (anti-pattern #6). REST is the whole requirement.
-
-### Serialization is free
-`serializeNode` (stripSession) keeps `metadata` — it's on BaseTaskNode,
-round-trips via save/load. So POST/PATCH responses + GET /tasks + the SSE tree
-broadcast all carry updated metadata with no extra code. `updateTaskOp`'s
-existing `broadcastTree()` pushes it to the UI. Metadata changes do NOT fire
-`notifyTargetNode`/`notifyTreeChange` (those stay title/description-only — a
-metadata edit is config, not a message to the node).
-
-### Driver + effect timing
-dchat's roster UI: "add a character" = POST a node with personality metadata;
-"edit a character's prompt" = PATCH its metadata. Editing a RUNNING character's
-metadata takes effect on its next launch/compact (system prompt is built at
-launch), not mid-session — dchat's UX concern, NOT this write-path's scope.
-
-### Tests
-- `src/task-operations.test.ts`: createTaskOp "applies metadata" + "persists
-  across reload"; updateTaskOp "sets metadata" + "REPLACES — removed key
-  disappears" + "metadata undefined leaves existing untouched".
-- `src/rest-metadata.test.ts` (NEW, createMatrixApp harness): the canonical dchat
-  journey — POST/PATCH metadata → GET /tasks reflects it; PATCH replace; PATCH
-  title-only preserves metadata; POST without metadata → no metadata field.
-- Mutation-verified: commenting out BOTH `createOpts.metadata = …` and
-  `tracker.setMetadata(…)` → exactly the 9 metadata-asserting tests fail; the 1
-  absence-asserting test (POST without metadata) correctly stays green.
-
-## FIX-7 (2026-06-10) — lifecycle guards: root delete, status validation, prefix canonicalization
-
-Five guard bugs at the task-operations + routes layer, each TDD with failing tests first.
-
-### R8-C#1 — root node protection (delete/close/reset)
-`deleteTaskOp`, `closeTaskOp`, `resetTaskOp` now reject `tracker.rootNodeId` with
-`TaskOperationError("Cannot {delete,close,reset} the root node")`. The root orchestrator
-is the tree anchor — destroying it orphans the tree.
-
-### R8-C#2 — status transition validation
-`updateTaskOp` rejects `status: "closed"` and `status: "failed"`. Both are lifecycle-terminal
-states requiring cleanup (worktree removal for close, Phase 2 done delivery for failed). A
-plain PATCH bypasses those ops and leaks worktrees / orphans state. Callers must use
-`closeTaskOp` or let `done("failed")` set it (which goes through `tracker.updateStatus`
-directly, NOT through `updateTaskOp`). Tests that need "failed" as setup now use
-`tracker.updateStatus` directly instead of PATCH.
-
-### R8-C#3 — prefix canonicalization in REST /message
-REST `/message` route resolves `tracker.get(rawNodeId)` and uses `resolved.id` (canonical
-full ID) for all downstream ops. Response also returns the canonical `taskId`.
-
-### R8-C#4 — REST /message + /clarify node validation
-Both routes now validate: node must exist (404) and be a task node, not folder (400).
-`handleClarifyResponse` in agent-lifecycle.ts also got canonicalization + validation.
-
-### R8-C#5 — draft guard on REST /message
-REST `/message` rejects `status === "draft"` with 400, matching MCP `send_message` behavior.
+`getImageDimensions(buffer)` parses PNG/JPEG headers, and `read_file` rejects anything over 8000px
+per dimension before it ever reaches a provider. Byte size is a provider-level concern
+(`validateImage?` on `ProviderAdapter`): Anthropic 5MB decoded, OpenAI 20MB.
 
 ---
 # Memory Index & Search
