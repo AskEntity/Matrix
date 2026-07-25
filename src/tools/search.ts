@@ -64,8 +64,10 @@ export const DEFAULT_SKIP_DIRS = [
  * untouched: `src/*.ts` stays anchored at the search root and must not start
  * reaching `deep/src/inner.ts`. Same split ripgrep makes.
  *
- * Promoting loses nothing — `**` matches zero directories too, so `**​/*.ts` is
- * a strict superset of `*.ts` and still returns the top-level file.
+ * Promoting loses nothing — a leading `**` matches zero directories too, so the
+ * promoted pattern is a strict superset of the original and still returns the
+ * top-level file. (Phrased without the literal prefix on purpose: writing it
+ * inside this block comment would close the comment.)
  */
 export function normalizeSearchGlob(glob: string): string {
 	return glob.includes("/") ? glob : `**/${glob}`;

@@ -2540,7 +2540,7 @@ describe("jsSearch: glob depth", () => {
 		await writeFile(join(tempDir, "top.ts"), `${SYMBOL}();\n`);
 		await writeFile(join(tempDir, "src", "top.ts"), `${SYMBOL}();\n`);
 		// A second `src/` one level down: the probe for over-promotion. `src/*.ts`
-		// must not reach it; `**​/src/*.ts` would.
+		// must not reach it; `**/src/*.ts` would.
 		await writeFile(join(tempDir, "deep", "src", "inner.ts"), `${SYMBOL}();\n`);
 	});
 
@@ -2566,9 +2566,9 @@ describe("jsSearch: glob depth", () => {
 	});
 
 	test("…and still matches the top level — promotion loses nothing", async () => {
-		// `**​/` matches zero directories too, so promoting is a strict superset.
+		// `**/` matches zero directories too, so promoting is a strict superset.
 		// Separate from the test above because it is a separate property: this one
-		// is what would regress if `**​/` ever stopped collapsing, and that failure
+		// is what would regress if `**/` ever stopped collapsing, and that failure
 		// has nothing to do with whether nested files are reached.
 		expect(await matchedFiles("*.ts")).toContain("top.ts");
 	});
@@ -2583,7 +2583,7 @@ describe("jsSearch: glob depth", () => {
 
 	test("the rule is on the slash, not on the leading star", () => {
 		// Stated at the string level because two of these have no behavioral
-		// symptom to assert: `**​/**​/*.ts` returns the same files as `**​/*.ts`, so
+		// symptom to assert: `**/**/*.ts` returns the same files as `**/*.ts`, so
 		// a doubly-promoted glob is invisible from the outside.
 		expect(normalizeSearchGlob("*.ts")).toBe("**/*.ts");
 		expect(normalizeSearchGlob("**/*.ts")).toBe("**/*.ts");
