@@ -164,6 +164,20 @@ Browser → Daemon (static assets + SSE) + Worker (API forwarding)
 | src/event-store.ts | JSONL EventStore — append-only; eid/parentEid chain, `setChainHead` for rollback+repair. Never truncates. |
 | src/event-converter.ts | walkEventsToMessages + EventConverterCallbacks |
 | src/task-tracker.ts | Task tree, node CRUD, tree.json persistence |
+| src/orchestrator-tools.ts | Every matrix tool definition + `buildAllToolDefs` (the external-MCP list is built from it) |
+| src/data-paths.ts | THE resolver for every path built from `dataRoot` — a grep test fails if a second site appears |
+| src/done-payload.ts | `donePayloadSchema` — the one source for done() content, imports only zod |
+| src/task-index.ts | Orama hybrid search index (title / description / result) |
+| src/plugin-sdk.ts | The public `mxd/plugin-sdk` surface — thin re-exports, never a vendored copy |
+| src/llm.ts | Stateless single-turn LLM for plugins (no tools, no session) |
+| .mxd/plugin/scope-opts.ts | `buildMatrixScopeOpts` — the ONE place that knows matrix's tools + prompt + hooks |
+| .mxd/plugin/web/event-handler.ts | UI event → log entries; `queueEntryToUIEvent` is the materialization gate, `pendingReducer` is pending |
+
+**Verified 2026-07-25**: every path above exists. The bottom eight were added in this pass — they
+had all appeared since the table was written and none of them had been added to it. A file map is
+one of the entries most prone to going quietly wrong, because it fails by OMISSION: nothing
+contradicts it, it just silently stops being the answer to "where do I start". If you add a file
+that a newcomer would need to find, add the row.
 
 ## Merge review discipline — hook-pass ≠ reviewed
 
@@ -5029,9 +5043,9 @@ What drift tests DO catch:
 - System/tools presence asymmetry (fixed a gap: previously silently passed when dropping system/tools mid-conversation)
 
 Files:
-- `src/drift-tool-lifecycle.test.ts` (22 integration tests — tool lifecycle)
-- `src/drift-message-sources.test.ts` (27 integration tests — every QueueMessage source type)
-- `src/drift-lifecycle.test.ts` (21 integration tests — yield/done/fork/compact transitions)
+- `src/drift-tool-lifecycle.test.ts` — tool lifecycle
+- `src/drift-message-sources.test.ts` — every QueueMessage source type
+- `src/drift-lifecycle.test.ts` — yield/done/fork/compact transitions
 - `src/integration.test.ts` Bug repro suite — original caption bug regressions
 
 ### Correctness invariant (golden snapshot unit tests)
@@ -5042,10 +5056,14 @@ Example: if walker's `onConsumedMessages` lacked caption, both paths would miss 
 Mutation-tested rigorously: every mutation (remove caption idle/working, drop is_error, add is_error to image tool_result, swap block order, break string↔array invariant, drop interleaved text, remove caller field) is caught by at least one test.
 
 Files:
-- `src/walker-golden.test.ts` (47 unit tests — core walker correctness)
-- `src/drift-infra-audit.test.ts` (23 golden + 39 mock-validator mutation tests)
-- `src/drift-tool-lifecycle.test.ts` (29 golden tests — tool lifecycle)
-- `src/drift-lifecycle.test.ts` (17 golden tests — yield/done/fork/compact)
+(Per-file test counts used to be listed here and have been dropped — they were wrong within weeks
+and a stale count reads exactly like a fresh one. What each file COVERS is the durable part and is
+what you actually need to pick a file; `bun test` counts them.)
+
+- `src/walker-golden.test.ts` — core walker correctness
+- `src/drift-infra-audit.test.ts` — golden output + mock-validator mutation tests
+- `src/drift-tool-lifecycle.test.ts` — tool lifecycle (golden half)
+- `src/drift-lifecycle.test.ts` — yield/done/fork/compact (golden half)
 
 ### Principle
 - Prefix validation tests **convergence** between paths (drift detection)
