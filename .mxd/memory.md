@@ -1983,597 +1983,237 @@ per dimension before it ever reaches a provider. Byte size is a provider-level c
 # Memory Index & Search
 ---
 
-## The done() payload: DonePayload → TaskNode.resultRounds (2026-07-14 … 07-20)
+## The done() payload, and the boundary it defends
 
-Merged from five sequential entries (Memory-index Step 1 → 1.1 → 1.2 → 1.3 → 1.4), each of which
-superseded the one before it. Only the end state is load-bearing; the trail is at the bottom,
-compressed to the decisions that still explain why the code looks like this.
-
-### Current state
-
-done() has exactly two agent-facing params: **`status`** (`passed`/`failed` — a RUNTIME control bit
+`done()` has exactly two agent-facing params: **`status`** (`passed`/`failed`, a runtime control bit
 that routes the node to verify/failed) and **`result`** (required, non-empty — everything the agent
-reports as content). `TaskNode.resultRounds?: DonePayload[]`: ONE block APPENDED per done(), never
-overwritten. Single-done task → one block; reawakened-and-re-done task → N blocks in call order;
-the field is absent until the first done().
+reports as content). `TaskNode.resultRounds?: DonePayload[]` gets ONE block APPENDED per `done()`,
+never overwritten, so a task woken and re-done N times carries N rounds in call order and the field
+is simply absent until the first done.
 
-⚠️ **`lessons` is GONE — but every step below was written while it existed.** It was a second
-content field for most of this chain's life, dropped from `DonePayload` after Step 2 shipped (the
-index-side half of that removal is recorded in *Memory-index Step 2* § Post-merge cleanup). Agents
-fold lessons and pitfalls into the `result` narrative directly. Verified against the code:
-`src/done-payload.ts` is `z.object({ result: z.string() })`, one field; `orchestrator-tools.ts`
-declares only `status` + `result`. **Wherever text below mentions `lessons`, read it as history.**
+`src/done-payload.ts` holds the single schema. Add a content field there and the tool param, the
+type, the stored round and the normalizer all follow — no fan-out. ⚠️ **It imports only zod**, which
+is not an aesthetic choice: both `types.ts` (type layer) and `orchestrator-tools.ts` (tool layer)
+must import it, and anything heavier creates a cycle.
 
-### The ONE struct — `src/done-payload.ts` (imports ONLY zod, no cycles)
+⭐ **The runtime↔plugin boundary, which is the point of the whole design.** The runtime MAY read
+`status` and ONE completion-output string (`doneCompletionOutput(input)` = `input.result`, the
+"what happened" summary sent to the parent and recorded on the `done_notified` marker; every plugin
+has one). The runtime MUST NOT carry the round structure or any content field beyond that string —
+those are read only inside matrix's `onDone`, via `parseDonePayload`, and the runtime hands the raw
+done input through as an opaque `Record`. **The check is a grep**: `resultRounds`,
+`appendResultRound`, `parseDonePayload` and `DonePayload` appear in `src/runtime/*`, `runtime.ts`,
+`provider-shared.ts` and `events.ts` only inside boundary-explaining comments, never in code.
 
-- `donePayloadSchema` — the SINGLE source of the done CONTENT shape.
-  `DonePayload = z.infer<typeof donePayloadSchema>`.
-- `parseDonePayload(input: Record<string,unknown>|undefined): DonePayload` — the ONE raw-input →
-  round normalizer. Add a content field → edit THIS schema; the tool params
-  (`donePayloadSchema.shape`), the type, the stored round, and the normalizer all follow. No fan-out.
-- Imports ONLY zod so BOTH `types.ts` (type layer) and `orchestrator-tools.ts` (tool layer) can
-  import it without an import cycle.
+⚠️ **`onDone` returns void, and `done_notified` is always the runtime-standard `{status, result}`.**
+It used to return a plugin struct that got spread into the marker, letting a plugin inject arbitrary
+marker fields — removed, because the marker is write-only (nothing reads its fields; crash recovery
+recomputes from the tool_call) and only a synthetic test used the channel. Do not re-add a
+`T["done"] | void` shape "just in case".
 
-`DonePayload` is 1:1 with a `resultRounds` element: `TaskNode.resultRounds?: DonePayload[]`
-(types.ts), `tracker.appendResultRound(nodeId, round: DonePayload)` (task-tracker.ts). done() ↔
-round by construction, not by hand-synced shapes.
+**Testing opacity requires data only the other layer understands.** The robustness test uses a
+non-matrix scope whose `done()` carries `wordCount` and `mood`, and asserts they reach `onDone`
+untouched and never appear in `done_notified`. **Testing with the default plugin's own fields cannot
+distinguish "passed through opaque" from "reconstructed into that plugin's shape"** — both produce
+the same round. Mutation-proofed empirically: reshaping `doneInput` into a fixed struct before
+`onDone` fails exactly that one test out of ~2500, and every matrix resultRounds test still passes.
 
-DELETED along the way: `ResultRound` interface, `MatrixDoneData` type, `AgentResult.doneResult`
-field, `readDonePayload`, `readDoneLessons`, `PluginTypes.done`, `MatrixPluginTypes.done`, and all
-done-result carrying through the provider loop.
+⚠️ **KNOWN LIMITATION: crash-recovery Phase 2 does not append a resultRound.** It is plugin-agnostic
+runtime code that sets status directly and never calls matrix's `onDone`, so a `done()` whose Phase
+2 was interrupted by a daemon crash loses its round. Wiring it in would either break the boundary
+above or route crash recovery through a plugin hook. The normal path — the overwhelming majority —
+captures correctly.
 
-### ⭐ The boundary (root's review criterion — hold this line)
+**`result` is enforced twice, and a rejected `done()` is harmless.** Zod rejects an absent result at
+`executeTool`; `beforeDone` rejects an empty or whitespace-only one with a steering message, before
+the git-clean check. Either way the tool_result is `isError`, and the loop's done-exit is gated on
+`!doneToolResult.isError`, so the loop does not exit, no Phase 2 runs, and no empty round is
+appended — the agent just sees the error and continues.
 
-`status` is NOT in the struct — it's a RUNTIME control bit. The runtime↔plugin split for done():
+Four gotchas that will each cost an hour:
 
-- **Runtime MAY read**: `status` (routes → verify/failed) + ONE completion-output string
-  (`doneCompletionOutput(input)` = `input.result` — the universal "what happened" summary sent to the
-  parent via task_complete AND recorded on the done_notified marker; every plugin has one, calling it
-  `result` is fine).
-- **Runtime MUST NOT carry**: the round structure, or any content field beyond that one string.
-  Those are read ONLY inside Matrix's `onDone`, via `parseDonePayload(doneInput)`. The runtime hands
-  the raw done tool_call input to onDone as an OPAQUE `Record` (`BaseDoneData`) and never
-  destructures round content itself.
-- Enforcement check (grep): `resultRounds` / `appendResultRound` / `parseDonePayload` / `DonePayload`
-  appear in `src/runtime/*`, `src/runtime.ts`, `src/provider-shared.ts`, `src/events.ts` ONLY in
-  boundary-explaining COMMENTS, never in code. (`lessons` was on this grep list too, while it
-  existed.) If a future change reads a content field inside the runtime, the boundary is broken.
+- ⚠️ **Zod strips unknown keys** (`z.object(inputSchema).safeParse`, no `.strict()`). So a caller
+  passing an obsolete param name does NOT fail on that param — it fails on the required one that is
+  now missing, which points at the wrong place.
+- ⚠️ **`parseDonePayload` must NOT use `donePayloadSchema.safeParse`.** The schema requires its
+  fields and raw done input may omit them, so safeParse rejects. Manual normalization only; it must
+  never throw.
+- ⚠️ **Required-ness comes from the tool's `decl`, not from the schema.** The param reuses the
+  schema's TYPE while `{kind: "explicit"}` vs `{kind: "optional"}` decides whether it is required —
+  which is how `result` is required on input while `parseDonePayload` still normalizes a missing one
+  to `""`, with no drift between the two.
+- ⚠️ **Any change to a tool's required params has a transition window.** Tools are frozen in
+  `session_config` until a compaction refreshes them, so an agent mid-session keeps calling the old
+  shape, the obsolete param is stripped, the required one is absent, and that done is rejected. It
+  costs that agent one round and it retries correctly. Know that this is expected, not a bug.
 
-### Flow (live + crash recovery)
+### ⭐ Renaming a tool param: three things that bit us, all generic
 
-- **provider-shared.ts** (loop): reads only `doneInput.status` → `doneExitReason`. Does NOT carry the
-  result out.
-- **agent-lifecycle.ts Phase 2**: `readDoneInput(events)` → raw `doneInput` (generic: the last done
-  tool_call's input, in events.ts). `doneCompletionOutput(doneInput)` → the parent-notice/marker
-  string. Runtime does the status flip (`updateStatus(passed ? "verify" : "failed")` — ONE mapping) +
-  `opts.onDone?.(node, tracker, doneInput ?? {})` (opaque) + `createTaskComplete(..., completionOutput)`
-  + marker `{status, result: completionOutput}`.
-- **scope-opts.ts onDone** (Matrix): `tracker.appendResultRound(node.id, parseDonePayload(doneInput))`.
-  Content-only, returns void. No status flip — that is the runtime's job.
-- **runtime.ts findInterruptedDonePhase2** (crash recovery): reads `status` +
-  `doneCompletionOutput(lastDoneCall.input)`.
-
-**KNOWN LIMITATION (unchanged since Step 1)**: crash-recovery Phase 2 does NOT append a resultRound —
-it is plugin-agnostic runtime code that updates status directly via `tracker.updateStatus` and never
-calls the Matrix onDone. So a done() whose Phase 2 was interrupted by a daemon crash loses its round.
-Wiring it in would either break the plugin-agnostic boundary (runtime knowing about resultRounds) or
-change crash-recovery behavior (route it through onDone). The normal Phase 2 path — the overwhelming
-majority — captures correctly.
-
-### Enforcement: `result` is required and non-empty (two layers)
-
-- Zod `explicit` (required) → an ABSENT result is rejected at executeTool's safeParse with
-  "Tool input validation error (mcp__mxd__done): result: …" (the message names `result`).
-- `beforeDone` (orchestrator-tools.ts) checks `!args.result?.trim()` FIRST, before the git-clean
-  check → an EMPTY/whitespace-only result is rejected with a steering message ("done() needs a
-  non-empty `result`: state what this round ACTUALLY accomplished…").
-
-**Why a rejected done() is harmless**: it returns isError → the provider-loop done-exit block
-(`if (doneToolResult && !doneToolResult.isError)`, provider-shared.ts ~1914) is skipped → the loop
-does NOT exit, no Phase 2, no resultRound appended → the agent sees the error and continues. So a
-barren done() never lands an empty `{result: ""}` round.
-
-### onDone → void; done_notified marker-injection DELETED (root-blessed)
-
-Old `onDone` returned `MatrixDoneData`, which was spread into `done_notified` — letting a plugin
-inject arbitrary marker fields. REMOVED: onDone returns void, and `done_notified` is RUNTIME-standard
-`{status, result}` always. Rationale: the marker is write-only (nothing reads its fields;
-findInterruptedDonePhase2 recomputes from the tool_call) and only a synthetic test used the channel →
-anti-pattern #6 (imagined use). Did NOT keep a `T["done"] | void` "just in case" shape.
-
-### Tracker: appendResultRound
-
-Append-only; creates the array on first call; rejects general nodes; bumps updatedAt. Round-trips
-through `save()`/`load()` FREE (save spreads `...rest`, load casts raw → TaskNode) — zero extra
-serialization code. Surfaces via `get_task` / `get_tree` FREE (stripSession spreads all fields).
-
-### Robustness test — "a plugin evolves its done fields without touching the runtime"
-
-The runtime IS already field-agnostic (opaque passthrough); the deliverable is the test that PROVES
-and PROTECTS it. Target = a plugin's OWN extended fields (the opaque part) — NOT `status` or the
-completion output, which ARE the runtime contract.
-
-- `src/plugin-custom-scope.test.ts` "Boundary: done() custom fields are opaque to the runtime": a
-  non-matrix scope whose done() carries `wordCount` + `mood`. onDone reads them off the opaque
-  `doneInput` and setMetadata's them. Asserts (1) `node.metadata == {wordCount, mood}` → the runtime
-  handed the raw input through untouched, no reshape to a fixed content struct; (2) `done_notified` =
-  `{status, result}` ONLY, `wordCount`/`mood` undefined → the runtime never spreads plugin content
-  into its artifacts; (3) status routed to verify.
-- `src/events.test.ts`: `findInterruptedDonePhase2` with a custom-field input returns EXACTLY
-  `{needs_phase2, status, result}` — crash recovery carries no custom fields.
-- `src/done-payload.test.ts`: `parseDonePayload` robustness — extra fields dropped, missing/malformed
-  defaulted, never throws.
-
-**EMPIRICALLY mutation-proofed** (full `bun test`, not reasoning): mutating agent-lifecycle to reshape
-`doneInput` into a fixed content struct before onDone → the ONLY failure across 2508 tests is this
-boundary test; ALL matrix resultRounds/done_notified tests PASS.
-
-**Lesson**: to test "layer X is opaque to layer Y's data", the test MUST use data that ONLY layer Y
-understands (a custom field). Testing with the DEFAULT plugin's own fields cannot distinguish "passed
-through opaque" from "reconstructed into that plugin's shape" — both produce the same round.
-
-### Tests
-
-- `src/task-tracker.test.ts` → `describe("TaskTracker: resultRounds (memory-index capture)")` — the
-  tracker unit: append, **append-twice-never-overwrites**, undefined until first append, updatedAt
-  bump, non-task throws, unknown-node throws, save/load round-trip, and stripSession (the
-  serialization `get_task`/`get_tree` use) preserving the field.
-- `src/integration.test.ts` → `describe("Integration: done() result capture (resultRounds)")` — the
-  full flow: `done(result)` lands on the node; **absent result → REJECTED, no empty round**;
-  **whitespace-only result → REJECTED with the steering message**; two rounds in call order after a
-  reawaken, first preserved; a failed done() also appends; and **ONE value → BOTH the parent
-  notification and `resultRounds.result`, byte-identical**.
-
-That last one is worth naming as a property, because 1.4 changed how it holds: the parent notice and
-the stored round are no longer the same variable handed to two places — the runtime derives the
-completion output and Matrix's onDone derives the round, *independently, from the same
-`doneInput.result`*. Byte-identity is now a consequence of both reading one source, which is why the
-test pins it rather than trusting the plumbing.
-
-Two consequences for test code, from when the carrier was removed:
-- Test scope opts whose `onDone` did nothing but flip status no longer define `onDone` at all — the
-  runtime flips status universally now.
-- `anthropic-compatible-provider.test.ts` can no longer assert `agentResult.doneResult` (the field is
-  gone); it asserts the emitted done() tool_call's `input.result` instead. That is the honest
-  assertion anyway: **the result lives in JSONL, not on AgentResult.**
-
-### Gotchas
-
-- **Zod strips unknown keys.** `z.object(inputSchema).safeParse` (tool-execution.ts) has NO
-  `.strict()`, so undeclared keys are STRIPPED, not rejected. A caller passing an obsolete param name
-  therefore does not fail on that param — it fails on the required one that is now missing.
-- **`parseDonePayload` must NOT use `donePayloadSchema.safeParse`** — the schema requires its fields
-  and raw done input may omit them → reject. Manual normalization only.
-- **Reading the done input** matches `e.tool === TOOL_DONE`, the full `mcp__mxd__done` name — tool_call
-  events store the mcp-prefixed name (same as `findInterruptedDonePhase2`).
-- **`appendResultRound` must NOT use `(node.resultRounds ??= []).push(x)`** — biome
-  `noAssignInExpressions` errors. Use `if (!node.resultRounds) node.resultRounds = []; …push`.
-- **Removing `PluginTypes.done` was safe**: test scopes use `ScopeOpts<any>` (erased). `BaseDoneData`
-  is KEPT — it now documents "the opaque raw done input" and is still exported from `plugin-sdk.ts`.
-- **Required-ness comes from the tool's `decl`, not from the schema.** The param reuses the schema's
-  TYPE (`donePayloadSchema.shape.result.describe(...)`), while `decl: {kind: "explicit"}` vs
-  `{kind: "optional"}` decides whether it is required. So the tool can be stricter or laxer than the
-  stored shape without the two drifting — which is exactly how `result` is required on input while
-  `parseDonePayload` still normalizes a missing one to `""`.
-- **Frozen-agent transition window.** An agent whose session_config froze the OLD done schema keeps
-  calling the old shape; the obsolete param is stripped (above), the required one is then absent, and
-  the done is REJECTED with the required-result error. Costs that agent one round; it retries
-  correctly. ANY change to a tool's required params has such a window — tools are frozen in
-  session_config until a compaction refreshes them (see *Session Config Refresh at Compact*).
-
-### Renaming a tool param — three things that bit us
-
-Out of the `summary` → `result` rename, all three generic:
-
-1. **Grep the FRONTEND.** The done-card consumers (`event-display.ts` getToolTitle, `McpToolCard.tsx`,
-   `LogEntryView.tsx`, `ToolCard.tsx`, `mock-showcase.ts` fixtures) read the param BY NAME —
-   `getArg(.., "summary")` / `toolArgs?.summary`. Typecheck cannot catch that (index/any access) and
-   integration tests do not render, so it was a SILENT UI regression found only by manual grep: the
-   done cards would have quietly lost their text. Same class as the bound on *Refactoring Philosophy*
-   — the compiler enumerates only what it can TYPE.
+1. **Grep the FRONTEND.** Done-card consumers read the param BY NAME (`getArg(.., "summary")`,
+   `toolArgs?.summary`) through index/`any` access, so **typecheck cannot catch it and integration
+   tests do not render.** The done cards would have quietly lost their text; only a manual grep
+   found it. Same class as the compiler-only-types bound in *Changing code here*.
 2. **Grep the TARGET name before a blanket rename.** `doneSummary → doneResult` collided with two
-   pre-existing local `doneResult` variables in provider-shared (the done ToolResult, and the
-   `handleImplicitYield` resume result); they became `doneToolResult` / `doneResumeResult`.
-3. **Make a missed site LOUD, not silent.** Because `result` became required, a missed call site fails
-   Zod → the done never completes → the test times out. That enforcement WAS the safety net. The one
-   miss that got through the bulk replace was a BACKTICK template literal
-   (`` summary: `child ${label}…` ``) in integration-stress MULTI1: the child's done was rejected, the
-   parent hung, and it read as a 48s flake rather than a regression. Grep BOTH `x: "` and `` x: ` ``,
-   plus the shorthand `x }`.
+   pre-existing local `doneResult` variables.
+3. **Make a missed site LOUD rather than silent.** Because `result` became required, a missed call
+   site fails Zod, the done never completes, and the test times out — that enforcement WAS the
+   safety net. The one miss that got through the bulk replace was a **backtick template literal**
+   (`` result: `child ${label}…` ``), and it read as a 48-second flake rather than a regression.
+   Grep both `x: "` and `` x: ` ``, plus the shorthand `x }`.
 
-**NOT this concept — do not rename these `summary`s**: compaction `<summary>` tags /
-SUMMARIZATION_INSTRUCTION; llm.ts OpenAI Responses reasoning `summary[]` / `summary_text` (an API
-field); cli.ts cost/tree display; get_logs "short summary" and send_message's title "Short summary of
-the message"; generic `ToolDisplay.summary`; compactedResume `"summary-1"` ids.
+⚠️ **Not this concept, do not rename these**: compaction's `<summary>` tags and
+`SUMMARIZATION_INSTRUCTION`; `llm.ts`'s OpenAI Responses reasoning `summary[]` / `summary_text` (an
+API field); CLI cost/tree display; `get_logs`' "short summary" and `send_message`'s title; the
+generic `ToolDisplay.summary`; `compactedResume` ids. Two provider test files declare their own
+`done` tool with a `summary` schema and are CORRECT — they drive `provider.stream()` directly and
+never run the runtime loop.
 
-**Two provider test files declare their own `done` tool with a `summary` schema and are CORRECT** —
-`openai-responses-compatible-provider.test.ts` and `anthropic-compatible-provider.test.ts` (~2560)
-are standalone provider tests driving `provider.stream()` directly; they never run the runtime loop,
-so they are not Matrix's done().
+## The search index — `src/task-index.ts`
 
-### How it got here
+Indexes every task's **title**, **description** and **each done() round's result** at per-field,
+per-round granularity: one document per (task, field, round), id `${taskId}:${field}:${round}`, so
+every hit traces to an exact location and removal is targeted rather than a scan.
 
-The five entries this replaces, and the one decision from each that still explains the code:
+Orama (pure TS, no native deps) with the Mandarin tokenizer (jieba WASM) and EmbeddingGemma-300M
+768-dim embeddings. `mode: "hybrid"` fuses BM25 and cosine in one query and is cross-lingual in
+practice ("fix session recovery" ↔ "修复会话恢复" scores 0.81). If the embedding model fails to
+load it degrades to pure BM25, so the daemon is never blocked on a model download.
 
-- **Step 1** — introduced `resultRounds`, and read the round from the persisted done tool_call in
-  JSONL rather than threading fields through `AgentResult` ("JSONL is the source of truth", draft
-  01KN8D1M). That is why Phase 2 re-reads the log instead of receiving the value from the loop.
-  Shipped with BOTH `summary` and `result` on done(), additively.
-- **Step 1.1** — noticed `summary` and `result` said the same thing; made `result` primary with
-  `summary` a deprecated alias (`result ?? summary`). Worth keeping for the naming rule it
-  established: **the tool description is agent-facing on every single call, so the param must be
-  named after the real concept.** Leaving the primary param `summary` while the stored field was
-  `result` would have re-seeded the exact two-names-for-one-thing confusion being removed.
-- **Step 1.2** — deleted the alias outright and made `result` required-non-empty. The alias had
-  forced `result` to be optional, which in turn allowed a done() carrying neither param.
-- **Step 1.3** — completed the rename through every internal carrier (`AgentResult.doneSummary`,
-  `MatrixDoneData.summary`, the `done_notified` field, `agent_end.result`). Renaming the persisted
-  marker field turned out to need no migration at all: nothing reads it back, and crash recovery
-  recomputes from the tool_call. Step 1.2 had assumed the opposite and deferred the rename for it.
-- **Step 1.4** — collapsed the three hand-picked shapes (done params / ResultRound / MatrixDoneData)
-  into the one zod struct above, and drew the runtime↔plugin boundary.
-- **After Step 2** — `lessons` dropped; `result` is the only content field.
+⚠️ **Orama scores are higher = better.** The previous FTS5 engine was lower = better, so any
+comparison, sort or threshold carried over from that era is backwards.
 
-## Memory index: the search engine — `src/task-index.ts` (2026-07-15 … 07-23)
+⭐ **Why the engine lives in `src/` and not in the plugin.** The red line is not "index code must sit
+in `.mxd/plugin/`" — `src/` is the neutral building-block layer. The real invariant is that
+**`src/runtime/*`, `runtime.ts` and `provider-shared.ts` contain ZERO occurrences of index / search /
+resultRounds, including in comments** (two hook comments had to be genericized because they said
+"search index"). The layout was then forced: `search_tasks` needs `availability: "both"`, the
+external-MCP list is built by `mcp-endpoint.ts` from `buildAllToolDefs()` in `orchestrator-tools.ts`,
+that is in `src/`, and `src/` may not import `.mxd/plugin/`. So the tool must be in
+`buildAllToolDefs` → the search function must be src-importable → the engine lives in `src/`.
 
-Merged from "Memory-index Step 2" (FTS5) and "Memory-index Phase C" (Orama). Phase C replaced the
-entire storage engine, so Step 2's machinery is history — but its *architectural* decisions (where
-the engine lives, the sync model, the hook) survived the swap untouched and are stated here as
-current. The FTS5 era is at the bottom.
+⚠️ **`onScopeResume(tracker, projectId)` is named by EVENT, not by resource**, and that is what keeps
+the boundary grep clean — no "index" or "search" token anywhere in the name. The runtime calls it
+once per project after the tracker loads and wraps it in try/catch; matrix's implementation happens
+to reconcile the index, and the runtime attaches no meaning to that. Its counterpart `seedTree` runs
+only on a fresh tree; this one runs every startup.
 
-Indexes every task's **title**, **description**, and **each done() round's result**, at per-field +
-per-round granularity: one document per (task, field, round), so every hit traces to an exact
-location rather than to "somewhere in this task".
+**Staleness is the node's `updatedAt` string, stored per task in a sidecar** (`index-meta.json`,
+beside the binary `index.msp`). Reconcile reindexes iff `stored.indexedAt !== node.updatedAt` —
+string compare, no clock math — which **subsumes backfill**, because a never-indexed task has no
+`indexedAt` and is therefore stale. There is no separate "already backfilled" marker and none is
+needed. Reconcile also prunes documents for tasks that have left the tree, and it catches what
+`onDone` cannot: title and description edits, which fire no `done()`. Accepted edge: an edit landing
+in the same millisecond as an index write yields an equal string and is skipped until the next edit
+or restart.
 
-### Current engine
+Four gotchas, three of them environmental:
 
-Orama (pure TS, no native deps) + `@orama/tokenizers/mandarin` (jieba WASM) +
-`@huggingface/transformers` EmbeddingGemma-300M (768-dim, q8 quantization).
+- ⚠️ **NaN scores trigger an automatic BM25 retry.** Documents indexed without a working embedding
+  pipeline get a zero vector; cosine on a zero vector is `0/0 = NaN` and hybrid fusion inherits it,
+  so *every* hit comes back `NaN`. `searchIndex` checks for a non-finite score and redoes the whole
+  search as pure fulltext.
+- ⚠️ **`MXD_DISABLE_EMBEDDINGS` exists because of a process-killing NAPI bug**, not for speed.
+  `@huggingface/transformers` has a static `import * as ONNX_NODE from "onnxruntime-node"` at module
+  scope; loading it registers the NAPI backend, and worker teardown then hits
+  `NAPI FATAL ERROR: Error::New napi_create_error` → SIGTRAP → **the whole test process dies.** The
+  env var short-circuits the pipeline so the backend is never registered. It must be passed to
+  workers via the Worker constructor's `env` option (see *Bun Worker env isolation*); a
+  `bunfig.toml [test.env]` entry alone does not reach them. Priority is explicit mock > env var >
+  lazy load, so a test can still exercise hybrid paths with a mock while the var is set.
+- ⚠️ **`sharp`/`libvips`**: Bun's global cache puts libvips at a versioned path sharp cannot find.
+  `scripts/fix-sharp-libvips.sh` symlinks it and is wired as `postinstall`.
+- ⚠️ **Orama's `where` only filters `enum` fields** and has no `ne` on them; `string`-typed fields
+  silently return empty. That is why all metadata lives in the sidecar and no query uses `where`.
 
-- **Hybrid search** (`mode: "hybrid"`): BM25 keyword + cosine vector in one query, fused by Orama's
-  built-in ranking. Cross-lingual in practice — "fix session recovery" ↔ "修复会话恢复" scores 0.81
-  cosine.
-- **Graceful degradation**: if the embedding model fails to load → `mode: "fulltext"` (pure BM25).
-  The daemon is never blocked on a model download.
-- **Mandarin tokenizer**: passed as `components.tokenizer` to `create()`. Chinese and English queries
-  both work natively.
-- **Embedding pipeline**: lazy module-level singleton (`getEmbeddingPipeline()`), ~5s cold / ~1s warm
-  on first call. `embed(text) → number[768]`.
-- ⚠️ **Score direction reversed at Phase C**: Orama scores are **higher = better**. FTS5 BM25 was
-  lower = better. Any comparison, sort, or threshold carried over from the FTS5 era is backwards.
+**`search_tasks` enriches from the tracker, not from the index**: each hit gets the task's CURRENT
+title via a fresh `getTask`, and hits whose task has been deleted are dropped.
 
-### ⭐ Boundary: why the engine lives in `src/`, not in the plugin
+**NEGATIVE RESULT, do not re-derive:** `bun:sqlite` **cannot** `loadExtension` — smoke-tested,
+`new Database(":memory:").loadExtension("x")` throws *"This build of sqlite3 does not support
+dynamic extension loading"*. That killed the sqlite-vec plan and is why the vector phase went to a
+pure-TS engine. The FTS5 index that preceded Orama worked correctly (MATCH, bm25, snippet,
+DELETE-by-column all verified); it was replaced for the vector story, not because it was broken.
 
-The red line is NOT "index code must physically sit in `.mxd/plugin/`" — `src/` is the neutral
-building-block layer, like `done-payload.ts` or `worktree-manager.ts`. The REAL invariant:
-**`src/runtime/*` + `runtime.ts` + `provider-shared.ts` contain ZERO occurrences of index / search /
-resultRounds** — grep-verified including comments (two hook comments had to be genericized because
-they said "search index"). The engine is a `src/` leaf imported by BOTH the plugin (onDone,
-onScopeResume) AND `orchestrator-tools.ts` (search_tasks); plugin→src and src(non-runtime)→leaf are
-both allowed directions.
+## Retrieval that nobody acts on ⇒ guidance goes where the DECISION is
 
-**Why it cannot live in the plugin**: `search_tasks` needs `availability: "both"`, and the
-external-MCP tool list is built by `mcp-endpoint.ts` from `buildAllToolDefs()` in
-`orchestrator-tools.ts` — which is in `src/`, and `src/` may not import `.mxd/plugin/`. So the tool
-must be in buildAllToolDefs → the search function must be src-importable → the engine lives in
-`src/`. That chain decided the layout; it is the same boundary as the DonePayload one, stated for a
-different subsystem.
+Three surfaces inject prior art: `work_context`'s `[Related past tasks]`, `create_task`'s
+`[Related existing tasks]`, and `search_tasks`' tiered output (2 full hits + up to 5 one-line briefs,
+hard-capped at 8000 chars to protect the context window). All three worked and produced real hits.
+None of them said what to do with a hit, so the block read as a return value: scanned, then dropped.
+**Root's count for one day: `create_task` called 8 times, block returned 8 times, behaviour changed
+0 times, `search_tasks` called 0 times.**
 
-### The `onScopeResume(tracker, projectId)` hook
+> ⭐ **Put the guidance where the decision is made. If the agent ASKED for the data, the tool
+> description reaches it in time — it still holds the intent it called with. If the data arrives
+> UNREQUESTED, only the payload reaches it.**
 
-A generic ScopeOpts hook (`src/runtime/context.ts`), called once per project in
-`autoResumeProjects` after the tracker loads and BEFORE resumeScope. Counterpart to `seedTree`
-(fresh tree only); this one runs every startup. **Named by EVENT, not by resource** — no
-"index"/"search" token anywhere in the name, which is what keeps the boundary grep clean. Matrix's
-implementation reconciles the index; the runtime attaches no meaning to it and wraps it in
-try/catch (best-effort). Now `async`.
+So the guidance lives in `search_tasks`' description (asked for) and in the two block headers
+(unrequested), with no duplicated paragraph. ⚠️ **The bash "don't pipe" precedent does NOT transfer**:
+that decision is made while CONSTRUCTING the call, so the description is its decision moment. A
+description read before the call is guidance about something that does not yet exist in the agent's
+world.
 
-**Test pitfall**: `createApp` does NOT call `autoResumeProjects`, so reconcile does not fire in
-every `createMatrixApp` test. Tests that want it call `app.autoResumeProjects()` or `reconcileIndex`
-directly.
+⚠️ **Matrix-specific tiebreaker, worth knowing on its own: tool descriptions are frozen in
+`session_config` until a compaction refreshes them, so a description change does not reach a running
+agent. Handler output reaches everyone on the next call.** For a fix motivated by "this failed
+today", that is decisive.
 
-### Sync model
+**The two block headers are different sentences on purpose**, because the readers can do different
+things. `create_task`'s reader is ROUTING — it just made a task and is deciding where the work should
+live, so its menu is fold-the-conclusion-into-this-description (most common, and the one agents
+skip), fork, `send_message` the found task and delete this one, or nothing. `work_context`'s reader
+is already ASSIGNED the work and is deciding how to do it: read before re-deriving, and if a hit
+already tried the approach it is about to take, **surface that upward** rather than obeying or
+ignoring it. Three capability facts were verified rather than assumed, because the hypothesis handed
+over was half wrong: a working agent **cannot** `send_message` the task it found (the handler's
+direction check allows only ancestors and direct sub tasks); it **can** update its own task
+description; and it **can** `fork_task_context` (only the TARGET is subtree-restricted, the source
+is free) but only into a sub task it creates, so forking is a dispatch move rather than a
+use-this-knowledge move.
 
-- **Staleness marker = the node's `updatedAt` string, stored per task in the index's sidecar**
-  (`indexedAt`). Reconcile reindexes a task iff `stored.indexedAt !== node.updatedAt` — string
-  compare, no clock math. This SUBSUMES backfill: a never-indexed task has no `indexedAt`, so it is
-  stale, so it gets indexed. No separate "already backfilled" marker exists or is needed. Reconcile
-  also PRUNES documents for tasks that have left the tree.
-- **index-on-done**: Matrix's `onDone` appends the round, then indexes the canonical node
-  best-effort — an index write must NEVER break the done lifecycle, and reconcile retries misses.
-  Since Phase C the index call is fire-and-forget (`indexTask(...).catch(...)`) because `onDone` is
-  synchronous in the runtime.
-- **Reconcile catches what onDone cannot**: title/description edits via `update_task` (no done()
-  fires), and a crash between done and index.
-- **Accepted edge**: an edit landing in the same millisecond as an index write yields an equal
-  `updatedAt` string and is skipped until the next edit or restart. Practically never — edits happen
-  at live-work time, indexing at startup/done.
-- **KNOWN LIMITATION (inherited)**: crash-recovery Phase 2 never calls onDone, so a crash-interrupted
-  done()'s round is lost from BOTH the node and the index. See *The done() payload* § Flow.
-
-### Persistence — two files per project
-
-- `index.msp` — the Orama binary (msgpack, via `@orama/plugin-data-persistence`). Written after every
-  `indexTask`, and after a reconcile that changed anything.
-- `index-meta.json` — sidecar: `{ [taskId]: { indexedAt, docIds } }`. Holds the staleness marker and
-  the stored document ids, which is what makes targeted removal possible.
-- Both resolve through `projectIndexDbPath()` (data-paths.ts), a sibling of tree.json →
-  `projects/<id>/plugin/matrix/`.
-
-**Document id convention**: `${taskId}:${field}:${round}` — deterministic, so `remove(db, id)` is
-targeted and needs no scan. Fields: `title`, `description`, `result` (per round). Metadata lives in
-the sidecar JSON, never in Orama — see the `where` limitation below.
-
-**In-memory cache**: `dbCache: Map<dbPath, IndexDb>`. First access restores from disk
-(`restoreFromFile`); in production one DB per project lives for the daemon's lifetime. Tests clear
-it via `_clearDbCache()`.
-
-### Public API (all async)
-
-`indexTask(dbPath, node)` · `reconcileIndex(dbPath, tracker) → {indexed, pruned}` ·
-`searchIndex(dbPath, query, limit?) → SearchHit[]`, where
-`SearchHit = { taskId, field, roundIndex?, snippet, score }`. Test-only:
-`_setEmbeddingPipeline`, `_resetEmbeddingPipeline`, `_clearDbCache`.
-
-### Gotchas
-
-- **NaN scores → automatic BM25 retry.** Documents indexed without a working embedding pipeline get
-  `ZERO_EMBEDDING` (768 zeros); cosine on a zero vector is `0/0 = NaN`, and hybrid fusion inherits
-  it, so *every* hit comes back `score: NaN`. `searchIndex` checks
-  `hits.some(h => !Number.isFinite(h.score))` after a hybrid search and, if any hit is non-finite,
-  redoes the whole search as pure fulltext. 3 regression tests.
-- **`MXD_DISABLE_EMBEDDINGS`** short-circuits `getEmbeddingPipeline()` to null (BM25-only). Set via
-  `bunfig.toml [test.env]` and propagated to workers by the daemon's `{ env: process.env }` Worker
-  option — see *Bun Worker env isolation*, because `process.env` assignments do NOT reach a Bun
-  Worker on their own. Priority: explicit mock (`_setEmbeddingPipeline`) > env var > lazy load, so a
-  test can still exercise hybrid paths with a mock while the env var is set.
-  **Why it exists**: `@huggingface/transformers` has a STATIC `import * as ONNX_NODE from
-  "onnxruntime-node"` at module scope. Loading it registers the NAPI backend, and worker teardown
-  then hits `NAPI FATAL ERROR: Error::New napi_create_error` → SIGTRAP → the whole test process
-  dies. The env var is how the test suite avoids ever registering it.
-- **sharp / libvips**: `@huggingface/transformers` depends on `sharp`, and Bun's global cache puts
-  libvips at a versioned path sharp cannot find. `scripts/fix-sharp-libvips.sh` symlinks the
-  unversioned `lib/` to the versioned one; wired as `postinstall`. Idempotent, platform-aware.
-- **Orama `where` only filters `enum` fields**, and has no `ne` on enums; `string`-typed fields
-  silently return empty. That is why metadata lives in the sidecar and no search query uses `where`.
-- **`search_tasks` enriches from the tracker, not the index**: each hit gets the task's CURRENT title
-  via a fresh `tracker.getTask`, and hits whose task has been deleted since indexing are dropped.
-- **`R.getDataPaths()`** (resource-registry, returns `{dataDir, dataRoot?}`) exists so the `src/` tool
-  can resolve the index path without any src→plugin coupling; the minimal config interface gained
-  `dataRoot?` for it.
-- **Index coverage is title / description / result.** `lessons` rows were removed when that field was
-  dropped from DonePayload — see *The done() payload* § Current state.
-
-### Tests
-
-- `src/task-index.test.ts` — provenance per field, re-index replaces stale rows, reconcile
-  backfill/incremental-noop/prune/skip-folders, empty + punctuation query safety, BM25 ranking,
-  limit, Chinese tokenizer, embedding degradation, persistence round-trip, hybrid search with mock
-  embeddings.
-- `src/integration.test.ts` "memory index (Orama hybrid search)" (4, full agent loop) — index-on-done
-  searchable, startup reconcile via `autoResumeProjects` → onScopeResume, `search_tasks` end-to-end,
-  and best-effort (sabotage the index path → done() still verifies and the round is still on the
-  node).
-
-### History: the FTS5 era (Step 2, 2026-07-15 → 07-20)
-
-The first working index was per-project SQLite via `bun:sqlite`, zero deps: an FTS5 table
-`task_fts(task_id, field, round, text)` with `tokenize='porter unicode61'`, a `task_index_meta`
-staleness table, a versioned `schema_meta`, and a reserved-but-unpopulated `task_vec` table for the
-vector phase that never used it. Query input went through `toMatchQuery` (quote each whitespace-split
-term, implicit AND) — **input safety against FTS5 syntax errors, deliberately not query rewriting**;
-no field weighting, no ranking heuristics, no filters, on the "add heuristics only when real use
-exposes a need" rule. Connections were opened per operation with no module cache, specifically
-because ~100 integration tests each use a fresh temp dataDir and a cached handle map would have
-leaked one handle per test onto a removed directory.
-
-Deleted at Phase C: `bun:sqlite`/`Database`/FTS5/SQL entirely, `openIndexDb`, `toMatchQuery`,
-`SCHEMA_VERSION`, the `task_vec` table, and the `initSchema`/`withDb`/`indexTaskInDb` internals.
-
-**One durable fact from that era**: `bun:sqlite` CANNOT `loadExtension` — smoke-tested,
-`new Database(":memory:").loadExtension("x")` → *"This build of sqlite3 does not support dynamic
-extension loading"*. That killed the sqlite-vec plan (the alternatives were
-`Database.setCustomSQLite()` against an extension-enabled libsqlite3, or storing embeddings as BLOBs
-and computing cosine in JS) and is why the vector phase went to a pure-TS engine instead. FTS5
-itself was fully built in and worked correctly — MATCH, bm25, snippet and DELETE-by-column all
-verified on bun 1.3.14.
-
-## Sidebar search + work_context related-tasks injection (2026-07-21)
-
-### Part A — Sidebar search via Orama
-- REST endpoint `GET /projects/:id/search?q=...&limit=N` in `.mxd/plugin/runtime.ts`.
-  Calls async `searchIndex`, enriches with task titles from `ctx.trackers.get(projectId)`.
-- `api.search(projectId, query, limit?)` URL builder in `.mxd/plugin/web/api.ts`.
-- `useSidebarSearch` hook (`.mxd/plugin/web/search.ts`): debounced 300ms, abort-on-supersede.
-- `TaskTree` accepts `searchHits`/`searchLoading` props; renders search results overlay
-  (title + field badge + snippet) INSTEAD of tree filter when backend results arrive.
-- UX: search results replace tree filter when text is typed and backend hits arrive.
-  Empty query → normal tree. Local substring filter still runs as instant fallback.
-
-### Part B — work_context related-tasks injection
-- `buildWorkContext` in `.mxd/plugin/scope-opts.ts` searches with `node.title + node.description` as
-  the query and appends a `[Related past tasks]` block: up to 5 hits, capped at
-  `RELATED_TASKS_CHAR_LIMIT = 8000` chars (~2000 tokens), self excluded (`taskId !== node.id`),
-  best-effort (try/catch — index unavailable just means no block). Works on both the initial-launch
-  and the compact re-arm path, because both go through the same `buildWorkContext` callback.
-
-⚠️ **SUPERSEDED — this shipped with a synchronous search and no longer has one.** The original text
-read: *"`searchIndexSync(dbPath, query, limit)`: synchronous BM25-only search using the
-already-cached in-memory Orama DB … Injection is sync → no runtime interface change."* Both halves
-are now false. `buildWorkContext` is `async` and awaits the normal `searchIndex`, and the runtime
-awaits the hook (`agent-lifecycle.ts` ~950/961) — so the interface DID change. Verified in code:
-`scope-opts.ts:149` is `buildWorkContext: async (...)`, `:166` is `await searchIndex(...)`.
-
-`searchIndexSync` still exists in `src/task-index.ts` but has **zero production callers** — only its
-own tests. It was written for this hook and orphaned when the hook went async. Whether to delete it
-is draft 01KYB46KTM.
-
-### Boundary preserved
-- `src/runtime/*` has ZERO knowledge of search/index. Everything routes through the plugin's hooks.
-- REST endpoint uses `ctx.trackers.get(projectId)` directly (not `getTracker` helper which
-  has scope-opts dependencies).
-
-## search_tasks tiered return + create_task auto-search (2026-07-23)
-
-`search_tasks` now returns tiered output via `formatTieredHits()` (exported from
-`orchestrator-tools.ts`). Top hits get full info (description ≤500 chars, latest
-resultRound result ≤300 chars, matched field+snippet, score); remaining hits are
-one-line briefs (title, taskId, status, score). Total output hard-capped at 8000
-chars to protect the context window.
-
-`create_task` handler appends a best-effort `[Related existing tasks]` block after
-the node JSON. Query = `title + description`; self-excluded; 2 full + up to 5 brief
-hits. Index unavailable → silent skip, never blocks create.
-
-⚠️ **SUPERSEDED**: this shipped using `searchIndexSync` ("sync, BM25-only, in-memory DB cache warmed
-at startup by `reconcileIndex`") — the handler now awaits the normal async `searchIndex`
-(`orchestrator-tools.ts:308`). Same staleness as the work_context injection above; both moved off
-the sync variant and left it with no production callers.
-
-System prompt: "Search before building" bullet added to Planning before acting
-(§2), steering agents to `search_tasks` before creating tasks or starting work
-in unfamiliar areas.
-
-### Key design decisions
-- Full taskId in output (not truncated prefix) — agents need it for `fork_task_context`
-  / `send_message`.
-- ~~`searchIndexSync` for create_task (not async `searchIndex`) — the handler is async
-  but sync search avoids a second embedding-pipeline load; the DB is already cached.~~
-  **REVERSED** — create_task awaits the async `searchIndex` now. The reasoning above was
-  sound but the sync variant lost its other caller and was not worth keeping alive for one.
-- 8000-char budget matches `RELATED_TASKS_CHAR_LIMIT` in scope-opts.ts work_context
-  injection.
-- `formatTieredHits` is shared between search_tasks and create_task (same formatting,
-  different `fullCount` and header).
-
-## Retrieval that nobody acts on ⇒ guidance goes where the DECISION is (2026-07-25)
-
-All three related-tasks surfaces worked and produced real prior art. None of them said
-what to do with a hit, so the block read as a return value: scanned, then dropped. Root's
-count for one day — `create_task` ×8, block returned ×8, behaviour changed ×0,
-`search_tasks` called ×0.
-
-### The placement rule (this is the reusable part)
-
-> **Put the guidance where the decision is made. If the agent ASKED for the data, the
-> tool description reaches it in time — it still holds the intent it called with. If the
-> data arrives UNREQUESTED, only the payload reaches it.**
-
-One rule, three placements, no duplicated paragraph:
-
-| surface | asked for it? | guidance lives in |
-|---|---|---|
-| `search_tasks` | yes | its description (one added clause) |
-| `create_task`'s `[Related existing tasks]` | no — rides along | the block header |
-| `work_context`'s `[Related past tasks]` | no — injected | the block header |
-
-This is also why the bash "don't pipe" precedent does NOT transfer: that decision is made
-while CONSTRUCTING the call, so the description is its decision moment. A description read
-before the call is guidance about something that does not exist yet in the agent's world.
-
-Matrix-specific tiebreaker, worth knowing on its own: **tool descriptions are frozen in
-`session_config` until a compaction refreshes them, so a description change does not reach
-a running agent. Handler output reaches everyone on the next call.** For a fix motivated by
-"this failed today", that is decisive.
-
-⚠️ **Root's stated evidence did not support root's conclusion — a different fact did.**
-The argument offered was "I read the tool description and still dropped the block". But
-create_task's description had never mentioned the block at all, so that is evidence that an
-unexplained block does not self-explain, not evidence about description-placed guidance.
-The real support is next door: system prompt §2 has "Search before building", and
-`search_tasks` was called 0 times that day. The conclusion held; the reason had to be
-replaced. **Check that a conclusion's stated reason is the one actually carrying it —
-especially when you already agree with the conclusion.**
-
-### The two block headers are DIFFERENT sentences, on purpose
-
-Same shared kernel — *pointers, not answers; `get_task` and read the result rounds* — then
-they diverge, because the readers can do different things:
-
-- **create_task's reader is ROUTING**: it just made a task and is deciding where the work
-  should live. Menu: fold the conclusion into this task's description (most common, and
-  the one agents skip); `fork_task_context`; `send_message` to the found task and delete
-  the just-created one; or nothing.
-- **work_context's reader is already ASSIGNED the work**: it is deciding how to do it.
-  Read before re-deriving; and if a hit already tried the approach it is about to take,
-  **surface that upward** rather than obeying or ignoring it (that is §3's "your
-  investigation contradicts the premise the task above is operating on").
-
-Verified rather than assumed, because the hypothesis handed to me was half wrong:
-- ✅ a working agent **cannot** `send_message` to the task it found — the direction check
-  in the handler allows only ancestors in its parent chain and its DIRECT sub tasks.
-- ❌ it **can** update its own task description: `checkPermission(auth,"subtree",…)`
-  returns true for self, and the system prompt tells it to on scope change.
-- ⚠️ it **can** `fork_task_context` (only the TARGET is subtree-restricted, the source is
-  free) — but only into a sub task it creates, so forking is a dispatch move, not a
-  use-this-knowledge move.
-
-### ⭐ "Latest result" is the LAST round, and the last round is often trivial
-
-The single fact that makes the block structurally unable to answer anything. Measured on a
-real hit: `01KY28ZXXSJG` has 3 rounds — round 0 is the whole implementation, rounds 1-2 are
-CSS tweaks. The block therefore advertised that task with *"Restyled search hits as
-card-style items: background: var(--bg-subtle…)"*. Everything that made the task worth
-reading was invisible. Same shape for any task that was reawakened for a follow-up, which
-is most closed tasks of any size.
-
-Hence the ordering inside the header: the "these are excerpts, they cannot tell you what a
-task concluded" reframe comes FIRST, so the hits are read as an index. Put it after the
+⭐ **"Latest result" is the LAST round, and the last round is often trivial.** This is the single
+fact that makes an excerpt block structurally unable to answer anything. A real hit had 3 rounds:
+round 0 was the whole implementation, rounds 1-2 were CSS tweaks, so the block advertised the task
+as *"Restyled search hits as card-style items: background: var(--bg-subtle…)"* and everything worth
+reading was invisible. That is the shape of any task reawakened for follow-up, which is most closed
+tasks of any size. Hence the ordering inside the header: **the "these are excerpts and cannot tell
+you what a task concluded" reframe comes FIRST**, so the hits are read as an index. Put it after the
 hits and the agent has already formed a judgement from the excerpts.
 
-### The reading rule that prevents a NEW error
+**The reading rule that prevents a NEW error**: a past round is *a measurement plus a judgement made
+at the time*. The measurement usually still holds; the judgement may already be void — **and a new
+task on the subject is often itself the evidence that intent changed.** An agent that reads "we
+tried this and reverted" as a prohibition abandons a road it is currently supposed to walk.
 
-A past round is *a measurement plus a judgement made at the time*. The measurement usually
-still holds; the judgement may already be void — **and a new task on the subject is often
-itself the evidence that intent changed** (see § *Tests as current truth* in the system
-prompt: a task is a certificate of intent change). An agent that reads "we tried this and
-reverted" as a prohibition abandons a road it is currently supposed to walk. Both headers
-carry this in one clause.
+⚠️ **An instruction you cannot execute is decoration.** Both fixes here are only worth doing BECAUSE
+the header now says "get_task these": the block prints the **full taskId** rather than
+`slice(0,12) + "…"` (12 chars resolves, the ellipsis does not, and a pasteable id costs ~70 chars),
+and dead hits are dropped rather than rendered as title `"unknown"` with a real-looking but
+unresolvable id.
 
-### Two supporting fixes — an instruction you cannot execute is decoration
+⚠️ **Root's stated evidence did not support root's conclusion; a different fact did.** The argument
+offered was "I read the tool description and still dropped the block" — but `create_task`'s
+description had never mentioned the block, so that is evidence that an unexplained block does not
+self-explain, not evidence about description-placed guidance. The real support was next door: the
+system prompt already says "Search before building", and `search_tasks` was called 0 times that day.
+**Check that a conclusion's stated reason is the one actually carrying it, especially when you
+already agree with the conclusion.**
 
-Both in the work_context block, both only worth doing BECAUSE the header now says
-"get_task these":
-- **full taskId**, not `slice(0,12) + "…"`. 12 chars resolves (tracker prefix-matching is
-  ≥8), but the ellipsis does not, and a pasteable id costs ~70 chars per block.
-- **dead hits dropped** (`if (!task) continue`). `formatTieredHits` always did this; this
-  block rendered them as title `"unknown"` with a real-looking but unresolvable id.
+⚠️ **Two mutations here mask each other and must be run SEPARATELY.** Reverting the full-id render
+and removing the dead-hit filter at the same time leaves the dead-hit test green, because it asserts
+`not.toContain(goneChild.id)` and a prefix render does not contain the full id. And the work_context
+assertion must be scoped to the block (`content.slice(content.lastIndexOf("[Related past tasks]"))`)
+— **work_context also preloads memory.md, which contains both the marker and the word `get_task`, so
+an unscoped `toContain` passes no matter what.**
 
-### Test notes
+This does **not** replace draft `01KNZGYY4T6SYWVT66DK13XCPV` (a required `origin` param on
+`create_task`) and cannot: the block is **structurally late**, because the task already exists by the
+time the agent learns a related one does. Everything here is recovery. What changes is the evidence
+that draft needs — its premise was "prompt alone cannot fix this", and until now no prompt had tried.
 
-Pinned by asserting the block contains `get_task` — the imperative, not the prose, so
-rewording survives and deletion does not. In the work_context test the assertion MUST be
-scoped to the block (`content.slice(content.lastIndexOf("[Related past tasks]"))`):
-work_context also preloads memory.md, which contains both the marker and `get_task`, so an
-unscoped `toContain` passes no matter what.
-
-Mutation-verified individually, and the pairing matters: **M2 (full id → prefix) and M3
-(dead-hit filter) must be mutated SEPARATELY.** Applied together they mask each other —
-the dead-hit test asserts `not.toContain(goneChild.id)`, and a reverted-to-prefix render
-does not contain the full id, so the M3 breakage passes silently. Results: both headers →
-bare markers = 2 fail (create_task + work_context, nothing else); M2 = 1 fail; M3 = 1 fail.
-
-### Relationship to draft 01KNZGYY (required `origin` param on create_task)
-
-This does NOT replace it and cannot. The block is **structurally late** — the task already
-exists by the time the agent learns a related one does. Everything here is recovery
-("…and delete this just-created task"); the parameter would make the choice up front. What
-changes is the evidence 01KNZGYY needs: its premise was "prompt alone cannot fix this", and
-until now no prompt had tried. The honest read is now measurable — if hits still change
-nothing, that premise is confirmed on real data instead of asserted.
-
-Left as drafts rather than swept in here: **01KYCQVA8CP** (one task can eat BOTH of
-create_task's full slots when it matches on two fields — observed twice; deduping would
-regress `search_tasks`, whose whole contract is per-LOCATION hits, so it is a decision not
-a tidy-up) and **01KYCQTGQZ** (~~the `search` tool skips `.mxd/` by default~~ — **FIXED the same
-day**, along with its glob-depth sibling `01KYCS0BH6` and the same pair in `list_files`
-`01KYCV43JAZ`; the three of them are one class and live next to each other in Core Mechanisms).
-
-The strikethrough is the point, not politeness: that parenthetical was a **present-tense claim**
-sitting inside a list of *records*, which is the shape that rots without anyone noticing. The
-record — "this draft was filed here, for this reason" — stays true forever. "The tool skips
-`.mxd/`" stopped being true four hours later, and nothing in this entry would ever have
-contradicted it.
+**`searchIndexSync` now has zero production callers.** It was written for a then-synchronous
+`buildWorkContext` and orphaned when that hook went async; only its own tests use it. Deleting a
+public export is its own decision, drafted as `01KYB46KTMNTW8E48YHE3KVXSR`.
 
 ---
 # Daemon, Worker & Transport
