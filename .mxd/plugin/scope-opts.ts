@@ -37,8 +37,23 @@ import { WorktreeManager } from "../../src/worktree-manager.ts";
 const RELATED_TASKS_CHAR_LIMIT = 8000;
 
 /**
+ * Header for the work_context [Related past tasks] block.
+ *
+ * Deliberately NOT the same sentence create_task's block carries, because the
+ * reader is not the same. create_task's reader is deciding where the work
+ * should live (fold in / fork / redirect / nothing). This reader is already
+ * assigned the work and cannot do most of that — send_message only reaches its
+ * own parent chain and direct sub tasks, so it cannot hand the job to the task
+ * it just found. What it CAN do is read before re-deriving, and — when a hit
+ * says the approach it is about to take was already tried — surface that
+ * upward instead of silently obeying or silently ignoring it.
+ */
+const RELATED_PAST_TASKS_HEADER =
+	"[Related past tasks] — pointers, not answers: each line is one truncated excerpt of one matched field. get_task the ones that look related and read their result rounds before you re-derive what they already cover. If one already tried the approach you are about to take, report that upward — its measurement probably still holds, its conclusion may have been superseded by the task you are doing now.";
+
+/**
  * Format search hits into a concise work_context block.
- * Each hit is one line with title, task id prefix, field, and snippet.
+ * Each hit is one line with title, task id, field, and snippet.
  * Truncated at RELATED_TASKS_CHAR_LIMIT to protect the context window.
  */
 function formatRelatedTasks(
@@ -47,19 +62,26 @@ function formatRelatedTasks(
 ): string {
 	if (hits.length === 0) return "";
 
-	const lines: string[] = ["[Related past tasks]"];
+	const lines: string[] = [RELATED_PAST_TASKS_HEADER];
 	let totalChars = lines[0]!.length;
 
 	for (const hit of hits) {
 		const task = tracker.getTask(hit.taskId);
-		const title = task?.title ?? "unknown";
-		const idPrefix = hit.taskId.slice(0, 12);
+		// Drop hits whose task has left the tree since indexing — the header
+		// tells the agent to get_task these, and a dead id is a wasted call.
+		// (formatTieredHits, the create_task/search_tasks formatter, has always
+		// done this; this block used to render them with the title "unknown".)
+		if (!task) continue;
+		const title = task.title;
 		const fieldLabel =
 			hit.field === "result" && hit.roundIndex !== undefined
 				? `result round ${hit.roundIndex}`
 				: hit.field;
 		const snippet = hit.snippet.slice(0, 150);
-		const line = `- "${title}" (task ${idPrefix}…, ${fieldLabel}): "${snippet}"`;
+		// Full taskId, not a truncated prefix + "…": the header tells the agent to
+		// get_task these, and an id it can paste is the cheapest way to make that
+		// instruction executable.
+		const line = `- "${title}" (task ${hit.taskId}, ${fieldLabel}): "${snippet}"`;
 
 		if (totalChars + line.length + 1 > RELATED_TASKS_CHAR_LIMIT) break;
 		lines.push(line);

@@ -41,6 +41,8 @@ This is a product property of Matrix's commit model, not a policy preference. Br
 7. **Create-task as path of least resistance** — when a new requirement emerges, agents default to `create_task` even when an existing task (closed, verify, pending) is a better target. Three alternatives exist: (a) create_task fresh, (b) create_task + fork from source, (c) send_message to existing. Option (c) is often correct but loses in every "cheap" dimension: fresh description vs stale, clean session vs unknown state, single step vs two operations, "closed = finished" word bias. The agent picks (a) because it's the local optimum at every dimension — but globally it fragments context across redundant task trees. **Prompt alone cannot fix this** — mechanism is required: (1) required `origin` param on create_task forcing explicit fresh/fork/continue choice, (2) auto-search for similar titles on "fresh" with warning, (3) `latestDirective` field surfaced in get_tree so existing tasks' current focus is visible (not just their original description), (4) collapse fork_task_context into create_task's origin option to eliminate "two-step" cost. See draft task 01KNZGYY4T6SYWVT66DK13XCPV for full design. User framing: "Too many ways to achieve the same thing, and the easiest way isn't optimal."
 8. **Treating context as a deadline** — an agent that feels "context is running low" starts planning a handoff, cutting scope, or asking to be replaced. **Context is not a deadline, it is a compaction boundary.** When it fills, the agent continues with a summary; the task description and memory.md survive compaction by construction. So a compacted agent strictly DOMINATES a replacement: it has the same durable documents the newcomer would read, plus a summary of its own work, plus whatever tacit judgement survived in it. **Running low on context is never a reason to hand off.** The only legitimate reason is that FAMILIARITY ITSELF has become the liability — a final read-through, an adversarial review, anything where not knowing the material is the requirement rather than the cost. Two failures observed the same day: an agent halved its own remaining scope over a constraint that does not exist (and agents estimate their own remaining budget badly, so the estimate was likely wrong too), and root created a fresh task to continue finished-agent work without ever comparing it against reactivating the original — the reason was constructed after the fact and did not survive checking the data. Note this is #7's sibling: both are "start something new" winning by default over "continue something that exists".
 
+**Measured 2026-07-25**, because #8's "agents estimate their own remaining budget badly" was an assertion with no numbers under it. The agent that offered the handoff was at 2.0M / 891 events having **never compacted once**, and estimated it had 2-3 more sections in it. Told to continue instead, it finished all 5 remaining plus an extra debt, ending at 3.0M / 1191 events — **still zero compactions**. It therefore did roughly twice its own estimate and never reached the boundary it had budgeted against. Two sibling tasks working normally that same day sat at 2.0M / 928 events and 2.0M / 649 events, also zero compactions. This measures one day, one model, one config: read it as "the estimate was off by ~2x and the wall was nowhere near", **not** as a threshold. For where any session actually stands, count that task's own events and `compact_marker`s — no number written here can answer it.
+
 ## Change Ownership Principle
 
 **Whoever introduces a change owns ALL consequences** (prompt, UI, tests, docs). Root never writes production code — delegates everything.
@@ -2965,6 +2967,128 @@ in unfamiliar areas.
 - `formatTieredHits` is shared between search_tasks and create_task (same formatting,
   different `fullCount` and header).
 
+## Retrieval that nobody acts on ⇒ guidance goes where the DECISION is (2026-07-25)
+
+All three related-tasks surfaces worked and produced real prior art. None of them said
+what to do with a hit, so the block read as a return value: scanned, then dropped. Root's
+count for one day — `create_task` ×8, block returned ×8, behaviour changed ×0,
+`search_tasks` called ×0.
+
+### The placement rule (this is the reusable part)
+
+> **Put the guidance where the decision is made. If the agent ASKED for the data, the
+> tool description reaches it in time — it still holds the intent it called with. If the
+> data arrives UNREQUESTED, only the payload reaches it.**
+
+One rule, three placements, no duplicated paragraph:
+
+| surface | asked for it? | guidance lives in |
+|---|---|---|
+| `search_tasks` | yes | its description (one added clause) |
+| `create_task`'s `[Related existing tasks]` | no — rides along | the block header |
+| `work_context`'s `[Related past tasks]` | no — injected | the block header |
+
+This is also why the bash "don't pipe" precedent does NOT transfer: that decision is made
+while CONSTRUCTING the call, so the description is its decision moment. A description read
+before the call is guidance about something that does not exist yet in the agent's world.
+
+Matrix-specific tiebreaker, worth knowing on its own: **tool descriptions are frozen in
+`session_config` until a compaction refreshes them, so a description change does not reach
+a running agent. Handler output reaches everyone on the next call.** For a fix motivated by
+"this failed today", that is decisive.
+
+⚠️ **Root's stated evidence did not support root's conclusion — a different fact did.**
+The argument offered was "I read the tool description and still dropped the block". But
+create_task's description had never mentioned the block at all, so that is evidence that an
+unexplained block does not self-explain, not evidence about description-placed guidance.
+The real support is next door: system prompt §2 has "Search before building", and
+`search_tasks` was called 0 times that day. The conclusion held; the reason had to be
+replaced. **Check that a conclusion's stated reason is the one actually carrying it —
+especially when you already agree with the conclusion.**
+
+### The two block headers are DIFFERENT sentences, on purpose
+
+Same shared kernel — *pointers, not answers; `get_task` and read the result rounds* — then
+they diverge, because the readers can do different things:
+
+- **create_task's reader is ROUTING**: it just made a task and is deciding where the work
+  should live. Menu: fold the conclusion into this task's description (most common, and
+  the one agents skip); `fork_task_context`; `send_message` to the found task and delete
+  the just-created one; or nothing.
+- **work_context's reader is already ASSIGNED the work**: it is deciding how to do it.
+  Read before re-deriving; and if a hit already tried the approach it is about to take,
+  **surface that upward** rather than obeying or ignoring it (that is §3's "your
+  investigation contradicts the premise the task above is operating on").
+
+Verified rather than assumed, because the hypothesis handed to me was half wrong:
+- ✅ a working agent **cannot** `send_message` to the task it found — the direction check
+  in the handler allows only ancestors in its parent chain and its DIRECT sub tasks.
+- ❌ it **can** update its own task description: `checkPermission(auth,"subtree",…)`
+  returns true for self, and the system prompt tells it to on scope change.
+- ⚠️ it **can** `fork_task_context` (only the TARGET is subtree-restricted, the source is
+  free) — but only into a sub task it creates, so forking is a dispatch move, not a
+  use-this-knowledge move.
+
+### ⭐ "Latest result" is the LAST round, and the last round is often trivial
+
+The single fact that makes the block structurally unable to answer anything. Measured on a
+real hit: `01KY28ZXXSJG` has 3 rounds — round 0 is the whole implementation, rounds 1-2 are
+CSS tweaks. The block therefore advertised that task with *"Restyled search hits as
+card-style items: background: var(--bg-subtle…)"*. Everything that made the task worth
+reading was invisible. Same shape for any task that was reawakened for a follow-up, which
+is most closed tasks of any size.
+
+Hence the ordering inside the header: the "these are excerpts, they cannot tell you what a
+task concluded" reframe comes FIRST, so the hits are read as an index. Put it after the
+hits and the agent has already formed a judgement from the excerpts.
+
+### The reading rule that prevents a NEW error
+
+A past round is *a measurement plus a judgement made at the time*. The measurement usually
+still holds; the judgement may already be void — **and a new task on the subject is often
+itself the evidence that intent changed** (see § *Tests as current truth* in the system
+prompt: a task is a certificate of intent change). An agent that reads "we tried this and
+reverted" as a prohibition abandons a road it is currently supposed to walk. Both headers
+carry this in one clause.
+
+### Two supporting fixes — an instruction you cannot execute is decoration
+
+Both in the work_context block, both only worth doing BECAUSE the header now says
+"get_task these":
+- **full taskId**, not `slice(0,12) + "…"`. 12 chars resolves (tracker prefix-matching is
+  ≥8), but the ellipsis does not, and a pasteable id costs ~70 chars per block.
+- **dead hits dropped** (`if (!task) continue`). `formatTieredHits` always did this; this
+  block rendered them as title `"unknown"` with a real-looking but unresolvable id.
+
+### Test notes
+
+Pinned by asserting the block contains `get_task` — the imperative, not the prose, so
+rewording survives and deletion does not. In the work_context test the assertion MUST be
+scoped to the block (`content.slice(content.lastIndexOf("[Related past tasks]"))`):
+work_context also preloads memory.md, which contains both the marker and `get_task`, so an
+unscoped `toContain` passes no matter what.
+
+Mutation-verified individually, and the pairing matters: **M2 (full id → prefix) and M3
+(dead-hit filter) must be mutated SEPARATELY.** Applied together they mask each other —
+the dead-hit test asserts `not.toContain(goneChild.id)`, and a reverted-to-prefix render
+does not contain the full id, so the M3 breakage passes silently. Results: both headers →
+bare markers = 2 fail (create_task + work_context, nothing else); M2 = 1 fail; M3 = 1 fail.
+
+### Relationship to draft 01KNZGYY (required `origin` param on create_task)
+
+This does NOT replace it and cannot. The block is **structurally late** — the task already
+exists by the time the agent learns a related one does. Everything here is recovery
+("…and delete this just-created task"); the parameter would make the choice up front. What
+changes is the evidence 01KNZGYY needs: its premise was "prompt alone cannot fix this", and
+until now no prompt had tried. The honest read is now measurable — if hits still change
+nothing, that premise is confirmed on real data instead of asserted.
+
+Left as drafts rather than swept in here: **01KYCQVA8CP** (one task can eat BOTH of
+create_task's full slots when it matches on two fields — observed twice; deduping would
+regress `search_tasks`, whose whole contract is per-LOCATION hits, so it is a decision not
+a tidy-up) and **01KYCQTGQZ** (the `search` tool skips `.mxd/` by default — see Known
+Pitfalls).
+
 ---
 # Daemon, Worker & Transport
 ---
@@ -2988,6 +3112,7 @@ Three tightly-coupled durability gaps closed so process exits + stops don't lose
 - `stopAgent` awaits loop settlement (bounded 1s) — symmetric with stopTask. Closes the race between `POST /projects/:id/stop` returning and the finally block's `agent_end` / Phase 2 `done_notified` / MCP disconnect writes. Fixes DELETE /projects → pm.delete → rm -rf racing with in-flight JSONL writes.
 - Both timeouts are defensive: real providers respect abort within ms. A stuck tool (foreground bash ignoring abort) gets bounded grace, then `buildSessionRepair` on next startup synthesizes the interrupted tool_result (orphan-repair contract). **Do NOT call `fg.resolve()` in stopAgent** — that moves bash cleanly to background and breaks the orphan-repair semantic.
 - Restart-crash integration tests (Restart B/I/J/K/N, LC3) rely on shutdown leaving foreground-tool orphans for autoResume to repair. 3s timeout was too slow for 5s test timeouts; 1s is the sweet spot.
+- ⚠️ **Correction (2026-07-25): that 1s was tuned under a single-run assumption.** Normal load is now 3-4 sub-agents each running the full suite plus root running it too, and under that contention `Restart B: crash during bash sleep` intermittently blows its 30s test timeout — it takes ~2.6s on the runs where it passes, so this is contention, not a marginal miss. Read the line above as the historical record of that tradeoff, not as "already tuned". Rate, mechanism and a second (port-collision) instance live in draft `01KYCMVKN14RRX0KK0H2CNTD9P`. **Triage shortcut from that draft: the suite's own total run time is a load probe** — when this test fails, check it before suspecting your diff (measured 2026-07-25: failing run 300.8s vs 267-269s for passing ones; the draft carries the current threshold). The thing to re-examine is whether 1s still holds under parallel load; raising the test's timeout would only hide it.
 
 ### Worker init timeout + restart backoff (daemon)
 
@@ -6213,6 +6338,43 @@ Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", 
 - Matrix-specific rules → memory.md (this file), not prompt.
 - Principle over rule: 4.7 generalizes from framings better than from rule lists. Prefer "tests are our current truth" (principle that generates behavior) over "don't contort arch for old tests" (rule specifying one behavior). Keep explicit rules only when they protect a product property (e.g., git worktree invariants) — those stay as-is.
 
+### The prompt contradicts itself across sessions, and nothing catches it
+
+Prompt edits rot the same three ways this file does (§ *Writing This File*), but the **superseded**
+kind — correction exists, filed away from the claim — is worse here because of the carrier.
+`memory.md` has regions and topical adjacency, so putting a claim next to its refutation is a move
+you can actually perform, and performing it is what makes the contradiction visible. **A prompt has
+no such mechanism.** It is one linear argument; two sentences sixty lines apart are never brought
+together by anything. And it does not present as a conflict — **both sentences are individually true
+and well written.** They only cancel when someone holds both at once, which is precisely what the
+linear form prevents.
+
+Observed 2026-07-25, two commits one session apart, same file, same author:
+- `be9707f9` added to §5 Refactoring: *"every unfinished break is state you carry, in a context that
+  runs out"* — true as written, there to explain why a half-broken tree is expensive for an agent.
+- `91ba03b5` existed to establish §6's *"compaction is a continuation, not a stopping point"* — i.e.
+  to deny the wall the earlier sentence had just asserted. Fixed to "exactly the kind of state a
+  compaction blurs", which keeps the cost claim and drops the wall.
+
+No gate can see this. The prompt is a template literal; typecheck and biome only prove it parses and
+is formatted, and the sole test touching its content greps for hardcoded git branch names.
+
+**Rule: before editing the prompt, read the recent prompt DIFFS, not just the current text** —
+`git log -p -5 -- src/system-prompts.ts`. The current text tells you what the prompt says; the
+recent diffs tell you what it has just *started* saying, which is the only place a fresh
+contradiction can have come from. After landing an edit, grep the file for the concept you leaned on
+(here, `context`) and read every hit: the sentence that cancels yours will not share your wording.
+
+**Why this step gets skipped**, from the same pair of sessions: the round that INTRODUCED the
+contradiction was required to re-read all 436 lines after editing and substituted a targeted grep,
+reasoning verbatim *"rather than burn context re-reading 436 lines verbatim"* — while sitting at
+zero compactions. The round that CAUGHT it did the full read, and the full read is also what found a
+second, subtler collision (§5 Text's "if you lack context … delegate to a sub task" reads as a
+licensed handoff once §6 forbids handing off for context reasons). So the proximate cause of the
+contradiction surviving a whole session was laziness pattern #8: a verification step narrowed to
+protect a budget that was not under pressure. This rule is worth exactly as much as the willingness
+to pay for it.
+
 ## Known Pitfalls
 
 - **memory.md**: Never `write_file` to append. Use `edit_file` or `echo >>`.
@@ -6220,6 +6382,14 @@ Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", 
 - **Biome**: Typecheck BEFORE lint. No `!important`. No duplicate CSS properties.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`.
 - **Daemon reload**: Commits don't auto-restart the daemon. Must manually restart after code changes.
+- **`search` tool silently skips `.mxd/`** (verified 2026-07-25): with the default path it
+  never walks hidden directories, and in THIS repo `.mxd/plugin/` is production code — every
+  ScopeOpts hook, every plugin REST route, the whole plugin UI. `search("buildMatrixScopeOpts")`
+  returns 4 files and omits `.mxd/plugin/scope-opts.ts`, which is where it is DEFINED. The
+  pattern is fine; passing `path: ".mxd"` explicitly finds it. **This makes the "grep for the
+  name as a string before you rename or delete" rule (Refactoring Philosophy) return a false
+  negative with the tool the description tells you to always use.** Until fixed (draft
+  01KYCQTGQZ), verify by-name references with `grep -rn` via bash, not with `search`.
 - **Concurrent ULID**: Use full `ulid()` (26 chars) — sliced ULIDs collide within same millisecond.
 - **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
