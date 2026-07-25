@@ -219,7 +219,7 @@ JSONL event content = exact content sent to API. Zero transformation. No `.slice
 Every tool_result must: (1) emit to JSONL, (2) yield to SSE, (3) push to messages[]. Missing any = orphan, missing UI, or API 400.
 
 ### Yield JSONL Invariant
-Nothing written to JSONL after yield tool_call except by provider loop. External events go to queue, not JSONL. `hasPendingYield()` detects this state.
+Nothing written to JSONL after yield tool_call except by provider loop. External events go to queue, not JSONL. ~~`hasPendingYield()` detects this state.~~ **That function no longer exists** — deleted in the FU/FIX-4b sweep with zero production callers (grep-verified: zero occurrences in `src/` today). Do not go looking for it; this file used to contradict itself about it. What exists now: `hasPendingImplicitYield` (events.ts) for the *implicit* yield, and for an *explicit* pending yield there is no named helper at all — `provider-shared.ts` reads it straight off the JSONL shape on resume (`pendingYieldToolCall`, set when the last tool_call is yield). The invariant itself is unchanged and live; only its detector sentence was stale.
 
 ### Single Delivery Path
 `deliverMessage` is THE message delivery path: JSONL write → queue delivery → flush → auto-launch. `quiet: true` for notifications. No other code writes message events to JSONL.
