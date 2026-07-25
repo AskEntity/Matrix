@@ -439,6 +439,26 @@ assistant, and asserting the real rule would redden correct fixtures. So:
 Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
 fork is where a fiction starts producing evidence.
 
+⭐ **The fork does not only arrive inherited — it can be born, in code written minutes earlier, and
+a green test is what lets it survive.** Measured instance (2026-07-25, `shouldLaunchAgent`): a
+docstring said *"a throw means LAUNCH — swallowing it into 'nothing to do' would turn a loud failure
+into a node that silently never comes back"*, while the code said `catch { return events }`, i.e.
+decide from the unrepaired log and let the tail settle it. **The test for it passed**, because the
+shapes that throw in practice happen to end in a user turn, so the fall-through launched anyway —
+*by coincidence*. Two lessons, and the second is the transferable one:
+
+- **A fixture that cannot distinguish the two rules is evidence for neither.** Same family as *a
+  test whose fixture cannot express the difference passes both ways*, but sharper here, because the
+  fixture was chosen from the failure mode that occurs in practice — which is exactly the fixture
+  that cannot separate them. The fix was to build one from the condition the rule NAMES (corrupt
+  JSONL, any shape) rather than from the instance you have seen, then pin *that the fixture is still
+  the hard case* in its own test.
+- ⚠️ **Names fork from behaviour the same way docstrings do.** The same function was called
+  `applyRepairInMemory` while writing nothing — naming, precisely, the in-memory-recovery
+  anti-pattern this codebase deleted. Nobody misreads a function they are writing; the cost lands on
+  whoever greps `memory` + `repair` next year and concludes the deleted path is back. **A verb that
+  promises an effect is the wrong verb for a projection** (`dryRun…`, `…View`, `project…`).
+
 **An over-strict test double bills you three ways, and the third leaves no artifact.** It creates
 complexity you pay for (the four mechanisms). It hides gaps — a fiction occupying the "role rules"
 slot stopped anyone asking what the real role rule was, so the true one got zero coverage and a
@@ -547,6 +567,104 @@ turn. Keeping one park is what stops "what is this agent waiting for" from becom
 There is no named helper for the explicit-yield case — `provider-shared.ts` reads it straight off
 the JSONL. Don't go looking for one; a `hasPendingYield` used to exist and was deleted with zero
 production callers. `hasPendingImplicitYield` (events.ts) is the implicit-yield one and is live.
+
+⚠️ **`hasPendingImplicitYield` must stop at `messages_consumed`.** It walks back for the last event
+that decides a role, and it used to skip straight over consumptions — landing on the `assistant_text`
+from BEFORE the message and reporting a park. Since `isYieldResume` is evaluated first and gates
+`isInterruptedResume` off, the loop then parked on a conversation ending in an unanswered user
+message: **a message drained into a turn the daemon died inside was silently never answered**, and
+the window is a whole API call wide. `thinking` is deliberately still transparent to it — see below.
+
+## Only launching agents that will act
+
+> **`in_progress` is not the question and never was.** Status says the node was never finished. It
+> says nothing about whether anything is owed, and today's dormant nodes have been `in_progress` for
+> six weeks.
+
+`shouldLaunchAgent(events)` (events.ts) is asked by `autoResumeProjects` BEFORE `runAgentForNode`.
+It is an **extraction of what the loop already decides**, not a second opinion: every place the loop
+declines to call the API was already correct, and the whole change is evaluating that same judgment
+one level earlier. If the two ever disagree the loop wins and the predicate is wrong — either it
+refuses a launch that would have worked, or it pays full session construction for an agent that
+immediately parks. `should-launch.test.ts` holds a differential test that recomputes the loop's gate
+order from the real walker and the real repair and asserts agreement shape by shape, so a walker
+change reddens it even when every hand-written expectation still passes.
+
+**Why it must run before the session exists**: `runAgentForNode` connects MCP, builds work_context
+and writes `session_config` before it looks at the conversation.
+
+⭐ **Measured on the live daemon, 2026-07-25** — a full accounting rather than a total, because the
+task's own warning was *"if the number does not move, something other than agent sessions is
+spawning them, and that matters more than this fix"*:
+
+| | |
+|---|---|
+| dormant nodes auto-resumed at one boot (21:39:02, within one second) | **13** |
+| of those, that did any work | **0** — every one parked |
+| that spawned MCP subprocesses | **8** (the matrix-scope ones; group-chat and story1001 scopes do not enable MCP, which is what makes 13 launches cost 8 sessions' worth) |
+| resulting subprocesses | **32 = 8 × 4** — exactly 4 per session, MCP being configured GLOBALLY so every session connects all of them |
+| resident | **1.58 GB**, ~202 MB per dormant agent |
+| still resident 85 minutes later | **unchanged** — a parked session never ends, so these are held for the daemon's life |
+
+Every process in the daemon's descendant tree was attributed to a session, so there is no other
+spawner. With the predicate all 13 are refused, taking the boot batch to zero.
+`scripts/survey-resume.ts` re-derives the decision on the current tree.
+
+⭐ **The boundary condition on hoisting ANY such decision, which is not the obvious one:**
+
+> It is **not** "the steps before the loop only read the log" — two of them manufacture input.
+> `buildSessionRepair` appends synthetic tool_results and replays messages; bgOrphan synthesis
+> invents a `background_complete` message out of nothing on disk. The rule is that **the decision
+> can be hoisted iff every input it consumes is computable WITHOUT performing the step that would
+> create it.** Both of those are, because both are pure functions whose caller does the writing.
+
+Stated the wrong way round, the next person concludes a step that appends is disqualified from
+hoisting, which is the opposite of what holds. And the failure is silent in the one direction that
+matters: a step whose output is only knowable by running it would leave the log looking identical.
+The bgOrphan case was found by an existing restart test going from 587ms to a 30s timeout, not by
+reading — refusing to launch there loses the completion outright, so the agent never learns its
+command died and the UI shows it running forever.
+
+⚠️ **`dryRunRepair` computes what repair would produce and writes nothing.** Do not read it as the
+in-memory recovery path this codebase deleted (*"a fix that only edits `messages[]` leaves the
+poison on disk"*) — the real repair still happens on disk inside `runAgentForNode`. It was briefly
+named `applyRepairInMemory`, which named the anti-pattern exactly; a verb that promises an effect is
+the wrong verb for a projection. **A corrupt log whose repair cannot be expressed LAUNCHES**, so it
+reaches `runAgentForNode` where it gets reported; swallowing it into "nothing to do" turns a loud
+failure into a node that never comes back.
+
+**The one genuinely new rule is the `interrupt` exclusion**, and it is a subtraction with a single
+named member rather than a policy table. Any unconsumed message launches, because on resume
+`findUnconsumedMessages` re-enqueues all of them and `queue.wait()` returns immediately on a
+non-empty queue. `interrupt` is subtracted because it is the only message the loop writes ABOUT
+ITSELF rather than delivering as input. When it is the ONLY thing waiting it must **veto** — an
+interrupt landing before anything streamed leaves `messages_consumed → message(interrupt)`, and the
+consumption alone reads as work owed.
+
+⚠️ **It keys on `source`, and must not be widened to "quiet".** `quiet` is an argument to `enqueue`
+describing one moment — do not wake the waiter — and it is not part of the message, so **it does not
+survive to JSONL**; after a restart the quietness of a `tree_change` does not exist. Worse, the
+generalisation is wrong on its own terms: of the three quiet-delivery sites, Phase-2 crash-recovery
+`task_complete` is delivered quiet *specifically so it does not double-launch alongside autoResume*
+and **depends on being launched from recovery** — a "quiet-ish sources do not launch" rule strands a
+parent waiting on a child's completion after a crash. `source` also cannot separate upward from
+downward `send_message`, which share one source and differ by a direction that is not persisted.
+
+⚠️ **A log ending in `thinking` PARKS.** The model thought and died before it spoke, so the log ends
+mid-turn — but the loop reads the lone thinking as an assistant message and waits, and the predicate
+agrees with the loop rather than out-guessing it. The turn is deferred, not lost: the next message
+wakes the agent and the conversation ends `[…, assistant[thinking], user]`. **Measured against
+production Anthropic 2026-07-25: a thinking block is positionally IDENTICAL to a text block** —
+`u | a[thinking] | u` → 200, `u | a[text, thinking] | u` → 200, and only the TRAILING assistant
+message 400s (`The final block in an assistant message cannot be 'thinking'`), which is the
+trailing-assistant rule wearing a different error string. So there is nothing here to repair; a
+repair that dropped such a turn was built on that false premise and deleted.
+
+⚠️ Consequence for `classifyTail`: it reports `trailingThinkingOnly` SEPARATELY from `kind`, because
+its two consumers want opposite things. `hasPendingImplicitYield` walks THROUGH thinking (it asks
+which live resume branch runs, and a trailing thinking has never selected the yield branch); the
+launch decision treats it as a stop. Merging them would change the live path, which this work
+deliberately did not touch.
 
 **`launchingNodes` guards the window between "we decided to launch" and "the session exists".**
 ⚠️ **Never add a node to `launchingNodes` from outside `runAgentForNode`.** `autoResumeProjects`
@@ -889,17 +1007,39 @@ knows it ran a command and lost the result, which invites re-running something t
 effects. Tools that cannot be stopped safely just run to completion — a half-written file is worse
 than a two-second wait.
 
-⚠️ **SYMPTOM: "I pressed stop, then restarted the daemon, and it started working again."** Not a
-bug; an accepted boundary, in the window *interrupt → restart with no message in between*:
+⚠️ **"I pressed stop, then restarted the daemon, and it started working again" USED to be an
+accepted boundary. It is now fixed, and the way the trade changed is the interesting part.**
 
-| interrupted during | log ends in | resume detects | after restart |
-|---|---|---|---|
-| `thinking`, text had streamed | `assistant_text` | implicit yield | **parked at idle** ✓ |
-| `thinking`, nothing streamed yet | the turn's user message | interrupted | re-runs the turn |
-| `tool` | tool_results (a user turn) | interrupted | **continues working** |
+In the window *interrupt → restart with no message in between*, the log alone could not tell "the
+user stopped me" from "I died mid-work" — an interrupt during a tool leaves tool_results, i.e. a
+user turn, which is byte-for-byte what a daemon death inside an API call leaves. The stated price of
+fixing it was a persisted "interrupted, waiting" marker, i.e. a **fifth resume state**, which this
+design refuses.
 
-Making the last row survive a restart needs a persisted "interrupted, waiting" marker — a fifth
-resume state, which this design refuses. That is the cost to weigh if it ever has to change.
+**What changed is that a persisted marker acquired a second, unrelated buyer**, so its cost is no
+longer charged to this problem alone. `shouldLaunchAgent` (see *Only launching agents that will
+act*) has to answer the same question — is anything owed here? — before a session exists, and it
+hits the identical ambiguity. One `message` event with `source: "interrupt"`, written by the loop at
+the park, settles both.
+
+⭐ **And it is NOT the fifth resume state the design refused.** That refusal was about the RESUME
+classification, which still reads exactly four shapes off the log and is untouched. The marker is an
+ordinary queue message — the same two-phase lifecycle, the same walker path, the same UI
+materialization as any other — that happens to be written by the loop about itself. **A cost
+rejected as "a new state in the state machine" can become payable as "an existing mechanism used
+once more", and those are worth re-pricing separately.** What made it cheap here: `source` is
+already persisted and already decides two other things (the text the model reads, how the UI renders
+it), so letting it decide a third adds no new concept.
+
+| interrupted during | log ends in | after restart |
+|---|---|---|
+| `thinking`, text had streamed | `assistant_text` + the interrupt notice | parked at idle ✓ |
+| `thinking`, nothing streamed yet | `messages_consumed` + the interrupt notice | parked at idle ✓ |
+| `tool` | tool_results + the interrupt notice | parked at idle ✓ |
+
+Row 2 is the one with **no other signal at all**: without the notice its log is identical to a
+daemon death mid-API-call, which must relaunch. Everything else about the interrupt design is
+unchanged — partial text is still kept, thinking is still discarded, no repair is owed.
 
 **`status` events are broadcast-only** (`isPersistedByEmitEvent` returns false), so the interrupt's
 "Interrupted by user" reaches clients and never reaches the log. Two consequences: it cannot sit
@@ -3831,6 +3971,23 @@ signal was wall-clock: 234ms against an expected ~12s. The fixed harness refuses
 unless the file text actually changed AND bun printed a summary line. **An instrument that fails by
 producing the comfortable answer is worse than one that errors**, and this is the same family as the
 blind `search` and the blocked-main-thread sampler: a false negative wearing evidence's clothes.
+
+⚠️ **A harness that RAN can still be aimed at the wrong files, and that also reports SURVIVED.**
+Same shape, second instance (2026-07-25): a mutation to `.mxd/plugin/web/event-handler.ts` was
+checked with `bun test web/ .mxd/plugin/web/` while the tests covering it live in
+`src/plugin-event-handler.test.ts`. Bun ran, printed a real summary, reported zero failures — a
+verdict about a set of tests that never touched the mutated code. **"Did it run" and "did it run
+the tests that cover this" are two questions**, and only the second one makes SURVIVED mean
+anything. Cheap check: a mutation reported as SURVIVED should name which tests it ran, so an
+implausible target is visible at the moment the verdict is printed.
+
+⚠️ **`git checkout -- <file>` reverts to the last COMMIT, so it eats an uncommitted fix in the same
+file — including the fix you are mutating.** Recorded again under a different symptom because the
+existing note reads as being about tidiness: mid-review a rename plus a behaviour fix were made,
+then a mutation was run to prove the new test fires, then reverted — and the revert silently took
+the whole uncommitted change with it. The tell was the "after revert" run showing the same failure
+count as the mutated run. **Commit before mutating** is not a style preference; the alternative
+loses work in a way that looks like the mutation still being applied.
 
 ⭐ **When you replace an implementation but not its contract, a differential probe beats a green
 suite.** ~40 lines running the OLD path and the NEW one over 21 real cases — the actual repo, both

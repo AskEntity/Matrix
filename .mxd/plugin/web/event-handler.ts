@@ -128,12 +128,22 @@ export function pendingReducer(
 	if (e.type === "message") {
 		const body = e.body as QueueMessage | undefined;
 		const source = body?.source;
-		// compact & compacted_resume: server-internal messages, not
-		// user-pending. Both have their own display path via the
-		// compact-marker / compact-summary cards. Excluding them here
-		// means no "[compacted_resume]" chip flashes during the brief
-		// emit→consume window.
-		if (!e.id || source === "compact" || source === "compacted_resume")
+		// compact, compacted_resume & interrupt: server-internal messages,
+		// not user-pending. Each has its own display path — the
+		// compact-marker / compact-summary cards, and a lifecycle line for
+		// interrupt. Excluding them here means no "[compacted_resume]" chip
+		// flashes during the brief emit→consume window.
+		//
+		// ⚠️ For `interrupt` the exclusion is not cosmetic. A chip is cleared
+		// by `messages_consumed`, and the interrupt notice is deliberately
+		// never consumed — that is what makes it survive as the marker the
+		// launch predicate reads. A chip for it would never clear.
+		if (
+			!e.id ||
+			source === "compact" ||
+			source === "compacted_resume" ||
+			source === "interrupt"
+		)
 			return state;
 		const content = body?.source === "user" ? body.content : "";
 		const images = body?.source === "user" ? body.images : undefined;
@@ -515,6 +525,22 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				return {
 					type: "clarify_response",
 					answer: qe.answer,
+					taskId: parentTaskId,
+					ts: eventTs,
+				};
+			case "interrupt":
+				// "The user cut off your previous message." Written by the
+				// provider loop at the park, never consumed.
+				//
+				// Rendered as a lifecycle line rather than a message card
+				// because it is not something anyone sent — it is the log
+				// saying why the assistant text above it stops mid-word. Live,
+				// the user already saw a transient "Interrupted by user"
+				// status, which is broadcast-only and gone after a refresh;
+				// this is the durable half of the same fact.
+				return {
+					type: "lifecycle",
+					content: "⏸ Interrupted by user",
 					taskId: parentTaskId,
 					ts: eventTs,
 				};
@@ -1038,6 +1064,30 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					if (source === "compact") {
 						return {
 							entries: [],
+							updates: [],
+							sideEffects: NO_SIDE_EFFECTS,
+						};
+					}
+
+					// interrupt: the loop's own note that a turn was cut off.
+					//
+					// ⚠️ It MUST skip pending, and this is the one source where
+					// skipping is load-bearing rather than tidy. A pending chip
+					// is cleared by `messages_consumed`, and this message is
+					// deliberately never consumed — that is exactly what makes
+					// it visible to the launch predicate on the next boot. Route
+					// it through pending and the chip has nothing that can ever
+					// clear it, so it sits in the UI forever.
+					if (source === "interrupt" && body) {
+						const uiEvent = queueEntryToUIEvent(
+							body,
+							msg.taskId ?? undefined,
+							msg.ts,
+						);
+						return {
+							entries: uiEvent
+								? [createLogEntry({ ...uiEvent, eid: msg.eid })]
+								: [],
 							updates: [],
 							sideEffects: NO_SIDE_EFFECTS,
 						};

@@ -642,5 +642,20 @@ function messageToDisplay(body: QueueMessage): MessageDisplay {
 				sender: null,
 				isError: false,
 			};
+		case "interrupt":
+			// Deliberately NOT the model-facing INTERRUPT_NOTICE string. That
+			// one is written for a model reading its own truncated turn; this
+			// is a human reading their own activity log, and they are the one
+			// who pressed the button. Same fact, different register — keeping
+			// them separate is also what keeps `runtime-types.ts` type-only,
+			// since importing the constant would pull message-queue.ts into
+			// the browser bundle.
+			return {
+				kind: "message",
+				source: "interrupt",
+				text: "Interrupted by user",
+				sender: null,
+				isError: false,
+			};
 	}
 }

@@ -4834,3 +4834,87 @@ describe("event-handler: run-start annotation in event order", () => {
 		expect(msg?.offChain).toBe("summarized");
 	});
 });
+
+// ============================================================
+// interrupt notice plumbing (2026-07-25)
+// ============================================================
+// The `interrupt` message is written by the provider loop when a user
+// interrupt parks it, and it is DELIBERATELY NEVER CONSUMED — that is what
+// makes it survive as the marker `shouldLaunchAgent` reads on the next boot.
+//
+// That property is exactly what makes a pending chip unacceptable: a chip is
+// cleared by messages_consumed, so a chip for this message could never clear.
+// It would sit in the footer forever, and nothing anywhere would say why.
+//
+// Caught by mutation: removing the reducer's skip left every other test in the
+// suite green.
+
+describe("event-handler: interrupt notice plumbing", () => {
+	const interruptEvent = (id: string, ts: number) =>
+		({
+			type: "message",
+			id,
+			body: { source: "interrupt", id, ts },
+			taskId: "task-a",
+			ts,
+		}) as unknown as IncomingEvent;
+
+	it("pendingReducer: interrupt APPLY is a no-op", () => {
+		// Mutation proof: drop `source === "interrupt"` from the reducer's skip
+		// condition → state grows to length 1 and the chip can never be cleared,
+		// because nothing ever consumes this message.
+		const start: PendingMessage[] = [];
+		const after = pendingReducer(start, {
+			type: "APPLY",
+			event: interruptEvent("int-1", 1000) as never,
+		});
+		expect(after).toEqual([]);
+		expect(after).toBe(start); // same reference — a pure no-op
+	});
+
+	it("processEvent: interrupt renders a lifecycle entry and leaves pending empty", () => {
+		// Mutation proof: drop the `source === "interrupt"` branch in
+		// processEvent's message case → no entry is rendered AND pending grows.
+		const { deps, pendingBox } = makeDeps();
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([interruptEvent("int-2", 2000)]);
+
+		const entry = capturedLogs.find((e: LogEntry) => e.type === "lifecycle");
+		expect(entry).toBeDefined();
+		if (entry?.type === "lifecycle") {
+			expect(entry.content).toContain("Interrupted");
+		}
+		expect(pendingBox.current.length).toBe(0);
+	});
+
+	it("a never-consumed interrupt leaves the footer empty", () => {
+		// The whole point, stated as the user-visible property: the notice
+		// arrives, nothing ever consumes it, and no chip is left behind.
+		const { deps, pendingBox } = makeDeps();
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "message",
+				id: "u-1",
+				body: { source: "user", id: "u-1", ts: 3000, content: "go" },
+				taskId: "task-a",
+				ts: 3000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["u-1"],
+				taskId: "task-a",
+				ts: 3001,
+			},
+			interruptEvent("int-3", 3002),
+		] as unknown as IncomingEvent[]);
+
+		expect(pendingBox.current).toEqual([]);
+	});
+});
