@@ -610,6 +610,19 @@ Every process in the daemon's descendant tree was attributed to a session, so th
 spawner. With the predicate all 13 are refused, taking the boot batch to zero.
 `scripts/survey-resume.ts` re-derives the decision on the current tree.
 
+⚠️ **The cost did not vanish; it MOVED — onto the path where a parent is waiting for its children,
+which is the one place it is felt.** A parent used to be launched at boot and sit parked, so a
+child's `task_complete` merely woke a live agent: microseconds. Now the parent is refused, so that
+same `task_complete` has to LAUNCH it — worktree checks, MCP connect, work_context, `session_config`.
+That is the intended trade, paying when work actually arrives instead of at every boot, and it is
+invisible in the headline number: "13 of 13 refused, 1.58 GB" says nothing about where the 1.58 GB
+went when it was needed. First observed as `MULTI1` (3 children → crash → restart → all complete →
+parent done) blowing its 45s budget on a contended run and passing in 15s alone — its budget now
+covers a cold launch that was not previously in it, so **this is where a load-related flake will
+surface first**, and reading it as contention alone would miss that the path genuinely got longer.
+The general form is worth more than the instance: **removing an eager cost does not delete it, it
+relocates it to the moment of first use — so ask what is waiting at that moment.**
+
 ⭐ **The boundary condition on hoisting ANY such decision, which is not the obvious one:**
 
 > It is **not** "the steps before the loop only read the log" — two of them manufacture input.
