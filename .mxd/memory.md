@@ -2664,673 +2664,201 @@ whatever you were testing. Wrap fixture paths in `realpathSync`.
 # Web UI — Routing, State & Event Handling
 ---
 
-## UI Notes
-
-- Event fetching: per-session (`api.taskEvents(projectId, sessionId)`) not per-project. Forked sessions contain parent events — merging causes stale content.
-- Derived state reset: ALL state cleared on project/task switch (logs, tokenUsage, pendingMessages, etc.).
-- Lifecycle entry collapse: consecutive lifecycle-only entries collapsed, keeping last per run.
-- Agent status: **SUPERSEDED 2026-07-25 — see "Agent activity: one explicit backend state" at the end of this file.** This used to read: *"`activeAgents` Set updated globally in `handleEvent` BEFORE per-session filter (agent_active/idle/stopped/orchestration_started/orchestration_completed). `processEventBatch` calls `checkAgentStatus()` after processing to overwrite stale state from historical events."* That second sentence WAS the bug report — replaying the log falsely activated agents, so a poll had to undo it. Activity is now one explicit backend state pushed by the server (and asked for at connect); `activeAgents` is derived from it in one place, and nothing reconstructs it from events.
-- Per-task message drafts: `localStorage` key `mxd-prompt-draft:<nodeId>`. Debounce uses `targetRef.current` (not `targetNodeId` in deps) to avoid saving stale prompt to wrong task key during render transition.
-- `/compact` targets viewed task: backend reads `nodeId` from POST body, falls back to rootNodeId. Frontend passes `viewedTaskId`.
-- Task tree sort: `STATUS_PRIORITY` in TaskTree.tsx: in_progress(0) > verify(1) > pending(2) > draft(3) > failed(4) > closed(5). Stable sort preserves user ordering within each status group.
-- hideCompleted filter: hides `closed` and `failed` only. `verify` is actionable and remains visible.
-- Scroll follow mode: scroll-to-bottom re-enables follow, scroll-up disables. Follow button also enables.
-
-## Partial event monotonic extend (Fix B, 2026-04-18)
-
-Two bugs fixed together by one invariant: **partial events are monotonic snapshots of content that only grows; clients extend to the longer of {current state, snapshot} and never shrink**.
-
-### Bug 1 — thinking refresh-loss
-`text_delta` events have `ctx.streamingText` buffer + synthetic `assistant_text partial:true` injection in the batch-events endpoint. Thinking had nothing. Refresh mid-stream: text survived (partial snapshot brought it back), thinking didn't (thinking_delta events are ephemeral, only post-refresh deltas accumulated).
-
-**Fix**: mirror streamingText exactly. `ctx.streamingThinking: Map<taskId, string>` updated in `updateStreamingBuffers` (extracted from the emit side-effect to `src/runtime/agent-lifecycle.ts` as a standalone exported function for unit testability). `thinking_delta` appends; `thinking` (final) clears; `runAgentForNode` finally clears on session end. Routes (`tasks.ts` + `projects.ts`) inject synthetic `thinking partial:true` alongside existing `assistant_text partial:true`.
-
-### Bug 2 — partial + delta race on reconnect
-`handleReconnect` does BOTH Last-Event-ID SSE resume AND REST refetch. Two paths deliver via different semantics:
-- SSE deltas → `merge_thinking` / `merge_text` (append)
-- REST partial snapshot → `replace_thinking` / `replace_text` (clobber)
-
-Race cases: (a) live "ABCDEF" + stale REST "ABCDE" → replace overwrites → data loss. (b) REST "ABC" + SSE deltas append "DEF" → "ABCDEF" correct but if SSE already had "ABCDEF" then "ABCDEFDEF" duplicated.
-
-**Fix**: new update ops `extend_text` / `extend_thinking` in `.mxd/plugin/web/event-handler.ts`. For events marked `partial: true`, emit extend ops instead of replace ops. Extend semantics:
-- snapshot longer AND snapshot.startsWith(existing) → adopt snapshot
-- snapshot shorter or equal → no-op (existing is ahead)
-- snapshot longer BUT prefix mismatch → prefer longer + `console.warn` (content drift, shouldn't happen with strictly additive deltas)
-
-Final (non-partial) events still use `replace_text` / `replace_thinking` — they're authoritative, not snapshots.
-
-### Event type extension
-`Event.assistant_text` and `Event.thinking` both gained optional `partial?: boolean` field. Never persisted to JSONL (the synthetic events are route-only injections); never produced by provider.
-
-### Why "extend" not "replace" even for thinking
-Thinking needs `signature` for Anthropic prefix byte-identity on restart. But partial events have empty signature (we don't know the real signature until the final block arrives). Using replace semantics for partial thinking would overwrite the signature; extend only touches `thinking`. When the final thinking event arrives, `replace_thinking` installs both final text AND signature.
-
-### Test coverage
-- Server (`src/runtime.test.ts`): 6 new tests — partial thinking synthesized, cleared on final, per-task + project-level endpoints, thinking+text together, `updateStreamingBuffers` unit tests for each spec type.
-- Frontend (`src/plugin-event-handler.test.ts`): 20 new tests — every extend case (longer/shorter/equal/mismatch/no-existing/interleave), merge+extend+merge sequences, SSE+REST race scenarios, final-replaces-partial-replaces-extends.
-- **Mutation-verified**: flipping `partial` check in processEvent → 3 integration tests fail. Removing `length <=` guard in extend → 2 tests fail. Deleting `thinking_delta` branch in `updateStreamingBuffers` → 2 tests fail.
-
-## Root is a regular task — the null-sentinel anti-pattern (Fix A + Fix C, 2026-04-18)
-
-Two entries merged: Fix A fixed one instance (the pending-message filter), Fix C named the class and
-swept the rest. The **anti-pattern below is the durable part and is still the rule.**
-
-⚠️ **The URL mechanism described in this section is superseded.** Fix C implemented it with a hash
-(`#<projectId>/<taskId>`); Task Y replaced that with path segments a few months later — see *URL
-routing: path segments with layer ownership*. What survived the replacement intact: the anti-pattern,
-the sentinel sweep, and the principle that the URL is the routing truth and a brief "nothing selected
-yet" state is valid rather than something to paper over. Task Y kept all three; it only moved where
-the id is stored in the URL.
-
-**Symmetry trio** (as written at the time): Fix A made root a regular task in the data model + AppFooter filter; Fix B made partial events monotonic-extend so refresh doesn't lose streamed content; Fix C makes the URL/routing layer treat root as a regular task too.
-
-### Instance: the pending-message filter (Fix A)
-
-`Plugin.tsx` used to set `targetNodeId = null` whenever the user viewed the root. `AppFooter`'s pending-message filter then had two branches:
-```ts
-targetNodeId
-  ? m.taskId === targetNodeId            // sub-task view: direct id compare
-  : m.taskId === null || m.taskId === rootNodeId  // root view: sentinel + rootNodeId prop
-```
-
-That asymmetry coupled the root view's filter behavior to whether `rootNodeId` state had populated yet. On fresh mount (`useTasks` pending, `rootNodeId=null`), root-destined pending messages silently dropped. The sub-task view had no such race because it always used an explicit id.
-
-**Fix**: root has a real id like any other task. Use it directly.
-- `Plugin.tsx` effect collapses to `setTargetNodeId(selectedTaskId ?? rootNodeId)` — one-line, no branching.
-- `AppFooter` filter collapses to `m.taskId === targetNodeId` — single path, both views behave identically.
-- `rootNodeId` prop removed from `AppFooter` (dead after the filter simplification).
-- `handleSend` / `/compact` / `/dump-messages` stop chaining `?? rootNodeId` because `targetNodeId` already resolves through the same fallback.
-
-**Residual transient**: pre-`useTasks` both state values are null → `targetNodeId=null` → filter drops all messages. ~100-500ms flash, acceptable. Optional optimization (seed `rootNodeId` from URL hash on mount) is a separate task if it becomes user-visible.
-
-**Regression guards**:
-- `web/AppFooter-pending.test.tsx` (7 tests) — exercises the filter line directly with prop combinations. Catches mutations of the filter (e.g. accidental re-introduction of the two-branch form, accepting `taskId === null` without intent).
-- `web/Plugin-targetNodeId.test.tsx` — mounts real Plugin against a seeded `tree.json`, waits for `useTasks` to populate, asserts InputBar's textarea placeholder reads `Message to "Orchestrator"…`. Mutation-verified: reverting the `Plugin.tsx` effect to the old branching form makes this test fail (placeholder stays at generic "Send a message…").
-
-**Lesson**: "root is a special view that needs a sentinel" is a UI-level story with no data-model counterpart. Once the UI speaks the same id language as the data layer, both filter paths collapse to one and a whole class of state-timing races disappears.
-
-### Anti-pattern: "root as default, null as sentinel"
-
-**Any code that treats root specially at the ROUTING / TARGETING / IDENTIFICATION level is wrong.** Root has an id like any task; use it. Only the TREE VISUALIZATION layer legitimately knows "root is root" (for drawing the tree hierarchy + dedicated orchestrator tab button). All other layers should be oblivious to which id happens to be root.
-
-Concrete failure shapes this anti-pattern produced over weeks:
-- `targetNodeId = selectedTaskId ?? rootNodeId` — pending banner filter coupled to a fallback chain → silent drop of root-destined messages during the useTasks transient
-- `isOrchestratorNode = !selectedTaskId || selectedTaskId === rootNodeId` — `!selectedTaskId` is the null sentinel meaning "treat as root", entangling routing logic with state initialization timing
-- `tabScrollStateRef.current.get(selectedTaskId ?? "root")` — literal string `"root"` as a Map key, asymmetric with the SET branch (which guarded on `if (prevTabId)` and skipped null), so root's scroll state was never persisted at all
-- `usageTaskId = targetNodeId ?? selectedTaskId ?? rootNodeId ?? nodes.find(...) ?? "orchestrator"` — 4-fallback chain that masks "no selection" rather than rendering empty
-- URL hash stripped task component when view matched root → on refresh, no task in URL, useTasks transient drops everything destined for root
-
-The fix everywhere: **selectedTaskId carries the actual root id when viewing root**. No sentinel. No fallback. If selectedTaskId is null, render nothing (it means "nothing selected yet"). The URL-redirect mechanism closes the null window; consumers stay simple.
-
-### Two truths, one effect  — *(hash era; the shape survives, the code does not)*
-
-The reconciliation SHAPE below is exactly what Task Y still does — URL is truth, the daemon's
-`/projects/:id/tasks` supplies rootNodeId, one effect normalizes the URL when both are known. Only
-the storage moved (hash → path segment) and the owner moved (Plugin → shell callback). Read it for
-the reasoning; read Task Y for the code.
-
-Just two sources of truth:
-1. **URL hash** is the routing truth: `#<projectId>/<taskId>`, ALWAYS includes taskId
-2. **Daemon `/projects/:id/tasks`** is the rootId truth: returns `{nodes, rootNodeId}` (already exists, not new)
-
-One effect reconciles them — when useTasks resolves rootNodeId AND the URL is missing taskId, normalize the URL via `replaceState` and `setSelectedTaskId(rootNodeId)`:
-
-```ts
-useEffect(() => {
-  if (!projectId || !rootNodeId) return;
-  const hash = parseHash();
-  if (hash.projectId && hash.projectId !== projectId) return;
-  if (!hash.taskId) {
-    const desired = `#${projectId}/${rootNodeId}`;
-    window.history.replaceState(null, "", pathname + search + desired);
-    setSelectedTaskId(rootNodeId);
-  }
-}, [projectId, rootNodeId]);
-```
-
-That's the entire normalization mechanism. No localStorage cache, no SSE listener, no per-project state to invalidate. Hash without a task id is "an invalid state" → fix it once, naturally.
-
-### Initial state: URL only
-
-```ts
-const [selectedTaskId, setSelectedTaskId] = useState(initialHash.taskId ?? null);
-const [rootNodeId, setRootNodeId] = useState<string | null>(null);
-const [targetNodeId, setTargetNodeId] = useState(initialHash.taskId ?? null);
-```
-
-Common case (URL already normalized): three states populated on first render → first commit is correct.
-
-Brand-new visit (URL bare): all three null → empty state renders during ~50-200ms transient → URL-redirect fires → catches up.
-
-The transient is **a valid empty state, not a bug to paper over**. AppFooter shows no pending banner. ActivityLog shows no logs. InputBar placeholder is generic "Send a message…". This is exactly what "nothing selected yet" should look like. No fallback chain tries to make it "work" during null.
-
-### Sentinel sweep (parallel cleanup)
-
-- `Plugin.tsx isOrchestratorNode = selectedTaskId === rootNodeId` (was `!selectedTaskId || ...`)
-- `TaskTree.tsx isOrchestratorSelected = selectedTaskId === rootNodeId` (same)
-- `MockShowcase.tsx` same (mirrors prod for consistency)
-- `usageTaskId = selectedTaskId ?? ""` (was 4-fallback chain)
-- `viewedSessionId = selectedTaskId` (was `selectedTaskId ?? rootNodeId`)
-- `tabScrollStateRef.get(selectedTaskId)` (was `?? "root"` literal)
-- `targetNodeId` useEffect = `setTargetNodeId(selectedTaskId)` (no fallback)
-- `updateHash(projectId, taskId)` always writes `#proj/taskId` (no taskId-stripping branch)
-
-**Kept (legitimate, not the anti-pattern)**:
-- Tab close → navigate to root: `next[idx] ?? rootNodeId` — this is a navigation decision ("where to go after closing the last tab"), not a fallback that hides null state. The `??` resolves an array-out-of-bounds undefined.
-- `handlers.ts: if (!selectedTaskId) return` in destructive ops — guards "did the user actually click a sub-task?", not the routing sentinel.
-- `BackgroundProcessBar.tsx` / `LogEntryView.tsx`: `taskId ?? rootNodeId` for event-level session attribution — different concern (per-event routing).
-- `tabScrollState SET` skips on null prevTabId — symmetric with the GET cleanup; null prevTabId means we never had anywhere to save from.
-
-### Tests (web/Plugin-url-task-id.test.tsx, 5 tests, mutation-verified)
-
-1. **URL has root task id** → first render is correct (no async wait)
-2. **URL bare** → after useTasks resolves, URL normalized to `#proj/<rootId>` + state catches up
-3. **URL has sub-task id** → preserved verbatim, NOT rewritten to root
-4. **openTabs defensive strip** → root id stripped from openTabs after useTasks (no cache to consult at init time, post-mount effect handles it)
-5. **No localStorage `mxd-root:` keys are written or read** (regression guard: any future agent re-introducing a cache fails this)
-
-**Mutation proofs confirmed by reverting code one edit at a time**:
-- Drop `initialHash.taskId ??` from useState init → Test 1 fails (placeholder is generic "Send a message…", not "Message to …" — proves URL-as-source-of-truth)
-- Drop the URL-redirect effect → Test 2 fails (URL stays `#proj`, placeholder never resolves)
-
-### How I went wrong (and what to do differently)
-
-**The wrong goal led to a complex solution.** I framed the problem as "first render must be correct" — which forced me to find some way to know rootId synchronously at mount. That led to building a localStorage cache layer.
-
-**The right goal**: "URL is truth; if URL is missing the id, normalize it AS SOON AS we know the id". The "as soon as" is naturally async (useTasks resolves in 50-200ms), and that's fine — the brief empty state during normalization IS a valid state.
-
-**The pivot**: user pointed out that daemon's `/projects/:id/tasks` already returns rootNodeId. Once that fact lodged, the cache became obviously redundant — `useTasks` already provides what the cache was caching, just async instead of sync. The async response IS the truth source; cache is only useful if you reject async, which I had no reason to do.
-
-**Lesson**: when tempted to add cache to make something synchronous, ask "is there an existing async truth I can wait for instead?" If yes (and there usually is), the answer is "wait + redirect", not "cache". Caches add invalidation complexity for the optimization of skipping a 100ms fetch. Rarely worth it.
-
-**Anti-pattern in the wider sense**: I picked a goal that sounded stricter than necessary ("first render correct" vs "correct after first async settle"). The strict goal pulled in solution complexity. **Default to the loosest goal that satisfies the actual user need.** "Pending banner appears within 200ms of refresh" was the real goal; "appears synchronously on first render" was my over-strict invention.
-
-### Test infra limitation: happy-dom + history.replaceState
-
-`window.history.replaceState(null, "", url)` does NOT update `window.location.hash` in happy-dom (real browsers do). Confirmed via direct repro. The URL-redirect effect handles this with a manual `setSelectedTaskId(rootNodeId)` call alongside the replaceState — works in both env. Without that manual setState, happy-dom would leave selectedTaskId stale (replaceState wouldn't fire hashchange to trigger the listener; production would, but tests wouldn't catch it).
-
-### Test pollution gotcha (pre-existing, not Fix C) — **SUPERSEDED, and the diagnosis below is wrong**
-
-Kept because being wrong is the point: the theory here ("happy-dom state surviving
-GlobalRegistrator cycles") was believed for months and shaped two separate decisions (Task Y deleted
-a whole test file over it). The real cause was react-dom's scheduler binding to whichever timer
-machinery existed at its FIRST import, and it is FIXED — see *bun test cross-file React breakage*
-(Testing region). Subset runs are no longer order-flaky for this reason.
-
-Running multiple `web/*.test.tsx` files together produces flaky failures (Plugin-targetNodeId may time out, AppFooter chips may not render). Caused by happy-dom state surviving GlobalRegistrator unregister/register cycles, and React's module-level state holding refs to old document instances. Pre-existing — confirmed by stashing changes and reproducing.
-
-Workaround: run `bun test web/` (whole dir, all 28 pass) or `bun test` (full, 2118 pass). Subset runs (`bun test web/A.tsx web/B.tsx`) are flaky depending on order. Real fix is a separate task — needs hard process-level isolation per file.
-
-## Pending messages are a projection of the event log (Task X, 2026-04-18)
-
-Three entries merged: Task X (the model), Fix D (the last patch to the model Task X deleted — kept
-because its lesson outlived its code), and the 2026-07-21 batch/SSE guard (the one qualification to
-Task X's purity claim).
-
-Deletes the entire "mutable deferredMessages map + imperative setPendingMessages + syncPendingBanner sideEffect + multiple clear paths" model in `.mxd/plugin/web/event-handler.ts`. Replaces it with a pure reducer.
-
-**Why**: Fixes A, B, C, D all tried to patch the imperative-state model by shifting *when* mutations happen. Each fix closed one race (Fix A: filter symmetry; Fix B: partial monotonic extend; Fix C: URL routing truth; Fix D: compact_marker mutation phase). Each left the underlying bad model in place. User's conclusion: the mutable state itself is the bug. Defining "which event clears pending" is still inside the wrong frame.
-
-**New model**:
-```ts
-// module scope, pure, exported
-type PendingMessage = { id, taskId, text, timestamp, images, source, content, queueEntry };
-type PendingAction = { type: "RESET" } | { type: "APPLY"; event: IncomingEvent };
-
-function pendingReducer(state, action) {
-  if (action.type === "RESET") return [];
-  const e = action.event;
-  if (e.type === "message" && e.id && e.body?.source !== "compact") {
-    return [...state, /* derived entry */];
-  }
-  if (e.type === "messages_consumed" && e.messageIds?.length) {
-    const consumed = new Set(e.messageIds);
-    return state.filter(m => !consumed.has(m.id));
-  }
-  return state;  // every other event: no-op for pending
-}
-```
-
-**Deletions** (all gone from event-handler.ts):
-- `const deferredMessages = new Map<...>()`
-- `function syncPendingBanner()`
-- `clearSessionState` deferredMessages manipulation (log filter + olderEvents cleanup retained)
-- `deferredMessages.clear()` in `compact_marker` case (Fix D's immediate version — now unnecessary)
-- `deferredMessages.clear()` in `processEventBatch` — replaced by `dispatchPending({type:"RESET"})`
-- `deferredMessages.set(id, ...)` in `message` case — replaced by `pendingActions: [{type:"APPLY", event}]`
-- `deferredMessages.delete(id)` in `messages_consumed` case — replaced by `pendingActions`
-- `setPendingMessages: React.Dispatch<...>` from `EventHandlerDeps`
-
-**Added** (all at module scope, all pure):
-- `PendingMessage` type (exported)
-- `PendingAction` type (exported)
-- `pendingReducer` function (exported, pure)
-- `pendingChipText` (hoisted from closure — used by reducer)
-
-**Plugin.tsx**: useState<Array> replaced with `useRef + useState + dispatchPending` sync-write-through pattern. Synchronous ref update → any messages_consumed in the same batch sees the just-applied message. setState triggers re-render, consumers (AppFooter) read the state as before.
-
-**Driver flow**:
-```ts
-for (const evt of events) {
-  const result = processEvent(evt);
-  entries.push(...result.entries);
-  applyUpdates(entries, result.updates);
-  for (const a of result.pendingActions ?? []) dispatchPending(a);  // SYNC
-  if (result.sideEffects !== NO_SIDE_EFFECTS) deferredSideEffects.push(result.sideEffects);
-}
-```
-
-**Invariants after Task X**:
-1. Pending is a pure function of the events log. `pendingReducer(prev, action)` is the only way pending changes.
-2. No imperative `clear` path. Events drive everything. `RESET` exists only for "replay from scratch" (processEventBatch at batch start or project switch).
-3. Compact-source messages never enter pending (predicate filter at reducer APPLY time). No subsequent cleanup needed — old Fix D world had to clear the "[compact]" chip; this world never adds it.
-4. tree_updated does NOT mutate pending. Task lifecycle status "pending" and message state "pending" are different concepts.
-
-**What Task X obsoletes from prior fixes**:
-- Fix A's AppFooter filter: still correct (`m.taskId === targetNodeId`), independent concern.
-- Fix B's partial monotonic extend: still correct (different code path — partial events don't affect pending).
-- Fix C's URL routing: orthogonal to pending.
-- Fix D's immediate `deferredMessages.clear()`: the clear itself is now deleted. Fix D's principle (mutations must happen in the same phase) is still valid — Task X eliminates the need by deleting the mutation entirely.
-
-**Regression tests**:
-- `src/plugin-event-handler.test.ts` "Task X: pendingReducer is pure" — 6 tests exercising the reducer directly (RESET, APPLY message/consumed/unrelated, compact-source exclusion).
-- `src/plugin-event-handler.test.ts` "Task X: no 'clear pending' paths outside messages_consumed/RESET" — 3 tests proving tree_updated and compact_marker no-op for pending.
-- `src/plugin-event-handler.test.ts` "Task X: mutation-proof regression for the four prior fixes" — 2 tests locking in the Fix-D-era batch shape and live handleEvent flow.
-- Three historical tests **inverted**: they previously encoded "clear pending on X" behaviors. Now they assert pending is PRESERVED — documenting the new invariant in-place.
-
-**Unconsumed messages stay pending forever** — semantically correct per user: "如果之前有没consume的，之后还是显示pending 我觉得合理". If the agent never processed a message, the UI should keep surfacing it; silently clearing on compact was lying about what actually happened.
-
-**Lesson**: any null/sentinel/special-case handling for "pending" was papering over a wrong mental model. Pending is a view — a projection. The data is the events log. Derivation is the correct word, not storage.
-
-### Superseded by this: Fix D — compact_marker clear had to be immediate
-
-**The code below is gone** — `deferredMessages` and every clear path with it (grep confirms the map
-survives only in explanatory comments). Kept for two reasons. First, it is the clearest statement of
-the phase-discipline lesson at the end, which applies to any code with an immediate phase and a
-deferred phase. Second, it is the last of four attempts to patch the mutable-state model by moving
-*when* mutations happen; reading it is what makes Task X's "the mutable state itself is the bug"
-land as a conclusion instead of an assertion.
-
-`.mxd/plugin/web/event-handler.ts`: `compact_marker` was the ONLY `deferredMessages` mutation that ran in the sideEffects phase. `message` case calls `deferredMessages.set(id, ...)` synchronously inside `processEvent` (before its return); `messages_consumed` calls `.delete(id)` synchronously too; `compact_marker` was calling `.clear()` from inside the `sideEffects` closure that runs AFTER `processEventBatch`'s loop completes.
-
-**Failure shape** — for a batch `[compact_marker, message_A, message_B]`:
-1. `processEvent(compact_marker)` → pushes `clearSideEffect` onto `deferredSideEffects`
-2. `processEvent(message_A)` → `deferredMessages.set("msg-A", ...)` immediate
-3. `processEvent(message_B)` → `deferredMessages.set("msg-B", ...)` immediate
-4. `setLogs(entries)`
-5. Deferred sideEffects run in insertion order → `clearSideEffect` wipes A and B that were legitimately staged AFTER the compact
-6. `syncPendingBanner` reads empty map → `pendingMessages = []`
-
-User observation: root view's pending banner was empty for messages sent mid-stream. Fresh sessions (no compact_marker in batch) worked; sessions with 14+ compact_markers triggered the bug on every refresh (REST batch-events fetch on reconnect re-runs `processEventBatch` with the full history including every compact).
-
-**Fix**: move `deferredMessages.clear()` out of the sideEffects closure into immediate execution inside the `case` body, before the return. Only `syncPendingBanner` (a React setState) stays deferred. Comment next to `messages_consumed` already said "Materialize immediately (not as side effect) so batch mode works" — compact_marker was the one violating the invariant.
-
-**Invariant, stated plainly**: all mutations to `deferredMessages` (`set`, `delete`, `clear`) must happen in the IMMEDIATE phase, synchronously inside `processEvent` before its return. Only React state sync (`syncPendingBanner`, `setBackgroundProcesses`) belongs in `sideEffects` — those are legitimate deferred-until-after-loop setState calls.
-
-**Regression tests** (`src/plugin-event-handler.test.ts` — "event-handler compact_marker clear ordering (Fix D)"):
-1. Batch `[compact, msg_A, msg_B]` → pendingMessages contains both A and B (post-compact messages survive)
-2. Batch `[msg_pre, compact, msg_post]` → pendingMessages contains only msg_post (pre-compact correctly cleared)
-3. Batch `[msg_pre, consumed([pre]), compact, msg_post]` → pendingMessages contains only msg_post (consumed pre is materialized then cleared)
-
-**Mutation-verified**: reverting `clear()` back into the sideEffects closure makes all 3 tests fail. Test 1 is the direct repro of the user's bug shape.
-
-**Lesson — mutation/setState phase discipline**: when multiple event types mutate the same data structure, they must all mutate in the same phase. Mixing "set/delete inside processEvent" with "clear inside sideEffects" is a silent correctness hazard: in single-event mode (handleEvent) there's no loop between processEvent and sideEffects so both phases look equivalent; in batch mode (processEventBatch) the phase gap yawns open and mutations interleave wrongly. Search any `sideEffects:` closure for non-React-state mutations — that's the smoke.
-
-### Qualification: the batch/SSE duplicate-message guard (2026-07-21)
-
-⚠️ **This is the one thing outside the reducer that affects pending.** Invariant 2 above ("no
-imperative clear path — events drive everything") still holds for the reducer itself, but the
-DRIVER now filters: `handleEvent` suppresses an APPLY for a message id it already saw consumed in a
-batch. If you are reasoning about why a chip is or isn't showing, `pendingReducer` alone is no
-longer the whole answer — check `batchConsumedIds` too.
-
-**Root cause**: race between SSE ring-buffer catch-up and the batch REST re-fetch during
-reconnection. `processEventBatch` (via `handleReconnect`) does RESET + full JSONL replay —
-pending correctly empty. But SSE catch-up events arriving AFTER the batch can re-deliver a
-`message` event whose `messages_consumed` was already in the batch. The duplicate `message`
-re-adds the pending chip; no live `messages_consumed` arrives to clear it → chip persists.
-
-**Fix**: `processEventBatch` records consumed IDs in `batchConsumedIds` (module-scoped Set
-inside `createEventHandler`). `handleEvent` checks this before dispatching APPLY(message) —
-batch-consumed IDs are suppressed. Set cleared on every RESET; entries removed by live
-`messages_consumed` events (defensive against id reuse).
-
-**Diagnosis technique**: 22 "unconsumed" messages found in JSONL were ALL compact/
-compacted_resume source (correctly excluded by reducer). 0 unconsumed user messages. Backend
-is correct — every user message has a matching `messages_consumed` with identical IDs. Bug
-was purely frontend timing.
-
-**Key invariant**: `batchConsumedIds` is the **minimum-viable deduplication** between batch
-and SSE event sources. It does NOT replace the pure `pendingReducer` — the reducer stays
-pure (no side-channel). The guard lives in `handleEvent` (the event handler driver), not in
-the reducer itself.
-
-## URL routing: path segments with layer ownership (Task Y, 2026-04-18)
-
-The current URL mechanism, plus its server-side half (SPA fallback, folded in at the end). Replaces
-the hash mechanism described in *Root is a regular task* — that entry keeps the reasoning and the
-anti-pattern; this one is the code.
-
-Replaces the single-hash cross-layer coordination (`#projectId/taskId`) with
-a path-based URL where each layer owns its segment:
-
-- URL format: `/<projectId>/<pluginScope>/<pluginPath>`
-- Shell owns `/<projectId>/<pluginScope>/` prefix
-- Plugin owns everything after `<pluginScope>/` (the `<pluginPath>` suffix)
-- Shell passes `pluginPath` + `pushPluginPath(path, replace?)` as props
-
-**Why path-based (not hash-based extended)**: hash routing forced `#projectId/taskId`
-into a single string two layers had to cooperate on. Shell's `projectId` state
-and plugin's `taskId` state constantly drifted — shell didn't read URL on
-mount, plugin wrote hash for task changes, "back" button was broken for
-project switches, and every layer had its own "URL stays in sync" bug.
-
-User's framing: "一个 daemon owned 一个是 project owned 中间完全同步灾难". Path
-segments are a natural ownership line — shell never reads plugin's path, plugin
-never reads shell's prefix. Cross-layer coordination deletes itself.
-
-**Shape after Task Y**:
-- Shell `AuthenticatedShell`:
-  - `parsed = parsePath(window.location.pathname)` on mount + `popstate` listener.
-  - URL normalization effect: `/` → `/<firstProjectId>/<firstPluginName>/` via
-    `replaceState` (no history entry). Waits for both projects AND plugins to
-    load — uses `plugins[0].name` (no hardcoded "matrix").
-  - `pushPluginPath(path, replace?)` callback passed to plugin: shell converts
-    to full URL, calls `push/replaceState`, updates its own `parsed` state.
-  - `handleProjectChange` / `handleAddProject` / `handleDeleteProject` use
-    `pushState` so browser back/forward works naturally.
-  - `handleScopeChange` pushes new scope URL.
-
-- Plugin `ProjectContent`:
-  - `selectedTaskId` is DERIVED from `pluginPath` via `parsePluginPath()` — NOT
-    useState. No hashchange listener. No URL bookkeeping inside plugin.
-  - `setSelectedTaskId(id, replace?)` is now a thin wrapper that calls
-    `pushPluginPath(id ?? "", replace)`. Same callsites, same semantics.
-  - URL normalization effect: `pluginPath === "" && rootNodeId` → 
-    `pushPluginPath(rootNodeId, replace=true)`. Same logic as Fix C, now
-    plugin-internal.
-  - `targetNodeId` remains useState, synced from `selectedTaskId` via useEffect.
-    Kept this way to minimize the diff — refactoring all `targetNodeId`
-    consumers to re-derive is orthogonal to Task Y.
-
-**Deletions**:
-- `parseHash`, `updateHash`, `initialHash` useMemo, hashchange listener in
-  Plugin.tsx.
-- Hash-based URL-redirect effect (replaced with path-based normalization
-  that calls pushPluginPath).
-- Shell's `projects[0].id` default (URL-derived now, no guessing).
-
-**What this fixes that prior Fix C didn't**:
-- Hash ownership was ambiguous — shell wrote projectId (via `window.location.hash`
-  directly in `handleProjectChange`), plugin wrote taskId, both trampled each
-  other during refresh and SSE updates.
-- ShellApp.tsx never read `window.location.hash` on mount → defaulted to
-  `projects[0].id` regardless of URL. Refresh on a specific project → URL hash
-  preserved the projectId but shell state started with projects[0].id, so task
-  events went to the wrong session.
-- Back button was broken: shell used `window.location.hash = ...` which
-  triggered hashchange but also created history entries plugin didn't know
-  about.
-
-**Invariants**:
-1. Shell NEVER reads/writes `<pluginPath>`. Plugin NEVER reads/writes
-   `<projectId>` or `<pluginScope>`. Each layer only touches its own segment.
-2. URL is THE routing source of truth. Neither shell nor plugin cache
-   anything — refresh is free, back/forward is free, `pushPluginPath` with
-   `replace=true` normalizes, default pushState for user actions.
-3. Plugin has ONE parent → prop → child flow. Shell owns URL and passes
-   `pluginPath` down. Plugin calls `pushPluginPath` back up. Cycle is
-   explicit and type-safe.
-
-**Future extension**: if a future plugin wants deeper routing (e.g.
-`<taskId>/<subPath>`), the plugin's own `parsePluginPath` handles that
-internally. Shell doesn't care what shape the plugin uses.
-
-**Regression tests**:
-- `web/path-routing.test.ts` (15 unit tests): pure `parsePath` / `buildPath`
-  covering all URL shapes (empty, bare projectId, full, ULID/UUID, double
-  slashes). Pins the parse ∘ build = identity round-trip.
-- `web/Plugin-url-task-id.test.tsx` (5 integration tests, rewritten for Task
-  Y): `TestShell` wrapper holds pluginPath state + forwards pushPluginPath,
-  mimicking the real shell↔plugin prop contract. Tests first-render
-  correctness, URL normalization on empty path, sub-task preservation, openTabs
-  defensive strip, no-localStorage-cache invariant.
-- `web/Plugin-targetNodeId.test.tsx` (1 integration test): same TestShell
-  pattern — verifies InputBar placeholder reflects root task title after
-  useTasks resolves.
-
-**ShellApp integration tests for path routing — DELETED, with reason**:
-An initial `web/ShellApp-path-routing.test.tsx` tried to spy on
-`window.history.pushState`/`replaceState` in `beforeEach` and restore in
-`afterAll`. Running the full test suite, those spies polluted every
-subsequent `bun test web/*.test.tsx`: `ShellApp.test.tsx`,
-`AppFooter-pending.test.tsx`, and `ShellApp-build-error.test.tsx` all got
-18 spurious failures. The polluting mechanism was not clean even with
-explicit restore + `GlobalRegistrator.unregister()` in `afterAll` — happy-
-dom's cross-file state is opaque, and mixing method-level monkey-patches
-with happy-dom's per-describe-block lifecycle turned out unfixable within
-scope. Deleted the file. Coverage isn't lost: the pure parse/build logic
-is in `path-routing.test.ts`; the shell's actual pushState/replaceState
-wiring is verified by manual smoke + visual inspection of the diff (13
-lines total: URL normalization effect, popstate listener, three pushState
-callsites in project handlers).
-
-**happy-dom limitation — monkey-patching `window.history`**:
-Instrumenting `window.history.pushState`/`replaceState` via `beforeEach`
-replacement survives `GlobalRegistrator.unregister()` in ways we couldn't
-diagnose. If a future task needs to assert on history API calls from
-happy-dom tests, **don't** spy on `window.history.*`; instead, intercept
-at a layer the test owns (e.g., a test harness that wraps `ShellApp` and
-exposes a ref to captured history calls via React context), OR accept
-that integration coverage of routing is best left to real browsers and
-keep unit tests for the pure logic.
-
-**Lesson (process — "never claim pre-existing without verifying against
-main")**: My first pass blamed these 18 failures on pre-existing happy-dom
-pollution documented in memory.md. I used `git stash && bun test web/` to
-"verify", saw 19 fails on main, and concluded Task Y hadn't regressed
-anything. I was wrong twice: (a) `git stash` left my committed changes in
-place — I needed `git reset --hard HEAD^` to actually revert Task Y; (b)
-even if stash had worked, the relevant baseline is `bun test` (full), not
-`bun test web/` (subset). On the true baseline, main had 0 failures. Lesson
-for any future "it was already broken" claim: revert the commit, run
-`bun test` (bare, not subset, not piped), read the bare numbers.
-
-**Lesson (design)**: when two layers coordinate via a shared serialized
-blob (one hash, one query string, one localStorage key), look for the
-segment they each own and give each layer direct access to its own segment.
-If "they must agree" is the contract, the contract is wrong — sooner or
-later they disagree. Path segments + props+callbacks encode ownership at
-the type level; no synchronization protocol needed.
-
-### Server side: SPA fallback — `pm.has(firstSeg)` is the single predicate
-
-After Task Y, paths look like `/<projectId>/<scope>/<rest>` and are
-server-visible. Browser refresh on those paths must reach the shell HTML so
-the SPA can boot, parse the URL, and render. Pre-fix: 404 (no catch-all).
-Post-fix: 200 HTML iff first segment is a registered project id.
-
-**Single source of truth**: `pm.has(firstSegment)` decides BOTH whether the
-auth middleware bypasses (skipping the 401 wall on browser navigation) AND
-whether the wildcard `app.get("*")` serves HTML. Same predicate, same
-answer — no chance of "auth bypassed but wildcard 404'd" or vice versa.
-
-**`isFrontendPath(path)`** (auth middleware): returns true for `/` exact OR
-`pm.has(firstSeg)`. Bypass only on GET (POST/PATCH to `/<projectId>/...`
-stay auth-gated — those don't exist as legitimate SPA paths, 401 is more
-honest than accidental HTML).
-
-**`app.get("*", ...)`** (registered last): mirrors the same `pm.has` check.
-Stale / deleted / never-existed first segments → clean 404, not a fake SPA
-shell that immediately 404s on its own data fetches. Backend route names
-("api", "auth", "projects", "health", etc.) never collide with project ids
-(ULIDs are 26 chars of base32).
-
-**Why not regex on ULID?** Considered + rejected. `pm.has` is the actual
-correctness predicate — a project's existence decides validity, not its
-id format. ULID format could change; project registration semantics
-won't. Also: bogus / old-deleted ids 404 cleanly under `pm.has`,
-broken-SPA-pretending-to-load under regex.
-
-**Why GET-only?** The wildcard is `app.get("*")`, not `app.all("*")`.
-POST/PATCH/DELETE to unknown paths stay 404. Typo'd write endpoint can't
-silently 200-with-HTML.
-
-**Plumbing**: added `ProjectManager.has(id)` as a one-liner public method
-(was using internal `this.projects.has(id)` only). Tests live in
-`src/daemon-integration.test.ts → "daemon integration: SPA fallback (Task Y
-refresh)"` — 13 tests covering authenticated GET, unauthenticated browser-
-refresh GET (the actual UX scenario), byte-identical HTML between `/` and
-`/<projectId>/...`, plugin 404s not swallowed, `/auth/bogus` still 401,
-`/vendor/missing.js` still 404, POST/PATCH stay auth-gated, non-existent
-project id 404s.
-
-**Cache hygiene** (SHIPPED — see "Content-hashed build pipeline" below):
-browser used to cache old `/app/web/main.js` after daemon restart. Fix was
-content-hashed filenames in the build pipeline (`naming: "[name]-[hash].[ext]"`
-+ manifest), NOT a `Cache-Control: no-store` band-aid. Different layer
-(build, not server routing), different risk class — shipped as its
-own ticket.
-
-## Project-switch reset via remount key (2026-04-18)
-
-`web/ShellApp.tsx` passes `key={`${projectId}/${selectedScope}`}` on
-`<PluginUI>`. When either segment changes, React unmounts the plugin
-subtree and remounts a fresh instance — every `useState` / `useRef` /
-`useAgent` re-initialises from scratch. No imperative reset ceremony
-needed.
-
-Before: `.mxd/plugin/web/Plugin.tsx` kept a `prevProjectId` ref + a
-25-line useEffect that manually cleared 14 pieces of state
-(`rootNodeId`, `openTabs`, `logs`, `tokenUsage`, `pendingMessages`,
-`pendingClarifications`, `backgroundProcesses`, `activeAgents`,
-`olderEventsAvailable`, `lastTurns`, `lastInputTokens`,
-`lastCacheCreationTokens`, `lastCacheReadTokens`, `lastOutputTokens`)
-plus clobbered `mxd-open-tabs` in localStorage.
-
-After: the useEffect is gone. Remount handles all 14 resets implicitly.
-`mxd-open-tabs` localStorage now survives a project switch; the
-existing tab-cleanup effect
-(`validTabs = openTabs.filter((id) => nodeMap.has(id))`) filters
-cross-project stale ids once `nodeMap` loads, so no user-visible
-difference.
-
-Why this matters as a pattern: "detect prop X change and manually
-clear 14 pieces of local state" is a consistent smell. React's
-`key={X}` is the idiomatic equivalent and cannot drift — a new useState
-added anywhere inside the subtree is reset for free. The old approach
-required every new piece of state to be manually added to the reset
-list; forgetting → cross-project leaks.
-
-Net LOC: -20 (+7 / -27).
-
-## compacted_resume UI card (2026-04-18) — queueEntryToUIEvent is the UI materialization gate
-
-Rendered post-compact summaries as a collapsible card in the activity log
-(visual cousin of the `◈ Context compacted` bar). Before the fix, the
-summary message existed in JSONL + went through the two-phase lifecycle,
-but the UI **silently dropped it** because `queueEntryToUIEvent` had no
-case for `source: "compacted_resume"` — fell through to `default: null`,
-so `materializeFromPending` produced null, so no log entry was ever
-created. The placeholder text "Session resumed from checkpoint" in
-`event-display.ts` was dead code (nothing imports `eventToDisplay` /
-`messageToDisplay`), so it wasn't even the visible artifact — the visible
-artifact was **nothing**.
-
-### Invariant (lock in mentally)
-
-Every `QueueMessage.source` that should be user-visible in the activity
-log MUST have a case in `queueEntryToUIEvent` (in
-`.mxd/plugin/web/event-handler.ts`). That switch is THE UI
-materialization gate for message-shaped events. A missing case → a
-silently-dropped event class. No error, no warning, nothing in DOM.
-
-Adding a new source type? Three places to touch, in order:
-1. `src/message-queue.ts` — union member definition
-2. `src/events.ts` — producer paths (usually via `queue.enqueue`)
-3. `.mxd/plugin/web/event-handler.ts:queueEntryToUIEvent` — UI
-   materialization case. If you forget this, nothing in the UI will
-   render despite perfect JSONL.
-
-### Pending routing decision
-
-compact & compacted_resume both skip `pendingReducer` (they're
-server-internal messages, not user-pending). That's an **intentional
-symmetry** — no chip flashes in the footer banner during the brief
-emit→consume window. If a new source should behave this way, add it to
-the same skip list.
-
-### Where the new card lives
-
-- Branch in `.mxd/plugin/web/components/tools/LogEntryView.tsx`
-  right after `fork_marker`, matching `entry.type === "message" &&
-  entry.body.source === "compacted_resume"`.
-- Uses `Card` component, default-collapsed (summaries are hundreds of
-  lines — expanding is opt-in).
-- Wrapper class `mxd-compact-boundary mxd-compact-summary` shares the
-  existing compact visual language.
-- Content renders in `<div className="mxd-compact-summary-content">`
-  with `white-space: pre-wrap` + scrollable `max-height: 420px`.
-- New i18n string `compact.summaryTitle` in both EN ("Compact Summary")
-  and ZH ("压缩摘要").
-
-### MockShowcase
-
-Added a sample `compacted_resume` event right after the
-`compact_marker` in `src/runtime/routes/mock-showcase.ts` so the
-mock-showcase page exercises the new card. Any future agent touching
-this flow can open `/mock-showcase` and visually confirm the card
-renders without running a real compaction.
-
-### Regression tests
-
-- `web/LogEntryView-compacted-resume.test.tsx` (3 tests) — full
-  LogEntryView render through LocaleProvider. Asserts i18n header,
-  default-collapsed, expand-click reveals real content, no placeholder
-  string ever appears, long bodies render verbatim (no truncation).
-- `src/plugin-event-handler.test.ts` "compacted_resume message plumbing"
-  (3 tests) — locks in: processEvent renders directly (skips pending),
-  pendingReducer treats compacted_resume as no-op, full cycle with
-  messages_consumed produces exactly ONE log entry (no duplicate).
-  Mutation proofs documented per-test.
-
-## ⚠️ A user message renders where it was CONSUMED, not where it arrived (2026-07-25)
-
-A message typed during a tool call is **delivered** between the `tool_call` and its `tool_result`,
-but **consumed** with that tool's results — so in the activity log it renders **after the finished
-tool card**. Delivery order and rendered order are different things.
-
-This is a trap for anything that reasons about a message's position. The Edit/Rewind gate hit it
-first: judging "did the agent run from this message" off the RENDERED entries calls exactly the
-blocked case a run start, because by then the message appears after the tool it interrupted. So the
-annotation is computed in `processEventBatch` from the **raw batch**, never from the entries.
-Mutation-verified — swapping the input to the entries fails exactly two tests out of ~2760.
-
-It is also the only place the annotation is needed, for a reason worth knowing on its own:
-**an eid reaches the UI only through a JSONL fetch — SSE broadcasts carry none** (events are
-stamped at persist time, after the broadcast). A live-streamed entry therefore has no eid, hence no
-Edit/Rewind buttons, hence nothing to gate. Same fact drives the re-fetch below.
-
-## Re-fetch JSONL when the viewed task stops working — Edit/Rewind buttons (2026-07-23)
-
-SSE-broadcast events lack `eid`/`parentEid` (stamped only at JSONL persist time in
-`EventStore.stampEvent`). So during streaming the Edit/Rewind buttons cannot exist — there is no eid
-to rewind TO. When the viewed task stops working, the frontend re-fetches JSONL via
-`GET taskEvents?after=compact` → `processEventResponse` — same pattern as SSE reconnect and rollback.
-Those events carry eid/parentEid, so the buttons appear.
-
-Implementation: `onAgentIdle` callback on `EventHandlerDeps`, fired when the viewed task's activity
-goes idle-or-gone. Plugin.tsx wires it via `refetchOnIdleRef` (breaks the useMemo/useCallback dep
-cycle).
-
-⚠️ **The trigger changed, and the original text named an event type that no longer exists.** It read:
-*"triggered from the `agent_idle` case in `processEvent`"*. There is no `agent_idle` event any more —
-it and `agent_active` were replaced by the single `agent_activity` state (see *Agent activity: live
-process state*, Agent Loop region), and this callback was migrated to fire on
-`agent_activity → idle` **or `null`**. The `null` half is a real behavior gain, not just a port: an
-agent that finishes with `done()` never passes through idle, so before the migration its last
-messages stayed uneditable. The CALLBACK name `onAgentIdle` survived the rename — do not read it as
-evidence that an `agent_idle` event exists.
+## Root is a regular task: the null-sentinel anti-pattern
+
+> ⚠️ **Any code that treats root specially at the ROUTING, TARGETING or IDENTIFICATION level is
+> wrong. Root has an id like any other task; use it.** Only the TREE VISUALIZATION layer legitimately
+> knows which node is root, for drawing the hierarchy and the dedicated orchestrator tab. Every other
+> layer should be oblivious to which id happens to be root.
+
+This one anti-pattern produced five separate bugs over several weeks, and they look unrelated until
+you see the shape:
+
+- `targetNodeId = selectedTaskId ?? rootNodeId` — the pending-message filter then needed two
+  branches, one comparing ids and one accepting `taskId === null`, so it was coupled to whether
+  `rootNodeId` had populated yet. On a fresh mount, root-destined pending messages were **silently
+  dropped**.
+- `isOrchestratorNode = !selectedTaskId || selectedTaskId === rootNodeId` — `!selectedTaskId` is the
+  sentinel meaning "treat as root", entangling routing with state-initialization timing.
+- `tabScrollStateRef.get(selectedTaskId ?? "root")` — a literal string as a Map key, asymmetric with
+  the SET branch (which guarded on `if (prevTabId)` and skipped null), so **root's scroll state was
+  never persisted at all**.
+- `usageTaskId = targetNodeId ?? selectedTaskId ?? rootNodeId ?? nodes.find(…) ?? "orchestrator"` —
+  a four-deep fallback chain masking "nothing is selected" rather than rendering empty.
+- The URL stripped the task component when the view matched root, so a refresh left no task in the
+  URL at all.
+
+**The fix everywhere is the same: `selectedTaskId` carries the actual root id when viewing root.** No
+sentinel, no fallback. **If `selectedTaskId` is null, render nothing — it means "nothing selected
+yet", and that is a valid state rather than a bug to paper over.** The URL normalization closes the
+null window, so consumers stay simple: `AppFooter`'s filter is one comparison, and both views behave
+identically.
+
+Legitimate uses of `?? rootNodeId` that are NOT this anti-pattern: "where do I navigate after
+closing the last tab" (a navigation decision, resolving an array-out-of-bounds), and
+`if (!selectedTaskId) return` guards in destructive operations (asking "did the user actually click
+a sub-task", not routing).
+
+⭐ **Two design lessons came out of getting this wrong first.** The initial attempt built a
+localStorage cache of `rootNodeId` so the first render could be correct synchronously:
+
+> **When tempted to add a cache to make something synchronous, ask whether there is an existing
+> async truth you can wait for instead.** There was — `/projects/:id/tasks` already returns
+> `rootNodeId`. `useTasks` provides in 50-200ms exactly what the cache was caching, and a cache is
+> only useful if you reject async, which there was no reason to do. Caches buy a skipped fetch and
+> cost invalidation complexity forever.
+
+> **Default to the loosest goal that satisfies the actual user need.** The goal was framed as "first
+> render must be correct", which *forces* a synchronous source and pulls in the cache. The real need
+> was "the pending banner appears within 200ms of refresh". "Correct after the first async settle"
+> satisfies it and needs no new machinery. An over-strict goal is how solution complexity gets in.
+
+## URL routing: each layer owns its own segment
+
+`/<projectId>/<pluginScope>/<pluginPath>`. The shell owns the `/<projectId>/<pluginScope>/` prefix;
+the plugin owns everything after it. The shell passes `pluginPath` down as a prop and
+`pushPluginPath(path, replace?)` back up.
+
+**Three invariants:**
+
+1. The shell NEVER reads or writes `<pluginPath>`; the plugin NEVER reads or writes `<projectId>` or
+   `<pluginScope>`.
+2. **The URL is THE routing source of truth.** Neither layer caches anything, so refresh and
+   back/forward are free. `replace = true` normalizes; the default `pushState` is for user actions.
+3. `selectedTaskId` is DERIVED from `pluginPath`, not `useState`. There is no hashchange listener
+   and no URL bookkeeping inside the plugin.
+
+⭐ **The lesson, which is what makes this worth a section:**
+
+> **When two layers coordinate through a shared serialized blob — one hash, one query string, one
+> localStorage key — look for the segment each layer owns and give each direct access to only its
+> own. If "they must agree" is the contract, the contract is wrong: sooner or later they disagree.**
+
+That was not theoretical. The previous design put `#projectId/taskId` in one hash that both layers
+wrote: the shell wrote the project part directly via `window.location.hash`, the plugin wrote the
+task part, and they trampled each other on refresh and on every SSE update. The shell also never
+read the hash on mount, so it defaulted to `projects[0].id` regardless of the URL — meaning a
+refresh on a specific project sent task events to the wrong session. Back was broken because the
+shell created history entries the plugin did not know about.
+
+The server-side half — why a refresh on such a path reaches the shell at all — is the `GET` +
+`pm.has(firstSegment)` predicate in *Auth & External API*; it is one predicate for both the auth
+bypass and the SPA-fallback wildcard, deliberately.
+
+⚠️ **happy-dom limitation: do NOT spy on `window.history.pushState`/`replaceState`.** Instrumenting
+them in `beforeEach` survives `GlobalRegistrator.unregister()` in ways nobody could diagnose and
+poisoned every subsequent `web/*.test.tsx` file with ~18 spurious failures. If you must assert on
+history calls, intercept at a layer the test owns (a harness that wraps the component and exposes
+captured calls), or leave routing integration to a real browser and unit-test the pure
+parse/build functions. Related: `history.replaceState` does **not** update `window.location.hash` in
+happy-dom although real browsers do.
+
+⚠️ **Process lesson, and it cost a wrong conclusion: never claim "pre-existing" without verifying
+against main properly.** The claim was that 18 failures predated the change. The verification used
+`git stash` — **which does not revert already-committed work**; `git reset --hard HEAD^` was needed.
+And even correctly reverted, the baseline must be a bare full `bun test`, not `bun test web/`: on the
+true baseline main had zero failures.
+
+## Pending messages are a projection of the event log
+
+Four successive fixes tried to patch a mutable `deferredMessages` map by changing *when* mutations
+happen — and each closed one race and left the model in place. **The mutable state was the bug.**
+
+`pendingReducer(state, action)` is a pure module-level function over `{type: "RESET"} | {type:
+"APPLY", event}`: a `message` event with an id and a non-compact source appends; a
+`messages_consumed` removes by id set; **every other event is a no-op.** Plugin.tsx drives it with a
+synchronous write-through ref plus `setState`, so a `messages_consumed` later in the same batch sees
+a message applied earlier in it.
+
+**Invariants after the rewrite:**
+
+1. Pending is a pure function of the event log. The reducer is the only thing that changes it.
+2. **There is no imperative clear path.** `RESET` exists only for "replay from scratch".
+3. Compact-source messages never enter pending, filtered at APPLY. The old model had to *clear* a
+   `[compact]` chip; this one never adds it.
+4. `tree_updated` does NOT touch pending. **A task's lifecycle status "pending" and a message's
+   state "pending" are different concepts** that happen to share a word.
+
+⚠️ **Unconsumed messages stay pending forever, and that is correct**, per the user: if the agent
+never processed a message the UI should keep surfacing it. Silently clearing on compact was lying
+about what happened.
+
+⚠️ **One thing outside the reducer affects pending, so the reducer alone is no longer the whole
+answer.** `handleEvent` suppresses an APPLY for a message id it already saw consumed in a batch
+(`batchConsumedIds`). The race: `processEventBatch` does RESET plus a full JSONL replay, correctly
+emptying pending — and then SSE catch-up events arriving *after* the batch can re-deliver a `message`
+whose `messages_consumed` was already in it, re-adding a chip that nothing will ever clear. The
+guard lives in the driver, not in the reducer, which stays pure. **Diagnosis worth keeping: all 22
+"unconsumed" messages in the JSONL were compact-source and correctly excluded; zero user messages
+were unconsumed. The backend was right and the bug was purely frontend timing.**
+
+⭐ **The phase-discipline lesson from the last of the four patches, which outlived its own code:**
+when several event types mutate one structure, **they must all mutate in the same phase.** Three did
+it synchronously inside `processEvent`; `compact_marker` did it inside a deferred side-effect
+closure. In single-event mode there is no loop between the two, so both look equivalent; in batch
+mode the gap yawns open and a deferred clear wipes messages that arrived *after* the compact.
+**Search any `sideEffects:` closure for non-React-state mutations — that is the smoke.**
+
+## Partial events are monotonic snapshots
+
+`assistant_text` and `thinking` can arrive with `partial: true` — synthetic events injected by the
+events endpoint from `ctx.streamingText` / `ctx.streamingThinking`, never persisted and never
+produced by a provider. They exist so a mid-stream refresh does not lose what has streamed so far.
+
+> **A partial event is a snapshot of content that only grows. Clients extend to the longer of
+> {current state, snapshot} and never shrink.**
+
+That rule is why the ops are `extend_text`/`extend_thinking` rather than `replace_*`. On reconnect
+the frontend does BOTH an SSE resume and a REST refetch, and the two deliver with opposite
+semantics — SSE deltas append, a REST snapshot clobbers. Without extend semantics you get either
+data loss (live "ABCDEF" overwritten by a stale "ABCDE") or duplication ("ABCDEFDEF"). Extend
+adopts a longer prefix-matching snapshot, ignores a shorter or equal one, and on a prefix mismatch
+prefers the longer and warns. **Final (non-partial) events still use `replace_*` — they are
+authoritative rather than snapshots.**
+
+⚠️ **Thinking specifically must extend rather than replace even though replace looks equivalent**:
+a partial thinking event has an empty `signature` (we do not know the real one until the block
+closes), and Anthropic needs that signature for prefix byte-identity on restart. Replace would
+overwrite it with nothing. Extend touches only the text, and the final event installs both.
+
+## `queueEntryToUIEvent` is THE UI materialization gate
+
+⚠️ **Every `QueueMessage.source` that should be visible in the activity log MUST have a case in
+`queueEntryToUIEvent`.** A missing case falls through to `default: null`, `materializeFromPending`
+produces null, and **the event class is silently dropped — no error, no warning, nothing in the
+DOM.** That is exactly what happened to post-compaction summaries: the message existed in JSONL and
+went through the full two-phase lifecycle, and the UI showed nothing. The placeholder text in
+`event-display.ts` was itself dead code, so the visible artifact was not even a wrong string.
+
+Adding a new source means three places, in order: the union member in `src/message-queue.ts`, the
+producer path, and this switch. Forget the third and the JSONL is perfect while the UI is empty.
+
+Related routing decision: `compact` and `compacted_resume` both skip `pendingReducer` deliberately,
+so no chip flashes during the brief emit→consume window. A new server-internal source belongs on
+that skip list too.
+
+## Project switch: remount, do not reset
+
+`<PluginUI key={`${projectId}/${selectedScope}`}>`. When either segment changes React unmounts the
+subtree and every `useState`/`useRef`/`useAgent` re-initialises from scratch.
+
+This replaced a 25-line effect that watched a `prevProjectId` ref and manually cleared **fourteen**
+pieces of state. ⭐ **"Detect that prop X changed and manually clear N pieces of local state" is a
+consistent smell, and the manual version cannot be kept correct** — every new `useState` added
+anywhere in the subtree has to be added to the reset list, and forgetting one leaks across projects.
+`key={X}` resets everything, including state that does not exist yet.
+
+## Small facts that are not obvious from the code
+
+- **Events are fetched per-session, not per-project.** A forked session contains its parent's
+  events, so merging by project produces stale content.
+- **`hideCompleted` hides `closed` and `failed` only.** `verify` is actionable and must stay
+  visible; that is a product decision, not an oversight in the filter.
+- ⚠️ **The per-task draft debounce reads `targetRef.current`, not `targetNodeId` from the deps
+  array.** With the value in deps, a render transition saves the previous task's prompt under the
+  new task's `mxd-prompt-draft:<nodeId>` key.
+- `/compact` targets the VIEWED task: the backend reads `nodeId` from the POST body and falls back
+  to the root node.
 
 ---
 # Web UI — Components & Interactions
