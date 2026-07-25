@@ -168,15 +168,17 @@ export function walkFiles(
 	while (stack.length > 0) {
 		// biome-ignore lint/style/noNonNullAssertion: length checked by the loop
 		const { abs, rel } = stack.pop()!;
-		let entries: Dirent[];
-		try {
-			entries = readdirSync(abs, { withFileTypes: true });
-		} catch {
-			// Unreadable directory — permissions, or it vanished mid-walk. Skipping
-			// matches `scanSync`, which yields what it can rather than failing the
-			// whole search over one directory.
-			continue;
-		}
+		// NOT wrapped in try/catch, deliberately. `scanSync` throws on both a
+		// missing root (ENOENT) and an unreadable directory mid-walk (EACCES) —
+		// measured, after a first version of this walk swallowed them and a comment
+		// here claimed that was the matching behavior. It is not.
+		//
+		// Swallowing turns "your path is wrong" and "the directory holding the
+		// answer is unreadable" into `(no matches)`, which is the exact failure this
+		// tool has already shipped twice: an answer that looks like an answer. The
+		// tool handler turns a throw into a visible isError result, so throwing is
+		// what tells the caller anything at all.
+		const entries: Dirent[] = readdirSync(abs, { withFileTypes: true });
 		for (const entry of entries) {
 			// Forward slashes, always. This string is both what the caller sees and
 			// what the glob is matched against; `join()` would write `\` on Windows

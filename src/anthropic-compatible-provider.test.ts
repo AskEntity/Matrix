@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { symlinkSync } from "node:fs";
+import { chmodSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -2740,6 +2740,42 @@ describe("jsSearch: the walk prunes at descent", () => {
 		]);
 	});
 
+	test("a path that does not exist is an ERROR, not '(no matches)'", async () => {
+		// The walk must not swallow ENOENT. A typo'd path answering "(no matches)"
+		// is indistinguishable from a real empty result, and this is the tool whose
+		// entire bug history is answers that look like answers. `scanSync` threw
+		// here; the first version of this walk caught it and returned [] — with a
+		// comment claiming that matched. Measured: it did not.
+		const missing = join(tempDir, "no", "such", "dir");
+		await expect(
+			jsSearch({
+				pattern: SYMBOL,
+				searchPath: missing,
+				outputMode: "files_with_matches",
+				headLimit: 50,
+				caseInsensitive: false,
+				cwd: tempDir,
+			}),
+		).rejects.toThrow(/ENOENT/);
+	});
+
+	test("an unreadable directory mid-walk is an ERROR, not a short answer", async () => {
+		// The dangerous direction: silently returning the files we could reach
+		// while the one holding the definition sits in a directory we could not.
+		// chmod is a no-op for root, so the assertion would be meaningless there.
+		if (process.platform === "win32" || process.getuid?.() === 0) return;
+		const locked = join(tempDir, "locked");
+		await mkdir(locked, { recursive: true });
+		await writeFile(join(locked, "hidden.ts"), `${SYMBOL}();\n`);
+		chmodSync(locked, 0o000);
+		try {
+			await expect(matchedFiles()).rejects.toThrow(/EACCES|EPERM/);
+		} finally {
+			chmodSync(locked, 0o755);
+			await rm(locked, { recursive: true, force: true });
+		}
+	});
+
 	test("excluded_dirs: [] reaches the nested node_modules too", async () => {
 		// Pruning must stay the skip list's decision. An `excluded_dirs: []` that
 		// still pruned would be the walker deciding, which is the bug the
@@ -2923,6 +2959,25 @@ describe("list_files: a pattern with no slash matches at any depth", () => {
 		// it could not answer "what is the shape of this project", which is what it
 		// looked like it was for.
 		expect((await listed("*")).sort()).toEqual([
+			"deep/src/inner.ts",
+			"src/nested.json",
+			"src/top.ts",
+			"top.json",
+		]);
+	});
+
+	test("output is sorted, and that is what makes truncation predictable", async () => {
+		// Note the test above sorts before asserting — every other list_files test
+		// is order-independent too, so nothing here pinned order, and until the
+		// shared walk landed there was nothing to pin: the tool returned
+		// filesystem order, which on APFS is a hash order (measured from the repo
+		// root: package.json, tsconfig.json, biome.json, …, .mxd/config.json last).
+		//
+		// It matters beyond tidiness because the 500-file cap slices this list. In
+		// traversal order "the first 500" is an arbitrary set that can change
+		// between two runs over an unchanged tree; sorted, it is the same 500 every
+		// time. So this assertion is deliberately NOT pre-sorted.
+		expect(await listed("*")).toEqual([
 			"deep/src/inner.ts",
 			"src/nested.json",
 			"src/top.ts",
