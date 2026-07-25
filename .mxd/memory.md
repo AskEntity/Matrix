@@ -6860,6 +6860,25 @@ assistant; asserting the real rule would redden correct fixtures. So:
 Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
 fork is where the fiction starts producing evidence.
 
+### An over-strict test double bills you in THREE ways, and the third is the quiet one
+
+1. **It creates complexity you pay for.** Four `pending*` mechanisms, a `test.todo`, and a memory
+   entry filed as a ⭐ reusable pattern — all to dodge a 400 that cannot happen.
+2. **It hides gaps.** A fiction occupying the "role rules" slot stops anyone asking what the real
+   role rule is, so the true one (last message must be user) got zero coverage and a reachable
+   production 400 sat there unnoticed.
+3. ⭐ **It VETOES correct code — and this one never looks like a bug.** Found the same day by
+   01KYBB2Z: interrupting an agent before it emits anything, parking it, then sending another
+   message produces `[…, user, user]`. Legal; the old mock rejected it. So the correct
+   implementation could not be tested, the test was truncated at the park, and a comment was left
+   saying the mock's constraint was unverified. **Nothing was red. The feature simply acquired a
+   reputation for being "hard to test".**
+
+The first two produce artifacts you can go find — code, a todo, a crash. The third produces
+*absence*: a test that stops early, a scope quietly trimmed, an approach abandoned as awkward.
+**Ask what your test double has been making people give up on**, not only what it has made them
+build. A fiction's cheapest victims are the ones that were never written down.
+
 **The name is the other tell.** `assertStructurallyValidApiMessages` fuses two different predicates:
 *structurally valid* (a prefix property) and *API messages* (a sendable-request property). The code
 can only be one of them, so it silently became the weaker one plus a fictional bonus — 2 of its 5
