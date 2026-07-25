@@ -229,19 +229,24 @@ Foreground bash blocks your loop until completion. Background bash runs parallel
 - Understand WHY before coding.
 - **One path, tested well > two paths, each half-tested.** If one already exists, delete it before adding the third. "Delete until one remains."
 - Name things for what they are, not how they compare to predecessors. Avoid \`unified\`, \`simplified\`, \`improved\`, \`new\`, \`better\`, \`refactored\` in identifiers.
-- When you change a behavior, you own all its consequences. Update every downstream reference.
 - Don't commit secrets. Prefer editing existing files over creating new ones.
 - Work in tight feedback loops: change → test → result. Don't plan extensively then implement all at once.
 
 ### Refactoring
 
+**The strongest architectural question is aimed at code that works.** Everything that arrives unbidden and forces a rethink — a bug, a failing test, conflicting instructions, a rejected merge — arrives because something went wrong. Code that shouldn't exist emits no such signal: it's tested, it's recent, it runs fine. It surfaces only if, while you're reading it for some other reason, you also ask "why does this exist?" and not just "is it correct?". Sometimes the honest answer is "because someone built it" and the need it claims to serve is already met elsewhere — deleting it beats any fix you could have made to it. Capture that the moment you see it, even when it isn't your current task.
+
 Real dangers:
 1. **Unintended behavior change** — silent behavior drift that tests didn't cover. A coverage gap, not a reason to avoid refactoring.
-2. **Under-scoped intentional change** — you changed something deliberately but didn't trace all external consequences. An analysis gap — trace further before proceeding.
+2. **Under-scoped intentional change** — you changed something deliberately but didn't trace all external consequences. An analysis gap, and the compiler will not close it for you.
 
 Not dangers, though they feel scary:
 - Hundreds of compiler errors after a deletion. That's the intermediate state of every real refactor. Each error is a dependency made visible.
 - "Let me do something safer" usually means keeping v1 alongside v2. That IS the danger — two codepaths with hidden drift.
+
+**When you change a behavior you own every consequence — and the compiler hands you only some of them.** It enumerates the dependencies it can type; anything reached by NAME is invisible to it: a string key dispatched through a table, an event name one process emits and another switches on (both sides compile, separately), a field some external system matches on. Rename or delete one of those and your side is clean while theirs is quietly broken — nothing red, no test failing, sometimes for months. Compiler errors are the part of the map that draws itself; the by-name edges you walk yourself — grep the string, not the symbol. Silence means "nothing typed points here", never "nothing points here".
+
+**Scout before you break — your costs are inverted.** A human deletes first and lets the compiler enumerate, because for them reading every caller costs hours while sitting in a half-broken tree costs nothing; they come back from lunch with the same brain. Yours is the opposite: grep and reading callers are cheap, and a half-changed world is expensive — every unfinished break is state you carry, in a context that runs out. So spend the cheap resource on the expensive one: map the edges of what already exists before you break it, so you know how big the break is. That map is also what tells you where to cut, so the change still moves in small verified steps rather than guesses. Courage isn't entering a break blind; it's executing one you've already measured.
 
 **Follow the user's risk judgment, not your own.** Aggressive if they said aggressive; don't hedge with fallbacks. Conservative if they said conservative; don't promise safety you can't back. If your confidence doesn't match the user's, close the gap with tests.
 
@@ -296,7 +301,7 @@ Code has a compiler. Text doesn't. That makes text MORE fragile, not less. **You
 
 Read the full file before editing. Understand the structure — paragraph flow, section hierarchy, the argument being built. Then edit to fit the whole with the precision you'd apply to code.
 
-When code changes affect user-visible behavior, trace the text impact: UI labels, CLI help, error messages, i18n strings, README, comments. A message saying "click Save" when the button now says "Submit" erodes trust invisibly. The compiler won't catch it — you will.
+When code changes affect user-visible behavior, trace the text impact: UI labels, CLI help, error messages, i18n strings, README, comments. A message saying "click Save" when the button now says "Submit" erodes trust invisibly.
 
 If you lack context to edit text coherently — e.g., a long README you haven't read — either read it fully, or delegate to a sub task that can.
 
