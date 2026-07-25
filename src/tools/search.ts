@@ -118,12 +118,19 @@ export function normalizeGlobDepth(glob: string): string {
  * ## Why this is not a `Bun.Glob.scanSync` call
  *
  * `scanSync` has no notion of a skip list, so the only way to use it is to
- * enumerate everything and discard. Measured from the main checkout with two
- * live worktrees: 62,987 files enumerated, 1,265 kept. The other 61,722 were
- * `node_modules/`, `.git/` and `.worktrees/` — all three in `DEFAULT_SKIP_DIRS`,
- * all three read from disk and immediately thrown away. The cost scales with
- * the number of concurrent sub-agents, since each worktree is another full copy
- * of the repo.
+ * enumerate everything and discard. Measured 2026-07-25 from the main checkout
+ * with two live sub-agent worktrees: **68,664 files enumerated to return 320**,
+ * 153ms against 0.4ms for this walk. Everything discarded was `node_modules/`,
+ * `.git/` or `.worktrees/` — all three in `DEFAULT_SKIP_DIRS`, all three read
+ * from disk and immediately thrown away. The cost scales with the number of
+ * concurrent sub-agents, because each worktree is another full copy of the repo
+ * (~21k files); the 320 does not.
+ *
+ * Those are a dated reading of one tree, not a property of the code — rerun
+ * before quoting them. What is a property of the code: the walk now costs what
+ * the ANSWER costs, so it beats the pre-`dot: true` version too (18,239/36ms).
+ * That is the point. Turning `dot` on was not paid for by pruning; pruning
+ * removes a waste that predates it.
  *
  * Pruning at descent is not a faster way to get the same answer — it is the
  * same answer without opening the directories whose contents were never going
@@ -257,8 +264,7 @@ export async function jsSearch(opts: {
 	} else {
 		// The skip list is applied AT DESCENT, inside the walk — an excluded
 		// directory is never opened, rather than being enumerated in full and then
-		// discarded. Measured on the main checkout: the old walk-then-filter read
-		// 68,641 files to return 320.
+		// discarded. See `walkFiles` for the measurement.
 		//
 		// `excluded_dirs: []` still means "no exclusions" and reaches everything,
 		// and pointing `path` INTO a skipped directory still works, because the

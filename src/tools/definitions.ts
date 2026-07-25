@@ -434,10 +434,11 @@ const listFilesTool = defineTool({
 			// one of them would have to hold both models.
 			//
 			// The skip list is consulted per DIRECTORY, at descent, so an excluded
-			// directory is never opened. Measured from the main checkout: the old
-			// walk-then-filter read 68,664 entries to return 320, and spent 135ms
-			// answering `list_files("*.rs")` with "no files" — the cap could not
-			// help, because a pattern that matches nothing never reaches it.
+			// directory is never opened — see `walkFiles` for the measurement. The
+			// 500-file cap did not protect against any of that cost: measured
+			// 2026-07-25, no pattern in this repo reaches 501 kept files, so the
+			// early break never fired and `list_files("*.rs")` spent 139ms walking
+			// the whole tree to answer "no files".
 			const skipDirs = skipDirsForPattern(pattern);
 			const files = walkFiles(cwd, skipDirs, pattern);
 			// The cap is applied AFTER the walk, and cannot be applied during it:
