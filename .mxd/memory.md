@@ -236,12 +236,19 @@ Browser → Daemon (static assets + SSE) + Worker (API forwarding)
 | src/llm.ts | Stateless single-turn LLM for plugins (no tools, no session) |
 | .mxd/plugin/scope-opts.ts | `buildMatrixScopeOpts` — the ONE place that knows matrix's tools + prompt + hooks |
 | .mxd/plugin/web/event-handler.ts | UI event → log entries; `queueEntryToUIEvent` is the materialization gate, `pendingReducer` is pending |
+| src/test-utils/api-message-rules.ts | The MEASURED Anthropic message-shape rules, and the prefix-vs-sendable split. The authority on "would this request be accepted" |
+| .mxd/plugin/message-editability.ts | Where the three Edit/Rewind judgments meet — and the ONLY place they may. Has zero imports, asserted by a test |
 
-**Verified 2026-07-25**: every path above exists. The bottom eight were added in this pass — they
-had all appeared since the table was written and none of them had been added to it. A file map is
-one of the entries most prone to going quietly wrong, because it fails by OMISSION: nothing
-contradicts it, it just silently stops being the answer to "where do I start". If you add a file
-that a newcomer would need to find, add the row.
+**Verified 2026-07-25**: every path above exists. Eight rows were added in the reorganisation pass
+and two more the same afternoon — all of them files that had existed for a while, or landed that
+day, without anyone adding the row. A file map is one of the entries most prone to going quietly
+wrong, because it fails by OMISSION: nothing contradicts it, it just silently stops being the answer
+to "where do I start". If you add a file that a newcomer would need to find, add the row.
+
+**The two additions are the test of that instruction, and it failed twice in one day** — both files
+were created by tasks that wrote careful memory entries about them and neither added a row. So the
+instruction is not enough on its own; if this keeps happening the answer is a check, not a
+firmer sentence.
 
 ## Merge review discipline — hook-pass ≠ reviewed
 
@@ -283,6 +290,13 @@ across a process boundary, a field an external system keys on. **The compiler's 
 list, not a completeness proof: before trusting it, grep for the symbol's name as a *string*, and
 check every boundary the type system does not cross.
 
+⚠️ **The instrument that rule depends on was itself blind until 2026-07-25.** `search` skipped every
+dot directory — so all of `.mxd/plugin/`, 34% of non-test source and the entire UI — and its
+documented `glob: "*.ts"` example matched only the top level. Both are fixed. But it means **a
+"grepped it, nothing points there" conclusion reached before that date proves less than it looks
+like**, and the failure was silent in the direction that matters: a confident non-empty answer with
+the deciding file missing from it. See the two `search` entries in Core Mechanisms.
+
 This bound is not hypothetical — the counter-evidence is in *Agent activity: live process state*
 (Agent Loop region), § "Two consumers that a grep for `activeAgents` does NOT find". Deleting the
 `agent_idle` event type would have made every external `send_user_message → yield_external →
@@ -305,6 +319,16 @@ Every tool_result must: (1) emit to JSONL, (2) yield to SSE, (3) push to message
 
 ### Yield JSONL Invariant
 Nothing written to JSONL after yield tool_call except by provider loop. External events go to queue, not JSONL. ~~`hasPendingYield()` detects this state.~~ **That function no longer exists** — deleted in the FU/FIX-4b sweep with zero production callers (grep-verified: zero occurrences in `src/` today). Do not go looking for it; this file used to contradict itself about it. What exists now: `hasPendingImplicitYield` (events.ts) for the *implicit* yield, and for an *explicit* pending yield there is no named helper at all — `provider-shared.ts` reads it straight off the JSONL shape on resume (`pendingYieldToolCall`, set when the last tool_call is yield). The invariant itself is unchanged and live; only its detector sentence was stale.
+
+### Persist Before Broadcast (2026-07-25)
+`emitEvent` writes to JSONL FIRST and broadcasts the *stamped* copy, so every observer — SSE
+clients included — gets the event's durable name (`eid`/`parentEid`) at the instant the event
+exists. `append`/`appendBatch` are fully synchronous and return the persisted event; that synchrony
+is what makes `rewindChainHead` correct on a failed write, so it is load-bearing, not a style
+choice. Four consumers depend on the name being there (Edit/Rewind, deep-links, viewport
+addressing, active-chain membership) and would each grow their own locating mechanism without it.
+Ephemeral events (`text_delta`, `agent_activity`) are deliberately NOT stamped — they are not
+history. Full reasoning: *Every transport carries the event's name (eid)* (Events/JSONL region).
 
 ### Single Delivery Path
 `deliverMessage` is THE message delivery path: JSONL write → queue delivery → flush → auto-launch. `quiet: true` for notifications. No other code writes message events to JSONL.
