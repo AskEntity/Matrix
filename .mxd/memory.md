@@ -5555,36 +5555,18 @@ the union through that intersection fine.
   count in a gate-restoration pass — biome's suggested `!` → `?.` autofix is marked
   *unsafe* and silently changes assertion semantics in tests.
 
-### ⚠️ The installed hook still does NOT cover merges — `pre-commit` is not run by `git merge`
-Empirically verified in a throwaway repo (`core.hooksPath` set, hook logs on run):
-**`git merge --no-ff <branch>` that auto-commits does NOT fire `pre-commit`.** Git
-fires `pre-merge-commit` for that path, and `.hooks/` contains ONLY `pre-commit`. So
-after the 2026-07-24 install, what is actually gated is:
+### ⚠️ The gate does not cover merges
 
-| path | hook git looks for | gated today? |
-|---|---|---|
-| root's direct `git commit` on main (memory curation, conflict resolution) | `pre-commit` | ✅ yes |
-| root's `git merge --no-ff <task-branch>`, clean auto-commit | `pre-merge-commit` | ❌ **no — file absent** |
-| a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | ✅ yes (inconsistent with the clean case) |
-| any commit inside a sub-task worktree | — (`hooksPath=/dev/null`) | ❌ no, by design |
-
-Merging is root's dominant path, so the gate as installed covers very little of the
-real workflow — and it fires on the CONFLICTING merge but not the clean one, which is
-backwards from intuition.
-
-**Deliberately NOT fixed by adding a `pre-merge-commit` hook**, because the project's
-documented merge model requires the opposite: "Intermediate merges may not typecheck
-(`--no-verify`). Final state must pass all hooks." Gating every merge would break
-incremental integration of parallel sub-tasks. The available options (root's call):
-(a) leave merges ungated and keep the manual `bash .hooks/pre-commit` discipline
-before declaring an integration finished; (b) add `pre-merge-commit` and accept
-`--no-verify` on intermediate merges — which reintroduces exactly the routine-bypass
-habit that hid these 24 errors; (c) move enforcement off the commit hook entirely
-(CI / a `mxd` preflight subcommand root runs once per integration).
+Established here, but it is a CURRENT-STATE fact rather than part of this record, so it lives in
+*What is actually gated (and what isn't)* (Reference & Pitfalls) — one place, with the coverage
+table and the fresh-clone caveat. Short version: `git merge --no-ff` with a clean auto-commit fires
+`pre-merge-commit`, which does not exist, so root's dominant path is ungated while a CONFLICTING
+merge is gated. Deliberately not fixed: the branch model requires intermediate merges to be allowed
+to not typecheck.
 
 ### Why this kept happening (the actual root cause)
-NOT "root bypassed the gate" — there was no gate to bypass (root's own correction in
-Known Pitfalls establishes this). The failure was that a *tracked* `.hooks/pre-commit`
+NOT "root bypassed the gate" — there was no gate to bypass (see *What is actually
+gated*). The failure was that a *tracked* `.hooks/pre-commit`
 existed, was referenced in memory as if it were active, and nothing pointed at it. The
 generalizable lesson: **a checked-in hook file is not an enforced hook.** Enforcement
 lives in untracked local config (`.git/config` → `core.hooksPath`), so it silently
@@ -5647,8 +5629,46 @@ Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", 
 - **Abort signal leak**: After stop, old runAgentForNode settles async. catch/finally check `sessionWasReplaced` to suppress stale error events.
 - **TS6133 `_` prefix**: TypeScript's `noUnusedLocals` does NOT respect `_` prefix for local variables or destructured locals — only for function parameters. For unused destructured React state, use `const [, setX] = useState(...)` (skip the getter slot). For unused `const` locals, delete outright. The underscore-prefix hint in our prompts is a holdover that doesn't match TypeScript's actual behavior.
 - **`bun run check` auto-writes**: `bun run check` runs `biome check --write` and silently formats 70+ files. `bun run check:ci` is the non-write variant used by the pre-commit hook. When debugging lint, use `check:ci`. When committing formatting sweeps, use `check` and split format-only changes into a separate commit.
-- **Pre-commit hook: worktrees skip it, main enforces it (since 2026-07-24)**: `worktree-manager.ts` sets `core.hooksPath = /dev/null` per worktree, so `git commit` in a sub-task skips the hook entirely — intentional (sub-tasks commit often; a full typecheck+lint+test on each would be unusable). To verify the hook passes from a worktree, run `bash /path/to/main/.hooks/pre-commit` manually.
-  **CORRECTION of a long-standing false entry**: this note used to claim "only root-orchestrator commits on main are actually gated." That was WRONG — main had NO `core.hooksPath` set, so git looked in `.git/hooks/pre-commit`, which never existed (only `.sample` files). The tracked `.hooks/pre-commit` was orphaned; nothing pointed at it. **Nobody was ever gated, anywhere.** Every `--no-verify` on main was a no-op bypassing a gate that didn't exist. That is how 24 typecheck errors accumulated across several merges undetected. Fixed by running the install command the hook's own header documents: `git config core.hooksPath .hooks`. Verified it now fails on typecheck (exit 2). **This config is local (`.git/config`), NOT tracked — a fresh clone must run it again.** If onboarding friction matters later, move it into `.mxd/hooks/setup_worktree.sh`'s main-repo counterpart or a `postinstall` script.
+- **Pre-commit hook**: see *What is actually gated* below — it needs more than a bullet.
+
+## What is actually gated (and what isn't)
+
+**Verified 2026-07-25.** Answer this before assuming a green result means anything.
+
+| path | hook git looks for | gated? |
+|---|---|---|
+| direct `git commit` on main (memory curation, conflict resolution) | `pre-commit` | ✅ yes |
+| `git merge --no-ff <branch>` with a clean auto-commit | `pre-merge-commit` | ❌ **no — that file does not exist** |
+| a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | ✅ yes |
+| any commit inside a sub-task worktree | none (`core.hooksPath=/dev/null`) | ❌ no, by design |
+
+Current config, checked: main's `.git/config` has `core.hooksPath = .hooks`; worktrees have
+`/dev/null`; `.hooks/` contains **only** `pre-commit`.
+
+Three consequences, none obvious:
+
+1. **The clean merge — root's dominant path — is NOT gated, while the conflicting merge IS.** That
+   is backwards from intuition and it is why "the hook passed" says very little about an
+   integration. Deliberately not fixed by adding `pre-merge-commit`: the branch model REQUIRES that
+   intermediate merges be allowed to not typecheck, and gating every merge would just re-establish
+   the routine-`--no-verify` habit that hid 24 errors before. The options if this ever needs
+   closing are (a) leave merges ungated and keep running `bash .hooks/pre-commit` by hand once per
+   integration, (b) add the hook and accept `--no-verify` on intermediate merges, (c) move
+   enforcement off the commit hook entirely (CI, or a preflight subcommand).
+2. **Worktrees skip the hook on purpose.** Sub-tasks commit constantly; a full typecheck + lint +
+   test on each would be unusable. To check the gate from a worktree, run
+   `bash /path/to/main/.hooks/pre-commit` manually.
+3. ⚠️ **`core.hooksPath` is LOCAL config (`.git/config`), not tracked.** A fresh clone is ungated
+   again and looks identical to a gated one. Install with `git config core.hooksPath .hooks`. If
+   that onboarding step ever bites, it belongs in a `postinstall` script or in the main-repo
+   counterpart of `.mxd/hooks/setup_worktree.sh` — nobody will remember to run it by hand.
+
+**A checked-in hook file is not an enforced hook.** For years `.hooks/pre-commit` existed, was
+referenced in this file as if active, and nothing pointed at it — git was looking in
+`.git/hooks/pre-commit`, which held only `.sample` files. **Nobody was gated anywhere**, every
+`--no-verify` was a no-op against a gate that did not exist, and the absence looked exactly like
+compliance. The only way to know is to assert it: `git config core.hooksPath`. (Superseded by this
+section: an older note claiming "only root's commits on main are gated" — that was never true.)
 
 ## Known Bugs (unfixed)
 
