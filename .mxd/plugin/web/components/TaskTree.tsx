@@ -839,6 +839,7 @@ function TreeNodeView({
 	onChildCreateCancel: () => void;
 	onContextMenu: (nodeId: string, x: number, y: number) => void;
 }) {
+	const { t } = useLocale();
 	const isSelected = node.id === selectedTaskId;
 	const allChildren = childMap.get(node.id) ?? [];
 	// When filtering, only show children that are in the matching set
@@ -951,7 +952,7 @@ function TreeNodeView({
 
 					<span className="mxd-task-title">{node.title}</span>
 					{isTask(node) && node.status === "draft" && (
-						<span className="mxd-task-draft-badge">draft</span>
+						<span className="mxd-task-draft-badge">{t("status.draft")}</span>
 					)}
 					{isTask(node) && favorites.has(node.id) && (
 						<span className="mxd-favorite-indicator">

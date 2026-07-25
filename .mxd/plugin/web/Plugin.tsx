@@ -310,6 +310,17 @@ interface PluginProps {
 	pushPluginPath: (path: string, replace?: boolean) => void;
 }
 
+/** Rendered before any project is chosen, so it carries its own provider —
+ * `Plugin`'s LocaleProvider wraps only the branches below this early return. */
+function NoProjectSelected() {
+	const { t } = useLocale();
+	return (
+		<div style={{ padding: 20, color: "#8b949e" }}>
+			{t("project.noneSelected")}
+		</div>
+	);
+}
+
 export function Plugin({
 	projectId,
 	scope,
@@ -318,7 +329,9 @@ export function Plugin({
 }: PluginProps) {
 	if (!projectId)
 		return (
-			<div style={{ padding: 20, color: "#8b949e" }}>No project selected</div>
+			<LocaleProvider>
+				<NoProjectSelected />
+			</LocaleProvider>
 		);
 
 	// Mock-showcase: standalone dev page at /<projectId>/matrix/mock-showcase

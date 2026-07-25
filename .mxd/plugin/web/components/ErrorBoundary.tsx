@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { useLocale } from "../i18n.ts";
 
 interface Props {
 	children: ReactNode;
@@ -32,39 +33,58 @@ export class ErrorBoundary extends Component<Props, State> {
 	override render() {
 		if (!this.state.hasError) return this.props.children;
 
-		const { error, showStack } = this.state;
-
 		return (
-			<div style={styles.container}>
-				<div style={styles.card}>
-					<div style={styles.icon}>⚠️</div>
-					<h1 style={styles.title}>Something went wrong</h1>
-					<p style={styles.message}>
-						{error?.message || "An unexpected error occurred."}
-					</p>
-					<button
-						type="button"
-						style={styles.button}
-						onClick={this.handleReload}
-					>
-						Reload
-					</button>
-					{error?.stack && (
-						<>
-							<button
-								type="button"
-								style={styles.toggle}
-								onClick={this.toggleStack}
-							>
-								{showStack ? "▾ Hide stack trace" : "▸ Show stack trace"}
-							</button>
-							{showStack && <pre style={styles.stack}>{error.stack}</pre>}
-						</>
-					)}
-				</div>
-			</div>
+			<ErrorFallback
+				error={this.state.error}
+				showStack={this.state.showStack}
+				onReload={this.handleReload}
+				onToggleStack={this.toggleStack}
+			/>
 		);
 	}
+}
+
+/**
+ * The fallback is a function component purely so it can reach `useLocale()` —
+ * a class cannot call hooks, and every visible string here needs t().
+ *
+ * Safe as a last-resort UI: `useLocale` outside a LocaleProvider falls back to
+ * the default context (`t: (key) => key`) rather than throwing, and the
+ * boundary is mounted INSIDE the provider anyway, so a provider crash was never
+ * something this component could have caught.
+ */
+function ErrorFallback({
+	error,
+	showStack,
+	onReload,
+	onToggleStack,
+}: {
+	error: Error | null;
+	showStack: boolean;
+	onReload: () => void;
+	onToggleStack: () => void;
+}) {
+	const { t } = useLocale();
+	return (
+		<div style={styles.container}>
+			<div style={styles.card}>
+				<div style={styles.icon}>⚠️</div>
+				<h1 style={styles.title}>{t("error.title")}</h1>
+				<p style={styles.message}>{error?.message || t("error.unexpected")}</p>
+				<button type="button" style={styles.button} onClick={onReload}>
+					{t("error.reload")}
+				</button>
+				{error?.stack && (
+					<>
+						<button type="button" style={styles.toggle} onClick={onToggleStack}>
+							{showStack ? t("error.hideStack") : t("error.showStack")}
+						</button>
+						{showStack && <pre style={styles.stack}>{error.stack}</pre>}
+					</>
+				)}
+			</div>
+		</div>
+	);
 }
 
 const styles: Record<string, React.CSSProperties> = {
