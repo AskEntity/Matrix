@@ -113,7 +113,6 @@ If a test is genuinely flaky, `bun test` it 5 times and read all 5 saved output 
 - If you want to re-investigate, rerun `bun test` again. Both files persist; read either.
 - If you're tempted to pipe "for context reasons": the bash tool's tiered output has already protected your context. Piping doesn't help — it only destroys.
 - ~2119 tests pass, 4 skip, 12 todo (as of 2026-04-18 after Fix A/B/C).
-```
 
 ## Architecture Overview
 
