@@ -197,12 +197,16 @@ function buildExternalOnlyToolDefs(ctx: RuntimeContext): AnyToolDef[] {
 					};
 				};
 
-				// Wake signals — agent paused or stopped
+				// Wake signals — agent paused or stopped. Matched against
+				// `event.type`, so this set is coupled to the LIVE event-type
+				// names: a rename in the runtime silently turns every wake into
+				// a timeout. `agent_stopped` / `orchestration_completed` sat here
+				// long after they were replaced by `agent_end`, so a stopped agent
+				// only ever woke an external client by timing out.
 				const WAKE_SIGNALS = new Set([
 					"agent_idle",
 					"done_notified",
-					"agent_stopped",
-					"orchestration_completed",
+					"agent_end",
 				]);
 
 				// ── Fast path: agent already idle/stopped/done ──

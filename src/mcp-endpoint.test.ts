@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MessageQueue } from "./message-queue.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
+import { broadcast } from "./runtime/event-system.ts";
 import { getEventStore, getTracker } from "./runtime/helpers.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { ulid } from "./ulid.ts";
@@ -532,5 +534,110 @@ describe("MCP endpoint", () => {
 				expect(names).not.toContain(name);
 			}
 		});
+	});
+});
+
+// ============================================================
+// yield_external wake signals
+// ============================================================
+//
+// yield_external subscribes to in-process events and finishes when one of
+// WAKE_SIGNALS arrives. That set is matched against `event.type`, so it is
+// coupled to the live event-type names — a rename anywhere in the runtime
+// silently turns a wake into a timeout. These tests pin the coupling.
+
+/** Attach a fake ACTIVE session (queue.idle = false) so yield_external takes
+ *  the subscribe path instead of the already-idle fast path. */
+function attachActiveSession(projectId: string, taskId: string): void {
+	const tracker = server.ctx.trackers.get(projectId);
+	if (!tracker) throw new Error("tracker not loaded");
+	const node = tracker.getTask(taskId);
+	if (!node) throw new Error("task not found");
+	const queue = new MessageQueue();
+	queue.idle = false;
+	node.session = {
+		queue,
+		abortController: new AbortController(),
+		loopTraceId: "test-trace",
+		depth: 0,
+		backgroundProcesses: new Map(),
+		foregroundExecutions: new Map(),
+	};
+}
+
+describe("yield_external wake signals", () => {
+	test("wakes on agent_end when the agent stops", async () => {
+		const projectId = await createProject("wake-end");
+		const tracker = await getTracker(server.ctx, projectId);
+		const rootId = tracker.rootNodeId;
+		attachActiveSession(projectId, rootId);
+
+		const started = Date.now();
+		// 2000ms, NOT 5000: bun's own per-test timeout is 5s, so a 5s tool
+		// timeout races it and the failure surfaces as an unhandled rejection
+		// in the NEXT test instead of a clean red here.
+		const resultP = mcpCallTool(hono, "yield_external", {
+			projectId,
+			taskId: rootId,
+			timeoutMs: 2000,
+		});
+		// Let the handler register its subscription before the event fires.
+		await new Promise((r) => setTimeout(r, 100));
+		broadcast(server.ctx, projectId, {
+			type: "agent_end",
+			taskId: rootId,
+			reason: "stopped",
+			ts: Date.now(),
+		});
+
+		const json = getJson(await resultP);
+		expect(json.reason).toBe("agent_end");
+		// Must be the wake, not the timeout.
+		expect(Date.now() - started).toBeLessThan(1500);
+	});
+
+	test("wakes on done_notified", async () => {
+		const projectId = await createProject("wake-done");
+		const tracker = await getTracker(server.ctx, projectId);
+		const rootId = tracker.rootNodeId;
+		attachActiveSession(projectId, rootId);
+
+		const resultP = mcpCallTool(hono, "yield_external", {
+			projectId,
+			taskId: rootId,
+			timeoutMs: 2000,
+		});
+		await new Promise((r) => setTimeout(r, 100));
+		broadcast(server.ctx, projectId, {
+			type: "done_notified",
+			taskId: rootId,
+			ts: Date.now(),
+		});
+
+		const json = getJson(await resultP);
+		expect(json.reason).toBe("done_notified");
+	});
+
+	test("an event for a DIFFERENT task does not wake it", async () => {
+		const projectId = await createProject("wake-other");
+		const tracker = await getTracker(server.ctx, projectId);
+		const rootId = tracker.rootNodeId;
+		attachActiveSession(projectId, rootId);
+
+		const resultP = mcpCallTool(hono, "yield_external", {
+			projectId,
+			taskId: rootId,
+			timeoutMs: 1000,
+		});
+		await new Promise((r) => setTimeout(r, 100));
+		broadcast(server.ctx, projectId, {
+			type: "agent_end",
+			taskId: "some-other-task",
+			reason: "stopped",
+			ts: Date.now(),
+		});
+
+		const json = getJson(await resultP);
+		expect(json.reason).toBe("timeout");
 	});
 });
