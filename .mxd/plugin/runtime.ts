@@ -8,8 +8,11 @@
 import type { Hono } from "hono";
 import type { RuntimeContext } from "../../src/runtime/context.ts";
 import { isTask } from "../../src/types.ts";
+import { editRefusalMessage, editVerdict } from "./message-editability.ts";
 import { isProductionProject } from "./production.ts";
+import { hasRewindPoint } from "./rewind-point.ts";
 import { registerMockShowcaseRoute } from "./routes/mock-showcase.ts";
+import { messageStartsRun } from "./run-start.ts";
 import { buildMatrixScopeOpts } from "./scope-opts.ts";
 
 export function buildScopeOpts(projectId: string, ctx: RuntimeContext) {
@@ -149,24 +152,38 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 			return c.json({ error: "No session data" }, 400);
 		}
 
-		// Read all events and validate the target
-		const allEvents = eventStore.read(nodeId);
-		const targetEvent = allEvents.find((e) => e.eid === body.eid);
+		// The ACTIVE chain, not the whole log: a tool call on a branch an
+		// earlier rewind already cut away says nothing about this message,
+		// and a target that is itself on such a branch cannot be edited at
+		// all — it is no longer part of the conversation.
+		const activeEvents = eventStore.readActive(nodeId);
+		const targetEvent = activeEvents.find((e) => e.eid === body.eid);
 		if (!targetEvent) {
-			return c.json({ error: "eid not found" }, 400);
+			return c.json(
+				{
+					error: editRefusalMessage("unknown_message"),
+					reason: "unknown_message",
+				},
+				400,
+			);
 		}
 		// Must be a user message
 		if (targetEvent.type !== "message" || targetEvent.body?.source !== "user") {
 			return c.json({ error: "eid must point to a user message" }, 400);
 		}
-		// Must be after the last compact_marker
-		const lastCompactIdx = allEvents.findLastIndex(
-			(e) => e.type === "compact_marker",
-		);
-		const targetIdx = allEvents.indexOf(targetEvent);
-		if (lastCompactIdx >= 0 && targetIdx <= lastCompactIdx) {
+
+		// The gate the UI greys the buttons on, run again here. The UI can be
+		// behind — an eid only reaches it through a JSONL fetch, and the
+		// agent can start working between that fetch and this request — so
+		// the button is UX and this is the correctness boundary.
+		const verdict = editVerdict({
+			startsRun: messageStartsRun(activeEvents, body.eid),
+			hasRewindPoint: hasRewindPoint(activeEvents, body.eid),
+			activity: node.session?.activity,
+		});
+		if (!verdict.editable) {
 			return c.json(
-				{ error: "Cannot edit a message before compact boundary" },
+				{ error: editRefusalMessage(verdict.reason), reason: verdict.reason },
 				400,
 			);
 		}

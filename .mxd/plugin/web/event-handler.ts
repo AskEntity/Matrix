@@ -1,4 +1,7 @@
 import type React from "react";
+import { isWorking } from "../agent-activity.ts";
+import { messageRunStarts } from "../run-start.ts";
+import { TOOL_YIELD } from "../tool-names.ts";
 // ID generation — crypto.randomUUID() for local UI state
 import {
 	type AgentActivity,
@@ -10,9 +13,6 @@ import {
 	type TreeNode,
 	type UIEvent,
 } from "./hooks.ts";
-import { isWorking } from "../agent-activity.ts";
-import { messageRunStarts } from "../run-start.ts";
-import { TOOL_YIELD } from "../tool-names.ts";
 import type { QueueMessage } from "./types.ts";
 
 // ── Pending messages: events-derived view, not mutable state ──
@@ -1408,8 +1408,19 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	/**
 	 * Process a batch of events (used for REST-fetched event history on page load/reconnect).
 	 * Resets all state and reprocesses from scratch through the unified processEvent path.
+	 *
+	 * `fromActiveChain` says whether these events ARE the conversation (the
+	 * `after=compact` fetch, which the server chain-walks) or the raw file
+	 * ("Load earlier history", which deliberately includes summarized-away
+	 * history and abandoned rewind branches so the user can read them). Only
+	 * the first kind can be annotated with run starts — in the raw file a
+	 * tool call from a branch nobody is on would count against a message that
+	 * has nothing to do with it.
 	 */
-	function processEventBatch(events: IncomingEvent[]): void {
+	function processEventBatch(
+		events: IncomingEvent[],
+		opts?: { fromActiveChain?: boolean },
+	): void {
 		// Reset per-batch state — reprocessing from scratch. Pending reducer
 		// also resets to []; message events in the batch will re-populate it.
 		toolCallToolNames.clear();
@@ -1461,7 +1472,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// Collapse consecutive session lifecycle entries (resumed/stopped) with no
 		// meaningful content between them. Keep only the last one in each run.
 		entries = collapseLifecycleEntries(entries);
-		entries = annotateRunStarts(entries, events);
+		if (opts?.fromActiveChain) entries = annotateRunStarts(entries, events);
 
 		setLogs(entries);
 		for (const fn of deferredSideEffects) fn();

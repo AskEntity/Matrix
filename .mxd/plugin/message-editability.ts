@@ -4,9 +4,9 @@
  * Edit and Rewind are one backend operation (Rewind = an Edit whose content
  * didn't change), so one answer governs both buttons.
  *
- * ── Two conditions, and they are NOT the same kind of thing ───────────────
+ * ── Three conditions, and they are NOT the same kind of thing ─────────────
  *
- * They are judged independently, by two modules that don't know about each
+ * They are judged independently, by three modules that don't know about each
  * other, because they answer unrelated questions:
  *
  *   `isWorking` (agent-activity.ts) — is the agent busy RIGHT NOW? A limit in
@@ -19,9 +19,14 @@
  *      message, so "run again from here" doesn't name anything. What the user
  *      needs to hear: *this one isn't a starting point*.
  *
- * Their only shared property is that both make the button grey. That is a
- * fact about rendering, not a common concept — resist the pull to give them a
- * shared abstraction just because the pixels agree. This module is the one
+ *   `hasRewindPoint` (rewind-point.ts) — is there a state to go back to? A
+ *      limit in HISTORY. The message is in the conversation, but a compaction
+ *      carried it across and the state around it was summarized away. What
+ *      the user needs to hear: *that history is gone*.
+ *
+ * Their only shared property is that all three make the button grey. That is
+ * a fact about rendering, not a common concept — resist the pull to give them
+ * a shared abstraction just because the pixels agree. This module is the one
  * place they meet, and all it does is pick which sentence to show.
  *
  * ── Precedence ────────────────────────────────────────────────────────────
@@ -47,6 +52,11 @@ export type EditBlockedReason =
 	 */
 	| "did_not_start_run"
 	/**
+	 * PERMANENT. A compaction carried this message across; the state around
+	 * it was summarized away, so there is no point to return to.
+	 */
+	| "no_rewind_point"
+	/**
 	 * PERMANENT. The eid names no message we can see. On the backend that
 	 * means it is not on the active chain — an earlier rewind cut it away.
 	 */
@@ -61,15 +71,22 @@ export type EditVerdict =
 const EDITABLE: EditVerdict = { editable: true };
 
 /**
- * @param startsRun  from `messageStartsRun` — `undefined` = couldn't tell.
- * @param activity   the agent's current state; `undefined` = no agent.
+ * @param startsRun       from `messageStartsRun` — `undefined` = couldn't tell.
+ * @param hasRewindPoint  from `hasRewindPoint`.
+ * @param activity        the agent's current state; `undefined` = no agent.
  */
-export function editVerdict(
-	startsRun: boolean | undefined,
-	activity: AgentActivity | undefined,
-): EditVerdict {
+export function editVerdict(judgments: {
+	startsRun: boolean | undefined;
+	hasRewindPoint: boolean;
+	activity: AgentActivity | undefined;
+}): EditVerdict {
+	const { startsRun, hasRewindPoint, activity } = judgments;
+	// Permanent first, and among the permanent ones the most fundamental
+	// first: a message we can't locate, then one whose history is gone, then
+	// one that never started anything.
 	if (startsRun === undefined)
 		return { editable: false, reason: "unknown_message" };
+	if (!hasRewindPoint) return { editable: false, reason: "no_rewind_point" };
 	if (!startsRun) return { editable: false, reason: "did_not_start_run" };
 	if (isWorking(activity)) return { editable: false, reason: "agent_busy" };
 	return EDITABLE;
@@ -85,6 +102,8 @@ export function editRefusalMessage(reason: EditBlockedReason): string {
 			return "The agent is working. Stop it first, then edit.";
 		case "did_not_start_run":
 			return "This message arrived while the agent was already working, so it never started a run — there is nothing to regenerate from here.";
+		case "no_rewind_point":
+			return "The history around this message was summarized away by a context compaction, so there is no state left to return to.";
 		case "unknown_message":
 			return "That message is not part of the current conversation — an earlier rewind replaced it.";
 	}

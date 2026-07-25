@@ -461,6 +461,7 @@ export const ActivityLog = memo(function ActivityLog({
 							onRollback={onRollback}
 							onEdit={onEdit}
 							editingEid={editingEid}
+							activity={activity}
 						/>
 					),
 				)}

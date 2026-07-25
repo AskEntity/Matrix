@@ -287,6 +287,18 @@ const en: Translations = {
 
 	// Edit message
 	"activity.editButton": "Edit",
+	// Why Edit/Rewind are greyed out. Two unrelated reasons, two sentences:
+	// one says "wait", the other says "this message isn't a starting point".
+	// Never merge them — "wait for the agent" on a permanently un-editable
+	// message is a promise that can't be kept.
+	"activity.editBlockedBusy":
+		"The agent is working — stop it before editing this message.",
+	"activity.editBlockedMidRun":
+		"Sent while the agent was already working. The agent's run started from an earlier message, so there is nothing to regenerate from here.",
+	"activity.editBlockedNoRewindPoint":
+		"The history around this message was summarized away when the context was compacted — there is no state left to return to.",
+	"activity.editBlockedUnknown":
+		"No longer part of the conversation — an earlier rewind replaced it.",
 	"footer.editing": "Editing message",
 	"footer.cancelEdit": "Cancel",
 
@@ -640,6 +652,14 @@ const zh: Translations = {
 
 	// Edit message
 	"activity.editButton": "编辑",
+	"activity.editBlockedBusy":
+		"agent 正在工作 —— 先让它停下来才能编辑这条消息。",
+	"activity.editBlockedMidRun":
+		"这条消息是在 agent 已经在工作时发出的。agent 这一轮是由更早的消息启动的，所以这里没有可以重新生成的起点。",
+	"activity.editBlockedNoRewindPoint":
+		"这条消息周围的历史在上下文压缩时已经被总结掉了 —— 没有可以回到的状态。",
+	"activity.editBlockedUnknown":
+		"已经不在当前对话里了 —— 之前的一次回退替换掉了它。",
 	"footer.editing": "编辑消息",
 	"footer.cancelEdit": "取消",
 

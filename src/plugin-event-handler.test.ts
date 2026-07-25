@@ -4346,3 +4346,135 @@ describe("SSE catch-up vs batch re-fetch race (pending chip reappears)", () => {
 		expect(pendingBox.current.length).toBe(2);
 	});
 });
+
+/**
+ * Run-start annotation.
+ *
+ * The trap this exists for: the activity log renders a user message where it
+ * was CONSUMED, and a message typed during a tool call is consumed with that
+ * tool's results — so it renders AFTER the finished tool card even though it
+ * was delivered inside the call. Deciding from the rendered order calls
+ * exactly the un-editable case a run start. The annotation therefore reads
+ * the raw batch, in delivery order.
+ */
+describe("processEventBatch: run-start annotation", () => {
+	const TOOL = "mcp__mxd__bash";
+
+	function batchWithMessageInsideToolCall(): IncomingEvent[] {
+		return [
+			{
+				type: "tool_call",
+				tool: TOOL,
+				toolCallId: "b1",
+				input: { command: "bun test" },
+				taskId: "root",
+				ts: 1,
+				eid: "e1",
+			},
+			{
+				type: "message",
+				id: "m1",
+				body: { source: "user", id: "m1", ts: 2, content: "wait" },
+				taskId: "root",
+				ts: 2,
+				eid: "e2",
+			},
+			{
+				type: "tool_result",
+				tool: TOOL,
+				toolCallId: "b1",
+				content: "done",
+				isError: false,
+				taskId: "root",
+				ts: 3,
+				eid: "e3",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m1"],
+				taskId: "root",
+				ts: 4,
+				eid: "e4",
+			},
+		] as unknown as IncomingEvent[];
+	}
+
+	function run(
+		events: IncomingEvent[],
+		opts?: { fromActiveChain?: boolean },
+	): LogEntry[] {
+		const { deps } = makeDeps();
+		let captured: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			captured = typeof entries === "function" ? entries([]) : entries;
+		});
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+		processEventBatch(events, opts);
+		return captured;
+	}
+
+	it("a message delivered inside a tool call renders AFTER it — and is still not a run start", () => {
+		const entries = run(batchWithMessageInsideToolCall(), {
+			fromActiveChain: true,
+		});
+		const toolIdx = entries.findIndex((e) => e.type === "tool_pair");
+		const msgIdx = entries.findIndex(
+			(e) => e.type === "message" && e.body?.source === "user",
+		);
+		// The premise: rendered order puts the message after the tool card,
+		// which is what makes reading it a trap.
+		expect(toolIdx).toBeGreaterThanOrEqual(0);
+		expect(msgIdx).toBeGreaterThan(toolIdx);
+		// The answer comes from delivery order instead.
+		expect(entries[msgIdx]?.startsRun).toBe(false);
+	});
+
+	it("a message delivered while the agent was parked is a run start", () => {
+		const entries = run(
+			[
+				{
+					type: "tool_call",
+					tool: "mcp__mxd__yield",
+					toolCallId: "y1",
+					input: {},
+					taskId: "root",
+					ts: 1,
+					eid: "e1",
+				},
+				{
+					type: "message",
+					id: "m1",
+					body: { source: "user", id: "m1", ts: 2, content: "hi" },
+					taskId: "root",
+					ts: 2,
+					eid: "e2",
+				},
+				{
+					type: "messages_consumed",
+					messageIds: ["m1"],
+					taskId: "root",
+					ts: 3,
+					eid: "e3",
+				},
+			] as unknown as IncomingEvent[],
+			{ fromActiveChain: true },
+		);
+		const msg = entries.find(
+			(e) => e.type === "message" && e.body?.source === "user",
+		);
+		expect(msg?.startsRun).toBe(true);
+	});
+
+	it("a raw-file batch is not annotated at all", () => {
+		// "Load earlier history" fetches the file, which holds summarized-away
+		// history and abandoned rewind branches. A tool call from a branch
+		// nobody is on would count against a message that has nothing to do
+		// with it, so we decline to answer rather than answer wrongly.
+		const entries = run(batchWithMessageInsideToolCall());
+		const msg = entries.find(
+			(e) => e.type === "message" && e.body?.source === "user",
+		);
+		expect(msg).toBeDefined();
+		expect(msg?.startsRun).toBeUndefined();
+	});
+});
