@@ -641,37 +641,55 @@ load-bearing and looks like padding**: a fast-rejecting `save()` lets the notifi
 wake and the test silently stops exercising the wake it is named after. Real workspace prep takes
 seconds, so waiting is also the faithful ordering, not a contrivance.
 
+⚠️ **Phase 2 crash recovery must deliver `task_complete` with `quiet: true`.** Without it the
+delivery auto-launches the parent, and `autoResumeProjects` launches it too — a duplicate launch.
+Quiet still persists the message to JSONL, and `findUnconsumedMessages` recovers it when autoResume
+gets there.
+
+Two things that look like duplicate-launch bugs and are not: after a crash,
+`orchestration_completed` never emitted, so `orchestration_started` from before the crash plus one
+from the resume is **two consecutive starts and is normal** — assert on `traceId` uniqueness
+instead. And in a restart test, `shutdown()` is required before `recreateApp()`, or the old app's
+agent stays alive and the new app launches a second one for the same node; in a real crash the
+process is dead, so that shape cannot occur in production.
+
 ### An unhandled rejection is an outage here, not a log line
 
 **Measured 2026-07-25.** A rejected promise with no handler inside a Bun **Worker** ends the worker
 thread: its own pending timers never run and the daemon sees `worker.onerror` (7-line repro — spawn
 a worker, `Promise.reject()` on a timer inside it, watch a later `setTimeout` never fire; the parent
 process survives). In a plain Bun process it exits the process outright, mid-flight continuations
-included. **Nothing in this repo installs a `process.on("unhandledRejection")` net** — the only
-occurrence anywhere is one test that captures its own injected failure. So a floating rejected
+included. **As of this writing nothing in this repo installs a `process.on("unhandledRejection")`
+net** — the only occurrence anywhere is one test that captures its own injected failure, and the
+handler decided on below (`01KYDESAKCW186VZ8GEK6TW91W`) deliberately does not change this
+paragraph's conclusion, only its legibility. So a floating rejected
 promise in the runtime is not noise in a log; it is a way to kill every agent in that project's lens
 and hand the daemon a backoff worker restart, and per *The self-bootstrap death chain* an
 `exit 133`-shaped worker death is indistinguishable from a real crash to anyone reading the log.
+**The hang was the mild half** — which is worth saying in those words, because the obvious framing
+("a parent waits forever") describes the bounded, recoverable consequence and silently sets the
+priority for the whole class from it.
 
-⭐ **The shape does not survive a single-line grep, which is the first thing to know before
-surveying for it.** `grep '\.catch(async'` returns **zero** hits in this repo — biome's formatter
-had split the only instance across two lines. Use a multiline search (`\.catch\(\s*async` with
-`multiline: true`); production carries one other continuation handler of the family,
+**Surveying for the shape needs two instruments neither of which is the obvious one.** A single-line
+`grep '\.catch(async'` returns zero hits in a repo that has one, and biome 2.4.10's
+`nursery/noFloatingPromises` is blind even to a planted violation — both written up under *a checker
+reporting ZERO is a claim about the checker* in the Gates section, because the lesson is about
+instruments and not about promises. What works: a multiline search (`\.catch\(\s*async`) plus a
+~120-line one-off over the real TypeScript checker — walk every `ExpressionStatement`, ask the
+checker whether the expression's type has a `then`, subtract `await` / `void` / `.catch(fn)` /
+`.then(a,b)`. Production carries one other continuation handler of the family,
 `backgroundChain.then(async …)` in `task-index.ts`, and that one is correct because its whole body
 is inside a try/catch.
 
-⚠️ **NEGATIVE RESULT — biome 2.4.10's `nursery/noFloatingPromises` is BLIND here. Do not reach for
-it and do not re-derive.** With `domains: { types: "all" }` it reports zero over this repo **and**
-zero over a planted `async function boom(){throw new Error("x")} ; boom();` sitting in the file it
-is checking. (`domains: { project: "all" }` is a different domain and merely switches on
-`noUndeclaredDependencies` — 214 errors of nothing to do with promises, which reads like a working
-instrument.) A ~120-line one-off over the real TypeScript checker does work: walk every
-`ExpressionStatement`, ask the checker whether the expression's type has a `then`, subtract `await`
-/ `void` / `.catch(fn)` / `.then(a,b)`. It found both planted probes. **The biome run's silence
-would have been reported as "there are none"** — same family as the blind `search` and the
-timeout-less mutation harness: an instrument that fails by producing the comfortable answer.
+⚠️ **The checker instrument has its own caveat, and it is not a defect: a type-level `Promise` arm
+is not a runtime promise.** The checker reports the declared union; whether the async arm is ever
+TAKEN is a question about the call site's configuration, answerable only per site. `queue.enqueue`
+is the case where it is taken (see below); Orama's `insert`/`remove` in `task-index.ts` are the case
+where it is not — measured with a 10-line probe in 35ms: under this repo's db config they return an
+id and a boolean synchronously, and `remove` of a missing id returns `false` rather than throwing.
+**Probe the call, do not read the `.d.ts`.**
 
-Two classes that survey turned up and that a reader here should know before writing new code:
+Two classes the survey turned up that a reader here should know before writing new code:
 
 - ⚠️ **`MessageQueue.enqueue()` returns `void | Promise<void>`**, and it returns the Promise exactly
   when the before-first-message hook is armed — i.e. on a fresh session and after every compaction
@@ -684,17 +702,20 @@ Two classes that survey turned up and that a reader here should know before writ
   `.catch` at all — no notification either, which is the same defect this section is about, one
   layer out.
 
-⚠️ **Phase 2 crash recovery must deliver `task_complete` with `quiet: true`.** Without it the
-delivery auto-launches the parent, and `autoResumeProjects` launches it too — a duplicate launch.
-Quiet still persists the message to JSONL, and `findUnconsumedMessages` recovers it when autoResume
-gets there.
+The full classified census — 26 server-side sites, 11 of them real, each with the reason it is or is
+not a hazard — lives in task `01KYDEFRM5WBDCRXPTGX75FYZ2`.
 
-Two things that look like duplicate-launch bugs and are not: after a crash,
-`orchestration_completed` never emitted, so `orchestration_started` from before the crash plus one
-from the resume is **two consecutive starts and is normal** — assert on `traceId` uniqueness
-instead. And in a restart test, `shutdown()` is required before `recreateApp()`, or the old app's
-agent stays alive and the new app launches a second one for the same node; in a real crash the
-process is dead, so that shape cannot occur in production.
+⭐ **DECIDED 2026-07-25 (`01KYDESAKCW186VZ8GEK6TW91W`): the scope worker should install a
+`process.on("unhandledRejection")` handler that LOGS AND LETS THE THREAD DIE.** It looks like the
+swallowing catch this file keeps arguing against, and the distinction that resolves it is *what the
+handler does AFTER it logs*. Log-and-die is pure attribution: the semantics do not change by one
+byte, and an anonymous worker death becomes one that names the lens. Log-and-swallow is the
+swallowing catch at PROCESS scope, and it is worse than the per-site version, because the worker
+then carries on in an unknown state while writing JSONL and managing worktrees. ⚠️ **Installing a handler SUPPRESSES
+the default action, so log-and-die is not free** — the death has to be re-raised deliberately, and
+that is the part a test must pin. ⚠️ **And a net does not reduce the 11**: it makes failures
+visible, not correct. If anything it raises their priority, because you can finally see how often
+they fire.
 
 ## Duplicate yield or done in one turn
 
@@ -1344,6 +1365,22 @@ that wrote down "a completeness survey run with a blind instrument returns a con
 were in the same task. **A tool description's "always use this" has an unstated premise — that the
 tool works. Spend one call proving your instrument sees a file you already know exists before
 trusting a by-name survey.**
+
+⭐ **Generalised, because this is the standing pattern rather than a run of bad luck: a checker
+reporting ZERO is a claim about the checker until you have made it report ONE.** Four instruments
+answered confidently and wrongly in one week — a `search` that could not see a third of the source,
+two gates that read 8% and 3.6% and printed `All checks passed.`, and (2026-07-25) biome 2.4.10's
+`nursery/noFloatingPromises`, which reports zero over this repo **and zero over a planted
+`async function boom(){throw new Error("x")} ; boom();` in the file it is checking**. Without that
+probe the survey would have been written up as "the type-aware linter finds none" — a false
+all-clear carrying a tool's authority, which is strictly worse than no check. **Planting is not
+diligence; it is the only thing that distinguishes "clean" from "not looking".**
+
+⚠️ **Sibling trap from the same survey, and the cheaper half to forget: a single-line grep is a
+claim about LINE BREAKS.** The shape being hunted was `.catch(async`, and `grep '\.catch(async'`
+returns **zero** hits in a repo that has one, because biome's formatter had split the call across
+two lines. A recommended instrument thus reported the whole class as already clean. Reach for a
+multiline search whenever the pattern spans a call boundary the formatter is free to break.
 
 ⚠️ **Consequence for this file**: any "grepped it, nothing points there" conclusion recorded here
 before 2026-07-25 was reached with an instrument that could not see `.mxd/plugin/`, and the failure
