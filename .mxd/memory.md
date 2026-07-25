@@ -39,6 +39,7 @@ This is a product property of Matrix's commit model, not a policy preference. Br
 5. **"Unify" = add third path** — delete until ONE remains.
 6. **Premature heuristic stacking** — when building a tool/analyzer, agents default to "handle every imagined case upfront": classifications, category labels, filter flags, pattern-match explanations. Each branch corresponds to an **imagined** use need, not an **observed** one. Half of them end up dead code, and the non-dead ones often hide data patterns the raw output would have revealed. **Correct default: start with the simplest raw dump. Add heuristics only after real use exposes a concrete need.** A 50-line dump is far more valuable than a 500-line "smart analyzer" whose categories were invented at design time. User framing: "List raw data first, add heuristics incrementally during actual use — we're not sure we actually need certain items."
 7. **Create-task as path of least resistance** — when a new requirement emerges, agents default to `create_task` even when an existing task (closed, verify, pending) is a better target. Three alternatives exist: (a) create_task fresh, (b) create_task + fork from source, (c) send_message to existing. Option (c) is often correct but loses in every "cheap" dimension: fresh description vs stale, clean session vs unknown state, single step vs two operations, "closed = finished" word bias. The agent picks (a) because it's the local optimum at every dimension — but globally it fragments context across redundant task trees. **Prompt alone cannot fix this** — mechanism is required: (1) required `origin` param on create_task forcing explicit fresh/fork/continue choice, (2) auto-search for similar titles on "fresh" with warning, (3) `latestDirective` field surfaced in get_tree so existing tasks' current focus is visible (not just their original description), (4) collapse fork_task_context into create_task's origin option to eliminate "two-step" cost. See draft task 01KNZGYY4T6SYWVT66DK13XCPV for full design. User framing: "Too many ways to achieve the same thing, and the easiest way isn't optimal."
+8. **Treating context as a deadline** — an agent that feels "context is running low" starts planning a handoff, cutting scope, or asking to be replaced. **Context is not a deadline, it is a compaction boundary.** When it fills, the agent continues with a summary; the task description and memory.md survive compaction by construction. So a compacted agent strictly DOMINATES a replacement: it has the same durable documents the newcomer would read, plus a summary of its own work, plus whatever tacit judgement survived in it. **Running low on context is never a reason to hand off.** The only legitimate reason is that FAMILIARITY ITSELF has become the liability — a final read-through, an adversarial review, anything where not knowing the material is the requirement rather than the cost. Two failures observed the same day: an agent halved its own remaining scope over a constraint that does not exist (and agents estimate their own remaining budget badly, so the estimate was likely wrong too), and root created a fresh task to continue finished-agent work without ever comparing it against reactivating the original — the reason was constructed after the fact and did not survive checking the data. Note this is #7's sibling: both are "start something new" winning by default over "continue something that exists".
 
 ## Change Ownership Principle
 
@@ -90,6 +91,10 @@ deliberate pass catches it, so the interval between passes is how long a wrong n
   went unrecorded for months.
 - About to leave a sentence standing as CURRENT? Verify it first — moving a sentence under a
   "current state" heading is **endorsing** it, not relocating it.
+- **Promised to do something later, once some condition holds?** Create a draft task for it *at
+  that moment*. A promise whose trigger exists only in one agent's context does not survive that
+  agent being interrupted — and it fails silently, because nothing anywhere records that it was
+  owed. (Same family as the rot above: a commitment with no home is a claim with no section.)
 
 ## Language Policy
 
@@ -308,7 +313,8 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 ## Agent Lifecycle
 
 - Root and child agents use the same launch function: `runAgentForNode` in `agent-lifecycle.ts`
-- `done()` = two-phase: Phase 1 (agent-side: close queue, loop exits) → Phase 2 (daemon-side: status→verify/failed, task_complete, done_notified marker). Intended orphan like yield — no tool_result written.
+- `done()` = two-phase, and an intended orphan like yield (no tool_result written). Full contract and
+  its two hard-won invariants: *Two-Phase done() Lifecycle*, immediately below.
 - `yield()` = loop-level pause. Provider intercepts before executeTool.
 - `end_turn` = implicit yield, never implicit done.
 - `stopTask()` = per-task real interrupt (close queue + abort signal via `TaskSession.abortController`).
@@ -329,6 +335,21 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 - **Status**: `done("passed")` → verify → close_task → closed. `done("failed")` → failed.
 - **Phase 2 ordering**: session=null is irreversibility boundary. Phase 2 runs AFTER session cleanup.
 
+**Two invariants inside Phase 2, both learned the hard way** (records in FIX-3 cc#3 and B-M4;
+re-verified in `agent-lifecycle.ts` 2026-07-25):
+
+- **The loop promise settles on EVERY path.** Phase 2 is wrapped in try/catch/finally, and the
+  `agentLoopPromises.delete` + resolve live in the `finally`. A throw anywhere in Phase 2 is logged,
+  not rethrown — the task already did its work, and a Phase-2 hiccup must not be treated as agent
+  failure. Why it matters: `stopTask` awaits that promise with **no timeout**, so a leaked promise
+  hangs the stop forever.
+- **task_complete must be DURABLE before `done_notified` is written.** Both are awaited and the
+  parent's store flushed before the marker. The marker is the crash-recovery signal meaning "Phase 2
+  finished", so if it can land while task_complete has not, a crash in that window leaves the parent
+  waiting forever with nothing to re-deliver. The reverse window (marker written, crash before its
+  own flush) re-delivers on restart — a duplicate completion is recoverable, a lost one is not, and
+  that asymmetry is the whole reason for the ordering.
+
 ## Auto-Launch Failure = task_complete(failed)
 
 `deliverMessage` auto-launches a pending child via `ensureChildAgentRunning`. When `beforeChildLaunch` throws (e.g., missing hook file, worktree creation fails), the sender's yield would have hung forever — target never ran, so no done() ever fires, so no task_complete ever delivered.
@@ -344,15 +365,33 @@ Design rule: any code path that could silently hang a yielding parent MUST notif
 
 ## Duplicate Yield Handling
 
-API can return multiple yield tool_calls in the same assistant turn. Evolution:
+API can return multiple yield tool_calls in the same assistant turn.
 
-**Fix 1**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done. Earlier yield/done orphans are genuine repair targets. Architectural lesson: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call.
+**Current behavior.** Two rules, both live:
 
-**Fix 2 (superseded)**: Provider loop wrote no-op tool_results for extras as a SEPARATE user message. This caused a new bug: extras user message + real yield's user message → 2 consecutive user messages → API 400 "Messages must alternate roles".
+1. **Repair skips the INTENDED orphan, which is specifically the LAST tool_call** — not "any
+   yield/done". Earlier yield/done orphans in the same turn are genuine repair targets and do get
+   interrupted results.
+2. **Extras emit to JSONL immediately** (orphan prevention) **but their live-path construction is
+   DEFERRED** via `pendingDuplicateYieldExtras`. On yield wake they bundle into the SAME
+   `buildUserTurn` call as the real yield, producing ONE user message of
+   `[...extras, real, ...queue]`. That order is forced by JSONL: extras emit at yield-detection and
+   the real one at wake, so the walker reconstructs them in that order and the live path must match
+   or the two drift.
 
-**Fix 3 (current)**: Extras' tool_result events still emit to JSONL immediately (orphan prevention), but their live-path construction is DEFERRED via `pendingDuplicateYieldExtras`. On yield wake, extras bundle into the SAME `buildUserTurn` call as the real yield, producing ONE user message with `[...extras, real, ...queue]`. Order matches JSONL (extras emit at yield-detection, real emits at wake → walker reconstructs in that order → live must match).
+⭐ **The reusable pattern: emit to JSONL for orphan prevention, defer the `messages[]` push so it
+merges with the next user turn.** The same shape solves the compaction-asymmetry bugs — see
+*Compaction Asymmetry* and FIX-5 R8-B#11, which extends `pendingDuplicateYieldExtras` into the
+compactOnly path.
 
-Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn" regression-guard this.
+Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn".
+
+**How it got here** — rule 1 came first ("skip yield/done" was too broad; the invariant is "skip the
+INTENDED orphan"). The first attempt at rule 2 wrote the extras' no-op tool_results as a SEPARATE
+user message, which produced a *new* bug: extras message + the real yield's message = two
+consecutive user messages → API 400 "Messages must alternate roles". Worth keeping because the
+failure is instructive: fixing an orphan by adding a message is how you turn a repair problem into
+an alternation problem, and deferral is what avoids both.
 
 ## Compaction Asymmetry
 
@@ -1486,9 +1525,14 @@ See: commit 0d8cda0, test file `src/drift-lifecycle.test.ts`, ValidatingMockAPI 
 3. **session_config tools=[] fix**: Moved session_config emission from agent-lifecycle to runProviderLoop (after tools are ready).
 4. **MCP tool ordering**: MCP servers connect asynchronously → tool registration order non-deterministic. Frozen tools solve this.
 
-### Cache Results
+### Cache results — measured once, when the four fixes landed
 - Restart: 99.8% cache hit (582 creation / 362K read)
 - Fork: 100% cache hit (0 creation / 365K read)
+
+These are a **dated measurement**, not a current reading: they are the evidence that the four fixes
+above worked, and they stay true as a record of that moment. Do NOT read them as "our cache hit rate
+is 99.8%" — nothing re-measures them, and a prefix change would move them without touching this
+file. If you need today's number, read `cache_creation` / `cache_read` off a real `usage` event.
 
 ### Message Cache Breakpoint
 Breakpoint on **last** user message (not second-to-last). Last message sent to API is always user role. Anthropic's 20-block lookback caches all preceding history. Previous "second-to-last" strategy caused full miss when only 1 user message existed (post-compaction with no new user input before restart).
@@ -2766,6 +2810,15 @@ in unfamiliar areas.
 
 ## Durability at process boundaries (FU2)
 
+> **Verified 2026-07-25, every constant in this region still matches the code** —
+> `WORKER_INIT_TIMEOUT_MS` 30s, `STABLE_RESET_MS` 60s, `RESTART_BACKOFF_MS` [2,4,8,16,30]s,
+> `SSE_INITIAL_STATE_RETRY_MS` 200 × 15 attempts (= the 3s budget), `pendingRestartTimers`,
+> `sseEpoch`, `formatSseEventId`/`parseSseLastEventId`, `{ env: process.env }` on the Worker
+> constructor, `.mxd.lock`, and `arrayBuffer()` in scope-worker. Recorded as a **negative result**:
+> this region was never re-checked before, and now it has been, so the next pass can skip it unless
+> daemon.ts changed. FIX-6 (below) fixes bugs in the machinery this section builds — read them
+> together.
+
 Three tightly-coupled durability gaps closed so process exits + stops don't lose data:
 
 ### shutdown() + stopAgent loop settlement
@@ -3512,10 +3565,12 @@ reads from disk on every call (local JSON, cost negligible).
 - Long-lived session token never appears in URL / proxy logs / history.
 
 ### Auth middleware exact-skip
-Skip set: `{ "/", "/auth/status", "/auth/logout" }` + static `/vendor/`
-`/app/` prefixes. Previously `startsWith("/auth/")` would silently allow
-any future `/auth/*` worker route past the middleware (Audit J H1).
-Regression guard: `GET /auth/bogus` with auth enabled → 401.
+~~Skip set: `{ "/", "/auth/status", "/auth/logout" }` + static `/vendor/` `/app/` prefixes.~~
+**SUPERSEDED twice** — see *The anonymous surface* under Audit R7 P1 for the current list, which is
+one exact path plus two prefixes plus a GET-only frontend-path predicate. The durable half of this
+entry: replacing a `startsWith("/auth/")` skip with an EXACT set (Audit J H1), because the prefix
+form would silently exempt any future `/auth/*` route someone added. Regression guard:
+`GET /auth/bogus` → 401.
 
 ### Case-insensitive Bearer
 `extractBearerToken` uses `/^Bearer[ \t]+(.+)$/i`. RFC 7235 mandates
@@ -3607,11 +3662,33 @@ Per-test pattern varies — a small `authed(daemon, token)` wrapper that attache
 
 Migrated files: `daemon.test.ts`, `daemon-auth.test.ts`, `daemon-bootstrap.test.ts`, `daemon-plugin-ui.test.ts`, `plugin-url-namespace.test.ts`, `daemon-harness.ts`, `web/ShellApp.test.tsx`. Lines migrated: ~200 across 7 files, within scope budget.
 
-### SKIP_EXACT rules (post-P1.1)
-- `/` — SPA root, login page renders pre-auth
-- `/auth/status` — login page needs to ask "are we authenticated?" before having a token
-- `/vendor/`, `/app/` (prefix match) — compiled bundles, no secrets
-- Everything else under `/auth/*` requires a token. Regression test: `/auth/bogus` → 401.
+### The anonymous surface (verified 2026-07-25 — this is the whole list)
+
+Four ways a request skips auth, and `SKIP_EXACT` is now only the first:
+
+1. `SKIP_EXACT` = **`{"/auth/status"}`**, one entry. The login page must be able to ask "am I
+   authenticated?" before it has a token.
+2. `/vendor/` and `/app/` prefixes — compiled bundles, no secrets.
+3. **`GET` + `isFrontendPath(path)`** — `/` exact, OR the first path segment is a **currently
+   registered project id**. This is the biggest part of the surface and the least obvious: after
+   Task Y, tasks live at `/<projectId>/<scope>/<taskPath>`, browsers do not send `Authorization` on
+   navigation, so a refresh on such a URL must reach the shell. The shell itself is
+   auth-content-free and every API call it makes is gated by this same middleware. Unregistered
+   first segments fall through to a clean 404. See *Task Y SPA fallback* for the `pm.has` predicate
+   and why it is not a ULID regex.
+4. Nothing else. **Everything under `/auth/*` other than `/auth/status` requires a token** —
+   regression test `/auth/bogus` → 401, which exists because a former `startsWith("/auth/")` skip
+   would have silently exempted any future `/auth/*` route.
+
+**Method-gated on purpose**: item 3 is `GET` only. POST/PATCH to a frontend-shaped path stays
+401 — those are not legitimate SPA paths, and an honest 401 beats accidentally serving HTML.
+
+~~Earlier descriptions of this set said `{"/", "/auth/status", "/auth/logout"}`, and later
+`{"/", "/auth/status"}` + prefixes.~~ Both are superseded: `/auth/logout` was removed by P1.1 (it
+was CSRF-abusable — any drive-by page could force a `bumpSecretVersion` and log everyone out), and
+`/` moved out of `SKIP_EXACT` into `isFrontendPath` when Task Y made project paths server-visible.
+Reading either old list understates the anonymous surface, which is exactly the wrong direction for
+an auth note to be wrong in.
 
 ## Audit R7 P2 — CLI onboarding fixes (2026-04-18)
 
@@ -5555,36 +5632,18 @@ the union through that intersection fine.
   count in a gate-restoration pass — biome's suggested `!` → `?.` autofix is marked
   *unsafe* and silently changes assertion semantics in tests.
 
-### ⚠️ The installed hook still does NOT cover merges — `pre-commit` is not run by `git merge`
-Empirically verified in a throwaway repo (`core.hooksPath` set, hook logs on run):
-**`git merge --no-ff <branch>` that auto-commits does NOT fire `pre-commit`.** Git
-fires `pre-merge-commit` for that path, and `.hooks/` contains ONLY `pre-commit`. So
-after the 2026-07-24 install, what is actually gated is:
+### ⚠️ The gate does not cover merges
 
-| path | hook git looks for | gated today? |
-|---|---|---|
-| root's direct `git commit` on main (memory curation, conflict resolution) | `pre-commit` | ✅ yes |
-| root's `git merge --no-ff <task-branch>`, clean auto-commit | `pre-merge-commit` | ❌ **no — file absent** |
-| a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | ✅ yes (inconsistent with the clean case) |
-| any commit inside a sub-task worktree | — (`hooksPath=/dev/null`) | ❌ no, by design |
-
-Merging is root's dominant path, so the gate as installed covers very little of the
-real workflow — and it fires on the CONFLICTING merge but not the clean one, which is
-backwards from intuition.
-
-**Deliberately NOT fixed by adding a `pre-merge-commit` hook**, because the project's
-documented merge model requires the opposite: "Intermediate merges may not typecheck
-(`--no-verify`). Final state must pass all hooks." Gating every merge would break
-incremental integration of parallel sub-tasks. The available options (root's call):
-(a) leave merges ungated and keep the manual `bash .hooks/pre-commit` discipline
-before declaring an integration finished; (b) add `pre-merge-commit` and accept
-`--no-verify` on intermediate merges — which reintroduces exactly the routine-bypass
-habit that hid these 24 errors; (c) move enforcement off the commit hook entirely
-(CI / a `mxd` preflight subcommand root runs once per integration).
+Established here, but it is a CURRENT-STATE fact rather than part of this record, so it lives in
+*What is actually gated (and what isn't)* (Reference & Pitfalls) — one place, with the coverage
+table and the fresh-clone caveat. Short version: `git merge --no-ff` with a clean auto-commit fires
+`pre-merge-commit`, which does not exist, so root's dominant path is ungated while a CONFLICTING
+merge is gated. Deliberately not fixed: the branch model requires intermediate merges to be allowed
+to not typecheck.
 
 ### Why this kept happening (the actual root cause)
-NOT "root bypassed the gate" — there was no gate to bypass (root's own correction in
-Known Pitfalls establishes this). The failure was that a *tracked* `.hooks/pre-commit`
+NOT "root bypassed the gate" — there was no gate to bypass (see *What is actually
+gated*). The failure was that a *tracked* `.hooks/pre-commit`
 existed, was referenced in memory as if it were active, and nothing pointed at it. The
 generalizable lesson: **a checked-in hook file is not an enforced hook.** Enforcement
 lives in untracked local config (`.git/config` → `core.hooksPath`), so it silently
@@ -5647,8 +5706,46 @@ Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", 
 - **Abort signal leak**: After stop, old runAgentForNode settles async. catch/finally check `sessionWasReplaced` to suppress stale error events.
 - **TS6133 `_` prefix**: TypeScript's `noUnusedLocals` does NOT respect `_` prefix for local variables or destructured locals — only for function parameters. For unused destructured React state, use `const [, setX] = useState(...)` (skip the getter slot). For unused `const` locals, delete outright. The underscore-prefix hint in our prompts is a holdover that doesn't match TypeScript's actual behavior.
 - **`bun run check` auto-writes**: `bun run check` runs `biome check --write` and silently formats 70+ files. `bun run check:ci` is the non-write variant used by the pre-commit hook. When debugging lint, use `check:ci`. When committing formatting sweeps, use `check` and split format-only changes into a separate commit.
-- **Pre-commit hook: worktrees skip it, main enforces it (since 2026-07-24)**: `worktree-manager.ts` sets `core.hooksPath = /dev/null` per worktree, so `git commit` in a sub-task skips the hook entirely — intentional (sub-tasks commit often; a full typecheck+lint+test on each would be unusable). To verify the hook passes from a worktree, run `bash /path/to/main/.hooks/pre-commit` manually.
-  **CORRECTION of a long-standing false entry**: this note used to claim "only root-orchestrator commits on main are actually gated." That was WRONG — main had NO `core.hooksPath` set, so git looked in `.git/hooks/pre-commit`, which never existed (only `.sample` files). The tracked `.hooks/pre-commit` was orphaned; nothing pointed at it. **Nobody was ever gated, anywhere.** Every `--no-verify` on main was a no-op bypassing a gate that didn't exist. That is how 24 typecheck errors accumulated across several merges undetected. Fixed by running the install command the hook's own header documents: `git config core.hooksPath .hooks`. Verified it now fails on typecheck (exit 2). **This config is local (`.git/config`), NOT tracked — a fresh clone must run it again.** If onboarding friction matters later, move it into `.mxd/hooks/setup_worktree.sh`'s main-repo counterpart or a `postinstall` script.
+- **Pre-commit hook**: see *What is actually gated* below — it needs more than a bullet.
+
+## What is actually gated (and what isn't)
+
+**Verified 2026-07-25.** Answer this before assuming a green result means anything.
+
+| path | hook git looks for | gated? |
+|---|---|---|
+| direct `git commit` on main (memory curation, conflict resolution) | `pre-commit` | ✅ yes |
+| `git merge --no-ff <branch>` with a clean auto-commit | `pre-merge-commit` | ❌ **no — that file does not exist** |
+| a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | ✅ yes |
+| any commit inside a sub-task worktree | none (`core.hooksPath=/dev/null`) | ❌ no, by design |
+
+Current config, checked: main's `.git/config` has `core.hooksPath = .hooks`; worktrees have
+`/dev/null`; `.hooks/` contains **only** `pre-commit`.
+
+Three consequences, none obvious:
+
+1. **The clean merge — root's dominant path — is NOT gated, while the conflicting merge IS.** That
+   is backwards from intuition and it is why "the hook passed" says very little about an
+   integration. Deliberately not fixed by adding `pre-merge-commit`: the branch model REQUIRES that
+   intermediate merges be allowed to not typecheck, and gating every merge would just re-establish
+   the routine-`--no-verify` habit that hid 24 errors before. The options if this ever needs
+   closing are (a) leave merges ungated and keep running `bash .hooks/pre-commit` by hand once per
+   integration, (b) add the hook and accept `--no-verify` on intermediate merges, (c) move
+   enforcement off the commit hook entirely (CI, or a preflight subcommand).
+2. **Worktrees skip the hook on purpose.** Sub-tasks commit constantly; a full typecheck + lint +
+   test on each would be unusable. To check the gate from a worktree, run
+   `bash /path/to/main/.hooks/pre-commit` manually.
+3. ⚠️ **`core.hooksPath` is LOCAL config (`.git/config`), not tracked.** A fresh clone is ungated
+   again and looks identical to a gated one. Install with `git config core.hooksPath .hooks`. If
+   that onboarding step ever bites, it belongs in a `postinstall` script or in the main-repo
+   counterpart of `.mxd/hooks/setup_worktree.sh` — nobody will remember to run it by hand.
+
+**A checked-in hook file is not an enforced hook.** For years `.hooks/pre-commit` existed, was
+referenced in this file as if active, and nothing pointed at it — git was looking in
+`.git/hooks/pre-commit`, which held only `.sample` files. **Nobody was gated anywhere**, every
+`--no-verify` was a no-op against a gate that did not exist, and the absence looked exactly like
+compliance. The only way to know is to assert it: `git config core.hooksPath`. (Superseded by this
+section: an older note claiming "only root's commits on main are gated" — that was never true.)
 
 ## Known Bugs (unfixed)
 

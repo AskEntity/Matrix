@@ -79,6 +79,13 @@ of phase 2 you understand the material too well to see what is missing — which
 mechanism behind the "destroyed by understanding" rot. The person best placed to finish is the
 person least able to.
 
+**This is the ONLY legitimate reason to hand this work over.** "Running low on context" is not one:
+context is a compaction boundary, not a deadline — a compacted agent continues with a summary, and
+both this file and `memory.md` survive compaction by construction. The compacted original therefore
+strictly dominates a replacement, who would re-read the same documents *without* the summary and
+without any tacit judgement. See `memory.md` § *AI Agent Laziness Patterns* #8. Phase 3 is different
+in kind: there, not knowing the material is the requirement, not the cost.
+
 ---
 
 ## Checks — run ALL of these after EVERY change, not just in phase 1
@@ -156,6 +163,18 @@ next lookup.
   undone. Also record the false positives you hit while checking (e.g. a deleted function still
   appearing in comments that explain its deletion) — that is a negative result and it stops the
   next person reopening it.
+- **When a region checks out clean, say so IN the file**, dated and scoped ("verified <date>, skip
+  unless <file> moved"). Otherwise the next pass re-derives the same finding from scratch, which is
+  exactly the cost this exercise exists to remove. The file has almost no negative results; it
+  should have more.
+- **Rot correlates with the gap between when a sentence was written and when the code under it last
+  moved** — not with the sentence's age alone. The newest region checked out entirely clean because
+  its entries were written by the same tasks, in the same sessions, as the code they describe. This
+  is why the oldest sections are worth reordering first: it front-loads the finds.
+- **Understating a security surface is worse than overstating it.** The auth middleware's skip list
+  was described twice, both times smaller than reality, because a later change (frontend paths
+  becoming server-visible) enlarged the anonymous surface without touching either auth entry. When
+  verifying anything about access control, check what is reachable, not just what the entry lists.
 
 ---
 
