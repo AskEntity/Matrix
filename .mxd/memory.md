@@ -348,6 +348,131 @@ disappeared"*, which is addressed to nobody.
   being interrupted, and it fails silently because nothing records that it was owed.
 
 ---
+# How This Project Fools Itself
+---
+
+## ⭐ Plausible and wrong
+
+> **The expensive failures here have not been mistakes that looked like mistakes. They have been
+> well-written, well-evidenced, plausible things that were wrong — and each one then LOWERED the bar
+> for everything downstream of it, because a check is only ever judged adequate against the
+> explanation you currently believe.**
+
+⭐ **What installs a fiction here is never a guess. It is something that LOOKS like evidence** — a
+real error message carrying an unverified attribution, or a real published mechanism fitted to two
+data points. **A guess invites checking; a citation suppresses it.** That is why the sourced-looking
+story is the one that survives unchallenged long enough to become load-bearing, and it is why the
+detectors below are all about provenance rather than about plausibility.
+
+**Member 1: an ENFORCED fiction manufactures its own evidence.** `ValidatingMockAPI` enforced a
+role-alternation rule that does not exist. Our JSONL history contains **628 occurrences of "Messages
+must alternate roles" — every one from our own mock and none from the API.** Four production
+mechanisms, one `test.todo` and one memory entry filed as a "reusable pattern" were built to avoid a
+400 that cannot happen.
+
+How it got installed is the instructive part. The helper's own comment wrote down BOTH rules and then
+chose:
+
+> *"We don't assert the trailing-role rule because some walker outputs are intermediate and meant to
+> be extended. We DO assert the alternation and structural shape."*
+
+**That reasoning is correct.** Some walker outputs genuinely are conversation *prefixes* that end on
+assistant, and asserting the real rule would redden correct fixtures. So:
+
+> ⚠️ **An inconvenient TRUE assertion plus a conveniently-green FALSE one means the false one gets
+> installed, and is then believed as fact. The fiction does not win on persuasiveness — it wins on
+> not causing trouble.** Once it lives inside a `throw` it starts MANUFACTURING EVIDENCE: 628 error
+> strings from the rule that was *executed*, zero from the rule that was merely *documented*. **The
+> knowledge was never lost; the enforcement was.**
+
+⚠️ **Detector — do not audit whether the assertions are correct.** That comment was entirely correct.
+Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
+fork is where a fiction starts producing evidence.
+
+**An over-strict test double bills you three ways, and the third leaves no artifact.** It creates
+complexity you pay for (the four mechanisms). It hides gaps — a fiction occupying the "role rules"
+slot stopped anyone asking what the real role rule was, so the true one got zero coverage and a
+reachable production 400 sat there unnoticed. And ⭐ **it VETOES correct code**: interrupting an agent
+before it emits anything, parking it, then sending another message produces `[…, user, user]` —
+legal, and the old mock rejected it, so the correct implementation could not be tested, the test was
+truncated at the park, and a comment was left saying the constraint was unverified. **Nothing was
+red. The feature simply acquired a reputation for being hard to test.** The first two produce
+artifacts you can go find; the third produces *absence*. **Ask what your test double has made people
+give up on, not only what it has made them build.**
+
+**The name was the other tell.** `assertStructurallyValidApiMessages` fused two different predicates
+— *structurally valid* (a prefix property) and *API messages* (a sendable-request property) — and
+code can only be one of them, so it silently became the weaker one plus a fictional bonus. **A name
+that claims "valid" without saying valid-for-what will drift to "matches what we imagined."** The fix
+was a new *concept*, not a stricter assertion: `wellFormedPrefixViolations` (first-must-be-user;
+pairing, but an answering run that RUNS OFF THE END of the array is incomplete rather than broken;
+orphan tool_results are violations at any position) and `sendableRequestViolations` (all of that plus
+trailing-role plus the last assistant's tool_uses answered by now). Note the trap's second half: the
+PAIRING rule has the same intermediate-state problem the trailing-role rule has, so whoever tried to
+assert the true rules with only one predicate available would have gone red on correct fixtures
+*twice*. **Courage was not the missing ingredient; the concept was.**
+
+⭐ **Zero existing tests went red when the true rules were added, and that is the finding rather than
+a disappointment.** `validateRequest` only ever sees requests the loop actually decided to send, and
+the loop only sends when its state is right — except on the one reachable bug, which had no test at
+all. **The fiction was not masking existing tests. It was masking the fact that nobody had written
+the missing one.** A gap does not turn red; it stays invisible until someone goes looking, which is
+why the probe had to be written by hand rather than discovered by running the suite.
+
+What DID go red was swapping the fused helper for the two real predicates: 10 tests, **every one a
+fixture that could never be sent to the API, and none fixed by loosening a rule** — six walker
+fixtures produced assistant-first output because they only cared about the assistant/tool region, and
+four prefix-byte-comparison fixtures opened with an orphan `tool_result`. Given a real conversation
+head they assert exactly what they always did. One did NOT get a head and is the interesting one: a
+dirty-JSONL scenario table claimed "the walker produces valid structure" for an *assistant-first*
+output. It does not, and **that is not hypothetical — a session was once permanently bricked by
+exactly that shape**, when a bare `compact_marker` left `readActive()` starting on an assistant turn.
+
+**Member 2: a plausible-but-wrong MECHANISM sets the verification bar.** Chasing the CoreML NaN
+above, a real published mechanism was found — ORT's CoreML provider defaults to the NeuralNetwork
+model format, which implicitly casts to FP16 — and an explanation was built that fitted both data
+points. **That is over-fitting to n=2 while carrying a citation.**
+
+> ⚠️ **A wrong mechanism does not merely fail to help — it LICENSES A WEAKER TEST, because a test's
+> adequacy is judged against the mechanism you currently believe.** "FP16 overflows on long inputs"
+> implies short inputs are safe, under which a single long probe is not merely adequate but
+> *well-chosen*. The weakened test then passes and confirms everything.
+
+This is a different failure from trusting a result you should have checked: here a **causal story**
+silently sets the bar, so the check that would have caught it is the one the story talked you out of
+needing. It was caught only because the falsification test was treated as the deliverable and the
+hypothesis as packaging.
+
+⭐ **And the end of the story is better shaped than "the mechanism was wrong", which is why it is
+worth the lines.** A *variant* of the hypothesis was proposed — that the conversion step itself is
+the bug rather than FP16's range — and **it is correct**: `coreml` + `dtype: "fp16"` is clean on
+every input, because there is nothing left to convert. The decision does not move an inch anyway.
+CoreML measured 84.2ms/doc at 382.6ms CPU/doc against webgpu's 56.5/3.8 in the same run, fp16 doubles
+the weights on disk and in memory, and **`webgpu` + `fp16` does not even load** (`Invalid
+ShaderModule "LayerNorm"`). So fp16 unlocks the device we reject and breaks the one we ship. **A
+correct mechanism that changes no decision is still worth establishing** — it is what tells you the
+rejection rests on measurement rather than on the wrong story you started with.
+
+**The class is not confined to code, and the cheapest instance to guard against is reading.** A
+short instruction was given a coherent interpretation that fit its words, and acting on that reading
+would have deleted 660 lines of this file; the reading was defended with "a revert restores anything
+lost", which is true and beside the point — **the revert restores the lines, not the hour.** Same
+shape as the two fictions above: a plausible account, held with more confidence than its evidence
+carried, silently lowering the bar for the check that would have caught it. ⭐ **When an instruction
+is short and the action it licenses is irreversible or expensive, one clarifying question is always
+cheaper than a confident reading.** The temptation is strongest exactly when the reading is
+coherent, because coherence feels like confirmation.
+
+⭐ **Fourth member, and the one you are most likely to commit while doing everything else right: a
+measurement that contradicts your plan is not a result to report afterwards — it is a reason to
+stop.** Mid-execution of that same deletion, the first rung was measured at 82 lines against an
+estimate of 310, which was already enough to refute the plan it was part of. The intent was to
+finish the cuts and report the discrepancy after. **Nothing about that is lazy or careless — it is
+the ordinary shape of finishing what you started**, which is exactly why it needs to be written
+down: the surprising number arrives while you are busy, and "I'll report it when I'm done" costs
+nothing to think and everything if the plan was wrong.
+
+---
 # The Agent Loop
 ---
 
@@ -1561,127 +1686,6 @@ CURRENT buggy shape.
 send the auth group's `systemPreamble` as the FIRST system block, or every call 429s. A first-pass
 probe that omitted it produced a wall of rate limits that reads exactly like validation failure and
 nearly yielded the opposite conclusion.
-
-## ⭐ Plausible and wrong: how this project fools itself
-
-> **The expensive failures here have not been mistakes that looked like mistakes. They have been
-> well-written, well-evidenced, plausible things that were wrong — and each one then LOWERED the bar
-> for everything downstream of it, because a check is only ever judged adequate against the
-> explanation you currently believe.**
-
-⭐ **What installs a fiction here is never a guess. It is something that LOOKS like evidence** — a
-real error message carrying an unverified attribution, or a real published mechanism fitted to two
-data points. **A guess invites checking; a citation suppresses it.** That is why the sourced-looking
-story is the one that survives unchallenged long enough to become load-bearing, and it is why the
-detectors below are all about provenance rather than about plausibility.
-
-**Member 1: an ENFORCED fiction manufactures its own evidence.** `ValidatingMockAPI` enforced a
-role-alternation rule that does not exist. Our JSONL history contains **628 occurrences of "Messages
-must alternate roles" — every one from our own mock and none from the API.** Four production
-mechanisms, one `test.todo` and one memory entry filed as a "reusable pattern" were built to avoid a
-400 that cannot happen.
-
-How it got installed is the instructive part. The helper's own comment wrote down BOTH rules and then
-chose:
-
-> *"We don't assert the trailing-role rule because some walker outputs are intermediate and meant to
-> be extended. We DO assert the alternation and structural shape."*
-
-**That reasoning is correct.** Some walker outputs genuinely are conversation *prefixes* that end on
-assistant, and asserting the real rule would redden correct fixtures. So:
-
-> ⚠️ **An inconvenient TRUE assertion plus a conveniently-green FALSE one means the false one gets
-> installed, and is then believed as fact. The fiction does not win on persuasiveness — it wins on
-> not causing trouble.** Once it lives inside a `throw` it starts MANUFACTURING EVIDENCE: 628 error
-> strings from the rule that was *executed*, zero from the rule that was merely *documented*. **The
-> knowledge was never lost; the enforcement was.**
-
-⚠️ **Detector — do not audit whether the assertions are correct.** That comment was entirely correct.
-Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
-fork is where a fiction starts producing evidence.
-
-**An over-strict test double bills you three ways, and the third leaves no artifact.** It creates
-complexity you pay for (the four mechanisms). It hides gaps — a fiction occupying the "role rules"
-slot stopped anyone asking what the real role rule was, so the true one got zero coverage and a
-reachable production 400 sat there unnoticed. And ⭐ **it VETOES correct code**: interrupting an agent
-before it emits anything, parking it, then sending another message produces `[…, user, user]` —
-legal, and the old mock rejected it, so the correct implementation could not be tested, the test was
-truncated at the park, and a comment was left saying the constraint was unverified. **Nothing was
-red. The feature simply acquired a reputation for being hard to test.** The first two produce
-artifacts you can go find; the third produces *absence*. **Ask what your test double has made people
-give up on, not only what it has made them build.**
-
-**The name was the other tell.** `assertStructurallyValidApiMessages` fused two different predicates
-— *structurally valid* (a prefix property) and *API messages* (a sendable-request property) — and
-code can only be one of them, so it silently became the weaker one plus a fictional bonus. **A name
-that claims "valid" without saying valid-for-what will drift to "matches what we imagined."** The fix
-was a new *concept*, not a stricter assertion: `wellFormedPrefixViolations` (first-must-be-user;
-pairing, but an answering run that RUNS OFF THE END of the array is incomplete rather than broken;
-orphan tool_results are violations at any position) and `sendableRequestViolations` (all of that plus
-trailing-role plus the last assistant's tool_uses answered by now). Note the trap's second half: the
-PAIRING rule has the same intermediate-state problem the trailing-role rule has, so whoever tried to
-assert the true rules with only one predicate available would have gone red on correct fixtures
-*twice*. **Courage was not the missing ingredient; the concept was.**
-
-⭐ **Zero existing tests went red when the true rules were added, and that is the finding rather than
-a disappointment.** `validateRequest` only ever sees requests the loop actually decided to send, and
-the loop only sends when its state is right — except on the one reachable bug, which had no test at
-all. **The fiction was not masking existing tests. It was masking the fact that nobody had written
-the missing one.** A gap does not turn red; it stays invisible until someone goes looking, which is
-why the probe had to be written by hand rather than discovered by running the suite.
-
-What DID go red was swapping the fused helper for the two real predicates: 10 tests, **every one a
-fixture that could never be sent to the API, and none fixed by loosening a rule** — six walker
-fixtures produced assistant-first output because they only cared about the assistant/tool region, and
-four prefix-byte-comparison fixtures opened with an orphan `tool_result`. Given a real conversation
-head they assert exactly what they always did. One did NOT get a head and is the interesting one: a
-dirty-JSONL scenario table claimed "the walker produces valid structure" for an *assistant-first*
-output. It does not, and **that is not hypothetical — a session was once permanently bricked by
-exactly that shape**, when a bare `compact_marker` left `readActive()` starting on an assistant turn.
-
-**Member 2: a plausible-but-wrong MECHANISM sets the verification bar.** Chasing the CoreML NaN
-above, a real published mechanism was found — ORT's CoreML provider defaults to the NeuralNetwork
-model format, which implicitly casts to FP16 — and an explanation was built that fitted both data
-points. **That is over-fitting to n=2 while carrying a citation.**
-
-> ⚠️ **A wrong mechanism does not merely fail to help — it LICENSES A WEAKER TEST, because a test's
-> adequacy is judged against the mechanism you currently believe.** "FP16 overflows on long inputs"
-> implies short inputs are safe, under which a single long probe is not merely adequate but
-> *well-chosen*. The weakened test then passes and confirms everything.
-
-This is a different failure from trusting a result you should have checked: here a **causal story**
-silently sets the bar, so the check that would have caught it is the one the story talked you out of
-needing. It was caught only because the falsification test was treated as the deliverable and the
-hypothesis as packaging.
-
-⭐ **And the end of the story is better shaped than "the mechanism was wrong", which is why it is
-worth the lines.** A *variant* of the hypothesis was proposed — that the conversion step itself is
-the bug rather than FP16's range — and **it is correct**: `coreml` + `dtype: "fp16"` is clean on
-every input, because there is nothing left to convert. The decision does not move an inch anyway.
-CoreML measured 84.2ms/doc at 382.6ms CPU/doc against webgpu's 56.5/3.8 in the same run, fp16 doubles
-the weights on disk and in memory, and **`webgpu` + `fp16` does not even load** (`Invalid
-ShaderModule "LayerNorm"`). So fp16 unlocks the device we reject and breaks the one we ship. **A
-correct mechanism that changes no decision is still worth establishing** — it is what tells you the
-rejection rests on measurement rather than on the wrong story you started with.
-
-**The class is not confined to code, and the cheapest instance to guard against is reading.** A
-short instruction was given a coherent interpretation that fit its words, and acting on that reading
-would have deleted 660 lines of this file; the reading was defended with "a revert restores anything
-lost", which is true and beside the point — **the revert restores the lines, not the hour.** Same
-shape as the two fictions above: a plausible account, held with more confidence than its evidence
-carried, silently lowering the bar for the check that would have caught it. ⭐ **When an instruction
-is short and the action it licenses is irreversible or expensive, one clarifying question is always
-cheaper than a confident reading.** The temptation is strongest exactly when the reading is
-coherent, because coherence feels like confirmation.
-
-⭐ **Fourth member, and the one you are most likely to commit while doing everything else right: a
-measurement that contradicts your plan is not a result to report afterwards — it is a reason to
-stop.** Mid-execution of that same deletion, the first rung was measured at 82 lines against an
-estimate of 310, which was already enough to refute the plan it was part of. The intent was to
-finish the cuts and report the discrepancy after. **Nothing about that is lazy or careless — it is
-the ordinary shape of finishing what you started**, which is exactly why it needs to be written
-down: the surprising number arrives while you are busy, and "I'll report it when I'm done" costs
-nothing to think and everything if the plan was wrong.
 
 ## The two providers
 
