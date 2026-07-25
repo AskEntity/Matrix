@@ -1084,15 +1084,35 @@ prefix itself and this walk does not, so it is slower — 0.3ms → 0.4ms. Delib
 
 ## Gates: a passing gate looks identical whether it read 8% or 100%
 
-Two gates had scopes narrower than their names, and both are now subtractions:
-`scripts/check-i18n.sh` walks every non-test `.tsx` minus a named prune list (4 → 31 files), and
-`src/data-paths.test.ts`'s source audit walks the repo root instead of `src/`. Before the fix the
-i18n gate read **927 of 11,534 lines (8%)** — never the shell's own `SettingsPanel.tsx` or
+Every gate in this repo has now been caught claiming more than it read, and they failed along **three
+independent axes**. That is the part to carry: fixing one axis leaves the others silently intact, and
+the output looks identical either way.
+
+| gate | axis | the claim | what it checked |
+|---|---|---|---|
+| `scripts/check-i18n.sh` | SCOPE | bare strings in JSX | 4 of 31 files — **927 of 11,534 lines (8%)** |
+| `scripts/check-i18n.sh` | DEPTH | bare strings | 1 syntactic form of 4 — **1 of 6** in `ErrorBoundary.tsx` |
+| `src/data-paths.test.ts` | PATTERN | only `data-paths.ts` builds paths from `dataRoot` | the 16 literal characters `dataRoot.slice(2)` |
+| `.hooks/pre-commit` | SCOPE | `All checks passed.` | **4 of 141** test files, while NAMING five |
+
+All four are fixed. The i18n gate never touched the shell's own `SettingsPanel.tsx` or
 `AppHeader.tsx`, and never *any* of the 25-file plugin UI, which is where essentially every
-user-facing string in this product lives — and then printed `i18n check passed — no bare strings
-found in JSX`, unqualified, from inside the pre-commit hook. The data-paths audit was proven dead by
-experiment rather than by reading: a `dataRoot.slice(2)` planted in `.mxd/plugin/scope-opts.ts` left
-it at 54 pass / 0 fail.
+user-facing string in this product lives. The data-paths audit was proven dead by experiment rather
+than by reading: a `dataRoot.slice(2)` planted in `.mxd/plugin/scope-opts.ts` left it at 54 pass /
+0 fail.
+
+⚠️ **The sharpest instance, and it upgrades the class statement: an addition list does not merely
+fail to cover NEW code — it silently stops covering the code it explicitly NAMED.** The hook listed
+five test files and ran four. `src/direct-provider.test.ts` was deleted 2026-03-12, **four days after
+being added to that list**, and the hook went on naming it for 4.5 months while printing
+`All checks passed.` What made it silent is the runner: **`bun test` skips a path that does not exist
+and still exits 0.** So even the list's own stated scope was fiction, and nothing green anywhere
+carried that information.
+
+⭐ **Second detector for this family, worth as much as the finding: an addition list must FAIL when a
+listed item is ABSENT.** A checker that shrugs at a missing entry cannot tell *"we chose not to check
+this"* from *"this evaporated"*. Pin it with a test rather than only implementing it — a
+named-but-missing entry is precisely the condition nobody thinks to re-verify.
 
 ⭐ **Start from everything and subtract; do not enumerate what to include.** A subtract-list fails
 LOUDLY — something noisy shows up and someone adds an entry. An include-list fails SILENTLY: new
@@ -1113,8 +1133,18 @@ detector: re-narrowing to `-maxdepth 1` drops it to 4 in front of whoever commit
 the same property in non-rotting form — scanned must exceed the number of non-test `.tsx` directly
 under `web/`, both sides measured — so the historical bug reports as `Expected: > 4, Received: 4`.
 
-⭐ **A partial-hit gate plus a fix-only-what-it-flagged policy produces incoherent output.** The
-i18n heuristic is single-line, so in a component with 6 user-visible strings it flagged 1. Fixing
+⭐ **And the count must be COMPUTED, never written down.** A literal `5 of 140` is indistinguishable
+from a true one on the day it stops being true — the drained rot, sitting inside the very sentence
+whose job is to describe scope. The hook derives both numbers (`wc -w` over its own list,
+`git ls-files` for the suite), so a re-narrowing prints `3 of 141` in front of whoever commits next,
+and a suite growing around a frozen list shows its own ratio worsening. **Every axis gets the same
+treatment**: the i18n gate prints its FORM count beside its file count, so a narrowing of depth is
+exactly as visible as a narrowing of scope. That symmetry was the only thing really missing on
+either axis.
+
+⭐ **A partial-hit gate plus a fix-only-what-it-flagged policy produces incoherent output.** This
+outlives any particular widening — a heuristic is partial by construction, and the four-form version
+still misses things. When it was single-line it flagged 1 of a component's 6 user-visible strings. Fixing
 that one leaves a component half translated and half English — worse than untouched, and it looks
 *handled*. **The unit of repair is the coherent unit, not the flagged line**; a gate that catches a
 subset tells you WHERE to look, not WHAT to fix. The judgement is per-case and the same round went
@@ -1130,6 +1160,47 @@ type must NOT report, and real JSX text including a `>` in column 0 MUST. And **
 through `t()` with the same value in every locale**, which is what `"header.title": "Matrix"` has
 always done; an exemption list was considered and rejected as the entry point for the next fictional
 rule.
+
+**The heuristic knows four forms now** — `>text<` on one line; text on its own line with the tag
+closed on the one before; a user-visible prop (`title`/`alt`/`placeholder`/`aria-label`) carrying a
+literal; a ternary or fallback whose branches are text. 1 hit → **26, every one real**. Fixing DEPTH
+honestly would mean a TSX parser (enumerate JSXText and JSXAttribute, subtract what routes through
+`t()`); a regex cannot become one, so these forms ARE an addition list and the remedy is the printed
+form count rather than a pretence of completeness.
+
+⭐ **One rule bought the precision, and it is the reusable part: a user-visible string starts with a
+capital OR contains a space.** Unfiltered, the ternary form ran at **32%** — reporting
+`rotate(90deg)`, `currentColor`, `mxd-btn-stop`, `sk-ant-...` and dotted i18n keys like
+`rollback.rewindTitle`. Filtered, ~100%. ⚠️ **The recall it costs is stated where the rule lives and
+pinned by a test: a single lowercase word with no space is NOT reported**, so `alt="attached"` is a
+real bare string this gate cannot see, and **baseline 0 will not mean zero bare strings**. A
+deliberate recall gap nobody wrote down is one commit from becoming the next depth defect — which is
+exactly what this gate was just fixed for. The reason to take the trade at all: **a gate with a bad
+hit rate teaches people to skim past it**, and then it is worth less than nothing.
+
+⚠️ **`aria-label=` had been sitting in the gate's SVG skip list**, between `viewBox` and
+`strokeWidth` — an accessibility string a screen reader speaks, skipped as if it were path geometry.
+Pulling it out changes 0 existing hits, which is what makes the fix provably not a behaviour change
+anywhere else.
+
+⭐ **When a widened gate surfaces a real backlog, RATCHET — and make the baseline write itself down.**
+The widening found 26 pre-existing bare strings, so two things were true at once: the gate is correct
+and the repo cannot pass it. Failing every commit until a translation project finishes is not a
+strict gate, it is one that gets `--no-verify`'d, which leaves no trace — the way 24 type errors once
+accumulated. **A gate nobody can pass stops being evidence about anything.** So
+`scripts/i18n-baseline.txt` carries the measured debt, the gate fails on any RISE, and **rewrites the
+file downward on any FALL**. The rewrite is the load-bearing half, not convenience: a baseline only a
+human remembers to lower is a number that quietly stops being true, so fixing ten strings against a
+stale 26 lets ten new ones land unnoticed — the drained rot, reintroduced by the fix for it. The hook
+stages the file, so the lowered number rides in the commit that earned it. ⚠️ Known hole, accepted
+and recorded next to the baseline: it is ONE count, so removing one string and adding another in the
+same commit nets to zero. A per-file table closes it and is a bigger surface than the thing it
+protects.
+
+⚠️ **Do not let the string cleanup swallow the gate fix.** Widening flags a lot, and the pull to fix
+them "while I'm here" is strong; it converts a nearly-finished bounded task into an unbounded
+translation project, which is how the thing that was going to protect us gets abandoned halfway.
+Count them, file them (`01KYDBRDAPF13M5X0E7PGQVB0X`), ship the gate.
 
 ### The census — negative results, so nobody re-runs this
 
@@ -1147,16 +1218,35 @@ Every file-enumeration site in the repo was searched, deliberately with bash `gr
   IS the claim.
 - **There is no CI.** `.github/` and `.gitlab-ci.yml` do not exist; the pre-commit hook is the only
   gate runner in this repo.
-- ⚠️ **The hook itself is the third addition list**: it runs `bun test --bail` on **5 of 140** test
-  files (3.6%) and then prints `All checks passed.` Here subtraction is genuinely infeasible — a
-  full `bun test` is ~270-300s per commit — which is the performance exception, and the remedy is
-  the other half of the i18n fix: say what you ran. Filed as `01KYCYSPVYPW0SGCX2YMK59874`.
+- ⚠️ **The hook itself was the third addition list** — 3.6% of the suite behind an unqualified
+  `All checks passed.` **Subtraction is genuinely infeasible here** (a full `bun test` is
+  ~255-300s per commit), which is the performance exception the rule leaves open, so the remedy was
+  the other half of the i18n fix: say what you ran. Now fixed, along with the two axis-siblings
+  below. **The census found no fourth; that census is done.**
 
-Two more of the same class along a different axis, filed not fixed: the i18n heuristic's DEPTH is
-still an addition list of one syntactic form (`01KYCYSPVYPW0SGCX2YMK59875`), and the data-paths
-audit's PATTERN is one spelling, so `dataRoot.substring(2)` passes silently
-(`01KYCYTJ2TC72AR8RDZGF9HMBZ`). **"Scope" is only one of the dimensions an addition list can hide
-in.**
+⭐ **"Scope" is only one dimension an addition list can hide in — PATTERN is another, and it hides
+better**, because a widened scope makes a narrow pattern look thoroughly exercised. The data-paths
+audit's scope was fixed while its regex still matched sixteen literal characters, so
+`dataRoot.substring(2)`, `.replace("@/", "")`, `.split("@/")[1]`, `dataRoot[2]` and a
+formatter-wrapped `dataRoot\n\t.slice(2)` all passed in silence. Widened to *any* operation on a
+dataRoot-named value, it immediately found a real second site the narrow pattern could never have
+seen: `effectiveDataRoot` in `plugin.ts`, which is legitimate — dataRoot in, dataRoot out, never a
+path — and is now a NAMED allowlist entry carrying its reason, which is what makes the check a
+subtraction. Round trip: **the old regex caught 1 of 8 planted spellings; the new audit catches 8 of
+8 and names the file.** Two limits stated rather than left to be discovered: a direct rebind
+(`const r = cfg.dataRoot`) gets its own check, and a value laundered through a function return is out
+of reach of any grep. ⚠️ Requiring the call parens (`dataRoot.slice(`) is load-bearing — five doc
+comments in this repo end a sentence on the word and start the next with a capital, which a bare
+`dataRoot\.\w+` reads as a method call.
+
+⚠️ **NEGATIVE RESULT — branded types were believed to be the one direction that escapes the
+enumeration frame entirely, and they do not.** Probed with `tsc` rather than reasoned about: on
+`type DataRoot = string & {__brand}`, **`dr.slice(2)` and `dr.substring(2)` both compile clean** — a
+branded string keeps every string method, so branding does not prevent the operation it was proposed
+to prevent. Meanwhile `const m: Manifest = { dataRoot: "@/plugin/foo" }` fails TS2322, so it *does*
+break plugin authors writing a plain JSON-shaped manifest. Refuted at both ends. Forbidding `.slice`
+needs a genuinely opaque non-string type with an unwrap at every serialize/log/compare site, and
+manifests are JSON. **Do not re-derive.**
 
 ### ⚠️ In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand
 
@@ -1831,10 +1921,14 @@ top level, and it completes the "matrix is just a plugin" framing. Config merges
 later overriding earlier: global `~/.mxd/config.json` < repo `<repo>/.mxd/config.json` < local
 `~/.mxd/projects/<id>/config.json`.
 
-**`src/data-paths.ts` is the ONE place that resolves a path from `dataRoot`.** Never compute
-`dataRoot.slice(2)` anywhere else; a grep test fails if a second site appears, and it now walks the
-repo root rather than `src/` (it walked only `src/` until 2026-07-25, so the very file that DEFINES
-`dataRoot` sat outside it — proven by planting, not by reading). Three lines of defence, and each
+**`src/data-paths.ts` is the ONE place that resolves a path from `dataRoot`.** Never apply a string
+operation to a `dataRoot` anywhere else — **any** spelling, not just `.slice(2)`; a grep test walks
+the whole repo and fails if a second site appears, with one named allowlist entry
+(`effectiveDataRoot`, which normalizes trailing slashes and returns a dataRoot rather than a path).
+Both halves of that audit were broken until 2026-07-25 and each was proven by planting rather than by
+reading: it walked only `src/`, so the very file that DEFINES `dataRoot` sat outside it, and it
+matched one literal spelling, so `.substring(2)` and `.replace("@/", "")` passed silently. See
+*Gates: a passing gate looks identical whether it read 8% or 100%*. Three lines of defence, and each
 one is there because the previous one might be relaxed:
 
 1. A strict regex at the input boundary (`/^@(\/[A-Za-z0-9_-]+)*$/`), checked at daemon startup and
@@ -3858,8 +3952,20 @@ again and looks identical to a gated one.** Install with `git config core.hooksP
 > gate that did not exist, and the absence looked exactly like compliance. The only way to know is to
 > assert it: `git config core.hooksPath`.
 
-The hook itself runs typecheck, `check:ci`, `check-i18n.sh`, and `bun test --bail` on **5 of 140**
-test files — see *Gates: a passing gate looks identical whether it read 8% or 100%*.
+The hook runs typecheck, `check:ci`, `check-i18n.sh`, and `bun test --bail` on a smoke subset whose
+size it computes and prints on every run — never a literal, so the ratio cannot go stale and this
+file does not need to carry it. It also **fails before typecheck if it names a test file that no longer
+exists**, and stages `scripts/i18n-baseline.txt` when the i18n gate lowers it. See *Gates: a passing
+gate looks identical whether it read 8% or 100%*.
+
+**The smoke set is chosen, not accumulated**, which matters because the old one grew by whoever
+happened to write a test that day. Two criteria: (1) the round-trip proofs for checks the hook itself
+runs — `check-i18n.test.ts`, `data-paths.test.ts`, `pre-commit-hook.test.ts` — because a hook that
+runs a gate but not the gate's own test can print that gate's "passed" while the gate is dead; and
+(2) invariants that fail SILENTLY, which in this repo means the persistence layer (`event-store`,
+`events`), since the inherited four — daemon shell, project registry, task tree, worktrees — all fail
+loudly. Deliberately excluded: `walker-golden` (one step out from the on-disk chain, covered by the
+drift suite at merge time) and `message-editability` (breakage greys a button, which is visible).
 
 ## Known pitfalls
 
