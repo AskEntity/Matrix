@@ -75,6 +75,8 @@ function makeCallbacks(broadcastFn: () => void) {
 		notifyTreeChange: () => {},
 		notifyTargetNode: () => {},
 		projectPath: tempDir,
+		// No index in this harness — these tests exercise tree semantics only.
+		dataPaths: null,
 	};
 }
 

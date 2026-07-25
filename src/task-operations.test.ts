@@ -8,6 +8,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MessageQueue } from "./message-queue.ts";
 import {
+	_clearDbCache,
+	_setEmbeddingPipeline,
+	searchIndex,
+} from "./task-index.ts";
+import {
 	closeTaskOp,
 	createTaskOp,
 	deleteTaskOp,
@@ -58,6 +63,8 @@ function makeCallbacks(extra?: Record<string, unknown>) {
 			notifyTargetNodeCalls.push({ action, nodeId, title });
 		},
 		projectPath: tempDir,
+		// No index in this harness — these tests exercise tree semantics only.
+		dataPaths: null,
 		removeWorktree: async () => {},
 		clearEventStore: () => {},
 		...extra,
@@ -985,5 +992,159 @@ describe("surgical description edit via updateTaskOp", () => {
 		if ("error" in result) {
 			expect(result.error).toContain("not unique");
 		}
+	});
+});
+
+/**
+ * Indexing as a FIRST-PARTY part of the operation.
+ *
+ * Before this, the search index was maintained by `onDone` plus a boot-time
+ * reconcile, so a task created or renamed by an agent was not findable until
+ * the next daemon restart — and the reconcile that fixed it was the thing that
+ * made the daemon unbootable. These tests assert the index is correct the
+ * instant the operation returns, with no reconcile anywhere.
+ *
+ * They go through the REAL ops with a REAL `dataPaths`, which is the only way
+ * to catch a call site that quietly stopped passing one — the rest of this file
+ * passes `dataPaths: null` on purpose.
+ */
+describe("task operations keep the search index in step", () => {
+	let indexDir: string;
+	let dbPath: string;
+	let embedCalls: string[];
+
+	function withIndex(extra?: Record<string, unknown>) {
+		return makeCallbacks({
+			dataPaths: { dataDir: indexDir, projectId: "proj", dataRoot: "@" },
+			...extra,
+		});
+	}
+
+	beforeEach(async () => {
+		indexDir = await mkdtemp(join(tmpdir(), "mxd-taskops-index-"));
+		dbPath = join(indexDir, "projects", "proj", "index.msp");
+		embedCalls = [];
+		_setEmbeddingPipeline({
+			embed: async (text: string) => {
+				embedCalls.push(text);
+				let h = 0;
+				for (let i = 0; i < text.length; i++)
+					h = (h * 31 + text.charCodeAt(i)) >>> 0;
+				const v = new Array(768).fill(0);
+				v[h % 768] = 1;
+				return v;
+			},
+		});
+	});
+
+	afterEach(async () => {
+		_clearDbCache();
+		_setEmbeddingPipeline(null);
+		await rm(indexDir, { recursive: true, force: true });
+	});
+
+	test("createTaskOp makes the task findable immediately", async () => {
+		const node = await createTaskOp(
+			tracker,
+			{ title: "Findable widget task", description: "widget body text" },
+			"agent",
+			withIndex(),
+		);
+
+		const byTitle = await searchIndex(dbPath, "widget");
+		expect(byTitle.some((h) => h.taskId === node.id)).toBe(true);
+		expect(byTitle.some((h) => h.field === "title")).toBe(true);
+		expect(byTitle.some((h) => h.field === "description")).toBe(true);
+	});
+
+	test("updateTaskOp re-indexes a renamed task and drops the old term", async () => {
+		const node = await createTaskOp(
+			tracker,
+			{ title: "beforeword title", description: "stable body" },
+			"agent",
+			withIndex(),
+		);
+		embedCalls.length = 0;
+
+		await updateTaskOp(
+			tracker,
+			node.id,
+			{ title: "afterword title" },
+			"agent",
+			withIndex(),
+		);
+
+		// Snapshot BEFORE searching: hybrid search embeds the QUERY through the
+		// same pipeline, so anything read after a search counts query calls too.
+		const indexingCalls = [...embedCalls];
+		// Per-document: the description did not change, so it is not rebuilt.
+		expect(indexingCalls).toEqual(["afterword title"]);
+
+		expect(await searchIndex(dbPath, "beforeword")).toHaveLength(0);
+		expect(await searchIndex(dbPath, "afterword")).toHaveLength(1);
+	});
+
+	test("an update that changes NO indexed field re-embeds nothing", async () => {
+		const node = await createTaskOp(
+			tracker,
+			{ title: "statusword title", description: "statusword body" },
+			"agent",
+			withIndex(),
+		);
+		embedCalls.length = 0;
+
+		// syncIndex is called unconditionally — deliberately, so nobody has to
+		// remember to extend a "did an indexed field change?" guard. It must
+		// therefore be free when nothing changed.
+		await updateTaskOp(
+			tracker,
+			node.id,
+			{ status: "in_progress" },
+			"agent",
+			withIndex(),
+		);
+		await updateTaskOp(tracker, node.id, { color: "red" }, "agent", withIndex());
+
+		expect(embedCalls).toEqual([]);
+		expect(
+			(await searchIndex(dbPath, "statusword")).map((h) => h.field).sort(),
+		).toEqual(["description", "title"]);
+	});
+
+	test("deleteTaskOp removes the task's documents immediately", async () => {
+		const node = await createTaskOp(
+			tracker,
+			{ title: "doomedword task", description: "doomedword body" },
+			"agent",
+			withIndex(),
+		);
+		expect(await searchIndex(dbPath, "doomedword")).toHaveLength(2);
+
+		await deleteTaskOp(tracker, node.id, "agent", withIndex());
+
+		expect(await searchIndex(dbPath, "doomedword")).toHaveLength(0);
+	});
+
+	test("a failing index write does not fail the task operation", async () => {
+		// Point dataDir at a FILE, so every index write under it fails.
+		const blocked = join(indexDir, "blocker");
+		await Bun.write(blocked, "not a directory");
+
+		const node = await createTaskOp(
+			tracker,
+			{ title: "Resilient task", description: "resilient body" },
+			"agent",
+			makeCallbacks({
+				dataPaths: { dataDir: blocked, projectId: "proj", dataRoot: "@" },
+			}),
+		);
+
+		// The tree operation succeeded — renaming or creating a task must never
+		// fail because the search index could not be written. Safe only because
+		// the failure is recoverable: the index persists the DB before the
+		// sidecar that claims it, so a failed write leaves the sidecar behind
+		// and the next reconcile repairs it.
+		expect(node.title).toBe("Resilient task");
+		expect(tracker.getTask(node.id)?.title).toBe("Resilient task");
 	});
 });

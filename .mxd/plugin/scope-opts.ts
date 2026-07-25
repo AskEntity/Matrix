@@ -21,10 +21,10 @@ import type { RuntimeContext, ScopeOpts } from "../../src/runtime/context.ts";
 import { resolveProjectConfig } from "../../src/runtime/helpers.ts";
 import { buildSystemPrompt } from "../../src/system-prompts.ts";
 import {
-	indexTask,
-	reconcileIndex,
+	reconcileIndexDeferred,
 	type SearchHit,
 	searchIndex,
+	updateTaskIndex,
 } from "../../src/task-index.ts";
 import { slugify } from "../../src/task-utils.ts";
 import { toToolDefinition } from "../../src/tool-def.ts";
@@ -215,16 +215,26 @@ export function buildMatrixScopeOpts(
 		onLaunch: (node, tracker) => {
 			tracker.updateStatus(node.id, "in_progress");
 		},
-		// Startup: reconcile the search index (backfill on first run, incremental
-		// after) — the fallback for anything index-on-done missed (crash between
-		// done and index write, or title/description edits via update_task that
-		// never fire onDone). Best-effort: swallow + log so a bad index write can
-		// never block agent resume. Needs ctx for the dataRoot; without it (some
-		// test harnesses) the index simply isn't maintained here.
+		// Startup: reconcile the search index — now purely a NET, for the window
+		// where a first-party index write was interrupted by a crash. Every
+		// content change (create, title/description edit, done() round, delete)
+		// writes the index as part of the operation, so the steady state here is
+		// a plan that finds nothing.
+		//
+		// ⚠️ DEFERRED, and this is a hard constraint rather than an optimisation.
+		// `autoResumeProjects` AWAITS this hook, and the worker's `ready` waits
+		// on autoResume — so anything slow here spends the daemon's 30s worker
+		// init budget. That is not hypothetical: with the old `updatedAt`
+		// staleness key a backfill took 4m13s, init timed out 23 times in a row,
+		// and terminating the worker mid-embedding took the whole daemon down
+		// with a NAPI abort. `reconcileIndexDeferred` awaits only the plan (one
+		// small JSON read + a hash per document) and hands everything that
+		// touches the index file or the embedding model to a background chain.
+		// Do not "simplify" this back to an awaited reconcile.
 		onScopeResume: ctx
 			? async (tracker, projId) => {
 					try {
-						await reconcileIndex(
+						await reconcileIndexDeferred(
 							projectIndexDbPath(
 								ctx.config.dataDir,
 								projId,
@@ -247,24 +257,30 @@ export function buildMatrixScopeOpts(
 			// the crash-safe marker are the RUNTIME's job; the runtime never reads
 			// the round content — only Matrix does, right here.
 			tracker.appendResultRound(node.id, parseDonePayload(doneInput));
-			// Index-on-done: keep the search index fresh on the common path. Read
-			// the canonical post-append node so the just-added round is included.
-			// Best-effort — an index write must NEVER break the done lifecycle;
-			// the startup reconcile retries any miss. Fire-and-forget — onDone is
-			// sync in the runtime contract, but the async indexTask runs in the
-			// background. Errors are caught + logged; the promise is not awaited.
+			// Index the new round — the same first-party write the task
+			// operations do, through the same non-fatal entry point (loud on
+			// failure, never breaks the done lifecycle). Read the canonical
+			// post-append node so the round just added is included.
+			//
+			// Fire-and-forget is NOT a choice here: `onDone` is synchronous in
+			// the runtime contract (`ScopeOpts.onDone` returns void), so there is
+			// nothing to await it with. That is exactly why the ordering
+			// invariant inside the index matters — a write interrupted by the
+			// process ending leaves the sidecar behind, never a sidecar claiming
+			// a document that was never persisted, so the startup reconcile can
+			// repair it. Per-document hashing keeps the cost to ONE embedding
+			// (this round), not a re-embed of every round the task has.
 			if (ctx) {
 				const fresh = tracker.getTask(node.id) ?? node;
-				indexTask(
+				void updateTaskIndex(
 					projectIndexDbPath(
 						ctx.config.dataDir,
 						projectId,
 						ctx.config.dataRoot,
 					),
+					node.id,
 					fresh,
-				).catch((e) => {
-					console.warn(`[task-index] index-on-done failed for ${node.id}:`, e);
-				});
+				);
 			}
 		},
 	};
