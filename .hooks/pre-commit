@@ -53,6 +53,15 @@ bun run check:ci
 echo "Running i18n check..."
 bash scripts/check-i18n.sh
 
+# The i18n gate rewrites its baseline when the debt falls, and that write is
+# worthless if it never reaches HEAD: the commit would land with the old, larger
+# allowance and the strings it permits could quietly come back. Stage it, so the
+# commit that fixed them carries the lowered number and a reviewer sees it in
+# the diff. Safe by construction — the gate only ever writes the number DOWN.
+if [ -f scripts/i18n-baseline.txt ]; then
+	git add scripts/i18n-baseline.txt
+fi
+
 echo "Running tests ($RAN of $TOTAL test files)..."
 bun test --bail $SMOKE_TESTS
 
