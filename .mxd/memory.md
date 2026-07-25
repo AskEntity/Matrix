@@ -113,6 +113,13 @@ add the row.
 | `.mxd/plugin/web/event-handler.ts` | UI event → log entries. `queueEntryToUIEvent` is the materialization gate; `pendingReducer` is pending. |
 | `.mxd/plugin/message-editability.ts` | where the three Edit/Rewind judgments meet, and the only place they may. Has zero imports, asserted by a test. |
 
+**Verified 2026-07-25, recorded so the next pass can skip it**: every file path cited anywhere in
+this file exists (24 distinct paths), and every symbol this file claims lives in a named file does
+(14 checked, including `walkActiveChainIndices`, `classifyOffChain`, `emitAndPushCompactToolResult`,
+`hasRewindPoint`, `rewindChainHead`, `skipDirsForPattern`). Re-derive only if files have moved — but
+note this checks EXISTENCE, not that the surrounding prose still describes them accurately, which is
+the harder half and has its own rule under *Writing this file*.
+
 ## Changing code here
 
 **Every bug fix asks two questions, not one.** What caused this specific bug, and why does the
