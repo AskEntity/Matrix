@@ -8,7 +8,11 @@ import {
 	loadGlobalConfig,
 	resolveAuthGroup,
 } from "./config.ts";
-import { doneCompletionOutput, type Event } from "./events.ts";
+import {
+	doneCompletionOutput,
+	type Event,
+	shouldLaunchAgent,
+} from "./events.ts";
 import { ProjectStore } from "./project-store.ts";
 import { createTaskComplete } from "./queue-message-factory.ts";
 import {
@@ -399,7 +403,26 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 					isTask(n) && shouldResumeFn(n) && eventStore.has(n.id),
 			);
 
+		let skipped = 0;
 		for (const node of resumableNodes) {
+			// Ask the log whether launching will DO anything, before paying for
+			// a session. `runAgentForNode` connects MCP servers, builds work
+			// context and writes session_config before it ever reads the
+			// conversation — measured 2026-07-25 at 4 MCP subprocesses and
+			// ~202 MB per session, held for as long as the session lives, and
+			// these sessions never end. An agent that will only park must be
+			// refused here; there is nowhere later that is cheap.
+			//
+			// `shouldResumeFn` (status) and this are different questions:
+			// status says the node was never finished, this says whether
+			// anything is outstanding. Today's dormant nodes have been
+			// in_progress for six weeks with nothing owed.
+			await eventStore.flushSession(node.id);
+			if (!shouldLaunchAgent(eventStore.readActive(node.id))) {
+				skipped++;
+				continue;
+			}
+
 			console.log(`Auto-resuming ${project.name} node ${node.id}`);
 
 			runAgentForNode(ctx, project, tracker, node.id, {
@@ -412,22 +435,43 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 				);
 			});
 		}
+		if (skipped > 0) {
+			// Said out loud, with both numbers: a silent skip is
+			// indistinguishable from a resume that failed, and this decision is
+			// the kind whose failure mode is "my agent didn't come back".
+			console.log(
+				`[autoResume] ${project.name}: launched ${resumableNodes.length - skipped}/${resumableNodes.length} resumable nodes — ${skipped} had no outstanding work`,
+			);
+		}
 	}
 
 	/**
 	 * Auto-resume agents that were running before daemon restart.
 	 *
-	 * Simply finds all in_progress nodes with JSONL sessions and launches them
-	 * via runAgentForNode. No resume messages, no root/child split, no
-	 * yielding/interrupted distinction.
+	 * Finds all in_progress nodes with JSONL sessions and launches the ones
+	 * that have outstanding work, via runAgentForNode. No resume messages, no
+	 * root/child split.
 	 *
-	 * The three resume states handle themselves inside the provider loop:
-	 * - Explicit yield (JSONL ends with yield tool_call): pendingYieldToolCall
-	 *   bypasses initial drain → queue.wait → zero API call until message arrives
-	 * - Implicit yield (JSONL ends with assistant_text): pendingImplicitYieldResume
-	 *   bypasses initial drain → handleImplicitYield → zero API call until message
-	 * - Interrupted (JSONL has orphaned tool_calls): buildSessionRepair adds
-	 *   tool_results → messages end with user content → skip initial drain → API call
+	 * ⚠️ **Status is the filter, not the decision.** `shouldResumeFn` says the
+	 * node was never finished; `shouldLaunchAgent` says whether launching will
+	 * produce an action. They are different questions and the second is the
+	 * expensive one to get wrong — a node that resumes only to park still pays
+	 * for MCP connections and a work-context build that live as long as the
+	 * session, and a parked session never ends.
+	 *
+	 * The resume states still handle themselves inside the provider loop; what
+	 * changed is that the two which resume to a park are no longer launched at
+	 * all:
+	 * - Explicit yield (JSONL ends with yield tool_call): would bypass the
+	 *   initial drain → queue.wait → zero API call. NOT LAUNCHED.
+	 * - Implicit yield (JSONL ends with assistant_text): would bypass to
+	 *   handleImplicitYield → zero API call. NOT LAUNCHED.
+	 * - Interrupted (orphaned tool_calls, or a consumed message with no
+	 *   answer): buildSessionRepair resolves it, messages end with user
+	 *   content, the loop skips the drain and calls the API. LAUNCHED.
+	 * - Pending input: any unconsumed message wakes the loop. LAUNCHED —
+	 *   unless the only thing waiting is an `interrupt` notice, which says the
+	 *   user stopped this session deliberately.
 	 */
 	async function autoResumeProjects(): Promise<void> {
 		if (!config.buildScopeOpts) {
