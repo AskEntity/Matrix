@@ -143,9 +143,22 @@ mutate "veto widens: interrupt notices merely filtered out" \
 # 6b. shouldLaunchAgent stops consulting repair (reads the raw log).
 mutate "repair is no longer consulted — raw log only" \
 	src/events.ts \
-	'	const events = applyRepairInMemory(rawEvents);' \
-	'	const events = rawEvents;' \
+	'		events = dryRunRepair(rawEvents);' \
+	'		events = rawEvents;' \
 	"src/should-launch.test.ts src/event-dedup-jsonl.test.ts"
+
+# 6c. The corrupt-log throw is swallowed instead of launching.
+mutate "corrupt log: throw swallowed, decide from the raw log" \
+	src/events.ts \
+	'		return true;
+	}
+
+	// 1. Pending input DECIDES' \
+	'		events = rawEvents;
+	}
+
+	// 1. Pending input DECIDES' \
+	"src/should-launch.test.ts"
 
 # 7. A trailing thinking-only turn stops parking the launch decision.
 mutate "trailing thinking no longer parks the launch decision" \
