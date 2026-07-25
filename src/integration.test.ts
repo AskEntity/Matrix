@@ -12618,8 +12618,71 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 		expect(content).toContain("Fix session recovery bug");
 		// Must not include self (root's own id)
 		expect(content).not.toContain(tracker.rootNodeId);
-		// Must include the related child's task id prefix
-		expect(content).toContain(pastChild.id.slice(0, 12));
+		// FULL task id, not a truncated prefix + "…". The block's header tells the
+		// agent to get_task these, so the id has to be pasteable.
+		expect(content).toContain(pastChild.id);
+
+		// The block carries USAGE, not just data: it must tell the agent what to
+		// do with a hit. Scoped to the block itself (lastIndexOf) because
+		// work_context also preloads memory.md, which mentions both the marker
+		// and get_task.
+		const block = content.slice(content.lastIndexOf("[Related past tasks]"));
+		expect(block).toContain("get_task");
+	}, 20000);
+
+	test("work_context related block drops hits whose task left the tree", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+
+		const goneChild = tracker.addChild(
+			tracker.rootNodeId,
+			"Fix session recovery bug",
+			"implemented the frobnicator cache via a ring buffer",
+		);
+		tracker.getTask(tracker.rootNodeId)!.title = "Session recovery follow-up";
+		await tracker.save();
+		await reconcileIndex(indexDbPath(ctx), tracker);
+
+		// Delete the node WITHOUT re-reconciling: the index still carries its
+		// documents, so the search below still returns it while the tracker no
+		// longer resolves it. That is the state a stale index is always in
+		// between a deletion and the next reconcile.
+		tracker.remove(goneChild.id);
+		await tracker.save();
+
+		// Non-vacuity guard: the dead task really is still a live search hit.
+		const staleHits = await searchIndex(
+			indexDbPath(ctx),
+			"Session recovery follow-up",
+			5,
+		);
+		expect(staleHits.some((h) => h.taskId === goneChild.id)).toBe(true);
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Starting work." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", result: "done" },
+				},
+			],
+		});
+		expect((await startAgent(ctx, instruction)).status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const events = await readSessionEvents(ctx, tracker.rootNodeId);
+		const workCtx = events.find((e) => {
+			if (e.type !== "message") return false;
+			const body = (e as { body?: { source?: string } }).body;
+			return body?.source === "work_context";
+		});
+		const content =
+			(workCtx as { body?: { content?: string } })?.body?.content ?? "";
+		// Never point the agent at an id that get_task cannot resolve. Asserting
+		// on the ID (not the title) is what makes this a mutation proof: the old
+		// code rendered dead hits with the title "unknown" but the real id.
+		expect(content).not.toContain(goneChild.id);
 	}, 20000);
 
 	test("searchIndex enriched with task titles (REST endpoint backing)", async () => {
@@ -12781,6 +12844,10 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 							contains: "[Related existing tasks]",
 						},
 						{ block: 0, type: "tool_result", contains: "Auth token rotation" },
+						// The block must carry USAGE, not just data — the imperative
+						// that makes a hit actionable. "get_task" appears nowhere else
+						// in this tool_result (the rest is the created node's JSON).
+						{ block: 0, type: "tool_result", contains: "get_task" },
 					],
 					blocks: [
 						{ type: "text", text: "Task created with related context." },
