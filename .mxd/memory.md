@@ -3478,31 +3478,6 @@ Stream token rides in `?token=` on `/events`; CLI Bearer rides as `Authorization
 - hideCompleted filter: hides `closed` and `failed` only. `verify` is actionable and remains visible.
 - Scroll follow mode: scroll-to-bottom re-enables follow, scroll-up disables. Follow button also enables.
 
-## Fix A (2026-04-18) — root is a regular task, not a null sentinel
-
-`Plugin.tsx` used to set `targetNodeId = null` whenever the user viewed the root. `AppFooter`'s pending-message filter then had two branches:
-```ts
-targetNodeId
-  ? m.taskId === targetNodeId            // sub-task view: direct id compare
-  : m.taskId === null || m.taskId === rootNodeId  // root view: sentinel + rootNodeId prop
-```
-
-That asymmetry coupled the root view's filter behavior to whether `rootNodeId` state had populated yet. On fresh mount (`useTasks` pending, `rootNodeId=null`), root-destined pending messages silently dropped. The sub-task view had no such race because it always used an explicit id.
-
-**Fix**: root has a real id like any other task. Use it directly.
-- `Plugin.tsx` effect collapses to `setTargetNodeId(selectedTaskId ?? rootNodeId)` — one-line, no branching.
-- `AppFooter` filter collapses to `m.taskId === targetNodeId` — single path, both views behave identically.
-- `rootNodeId` prop removed from `AppFooter` (dead after the filter simplification).
-- `handleSend` / `/compact` / `/dump-messages` stop chaining `?? rootNodeId` because `targetNodeId` already resolves through the same fallback.
-
-**Residual transient**: pre-`useTasks` both state values are null → `targetNodeId=null` → filter drops all messages. ~100-500ms flash, acceptable. Optional optimization (seed `rootNodeId` from URL hash on mount) is a separate task if it becomes user-visible.
-
-**Regression guards**:
-- `web/AppFooter-pending.test.tsx` (7 tests) — exercises the filter line directly with prop combinations. Catches mutations of the filter (e.g. accidental re-introduction of the two-branch form, accepting `taskId === null` without intent).
-- `web/Plugin-targetNodeId.test.tsx` — mounts real Plugin against a seeded `tree.json`, waits for `useTasks` to populate, asserts InputBar's textarea placeholder reads `Message to "Orchestrator"…`. Mutation-verified: reverting the `Plugin.tsx` effect to the old branching form makes this test fail (placeholder stays at generic "Send a message…").
-
-**Lesson**: "root is a special view that needs a sentinel" is a UI-level story with no data-model counterpart. Once the UI speaks the same id language as the data layer, both filter paths collapse to one and a whole class of state-timing races disappears.
-
 ## Partial event monotonic extend (Fix B, 2026-04-18)
 
 Two bugs fixed together by one invariant: **partial events are monotonic snapshots of content that only grows; clients extend to the longer of {current state, snapshot} and never shrink**.
@@ -3537,9 +3512,44 @@ Thinking needs `signature` for Anthropic prefix byte-identity on restart. But pa
 - Frontend (`src/plugin-event-handler.test.ts`): 20 new tests — every extend case (longer/shorter/equal/mismatch/no-existing/interleave), merge+extend+merge sequences, SSE+REST race scenarios, final-replaces-partial-replaces-extends.
 - **Mutation-verified**: flipping `partial` check in processEvent → 3 integration tests fail. Removing `length <=` guard in extend → 2 tests fail. Deleting `thinking_delta` branch in `updateStreamingBuffers` → 2 tests fail.
 
-## URL always carries viewed task id (Fix C, 2026-04-18)
+## Root is a regular task — the null-sentinel anti-pattern (Fix A + Fix C, 2026-04-18)
 
-**Symmetry trio**: Fix A made root a regular task in the data model + AppFooter filter; Fix B made partial events monotonic-extend so refresh doesn't lose streamed content; Fix C makes the URL/routing layer treat root as a regular task too.
+Two entries merged: Fix A fixed one instance (the pending-message filter), Fix C named the class and
+swept the rest. The **anti-pattern below is the durable part and is still the rule.**
+
+⚠️ **The URL mechanism described in this section is superseded.** Fix C implemented it with a hash
+(`#<projectId>/<taskId>`); Task Y replaced that with path segments a few months later — see *URL
+routing: path segments with layer ownership*. What survived the replacement intact: the anti-pattern,
+the sentinel sweep, and the principle that the URL is the routing truth and a brief "nothing selected
+yet" state is valid rather than something to paper over. Task Y kept all three; it only moved where
+the id is stored in the URL.
+
+**Symmetry trio** (as written at the time): Fix A made root a regular task in the data model + AppFooter filter; Fix B made partial events monotonic-extend so refresh doesn't lose streamed content; Fix C makes the URL/routing layer treat root as a regular task too.
+
+### Instance: the pending-message filter (Fix A)
+
+`Plugin.tsx` used to set `targetNodeId = null` whenever the user viewed the root. `AppFooter`'s pending-message filter then had two branches:
+```ts
+targetNodeId
+  ? m.taskId === targetNodeId            // sub-task view: direct id compare
+  : m.taskId === null || m.taskId === rootNodeId  // root view: sentinel + rootNodeId prop
+```
+
+That asymmetry coupled the root view's filter behavior to whether `rootNodeId` state had populated yet. On fresh mount (`useTasks` pending, `rootNodeId=null`), root-destined pending messages silently dropped. The sub-task view had no such race because it always used an explicit id.
+
+**Fix**: root has a real id like any other task. Use it directly.
+- `Plugin.tsx` effect collapses to `setTargetNodeId(selectedTaskId ?? rootNodeId)` — one-line, no branching.
+- `AppFooter` filter collapses to `m.taskId === targetNodeId` — single path, both views behave identically.
+- `rootNodeId` prop removed from `AppFooter` (dead after the filter simplification).
+- `handleSend` / `/compact` / `/dump-messages` stop chaining `?? rootNodeId` because `targetNodeId` already resolves through the same fallback.
+
+**Residual transient**: pre-`useTasks` both state values are null → `targetNodeId=null` → filter drops all messages. ~100-500ms flash, acceptable. Optional optimization (seed `rootNodeId` from URL hash on mount) is a separate task if it becomes user-visible.
+
+**Regression guards**:
+- `web/AppFooter-pending.test.tsx` (7 tests) — exercises the filter line directly with prop combinations. Catches mutations of the filter (e.g. accidental re-introduction of the two-branch form, accepting `taskId === null` without intent).
+- `web/Plugin-targetNodeId.test.tsx` — mounts real Plugin against a seeded `tree.json`, waits for `useTasks` to populate, asserts InputBar's textarea placeholder reads `Message to "Orchestrator"…`. Mutation-verified: reverting the `Plugin.tsx` effect to the old branching form makes this test fail (placeholder stays at generic "Send a message…").
+
+**Lesson**: "root is a special view that needs a sentinel" is a UI-level story with no data-model counterpart. Once the UI speaks the same id language as the data layer, both filter paths collapse to one and a whole class of state-timing races disappears.
 
 ### Anti-pattern: "root as default, null as sentinel"
 
@@ -3554,7 +3564,12 @@ Concrete failure shapes this anti-pattern produced over weeks:
 
 The fix everywhere: **selectedTaskId carries the actual root id when viewing root**. No sentinel. No fallback. If selectedTaskId is null, render nothing (it means "nothing selected yet"). The URL-redirect mechanism closes the null window; consumers stay simple.
 
-### Two truths, one effect
+### Two truths, one effect  — *(hash era; the shape survives, the code does not)*
+
+The reconciliation SHAPE below is exactly what Task Y still does — URL is truth, the daemon's
+`/projects/:id/tasks` supplies rootNodeId, one effect normalizes the URL when both are known. Only
+the storage moved (hash → path segment) and the owner moved (Plugin → shell callback). Read it for
+the reasoning; read Task Y for the code.
 
 Just two sources of truth:
 1. **URL hash** is the routing truth: `#<projectId>/<taskId>`, ALWAYS includes taskId
@@ -3636,40 +3651,23 @@ The transient is **a valid empty state, not a bug to paper over**. AppFooter sho
 
 `window.history.replaceState(null, "", url)` does NOT update `window.location.hash` in happy-dom (real browsers do). Confirmed via direct repro. The URL-redirect effect handles this with a manual `setSelectedTaskId(rootNodeId)` call alongside the replaceState — works in both env. Without that manual setState, happy-dom would leave selectedTaskId stale (replaceState wouldn't fire hashchange to trigger the listener; production would, but tests wouldn't catch it).
 
-### Test pollution gotcha (pre-existing, not Fix C)
+### Test pollution gotcha (pre-existing, not Fix C) — **SUPERSEDED, and the diagnosis below is wrong**
+
+Kept because being wrong is the point: the theory here ("happy-dom state surviving
+GlobalRegistrator cycles") was believed for months and shaped two separate decisions (Task Y deleted
+a whole test file over it). The real cause was react-dom's scheduler binding to whichever timer
+machinery existed at its FIRST import, and it is FIXED — see *bun test cross-file React breakage*
+(Testing region). Subset runs are no longer order-flaky for this reason.
 
 Running multiple `web/*.test.tsx` files together produces flaky failures (Plugin-targetNodeId may time out, AppFooter chips may not render). Caused by happy-dom state surviving GlobalRegistrator unregister/register cycles, and React's module-level state holding refs to old document instances. Pre-existing — confirmed by stashing changes and reproducing.
 
 Workaround: run `bun test web/` (whole dir, all 28 pass) or `bun test` (full, 2118 pass). Subset runs (`bun test web/A.tsx web/B.tsx`) are flaky depending on order. Real fix is a separate task — needs hard process-level isolation per file.
 
-## Fix D (2026-04-18) — compact_marker clear must be immediate, not deferred
+## Pending messages are a projection of the event log (Task X, 2026-04-18)
 
-`.mxd/plugin/web/event-handler.ts`: `compact_marker` was the ONLY `deferredMessages` mutation that ran in the sideEffects phase. `message` case calls `deferredMessages.set(id, ...)` synchronously inside `processEvent` (before its return); `messages_consumed` calls `.delete(id)` synchronously too; `compact_marker` was calling `.clear()` from inside the `sideEffects` closure that runs AFTER `processEventBatch`'s loop completes.
-
-**Failure shape** — for a batch `[compact_marker, message_A, message_B]`:
-1. `processEvent(compact_marker)` → pushes `clearSideEffect` onto `deferredSideEffects`
-2. `processEvent(message_A)` → `deferredMessages.set("msg-A", ...)` immediate
-3. `processEvent(message_B)` → `deferredMessages.set("msg-B", ...)` immediate
-4. `setLogs(entries)`
-5. Deferred sideEffects run in insertion order → `clearSideEffect` wipes A and B that were legitimately staged AFTER the compact
-6. `syncPendingBanner` reads empty map → `pendingMessages = []`
-
-User observation: root view's pending banner was empty for messages sent mid-stream. Fresh sessions (no compact_marker in batch) worked; sessions with 14+ compact_markers triggered the bug on every refresh (REST batch-events fetch on reconnect re-runs `processEventBatch` with the full history including every compact).
-
-**Fix**: move `deferredMessages.clear()` out of the sideEffects closure into immediate execution inside the `case` body, before the return. Only `syncPendingBanner` (a React setState) stays deferred. Comment next to `messages_consumed` already said "Materialize immediately (not as side effect) so batch mode works" — compact_marker was the one violating the invariant.
-
-**Invariant, stated plainly**: all mutations to `deferredMessages` (`set`, `delete`, `clear`) must happen in the IMMEDIATE phase, synchronously inside `processEvent` before its return. Only React state sync (`syncPendingBanner`, `setBackgroundProcesses`) belongs in `sideEffects` — those are legitimate deferred-until-after-loop setState calls.
-
-**Regression tests** (`src/plugin-event-handler.test.ts` — "event-handler compact_marker clear ordering (Fix D)"):
-1. Batch `[compact, msg_A, msg_B]` → pendingMessages contains both A and B (post-compact messages survive)
-2. Batch `[msg_pre, compact, msg_post]` → pendingMessages contains only msg_post (pre-compact correctly cleared)
-3. Batch `[msg_pre, consumed([pre]), compact, msg_post]` → pendingMessages contains only msg_post (consumed pre is materialized then cleared)
-
-**Mutation-verified**: reverting `clear()` back into the sideEffects closure makes all 3 tests fail. Test 1 is the direct repro of the user's bug shape.
-
-**Lesson — mutation/setState phase discipline**: when multiple event types mutate the same data structure, they must all mutate in the same phase. Mixing "set/delete inside processEvent" with "clear inside sideEffects" is a silent correctness hazard: in single-event mode (handleEvent) there's no loop between processEvent and sideEffects so both phases look equivalent; in batch mode (processEventBatch) the phase gap yawns open and mutations interleave wrongly. Search any `sideEffects:` closure for non-React-state mutations — that's the smoke.
-
-## Task X (2026-04-18) — pending is a projection of the events log, not a state
+Three entries merged: Task X (the model), Fix D (the last patch to the model Task X deleted — kept
+because its lesson outlived its code), and the 2026-07-21 batch/SSE guard (the one qualification to
+Task X's purity claim).
 
 Deletes the entire "mutable deferredMessages map + imperative setPendingMessages + syncPendingBanner sideEffect + multiple clear paths" model in `.mxd/plugin/web/event-handler.ts`. Replaces it with a pure reducer.
 
@@ -3746,7 +3744,74 @@ for (const evt of events) {
 
 **Lesson**: any null/sentinel/special-case handling for "pending" was papering over a wrong mental model. Pending is a view — a projection. The data is the events log. Derivation is the correct word, not storage.
 
-## Task Y (2026-04-18) — URL path-based routing with segment ownership
+### Superseded by this: Fix D — compact_marker clear had to be immediate
+
+**The code below is gone** — `deferredMessages` and every clear path with it (grep confirms the map
+survives only in explanatory comments). Kept for two reasons. First, it is the clearest statement of
+the phase-discipline lesson at the end, which applies to any code with an immediate phase and a
+deferred phase. Second, it is the last of four attempts to patch the mutable-state model by moving
+*when* mutations happen; reading it is what makes Task X's "the mutable state itself is the bug"
+land as a conclusion instead of an assertion.
+
+`.mxd/plugin/web/event-handler.ts`: `compact_marker` was the ONLY `deferredMessages` mutation that ran in the sideEffects phase. `message` case calls `deferredMessages.set(id, ...)` synchronously inside `processEvent` (before its return); `messages_consumed` calls `.delete(id)` synchronously too; `compact_marker` was calling `.clear()` from inside the `sideEffects` closure that runs AFTER `processEventBatch`'s loop completes.
+
+**Failure shape** — for a batch `[compact_marker, message_A, message_B]`:
+1. `processEvent(compact_marker)` → pushes `clearSideEffect` onto `deferredSideEffects`
+2. `processEvent(message_A)` → `deferredMessages.set("msg-A", ...)` immediate
+3. `processEvent(message_B)` → `deferredMessages.set("msg-B", ...)` immediate
+4. `setLogs(entries)`
+5. Deferred sideEffects run in insertion order → `clearSideEffect` wipes A and B that were legitimately staged AFTER the compact
+6. `syncPendingBanner` reads empty map → `pendingMessages = []`
+
+User observation: root view's pending banner was empty for messages sent mid-stream. Fresh sessions (no compact_marker in batch) worked; sessions with 14+ compact_markers triggered the bug on every refresh (REST batch-events fetch on reconnect re-runs `processEventBatch` with the full history including every compact).
+
+**Fix**: move `deferredMessages.clear()` out of the sideEffects closure into immediate execution inside the `case` body, before the return. Only `syncPendingBanner` (a React setState) stays deferred. Comment next to `messages_consumed` already said "Materialize immediately (not as side effect) so batch mode works" — compact_marker was the one violating the invariant.
+
+**Invariant, stated plainly**: all mutations to `deferredMessages` (`set`, `delete`, `clear`) must happen in the IMMEDIATE phase, synchronously inside `processEvent` before its return. Only React state sync (`syncPendingBanner`, `setBackgroundProcesses`) belongs in `sideEffects` — those are legitimate deferred-until-after-loop setState calls.
+
+**Regression tests** (`src/plugin-event-handler.test.ts` — "event-handler compact_marker clear ordering (Fix D)"):
+1. Batch `[compact, msg_A, msg_B]` → pendingMessages contains both A and B (post-compact messages survive)
+2. Batch `[msg_pre, compact, msg_post]` → pendingMessages contains only msg_post (pre-compact correctly cleared)
+3. Batch `[msg_pre, consumed([pre]), compact, msg_post]` → pendingMessages contains only msg_post (consumed pre is materialized then cleared)
+
+**Mutation-verified**: reverting `clear()` back into the sideEffects closure makes all 3 tests fail. Test 1 is the direct repro of the user's bug shape.
+
+**Lesson — mutation/setState phase discipline**: when multiple event types mutate the same data structure, they must all mutate in the same phase. Mixing "set/delete inside processEvent" with "clear inside sideEffects" is a silent correctness hazard: in single-event mode (handleEvent) there's no loop between processEvent and sideEffects so both phases look equivalent; in batch mode (processEventBatch) the phase gap yawns open and mutations interleave wrongly. Search any `sideEffects:` closure for non-React-state mutations — that's the smoke.
+
+### Qualification: the batch/SSE duplicate-message guard (2026-07-21)
+
+⚠️ **This is the one thing outside the reducer that affects pending.** Invariant 2 above ("no
+imperative clear path — events drive everything") still holds for the reducer itself, but the
+DRIVER now filters: `handleEvent` suppresses an APPLY for a message id it already saw consumed in a
+batch. If you are reasoning about why a chip is or isn't showing, `pendingReducer` alone is no
+longer the whole answer — check `batchConsumedIds` too.
+
+**Root cause**: race between SSE ring-buffer catch-up and the batch REST re-fetch during
+reconnection. `processEventBatch` (via `handleReconnect`) does RESET + full JSONL replay —
+pending correctly empty. But SSE catch-up events arriving AFTER the batch can re-deliver a
+`message` event whose `messages_consumed` was already in the batch. The duplicate `message`
+re-adds the pending chip; no live `messages_consumed` arrives to clear it → chip persists.
+
+**Fix**: `processEventBatch` records consumed IDs in `batchConsumedIds` (module-scoped Set
+inside `createEventHandler`). `handleEvent` checks this before dispatching APPLY(message) —
+batch-consumed IDs are suppressed. Set cleared on every RESET; entries removed by live
+`messages_consumed` events (defensive against id reuse).
+
+**Diagnosis technique**: 22 "unconsumed" messages found in JSONL were ALL compact/
+compacted_resume source (correctly excluded by reducer). 0 unconsumed user messages. Backend
+is correct — every user message has a matching `messages_consumed` with identical IDs. Bug
+was purely frontend timing.
+
+**Key invariant**: `batchConsumedIds` is the **minimum-viable deduplication** between batch
+and SSE event sources. It does NOT replace the pure `pendingReducer` — the reducer stays
+pure (no side-channel). The guard lives in `handleEvent` (the event handler driver), not in
+the reducer itself.
+
+## URL routing: path segments with layer ownership (Task Y, 2026-04-18)
+
+The current URL mechanism, plus its server-side half (SPA fallback, folded in at the end). Replaces
+the hash mechanism described in *Root is a regular task* — that entry keeps the reasoning and the
+anti-pattern; this one is the code.
 
 Replaces the single-hash cross-layer coordination (`#projectId/taskId`) with
 a path-based URL where each layer owns its segment:
@@ -3880,7 +3945,7 @@ If "they must agree" is the contract, the contract is wrong — sooner or
 later they disagree. Path segments + props+callbacks encode ownership at
 the type level; no synchronization protocol needed.
 
-## Task Y SPA fallback (2026-04-18) — `pm.has(firstSeg)` is the single predicate
+### Server side: SPA fallback — `pm.has(firstSeg)` is the single predicate
 
 After Task Y, paths look like `/<projectId>/<scope>/<rest>` and are
 server-visible. Browser refresh on those paths must reach the shell HTML so
@@ -4031,40 +4096,26 @@ renders without running a real compaction.
   messages_consumed produces exactly ONE log entry (no duplicate).
   Mutation proofs documented per-test.
 
-## Pending chip reappears after SSE reconnect — batch-consumed ID guard (2026-07-21)
-
-**Root cause**: race between SSE ring-buffer catch-up and the batch REST re-fetch during
-reconnection. `processEventBatch` (via `handleReconnect`) does RESET + full JSONL replay —
-pending correctly empty. But SSE catch-up events arriving AFTER the batch can re-deliver a
-`message` event whose `messages_consumed` was already in the batch. The duplicate `message`
-re-adds the pending chip; no live `messages_consumed` arrives to clear it → chip persists.
-
-**Fix**: `processEventBatch` records consumed IDs in `batchConsumedIds` (module-scoped Set
-inside `createEventHandler`). `handleEvent` checks this before dispatching APPLY(message) —
-batch-consumed IDs are suppressed. Set cleared on every RESET; entries removed by live
-`messages_consumed` events (defensive against id reuse).
-
-**Diagnosis technique**: 22 "unconsumed" messages found in JSONL were ALL compact/
-compacted_resume source (correctly excluded by reducer). 0 unconsumed user messages. Backend
-is correct — every user message has a matching `messages_consumed` with identical IDs. Bug
-was purely frontend timing.
-
-**Key invariant**: `batchConsumedIds` is the **minimum-viable deduplication** between batch
-and SSE event sources. It does NOT replace the pure `pendingReducer` — the reducer stays
-pure (no side-channel). The guard lives in `handleEvent` (the event handler driver), not in
-the reducer itself.
-
-## agent_idle re-fetch for Edit/Rewind buttons (2026-07-23)
+## Re-fetch JSONL when the viewed task stops working — Edit/Rewind buttons (2026-07-23)
 
 SSE-broadcast events lack `eid`/`parentEid` (stamped only at JSONL persist time in
-`EventStore.stampEvent`). During streaming, Edit/Rewind buttons are unavailable. When
-the agent goes idle (agent_idle SSE event for the VIEWED task), the frontend re-fetches
-JSONL events via `GET taskEvents?after=compact` → `processEventResponse` — same pattern
-as SSE reconnect and rollback. JSONL events carry eid/parentEid → buttons appear.
+`EventStore.stampEvent`). So during streaming the Edit/Rewind buttons cannot exist — there is no eid
+to rewind TO. When the viewed task stops working, the frontend re-fetches JSONL via
+`GET taskEvents?after=compact` → `processEventResponse` — same pattern as SSE reconnect and rollback.
+Those events carry eid/parentEid, so the buttons appear.
 
-Implementation: `onAgentIdle` callback on `EventHandlerDeps`, triggered from the
-`agent_idle` case in `processEvent` when `msg.taskId === getViewedSessionId()`.
-Plugin.tsx wires it via `refetchOnIdleRef` (breaks the useMemo/useCallback dep cycle).
+Implementation: `onAgentIdle` callback on `EventHandlerDeps`, fired when the viewed task's activity
+goes idle-or-gone. Plugin.tsx wires it via `refetchOnIdleRef` (breaks the useMemo/useCallback dep
+cycle).
+
+⚠️ **The trigger changed, and the original text named an event type that no longer exists.** It read:
+*"triggered from the `agent_idle` case in `processEvent`"*. There is no `agent_idle` event any more —
+it and `agent_active` were replaced by the single `agent_activity` state (see *Agent activity: live
+process state*, Agent Loop region), and this callback was migrated to fire on
+`agent_activity → idle` **or `null`**. The `null` half is a real behavior gain, not just a port: an
+agent that finishes with `done()` never passes through idle, so before the migration its last
+messages stayed uneditable. The CALLBACK name `onAgentIdle` survived the rename — do not read it as
+evidence that an `agent_idle` event exists.
 
 ---
 # Web UI — Components & Interactions
