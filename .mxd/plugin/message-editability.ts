@@ -73,10 +73,23 @@ export type EditBlockedReason =
 	 */
 	| "no_rewind_point"
 	/**
-	 * PERMANENT. The eid names no message we can see. On the backend that
-	 * means it is not on the active chain — an earlier rewind cut it away.
+	 * PERMANENT. The eid names no message we can see at all — not on the
+	 * active chain, not off it. A stale link, or a client asking about
+	 * something from another session.
 	 */
 	| "unknown_message"
+	/**
+	 * PERMANENT. Found, and older than the last completed compaction: a
+	 * summary stands in for that stretch of history now.
+	 */
+	| "off_chain_summarized"
+	/**
+	 * PERMANENT. Found, on a branch an earlier rewind walked away from. It is
+	 * shown because "Load earlier history" shows what the conversation used to
+	 * contain; it is not operable because the conversation no longer runs
+	 * through it.
+	 */
+	| "off_chain_abandoned"
 	/** TRANSIENT. The agent is working; stopping it opens the gate. */
 	| "agent_busy";
 
@@ -97,11 +110,35 @@ export function editVerdict(judgments: {
 	startsRun: boolean | undefined;
 	hasRewindPoint: boolean;
 	agentBusy: boolean;
+	/**
+	 * From `classifyOffChain` (events.ts) — why this message is not part of
+	 * the conversation, `undefined` when it is.
+	 *
+	 * Spelled out rather than imported: this file has no imports, on purpose
+	 * (see the header). Widening the union upstream breaks every call site
+	 * that passes it, which is the same protection an import would give.
+	 */
+	offChain?: "summarized" | "abandoned";
 }): EditVerdict {
-	const { startsRun, hasRewindPoint, agentBusy } = judgments;
+	const { startsRun, hasRewindPoint, agentBusy, offChain } = judgments;
 	// Permanent first, and among the permanent ones the most fundamental
-	// first: a message we can't locate, then one whose history is gone, then
-	// one that never started anything.
+	// first: a message we can't locate at all, then one that is located but
+	// outside the conversation, then one whose history is gone, then one that
+	// never started anything.
+	//
+	// Order matters for a reason that has nothing to do with code: a
+	// transient reason offers a remedy. Tell someone to wait for the agent on
+	// a message that will never be editable and they wait, the agent stops,
+	// the button is still grey, and they cannot tell whether they waited
+	// wrong or the product is broken. Never offer a remedy that won't work.
+	if (offChain)
+		return {
+			editable: false,
+			reason:
+				offChain === "summarized"
+					? "off_chain_summarized"
+					: "off_chain_abandoned",
+		};
 	if (startsRun === undefined)
 		return { editable: false, reason: "unknown_message" };
 	if (!hasRewindPoint) return { editable: false, reason: "no_rewind_point" };
@@ -123,6 +160,10 @@ export function editRefusalMessage(reason: EditBlockedReason): string {
 		case "no_rewind_point":
 			return "The history around this message was summarized away by a context compaction, so there is no state left to return to.";
 		case "unknown_message":
-			return "That message is not part of the current conversation — an earlier rewind replaced it.";
+			return "No message with that id is in this session's log.";
+		case "off_chain_summarized":
+			return "This message is from before the last context compaction — a summary stands in for that stretch of the conversation now, so there is nothing to return to.";
+		case "off_chain_abandoned":
+			return "This message is on a branch an earlier rewind walked away from. You can read it, but the conversation no longer runs through it.";
 	}
 }

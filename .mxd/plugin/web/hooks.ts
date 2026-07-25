@@ -11,7 +11,12 @@ export type {
 } from "./types.ts";
 export { isFolder, isGeneral, isTask } from "./types.ts";
 
-import type { AgentActivity, Event, TreeNode } from "./types.ts";
+import type {
+	AgentActivity,
+	Event,
+	OffChainReason,
+	TreeNode,
+} from "./types.ts";
 
 export type { Event } from "./types.ts";
 
@@ -178,6 +183,13 @@ export type LogEntry = UIEvent & {
 	 * the backend never writes).
 	 */
 	eid?: string;
+	/**
+	 * Why this entry is not part of the conversation, when it isn't. Only the
+	 * raw-file fetch ("Load earlier history") can carry such entries, and the
+	 * server marks them there; every other path delivers events that are on
+	 * the chain by construction.
+	 */
+	offChain?: OffChainReason;
 	taskId?: string;
 	expanded?: boolean;
 	/** Per-turn token/cache breakdown, attached from usage events. */
@@ -613,7 +625,7 @@ export function entryIdForEid(eid: string): number {
  * `bindEntryId`.
  */
 export function createLogEntry(
-	event: UIEvent & { taskId?: string; eid?: string },
+	event: UIEvent & { taskId?: string; eid?: string; offChain?: OffChainReason },
 	reuseId?: number,
 ): LogEntry {
 	const eid = event.eid;

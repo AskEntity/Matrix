@@ -21,6 +21,7 @@ export {
 	type GeneralNode,
 	isGeneral,
 	isTask,
+	type OffChainReason,
 	type QueueMessage,
 	type TaskNode,
 	type TaskStatus,

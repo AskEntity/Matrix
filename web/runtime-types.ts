@@ -9,7 +9,7 @@
  * (zero-import sibling of plugin.ts) precisely to avoid dragging `node:path`
  * in through plugin.ts → data-paths.ts.
  */
-export type { Event } from "../src/events.ts";
+export type { Event, OffChainReason } from "../src/events.ts";
 export type { QueueMessage } from "../src/message-queue.ts";
 export { pluginApiPrefix } from "../src/plugin-url.ts";
 export {
