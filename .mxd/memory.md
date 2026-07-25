@@ -2864,365 +2864,66 @@ anywhere in the subtree has to be added to the reset list, and forgetting one le
 # Web UI — Components & Interactions
 ---
 
-## Compact sidebar header (2026-06-17)
+## The activity log's scroll position: guard the property, not the list of causes
 
-Sidebar header consolidated from 3 rows (TASKS+buttons / filter input / hide-completed)
-into one: `[TASKS] [+] [Refresh] [🔍 Filter] [👁 Hide completed]`.
+A survey of everything that reads, writes or invalidates the log's scroll offset found **30 touch
+points, not the 9 anyone could name**: 9 JS writers, 5 readers, 6 pieces of state, 6 content-height
+mutators inside the container, 6 clientHeight mutators outside it, 6 wholesale `logs` replacements —
+plus the browser itself, via `overflow-anchor: auto`, which silently absorbs top-of-list insertions
+and is not implemented by Safari. They fall into three clusters: measuring or writing during a
+transitional state (unpredictable symptoms, because the transient's duration is a network variable);
+addressing a viewport position by a **perishable identity** (a pixel offset, a module-counter entry
+id, a React component instance — deterministic losses, each disguised as some other feature behaving
+normally); and conditional renders in a flex row (cheap, cosmetic). Their common amplifier is that
+`logs` is the whole session's array, replaced wholesale on every refetch.
 
-- `filterMode` state + `cycleFilterMode` lifted from TaskTree.tsx to Plugin.tsx.
-  TaskTree accepts `filterOpen`, `onFilterOpenChange`, `filterMode` as props.
-- `FilterMode`, `FILTER_MODES`, `readFilterMode` exported from TaskTree.tsx.
-- Search bar is collapsible via CSS `max-height` + `opacity` transition.
-  Class `mxd-tree-search-bar--open` toggles visibility. Auto-focus on open,
-  auto-close on blur when empty, Escape clears and closes.
-- Filter mode button uses `mxd-btn-icon mxd-filter-mode-btn` dual-class pattern
-  in the header (inherits icon button sizing, overrides color for active/favorites).
-- `IconSearch` added to icons.tsx (magnifying glass SVG).
-- `tasks.filterToggle` i18n key added (EN + ZH).
+⭐ **The predicate that works is `scrollRangeShrank(prev, current)`, where range = `scrollHeight −
+clientHeight`.** Two predicates were proposed on the *cause* side and one measurement killed both:
+"is the rendered content from the task being viewed" and "is the container non-scrollable" both miss
+an in-log search that leaves 449px of range — fully scrollable — where a `scrollTop` of 1200 is
+clamped to 449, which IS the new bottom, so the near-bottom test returns true and follow mode arms
+itself. All five measured failures share not emptiness but *the scrollable range got smaller and the
+browser pushed the offset to the new bottom*.
 
-## Full lightweight markdown rendering in agent replies (2026-07-02)
+> **This generalises and a cause-list does not.** This subsystem had already proven the cause side
+> cannot be enumerated — the survey started from "your nine are almost certainly incomplete" and
+> ended at 30. `scrollRangeShrank` tests **the property that makes an observation meaningless**, so
+> it covers causes nobody wrote down. The composer auto-growing is the proof: not a view parameter,
+> not anticipated, and it lands in the predicate for free. It also collapsed two separately-
+> catalogued classes — content-height changes inside the container and clientHeight changes outside
+> it — into one. They were two classes only because they were sorted by *what changed*; sorted by
+> *what it causes*, they are one thing.
 
-Extends the tables-only pipeline to the full lightweight set: fenced code, headings,
-blockquotes, lists (one nesting level), hr + inline `code` / **strong** / *em* /
-~~strike~~ / [text](http(s)-only url). Same philosophy as the table parser: strict
-grammar, false positives worse than missing features, no md library, React elements
-only (no dangerouslySetInnerHTML).
+**Growth is deliberately NOT suspicious**: streaming grows every frame, and a user scrolling back to
+the bottom mid-stream must still be able to re-arm follow.
 
-### Files
-- `.mxd/plugin/web/markdown.ts` — NEW pure parser. `parseMarkdown(text): MarkdownBlock[]`,
-  `parseInline(line): InlineNode[]`, `isPlainText(blocks)`, `isSafeLinkHref(href)`.
-  Composes WITH `markdown-table.ts` (tables delegated to `parseTextSegments`, untouched).
-- `components/MarkdownText.tsx` — renders the block tree; `MarkdownTable` component kept
-  verbatim; new `CodeBlock` (copy button, mirrors table pattern), `ListView`, heading via
-  `createElement("h"+level)`.
-- `style.css` `.mxd-md-*` family extended (modest heading sizes — chat log, not document);
-  copy-button selectors comma-joined table+code. `i18n.ts`: `code.copy`/`code.copied`.
-- Tests: `web/markdown.test.ts` (72, pure) + `web/MarkdownText.test.tsx` (+6 DOM
-  integration). Mock-showcase got a full-markdown sample event (visual verification).
+**`autoScroll` and `logAtBottom` are two concepts and must not be merged into one boolean.**
+`logAtBottom`'s writers are all **observations**; `autoScroll`'s are one observation and six
+**intents**, and the Follow button needs the intent concept. That single observation-writing-intent
+(`handleScroll` reporting to both) is the door every hijack came through. Two halves, fixed
+separately: the guard rejects a **false observation** (a clamp after a shrink), and the new-content
+effect no longer takes `autoScroll` as a dependency, which stops a **true observation from
+immediately executing** — the user scrolls into the 40px band, follow correctly arms, and the effect
+used to fire and yank them the rest of the way mid-gesture. **Arming is not acting**, and "go to the
+bottom now" already has its own channel (a monotonic `scrollToBottomRequest` counter). That fix was
+a deletion, and the effect reads `autoScrollRef` so "responds to content, not to intent" is explicit
+rather than implied by a deps array.
 
-### Parse order (load-bearing, tested)
-1. Fences FIRST — content verbatim, no table/block/inline parsing inside. Unclosed fence
-   runs to EOF (`closed:false`). Backtick-fence info string may not contain backticks
-   (keeps "```x``` y" lines inline).
-2. Tables via existing `parseTextSegments` on non-fence text.
-3. Per-line blocks: heading (`#{1..6} + space`), hr (also `- - -` style; checked BEFORE
-   list), quote, list. Everything else = verbatim text runs (interior blank lines
-   preserved; edges trimmed next to blocks).
-4. Inline per line: code spans bind tightest (N-backtick runs, protect content — even in
-   emphasis-closer search), then links, then emphasis.
+⚠️ **`prevScrollRangeRef` may ONLY be advanced by `handleScroll`, and the danger is that the wrong
+version looks MORE thorough.** Letting a geometry-reading effect update it too makes the guard inert:
+effects run at commit, the clamp's scroll event is dispatched by the browser *afterwards* (measured
+14ms later), so the effect writes the new small value first and the comparison becomes new-vs-new.
+The next person will read the single call site as a missed one.
 
-### Key invariants
-- **Plain fallback**: `isPlainText(blocks)` (all blocks = text runs of only-text nodes) →
-  render ORIGINAL string in single `<span className>` — byte-identical to pre-markdown
-  rendering. Unsafe-link-only text stays "plain" (renders raw source).
-- **Link safety**: only `^https?://` (case-insens.) becomes `<a target=_blank
-  rel="noopener noreferrer">`; javascript:/data:/file:/relative → raw literal TEXT.
-  Enforced in parser (single gate), tested at parser + DOM layers.
-- **Emphasis = whitespace-adjacency rules, NOT \b** (CJK-safe: `周围**中文**相邻` works).
-  Opener must be followed by non-WS; closer preceded by non-WS; single-`*` closer must be
-  a LONE star (enables `*a **b** c*` nesting). Runs of 3+ markers = literal (predictable).
-  No `_underscore_` emphasis (snake_case), no setext headings, no backslash escapes
-  (Windows paths), no images (`![` skipped), no raw HTML — deliberate.
-- Mutation-verified: scheme-gate → 5 tests fail; opener-WS / closer-WS rules each pinned
-  by a dedicated asymmetric test (`** x**` literal / `**a ** b**` full-span strong) —
-  the symmetric math case alone did NOT pin them individually (defense-in-depth masking;
-  gap found by mutation #2 surviving, then closed).
+⚠️ **"Only trust real user scrolls" is unimplementable.** A clamp-dispatched scroll event has
+`isTrusted === true` and is indistinguishable from a user's at the event layer. Recorded, re-derived,
+recorded again.
 
-### Gotchas for future editors
-- biome `noArrayIndexKey` suppression on MULTILINE JSX must sit directly above the
-  `key={i}` attribute line, not above the element. `useIterableCallbackReturn` requires
-  every switch path to return — merged `default:` onto the last case (TS still narrows).
-- Verification ran under the broken-gate interim rules above (scoped bun test + zero new
-  typecheck/biome diagnostics); full-suite re-verification owed once the bun gate is
-  restored.
-
-### First slice: tables only (2026-06-22) — the parser this builds on
-
-The table parser below was NOT replaced — the full-markdown parser composes with it
-(`parseMarkdown` delegates tables to `parseTextSegments`). So its grammar rules are live, not
-history. **One thing here IS superseded**: the scope statement "TABLES ONLY (not full markdown —
-deliberate) … if full markdown is ever wanted, that's a separate decision". That decision was
-taken, six weeks later, and is the section above.
-
-Agent replies frequently use markdown tables to compare options; they rendered
-as misaligned pipe text in the proportional/mono font. Now rendered as real
-aligned `<table>` with a hover copy button.
-
-#### Scope: TABLES ONLY (not full markdown — deliberate)
-No markdown library pulled in. A focused hand-written GFM-table parser. Inline
-markdown (`**bold**`, `` `code` ``) inside cells is NOT parsed — cells render as
-plain text. If full markdown is ever wanted, that's a separate decision.
-
-#### Files
-- `.mxd/plugin/web/markdown-table.ts` — pure parser (no DOM, fully unit-tested):
-  `parseTextSegments(text)` → ordered `{type:"text"} | {type:"table"}` segments;
-  `splitRow`, `isDelimiterRow`, `hasTable` exported for tests.
-- `.mxd/plugin/web/components/MarkdownText.tsx` — `<MarkdownText text className>`.
-  Renders tables as `<table class="mxd-md-table">` + a `MarkdownTable` subcomponent
-  with the copy button. Reusable — currently wired ONLY into `assistant_text`.
-- `LogEntryView.tsx` — assistant_text path: `<span class=mxd-lmxd-text>{text}</span>`
-  → `<MarkdownText text={text} className="mxd-lmxd-text" />`. Two-line diff.
-- `style.css` — `.mxd-md*` block (after `.mxd-event-assistant_text .mxd-lmxd-text`).
-- `i18n.ts` — `table.copy`/`table.copied` (EN + ZH).
-- `routes/mock-showcase.ts` — added an assistant_text-with-table sample (same
-  precedent as the compacted_resume card) → visually verifiable at `/mock-showcase`.
-
-#### Parser grammar (strict — false positives are the danger)
-A table requires a HEADER line containing `|` IMMEDIATELY followed by a DELIMITER
-row whose cells are all `:?-+:?`, AND header/delimiter must have the SAME cell
-count (GFM rule). The column-count match is what stops a thematic break (`---`)
-or a piped prose line from being misread as a table. Body rows continue until a
-blank/non-pipe/delimiter line; padded or truncated to header width. Escaped pipes
-(`\|`) inside cells are unescaped and don't split. Alignment from delimiter colons.
-
-#### Key invariants
-- **Zero regression for the no-table case**: `MarkdownText` fast-paths to the
-  SAME `<span className={className}>{text}</span>` when no table is present.
-  `.mxd-md` wrapper only appears when a table exists.
-- **XSS-safe**: cells render as React text children (escaped), never
-  `dangerouslySetInnerHTML`. Test asserts `<img>`/`<b>` in a cell stay literal text.
-- **Copy = original markdown source** (the captured `raw` block), so it re-pastes
-  into another markdown surface verbatim. `navigator.clipboard?.writeText` guarded
-  (insecure-context / denied → no-op).
-- Copy button is hover/focus-reveal (`opacity 0 → 1`), styled like
-  `mxd-bash-background-btn`. Non-scrolling `.mxd-md-table-wrap` holds the absolute
-  button; inner `.mxd-md-table-scroll` does `overflow-x:auto` so the button stays
-  fixed while a wide table scrolls.
-
-#### Tests (mutation-verified)
-- `web/markdown-table.test.ts` (26) — parser grammar, heavy on "this is NOT a
-  table" (thematic break, no-delimiter, column mismatch). Mutation: removing the
-  column-count guard fails the mismatch test.
-- `web/MarkdownText.test.tsx` (6) — full render through LogEntryView: no-table
-  plain span, real `<table>` headers/cells, alignment styles, copy-button copies
-  the markdown, mixed prose+table, XSS guard. Mutations (force plain path / copy
-  wrong content) fail the right tests.
-- TS gotcha hit + fixed: clipboard capture used a holder object `{value}` (not a
-  bare `let`) so TS doesn't narrow the closure-assigned probe back to `null` (same
-  pattern noted in lifecycle-concurrency tests).
-
-#### Pre-existing base-branch issues observed (NOT introduced here; flagged to root)
-At fork point the branch already had: 5 `tsc` TS6133 unused-symbol errors
-(`handlers.ts` isOrchestratorNode, `lifecycle-guards.test.ts` x3,
-`worker-lifecycle.test.ts`) + 1 biome format drift (`mxd-user-prompt-text` span in
-LogEntryView). Verified identical with my changes stashed. `bun test` is green
-(2305 pass); these only affect `tsc`/`check:ci`. Root should clean before the
-final main commit (worktree hooks are /dev/null so they don't gate here).
-
-## Select-to-quote "Ask Matrix" in activity log (2026-07-02)
-
-Select text in the activity log → floating "Ask Matrix" button near the selection →
-click → text lands in the InputBar draft as a markdown blockquote (`> …\n\n` prepended
-before any existing draft), textarea focused with cursor at end.
-
-### Shape
-- `.mxd/plugin/web/quote.ts` — ALL pure logic, unit-tested directly: `selectionQuoteText`
-  (generic over node type — validates Selection against container: non-collapsed,
-  non-whitespace, BOTH endpoints inside), `toBlockquote` (outer-trim, `\r\n?`→`\n`,
-  interior empty lines become bare `>` so the blockquote stays one block),
-  `insertQuote(draft, selected)` (prepend + blank line; whitespace-only → draft unchanged),
-  `quoteButtonPosition` (below-right of selection end, viewport-clamped, flips above
-  when no room below).
-- `ActivityLog.tsx` — document-level mouseup (show), selectionchange (dismiss on
-  collapse), keydown Escape (dismiss); container scroll + filterTaskId change also
-  dismiss. Button is `position: fixed` (no ancestor transforms — verified), rendered
-  only when `onQuoteText` prop present. `onMouseDown={e => e.preventDefault()}` on the
-  button is LOAD-BEARING: without it, mousedown collapses the selection → selectionchange
-  unmounts the button before click fires.
-- Wiring: Plugin.tsx `quoteRequest: { text, seq } | null` state — `seq` increments per
-  request so quoting the SAME text twice re-fires InputBar's effect. ActivityLog
-  `onQuoteText` → Plugin → AppFooter passthrough → InputBar applies via
-  `insertQuote(promptRef.current, …)` + rAF focus/cursor-to-end. `QuoteRequest` type
-  exported from InputBar.tsx.
-- i18n: `activity.askMatrix` (EN "Ask Matrix" / ZH "问 Matrix"). CSS:
-  `.mxd-selection-quote-btn` at end of style.css.
-
-### Tests (mutation-verified at the seams)
-- `web/quote.test.ts` (24) — pure functions, no DOM.
-- `web/ActivityLog-quote.test.tsx` (7) — happy-dom Selection/Range work well enough for
-  the real flow (addRange + document mouseup dispatch + selectionchange). Only
-  `range.getBoundingClientRect()` returns zeros — position math is covered by the pure
-  tests instead. Poll-based `waitFor` (NonNullable<T> return), never fixed sleeps —
-  fixed 20ms waits flaked on cold first-file module compile.
-- `web/InputBar-quote.test.tsx` (4) — prop-driven rerender path, draft preservation,
-  seq-bump reapplication.
-- `web/Plugin-quote-journey.test.tsx` (1) — CANONICAL JOURNEY, full stack: real daemon,
-  real Plugin, seeded tree.json + session JSONL at matrix dataRoot
-  (`projects/<id>/plugin/matrix/{tree.json,tasks/<rootId>.jsonl}` — nodes need explicit
-  `type: "task"` since P3). Mutation-proof: dropping `onQuoteText={handleQuoteText}` or
-  `quoteRequest={quoteRequest}` in Plugin.tsx fails ONLY this test (component tests stay
-  green) — the seam is exactly what it guards.
-- NOTE: `web/Plugin-targetNodeId.test.tsx` seeds tree.json at `projects/<id>/tree.json` —
-  the WRONG path since the dataRoot move (silently ignored; test passes because a fresh
-  tree's default root title is also "Orchestrator"). Harmless but misleading; fix when
-  next touching that file.
-
-### Follow-up: scroll to the caret after inserting a long quote (2026-07-14)
-
-Bug: after "Ask Matrix" select-to-quote prepends a markdown blockquote into the
-InputBar and moves the caret to the END, a LONG quote overflowed the textarea's
-`max-height: 120px; overflow-y: auto` cap — the visible region showed the quote
-(top), the caret line (bottom) stayed below the fold → user typed blind.
-
-Fix (`.mxd/plugin/web/components/InputBar.tsx`, the quote-apply effect's rAF ONLY —
-`quote.ts insertQuote` is pure + correct, untouched): after caret-to-end, scroll to
-the caret via `el.scrollTop = el.scrollHeight` (browser clamps to the max offset →
-bottom, which is where the caret sits after a quote insert).
-
-⚠️ ORDER IS LOAD-BEARING: the capped auto-grow height recompute (`adjustTextareaHeight`)
-MUST run BEFORE reading `scrollHeight`/setting `scrollTop`, and BOTH inside the SAME
-rAF. Reading scrollHeight before the new height applies yields a stale value → wrong
-scroll. Do NOT rely on the separate `[prompt]` resize effect having run before the
-rAF — React 18 flushes passive effects asynchronously; rAF-vs-passive-effect ordering
-is NOT guaranteed. rAF body = applyHeight() → focus() → setSelectionRange(end) →
-scrollTop=scrollHeight.
-
-Seam: `focusCaretAndScrollToEnd(el, caret, applyHeight)` (exported from InputBar.tsx)
-encapsulates that exact order; unit-testable against a fake element (no live layout).
-
-Tests (`web/InputBar-quote.test.tsx`): 3 pure seam tests (scroll-to-bottom; the
-stale-height guard = applyHeight mutates scrollHeight and we assert the POST value;
-fits-the-cap) + 1 component test (mock `scrollHeight` via Object.defineProperty=500,
-fire quoteRequest, assert `scrollTop===500` after rAF — happy-dom stores scrollTop
-unclamped, same pattern as the existing ActivityLog/Plugin scroll tests).
-Mutation-verified: removing `scrollTop=scrollHeight` fails exactly the 4 scroll
-tests; the 4 insertion tests stay green.
-
-biome gotcha: referencing the hoisted `adjustTextareaHeight` inside the effect's rAF
-trips `useExhaustiveDependencies` (ERROR-level, not warning). Adding it to deps would
-re-fire the insert every render (new fn identity each render) — a `biome-ignore` on
-the effect is the correct fix, matching the codebase convention. No CSS/i18n change
-(textarea was already capped+scrollable; fix is purely JS scroll).
-
-## Scroll-to-bottom button + happy-dom v20 MutationObserver WeakRef GC hazard (2026-07-07)
-
-Scroll-to-bottom button (↓, `.mxd-scroll-bottom-btn`) in `.mxd-panel-actions`, rendered
-immediately LEFT of the Compact ⌘ button (which lives inside TokenUsageBadge — NOT in
-AppFooter/InputBar). Shown when the activity log is scrolled >40px from the bottom.
-
-### Shape
-- `.mxd/plugin/web/scroll.ts` — pure `isNearBottom(scrollTop, scrollHeight, clientHeight,
-  threshold=NEAR_BOTTOM_THRESHOLD)`; the ONE predicate for both auto-follow re-engagement
-  (ActivityLog handleScroll, formerly inline `< 40`) and button visibility.
-- ActivityLog: new optional `onAtBottomChange?: (atBottom: boolean) => void` prop, ref-mirrored
-  (observer effects don't churn on unstable parent callbacks). Report sites: handleScroll (with
-  onAutoScrollChange, same value), `visible.length` effect else-branch (entry growth while
-  scrolled up — the DETERMINISTIC growth trigger), MutationObserver else-branch (streaming
-  characterData growth, real-browsers-only complement), scrollToBottom (reports true by
-  construction). One shared `reportAtBottom` callback.
-- Plugin.tsx: `logAtBottom` state ← onAtBottomChange; click = querySelector scrollTop=scrollHeight
-  (precedent: tab scroll save) + setAutoScroll(true) + optimistic setLogAtBottom(true).
-- Existing Follow pill (`!autoScroll`, right of badge) untouched — overlaps ~95% with the new
-  button (both show when scrolled up, both end in follow+bottom). Dedup is a user/UX call, not made here.
-
-### ⚠️ happy-dom v20 MutationObserver delivery dies under GC pressure
-`MutationObserverListener` stores its report callback as `new WeakRef((record) => this.report(record))`
-with NO strong reference to the arrow anywhere; Node dispatch does `mutationListener.callback.deref()`
-— after any GC pass the deref returns undefined and mutations are SILENTLY dropped (no error).
-Consequence: a test relying on MO callbacks passes in isolation (no GC between observe and mutation)
-and flakes in the full 250s suite (GC runs constantly). Real browsers hold strong refs per spec —
-production code using MO is fine; only happy-dom TESTS of MO paths are inherently flaky.
-**Rule: never let a happy-dom test depend on MutationObserver delivery.** Route the tested behavior
-through a React effect (deterministic) and treat the MO path as a real-browser-only complement
-(document, don't test). The scroll-report content-growth test additionally stubs a no-op
-MutationObserver so its mutation-proof targets exactly the effect branch.
-
-### Tests
-`web/scroll.test.ts` (10 pure), `web/ActivityLog-scroll-report.test.tsx` (5 — every report path +
-auto-follow-preserved + optional-prop), `web/Plugin-scroll-bottom-journey.test.tsx` (canonical
-journey: real daemon, seeded assistant_text + `usage` event so TokenUsageBadge/⌘ renders → DOM-order
-assertion "↓ before ⌘ in panel-actions"; scroll up → appears → click → bottom + hidden + Follow pill
-gone). Seeding a `usage` JSONL event (`{type:"usage", taskId, inputTokens, contextWindow, ts}`) is
-the trick to make the Compact button exist in harness tests. Mutation-verified: prop-wire drop →
-journey fails; handleScroll report drop → 2 scroll tests fail; effect else drop → content-growth
-test fails (exact, thanks to the MO stub).
-
-## Activity-log viewport position: 30 touch points, three clusters, and the culprit that was not in the scroll code (2026-07-25)
-
-A survey of everything that reads, writes or invalidates the activity log's scroll offset — done
-because the area "felt fragile and nobody could state the conditions" — found **30 touch points,
-not the 9 anyone could name**: 9 JS writers, 5 readers, 6 pieces of state, 6 content-height
-mutators inside the container, 6 clientHeight mutators outside it, 6 wholesale `logs` replacements,
-plus **the browser** (`overflow-anchor: auto`, which silently absorbs top-of-list insertions —
-load-bearing here, and not implemented by Safari; see below).
-
-They do NOT collapse into one mechanism, and forcing them to would be wrong. Three clusters:
-
-- **A — measuring or writing during a transitional state.** Produces the *unpredictable* symptoms,
-  because the transient's duration is a network variable.
-- **B — viewport position addressed by a perishable identity** (pixel offsets, a module-counter
-  entry id, a React component instance). Produces *deterministic* losses, each disguised as some
-  other feature behaving normally, which is why none of them were ever reported.
-- **C — conditional renders in a flex row.** Independent, cheap, cosmetic.
-
-Their common amplifier: `logs` is the whole viewed session's array, replaced wholesale on every
-refresh. **That amplifier turned out to be able to hurt users on its own** — see the causal chain
-below. "What time may I measure" and "what name do I remember a position by" are orthogonal
-questions; one mechanism cannot answer both.
-
-### The finding: guard the PROPERTY, not the enumeration of causes
-
-Two predicates were proposed on the *cause* side and both were killed by one measurement:
-
-- *"is the rendered content from the task being viewed"* (a view-parameter identity)
-- *"is the container non-scrollable"* (an emptiness proxy)
-
-Counter-example: an in-log search matching 40 entries leaves the container with 449px of range —
-fully scrollable — but `scrollTop` 1200 is clamped to 449, which IS the new bottom, so
-`isNearBottom` returns true and follow mode arms itself. Neither predicate catches it.
-
-**The predicate that works: `scrollRangeShrank(prev, current)` where range = `scrollHeight −
-clientHeight`.** All five measured failures share not emptiness but *the scrollable range got
-smaller and the browser pushed the offset to the new bottom*: tab-switch fetch gap (1549→0), three
-kinds of in-log search, and the composer auto-growing (viewport 572→537). Growth is deliberately
-NOT suspicious — streaming grows every frame, and a user scrolling back to the bottom mid-stream
-must still be able to re-arm follow.
-
-⭐ **Why this generalises and a cause-list does not**: this subsystem had already proven that the
-cause side cannot be enumerated — the survey started from "your nine are almost certainly
-incomplete" and ended at 30. Listing causes again would repeat the same error. `scrollRangeShrank`
-tests **the property that makes an observation meaningless**, so it covers causes nobody wrote
-down. The composer's auto-grow is the proof: not a view parameter, not anticipated, and it lands in
-the predicate for free. (It also collapsed two separately-catalogued classes — content-height
-changes inside the container and clientHeight changes outside it — into one. They were two classes
-only because they were sorted by *what changed*; sorted by *what it causes*, they are one thing.)
-
-### `autoScroll` vs `logAtBottom` — two concepts, one illegal coupling
-
-`logAtBottom`'s writers are all **observations**. `autoScroll`'s are one observation and six
-**intents**. That single observation-writing-intent (`handleScroll` reporting to both; the
-predicate's own comment admits "one predicate, two consumers") is the door every hijack came
-through. They must NOT be merged into one boolean — that would lose the "intent" concept the Follow
-button needs.
-
-Two halves of the same seam, fixed separately: the guard above rejects a **false observation** (a
-clamp after shrink); and the new-content effect no longer takes `autoScroll` as a dependency, which
-stops a **true observation from immediately executing** — the user scrolls into the 40px band,
-follow correctly arms, and previously the effect fired and yanked them the rest of the way
-mid-gesture. **Arming is not acting**, and "go to the bottom now" already has its own channel
-(the `scrollToBottomRequest` counter). The fix was a deletion, and the effect reads `autoScrollRef`
-so "responds to content, not to intent" is explicit rather than implied by a deps array.
-
-### Pitfalls that will look like oversights
-
-- **`prevScrollRangeRef` may ONLY be advanced by `handleScroll`.** Letting a geometry-reading effect
-  update it too makes the guard inert: effects run at commit, the clamp's scroll event is dispatched
-  by the browser *afterwards* (measured 14ms later), so the effect writes the new small value first
-  and the comparison becomes new-vs-new. **The danger is that it looks MORE thorough** — the next
-  person will read the single call site as a missed one.
-- **"Only trust real user scrolls" is unimplementable.** A clamp-dispatched scroll event has
-  `isTrusted === true` and is indistinguishable from a user's at the event layer. Written into the
-  predicate's docstring specifically to stop someone walking that road again.
-- **In a right-aligned flex row, inserting a child moves only the siblings BEFORE it.** So
-  conditionally-rendered controls belong *before* the persistent ones — cheaper than reserving
-  blank space and with no side effects. This is what made the header jump 71.3px when Follow
-  appeared. (First measured as "100.3px on the whole actions group" — a container's property read
-  as the content's. Same shape as the mistakes above, caught by re-measuring per child.) Fixed
-  by putting both scroll-state buttons leftmost; Follow also shares `requestScrollLogToBottom`
-  with ↓ so the two booleans flip in one batch instead of two.
-- **`scroll-attribution.ts`** is dev-only (`localStorage mxd-debug-scroll`): it tags every
-  programmatic write with who did it, plus a per-frame sampler for movement nobody claimed.
-  **Read its docstring before trusting it** — it has a documented blind spot (below).
+⚠️ **In a right-aligned flex row, inserting a child moves only the siblings BEFORE it.** So
+conditionally-rendered controls belong *before* the persistent ones — cheaper than reserving blank
+space and with no side effects. This is what made the header jump 71.3px when the Follow pill
+appeared. (First measured as "100.3px on the whole actions group" — a container's property read as
+the content's; re-measure per child.)
 
 ### Deleting an implementation that never worked
 
@@ -3232,605 +2933,295 @@ had collapsed and `scrollTop` was clamped to 0. It saved a destroyed value, stru
 invisible because the follow-hijack it fed put you at the bottom anyway, which looked like normal
 follow behavior.
 
-Fixing the hijack exposed it, and "leave it as-is" turned out not to be an option — behavior would
-change either way. Made into an explicit three-way choice and reported: guard only (visible
-regression) / make restore actually work (decides a product question) / **delete the never-working
-implementation and write the current behavior down explicitly (zero user-visible change, measured
-8/8)**. Chose the third. **Deleting an implementation that never had an effect is not deciding the
-feature shouldn't exist — it is removing a lie.** The real feature needs an address that survives a
-refetch, which is the same requirement as message deep-linking and active-chain membership: all
-three want persisted event identity (`eid`) on every entry regardless of transport.
+⭐ **Deleting an implementation that never had an effect is not deciding the feature should not
+exist — it is removing a lie.** The real feature needs an address that survives a refetch, which is
+the same requirement as message deep-linking and active-chain membership: all three want persisted
+event identity on every entry regardless of transport.
 
-### The symptom that was not in the scroll code at all
+### The culprit was not in the scroll code at all
 
-User: "from mid-output to output complete, my scroll gets yanked to somewhere above." Only visible
-with follow OFF. Caught with a console probe in the real session:
+Symptom: *"from mid-output to output complete, my scroll gets yanked to somewhere above"* — only
+visible with follow OFF. The chain: the viewed agent goes idle → a refetch replaces every entry
+object → new entry ids → new React keys → the whole subtree unmounts and remounts → **the offset
+does not survive the swap.** Measured from inside the DOM mutation:
 
 ```
-t=22467   GET events?after=compact        atScrollTop = 5517      (agent went idle)
-t=22736   5517 → 0   delta -5517   "BROWSER (no JS write)"   top=""   entries 59→60
-t=22751   JS write scrollTop 0 → 0        at index.js:4283:33
+t=87006  >>> REFETCH                   scrollTop 8089  scrollHeight 8823  children 85
+t=87032  dom-mutation  removed:1       scrollTop 8089  scrollHeight 8809
+t=87299  dom-mutation  added:82 removed:82   scrollTop 191   ← offset already gone
+t=87313  js-write 191 -> 191           (the lazy-render anchor, pinning it)
 ```
-
-Both line numbers map back exactly: **4283 = the lazy-render anchor**
-(`container.scrollTop = container.scrollHeight - scrollBottom`), **4294 = `scrollToBottom`**.
-
-The chain: `agent_idle` → `refetchOnIdleRef` → `processEventBatch` → `setLogs` replaces every entry
-with a new object → new `createLogEntry` ids → new React keys → the whole subtree unmounts and
-remounts → **the offset does not survive the swap**.
-
-A second capture measured this from inside the DOM mutation:
-
-```
-t=87006  >>> REFETCH                          st 8089   sh 8823   kids 85
-t=87032  dom-mutation  removed:1              st 8089   sh 8809
-t=87299  dom-mutation  added:82 removed:82    st  191   sh 8978   ← offset already gone
-t=87313  js-write 191 → 191                   (the same anchor, pinning again)
-```
-
-Note what this does and does not show. All 82 entries are swapped in **one** mutation record, and by
-the time the observer's microtask runs the height is **already restored** — while the offset is
-already lost. It lands wherever the intermediate geometry allowed (0 in the first capture, 191 in
-this one), so "clamped to 0" is too specific; the honest statement is that **the offset does not
-survive a wholesale replacement**. And the usable evidence is not a dip in `scrollHeight` — nothing
-observable ever sees the dip — it is that **the offset changed across the mutation with no JS
-write**.
 
 **`added:82 removed:82` is the direct observation of every React key changing.** With stable keys
-React reuses nodes and a normal update looks like the `removed:1` record at t=87032. Eighty-two out,
-eighty-two back, `kids` unchanged — that is key churn measured, not inferred, and it is the positive
-evidence that **eid-as-React-key is aimed at the right thing**.
+React reuses nodes and a normal update looks like the `removed:1` record — 82 out, 82 back,
+`children` unchanged, is key churn measured rather than inferred. Note what it does *not* show: the
+height is already restored by the time the observer's microtask runs, so "clamped to 0" is too
+specific; the honest statement is that **the offset does not survive a wholesale replacement**, and
+it lands wherever the intermediate geometry allowed (0 in one capture, 191 in another).
 
-Then the pin: landing near the top brings the sentinel into view → the IntersectionObserver fires →
-it captures `scrollBottom = scrollHeight - scrollTop` → one frame later writes
-`scrollHeight - scrollBottom`, reproducing the same offset (`0 → 0` in the first capture,
-`191 → 191` in the second). **The anchor is what turns the culprit's result into a persistent
-state** — which is why the symptom is "stuck near the top" rather than "flickered once".
+**The lazy-render anchor is an accomplice, not the cause**, and the arithmetic proves it: it captured
+`scrollBottom = 8978 − 191 = 8787` against a `scrollHeight` of 8809-8978, so the offset was already
+near the top when it ran. It **observed and reproduced** a position that was lost before it existed;
+it did not compute a wrong one. That is what turns a one-frame flicker into a stuck state, and it is
+why there is nothing to fix in the anchor. **Fix the keys.**
 
-But the anchor is an accomplice, not the cause, and the arithmetic proves it: `scrollBottom =
-8978 − 191 = 8787`, and `scrollHeight` across that window was 8809–8978, so the offset **at capture
-time** was already ≈22–191 — already near the top. The anchor **observed and reproduced** a position
-that was lost before it ran; it did not compute a wrong one. So there is nothing to fix in the
-anchor. Fix the keys.
+⚠️ **CORRECTION: "a wholesale replacement does not move the offset" is FALSE**, and an earlier round
+measured it four times and concluded otherwise. The measurements were honest; the fixture held ~60-80
+plain-text entries, which are cheap enough to tear down and rebuild that the collapse never survives
+to a layout. A real session has images with no reserved height, expandable cards and markdown tables.
+**The cost of a remount depends on how expensive the content is to rebuild, so a fixture made of
+cheap content cannot answer the question at all.**
 
-**The fix is not in the scroll subsystem.** That refetch exists for exactly one reason: to get
-`eid` back, because SSE-broadcast events don't carry it (it is stamped at persist time), so
-Edit/Rewind can't work during streaming. Task `01KYBQXSVEP7Y94NWHGWSMNQSM` kills this two ways
-over — eid arriving with SSE means the refetch never happens, and **eid as the React key** makes a
-refetch reconcile instead of remount, which also covers `handleReconnect` (whose replacement will
-not disappear) and fixes expanded `Card` state being reset. A stop-gap was explicitly rejected:
-it would add a 31st touch point to a mechanism scheduled to disappear, and transitional code is
-code that must later be deleted — which is forgotten far more reliably than adding it was.
+### The instrument's blind spot, and what it says about specifying measurements
 
-### ⚠️ CORRECTION — "a wholesale replacement does not move the offset" is FALSE
-
-An earlier round measured this four times and concluded a full replacement preserves `scrollTop`
-(remove-all-then-insert-all inside one synchronous block does not clamp, because no layout happens
-in between). **The measurements were honest and the conclusion is wrong**, and left standing it
-sends the next reader straight past the actual culprit.
-
-Why it looked true: the fixture held ~60–80 plain-text entries. Tearing those down and rebuilding
-them is cheap enough that the collapse never survives to a layout. A real session has images with
-no reserved height, expandable cards, markdown tables — rebuilding is slow enough that the collapse
-becomes observable and the browser clamps.
-
-**The cost of a remount depends on how expensive the content is to rebuild**, so a fixture made of
-cheap content cannot answer the question at all. Second instance in one day of *correct measurement,
-wrong world sampled*.
-
-### The instrument's blind spot — and a rule about specifying observations
-
-The probe classified that exact jump as `range UNCHANGED → scroll anchoring or user — NOT a clamp`.
-Wrong: the range collapsed and refilled **inside one frame**, and a per-frame sampler only sees what
-survives to the end of a frame.
-
-So `range unchanged ⟹ not a clamp` holds ACROSS frames and fails for collapse-and-refill within
-one. And **`scrollHeight` never dipped in any sample of the second capture either** — read
-literally, that refutes "the container collapsed". It does not, and the reason is the sharp edge
-of this whole subsystem:
+The per-frame probe classified that exact jump as `range UNCHANGED → scroll anchoring or user — NOT
+a clamp`. Wrong: the range collapsed and refilled **inside one frame**. Worse, `scrollHeight` never
+dipped in any sample — read literally, that refutes "the container collapsed", and it does not:
 
 ```
-t=87032  dom-mutation  ...
-         ← 267ms, ZERO samples (≈16 expected at 60fps)
+t=87032  dom-mutation ...
+         <- 267ms, ZERO samples (~16 expected at 60fps)
 t=87299  dom-mutation  added:82 removed:82
 ```
 
-The main thread was blocked solid for 267ms rebuilding 82 entries, so every rAF callback and
-observer microtask queued behind it. **"No dip in the samples" ≠ "no dip."**
+The main thread was blocked solid for 267ms rebuilding 82 entries, so every rAF callback and observer
+microtask queued behind it. **"No dip in the samples" is not "no dip."**
 
-This turns the blind spot from an edge case into a **systematic bias**: the operations that cause
-large displacement are exactly the operations that block the main thread long enough to hide
-themselves. A per-frame instrument is least able to see precisely the moments it is most needed for.
-Any future instrument here needs an observation that survives a blocked thread — a count taken
-either side of the render, or a mutation record — not a sample taken during it.
+⚠️ **That is a systematic bias, not an edge case: the operations that cause large displacement are
+exactly the operations that block the main thread long enough to hide themselves.** A per-frame
+instrument is least able to see precisely the moments it is most needed for. Any instrument here
+needs an observation that survives a blocked thread — a count taken either side of the render, or a
+mutation record — not a sample taken during it.
 
-The generalisation, which cost a nearly-wasted round: **before specifying a measurement, check that
-the instrument's resolution can carry it.** The request that prompted this was "record
-`scrollHeight` every frame across the window" — below the instrument's resolution, and its failure
-mode is a **silent false negative** ("no dip, so not a remount") that reads exactly like a real
-result. That is more dangerous than reasoning wrongly, because it arrives wearing evidence's
-clothes. Three false negatives of this family landed in one day: an over-specified observation, a
-fixture whose content was too cheap to reproduce the effect, and a blocked-thread sampling gap.
+⭐ **Before specifying a measurement, check that the instrument's resolution can carry it.** The
+request that prompted this was "record `scrollHeight` every frame across the window", which is below
+the instrument's resolution and whose failure mode is a **silent false negative** ("no dip, so not a
+remount") that reads exactly like a real result. That is more dangerous than reasoning wrongly,
+because it arrives wearing evidence's clothes. Three false negatives of this family landed in one
+day: an over-specified observation, a fixture whose content was too cheap to reproduce the effect,
+and a blocked-thread sampling gap. A fourth, twice in one session: **check what your selector
+actually points at before believing a null result** — `log.children[0]` is the "load earlier" bar,
+not an entry, so "the first node is still attached" was true on a build that remounts everything.
 
-And the counterpart to knowing when to measure — **stop collecting once the answer cannot change
-the action.** Exactly where in those 267ms the offset died does not alter the fix: don't remove the
-82 nodes. Further rounds of user reproduction would have bought precision nobody would spend.
+⭐ **And the counterpart: stop collecting once the answer cannot change the action.** Exactly where
+in those 267ms the offset died does not alter the fix — do not remove the 82 nodes. Further rounds
+of user reproduction would have bought precision nobody would spend.
 
 ### Fixing a "you end up at the bottom anyway" mechanism makes older displacement visible
 
 This displacement had always been there. With follow ON, any content change re-triggered
-scroll-to-bottom, so **every** displacement was overwritten by the same endpoint and none of them
-produced a distinguishable symptom. Removing that overwrite is what made this one visible.
+scroll-to-bottom, so **every** displacement was overwritten by the same endpoint and none produced a
+distinguishable symptom. Removing that overwrite is what made this one visible.
 
-Generally: **in a subsystem with a mechanism that keeps forcing one endpoint, that mechanism is
-masking every other bug that moves the same value.** Each masker you fix surfaces a symptom that
-"has always been there" — the user will report it as new and it is not a regression, it is
-*newly visible*. This explains a whole class of "I hit this often but can't say when" reports, and
-it means a subsystem's bug count can appear to grow while it is genuinely getting better.
+> **In a subsystem with a mechanism that keeps forcing one endpoint, that mechanism is masking every
+> other bug that moves the same value.** Each masker you fix surfaces a symptom that has always been
+> there; the user reports it as new and it is not a regression, it is *newly visible*. This explains
+> a whole class of "I hit this often but cannot say when" reports, and it means a subsystem's bug
+> count can appear to grow while it is genuinely getting better.
 
 ### Reusable method
 
-- **Attribution beats reasoning here.** One reproduction with the probe turned "something moved me
-  and I don't know what" into two exact line numbers. The previous round needed a full 30-touch-point
-  survey to reach a *worse* answer.
+- **Attribution beats reasoning here.** One reproduction with a probe that tags every programmatic
+  write with who did it turned "something moved me and I don't know what" into two exact line
+  numbers. The previous round needed a 30-touch-point survey to reach a *worse* answer.
 - **Diagnose by absence.** Browser scroll anchoring goes through no JS path and fires no event, so
-  "the offset moved and nobody wrote it" is itself the diagnosis. Any instrument here must record
-  unclaimed movement, not just instrument the writers.
-- **Do not try to separate a clamp from a user scroll by `isTrusted`** — a clamp's scroll event is
-  trusted and identical at the event layer. Recorded before, re-derived, and now recorded again.
+  "the offset moved and nobody wrote it" is itself the diagnosis. Instrument unclaimed movement, not
+  just the writers.
 - **A streaming mock provider is ~60 lines and puts a frontend bug on the real agent loop**: serve
   Anthropic's SSE shape on a local port and set `ANTHROPIC_BASE_URL` (the daemon passes
-  `process.env` into the worker). Gets real `text_delta`, thinking, tool execution, `end_turn` →
-  real `agent_idle` → real refetch. `/tmp/scroll-probe/` holds the fixture + mock.
+  `process.env` into the worker). You get real `text_delta`, real tool execution, real `end_turn`.
 - **When you cannot reproduce, send the instrument to whoever can.** Four increasingly faithful
-  attempts failed; one paste into the user's console succeeded immediately.
-
-## Sidebar search/filter toggle — pure reducer, blur-close removed (2026-07-07)
-
-The sidebar filter button ([TASKS][+][refresh][🔍][👁] header row) now cleanly TOGGLES its
-search input: click open→focus, click again/Escape→close, and **closing clears the query** so
-the tree is never left silently narrowed by a hidden input.
-
-### Root cause of the "又弹出来" (reopen) bug
-open state lived in Plugin.tsx (`useState`), query lived in TaskTree.tsx (`useState`), and the
-input had `onBlur` that auto-closed when empty. Clicking the toggle button while the input was
-focused+empty fired the input's `blur` on **mousedown** (→ `onFilterOpenChange(false)`, state
-now false) BEFORE the button's `onClick` `setFilterOpen(p=>!p)` ran → the toggle read `false` and
-flipped back to `true` → the box **re-opened**. Classic blur-vs-click race across a split state.
-
-### Fix — one atomic reducer, no blur-close
-- **New `.mxd/plugin/web/filter-state.ts`**: pure `filterReducer(state,{toggle|close|setQuery})`
-  over `{open, query}`. `toggle` opens (query stays "") / closes-and-clears; `close` clears+closes;
-  `setQuery` ignored while closed. Invariant: **closed ⟹ query===""**. Race-free by construction —
-  the button dispatches `toggle`, Escape dispatches `close`, there is NO competing blur mutation.
-- **Plugin.tsx**: `useReducer(filterReducer, INITIAL_FILTER_STATE)`; button `onClick` →
-  `dispatch({type:"toggle"})`; passes `filterQuery` + `onFilterQueryChange`(setQuery) +
-  `onFilterClose`(close) to TaskTree. Button active-state styling (`.mxd-btn-icon.active`, already
-  in CSS) unchanged.
-- **TaskTree.tsx**: filter is now a CONTROLLED prop (`filterQuery`) — removed internal
-  `taskFilter` useState. **Removed the input's `onBlur` handler entirely** (the race source).
-  Escape → `onFilterClose()`. Auto-focus-on-open effect kept. Props type extracted to exported
-  `TaskTreeProps`. Filtering behavior (substring match on title/description/id) unchanged.
-- MockShowcase.tsx + web/TaskTree-color.test.tsx updated for the new props.
-
-### Behavior change worth knowing (surfaced to root)
-The old **auto-close-on-blur-when-empty** is GONE. An empty open search no longer collapses when
-you click elsewhere; it closes only via the toggle button or Escape. This matches the task's
-enumerated close triggers ("click again/Escape") and is what makes the toggle race-free without a
-`preventDefault` hack. If click-away-collapse is ever wanted back, do it via a document-level
-outside-click listener (NOT input.onBlur) to avoid re-introducing the race.
-
-### Why lift to a reducer instead of a minimal in-place patch
-happy-dom + React controlled-input change tracking is unreliable: simulating typing (native `input`
-event AND the `Object.getOwnPropertyDescriptor(...).value` setter trick) both FAILED to fire React's
-`onChange` in probes. So a query-in-TaskTree design would need fragile typing simulation to test.
-Lifting the query to a controlled prop makes filtering testable by **passing a prop** (no typing),
-and the pure reducer makes the toggle logic testable with **zero DOM**. `.blur()` and keydown DO
-fire in happy-dom (probed) — used for the component-level guards.
-
-### Tests (mutation-verified)
-- `web/filter-state.test.ts` (11): reducer purity — open→type→close→open (reopened input empty),
-  toggle strict alternation, close clears, setQuery-ignored-while-closed, closed⟹empty invariant.
-- `web/TaskTree-filter.test.tsx` (7): filterQuery prop filters; search bar reflects filterOpen;
-  Escape→onFilterClose; **blur does NOT close** (guard); auto-focus on open; and a faithful
-  **"又弹出来" reproduction** — a Harness wiring a real button + the real reducer + TaskTree, does
-  open→blur input→click toggle, asserts it stays CLOSED. Mutation proof: re-adding `onBlur`→close
-  fails BOTH the blur guard AND the reproduction (reproduction shows `Received: true` = reopened).
-- Full `bun test` 2465 pass / 0 fail (baseline 2447 + 18). typecheck + check:ci + i18n clean.
-
-## Global image drag-drop → composer attachment (2026-07-15)
-
-Drop an image ANYWHERE on the plugin web page → it attaches to the composer's existing
-attachment state, instead of the browser navigating to / opening the file. The composer's
-own footer-form drop (`.mxd-footer-form`) is UNTOUCHED (additive) — this ADDS page-wide
-coverage.
-
-### Files
-- `.mxd/plugin/web/file-drop.ts` — NEW. Pure helpers `isFileDrag(dt)` / `extractImageFiles(dt)`
-  (no DOM, unit-tested) + the `useWindowFileDrop(onImageFiles): isDragging` hook.
-- `InputBar.tsx` — new `ImageDropRequest = { files: File[]; seq: number }` type + `imageDropRequest`
-  prop + a one-shot `useEffect` that runs each file through the EXISTING `handleFileToBase64`
-  (the reuse point — no duplicated validation; paste / click-upload / composer-drop all share it).
-- `AppFooter.tsx` — threads `imageDropRequest` Plugin → InputBar.
-- `Plugin.tsx` (ProjectContent) — `useWindowFileDrop(handleImageFiles)` → bumps a one-shot
-  `imageDropRequest` state (mirrors the `quoteRequest` seq-hop) → AppFooter; renders the
-  `.mxd-global-drop-overlay` when `isDraggingFile`.
-- `style.css` — `.mxd-global-drop-overlay` (fixed, full-viewport, `pointer-events:none`) +
-  `.mxd-global-drop-inner`. i18n `footer.dropImage` (EN "Drop image to attach" / ZH "拖放图片以添加").
-
-### ⭐ RED LINE — never intercept internal HTML5 drags
-The task-tree reorder/reparent (TaskTree.tsx) and tab-bar reorder are native HTML5 drags that
-set `dataTransfer.setData("text/plain", …)` → `dataTransfer.types === ["text/plain"]`, NEVER
-"Files". EVERY global handler gates on `isFileDrag` (= `types.includes("Files")`), so internal
-drags pass through completely untouched. Verified: TaskTree `handleDragOver` early-returns (no
-`preventDefault`) when its internal `dragState` is null (external drag), and `handleDrop` calls
-`preventDefault` but NEVER `stopPropagation` — so a FILE dropped on a task node is preventDefaulted
-(no browser open) AND bubbles to the window handler (attaches). Live-smoke confirmed
-`internalDragPrevented === false` for a text/plain dragover.
-
-### Design: window listeners, CAPTURE (visual) vs BUBBLE (functional) split
-`useWindowFileDrop` attaches to `window` (covers the whole viewport regardless of DOM — sidebar,
-activity, footer — without a wrapping div / layout change). Two concerns, two phases:
-- FUNCTIONAL (bubble): `dragover` (preventDefault + `dropEffect="copy"`) + `drop` (preventDefault +
-  attach image files). BUBBLE phase is load-bearing: InputBar's own composer `onDrop` calls
-  `stopPropagation`, so a drop landing ON the composer is handled there and this window `drop`
-  does NOT also fire → NO double-attach. Drops elsewhere aren't stopped → bubble to window → attach.
-- VISUAL (capture): `dragenter`/`dragleave` depth counter + `drop` reset drive the overlay.
-  CAPTURE phase is load-bearing: it fires before any inner bubble-phase handler, so InputBar's
-  `stopPropagation` on the composer's drag/drop can't desync the counter or leave the overlay
-  stuck (a composer drop still triggers the capture `drop` reset). This is why the overlay needs
-  NO timer/flicker heuristic — the counter is deterministic.
-
-### Consumer wiring — one-shot request (mirrors quoteRequest)
-Window handler collects `File[]` and bumps `imageDropRequest = { files, seq }`; InputBar's effect
-(keyed on the object; `handleFileToBase64` is a stable useCallback, listed in deps → no re-fire)
-runs each file through `handleFileToBase64`. Passing File objects (not base64) down keeps the
-one converter (size guard + FileReader + mediaType) in InputBar — zero duplication.
-
-### Tests (mutation-verified)
-- `web/file-drop.test.ts` (pure helpers), `web/file-drop-hook.test.tsx` (hook: overlay show/hide,
-  attach, dropEffect, enter/leave counter, unmount cleanup, + RED LINE text/plain not intercepted),
-  `web/InputBar-image-drop.test.tsx` (imageDropRequest → preview via handleFileToBase64),
-  `web/Plugin-image-drop-journey.test.tsx` (CANONICAL: real daemon + Plugin, drop image on the
-  sidebar → composer preview; internal text/plain dragover not prevented — guards the
-  Plugin→AppFooter→InputBar seam + the hook wiring).
-- Mutation-proofed: dropping `imageDropRequest={imageDropRequest}` in AppFooter → journey FAILS
-  (15s timeout, no preview) while component tests stay green; removing the `isFileDrag` gate in
-  the hook's `onDragOver` → RED-LINE hook test FAILS.
-- Live browser smoke on the branch build (isolated daemon :7434): overlay renders w/ correct
-  text + `pointer-events:none`; file dragover/drop `defaultPrevented`; text/plain drag NOT
-  prevented; drop image on sidebar → `data:image/png;base64,…` preview in composer; paste image
-  still works. happy-dom + Bun support `File`/`FileReader.readAsDataURL` and synthetic DragEvents
-  (attach `dataTransfer` via `Object.defineProperty`).
-
-### Gotcha — CDP can't synthesize an OS-file drag
-chrome-devtools `drag` is element-to-element only; a REAL external-file drop (the one that
-triggers the browser's open-the-file default) can't be synthesized via available tools. Both the
-tests and the live smoke inject SYNTHETIC drops (dataTransfer stub). "Browser doesn't open the
-file" rests on standard `preventDefault(dragover+drop)` semantics (verified prevented) + a human's
-eventual real-file drag. Everything else is covered end-to-end.
-
-## Settings UX — unified "Save & Restart" (2026-07-17)
-
-Three entries merged, newest-first, because this UI was rebuilt twice in a month and only the end
-state is actionable. **Current shape** (verified in `web/components/SettingsPanel.tsx`): a
-`RestartBar` with exactly two buttons — **Save & Restart** (saves every dirty tab, then restarts the
-daemon) and **Revert** (resets all tabs to last-saved). Closing the panel discards. **No confirm
-dialogs anywhere.**
-
-The two superseded entries are kept below for one reason each: the three-fix decouple carries the
-mechanism note that is still true and still counter-intuitive (config Save takes effect on the next
-run WITHOUT a restart — restart only reloads code), and FIX-10 carries the bug that made all of this
-necessary in the first place.
-
-Simplified from the three-fix model (separate Save, Revert, restart-relabel, save-effect hint,
-restart-confirm) to a single-action model per user request ("try simplest, revert if bad").
-
-**One button: "Save & Restart" / "保存并重启"** — saves ALL dirty tabs (global/repo/local) then
-restarts the daemon. Closing the panel = discard. No separate Save or Revert buttons.
-
-**handleSaveAndRestart** (SettingsPanel level): validates model required on global → PATCHes each
-dirty tab via updateGlobal/updateRepo/updateLocal → on first error stops + shows inline error → on
-all success POSTs /restart-daemon + polls /health + page reload. Lifted from GlobalTab to
-SettingsPanel so the RestartBar is shared across all tabs.
-
-**Close-panel guard retained**: X button + click-outside with `hasUnsavedChanges` → confirm
-"You have unsaved changes. Discard them?". Tab-switch NOT guarded (drafts persist).
-
-**RestartBar replaces TabActions**: renders after tab content, before danger zone. One button +
-error display. The old per-tab Save/Revert bar is gone. GlobalTab/ProjectTab are pure forms
-(no action buttons, no save/revert/error/dirty props).
-
-**Verified mechanism** (unchanged): config Save → daemon syncToWorkers (daemon.ts:2163) →
-worker ctx.globalConfig updates (scope-worker.ts:184-188) → next resolveProjectConfig uses new
-values. Restart is only for loading newly deployed code. But the UX merges both into one button
-for simplicity — "Save & Restart" always saves first, then restarts.
-
-**Revert path**: the entire change (three-fix base + this simplification) is two merge-able
-commits. `git revert <merge>` cleanly returns to pre-fix state.
-
-### Settings UX iteration 3: Revert button added, close-panel confirm removed (2026-07-17)
-
-User feedback: close-panel confirm dialog was more annoying than helpful. With Revert available,
-users undo mistakes themselves — no need for system to block close.
-
-- **Revert button** added to RestartBar (next to Save & Restart). Resets ALL tabs (global/repo/local)
-  to last-saved state. Disabled when clean (nothing to revert).
-- **Close-panel confirm removed**: X button + click-outside → direct onClose, no window.confirm.
-- `closeConfirmUnsaved` i18n key deleted (EN + ZH).
-- `handleClose` useCallback removed; click-outside handler reverted to direct `onClose()`.
-
-**Current SettingsPanel action model**: Save & Restart (saves all dirty + restarts daemon) +
-Revert (undo all edits) + close (just closes, discards unsaved). No confirm dialogs anywhere.
-
-### Superseded by this: the three-fix decouple (2026-07-16)
-
-Three UX fixes to `web/components/SettingsPanel.tsx` that stop users from conflating
-"restart daemon (loads code)" with "apply config changes (Save → next run)". Root cause
-was layout: restart button appeared inside the Global tab near Save/Revert, giving the
-impression that restart = apply config.
-
-**Verified mechanism (write into copy)**: config Save → daemon `syncToWorkers("config",
-globalConfig)` (daemon.ts:2163) → worker `ctx.globalConfig` updates instantly
-(scope-worker.ts:184-188) → next `resolveProjectConfig` → `resolveConfig(ctx.globalConfig,...)`
-uses new values. **Restart is only for loading newly deployed code.**
-
-#### Fix ①: Restart button relabel + decouple
-- `settings.restartDaemon` = "Restart backend (load new code)" / "重启后台(加载新代码)"
-- `settings.restartDaemonLabel` = "Load new code" (left label, replaces old misleading hint)
-- `settings.restartDaemonHint` = description below button: "Only reloads daemon to pick up
-  newly deployed code. Config changes do NOT need a restart — Save applies on the next run."
-  
-#### Fix ②: Save-takes-effect hint
-- `settings.saveEffectHint` in TabActions (shared across all three config tabs):
-  "Saved changes take effect on the next run — no restart needed."
-
-#### Fix ③: Unsaved-changes protection (option A — guard real loss points only)
-- **Restart** with any-tab unsaved → `window.confirm` with misconception-correcting text:
-  "Restarting reloads code, does NOT apply config changes. Save first." If cancelled, no POST.
-- **Close panel** (X or click-outside) with any-tab unsaved → standard "You have unsaved
-  changes. Discard them?" confirm.
-- **Tab-switch** (global↔project↔local): NO guard — each tab keeps independent persistent
-  draft state; no data lost on switch. A confirm here = crying-wolf (trains users to ignore
-  the real confirms on restart/close).
-
-#### CSS
-`.mxd-settings-hint` (muted 11px helper text). Inside `.mxd-settings-tab-actions` takes
-full-width row via `flex-basis: 100%`.
-
-#### Tests (`web/SettingsPanel-restart.test.tsx`, 13 tests)
-- `isDirty` pure-function unit tests (6) — detection algorithm.
-- Fix ①: button text, description text, left label. Fix ②: hint presence. Fix ③: clean-path
-  restart (no confirm, POST fires), close (no confirm, onClose fires), tab-switch (no confirm).
-- happy-dom limitation: React controlled `<input>` onChange doesn't fire from native value
-  setter + dispatchEvent ("input"). Dirty-path component tests can't make the internal draft
-  diverge from saved state. Dirty detection is unit-tested via exported `isDirty`; the wiring
-  (`if (hasUnsavedChanges && !window.confirm(...)) return;`) is ~4 lines verified by code review.
-
-### The bug underneath it all: Save silently failed (FIX-10, 2026-06-10)
-
-Two frontend bugs caused "save then restart, changes gone":
-
-#### Root cause chain
-1. `updateDraftGlobal` deletes keys when value is `""` / `null` / `undefined`
-2. `buildPatch` sends `null` for keys in saved but missing from draft (second loop)
-3. Server PATCH `/config/global` rejects null on required fields -> 400
-4. `updateConfig` in ShellApp.tsx didn't check `res.ok` -> silent swallow
-5. Refetch after silent failure reverts UI -> user sees changes "disappear"
-
-**Backend persistence is fine** -- PATCH -> disk write -> restart -> GET all works. Bug was
-purely frontend.
-
-#### Fix 1 -- `buildPatch(draft, saved, allowNull)`
-New third parameter. `saveGlobal` passes `allowNull=false` -> null values omitted from
-patch. `saveRepo`/`saveLocal` keep `allowNull=true` (null = "remove override"). A model
-change + cleared field no longer poisons the entire PATCH body.
-
-#### Fix 2 -- `updateConfig` checks `res.ok`
-Returns `Promise<string | null>` (error message or null). SettingsPanel shows inline
-red error banner in `TabActions`. Draft stays dirty on failure. Error clears on revert
-or next save attempt. i18n: `settings.saveError` (EN: "Save failed", ZH: "保存失败").
-
-#### Interaction with server-side null rejection (cc#4)
-The server's null rejection for global config (added in FIX-2 cc#4) is CORRECT -- it
-prevents writing incomplete configs that would brick the next boot. The frontend was
-producing the null values that triggered the rejection. Both sides are now correct:
-server rejects null, frontend never sends it for global.
-
-## Pure image send + read-only tool collapse + timestamp alignment + edit SVG icon (2026-07-23)
-
-Four fixes in one commit:
-
-### Bug 1 — Pure image messages blocked
-REST `/message` route (tasks.ts) and `/edit` route (plugin/runtime.ts) both rejected
-requests with empty `content` even when `images` were present. Fixed both guards to
-`!content?.trim() && (!images || images.length === 0)`. `createUserMessage` gets
-`content ?? ""` fallback (it requires `string`, not `undefined`). `notifyParentChain`
-gets `"[image]"` fallback for pure-image messages.
-
-### Bug 2 — Read-only tool cards default collapsed
-Added `TOOL_SEARCH_TASKS` to `tool-names.ts`. New `isDefaultCollapsed(toolName)` in
-`event-display.ts` returns true for `get_tree`, `get_task`, `search_tasks`,
-`list_projects`. `ToolCard.tsx` uses it alongside `titleOnly` to force
-`defaultExpanded=false`. These tools still have expandable bodies (unlike `isTitleOnly`
-which removes the body entirely) — users can click to see results.
-
-### Bug 3 — Timestamp vertical alignment
-`mxd-user-ts-col` had `align-items: center` with no fixed width. The action buttons row
-(3×16px + 2×6px = 60px) was wider than the timestamp `min-width: 58px`, causing the
-timestamp to center-shift rightward. Fixed: `width: 58px` + `align-items: flex-start`.
-Action button gap reduced 6px→4px to fit within 58px (3×16px + 2×4px = 56px).
-
-### Bug 4 — Edit button SVG icon
-Replaced `✎` unicode char with `<IconEdit size={12}/>` SVG pencil icon in LogEntryView
-user message action buttons. `IconEdit` added to `icons.tsx` (Lucide-style pencil path).
-
-## Blocked Edit/Rewind buttons: grey + explain, never hide (2026-07-25)
-
-The rule for which messages are editable is in Events/JSONL (*Which messages can be edited/rewound*).
-This is how a refusal is presented.
-
-**Blocked buttons stay, greyed and disabled, with the reason in `title`.** Copy is never gated. Two
-independent justifications, which is what makes the decision stable:
-
-1. **Semantic**: a silently vanishing control reads as broken — and the cases that most need an
-   explanation are exactly the ones left with no affordance to carry one.
-2. **Layout**: the row is ✎ ↺ ⧉. Hiding makes Copy change position, so a list has rows with two
-   buttons and rows with three. Greying keeps the column stable. This holds *even if* every
-   disappearance were explained.
-
-**Precedence: permanent outranks transient** — not "whichever the code tests first". Order:
-`unknown_message` → `no_rewind_point` → `did_not_start_run` → `agent_busy`. "Wait for the agent to
-stop" promises a remedy; on a permanently un-editable message the user waits, the agent stops, the
-button is still grey, and they cannot tell whether they waited wrong or the product is broken.
-**Never offer a remedy that will not work.** The rule generalises to any future reason.
-
-**Wording follows the user, not the loop.** Every visible string uses their framing — *"Not sent on
-its own — the agent picked this up along with work it was already doing, so there is no separate
-point here to go back to."* The internal token (`did_not_start_run`) stays, because it is part of
-the `/edit` response shape.
-
-**Keep the reason→string map exhaustive over the union** (`Record<EditBlockedReason, string>`), not
-partial-with-fallback: it is what caught the missing i18n key the moment a third reason was added.
-
-## Rewind/Edit confirm dialog + rollback impact analysis (2026-07-24)
-
-Replaces `window.confirm` on Rewind with an in-app modal that reports **what the
-rollback does NOT undo**, and marks the message being edited in the log.
-
-### `.mxd/plugin/web/rollback-impact.ts` (pure, no DOM/React)
-`analyzeRollbackImpact(entries, targetEid) → { filesModified, tasksModified,
-messagesSent, otherSideEffects, toolNames[] }` + `hasSideEffects(impact)`.
-Scans from the entry carrying `targetEid` (inclusive) to the end of the log,
-counting `tool_call` / `tool_pair` entries, **skipping entries from other tasks**
-(rollback is per-session — a sibling agent's bash must not be reported here).
-Unknown `targetEid` → empty impact (the dialog then claims nothing).
-
-Categories (MCP prefix stripped via `stripMcpPrefix`): FILE = write_file /
-edit_file / bash · TASK = create/update/delete/close/reset_task, reorder_tasks,
-execute_tasks, create/delete/rename_folder, fork_task_context · MESSAGE =
-send_message, send_message_to_project, send_message_to_child, report_to_parent,
-clarify.
-
-**Read-only whitelist is load-bearing, not documentation**: read_file, list_files,
-search, search_tasks, get_tree, get_task, get_logs, list_projects, background,
-yield, done. Anything NOT whitelisted and NOT categorized sets `otherSideEffects`
-→ generic warning. **Unknown tools (external MCP, evaluate_script) are never
-assumed safe** — that's why the whitelist exists instead of "warn only on the
-three known categories".
-
-`toolNames` lists EVERY tool that ran in the range (read-only included, deduped,
-first-call order) — raw truth for the detail line; the dialog collapses >8 to `+N`.
-
-### Components
-- `components/ConfirmDialog.tsx` — generic in-app modal (backdrop + centered card,
-  Escape / backdrop click / Cancel all cancel, card click doesn't, `danger` picks
-  `mxd-btn-stop` vs `mxd-btn-primary`, confirm button autofocused, `children` slot).
-- `components/RollbackConfirmDialog.tsx` — composes it with the impact report.
-  `kind: "rewind" | "edit"` picks wording + danger styling. Warnings render in an
-  amber box; a clean range renders a green "nothing outside the conversation
-  changes" box (+ the tool list if read-only tools ran).
-
-**Other `confirm()` call sites are untouched** (delete task, clear session in
-Plugin.tsx + handlers.ts). ConfirmDialog is ready for them; migrating was out of
-scope.
-
-### Rewind vs Edit — where the dialog sits
-Both are the same backend operation (`POST /edit`). Rewind confirms and fires
-immediately. **Edit confirms at the moment the ✎ button is clicked**, not at
-submit: the warning's value is "before you decide to edit", and intercepting the
-submit would need draft restore on cancel (InputBar clears the prompt on submit).
-Trade-off accepted: the actual POST then happens without a second confirm.
-
-### One "jump to bottom" mechanism
-`ActivityLog` gained `scrollToBottomRequest?: number` — a monotonic counter applied
-in a `useLayoutEffect` (deps `[scrollToBottomRequest, entries, scrollToBottom]`).
-Plugin's `requestScrollLogToBottom()` bumps it + `setAutoScroll(true)` +
-`setLogAtBottom(true)`; both the ↓ button and the post-rollback/edit re-fetch call
-it (the ↓ button previously did its own `document.querySelector(...).scrollTop`).
-
-Why a counter and not just `setAutoScroll(true)`: the follow effect only fires when
-`visible.length` or `autoScroll` CHANGES. Rewinding while already at the bottom
-with an unchanged entry count changes neither → nothing scrolls. That matches the
-user's report that the "jumps to the top" symptom is **intermittent**. The layout
-effect also runs before paint (no flash), unlike the follow effect's rAF.
-
-This is a SIBLING of the "Load earlier history" bottom-relative anchor (01KXP05P),
-not a change to it: same class of bug (wholesale `entries` replacement invalidates
-the scroll offset), opposite intent (land at the bottom vs stay put). The anchor
-effect and the follow effect are untouched.
-
-### Editing highlight
-`editRequest.eid` → ActivityLog `editingEid` → LogEntryView adds
-`mxd-user-msg--editing` (inset accent rail + brighter bubble) and stamps
-`data-eid` on every user-message entry. The composer's "editing" indicator is now
-a button (`mxd-edit-indicator-label`, `IconEdit` SVG replacing the ✏️ emoji) that
-jumps back to that message via `[data-eid=...]`.
-
-**Gotcha — smooth scrollIntoView loses to follow mode.** `scrollIntoView({behavior:
-"smooth"})` on the edited message got snapped back to the bottom mid-animation
-(observed live in the browser, not in tests). Fix: `setAutoScroll(false)` first,
-then an INSTANT `scrollIntoView({block:"center"})`.
-
-### Test-harness gotcha: a seeded task with `status: "pending"` wipes its own log
-`clearSessionState` (event-handler.ts) drops log entries for sessions transitioning
-to `pending`. In happy-dom journey tests the SSE EventSource is a no-op mock so
-this never fires, but in a REAL browser the first `tree_updated` arrives and the
-activity log renders "No events yet" despite the events endpoint returning data.
-Seed live-smoke fixtures with `status: "verify"` (or in_progress) — a task that
-owns a session is never `pending` in reality.
-
-### Live smoke recipe (reusable)
-`/tmp/smoke-rewind/setup.ts` pattern: temp dataDir + `projects.json` + tree.json +
-hand-written JSONL (explicit `eid`/`parentEid` chain so no auto-migration) under
-`projects/<id>/plugin/matrix/`, `createTestToken`, `createDaemon({dataDir})`,
-`Bun.serve({port: 7434, fetch: daemon.fetch})`. Then in the browser:
-`localStorage.setItem("mxd-jwt", token)` + navigate to `/<projectId>/matrix/<rootId>`.
-A user message needs BOTH a `message` event with `id`+`eid` AND a
-`messages_consumed` event to materialize with its eid (the eid rides through
-`pendingReducer` → `materializeFromPending`), which is what makes Edit/Rewind
-buttons appear.
-
-### Tests (36 new, mutation-verified)
-- `web/rollback-impact.test.ts` (15, pure): every category, read-only → no warning,
-  no-tools → clean, unknown tool → otherSideEffects, range/task filtering, dedupe.
-- `web/ConfirmDialog.test.tsx` (12): dismissal contract + warning rendering per
-  impact + rewind/edit wording and button styling.
-- `web/ActivityLog-rollback-scroll.test.tsx` (7): request applies after a shrinking
-  entries replacement, **mutation proof** (no request → offset unchanged), repeat
-  requests, mount doesn't force a scroll, editingEid highlight on/off.
-- `web/Plugin-rewind-journey.test.tsx` (2, real daemon + real Plugin): ↺ → in-app
-  dialog (window.confirm spy proves it's never called) → impact warning → Cancel is
-  a no-op → Confirm POSTs /edit and lands at the bottom with follow resumed; ✎ →
-  edit wording → composer prefilled + log marked + indicator jumps back.
-  The `POST /edit` is the ONE stubbed call (the real endpoint would launch an agent
-  against the fixture repo; backend semantics live in src/rollback.test.ts).
-  Mutation-proofed: dropping `scrollToBottomRequest` fails the follow-mode-rewind
-  step; dropping `editingEid` fails the Edit test.
-
-**Journey-test gotcha**: after a rollback re-fetch the log entries REMOUNT (fresh
-`createLogEntry` ids → new React keys → new DOM nodes), so any button captured
-before the rebuild is detached. Re-query it.
-
-### Correction (2026-07-24, same day): `done` is NOT read-only
-
-The first cut of `rollback-impact.ts` whitelisted `done` as read-only, so a range
-that crossed a `done()` rendered the green "nothing outside the conversation
-changes" box — a lie. `done()` has two real, non-rollback-able effects: it flips
-the task's status to verify/failed AND delivers `task_complete` to the task above
-(which may already have woken, reviewed and merged).
-
-`done` now lives in BOTH `TASK_TOOLS` and `MESSAGE_TOOLS`, and the classification
-loop changed from a first-match `else if` chain to **independent membership
-checks** (`isFile` / `isTask` / `isMessage`, then `otherSideEffects` only when
-none matched and the tool isn't whitelisted). The sets are otherwise disjoint, so
-every single-category tool behaves exactly as before — a regression test pins
-that (`bash`/`create_task`/`send_message` each flip exactly one flag).
-
-Re-checked the rest of the whitelist: `yield` is a pure loop pause; `background`
-covers list/status and a kill is a stop, not a rollback-able state change. Both
-stay. Mutation-verified: moving `done` back to the whitelist fails 3 tests;
-restoring the `else if` chain fails 2.
+  local attempts failed; one paste into the user's console succeeded immediately.
+
+## Rewind and Edit: report what the rollback does NOT undo
+
+`analyzeRollbackImpact(entries, targetEid)` scans from the target entry to the end of the log,
+**skipping entries from other tasks** (rollback is per-session, so a sibling agent's bash must not be
+reported), and counts file / task / message side effects plus a generic bucket. An unknown
+`targetEid` yields an empty impact, so the dialog claims nothing rather than guessing.
+
+⚠️ **The read-only list is a WHITELIST, and that is the load-bearing choice.** `read_file`,
+`list_files`, `search`, `search_tasks`, `get_tree`, `get_task`, `get_logs`, `list_projects`,
+`background`, `yield` are named safe; **anything not whitelisted and not categorised sets the generic
+warning.** Unknown tools — external MCP servers, `evaluate_script` — are never assumed safe. That is
+why it is not "warn only on the three known categories".
+
+⚠️ **`done` is NOT read-only, and the first cut whitelisted it.** A range crossing a `done()` then
+rendered the green "nothing outside the conversation changes" box, which is a lie: `done()` flips the
+task's status AND delivers `task_complete` to the task above, which may already have woken, reviewed
+and merged. `done` now lives in both the task and message sets, which forced the classification loop
+from a first-match `else if` chain to **independent membership checks** — the sets are otherwise
+disjoint, so every single-category tool behaves exactly as before, pinned by a regression test.
+Re-checked at the same time: `yield` is a pure loop pause and `background`'s kill is a stop rather
+than a rollback-able state change, so both correctly stay whitelisted.
+
+**Edit confirms at the moment ✎ is clicked, not at submit.** The warning's value is "before you
+decide to edit", and intercepting the submit would need draft restore on cancel, since the composer
+clears the prompt on submit. Accepted trade-off: the actual POST then happens without a second
+confirm.
+
+⚠️ **There is ONE "jump to bottom" mechanism, and it is a monotonic counter rather than
+`setAutoScroll(true)`.** The follow effect only fires when `visible.length` or `autoScroll` CHANGES,
+so rewinding while already at the bottom with an unchanged entry count changes neither and **nothing
+scrolls** — which is exactly why the "jumps to the top" symptom was reported as intermittent. The
+counter is applied in a `useLayoutEffect`, so it also runs before paint with no flash. This is a
+SIBLING of the "Load earlier history" bottom-relative anchor, not a change to it: same class of bug
+(a wholesale `entries` replacement invalidates the offset), opposite intent (land at the bottom
+versus stay put).
+
+⚠️ **A smooth `scrollIntoView` loses to follow mode.** Jumping back to the edited message got snapped
+to the bottom mid-animation — observed live in a browser, not in tests. `setAutoScroll(false)` first,
+then an INSTANT `scrollIntoView({block: "center"})`.
+
+⚠️ **Test-harness gotcha with a real teeth**: `clearSessionState` drops log entries for a session
+transitioning to `pending`, so a fixture seeded with `status: "pending"` **wipes its own log** the
+moment the first `tree_updated` arrives. In happy-dom tests the SSE mock is a no-op so this never
+fires; in a real browser the activity log renders "No events yet" while the events endpoint returns
+data. Seed live-smoke fixtures with `verify` — a task that owns a session is never `pending` in
+reality.
+
+⚠️ **After a rollback re-fetch the log entries REMOUNT** (fresh ids → new React keys → new DOM
+nodes), so any element captured before the rebuild is detached. Re-query it.
+
+**Live smoke recipe, reusable**: temp dataDir + `projects.json` + `tree.json` + hand-written JSONL
+with an explicit eid/parentEid chain (so nothing auto-migrates) under
+`projects/<id>/plugin/matrix/`, `createTestToken`, `createDaemon`, `Bun.serve`. Then in the browser
+`localStorage.setItem("mxd-jwt", token)` and navigate. **A user message needs BOTH a `message` event
+carrying `id` and `eid` AND a `messages_consumed`** to materialize with its eid — the eid rides
+through `pendingReducer` → `materializeFromPending`, and without it the Edit/Rewind buttons never
+appear.
+
+## Markdown rendering in agent replies
+
+A hand-written parser for a lightweight subset — fenced code, headings, blockquotes, one level of
+lists, hr, tables, and inline code/strong/em/strike/link. No markdown library, no
+`dangerouslySetInnerHTML`, React elements only. **Strict grammar throughout, because a false positive
+is worse than a missing feature.**
+
+⚠️ **Parse order is load-bearing.** Fences FIRST, with their content verbatim and no table, block or
+inline parsing inside (an unclosed fence runs to EOF). Then tables. Then per-line blocks, with **hr
+checked BEFORE list**, since `- - -` is both. Then inline, where **code spans bind tightest** and
+protect their content even during the search for an emphasis closer.
+
+⚠️ **The plain fallback must stay byte-identical to no markdown at all.** When every block is a text
+run of only text nodes, the original string renders in a single `<span className>` — the same element
+as before markdown existed. Text containing only an unsafe link stays "plain" and renders its raw
+source.
+
+⚠️ **Link safety is one gate in the parser**: only `^https?://` (case-insensitive) becomes an anchor
+with `target="_blank" rel="noopener noreferrer"`. `javascript:`, `data:`, `file:` and relative URLs
+render as literal TEXT. Cells and inline nodes are React text children, so an `<img>` or `<b>` typed
+by the model stays visible text.
+
+⚠️ **Emphasis uses whitespace-adjacency rules, NOT word boundaries — that is what makes it
+CJK-safe.** An opener must be followed by non-whitespace and a closer preceded by non-whitespace, so
+`周围**中文**相邻` works where `\b` would not. A single-`*` closer must be a lone star, which is what
+allows `*a **b** c*`. Runs of 3+ markers are literal, on purpose. Deliberately absent, each for a
+concrete reason: `_underscore_` emphasis (snake_case identifiers), setext headings, backslash escapes
+(Windows paths), images, raw HTML.
+
+⚠️ **A table requires the header and delimiter rows to have the SAME cell count**, and that guard is
+the entire defence against reading a thematic break or a piped prose line as a table.
+
+⚠️ **The copy button copies the ORIGINAL markdown source**, not the rendered text, so it re-pastes
+into another markdown surface verbatim.
+
+⭐ **Mutation-testing finding worth keeping**: the symmetric math case alone did NOT pin the
+opener/closer whitespace rules individually — two tests were covering for each other, so a mutation
+survived. Each rule now has a dedicated asymmetric test (`** x**` stays literal; `**a ** b**` spans
+the whole run). **A defence-in-depth pair can hide the fact that neither half is actually pinned.**
+
+⚠️ Two biome traps in this file: a `noArrayIndexKey` suppression on multiline JSX must sit directly
+above the `key={i}` attribute line, not above the element; and `useIterableCallbackReturn` requires
+every switch path to return, which is why the last case and `default:` are merged.
+
+## Interactions with a load-bearing event detail
+
+**Select-to-quote ("Ask Matrix").** ⚠️ **`onMouseDown={e => e.preventDefault()}` on the floating
+button is LOAD-BEARING**: without it, mousedown collapses the selection, `selectionchange` unmounts
+the button, and the click never fires. The request carries a `seq` counter so quoting the *same* text
+twice re-fires the consumer's effect.
+
+⚠️ **The rAF that inserts the quote has a required ORDER, all in ONE frame**: recompute the capped
+auto-grow height, then focus, then set the caret to the end, then `scrollTop = scrollHeight`. Reading
+`scrollHeight` before the new height applies gives a stale value and the wrong scroll, so a long
+quote leaves the user typing below the fold. **Do NOT rely on the separate `[prompt]` resize effect
+having run first — React 18 flushes passive effects asynchronously and rAF-versus-passive ordering is
+not guaranteed.**
+
+**Global image drag-drop.** ⚠️ **RED LINE: never intercept internal HTML5 drags.** Task-tree reorder
+and tab reorder set `dataTransfer` `text/plain`; every global handler gates on
+`types.includes("Files")`, so internal drags pass through untouched. A file dropped on a task node is
+preventDefaulted by the tree (no browser navigation) and still bubbles to the window handler.
+
+⚠️ **The visual and functional halves are on different phases, and both choices are load-bearing.**
+Functional (`dragover`, `drop`) is on BUBBLE, because the composer's own drop handler calls
+`stopPropagation` — so a drop on the composer is handled there and does not also attach at the
+window, which is what prevents a double-attach. Visual (`dragenter`/`dragleave` depth counter) is on
+CAPTURE, so it fires before any inner bubble handler and cannot be desynced by that same
+`stopPropagation`, leaving no stuck overlay and needing no timer or flicker heuristic.
+
+⚠️ **CDP cannot synthesize an OS-file drag** — `drag` is element-to-element only. Both tests and live
+smoke inject synthetic drops; "the browser does not open the file" rests on standard
+`preventDefault` semantics plus a human with a real file.
+
+**Sidebar filter toggle.** ⚠️ The reopen bug: open state lived in the parent and query state in the
+child, and the input had an `onBlur` that auto-closed when empty. Clicking the toggle while the input
+was focused and empty fired blur on **mousedown** (closing it) before the button's **click** (which
+read `false` and flipped it back to `true`), so the box reopened. Fixed by one reducer over
+`{open, query}` with the invariant **closed ⟹ query === ""**, and by **removing `onBlur` entirely**.
+⚠️ **The behavior change is real and intended: an empty open search no longer collapses on
+click-away.** If that is ever wanted back, use a document-level outside-click listener — **not**
+`input.onBlur`, which re-introduces the race.
+
+⚠️ **happy-dom cannot simulate typing into a React controlled input.** Both the native `input` event
+and the `Object.getOwnPropertyDescriptor(...).value` setter trick fail to fire `onChange` (probed).
+That is *why* the query was lifted to a controlled prop: filtering became testable by passing a prop
+instead of typing. `.blur()` and keydown do work.
+
+⚠️ **happy-dom v20 silently drops MutationObserver callbacks under GC pressure.**
+`MutationObserverListener` stores its callback in a `new WeakRef(...)` with no strong reference
+anywhere, and dispatch does `callback.deref()` — so after any GC pass, mutations are delivered to
+nothing, with **no error**. A test relying on MO delivery passes in isolation (no GC between observe
+and mutate) and flakes inside the full suite. Real browsers hold strong refs per spec, so production
+is fine. **Rule: never let a happy-dom test depend on MutationObserver delivery.** Route the tested
+behavior through a React effect and treat the MO path as a real-browser-only complement — and stub a
+no-op MutationObserver so the mutation proof targets the effect branch exactly.
+
+## Settings: one Save & Restart button, and the misconception it encodes
+
+The panel has exactly two actions — **Save & Restart** (saves every dirty tab, then restarts the
+daemon) and **Revert** (resets all tabs to last-saved) — and **no confirm dialogs anywhere**. Closing
+the panel discards. Tab switching is deliberately not guarded, because each tab keeps an independent
+draft and a confirm there is crying wolf, which trains users to ignore the real ones.
+
+⚠️ **The mechanism everyone gets wrong: saving config takes effect on the NEXT run, with no restart.**
+Save → the daemon syncs to workers → `ctx.globalConfig` updates → the next `resolveProjectConfig`
+uses the new values. **Restart exists only to load newly deployed code.** The two got conflated
+because the restart button used to sit next to Save; the single button now merges both actions so the
+question does not arise, and the restart control's own label says "load new code".
+
+⚠️ **A save that silently fails looks exactly like a save that was reverted**, and this shipped: the
+draft dropped keys whose value became `""`, `buildPatch` then sent `null` for keys present in saved
+but absent from draft, the server correctly rejected null on required global fields with a 400,
+`updateConfig` **did not check `res.ok`**, and the refetch reverted the UI — so the user saw their
+changes "disappear". Two fixes, and both are needed: `buildPatch(draft, saved, allowNull)` omits
+nulls for global saves (repo and local keep `allowNull`, where null means "remove this override"),
+and `updateConfig` returns an error message that surfaces as an inline banner with the draft left
+dirty. **The server's null rejection was correct all along; the frontend was manufacturing the
+nulls.**
+
+## Small component facts worth knowing
+
+- ⚠️ **A pure-image message with no text was rejected by both REST guards**, which tested
+  `!content?.trim()`. They now also check `images.length`, `createUserMessage` gets a `content ?? ""`
+  fallback, and the parent notification falls back to `"[image]"`.
+- **Read-only tools default to collapsed but keep their body** (`isDefaultCollapsed`: `get_tree`,
+  `get_task`, `search_tasks`, `list_projects`). That is a different thing from `isTitleOnly`, which
+  removes the body entirely — users can still click to see results.
+- ⚠️ **A `min-width` does not center-align a column whose content is wider than it.** The timestamp
+  column drifted right because the action-button row (3×16px + gaps) exceeded its `min-width: 58px`
+  with `align-items: center`. Fixed with a hard `width` plus `flex-start`.
 
 ---
 # Testing
