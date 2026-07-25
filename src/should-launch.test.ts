@@ -508,43 +508,59 @@ describe("rule 0: repair is CONSULTED, not assumed", () => {
 		expect(loopWouldAct(events)).toBe(true);
 	});
 
-	test("a corrupt log that repair cannot express → launch, do not swallow", () => {
-		// buildSessionRepair throws when an event it must chain to has no eid.
-		// That is a real structural problem and runAgentForNode is where it
-		// gets reported; refusing to launch would turn a loud failure into a
-		// node that silently never returns.
-		const unstamped = [
-			{ type: "assistant_text", content: "hi", taskId: T, ts: 1 },
-			{
-				type: "tool_call",
-				toolCallId: "c1",
-				tool: "bash",
-				input: {},
-				taskId: T,
-				ts: 1,
-			},
-			{
-				type: "tool_result",
-				toolCallId: "c1",
-				tool: "bash",
-				content: "a",
-				isError: false,
-				taskId: T,
-				ts: 1,
-			},
-			{
-				type: "tool_result",
-				toolCallId: "c1",
-				tool: "bash",
-				content: "b",
-				isError: false,
-				taskId: T,
-				ts: 1,
-			},
-		] as Event[];
-		expect(() => buildSessionRepair(unstamped, T)).toThrow();
-		expect(() => shouldLaunchAgent(unstamped)).not.toThrow();
-		expect(shouldLaunchAgent(unstamped)).toBe(true);
+	// ⚠️ This fixture ends in an ASSISTANT turn on purpose, and that is the
+	// whole test. buildSessionRepair throws when it cannot express its chain
+	// jump — an unstamped event, i.e. corrupt or hand-edited JSONL. The shapes
+	// that throw in practice happen to end in a USER turn, so a fixture like
+	// that launches by COINCIDENCE whether or not the throw is handled, and
+	// proves nothing. Corruption has no guaranteed shape: deciding from the
+	// unrepaired log here returns false and the node silently never comes back,
+	// which is exactly what the code promises to prevent.
+	const corruptEndingInAssistant = [
+		{ type: "assistant_text", content: "hi", taskId: T, ts: 1 },
+		{
+			type: "tool_call",
+			toolCallId: "c1",
+			tool: "bash",
+			input: {},
+			taskId: T,
+			ts: 1,
+		},
+		{
+			type: "tool_result",
+			toolCallId: "c1",
+			tool: "bash",
+			content: "a",
+			isError: false,
+			taskId: T,
+			ts: 1,
+		},
+		{
+			// duplicate → truncating repair → needs an eid to chain to → throws
+			type: "tool_result",
+			toolCallId: "c1",
+			tool: "bash",
+			content: "b",
+			isError: false,
+			taskId: T,
+			ts: 1,
+		},
+		{ type: "assistant_text", content: "carried on", taskId: T, ts: 1 },
+	] as Event[];
+
+	test("the corrupt fixture really is the hard case", () => {
+		// Both halves matter. If either stops holding, the test below has gone
+		// back to passing on a coincidence and needs a new fixture.
+		expect(() => buildSessionRepair(corruptEndingInAssistant, T)).toThrow();
+		const raw = eventsToAnthropicMessages(corruptEndingInAssistant) as Array<{
+			role: string;
+		}>;
+		expect(raw[raw.length - 1]?.role).toBe("assistant");
+	});
+
+	test("a corrupt log that repair cannot express → LAUNCH, do not swallow", () => {
+		expect(() => shouldLaunchAgent(corruptEndingInAssistant)).not.toThrow();
+		expect(shouldLaunchAgent(corruptEndingInAssistant)).toBe(true);
 	});
 
 	test("consulting repair does not PERFORM it — the input is untouched", () => {

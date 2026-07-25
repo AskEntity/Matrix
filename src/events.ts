@@ -612,36 +612,40 @@ const NON_LAUNCHING_MESSAGE_SOURCES: ReadonlySet<QueueMessage["source"]> =
 	new Set(["interrupt"]);
 
 /**
- * The event list the loop would see AFTER `runAgentForNode`'s repair step —
- * without performing the repair.
+ * What the log WOULD look like after `runAgentForNode`'s repair step. A dry
+ * run: nothing is written, nothing is recovered, and the returned array is a
+ * projection used to decide and then thrown away.
  *
- * `buildSessionRepair` is a pure computation returning `{chainToEid,
- * appendEvents}`; only its caller writes. So the launch decision can consult
- * it for free, and must: repair is what turns an orphan `tool_call` into a
- * user turn, and a truncating repair replays messages the raw log shows as
- * already consumed.
+ * ⚠️ **This is not in-memory recovery, and must never become it.** That
+ * mechanism existed — pop the broken user message, splice in synthetic
+ * tool_results, retry once — and was deleted, because a fix that only edits
+ * `messages[]` leaves the poison on disk and it comes back on the next
+ * resume. The real repair still happens exactly where it always did: on disk,
+ * inside `runAgentForNode`. This only asks what it would produce.
  *
- * ⚠️ A throw means LAUNCH. `buildSessionRepair` throws when it cannot express
- * its chain jump — an event with no eid, which means corrupt or hand-edited
- * JSONL. That is a real structural problem, and `runAgentForNode` is where it
- * gets reported. Swallowing it into "nothing to do" would turn a loud failure
- * into a node that silently never comes back.
+ * Asking is free because `buildSessionRepair` is a pure computation returning
+ * `{chainToEid, appendEvents}` — only its caller writes. And it is necessary,
+ * because repair changes the answer: it is what turns an orphan `tool_call`
+ * into a user turn, and a truncating repair replays messages that the raw log
+ * shows as already consumed.
+ *
+ * ⚠️ THROWS on a log whose repair cannot be expressed. The caller decides what
+ * that means; see `shouldLaunchAgent`.
  */
-function applyRepairInMemory(events: Event[]): Event[] {
-	let repair: SessionRepair | null;
-	try {
-		// taskId only lands on synthesized events, which stay in memory here.
-		repair = buildSessionRepair(events, "");
-	} catch {
-		return events;
-	}
+function dryRunRepair(events: Event[]): Event[] {
+	// taskId only lands on synthesized events, which never leave this function.
+	const repair: SessionRepair | null = buildSessionRepair(events, "");
 	if (!repair) return events;
 	if (!repair.chainToEid) return [...events, ...repair.appendEvents];
 	const cut = events.findIndex((e) => e.eid === repair.chainToEid);
-	// A chain target that is not in the list would mean repair and this walk
-	// disagree about the active region; keep the raw list rather than silently
-	// truncating to nothing.
-	if (cut < 0) return events;
+	if (cut < 0) {
+		// Repair and this walk disagree about the active region. Same class as
+		// the unstamped-event throw, and handled the same way: a caller must
+		// not receive a plausible-looking projection built on a contradiction.
+		throw new Error(
+			`dryRunRepair: chain target ${repair.chainToEid} is not in the active region`,
+		);
+	}
 	return [...events.slice(0, cut + 1), ...repair.appendEvents];
 }
 
@@ -682,7 +686,23 @@ export function shouldLaunchAgent(rawEvents: Event[]): boolean {
 	//    it into a user tail. A truncating repair goes further and replays the
 	//    dropped region's messages, so a poisoned session's real tail is not
 	//    on disk at all.
-	const events = applyRepairInMemory(rawEvents);
+	let events: Event[];
+	try {
+		events = dryRunRepair(rawEvents);
+	} catch {
+		// A log whose repair cannot even be expressed — an unstamped event, or
+		// a chain target outside the active region — is corrupt or
+		// hand-edited. LAUNCH, so it reaches `runAgentForNode`, which is where
+		// that gets reported.
+		//
+		// ⚠️ Returning here rather than falling through to decide from the
+		// UNREPAIRED log is the whole point, and the difference is invisible on
+		// most fixtures: the shapes that throw today happen to end in a user
+		// turn, so falling through would launch anyway — by coincidence.
+		// Corruption has no guaranteed shape, and one ending in an assistant
+		// turn reads as "parked, nothing owed" and never comes back.
+		return true;
+	}
 
 	// 1. Pending input DECIDES, and it decides in both directions.
 	//
