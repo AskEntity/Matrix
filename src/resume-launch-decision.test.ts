@@ -313,12 +313,17 @@ describe("what the model reads after being interrupted", () => {
 			() => ctx.mockAPI.getRequestCount() >= 1,
 			"the first API request",
 		);
+
+		// ⚠️ Snapshot BEFORE the interrupt, not after waitForIdle. Taking it
+		// after lets a turn the notice itself started slip into the baseline —
+		// the wrong-order mutation (enqueue before the park) does exactly that,
+		// and this assertion silently passed until the baseline moved here.
+		const beforeInterrupt = ctx.mockAPI.getRequestCount();
 		interruptTask(ctx.app.ctx, ctx.projectId, nodeId);
 		await waitForIdle(ctx);
-
-		const after = ctx.mockAPI.getRequestCount();
 		await new Promise((r) => setTimeout(r, 400));
-		expect(ctx.mockAPI.getRequestCount()).toBe(after);
+
+		expect(ctx.mockAPI.getRequestCount()).toBe(beforeInterrupt);
 
 		const events = await readSessionEvents(ctx, nodeId);
 		expect(
