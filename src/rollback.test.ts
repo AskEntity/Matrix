@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
-import { walkActiveChainIndices } from "./events.ts";
+import { classifyOffChain, walkActiveChainIndices } from "./events.ts";
 
 // ── Unit: walkActiveChainIndices ──
 
@@ -1702,5 +1702,75 @@ describe("a failed write must not advance the chain head", () => {
 		// never landed → the walk stops there and "first" disappears.
 		expect(events[1]?.parentEid).toBe(firstEid);
 		expect(store.readActive("s1").length).toBe(2);
+	});
+});
+
+// ── Unit: classifyOffChain ──
+//
+// The client is handed the ANSWER to "is this event part of the
+// conversation", never the walk. It cannot work it out for itself anyway:
+// membership is a relation between an event and the current chain head, which
+// a rewind changes without touching any event.
+
+describe("classifyOffChain", () => {
+	function ev(eid: string, parentEid: string | null, extra?: object): Event {
+		return {
+			type: "assistant_text",
+			content: eid,
+			taskId: "t1",
+			ts: 1,
+			eid,
+			parentEid,
+			...extra,
+		} as Event;
+	}
+
+	test("a linear log is entirely on the chain", () => {
+		const events = [ev("a", null), ev("b", "a"), ev("c", "b")];
+		expect(classifyOffChain(events)).toEqual([undefined, undefined, undefined]);
+	});
+
+	test("a rewound-away branch is 'abandoned'", () => {
+		// d's parent jumps back over b and c — the shape setChainHead leaves.
+		const events = [ev("a", null), ev("b", "a"), ev("c", "b"), ev("d", "a")];
+		expect(classifyOffChain(events)).toEqual([
+			undefined,
+			"abandoned",
+			"abandoned",
+			undefined,
+		]);
+	});
+
+	test("everything before a completed compaction is 'summarized'", () => {
+		const events = [
+			ev("old1", null),
+			ev("old2", "old1"),
+			{ ...ev("cs", "old2"), type: "compact_started" } as Event,
+			{ ...ev("cm", "cs"), type: "compact_marker", savedTokens: 10 } as Event,
+			ev("after", "cm"),
+		];
+		const out = classifyOffChain(events);
+		expect(out.slice(0, 3)).toEqual(["summarized", "summarized", "summarized"]);
+		expect(out.slice(3)).toEqual([undefined, undefined]);
+	});
+
+	test("the two reasons are told apart in one log", () => {
+		// Pre-compaction history, then a live stretch with a rewound branch.
+		const events = [
+			ev("old", null),
+			{ ...ev("cs", "old"), type: "compact_started" } as Event,
+			{ ...ev("cm", "cs"), type: "compact_marker", savedTokens: 10 } as Event,
+			ev("live1", "cm"),
+			ev("dead", "live1"),
+			ev("live2", "live1"),
+		];
+		expect(classifyOffChain(events)).toEqual([
+			"summarized",
+			"summarized",
+			undefined,
+			undefined,
+			"abandoned",
+			undefined,
+		]);
 	});
 });

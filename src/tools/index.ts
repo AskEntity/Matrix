@@ -7,4 +7,8 @@ export {
 	killBackgroundProcess,
 } from "./bash.ts";
 export { buildBuiltinToolDefs, resolvePath } from "./definitions.ts";
-export { jsSearch, truncateSearchOutput } from "./search.ts";
+export {
+	DEFAULT_SKIP_DIRS,
+	jsSearch,
+	truncateSearchOutput,
+} from "./search.ts";

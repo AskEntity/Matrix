@@ -41,6 +41,8 @@ This is a product property of Matrix's commit model, not a policy preference. Br
 7. **Create-task as path of least resistance** — when a new requirement emerges, agents default to `create_task` even when an existing task (closed, verify, pending) is a better target. Three alternatives exist: (a) create_task fresh, (b) create_task + fork from source, (c) send_message to existing. Option (c) is often correct but loses in every "cheap" dimension: fresh description vs stale, clean session vs unknown state, single step vs two operations, "closed = finished" word bias. The agent picks (a) because it's the local optimum at every dimension — but globally it fragments context across redundant task trees. **Prompt alone cannot fix this** — mechanism is required: (1) required `origin` param on create_task forcing explicit fresh/fork/continue choice, (2) auto-search for similar titles on "fresh" with warning, (3) `latestDirective` field surfaced in get_tree so existing tasks' current focus is visible (not just their original description), (4) collapse fork_task_context into create_task's origin option to eliminate "two-step" cost. See draft task 01KNZGYY4T6SYWVT66DK13XCPV for full design. User framing: "Too many ways to achieve the same thing, and the easiest way isn't optimal."
 8. **Treating context as a deadline** — an agent that feels "context is running low" starts planning a handoff, cutting scope, or asking to be replaced. **Context is not a deadline, it is a compaction boundary.** When it fills, the agent continues with a summary; the task description and memory.md survive compaction by construction. So a compacted agent strictly DOMINATES a replacement: it has the same durable documents the newcomer would read, plus a summary of its own work, plus whatever tacit judgement survived in it. **Running low on context is never a reason to hand off.** The only legitimate reason is that FAMILIARITY ITSELF has become the liability — a final read-through, an adversarial review, anything where not knowing the material is the requirement rather than the cost. Two failures observed the same day: an agent halved its own remaining scope over a constraint that does not exist (and agents estimate their own remaining budget badly, so the estimate was likely wrong too), and root created a fresh task to continue finished-agent work without ever comparing it against reactivating the original — the reason was constructed after the fact and did not survive checking the data. Note this is #7's sibling: both are "start something new" winning by default over "continue something that exists".
 
+**Measured 2026-07-25**, because #8's "agents estimate their own remaining budget badly" was an assertion with no numbers under it. The agent that offered the handoff was at 2.0M / 891 events having **never compacted once**, and estimated it had 2-3 more sections in it. Told to continue instead, it finished all 5 remaining plus an extra debt, ending at 3.0M / 1191 events — **still zero compactions**. It therefore did roughly twice its own estimate and never reached the boundary it had budgeted against. Two sibling tasks working normally that same day sat at 2.0M / 928 events and 2.0M / 649 events, also zero compactions. This measures one day, one model, one config: read it as "the estimate was off by ~2x and the wall was nowhere near", **not** as a threshold. For where any session actually stands, count that task's own events and `compact_marker`s — no number written here can answer it.
+
 ## Change Ownership Principle
 
 **Whoever introduces a change owns ALL consequences** (prompt, UI, tests, docs). Root never writes production code — delegates everything.
@@ -389,23 +391,54 @@ API can return multiple yield tool_calls in the same assistant turn.
    the real one at wake, so the walker reconstructs them in that order and the live path must match
    or the two drift.
 
-⭐ **The reusable pattern: emit to JSONL for orphan prevention, defer the `messages[]` push so it
-merges with the next user turn.** The same shape solves the compaction-asymmetry bugs — see
-*Compaction Asymmetry* and FIX-5 R8-B#11, which extends `pendingDuplicateYieldExtras` into the
-compactOnly path.
+⭐ **The reusable pattern — CONCLUSION KEPT, REASON REPLACED (2026-07-25).** It used to read: *"emit
+to JSONL for orphan prevention, defer the `messages[]` push so it merges with the next user turn"*,
+justified by role alternation. **Role alternation does not exist** (see *The Anthropic message-shape
+rules, MEASURED*), so that justification only told you "this looks like the last one". The real
+constraint is the one rule 2 above already states, and it is checkable:
+
+> **Deferral is a live/walker BYTE-IDENTITY device, not an API-shape device.** It is REQUIRED when
+> the deferred tool_result is PERSISTED and lands ADJACENT to another in JSONL — the walker's
+> collection loop merges adjacent tool_results into ONE user message, so the live path must too.
+> It is UNNECESSARY when the message it would merge into is TRANSIENT.
+
+Which is why the three sites do not all resolve the same way. `pendingDuplicateYieldExtras` **must
+stay**: nothing separates the extras' results from the real yield's in JSONL (the walker skips
+`message` events), so splitting the live push would require inventing a JSONL boundary event —
+strictly more machinery, not less. The two compaction deferrals **can collapse**: the summarization
+instruction is never persisted at all (`provider-shared.ts` "summarization_request event removed"),
+`messages.length = 0` on success, so that request is never reconstructed and there is nothing to
+stay byte-identical with. See *Compaction Asymmetry* and FIX-5 R8-B#11.
 
 Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn".
 
 **How it got here** — rule 1 came first ("skip yield/done" was too broad; the invariant is "skip the
-INTENDED orphan"). The first attempt at rule 2 wrote the extras' no-op tool_results as a SEPARATE
+INTENDED orphan"). ~~The first attempt at rule 2 wrote the extras' no-op tool_results as a SEPARATE
 user message, which produced a *new* bug: extras message + the real yield's message = two
 consecutive user messages → API 400 "Messages must alternate roles". Worth keeping because the
 failure is instructive: fixing an orphan by adding a message is how you turn a repair problem into
-an alternation problem, and deferral is what avoids both.
+an alternation problem, and deferral is what avoids both.~~
+
+**SUPERSEDED 2026-07-25 — that 400 never happened.** It was thrown by our own mock; the shape
+(`user[tool_result]` then `user[tool_result, …]`) is ACCEPTED by the real API — both messages open
+with tool_result blocks, so the answering run spans them. Kept because it is the clearest specimen
+of the phantom: a real error message plus an unverified attribution reads exactly like evidence.
+The deferral survives anyway, on the byte-identity ground above — **right mechanism, wrong reason,
+and the wrong reason is what spread.**
 
 ## Compaction Asymmetry
 
-Manual `/compact` injects a summarization instruction as a user message. If the previous loop iteration also pushed a user message (yield tool_result + queue content, done tool_result + queue content), result is two consecutive user messages → API 400 "Messages must alternate roles".
+> ⚠️ **THE PREMISE OF THIS WHOLE SECTION IS A PHANTOM (established 2026-07-25).** Two consecutive
+> user messages are LEGAL — measured against production Anthropic, 19 shapes, see *The Anthropic
+> message-shape rules, MEASURED*. Every "→ API 400" below came from `ValidatingMockAPI`, never from
+> the API. Read this section as the HISTORY of why three `pending*` deferral variables exist.
+>
+> What is still LIVE in here: FIX-5 **R8-B#11** and the too-short-compact consumption (**R8-B#1b**)
+> are REAL — their cause is the *pairing* rule (an assistant's tool_use with no answering
+> tool_result in the request), which was attributed correctly at the time. What is dead: the
+> alternation framing, the **B-L9** diagnosis, and the "latent walker bug" below.
+
+~~Manual `/compact` injects a summarization instruction as a user message. If the previous loop iteration also pushed a user message (yield tool_result + queue content, done tool_result + queue content), result is two consecutive user messages → API 400 "Messages must alternate roles".~~
 
 Seven paths in `provider-shared.ts` have this shape. 3 are clean (`continue;` without pushing user msg). ~~1 is fixed. 3 are deferred via test.todo.~~
 
@@ -420,11 +453,17 @@ duplicate-yield extras in the compactOnly path (FIX-5 R8-B#11). The shape of wha
 where the queue had OTHER messages alongside the compact, so there was nothing empty to bundle the
 deferred tool_result into.
 
-**Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. One user message with `[tool_result, text]` blocks → valid alternation.
+**Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. ~~One user message with `[tool_result, text]` blocks → valid alternation.~~ **The unbundled form — `user[tool_result]` then `user[summarization]` — is equally valid** (measured). This deferral has no remaining justification: the summarization message is never persisted, so there is no byte-identity to preserve. Slated for collapse.
 
-**Pattern**: emit to JSONL for orphan prevention, defer messages[] push to merge with next user turn. Same as duplicate-yield fix (19995b9).
+~~**Pattern**: emit to JSONL for orphan prevention, defer messages[] push to merge with next user turn. Same as duplicate-yield fix (19995b9).~~ **Re-derived** — see the ⭐ block in *Duplicate Yield Handling*: deferral is a byte-identity device, and it is required only when the deferred tool_result is persisted next to another one. That is true of the duplicate-yield case and false of both compaction cases.
 
-**Latent walker bug** (deferred): walker reading `[tool_result, messages_consumed, summarization_request]` produces two consecutive user messages. Proper structural fix: summarization_request should append to the current user turn, not create a separate one. Requires matching live + walker changes for byte-identical output. Documented as test.todo in drift-lifecycle.test.ts.
+~~**Latent walker bug** (deferred): walker reading `[tool_result, messages_consumed, summarization_request]` produces two consecutive user messages. Proper structural fix: summarization_request should append to the current user turn, not create a separate one. Requires matching live + walker changes for byte-identical output. Documented as test.todo in drift-lifecycle.test.ts.~~
+
+**NOT A BUG (2026-07-25).** That walker output was run through the real walker and checked against
+the measured rules: `user[tool_result, text, text]` followed by the summarization user message —
+the tool_result leads its turn, so the yield is answered, and the following consecutive user
+message is fine. Verified verbatim against the live API. The `test.todo` in
+`drift-lifecycle.test.ts` describes a shape that works; it should be deleted, not implemented.
 
 ## API 400 → crash → repair-on-next-launch
 
@@ -492,6 +531,95 @@ The "don't pipe" guidance lives in the bash tool's `description` field (`src/too
 ### Architectural framing the task demonstrated
 When AI repeatedly does X (pipe/redirect/`| head`), ask: is the motivation legitimate? If yes (context protection IS legitimate), make the tool satisfy it naturally — don't enforce against it. Rule suppression leaks at edges; tool-level satisfaction closes the loop. If you find yourself adding parser/rejection/warning to the new tool, you drifted — the point is to make shortcuts unnecessary, not forbidden.
 
+## `search` tool: a hidden directory is not a boring directory (2026-07-25)
+
+`src/tools/search.ts` passed no `dot` option to `Bun.Glob.scanSync`, whose default is
+`dot: false` — so the walker never descended into ANY hidden directory. In this repo that
+is `.mxd/plugin/`: every ScopeOpts hook, every plugin REST route, the entire plugin UI —
+**17,862 lines across 54 files, i.e. 34% of all non-test source** (the task that filed this
+said "half"; measured, it is a third, and the whole UI). Invisible to the primary search
+tool. Fixed by `dot: true` at both scanSync call sites (the glob branch and the no-glob
+branch — fixing one and not the other leaves half the tool lying, so both are pinned
+separately).
+
+**`DEFAULT_SKIP_DIRS` is now the ONLY thing that decides what a search ignores**, which is
+what the code always claimed: `.git/` and `.worktrees/` were already listed *explicitly*,
+so `dot: false` was never anyone's intent — just a library default leaking through an
+option nobody passed. It is exported now, and a test pins it against its prose copy in the
+`excluded_dirs` param description. (Prose copies of lists are the "drained" rot from
+§ *Writing This File*: a stale list and a fresh list read identically.)
+
+⚠️ **`.worktrees/` in that list is load-bearing, costs nothing today, and therefore needs
+an assertion.** Each sub-agent worktree is a full second copy of the repo — measured 63,975
+files across 3 live worktrees — so dropping it makes one search from main scan every file
+4× and report every hit 4×. The guard test exists for the day someone "tidies" the list;
+it will not fail before then, which is the entire point.
+
+Two adjacent findings filed rather than swept in: **01KYCS0BH6** (`glob: "*.ts"` — the
+example in the tool's OWN description — returns nothing, because `*` does not cross `/` in
+Bun.Glob) and **01KYCS1552** (the skip list is applied AFTER the walk, so every excluded
+dir is enumerated then discarded; `dot: true` made that ~4× worse from main).
+
+### ⭐ How it was caught, and why that was the only way it could have been
+
+The failure mode is silent **by construction**: "no matches" and "never looked" produce a
+byte-identical tool_result. Nothing in a search result carries evidence that the search
+happened. So it can never be caught by inspecting the answer — only by a **collision with
+something you independently already know**.
+
+Forensic record, session 01KYCNHX9JAM, 13:01:04 → 13:01:55 (read out of its JSONL):
+
+| time | event |
+|---|---|
+| 13:01:04 | `search("formatTieredHits\|Related past tasks")` → a long, confident answer spanning 3 `src/` files. It silently omitted `.mxd/plugin/scope-opts.ts`, which holds the literal header string `[Related past tasks]` AND the second formatter. **The agent did not blink** — 2s later it was reading one of the returned files. |
+| 13:01:42 | `search("formatRelatedTasks\|RELATED_TASKS_CHAR_LIMIT")` → `(no matches)`. It had read that file 5 events earlier, and the thinking in the very same turn says *"I see there's a separate `formatRelatedTasks` function in scope-opts.ts"*. The answer was not incomplete, it was **impossible**. |
+| 13:01:47 | `bash grep -rn` — 4s after the empty result, reflexively, with no hypothesis stated. |
+| 13:01:55 | the hypothesis finally forms: *"seems to be skipping dotted directories"* — 7s AFTER grep had already proved it. The distrust was procedural, not analytical: the fallback fired first, the explanation came later. |
+
+Three things worth carrying:
+
+1. **The empty result is the detectable one; the partial result is the dangerous one.**
+   Same bug, same tool, same agent, 38 seconds apart: the non-empty answer went
+   unchallenged, the empty answer got double-checked. An under-report is only conspicuous
+   when it takes *everything* away — which is the case that matters least.
+2. **Detection needed an independently-held fact at that exact instant.** Search for
+   something you do NOT already know exists — "are there other callers of X?" — and a false
+   `(no matches)` is indistinguishable from the truth AND confirms your hypothesis, which is
+   the most comfortable answer there is. That is precisely the rename/delete check
+   § *Refactoring Philosophy* tells you to run.
+3. **The check that caught it is the one the tool description forbids** ("ALWAYS use this
+   for search tasks — NEVER invoke grep or rg via bash"), and the suppression had already
+   worked once that same minute. Sibling of the bash-tool framing directly above: a rule
+   that suppresses a redundant check also suppresses the only detector its failure mode has.
+   For as long as the bug lived, **an agent that obeyed the instruction got the wrong answer
+   and one that disobeyed got the right one** — which is not just a bad outcome, it is
+   training every agent that reads a tool description to discount it. If a description tells
+   agents to stop cross-checking, the tool has to earn it.
+
+### Test notes
+
+`src/anthropic-compatible-provider.test.ts` → `describe("jsSearch: hidden directories")`,
+next to the pre-existing `describe("jsSearch")`. **Yes, that file** — search's tests have
+always lived in the provider test file, and keeping them together beat giving `search` a
+second home.
+
+Mutations, each a full `bun test`:
+
+| mutation | fails |
+|---|---|
+| the bug itself (no `dot: true`, both sites) | the 2 walker tests + `excluded_dirs: []`. The 3 guards stay green — which is what makes them guards, not coverage. |
+| `.worktrees/` dropped from `DEFAULT_SKIP_DIRS` | the `.worktrees` guard + the description test, and nothing else. |
+
+Per-site attribution comes free rather than from a third mutation: the two walker tests are
+path-disjoint (one passes a `glob`, one does not), so each can only be reporting on its own
+`scanSync` call.
+
+⚠️ **The first cut of the two walker tests asserted an EXACT file list, and the `.worktrees`
+mutation tripped them too** — three extra red tests all naming the wrong cause. Narrowed to
+presence-only. **A test that can fail for two different reasons cannot tell you which one
+happened**, and a guard's entire value is being legible on the one day it fires. The exact
+list survives in `excluded_dirs: []`, where enumerating everything IS the claim.
+
 ## FIX-3 (2026-06-05) — lifecycle + provider concurrency: Phase-2 leak, done ordering, launch race, abort-sleep, done+compact
 
 Five concurrency bugs in `agent-lifecycle.ts` + `provider-shared.ts`. Each is a "the loop/parent
@@ -554,6 +682,14 @@ paths so a long-lived signal doesn't accumulate listeners) + after it `if (signa
 abandon the retry loop. **Test with stopTask (no timeout), NOT stopAgent (its 1s race masks the block).**
 
 ### B-L9 — done-resume + compactOnly → consecutive user messages → API 400 (FIXED)
+
+> ⚠️ **PHANTOM (2026-07-25).** There was no 400. `pendingCompactDoneToolCall` was built against a
+> mock-only rule; the unbundled shape is accepted by the real API. The mechanism works and is
+> harmless, but it has no reason to exist — slated for collapse alongside
+> `pendingCompactYieldToolCall`. See *The Anthropic message-shape rules, MEASURED*. Everything
+> below is history, including the "Reachability trick", whose last sentence names the mock's
+> fictional check as the detection mechanism — which is exactly how the phantom stayed alive.
+
 `provider-shared.ts` pendingDoneToolCall handler did NOT check `compactOnly` (the yield path already did
 via `pendingCompactYieldToolCall`). When the ONLY wake message during a done-resume was /compact, it
 pushed the done tool_result as its own user message, then the compact block pushed the summarization as
@@ -603,6 +739,15 @@ rebuilding context (no session_config, no compacted_resume). On restart,
 so the assistant tool_use has a matching result.
 
 ### R8-B#2 — duplicate done() → emit results for ALL dones
+
+> ⚠️ **PHANTOM, and this one COST something (2026-07-25).** The diagnosis below is accurate right
+> up to "two separate user messages", and then wrong: that shape is `user[tool_result]`
+> `user[tool_result]`, which the real API ACCEPTS — both messages open with tool_result blocks so
+> the answering run spans them. Verified by feeding this exact event sequence through the real
+> walker. **So the trade-off recorded in the last sentence — the agent losing its done-resume
+> context and getting a generic interrupted resume — was paid for a bug that does not exist.**
+> Reverting is therefore a BEHAVIOR FIX, not a cleanup; do not treat it as a risky style revert.
+
 Two done tool_calls both exited as orphans. On resume, repair placed the interrupted
 result AFTER lifecycle events (agent_end, done_notified). The walker tool_result
 collection loop broke at those lifecycle events → two separate user messages → API 400
@@ -618,11 +763,23 @@ compactOnly compact path ignored them → extras tool_results were dangling → 
 Fix: compact summarization path and too-short path both include extras in the bundled
 user turn.
 
+✅ **REAL — and correctly attributed at the time (re-verified 2026-07-25).** "Dangling" is the
+*pairing* rule, not alternation: the assistant's extra `tool_use` blocks had no answering
+`tool_result` in the compaction request. Its sibling R8-B#1b (the too-short branch consuming the
+same pendings) is real for the identical reason. **When the two compaction deferrals collapse, this
+requirement does NOT go away** — the extras still have to be pushed, just as their own
+`user[tool_result…]` message ahead of the rest. Form changes, obligation stays. Worth noting that
+these two entries sit inches from B-L9 and R8-B#2 in the same file and are the ones that got it
+right; the wording is nearly identical, so read the *mechanism* rather than pattern-matching the
+sentence.
+
 ### Pre-existing issue found (not fixed here): compact messages never get messages_consumed
 `handleImplicitYield` filters compact messages from `nonCompact` and `recordQueueEvents`
 only records nonCompact. On restart, `findUnconsumedMessages` re-enqueues the compact →
-spurious `manualCompactRequested` on next session. Usually benign but can cause
-consecutive user messages during done-resume with compact.
+spurious `manualCompactRequested` on next session. Usually benign but ~~can cause
+consecutive user messages during done-resume with compact.~~ **that consequence was the phantom
+(2026-07-25) — consecutive user messages are legal.** The re-enqueue itself is still real; it just
+has no known bad effect.
 
 ## fable silent-turn → silent idle + agent date-blindness (2026-07-15, from closed task 01KWYCYA)
 
@@ -1212,9 +1369,17 @@ interrupted results. New helper `lastToolCallEvent(events)`.
 ### Status-message structural guard (required once B-L8 lands)
 Strategy 2's status message is a synthetic **user** message. If the kept region ends in an
 unresolved intended-orphan yield/done (now skipped, not given a result), appending a user message
-after it breaks assistant→tool_result alternation → API 400. Guard: append the status message only
-when `!endsInPendingControl`. When the session ends in pending yield/done, it correctly resumes in
-that state (no API-forcing user message).
+after it breaks ~~assistant→tool_result alternation~~ **the tool_use PAIRING rule** → API 400. Guard:
+append the status message only when `!endsInPendingControl`. When the session ends in pending
+yield/done, it correctly resumes in that state (no API-forcing user message).
+
+✅ **REAL — verified 2026-07-25, keep the guard.** Removing it produces `assistant[text, tool_use]`
+followed by `user[string]`: the answering run is empty, so the tool_use is unanswered → genuine
+400 *"`tool_use` ids were found without `tool_result` blocks immediately after"*. Only the WORDING
+was wrong — "alternation" is the fictional rule (see *The Anthropic message-shape rules,
+MEASURED*), and this guard has nothing to do with it. A useful contrast with B-L9 / R8-B#2 in the
+same file: same vocabulary, opposite verdict. **The word "alternation" in this codebase is not a
+reliable signal of anything — go read what the shape actually is.**
 
 ### D#1 — `source: "system" as never` rendered to an EMPTY string
 Strategy 0's reason message forced an illegal `source: "system"`; `formatBodyForAI`'s `default`
@@ -3093,6 +3258,128 @@ in unfamiliar areas.
 - `formatTieredHits` is shared between search_tasks and create_task (same formatting,
   different `fullCount` and header).
 
+## Retrieval that nobody acts on ⇒ guidance goes where the DECISION is (2026-07-25)
+
+All three related-tasks surfaces worked and produced real prior art. None of them said
+what to do with a hit, so the block read as a return value: scanned, then dropped. Root's
+count for one day — `create_task` ×8, block returned ×8, behaviour changed ×0,
+`search_tasks` called ×0.
+
+### The placement rule (this is the reusable part)
+
+> **Put the guidance where the decision is made. If the agent ASKED for the data, the
+> tool description reaches it in time — it still holds the intent it called with. If the
+> data arrives UNREQUESTED, only the payload reaches it.**
+
+One rule, three placements, no duplicated paragraph:
+
+| surface | asked for it? | guidance lives in |
+|---|---|---|
+| `search_tasks` | yes | its description (one added clause) |
+| `create_task`'s `[Related existing tasks]` | no — rides along | the block header |
+| `work_context`'s `[Related past tasks]` | no — injected | the block header |
+
+This is also why the bash "don't pipe" precedent does NOT transfer: that decision is made
+while CONSTRUCTING the call, so the description is its decision moment. A description read
+before the call is guidance about something that does not exist yet in the agent's world.
+
+Matrix-specific tiebreaker, worth knowing on its own: **tool descriptions are frozen in
+`session_config` until a compaction refreshes them, so a description change does not reach
+a running agent. Handler output reaches everyone on the next call.** For a fix motivated by
+"this failed today", that is decisive.
+
+⚠️ **Root's stated evidence did not support root's conclusion — a different fact did.**
+The argument offered was "I read the tool description and still dropped the block". But
+create_task's description had never mentioned the block at all, so that is evidence that an
+unexplained block does not self-explain, not evidence about description-placed guidance.
+The real support is next door: system prompt §2 has "Search before building", and
+`search_tasks` was called 0 times that day. The conclusion held; the reason had to be
+replaced. **Check that a conclusion's stated reason is the one actually carrying it —
+especially when you already agree with the conclusion.**
+
+### The two block headers are DIFFERENT sentences, on purpose
+
+Same shared kernel — *pointers, not answers; `get_task` and read the result rounds* — then
+they diverge, because the readers can do different things:
+
+- **create_task's reader is ROUTING**: it just made a task and is deciding where the work
+  should live. Menu: fold the conclusion into this task's description (most common, and
+  the one agents skip); `fork_task_context`; `send_message` to the found task and delete
+  the just-created one; or nothing.
+- **work_context's reader is already ASSIGNED the work**: it is deciding how to do it.
+  Read before re-deriving; and if a hit already tried the approach it is about to take,
+  **surface that upward** rather than obeying or ignoring it (that is §3's "your
+  investigation contradicts the premise the task above is operating on").
+
+Verified rather than assumed, because the hypothesis handed to me was half wrong:
+- ✅ a working agent **cannot** `send_message` to the task it found — the direction check
+  in the handler allows only ancestors in its parent chain and its DIRECT sub tasks.
+- ❌ it **can** update its own task description: `checkPermission(auth,"subtree",…)`
+  returns true for self, and the system prompt tells it to on scope change.
+- ⚠️ it **can** `fork_task_context` (only the TARGET is subtree-restricted, the source is
+  free) — but only into a sub task it creates, so forking is a dispatch move, not a
+  use-this-knowledge move.
+
+### ⭐ "Latest result" is the LAST round, and the last round is often trivial
+
+The single fact that makes the block structurally unable to answer anything. Measured on a
+real hit: `01KY28ZXXSJG` has 3 rounds — round 0 is the whole implementation, rounds 1-2 are
+CSS tweaks. The block therefore advertised that task with *"Restyled search hits as
+card-style items: background: var(--bg-subtle…)"*. Everything that made the task worth
+reading was invisible. Same shape for any task that was reawakened for a follow-up, which
+is most closed tasks of any size.
+
+Hence the ordering inside the header: the "these are excerpts, they cannot tell you what a
+task concluded" reframe comes FIRST, so the hits are read as an index. Put it after the
+hits and the agent has already formed a judgement from the excerpts.
+
+### The reading rule that prevents a NEW error
+
+A past round is *a measurement plus a judgement made at the time*. The measurement usually
+still holds; the judgement may already be void — **and a new task on the subject is often
+itself the evidence that intent changed** (see § *Tests as current truth* in the system
+prompt: a task is a certificate of intent change). An agent that reads "we tried this and
+reverted" as a prohibition abandons a road it is currently supposed to walk. Both headers
+carry this in one clause.
+
+### Two supporting fixes — an instruction you cannot execute is decoration
+
+Both in the work_context block, both only worth doing BECAUSE the header now says
+"get_task these":
+- **full taskId**, not `slice(0,12) + "…"`. 12 chars resolves (tracker prefix-matching is
+  ≥8), but the ellipsis does not, and a pasteable id costs ~70 chars per block.
+- **dead hits dropped** (`if (!task) continue`). `formatTieredHits` always did this; this
+  block rendered them as title `"unknown"` with a real-looking but unresolvable id.
+
+### Test notes
+
+Pinned by asserting the block contains `get_task` — the imperative, not the prose, so
+rewording survives and deletion does not. In the work_context test the assertion MUST be
+scoped to the block (`content.slice(content.lastIndexOf("[Related past tasks]"))`):
+work_context also preloads memory.md, which contains both the marker and `get_task`, so an
+unscoped `toContain` passes no matter what.
+
+Mutation-verified individually, and the pairing matters: **M2 (full id → prefix) and M3
+(dead-hit filter) must be mutated SEPARATELY.** Applied together they mask each other —
+the dead-hit test asserts `not.toContain(goneChild.id)`, and a reverted-to-prefix render
+does not contain the full id, so the M3 breakage passes silently. Results: both headers →
+bare markers = 2 fail (create_task + work_context, nothing else); M2 = 1 fail; M3 = 1 fail.
+
+### Relationship to draft 01KNZGYY (required `origin` param on create_task)
+
+This does NOT replace it and cannot. The block is **structurally late** — the task already
+exists by the time the agent learns a related one does. Everything here is recovery
+("…and delete this just-created task"); the parameter would make the choice up front. What
+changes is the evidence 01KNZGYY needs: its premise was "prompt alone cannot fix this", and
+until now no prompt had tried. The honest read is now measurable — if hits still change
+nothing, that premise is confirmed on real data instead of asserted.
+
+Left as drafts rather than swept in here: **01KYCQVA8CP** (one task can eat BOTH of
+create_task's full slots when it matches on two fields — observed twice; deduping would
+regress `search_tasks`, whose whole contract is per-LOCATION hits, so it is a decision not
+a tidy-up) and **01KYCQTGQZ** (the `search` tool skips `.mxd/` by default — see Known
+Pitfalls).
+
 ---
 # Daemon, Worker & Transport
 ---
@@ -3116,6 +3403,7 @@ Three tightly-coupled durability gaps closed so process exits + stops don't lose
 - `stopAgent` awaits loop settlement (bounded 1s) — symmetric with stopTask. Closes the race between `POST /projects/:id/stop` returning and the finally block's `agent_end` / Phase 2 `done_notified` / MCP disconnect writes. Fixes DELETE /projects → pm.delete → rm -rf racing with in-flight JSONL writes.
 - Both timeouts are defensive: real providers respect abort within ms. A stuck tool (foreground bash ignoring abort) gets bounded grace, then `buildSessionRepair` on next startup synthesizes the interrupted tool_result (orphan-repair contract). **Do NOT call `fg.resolve()` in stopAgent** — that moves bash cleanly to background and breaks the orphan-repair semantic.
 - Restart-crash integration tests (Restart B/I/J/K/N, LC3) rely on shutdown leaving foreground-tool orphans for autoResume to repair. 3s timeout was too slow for 5s test timeouts; 1s is the sweet spot.
+- ⚠️ **Correction (2026-07-25): that 1s was tuned under a single-run assumption.** Normal load is now 3-4 sub-agents each running the full suite plus root running it too, and under that contention `Restart B: crash during bash sleep` intermittently blows its 30s test timeout — it takes ~2.6s on the runs where it passes, so this is contention, not a marginal miss. Read the line above as the historical record of that tradeoff, not as "already tuned". Rate, mechanism and a second (port-collision) instance live in draft `01KYCMVKN14RRX0KK0H2CNTD9P`. **Triage shortcut from that draft: the suite's own total run time is a load probe** — when this test fails, check it before suspecting your diff (measured 2026-07-25: failing run 300.8s vs 267-269s for passing ones; the draft carries the current threshold). The thing to re-examine is whether 1s still holds under parallel load; raising the test's timeout would only hide it.
 
 ### Worker init timeout + restart backoff (daemon)
 
@@ -5038,6 +5326,202 @@ the trick to make the Compact button exist in harness tests. Mutation-verified: 
 journey fails; handleScroll report drop → 2 scroll tests fail; effect else drop → content-growth
 test fails (exact, thanks to the MO stub).
 
+## Activity-log viewport position: 30 touch points, three clusters, and the one that isn't in the scroll code (2026-07-25)
+
+A survey of everything that reads, writes or invalidates the activity log's scroll offset found
+**30 touch points, not the 9 anyone could name**: 9 JS writers, 5 readers, 6 pieces of state,
+6 content-height mutators inside the container, 6 clientHeight mutators outside it, 6 wholesale
+`logs` replacements, plus **the browser** (`overflow-anchor: auto`, load-bearing here and not
+implemented by Safari — see below).
+
+They do NOT collapse into one mechanism, and forcing them to would be wrong. Three clusters:
+
+- **A — measuring or writing during a transitional state.** Produces the *unpredictable* symptoms,
+  because the transient's duration is a network variable.
+- **B — viewport position addressed by a perishable identity** (pixel offsets, a module-counter
+  entry id, a React component instance). Produces *deterministic* losses, each disguised as some
+  other feature behaving normally, which is why none of them were ever reported.
+- **C — conditional renders in a flex row.** Independent, cheap, cosmetic.
+
+Their common amplifier: `logs` is the whole viewed session's array, replaced wholesale on every
+refresh. **That amplifier turned out to be able to hurt users on its own** — see the causal chain
+below. "What time may I measure" and "what name do I remember a position by" are orthogonal
+questions; one mechanism cannot answer both.
+
+### What shipped
+
+- **`scrollRangeShrank(prev, current)`** (`scroll.ts`) gates follow INTENT in `handleScroll`.
+  `isNearBottom` answers "is it at the bottom" — right for the ↓ button, wrong for "does the user
+  want to follow", because the offset reaches the bottom on its own whenever the range shrinks and
+  the browser clamps. Measured cases that used to silently re-arm follow and then yank the user
+  down: task switch (range 1549→0), log search matching nothing / a few / **40 entries where it
+  still overflows (1549→449 — so "does it overflow" is NOT the discriminator)**, and the composer
+  growing (viewport 572→537). Growth is deliberately not suspicious: streaming grows the log every
+  frame and scrolling back down must still re-arm. `prevScrollRangeRef` may **only** be advanced by
+  `handleScroll` — effects that read geometry run at commit, BEFORE the browser dispatches the
+  clamp's scroll event, so letting them advance it hides the very shrink being detected.
+- **Arming is not acting.** `autoScroll` was a dependency of the new-content effect, so merely
+  re-arming follow ran it — and re-arming happens the instant a manual scroll comes within 40px of
+  the bottom, so the last stretch of the user's own gesture was completed for them mid-drag
+  (measured: 25px from the bottom → 0.5px two frames later). The flag is now read from the ref and
+  is not a dependency: that effect reacts to CONTENT, never to intent. "Go to the bottom now" is a
+  separate intent with its own channel (`scrollToBottomRequest`).
+- **Panel header ordering.** The row is right-aligned flex, so inserting a child moves the children
+  BEFORE it and leaves the rest alone. The Follow pill sat mid-row and shoved ⌘ + the token badge
+  71.3px sideways on every scroll-up; both scroll-state buttons are now leftmost. Follow also
+  shares `requestScrollLogToBottom` with ↓ so the two booleans flip in one batch instead of two.
+- **`scroll-attribution.ts`** — dev-only (`localStorage mxd-debug-scroll`), tags every programmatic
+  write with who did it, plus a per-frame sampler for movement nobody claimed. Read its docstring
+  before trusting it; it has a documented blind spot (below).
+- The per-tab `{scrollTop, follow}` map was **deleted, not repaired**: it never worked once (the
+  save ran in a passive effect, after the commit that swapped in the new filter, so scrollTop read
+  0 — measured 8/8 landing at the bottom). Whether task switching *should* remember your position
+  is a product question left open; answering it needs an address that survives a refetch.
+
+### The symptom that was not in the scroll code at all
+
+User: "from mid-output to output complete, my scroll gets yanked to somewhere above." Only visible
+with follow OFF. Caught with a console probe in the real session:
+
+```
+t=22467   GET events?after=compact        atScrollTop = 5517      (agent went idle)
+t=22736   5517 → 0   delta -5517   "BROWSER (no JS write)"   top=""   entries 59→60
+t=22751   JS write scrollTop 0 → 0        at index.js:4283:33
+```
+
+Both line numbers map back exactly: **4283 = the lazy-render anchor**
+(`container.scrollTop = container.scrollHeight - scrollBottom`), **4294 = `scrollToBottom`**.
+
+The chain: `agent_idle` → `refetchOnIdleRef` → `processEventBatch` → `setLogs` replaces every entry
+with a new object → new `createLogEntry` ids → new React keys → the whole subtree unmounts and
+remounts → **the offset does not survive the swap**.
+
+A second capture measured this from inside the DOM mutation:
+
+```
+t=87006  >>> REFETCH                          st 8089   sh 8823   kids 85
+t=87032  dom-mutation  removed:1              st 8089   sh 8809
+t=87299  dom-mutation  added:82 removed:82    st  191   sh 8978   ← offset already gone
+t=87313  js-write 191 → 191                   (the same anchor, pinning again)
+```
+
+Note what this does and does not show. All 82 entries are swapped in **one** mutation record, and by
+the time the observer's microtask runs the height is **already restored** — while the offset is
+already lost. It lands wherever the intermediate geometry allowed (0 in the first capture, 191 in
+this one), so "clamped to 0" is too specific; the honest statement is that **the offset does not
+survive a wholesale replacement**. And the usable evidence is not a dip in `scrollHeight` — nothing
+observable ever sees the dip — it is that **the offset changed across the mutation with no JS
+write**.
+
+**`added:82 removed:82` is the direct observation of every React key changing.** With stable keys
+React reuses nodes and a normal update looks like the `removed:1` record at t=87032. Eighty-two out,
+eighty-two back, `kids` unchanged — that is key churn measured, not inferred, and it is the positive
+evidence that **eid-as-React-key is aimed at the right thing**.
+
+Then the pin: landing near the top brings the sentinel into view → the IntersectionObserver fires →
+it captures `scrollBottom = scrollHeight - scrollTop` → one frame later writes
+`scrollHeight - scrollBottom`, reproducing the same offset (`0 → 0` in the first capture,
+`191 → 191` in the second). **The anchor is what turns the culprit's result into a persistent
+state** — which is why the symptom is "stuck near the top" rather than "flickered once".
+
+But the anchor is an accomplice, not the cause, and the arithmetic proves it: `scrollBottom =
+8978 − 191 = 8787`, and `scrollHeight` across that window was 8809–8978, so the offset **at capture
+time** was already ≈22–191 — already near the top. The anchor **observed and reproduced** a position
+that was lost before it ran; it did not compute a wrong one. So there is nothing to fix in the
+anchor. Fix the keys.
+
+**The fix is not in the scroll subsystem.** That refetch exists for exactly one reason: to get
+`eid` back, because SSE-broadcast events don't carry it (it is stamped at persist time), so
+Edit/Rewind can't work during streaming. Task `01KYBQXSVEP7Y94NWHGWSMNQSM` kills this two ways
+over — eid arriving with SSE means the refetch never happens, and **eid as the React key** makes a
+refetch reconcile instead of remount, which also covers `handleReconnect` (whose replacement will
+not disappear) and fixes expanded `Card` state being reset. A stop-gap was explicitly rejected:
+it would add a 31st touch point to a mechanism scheduled to disappear, and transitional code is
+code that must later be deleted — which is forgotten far more reliably than adding it was.
+
+### ⚠️ CORRECTION — "a wholesale replacement does not move the offset" is FALSE
+
+An earlier round measured this four times and concluded a full replacement preserves `scrollTop`
+(remove-all-then-insert-all inside one synchronous block does not clamp, because no layout happens
+in between). **The measurements were honest and the conclusion is wrong**, and left standing it
+sends the next reader straight past the actual culprit.
+
+Why it looked true: the fixture held ~60–80 plain-text entries. Tearing those down and rebuilding
+them is cheap enough that the collapse never survives to a layout. A real session has images with
+no reserved height, expandable cards, markdown tables — rebuilding is slow enough that the collapse
+becomes observable and the browser clamps.
+
+**The cost of a remount depends on how expensive the content is to rebuild**, so a fixture made of
+cheap content cannot answer the question at all. Second instance in one day of *correct measurement,
+wrong world sampled*.
+
+### The instrument's blind spot — and a rule about specifying observations
+
+The probe classified that exact jump as `range UNCHANGED → scroll anchoring or user — NOT a clamp`.
+Wrong: the range collapsed and refilled **inside one frame**, and a per-frame sampler only sees what
+survives to the end of a frame.
+
+So `range unchanged ⟹ not a clamp` holds ACROSS frames and fails for collapse-and-refill within
+one. And **`scrollHeight` never dipped in any sample of the second capture either** — read
+literally, that refutes "the container collapsed". It does not, and the reason is the sharp edge
+of this whole subsystem:
+
+```
+t=87032  dom-mutation  ...
+         ← 267ms, ZERO samples (≈16 expected at 60fps)
+t=87299  dom-mutation  added:82 removed:82
+```
+
+The main thread was blocked solid for 267ms rebuilding 82 entries, so every rAF callback and
+observer microtask queued behind it. **"No dip in the samples" ≠ "no dip."**
+
+This turns the blind spot from an edge case into a **systematic bias**: the operations that cause
+large displacement are exactly the operations that block the main thread long enough to hide
+themselves. A per-frame instrument is least able to see precisely the moments it is most needed for.
+Any future instrument here needs an observation that survives a blocked thread — a count taken
+either side of the render, or a mutation record — not a sample taken during it.
+
+The generalisation, which cost a nearly-wasted round: **before specifying a measurement, check that
+the instrument's resolution can carry it.** The request that prompted this was "record
+`scrollHeight` every frame across the window" — below the instrument's resolution, and its failure
+mode is a **silent false negative** ("no dip, so not a remount") that reads exactly like a real
+result. That is more dangerous than reasoning wrongly, because it arrives wearing evidence's
+clothes. Three false negatives of this family landed in one day: an over-specified observation, a
+fixture whose content was too cheap to reproduce the effect, and a blocked-thread sampling gap.
+
+And the counterpart to knowing when to measure — **stop collecting once the answer cannot change
+the action.** Exactly where in those 267ms the offset died does not alter the fix: don't remove the
+82 nodes. Further rounds of user reproduction would have bought precision nobody would spend.
+
+### Fixing a "you end up at the bottom anyway" mechanism makes older displacement visible
+
+This displacement had always been there. With follow ON, any content change re-triggered
+scroll-to-bottom, so **every** displacement was overwritten by the same endpoint and none of them
+produced a distinguishable symptom. Removing that overwrite is what made this one visible.
+
+Generally: **in a subsystem with a mechanism that keeps forcing one endpoint, that mechanism is
+masking every other bug that moves the same value.** Each masker you fix surfaces a symptom that
+"has always been there" — the user will report it as new and it is not a regression, it is
+*newly visible*. This explains a whole class of "I hit this often but can't say when" reports, and
+it means a subsystem's bug count can appear to grow while it is genuinely getting better.
+
+### Reusable method
+
+- **Attribution beats reasoning here.** One reproduction with the probe turned "something moved me
+  and I don't know what" into two exact line numbers. The previous round needed a full 30-touch-point
+  survey to reach a *worse* answer.
+- **Diagnose by absence.** Browser scroll anchoring goes through no JS path and fires no event, so
+  "the offset moved and nobody wrote it" is itself the diagnosis. Any instrument here must record
+  unclaimed movement, not just instrument the writers.
+- **Do not try to separate a clamp from a user scroll by `isTrusted`** — a clamp's scroll event is
+  trusted and identical at the event layer. Recorded before, re-derived, and now recorded again.
+- **A streaming mock provider is ~60 lines and puts a frontend bug on the real agent loop**: serve
+  Anthropic's SSE shape on a local port and set `ANTHROPIC_BASE_URL` (the daemon passes
+  `process.env` into the worker). Gets real `text_delta`, thinking, tool execution, `end_turn` →
+  real `agent_idle` → real refetch. `/tmp/scroll-probe/` holds the fixture + mock.
+- **When you cannot reproduce, send the instrument to whoever can.** Four increasingly faithful
+  attempts failed; one paste into the user's console succeeded immediately.
+
 ## Sidebar search/filter toggle — pure reducer, blur-close removed (2026-07-07)
 
 The sidebar filter button ([TASKS][+][refresh][🔍][👁] header row) now cleanly TOGGLES its
@@ -5514,6 +5998,34 @@ Drift between prompt claims and tool reality is a **silent failure mode**. Integ
 - `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
 - Test counts are not recorded here — `bun test` prints them and any number written down starts
   rotting immediately. (This bullet used to say "~1976 tests, 4 skipped".)
+
+## ⚠️ Every `throw` in a test double must quote the real error it mirrors (2026-07-25)
+
+**Rule, for ANY test double — not just `ValidatingMockAPI`:** when a fake rejects something on the
+grounds that the real system would reject it, the rejection message must carry **the real system's
+own error string**. If you cannot quote it, you have not verified it, and it does not belong in a
+predicate named after the real system.
+
+**Why this rule and not "be careful":** it moves the failure to the moment of WRITING. The claim
+that cost us four production mechanisms propagated as a parenthesis in a bug report — *"Error from
+ValidatingMockAPI (matches real Anthropic)"* — which nobody ever checked. Under this rule the author
+would have gone looking for the API's wording, found none, and stopped there. **A rule is worth
+what its failure mode is worth, not what it says.**
+
+**Corollary — separate OUR expectations from THEIR rules, by name.** A check we want but the API
+does not enforce is fine; it just may not live inside something called `validateRequest` /
+`assertValidApiMessages`. Give it its own name (`assertNoEmptyContent`) and let tests opt in. **A
+style rule hidden inside an API-validity predicate gets cited later as API behavior** — that is
+precisely how the alternation fiction became a documented fact.
+
+**Corollary — a fake that is STRICTER than the real system is not "safe".** It manufactures phantom
+bugs, and phantom bugs get fixed with real complexity. Strictness in a test double is not a
+conservative choice; it is an unverified claim about the system under test.
+
+Detection heuristic for auditing an existing double: **do not audit whether the assertions are
+correct — ask whether the rule being ENFORCED is the same rule that is DOCUMENTED.** Where those two
+fork is where a fiction starts producing evidence. Full case study: *The Anthropic message-shape
+rules, MEASURED*.
 
 ## Canonical user journey test is MANDATORY
 
@@ -6145,6 +6657,43 @@ Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", 
 - Matrix-specific rules → memory.md (this file), not prompt.
 - Principle over rule: 4.7 generalizes from framings better than from rule lists. Prefer "tests are our current truth" (principle that generates behavior) over "don't contort arch for old tests" (rule specifying one behavior). Keep explicit rules only when they protect a product property (e.g., git worktree invariants) — those stay as-is.
 
+### The prompt contradicts itself across sessions, and nothing catches it
+
+Prompt edits rot the same three ways this file does (§ *Writing This File*), but the **superseded**
+kind — correction exists, filed away from the claim — is worse here because of the carrier.
+`memory.md` has regions and topical adjacency, so putting a claim next to its refutation is a move
+you can actually perform, and performing it is what makes the contradiction visible. **A prompt has
+no such mechanism.** It is one linear argument; two sentences sixty lines apart are never brought
+together by anything. And it does not present as a conflict — **both sentences are individually true
+and well written.** They only cancel when someone holds both at once, which is precisely what the
+linear form prevents.
+
+Observed 2026-07-25, two commits one session apart, same file, same author:
+- `be9707f9` added to §5 Refactoring: *"every unfinished break is state you carry, in a context that
+  runs out"* — true as written, there to explain why a half-broken tree is expensive for an agent.
+- `91ba03b5` existed to establish §6's *"compaction is a continuation, not a stopping point"* — i.e.
+  to deny the wall the earlier sentence had just asserted. Fixed to "exactly the kind of state a
+  compaction blurs", which keeps the cost claim and drops the wall.
+
+No gate can see this. The prompt is a template literal; typecheck and biome only prove it parses and
+is formatted, and the sole test touching its content greps for hardcoded git branch names.
+
+**Rule: before editing the prompt, read the recent prompt DIFFS, not just the current text** —
+`git log -p -5 -- src/system-prompts.ts`. The current text tells you what the prompt says; the
+recent diffs tell you what it has just *started* saying, which is the only place a fresh
+contradiction can have come from. After landing an edit, grep the file for the concept you leaned on
+(here, `context`) and read every hit: the sentence that cancels yours will not share your wording.
+
+**Why this step gets skipped**, from the same pair of sessions: the round that INTRODUCED the
+contradiction was required to re-read all 436 lines after editing and substituted a targeted grep,
+reasoning verbatim *"rather than burn context re-reading 436 lines verbatim"* — while sitting at
+zero compactions. The round that CAUGHT it did the full read, and the full read is also what found a
+second, subtler collision (§5 Text's "if you lack context … delegate to a sub task" reads as a
+licensed handoff once §6 forbids handing off for context reasons). So the proximate cause of the
+contradiction surviving a whole session was laziness pattern #8: a verification step narrowed to
+protect a budget that was not under pressure. This rule is worth exactly as much as the willingness
+to pay for it.
+
 ## Known Pitfalls
 
 - **memory.md**: Never `write_file` to append. Use `edit_file` or `echo >>`.
@@ -6152,6 +6701,21 @@ Common AI misunderstanding when cleaning prompts: told "avoid matrix-internal", 
 - **Biome**: Typecheck BEFORE lint. No `!important`. No duplicate CSS properties.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`.
 - **Daemon reload**: Commits don't auto-restart the daemon. Must manually restart after code changes.
+- ~~**`search` tool silently skips `.mxd/`** (verified 2026-07-25): with the default path it
+  never walks hidden directories, and in THIS repo `.mxd/plugin/` is production code — every
+  ScopeOpts hook, every plugin REST route, the whole plugin UI. `search("buildMatrixScopeOpts")`
+  returns 4 files and omits `.mxd/plugin/scope-opts.ts`, which is where it is DEFINED. The
+  pattern is fine; passing `path: ".mxd"` explicitly finds it. **This makes the "grep for the
+  name as a string before you rename or delete" rule (Refactoring Philosophy) return a false
+  negative with the tool the description tells you to always use.** Until fixed (draft
+  01KYCQTGQZ), verify by-name references with `grep -rn` via bash, not with `search`.~~
+  **FIXED same day (01KYCQTGQZ) — hidden dirs are searched now; the workaround advice above is
+  obsolete.** The claim is kept because it is the clearest statement of the symptom, and
+  because the DETECTION lesson generalises to any silent under-report: see
+  § *`search` tool: a hidden directory is not a boring directory*. ⚠️ **One sibling bug in the
+  same tool is still OPEN and still produces silent false negatives**: `glob: "*.ts"` — the
+  example in the tool's own description — matches nothing below the top level, because `*`
+  does not cross `/` in Bun.Glob (**01KYCS0BH6**). Until that lands, pass `**/*.ts`.
 - **Concurrent ULID**: Use full `ulid()` (26 chars) — sliced ULIDs collide within same millisecond.
 - **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
@@ -6203,11 +6767,15 @@ section: an older note claiming "only root's commits on main are gated" — that
 
 ## Known Bugs (unfixed)
 
-- Manual compaction during yield → consecutive user messages → API 400. **The live list of open
-  paths is the `test.todo` set in `drift-lifecycle.test.ts`** — read it rather than trusting a count
-  here. Shape of what remains: compact arriving in the SAME drain as a regular message, so there is
-  no empty queue to bundle the deferred tool_result into. The compact-ONLY variants (yield-side and
-  done-side) and the duplicate-yield-extras variant are fixed; see *Compaction Asymmetry*.
+- ~~Manual compaction during yield → consecutive user messages → API 400.~~ **NOT A BUG — RESOLVED
+  BY MEASUREMENT 2026-07-25.** Consecutive user messages are legal; the remaining `test.todo` in
+  `drift-lifecycle.test.ts` describes a shape that works (verified through the real walker and
+  against the live API). See *The Anthropic message-shape rules, MEASURED*.
+- **Reachable, real, and open**: `/compact` on a session with `messages.length <= 4` whose last
+  message is an assistant turn sends a request ending in assistant → 400 *"does not support
+  assistant message prefill"*. A fresh agent whose first turn ends with `end_turn` reaches it with
+  no further setup. Pinned by `src/reachable-400-snapshot.test.ts` (a BEHAVIOR SNAPSHOT — it
+  asserts the CURRENT, buggy shape).
 
 ## Vertical Dependency Boundaries
 
@@ -6228,3 +6796,294 @@ reason to come back here. Re-checked against the code:
    "resist feature creep" constraint on them is recorded there.
 3. Tool search — dynamic tool discovery. **Still open.** A draft exists; Anthropic has a server-side
    `defer_loading`, but the user prefers a client-side design.
+
+---
+
+## Every transport carries the event's name (eid) — and what that let us delete (2026-07-25)
+
+Four consumers wanted the same missing thing and were each about to grow their own locating
+mechanism: the Edit/Rewind gate, message deep-links, viewport addressing, and "is this event still
+part of the conversation". They are one thing — **the frontend needs the persisted event identity
+on the path it actually receives events over** — and it was missing for one reason: `emitEvent`
+broadcast BEFORE persisting, so SSE clients were shown events they could not refer to.
+
+### The mechanism: `append` is synchronous and returns the persisted event
+
+`EventStore.append`/`appendBatch` stamp the chain fields and write in one uninterruptible step and
+return the stamped copy; `emitEvent` persists first and broadcasts THAT. One object, one name,
+every transport.
+
+**Why not "stamp now, write later"** (the shape tried and reverted in 01KY54YT round 11, whose
+failure was two writers of `lastEventIds` racing):
+
+- ONE writer of the chain head. This MOVES the only stamper earlier rather than adding a second, so
+  the TOCTOU has no premise left. (Round 11's measurement was real and its product judgement —
+  "rollback isn't a realtime feature" — is what expired.)
+- ⭐ **The write-failure path is the load-bearing argument.** `rewindChainHead` keeps a failed event
+  out of the chain, and that is correct ONLY while nothing can be stamped between the stamp and the
+  write. Defer the write and a burst in one tick gets stamped first: the event after a failed one
+  names a parent no line carries, the walk stops dead (no dangling-link fallback, deliberately), and
+  the agent resumes with a **silently truncated context**. Synchronous keeps the cost of a failed
+  write at "one event lost" instead of "history lost". Pinned by a test that chmods the file
+  read-only and asserts the next event chains to the last one that actually landed.
+- The general form: it replaces "correct because nothing happens to interleave" with "correct
+  because nothing CAN".
+
+`enqueueWrite` + the generation guard survive for `copySessionFrom`, the one genuinely async write.
+Its docstring now says outright that **the guard has no reachable failure path today** — a mechanism
+that looks like protection but protects nothing is worse than none, because the next reader reads
+"there is a queue" as "there is protection". Revisit once synchronous appends have production
+mileage: draft 01KYCQDJRF8Z8S6YC39F7ECVZ8.
+
+### Entry ids come from the eid — the React key, not a display value
+
+`createLogEntry` derives `LogEntry.id` from `eid` (`Map<eid, number>`, never cleared — clearing it
+IS the failure it prevents). The log is replaced wholesale on every refetch, and a module counter
+made every key change every time: measured in a real session as ONE MutationObserver batch with
+`added: 82, removed: 82` against `removed: 1` for a normal update in the same trace.
+
+Two entries exist BEFORE the event they are named after, and both **bind** their eid to the id they
+already have rather than re-deriving it:
+- a streamed text/thinking block is built from `*_delta`, which is never persisted, and learns its
+  eid when the block closes;
+- a tool card is replaced in place by its `tool_pair` when the result lands — which is exactly when
+  a user is most likely to have it expanded. (That one was a live, independent bug: every tool card
+  remounted and lost its expanded state the moment its result arrived.)
+
+⚠️ **`key={entry.eid ?? entry.id}` is the wrong shape** even though it looks simpler: it moves the
+key at the end of every streamed block, adding a per-block remount that does not exist today.
+
+**Known residual, deliberate**: an entry that is still streaming when a wholesale replacement lands
+changes key once — its rebuild source is the route-injected `partial: true` synthetic, which by
+definition has no eid. One entry, no container collapse, and the buttons are disabled anyway
+(`isWorking`). Closing it needs a second lifecycle-bearing map, i.e. a branch for an imagined
+consumer (anti-pattern #6). Add it if it ever produces an observable symptom.
+
+### Run-start is decided in the ONE in-order channel
+
+"Was this message sent on its own" used to be a second pass over the raw batch AFTER entries were
+built, which made it structurally unanswerable for a live message (the live path sees one event at a
+time and never holds a batch) — and that is why Edit/Rewind could only appear via a JSONL refetch.
+`processEvent` is reached in event order by BOTH paths, so the current turn is tracked there and the
+verdict is set at the `messages_consumed` that picks the message up. The rule itself is
+`turnAnswersPriorWork` in `run-start.ts`; the whole-log pass calls it too. **One rule, two entry
+points**, locked by a test asserting the in-order map equals the one-shot map key for key.
+
+### Active-chain membership needs its own bit — and this is the general reason
+
+> **eid is an IDENTITY (immutable, per event). Membership is a RELATION between an event and the
+> current chain head.** A rewind changes it for a whole stretch of log without touching a single
+> event in it. **An immutable identity cannot encode a mutable relation.**
+
+So the raw-file fetch (`GET .../events` without `after=compact`, i.e. "Load earlier history") marks
+each event: `offChain: "summarized" | "abandoned"` (`classifyOffChain` in events.ts, built on the
+one `walkActiveChainIndices`). The client gets the ANSWER, never the algorithm — a second chain walk
+in the browser is what *One boundary: the active chain* removed.
+
+Marked only where it is not the obvious answer: every other transport carries active events by
+construction. Explicit-everywhere was considered and rejected — it does not actually buy safety,
+because the reader still has to choose what `undefined` means, and it costs bytes on the hottest
+path.
+
+KNOWN IMPRECISION, documented in place: the summarizer's own output inside a compaction window is
+labelled "abandoned" where "summarized" would be truer. Nothing reads it (only user messages carry
+the buttons), and a third category for events with no consumer is a classification describing its
+author.
+
+### Two workarounds deleted, both by the person who filled the hole they stood in
+
+- `processEventBatch(events, { fromActiveChain })` — gone. Off-chain events are simply dropped from
+  the turn windows, which leaves exactly the active chain in order.
+- **the re-fetch on agent idle** — gone. It existed only to go and get eids the broadcast did not
+  carry, and it replaced the entire log to do it.
+
+Refusal wording followed: "No longer part of the conversation" was what the UI said when it could
+not tell — about every message in the batch, including ones still in it. Now it says which way the
+message left, and either reason outranks "the agent is busy", because that one promises a remedy
+that will never arrive.
+
+### Live verification, including one honest negative
+
+Real browser, two daemons (this branch vs main), same fixture, content deliberately expensive to
+rebuild (tool cards, markdown tables, images with no reserved height — 327 entries). After "Load
+earlier history":
+
+| | main | this branch |
+|---|---|---|
+| Edit/Rewind enabled | **0 of 280** | 120 messages editable |
+| what the rest say | all 280: "No longer part of the conversation — an earlier rewind replaced it." | the 20 pre-compaction ones: "From before the last context compaction…" |
+
+**Negative result worth keeping**: the load-older path did NOT remount on EITHER build (90 of 100
+entries kept both their React key and their DOM node, identical on both), so it does not discriminate
+the id change. The measured `+82/-82` came from the **agent_idle** refetch specifically — which this
+work deletes outright, so that trigger is gone rather than made cheap. Do not cite the load-older
+path as evidence for or against the key derivation; use the unit tests, which mutate in both
+directions.
+
+Also, twice in one session, a first measurement measured the wrong element: `log.children[0]` is the
+"load earlier" bar, not an entry, so "the first node is still attached" was true on a build that
+remounts everything. Same shape as the viewport task's container-vs-content error. **Check what your
+selector actually points at before believing a null result.**
+## The Anthropic message-shape rules, MEASURED (2026-07-25) — and the fictional one we built on
+
+⚠️ **`ValidatingMockAPI` enforced a role-alternation rule that DOES NOT EXIST.** 628 occurrences of
+"Messages must alternate roles" in our JSONL history; **every one came from our own mock, none from
+the API.** Four mechanisms, one `test.todo` and one memory "⭐ reusable pattern" were built to avoid
+a 400 that cannot happen. Full audit + per-mechanism verdicts: task **01KYCQ856M3Z6F4EN247C4GW69**.
+
+### The rules, as measured against production Anthropic (19 shapes, OAuth, `claude-opus-5`)
+
+1. **First message must be `user`.** (mock had it ✅)
+2. **The conversation must END with a `user` message.** Ending on assistant →
+   400 *"This model does not support assistant message prefill."* (mock did NOT have it ❌)
+3. **The tool-answering rule — and it is NOT "in the next message":**
+
+   > Flatten the user messages after an assistant-with-`tool_use` into one block stream. Take the
+   > **maximal LEADING run of `tool_result` blocks**. It crosses message boundaries freely; **any
+   > non-`tool_result` block ends it** — including a *trailing* text block in an otherwise-fine
+   > message, and including a plain-string user message. Every `tool_use` must be answered inside
+   > that run.
+
+4. **Every `tool_result` must answer a `tool_use` in the preceding assistant message** (orphan →
+   400). (mock had it ✅)
+5. **Consecutive same-role messages are LEGAL** — user/user, user/user/user, and assistant/assistant
+   all accepted. (mock forbade ❌ — the fiction)
+6. **Empty content is LEGAL** — `""`, `[]`, and `[{type:"text",text:""}]` all accepted. (mock
+   forbade ❌ — a second, unnoticed fiction)
+
+Consequences of rule 3 that nothing tests today:
+- results **split across several user messages** are fine (`[R1] [R2] [R3,text]` ✅), in **any order**
+- `[R1, text]` then `[R2, …]` is **400** — the trailing text ended the run before R2
+- `[text, R1]` is **400** — block ORDER inside the message matters
+- ⭐ **`buildUserTurn` packs `[...tool_results, ...queueMessages]`, tool_results FIRST. That order is
+  a real API requirement, not style.** Put text before a tool_result, or between two batches of
+  them, and you get a production 400 with a fully green suite.
+
+### Reachable bug this exposed (BEHAVIOR SNAPSHOT test, `src/reachable-400-snapshot.test.ts`)
+
+`provider-shared.ts` "context too short to compact" (`manualCompactRequested && messages.length <= 4`):
+a fresh agent whose first turn ends with `end_turn` has `messages = [user, assistant]`; `/compact`
+takes the compactOnly path → `continue` → the too-short branch clears the flag and `continue`s with
+nothing to push → next iteration sends a request **ending in assistant** → 400. Reproduced
+end-to-end through the real agent loop; the agent crashes. **No new code needed to reach it.**
+
+### ⭐ The general lesson — how a fictional rule gets installed
+
+`jsonl-stress.test.ts`'s `assertStructurallyValidApiMessages` wrote down BOTH rules in the same
+comment, then chose:
+
+> *"We don't assert the trailing-role rule because some walker outputs are intermediate and meant to
+> be extended. We DO assert the alternation and structural shape."*
+
+**That reasoning is correct.** Some walker outputs genuinely are conversation *prefixes* that end on
+assistant; asserting the real rule would redden correct fixtures. So:
+
+> **An inconvenient TRUE assertion + a conveniently-green FALSE one ⇒ the false one gets installed,
+> and is then believed as fact.** The fiction does not win on persuasiveness — it wins on **not
+> causing trouble**. Once it lives inside a `throw` it starts MANUFACTURING EVIDENCE: 628 error
+> strings from the rule that was *executed*, 0 from the rule that was merely *documented*. **The
+> knowledge was never lost; the enforcement was.**
+
+**Detector — do not audit whether the assertions are correct** (that comment was entirely correct).
+Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
+fork is where the fiction starts producing evidence.
+
+### An over-strict test double bills you in THREE ways, and the third is the quiet one
+
+1. **It creates complexity you pay for.** Four `pending*` mechanisms, a `test.todo`, and a memory
+   entry filed as a ⭐ reusable pattern — all to dodge a 400 that cannot happen.
+2. **It hides gaps.** A fiction occupying the "role rules" slot stops anyone asking what the real
+   role rule is, so the true one (last message must be user) got zero coverage and a reachable
+   production 400 sat there unnoticed.
+3. ⭐ **It VETOES correct code — and this one never looks like a bug.** Found the same day by
+   01KYBB2Z: interrupting an agent before it emits anything, parking it, then sending another
+   message produces `[…, user, user]`. Legal; the old mock rejected it. So the correct
+   implementation could not be tested, the test was truncated at the park, and a comment was left
+   saying the mock's constraint was unverified. **Nothing was red. The feature simply acquired a
+   reputation for being "hard to test".**
+
+The first two produce artifacts you can go find — code, a todo, a crash. The third produces
+*absence*: a test that stops early, a scope quietly trimmed, an approach abandoned as awkward.
+**Ask what your test double has been making people give up on**, not only what it has made them
+build. A fiction's cheapest victims are the ones that were never written down.
+
+**The name is the other tell.** `assertStructurallyValidApiMessages` fuses two different predicates:
+*structurally valid* (a prefix property) and *API messages* (a sendable-request property). The code
+can only be one of them, so it silently became the weaker one plus a fictional bonus — 2 of its 5
+listed rules fictional, 1 true but deliberately unasserted. **A name that claims "valid" without
+saying valid-for-what will drift to "matches what we imagined".** The way out is two predicates:
+a *prefix* check and a *sendable* check. **Shipped as `src/test-utils/api-message-rules.ts`:**
+`wellFormedPrefixViolations` (first-must-be-user; pairing, but an answering run that simply RUNS OFF
+THE END of the array is incomplete rather than broken; orphan tool_results are violations at any
+position) and `sendableRequestViolations` (all of that, plus trailing-role, plus the last
+assistant's tool_uses must be answered by now). `ValidatingMockAPI.validateRequest` is the sendable
+one; `jsonl-stress.test.ts`'s helper is the prefix one, renamed `assertWellFormedPrefix`.
+`emptyContentViolations` holds the non-rule, opt-in, under a name that says it is ours.
+
+**Note the second half of the trap**: the PAIRING rule has the same intermediate-state problem the
+trailing-role rule has (an assistant's tool_results legitimately arrive after the prefix ends). So
+whoever tried to assert the true rules with only one predicate available would have gone red on
+correct fixtures *twice*, not once. **Courage was not the missing ingredient; the concept was.**
+That is what makes this a structural failure rather than a lapse — and it is why the fix is a new
+type of assertion, not a stricter one.
+
+Sibling entries, same family: *"a real error message + an unverified attribution beats a pure guess,
+because it arrives wearing evidence's clothes"* — the phrase that propagated this one was an
+offhand "(matches real Anthropic)" that nobody checked. And *"an accurate observation + an
+over-broad generalisation is harder to challenge than a guess, because it arrives with a number"*
+(Which messages can be edited/rewound).
+
+### Probing the real API: the `systemPreamble` trap
+
+Any probe against the OAuth endpoint **must send the auth group's `systemPreamble` as the FIRST
+system block**, or every call 429s. A first-pass probe that omitted it produced a wall of rate
+limits that reads exactly like validation failure — nearly yielding the opposite conclusion. Probes
+live in `/tmp/alt-probe/` (`probe2.ts`-`probe6.ts` = API shapes, `walker-shapes.ts` = runs disputed
+shapes through the real walker and checks them against the measured rule). They read `oauthToken`
+from config and never print it.
+
+### What the measurement cost, and the one number that reframes it
+
+Full `bun test` with the mock progressively made realistic (env-gated during the experiment, now
+shipped): **A** (drop alternation) 2774/2 — one is the mock's own self-test of the fiction, one a
+known teardown flake that did not recur; **B** (+ trailing-role) 2776/1; **C** (+ the real pairing
+rule) 2776/1. In every variant **the only real failure was the mock's self-test of the fictional
+rule.** The realistic mock was a drop-in: nothing depended on the fiction and the true rules cost
+nothing to adopt — they were simply never asked for.
+
+⭐ **Zero existing tests went red when the true rule was added, and that is the finding, not a
+disappointment.** The expectation going in was "some tests will red, and those reds are assets".
+They didn't, because `validateRequest` only ever sees requests the loop actually decided to send —
+and the loop only sends when its state is right, *except* on the one reachable bug, which had no
+test at all. **The fiction was not masking existing tests. It was masking the fact that nobody had
+written the missing one.** A gap does not turn red; it stays invisible until someone goes looking,
+which is why the probe had to be written by hand rather than discovered by running the suite.
+
+### What DID go red: swapping the fused helper for the two real predicates (10 tests)
+
+Splitting `assertStructurallyValidApiMessages` into prefix/sendable and giving both the measured
+rules turned 10 tests red. **Every one was a fixture that could never be sent to the API, and none
+of them was fixed by loosening a rule** — they were fixed by making the fixture a real
+conversation. Two shapes:
+
+- **6 walker fixtures produced assistant-first output** — no leading user message, because the
+  fixture only cared about the assistant/tool region. Given a `user` head, they assert exactly what
+  they always did.
+- **4 prefix-byte-comparison fixtures opened with an orphan `tool_result`** — no assistant carrying
+  the matching `tool_use`, because those tests are about byte diffing, not conversation validity.
+  Given a real head, likewise unchanged.
+
+One did NOT get a head, and it is the interesting one: the dirty-JSONL scenario table contained
+`orphan assistant_text with no user message before it` under the blanket claim *"walker produces
+valid structure"*. It doesn't — that output is assistant-first and the API rejects it. Moved to its
+own BEHAVIOR SNAPSHOT. **Not hypothetical**: FIX-5 R8-B#1 records a session permanently bricked by
+exactly this shape (a bare `compact_marker` left `readActive()` starting on an assistant turn),
+quoting the same API error.
+
+⭐ **The count that says how far this went.** The old helper's own comment listed five things it
+was about. Of the FOUR rules the API actually has, it enforced **none**: never checked
+first-must-be-user, explicitly skipped trailing-role, never checked pairing or orphans. What it did
+enforce was role-is-one-of-two (a type constraint) plus the two fictions. **A helper named
+`assertStructurallyValidApiMessages`, called from 10 sites, enforced zero real API rules for
+months** — and looked like coverage the whole time. That is the shape to watch for: not a wrong
+assertion, but a *confident name over a predicate nobody re-derived from the source of truth*.

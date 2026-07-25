@@ -1,10 +1,14 @@
 import type React from "react";
-import { isWorking } from "../agent-activity.ts";
-import { messageRunStarts } from "../run-start.ts";
+import {
+	endsTurnLookingBack,
+	type RunEvent,
+	turnAnswersPriorWork,
+} from "../run-start.ts";
 import { TOOL_YIELD } from "../tool-names.ts";
 // ID generation — crypto.randomUUID() for local UI state
 import {
 	type AgentActivity,
+	bindEntryId,
 	createLogEntry,
 	getLogTaskId,
 	type IncomingEvent,
@@ -13,7 +17,7 @@ import {
 	type TreeNode,
 	type UIEvent,
 } from "./hooks.ts";
-import type { QueueMessage } from "./types.ts";
+import type { OffChainReason, QueueMessage } from "./types.ts";
 
 // ── Pending messages: events-derived view, not mutable state ──
 //
@@ -49,6 +53,13 @@ export type PendingMessage = {
 	queueEntry: QueueMessage | undefined;
 	/** JSONL event ID — needed for rollback button on user messages. */
 	eid?: string;
+	/**
+	 * Why this message is not part of the conversation, when it isn't —
+	 * marked by the server on the raw-file fetch ("Load earlier history").
+	 * Absent on every other path, where events are on the chain by
+	 * construction.
+	 */
+	offChain?: OffChainReason;
 };
 
 export type PendingAction =
@@ -138,6 +149,7 @@ export function pendingReducer(
 				content,
 				queueEntry: body,
 				eid: e.eid,
+				offChain: (e as { offChain?: OffChainReason }).offChain,
 			},
 		];
 	}
@@ -204,6 +216,14 @@ type UpdateOp =
 			taskId: string | undefined;
 			text: string;
 			ts?: number;
+			/**
+			 * The persisted block's eid. The entry usually already exists —
+			 * `text_delta` built it before this event was written — so this
+			 * BINDS the eid to the id that entry already has, instead of
+			 * deriving a new one. That is what keeps the key stable across
+			 * the moment a streamed block closes.
+			 */
+			eid?: string;
 	  }
 	| {
 			/**
@@ -237,6 +257,8 @@ type UpdateOp =
 			text: string;
 			signature: string;
 			ts?: number;
+			/** See replace_text.eid. */
+			eid?: string;
 	  }
 	| {
 			/** Monotonic extend for partial thinking snapshots — see extend_text. */
@@ -251,6 +273,8 @@ type UpdateOp =
 			savedTokens: number;
 			taskId: string | undefined;
 			ts?: number;
+			/** eid of the compact_marker this entry stands for. */
+			eid?: string;
 	  }
 	| {
 			type: "resolve_tool";
@@ -266,6 +290,12 @@ type UpdateOp =
 			backgroundId?: string;
 			backgroundCommand?: string;
 			resultTs: number;
+			/**
+			 * eid of the tool_result. Only used when no tool_call is found —
+			 * a resolved pair keeps the tool_call's eid, because the pair IS
+			 * that entry with its result filled in.
+			 */
+			eid?: string;
 	  }
 	| {
 			type: "remove_tool";
@@ -293,8 +323,6 @@ export interface EventHandlerDeps {
 	 * follow-up event in the same tick reads the already-applied map.
 	 */
 	dispatchActivity: (action: ActivityAction) => void;
-	/** Synchronous snapshot of the activity map (ref-backed on the consumer). */
-	getAgentActivity: () => ActivityMap;
 	setAgentProvider: (provider: string) => void;
 	setAgentModel: (model: string) => void;
 	setLogs: React.Dispatch<React.SetStateAction<LogEntry[]>>;
@@ -345,18 +373,6 @@ export interface EventHandlerDeps {
 	t: (key: string, params?: Record<string, string>) => string;
 	/** Returns the currently viewed session ID (= selectedTaskId after Fix C; only during the brand-new-project transient does the rootNodeId fallback matter). Used to filter SSE events. */
 	getViewedSessionId?: () => string | null;
-	/**
-	 * Called when the viewed task's agent stops working — it parked on the
-	 * queue, or its session ended. Plugin.tsx wires this to re-fetch JSONL
-	 * events so the frontend gets eid/parentEid (only stamped at persistence
-	 * time, not on SSE broadcast), which is what makes Edit/Rewind buttons
-	 * appear once streaming is over.
-	 *
-	 * Session-end counts, which it did not before: an agent that finishes with
-	 * done() never goes idle, so its last messages stayed uneditable until
-	 * something unrelated triggered a refetch.
-	 */
-	onAgentIdle?: (taskId: string) => void;
 }
 
 export function createEventHandler(deps: EventHandlerDeps) {
@@ -365,7 +381,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		setRootNodeId,
 		setOlderEventsAvailable,
 		dispatchActivity,
-		getAgentActivity,
 		setAgentProvider,
 		setAgentModel,
 		setLogs,
@@ -557,7 +572,13 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				p.taskId ?? undefined,
 				ts,
 			);
-			return uiEvent ? createLogEntry(uiEvent) : null;
+			return uiEvent
+				? createLogEntry({
+						...uiEvent,
+						...(p.eid ? { eid: p.eid } : {}),
+						...(p.offChain ? { offChain: p.offChain } : {}),
+					})
+				: null;
 		}
 		// User messages (or no source): render as message
 		return createLogEntry({
@@ -573,6 +594,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			taskId: p.taskId ?? "",
 			ts,
 			...(p.eid ? { eid: p.eid } : {}),
+			...(p.offChain ? { offChain: p.offChain } : {}),
 		});
 	}
 
@@ -600,11 +622,51 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	}
 
 	/**
+	 * Events since the last turn boundary, per task — the current user turn as
+	 * it is being built. Reading them in order is how "was this message sent
+	 * on its own" gets answered without a second pass over the log, which is
+	 * what let the live path answer it at all: it sees one event at a time and
+	 * never has the whole batch.
+	 */
+	const turnWindows = new Map<string, RunEvent[]>();
+
+	/**
+	 * Feed one event to the per-task turn tracker, and return the turn it
+	 * closes. Only a boundary event closes a turn; for anything else the
+	 * return value is not meaningful (the event has just been added to the
+	 * window it would be describing).
+	 *
+	 * Events the server marked as off the active chain are ignored entirely.
+	 * The raw file interleaves abandoned branches with the conversation, and a
+	 * tool call from a branch nobody is on must not count against a message
+	 * that has nothing to do with it. Dropping them leaves exactly the active
+	 * chain, in order — the same sequence a chain-walked fetch would deliver.
+	 */
+	function noteTurnEvent(msg: IncomingEvent): RunEvent[] {
+		if ((msg as { offChain?: OffChainReason }).offChain) return [];
+		const taskId =
+			"taskId" in msg && typeof msg.taskId === "string" ? msg.taskId : "";
+		const current = turnWindows.get(taskId) ?? [];
+		if (endsTurnLookingBack(msg.type)) {
+			turnWindows.set(taskId, []);
+			return current;
+		}
+		current.push(msg as unknown as RunEvent);
+		turnWindows.set(taskId, current);
+		return current;
+	}
+
+	/**
 	 * Single event → entries, in-place updates, and side effects.
 	 * THE unified event processor — used by both live SSE and batch processing.
 	 * Accepts typed IncomingEvent — discriminated union narrowing eliminates all `as` casts.
 	 */
 	function processEvent(msg: IncomingEvent): ProcessResult {
+		// Both callers reach this one function in event order, which is why
+		// the turn tracker lives here: annotate once, and live and refetched
+		// entries get the same answer from the same rule.
+		const closedTurn = noteTurnEvent(msg);
+
 		switch (msg.type) {
 			case "tree_updated":
 				return {
@@ -647,6 +709,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							input: msg.input ?? {},
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					],
 					updates: [],
@@ -681,6 +744,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							backgroundId: msg.backgroundId,
 							backgroundCommand: msg.backgroundCommand,
 							resultTs: msg.ts,
+							eid: msg.eid,
 						},
 					],
 					sideEffects: msg.backgroundId
@@ -749,6 +813,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							text: msg.thinking,
 							signature: msg.signature,
 							ts: msg.ts,
+							eid: msg.eid,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -804,6 +869,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							taskId: msg.taskId,
 							text: msg.content,
 							ts: msg.ts,
+							eid: msg.eid,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -843,6 +909,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							type: "compact_started",
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					],
 					updates: [],
@@ -865,6 +932,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							savedTokens: msg.savedTokens,
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -878,6 +946,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							sourceTaskId: msg.sourceTaskId,
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					],
 					updates: [],
@@ -899,6 +968,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							content: "▶ Agent started",
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					);
 				}
@@ -926,6 +996,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							content: "⏹ Agent stopped",
 							taskId: msg.taskId,
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					);
 				}
@@ -986,7 +1057,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						);
 						if (uiEvent) {
 							return {
-								entries: [createLogEntry(uiEvent)],
+								entries: [createLogEntry({ ...uiEvent, eid: msg.eid })],
 								updates: [],
 								sideEffects: NO_SIDE_EFFECTS,
 							};
@@ -1031,7 +1102,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					);
 					if (uiEvent) {
 						return {
-							entries: [createLogEntry(uiEvent)],
+							entries: [createLogEntry({ ...uiEvent, eid: msg.eid })],
 							updates: [],
 							sideEffects: NO_SIDE_EFFECTS,
 						};
@@ -1054,6 +1125,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							},
 							taskId: msg.taskId ?? "",
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					],
 					updates: [],
@@ -1071,11 +1143,28 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				if (consumedIds.size === 0) {
 					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 				}
+				// This is the moment the question becomes answerable: a turn
+				// carrying a tool_result is answering the agent's own previous
+				// output, so nothing riding along in it started anything.
+				// Delivery order decides, and this is delivery order — the
+				// entries are not, since a message typed mid-tool-call renders
+				// after the finished tool card.
+				//
+				// A consumption on an abandoned branch says nothing about the
+				// conversation, and the messages it names are refused for
+				// being off-chain anyway — a stronger and more specific answer
+				// than anything this could add.
+				const startsRun = (msg as { offChain?: OffChainReason }).offChain
+					? undefined
+					: !turnAnswersPriorWork(closedTurn);
 				const newEntries: LogEntry[] = [];
 				for (const p of getPendingMessages()) {
 					if (consumedIds.has(p.id)) {
 						const entry = materializeFromPending(p, msg.ts);
-						if (entry) newEntries.push(entry);
+						if (entry)
+							newEntries.push(
+								startsRun === undefined ? entry : { ...entry, startsRun },
+							);
 					}
 				}
 				return {
@@ -1094,6 +1183,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							message: msg.message,
 							taskId: msg.taskId ?? "",
 							ts: msg.ts,
+							eid: msg.eid,
 						}),
 					],
 					updates: [],
@@ -1141,8 +1231,18 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					const e = entries[i];
 					if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
 						const updated = [...entries];
+						// The block closing gives this entry its durable name. Bind
+						// rather than re-derive: the entry already has an id, and
+						// changing it here would remount it at the end of every
+						// streamed block.
+						if (op.eid) bindEntryId(op.eid, e.id);
 						// Use persisted event's ts so refresh matches JSONL reconstruction
-						updated[i] = { ...e, content: op.text, ts: op.ts ?? e.ts };
+						updated[i] = {
+							...e,
+							content: op.text,
+							ts: op.ts ?? e.ts,
+							...(op.eid ? { eid: op.eid } : {}),
+						};
 						return updated;
 					}
 					// Skip thinking entries — they interleave with text in the same turn
@@ -1157,6 +1257,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						content: op.text,
 						taskId: op.taskId ?? "",
 						ts: op.ts ?? Date.now(),
+						eid: op.eid,
 					}),
 				];
 			}
@@ -1194,12 +1295,15 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					const e = entries[i];
 					if (e && e.type === "thinking" && e.taskId === op.taskId) {
 						const updated = [...entries];
+						// See replace_text: bind, don't re-derive.
+						if (op.eid) bindEntryId(op.eid, e.id);
 						updated[i] = {
 							...e,
 							thinking: op.text,
 							signature: op.signature,
 							// Use persisted event's ts so refresh matches JSONL reconstruction
 							ts: op.ts ?? e.ts,
+							...(op.eid ? { eid: op.eid } : {}),
 						};
 						return updated;
 					}
@@ -1217,6 +1321,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						signature: op.signature,
 						taskId: op.taskId ?? "",
 						ts: op.ts ?? Date.now(),
+						eid: op.eid,
 					}),
 				];
 			}
@@ -1305,6 +1410,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					savedTokens: op.savedTokens,
 					taskId: op.taskId ?? "",
 					ts: op.ts ?? Date.now(),
+					eid: op.eid,
 				});
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
@@ -1327,21 +1433,29 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					const e = entries[i];
 					if (e && e.type === "tool_call" && e.toolCallId === op.toolCallId) {
 						const updated = [...entries];
-						updated[i] = createLogEntry({
-							type: "tool_pair",
-							tool: e.tool,
-							toolCallId: e.toolCallId,
-							input: e.input,
-							resultContent: op.resultContent,
-							isError: op.isError,
-							images: op.images,
-							pending: op.pending,
-							backgroundId: op.backgroundId,
-							backgroundCommand: op.backgroundCommand,
-							resultTs: op.resultTs,
-							taskId: e.taskId,
-							ts: e.ts,
-						});
+						// Same entry, now with its result — so it keeps its id and
+						// its eid (the tool_call's). Handing it a fresh id would
+						// remount the card the instant the result lands, which is
+						// exactly when a user might have it expanded to watch.
+						updated[i] = createLogEntry(
+							{
+								type: "tool_pair",
+								tool: e.tool,
+								toolCallId: e.toolCallId,
+								input: e.input,
+								resultContent: op.resultContent,
+								isError: op.isError,
+								images: op.images,
+								pending: op.pending,
+								backgroundId: op.backgroundId,
+								backgroundCommand: op.backgroundCommand,
+								resultTs: op.resultTs,
+								taskId: e.taskId,
+								ts: e.ts,
+								eid: e.eid,
+							},
+							e.id,
+						);
 						return updated;
 					}
 				}
@@ -1361,6 +1475,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						backgroundCommand: op.backgroundCommand,
 						resultTs: op.resultTs,
 						ts: op.resultTs,
+						eid: op.eid,
 					}),
 				];
 			}
@@ -1409,32 +1524,19 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	 * Process a batch of events (used for REST-fetched event history on page load/reconnect).
 	 * Resets all state and reprocesses from scratch through the unified processEvent path.
 	 *
-	 * `fromActiveChain` says whether these events ARE the conversation (the
-	 * `after=compact` fetch, which the server chain-walks) or the raw file
-	 * ("Load earlier history", which deliberately includes summarized-away
-	 * history and abandoned rewind branches so the user can read them). Only
-	 * the first kind can be annotated with run starts — in the raw file a
-	 * tool call from a branch nobody is on would count against a message that
-	 * has nothing to do with it. A gate that answers wrongly is worse than
-	 * one that says "I don't know", so on a raw batch we decline.
-	 *
-	 * ⚠️ TEMPORARY. This flag exists ONLY because "Load earlier history"
-	 * hands us the raw file and the client has no way to tell which of those
-	 * events the conversation still contains. The real fix is server-side:
-	 * mark active-chain membership in the response, so the client receives
-	 * the answer instead of guessing at the algorithm (a second copy of the
-	 * chain walk in the browser is exactly what "One boundary: the active
-	 * chain" removed). **When that lands, this parameter should be DELETED,
-	 * not repurposed** — it is scaffolding around a hole, and scaffolding
-	 * outlives holes unless whoever fills the hole takes it down.
+	 * Takes no "is this the conversation" flag any more. It used to, because
+	 * "Load earlier history" hands back the raw file — abandoned rewind
+	 * branches and summarized-away history included — and the client had no
+	 * way to tell those apart, so it declined to judge that batch at all. The
+	 * server marks them now (`offChain`), which is a real answer rather than
+	 * a refusal to answer, so every batch is treated the same way and the
+	 * events that are not part of the conversation say so for themselves.
 	 */
-	function processEventBatch(
-		events: IncomingEvent[],
-		opts?: { fromActiveChain?: boolean },
-	): void {
+	function processEventBatch(events: IncomingEvent[]): void {
 		// Reset per-batch state — reprocessing from scratch. Pending reducer
 		// also resets to []; message events in the batch will re-populate it.
 		toolCallToolNames.clear();
+		turnWindows.clear();
 		setBackgroundProcesses(new Map());
 		dispatchPending({ type: "RESET" });
 
@@ -1483,7 +1585,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// Collapse consecutive session lifecycle entries (resumed/stopped) with no
 		// meaningful content between them. Keep only the last one in each run.
 		entries = collapseLifecycleEntries(entries);
-		if (opts?.fromActiveChain) entries = annotateRunStarts(entries, events);
 
 		setLogs(entries);
 		for (const fn of deferredSideEffects) fn();
@@ -1493,33 +1594,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// overwrite that. Nothing in this batch can touch activity now — it
 		// comes only from ephemeral events that never enter JSONL — so there
 		// is nothing to correct.
-	}
-
-	/**
-	 * Mark which user-message entries started a run (run-start.ts).
-	 *
-	 * Decided from `events` — the RAW batch in delivery order — not from the
-	 * entries, because a message typed mid-tool-call is delivered inside the
-	 * tool's window but rendered after the finished tool card. Reading the
-	 * rendered order would call exactly the blocked case a run start.
-	 *
-	 * The batch is the only place this can be done, and the only place it
-	 * needs to be: an eid reaches the UI only through a JSONL fetch (SSE
-	 * broadcasts carry none), so an entry without one shows no buttons.
-	 */
-	function annotateRunStarts(
-		entries: LogEntry[],
-		events: IncomingEvent[],
-	): LogEntry[] {
-		const starts = messageRunStarts(events);
-		if (starts.size === 0) return entries;
-		return entries.map((entry) => {
-			if (entry.type !== "message") return entry;
-			const eid = (entry as { eid?: string }).eid;
-			if (!eid) return entry;
-			const startsRun = starts.get(eid);
-			return startsRun === undefined ? entry : { ...entry, startsRun };
-		});
 	}
 
 	/** Entry types that count as "meaningful content" — NOT lifecycle noise. */
@@ -1578,23 +1652,18 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			return;
 		}
 		if (msg.type === "agent_activity") {
-			const wasWorking = isWorking(getAgentActivity()[msg.taskId]);
 			dispatchActivity({
 				type: "SET",
 				taskId: msg.taskId,
 				state: msg.state,
 			});
-			// Streaming just stopped for the task on screen: re-fetch so the
-			// messages get their eid back and Edit/Rewind appears. Fires on
-			// idle AND on session end — done() never goes idle, and its last
-			// messages should be editable too.
-			if (
-				wasWorking &&
-				!isWorking(msg.state ?? undefined) &&
-				msg.taskId === deps.getViewedSessionId?.()
-			) {
-				deps.onAgentIdle?.(msg.taskId);
-			}
+			// This used to re-fetch the whole JSONL when the viewed agent
+			// stopped, because a broadcast event carried no eid and the
+			// Edit/Rewind buttons had nothing to point at. Events carry their
+			// eid on every path now, and run starts are decided as events
+			// arrive, so there is nothing left to go and get — and the
+			// re-fetch was not free: it replaced the entire log, which is how
+			// a user watching a finished run got thrown to the top of it.
 			return;
 		}
 

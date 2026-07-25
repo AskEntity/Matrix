@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -490,4 +490,89 @@ describe("JSONL eid/parentEid serialize first", () => {
 			expect(line).toMatch(CHAIN_FIRST);
 		}
 	});
+});
+
+// ── One writer, and what that buys on the failure path ──
+//
+// The chain head is advanced by exactly one place: `stampEvent`, called
+// synchronously inside `append`/`appendBatch`. That is what makes the two
+// properties below decidable rather than lucky.
+describe("JSONL chain: append is the single, synchronous writer", () => {
+	let dir: string;
+	let store: EventStore;
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), "eid-sync-"));
+		store = new EventStore(dir);
+	});
+
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	test("append returns the persisted event, chain fields included", () => {
+		// `emitEvent` broadcasts this object, so what a client sees and what
+		// the file holds are the same thing by construction — not two copies
+		// that have to be kept in step.
+		const stamped = store.append("s", makeEvent("assistant_text"));
+		expect(stamped.eid).toMatch(EID_PATTERN);
+		expect(stamped.parentEid).toBeNull();
+
+		const onDisk = store.read("s");
+		expect(onDisk).toHaveLength(1);
+		expect(onDisk[0]?.eid).toBe(stamped.eid as string);
+
+		const second = store.append("s", makeEvent("assistant_text"));
+		expect(second.parentEid).toBe(stamped.eid as string);
+	});
+
+	test("a burst in one tick chains linearly, in call order", () => {
+		// The shape that broke when two places stamped: emit a run of events
+		// with no await between them.
+		const stamped = Array.from({ length: 25 }, (_, i) =>
+			store.append("s", makeEvent("assistant_text", "task-1", i)),
+		);
+		const onDisk = store.read("s");
+		expect(onDisk.map((e) => e.eid)).toEqual(stamped.map((e) => e.eid));
+
+		let expectedParent: string | null = null;
+		for (const e of onDisk) {
+			expect(e.parentEid ?? null).toBe(expectedParent);
+			expectedParent = e.eid as string;
+		}
+	});
+
+	// This is the property that decided against "stamp now, write later".
+	// A failed write must not leave a successor pointing at an eid no line
+	// carries: the walk has no dangling-link fallback (deliberately), so it
+	// would stop dead there and the agent would resume with a silently
+	// truncated context. Synchronous appends make the rewind sufficient,
+	// because nothing can be stamped in between.
+	test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+		"a failed write costs one event, not the history behind it",
+		() => {
+			const a = store.append("s", makeEvent("assistant_text", "task-1", 1));
+
+			const file = join(dir, "s.jsonl");
+			chmodSync(file, 0o444);
+			const failed = store.append(
+				"s",
+				makeEvent("assistant_text", "task-1", 2),
+			);
+			chmodSync(file, 0o644);
+
+			const c = store.append("s", makeEvent("assistant_text", "task-1", 3));
+
+			// The failed event is nowhere on disk…
+			const onDisk = store.read("s");
+			expect(onDisk.map((e) => e.eid)).toEqual([
+				a.eid as string,
+				c.eid as string,
+			]);
+			// …and, decisively, the next event chains to the last event that
+			// actually landed — not to the one that didn't.
+			expect(c.parentEid).toBe(a.eid as string);
+			expect(c.parentEid).not.toBe(failed.eid as string);
+		},
+	);
 });

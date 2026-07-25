@@ -55,6 +55,22 @@ import {
 
 const SESSION = "audit-session";
 
+/**
+ * A realistic conversation head for fixtures whose FIRST message carries a
+ * `tool_result`. Without it the tool_result answers nothing, which the real API
+ * rejects ("unexpected `tool_use_id` found in `tool_result` blocks") — and so,
+ * since 2026-07-25, does the mock. These fixtures are probing prefix BYTE
+ * comparison, not conversation validity, so they get a real head rather than a
+ * looser validator. (Task 01KYCQ85.)
+ */
+const TOOL_HEAD = [
+	{ role: "user" as const, content: "go" },
+	{
+		role: "assistant" as const,
+		content: [{ type: "tool_use" as const, id: "t1", name: "bash", input: {} }],
+	},
+];
+
 function newMock(): ValidatingMockAPI {
 	const m = new ValidatingMockAPI();
 	m.enablePrefixValidation();
@@ -128,6 +144,7 @@ describe("Prefix validation: content mutations MUST throw", () => {
 	test("is_error VALUE differs (true vs false) → throws", () => {
 		const mock = newMock();
 		primeFirstCall(mock, [
+			...TOOL_HEAD,
 			{
 				role: "user",
 				content: [
@@ -143,6 +160,7 @@ describe("Prefix validation: content mutations MUST throw", () => {
 			{ role: "user", content: "next" },
 		]);
 		expectMismatch(mock, [
+			...TOOL_HEAD,
 			{
 				role: "user",
 				content: [
@@ -722,6 +740,7 @@ describe("Prefix validation: key reordering WITHIN objects should PASS", () => {
 		const mock = newMock();
 		// Both objects semantically identical — keys in different insertion order
 		primeFirstCall(mock, [
+			...TOOL_HEAD,
 			{
 				role: "user",
 				content: [
@@ -739,6 +758,7 @@ describe("Prefix validation: key reordering WITHIN objects should PASS", () => {
 			mock.createStream(
 				{
 					messages: [
+						...TOOL_HEAD,
 						{
 							role: "user",
 							content: [
@@ -1171,6 +1191,7 @@ describe("Prefix validation: real-world drift scenarios", () => {
 		// Same content, only difference: is_error key absent in one version
 		const mock = newMock();
 		primeFirstCall(mock, [
+			...TOOL_HEAD,
 			{
 				role: "user",
 				content: [
@@ -1184,6 +1205,7 @@ describe("Prefix validation: real-world drift scenarios", () => {
 			},
 		]);
 		expectMismatch(mock, [
+			...TOOL_HEAD,
 			{
 				role: "user",
 				content: [

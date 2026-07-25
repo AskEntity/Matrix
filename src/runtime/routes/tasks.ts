@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { classifyOffChain } from "../../events.ts";
 import type { QueueImage } from "../../message-queue.ts";
 import {
 	createTaskMessage,
@@ -607,9 +608,23 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 			});
 		}
 
-		const events = eventStore
-			.read(nodeId)
-			.map((e) => e as unknown as Record<string, unknown>);
+		// The raw file: everything, including what the conversation no longer
+		// contains. That is the point — this is what "Load earlier history"
+		// fetches. But the client must be able to tell the two apart, and it
+		// cannot work that out for itself: membership is a relation between an
+		// event and the current chain head, not a property of the event, and
+		// re-deriving it in the browser would be a second implementation of
+		// "which events count". So the answer is marked here, per event, and
+		// only where it is not the obvious one — every other transport carries
+		// active events by construction (SSE broadcasts an event that was just
+		// appended to the head; `after=compact` is chain-walked above).
+		const all = eventStore.read(nodeId);
+		const offChain = classifyOffChain(all);
+		const events = all.map((e, i) => {
+			const reason = offChain[i];
+			const out = e as unknown as Record<string, unknown>;
+			return reason ? { ...out, offChain: reason } : out;
+		});
 		return c.json({ events: appendPartial(events), hasOlderEvents: false });
 	});
 

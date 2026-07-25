@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import type React from "react";
 import { isWorking } from "../.mxd/plugin/agent-activity.ts";
+import { messageRunStarts, type RunEvent } from "../.mxd/plugin/run-start.ts";
 import {
 	type ActivityAction,
 	type ActivityMap,
@@ -2978,107 +2979,6 @@ describe("event-handler: replaying history must not fake-activate (Verification 
 	});
 });
 
-describe("event-handler onAgentIdle (Edit/Rewind re-fetch)", () => {
-	function setup(viewed: string | null) {
-		const { deps: raw, activityBox } = makeDeps();
-		const deps = raw as unknown as EventHandlerDeps;
-		const idleCalls: string[] = [];
-		deps.getViewedSessionId = () => viewed;
-		deps.onAgentIdle = (taskId: string) => idleCalls.push(taskId);
-		const { handleEvent } = createEventHandler(deps);
-		return { handleEvent, idleCalls, activityBox };
-	}
-
-	it("fires when the VIEWED task stops working (thinking → idle)", () => {
-		const { handleEvent, idleCalls } = setup("task-1");
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "thinking",
-			ts: 1000,
-		});
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "idle",
-			ts: 2000,
-		});
-		expect(idleCalls).toEqual(["task-1"]);
-	});
-
-	it("fires on session END too — done() never goes idle", () => {
-		// An agent that finishes with done() goes straight from working to no
-		// session. Before, only agent_idle triggered the re-fetch, so the last
-		// messages of a completed task never got their eid and stayed
-		// uneditable.
-		const { handleEvent, idleCalls } = setup("task-1");
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "tool",
-			ts: 1000,
-		});
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: null,
-			ts: 2000,
-		});
-		expect(idleCalls).toEqual(["task-1"]);
-	});
-
-	it("does NOT fire for a task that is not being viewed", () => {
-		const { handleEvent, idleCalls } = setup("task-1");
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-2",
-			state: "thinking",
-			ts: 1000,
-		});
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-2",
-			state: "idle",
-			ts: 2000,
-		});
-		expect(idleCalls).toEqual([]);
-	});
-
-	it("does NOT fire on transitions between working states (thinking → tool)", () => {
-		const { handleEvent, idleCalls } = setup("task-1");
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "thinking",
-			ts: 1000,
-		});
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "tool",
-			ts: 2000,
-		});
-		expect(idleCalls).toEqual([]);
-	});
-
-	it("does NOT fire when a task that was already idle reports idle again", () => {
-		const { handleEvent, idleCalls } = setup("task-1");
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "idle",
-			ts: 1000,
-		});
-		handleEvent({
-			type: "agent_activity",
-			taskId: "task-1",
-			state: "idle",
-			ts: 2000,
-		});
-		expect(idleCalls).toEqual([]);
-	});
-});
-
 describe("event-handler usage / cache info", () => {
 	it("processEventBatch: usage event attaches cacheInfo to preceding assistant_text", () => {
 		const { deps } = makeDeps();
@@ -4399,24 +4299,19 @@ describe("processEventBatch: run-start annotation", () => {
 		] as unknown as IncomingEvent[];
 	}
 
-	function run(
-		events: IncomingEvent[],
-		opts?: { fromActiveChain?: boolean },
-	): LogEntry[] {
+	function run(events: IncomingEvent[]): LogEntry[] {
 		const { deps } = makeDeps();
 		let captured: LogEntry[] = [];
 		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
 			captured = typeof entries === "function" ? entries([]) : entries;
 		});
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
-		processEventBatch(events, opts);
+		processEventBatch(events);
 		return captured;
 	}
 
 	it("a message delivered inside a tool call renders AFTER it — and is still not a run start", () => {
-		const entries = run(batchWithMessageInsideToolCall(), {
-			fromActiveChain: true,
-		});
+		const entries = run(batchWithMessageInsideToolCall());
 		const toolIdx = entries.findIndex((e) => e.type === "tool_pair");
 		const msgIdx = entries.findIndex(
 			(e) => e.type === "message" && e.body?.source === "user",
@@ -4430,51 +4325,512 @@ describe("processEventBatch: run-start annotation", () => {
 	});
 
 	it("a message delivered while the agent was parked is a run start", () => {
-		const entries = run(
-			[
-				{
-					type: "tool_call",
-					tool: "mcp__mxd__yield",
-					toolCallId: "y1",
-					input: {},
-					taskId: "root",
-					ts: 1,
-					eid: "e1",
-				},
-				{
-					type: "message",
-					id: "m1",
-					body: { source: "user", id: "m1", ts: 2, content: "hi" },
-					taskId: "root",
-					ts: 2,
-					eid: "e2",
-				},
-				{
-					type: "messages_consumed",
-					messageIds: ["m1"],
-					taskId: "root",
-					ts: 3,
-					eid: "e3",
-				},
-			] as unknown as IncomingEvent[],
-			{ fromActiveChain: true },
-		);
+		const entries = run([
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__yield",
+				toolCallId: "y1",
+				input: {},
+				taskId: "root",
+				ts: 1,
+				eid: "e1",
+			},
+			{
+				type: "message",
+				id: "m1",
+				body: { source: "user", id: "m1", ts: 2, content: "hi" },
+				taskId: "root",
+				ts: 2,
+				eid: "e2",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m1"],
+				taskId: "root",
+				ts: 3,
+				eid: "e3",
+			},
+		] as unknown as IncomingEvent[]);
 		const msg = entries.find(
 			(e) => e.type === "message" && e.body?.source === "user",
 		);
 		expect(msg?.startsRun).toBe(true);
 	});
+});
 
-	it("a raw-file batch is not annotated at all", () => {
-		// "Load earlier history" fetches the file, which holds summarized-away
-		// history and abandoned rewind branches. A tool call from a branch
-		// nobody is on would count against a message that has nothing to do
-		// with it, so we decline to answer rather than answer wrongly.
-		const entries = run(batchWithMessageInsideToolCall());
-		const msg = entries.find(
-			(e) => e.type === "message" && e.body?.source === "user",
+// ── Entry identity: the log is rebuilt wholesale, keys must not change ──
+//
+// Every refetch (reconnect, load-earlier, post-rollback) replaces the whole
+// entries array. When the ids came from a counter, every key changed and
+// React remounted the entire list — observed in a real session as ONE
+// MutationObserver batch with `added: 82, removed: 82`, against `removed: 1`
+// for a normal in-place update in the same trace. That empties the container
+// for a frame, and the scroll offset does not survive it.
+describe("event-handler: entry id is derived from the event's eid", () => {
+	function batch(): IncomingEvent[] {
+		return [
+			{
+				type: "message",
+				id: "m1",
+				body: { source: "user", id: "m1", ts: 1, content: "go" },
+				taskId: "root",
+				ts: 1,
+				eid: "eid-msg",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m1"],
+				taskId: "root",
+				ts: 2,
+				eid: "eid-consumed",
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				input: { command: "ls" },
+				taskId: "root",
+				ts: 3,
+				eid: "eid-call",
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				content: "ok",
+				isError: false,
+				taskId: "root",
+				ts: 4,
+				eid: "eid-result",
+			},
+			{
+				type: "assistant_text",
+				content: "done",
+				taskId: "root",
+				ts: 5,
+				eid: "eid-text",
+			},
+		] as unknown as IncomingEvent[];
+	}
+
+	function runBatch(events: IncomingEvent[]): LogEntry[] {
+		const { deps } = makeDeps();
+		let captured: LogEntry[] = [];
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			captured = typeof u === "function" ? u([]) : u;
+		});
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+		processEventBatch(events);
+		return captured;
+	}
+
+	/** Deps whose setLogs actually accumulates, like React state does. */
+	function makeLiveDeps() {
+		const box = { current: [] as LogEntry[] };
+		const { deps, ...rest } = makeDeps();
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			box.current = typeof u === "function" ? u(box.current) : u;
+		});
+		return { deps, box, ...rest };
+	}
+
+	it("THE property: rebuilding the same log produces the same ids", () => {
+		const first = runBatch(batch());
+		const second = runBatch(batch());
+
+		expect(first.length).toBeGreaterThan(0);
+		expect(second.map((e) => e.id)).toEqual(first.map((e) => e.id));
+		// …and it is the eid that carries the identity, not the position.
+		expect(second.map((e) => e.eid)).toEqual(first.map((e) => e.eid));
+	});
+
+	it("a rebuild that gained one event keeps every existing id", () => {
+		const before = runBatch(batch());
+		const after = runBatch([
+			...batch(),
+			{
+				type: "assistant_text",
+				content: "and more",
+				taskId: "root",
+				ts: 6,
+				eid: "eid-text-2",
+			},
+		] as unknown as IncomingEvent[]);
+
+		// This is the shape of every refetch: the log grew by one. Everything
+		// that already existed must reconcile; only the new entry is new.
+		expect(after.slice(0, before.length).map((e) => e.id)).toEqual(
+			before.map((e) => e.id),
 		);
-		expect(msg).toBeDefined();
-		expect(msg?.startsRun).toBeUndefined();
+	});
+
+	it("distinct eids get distinct ids", () => {
+		const entries = runBatch(batch());
+		const ids = entries.map((e) => e.id);
+		expect(new Set(ids).size).toBe(ids.length);
+	});
+
+	// The other half of the guard: deriving ids from eid must NOT collapse
+	// entries that have no eid. Two streamed blocks with nothing to name them
+	// are still two entries, and a duplicate React key is a hard error.
+	it("entries with no eid still get distinct ids", () => {
+		const entries = runBatch([
+			{ type: "text_delta", content: "a", taskId: "root", ts: 1 },
+			{
+				type: "tool_call",
+				tool: "x",
+				toolCallId: "t1",
+				input: {},
+				taskId: "root",
+				ts: 2,
+			},
+			{ type: "text_delta", content: "b", taskId: "root", ts: 3 },
+		] as unknown as IncomingEvent[]);
+		const ids = entries.map((e) => e.id);
+		expect(ids.length).toBe(3);
+		expect(new Set(ids).size).toBe(3);
+	});
+
+	it("a streamed block keeps its id when it closes, and a rebuild finds it", () => {
+		// The one entry that exists before its event does: text_delta builds
+		// it, and it only learns its eid when the block closes. Binding —
+		// rather than re-deriving — is what stops the key changing at the end
+		// of every block.
+		const { deps, box } = makeLiveDeps();
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		handleEvent({
+			type: "text_delta",
+			content: "hel",
+			taskId: "root",
+			ts: 1,
+		} as unknown as IncomingEvent);
+		const streamingId = box.current[0]?.id;
+		expect(streamingId).toBeDefined();
+		expect(box.current[0]?.eid).toBeUndefined();
+
+		handleEvent({
+			type: "assistant_text",
+			content: "hello",
+			taskId: "root",
+			ts: 2,
+			eid: "eid-block",
+		} as unknown as IncomingEvent);
+
+		expect(box.current[0]?.id).toBe(streamingId as number);
+		expect(box.current[0]?.eid).toBe("eid-block");
+
+		// A later wholesale rebuild reconstructs it from the persisted event
+		// alone and must land on the same id.
+		const rebuilt = runBatch([
+			{
+				type: "assistant_text",
+				content: "hello",
+				taskId: "root",
+				ts: 2,
+				eid: "eid-block",
+			},
+		] as unknown as IncomingEvent[]);
+		expect(rebuilt[0]?.id).toBe(streamingId as number);
+	});
+
+	it("a tool card keeps its id when its result arrives", () => {
+		// resolve_tool replaces the entry in place — same log entry, now with
+		// its result. A fresh id here remounts the card at the moment a user
+		// is most likely to have it expanded.
+		const { deps, box } = makeLiveDeps();
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		handleEvent({
+			type: "tool_call",
+			tool: "mcp__mxd__bash",
+			toolCallId: "tc9",
+			input: { command: "ls" },
+			taskId: "root",
+			ts: 1,
+			eid: "eid-call-9",
+		} as unknown as IncomingEvent);
+		const callId = box.current[0]?.id;
+
+		handleEvent({
+			type: "tool_result",
+			tool: "mcp__mxd__bash",
+			toolCallId: "tc9",
+			content: "ok",
+			isError: false,
+			taskId: "root",
+			ts: 2,
+			eid: "eid-result-9",
+		} as unknown as IncomingEvent);
+
+		expect(box.current[0]?.type).toBe("tool_pair");
+		expect(box.current[0]?.id).toBe(callId as number);
+		expect(box.current[0]?.eid).toBe("eid-call-9");
+	});
+});
+
+// ── Run-start is decided once, in event order ──
+//
+// The annotation used to be a second pass over the raw batch, which meant a
+// live SSE entry could never have it: the live path sees one event at a time
+// and never holds the batch. Deciding it where events are already being read
+// in order gives both paths the same answer from the same rule — and is what
+// lets the log stop being re-fetched from JSONL just to light up two buttons.
+describe("event-handler: run-start annotation in event order", () => {
+	/** Three shapes in one log: a plain send, one swept into a bash turn, two woken from a park. */
+	function mixedLog(): IncomingEvent[] {
+		const msg = (id: string, eid: string, ts: number, content: string) => ({
+			type: "message",
+			id,
+			body: { source: "user", id, ts, content },
+			taskId: "root",
+			ts,
+			eid,
+		});
+		return [
+			msg("m1", "e1", 1, "go"),
+			{
+				type: "messages_consumed",
+				messageIds: ["m1"],
+				taskId: "root",
+				ts: 2,
+				eid: "c1",
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc",
+				input: { command: "ls" },
+				taskId: "root",
+				ts: 3,
+				eid: "tc",
+			},
+			msg("m2", "e2", 4, "and also this"),
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc",
+				content: "ok",
+				isError: false,
+				taskId: "root",
+				ts: 5,
+				eid: "tr",
+			},
+			// An unrecognised event between the result and the consumption must
+			// not detach them — detaching is the direction that wrongly calls a
+			// message editable.
+			{ type: "status", message: "…", taskId: "root", ts: 6, eid: "st" },
+			{
+				type: "messages_consumed",
+				messageIds: ["m2"],
+				taskId: "root",
+				ts: 7,
+				eid: "c2",
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__yield",
+				toolCallId: "ty",
+				input: {},
+				taskId: "root",
+				ts: 8,
+				eid: "ty",
+			},
+			msg("m3", "e3", 9, "wake up"),
+			msg("m4", "e4", 10, "one more"),
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__yield",
+				toolCallId: "ty",
+				content: "resumed.",
+				isError: false,
+				taskId: "root",
+				ts: 11,
+				eid: "tyr",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m3", "m4"],
+				taskId: "root",
+				ts: 12,
+				eid: "c3",
+			},
+		] as unknown as IncomingEvent[];
+	}
+
+	function annotatedByBatch(events: IncomingEvent[]): Map<string, boolean> {
+		const { deps } = makeDeps();
+		let captured: LogEntry[] = [];
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			captured = typeof u === "function" ? u([]) : u;
+		});
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+		processEventBatch(events);
+		const out = new Map<string, boolean>();
+		for (const e of captured) {
+			if (e.type === "message" && e.eid && e.startsRun !== undefined) {
+				out.set(e.eid, e.startsRun);
+			}
+		}
+		return out;
+	}
+
+	// THE lock: two entry points, one rule. Reading a whole log at once and
+	// watching it arrive one event at a time must not be able to disagree.
+	it("agrees with a one-shot pass over the same log, key for key", () => {
+		const events = mixedLog();
+		const inOrder = annotatedByBatch(events);
+		const oneShot = messageRunStarts(events as unknown as RunEvent[]);
+
+		expect(inOrder.size).toBeGreaterThan(0);
+		expect([...inOrder.entries()].sort()).toEqual(
+			[...oneShot.entries()].sort(),
+		);
+	});
+
+	it("the three shapes come out as expected", () => {
+		const m = annotatedByBatch(mixedLog());
+		expect(m.get("e1")).toBe(true); // sent on its own
+		expect(m.get("e2")).toBe(false); // swept into a bash turn
+		expect(m.get("e3")).toBe(true); // woke a parked agent…
+		expect(m.get("e4")).toBe(true); // …together with the one before it
+	});
+
+	it("a live SSE message is annotated as it is consumed", () => {
+		// The reason the log no longer needs re-fetching when the agent stops.
+		const box = { current: [] as LogEntry[] };
+		const { deps } = makeDeps();
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			box.current = typeof u === "function" ? u(box.current) : u;
+		});
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		for (const evt of mixedLog()) handleEvent(evt);
+
+		const byEid = new Map(
+			box.current
+				.filter((e) => e.type === "message" && e.eid)
+				.map((e) => [e.eid as string, e.startsRun]),
+		);
+		expect(byEid.get("e1")).toBe(true);
+		expect(byEid.get("e2")).toBe(false);
+		expect(byEid.get("e3")).toBe(true);
+		expect(byEid.get("e4")).toBe(true);
+	});
+
+	// These two used to say "a raw batch is not annotated at all", which was
+	// the honest answer while the client could not tell an abandoned branch
+	// from the conversation. The server marks them now, so declining has
+	// stopped being honest and started being a shrug.
+	it("an abandoned branch neither gets judged nor drags anyone else down", () => {
+		const { deps } = makeDeps();
+		let captured: LogEntry[] = [];
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			captured = typeof u === "function" ? u([]) : u;
+		});
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		// A raw file as "Load earlier history" gets it: a rewound-away branch
+		// (with a bash call on it) sitting between two live messages.
+		processEventBatch([
+			{
+				type: "message",
+				id: "m0",
+				body: { source: "user", id: "m0", ts: 1, content: "first" },
+				taskId: "root",
+				ts: 1,
+				eid: "e0",
+				offChain: "abandoned",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m0"],
+				taskId: "root",
+				ts: 2,
+				eid: "c0",
+				offChain: "abandoned",
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "dead",
+				input: { command: "ls" },
+				taskId: "root",
+				ts: 3,
+				eid: "tc0",
+				offChain: "abandoned",
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "dead",
+				content: "ok",
+				isError: false,
+				taskId: "root",
+				ts: 4,
+				eid: "tr0",
+				offChain: "abandoned",
+			},
+			// Back on the conversation: sent on its own, and the dead branch's
+			// bash must not be counted against it.
+			{
+				type: "message",
+				id: "m1",
+				body: { source: "user", id: "m1", ts: 5, content: "live" },
+				taskId: "root",
+				ts: 5,
+				eid: "e1",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m1"],
+				taskId: "root",
+				ts: 6,
+				eid: "c1",
+			},
+		] as unknown as IncomingEvent[]);
+
+		const byEid = new Map(
+			captured
+				.filter((e) => e.type === "message" && e.eid)
+				.map((e) => [e.eid as string, e]),
+		);
+		// THE hole this closes: a tool call nobody is on used to make the
+		// annotation wrong, which is why the whole batch went unjudged.
+		expect(byEid.get("e1")?.startsRun).toBe(true);
+		// The abandoned message is readable, carries its reason, and is not
+		// given a run-start verdict — the reason is the more specific answer.
+		expect(byEid.get("e0")?.offChain).toBe("abandoned");
+		expect(byEid.get("e0")?.startsRun).toBeUndefined();
+	});
+
+	it("a summarized-away message says so", () => {
+		const { deps } = makeDeps();
+		let captured: LogEntry[] = [];
+		deps.setLogs = mock((u: React.SetStateAction<LogEntry[]>) => {
+			captured = typeof u === "function" ? u([]) : u;
+		});
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+		processEventBatch([
+			{
+				type: "message",
+				id: "old",
+				body: { source: "user", id: "old", ts: 1, content: "ancient" },
+				taskId: "root",
+				ts: 1,
+				eid: "eold",
+				offChain: "summarized",
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["old"],
+				taskId: "root",
+				ts: 2,
+				eid: "cold",
+				offChain: "summarized",
+			},
+		] as unknown as IncomingEvent[]);
+		const msg = captured.find((e) => e.type === "message");
+		expect(msg?.offChain).toBe("summarized");
 	});
 });

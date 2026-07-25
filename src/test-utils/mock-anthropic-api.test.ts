@@ -35,31 +35,151 @@ describe("ValidatingMockAPI", () => {
 			).toThrow("First message must be role 'user'");
 		});
 
-		test("rejects consecutive same roles", () => {
-			expect(() =>
+		// ── Rules that used to be enforced here and DO NOT EXIST ──
+		// Each of these three was a `toThrow` until 2026-07-25. All measured
+		// ACCEPTED by production Anthropic. They are now pinned in the positive
+		// direction so nobody can quietly put the fiction back. (Task 01KYCQ85.)
+
+		test("ACCEPTS consecutive user messages (role alternation is NOT a rule)", () => {
+			expect(
 				createStream({
 					messages: [
 						{ role: "user", content: "a" },
 						{ role: "user", content: "b" },
 					],
 				}),
-			).toThrow("consecutive");
+			).toBeDefined();
 		});
 
-		test("rejects empty string content", () => {
-			expect(() =>
+		test("ACCEPTS consecutive assistant messages", () => {
+			expect(
 				createStream({
-					messages: [{ role: "user", content: "" }],
+					messages: [
+						{ role: "user", content: "a" },
+						{ role: "assistant", content: "b" },
+						{ role: "assistant", content: "c" },
+						{ role: "user", content: "d" },
+					],
 				}),
-			).toThrow("empty string content");
+			).toBeDefined();
 		});
 
-		test("rejects empty array content", () => {
+		test("ACCEPTS empty string / empty array content", () => {
+			expect(
+				createStream({
+					messages: [
+						{ role: "user", content: "hi" },
+						{ role: "user", content: "" },
+					],
+				}),
+			).toBeDefined();
+			expect(
+				createStream({
+					messages: [
+						{ role: "user", content: "hi" },
+						{ role: "user", content: [] },
+					],
+				}),
+			).toBeDefined();
+		});
+
+		// ── The rule the mock never had, which is why a reachable 400 survived ──
+
+		test("rejects a conversation ending with an assistant message", () => {
 			expect(() =>
 				createStream({
-					messages: [{ role: "user", content: [] }],
+					messages: [
+						{ role: "user", content: "hi" },
+						{ role: "assistant", content: [{ type: "text", text: "there" }] },
+					],
 				}),
-			).toThrow("empty content array");
+			).toThrow("must end with a user message");
+		});
+
+		// ── Block ORDER inside a user turn is load-bearing (measured) ──
+		// This is the only guard on buildUserTurn packing tool_results FIRST.
+
+		test("rejects a text block BEFORE the tool_result in the answering turn", () => {
+			expect(() =>
+				createStream({
+					messages: [
+						{ role: "user", content: "hi" },
+						{
+							role: "assistant",
+							content: [
+								{ type: "tool_use", id: "tc_1", name: "bash", input: {} },
+							],
+						},
+						{
+							role: "user",
+							content: [
+								{ type: "text", text: "a queue message snuck in first" },
+								{ type: "tool_result", tool_use_id: "tc_1", content: "ok" },
+							],
+						},
+					],
+				}),
+			).toThrow("Missing tool_result for tool_use_id 'tc_1'");
+		});
+
+		test("rejects a trailing text block that cuts the answer run short", () => {
+			expect(() =>
+				createStream({
+					messages: [
+						{ role: "user", content: "hi" },
+						{
+							role: "assistant",
+							content: [
+								{ type: "tool_use", id: "tc_1", name: "bash", input: {} },
+								{ type: "tool_use", id: "tc_2", name: "bash", input: {} },
+							],
+						},
+						{
+							role: "user",
+							content: [
+								{ type: "tool_result", tool_use_id: "tc_1", content: "ok" },
+								{ type: "text", text: "ends the run here" },
+							],
+						},
+						{
+							role: "user",
+							content: [
+								{ type: "tool_result", tool_use_id: "tc_2", content: "ok" },
+							],
+						},
+					],
+				}),
+			).toThrow("Missing tool_result for tool_use_id 'tc_2'");
+		});
+
+		test("ACCEPTS tool_results split across several user messages, in any order", () => {
+			expect(
+				createStream({
+					messages: [
+						{ role: "user", content: "hi" },
+						{
+							role: "assistant",
+							content: [
+								{ type: "tool_use", id: "tc_1", name: "bash", input: {} },
+								{ type: "tool_use", id: "tc_2", name: "bash", input: {} },
+							],
+						},
+						{
+							role: "user",
+							content: [
+								{ type: "tool_result", tool_use_id: "tc_2", content: "ok" },
+							],
+						},
+						{
+							role: "user",
+							content: [
+								{ type: "tool_result", tool_use_id: "tc_1", content: "ok" },
+								{ type: "text", text: "now continue" },
+							],
+						},
+					],
+				}),
+			).toBeDefined();
 		});
 
 		test("rejects missing tool_result for tool_use", () => {

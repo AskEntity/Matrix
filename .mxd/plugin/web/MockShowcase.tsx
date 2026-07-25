@@ -184,7 +184,6 @@ function MockShowcaseInner() {
 			updateFromWS: () => {},
 			setRootNodeId,
 			dispatchActivity: () => {},
-			getAgentActivity: () => ({}),
 			setAgentProvider: () => {},
 			setAgentModel: () => {},
 			setLogs,

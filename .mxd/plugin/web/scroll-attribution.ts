@@ -25,6 +25,42 @@
  * `from`/`to` are the offset either side of the write, and `range` is
  * scrollHeight - clientHeight at that moment — a shrinking range is what turns
  * an ordinary-looking scroll event into a clamp (see scroll.ts).
+ *
+ * ⚠️ KNOWN BLIND SPOT — this misreports the most important case.
+ *
+ * The sampler runs once per frame, so it only ever sees geometry that survived
+ * to the end of a frame. A wholesale re-render of the log tears every entry out
+ * and puts new ones back WITHIN one frame: the container collapses, the browser
+ * clamps the offset to 0, and the content is restored before the next sample.
+ * All this sampler sees afterwards is an unchanged range, so it reports
+ * "scroll anchoring or user" for what was actually a clamp.
+ *
+ * That happened on the real jump this was built to catch (2026-07-25): the
+ * offset went 5517 → 0 with no JS write, 269ms after an `events?after=compact`
+ * refetch, and the trace called it anchoring.
+ *
+ * A second capture, this time measuring inside the DOM mutation itself, shows
+ * the collapse is not observable even there:
+ *
+ *     dom-mutation  added:82 removed:82   st: 191   sh: 8978   (was st 8089)
+ *
+ * All 82 entries were swapped in ONE mutation record, and by the time the
+ * observer's microtask ran the height was already restored — while the offset
+ * was already gone. So the evidence is not a dip in scrollHeight at all: it is
+ * that the OFFSET changed across the mutation with no JS write. Only a reading
+ * taken either side of the render (before/after setLogs) can see the dip, and
+ * nothing needs to: "offset moved, nobody wrote it, a replacement just landed"
+ * is sufficient and observable.
+ *
+ * So: "range unchanged ⟹ not a clamp" holds ACROSS frames and fails for a
+ * collapse-and-refill inside one.
+ *
+ * The cheap way to recognise it anyway: an unclaimed jump within a few hundred
+ * ms of a wholesale replacement is a remount clamp, whatever the range says.
+ * Wiring that in would mean telling this module when a replacement happens; it
+ * is deliberately not wired, because the replacement itself is expected to stop
+ * happening (see the memory entry for why the fix is eid-as-React-key, not
+ * anything in the scroll code).
  */
 
 /** Every programmatic writer of the activity log's scroll offset. */

@@ -36,6 +36,10 @@ import {
 	type SessionRepair,
 	walkActiveChainIndices,
 } from "./events.ts";
+import {
+	type ApiMessage,
+	wellFormedPrefixViolations,
+} from "./test-utils/api-message-rules.ts";
 import { TOOL_DONE, TOOL_YIELD } from "./tool-names.ts";
 
 // ── Small event factory helpers (kept minimal; see walker-golden.test.ts
@@ -173,45 +177,35 @@ function forkMarkerEvent(
 type AnthMessage = { role: "user" | "assistant"; content: unknown };
 
 /**
- * A minimum Anthropic API validity check. The API rejects:
- *   - empty messages array (for non-empty conversations; we only assert
- *     structural sanity, not this)
- *   - messages with role !== "user" | "assistant"
- *   - messages with empty content arrays
- *   - two consecutive user messages or two consecutive assistant messages
- *   - a trailing assistant message (API wants the conversation to end with
- *     a user message when requesting completion)
+ * Walker outputs are CONVERSATION PREFIXES, not sendable requests — several of
+ * these fixtures legitimately end on an assistant turn because more is meant to
+ * be appended. So this asserts the prefix rules only; the sendable rules
+ * (trailing role, all tool_uses answered) are asserted where a request is
+ * actually built, i.e. inside the mock's `validateRequest`.
  *
- * We don't assert the trailing-role rule because some walker outputs are
- * intermediate and meant to be extended. We DO assert the alternation and
- * structural shape.
+ * ⚠️ TOMBSTONE — read before "simplifying" this back into one predicate.
+ * This helper used to be called `assertStructurallyValidApiMessages` and it
+ * enforced STRICT ROLE ALTERNATION, a rule that does not exist in the API. Its
+ * own comment listed the trailing-role rule as real and then explained, quite
+ * correctly, that it could not assert it because some walker outputs are
+ * intermediate. What was missing was not rigor but the CONCEPT of a prefix:
+ * with only one predicate available, the inconvenient true rule lost to a
+ * conveniently-green false one, and the false one then spent months producing
+ * evidence (628 thrown "must alternate roles" errors, four production
+ * mechanisms built to avoid them). The old name is itself the tell — it fused
+ * "structurally valid" (a prefix property) with "API messages" (a sendable
+ * property), so the code could only ever be one of them.
+ * See `api-message-rules.ts` and memory.md.
  */
-function assertStructurallyValidApiMessages(msgs: unknown[]): void {
+function assertWellFormedPrefix(msgs: unknown[]): void {
 	const arr = msgs as AnthMessage[];
-
-	for (let i = 0; i < arr.length; i++) {
-		const m = arr[i];
+	for (const m of arr) {
 		expect(m).toBeDefined();
 		if (!m) continue;
 		expect(["user", "assistant"]).toContain(m.role);
-		// Content must exist and not be an empty array
-		if (Array.isArray(m.content)) {
-			expect(m.content.length).toBeGreaterThan(0);
-		} else if (typeof m.content === "string") {
-			// string content is valid (for simple user messages)
-		} else {
-			expect(m.content).toBeDefined();
-		}
+		expect(m.content).toBeDefined();
 	}
-
-	// Alternation: no two consecutive messages with the same role
-	for (let i = 1; i < arr.length; i++) {
-		const prev = arr[i - 1];
-		const curr = arr[i];
-		if (prev && curr) {
-			expect(prev.role).not.toBe(curr.role);
-		}
-	}
+	expect(wellFormedPrefixViolations(arr as ApiMessage[])).toEqual([]);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -378,13 +372,20 @@ describe("runtime vs recovery: yield tool_call position", () => {
 	// which one is last, only ONE is left unrepaired.
 	test("recovery: yield + done same turn → walker valid, last one stays orphan", () => {
 		const events: Event[] = [
+			// A leading user turn: without it the walker output starts with an
+			// assistant message, which the API rejects outright ("first message
+			// must use the 'user' role") — see the BEHAVIOR SNAPSHOT at the
+			// bottom of this file. The fixture is about the assistant turn, so
+			// give it a realistic head instead of asserting on an unsendable one.
+			userMsgEvent("u1", "go"),
+			messagesConsumedEvent(["u1"]),
 			assistantText("mixed control"),
 			toolCall("tc-y", TOOL_YIELD, {}),
 			toolCall("tc-done", TOOL_DONE, { status: "passed" }),
 		];
 		const msgs = eventsToAnthropicMessages(events);
 		// Valid structure, assistant turn preserves both tool_calls
-		assertStructurallyValidApiMessages(msgs);
+		assertWellFormedPrefix(msgs);
 		const repair = buildSessionRepair(events, "t1");
 		// Repair appends tc-y interrupted result (tc-done is last → intended)
 		expect(repair).not.toBeNull();
@@ -404,6 +405,8 @@ describe("runtime vs recovery: yield tool_call position", () => {
 	// tool_result events — as long as they're consecutive, order is preserved.
 	test("recovery: yield tool_result with another tool_result after it → walker preserves order", () => {
 		const events: Event[] = [
+			userMsgEvent("u1", "go"),
+			messagesConsumedEvent(["u1"]),
 			assistantText("a"),
 			toolCall("tc-y", TOOL_YIELD, {}),
 			toolCall("tc-bash", "mcp__mxd__bash", {}),
@@ -412,11 +415,12 @@ describe("runtime vs recovery: yield tool_call position", () => {
 		];
 		const msgs = eventsToAnthropicMessages(events);
 		// Valid: assistant turn with 2 tool_use + user turn with 2 tool_result
-		assertStructurallyValidApiMessages(msgs);
-		expect(msgs.length).toBe(2);
-		expect((msgs[0] as AnthMessage).role).toBe("assistant");
-		expect((msgs[1] as AnthMessage).role).toBe("user");
-		const userContent = (msgs[1] as AnthMessage).content as Array<{
+		assertWellFormedPrefix(msgs);
+		expect(msgs.length).toBe(3);
+		expect((msgs[0] as AnthMessage).role).toBe("user");
+		expect((msgs[1] as AnthMessage).role).toBe("assistant");
+		expect((msgs[2] as AnthMessage).role).toBe("user");
+		const userContent = (msgs[2] as AnthMessage).content as Array<{
 			type: string;
 			tool_use_id?: string;
 		}>;
@@ -615,13 +619,15 @@ describe("runtime vs recovery: fork_marker uniqueness", () => {
 	// RUNTIME: a fresh fork emits exactly one fork_marker.
 	test("runtime: single fork_marker renders once", () => {
 		const events: Event[] = [
+			userMsgEvent("u1", "go"),
+			messagesConsumedEvent(["u1"]),
 			assistantText("before fork"),
 			toolCall("tc-bash", "mcp__mxd__bash", {}),
 			toolResult("tc-bash", "mcp__mxd__bash", "ok"),
 			forkMarkerEvent("parent-task-id", "New Task"),
 		];
 		const msgs = eventsToAnthropicMessages(events);
-		assertStructurallyValidApiMessages(msgs);
+		assertWellFormedPrefix(msgs);
 	});
 
 	// RECOVERY: two fork_markers back-to-back (e.g., from a fork that got
@@ -633,6 +639,8 @@ describe("runtime vs recovery: fork_marker uniqueness", () => {
 	// assistant's identity context.
 	test("recovery: 2 consecutive fork_markers → walker renders BOTH", () => {
 		const events: Event[] = [
+			userMsgEvent("u1", "go"),
+			messagesConsumedEvent(["u1"]),
 			assistantText("mixed"),
 			toolCall("tc-bash", "mcp__mxd__bash", {}),
 			toolResult("tc-bash", "mcp__mxd__bash", "ok"),
@@ -640,10 +648,11 @@ describe("runtime vs recovery: fork_marker uniqueness", () => {
 			forkMarkerEvent("parent-b"),
 		];
 		const msgs = eventsToAnthropicMessages(events);
-		assertStructurallyValidApiMessages(msgs);
+		assertWellFormedPrefix(msgs);
 		// The user turn (tool_result batch) contains interleaved text with
 		// both fork markers. Count fork_marker occurrences in text blocks.
-		const userMsg = msgs.find((m) => (m as AnthMessage).role === "user") as
+		// findLast, not find: msgs[0] is the leading user turn of the fixture.
+		const userMsg = msgs.findLast((m) => (m as AnthMessage).role === "user") as
 			| AnthMessage
 			| undefined;
 		expect(userMsg).toBeDefined();
@@ -914,7 +923,10 @@ describe("walker edge cases", () => {
 	// Each becomes its own text block. Attack: a refactor could collapse
 	// them into one concatenated string, losing the per-message boundary.
 	test("100 consumed messages in one batch → 100 text blocks", () => {
-		const events: Event[] = [];
+		const events: Event[] = [
+			userMsgEvent("head", "go", -2),
+			messagesConsumedEvent(["head"], -1),
+		];
 		const ids: string[] = [];
 		for (let i = 0; i < 100; i++) {
 			const id = `u${i}`;
@@ -930,8 +942,9 @@ describe("walker edge cases", () => {
 
 		const msgs = eventsToAnthropicMessages(events);
 		// At least one assistant + one user message
-		assertStructurallyValidApiMessages(msgs);
-		const userMsg = msgs.find((m) => (m as AnthMessage).role === "user") as
+		assertWellFormedPrefix(msgs);
+		// findLast, not find: msgs[0] is the leading user turn of the fixture.
+		const userMsg = msgs.findLast((m) => (m as AnthMessage).role === "user") as
 			| AnthMessage
 			| undefined;
 		expect(userMsg).toBeDefined();
@@ -1093,10 +1106,10 @@ describe("walker output is always structurally valid under dirty JSONL", () => {
 				toolCall("tc-y2", TOOL_YIELD, {}),
 			],
 		},
-		{
-			name: "orphan assistant_text with no user message before it",
-			events: [assistantText("random")],
-		},
+		// NOTE: "orphan assistant_text with no user message before it" USED to
+		// live in this table, claiming the walker produced a valid structure
+		// from it. It does not — see the BEHAVIOR SNAPSHOT below. It only
+		// looked valid because the old helper never checked the FIRST rule.
 		// NOTE: "tool_result with no tool_call" is intentionally omitted from
 		// this structurally-valid batch — see the dedicated test case below
 		// which documents a LATENT RECOVERY GAP in buildSessionRepair.
@@ -1158,7 +1171,7 @@ describe("walker output is always structurally valid under dirty JSONL", () => {
 			const msgs = eventsToAnthropicMessages(events);
 			// Valid API structure (alternating, non-empty content)
 			if (msgs.length > 0) {
-				assertStructurallyValidApiMessages(msgs);
+				assertWellFormedPrefix(msgs);
 			}
 		});
 	}
@@ -1185,20 +1198,55 @@ describe("walker output is always structurally valid under dirty JSONL", () => {
 // force a deliberate decision. See memory.md for the reasoning.
 // ══════════════════════════════════════════════════════════════════════════
 
+describe("BEHAVIOR SNAPSHOT: assistant-first walker output (not an invariant)", () => {
+	// This case sat inside the "dirty JSONL → walker produces valid structure"
+	// table for months and passed, because the helper guarding that table
+	// checked role alternation (a rule that does not exist) and never checked
+	// the FIRST rule of the API. The walker really does emit an assistant-first
+	// array here, and the API really does reject it — this is not hypothetical:
+	// FIX-5 R8-B#1 records a session PERMANENTLY BRICKED by exactly this shape
+	// (a bare compact_marker left readActive() starting on an assistant turn),
+	// quoting the same API error. Fixing that walker/readActive behavior is out
+	// of scope here; pinning the truth is not.
+	test("walker: events with no leading user message → assistant-first (rejected by the API)", () => {
+		const msgs = eventsToAnthropicMessages([assistantText("random")]);
+		expect(msgs.length).toBe(1);
+		expect((msgs[0] as AnthMessage).role).toBe("assistant");
+		expect(
+			wellFormedPrefixViolations(msgs as ApiMessage[]).some((v) =>
+				v.includes("First message must be role 'user'"),
+			),
+		).toBe(true);
+	});
+});
+
 describe("BEHAVIOR SNAPSHOT: orphan tool_result (not an invariant)", () => {
-	test("walker: orphan tool_result produces TWO consecutive user messages (not API-valid)", () => {
+	// NAME CORRECTED 2026-07-25. This used to be called "walker: orphan
+	// tool_result produces TWO consecutive user messages (not API-valid)".
+	// The CONCLUSION was right — the output really is rejected — but the REASON
+	// was the fictional alternation rule, and the test's own name was one of
+	// the places that phantom propagated from. Consecutive user messages are
+	// perfectly legal (measured). What the API rejects here is the ORPHAN: a
+	// tool_result with no matching tool_use in the previous assistant message.
+	test("walker: orphan tool_result stays orphaned in the output (rejected by the API)", () => {
 		const events: Event[] = [
 			userMsgEvent("u1", "x"),
 			messagesConsumedEvent(["u1"]),
 			toolResult("tc-ghost", "mcp__mxd__bash", "orphan result"),
 		];
 		const msgs = eventsToAnthropicMessages(events);
-		// Current behavior: 2 consecutive user messages. NOT valid API input.
-		// If someone makes the walker "smarter" about this case, revisit
-		// whether they're masking an upstream bug.
+		// Current behavior: the orphan is carried through into its own user
+		// message. If someone makes the walker "smarter" about this case,
+		// revisit whether they're masking an upstream bug.
 		expect(msgs.length).toBe(2);
 		expect((msgs[0] as AnthMessage).role).toBe("user");
 		expect((msgs[1] as AnthMessage).role).toBe("user");
+		// The two-consecutive-user shape is NOT why this is invalid — this is:
+		expect(
+			wellFormedPrefixViolations(msgs as ApiMessage[]).some((v) =>
+				v.includes("no matching tool_use"),
+			),
+		).toBe(true);
 	});
 
 	test("buildSessionRepair: orphan tool_result → null (out of scope)", () => {
@@ -1414,9 +1462,7 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 		// Poison gone, no orphan, reconstruction valid.
 		expect(resultCounts(final).get("tc-A")).toBe(1);
 		expect(hasOrphanResult(final)).toBe(false);
-		assertStructurallyValidApiMessages(
-			eventsToAnthropicMessages(activeOf(final)),
-		);
+		assertWellFormedPrefix(eventsToAnthropicMessages(activeOf(final)));
 	});
 
 	// ── F-H2: orphan tool_results from the truncated region ──
@@ -1455,9 +1501,7 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 		expect(
 			final.some((e) => e.type === "tool_result" && e.toolCallId === "tc-B"),
 		).toBe(false);
-		assertStructurallyValidApiMessages(
-			eventsToAnthropicMessages(activeOf(final)),
-		);
+		assertWellFormedPrefix(eventsToAnthropicMessages(activeOf(final)));
 		// Idempotent: a second repair pass over the repaired log is null.
 		expect(buildSessionRepair(final, "t1")).toBeNull();
 	});
@@ -1497,9 +1541,7 @@ describe("FIX-1: buildSessionRepair compact-boundary safety", () => {
 		expect(resultCounts(final).get("tc-done") ?? 0).toBe(0);
 		expect(hasOrphanResult(final)).toBe(false);
 		// Pending-done shape: assistant turn ends the log (valid alternation).
-		assertStructurallyValidApiMessages(
-			eventsToAnthropicMessages(activeOf(final)),
-		);
+		assertWellFormedPrefix(eventsToAnthropicMessages(activeOf(final)));
 		// Idempotent: the repaired session is in pending-done state → no-op.
 		expect(buildSessionRepair(final, "t1")).toBeNull();
 	});

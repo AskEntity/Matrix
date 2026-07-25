@@ -92,18 +92,29 @@ export function emitEvent(
 	projectId: string,
 	event: Event,
 ) {
-	broadcast(ctx, projectId, event as unknown as Record<string, unknown>);
-
-	// Persist to JSONL (skips ephemeral events like text_delta, usage, etc.)
+	// Persist FIRST, then broadcast what was persisted.
+	//
+	// The stamped copy carries `eid`/`parentEid`, so every observer gets the
+	// event's durable name at the same instant the event exists — including
+	// SSE clients, which used to receive an anonymous copy and had to re-fetch
+	// the whole JSONL later just to learn what they had already been shown.
+	// A frontend entry can then be named from the moment it is created, which
+	// is what lets a rebuilt log reconcile instead of remount.
+	//
+	// Ephemeral events (text_delta, agent_activity, …) are not persisted and
+	// so have no name — deliberately. They are not history.
+	let persisted = event;
 	if (isPersistedByEmitEvent(event)) {
 		const taskId =
 			"taskId" in event ? (event.taskId as string | undefined) : undefined;
 		const sessionId = taskId || ctx.trackers.get(projectId)?.rootNodeId;
 		if (sessionId) {
 			const eventStore = getEventStore(ctx, projectId);
-			eventStore.append(sessionId, event);
+			persisted = eventStore.append(sessionId, event);
 		}
 	}
+
+	broadcast(ctx, projectId, persisted as unknown as Record<string, unknown>);
 
 	// Track clarification_requested events for pending clarifications state
 	if (event.type === "clarification_requested") {

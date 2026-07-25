@@ -563,7 +563,6 @@ function ProjectContent({
 		agentActivityRef.current = next;
 		setAgentActivity(next);
 	}, []);
-	const getAgentActivity = useCallback(() => agentActivityRef.current, []);
 	/**
 	 * The ONE derivation of "this agent is busy" — sidebar spinners, tab
 	 * indicators, TaskDetail and the activity log all read this instead of
@@ -687,10 +686,6 @@ function ProjectContent({
 	const viewedSessionRef = useRef<string | null>(null);
 	const viewedSessionId = selectedTaskId;
 	viewedSessionRef.current = viewedSessionId;
-
-	// Ref-based re-fetch for agent_idle: the actual function is set after
-	// processEventResponse is defined (breaks the useMemo→useCallback cycle).
-	const refetchOnIdleRef = useRef<((taskId: string) => void) | null>(null);
 
 	const {
 		nodes,
@@ -943,7 +938,6 @@ function ProjectContent({
 				setRootNodeId,
 				setOlderEventsAvailable,
 				dispatchActivity,
-				getAgentActivity,
 				setAgentProvider,
 				setAgentModel,
 				setLogs,
@@ -959,12 +953,10 @@ function ProjectContent({
 				setBackgroundProcesses,
 				t,
 				getViewedSessionId: () => viewedSessionRef.current,
-				onAgentIdle: (taskId) => refetchOnIdleRef.current?.(taskId),
 			}),
 		[
 			updateFromWS,
 			dispatchActivity,
-			getAgentActivity,
 			setAgentProvider,
 			setAgentModel,
 			dispatchPending,
@@ -973,15 +965,11 @@ function ProjectContent({
 		],
 	);
 
-	/**
-	 * Process event response: update logs and track which sessions have older
-	 * events. Every caller of this fetches with `after=compact`, which the
-	 * server answers by chain-walking — so these events ARE the conversation.
-	 */
+	/** Process event response: update logs and track which sessions have older events. */
 	const processEventResponse = useCallback(
 		(data: { events?: IncomingEvent[]; hasOlderEvents?: boolean }) => {
 			if (data.events && data.events.length > 0) {
-				processEventBatch(data.events, { fromActiveChain: true });
+				processEventBatch(data.events);
 
 				// Track per-session older events availability
 				if (data.hasOlderEvents) {
@@ -1008,19 +996,6 @@ function ProjectContent({
 		},
 		[processEventBatch],
 	);
-
-	// Wire up agent_idle re-fetch: when the viewed agent goes idle, re-fetch
-	// JSONL events so the frontend gets eid/parentEid for Edit/Rewind buttons.
-	// Uses the same processEventResponse + compact-barrier fetch as reconnect.
-	refetchOnIdleRef.current = (taskId: string) => {
-		if (!projectId) return;
-		authFetch(api.taskEvents(projectId, taskId, "after=compact"))
-			.then((r) => r.json())
-			.then(processEventResponse)
-			.catch((e) =>
-				console.warn("[Plugin] Failed to re-fetch events on agent idle:", e),
-			);
-	};
 
 	// Rewind: rollback to before the message, then resend the ORIGINAL content
 	// unchanged. Both Rewind and Edit use the same /edit endpoint; Rewind just

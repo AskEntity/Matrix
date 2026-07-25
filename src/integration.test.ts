@@ -18,6 +18,7 @@ import { basename, join } from "node:path";
 import { projectIndexDbPath } from "./data-paths.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
+import { subscribeToEvents } from "./runtime/event-system.ts";
 import {
 	_clearDbCache,
 	_setEmbeddingPipeline,
@@ -11559,6 +11560,21 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 		mockAPI.createStream(
 			{
 				messages: [
+					// A realistic head: without it the tool_result answers nothing,
+					// which the real API rejects and (since 2026-07-25) so does the
+					// mock. This fixture is about prefix BYTE comparison. (01KYCQ85)
+					{ role: "user", content: "go" },
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "tool_use" as const,
+								id: "test_123",
+								name: "bash",
+								input: {},
+							},
+						],
+					},
 					{
 						role: "user",
 						content: [
@@ -11589,6 +11605,18 @@ describe("Bug repro: image message reconstruction mismatch", () => {
 			mockAPI.createStream(
 				{
 					messages: [
+						{ role: "user", content: "go" },
+						{
+							role: "assistant",
+							content: [
+								{
+									type: "tool_use" as const,
+									id: "test_123",
+									name: "bash",
+									input: {},
+								},
+							],
+						},
 						{
 							role: "user",
 							content: [
@@ -12618,8 +12646,71 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 		expect(content).toContain("Fix session recovery bug");
 		// Must not include self (root's own id)
 		expect(content).not.toContain(tracker.rootNodeId);
-		// Must include the related child's task id prefix
-		expect(content).toContain(pastChild.id.slice(0, 12));
+		// FULL task id, not a truncated prefix + "…". The block's header tells the
+		// agent to get_task these, so the id has to be pasteable.
+		expect(content).toContain(pastChild.id);
+
+		// The block carries USAGE, not just data: it must tell the agent what to
+		// do with a hit. Scoped to the block itself (lastIndexOf) because
+		// work_context also preloads memory.md, which mentions both the marker
+		// and get_task.
+		const block = content.slice(content.lastIndexOf("[Related past tasks]"));
+		expect(block).toContain("get_task");
+	}, 20000);
+
+	test("work_context related block drops hits whose task left the tree", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+
+		const goneChild = tracker.addChild(
+			tracker.rootNodeId,
+			"Fix session recovery bug",
+			"implemented the frobnicator cache via a ring buffer",
+		);
+		tracker.getTask(tracker.rootNodeId)!.title = "Session recovery follow-up";
+		await tracker.save();
+		await reconcileIndex(indexDbPath(ctx), tracker);
+
+		// Delete the node WITHOUT re-reconciling: the index still carries its
+		// documents, so the search below still returns it while the tracker no
+		// longer resolves it. That is the state a stale index is always in
+		// between a deletion and the next reconcile.
+		tracker.remove(goneChild.id);
+		await tracker.save();
+
+		// Non-vacuity guard: the dead task really is still a live search hit.
+		const staleHits = await searchIndex(
+			indexDbPath(ctx),
+			"Session recovery follow-up",
+			5,
+		);
+		expect(staleHits.some((h) => h.taskId === goneChild.id)).toBe(true);
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Starting work." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", result: "done" },
+				},
+			],
+		});
+		expect((await startAgent(ctx, instruction)).status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const events = await readSessionEvents(ctx, tracker.rootNodeId);
+		const workCtx = events.find((e) => {
+			if (e.type !== "message") return false;
+			const body = (e as { body?: { source?: string } }).body;
+			return body?.source === "work_context";
+		});
+		const content =
+			(workCtx as { body?: { content?: string } })?.body?.content ?? "";
+		// Never point the agent at an id that get_task cannot resolve. Asserting
+		// on the ID (not the title) is what makes this a mutation proof: the old
+		// code rendered dead hits with the title "unknown" but the real id.
+		expect(content).not.toContain(goneChild.id);
 	}, 20000);
 
 	test("searchIndex enriched with task titles (REST endpoint backing)", async () => {
@@ -12781,6 +12872,10 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 							contains: "[Related existing tasks]",
 						},
 						{ block: 0, type: "tool_result", contains: "Auth token rotation" },
+						// The block must carry USAGE, not just data — the imperative
+						// that makes a hit actionable. "get_task" appears nowhere else
+						// in this tool_result (the rest is the created node's JSON).
+						{ block: 0, type: "tool_result", contains: "get_task" },
 					],
 					blocks: [
 						{ type: "text", text: "Task created with related context." },
@@ -13108,4 +13203,96 @@ describe("Integration: done() result capture (resultRounds)", () => {
 		// resultRounds.result is BYTE-IDENTICAL to the value the parent received.
 		expect(childNode?.resultRounds).toEqual([{ result: MARKER }]);
 	}, 45000);
+});
+
+// ── The event's name reaches every observer, not just the file ──
+//
+// `emitEvent` used to broadcast an anonymous copy and persist a named one, so
+// the only way for a client to learn an event's eid was to re-read the whole
+// JSONL afterwards. Everything that wants to point AT an event — Edit/Rewind,
+// a link to a message, a stable React key — was blocked behind that re-read.
+describe("Integration: broadcasts carry the eid the file holds", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("a live run's broadcasts and its JSONL agree, event for event", async () => {
+		ctx = await setupTestContext();
+
+		const broadcast: Array<{ type: string; eid?: string }> = [];
+		const unsubscribe = subscribeToEvents(ctx.app.ctx, ctx.projectId, (e) => {
+			broadcast.push({
+				type: e.type as string,
+				eid: (e as { eid?: string }).eid,
+			});
+		});
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Looking." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__bash",
+					input: { command: "echo hi" },
+				},
+			],
+		});
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		unsubscribe();
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const onDisk = await readSessionEvents(ctx, rootNodeId);
+		expect(onDisk.length).toBeGreaterThan(3);
+
+		// Every persisted event was broadcast with the SAME name it was
+		// written under — same events, same order, same eids. Identity, not
+		// merely "some eid is present".
+		const persistedTypes = new Set<string>(onDisk.map((e) => e.type));
+		const broadcastNamed = broadcast.filter((e) => persistedTypes.has(e.type));
+		expect(broadcastNamed.map((e) => `${e.type}:${e.eid}`)).toEqual(
+			onDisk.map((e) => `${e.type}:${e.eid}`),
+		);
+
+		// And the chain the client sees is the chain on disk: linear, no holes.
+		let parent: string | null = null;
+		for (const e of onDisk) {
+			expect(e.eid).toMatch(/^[0-9a-f]{12}$/);
+			expect(e.parentEid ?? null).toBe(parent);
+			parent = e.eid as string;
+		}
+	}, 15000);
+
+	test("ephemeral events stay nameless — they are not history", async () => {
+		ctx = await setupTestContext();
+
+		const broadcast: Array<{ type: string; eid?: string }> = [];
+		const unsubscribe = subscribeToEvents(ctx.app.ctx, ctx.projectId, (e) => {
+			broadcast.push({
+				type: e.type as string,
+				eid: (e as { eid?: string }).eid,
+			});
+		});
+
+		await startAgent(
+			ctx,
+			JSON.stringify({
+				blocks: [
+					{ type: "text", text: "Thinking out loud." },
+					{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+				],
+			}),
+		);
+		await waitForIdle(ctx);
+		unsubscribe();
+
+		// agent_activity is live process state that is deliberately never
+		// persisted. Handing it an eid would be a claim that it can be
+		// pointed at later, and nothing on disk would back that up.
+		const activity = broadcast.filter((e) => e.type === "agent_activity");
+		expect(activity.length).toBeGreaterThan(0);
+		for (const e of activity) expect(e.eid).toBeUndefined();
+	}, 15000);
 });

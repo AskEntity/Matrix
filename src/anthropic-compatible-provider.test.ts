@@ -29,7 +29,7 @@ import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
-import { toToolDefinition } from "./tool-def.ts";
+import { type ParamDefs, toToolDefinition } from "./tool-def.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import { TOOL_YIELD } from "./tool-names.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
@@ -37,6 +37,7 @@ import type { BackgroundProcess, ForegroundExecution } from "./tools/bash.ts";
 import { buildBuiltinToolDefs } from "./tools/definitions.ts";
 import {
 	cleanupSessionBackgroundProcesses,
+	DEFAULT_SKIP_DIRS,
 	executeBashWithTimeout,
 	getBackgroundStatus,
 	jsSearch,
@@ -2383,6 +2384,136 @@ describe("jsSearch", () => {
 		});
 		expect(result).toContain("const x = 1;");
 		expect(result).toContain("const y = 2;");
+	});
+});
+
+/**
+ * A hidden directory is not automatically a boring directory.
+ *
+ * In THIS repo `.mxd/plugin/` is production code — every ScopeOpts hook, every
+ * plugin REST route, the entire plugin UI. A walker that never descends into dot
+ * directories therefore answers "no matches" for roughly half the codebase, and
+ * it does so SILENTLY: "found nothing" and "never looked" are indistinguishable
+ * to the caller. That matters most in the one place memory.md tells you to reach
+ * for this tool — grepping for a name as a STRING before a rename or a delete,
+ * where the compiler cannot help.
+ *
+ * Which directories are skipped is `DEFAULT_SKIP_DIRS`' job, and nothing else's.
+ */
+describe("jsSearch: hidden directories", () => {
+	let tempDir: string;
+	const SYMBOL = "buildMatrixScopeOpts";
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-search-dot-"));
+		// Production code living in a hidden directory — models .mxd/plugin/.
+		await mkdir(join(tempDir, ".mxd", "plugin"), { recursive: true });
+		await writeFile(
+			join(tempDir, ".mxd", "plugin", "scope-opts.ts"),
+			`export function ${SYMBOL}() {}\n`,
+		);
+		// A visible caller. The original false negative had exactly this shape:
+		// every caller found, the definition missing.
+		await mkdir(join(tempDir, "src"), { recursive: true });
+		await writeFile(join(tempDir, "src", "caller.ts"), `${SYMBOL}();\n`);
+		// Hidden directories that DEFAULT_SKIP_DIRS must keep excluding.
+		await mkdir(join(tempDir, ".worktrees", "child", "src"), {
+			recursive: true,
+		});
+		await writeFile(
+			join(tempDir, ".worktrees", "child", "src", "caller.ts"),
+			`${SYMBOL}();\n`,
+		);
+		await mkdir(join(tempDir, ".git"), { recursive: true });
+		await writeFile(join(tempDir, ".git", "COMMIT_EDITMSG"), `${SYMBOL}\n`);
+	});
+
+	afterAll(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	/** files_with_matches, default excludes, rooted at tempDir. */
+	async function matchedFiles(
+		extra: { glob?: string; excludedDirs?: string[] } = {},
+	): Promise<string[]> {
+		const result = await jsSearch({
+			pattern: SYMBOL,
+			searchPath: ".",
+			outputMode: "files_with_matches",
+			headLimit: 50,
+			caseInsensitive: false,
+			cwd: tempDir,
+			...extra,
+		});
+		return result.split("\n").filter(Boolean);
+	}
+
+	// These two own ONE question — does the walker descend into a dot directory —
+	// so they assert presence, not an exact file list. Which directories are
+	// EXCLUDED is the next three tests' business; asserting it here too would make
+	// a failure ambiguous between "stopped walking" and "stopped excluding".
+	test("default path finds a definition inside a hidden directory", async () => {
+		const files = await matchedFiles();
+		expect(files).toContain(".mxd/plugin/scope-opts.ts");
+		expect(files).toContain("src/caller.ts");
+	});
+
+	test("glob branch descends into hidden directories too", async () => {
+		// Separate scanSync call site from the no-glob branch above — fixing one
+		// and not the other leaves half the tool lying.
+		const files = await matchedFiles({ glob: "**/*.ts" });
+		expect(files).toContain(".mxd/plugin/scope-opts.ts");
+		expect(files).toContain("src/caller.ts");
+	});
+
+	test(".worktrees/ stays excluded — each worktree is a whole second copy of the repo", async () => {
+		// Not a hypothetical: with 3 live sub-agent worktrees, a search from main
+		// would scan 4 copies of every file and report each hit 4 times. This
+		// assertion exists because the day it breaks, nobody will know why the
+		// results exploded.
+		const files = await matchedFiles();
+		expect(files.some((f) => f.startsWith(".worktrees/"))).toBe(false);
+		// Two-sided: the visible copy IS found, so this cannot pass by finding nothing.
+		expect(files).toContain("src/caller.ts");
+	});
+
+	test(".git/ stays excluded", async () => {
+		const files = await matchedFiles();
+		expect(files.some((f) => f.startsWith(".git/"))).toBe(false);
+		expect(files).toContain("src/caller.ts");
+	});
+
+	test("excluded_dirs: [] reaches everything — exclusion is the list's doing, not the walker's", async () => {
+		expect(await matchedFiles({ excludedDirs: [] })).toEqual([
+			".git/COMMIT_EDITMSG",
+			".mxd/plugin/scope-opts.ts",
+			".worktrees/child/src/caller.ts",
+			"src/caller.ts",
+		]);
+	});
+
+	test("the excluded_dirs description lists exactly DEFAULT_SKIP_DIRS", () => {
+		// A prose copy of a list rots with no symptom: a stale list and a fresh
+		// list read identically. Pin them together instead of re-checking by hand.
+		const params: ParamDefs | undefined = buildBuiltinToolDefs().find(
+			(t) => t.name === "search",
+		)?.params;
+		const description = params?.excluded_dirs?.description ?? "";
+		const skipped = DEFAULT_SKIP_DIRS.map((d) => d.replace(/\/$/, ""));
+
+		for (const dir of skipped) expect(description).toContain(dir);
+
+		// …and nothing documented that we do not actually skip.
+		expect(description).toContain("Defaults to:");
+		expect(description).toContain("Pass empty array");
+		const afterMarker = description.split("Defaults to:")[1] ?? "";
+		const listed = afterMarker.split("Pass empty array")[0] ?? "";
+		const documented = listed
+			.replace(/\.\s*$/, "")
+			.split(",")
+			.map((s) => s.trim())
+			.filter(Boolean);
+		expect(documented.sort()).toEqual([...skipped].sort());
 	});
 });
 

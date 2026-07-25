@@ -41,6 +41,9 @@ import {
  * "can't edit this": the two permanent reasons and the transient one call
  * for completely different responses from the user.
  */
+// Exhaustive over the reason union on purpose: adding a reason without a
+// sentence should be a type error, not a blank tooltip. That is how the
+// missing key for the third reason was caught.
 const BLOCKED_TITLE_KEY: Record<EditBlockedReason, string> = {
 	agent_busy: "activity.editBlockedBusy",
 	did_not_start_run: "activity.editBlockedMidRun",
@@ -49,6 +52,8 @@ const BLOCKED_TITLE_KEY: Record<EditBlockedReason, string> = {
 	// The backend can, and will say the same thing.
 	no_rewind_point: "activity.editBlockedNoRewindPoint",
 	unknown_message: "activity.editBlockedUnknown",
+	off_chain_summarized: "activity.editBlockedSummarized",
+	off_chain_abandoned: "activity.editBlockedAbandoned",
 };
 
 /** Outer wrapper: timestamp + badge + card */
@@ -705,7 +710,7 @@ export const LogEntryView = memo(function LogEntryView({
 
 	// User message — special bubble rendering, not a card
 	if (entry.type === "message" && entry.body.source === "user") {
-		const eid = (entry as { eid?: string }).eid;
+		const eid = entry.eid;
 		const isEditing = !!eid && eid === editingEid;
 		// Edit and Rewind are the same backend operation, so one verdict
 		// governs both. A blocked message keeps its buttons — greyed, with
@@ -714,13 +719,12 @@ export const LogEntryView = memo(function LogEntryView({
 		// one is "wait", the other is "this message isn't a starting point".
 		const verdict = editVerdict({
 			startsRun: entry.startsRun,
-			// The log the UI renders is already sliced at the compaction
-			// barrier, so every message it shows sits past the splice and
-			// has somewhere to rewind to. (After "Load earlier history" the
-			// batch is the raw file instead — those entries get no
-			// `startsRun` at all, and `unknown_message` outranks this.)
+			// The messages this can reach are on the active chain — either
+			// live, or from a chain-walked fetch, or marked `offChain` below,
+			// which outranks this and is the more specific answer.
 			hasRewindPoint: true,
 			agentBusy: isWorking(activity),
+			offChain: entry.offChain,
 		});
 		const blockedTitle = verdict.editable
 			? null
