@@ -267,3 +267,107 @@ describe("ActivityLog scroll-position reporting", () => {
 		expect(autoScrollCalls[autoScrollCalls.length - 1]).toBe(false);
 	});
 });
+
+/**
+ * The follow-intent guard. `isNearBottom` answers "is the log at its bottom",
+ * which is the right question for the ↓ button and the wrong one for "does the
+ * user want to follow new output" — because the offset can arrive at the bottom
+ * without the user doing anything, when the content or the viewport shrinks
+ * under it. The browser clamps and fires an ordinary scroll event; nothing on
+ * the event distinguishes it from a real scroll.
+ *
+ * Measured in Chrome before the guard: switching tasks, and every log search
+ * (no match / few matches / a match set that still overflows) re-armed follow
+ * and dragged the user to the bottom the moment the content came back.
+ */
+describe("ActivityLog follow-intent guard (shrinking range)", () => {
+	test("range shrinks to zero → reports at-bottom but does NOT re-arm follow", async () => {
+		const { container, atBottomCalls, autoScrollCalls } = await renderLog({
+			autoScroll: false,
+		});
+		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
+
+		// Establish the previous range (700) with a real scroll.
+		container.scrollTop = 200;
+		container.dispatchEvent(new Event("scroll"));
+		await waitFor(() => autoScrollCalls.length > 0);
+
+		atBottomCalls.length = 0;
+		autoScrollCalls.length = 0;
+
+		// The log empties (task switch mid-fetch / search matched nothing):
+		// range 700 → 0, the browser clamps the offset to 0 and fires scroll.
+		mockGeometry(container, { scrollHeight: 300, clientHeight: 300 });
+		container.scrollTop = 0;
+		container.dispatchEvent(new Event("scroll"));
+
+		await waitFor(() => atBottomCalls.length > 0);
+		// The ↓ button still gets the truth: there is nowhere to scroll.
+		expect(atBottomCalls[atBottomCalls.length - 1]).toBe(true);
+		// Follow intent is left alone.
+		expect(autoScrollCalls).toEqual([]);
+	});
+
+	test("range shrinks but still overflows → still does NOT re-arm follow", async () => {
+		// The case that rules out "does it overflow" as the discriminator:
+		// a log search whose results still scroll. Measured range 1549 → 449,
+		// offset clamped to the new bottom, follow silently re-armed.
+		const { container, atBottomCalls, autoScrollCalls } = await renderLog({
+			autoScroll: false,
+		});
+		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
+		container.scrollTop = 200;
+		container.dispatchEvent(new Event("scroll"));
+		await waitFor(() => autoScrollCalls.length > 0);
+
+		atBottomCalls.length = 0;
+		autoScrollCalls.length = 0;
+
+		mockGeometry(container, { scrollHeight: 400, clientHeight: 300 });
+		container.scrollTop = 100; // clamped to the new max → reads as at-bottom
+		container.dispatchEvent(new Event("scroll"));
+
+		await waitFor(() => atBottomCalls.length > 0);
+		expect(atBottomCalls[atBottomCalls.length - 1]).toBe(true);
+		expect(autoScrollCalls).toEqual([]);
+	});
+
+	test("range GROWS (streaming) → scrolling back down still re-arms follow", async () => {
+		const { container, autoScrollCalls } = await renderLog({
+			autoScroll: false,
+		});
+		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
+		container.scrollTop = 200;
+		container.dispatchEvent(new Event("scroll"));
+		await waitFor(() => autoScrollCalls.length > 0);
+
+		autoScrollCalls.length = 0;
+
+		// Content grew while the user was reading, then they scroll to the end.
+		mockGeometry(container, { scrollHeight: 2000, clientHeight: 300 });
+		container.scrollTop = 1700;
+		container.dispatchEvent(new Event("scroll"));
+
+		await waitFor(() => autoScrollCalls.length > 0);
+		expect(autoScrollCalls[autoScrollCalls.length - 1]).toBe(true);
+	});
+
+	test("stable geometry → scrolling back to the bottom re-arms follow", async () => {
+		// The guard must not break the everyday path.
+		const { container, autoScrollCalls } = await renderLog({
+			autoScroll: false,
+		});
+		mockGeometry(container, { scrollHeight: 1000, clientHeight: 300 });
+		container.scrollTop = 100;
+		container.dispatchEvent(new Event("scroll"));
+		await waitFor(() => autoScrollCalls.length > 0);
+		expect(autoScrollCalls[autoScrollCalls.length - 1]).toBe(false);
+
+		autoScrollCalls.length = 0;
+		container.scrollTop = 690; // distance 10 < 40
+		container.dispatchEvent(new Event("scroll"));
+
+		await waitFor(() => autoScrollCalls.length > 0);
+		expect(autoScrollCalls[autoScrollCalls.length - 1]).toBe(true);
+	});
+});

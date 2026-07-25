@@ -515,10 +515,6 @@ function ProjectContent({
 	const [viewMode, setViewMode] = useState<"activity" | "description">(
 		"activity",
 	);
-	// Per-tab scroll state: { scrollTop, follow }
-	const tabScrollStateRef = useRef<
-		Map<string, { scrollTop: number; follow: boolean }>
-	>(new Map());
 	const [autoScroll, setAutoScroll] = useState(true);
 	// Whether the activity log is scrolled near its bottom (reported by
 	// ActivityLog). Drives the scroll-to-bottom button next to Compact.
@@ -1236,24 +1232,12 @@ function ProjectContent({
 
 	// When set, the next task switch should scroll to this timestamp instead of the bottom.
 	const scrollToEntryRef = useRef<string | null>(null);
-	const prevSelectedTaskRef = useRef<string | null>(selectedTaskId);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only trigger on task selection change
 	useEffect(() => {
 		setViewMode("activity");
 		const targetEntryId = scrollToEntryRef.current;
 		scrollToEntryRef.current = null;
-
-		// Save scroll state of the previous tab
-		const prevTabId = prevSelectedTaskRef.current;
-		if (prevTabId) {
-			const logEl = document.querySelector(".mxd-activity-log");
-			tabScrollStateRef.current.set(prevTabId, {
-				scrollTop: logEl?.scrollTop ?? 0,
-				follow: autoScroll,
-			});
-		}
-		prevSelectedTaskRef.current = selectedTaskId;
 
 		if (targetEntryId) {
 			// Navigation: scroll to specific entry by ID
@@ -1275,34 +1259,24 @@ function ProjectContent({
 				}
 			}, 300);
 		} else {
-			// Normal tab switch: restore previous scroll state or follow.
-			// selectedTaskId is the real id of the viewed task (root included);
-			// no "root" string sentinel needed. Pre-Fix-C this used `?? "root"`
-			// asymmetrically with the SET branch above (which skipped on null
-			// via `if (prevTabId)`), so root's scroll state never persisted at
-			// all — set under nothing, get from "root" → always missed.
-			const tabId = selectedTaskId;
-			const saved = tabId ? tabScrollStateRef.current.get(tabId) : undefined;
-			if (saved) {
-				setAutoScroll(saved.follow);
-				requestAnimationFrame(() => {
-					const logEl = document.querySelector(".mxd-activity-log");
-					if (logEl) {
-						if (saved.follow) {
-							logEl.scrollTop = logEl.scrollHeight;
-						} else {
-							logEl.scrollTop = saved.scrollTop;
-						}
-					}
-				});
-			} else {
-				// First visit to this tab — follow mode
-				setAutoScroll(true);
-				requestAnimationFrame(() => {
-					const logEl = document.querySelector(".mxd-activity-log");
-					if (logEl) logEl.scrollTop = logEl.scrollHeight;
-				});
-			}
+			// Switching tasks lands on the newest content with follow on.
+			//
+			// This is what the app has ALWAYS done — it just used to arrive here
+			// by accident. There was a per-tab {scrollTop, follow} map meant to
+			// put you back where you were reading, and it never worked once: the
+			// save ran in a passive effect, which fires AFTER the commit that
+			// swapped in the new task's filter, so by then the log had already
+			// rendered empty and `scrollTop` read 0. Measured 8/8: every return
+			// to a tab landed at the bottom, never at the saved offset. The map
+			// is gone rather than repaired, so this file states its behavior
+			// instead of arriving at it through a broken restore.
+			//
+			// Whether switching tasks SHOULD remember your reading position is a
+			// product question, still open, and deliberately not answered here.
+			// Answering it needs an address that survives a refetch (the entry
+			// ids in the DOM are a module counter that changes every time), which
+			// is the same thing message deep-links need.
+			requestScrollLogToBottom();
 		}
 	}, [selectedTaskId]);
 

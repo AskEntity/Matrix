@@ -15,7 +15,7 @@ import {
 } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { quoteButtonPosition, selectionQuoteText } from "../quote.ts";
-import { isNearBottom } from "../scroll.ts";
+import { isNearBottom, scrollRange, scrollRangeShrank } from "../scroll.ts";
 import { LogEntryView, ToolCard } from "./ToolCard.tsx";
 import { getEntryText } from "./tools/utils.ts";
 
@@ -126,6 +126,8 @@ export const ActivityLog = memo(function ActivityLog({
 	const scrollAnchorRef = useRef<number | null>(null);
 	const prevLoadingOlderRef = useRef(!!loadingOlderEvents);
 	const prevScrollRequestRef = useRef(scrollToBottomRequest ?? 0);
+	// Last scrollable range seen by handleScroll — see the guard there.
+	const prevScrollRangeRef = useRef(0);
 
 	// Select-to-quote: floating "Ask Matrix" button near the current selection.
 	// Set on mouseup with a valid selection inside the log container; dismissed
@@ -337,7 +339,23 @@ export const ActivityLog = memo(function ActivityLog({
 			el.scrollHeight,
 			el.clientHeight,
 		);
-		onAutoScrollChange(atBottom);
+		// Two different questions, and only one of them this event can answer.
+		//
+		// "Is the log at its bottom right now" — yes, always answerable, drives
+		// the ↓ button. "Does the user want to follow new output" — only if the
+		// user is the reason the offset is here. When the range shrinks the
+		// browser clamps the offset and fires an ordinary scroll event, which
+		// reads as at-bottom and used to re-arm follow; the user then got
+		// yanked to the bottom the moment the content came back. See
+		// scrollRangeShrank for the measured cases.
+		const range = scrollRange(el.scrollHeight, el.clientHeight);
+		const shrank = scrollRangeShrank(prevScrollRangeRef.current, range);
+		// Only handleScroll advances this. Effects that read geometry (e.g.
+		// reportAtBottom) run at commit time, BEFORE the browser dispatches the
+		// clamp's scroll event — letting them update it would hide the very
+		// shrink this guard exists to see.
+		prevScrollRangeRef.current = range;
+		if (!shrank) onAutoScrollChange(atBottom);
 		onAtBottomChangeRef.current?.(atBottom);
 		// The quote button is fixed-positioned; scrolling moves the selected
 		// text away from it. Dismiss instead of tracking.
