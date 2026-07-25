@@ -391,23 +391,54 @@ API can return multiple yield tool_calls in the same assistant turn.
    the real one at wake, so the walker reconstructs them in that order and the live path must match
    or the two drift.
 
-⭐ **The reusable pattern: emit to JSONL for orphan prevention, defer the `messages[]` push so it
-merges with the next user turn.** The same shape solves the compaction-asymmetry bugs — see
-*Compaction Asymmetry* and FIX-5 R8-B#11, which extends `pendingDuplicateYieldExtras` into the
-compactOnly path.
+⭐ **The reusable pattern — CONCLUSION KEPT, REASON REPLACED (2026-07-25).** It used to read: *"emit
+to JSONL for orphan prevention, defer the `messages[]` push so it merges with the next user turn"*,
+justified by role alternation. **Role alternation does not exist** (see *The Anthropic message-shape
+rules, MEASURED*), so that justification only told you "this looks like the last one". The real
+constraint is the one rule 2 above already states, and it is checkable:
+
+> **Deferral is a live/walker BYTE-IDENTITY device, not an API-shape device.** It is REQUIRED when
+> the deferred tool_result is PERSISTED and lands ADJACENT to another in JSONL — the walker's
+> collection loop merges adjacent tool_results into ONE user message, so the live path must too.
+> It is UNNECESSARY when the message it would merge into is TRANSIENT.
+
+Which is why the three sites do not all resolve the same way. `pendingDuplicateYieldExtras` **must
+stay**: nothing separates the extras' results from the real yield's in JSONL (the walker skips
+`message` events), so splitting the live push would require inventing a JSONL boundary event —
+strictly more machinery, not less. The two compaction deferrals **can collapse**: the summarization
+instruction is never persisted at all (`provider-shared.ts` "summarization_request event removed"),
+`messages.length = 0` on success, so that request is never reconstructed and there is nothing to
+stay byte-identical with. See *Compaction Asymmetry* and FIX-5 R8-B#11.
 
 Tests: `drift-lifecycle.test.ts` "2 yield calls in same turn" and "3 yield calls in same turn".
 
 **How it got here** — rule 1 came first ("skip yield/done" was too broad; the invariant is "skip the
-INTENDED orphan"). The first attempt at rule 2 wrote the extras' no-op tool_results as a SEPARATE
+INTENDED orphan"). ~~The first attempt at rule 2 wrote the extras' no-op tool_results as a SEPARATE
 user message, which produced a *new* bug: extras message + the real yield's message = two
 consecutive user messages → API 400 "Messages must alternate roles". Worth keeping because the
 failure is instructive: fixing an orphan by adding a message is how you turn a repair problem into
-an alternation problem, and deferral is what avoids both.
+an alternation problem, and deferral is what avoids both.~~
+
+**SUPERSEDED 2026-07-25 — that 400 never happened.** It was thrown by our own mock; the shape
+(`user[tool_result]` then `user[tool_result, …]`) is ACCEPTED by the real API — both messages open
+with tool_result blocks, so the answering run spans them. Kept because it is the clearest specimen
+of the phantom: a real error message plus an unverified attribution reads exactly like evidence.
+The deferral survives anyway, on the byte-identity ground above — **right mechanism, wrong reason,
+and the wrong reason is what spread.**
 
 ## Compaction Asymmetry
 
-Manual `/compact` injects a summarization instruction as a user message. If the previous loop iteration also pushed a user message (yield tool_result + queue content, done tool_result + queue content), result is two consecutive user messages → API 400 "Messages must alternate roles".
+> ⚠️ **THE PREMISE OF THIS WHOLE SECTION IS A PHANTOM (established 2026-07-25).** Two consecutive
+> user messages are LEGAL — measured against production Anthropic, 19 shapes, see *The Anthropic
+> message-shape rules, MEASURED*. Every "→ API 400" below came from `ValidatingMockAPI`, never from
+> the API. Read this section as the HISTORY of why three `pending*` deferral variables exist.
+>
+> What is still LIVE in here: FIX-5 **R8-B#11** and the too-short-compact consumption (**R8-B#1b**)
+> are REAL — their cause is the *pairing* rule (an assistant's tool_use with no answering
+> tool_result in the request), which was attributed correctly at the time. What is dead: the
+> alternation framing, the **B-L9** diagnosis, and the "latent walker bug" below.
+
+~~Manual `/compact` injects a summarization instruction as a user message. If the previous loop iteration also pushed a user message (yield tool_result + queue content, done tool_result + queue content), result is two consecutive user messages → API 400 "Messages must alternate roles".~~
 
 Seven paths in `provider-shared.ts` have this shape. 3 are clean (`continue;` without pushing user msg). ~~1 is fixed. 3 are deferred via test.todo.~~
 
@@ -422,11 +453,17 @@ duplicate-yield extras in the compactOnly path (FIX-5 R8-B#11). The shape of wha
 where the queue had OTHER messages alongside the compact, so there was nothing empty to bundle the
 deferred tool_result into.
 
-**Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. One user message with `[tool_result, text]` blocks → valid alternation.
+**Fixed** (commit 304fccd): compactOnly pending-yield with empty queue. Defer the yield tool_result push via `pendingCompactYieldToolCall` flag; compact path bundles tool_result into the SAME user turn as summarization text. ~~One user message with `[tool_result, text]` blocks → valid alternation.~~ **The unbundled form — `user[tool_result]` then `user[summarization]` — is equally valid** (measured). This deferral has no remaining justification: the summarization message is never persisted, so there is no byte-identity to preserve. Slated for collapse.
 
-**Pattern**: emit to JSONL for orphan prevention, defer messages[] push to merge with next user turn. Same as duplicate-yield fix (19995b9).
+~~**Pattern**: emit to JSONL for orphan prevention, defer messages[] push to merge with next user turn. Same as duplicate-yield fix (19995b9).~~ **Re-derived** — see the ⭐ block in *Duplicate Yield Handling*: deferral is a byte-identity device, and it is required only when the deferred tool_result is persisted next to another one. That is true of the duplicate-yield case and false of both compaction cases.
 
-**Latent walker bug** (deferred): walker reading `[tool_result, messages_consumed, summarization_request]` produces two consecutive user messages. Proper structural fix: summarization_request should append to the current user turn, not create a separate one. Requires matching live + walker changes for byte-identical output. Documented as test.todo in drift-lifecycle.test.ts.
+~~**Latent walker bug** (deferred): walker reading `[tool_result, messages_consumed, summarization_request]` produces two consecutive user messages. Proper structural fix: summarization_request should append to the current user turn, not create a separate one. Requires matching live + walker changes for byte-identical output. Documented as test.todo in drift-lifecycle.test.ts.~~
+
+**NOT A BUG (2026-07-25).** That walker output was run through the real walker and checked against
+the measured rules: `user[tool_result, text, text]` followed by the summarization user message —
+the tool_result leads its turn, so the yield is answered, and the following consecutive user
+message is fine. Verified verbatim against the live API. The `test.todo` in
+`drift-lifecycle.test.ts` describes a shape that works; it should be deleted, not implemented.
 
 ## API 400 → crash → repair-on-next-launch
 
@@ -645,6 +682,14 @@ paths so a long-lived signal doesn't accumulate listeners) + after it `if (signa
 abandon the retry loop. **Test with stopTask (no timeout), NOT stopAgent (its 1s race masks the block).**
 
 ### B-L9 — done-resume + compactOnly → consecutive user messages → API 400 (FIXED)
+
+> ⚠️ **PHANTOM (2026-07-25).** There was no 400. `pendingCompactDoneToolCall` was built against a
+> mock-only rule; the unbundled shape is accepted by the real API. The mechanism works and is
+> harmless, but it has no reason to exist — slated for collapse alongside
+> `pendingCompactYieldToolCall`. See *The Anthropic message-shape rules, MEASURED*. Everything
+> below is history, including the "Reachability trick", whose last sentence names the mock's
+> fictional check as the detection mechanism — which is exactly how the phantom stayed alive.
+
 `provider-shared.ts` pendingDoneToolCall handler did NOT check `compactOnly` (the yield path already did
 via `pendingCompactYieldToolCall`). When the ONLY wake message during a done-resume was /compact, it
 pushed the done tool_result as its own user message, then the compact block pushed the summarization as
@@ -694,6 +739,15 @@ rebuilding context (no session_config, no compacted_resume). On restart,
 so the assistant tool_use has a matching result.
 
 ### R8-B#2 — duplicate done() → emit results for ALL dones
+
+> ⚠️ **PHANTOM, and this one COST something (2026-07-25).** The diagnosis below is accurate right
+> up to "two separate user messages", and then wrong: that shape is `user[tool_result]`
+> `user[tool_result]`, which the real API ACCEPTS — both messages open with tool_result blocks so
+> the answering run spans them. Verified by feeding this exact event sequence through the real
+> walker. **So the trade-off recorded in the last sentence — the agent losing its done-resume
+> context and getting a generic interrupted resume — was paid for a bug that does not exist.**
+> Reverting is therefore a BEHAVIOR FIX, not a cleanup; do not treat it as a risky style revert.
+
 Two done tool_calls both exited as orphans. On resume, repair placed the interrupted
 result AFTER lifecycle events (agent_end, done_notified). The walker tool_result
 collection loop broke at those lifecycle events → two separate user messages → API 400
@@ -709,11 +763,23 @@ compactOnly compact path ignored them → extras tool_results were dangling → 
 Fix: compact summarization path and too-short path both include extras in the bundled
 user turn.
 
+✅ **REAL — and correctly attributed at the time (re-verified 2026-07-25).** "Dangling" is the
+*pairing* rule, not alternation: the assistant's extra `tool_use` blocks had no answering
+`tool_result` in the compaction request. Its sibling R8-B#1b (the too-short branch consuming the
+same pendings) is real for the identical reason. **When the two compaction deferrals collapse, this
+requirement does NOT go away** — the extras still have to be pushed, just as their own
+`user[tool_result…]` message ahead of the rest. Form changes, obligation stays. Worth noting that
+these two entries sit inches from B-L9 and R8-B#2 in the same file and are the ones that got it
+right; the wording is nearly identical, so read the *mechanism* rather than pattern-matching the
+sentence.
+
 ### Pre-existing issue found (not fixed here): compact messages never get messages_consumed
 `handleImplicitYield` filters compact messages from `nonCompact` and `recordQueueEvents`
 only records nonCompact. On restart, `findUnconsumedMessages` re-enqueues the compact →
-spurious `manualCompactRequested` on next session. Usually benign but can cause
-consecutive user messages during done-resume with compact.
+spurious `manualCompactRequested` on next session. Usually benign but ~~can cause
+consecutive user messages during done-resume with compact.~~ **that consequence was the phantom
+(2026-07-25) — consecutive user messages are legal.** The re-enqueue itself is still real; it just
+has no known bad effect.
 
 ## fable silent-turn → silent idle + agent date-blindness (2026-07-15, from closed task 01KWYCYA)
 
@@ -1175,9 +1241,17 @@ interrupted results. New helper `lastToolCallEvent(events)`.
 ### Status-message structural guard (required once B-L8 lands)
 Strategy 2's status message is a synthetic **user** message. If the kept region ends in an
 unresolved intended-orphan yield/done (now skipped, not given a result), appending a user message
-after it breaks assistant→tool_result alternation → API 400. Guard: append the status message only
-when `!endsInPendingControl`. When the session ends in pending yield/done, it correctly resumes in
-that state (no API-forcing user message).
+after it breaks ~~assistant→tool_result alternation~~ **the tool_use PAIRING rule** → API 400. Guard:
+append the status message only when `!endsInPendingControl`. When the session ends in pending
+yield/done, it correctly resumes in that state (no API-forcing user message).
+
+✅ **REAL — verified 2026-07-25, keep the guard.** Removing it produces `assistant[text, tool_use]`
+followed by `user[string]`: the answering run is empty, so the tool_use is unanswered → genuine
+400 *"`tool_use` ids were found without `tool_result` blocks immediately after"*. Only the WORDING
+was wrong — "alternation" is the fictional rule (see *The Anthropic message-shape rules,
+MEASURED*), and this guard has nothing to do with it. A useful contrast with B-L9 / R8-B#2 in the
+same file: same vocabulary, opposite verdict. **The word "alternation" in this codebase is not a
+reliable signal of anything — go read what the shape actually is.**
 
 ### D#1 — `source: "system" as never` rendered to an EMPTY string
 Strategy 0's reason message forced an illegal `source: "system"`; `formatBodyForAI`'s `default`
@@ -5797,6 +5871,34 @@ Drift between prompt claims and tool reality is a **silent failure mode**. Integ
 - Test counts are not recorded here — `bun test` prints them and any number written down starts
   rotting immediately. (This bullet used to say "~1976 tests, 4 skipped".)
 
+## ⚠️ Every `throw` in a test double must quote the real error it mirrors (2026-07-25)
+
+**Rule, for ANY test double — not just `ValidatingMockAPI`:** when a fake rejects something on the
+grounds that the real system would reject it, the rejection message must carry **the real system's
+own error string**. If you cannot quote it, you have not verified it, and it does not belong in a
+predicate named after the real system.
+
+**Why this rule and not "be careful":** it moves the failure to the moment of WRITING. The claim
+that cost us four production mechanisms propagated as a parenthesis in a bug report — *"Error from
+ValidatingMockAPI (matches real Anthropic)"* — which nobody ever checked. Under this rule the author
+would have gone looking for the API's wording, found none, and stopped there. **A rule is worth
+what its failure mode is worth, not what it says.**
+
+**Corollary — separate OUR expectations from THEIR rules, by name.** A check we want but the API
+does not enforce is fine; it just may not live inside something called `validateRequest` /
+`assertValidApiMessages`. Give it its own name (`assertNoEmptyContent`) and let tests opt in. **A
+style rule hidden inside an API-validity predicate gets cited later as API behavior** — that is
+precisely how the alternation fiction became a documented fact.
+
+**Corollary — a fake that is STRICTER than the real system is not "safe".** It manufactures phantom
+bugs, and phantom bugs get fixed with real complexity. Strictness in a test double is not a
+conservative choice; it is an unverified claim about the system under test.
+
+Detection heuristic for auditing an existing double: **do not audit whether the assertions are
+correct — ask whether the rule being ENFORCED is the same rule that is DOCUMENTED.** Where those two
+fork is where a fiction starts producing evidence. Full case study: *The Anthropic message-shape
+rules, MEASURED*.
+
 ## Canonical user journey test is MANDATORY
 
 If the feature's name or description describes a user action — "fresh-install bootstrap", "sidebar toggle on desktop", "auto-save preserves output", "production mode blocks agent" — there MUST be a test that **performs that exact user action and asserts the user-observable result**. Testing subcomponents, supporting algorithms, and edge cases does not substitute.
@@ -6537,11 +6639,15 @@ section: an older note claiming "only root's commits on main are gated" — that
 
 ## Known Bugs (unfixed)
 
-- Manual compaction during yield → consecutive user messages → API 400. **The live list of open
-  paths is the `test.todo` set in `drift-lifecycle.test.ts`** — read it rather than trusting a count
-  here. Shape of what remains: compact arriving in the SAME drain as a regular message, so there is
-  no empty queue to bundle the deferred tool_result into. The compact-ONLY variants (yield-side and
-  done-side) and the duplicate-yield-extras variant are fixed; see *Compaction Asymmetry*.
+- ~~Manual compaction during yield → consecutive user messages → API 400.~~ **NOT A BUG — RESOLVED
+  BY MEASUREMENT 2026-07-25.** Consecutive user messages are legal; the remaining `test.todo` in
+  `drift-lifecycle.test.ts` describes a shape that works (verified through the real walker and
+  against the live API). See *The Anthropic message-shape rules, MEASURED*.
+- **Reachable, real, and open**: `/compact` on a session with `messages.length <= 4` whose last
+  message is an assistant turn sends a request ending in assistant → 400 *"does not support
+  assistant message prefill"*. A fresh agent whose first turn ends with `end_turn` reaches it with
+  no further setup. Pinned by `src/reachable-400-snapshot.test.ts` (a BEHAVIOR SNAPSHOT — it
+  asserts the CURRENT, buggy shape).
 
 ## Vertical Dependency Boundaries
 
@@ -6690,3 +6796,147 @@ Also, twice in one session, a first measurement measured the wrong element: `log
 "load earlier" bar, not an entry, so "the first node is still attached" was true on a build that
 remounts everything. Same shape as the viewport task's container-vs-content error. **Check what your
 selector actually points at before believing a null result.**
+## The Anthropic message-shape rules, MEASURED (2026-07-25) — and the fictional one we built on
+
+⚠️ **`ValidatingMockAPI` enforced a role-alternation rule that DOES NOT EXIST.** 628 occurrences of
+"Messages must alternate roles" in our JSONL history; **every one came from our own mock, none from
+the API.** Four mechanisms, one `test.todo` and one memory "⭐ reusable pattern" were built to avoid
+a 400 that cannot happen. Full audit + per-mechanism verdicts: task **01KYCQ856M3Z6F4EN247C4GW69**.
+
+### The rules, as measured against production Anthropic (19 shapes, OAuth, `claude-opus-5`)
+
+1. **First message must be `user`.** (mock had it ✅)
+2. **The conversation must END with a `user` message.** Ending on assistant →
+   400 *"This model does not support assistant message prefill."* (mock did NOT have it ❌)
+3. **The tool-answering rule — and it is NOT "in the next message":**
+
+   > Flatten the user messages after an assistant-with-`tool_use` into one block stream. Take the
+   > **maximal LEADING run of `tool_result` blocks**. It crosses message boundaries freely; **any
+   > non-`tool_result` block ends it** — including a *trailing* text block in an otherwise-fine
+   > message, and including a plain-string user message. Every `tool_use` must be answered inside
+   > that run.
+
+4. **Every `tool_result` must answer a `tool_use` in the preceding assistant message** (orphan →
+   400). (mock had it ✅)
+5. **Consecutive same-role messages are LEGAL** — user/user, user/user/user, and assistant/assistant
+   all accepted. (mock forbade ❌ — the fiction)
+6. **Empty content is LEGAL** — `""`, `[]`, and `[{type:"text",text:""}]` all accepted. (mock
+   forbade ❌ — a second, unnoticed fiction)
+
+Consequences of rule 3 that nothing tests today:
+- results **split across several user messages** are fine (`[R1] [R2] [R3,text]` ✅), in **any order**
+- `[R1, text]` then `[R2, …]` is **400** — the trailing text ended the run before R2
+- `[text, R1]` is **400** — block ORDER inside the message matters
+- ⭐ **`buildUserTurn` packs `[...tool_results, ...queueMessages]`, tool_results FIRST. That order is
+  a real API requirement, not style.** Put text before a tool_result, or between two batches of
+  them, and you get a production 400 with a fully green suite.
+
+### Reachable bug this exposed (BEHAVIOR SNAPSHOT test, `src/reachable-400-snapshot.test.ts`)
+
+`provider-shared.ts` "context too short to compact" (`manualCompactRequested && messages.length <= 4`):
+a fresh agent whose first turn ends with `end_turn` has `messages = [user, assistant]`; `/compact`
+takes the compactOnly path → `continue` → the too-short branch clears the flag and `continue`s with
+nothing to push → next iteration sends a request **ending in assistant** → 400. Reproduced
+end-to-end through the real agent loop; the agent crashes. **No new code needed to reach it.**
+
+### ⭐ The general lesson — how a fictional rule gets installed
+
+`jsonl-stress.test.ts`'s `assertStructurallyValidApiMessages` wrote down BOTH rules in the same
+comment, then chose:
+
+> *"We don't assert the trailing-role rule because some walker outputs are intermediate and meant to
+> be extended. We DO assert the alternation and structural shape."*
+
+**That reasoning is correct.** Some walker outputs genuinely are conversation *prefixes* that end on
+assistant; asserting the real rule would redden correct fixtures. So:
+
+> **An inconvenient TRUE assertion + a conveniently-green FALSE one ⇒ the false one gets installed,
+> and is then believed as fact.** The fiction does not win on persuasiveness — it wins on **not
+> causing trouble**. Once it lives inside a `throw` it starts MANUFACTURING EVIDENCE: 628 error
+> strings from the rule that was *executed*, 0 from the rule that was merely *documented*. **The
+> knowledge was never lost; the enforcement was.**
+
+**Detector — do not audit whether the assertions are correct** (that comment was entirely correct).
+Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
+fork is where the fiction starts producing evidence.
+
+**The name is the other tell.** `assertStructurallyValidApiMessages` fuses two different predicates:
+*structurally valid* (a prefix property) and *API messages* (a sendable-request property). The code
+can only be one of them, so it silently became the weaker one plus a fictional bonus — 2 of its 5
+listed rules fictional, 1 true but deliberately unasserted. **A name that claims "valid" without
+saying valid-for-what will drift to "matches what we imagined".** The way out is two predicates:
+a *prefix* check and a *sendable* check. **Shipped as `src/test-utils/api-message-rules.ts`:**
+`wellFormedPrefixViolations` (first-must-be-user; pairing, but an answering run that simply RUNS OFF
+THE END of the array is incomplete rather than broken; orphan tool_results are violations at any
+position) and `sendableRequestViolations` (all of that, plus trailing-role, plus the last
+assistant's tool_uses must be answered by now). `ValidatingMockAPI.validateRequest` is the sendable
+one; `jsonl-stress.test.ts`'s helper is the prefix one, renamed `assertWellFormedPrefix`.
+`emptyContentViolations` holds the non-rule, opt-in, under a name that says it is ours.
+
+**Note the second half of the trap**: the PAIRING rule has the same intermediate-state problem the
+trailing-role rule has (an assistant's tool_results legitimately arrive after the prefix ends). So
+whoever tried to assert the true rules with only one predicate available would have gone red on
+correct fixtures *twice*, not once. **Courage was not the missing ingredient; the concept was.**
+That is what makes this a structural failure rather than a lapse — and it is why the fix is a new
+type of assertion, not a stricter one.
+
+Sibling entries, same family: *"a real error message + an unverified attribution beats a pure guess,
+because it arrives wearing evidence's clothes"* — the phrase that propagated this one was an
+offhand "(matches real Anthropic)" that nobody checked. And *"an accurate observation + an
+over-broad generalisation is harder to challenge than a guess, because it arrives with a number"*
+(Which messages can be edited/rewound).
+
+### Probing the real API: the `systemPreamble` trap
+
+Any probe against the OAuth endpoint **must send the auth group's `systemPreamble` as the FIRST
+system block**, or every call 429s. A first-pass probe that omitted it produced a wall of rate
+limits that reads exactly like validation failure — nearly yielding the opposite conclusion. Probes
+live in `/tmp/alt-probe/` (`probe2.ts`-`probe6.ts` = API shapes, `walker-shapes.ts` = runs disputed
+shapes through the real walker and checks them against the measured rule). They read `oauthToken`
+from config and never print it.
+
+### What the measurement cost, and the one number that reframes it
+
+Full `bun test` with the mock progressively made realistic (env-gated during the experiment, now
+shipped): **A** (drop alternation) 2774/2 — one is the mock's own self-test of the fiction, one a
+known teardown flake that did not recur; **B** (+ trailing-role) 2776/1; **C** (+ the real pairing
+rule) 2776/1. In every variant **the only real failure was the mock's self-test of the fictional
+rule.** The realistic mock was a drop-in: nothing depended on the fiction and the true rules cost
+nothing to adopt — they were simply never asked for.
+
+⭐ **Zero existing tests went red when the true rule was added, and that is the finding, not a
+disappointment.** The expectation going in was "some tests will red, and those reds are assets".
+They didn't, because `validateRequest` only ever sees requests the loop actually decided to send —
+and the loop only sends when its state is right, *except* on the one reachable bug, which had no
+test at all. **The fiction was not masking existing tests. It was masking the fact that nobody had
+written the missing one.** A gap does not turn red; it stays invisible until someone goes looking,
+which is why the probe had to be written by hand rather than discovered by running the suite.
+
+### What DID go red: swapping the fused helper for the two real predicates (10 tests)
+
+Splitting `assertStructurallyValidApiMessages` into prefix/sendable and giving both the measured
+rules turned 10 tests red. **Every one was a fixture that could never be sent to the API, and none
+of them was fixed by loosening a rule** — they were fixed by making the fixture a real
+conversation. Two shapes:
+
+- **6 walker fixtures produced assistant-first output** — no leading user message, because the
+  fixture only cared about the assistant/tool region. Given a `user` head, they assert exactly what
+  they always did.
+- **4 prefix-byte-comparison fixtures opened with an orphan `tool_result`** — no assistant carrying
+  the matching `tool_use`, because those tests are about byte diffing, not conversation validity.
+  Given a real head, likewise unchanged.
+
+One did NOT get a head, and it is the interesting one: the dirty-JSONL scenario table contained
+`orphan assistant_text with no user message before it` under the blanket claim *"walker produces
+valid structure"*. It doesn't — that output is assistant-first and the API rejects it. Moved to its
+own BEHAVIOR SNAPSHOT. **Not hypothetical**: FIX-5 R8-B#1 records a session permanently bricked by
+exactly this shape (a bare `compact_marker` left `readActive()` starting on an assistant turn),
+quoting the same API error.
+
+⭐ **The count that says how far this went.** The old helper's own comment listed five things it
+was about. Of the FOUR rules the API actually has, it enforced **none**: never checked
+first-must-be-user, explicitly skipped trailing-role, never checked pairing or orphans. What it did
+enforce was role-is-one-of-two (a type constraint) plus the two fictions. **A helper named
+`assertStructurallyValidApiMessages`, called from 10 sites, enforced zero real API rules for
+months** — and looked like coverage the whole time. That is the shape to watch for: not a wrong
+assertion, but a *confident name over a predicate nobody re-derived from the source of truth*.
