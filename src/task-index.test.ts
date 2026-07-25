@@ -7,6 +7,7 @@ import {
 	_clearDbCache,
 	_setEmbeddingPipeline,
 	_waitForBackgroundIndexing,
+	batchDocs,
 	indexTask,
 	reconcileIndex,
 	reconcileIndexDeferred,
@@ -640,9 +641,9 @@ describe("task-index: hash-keyed staleness", () => {
 		const legacy: Record<string, unknown> = {};
 		for (const node of [tracker.getTask(a.id)!, tracker.getTask(b.id)!]) {
 			const ids = [`${node.id}:title:`, `${node.id}:description:`];
-			(node.resultRounds ?? []).forEach((_, i) =>
-				ids.push(`${node.id}:result:${i}`),
-			);
+			(node.resultRounds ?? []).forEach((_, i) => {
+				ids.push(`${node.id}:result:${i}`);
+			});
 			legacy[node.id] = { indexedAt: node.updatedAt, docIds: ids };
 		}
 		// The root task too — it is in the tree and therefore in the sidecar.
@@ -786,7 +787,7 @@ describe("task-index: hash-keyed staleness", () => {
 	// ── A failed embedding must not be recorded as done ──
 
 	test("a document whose embedding fails is retried on the next pass", async () => {
-		const t = tracker.addTask("Retry title", "retry body");
+		tracker.addTask("Retry title", "retry body");
 		const vec = new Array(768).fill(0);
 		vec[0] = 1;
 		let failing = true;
@@ -913,5 +914,57 @@ describe("task-index: a non-finite embedding is a defect, never a value", () => 
 		_setEmbeddingPipeline({ embed: async () => [1, 2, 3] });
 		await reconcileIndex(dbPath, tracker);
 		expect(await searchIndex(dbPath, "dimword")).not.toHaveLength(0);
+	});
+});
+
+describe("task-index: batching packs by length", () => {
+	const doc = (text: string): Parameters<typeof batchDocs>[0][number] => ({
+		taskId: "t",
+		id: `t:x:${text.length}:${Math.random()}`,
+		field: "x",
+		round: "",
+		text,
+		hash: "h",
+	});
+
+	/** What a batch actually costs the model: count × its longest member. */
+	function paddedWork(batches: ReturnType<typeof batchDocs>): number {
+		return batches.reduce(
+			(sum, b) => sum + b.length * Math.max(...b.map((d) => d.text.length)),
+			0,
+		);
+	}
+
+	test("length-sorted packing beats input order on a realistic mix", () => {
+		// The real matrix tree's shape: mostly short, a long tail. Interleaved,
+		// which is how a tree walk produces them.
+		const docs = [];
+		for (let i = 0; i < 200; i++) {
+			docs.push(doc("t".repeat(200)));
+			if (i % 10 === 0) docs.push(doc("r".repeat(4000)));
+		}
+		const actual = docs.reduce((a, d) => a + d.text.length, 0);
+		const sorted = paddedWork(batchDocs(docs));
+
+		// Every document appears exactly once, whatever the grouping.
+		expect(batchDocs(docs).flat()).toHaveLength(docs.length);
+		// And the padding overhead stays close to 1×. Without the sort this mix
+		// pads every short title up to 4000 characters — measured 3.2× on the
+		// real tree, and the model pays for every one of those characters.
+		expect(sorted / actual).toBeLessThan(1.3);
+	});
+
+	test("one huge document travels alone rather than dragging a batch up", () => {
+		const batches = batchDocs([
+			doc("a".repeat(40_000)),
+			...Array.from({ length: 40 }, () => doc("b".repeat(50))),
+		]);
+		const huge = batches.find((b) => b.some((d) => d.text.length === 40_000));
+		expect(huge).toHaveLength(1);
+	});
+
+	test("batches respect the count cap", () => {
+		const batches = batchDocs(Array.from({ length: 100 }, () => doc("x")));
+		for (const b of batches) expect(b.length).toBeLessThanOrEqual(32);
 	});
 });

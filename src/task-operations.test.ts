@@ -1103,7 +1103,13 @@ describe("task operations keep the search index in step", () => {
 			"agent",
 			withIndex(),
 		);
-		await updateTaskOp(tracker, node.id, { color: "red" }, "agent", withIndex());
+		await updateTaskOp(
+			tracker,
+			node.id,
+			{ color: "red" },
+			"agent",
+			withIndex(),
+		);
 
 		expect(embedCalls).toEqual([]);
 		expect(

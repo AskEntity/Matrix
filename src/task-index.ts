@@ -528,7 +528,7 @@ function taskRows(
 
 // ── Plan ──
 
-interface PlannedDoc {
+export interface PlannedDoc {
 	taskId: string;
 	id: string;
 	field: string;
@@ -739,12 +739,22 @@ function toStoredVector(v: number[] | undefined): {
  * Group documents so that `count × longest member` stays under the work cap.
  * Padding is to the longest member, so a single 40KB result round travels
  * alone rather than dragging 31 short titles up to its length.
+ *
+ * SORTED BY LENGTH first, and that is not tidiness — it is most of the win.
+ * A batch costs `count × longest`, so mixing a 4000-character result round in
+ * with 31 titles makes all 32 cost 4000. Measured on the real matrix tree
+ * (1124 documents, 1.49M characters, p50 206 / p90 3988 / max 19284):
+ * tree order pads to 4.74M character-equivalents (3.2× waste), length-sorted
+ * pads to 1.58M (1.1×). Same documents, same cap, one `sort`.
+ *
+ * Order is otherwise irrelevant — document ids are content-derived, and the
+ * only thing it changes is which documents land before each flush checkpoint.
  */
-function batchDocs(docs: PlannedDoc[]): PlannedDoc[][] {
+export function batchDocs(docs: PlannedDoc[]): PlannedDoc[][] {
 	const out: PlannedDoc[][] = [];
 	let cur: PlannedDoc[] = [];
 	let longest = 0;
-	for (const d of docs) {
+	for (const d of [...docs].sort((a, b) => a.text.length - b.text.length)) {
 		const nextLongest = Math.max(longest, d.text.length);
 		if (
 			cur.length > 0 &&
