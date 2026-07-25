@@ -2691,6 +2691,10 @@ in unfamiliar areas.
 - `formatTieredHits` is shared between search_tasks and create_task (same formatting,
   different `fullCount` and header).
 
+---
+# Daemon, Worker & Transport
+---
+
 ## Durability at process boundaries (FU2)
 
 Three tightly-coupled durability gaps closed so process exits + stops don't lose data:
@@ -3408,8 +3412,11 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_k
 
 ### Defaults that close the "LAN-open window"
 - Fresh daemon auto-initializes `auth.json` with `jwtSecret` + `secretVersion=1`
-  during `createDaemon`. Production callers get this by default; tests opt out
-  via `createDaemon({ autoInitAuth: false })`.
+  during `createDaemon`. ~~Production callers get this by default; tests opt out
+  via `createDaemon({ autoInitAuth: false })`.~~ **There is no opt-out** — the
+  parameter was deleted in Audit R7 P1.3 and auth is now unconditionally on for
+  every daemon boot, tests included (they mint a token instead; see the migration
+  note in that entry). This bullet contradicted P1.3 in the same file.
 - Production entry binds `127.0.0.1` unless `MXD_BIND_HOST` is set. Previous
   default `*:7433` was LAN-reachable during the bootstrap window.
 
@@ -4941,7 +4948,8 @@ Drift between prompt claims and tool reality is a **silent failure mode**. Integ
 - `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation, **strict tool-error mode**.
 - Mock DSL: `{"blocks": [...]}` or `{"turns": [...]}` with assert/capture.
 - `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
-- ~1976 tests (unit + integration). 4 skipped (E2E).
+- Test counts are not recorded here — `bun test` prints them and any number written down starts
+  rotting immediately. (This bullet used to say "~1976 tests, 4 skipped".)
 
 ## Canonical user journey test is MANDATORY
 
