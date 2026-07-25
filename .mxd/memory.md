@@ -250,6 +250,21 @@ changelog, and a changelog is what every reader pays for on every launch.
 **Compression is not terseness.** Line count falls because seven sections became one, not because
 sentences became telegrams. Write every surviving sentence out properly.
 
+⭐ **This file has a RATE, not a size — so a line-count target is the wrong instrument.** Measured
+2026-07-25: sixteen sections dated that single day accounted for **1,784 of the file's 7,617 lines,
+23%**, and about **960 lines** after being rewritten at compressed density. **One heavy day produces
+more than a 1,000-line target would allow the whole file to be**, so any such target is met once and
+then exceeded within a week by ordinary work. What holds is a rule with a trigger — merge a region
+when it passes some size, re-derive the criterion every Nth pass — because a number only decides how
+much gets destroyed on the day it is chosen.
+
+⭐ **The rate control we have was adopted by accident, and it is the write-time gate this file never
+had: tasks no longer append here.** They report what they learned in their `done()` result, and one
+curator with the whole file in view integrates it. It was introduced to stop parallel tasks
+conflicting on one file, and it turned out to do something much more valuable — the curator can see
+that a round's findings belong in three different places, and can spend 117 net lines where an
+appending task would have left a 200-line section wherever that task happened to live.
+
 ⚠️ **File a task's memory output BY SUBJECT, not where the task lived.** A round's findings are
 rarely one thing: a walker rewrite also produced two lessons about mutation harnesses and one about
 how prose rots. Filing all of it under the walker buries the other two where only someone already
@@ -1575,6 +1590,16 @@ assistant, and asserting the real rule would redden correct fixtures. So:
 ⚠️ **Detector — do not audit whether the assertions are correct.** That comment was entirely correct.
 Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
 fork is where a fiction starts producing evidence.
+
+**The class is not confined to code, and the cheapest instance to guard against is reading.** A
+short instruction was given a coherent interpretation that fit its words, and acting on that reading
+would have deleted 660 lines of this file; the reading was defended with "a revert restores anything
+lost", which is true and beside the point — **the revert restores the lines, not the hour.** Same
+shape as the two fictions above: a plausible account, held with more confidence than its evidence
+carried, silently lowering the bar for the check that would have caught it. ⭐ **When an instruction
+is short and the action it licenses is irreversible or expensive, one clarifying question is always
+cheaper than a confident reading.** The temptation is strongest exactly when the reading is
+coherent, because coherence feels like confirmation.
 
 **An over-strict test double bills you three ways, and the third leaves no artifact.** It creates
 complexity you pay for (the four mechanisms). It hides gaps — a fiction occupying the "role rules"
