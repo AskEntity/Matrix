@@ -166,6 +166,51 @@ written in the mechanism's own comment as an accepted trade-off. One such block 
 `done()` tool_call, which made resume detect a generic interrupted-resume instead of a done-resume,
 so the woken agent silently lost its done-resume context. Reverting it was a behavior fix.
 
+---
+
+## Deleting a mechanism whose premise YOUR OWN change just voided — and what happens to its tests
+
+Worked example (2026-07-25) for the rule stated under *Deleting a mechanism built on a false
+premise: separate the PREMISE from the OBLIGATION*, and the first instance where all three checks
+came out "delete". The activity log stopped rendering `▶ Agent started` / `⏹ Agent stopped` —
+`agent_start` and `agent_end` are still emitted, persisted and processed, and **both `case` bodies
+in `.mxd/plugin/web/event-handler.ts` still exist for their `sideEffects` alone**: one sets the
+provider/model display, the other the five values behind the token badge. ⚠️ Deleting a whole
+`case` because its visible output is gone blanks those with nothing red and no visible connection
+to a commit about hiding two lines.
+
+Removing the two `entries.push` calls also killed `collapseLifecycleEntries`, which folded runs of
+consecutive lifecycle entries down to the last one:
+
+- **Premise** — "restart bookkeeping produces runs of visual noise" — void, because that noise IS
+  what the change removes.
+- **Obligation** — empty. The sole remaining `type: "lifecycle"` producer is the interrupt notice,
+  and two of those cannot become adjacent: the notice is written AT the park, so a second one needs
+  the agent to have woken, which needs a message, which renders between them.
+- **Cost** — real, which is what makes "harmless, leave it" wrong here. It replaced in place
+  (`result[first] = last`), so the day a second lifecycle producer arrived, two distinct entries
+  would have rendered as one, carrying the last one's content at the **first one's timestamp**. Not
+  a neutral leftover; a latent wrong answer parked in the code waiting for a new caller.
+
+⭐ **The transferable half is what happens to the dead mechanism's TESTS, and the honest-looking
+move is the wrong one.** Four tests covered the collapse. They were not assertions that the deleted
+lines render, so *"invert rather than delete"* — the right rule for the tests of a removed feature —
+does not reach them: with no producer left they would assert "nothing collapsed because nothing was
+produced", which passes against every implementation including a deleted one. Three options, one
+right: delete mechanism and tests together; keep both and RE-AIM the tests at the surviving
+producer; or keep the mechanism with no coverage. **Re-aiming is the trap**, because it silently
+pins, as intended behaviour, whatever the mechanism happens to do to a producer it was never
+designed for — here "collapse two distinct user interrupts into one, at the wrong timestamp",
+chosen by nobody and thereafter defended by a test.
+
+⚠️ **A guard on an unreachable state has to say IN THE TEST that it is a contract test, or the next
+reader deletes it.** The replacement pins "processEventBatch does not collapse lifecycle entries" as
+a property of the whole `lifecycle` category, which will get producers that do not exist yet — it is
+not a scenario, because today's scenario cannot occur, and someone reading it as one will try to
+reproduce it, fail, and conclude the test is wrong. It asserts both entries' **timestamps** rather
+than their count, because the failure being guarded is content-and-position substitution, and a
+count assertion passes against a collapse that kept two entries for some other reason.
+
 ## Where agents predictably go wrong
 
 These are not hypotheticals; each has cost us real work.
@@ -397,6 +442,67 @@ disappeared"*, which is addressed to nobody.
   moment*. A promise whose trigger exists only in one agent's context does not survive that agent
   being interrupted, and it fails silently because nothing records that it was owed.
 
+## Editing the system prompt
+
+The system prompt is **universal** across every project that uses Matrix. Each project has its own
+`memory.md`, and agents elsewhere see the shared prompt plus THEIR memory — never ours. So:
+
+- **Prompt**: principles, roles, tool semantics, communication patterns, task lifecycle, craft —
+  anything true for any project using Matrix.
+- **This file**: matrix-internal implementation, architecture, pitfalls, design decisions.
+
+⚠️ **The limit on that rule, established by trying it: the craft lessons in this file cannot be
+relocated to the prompt, and the attempt is the proof.** It looks correct — "universal lessons belong
+in the universal prompt" follows directly from the split above — and it was executed far enough to
+measure. Applying "when in doubt keep the local instance" shrank the movable part from an estimated
+310 lines to **82**, because **each rule here is welded to the specific thing that happened, and the
+weld is what makes it work.** A craft rule in the prompt with no evidence is a platitude every agent
+reads past; the same rule sitting next to the afternoon it cost is an argument. Separating them
+leaves a platitude there and a stranded anecdote here, and neither half does the job the whole did.
+The general-moves/local-stays split is still right for a genuine **duplicate** — where the prompt
+already states the principle and this file repeats it. It fails here because there is no duplicate:
+the prompt has the principle and this file has the only evidence for it.
+
+**The one matrix-internal detail the prompt is allowed to expose is the path where pre-compaction
+events are preserved**, because a compacted agent otherwise has no way to read its own history.
+
+⚠️ **Pitfall: "avoid internal" does NOT mean "delete the concept".** Told to strip matrix-internal
+detail, agents delete the whole section. It means strip implementation-specific words and keep the
+agent-experience concept — rewrite without `JSONL`, `checkpoint` and type names, keep the file path
+agents operationally need. **Preserve what agents experience; remove what only implementers reason
+about.**
+
+Read the full prompt before editing it; it is for all Matrix users, not our project notebook. Prefer
+a principle that generates behavior ("tests are our current truth") over a rule specifying one
+behavior ("don't contort architecture for old tests"). Keep explicit rules only where they protect a
+product property, such as the git worktree invariants.
+
+⚠️ **The prompt contradicts itself across sessions and nothing catches it.** Prompt edits rot the
+same three ways this file does, but the **superseded** kind is worse there because of the carrier.
+This file has regions and topical adjacency, so putting a claim next to its refutation is a move you
+can actually perform, and performing it is what makes the contradiction visible. **A prompt has no
+such mechanism** — it is one linear argument, and two sentences sixty lines apart are never brought
+together by anything. It does not present as a conflict either: **both sentences are individually
+true and well written**, and they only cancel when someone holds both at once, which is exactly what
+the linear form prevents. Observed in two commits one session apart, same file, same author: one
+added *"every unfinished break is state you carry, in a context that runs out"*, and the other
+existed to establish *"compaction is a continuation, not a stopping point"* — i.e. to deny the wall
+the first had just asserted. No gate can see this: the prompt is a template literal, so typecheck
+and biome only prove it parses, and the one test touching its content greps for hardcoded branch
+names.
+
+> **Before editing the prompt, read the recent prompt DIFFS, not just the current text**
+> (`git log -p -5 -- src/system-prompts.ts`). The current text tells you what the prompt says; the
+> recent diffs tell you what it has just *started* saying, which is the only place a fresh
+> contradiction can come from. Afterwards, grep the file for the concept you leaned on and read
+> every hit — the sentence that cancels yours will not share your wording.
+
+⚠️ **Why that step gets skipped**, from the same pair of sessions: the round that INTRODUCED the
+contradiction was required to re-read all 436 lines after editing and substituted a targeted grep,
+reasoning *"rather than burn context re-reading 436 lines verbatim"* — while sitting at zero
+compactions. The round that CAUGHT it did the full read, and the full read also found a second,
+subtler collision. **This rule is worth exactly as much as the willingness to pay for it.**
+
 ---
 # How This Project Fools Itself
 ---
@@ -541,6 +647,85 @@ finish the cuts and report the discrepancy after. **Nothing about that is lazy o
 the ordinary shape of finishing what you started**, which is exactly why it needs to be written
 down: the surprising number arrives while you are busy, and "I'll report it when I'm done" costs
 nothing to think and everything if the plan was wrong.
+
+---
+
+## A verification whose reference was produced by the verifier is not a verification
+
+⚠️ **Checking an artifact against a description YOU wrote is a self-consistency check wearing
+verification's clothes, and from the inside it is indistinguishable from the real thing.**
+
+The instance, because the shape is what matters and the shape is invisible without it. A 2026-04-03
+documentation audit reported *"matrix-docs: index.md, why.md, concepts.md, architecture.md,
+getting-started.md — all verified clean"*. Its own session, ~320 events earlier, had sent the docs
+project the numbered change-list those files had just been edited from. So the audit compared the
+docs against its own instructions and found agreement. **Agreement was structurally guaranteed.**
+
+Two properties that make this hard to catch rather than merely embarrassing:
+
+- ⭐ **Distance manufactures the illusion.** 320 events is far more than enough to stop experiencing
+  a list as your own output; by the time it is read back it is simply *the criteria*. The defence is
+  not vigilance, it is asking **where did my reference come from** — a question with a checkable
+  answer, unlike "am I being circular", which has none.
+- ⚠️ **The verdict was `clean`, which is the one verdict that leaves no artifact to review.** A wrong
+  finding can be argued with. "Nothing to report" produces nothing anyone can check, so it is
+  accepted by default and inherited by everyone downstream — here for **115 days**, during which the
+  files were never re-examined.
+
+⚠️ **Corollary that bit the same audit: a "clean" verdict does not even cover the bytes it read.**
+Two commits landed on `architecture.md` AFTER it closed, one of them 12 hours later, and that commit
+introduced the `TreeNode: TaskNode | FolderNode` heading — a type that has never existed — which the
+next reviewer found in ten minutes by reading the table of contents. **Date the artifact, not the
+review**: a verdict names a commit or it names nothing.
+
+The reusable form: **a review is only evidence to the extent its reference is INDEPENDENT of the
+thing reviewed.** Code, a measurement, or a document written by someone else are independent. Your
+own change-list, your own task description, and your own previous summary are not.
+
+## ⭐ A checklist derived from the artifact can only find contradictions, never omissions
+
+**Walk a document and check each claim, and every finding you can possibly produce has the form
+"it says X, the code says Y". You cannot produce "the code has Z and the document has never
+mentioned it", because nothing in the document ever raised Z.** The audit above returned findings
+that were **100% contradictions and 0% omissions**, and that ratio was not a fact about the
+documents — it was a fact about the method.
+
+**This is the addition-list rule from *Gates* in a different medium**, which is the reason to keep it
+here rather than treat it as a documentation lesson: the document's own claims ARE the include-list,
+so it fails in the same silent direction — new subsystems simply are not covered and nothing
+anywhere says so. Measured on the same files: a whole-repo probe for concepts absent from all four
+docs returned **0 mentions** of the plugin layer, the Worker thread, per-plugin data roots, dual
+lenses, `/api/<plugin>/`, `eid`/`parentEid`, the active chain, the search index, embeddings,
+Edit/Rewind, `resultRounds`, or `agent_activity` — twelve subsystems, invisible to claim-checking
+because a document cannot contradict you about something it does not discuss.
+
+**So the omission pass needs its own instrument, and it runs in the opposite direction: start from
+the CODE, enumerate what exists, and ask which of those the reader would form a wrong model
+without.** That last clause is the bound — "the docs don't mention X" is true of a thousand X's, and
+without it the pass never terminates. A grep for each concept-name across the doc set is the cheap
+version and it is where the twelve came from.
+
+⚠️ **The trap for whoever runs it next: the omission pass makes the contradiction pass look
+thorough by comparison** — contradictions come with line numbers and quotes, omissions come with an
+absence, and an absence reads as a weaker finding while being the larger one.
+
+## ⚠️ Auditing a live repo: pin the commit, and expect it to move under you
+
+Mid-audit, the target repo gained two commits and `architecture.md` went **984 → 1015 lines**, which
+silently invalidated every line number collected up to that point and — worse — **fixed one of the
+findings**, so reporting it would have sent another team to re-do work they had just finished.
+
+Three habits, all cheap, none of which occur to you until it has happened once:
+
+1. **Record the target's HEAD when you start and re-check it before you report.** `git log --oneline`
+   costs nothing; a report whose line numbers are off by 31 costs the reader their trust in all of it.
+2. ⭐ **Re-derive line numbers mechanically from anchor TEXT at the end, never carry the numbers you
+   noted while reading.** A ~30-line script that greps each finding's quoted sentence and prints its
+   current line is proof against every edit that does not touch that sentence. Numbers you wrote down
+   by hand are a snapshot of a file that no longer exists.
+3. **Diff the range before re-reading everything.** `git diff <start-head> HEAD -- <file>` told me in
+   one command that exactly one section had changed, so re-verification was one section rather than
+   1015 lines.
 
 ---
 # The Agent Loop
@@ -873,6 +1058,91 @@ that is the part a test must pin. ⚠️ **And a net does not reduce the 11**: i
 visible, not correct. If anything it raises their priority, because you can finally see how often
 they fire.
 
+## The done() payload, and the boundary it defends
+
+`done()` has exactly two agent-facing params: **`status`** (`passed`/`failed`, a runtime control bit
+that routes the node to verify/failed) and **`result`** (required, non-empty — everything the agent
+reports as content). `TaskNode.resultRounds?: DonePayload[]` gets ONE block APPENDED per `done()`,
+never overwritten, so a task woken and re-done N times carries N rounds in call order and the field
+is simply absent until the first done.
+
+`src/done-payload.ts` holds the single schema. Add a content field there and the tool param, the
+type, the stored round and the normalizer all follow — no fan-out. ⚠️ **It imports only zod**, which
+is not an aesthetic choice: both `types.ts` (type layer) and `orchestrator-tools.ts` (tool layer)
+must import it, and anything heavier creates a cycle.
+
+⭐ **The runtime↔plugin boundary, which is the point of the whole design.** The runtime MAY read
+`status` and ONE completion-output string (`doneCompletionOutput(input)` = `input.result`, the
+"what happened" summary sent to the parent and recorded on the `done_notified` marker; every plugin
+has one). The runtime MUST NOT carry the round structure or any content field beyond that string —
+those are read only inside matrix's `onDone`, via `parseDonePayload`, and the runtime hands the raw
+done input through as an opaque `Record`. **The check is a grep**: `resultRounds`,
+`appendResultRound`, `parseDonePayload` and `DonePayload` appear in `src/runtime/*`, `runtime.ts`,
+`provider-shared.ts` and `events.ts` only inside boundary-explaining comments, never in code.
+
+⚠️ **`onDone` returns void, and `done_notified` is always the runtime-standard `{status, result}`.**
+It used to return a plugin struct that got spread into the marker, letting a plugin inject arbitrary
+marker fields — removed, because the marker is write-only (nothing reads its fields; crash recovery
+recomputes from the tool_call) and only a synthetic test used the channel. Do not re-add a
+`T["done"] | void` shape "just in case".
+
+**Testing opacity requires data only the other layer understands.** The robustness test uses a
+non-matrix scope whose `done()` carries `wordCount` and `mood`, and asserts they reach `onDone`
+untouched and never appear in `done_notified`. **Testing with the default plugin's own fields cannot
+distinguish "passed through opaque" from "reconstructed into that plugin's shape"** — both produce
+the same round. Mutation-proofed empirically: reshaping `doneInput` into a fixed struct before
+`onDone` fails exactly that one test out of ~2500, and every matrix resultRounds test still passes.
+
+⚠️ **KNOWN LIMITATION: crash-recovery Phase 2 does not append a resultRound.** It is plugin-agnostic
+runtime code that sets status directly and never calls matrix's `onDone`, so a `done()` whose Phase
+2 was interrupted by a daemon crash loses its round. Wiring it in would either break the boundary
+above or route crash recovery through a plugin hook. The normal path — the overwhelming majority —
+captures correctly.
+
+**`result` is enforced twice, and a rejected `done()` is harmless.** Zod rejects an absent result at
+`executeTool`; `beforeDone` rejects an empty or whitespace-only one with a steering message, before
+the git-clean check. Either way the tool_result is `isError`, and the loop's done-exit is gated on
+`!doneToolResult.isError`, so the loop does not exit, no Phase 2 runs, and no empty round is
+appended — the agent just sees the error and continues.
+
+Four gotchas that will each cost an hour:
+
+- ⚠️ **Zod strips unknown keys** (`z.object(inputSchema).safeParse`, no `.strict()`). So a caller
+  passing an obsolete param name does NOT fail on that param — it fails on the required one that is
+  now missing, which points at the wrong place.
+- ⚠️ **`parseDonePayload` must NOT use `donePayloadSchema.safeParse`.** The schema requires its
+  fields and raw done input may omit them, so safeParse rejects. Manual normalization only; it must
+  never throw.
+- ⚠️ **Required-ness comes from the tool's `decl`, not from the schema.** The param reuses the
+  schema's TYPE while `{kind: "explicit"}` vs `{kind: "optional"}` decides whether it is required —
+  which is how `result` is required on input while `parseDonePayload` still normalizes a missing one
+  to `""`, with no drift between the two.
+- ⚠️ **Any change to a tool's required params has a transition window.** Tools are frozen in
+  `session_config` until a compaction refreshes them, so an agent mid-session keeps calling the old
+  shape, the obsolete param is stripped, the required one is absent, and that done is rejected. It
+  costs that agent one round and it retries correctly. Know that this is expected, not a bug.
+
+### ⭐ Renaming a tool param: three things that bit us, all generic
+
+1. **Grep the FRONTEND.** Done-card consumers read the param BY NAME (`getArg(.., "summary")`,
+   `toolArgs?.summary`) through index/`any` access, so **typecheck cannot catch it and integration
+   tests do not render.** The done cards would have quietly lost their text; only a manual grep
+   found it. Same class as the compiler-only-types bound in *Changing code here*.
+2. **Grep the TARGET name before a blanket rename.** `doneSummary → doneResult` collided with two
+   pre-existing local `doneResult` variables.
+3. **Make a missed site LOUD rather than silent.** Because `result` became required, a missed call
+   site fails Zod, the done never completes, and the test times out — that enforcement WAS the
+   safety net. The one miss that got through the bulk replace was a **backtick template literal**
+   (`` result: `child ${label}…` ``), and it read as a 48-second flake rather than a regression.
+   Grep both `x: "` and `` x: ` ``, plus the shorthand `x }`.
+
+⚠️ **Not this concept, do not rename these**: compaction's `<summary>` tags and
+`SUMMARIZATION_INSTRUCTION`; `llm.ts`'s OpenAI Responses reasoning `summary[]` / `summary_text` (an
+API field); CLI cost/tree display; `get_logs`' "short summary" and `send_message`'s title; the
+generic `ToolDisplay.summary`; `compactedResume` ids. Two provider test files declare their own
+`done` tool with a `summary` schema and are CORRECT — they drive `provider.stream()` directly and
+never run the runtime loop.
+
 ## Duplicate yield or done in one turn
 
 The API can return several `yield` tool_calls in the same assistant turn. Two rules, both live:
@@ -1203,6 +1473,104 @@ point is to make the shortcut unnecessary, not forbidden.
 The "don't pipe" guidance lives in the bash tool's `description`, not in `system-prompts.ts`,
 because that is where the decision to pipe is made — while constructing the call.
 
+---
+
+## The bash result names its own working directory — and a one-shot warning could not
+
+*(Curator: this half belongs in the `bash` region of "Tools the Agent Calls"; the `cd` half below
+belongs beside it, and its last two bullets belong in "Writing this file" under prose rot.)*
+
+Every bash result whose working directory is not the agent's worktree root opens with a line naming
+it. Three states, and the quiet one is EXACTLY the root:
+
+| cwd | line |
+|---|---|
+| exactly your worktree root | *(nothing)* |
+| below your root | `[cwd: <dir>]` |
+| a different checkout | `[cwd: <dir> — OUTSIDE your worktree, which is <root>]` |
+
+**The failure it removes is invisible by construction**, which is why a stronger warning was not the
+fix: after a `cd` out of the worktree, every later command succeeds, `git status` reports cleanly,
+and the output looks authoritative. An agent in another project `cd`'d into this repo, missed the
+one-shot warning, then built a five-link evidence chain — empty `git status --porcelain`, `ls`
+returning "No such file or directory", a `git check-ignore` hit — and **filed a two-bug report
+against this daemon.** Every link was individually valid; they were answers about a different
+repository. Root hit the same shape twice in one day.
+
+⭐ **The general rule, worth more than the feature: a one-shot notification cannot signal a
+persistent condition — the notification's lifetime has to match the state's.** The old warning fired
+at the moment of the `cd` and never again, so it covered the one result the agent was already paying
+attention to and left silent every result where the mistake actually does its damage.
+
+⭐ **And the corollary that decided a live disagreement: once every affected result carries the
+state, the transition warning's firing condition is a strict SUBSET of it, so "keep both" means
+printing the same fact twice in one result.** Deleted. What is NOT redundant, and stays, is
+`workdir set to X from now on` — that reports an EVENT (you just moved), the notice reports a STATE
+(this is where the output above came from). Neither substitutes for the other, and the distinction is
+worth keeping in hand: it is the same one that separates an SSE delta from a snapshot.
+
+⚠️ **Which checkout a directory belongs to is answered by `git rev-parse --show-toplevel`, and both
+obvious simplifications are wrong:**
+
+- **A path-prefix test** (`cwd.startsWith(worktreeRoot + "/")`) calls `.worktrees/<other-task>`
+  "inside", because it IS under the main repo root. For ROOT — whose worktree root is the repo root
+  — that covers *every* other agent's checkout, which is the single most dangerous place to stand
+  unknowingly: another branch, where a write or a commit lands in someone else's in-flight work and
+  looks entirely normal going in.
+- **A hand-rolled walk up to the nearest `.git`** is wrong in its naive form, because **a linked
+  worktree's `.git` is a FILE** (`gitdir: <repo>/.git/worktrees/<name>`), not a directory. An
+  `isDirectory()` test resolves every agent worktree to the main repo — the one answer that makes
+  another agent's checkout look like home. Asking git cannot drift from git, and `GIT_DIR`,
+  submodules and everything else come free. The test fixture is a real `git worktree add`, with a
+  test pinning that its `.git` really is a file, so the fixture cannot decay into one that every
+  implementation passes.
+
+The lookup **rides in the EXIT trap that was already writing `pwd`** (a second line beside it), not
+in a daemon-side spawn — the shell is being paid for regardless. ⚠️ **The `2>/dev/null` on that trap
+is load-bearing, not tidiness**: outside a repository `git rev-parse` fails LOUDLY on stderr, that
+case is NORMAL rather than an error, and merged mode folds the subshell's stderr into the command's
+own output — so without it every command run from `/tmp` reports a git error it did not cause.
+Removing it reddens exactly one test. (The command's OWN git errors still surface, which is the
+distinction to preserve if you touch this.)
+
+The notice describes the directory the shell **ENDED** in, not the one it started in:
+`cd ~/.mxd && cat config.json` produces output about `~/.mxd`, and naming the worktree there would be
+the very defect the line exists to remove. It is carried on the shape `formatBashResult` takes, so
+foreground, `background_complete` and the `background` tool's status action get it by construction
+rather than by three callers remembering.
+
+## `cd` to the directory you are already in is a free no-op
+
+There was a shell `cd()` override that errored with *"already in this directory"*. **Every line of
+its body existed to produce that error** — it resolved the target only to compare it against `pwd`,
+and wrote no file anywhere. CWD tracking was, and is, entirely the EXIT trap. ⚠️ **Do not
+reintroduce a wrapper**: with the error gone the remainder is `cd() { builtin cd "$1"; }`, strictly
+worse than the builtin it shadows — it breaks `cd -`, and an empty argument stops meaning `$HOME`.
+
+The trade was priced wrong originally: it optimised the common case (a redundant `cd` costs a few
+tokens) against the rare one (a command running somewhere unintended, with every result still
+looking authoritative). The guidance is now the opposite — **prefix a `cd` whenever you are not sure
+where you are.**
+
+⚠️ **Removing an error branch must not remove real errors.** A `cd` that silently does nothing on a
+typo'd path is the wrong-directory command this whole area exists to prevent, wearing a friendlier
+face. Pinned by four tests that pass identically before and after the change — a missing directory
+and a path that is a file both still fail with bash's own message naming the path, the rest of the
+command still runs in the original directory, and a bare `cd` still reaches `$HOME`.
+
+⭐ **A behaviour rule stated in prose lives in more places than a grep for the CODE finds.** Three
+surfaces were known here; a fourth turned up only by grepping the RULE itself, case-insensitively and
+with a tolerant pattern (`do ?n[o']t cd`), which found `buildTaskPrompt`'s git-context block. **Grep
+for the sentence, not for the symbol** — the symbol is exactly what the distant surfaces do not
+contain.
+
+⭐ **The compaction checkpoint (`src/compaction.ts`) is the highest-risk prose surface in this repo,
+and it is nowhere near the code it describes.** It is injected into an agent that has just lost its
+history, so nothing in that agent's context can contradict a stale line — a rule that survives there
+gets taught, fresh, to every compacted agent. When you change a behaviour, check it explicitly; a
+grep scoped to the subsystem will not reach it. Its test was **inverted** (`not.toContain`) rather
+than deleted, because deleting it would leave the removal pinned by nothing at all.
+
 ## Two filesystem-walk defects, in both tools that walk: a library default serving somebody else
 
 `search` and `list_files` each had the SAME two defects, and finding the pair a second time in the
@@ -1380,219 +1748,6 @@ versus early-and-arbitrary and it cannot be both.
 
 **The only case that regresses**: for an anchored glob (`src/*.ts`) `Bun.Glob` prunes the path
 prefix itself and this walk does not, so it is slower — 0.3ms → 0.4ms. Deliberately not chased.
-
-## Gates: a passing gate looks identical whether it read 8% or 100%
-
-Every gate in this repo has now been caught claiming more than it read, and they failed along **three
-independent axes**. That is the part to carry: fixing one axis leaves the others silently intact, and
-the output looks identical either way.
-
-| gate | axis | the claim | what it checked |
-|---|---|---|---|
-| `scripts/check-i18n.sh` | SCOPE | bare strings in JSX | 4 of 31 files — **927 of 11,534 lines (8%)** |
-| `scripts/check-i18n.sh` | DEPTH | bare strings | 1 syntactic form of 4 — **1 of 6** in `ErrorBoundary.tsx` |
-| `src/data-paths.test.ts` | PATTERN | only `data-paths.ts` builds paths from `dataRoot` | the 16 literal characters `dataRoot.slice(2)` |
-| `.hooks/pre-commit` | SCOPE | `All checks passed.` | **4 of 141** test files, while NAMING five |
-
-All four are fixed. The i18n gate never touched the shell's own `SettingsPanel.tsx` or
-`AppHeader.tsx`, and never *any* of the 25-file plugin UI, which is where essentially every
-user-facing string in this product lives. The data-paths audit was proven dead by experiment rather
-than by reading: a `dataRoot.slice(2)` planted in `.mxd/plugin/scope-opts.ts` left it at 54 pass /
-0 fail.
-
-⚠️ **The sharpest instance, and it upgrades the class statement: an addition list does not merely
-fail to cover NEW code — it silently stops covering the code it explicitly NAMED.** The hook listed
-five test files and ran four. `src/direct-provider.test.ts` was deleted 2026-03-12, **four days after
-being added to that list**, and the hook went on naming it for 4.5 months while printing
-`All checks passed.` What made it silent is the runner: **`bun test` skips a path that does not exist
-and still exits 0.** So even the list's own stated scope was fiction, and nothing green anywhere
-carried that information.
-
-⭐ **Second detector for this family, worth as much as the finding: an addition list must FAIL when a
-listed item is ABSENT.** A checker that shrugs at a missing entry cannot tell *"we chose not to check
-this"* from *"this evaporated"*. Pin it with a test rather than only implementing it — a
-named-but-missing entry is precisely the condition nobody thinks to re-verify.
-
-⭐ **Start from everything and subtract; do not enumerate what to include.** A subtract-list fails
-LOUDLY — something noisy shows up and someone adds an entry. An include-list fails SILENTLY: new
-code simply is not covered and nothing anywhere says so. `biome.json` (`"includes": ["**",
-"!.worktrees", …]`) and `tsconfig.json` (`exclude`, no `include`) both got this right with nobody
-maintaining them, and `tsc --noEmit --listFiles` really does put all 54 `.mxd/plugin/` files in its
-program. The one legitimate exception is performance, and it must be said out loud rather than
-implied — see the pre-commit hook below.
-
-⭐ **When a check is known dead, "the suite passes" is not evidence the fix worked** — the suite
-passed while it was dead. The evidence is the round trip: plant re-verified dead against the old
-audit, then plant → **1 test red naming the offending file**, then plant removed → green. A test
-whose value is entirely in the day it fires must be made to fire on purpose at least once.
-
-⭐ **An unqualified pass is worse than a narrow scope.** The pass message carries the file count now
-(`scanned 31 JSX file(s)`), and **scanning 0 files is a failure, not a pass**. The count is the
-detector: re-narrowing to `-maxdepth 1` drops it to 4 in front of whoever commits next. A test pins
-the same property in non-rotting form — scanned must exceed the number of non-test `.tsx` directly
-under `web/`, both sides measured — so the historical bug reports as `Expected: > 4, Received: 4`.
-
-⭐ **And the count must be COMPUTED, never written down.** A literal `5 of 140` is indistinguishable
-from a true one on the day it stops being true — the drained rot, sitting inside the very sentence
-whose job is to describe scope. The hook derives both numbers (`wc -w` over its own list,
-`git ls-files` for the suite), so a re-narrowing prints `3 of 141` in front of whoever commits next,
-and a suite growing around a frozen list shows its own ratio worsening. **Every axis gets the same
-treatment**: the i18n gate prints its FORM count beside its file count, so a narrowing of depth is
-exactly as visible as a narrowing of scope. That symmetry was the only thing really missing on
-either axis.
-
-⭐ **A partial-hit gate plus a fix-only-what-it-flagged policy produces incoherent output.** This
-outlives any particular widening — a heuristic is partial by construction, and the four-form version
-still misses things. When it was single-line it flagged 1 of a component's 6 user-visible strings. Fixing
-that one leaves a component half translated and half English — worse than untouched, and it looks
-*handled*. **The unit of repair is the coherent unit, not the flagged line**; a gate that catches a
-subset tells you WHERE to look, not WHAT to fix. The judgement is per-case and the same round went
-the other way on purpose: in an 1800-line file containing an entire untranslated screen, fixing the
-flagged line's neighbours reproduces the same incoherence one level up, so the line was fixed alone
-and the rest filed.
-
-Two repair notes worth keeping. The heuristic's `>text<` detector matched `) => Promise<void>;` six
-times out of eleven hits, so the guard is `(^|[^=])>` — in real JSX the character before a closing
-`>` is an identifier char, a quote, `}`, `/` or a space, never `=`. **That is exactly the shape a
-lazy agent would use as cover for loosening the rule**, so it is pinned in both directions: an arrow
-type must NOT report, and real JSX text including a `>` in column 0 MUST. And **brand names go
-through `t()` with the same value in every locale**, which is what `"header.title": "Matrix"` has
-always done; an exemption list was considered and rejected as the entry point for the next fictional
-rule.
-
-**The heuristic knows four forms now** — `>text<` on one line; text on its own line with the tag
-closed on the one before; a user-visible prop (`title`/`alt`/`placeholder`/`aria-label`) carrying a
-literal; a ternary or fallback whose branches are text. 1 hit → **26, every one real**. Fixing DEPTH
-honestly would mean a TSX parser (enumerate JSXText and JSXAttribute, subtract what routes through
-`t()`); a regex cannot become one, so these forms ARE an addition list and the remedy is the printed
-form count rather than a pretence of completeness.
-
-⭐ **One rule bought the precision, and it is the reusable part: a user-visible string starts with a
-capital OR contains a space.** Unfiltered, the ternary form ran at **32%** — reporting
-`rotate(90deg)`, `currentColor`, `mxd-btn-stop`, `sk-ant-...` and dotted i18n keys like
-`rollback.rewindTitle`. Filtered, ~100%. ⚠️ **The recall it costs is stated where the rule lives and
-pinned by a test: a single lowercase word with no space is NOT reported**, so `alt="attached"` is a
-real bare string this gate cannot see, and **baseline 0 will not mean zero bare strings**. A
-deliberate recall gap nobody wrote down is one commit from becoming the next depth defect — which is
-exactly what this gate was just fixed for. The reason to take the trade at all: **a gate with a bad
-hit rate teaches people to skim past it**, and then it is worth less than nothing.
-
-⚠️ **`aria-label=` had been sitting in the gate's SVG skip list**, between `viewBox` and
-`strokeWidth` — an accessibility string a screen reader speaks, skipped as if it were path geometry.
-Pulling it out changes 0 existing hits, which is what makes the fix provably not a behaviour change
-anywhere else.
-
-⭐ **When a widened gate surfaces a real backlog, RATCHET — and make the baseline write itself down.**
-The widening found 26 pre-existing bare strings, so two things were true at once: the gate is correct
-and the repo cannot pass it. Failing every commit until a translation project finishes is not a
-strict gate, it is one that gets `--no-verify`'d, which leaves no trace — the way 24 type errors once
-accumulated. **A gate nobody can pass stops being evidence about anything.** So
-`scripts/i18n-baseline.txt` carries the measured debt, the gate fails on any RISE, and **rewrites the
-file downward on any FALL**. The rewrite is the load-bearing half, not convenience: a baseline only a
-human remembers to lower is a number that quietly stops being true, so fixing ten strings against a
-stale 26 lets ten new ones land unnoticed — the drained rot, reintroduced by the fix for it. The hook
-stages the file, so the lowered number rides in the commit that earned it. ⚠️ Known hole, accepted
-and recorded next to the baseline: it is ONE count, so removing one string and adding another in the
-same commit nets to zero. A per-file table closes it and is a bigger surface than the thing it
-protects.
-
-⚠️ **Do not let the string cleanup swallow the gate fix.** Widening flags a lot, and the pull to fix
-them "while I'm here" is strong; it converts a nearly-finished bounded task into an unbounded
-translation project, which is how the thing that was going to protect us gets abandoned halfway.
-Count them, file them (`01KYDBRDAPF13M5X0E7PGQVB0X`), ship the gate.
-
-### The census — negative results, so nobody re-runs this
-
-Every file-enumeration site in the repo was searched, deliberately with bash `grep -rn` rather than
-`search` (see the self-bootstrap warning below). Conclusions:
-
-- **Every `Bun.Glob` in the repo is now correct** — three call sites, two in `search`, one in
-  `list_files`.
-- **File enumeration here is either a `Bun.Glob` or a flat, single-directory read of a directory we
-  own with its filter written down** (a ULID regex, a `.jsonl` suffix). `readdir` returns dotfiles
-  by default and here that is what we want, so no default is doing hidden work. **Do not go looking
-  again.**
-- **File-scope CLAIMS are made in exactly two places**: a `readdirSync` walk in a test, or a
-  config's include/exclude. Everything else that reads a file reads a file it names, where the scope
-  IS the claim.
-- **There is no CI.** `.github/` and `.gitlab-ci.yml` do not exist; the pre-commit hook is the only
-  gate runner in this repo.
-- ⚠️ **The hook itself was the third addition list** — 3.6% of the suite behind an unqualified
-  `All checks passed.` **Subtraction is genuinely infeasible here** (a full `bun test` is
-  ~255-300s per commit), which is the performance exception the rule leaves open, so the remedy was
-  the other half of the i18n fix: say what you ran. Now fixed, along with the two axis-siblings
-  below. **The census found no fourth; that census is done.**
-
-⭐ **"Scope" is only one dimension an addition list can hide in — PATTERN is another, and it hides
-better**, because a widened scope makes a narrow pattern look thoroughly exercised. The data-paths
-audit's scope was fixed while its regex still matched sixteen literal characters, so
-`dataRoot.substring(2)`, `.replace("@/", "")`, `.split("@/")[1]`, `dataRoot[2]` and a
-formatter-wrapped `dataRoot\n\t.slice(2)` all passed in silence. Widened to *any* operation on a
-dataRoot-named value, it immediately found a real second site the narrow pattern could never have
-seen: `effectiveDataRoot` in `plugin.ts`, which is legitimate — dataRoot in, dataRoot out, never a
-path — and is now a NAMED allowlist entry carrying its reason, which is what makes the check a
-subtraction. Round trip: **the old regex caught 1 of 8 planted spellings; the new audit catches 8 of
-8 and names the file.** Two limits stated rather than left to be discovered: a direct rebind
-(`const r = cfg.dataRoot`) gets its own check, and a value laundered through a function return is out
-of reach of any grep. ⚠️ Requiring the call parens (`dataRoot.slice(`) is load-bearing — five doc
-comments in this repo end a sentence on the word and start the next with a capital, which a bare
-`dataRoot\.\w+` reads as a method call.
-
-⚠️ **NEGATIVE RESULT — branded types were believed to be the one direction that escapes the
-enumeration frame entirely, and they do not.** Probed with `tsc` rather than reasoned about: on
-`type DataRoot = string & {__brand}`, **`dr.slice(2)` and `dr.substring(2)` both compile clean** — a
-branded string keeps every string method, so branding does not prevent the operation it was proposed
-to prevent. Meanwhile `const m: Manifest = { dataRoot: "@/plugin/foo" }` fails TS2322, so it *does*
-break plugin authors writing a plain JSON-shaped manifest. Refuted at both ends. Forbidding `.slice`
-needs a genuinely opaque non-string type with an unwrap at every serialize/log/compare site, and
-manifests are JSON. **Do not re-derive.**
-
-### ⚠️ In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand
-
-> The tools an agent calls belong to the **running daemon**, not to anybody's worktree. So *"I just
-> fixed X, therefore I can use X"* is **false until the daemon restarts** — and it is false for
-> every other agent running at the same time.
-
-Measured hours after `search`'s fixes landed on main: `search("ErrorBoundary", glob: "**/*.tsx")`
-returned `(no matches)` while `grep -rn` returned 10 hits including the file that DEFINES it.
-
-**This makes the blind-instrument trap harder to avoid than it looks, because of who walks into
-it: the person who fixed the tool is the person with the most reason to believe it works.** The task
-that wrote down "a completeness survey run with a blind instrument returns a confident, wrong
-'that's all of them'" then ran its own survey on the blind instrument. The warning and the violation
-were in the same task. **A tool description's "always use this" has an unstated premise — that the
-tool works. Spend one call proving your instrument sees a file you already know exists before
-trusting a by-name survey.**
-
-⭐ **Generalised, because this is the standing pattern rather than a run of bad luck: a checker
-reporting ZERO is a claim about the checker until you have made it report ONE.** Four instruments
-answered confidently and wrongly in one week — a `search` that could not see a third of the source,
-two gates that read 8% and 3.6% and printed `All checks passed.`, and (2026-07-25) biome 2.4.10's
-`nursery/noFloatingPromises`, which reports zero over this repo **and zero over a planted
-`async function boom(){throw new Error("x")} ; boom();` in the file it is checking**. Without that
-probe the survey would have been written up as "the type-aware linter finds none" — a false
-all-clear carrying a tool's authority, which is strictly worse than no check. **Planting is not
-diligence; it is the only thing that distinguishes "clean" from "not looking".**
-
-⚠️ **Sibling trap from the same survey, and the cheaper half to forget: a single-line grep is a
-claim about LINE BREAKS.** The shape being hunted was `.catch(async`, and `grep '\.catch(async'`
-returns **zero** hits in a repo that has one, because biome's formatter had split the call across
-two lines. A recommended instrument thus reported the whole class as already clean. Reach for a
-multiline search whenever the pattern spans a call boundary the formatter is free to break.
-
-⚠️ **Consequence for this file**: any "grepped it, nothing points there" conclusion recorded here
-before 2026-07-25 was reached with an instrument that could not see `.mxd/plugin/`, and the failure
-was silent in the direction that matters — a confident non-empty answer with the deciding file
-missing from it.
-
-⚠️ **Same family, and here the blind instrument is your own tool list: it is a frozen snapshot, not
-an inventory of what you can do.** The list you can see was frozen into `session_config` at session
-start; the daemon's handler registry holds more, and Anthropic dispatches any tool name to whatever
-handler exists. Root asserted "there is no WebSearch tool in this project" from reading its own
-56-entry list; `mcp__brave-search__brave_web_search` works, called by name. **"It is not in my list"
-is not evidence that it does not exist.** (Gotcha when you do call one: an unlisted tool has
-unconstrained argument types, so a numeric `count` arrives as a string and fails validation — pass
-the required argument alone.)
 
 ---
 # Events, JSONL & the Active Chain
@@ -2404,6 +2559,27 @@ leaking worktrees or orphaning Phase 2 (use `closeTaskOp`, or let `done("failed"
 validate the node exists and is a task rather than a folder, and reject `draft` the way MCP
 `send_message` always did.
 
+## The boundary had two doors, and the second was not the one anyone remembered
+
+A message reaches the runtime through **`POST /projects/:id/tasks/:nodeId/message`**
+(`src/runtime/routes/tasks.ts`) and **`POST /projects/:id/tasks/:nodeId/edit`**
+(`.mxd/plugin/runtime.ts`). Both take `images`; `/clarify` does not and is not one of them. Both
+now answer a text-less message with the same sentence, and `src/image-requires-text.test.ts` asserts
+both against ONE constant, so changing either wording alone reddens.
+
+⚠️ **The general trap is the UNNAMED PLURAL, and this file was the source of it.** The old entry said
+*"rejected by both REST guards"* and never named them. That reads as precise and carries no way to
+check itself, so the next reader supplies the missing names from whatever is adjacent — here
+`/clarify`, from a nearby sentence about `/message` and `/clarify` sharing task-id canonicalization —
+and then states them with the original's confidence, in a task description, as recorded fact.
+**"Both", "all three", "each of the N sites" without the names is a drained-rot vector with an
+amplifier: it does not merely go stale, it invites a confident fabrication that looks sourced.**
+Name them, or say "grep X to find them".
+
+⭐ **Corollary for enforcement, not just prose: a rule enforced at one of two doors is enforced
+nowhere**, because the other accepts the same payload. Test both in ONE file against one app — "I
+closed the door" then cannot quietly mean "I closed a door".
+
 ## Images
 
 `getImageDimensions(buffer)` parses PNG/JPEG headers, and `read_file` rejects anything over 8000px
@@ -2413,91 +2589,6 @@ per dimension before it ever reaches a provider. Byte size is a provider-level c
 ---
 # Memory Index & Search
 ---
-
-## The done() payload, and the boundary it defends
-
-`done()` has exactly two agent-facing params: **`status`** (`passed`/`failed`, a runtime control bit
-that routes the node to verify/failed) and **`result`** (required, non-empty — everything the agent
-reports as content). `TaskNode.resultRounds?: DonePayload[]` gets ONE block APPENDED per `done()`,
-never overwritten, so a task woken and re-done N times carries N rounds in call order and the field
-is simply absent until the first done.
-
-`src/done-payload.ts` holds the single schema. Add a content field there and the tool param, the
-type, the stored round and the normalizer all follow — no fan-out. ⚠️ **It imports only zod**, which
-is not an aesthetic choice: both `types.ts` (type layer) and `orchestrator-tools.ts` (tool layer)
-must import it, and anything heavier creates a cycle.
-
-⭐ **The runtime↔plugin boundary, which is the point of the whole design.** The runtime MAY read
-`status` and ONE completion-output string (`doneCompletionOutput(input)` = `input.result`, the
-"what happened" summary sent to the parent and recorded on the `done_notified` marker; every plugin
-has one). The runtime MUST NOT carry the round structure or any content field beyond that string —
-those are read only inside matrix's `onDone`, via `parseDonePayload`, and the runtime hands the raw
-done input through as an opaque `Record`. **The check is a grep**: `resultRounds`,
-`appendResultRound`, `parseDonePayload` and `DonePayload` appear in `src/runtime/*`, `runtime.ts`,
-`provider-shared.ts` and `events.ts` only inside boundary-explaining comments, never in code.
-
-⚠️ **`onDone` returns void, and `done_notified` is always the runtime-standard `{status, result}`.**
-It used to return a plugin struct that got spread into the marker, letting a plugin inject arbitrary
-marker fields — removed, because the marker is write-only (nothing reads its fields; crash recovery
-recomputes from the tool_call) and only a synthetic test used the channel. Do not re-add a
-`T["done"] | void` shape "just in case".
-
-**Testing opacity requires data only the other layer understands.** The robustness test uses a
-non-matrix scope whose `done()` carries `wordCount` and `mood`, and asserts they reach `onDone`
-untouched and never appear in `done_notified`. **Testing with the default plugin's own fields cannot
-distinguish "passed through opaque" from "reconstructed into that plugin's shape"** — both produce
-the same round. Mutation-proofed empirically: reshaping `doneInput` into a fixed struct before
-`onDone` fails exactly that one test out of ~2500, and every matrix resultRounds test still passes.
-
-⚠️ **KNOWN LIMITATION: crash-recovery Phase 2 does not append a resultRound.** It is plugin-agnostic
-runtime code that sets status directly and never calls matrix's `onDone`, so a `done()` whose Phase
-2 was interrupted by a daemon crash loses its round. Wiring it in would either break the boundary
-above or route crash recovery through a plugin hook. The normal path — the overwhelming majority —
-captures correctly.
-
-**`result` is enforced twice, and a rejected `done()` is harmless.** Zod rejects an absent result at
-`executeTool`; `beforeDone` rejects an empty or whitespace-only one with a steering message, before
-the git-clean check. Either way the tool_result is `isError`, and the loop's done-exit is gated on
-`!doneToolResult.isError`, so the loop does not exit, no Phase 2 runs, and no empty round is
-appended — the agent just sees the error and continues.
-
-Four gotchas that will each cost an hour:
-
-- ⚠️ **Zod strips unknown keys** (`z.object(inputSchema).safeParse`, no `.strict()`). So a caller
-  passing an obsolete param name does NOT fail on that param — it fails on the required one that is
-  now missing, which points at the wrong place.
-- ⚠️ **`parseDonePayload` must NOT use `donePayloadSchema.safeParse`.** The schema requires its
-  fields and raw done input may omit them, so safeParse rejects. Manual normalization only; it must
-  never throw.
-- ⚠️ **Required-ness comes from the tool's `decl`, not from the schema.** The param reuses the
-  schema's TYPE while `{kind: "explicit"}` vs `{kind: "optional"}` decides whether it is required —
-  which is how `result` is required on input while `parseDonePayload` still normalizes a missing one
-  to `""`, with no drift between the two.
-- ⚠️ **Any change to a tool's required params has a transition window.** Tools are frozen in
-  `session_config` until a compaction refreshes them, so an agent mid-session keeps calling the old
-  shape, the obsolete param is stripped, the required one is absent, and that done is rejected. It
-  costs that agent one round and it retries correctly. Know that this is expected, not a bug.
-
-### ⭐ Renaming a tool param: three things that bit us, all generic
-
-1. **Grep the FRONTEND.** Done-card consumers read the param BY NAME (`getArg(.., "summary")`,
-   `toolArgs?.summary`) through index/`any` access, so **typecheck cannot catch it and integration
-   tests do not render.** The done cards would have quietly lost their text; only a manual grep
-   found it. Same class as the compiler-only-types bound in *Changing code here*.
-2. **Grep the TARGET name before a blanket rename.** `doneSummary → doneResult` collided with two
-   pre-existing local `doneResult` variables.
-3. **Make a missed site LOUD rather than silent.** Because `result` became required, a missed call
-   site fails Zod, the done never completes, and the test times out — that enforcement WAS the
-   safety net. The one miss that got through the bulk replace was a **backtick template literal**
-   (`` result: `child ${label}…` ``), and it read as a 48-second flake rather than a regression.
-   Grep both `x: "` and `` x: ` ``, plus the shorthand `x }`.
-
-⚠️ **Not this concept, do not rename these**: compaction's `<summary>` tags and
-`SUMMARIZATION_INSTRUCTION`; `llm.ts`'s OpenAI Responses reasoning `summary[]` / `summary_text` (an
-API field); CLI cost/tree display; `get_logs`' "short summary" and `send_message`'s title; the
-generic `ToolDisplay.summary`; `compactedResume` ids. Two provider test files declare their own
-`done` tool with a `summary` schema and are CORRECT — they drive `provider.stream()` directly and
-never run the runtime loop.
 
 ## The search index — `src/task-index.ts`
 
@@ -3643,6 +3734,44 @@ distinguishable symptom. Removing that overwrite is what made this one visible.
 - **When you cannot reproduce, send the instrument to whoever can.** Four increasingly faithful
   local attempts failed; one paste into the user's console succeeded immediately.
 
+---
+
+## CORRECTION (2026-07-25) — `logAtBottom` no longer exists
+
+⚠️ **The section *The activity log's scroll position* still says "`autoScroll` and `logAtBottom` are
+two concepts and must not be merged into one boolean". `logAtBottom` is gone — and it was NOT merged
+into `autoScroll`, which is the reading to head off.** It was deleted, because the only thing that
+ever read it was an icon-only `↓` button whose `onClick` was the same function as Follow's. Follow
+arrived two and a half weeks later than `↓` and subsumed it; the superseding change did not look
+back. The observation/intent distinction the paragraph protects is intact and now lives entirely
+inside `handleScroll`: `if (!shrank) onAutoScrollChange(atBottom)` is what still stops an observation
+from writing an intent. **Do not "restore" a second reporting channel to re-establish a separation
+that is already there.**
+
+**A duplicate ENTRY POINT is not the same thing as a duplicate mechanism, and unifying the mechanism
+does not clean it up.** The jump had already been collapsed to one `scrollBottomRequest` counter, and
+that is exactly why the two buttons were so hard to notice: both were thin, both called the same
+handler, both worked. What made the pair visible was putting them side by side and asking what the
+older one still does that the newer one does not — nothing.
+
+⭐ **The cost of the narrow affordance was not the affordance.** Deleting one `useState` cascaded to a
+whole reporting channel: `ActivityLog`'s `onAtBottomChange` prop, its ref mirror, `reportAtBottom`,
+and the `else` branch of BOTH the `visible.length` effect and the MutationObserver — each of which
+existed only to keep that button's visibility fresh. **When you delete a consumer, follow the data
+backwards to the producer before believing you are done**; the compiler stops at the prop.
+
+⚠️ **THE TRAP, and it is general to every "delete the duplicate" task: the redundant channel was
+being used as the SYNCHRONIZATION for tests of the channel that survives.** Two follow-intent guard
+tests read `await waitFor(() => atBottomCalls.length > 0)` and then asserted
+`expect(autoScrollCalls).toEqual([])`. Delete the channel, delete the await — and the negative
+assertion now runs before anything *could* have been reported, so it passes on a component that
+reports nothing at all. Nothing goes red; the guard just stops being covered, silently, in the same
+commit that "only removed a duplicate". **A negative assertion is only worth the wait in front of
+it.** The fix is a positive control inside the same test — after asserting follow was NOT re-armed by
+the clamp, grow the range back and scroll for real, and require that one to re-arm. Verified the way
+this repo requires: with the `!shrank` guard mutated away, both tests fail on the negative assertion;
+restored, both pass, and 2973 → 2973 with 0 fail across the suite.
+
 ## Rewind and Edit: report what the rollback does NOT undo
 
 `analyzeRollbackImpact(entries, targetEid)` scans from the target entry to the end of the log,
@@ -4041,6 +4170,33 @@ can only state "the cases someone thought to write still pass".
 ⚠️ **Careless-git note**: reverting a mutation with `git checkout -- <file>` also reverts any
 UNCOMMITTED fix in the same file. Commit the fix before mutating it.
 
+---
+
+## An assertion about an ERROR MESSAGE survives the behaviour being inverted
+
+⭐ **What earns this a section is not the rule. It is that the behaviour had shipped TWICE,
+deliberately, and was pinned by NOTHING.** `6be3a829` made the composer accept image-only;
+`10da7d33` made both REST doors accept it. The only test either commit touched was a single line:
+
+```diff
+-  expect(body.error).toBe("content is required");
++  expect(body.error).toBe("content or images required");
+```
+
+That reads as coverage. It is an assertion about a STRING, and it holds no matter which way the
+behaviour goes: the wording could survive untouched while image-only flipped from accepted to
+refused and back. Two rounds of authors, one green suite, zero tests of the thing.
+
+> **An assertion about the text of a rejection is not an assertion about what is rejected.** Same
+> family as *a test whose fixture cannot express the difference passes both ways*, and it hides
+> better, because the diff LOOKS like the test was updated along with the behaviour.
+
+**Detector, and it is cheap: for any behavioural claim, ask what the test would do if the behaviour
+were inverted.** If the answer is "still pass, possibly after changing one string", the behaviour is
+uncovered. Here the inversion needed 10 new tests across 4 gates and 0 flipped ones, because there
+was nothing to flip — a fact worth knowing before you go looking for the outdated tests a task
+description promises you.
+
 ## Test fixtures and harness traps
 
 ⚠️ **A fixture with unstable identity silently loses its resolution.** If it regenerates entry ids on
@@ -4091,6 +4247,36 @@ Three smaller traps that each cost real time:
   assertion produced a **227MB** log and a 60s test. Compare booleans in DOM tests.
 - **A bare "timed out waiting for X" tells you nothing.** Dump the last few events alongside it —
   that turned two blind reruns into one answer.
+
+## happy-dom: a React key handler on a text input needs a FOCUS first, or it never runs
+
+⚠️ **Measured 2026-07-27 with a standalone probe.** `textarea.dispatchEvent(new KeyboardEvent(
+"keydown", …))` on a React-controlled textarea does **not** reach `onKeyDown`. React's
+ChangeEventPlugin takes its polyfill branch under happy-dom and, on any key event over a text input,
+calls `getInstIfValueChanged` with the fiber it recorded at `focusin` — `null` when nothing was ever
+focused — and throws on that **before any listener runs**. Call `.focus()` first and both
+`onKeyDown` and a dispatched `submit` on the form work normally.
+
+This sits beside the already-recorded *happy-dom cannot type into a React controlled input*: between
+them, the way to drive a composer in a test is **seed the draft through the component's own
+`localStorage` key or a `quoteRequest` prop for the text, `.focus()` + keydown for the submit.**
+
+⚠️ **The reason this needs writing down is not the lost hour — it is the shape of the failure.** The
+first version of "Enter with an image and no text does not send" **passed**, on code that had no
+guard at all, because Enter never reached the handler. A green negative assertion over dead wiring
+is the exact thing *a fixture that cannot express the difference* describes, and here the dead
+wiring was supplied by the environment rather than by the fixture, so nothing in the test looked
+wrong. **Every negative assertion driven through synthetic events needs a positive control in the
+same test** — give the same composer text, press the same key, require a send.
+
+⚠️ **And the 227MB `toBeNull()` trap has a second cost nobody had hit yet: it corrupts a mutation
+VERDICT.** Relaxing the hint's render condition IS caught — by `expect(hint()).toBeNull()` in a
+regression test — but that assertion printed the received DOM node with its whole React fiber graph
+(measured: 182MB, a 43-second test), which mangled bun's `(fail)` line, so the harness scraping that
+line reported the mutation as **SURVIVED**. Third instance of *an instrument that fails by producing
+the comfortable answer*, and the first where the instrument was fine and its INPUT was destroyed by
+an assertion elsewhere. Compare booleans in DOM tests — not for tidiness, for legibility on the one
+day it fires.
 
 ## ⚠️ `bunfig.toml`'s preload is load-bearing; do not remove it
 
@@ -4202,83 +4388,218 @@ biome's suggested `!` → `?.` autofix is marked unsafe and silently changes ass
 gate".** There was no gate to bypass — see *What is actually gated*. A **tracked** `.hooks/pre-commit`
 existed and was referenced in this file as if it were active, while nothing pointed at it.
 
-## Two smaller standing facts
+## Gates: a passing gate looks identical whether it read 8% or 100%
 
-`mxd` is installed globally via `bun link`; `package.json` has `"bin": { "mxd": "src/cli.ts" }` and
-the CLI carries a `#!/usr/bin/env bun` shebang.
+Every gate in this repo has now been caught claiming more than it read, and they failed along **three
+independent axes**. That is the part to carry: fixing one axis leaves the others silently intact, and
+the output looks identical either way.
 
-⚠️ **If `bun test` ever dies mid-suite, check the EXIT CODE rather than the summary.** Bun 1.3.7-1.3.8
-had a native bug that killed the whole test process with SIGTRAP (exit 133) on any Worker teardown —
-a libmalloc double-free in `pthread_exit` — so the crashing file ran first and "3 tests passed" was
-meaningless while every claim of a green suite from that era was worthless. Fixed by upgrading to
-1.3.14. The generalisable part is the check, and that a minimal 7-line repro (spawn a Worker,
-terminate, observe exit 133) plus a version matrix over isolated installs settled in minutes what
-days of test-level debugging could not.
+| gate | axis | the claim | what it checked |
+|---|---|---|---|
+| `scripts/check-i18n.sh` | SCOPE | bare strings in JSX | 4 of 31 files — **927 of 11,534 lines (8%)** |
+| `scripts/check-i18n.sh` | DEPTH | bare strings | 1 syntactic form of 4 — **1 of 6** in `ErrorBoundary.tsx` |
+| `src/data-paths.test.ts` | PATTERN | only `data-paths.ts` builds paths from `dataRoot` | the 16 literal characters `dataRoot.slice(2)` |
+| `.hooks/pre-commit` | SCOPE | `All checks passed.` | **4 of 141** test files, while NAMING five |
 
----
-# Reference & Pitfalls
----
+All four are fixed. The i18n gate never touched the shell's own `SettingsPanel.tsx` or
+`AppHeader.tsx`, and never *any* of the 25-file plugin UI, which is where essentially every
+user-facing string in this product lives. The data-paths audit was proven dead by experiment rather
+than by reading: a `dataRoot.slice(2)` planted in `.mxd/plugin/scope-opts.ts` left it at 54 pass /
+0 fail.
 
-## Editing the system prompt
+⚠️ **The sharpest instance, and it upgrades the class statement: an addition list does not merely
+fail to cover NEW code — it silently stops covering the code it explicitly NAMED.** The hook listed
+five test files and ran four. `src/direct-provider.test.ts` was deleted 2026-03-12, **four days after
+being added to that list**, and the hook went on naming it for 4.5 months while printing
+`All checks passed.` What made it silent is the runner: **`bun test` skips a path that does not exist
+and still exits 0.** So even the list's own stated scope was fiction, and nothing green anywhere
+carried that information.
 
-The system prompt is **universal** across every project that uses Matrix. Each project has its own
-`memory.md`, and agents elsewhere see the shared prompt plus THEIR memory — never ours. So:
+⭐ **Second detector for this family, worth as much as the finding: an addition list must FAIL when a
+listed item is ABSENT.** A checker that shrugs at a missing entry cannot tell *"we chose not to check
+this"* from *"this evaporated"*. Pin it with a test rather than only implementing it — a
+named-but-missing entry is precisely the condition nobody thinks to re-verify.
 
-- **Prompt**: principles, roles, tool semantics, communication patterns, task lifecycle, craft —
-  anything true for any project using Matrix.
-- **This file**: matrix-internal implementation, architecture, pitfalls, design decisions.
+⭐ **Start from everything and subtract; do not enumerate what to include.** A subtract-list fails
+LOUDLY — something noisy shows up and someone adds an entry. An include-list fails SILENTLY: new
+code simply is not covered and nothing anywhere says so. `biome.json` (`"includes": ["**",
+"!.worktrees", …]`) and `tsconfig.json` (`exclude`, no `include`) both got this right with nobody
+maintaining them, and `tsc --noEmit --listFiles` really does put all 54 `.mxd/plugin/` files in its
+program. The one legitimate exception is performance, and it must be said out loud rather than
+implied — see the pre-commit hook below.
 
-⚠️ **The limit on that rule, established by trying it: the craft lessons in this file cannot be
-relocated to the prompt, and the attempt is the proof.** It looks correct — "universal lessons belong
-in the universal prompt" follows directly from the split above — and it was executed far enough to
-measure. Applying "when in doubt keep the local instance" shrank the movable part from an estimated
-310 lines to **82**, because **each rule here is welded to the specific thing that happened, and the
-weld is what makes it work.** A craft rule in the prompt with no evidence is a platitude every agent
-reads past; the same rule sitting next to the afternoon it cost is an argument. Separating them
-leaves a platitude there and a stranded anecdote here, and neither half does the job the whole did.
-The general-moves/local-stays split is still right for a genuine **duplicate** — where the prompt
-already states the principle and this file repeats it. It fails here because there is no duplicate:
-the prompt has the principle and this file has the only evidence for it.
+⭐ **When a check is known dead, "the suite passes" is not evidence the fix worked** — the suite
+passed while it was dead. The evidence is the round trip: plant re-verified dead against the old
+audit, then plant → **1 test red naming the offending file**, then plant removed → green. A test
+whose value is entirely in the day it fires must be made to fire on purpose at least once.
 
-**The one matrix-internal detail the prompt is allowed to expose is the path where pre-compaction
-events are preserved**, because a compacted agent otherwise has no way to read its own history.
+⭐ **An unqualified pass is worse than a narrow scope.** The pass message carries the file count now
+(`scanned 31 JSX file(s)`), and **scanning 0 files is a failure, not a pass**. The count is the
+detector: re-narrowing to `-maxdepth 1` drops it to 4 in front of whoever commits next. A test pins
+the same property in non-rotting form — scanned must exceed the number of non-test `.tsx` directly
+under `web/`, both sides measured — so the historical bug reports as `Expected: > 4, Received: 4`.
 
-⚠️ **Pitfall: "avoid internal" does NOT mean "delete the concept".** Told to strip matrix-internal
-detail, agents delete the whole section. It means strip implementation-specific words and keep the
-agent-experience concept — rewrite without `JSONL`, `checkpoint` and type names, keep the file path
-agents operationally need. **Preserve what agents experience; remove what only implementers reason
-about.**
+⭐ **And the count must be COMPUTED, never written down.** A literal `5 of 140` is indistinguishable
+from a true one on the day it stops being true — the drained rot, sitting inside the very sentence
+whose job is to describe scope. The hook derives both numbers (`wc -w` over its own list,
+`git ls-files` for the suite), so a re-narrowing prints `3 of 141` in front of whoever commits next,
+and a suite growing around a frozen list shows its own ratio worsening. **Every axis gets the same
+treatment**: the i18n gate prints its FORM count beside its file count, so a narrowing of depth is
+exactly as visible as a narrowing of scope. That symmetry was the only thing really missing on
+either axis.
 
-Read the full prompt before editing it; it is for all Matrix users, not our project notebook. Prefer
-a principle that generates behavior ("tests are our current truth") over a rule specifying one
-behavior ("don't contort architecture for old tests"). Keep explicit rules only where they protect a
-product property, such as the git worktree invariants.
+⭐ **A partial-hit gate plus a fix-only-what-it-flagged policy produces incoherent output.** This
+outlives any particular widening — a heuristic is partial by construction, and the four-form version
+still misses things. When it was single-line it flagged 1 of a component's 6 user-visible strings. Fixing
+that one leaves a component half translated and half English — worse than untouched, and it looks
+*handled*. **The unit of repair is the coherent unit, not the flagged line**; a gate that catches a
+subset tells you WHERE to look, not WHAT to fix. The judgement is per-case and the same round went
+the other way on purpose: in an 1800-line file containing an entire untranslated screen, fixing the
+flagged line's neighbours reproduces the same incoherence one level up, so the line was fixed alone
+and the rest filed.
 
-⚠️ **The prompt contradicts itself across sessions and nothing catches it.** Prompt edits rot the
-same three ways this file does, but the **superseded** kind is worse there because of the carrier.
-This file has regions and topical adjacency, so putting a claim next to its refutation is a move you
-can actually perform, and performing it is what makes the contradiction visible. **A prompt has no
-such mechanism** — it is one linear argument, and two sentences sixty lines apart are never brought
-together by anything. It does not present as a conflict either: **both sentences are individually
-true and well written**, and they only cancel when someone holds both at once, which is exactly what
-the linear form prevents. Observed in two commits one session apart, same file, same author: one
-added *"every unfinished break is state you carry, in a context that runs out"*, and the other
-existed to establish *"compaction is a continuation, not a stopping point"* — i.e. to deny the wall
-the first had just asserted. No gate can see this: the prompt is a template literal, so typecheck
-and biome only prove it parses, and the one test touching its content greps for hardcoded branch
-names.
+Two repair notes worth keeping. The heuristic's `>text<` detector matched `) => Promise<void>;` six
+times out of eleven hits, so the guard is `(^|[^=])>` — in real JSX the character before a closing
+`>` is an identifier char, a quote, `}`, `/` or a space, never `=`. **That is exactly the shape a
+lazy agent would use as cover for loosening the rule**, so it is pinned in both directions: an arrow
+type must NOT report, and real JSX text including a `>` in column 0 MUST. And **brand names go
+through `t()` with the same value in every locale**, which is what `"header.title": "Matrix"` has
+always done; an exemption list was considered and rejected as the entry point for the next fictional
+rule.
 
-> **Before editing the prompt, read the recent prompt DIFFS, not just the current text**
-> (`git log -p -5 -- src/system-prompts.ts`). The current text tells you what the prompt says; the
-> recent diffs tell you what it has just *started* saying, which is the only place a fresh
-> contradiction can come from. Afterwards, grep the file for the concept you leaned on and read
-> every hit — the sentence that cancels yours will not share your wording.
+**The heuristic knows four forms now** — `>text<` on one line; text on its own line with the tag
+closed on the one before; a user-visible prop (`title`/`alt`/`placeholder`/`aria-label`) carrying a
+literal; a ternary or fallback whose branches are text. 1 hit → **26, every one real**. Fixing DEPTH
+honestly would mean a TSX parser (enumerate JSXText and JSXAttribute, subtract what routes through
+`t()`); a regex cannot become one, so these forms ARE an addition list and the remedy is the printed
+form count rather than a pretence of completeness.
 
-⚠️ **Why that step gets skipped**, from the same pair of sessions: the round that INTRODUCED the
-contradiction was required to re-read all 436 lines after editing and substituted a targeted grep,
-reasoning *"rather than burn context re-reading 436 lines verbatim"* — while sitting at zero
-compactions. The round that CAUGHT it did the full read, and the full read also found a second,
-subtler collision. **This rule is worth exactly as much as the willingness to pay for it.**
+⭐ **One rule bought the precision, and it is the reusable part: a user-visible string starts with a
+capital OR contains a space.** Unfiltered, the ternary form ran at **32%** — reporting
+`rotate(90deg)`, `currentColor`, `mxd-btn-stop`, `sk-ant-...` and dotted i18n keys like
+`rollback.rewindTitle`. Filtered, ~100%. ⚠️ **The recall it costs is stated where the rule lives and
+pinned by a test: a single lowercase word with no space is NOT reported**, so `alt="attached"` is a
+real bare string this gate cannot see, and **baseline 0 will not mean zero bare strings**. A
+deliberate recall gap nobody wrote down is one commit from becoming the next depth defect — which is
+exactly what this gate was just fixed for. The reason to take the trade at all: **a gate with a bad
+hit rate teaches people to skim past it**, and then it is worth less than nothing.
+
+⚠️ **`aria-label=` had been sitting in the gate's SVG skip list**, between `viewBox` and
+`strokeWidth` — an accessibility string a screen reader speaks, skipped as if it were path geometry.
+Pulling it out changes 0 existing hits, which is what makes the fix provably not a behaviour change
+anywhere else.
+
+⭐ **When a widened gate surfaces a real backlog, RATCHET — and make the baseline write itself down.**
+The widening found 26 pre-existing bare strings, so two things were true at once: the gate is correct
+and the repo cannot pass it. Failing every commit until a translation project finishes is not a
+strict gate, it is one that gets `--no-verify`'d, which leaves no trace — the way 24 type errors once
+accumulated. **A gate nobody can pass stops being evidence about anything.** So
+`scripts/i18n-baseline.txt` carries the measured debt, the gate fails on any RISE, and **rewrites the
+file downward on any FALL**. The rewrite is the load-bearing half, not convenience: a baseline only a
+human remembers to lower is a number that quietly stops being true, so fixing ten strings against a
+stale 26 lets ten new ones land unnoticed — the drained rot, reintroduced by the fix for it. The hook
+stages the file, so the lowered number rides in the commit that earned it. ⚠️ Known hole, accepted
+and recorded next to the baseline: it is ONE count, so removing one string and adding another in the
+same commit nets to zero. A per-file table closes it and is a bigger surface than the thing it
+protects.
+
+⚠️ **Do not let the string cleanup swallow the gate fix.** Widening flags a lot, and the pull to fix
+them "while I'm here" is strong; it converts a nearly-finished bounded task into an unbounded
+translation project, which is how the thing that was going to protect us gets abandoned halfway.
+Count them, file them (`01KYDBRDAPF13M5X0E7PGQVB0X`), ship the gate.
+
+### The census — negative results, so nobody re-runs this
+
+Every file-enumeration site in the repo was searched, deliberately with bash `grep -rn` rather than
+`search` (see the self-bootstrap warning below). Conclusions:
+
+- **Every `Bun.Glob` in the repo is now correct** — three call sites, two in `search`, one in
+  `list_files`.
+- **File enumeration here is either a `Bun.Glob` or a flat, single-directory read of a directory we
+  own with its filter written down** (a ULID regex, a `.jsonl` suffix). `readdir` returns dotfiles
+  by default and here that is what we want, so no default is doing hidden work. **Do not go looking
+  again.**
+- **File-scope CLAIMS are made in exactly two places**: a `readdirSync` walk in a test, or a
+  config's include/exclude. Everything else that reads a file reads a file it names, where the scope
+  IS the claim.
+- **There is no CI.** `.github/` and `.gitlab-ci.yml` do not exist; the pre-commit hook is the only
+  gate runner in this repo.
+- ⚠️ **The hook itself was the third addition list** — 3.6% of the suite behind an unqualified
+  `All checks passed.` **Subtraction is genuinely infeasible here** (a full `bun test` is
+  ~255-300s per commit), which is the performance exception the rule leaves open, so the remedy was
+  the other half of the i18n fix: say what you ran. Now fixed, along with the two axis-siblings
+  below. **The census found no fourth; that census is done.**
+
+⭐ **"Scope" is only one dimension an addition list can hide in — PATTERN is another, and it hides
+better**, because a widened scope makes a narrow pattern look thoroughly exercised. The data-paths
+audit's scope was fixed while its regex still matched sixteen literal characters, so
+`dataRoot.substring(2)`, `.replace("@/", "")`, `.split("@/")[1]`, `dataRoot[2]` and a
+formatter-wrapped `dataRoot\n\t.slice(2)` all passed in silence. Widened to *any* operation on a
+dataRoot-named value, it immediately found a real second site the narrow pattern could never have
+seen: `effectiveDataRoot` in `plugin.ts`, which is legitimate — dataRoot in, dataRoot out, never a
+path — and is now a NAMED allowlist entry carrying its reason, which is what makes the check a
+subtraction. Round trip: **the old regex caught 1 of 8 planted spellings; the new audit catches 8 of
+8 and names the file.** Two limits stated rather than left to be discovered: a direct rebind
+(`const r = cfg.dataRoot`) gets its own check, and a value laundered through a function return is out
+of reach of any grep. ⚠️ Requiring the call parens (`dataRoot.slice(`) is load-bearing — five doc
+comments in this repo end a sentence on the word and start the next with a capital, which a bare
+`dataRoot\.\w+` reads as a method call.
+
+⚠️ **NEGATIVE RESULT — branded types were believed to be the one direction that escapes the
+enumeration frame entirely, and they do not.** Probed with `tsc` rather than reasoned about: on
+`type DataRoot = string & {__brand}`, **`dr.slice(2)` and `dr.substring(2)` both compile clean** — a
+branded string keeps every string method, so branding does not prevent the operation it was proposed
+to prevent. Meanwhile `const m: Manifest = { dataRoot: "@/plugin/foo" }` fails TS2322, so it *does*
+break plugin authors writing a plain JSON-shaped manifest. Refuted at both ends. Forbidding `.slice`
+needs a genuinely opaque non-string type with an unwrap at every serialize/log/compare site, and
+manifests are JSON. **Do not re-derive.**
+
+### ⚠️ In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand
+
+> The tools an agent calls belong to the **running daemon**, not to anybody's worktree. So *"I just
+> fixed X, therefore I can use X"* is **false until the daemon restarts** — and it is false for
+> every other agent running at the same time.
+
+Measured hours after `search`'s fixes landed on main: `search("ErrorBoundary", glob: "**/*.tsx")`
+returned `(no matches)` while `grep -rn` returned 10 hits including the file that DEFINES it.
+
+**This makes the blind-instrument trap harder to avoid than it looks, because of who walks into
+it: the person who fixed the tool is the person with the most reason to believe it works.** The task
+that wrote down "a completeness survey run with a blind instrument returns a confident, wrong
+'that's all of them'" then ran its own survey on the blind instrument. The warning and the violation
+were in the same task. **A tool description's "always use this" has an unstated premise — that the
+tool works. Spend one call proving your instrument sees a file you already know exists before
+trusting a by-name survey.**
+
+⭐ **Generalised, because this is the standing pattern rather than a run of bad luck: a checker
+reporting ZERO is a claim about the checker until you have made it report ONE.** Four instruments
+answered confidently and wrongly in one week — a `search` that could not see a third of the source,
+two gates that read 8% and 3.6% and printed `All checks passed.`, and (2026-07-25) biome 2.4.10's
+`nursery/noFloatingPromises`, which reports zero over this repo **and zero over a planted
+`async function boom(){throw new Error("x")} ; boom();` in the file it is checking**. Without that
+probe the survey would have been written up as "the type-aware linter finds none" — a false
+all-clear carrying a tool's authority, which is strictly worse than no check. **Planting is not
+diligence; it is the only thing that distinguishes "clean" from "not looking".**
+
+⚠️ **Sibling trap from the same survey, and the cheaper half to forget: a single-line grep is a
+claim about LINE BREAKS.** The shape being hunted was `.catch(async`, and `grep '\.catch(async'`
+returns **zero** hits in a repo that has one, because biome's formatter had split the call across
+two lines. A recommended instrument thus reported the whole class as already clean. Reach for a
+multiline search whenever the pattern spans a call boundary the formatter is free to break.
+
+⚠️ **Consequence for this file**: any "grepped it, nothing points there" conclusion recorded here
+before 2026-07-25 was reached with an instrument that could not see `.mxd/plugin/`, and the failure
+was silent in the direction that matters — a confident non-empty answer with the deciding file
+missing from it.
+
+⚠️ **Same family, and here the blind instrument is your own tool list: it is a frozen snapshot, not
+an inventory of what you can do.** The list you can see was frozen into `session_config` at session
+start; the daemon's handler registry holds more, and Anthropic dispatches any tool name to whatever
+handler exists. Root asserted "there is no WebSearch tool in this project" from reading its own
+56-entry list; `mcp__brave-search__brave_web_search` works, called by name. **"It is not in my list"
+is not evidence that it does not exist.** (Gotcha when you do call one: an unlisted tool has
+unconstrained argument types, so a numeric `count` arrives as a string and fails validation — pass
+the required argument alone.)
 
 ## What is actually gated (and what is not)
 
@@ -4327,6 +4648,23 @@ runs a gate but not the gate's own test can print that gate's "passed" while the
 loudly. Deliberately excluded: `walker-golden` (one step out from the on-disk chain, covered by the
 drift suite at merge time) and `message-editability` (breakage greys a button, which is visible).
 
+## Two smaller standing facts
+
+`mxd` is installed globally via `bun link`; `package.json` has `"bin": { "mxd": "src/cli.ts" }` and
+the CLI carries a `#!/usr/bin/env bun` shebang.
+
+⚠️ **If `bun test` ever dies mid-suite, check the EXIT CODE rather than the summary.** Bun 1.3.7-1.3.8
+had a native bug that killed the whole test process with SIGTRAP (exit 133) on any Worker teardown —
+a libmalloc double-free in `pthread_exit` — so the crashing file ran first and "3 tests passed" was
+meaningless while every claim of a green suite from that era was worthless. Fixed by upgrading to
+1.3.14. The generalisable part is the check, and that a minimal 7-line repro (spawn a Worker,
+terminate, observe exit 133) plus a version matrix over isolated installs settled in minutes what
+days of test-level debugging could not.
+
+---
+# Reference & Pitfalls
+---
+
 ## Known pitfalls
 
 - **This file**: never `write_file` to append. Use `edit_file` or `echo >>`.
@@ -4365,341 +4703,3 @@ drift suite at merge time) and `message-editability` (breakage greys a button, w
   arbitrary descendants. That half is what remains open.
 - **Tool search** — dynamic tool discovery instead of sending every tool. Anthropic has a server-side
   `defer_loading`; the user prefers a client-side design.
-
----
-
-## CORRECTION (2026-07-25) — `logAtBottom` no longer exists
-
-⚠️ **The section *The activity log's scroll position* still says "`autoScroll` and `logAtBottom` are
-two concepts and must not be merged into one boolean". `logAtBottom` is gone — and it was NOT merged
-into `autoScroll`, which is the reading to head off.** It was deleted, because the only thing that
-ever read it was an icon-only `↓` button whose `onClick` was the same function as Follow's. Follow
-arrived two and a half weeks later than `↓` and subsumed it; the superseding change did not look
-back. The observation/intent distinction the paragraph protects is intact and now lives entirely
-inside `handleScroll`: `if (!shrank) onAutoScrollChange(atBottom)` is what still stops an observation
-from writing an intent. **Do not "restore" a second reporting channel to re-establish a separation
-that is already there.**
-
-**A duplicate ENTRY POINT is not the same thing as a duplicate mechanism, and unifying the mechanism
-does not clean it up.** The jump had already been collapsed to one `scrollBottomRequest` counter, and
-that is exactly why the two buttons were so hard to notice: both were thin, both called the same
-handler, both worked. What made the pair visible was putting them side by side and asking what the
-older one still does that the newer one does not — nothing.
-
-⭐ **The cost of the narrow affordance was not the affordance.** Deleting one `useState` cascaded to a
-whole reporting channel: `ActivityLog`'s `onAtBottomChange` prop, its ref mirror, `reportAtBottom`,
-and the `else` branch of BOTH the `visible.length` effect and the MutationObserver — each of which
-existed only to keep that button's visibility fresh. **When you delete a consumer, follow the data
-backwards to the producer before believing you are done**; the compiler stops at the prop.
-
-⚠️ **THE TRAP, and it is general to every "delete the duplicate" task: the redundant channel was
-being used as the SYNCHRONIZATION for tests of the channel that survives.** Two follow-intent guard
-tests read `await waitFor(() => atBottomCalls.length > 0)` and then asserted
-`expect(autoScrollCalls).toEqual([])`. Delete the channel, delete the await — and the negative
-assertion now runs before anything *could* have been reported, so it passes on a component that
-reports nothing at all. Nothing goes red; the guard just stops being covered, silently, in the same
-commit that "only removed a duplicate". **A negative assertion is only worth the wait in front of
-it.** The fix is a positive control inside the same test — after asserting follow was NOT re-armed by
-the clamp, grow the range back and scroll for real, and require that one to re-arm. Verified the way
-this repo requires: with the `!shrank` guard mutated away, both tests fail on the negative assertion;
-restored, both pass, and 2973 → 2973 with 0 fail across the suite.
-
----
-
-## Deleting a mechanism whose premise YOUR OWN change just voided — and what happens to its tests
-
-Worked example (2026-07-25) for the rule stated under *Deleting a mechanism built on a false
-premise: separate the PREMISE from the OBLIGATION*, and the first instance where all three checks
-came out "delete". The activity log stopped rendering `▶ Agent started` / `⏹ Agent stopped` —
-`agent_start` and `agent_end` are still emitted, persisted and processed, and **both `case` bodies
-in `.mxd/plugin/web/event-handler.ts` still exist for their `sideEffects` alone**: one sets the
-provider/model display, the other the five values behind the token badge. ⚠️ Deleting a whole
-`case` because its visible output is gone blanks those with nothing red and no visible connection
-to a commit about hiding two lines.
-
-Removing the two `entries.push` calls also killed `collapseLifecycleEntries`, which folded runs of
-consecutive lifecycle entries down to the last one:
-
-- **Premise** — "restart bookkeeping produces runs of visual noise" — void, because that noise IS
-  what the change removes.
-- **Obligation** — empty. The sole remaining `type: "lifecycle"` producer is the interrupt notice,
-  and two of those cannot become adjacent: the notice is written AT the park, so a second one needs
-  the agent to have woken, which needs a message, which renders between them.
-- **Cost** — real, which is what makes "harmless, leave it" wrong here. It replaced in place
-  (`result[first] = last`), so the day a second lifecycle producer arrived, two distinct entries
-  would have rendered as one, carrying the last one's content at the **first one's timestamp**. Not
-  a neutral leftover; a latent wrong answer parked in the code waiting for a new caller.
-
-⭐ **The transferable half is what happens to the dead mechanism's TESTS, and the honest-looking
-move is the wrong one.** Four tests covered the collapse. They were not assertions that the deleted
-lines render, so *"invert rather than delete"* — the right rule for the tests of a removed feature —
-does not reach them: with no producer left they would assert "nothing collapsed because nothing was
-produced", which passes against every implementation including a deleted one. Three options, one
-right: delete mechanism and tests together; keep both and RE-AIM the tests at the surviving
-producer; or keep the mechanism with no coverage. **Re-aiming is the trap**, because it silently
-pins, as intended behaviour, whatever the mechanism happens to do to a producer it was never
-designed for — here "collapse two distinct user interrupts into one, at the wrong timestamp",
-chosen by nobody and thereafter defended by a test.
-
-⚠️ **A guard on an unreachable state has to say IN THE TEST that it is a contract test, or the next
-reader deletes it.** The replacement pins "processEventBatch does not collapse lifecycle entries" as
-a property of the whole `lifecycle` category, which will get producers that do not exist yet — it is
-not a scenario, because today's scenario cannot occur, and someone reading it as one will try to
-reproduce it, fail, and conclude the test is wrong. It asserts both entries' **timestamps** rather
-than their count, because the failure being guarded is content-and-position substitution, and a
-count assertion passes against a collapse that kept two entries for some other reason.
-
----
-
-## A verification whose reference was produced by the verifier is not a verification
-
-⚠️ **Checking an artifact against a description YOU wrote is a self-consistency check wearing
-verification's clothes, and from the inside it is indistinguishable from the real thing.**
-
-The instance, because the shape is what matters and the shape is invisible without it. A 2026-04-03
-documentation audit reported *"matrix-docs: index.md, why.md, concepts.md, architecture.md,
-getting-started.md — all verified clean"*. Its own session, ~320 events earlier, had sent the docs
-project the numbered change-list those files had just been edited from. So the audit compared the
-docs against its own instructions and found agreement. **Agreement was structurally guaranteed.**
-
-Two properties that make this hard to catch rather than merely embarrassing:
-
-- ⭐ **Distance manufactures the illusion.** 320 events is far more than enough to stop experiencing
-  a list as your own output; by the time it is read back it is simply *the criteria*. The defence is
-  not vigilance, it is asking **where did my reference come from** — a question with a checkable
-  answer, unlike "am I being circular", which has none.
-- ⚠️ **The verdict was `clean`, which is the one verdict that leaves no artifact to review.** A wrong
-  finding can be argued with. "Nothing to report" produces nothing anyone can check, so it is
-  accepted by default and inherited by everyone downstream — here for **115 days**, during which the
-  files were never re-examined.
-
-⚠️ **Corollary that bit the same audit: a "clean" verdict does not even cover the bytes it read.**
-Two commits landed on `architecture.md` AFTER it closed, one of them 12 hours later, and that commit
-introduced the `TreeNode: TaskNode | FolderNode` heading — a type that has never existed — which the
-next reviewer found in ten minutes by reading the table of contents. **Date the artifact, not the
-review**: a verdict names a commit or it names nothing.
-
-The reusable form: **a review is only evidence to the extent its reference is INDEPENDENT of the
-thing reviewed.** Code, a measurement, or a document written by someone else are independent. Your
-own change-list, your own task description, and your own previous summary are not.
-
-## ⭐ A checklist derived from the artifact can only find contradictions, never omissions
-
-**Walk a document and check each claim, and every finding you can possibly produce has the form
-"it says X, the code says Y". You cannot produce "the code has Z and the document has never
-mentioned it", because nothing in the document ever raised Z.** The audit above returned findings
-that were **100% contradictions and 0% omissions**, and that ratio was not a fact about the
-documents — it was a fact about the method.
-
-**This is the addition-list rule from *Gates* in a different medium**, which is the reason to keep it
-here rather than treat it as a documentation lesson: the document's own claims ARE the include-list,
-so it fails in the same silent direction — new subsystems simply are not covered and nothing
-anywhere says so. Measured on the same files: a whole-repo probe for concepts absent from all four
-docs returned **0 mentions** of the plugin layer, the Worker thread, per-plugin data roots, dual
-lenses, `/api/<plugin>/`, `eid`/`parentEid`, the active chain, the search index, embeddings,
-Edit/Rewind, `resultRounds`, or `agent_activity` — twelve subsystems, invisible to claim-checking
-because a document cannot contradict you about something it does not discuss.
-
-**So the omission pass needs its own instrument, and it runs in the opposite direction: start from
-the CODE, enumerate what exists, and ask which of those the reader would form a wrong model
-without.** That last clause is the bound — "the docs don't mention X" is true of a thousand X's, and
-without it the pass never terminates. A grep for each concept-name across the doc set is the cheap
-version and it is where the twelve came from.
-
-⚠️ **The trap for whoever runs it next: the omission pass makes the contradiction pass look
-thorough by comparison** — contradictions come with line numbers and quotes, omissions come with an
-absence, and an absence reads as a weaker finding while being the larger one.
-
-## ⚠️ Auditing a live repo: pin the commit, and expect it to move under you
-
-Mid-audit, the target repo gained two commits and `architecture.md` went **984 → 1015 lines**, which
-silently invalidated every line number collected up to that point and — worse — **fixed one of the
-findings**, so reporting it would have sent another team to re-do work they had just finished.
-
-Three habits, all cheap, none of which occur to you until it has happened once:
-
-1. **Record the target's HEAD when you start and re-check it before you report.** `git log --oneline`
-   costs nothing; a report whose line numbers are off by 31 costs the reader their trust in all of it.
-2. ⭐ **Re-derive line numbers mechanically from anchor TEXT at the end, never carry the numbers you
-   noted while reading.** A ~30-line script that greps each finding's quoted sentence and prints its
-   current line is proof against every edit that does not touch that sentence. Numbers you wrote down
-   by hand are a snapshot of a file that no longer exists.
-3. **Diff the range before re-reading everything.** `git diff <start-head> HEAD -- <file>` told me in
-   one command that exactly one section had changed, so re-verification was one section rather than
-   1015 lines.
-
----
-
-## An assertion about an ERROR MESSAGE survives the behaviour being inverted
-
-⭐ **What earns this a section is not the rule. It is that the behaviour had shipped TWICE,
-deliberately, and was pinned by NOTHING.** `6be3a829` made the composer accept image-only;
-`10da7d33` made both REST doors accept it. The only test either commit touched was a single line:
-
-```diff
--  expect(body.error).toBe("content is required");
-+  expect(body.error).toBe("content or images required");
-```
-
-That reads as coverage. It is an assertion about a STRING, and it holds no matter which way the
-behaviour goes: the wording could survive untouched while image-only flipped from accepted to
-refused and back. Two rounds of authors, one green suite, zero tests of the thing.
-
-> **An assertion about the text of a rejection is not an assertion about what is rejected.** Same
-> family as *a test whose fixture cannot express the difference passes both ways*, and it hides
-> better, because the diff LOOKS like the test was updated along with the behaviour.
-
-**Detector, and it is cheap: for any behavioural claim, ask what the test would do if the behaviour
-were inverted.** If the answer is "still pass, possibly after changing one string", the behaviour is
-uncovered. Here the inversion needed 10 new tests across 4 gates and 0 flipped ones, because there
-was nothing to flip — a fact worth knowing before you go looking for the outdated tests a task
-description promises you.
-
-## The boundary had two doors, and the second was not the one anyone remembered
-
-A message reaches the runtime through **`POST /projects/:id/tasks/:nodeId/message`**
-(`src/runtime/routes/tasks.ts`) and **`POST /projects/:id/tasks/:nodeId/edit`**
-(`.mxd/plugin/runtime.ts`). Both take `images`; `/clarify` does not and is not one of them. Both
-now answer a text-less message with the same sentence, and `src/image-requires-text.test.ts` asserts
-both against ONE constant, so changing either wording alone reddens.
-
-⚠️ **The general trap is the UNNAMED PLURAL, and this file was the source of it.** The old entry said
-*"rejected by both REST guards"* and never named them. That reads as precise and carries no way to
-check itself, so the next reader supplies the missing names from whatever is adjacent — here
-`/clarify`, from a nearby sentence about `/message` and `/clarify` sharing task-id canonicalization —
-and then states them with the original's confidence, in a task description, as recorded fact.
-**"Both", "all three", "each of the N sites" without the names is a drained-rot vector with an
-amplifier: it does not merely go stale, it invites a confident fabrication that looks sourced.**
-Name them, or say "grep X to find them".
-
-⭐ **Corollary for enforcement, not just prose: a rule enforced at one of two doors is enforced
-nowhere**, because the other accepts the same payload. Test both in ONE file against one app — "I
-closed the door" then cannot quietly mean "I closed a door".
-
-## happy-dom: a React key handler on a text input needs a FOCUS first, or it never runs
-
-⚠️ **Measured 2026-07-27 with a standalone probe.** `textarea.dispatchEvent(new KeyboardEvent(
-"keydown", …))` on a React-controlled textarea does **not** reach `onKeyDown`. React's
-ChangeEventPlugin takes its polyfill branch under happy-dom and, on any key event over a text input,
-calls `getInstIfValueChanged` with the fiber it recorded at `focusin` — `null` when nothing was ever
-focused — and throws on that **before any listener runs**. Call `.focus()` first and both
-`onKeyDown` and a dispatched `submit` on the form work normally.
-
-This sits beside the already-recorded *happy-dom cannot type into a React controlled input*: between
-them, the way to drive a composer in a test is **seed the draft through the component's own
-`localStorage` key or a `quoteRequest` prop for the text, `.focus()` + keydown for the submit.**
-
-⚠️ **The reason this needs writing down is not the lost hour — it is the shape of the failure.** The
-first version of "Enter with an image and no text does not send" **passed**, on code that had no
-guard at all, because Enter never reached the handler. A green negative assertion over dead wiring
-is the exact thing *a fixture that cannot express the difference* describes, and here the dead
-wiring was supplied by the environment rather than by the fixture, so nothing in the test looked
-wrong. **Every negative assertion driven through synthetic events needs a positive control in the
-same test** — give the same composer text, press the same key, require a send.
-
-⚠️ **And the 227MB `toBeNull()` trap has a second cost nobody had hit yet: it corrupts a mutation
-VERDICT.** Relaxing the hint's render condition IS caught — by `expect(hint()).toBeNull()` in a
-regression test — but that assertion printed the received DOM node with its whole React fiber graph
-(measured: 182MB, a 43-second test), which mangled bun's `(fail)` line, so the harness scraping that
-line reported the mutation as **SURVIVED**. Third instance of *an instrument that fails by producing
-the comfortable answer*, and the first where the instrument was fine and its INPUT was destroyed by
-an assertion elsewhere. Compare booleans in DOM tests — not for tidiness, for legibility on the one
-day it fires.
-
----
-
-## The bash result names its own working directory — and a one-shot warning could not
-
-*(Curator: this half belongs in the `bash` region of "Tools the Agent Calls"; the `cd` half below
-belongs beside it, and its last two bullets belong in "Writing this file" under prose rot.)*
-
-Every bash result whose working directory is not the agent's worktree root opens with a line naming
-it. Three states, and the quiet one is EXACTLY the root:
-
-| cwd | line |
-|---|---|
-| exactly your worktree root | *(nothing)* |
-| below your root | `[cwd: <dir>]` |
-| a different checkout | `[cwd: <dir> — OUTSIDE your worktree, which is <root>]` |
-
-**The failure it removes is invisible by construction**, which is why a stronger warning was not the
-fix: after a `cd` out of the worktree, every later command succeeds, `git status` reports cleanly,
-and the output looks authoritative. An agent in another project `cd`'d into this repo, missed the
-one-shot warning, then built a five-link evidence chain — empty `git status --porcelain`, `ls`
-returning "No such file or directory", a `git check-ignore` hit — and **filed a two-bug report
-against this daemon.** Every link was individually valid; they were answers about a different
-repository. Root hit the same shape twice in one day.
-
-⭐ **The general rule, worth more than the feature: a one-shot notification cannot signal a
-persistent condition — the notification's lifetime has to match the state's.** The old warning fired
-at the moment of the `cd` and never again, so it covered the one result the agent was already paying
-attention to and left silent every result where the mistake actually does its damage.
-
-⭐ **And the corollary that decided a live disagreement: once every affected result carries the
-state, the transition warning's firing condition is a strict SUBSET of it, so "keep both" means
-printing the same fact twice in one result.** Deleted. What is NOT redundant, and stays, is
-`workdir set to X from now on` — that reports an EVENT (you just moved), the notice reports a STATE
-(this is where the output above came from). Neither substitutes for the other, and the distinction is
-worth keeping in hand: it is the same one that separates an SSE delta from a snapshot.
-
-⚠️ **Which checkout a directory belongs to is answered by `git rev-parse --show-toplevel`, and both
-obvious simplifications are wrong:**
-
-- **A path-prefix test** (`cwd.startsWith(worktreeRoot + "/")`) calls `.worktrees/<other-task>`
-  "inside", because it IS under the main repo root. For ROOT — whose worktree root is the repo root
-  — that covers *every* other agent's checkout, which is the single most dangerous place to stand
-  unknowingly: another branch, where a write or a commit lands in someone else's in-flight work and
-  looks entirely normal going in.
-- **A hand-rolled walk up to the nearest `.git`** is wrong in its naive form, because **a linked
-  worktree's `.git` is a FILE** (`gitdir: <repo>/.git/worktrees/<name>`), not a directory. An
-  `isDirectory()` test resolves every agent worktree to the main repo — the one answer that makes
-  another agent's checkout look like home. Asking git cannot drift from git, and `GIT_DIR`,
-  submodules and everything else come free. The test fixture is a real `git worktree add`, with a
-  test pinning that its `.git` really is a file, so the fixture cannot decay into one that every
-  implementation passes.
-
-The lookup **rides in the EXIT trap that was already writing `pwd`** (a second line beside it), not
-in a daemon-side spawn — the shell is being paid for regardless. ⚠️ **The `2>/dev/null` on that trap
-is load-bearing, not tidiness**: outside a repository `git rev-parse` fails LOUDLY on stderr, that
-case is NORMAL rather than an error, and merged mode folds the subshell's stderr into the command's
-own output — so without it every command run from `/tmp` reports a git error it did not cause.
-Removing it reddens exactly one test. (The command's OWN git errors still surface, which is the
-distinction to preserve if you touch this.)
-
-The notice describes the directory the shell **ENDED** in, not the one it started in:
-`cd ~/.mxd && cat config.json` produces output about `~/.mxd`, and naming the worktree there would be
-the very defect the line exists to remove. It is carried on the shape `formatBashResult` takes, so
-foreground, `background_complete` and the `background` tool's status action get it by construction
-rather than by three callers remembering.
-
-## `cd` to the directory you are already in is a free no-op
-
-There was a shell `cd()` override that errored with *"already in this directory"*. **Every line of
-its body existed to produce that error** — it resolved the target only to compare it against `pwd`,
-and wrote no file anywhere. CWD tracking was, and is, entirely the EXIT trap. ⚠️ **Do not
-reintroduce a wrapper**: with the error gone the remainder is `cd() { builtin cd "$1"; }`, strictly
-worse than the builtin it shadows — it breaks `cd -`, and an empty argument stops meaning `$HOME`.
-
-The trade was priced wrong originally: it optimised the common case (a redundant `cd` costs a few
-tokens) against the rare one (a command running somewhere unintended, with every result still
-looking authoritative). The guidance is now the opposite — **prefix a `cd` whenever you are not sure
-where you are.**
-
-⚠️ **Removing an error branch must not remove real errors.** A `cd` that silently does nothing on a
-typo'd path is the wrong-directory command this whole area exists to prevent, wearing a friendlier
-face. Pinned by four tests that pass identically before and after the change — a missing directory
-and a path that is a file both still fail with bash's own message naming the path, the rest of the
-command still runs in the original directory, and a bare `cd` still reaches `$HOME`.
-
-⭐ **A behaviour rule stated in prose lives in more places than a grep for the CODE finds.** Three
-surfaces were known here; a fourth turned up only by grepping the RULE itself, case-insensitively and
-with a tolerant pattern (`do ?n[o']t cd`), which found `buildTaskPrompt`'s git-context block. **Grep
-for the sentence, not for the symbol** — the symbol is exactly what the distant surfaces do not
-contain.
-
-⭐ **The compaction checkpoint (`src/compaction.ts`) is the highest-risk prose surface in this repo,
-and it is nowhere near the code it describes.** It is injected into an agent that has just lost its
-history, so nothing in that agent's context can contradict a stale line — a rule that survives there
-gets taught, fresh, to every compacted agent. When you change a behaviour, check it explicitly; a
-grep scoped to the subsystem will not reach it. Its test was **inverted** (`not.toContain`) rather
-than deleted, because deleting it would leave the removal pinned by nothing at all.
