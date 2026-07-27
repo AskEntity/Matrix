@@ -166,14 +166,11 @@ written in the mechanism's own comment as an accepted trade-off. One such block 
 `done()` tool_call, which made resume detect a generic interrupted-resume instead of a done-resume,
 so the woken agent silently lost its done-resume context. Reverting it was a behavior fix.
 
----
+#### The worked example — including what happens to the dead mechanism's TESTS
 
-## Deleting a mechanism whose premise YOUR OWN change just voided — and what happens to its tests
-
-Worked example (2026-07-25) for the rule stated under *Deleting a mechanism built on a false
-premise: separate the PREMISE from the OBLIGATION*, and the first instance where all three checks
-came out "delete". The activity log stopped rendering `▶ Agent started` / `⏹ Agent stopped` —
-`agent_start` and `agent_end` are still emitted, persisted and processed, and **both `case` bodies
+The first instance where all three questions came out "delete" (2026-07-25), and the voided premise
+was the same change's own. The activity log stopped rendering `▶ Agent started` / `⏹ Agent stopped`
+— `agent_start` and `agent_end` are still emitted, persisted and processed, and **both `case` bodies
 in `.mxd/plugin/web/event-handler.ts` still exist for their `sideEffects` alone**: one sets the
 provider/model display, the other the five values behind the token badge. ⚠️ Deleting a whole
 `case` because its visible output is gone blanks those with nothing red and no visible connection
@@ -658,8 +655,6 @@ finish the cuts and report the discrepancy after. **Nothing about that is lazy o
 the ordinary shape of finishing what you started**, which is exactly why it needs to be written
 down: the surprising number arrives while you are busy, and "I'll report it when I'm done" costs
 nothing to think and everything if the plan was wrong.
-
----
 
 ## A verification whose reference was produced by the verifier is not a verification
 
