@@ -3818,9 +3818,13 @@ nulls.**
 
 ## Small component facts worth knowing
 
-- ⚠️ **A pure-image message with no text was rejected by both REST guards**, which tested
-  `!content?.trim()`. They now also check `images.length`, `createUserMessage` gets a `content ?? ""`
-  fallback, and the parent notification falls back to `"[image]"`.
+- ⚠️ **A message must carry TEXT; images ride along with it and are never a message on their own.**
+  Refused at four gates — `canSend` (the Send button), `handleSubmit` (Enter, which never touches the
+  button), `handlers.handleSend`, and both REST doors, `/message` and `/edit`, which answer with one
+  identical sentence asserted against a single constant so neither wording can drift alone. Note
+  `/clarify` is NOT one of the doors; it takes no images. The earlier permissive behaviour and the
+  fallbacks that served it (`content ?? ""` into `createUserMessage`, `"[image]"` into the parent
+  notification) are gone with their premise.
 - **Read-only tools default to collapsed but keep their body** (`isDefaultCollapsed`: `get_tree`,
   `get_task`, `search_tasks`, `list_projects`). That is a different thing from `isTitleOnly`, which
   removes the body entirely — users can still click to see results.
@@ -4523,16 +4527,10 @@ Three habits, all cheap, none of which occur to you until it has happened once:
 3. **Diff the range before re-reading everything.** `git diff <start-head> HEAD -- <file>` told me in
    one command that exactly one section had changed, so re-verification was one section rather than
    1015 lines.
+
 ---
 
 ## An assertion about an ERROR MESSAGE survives the behaviour being inverted
-
-⚠️ **CORRECTION to *Small component facts worth knowing*, which still says a pure-image message is
-accepted.** As of 2026-07-27 the rule is the opposite: **a message must carry text; images ride
-along with it and are not a message on their own.** The `images.length` clauses in both REST guards,
-the `content ?? ""` fallback into `createUserMessage` and the `"[image]"` fallback into
-`notifyParentChain` are all gone — the premise those existed for (a message may carry no text) was
-removed, and none of them had another caller.
 
 ⭐ **What earns this a section is not the rule. It is that the behaviour had shipped TWICE,
 deliberately, and was pinned by NOTHING.** `6be3a829` made the composer accept image-only;
