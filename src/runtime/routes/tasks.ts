@@ -669,8 +669,17 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 			images?: QueueImage[];
 		}>();
 		const content = body.content ?? body.message;
-		if (!content?.trim() && (!body.images || body.images.length === 0)) {
-			return c.json({ error: "content or images required" }, 400);
+		// A message must carry text. Images ride along with it; they are not a
+		// message on their own. The UI refuses this too, but the UI is one
+		// client — this is the boundary, and it has a second door at
+		// `POST .../edit` in the matrix plugin, worded identically on purpose.
+		// Both are pinned together in `src/image-requires-text.test.ts`, which
+		// is what keeps the two wordings from drifting.
+		if (!content?.trim()) {
+			return c.json(
+				{ error: "Message text is required — images alone cannot be sent" },
+				400,
+			);
 		}
 
 		const tracker = await getTracker(ctx, project.id);
@@ -704,7 +713,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		const statusBeforeDelivery = resolved.status;
 
 		// No header needed — work_context is injected by enqueue hook on fresh sessions.
-		const msg = createUserMessage(content ?? "", { images: body.images });
+		const msg = createUserMessage(content, { images: body.images });
 
 		// Single delivery path: JSONL persistence + queue delivery + auto-launch.
 		// Scope opts looked up from ctx.scopeOpts by deliverMessage.
@@ -717,7 +726,7 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 				project,
 				nodeId,
 				resolved.title ?? nodeId,
-				content ?? "[image]",
+				content,
 				statusBeforeDelivery,
 			);
 		}

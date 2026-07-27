@@ -299,13 +299,24 @@ export const InputBar = memo(function InputBar({
 		[setPromptAndRef],
 	);
 
-	const canSend = projectId && (prompt.trim() || attachedImages.length > 0);
+	// A message must carry text. Images ride along with it; they are not a
+	// message on their own — the same rule both REST doors enforce
+	// (src/runtime/routes/tasks.ts, .mxd/plugin/runtime.ts).
+	const canSend = projectId && prompt.trim();
+	// …which is only half an affordance. Having just attached an image, the
+	// user needs to be told what to do, and a tooltip cannot tell them: it
+	// needs a hover, which Enter-to-send does not have and a keyboard user
+	// never performs. So the hint is always visible, from the moment of
+	// attaching, and it says what to DO rather than what is wrong.
+	const imageNeedsText = attachedImages.length > 0 && !prompt.trim();
 
 	const handleSubmit = useCallback(
 		(e: React.FormEvent | React.KeyboardEvent) => {
 			e.preventDefault();
 			if (!projectId) return;
-			if (!prompt.trim() && attachedImages.length === 0) return;
+			// Re-checked here, not only via the button's `disabled`: Enter
+			// reaches this without ever passing the button.
+			if (!prompt.trim()) return;
 			const images = attachedImages.length > 0 ? attachedImages : undefined;
 			onSend(prompt.trim(), images);
 			setPromptAndRef("");
@@ -378,6 +389,9 @@ export const InputBar = memo(function InputBar({
 						</div>
 					))}
 				</div>
+			)}
+			{imageNeedsText && (
+				<div className="mxd-image-needs-text">{t("footer.imageNeedsText")}</div>
 			)}
 			{/* Editing indicator — shown when user clicked Edit on a message */}
 			{editRequest && (
