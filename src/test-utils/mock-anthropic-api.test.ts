@@ -36,9 +36,18 @@ describe("ValidatingMockAPI", () => {
 		});
 
 		// ── Rules that used to be enforced here and DO NOT EXIST ──
-		// Each of these three was a `toThrow` until 2026-07-25. All measured
-		// ACCEPTED by production Anthropic. They are now pinned in the positive
-		// direction so nobody can quietly put the fiction back. (Task 01KYCQ85.)
+		// Role alternation was a `toThrow` until 2026-07-25 and is measured
+		// ACCEPTED by production Anthropic in all three shapes below. They are
+		// pinned in the positive direction so nobody can quietly put the
+		// fiction back. (Task 01KYCQ85; provenance in api-message-rules.ts.)
+		//
+		// ⚠️ A fourth positive pin used to sit here — "ACCEPTS empty string /
+		// empty array content", asserting a bare "" on a USER message. That one
+		// was never measured; it was generalised from the assistant case, and
+		// the real API answers 400 "user messages must have non-empty content".
+		// The comment above it said "All measured ACCEPTED by production
+		// Anthropic", which is how an unverified claim acquires a citation. It
+		// is now split by role below, each half carrying what was actually sent.
 
 		test("ACCEPTS consecutive user messages (role alternation is NOT a rule)", () => {
 			expect(
@@ -64,15 +73,7 @@ describe("ValidatingMockAPI", () => {
 			).toBeDefined();
 		});
 
-		test("ACCEPTS empty string / empty array content", () => {
-			expect(
-				createStream({
-					messages: [
-						{ role: "user", content: "hi" },
-						{ role: "user", content: "" },
-					],
-				}),
-			).toBeDefined();
+		test("ACCEPTS an empty content ARRAY", () => {
 			expect(
 				createStream({
 					messages: [
@@ -81,6 +82,57 @@ describe("ValidatingMockAPI", () => {
 					],
 				}),
 			).toBeDefined();
+		});
+
+		test('ACCEPTS a bare "" as an ASSISTANT message\'s whole content', () => {
+			expect(
+				createStream({
+					messages: [
+						{ role: "user", content: "hi" },
+						{ role: "assistant", content: "" },
+						{ role: "user", content: "go on" },
+					],
+				}),
+			).toBeDefined();
+		});
+
+		// ── Rule 5: the empty-content forms that ARE 400s (measured 2026-07-25,
+		//    task 01KYDKK0). The mock is the door every test in this repo goes
+		//    through, so the rule is only worth anything if it is enforced here.
+
+		test('rejects a bare "" as a USER message\'s whole content', () => {
+			expect(() =>
+				createStream({
+					messages: [
+						{ role: "user", content: "hi" },
+						{ role: "user", content: "" },
+					],
+				}),
+			).toThrow("user messages must have non-empty content");
+		});
+
+		test("rejects an empty text block", () => {
+			expect(() =>
+				createStream({
+					messages: [
+						{ role: "user", content: "hi" },
+						{ role: "assistant", content: [{ type: "text", text: "" }] },
+						{ role: "user", content: "go on" },
+					],
+				}),
+			).toThrow("text content blocks must be non-empty");
+		});
+
+		test("rejects a whitespace-only text block", () => {
+			expect(() =>
+				createStream({
+					messages: [
+						{ role: "user", content: "hi" },
+						{ role: "assistant", content: [{ type: "text", text: "  " }] },
+						{ role: "user", content: "go on" },
+					],
+				}),
+			).toThrow("text content blocks must contain non-whitespace text");
 		});
 
 		// ── The rule the mock never had, which is why a reachable 400 survived ──
