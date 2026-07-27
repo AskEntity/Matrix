@@ -1027,10 +1027,10 @@ priority for the whole class from it.
 
 **Surveying for the shape needs two instruments neither of which is the obvious one.** A single-line
 `grep '\.catch(async'` returns zero hits in a repo that has one, and biome 2.4.10's
-`nursery/noFloatingPromises` is blind even to a planted violation — both written up under *a checker
-reporting ZERO is a claim about the checker* in the Gates section, because the lesson is about
-instruments and not about promises. What works: a multiline search (`\.catch\(\s*async`) plus a
-~120-line one-off over the real TypeScript checker — walk every `ExpressionStatement`, ask the
+`nursery/noFloatingPromises` is blind even to a planted violation — both written up under *In a
+self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand*, because the
+lesson is about instruments and not about promises. What works: a multiline search
+(`\.catch\(\s*async`) plus a ~120-line one-off over the real TypeScript checker — walk every `ExpressionStatement`, ask the
 checker whether the expression's type has a `then`, subtract `await` / `void` / `.catch(fn)` /
 `.then(a,b)`. Production carries one other continuation handler of the family,
 `backgroundChain.then(async …)` in `task-index.ts`, and that one is correct because its whole body
@@ -1744,6 +1744,53 @@ versus early-and-arbitrary and it cannot be both.
 
 **The only case that regresses**: for an anchored glob (`src/*.ts`) `Bun.Glob` prunes the path
 prefix itself and this walk does not, so it is slower — 0.3ms → 0.4ms. Deliberately not chased.
+
+## ⚠️ In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand
+
+> The tools an agent calls belong to the **running daemon**, not to anybody's worktree. So *"I just
+> fixed X, therefore I can use X"* is **false until the daemon restarts** — and it is false for
+> every other agent running at the same time.
+
+Measured hours after `search`'s fixes landed on main: `search("ErrorBoundary", glob: "**/*.tsx")`
+returned `(no matches)` while `grep -rn` returned 10 hits including the file that DEFINES it.
+
+**This makes the blind-instrument trap harder to avoid than it looks, because of who walks into
+it: the person who fixed the tool is the person with the most reason to believe it works.** The task
+that wrote down "a completeness survey run with a blind instrument returns a confident, wrong
+'that's all of them'" then ran its own survey on the blind instrument. The warning and the violation
+were in the same task. **A tool description's "always use this" has an unstated premise — that the
+tool works. Spend one call proving your instrument sees a file you already know exists before
+trusting a by-name survey.**
+
+⭐ **Generalised, because this is the standing pattern rather than a run of bad luck: a checker
+reporting ZERO is a claim about the checker until you have made it report ONE.** Four instruments
+answered confidently and wrongly in one week — a `search` that could not see a third of the source,
+two gates that read 8% and 3.6% and printed `All checks passed.`, and (2026-07-25) biome 2.4.10's
+`nursery/noFloatingPromises`, which reports zero over this repo **and zero over a planted
+`async function boom(){throw new Error("x")} ; boom();` in the file it is checking**. Without that
+probe the survey would have been written up as "the type-aware linter finds none" — a false
+all-clear carrying a tool's authority, which is strictly worse than no check. **Planting is not
+diligence; it is the only thing that distinguishes "clean" from "not looking".**
+
+⚠️ **Sibling trap from the same survey, and the cheaper half to forget: a single-line grep is a
+claim about LINE BREAKS.** The shape being hunted was `.catch(async`, and `grep '\.catch(async'`
+returns **zero** hits in a repo that has one, because biome's formatter had split the call across
+two lines. A recommended instrument thus reported the whole class as already clean. Reach for a
+multiline search whenever the pattern spans a call boundary the formatter is free to break.
+
+⚠️ **Consequence for this file**: any "grepped it, nothing points there" conclusion recorded here
+before 2026-07-25 was reached with an instrument that could not see `.mxd/plugin/`, and the failure
+was silent in the direction that matters — a confident non-empty answer with the deciding file
+missing from it.
+
+⚠️ **Same family, and here the blind instrument is your own tool list: it is a frozen snapshot, not
+an inventory of what you can do.** The list you can see was frozen into `session_config` at session
+start; the daemon's handler registry holds more, and Anthropic dispatches any tool name to whatever
+handler exists. Root asserted "there is no WebSearch tool in this project" from reading its own
+56-entry list; `mcp__brave-search__brave_web_search` works, called by name. **"It is not in my list"
+is not evidence that it does not exist.** (Gotcha when you do call one: an unlisted tool has
+unconstrained argument types, so a numeric `count` arrives as a string and fails validation — pass
+the required argument alone.)
 
 ---
 # Events, JSONL & the Active Chain
@@ -4498,7 +4545,8 @@ Count them, file them (`01KYDBRDAPF13M5X0E7PGQVB0X`), ship the gate.
 ### The census — negative results, so nobody re-runs this
 
 Every file-enumeration site in the repo was searched, deliberately with bash `grep -rn` rather than
-`search` (see the self-bootstrap warning below). Conclusions:
+`search` — see *In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in
+your hand*, in the tools region. Conclusions:
 
 - **Every `Bun.Glob` in the repo is now correct** — three call sites, two in `search`, one in
   `list_files`.
@@ -4540,53 +4588,6 @@ to prevent. Meanwhile `const m: Manifest = { dataRoot: "@/plugin/foo" }` fails T
 break plugin authors writing a plain JSON-shaped manifest. Refuted at both ends. Forbidding `.slice`
 needs a genuinely opaque non-string type with an unwrap at every serialize/log/compare site, and
 manifests are JSON. **Do not re-derive.**
-
-### ⚠️ In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand
-
-> The tools an agent calls belong to the **running daemon**, not to anybody's worktree. So *"I just
-> fixed X, therefore I can use X"* is **false until the daemon restarts** — and it is false for
-> every other agent running at the same time.
-
-Measured hours after `search`'s fixes landed on main: `search("ErrorBoundary", glob: "**/*.tsx")`
-returned `(no matches)` while `grep -rn` returned 10 hits including the file that DEFINES it.
-
-**This makes the blind-instrument trap harder to avoid than it looks, because of who walks into
-it: the person who fixed the tool is the person with the most reason to believe it works.** The task
-that wrote down "a completeness survey run with a blind instrument returns a confident, wrong
-'that's all of them'" then ran its own survey on the blind instrument. The warning and the violation
-were in the same task. **A tool description's "always use this" has an unstated premise — that the
-tool works. Spend one call proving your instrument sees a file you already know exists before
-trusting a by-name survey.**
-
-⭐ **Generalised, because this is the standing pattern rather than a run of bad luck: a checker
-reporting ZERO is a claim about the checker until you have made it report ONE.** Four instruments
-answered confidently and wrongly in one week — a `search` that could not see a third of the source,
-two gates that read 8% and 3.6% and printed `All checks passed.`, and (2026-07-25) biome 2.4.10's
-`nursery/noFloatingPromises`, which reports zero over this repo **and zero over a planted
-`async function boom(){throw new Error("x")} ; boom();` in the file it is checking**. Without that
-probe the survey would have been written up as "the type-aware linter finds none" — a false
-all-clear carrying a tool's authority, which is strictly worse than no check. **Planting is not
-diligence; it is the only thing that distinguishes "clean" from "not looking".**
-
-⚠️ **Sibling trap from the same survey, and the cheaper half to forget: a single-line grep is a
-claim about LINE BREAKS.** The shape being hunted was `.catch(async`, and `grep '\.catch(async'`
-returns **zero** hits in a repo that has one, because biome's formatter had split the call across
-two lines. A recommended instrument thus reported the whole class as already clean. Reach for a
-multiline search whenever the pattern spans a call boundary the formatter is free to break.
-
-⚠️ **Consequence for this file**: any "grepped it, nothing points there" conclusion recorded here
-before 2026-07-25 was reached with an instrument that could not see `.mxd/plugin/`, and the failure
-was silent in the direction that matters — a confident non-empty answer with the deciding file
-missing from it.
-
-⚠️ **Same family, and here the blind instrument is your own tool list: it is a frozen snapshot, not
-an inventory of what you can do.** The list you can see was frozen into `session_config` at session
-start; the daemon's handler registry holds more, and Anthropic dispatches any tool name to whatever
-handler exists. Root asserted "there is no WebSearch tool in this project" from reading its own
-56-entry list; `mcp__brave-search__brave_web_search` works, called by name. **"It is not in my list"
-is not evidence that it does not exist.** (Gotcha when you do call one: an unlisted tool has
-unconstrained argument types, so a numeric `count` arrives as a string and fails validation — pass
-the required argument alone.)
 
 ## Type errors that were all casts, and the gate that never ran
 
