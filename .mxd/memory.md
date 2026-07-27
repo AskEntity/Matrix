@@ -4444,3 +4444,88 @@ not a scenario, because today's scenario cannot occur, and someone reading it as
 reproduce it, fail, and conclude the test is wrong. It asserts both entries' **timestamps** rather
 than their count, because the failure being guarded is content-and-position substitution, and a
 count assertion passes against a collapse that kept two entries for some other reason.
+
+---
+
+## An assertion about an ERROR MESSAGE survives the behaviour being inverted
+
+⚠️ **CORRECTION to *Small component facts worth knowing*, which still says a pure-image message is
+accepted.** As of 2026-07-27 the rule is the opposite: **a message must carry text; images ride
+along with it and are not a message on their own.** The `images.length` clauses in both REST guards,
+the `content ?? ""` fallback into `createUserMessage` and the `"[image]"` fallback into
+`notifyParentChain` are all gone — the premise those existed for (a message may carry no text) was
+removed, and none of them had another caller.
+
+⭐ **What earns this a section is not the rule. It is that the behaviour had shipped TWICE,
+deliberately, and was pinned by NOTHING.** `6be3a829` made the composer accept image-only;
+`10da7d33` made both REST doors accept it. The only test either commit touched was a single line:
+
+```diff
+-  expect(body.error).toBe("content is required");
++  expect(body.error).toBe("content or images required");
+```
+
+That reads as coverage. It is an assertion about a STRING, and it holds no matter which way the
+behaviour goes: the wording could survive untouched while image-only flipped from accepted to
+refused and back. Two rounds of authors, one green suite, zero tests of the thing.
+
+> **An assertion about the text of a rejection is not an assertion about what is rejected.** Same
+> family as *a test whose fixture cannot express the difference passes both ways*, and it hides
+> better, because the diff LOOKS like the test was updated along with the behaviour.
+
+**Detector, and it is cheap: for any behavioural claim, ask what the test would do if the behaviour
+were inverted.** If the answer is "still pass, possibly after changing one string", the behaviour is
+uncovered. Here the inversion needed 10 new tests across 4 gates and 0 flipped ones, because there
+was nothing to flip — a fact worth knowing before you go looking for the outdated tests a task
+description promises you.
+
+## The boundary had two doors, and the second was not the one anyone remembered
+
+A message reaches the runtime through **`POST /projects/:id/tasks/:nodeId/message`**
+(`src/runtime/routes/tasks.ts`) and **`POST /projects/:id/tasks/:nodeId/edit`**
+(`.mxd/plugin/runtime.ts`). Both take `images`; `/clarify` does not and is not one of them. Both
+now answer a text-less message with the same sentence, and `src/image-requires-text.test.ts` asserts
+both against ONE constant, so changing either wording alone reddens.
+
+⚠️ **The general trap is the UNNAMED PLURAL, and this file was the source of it.** The old entry said
+*"rejected by both REST guards"* and never named them. That reads as precise and carries no way to
+check itself, so the next reader supplies the missing names from whatever is adjacent — here
+`/clarify`, from a nearby sentence about `/message` and `/clarify` sharing task-id canonicalization —
+and then states them with the original's confidence, in a task description, as recorded fact.
+**"Both", "all three", "each of the N sites" without the names is a drained-rot vector with an
+amplifier: it does not merely go stale, it invites a confident fabrication that looks sourced.**
+Name them, or say "grep X to find them".
+
+⭐ **Corollary for enforcement, not just prose: a rule enforced at one of two doors is enforced
+nowhere**, because the other accepts the same payload. Test both in ONE file against one app — "I
+closed the door" then cannot quietly mean "I closed a door".
+
+## happy-dom: a React key handler on a text input needs a FOCUS first, or it never runs
+
+⚠️ **Measured 2026-07-27 with a standalone probe.** `textarea.dispatchEvent(new KeyboardEvent(
+"keydown", …))` on a React-controlled textarea does **not** reach `onKeyDown`. React's
+ChangeEventPlugin takes its polyfill branch under happy-dom and, on any key event over a text input,
+calls `getInstIfValueChanged` with the fiber it recorded at `focusin` — `null` when nothing was ever
+focused — and throws on that **before any listener runs**. Call `.focus()` first and both
+`onKeyDown` and a dispatched `submit` on the form work normally.
+
+This sits beside the already-recorded *happy-dom cannot type into a React controlled input*: between
+them, the way to drive a composer in a test is **seed the draft through the component's own
+`localStorage` key or a `quoteRequest` prop for the text, `.focus()` + keydown for the submit.**
+
+⚠️ **The reason this needs writing down is not the lost hour — it is the shape of the failure.** The
+first version of "Enter with an image and no text does not send" **passed**, on code that had no
+guard at all, because Enter never reached the handler. A green negative assertion over dead wiring
+is the exact thing *a fixture that cannot express the difference* describes, and here the dead
+wiring was supplied by the environment rather than by the fixture, so nothing in the test looked
+wrong. **Every negative assertion driven through synthetic events needs a positive control in the
+same test** — give the same composer text, press the same key, require a send.
+
+⚠️ **And the 227MB `toBeNull()` trap has a second cost nobody had hit yet: it corrupts a mutation
+VERDICT.** Relaxing the hint's render condition IS caught — by `expect(hint()).toBeNull()` in a
+regression test — but that assertion printed the received DOM node with its whole React fiber graph
+(measured: 182MB, a 43-second test), which mangled bun's `(fail)` line, so the harness scraping that
+line reported the mutation as **SURVIVED**. Third instance of *an instrument that fails by producing
+the comfortable answer*, and the first where the instrument was fine and its INPUT was destroyed by
+an assertion elsewhere. Compare booleans in DOM tests — not for tidiness, for legibility on the one
+day it fires.

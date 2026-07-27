@@ -149,8 +149,7 @@ async function renderInputBar(opts?: { draft?: string }) {
 	// WITH its React fiber graph on failure — measured here at 182MB of output
 	// and a 43-second test, which is how a caught mutation came back looking
 	// like a survivor.
-	const hintShown = () =>
-		div.querySelector(".mxd-image-needs-text") !== null;
+	const hintShown = () => div.querySelector(".mxd-image-needs-text") !== null;
 	const hintText = () =>
 		div.querySelector(".mxd-image-needs-text")?.textContent ?? "";
 	const previews = () =>
