@@ -44,7 +44,10 @@ the run you already have — see *An unhandled rejection is an outage here, not 
 that stack matters far beyond the test suite.
 
 Do not record test counts in this file. They were ~500 short within three months, and a stale count
-is indistinguishable from a fresh one.
+is indistinguishable from a fresh one. ⚠️ **That forbids a count presented as CURRENT STATE, not the
+characters** — a count inside a worked example ("you see `2116 pass / 2 fail` and cannot tell WHICH
+two") is an instance, cannot expire, and loses its shape without the number. See *Writing this file*
+before deleting one.
 
 ## Language
 
@@ -380,6 +383,26 @@ type was renamed". A symptom looks most redundant exactly when you have just und
 mechanism, which is exactly when it is most needed. Keep the conditional form — *"if you break this
 invariant, you will see X"* — and cut the perfect tense — *"in July we had a bug where the buttons
 disappeared"*, which is addressed to nobody.
+
+⭐ **Before applying any rule below, ask whether the thing in front of you is a CLAIM or an
+INSTANCE. Every rule here targets what is presented as CURRENT STATE; none of them targets a string
+appearing in the file.** An instance cannot rot — it records something that was true at a moment,
+and that moment does not change. *"You see `2116 pass / 2 fail`, discover you cannot see WHICH two,
+re-run with `| grep fail`, and get a different flaky subset"* is not a claim about the suite's size;
+the story is identical when the suite reaches three thousand, and deleting the numbers leaves it
+with no shape. The same sentence pattern presented as state — *"the suite has 2116 tests"* — expires
+silently and is what the rule is for.
+
+⚠️ **This is the one phase-3 loss that nothing can detect.** A curator holding "do not record test
+counts" scans, finds three violations, deletes them, writes them into the enumeration, and is
+compliant at every step — while three arguments lose their skeletons. `comm` does not apply, nothing
+rings, and the content was there until we removed it. That is the **destroyed by understanding** rot
+kind, arriving through a correctly-applied rule.
+
+⚠️ **And when a measurement is sitting alone as its own paragraph, the move is to FOLD IT INTO the
+guardrail it evidences — never to delete it.** Alone it reads as trivia and is the first thing a
+compression pass takes; welded into the instruction it survives, with its date and its number
+intact.
 
 **Rules:**
 
