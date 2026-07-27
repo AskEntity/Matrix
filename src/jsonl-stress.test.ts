@@ -865,8 +865,12 @@ describe("walker edge cases", () => {
 	});
 
 	// Adversarial: an assistant_text event with EMPTY content. The walker
-	// renders it as a text block. Defensive fallback in onAssistantContent
-	// ensures the block array is never empty (prevents Anthropic 400).
+	// renders it as a text block.
+	// ⚠️ This used to claim the non-empty block array "prevents Anthropic 400".
+	// Both halves are wrong, in opposite directions: an empty content ARRAY is
+	// legal (measured 200, 2026-07-25), and the `[{text:""}]` this produces
+	// instead is a 400 at every position. See PROBED_SHAPES in
+	// test-utils/api-message-rules.ts, and draft 01KYDKK0 for the emit guard.
 	test("assistant_text with empty content → block present, never empty content[]", () => {
 		const events: Event[] = [assistantText("")];
 		const msgs = eventsToAnthropicMessages(events);

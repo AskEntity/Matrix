@@ -47,8 +47,8 @@
  *      message.                                                   [2026-07-25]
  *   5. No EMPTY and no WHITESPACE-ONLY `text` block, at ANY position, on
  *      EITHER role — and no bare `""` as a USER message's whole content.
- *      Three separate 400s. One of them sat in the list below as LEGAL for two
- *      days; see the tombstone.                                   [2026-07-25]
+ *      Three separate 400s, one of which this file called LEGAL for two days
+ *      — see the tombstone.                                       [2026-07-25]
  *
  * NOT rules — each measured LEGAL, not merely never-objected-to:
  *   - role alternation: user/user, user/user/user, assistant/assistant
@@ -355,7 +355,8 @@ export const UNPROBED: readonly UnprobedClaim[] = [
 			"is nothing to probe; it means a bug on our side.",
 	},
 	{
-		claim: 'an empty or whitespace-only `thinking` block, or an empty `tool_result`',
+		claim:
+			"an empty or whitespace-only `thinking` block, or an empty `tool_result`",
 		note:
 			"Rule 5's check covers `text` blocks ONLY, because `text` is what was measured. Do " +
 			"NOT widen it by analogy with the thinking/text positional equivalence — that " +

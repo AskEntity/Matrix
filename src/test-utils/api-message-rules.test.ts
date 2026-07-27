@@ -23,7 +23,10 @@ import {
  * fails here.
  */
 
-const userText = (text: string): ApiMessage => ({ role: "user", content: text });
+const userText = (text: string): ApiMessage => ({
+	role: "user",
+	content: text,
+});
 
 describe("rule 5 — empty and whitespace-only content (measured 2026-07-25)", () => {
 	// ── The rule fires ──
@@ -364,9 +367,9 @@ describe("provenance — every rule says when it last met the real API", () => {
 		expect(dupe).toBeDefined();
 		expect(dupe).not.toContain("Real API:");
 		expect(dupe).toContain("OUR rule");
-		expect(
-			UNPROBED.some((u) => u.claim.includes("same tool_use_id")),
-		).toBe(true);
+		expect(UNPROBED.some((u) => u.claim.includes("same tool_use_id"))).toBe(
+			true,
+		);
 	});
 
 	test("no row claims an empty text block is legal", () => {
