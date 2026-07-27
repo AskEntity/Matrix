@@ -145,7 +145,14 @@ async function renderInputBar(opts?: { draft?: string }) {
 
 	const sendButton = () =>
 		div.querySelector<HTMLButtonElement>("button.mxd-btn-run");
-	const hint = () => div.querySelector(".mxd-image-needs-text");
+	// ⚠️ A boolean, deliberately. `expect(domNode).toBeNull()` prints the node
+	// WITH its React fiber graph on failure — measured here at 182MB of output
+	// and a 43-second test, which is how a caught mutation came back looking
+	// like a survivor.
+	const hintShown = () =>
+		div.querySelector(".mxd-image-needs-text") !== null;
+	const hintText = () =>
+		div.querySelector(".mxd-image-needs-text")?.textContent ?? "";
 	const previews = () =>
 		div.querySelectorAll<HTMLImageElement>(".mxd-image-previews img");
 
@@ -178,7 +185,8 @@ async function renderInputBar(opts?: { draft?: string }) {
 		div,
 		sent,
 		sendButton,
-		hint,
+		hintShown,
+		hintText,
 		previews,
 		attachImage,
 		insertText,
@@ -188,15 +196,16 @@ async function renderInputBar(opts?: { draft?: string }) {
 
 describe("composer: an image alone is not sendable", () => {
 	test("image attached, no text → Send is disabled and the hint says what to do", async () => {
-		const { sendButton, hint, attachImage } = await renderInputBar();
+		const { sendButton, hintShown, hintText, attachImage } =
+			await renderInputBar();
 		expect(sendButton()?.disabled).toBe(true); // empty composer
-		expect(hint()).toBeNull();
+		expect(hintShown()).toBe(false);
 
 		await attachImage();
 
 		expect(sendButton()?.disabled).toBe(true);
-		const shown = await waitFor(() => hint());
-		expect(shown.textContent).toContain(HINT);
+		await waitFor(hintShown);
+		expect(hintText()).toContain(HINT);
 	});
 
 	test("image attached, no text → Enter does not send (with a positive control)", async () => {
@@ -221,25 +230,25 @@ describe("composer: an image alone is not sendable", () => {
 	});
 
 	test("whitespace-only text with an image is still not sendable", async () => {
-		const { sendButton, hint, sent, attachImage, pressEnter } =
+		const { sendButton, hintShown, sent, attachImage, pressEnter } =
 			await renderInputBar({ draft: "   \n  " });
 		await attachImage();
 
 		expect(sendButton()?.disabled).toBe(true);
-		expect(hint()).not.toBeNull();
+		expect(hintShown()).toBe(true);
 		pressEnter();
 		await new Promise((r) => setTimeout(r, 30));
 		expect(sent).toHaveLength(0);
 	});
 
 	test("REGRESSION: text WITH an image sends, and the image rides along", async () => {
-		const { sendButton, hint, sent, attachImage, pressEnter } =
+		const { sendButton, hintShown, sent, attachImage, pressEnter } =
 			await renderInputBar({ draft: "look at this" });
 		await attachImage();
 
 		expect(sendButton()?.disabled).toBe(false);
 		// Nothing to tell the user — the hint is a prompt to act, not a label.
-		expect(hint()).toBeNull();
+		expect(hintShown()).toBe(false);
 
 		pressEnter();
 		await waitFor(() => (sent.length === 1 ? true : null));
@@ -263,9 +272,9 @@ describe("composer: an image alone is not sendable", () => {
 		// The hint answers "you attached something and nothing happened". With
 		// nothing attached there is no question to answer, and a permanent
 		// line under an empty composer is noise.
-		const { hint, sendButton } = await renderInputBar();
+		const { hintShown, sendButton } = await renderInputBar();
 		await new Promise((r) => setTimeout(r, 30));
-		expect(hint()).toBeNull();
+		expect(hintShown()).toBe(false);
 		expect(sendButton()?.disabled).toBe(true);
 	});
 });
