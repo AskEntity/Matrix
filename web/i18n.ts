@@ -132,8 +132,8 @@ const en: Translations = {
 	"settings.titleGlobal": "Global Settings",
 	"settings.titleProject": "Project Settings",
 	"settings.titleLocal": "Local Settings",
-	"settings.rootAuth": "Root Auth",
-	"settings.rootModel": "Root Model",
+	"settings.rootAuth": "Auth",
+	"settings.rootModel": "Model",
 	"settings.rootModelPlaceholder": "e.g. claude-opus-4-6 (required)",
 
 	"settings.taskAgentModel": "Task Agent Model",
@@ -445,8 +445,8 @@ const zh: Translations = {
 	"settings.titleGlobal": "全局设置",
 	"settings.titleProject": "项目设置",
 	"settings.titleLocal": "本地设置",
-	"settings.rootAuth": "根认证",
-	"settings.rootModel": "根模型",
+	"settings.rootAuth": "认证",
+	"settings.rootModel": "模型",
 	"settings.rootModelPlaceholder": "如 claude-opus-4-6（必填）",
 
 	"settings.taskAgentModel": "任务代理模型",
