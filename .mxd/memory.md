@@ -398,6 +398,14 @@ disappeared"*, which is addressed to nobody.
    prefix; measured 99.8% hit after fixing it (2026-04, 582 creation / 362K read)" is one line that
    keeps the number, the date and the instruction. As a separate paragraph the same number is the
    first thing a compression pass deletes, because on its own it reads as trivia.
+   ⚠️ **The sharpest instance is the UNNAMED PLURAL, and this file was the source of one.** An entry
+   said *"rejected by both REST guards"* and never named them. That reads as precise while carrying
+   no way to check itself, so the next reader supplies the missing names from whatever is adjacent —
+   there, `/clarify`, from a nearby sentence about `/message` and `/clarify` sharing task-id
+   canonicalization — and then restates them with the original's confidence, in a task description,
+   as recorded fact. **"Both", "all three", "each of the N sites" without the names does not merely
+   go stale like any other count; it invites a confident fabrication that looks sourced.** Name
+   them, or say "grep X to find them".
 2. **Name things for what they ARE, not where they came from.** A check called "the phase-1
    invariant" gets switched off after phase 1 — precisely when it starts being useful.
 3. **Anything probabilistic: one passing sample is not verification.** The complement of mutation
@@ -2547,26 +2555,14 @@ leaking worktrees or orphaning Phase 2 (use `closeTaskOp`, or let `done("failed"
 validate the node exists and is a task rather than a folder, and reject `draft` the way MCP
 `send_message` always did.
 
-## The boundary had two doors, and the second was not the one anyone remembered
-
-A message reaches the runtime through **`POST /projects/:id/tasks/:nodeId/message`**
+⭐ **The same principle one layer out: a rule enforced at one of two doors is enforced nowhere**,
+because the other accepts the same payload — and the second door is reliably the one nobody
+remembers. A message reaches the runtime through **`POST /projects/:id/tasks/:nodeId/message`**
 (`src/runtime/routes/tasks.ts`) and **`POST /projects/:id/tasks/:nodeId/edit`**
-(`.mxd/plugin/runtime.ts`). Both take `images`; `/clarify` does not and is not one of them. Both
-now answer a text-less message with the same sentence, and `src/image-requires-text.test.ts` asserts
-both against ONE constant, so changing either wording alone reddens.
-
-⚠️ **The general trap is the UNNAMED PLURAL, and this file was the source of it.** The old entry said
-*"rejected by both REST guards"* and never named them. That reads as precise and carries no way to
-check itself, so the next reader supplies the missing names from whatever is adjacent — here
-`/clarify`, from a nearby sentence about `/message` and `/clarify` sharing task-id canonicalization —
-and then states them with the original's confidence, in a task description, as recorded fact.
-**"Both", "all three", "each of the N sites" without the names is a drained-rot vector with an
-amplifier: it does not merely go stale, it invites a confident fabrication that looks sourced.**
-Name them, or say "grep X to find them".
-
-⭐ **Corollary for enforcement, not just prose: a rule enforced at one of two doors is enforced
-nowhere**, because the other accepts the same payload. Test both in ONE file against one app — "I
-closed the door" then cannot quietly mean "I closed a door".
+(`.mxd/plugin/runtime.ts`); both take `images`, and `/clarify` does NOT and is not one of them.
+Both answer a text-less message with the same sentence, and `src/image-requires-text.test.ts`
+asserts both against ONE constant, so changing either wording alone reddens. Test both doors in one
+file against one app, and "I closed the door" can no longer quietly mean "I closed a door".
 
 ## Images
 
@@ -3443,13 +3439,9 @@ The server-side half — why a refresh on such a path reaches the shell at all �
 `pm.has(firstSegment)` predicate in *Auth & External API*; it is one predicate for both the auth
 bypass and the SPA-fallback wildcard, deliberately.
 
-⚠️ **happy-dom limitation: do NOT spy on `window.history.pushState`/`replaceState`.** Instrumenting
-them in `beforeEach` survives `GlobalRegistrator.unregister()` in ways nobody could diagnose and
-poisoned every subsequent `web/*.test.tsx` file with ~18 spurious failures. If you must assert on
-history calls, intercept at a layer the test owns (a harness that wraps the component and exposes
-captured calls), or leave routing integration to a real browser and unit-test the pure
-parse/build functions. Related: `history.replaceState` does **not** update `window.location.hash` in
-happy-dom although real browsers do.
+⚠️ **Testing this layer under happy-dom has its own trap — do NOT spy on `history.pushState` /
+`replaceState`** (limit 5 under *What happy-dom does not do*); unit-test the pure parse/build
+functions instead and leave routing integration to a real browser.
 
 ⚠️ **Process lesson, and it cost a wrong conclusion: never claim "pre-existing" without verifying
 against main properly.** The claim was that 18 failures predated the change. The verification used
@@ -3885,10 +3877,9 @@ read `false` and flipped it back to `true`), so the box reopened. Fixed by one r
 click-away.** If that is ever wanted back, use a document-level outside-click listener — **not**
 `input.onBlur`, which re-introduces the race.
 
-⚠️ **happy-dom cannot simulate typing into a React controlled input.** Both the native `input` event
-and the `Object.getOwnPropertyDescriptor(...).value` setter trick fail to fire `onChange` (probed).
-That is *why* the query was lifted to a controlled prop: filtering became testable by passing a prop
-instead of typing. `.blur()` and keydown do work.
+⚠️ **The query was lifted to a controlled prop because happy-dom cannot type into a React controlled
+input** (limit 3 under *What happy-dom does not do*): filtering became testable by passing a prop
+instead of typing.
 
 ## Settings: one Save & Restart button, and the misconception it encodes
 
@@ -4181,14 +4172,43 @@ writes "assert the abort actually aborts" when the harness cannot express the di
 before the first API call exists — and it **passes every park assertion while testing nothing about
 aborting a request**. Key on `mockAPI.getRequestHistory().length >= 1`.
 
-⚠️ **happy-dom v20 silently drops MutationObserver callbacks under GC pressure.**
-`MutationObserverListener` stores its callback in a `new WeakRef(...)` with no strong reference
-anywhere, and dispatch does `callback.deref()` — so after any GC pass, mutations are delivered to
-nothing, with **no error**. A test relying on MO delivery passes in isolation (no GC between observe
-and mutate) and flakes inside the full suite. Real browsers hold strong refs per spec, so production
-is fine. **Rule: never let a happy-dom test depend on MutationObserver delivery.** Route the tested
-behavior through a React effect and treat the MO path as a real-browser-only complement — and stub a
-no-op MutationObserver so the mutation proof targets the effect branch exactly.
+### What happy-dom does not do — five limits, each probed
+
+Kept together because a test author hits them as one question ("why did nothing happen?"), and each
+one produces a **passing** test rather than an error.
+
+1. ⚠️ **It silently drops MutationObserver callbacks under GC pressure** (v20).
+   `MutationObserverListener` stores its callback in a `new WeakRef(...)` with no strong reference
+   anywhere, and dispatch does `callback.deref()` — so after any GC pass, mutations are delivered to
+   nothing, with **no error**. A test relying on MO delivery passes in isolation (no GC between
+   observe and mutate) and flakes inside the full suite. Real browsers hold strong refs per spec, so
+   production is fine. **Never let a happy-dom test depend on MutationObserver delivery.** Route the
+   behavior through a React effect and treat the MO path as a real-browser-only complement — and
+   stub a no-op MutationObserver so the mutation proof targets the effect branch exactly.
+2. ⚠️ **No layout, so geometry cannot be observed there.** It can still test the *causes* of
+   geometry — DOM order, commit granularity, whether a callback ran — which is far better than
+   dropping the test or mocking geometry brittlely. Anything genuinely about pixels needs a real
+   browser.
+3. ⚠️ **You cannot type into a React controlled input.** Both the native `input` event and the
+   `Object.getOwnPropertyDescriptor(...).value` setter trick fail to fire `onChange` (probed).
+   `.blur()` and keydown do work.
+4. ⚠️ **A key handler on a text input needs a FOCUS first, or it never runs** (measured 2026-07-27).
+   `textarea.dispatchEvent(new KeyboardEvent("keydown", …))` on a React-controlled textarea does not
+   reach `onKeyDown`: React's ChangeEventPlugin takes its polyfill branch under happy-dom and, on
+   any key event over a text input, calls `getInstIfValueChanged` with the fiber it recorded at
+   `focusin` — `null` when nothing was ever focused — and throws on that **before any listener
+   runs**. Call `.focus()` first and both `onKeyDown` and a dispatched `submit` work normally.
+5. ⚠️ **Do NOT spy on `window.history.pushState`/`replaceState`.** Instrumenting them in
+   `beforeEach` survives `GlobalRegistrator.unregister()` in ways nobody could diagnose and poisoned
+   every subsequent `web/*.test.tsx` file with ~18 spurious failures. To assert on history calls,
+   intercept at a layer the test owns (a harness wrapping the component and exposing captured
+   calls), or leave routing integration to a real browser and unit-test the pure parse/build
+   functions. Related: `history.replaceState` does **not** update `window.location.hash` here,
+   although real browsers do.
+
+Taking 3 and 4 together, the way to drive a composer in a test is: **seed the draft through the
+component's own `localStorage` key (or a `quoteRequest` prop) for the text, `.focus()` + keydown for
+the submit.**
 
 ⚠️ **A constant-vector mock makes every hybrid-search assertion vacuous.** If the fake embedder
 returns the same vector for every text, every document scores cosine 1.0 against every query, the
@@ -4196,11 +4216,6 @@ whole index comes back, and any assertion about *which* documents matched passes
 tests were written that way and were measuring nothing. Return a text-derived vector so different
 texts are orthogonal. ⚠️ And **hybrid search embeds the QUERY through the same pipeline**, so an
 embed counter read *after* a search has counted the query too — snapshot before searching.
-
-⚠️ **happy-dom does no layout, so geometry cannot be observed there.** It can still test the *causes*
-of geometry — DOM order, commit granularity, whether a callback ran — which is far better than
-dropping the test or mocking geometry brittlely. Anything genuinely about pixels needs a real
-browser.
 
 ⚠️ **A negative assertion is only worth the WAIT in front of it — and deleting a redundant channel
 can silently remove that wait.** The shape, which generalises to every "delete the duplicate" task:
@@ -4213,44 +4228,25 @@ a positive control inside the same test: after asserting the thing was NOT trigg
 trigger for real and require that. Same family as `waitFor(() => x === null || true)` below — both
 are assertions sampled before the moment they are about.
 
+⚠️ **The same rule with the environment, not a duplicate channel, supplying the dead wiring:
+a negative assertion driven through SYNTHETIC EVENTS needs a positive control in the same test.**
+The first version of "Enter with an image and no text does not send" **passed on code that had no
+guard at all**, because limit 4 above meant Enter never reached the handler. Nothing in the test
+looked wrong — the fixture was fine and the environment was the thing that could not express the
+difference. Give the same composer text, press the same key, require a send.
+
 Three smaller traps that each cost real time:
 
 - `await waitFor(() => x === null || true)` polls NOTHING (always true) and asserts before React
   commits. Poll the real condition.
-- `expect(domNode).toBeNull()` prints the node **with its React fiber graph** on failure: one
-  assertion produced a **227MB** log and a 60s test. Compare booleans in DOM tests.
+- ⚠️ **`expect(domNode).toBeNull()` prints the node with its whole React fiber graph on failure**,
+  and the second cost is worse than the first. One such assertion produced a **227MB** log and a
+  60s test; another (182MB, 43s) **mangled bun's `(fail)` line, so a harness scraping that line
+  reported the mutation as SURVIVED** — the instrument was fine and its INPUT was destroyed by an
+  assertion elsewhere. Compare booleans in DOM tests, not for tidiness but for legibility on the one
+  day it fires.
 - **A bare "timed out waiting for X" tells you nothing.** Dump the last few events alongside it —
   that turned two blind reruns into one answer.
-
-## happy-dom: a React key handler on a text input needs a FOCUS first, or it never runs
-
-⚠️ **Measured 2026-07-27 with a standalone probe.** `textarea.dispatchEvent(new KeyboardEvent(
-"keydown", …))` on a React-controlled textarea does **not** reach `onKeyDown`. React's
-ChangeEventPlugin takes its polyfill branch under happy-dom and, on any key event over a text input,
-calls `getInstIfValueChanged` with the fiber it recorded at `focusin` — `null` when nothing was ever
-focused — and throws on that **before any listener runs**. Call `.focus()` first and both
-`onKeyDown` and a dispatched `submit` on the form work normally.
-
-This sits beside the already-recorded *happy-dom cannot type into a React controlled input*: between
-them, the way to drive a composer in a test is **seed the draft through the component's own
-`localStorage` key or a `quoteRequest` prop for the text, `.focus()` + keydown for the submit.**
-
-⚠️ **The reason this needs writing down is not the lost hour — it is the shape of the failure.** The
-first version of "Enter with an image and no text does not send" **passed**, on code that had no
-guard at all, because Enter never reached the handler. A green negative assertion over dead wiring
-is the exact thing *a fixture that cannot express the difference* describes, and here the dead
-wiring was supplied by the environment rather than by the fixture, so nothing in the test looked
-wrong. **Every negative assertion driven through synthetic events needs a positive control in the
-same test** — give the same composer text, press the same key, require a send.
-
-⚠️ **And the 227MB `toBeNull()` trap has a second cost nobody had hit yet: it corrupts a mutation
-VERDICT.** Relaxing the hint's render condition IS caught — by `expect(hint()).toBeNull()` in a
-regression test — but that assertion printed the received DOM node with its whole React fiber graph
-(measured: 182MB, a 43-second test), which mangled bun's `(fail)` line, so the harness scraping that
-line reported the mutation as **SURVIVED**. Third instance of *an instrument that fails by producing
-the comfortable answer*, and the first where the instrument was fine and its INPUT was destroyed by
-an assertion elsewhere. Compare booleans in DOM tests — not for tidiness, for legibility on the one
-day it fires.
 
 ## ⚠️ `bunfig.toml`'s preload is load-bearing; do not remove it
 
