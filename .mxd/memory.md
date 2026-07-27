@@ -453,8 +453,8 @@ intact.
   longer exists**: `buildAgentContext` (really `createAgentContext`), `sessionWasReplaced` (see
   below — its obvious correction is a phantom too), two deleted turn-builders standing where
   `adapter.buildUserTurn` now is, and an Edit/Rewind re-fetch consumer that had been removed
-  outright. Each fails the same way: a reader
-  greps it, gets nothing, and concludes the mechanism is gone.
+  outright. Each fails the same way: a reader greps it, gets nothing, and concludes the mechanism
+  is gone.
   ⚠️ **The endpoint of this survey is a DEFINITION, never another name** — the replacement you find
   in the source can itself be a phantom. `sessionWasReplaced` was corrected here to `wasReplaced`,
   which **also does not exist**: it appears three times in `agent-lifecycle.ts` and all three are
