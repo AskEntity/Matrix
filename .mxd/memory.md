@@ -438,6 +438,28 @@ intact.
 **Daily maintenance, all cheap:**
 
 - Changed an identifier? Grep it in this file.
+- ⭐ **And periodically run that BACKWARDS: extract every backticked identifier this file names and
+  check each one against the source.** The forward direction only fires when someone remembers they
+  renamed something; the backward direction needs nobody to remember, which is why it finds a
+  different set. Measured 2026-07-27 over 485 identifiers: 41 absent from the repo, most of them
+  deliberate deletion records — and **four were live present-tense guidance naming something that no
+  longer exists**: `buildAgentContext` (really `createAgentContext`), `sessionWasReplaced` (really
+  `wasReplaced`), two deleted turn-builders standing where `adapter.buildUserTurn` now is, and an
+  Edit/Rewind re-fetch consumer that had been removed outright. Each fails the same way: a reader
+  greps it, gets nothing, and concludes the mechanism is gone.
+  ⚠️ **Plant a fake identifier in the input before believing the output.** On the first run of this
+  check a bash `while read` loop silently dropped its final line — and the planted control, added
+  last, was the only thing that said so. A survey of 485 names that quietly checks 484 reports
+  exactly like one that checks all of them.
+- ⚠️ **Searching THIS file: anything over ~60 characters needs a multiline search.** The file is hard
+  wrapped near 100 columns and the wrap lands mid-phrase, so a single-line `grep` for a sentence you
+  can see with your own eyes returns **0**. Demonstrated on itself: `grep -c "text content blocks
+  must be non-empty"` → 0, multiline → 1, the phrase split across two lines. `git log -S"<long
+  phrase>"` fails the same way, so "when did this sentence arrive" archaeology comes back silently
+  empty. Same family as *a single-line grep is a claim about LINE BREAKS*, landing on the prose file
+  we grep most. **The damage is specific and it is the opposite of a missed match**: you conclude
+  the file does not say a thing, and write it a second time — which is precisely what a
+  reorganization exists to remove. Search a short fragment, or search with newlines collapsed.
 - ⭐ **Changed a BEHAVIOUR? Grep for prose that describes it — in this file, in docstrings, in tool
   descriptions and in test names.** This is the rule the identifier one is missing, and it is the
   only thing that finds the second kind of prose rot:
@@ -1454,8 +1476,8 @@ because "nothing is running" is exactly the message a client reconnecting after 
 needs in order to drop stale entries. A delta rather than a snapshot per change because building a
 snapshot needs the tracker and the provider loop has none.
 
-⚠️ **Two consumers that a grep for `activeAgents` does NOT find**, and this is the canonical local
-example of the by-name blindness described in *Changing code here*:
+⚠️ **A consumer that a grep for `activeAgents` does NOT find**, and the canonical local example of
+the by-name blindness described in *Changing code here*:
 
 1. `yield_external` subscribes to the `agent_idle` **event type name** in `WAKE_SIGNALS`
    (`mcp-endpoint.ts`). It is matched now via a predicate on `agent_activity`
@@ -1463,9 +1485,10 @@ example of the by-name blindness described in *Changing code here*:
    because that is the tool's external contract**, unrelated to our internal event names. In the
    same file, ~15 lines apart, the fast path returns the *string* `"agent_idle"` off
    `session.queue?.idle` — a different thing from the event type, and easy to conflate.
-2. `onAgentIdle` (the Edit/Rewind re-fetch). Migrated to "the viewed task stopped working", which
-   now also covers session end — an agent that finishes with `done()` never goes idle, so its last
-   messages used to stay uneditable forever.
+⚠️ **There was a second — an idle-triggered re-fetch feeding Edit/Rewind — and it is gone. Do not
+re-add one.** Its only job was recovering the persisted event identity that SSE did not carry;
+`eid` now rides every transport, so the re-fetch would buy nothing and cost a wholesale replacement
+of the whole log (see the entry-key churn under *The activity log's scroll position*).
 
 ## An anomalous stop idles the agent silently
 
@@ -2216,9 +2239,10 @@ are **different cache entries** — the TTL is part of prefix identity. `cacheTt
 `session_config` (root `"1h"`, regular children unset = 5 min) and is inherited through fork, which
 is why it is deliberately NOT refreshed at compaction.
 
-⚠️ **Multiline queue content must stay ONE text block.** `buildToolResultsMessage` and
-`buildImplicitYieldMessage` used to split queue messages on `\n` into separate blocks, while JSONL
-reconstruction merged them back into one — a guaranteed prefix mismatch on every resume.
+⚠️ **Multiline queue content must stay ONE text block**, which today is `adapter.buildUserTurn`'s
+job. Two earlier per-shape builders split queue messages on `\n` into separate blocks while JSONL
+reconstruction merged them back into one — a guaranteed prefix mismatch on every resume, and the
+reason turn-building was collapsed onto a single path at all.
 
 **Known residual, low priority**: `addAssistantMessage` stores the raw API response content in the
 SDK's key order, while JSONL reconstruction uses our manual key order. They happen to agree today
@@ -2349,41 +2373,32 @@ agent silently* for what that costs.
 
 ## The Anthropic message-shape rules, MEASURED
 
-Measured against production Anthropic (19 shapes, OAuth, opus-class). These four are the API's actual
-rules:
+**`src/test-utils/api-message-rules.ts` is the authoritative list — read it there, not here.** It
+carries each rule with the real 400 string it mirrors, plus `PROBED_SHAPES` (every shape we have
+actually sent, with the day we sent it) and `UNPROBED` (what we assert but have never asked the API).
+This section keeps only what that file cannot tell you.
 
-1. **The first message must be `user`.**
-2. **The conversation must END with a `user` message.** Ending on assistant → 400 *"This model does
-   not support assistant message prefill."*
-3. **The tool-answering rule, which is NOT "in the next message":** flatten the user messages after
-   an assistant-with-`tool_use` into one block stream and take the **maximal LEADING run of
-   `tool_result` blocks.** It crosses message boundaries freely; **any non-`tool_result` block ends
-   it**, including a *trailing* text block in an otherwise-fine message and including a plain-string
-   user message. Every `tool_use` must be answered inside that run.
-4. **Every `tool_result` must answer a `tool_use` in the preceding assistant message.**
+⚠️ **Do not re-enumerate the rules here.** This section used to, opening "these four are the API's
+actual rules" — and it was **five** within two days, with the fifth sitting in the very next
+paragraph, added later and reading as an elaboration rather than as the refutation it was. Nobody
+noticed, because a list and its correction do not look like a contradiction when they are adjacent
+and politely worded.
 
-And two things that are **LEGAL** and were long believed otherwise: **consecutive same-role messages**
-(user/user, user/user/user, assistant/assistant) and an **empty content array** (`[]`), plus a bare
-empty string as an assistant message's whole content.
+⚠️ **"NOT rules" in that file means MEASURED LEGAL, not never-objected-to, and that distinction is
+the whole bug.** From outside, a rule we never discovered and a shape we measured as legal read
+identically. `[{type:"text", text:""}]` sat under "NOT rules" as legal for two days and is in fact a
+400 in every position on either role. It is reachable: `walker-golden.test.ts` pins the walker
+rebuilding an empty `assistant_text` as exactly that block, repair does not cover it, and while both
+emit sites guard on truthiness (`if (partialText)`, `if (responseText)`), ⚠️ **whitespace-only passes
+truthiness** — so a model whose first streamed token is a newline, interrupted right there, bricks
+the session on every later request.
 
-⚠️ **An empty or whitespace-only TEXT BLOCK is a different thing and is a 400 in every position, on
-either role.** Measured 2026-07-25: `[{type:"text",text:""}]` gives *"text content blocks must be
-non-empty"* and `[{type:"text",text:"  "}]` gives *"text content blocks must contain non-whitespace
-text"*, mid-conversation exactly as readily as at the tail; a bare `""` as a USER message's content
-is also rejected (*"user messages must have non-empty content"*). This file listed the block form as
-legal until that day — the legal case is the bare string on an assistant message, never a block
-wrapping one. It matters because `walker-golden.test.ts` pins the walker rebuilding an empty
-`assistant_text` as precisely that block, so anything that persists one bricks the session on every
-later request, and repair does not cover it. Nothing produces one today — both emit sites guard on
-truthiness (`if (partialText)`, `if (responseText)`) — but ⚠️ **whitespace-only passes both guards**,
-so a model whose first streamed token is a newline, interrupted right there, is the reachable path.
-
-⭐ **A `thinking` block is positionally identical to a text block, so the four rules above are the
-whole story and thinking needs no clause of its own.** Measured the same day against production with
-real signed thinking blocks: `[u, a[thinking], u]`, `[u, a[text, thinking], u]` and
-`[u, a[text], a[thinking], u]` are all accepted. Trailing, `a[thinking]` is rejected — but so is
-`a[text]`, and **the SAME assistant message is accepted when it is not last**, which is what makes it
-rule 2 rather than a rule about thinking. Only the error string differs: a trailing thinking block
+⭐ **A `thinking` block is positionally identical to a text block, so it needs no clause of its
+own.** (Rule numbers below are that file's.) Measured against production with real signed thinking
+blocks: `[u, a[thinking], u]`, `[u, a[text, thinking], u]` and `[u, a[text], a[thinking], u]` are
+all accepted. Trailing, `a[thinking]` is rejected — but so is `a[text]`, and **the SAME assistant
+message is accepted when it is not last**, which is what makes it rule 2 rather than a rule about
+thinking. Only the error string differs: a trailing thinking block
 says *"The final block in an assistant message cannot be `thinking`"*, trailing text says *"does not
 support assistant message prefill"*. ⚠️ **Do not read that wording as a separate constraint.** It
 fires only where rule 2 already fires, and reading it as its own rule is how someone builds a repair
@@ -3269,7 +3284,7 @@ with the plugin's own tools owning routing.
 
 ⚠️ **`deliverToNode` throws "deliverMessage not registered" outside any agent loop.** `_ctx` is set
 by `initResourceRegistry` on the `createApp` path, but `_deliverMessage` is registered by
-`registerSideEffects`, which runs inside `buildAgentContext` **at agent launch**. `listNodes` works
+`registerSideEffects`, which runs inside `createAgentContext` **at agent launch**. `listNodes` works
 without a launch; delivery does not. This is why its arrival is tested through a real loop rather
 than a bare `createApp`.
 
@@ -4142,6 +4157,15 @@ it are all consistent with it by construction.**
 was invisible because the fixture contained exactly one `src/`, so `src/*.ts` and `**/src/*.ts`
 returned the same files.
 
+⚠️ **And the mirror image, which is the one you will defend rather than fix: a fixture can be too
+REAL to see the difference.** Deleting a `b.type !== "text"` filter reddened NOTHING, because both
+scoping tests used genuine shapes — an empty `tool_result`, a real thinking block — and **no real
+Anthropic block type carries a `text` field at all**, so that filter and the `typeof b.text ===
+"string"` narrowing below it covered for each other perfectly. Only a synthetic block, a non-`text`
+type that nevertheless has a `text` field, can see that line. Realism is normally the thing you want
+from a fixture, and here it is exactly what blinded it — so "our fixtures are faithful" is not an
+answer to "would this mutation be caught".
+
 ⚠️ **The same defect in a PERFORMANCE fixture does not merely lose precision — it can reverse the
 sign.** A synthetic 64-document benchmark said webgpu was 18% *faster*; the real 1115-document corpus
 says it is 30% *slower*, because real documents have a long tail (p50 206 chars, p90 3988, max
@@ -4695,7 +4719,7 @@ days of test-level debugging could not.
   description and in the system prompt all said the cascade was reachable, for months; it is not,
   and describing a guard as a hazard makes agents avoid the tool where it is the right move.
 - ⚠️ **Abort-signal leak**: after a stop, the old `runAgentForNode` settles asynchronously. The catch
-  and finally check `sessionWasReplaced` to suppress stale error events from a session that is
+  and finally check `wasReplaced` to suppress stale error events from a session that is
   already gone.
 
 ## Known bugs and open design
