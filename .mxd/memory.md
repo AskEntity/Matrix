@@ -438,19 +438,36 @@ intact.
 **Daily maintenance, all cheap:**
 
 - Changed an identifier? Grep it in this file.
+- ⭐ **Naming an identifier is what exposes a sentence to this rot; describing the BEHAVIOUR is
+  immune.** The same mechanism appears twice in this file, and only one instance rotted. *"The
+  session-identity check in the `finally` block prevents a dying agent from clobbering the cleanup
+  of the replacement agent"* — still exactly true, and it cannot go stale, because there is no name
+  in it to go stale. The other instance named the variable, the variable was renamed and inverted,
+  and the sentence became a pointer to nothing. **Prefer the behavioural form; spend a name only
+  where the reader needs it to FIND the thing** — and then it is load-bearing and belongs in the
+  backward survey below.
 - ⭐ **And periodically run that BACKWARDS: extract every backticked identifier this file names and
   check each one against the source.** The forward direction only fires when someone remembers they
   renamed something; the backward direction needs nobody to remember, which is why it finds a
   different set. Measured 2026-07-27 over 485 identifiers: 41 absent from the repo, most of them
   deliberate deletion records — and **four were live present-tense guidance naming something that no
-  longer exists**: `buildAgentContext` (really `createAgentContext`), `sessionWasReplaced` (really
-  `wasReplaced`), two deleted turn-builders standing where `adapter.buildUserTurn` now is, and an
-  Edit/Rewind re-fetch consumer that had been removed outright. Each fails the same way: a reader
+  longer exists**: `buildAgentContext` (really `createAgentContext`), `sessionWasReplaced` (see
+  below — its obvious correction is a phantom too), two deleted turn-builders standing where
+  `adapter.buildUserTurn` now is, and an Edit/Rewind re-fetch consumer that had been removed
+  outright. Each fails the same way: a reader
   greps it, gets nothing, and concludes the mechanism is gone.
+  ⚠️ **The endpoint of this survey is a DEFINITION, never another name** — the replacement you find
+  in the source can itself be a phantom. `sessionWasReplaced` was corrected here to `wasReplaced`,
+  which **also does not exist**: it appears three times in `agent-lifecycle.ts` and all three are
+  comments, while the real local is `notReplaced` and its polarity is the opposite. Grep either
+  phantom and you hit those comments, which describe it as though it were there. So after finding a
+  candidate, ask the same question again: does *this* one have a definition?
   ⚠️ **Plant a fake identifier in the input before believing the output.** On the first run of this
   check a bash `while read` loop silently dropped its final line — and the planted control, added
   last, was the only thing that said so. A survey of 485 names that quietly checks 484 reports
-  exactly like one that checks all of them.
+  exactly like one that checks all of them. ⭐ **The control worked ONLY because it was last: put it
+  where truncation risk is highest**, which for anything looping line by line is the final line. A
+  control in the middle would have passed and told you nothing.
 - ⚠️ **Searching THIS file: anything over ~60 characters needs a multiline search.** The file is hard
   wrapped near 100 columns and the wrap lands mid-phrase, so a single-line `grep` for a sentence you
   can see with your own eyes returns **0**. Demonstrated on itself: `grep -c "text content blocks
@@ -1485,10 +1502,12 @@ the by-name blindness described in *Changing code here*:
    because that is the tool's external contract**, unrelated to our internal event names. In the
    same file, ~15 lines apart, the fast path returns the *string* `"agent_idle"` off
    `session.queue?.idle` — a different thing from the event type, and easy to conflate.
-⚠️ **There was a second — an idle-triggered re-fetch feeding Edit/Rewind — and it is gone. Do not
-re-add one.** Its only job was recovering the persisted event identity that SSE did not carry;
-`eid` now rides every transport, so the re-fetch would buy nothing and cost a wholesale replacement
-of the whole log (see the entry-key churn under *The activity log's scroll position*).
+⚠️ **There was a second — an idle-triggered re-fetch feeding Edit/Rewind — and it is gone entirely,
+not renamed. Do not re-add one.** The verdict is now computed IN RENDER from the pushed activity map
+(`isWorking(activity)` inside `LogEntryView`), so every `agent_activity` broadcast re-evaluates it
+for free; the other two inputs ride on the entry itself. A re-fetch would buy nothing and cost a
+wholesale replacement of the log — see the entry-key churn under *The activity log's scroll
+position*.
 
 ## An anomalous stop idles the agent silently
 
@@ -4719,8 +4738,10 @@ days of test-level debugging could not.
   description and in the system prompt all said the cascade was reachable, for months; it is not,
   and describing a guard as a hazard makes agents avoid the tool where it is the right move.
 - ⚠️ **Abort-signal leak**: after a stop, the old `runAgentForNode` settles asynchronously. The catch
-  and finally check `wasReplaced` to suppress stale error events from a session that is
-  already gone.
+  and finally re-read the node and compare its session against the one they began with, so a dying
+  agent cannot emit stale error events over the replacement that already owns the node. ⚠️ Do not
+  reach for a name here: the readable one (`wasReplaced`) exists only in comments, and the real
+  local is its **negation** (`notReplaced`).
 
 ## Known bugs and open design
 
