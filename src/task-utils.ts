@@ -115,7 +115,7 @@ export function buildTaskPrompt(
 		parts.push(
 			`\n## Git Context`,
 			`You are on branch: \`${node.branch}\``,
-			`Your working directory is already set to \`${node.worktreePath ?? "unknown"}\` — do NOT cd to it.`,
+			`Your working directory is already set to \`${node.worktreePath ?? "unknown"}\`.`,
 			`Do NOT switch branches. All commits go on \`${node.branch}\`.`,
 		);
 	}

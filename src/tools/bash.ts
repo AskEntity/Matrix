@@ -614,12 +614,25 @@ export async function executeBashWithTimeout(
 		: null;
 	const cwdPath = join(MXD_TMP_DIR, `cwd-${execId}`);
 
-	// cd wrapper writes resolved pwd to temp file on every cd — no stdout pollution.
-	// EXIT trap writes final pwd to temp file (catches cd in subshells/scripts too).
+	// The EXIT trap is the WHOLE of CWD tracking: it writes the shell's final pwd
+	// to a temp file, which catches every way a directory can change — a bare
+	// `cd`, one inside a `&&` chain, one inside a sourced script — and touches
+	// neither stdout nor stderr.
+	//
+	// `cd` itself is deliberately left as the builtin. There was an override here
+	// that errored on `cd <the directory you are already in>`; the whole of its
+	// body existed to produce that error, and cd-ing to where you already are is
+	// now a free no-op, because a redundant `cd` costs a few tokens and a command
+	// that runs in the wrong repository costs a great deal more. Do not
+	// reintroduce a wrapper to reach some other end either: `cd() { builtin cd
+	// "$1"; }` is strictly worse than the builtin it replaces — it breaks `cd -`
+	// and an empty argument stops meaning $HOME.
+	//
+	// Immediate-background commands get no prefix at all: they cannot change the
+	// agent's CWD, so there is nothing to track.
 	const isImmediateBackground = foregroundTimeout === 0 && !!sessionId;
-	const cdWrapper = `cd() { local t="${"$"}{1:-${"$"}HOME}"; local r; r=${"$"}(builtin cd "${"$"}t" 2>/dev/null && pwd); if [ "${"$"}(pwd)" = "${"$"}r" ]; then echo "bash: cd: ${"$"}(pwd): already in this directory" >&2; return 1; fi; builtin cd "${"$"}t"; }; `;
 	const exitTrap = `___mxd_trap() { pwd > "${cwdPath}"; }; trap ___mxd_trap EXIT; `;
-	const wrapperPrefix = isImmediateBackground ? "" : `${exitTrap}${cdWrapper}`;
+	const wrapperPrefix = isImmediateBackground ? "" : exitTrap;
 
 	// Merged mode: subshell wrapped with 2>&1 so all output funnels to stdout file.
 	// Bash's own stderr is discarded ("ignore"); rare bash-level syntax errors

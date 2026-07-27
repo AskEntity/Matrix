@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, symlinkSync } from "node:fs";
+import { chmodSync, realpathSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -360,6 +360,111 @@ describe("executeTool", () => {
 		expect(result.isError).toBe(true);
 		expect(result.cwd).toBe("/tmp");
 		expect(result.content).toContain("exit code: 1");
+	});
+
+	// ── `cd` to where you already are is free; a `cd` that cannot land is not ──
+	//
+	// There used to be a shell `cd()` override here that errored with
+	// "already in this directory". It is gone, and these pin both halves of what
+	// replaced it: the redundant `cd` an unsure agent should feel free to write
+	// must succeed, and every `cd` that CANNOT reach its target must still fail
+	// loudly. The second is the one worth the lines — swapping a small annoyance
+	// for a `cd` that silently does nothing on a typo'd path would leave the next
+	// command running somewhere the agent did not intend, which is the failure
+	// this whole area exists to prevent.
+
+	test("bash: cd to the directory you are already in succeeds, in every spelling of it", async () => {
+		// "same directory" has more spellings than it looks. `.`, `$(pwd)`, a
+		// trailing slash and the resolved absolute path must all be no-ops —
+		// exit 0, nothing on stderr, and the tracked CWD untouched.
+		const real = realpathSync(tempDir);
+		for (const command of [
+			"cd .",
+			'cd "$(pwd)"',
+			`cd "${real}"`,
+			`cd "${real}/"`,
+			"cd ./.",
+		]) {
+			const result = await executeTool("bash", { command }, tempDir);
+			expect({ command, isError: result.isError }).toEqual({
+				command,
+				isError: false,
+			});
+			expect(result.content).not.toContain("already in this directory");
+			expect(result.content).not.toContain("cd:");
+			// Same place, so nothing to re-track and nothing to announce.
+			expect(result.cwd).toBeUndefined();
+			expect(result.content).not.toContain("workdir set to");
+		}
+	});
+
+	test("bash: a redundant cd does not disturb a real one that follows it", async () => {
+		// The defensive-prefix shape the tool description now recommends.
+		const result = await executeTool(
+			"bash",
+			{ command: 'cd "$(pwd)" && cd /tmp && echo arrived' },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("arrived");
+		expect(result.cwd).toBe("/tmp");
+	});
+
+	test("bash: cd to a nonexistent directory still fails loudly", async () => {
+		const missing = join(tempDir, "no-such-dir-9f3a");
+		const result = await executeTool(
+			"bash",
+			{ command: `cd ${missing}` },
+			tempDir,
+		);
+		expect(result.isError).toBe(true);
+		expect(result.content).toContain("exit code: 1");
+		// The real bash error, naming the path — not a silent no-op.
+		expect(result.content).toContain("No such file or directory");
+		expect(result.content).toContain(missing);
+		// And the agent has NOT been moved anywhere.
+		expect(result.cwd).toBeUndefined();
+	});
+
+	test("bash: a failed cd does not let the rest of the command run elsewhere", async () => {
+		const missing = join(tempDir, "no-such-dir-7c1b");
+		const result = await executeTool(
+			"bash",
+			{ command: `cd ${missing}; pwd` },
+			tempDir,
+		);
+		expect(result.isError).toBe(false); // `;` — pwd is the last command
+		expect(result.content).toContain("No such file or directory");
+		// pwd reports the ORIGINAL directory: the failed cd moved nothing.
+		expect(result.content).toContain(realpathSync(tempDir));
+		expect(result.cwd).toBeUndefined();
+	});
+
+	test("bash: cd to a file (not a directory) still fails loudly", async () => {
+		const filePath = join(tempDir, "not-a-dir.txt");
+		await writeFile(filePath, "x");
+		const result = await executeTool(
+			"bash",
+			{ command: `cd ${filePath}` },
+			tempDir,
+		);
+		expect(result.isError).toBe(true);
+		expect(result.content).toContain("Not a directory");
+		expect(result.cwd).toBeUndefined();
+	});
+
+	test("bash: a bare cd still goes to $HOME", async () => {
+		// `builtin cd` does this natively. Pinned because the deleted override
+		// spelled it out as `${1:-$HOME}`, which reads like the wrapper was
+		// providing it.
+		const home = process.env.HOME;
+		expect(home).toBeTruthy();
+		const result = await executeTool("bash", { command: "cd" }, tempDir);
+		expect(result.isError).toBe(false);
+		expect(result.cwd).toBeTruthy();
+		expect(realpathSync(result.cwd as string)).toBe(
+			realpathSync(home as string),
+		);
 	});
 
 	test("bash: warns when CWD leaves worktree", async () => {
@@ -1491,7 +1596,23 @@ describe("extractCheckpoint", () => {
 		expect(checkpoint).toContain("## System Context (auto-generated)");
 		expect(checkpoint).toContain("Working directory: /path/to/project");
 		expect(checkpoint).toContain("Resume from this checkpoint");
-		expect(checkpoint).toContain("Do not cd to your current working directory");
+	});
+
+	test("system context does not teach the deleted no-cd rule", () => {
+		// This block is injected into an agent that has just lost its history, so
+		// it is the one surface where a stale rule cannot be caught by the reader
+		// it is aimed at — nothing in that context can contradict it. It used to
+		// end "Do not cd to your current working directory — you are already
+		// there", stating a shell behaviour that no longer exists.
+		//
+		// Inverted rather than deleted, because deleting it would leave the
+		// removal pinned by nothing at all.
+		const checkpoint = extractCheckpoint(
+			"<summary>work</summary>",
+			"/path/to/project",
+		);
+		expect(checkpoint).not.toContain("Do not cd");
+		expect(checkpoint).not.toContain("you are already there");
 	});
 
 	test("does not append system context when cwd is undefined", () => {
