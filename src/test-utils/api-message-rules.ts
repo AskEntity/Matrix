@@ -74,9 +74,14 @@
  *
  * ⚠️ TOMBSTONE — the reason the dates exist. This file shipped at 15:28 on
  * 2026-07-25 listing `[{type:"text",text:""}]` under NOT rules as "all OK".
- * It is a 400. The BLOCK form had never been probed — the probe sent a bare
- * `""` — and the generalisation was written down inside a file whose name says
- * MEASURED. memory.md was corrected at 22:43 the SAME DAY; this file was not,
+ * It is a 400. The BLOCK form had never been probed — the audit sent a bare
+ * `""` and its write-up then listed all three "empty contents" together — so a
+ * generalisation ended up inside a file whose name says MEASURED. (That
+ * account is the later task's reading of how the two disagree. If a transcript
+ * ever turns up showing the block form really was sent and really did return
+ * 200, this stops being a stale line and becomes two contradictory
+ * measurements, which is a much bigger thing to chase.)
+ * memory.md was corrected at 22:43 the SAME DAY; this file was not,
  * and for two days the repo's designated record of the API's rules said a
  * reachable 400 was legal. A downstream agent then quoted three passages from
  * here word for word and derived a wrong correction from them, which is the
@@ -244,7 +249,7 @@ export const PROBED_SHAPES: readonly ProbedShape[] = [
 
 	// ── Rule 5 — empty / whitespace-only content ──
 	// Probed SEVEN HOURS after this file shipped, by a different task, and
-	// landed only in memory.md. That gap is the tombstone in the header.
+	// landed only in memory.md (commit 10e018e4). That gap is the tombstone.
 	{
 		shape: 'u | a[{type:"text",text:""}] | u',
 		status: 400,
@@ -347,6 +352,13 @@ export const UNPROBED: readonly UnprobedClaim[] = [
 			"The check earns its place — buildSessionRepair treats a duplicate result as a " +
 			"corruption shape and chains back before it — but its message deliberately does not " +
 			"quote an API error, because there is none to quote.",
+	},
+	{
+		claim: "an EMPTY messages array",
+		note:
+			"`wellFormedPrefixViolations` rejects it and the API has never been asked. It is " +
+			"almost certainly a 400 — which is exactly the reasoning that put the tombstone in " +
+			"this file, so it stays here until somebody sends one.",
 	},
 	{
 		claim: "content: undefined / null",
@@ -457,7 +469,13 @@ function emptyBlockViolations(messages: ApiMessage[]): string[] {
  */
 export function wellFormedPrefixViolations(messages: ApiMessage[]): string[] {
 	const out: string[] = [];
-	if (messages.length === 0) return ["Messages array must not be empty"];
+	if (messages.length === 0) {
+		// ⚠️ No "Real API:" clause — see UNPROBED. Obvious is not measured.
+		return [
+			"Messages array must not be empty. (OUR rule — this shape has never " +
+				"been sent to the real API.)",
+		];
+	}
 
 	if (messages[0]?.role !== "user") {
 		out.push(

@@ -370,6 +370,16 @@ describe("provenance — every rule says when it last met the real API", () => {
 		expect(UNPROBED.some((u) => u.claim.includes("same tool_use_id"))).toBe(
 			true,
 		);
+
+		// Same for the empty-messages rejection. "Obviously a 400" is the
+		// reasoning that produced the tombstone, so it does not get a citation
+		// either until somebody sends one.
+		const empty = wellFormedPrefixViolations([])[0];
+		expect(empty).toContain("must not be empty");
+		expect(empty).not.toContain("Real API:");
+		expect(UNPROBED.some((u) => u.claim.includes("EMPTY messages array"))).toBe(
+			true,
+		);
 	});
 
 	test("no row claims an empty text block is legal", () => {
