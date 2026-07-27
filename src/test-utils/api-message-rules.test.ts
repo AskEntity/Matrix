@@ -151,11 +151,31 @@ describe("rule 5 — empty and whitespace-only content (measured 2026-07-25)", (
 		expect(wellFormedPrefixViolations(msgs)).toEqual([]);
 	});
 
-	test("an empty tool_result is NOT reported — rule 5 covers `text` blocks only", () => {
-		// Deliberate scope limit, recorded in UNPROBED: only text blocks were
-		// measured. Widening this by analogy would be the same move that put
-		// the fiction here in the first place.
+	test("rule 5 keys on the block TYPE, not on having a `text` field", () => {
+		// ⚠️ The fixture is synthetic on purpose, and that is the finding. The
+		// first two versions of this test used real shapes — an empty
+		// tool_result and `{type:"thinking",thinking:""}` — and BOTH passed
+		// against an implementation with the `b.type !== "text"` filter deleted,
+		// because no real block type carries a `text` field at all. So the type
+		// filter and the `typeof b.text === "string"` narrowing cover for each
+		// other, and a pair that covers for itself is a pair where neither half
+		// is pinned. Only a block that is both non-text AND text-bearing can
+		// see the line.
 		const msgs: ApiMessage[] = [
+			userText("hi"),
+			{ role: "assistant", content: [{ type: "thinking", text: "  " }] },
+			userText("go on"),
+		];
+		expect(wellFormedPrefixViolations(msgs)).toEqual([]);
+	});
+
+	test("CONTRACT: rule 5 walks TOP-LEVEL blocks only, and only `text` ones", () => {
+		// Not a scenario — nothing produces these today, so do not try to
+		// reproduce it. It states the scope limit recorded in UNPROBED: `text`
+		// blocks are what was measured, and nesting was never sent at all.
+		// Widening by analogy is the exact move that put the fiction in this
+		// file, so it should be a decision somebody makes on purpose.
+		const nested: ApiMessage[] = [
 			userText("hi"),
 			{
 				role: "assistant",
@@ -163,14 +183,18 @@ describe("rule 5 — empty and whitespace-only content (measured 2026-07-25)", (
 			},
 			{
 				role: "user",
-				content: [{ type: "tool_result", tool_use_id: "tc_1", content: "" }],
+				content: [
+					{
+						type: "tool_result",
+						tool_use_id: "tc_1",
+						content: [{ type: "text", text: "" }],
+					},
+				],
 			},
 		];
-		expect(sendableRequestViolations(msgs)).toEqual([]);
-	});
+		expect(sendableRequestViolations(nested)).toEqual([]);
 
-	test("an empty `thinking` block is NOT reported — same scope limit", () => {
-		const msgs: ApiMessage[] = [
+		const realThinking: ApiMessage[] = [
 			userText("hi"),
 			{
 				role: "assistant",
@@ -178,7 +202,7 @@ describe("rule 5 — empty and whitespace-only content (measured 2026-07-25)", (
 			},
 			userText("go on"),
 		];
-		expect(wellFormedPrefixViolations(msgs)).toEqual([]);
+		expect(wellFormedPrefixViolations(realThinking)).toEqual([]);
 	});
 });
 
