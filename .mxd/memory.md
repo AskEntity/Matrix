@@ -4605,3 +4605,101 @@ line reported the mutation as **SURVIVED**. Third instance of *an instrument tha
 the comfortable answer*, and the first where the instrument was fine and its INPUT was destroyed by
 an assertion elsewhere. Compare booleans in DOM tests — not for tidiness, for legibility on the one
 day it fires.
+
+---
+
+## The bash result names its own working directory — and a one-shot warning could not
+
+*(Curator: this half belongs in the `bash` region of "Tools the Agent Calls"; the `cd` half below
+belongs beside it, and its last two bullets belong in "Writing this file" under prose rot.)*
+
+Every bash result whose working directory is not the agent's worktree root opens with a line naming
+it. Three states, and the quiet one is EXACTLY the root:
+
+| cwd | line |
+|---|---|
+| exactly your worktree root | *(nothing)* |
+| below your root | `[cwd: <dir>]` |
+| a different checkout | `[cwd: <dir> — OUTSIDE your worktree, which is <root>]` |
+
+**The failure it removes is invisible by construction**, which is why a stronger warning was not the
+fix: after a `cd` out of the worktree, every later command succeeds, `git status` reports cleanly,
+and the output looks authoritative. An agent in another project `cd`'d into this repo, missed the
+one-shot warning, then built a five-link evidence chain — empty `git status --porcelain`, `ls`
+returning "No such file or directory", a `git check-ignore` hit — and **filed a two-bug report
+against this daemon.** Every link was individually valid; they were answers about a different
+repository. Root hit the same shape twice in one day.
+
+⭐ **The general rule, worth more than the feature: a one-shot notification cannot signal a
+persistent condition — the notification's lifetime has to match the state's.** The old warning fired
+at the moment of the `cd` and never again, so it covered the one result the agent was already paying
+attention to and left silent every result where the mistake actually does its damage.
+
+⭐ **And the corollary that decided a live disagreement: once every affected result carries the
+state, the transition warning's firing condition is a strict SUBSET of it, so "keep both" means
+printing the same fact twice in one result.** Deleted. What is NOT redundant, and stays, is
+`workdir set to X from now on` — that reports an EVENT (you just moved), the notice reports a STATE
+(this is where the output above came from). Neither substitutes for the other, and the distinction is
+worth keeping in hand: it is the same one that separates an SSE delta from a snapshot.
+
+⚠️ **Which checkout a directory belongs to is answered by `git rev-parse --show-toplevel`, and both
+obvious simplifications are wrong:**
+
+- **A path-prefix test** (`cwd.startsWith(worktreeRoot + "/")`) calls `.worktrees/<other-task>`
+  "inside", because it IS under the main repo root. For ROOT — whose worktree root is the repo root
+  — that covers *every* other agent's checkout, which is the single most dangerous place to stand
+  unknowingly: another branch, where a write or a commit lands in someone else's in-flight work and
+  looks entirely normal going in.
+- **A hand-rolled walk up to the nearest `.git`** is wrong in its naive form, because **a linked
+  worktree's `.git` is a FILE** (`gitdir: <repo>/.git/worktrees/<name>`), not a directory. An
+  `isDirectory()` test resolves every agent worktree to the main repo — the one answer that makes
+  another agent's checkout look like home. Asking git cannot drift from git, and `GIT_DIR`,
+  submodules and everything else come free. The test fixture is a real `git worktree add`, with a
+  test pinning that its `.git` really is a file, so the fixture cannot decay into one that every
+  implementation passes.
+
+The lookup **rides in the EXIT trap that was already writing `pwd`** (a second line beside it), not
+in a daemon-side spawn — the shell is being paid for regardless. ⚠️ **The `2>/dev/null` on that trap
+is load-bearing, not tidiness**: outside a repository `git rev-parse` fails LOUDLY on stderr, that
+case is NORMAL rather than an error, and merged mode folds the subshell's stderr into the command's
+own output — so without it every command run from `/tmp` reports a git error it did not cause.
+Removing it reddens exactly one test. (The command's OWN git errors still surface, which is the
+distinction to preserve if you touch this.)
+
+The notice describes the directory the shell **ENDED** in, not the one it started in:
+`cd ~/.mxd && cat config.json` produces output about `~/.mxd`, and naming the worktree there would be
+the very defect the line exists to remove. It is carried on the shape `formatBashResult` takes, so
+foreground, `background_complete` and the `background` tool's status action get it by construction
+rather than by three callers remembering.
+
+## `cd` to the directory you are already in is a free no-op
+
+There was a shell `cd()` override that errored with *"already in this directory"*. **Every line of
+its body existed to produce that error** — it resolved the target only to compare it against `pwd`,
+and wrote no file anywhere. CWD tracking was, and is, entirely the EXIT trap. ⚠️ **Do not
+reintroduce a wrapper**: with the error gone the remainder is `cd() { builtin cd "$1"; }`, strictly
+worse than the builtin it shadows — it breaks `cd -`, and an empty argument stops meaning `$HOME`.
+
+The trade was priced wrong originally: it optimised the common case (a redundant `cd` costs a few
+tokens) against the rare one (a command running somewhere unintended, with every result still
+looking authoritative). The guidance is now the opposite — **prefix a `cd` whenever you are not sure
+where you are.**
+
+⚠️ **Removing an error branch must not remove real errors.** A `cd` that silently does nothing on a
+typo'd path is the wrong-directory command this whole area exists to prevent, wearing a friendlier
+face. Pinned by four tests that pass identically before and after the change — a missing directory
+and a path that is a file both still fail with bash's own message naming the path, the rest of the
+command still runs in the original directory, and a bare `cd` still reaches `$HOME`.
+
+⭐ **A behaviour rule stated in prose lives in more places than a grep for the CODE finds.** Three
+surfaces were known here; a fourth turned up only by grepping the RULE itself, case-insensitively and
+with a tolerant pattern (`do ?n[o']t cd`), which found `buildTaskPrompt`'s git-context block. **Grep
+for the sentence, not for the symbol** — the symbol is exactly what the distant surfaces do not
+contain.
+
+⭐ **The compaction checkpoint (`src/compaction.ts`) is the highest-risk prose surface in this repo,
+and it is nowhere near the code it describes.** It is injected into an agent that has just lost its
+history, so nothing in that agent's context can contradict a stale line — a rule that survives there
+gets taught, fresh, to every compacted agent. When you change a behaviour, check it explicitly; a
+grep scoped to the subsystem will not reach it. Its test was **inverted** (`not.toContain`) rather
+than deleted, because deleting it would leave the removal pinned by nothing at all.
