@@ -3606,14 +3606,18 @@ browser pushed the offset to the new bottom*.
 **Growth is deliberately NOT suspicious**: streaming grows every frame, and a user scrolling back to
 the bottom mid-stream must still be able to re-arm follow.
 
-**`autoScroll` and `logAtBottom` are two concepts and must not be merged into one boolean.**
-`logAtBottom`'s writers are all **observations**; `autoScroll`'s are one observation and six
-**intents**, and the Follow button needs the intent concept. That single observation-writing-intent
-(`handleScroll` reporting to both) is the door every hijack came through. Two halves, fixed
-separately: the guard rejects a **false observation** (a clamp after a shrink), and the new-content
-effect no longer takes `autoScroll` as a dependency, which stops a **true observation from
-immediately executing** — the user scrolls into the 40px band, follow correctly arms, and the effect
-used to fire and yank them the rest of the way mid-gesture. **Arming is not acting**, and "go to the
+**Observation and intent are two concepts, and there is exactly ONE channel carrying each.** Scroll
+position is an observation; `autoScroll` is an intent, written by one observation and six intents,
+and the Follow button needs the intent concept. That single observation-writing-intent is the door
+every hijack came through, and today it is the only place the two meet:
+`if (!shrank) onAutoScrollChange(atBottom)` inside `handleScroll`. ⚠️ **Do not add a second
+reporting channel to re-establish the separation — the separation is already there, and a second
+channel is what the first one was.** There used to be a `logAtBottom` boolean feeding an icon-only
+`↓` button whose `onClick` was Follow's own handler; Follow arrived two and a half weeks later and
+subsumed it. Two halves, fixed separately: the guard rejects a **false observation** (a clamp after
+a shrink), and the new-content effect no longer takes `autoScroll` as a dependency, which stops a
+**true observation from immediately executing** — the user scrolls into the 40px band, follow
+correctly arms, and the effect used to fire and yank them the rest of the way mid-gesture. **Arming is not acting**, and "go to the
 bottom now" already has its own channel (a monotonic `scrollToBottomRequest` counter). That fix was
 a deletion, and the effect reads `autoScrollRef` so "responds to content, not to intent" is explicit
 rather than implied by a deps array.
@@ -3632,7 +3636,7 @@ conditionally-rendered controls belong *before* the persistent ones — cheaper 
 space and with no side effects. This is what made the header jump 71.3px when the Follow pill
 appeared.
 
-### Deleting an implementation that never worked
+### Two deletions here, and neither was about the feature
 
 `tabScrollStateRef` (per-tab scroll memory) **never functioned**: the save ran in a passive effect
 keyed on the task id, which runs *after* commit — by which time the list had emptied, the container
@@ -3644,6 +3648,20 @@ follow behavior.
 exist — it is removing a lie.** The real feature needs an address that survives a refetch, which is
 the same requirement as message deep-linking and active-chain membership: all three want persisted
 event identity on every entry regardless of transport.
+
+The `↓` button above is the second, and it is the harder kind to see: **a duplicate ENTRY POINT is
+not a duplicate mechanism, and unifying the mechanism does not clean it up.** The jump had already
+been collapsed to one `scrollBottomRequest` counter — which is precisely why two buttons could sit
+there unnoticed, both thin, both calling the same handler, both working. What made the pair visible
+was putting them side by side and asking what the older one still does that the newer one does not:
+nothing.
+
+⭐ **The cost of the narrow affordance was not the affordance.** Deleting one `useState` cascaded to
+a whole reporting channel — `ActivityLog`'s `onAtBottomChange` prop, its ref mirror,
+`reportAtBottom`, and the `else` branch of BOTH the `visible.length` effect and the
+MutationObserver, each of which existed only to keep that button's visibility fresh. **When you
+delete a consumer, follow the data backwards to the producer before believing you are done**; the
+compiler stops at the prop.
 
 ### The culprit was not in the scroll code at all
 
@@ -3733,44 +3751,6 @@ distinguishable symptom. Removing that overwrite is what made this one visible.
   `process.env` into the worker). You get real `text_delta`, real tool execution, real `end_turn`.
 - **When you cannot reproduce, send the instrument to whoever can.** Four increasingly faithful
   local attempts failed; one paste into the user's console succeeded immediately.
-
----
-
-## CORRECTION (2026-07-25) — `logAtBottom` no longer exists
-
-⚠️ **The section *The activity log's scroll position* still says "`autoScroll` and `logAtBottom` are
-two concepts and must not be merged into one boolean". `logAtBottom` is gone — and it was NOT merged
-into `autoScroll`, which is the reading to head off.** It was deleted, because the only thing that
-ever read it was an icon-only `↓` button whose `onClick` was the same function as Follow's. Follow
-arrived two and a half weeks later than `↓` and subsumed it; the superseding change did not look
-back. The observation/intent distinction the paragraph protects is intact and now lives entirely
-inside `handleScroll`: `if (!shrank) onAutoScrollChange(atBottom)` is what still stops an observation
-from writing an intent. **Do not "restore" a second reporting channel to re-establish a separation
-that is already there.**
-
-**A duplicate ENTRY POINT is not the same thing as a duplicate mechanism, and unifying the mechanism
-does not clean it up.** The jump had already been collapsed to one `scrollBottomRequest` counter, and
-that is exactly why the two buttons were so hard to notice: both were thin, both called the same
-handler, both worked. What made the pair visible was putting them side by side and asking what the
-older one still does that the newer one does not — nothing.
-
-⭐ **The cost of the narrow affordance was not the affordance.** Deleting one `useState` cascaded to a
-whole reporting channel: `ActivityLog`'s `onAtBottomChange` prop, its ref mirror, `reportAtBottom`,
-and the `else` branch of BOTH the `visible.length` effect and the MutationObserver — each of which
-existed only to keep that button's visibility fresh. **When you delete a consumer, follow the data
-backwards to the producer before believing you are done**; the compiler stops at the prop.
-
-⚠️ **THE TRAP, and it is general to every "delete the duplicate" task: the redundant channel was
-being used as the SYNCHRONIZATION for tests of the channel that survives.** Two follow-intent guard
-tests read `await waitFor(() => atBottomCalls.length > 0)` and then asserted
-`expect(autoScrollCalls).toEqual([])`. Delete the channel, delete the await — and the negative
-assertion now runs before anything *could* have been reported, so it passes on a component that
-reports nothing at all. Nothing goes red; the guard just stops being covered, silently, in the same
-commit that "only removed a duplicate". **A negative assertion is only worth the wait in front of
-it.** The fix is a positive control inside the same test — after asserting follow was NOT re-armed by
-the clamp, grow the range back and scroll for real, and require that one to re-arm. Verified the way
-this repo requires: with the `!shrank` guard mutated away, both tests fail on the negative assertion;
-restored, both pass, and 2973 → 2973 with 0 fail across the suite.
 
 ## Rewind and Edit: report what the rollback does NOT undo
 
@@ -4167,11 +4147,6 @@ checkouts, subdirectory roots, every glob shape, a synthetic symlink fixture, `e
 point: it states "behaviour is unchanged" as a measurement over whole outputs, where a green suite
 can only state "the cases someone thought to write still pass".
 
-⚠️ **Careless-git note**: reverting a mutation with `git checkout -- <file>` also reverts any
-UNCOMMITTED fix in the same file. Commit the fix before mutating it.
-
----
-
 ## An assertion about an ERROR MESSAGE survives the behaviour being inverted
 
 ⭐ **What earns this a section is not the rule. It is that the behaviour had shipped TWICE,
@@ -4238,6 +4213,17 @@ embed counter read *after* a search has counted the query too — snapshot befor
 of geometry — DOM order, commit granularity, whether a callback ran — which is far better than
 dropping the test or mocking geometry brittlely. Anything genuinely about pixels needs a real
 browser.
+
+⚠️ **A negative assertion is only worth the WAIT in front of it — and deleting a redundant channel
+can silently remove that wait.** The shape, which generalises to every "delete the duplicate" task:
+two guard tests did `await waitFor(() => atBottomCalls.length > 0)` and then asserted
+`expect(autoScrollCalls).toEqual([])`. `atBottomCalls` came from a *redundant* reporting channel —
+so deleting the duplicate deletes the await, and the negative assertion now runs before anything
+COULD have been reported. It passes on a component that reports nothing at all. **Nothing goes red;
+the guard just stops being covered, in the same commit that "only removed a duplicate".** The fix is
+a positive control inside the same test: after asserting the thing was NOT triggered, make it
+trigger for real and require that. Same family as `waitFor(() => x === null || true)` below — both
+are assertions sampled before the moment they are about.
 
 Three smaller traps that each cost real time:
 
