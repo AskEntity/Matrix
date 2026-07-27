@@ -288,8 +288,10 @@ updating an entry, which is every session.
 **What earns a place.** Code can state what it does. It cannot state why the change that looks like
 an improvement is wrong. So: *if a reader of this code would want to simplify it, this file must say
 why that fails; if nobody would touch it, this file should say nothing.* Do not ask "is this
-useful" — the answer is "somewhat" for every entry ever written, and that is how the file reached
-7,616 lines by 2026-07 (a compression pass then took it to ~3,400). Four things survive that
+useful" — the answer is "somewhat" for every entry ever written, and that is how the file grew past
+7,000 lines by 2026-07 before a compression pass roughly halved it. (`memory-reorg.md` is the record
+of what each run cost and produced; do not restate its numbers here — this sentence carried two that
+disagreed with it.) Four things survive that
 question: how to operate here and what happens if you don't; why the design is shaped this way;
 **the places that look wrong but are right**; and negative results ("checked, it is not that"),
 which are recorded nowhere else because nobody opens a task for "it wasn't that".
@@ -467,6 +469,16 @@ intact.
   exactly like one that checks all of them. ⭐ **The control worked ONLY because it was last: put it
   where truncation risk is highest**, which for anything looping line by line is the final line. A
   control in the middle would have passed and told you nothing.
+  ⚠️ **And a control must be able to FAIL for the reason you are testing, or it proves only that the
+  instrument runs.** A reviewer reported two symbols in `api-message-rules.ts` as fabricated, having
+  first confirmed with a positive control that grep could see that file's real exports — sound
+  method, wrong control. The symbols were real and lived in a commit their branch had not merged,
+  and the control they picked existed in BOTH versions, so it could not separate "this symbol is
+  absent" from "my checkout is old". **Choose a control present under one hypothesis and absent
+  under the other**; any symbol from the same commit would have failed loudly and named the real
+  problem. ⚠️ Corollary for a repo worked on in parallel branches: **prose on a branch can correctly
+  point at code that only exists on `main` yet**, and it reads as fabricated to anyone standing on
+  the branch.
 - ⚠️ **Searching THIS file: anything over ~60 characters needs a multiline search.** The file is hard
   wrapped near 100 columns and the wrap lands mid-phrase, so a single-line `grep` for a sentence you
   can see with your own eyes returns **0**. Demonstrated on itself: `grep -c "text content blocks
@@ -707,7 +719,8 @@ ShaderModule "LayerNorm"`). So fp16 unlocks the device we reject and breaks the 
 correct mechanism that changes no decision is still worth establishing** — it is what tells you the
 rejection rests on measurement rather than on the wrong story you started with.
 
-**The class is not confined to code, and the cheapest instance to guard against is reading.** A
+**Member 3: the class is not confined to code, and the cheapest instance to guard against is
+reading.** A
 short instruction was given a coherent interpretation that fit its words, and acting on that reading
 would have deleted 660 lines of this file; the reading was defended with "a revert restores anything
 lost", which is true and beside the point — **the revert restores the lines, not the hour.** Same
@@ -1284,7 +1297,7 @@ had already moved out of it.** It used to consume the pending yield/done tool_re
 duplicate-yield extras — the **pairing** rule, which is real. That consumption now happens where the
 tool_result is EMITTED (`emitAndPushCompactToolResult`), so the ordinary path inherits it for free.
 Confirmed by shape rather than by reading: dropping the `yield*` at one call site reddens **8 tests
-in `drift-lifecycle.test.ts` alone**. **This is the worked example of *Deleting a mechanism built on
+in `drift-lifecycle.test.ts` alone**. **This is a second worked example of *Deleting a mechanism built on
 a false premise: separate the PREMISE from the OBLIGATION*** — premise "too short to compact",
 obligation "answer the `tool_use`", and the deletion is only safe because the obligation was checked
 separately and found to live somewhere else.
@@ -2379,8 +2392,8 @@ Three forensic techniques worth keeping, all model-agnostic:
 wrong.** It produced an action (an SDK bump, kept, harmless) and a false verification — one clean
 post-restart sample, then recurrence within the hour. **A single passing sample is not verification
 when the phenomenon is intermittent by design**, and the scope rules above guarantee a clean sample
-is always available regardless of the fix. This is a third instance of *Plausible and wrong*:
-the wrong mechanism is what made one sample look like enough.
+is always available regardless of the fix. This is *Plausible and wrong* again, in its member-2
+shape: the wrong mechanism is what made one sample look like enough.
 
 **Two gaps deliberately left open** (waiting for real data rather than building for imagined cases):
 `buildResponseEvents` has no branch for a server-side `fallback` block, so a fallback hop would not
