@@ -1291,6 +1291,14 @@ describe("walker: empty and defensive cases", () => {
 		expect(msgs.length).toBe(0);
 	});
 
+	// ⚠️ CORRUPTION-INPUT FIXTURE, not a shape we may send. `[{text:""}]` is a
+	// 400 in every position on either role (measured 2026-07-25; PROBED_SHAPES
+	// in test-utils/api-message-rules.ts), and repair does not cover it — so a
+	// persisted empty assistant_text bricks every later request for the life of
+	// the session. Nothing produces one today, because both emit sites guard on
+	// truthiness; whitespace passes those guards, which is draft 01KYDKK0. This
+	// golden is the evidence for why that draft matters, and it stays green by
+	// pinning what the walker DOES, not what is legal.
 	test("assistant_text with empty string still creates block", () => {
 		const events: Event[] = [assistantTextEvent("")];
 		const msgs = eventsToAnthropicMessages(events);

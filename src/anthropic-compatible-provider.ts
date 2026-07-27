@@ -295,7 +295,15 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 					});
 				}
 			}
-			// Defensive: ensure content array is never empty (causes Anthropic 400)
+			// ⚠️ The stated reason for this was "an empty content array causes
+			// Anthropic 400". It does not — `u | a[] | u` was measured 200 on
+			// 2026-07-25 (see PROBED_SHAPES in test-utils/api-message-rules.ts).
+			// What IS a 400, in every position, is a text block wrapping an
+			// empty or whitespace-only string. So the literal below is
+			// load-bearing in the opposite direction from how it reads:
+			// "simplifying" `"(empty)"` to `""` would turn a legal shape into
+			// one that bricks the session on every later request. Whether this
+			// fallback should exist at all is draft 01KYJ5RST0GVAN1H67S60G2PDY.
 			if (blocks.length === 0) {
 				console.warn(
 					"[event-converter] Empty assistant content blocks — inserting (empty) fallback",
