@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, realpathSync, symlinkSync } from "node:fs";
+import { chmodSync, realpathSync, statSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -467,7 +467,7 @@ describe("executeTool", () => {
 		);
 	});
 
-	test("bash: warns when CWD leaves worktree", async () => {
+	test("bash: leaving the worktree marks the result OUTSIDE", async () => {
 		const result = await executeTool(
 			"bash",
 			{ command: "cd /tmp" },
@@ -476,12 +476,17 @@ describe("executeTool", () => {
 		);
 		expect(result.isError).toBe(false);
 		expect(result.cwd).toBeDefined();
-		expect(result.content).toContain("CWD is outside your worktree");
-		expect(result.content).toContain("Remember to cd back");
+		expect(result.content).toContain("OUTSIDE your worktree");
+		expect(result.content).toContain(realpathSync("/tmp"));
+		// The EVENT line stays alongside the state line — they report different
+		// things and neither substitutes for the other.
+		expect(result.content).toContain("workdir set to /tmp from now on");
 	});
 
-	test("bash: no warning when CWD stays within worktree", async () => {
-		// Create a subdirectory within the worktree
+	test("bash: a subdirectory of your own worktree is NAMED, not marked outside", async () => {
+		// The quiet case is EXACTLY the worktree root. `ls` from a subdirectory
+		// means something different from `ls` at the root, so the result says
+		// where it was taken — it just is not an alarm.
 		const subDir = join(tempDir, "subdir");
 		await mkdir(subDir, { recursive: true });
 
@@ -492,14 +497,16 @@ describe("executeTool", () => {
 			tempDir, // fallbackCwd = worktree root
 		);
 		expect(result.isError).toBe(false);
-		expect(result.content).not.toContain("CWD is outside your worktree");
+		expect(result.content).toContain(`[cwd: ${realpathSync(subDir)}]`);
+		expect(result.content).not.toContain("OUTSIDE");
 	});
 
-	test("bash: no warning when no fallbackCwd provided", async () => {
-		// Without fallbackCwd, no worktree validation happens (root orchestrator case)
+	test("bash: no notice at all when no worktree root is known", async () => {
+		// Without fallbackCwd there is nothing to compare against, so the tool
+		// says nothing rather than guessing.
 		const result = await executeTool("bash", { command: "cd /tmp" }, tempDir);
 		expect(result.isError).toBe(false);
-		expect(result.content).not.toContain("CWD is outside your worktree");
+		expect(result.content).not.toContain("[cwd:");
 	});
 
 	test("bash: falls back to fallbackCwd when cwd is deleted", async () => {
@@ -933,6 +940,206 @@ describe("executeTool", () => {
 	});
 });
 
+// ── Every result names the directory it came from ──
+//
+// Three states:
+//   exactly your worktree root → silence
+//   below your root            → the cwd, on EVERY result
+//   a different checkout       → the cwd, marked OUTSIDE
+//
+// Which checkout a directory belongs to is answered by `git rev-parse
+// --show-toplevel`, run by the command's own shell. That is what makes
+// `.worktrees/<other-task>` come out OUTSIDE even though it sits UNDER the main
+// repo root: a path-prefix test calls it "inside", and for ROOT — whose worktree
+// root IS the repo root — that would cover every other agent's checkout, on
+// another branch, where a write or a commit lands in someone else's in-flight
+// work and looks entirely normal going in.
+describe("bash: the result names its own working directory", () => {
+	let repo: string;
+	let subDir: string;
+	let otherWorktree: string;
+
+	function git(cwd: string, ...args: string[]): void {
+		const r = Bun.spawnSync(["git", ...args], {
+			cwd,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		if (r.exitCode !== 0) {
+			throw new Error(`git ${args.join(" ")} failed: ${r.stderr.toString()}`);
+		}
+	}
+
+	beforeAll(async () => {
+		repo = realpathSync(await mkdtemp(join(tmpdir(), "mxd-cwd-repo-")));
+		git(repo, "init", "-b", "main");
+		git(repo, "config", "user.email", "test@example.com");
+		git(repo, "config", "user.name", "Test");
+		await writeFile(join(repo, "seed.txt"), "seed");
+		git(repo, "add", "seed.txt");
+		git(repo, "commit", "-m", "seed");
+
+		subDir = join(repo, "src");
+		await mkdir(subDir, { recursive: true });
+
+		// A REAL linked worktree, created by git. Nothing synthetic reproduces
+		// the property that matters here.
+		otherWorktree = join(repo, ".worktrees", "other-task");
+		git(repo, "worktree", "add", "-b", "other-branch", otherWorktree);
+	});
+
+	afterAll(async () => {
+		if (repo) await rm(repo, { recursive: true, force: true });
+	});
+
+	test("the fixture is the hard case: a linked worktree's .git is a FILE", () => {
+		// Pinned so the fixture cannot silently degrade into one that any
+		// implementation would pass. A `.git`-DIRECTORY test resolves every agent
+		// worktree to the main repo — the one answer that makes another agent's
+		// checkout look like home.
+		expect(statSync(join(otherWorktree, ".git")).isFile()).toBe(true);
+		expect(statSync(join(repo, ".git")).isDirectory()).toBe(true);
+		expect(otherWorktree.startsWith(`${repo}/`)).toBe(true);
+	});
+
+	test("at your worktree root: silence", async () => {
+		const r = await executeTool("bash", { command: "echo hi" }, repo, repo);
+		expect(r.content).toContain("hi");
+		expect(r.content).not.toContain("[cwd:");
+	});
+
+	test("below your root: named on EVERY result, not only the one that moved", async () => {
+		// This is the whole fix. The warning this replaced fired once, at the
+		// `cd`, and every later result was silent — and those later results are
+		// the deceptive ones, because nothing in them goes wrong.
+		for (const command of ["echo one", "echo two", "echo three"]) {
+			const r = await executeTool("bash", { command }, subDir, repo);
+			expect(r.content).toContain(`[cwd: ${subDir}]`);
+			expect(r.content).not.toContain("OUTSIDE");
+		}
+	});
+
+	test("ROOT inside another task's worktree: OUTSIDE, though it is under root's own tree", async () => {
+		const r = await executeTool(
+			"bash",
+			{ command: "echo hi" },
+			otherWorktree,
+			repo, // root's worktree root IS the repo root
+		);
+		expect(r.content).toContain(`[cwd: ${otherWorktree}`);
+		expect(r.content).toContain("OUTSIDE your worktree");
+		expect(r.content).toContain(repo);
+	});
+
+	test("a CHILD inside the main repo: OUTSIDE", async () => {
+		const r = await executeTool(
+			"bash",
+			{ command: "echo hi" },
+			repo,
+			otherWorktree,
+		);
+		expect(r.content).toContain("OUTSIDE your worktree");
+	});
+
+	test("a child at its own worktree root: silence", async () => {
+		const r = await executeTool(
+			"bash",
+			{ command: "echo hi" },
+			otherWorktree,
+			otherWorktree,
+		);
+		expect(r.content).not.toContain("[cwd:");
+	});
+
+	test("no checkout at all: OUTSIDE, and git's own error never reaches the output", async () => {
+		// Outside a repository `git rev-parse` fails loudly on stderr, and in
+		// merged mode the subshell's stderr is folded into the command's output.
+		// That case is NORMAL, so its noise must not surface as a failure the
+		// command did not cause.
+		const outside = realpathSync(tmpdir());
+		const r = await executeTool("bash", { command: "echo hi" }, outside, repo);
+		expect(r.content).toContain("OUTSIDE your worktree");
+		expect(r.content).toContain("hi");
+		expect(r.content.toLowerCase()).not.toContain("not a git repository");
+		expect(r.content.toLowerCase()).not.toContain("fatal");
+	});
+
+	test("cd back to the root: the annotation stops on that same result", async () => {
+		const away = await executeTool(
+			"bash",
+			{ command: "echo hi" },
+			subDir,
+			repo,
+		);
+		expect(away.content).toContain("[cwd:");
+
+		// Final-directory semantics: the notice describes where the shell ENDED,
+		// which is where this output came from and where the next command starts.
+		const back = await executeTool(
+			"bash",
+			{ command: `cd ${repo} && echo hi` },
+			subDir,
+			repo,
+		);
+		expect(back.content).not.toContain("[cwd:");
+		expect(back.content).toContain(`workdir set to ${repo} from now on`);
+	});
+
+	test("a background result carries it — the case most likely to mislead", async () => {
+		// It arrives detached from the command that moved there, possibly many
+		// turns later, so it is the result least able to be read in context.
+		const bgMap = new Map<string, BackgroundProcess>();
+		const queue = new MessageQueue();
+		const result = await executeBashWithTimeout(
+			'echo "bg-out"',
+			otherWorktree,
+			repo,
+			0, // immediate background
+			"sess",
+			queue,
+			"tc-cwd",
+			bgMap,
+			new Map<string, ForegroundExecution>(),
+		);
+		expect(result.backgroundId).toBeTruthy();
+
+		const msg = await queue.wait();
+		expect(msg.source).toBe("background_complete");
+		if (msg.source === "background_complete") {
+			expect(msg.content).toContain("bg-out");
+			expect(msg.content).toContain("OUTSIDE your worktree");
+		}
+
+		// …and the `background` tool's own status action reports the same thing.
+		const status = getBackgroundStatus(bgMap, result.backgroundId as string);
+		expect(status).toContain("OUTSIDE your worktree");
+
+		cleanupSessionBackgroundProcesses(bgMap);
+	});
+
+	test("a background result at the worktree root stays silent", async () => {
+		const bgMap = new Map<string, BackgroundProcess>();
+		const queue = new MessageQueue();
+		await executeBashWithTimeout(
+			'echo "bg-quiet"',
+			repo,
+			repo,
+			0,
+			"sess",
+			queue,
+			"tc-quiet",
+			bgMap,
+			new Map<string, ForegroundExecution>(),
+		);
+		const msg = await queue.wait();
+		if (msg.source === "background_complete") {
+			expect(msg.content).toContain("bg-quiet");
+			expect(msg.content).not.toContain("[cwd:");
+		}
+		cleanupSessionBackgroundProcesses(bgMap);
+	});
+});
+
 describe("executeBashWithTimeout", () => {
 	let tempDir: string;
 
@@ -1151,6 +1358,7 @@ describe("executeBashWithTimeout", () => {
 					kill: null,
 					stdoutPath: null,
 					stderrPath: null,
+					cwdPath: null,
 				},
 			],
 		]);
@@ -1211,6 +1419,7 @@ describe("executeBashWithTimeout", () => {
 					kill: null,
 					stdoutPath: null,
 					stderrPath: null,
+					cwdPath: null,
 				},
 			],
 		]);
@@ -1273,6 +1482,7 @@ describe("executeBashWithTimeout", () => {
 					kill: null,
 					stdoutPath: "/tmp/mxd/exec-test.stdout",
 					stderrPath: "/tmp/mxd/exec-test.stderr",
+					cwdPath: null,
 				},
 			],
 		]);
@@ -1341,6 +1551,7 @@ describe("executeBashWithTimeout", () => {
 					kill: null,
 					stdoutPath: null,
 					stderrPath: null,
+					cwdPath: null,
 				},
 			],
 		]);

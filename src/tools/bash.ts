@@ -100,6 +100,14 @@ export interface BackgroundProcess {
 	 * - Separate mode: the `.stderr` file.
 	 */
 	stderrPath: string | null;
+	/** Temp file the shell's EXIT trap writes pwd + git toplevel to. */
+	cwdPath: string | null;
+	/**
+	 * Which directory this process's output describes, formatted, or null when
+	 * that is the agent's worktree root. Filled in when the process exits —
+	 * before then there is nothing to report a result about.
+	 */
+	cwdNotice?: string | null;
 	/** Resolves when the process completes. Used internally for cleanup tracking. */
 	completionPromise?: Promise<void>;
 	/** Call to resolve the completion promise. */
@@ -108,7 +116,7 @@ export interface BackgroundProcess {
 
 /** Remove temp output files for a background process. */
 function cleanupBgFiles(bg: BackgroundProcess): void {
-	for (const p of [bg.stdoutPath, bg.stderrPath]) {
+	for (const p of [bg.stdoutPath, bg.stderrPath, bg.cwdPath]) {
 		if (p) {
 			try {
 				unlinkSync(p);
@@ -119,6 +127,123 @@ function cleanupBgFiles(bg: BackgroundProcess): void {
 	}
 	bg.stdoutPath = null;
 	bg.stderrPath = null;
+	bg.cwdPath = null;
+}
+
+// ── Which directory a result came from ──
+
+/** realpath, falling back to the literal path when it cannot be resolved. */
+function realpathOr(p: string): string {
+	try {
+		return realpathSync(p);
+	} catch {
+		return p;
+	}
+}
+
+/** Where a directory stands relative to the agent's own checkout. */
+export type CwdRelation = "own_root" | "inside_own" | "outside";
+
+/**
+ * Three states. The quiet one is EXACTLY the worktree root — not the subtree
+ * under it: `ls` run from `src/tools` means something different from `ls` run
+ * at the root, so a result taken below the root should say where it was taken.
+ * Silence is reserved for the one directory the agent is assumed to be in.
+ *
+ * `gitTop` is `git rev-parse --show-toplevel` **run by the command's own
+ * shell**, in the directory the command finished in. ⚠️ It is an INPUT here
+ * rather than something this function computes, and that is deliberate: the
+ * question "which checkout am I in" has exactly one authority, and it is git.
+ * A hand-written walk up to the nearest `.git` gets `.worktrees/<other-task>`
+ * wrong in the naive version (a linked worktree's `.git` is a FILE, not a
+ * directory, so a `isDirectory()` test resolves every agent worktree to the
+ * main repo — the one answer that makes another agent's checkout look like
+ * home), and would still have to grow `GIT_DIR` and submodule handling to stay
+ * correct. Asking git cannot drift from git.
+ *
+ * That per-worktree answer is what makes this beat a path-prefix test:
+ * `<repo>/.worktrees/<other-task>` is UNDER the main repo root, so a prefix
+ * test calls it "inside" — while it is another agent's checkout on another
+ * branch, where a write or a commit lands in someone else's in-flight work and
+ * looks entirely normal going in.
+ *
+ * Both sides are compared RESOLVED — `--show-toplevel` already returns a
+ * resolved path, and the worktree root is resolved to match, because two
+ * spellings of one directory (a symlink, or `/tmp` vs `/private/tmp` on macOS,
+ * which has bitten this repo before) must not read as two checkouts.
+ */
+export function classifyCwd(
+	dir: string,
+	worktreeRoot: string,
+	gitTop?: string | null,
+): CwdRelation {
+	const here = realpathOr(dir);
+	const root = realpathOr(worktreeRoot);
+	if (here === root) return "own_root";
+	if (gitTop) return realpathOr(gitTop) === root ? "inside_own" : "outside";
+	// `git rev-parse` found no repository — /tmp, ~/.mxd, anywhere outside a
+	// checkout. That is "outside" by the rule, EXCEPT where the worktree root is
+	// itself not a checkout (test fixtures, nothing this repo ships), where
+	// reporting a subdirectory of your own root as "outside" would be a plain
+	// lie. Containment is the last resort and cannot resurrect the case above: a
+	// linked worktree always answers `--show-toplevel`, so another agent's
+	// checkout never reaches this line.
+	return here.startsWith(`${root}/`) ? "inside_own" : "outside";
+}
+
+/**
+ * The one line that tells a result which directory it came from. Null at the
+ * worktree root, which is the overwhelmingly common case, so an agent that has
+ * not moved pays nothing.
+ *
+ * ⚠️ **This rides on EVERY affected result, not only on the one that moved**,
+ * and that is the fix rather than an implementation detail. Being somewhere
+ * other than your worktree root is a persistent CONDITION; the warning it
+ * replaces fired once, at the `cd`. A one-shot signal for a persistent state
+ * leaves every later result silent, and those later results are maximally
+ * deceptive because nothing goes wrong in them: commands succeed, git reports
+ * cleanly, output looks authoritative. Three observed incidents, two agents;
+ * in the worst one an agent built a five-link evidence chain and filed a bug
+ * report against this daemon — every link individually valid, all of them
+ * answers about a different repository.
+ *
+ * `workdir set to X from now on` is NOT redundant with this and stays. That
+ * line reports an EVENT (you just moved); this one reports a STATE (this is
+ * where the output above came from). Neither substitutes for the other.
+ */
+export function formatCwdNotice(
+	dir: string,
+	worktreeRoot?: string | null,
+	gitTop?: string | null,
+): string | null {
+	if (!worktreeRoot) return null;
+	const relation = classifyCwd(dir, worktreeRoot, gitTop);
+	if (relation === "own_root") return null;
+	const here = realpathOr(dir);
+	if (relation === "inside_own") return `[cwd: ${here}]`;
+	// Naming YOUR root beside the foreign path is what keeps this legible when
+	// the foreign path is another checkout of this same repo: the two sit side
+	// by side and the difference is the whole message. "outside" alone would
+	// read like you had wandered into /tmp.
+	return `[cwd: ${here} — OUTSIDE your worktree, which is ${realpathOr(worktreeRoot)}]`;
+}
+
+/**
+ * Read what the shell's EXIT trap wrote: line 1 the final pwd, line 2 the
+ * checkout it belongs to. The second line is absent when `git rev-parse` failed
+ * (not a repository), which is a normal answer rather than an error, and BOTH
+ * are absent when the shell was killed by a signal before its trap could run.
+ */
+function readCwdProbe(path: string): { pwd?: string; gitTop?: string } {
+	try {
+		const [pwdLine, topLine] = readFileSync(path, "utf-8").split("\n");
+		return {
+			pwd: pwdLine?.trim() || undefined,
+			gitTop: topLine?.trim() || undefined,
+		};
+	} catch {
+		return {};
+	}
 }
 
 // ── Pure formatting helpers ──
@@ -418,6 +543,14 @@ function formatBashResult(
 		separate: boolean;
 		stdoutPath: string | null;
 		stderrPath: string | null;
+		/**
+		 * Where this result came from, or null when that is the worktree root.
+		 * Carried on the shape rather than passed per call so that all three
+		 * result paths — foreground, background_complete, background status —
+		 * get it by construction. It is pre-formatted because the background
+		 * paths can only learn it once, when the process exits.
+		 */
+		cwdNotice?: string | null;
 	},
 	exitCode: number,
 ): { content: string; isError: boolean } {
@@ -451,6 +584,11 @@ function formatBashResult(
 	} else {
 		content = `exit code: ${exitCode}`;
 	}
+
+	// First line, so it frames the output rather than trailing it: a truncated
+	// 10KB result is read from the top, and the whole point is that the reader
+	// knows the scope before reading the answer.
+	if (bg.cwdNotice) content = `${bg.cwdNotice}\n${content}`;
 
 	return { content, isError: exitCode !== 0 };
 }
@@ -619,6 +757,22 @@ export async function executeBashWithTimeout(
 	// `cd`, one inside a `&&` chain, one inside a sourced script — and touches
 	// neither stdout nor stderr.
 	//
+	// It writes a SECOND line: `git rev-parse --show-toplevel`, i.e. which
+	// checkout that final directory belongs to, answered by git itself. It rides
+	// here rather than in a daemon-side spawn because we are already paying for
+	// this shell, and a few milliseconds inside it beats a whole extra process
+	// per bash call. ⚠️ The `2>/dev/null` is load-bearing, not tidiness: outside
+	// a repository `git rev-parse` fails LOUDLY on stderr, and that case is
+	// normal rather than an error — in merged mode the subshell's stderr is
+	// folded into the command's own output, so without it every command run from
+	// /tmp would report a git error it did not cause. The trap writes to a file
+	// for exactly this reason and must not undo it.
+	//
+	// Background commands get the trap too. They cannot change the agent's CWD
+	// and nothing applies theirs, but their RESULT still has to say which
+	// directory it came from, and one mechanism for all three result paths beats
+	// a second probe shaped differently.
+	//
 	// `cd` itself is deliberately left as the builtin. There was an override here
 	// that errored on `cd <the directory you are already in>`; the whole of its
 	// body existed to produce that error, and cd-ing to where you already are is
@@ -631,8 +785,7 @@ export async function executeBashWithTimeout(
 	// Immediate-background commands get no prefix at all: they cannot change the
 	// agent's CWD, so there is nothing to track.
 	const isImmediateBackground = foregroundTimeout === 0 && !!sessionId;
-	const exitTrap = `___mxd_trap() { pwd > "${cwdPath}"; }; trap ___mxd_trap EXIT; `;
-	const wrapperPrefix = isImmediateBackground ? "" : exitTrap;
+	const wrapperPrefix = `___mxd_trap() { { pwd; git rev-parse --show-toplevel; } > "${cwdPath}" 2>/dev/null; }; trap ___mxd_trap EXIT; `;
 
 	// Merged mode: subshell wrapped with 2>&1 so all output funnels to stdout file.
 	// Bash's own stderr is discarded ("ignore"); rare bash-level syntax errors
@@ -657,68 +810,59 @@ export async function executeBashWithTimeout(
 		isError: boolean;
 		cwd?: string;
 	} {
+		// The directory has to be known BEFORE the output is formatted, because
+		// the notice is the result's first line.
+		let newCwd: string | undefined;
+		const probe = readCwdProbe(cwdPath);
+		try {
+			unlinkSync(cwdPath);
+		} catch {
+			// Already removed, or the shell died before its trap ran.
+		}
+		if (probe.pwd && probe.pwd !== realpathOr(effectiveCwd)) {
+			newCwd = probe.pwd;
+		}
+
+		// Prepend workdir reset if CWD was invalid
+		let resetMsg: string | undefined;
+		if (effectiveCwd !== cwd) {
+			resetMsg = `workdir reset to ${effectiveCwd} (previous dir '${cwd}' no longer exists)`;
+			if (!newCwd) newCwd = effectiveCwd;
+		}
+
 		const result = formatBashResult(
-			{ separate, stdoutPath, stderrPath },
+			{
+				separate,
+				stdoutPath,
+				stderrPath,
+				// The directory the shell ENDED in, which is where the output
+				// above came from and where the next command will start. Not the
+				// one it started in: `cd ~/.mxd && cat config.json` produces
+				// output about ~/.mxd, and naming the worktree there would be the
+				// very defect this line exists to remove.
+				cwdNotice: formatCwdNotice(
+					newCwd ?? effectiveCwd,
+					fallbackCwd,
+					probe.gitTop,
+				),
+			},
 			exitCode,
 		);
 
 		let content = result.content;
-		let newCwd: string | undefined;
+		if (resetMsg) content = `${resetMsg}\n${content}`;
 
-		// Read CWD from temp file (written by cd wrapper or EXIT trap)
-		try {
-			const cwdFromFile = readFileSync(cwdPath, "utf-8").trim();
-			if (cwdFromFile) {
-				let resolvedCwd: string;
-				try {
-					resolvedCwd = realpathSync(effectiveCwd);
-				} catch {
-					resolvedCwd = effectiveCwd;
-				}
-				if (cwdFromFile !== resolvedCwd) {
-					newCwd = cwdFromFile;
-				}
-			}
-		} catch {
-			// No CWD file — command didn't cd
-		} finally {
-			// Clean up CWD temp file
-			try {
-				unlinkSync(cwdPath);
-			} catch {
-				// Already removed or never created
-			}
-		}
-
-		// Prepend workdir reset if CWD was invalid
-		if (effectiveCwd !== cwd) {
-			const resetMsg = `workdir reset to ${effectiveCwd} (previous dir '${cwd}' no longer exists)`;
-			content = `${resetMsg}\n${content}`;
-			if (!newCwd) newCwd = effectiveCwd;
-		}
-
+		// An EVENT — "you just moved" — which the notice above does not report and
+		// cannot: that one is a statement about state. The `[Note: CWD is outside
+		// your worktree …]` line that used to follow is GONE, because once every
+		// affected result names its own directory, a one-shot warning fires only
+		// where the notice already fired and says the same thing twice. Its one
+		// piece of unique content, naming the worktree root, moved into the
+		// notice; "remember to cd back" was advice that had to survive until the
+		// agent acted on it, and a line on every subsequent result does that job
+		// better than a reminder it has already scrolled past.
 		if (newCwd) {
 			content += `\n\nworkdir set to ${newCwd} from now on`;
-			if (fallbackCwd) {
-				let resolvedWorktree: string;
-				let resolvedNew: string;
-				try {
-					resolvedWorktree = realpathSync(fallbackCwd);
-				} catch {
-					resolvedWorktree = fallbackCwd;
-				}
-				try {
-					resolvedNew = realpathSync(newCwd);
-				} catch {
-					resolvedNew = newCwd;
-				}
-				const isOutside =
-					resolvedNew !== resolvedWorktree &&
-					!resolvedNew.startsWith(`${resolvedWorktree}/`);
-				if (isOutside) {
-					content += `\n[Note: CWD is outside your worktree. Your worktree root is ${resolvedWorktree}. Remember to cd back when done.]`;
-				}
-			}
 		}
 
 		// Append execution duration
@@ -758,6 +902,7 @@ export async function executeBashWithTimeout(
 			kill: () => proc.kill(),
 			stdoutPath,
 			stderrPath,
+			cwdPath,
 		};
 		bgEntry.completionPromise = new Promise<void>((resolve) => {
 			bgEntry.resolveCompletion = resolve;
@@ -773,6 +918,17 @@ export async function executeBashWithTimeout(
 				bgEntry.status = exitCode === 0 ? "completed" : "failed";
 				bgEntry.endTime = Date.now();
 				bgEntry.kill = null;
+
+				// A background result is the one MOST likely to mislead about its
+				// directory: it arrives detached from the command that moved
+				// there, sometimes many turns later. Stored on the entry so the
+				// `background` tool's status action reports the same thing.
+				const probe = readCwdProbe(cwdPath);
+				bgEntry.cwdNotice = formatCwdNotice(
+					probe.pwd ?? effectiveCwd,
+					fallbackCwd,
+					probe.gitTop,
+				);
 
 				const result = formatBashResult(bgEntry, exitCode);
 
