@@ -122,12 +122,13 @@ add the row.
 | `.mxd/plugin/web/event-handler.ts` | UI event → log entries. `queueEntryToUIEvent` is the materialization gate; `pendingReducer` is pending. |
 | `.mxd/plugin/message-editability.ts` | where the three Edit/Rewind judgments meet, and the only place they may. Has zero imports, asserted by a test. |
 
-**Verified 2026-07-25, recorded so the next pass can skip it**: every file path cited anywhere in
-this file exists (24 distinct paths), and every symbol this file claims lives in a named file does
-(14 checked, including `walkActiveChainIndices`, `classifyOffChain`, `emitAndPushCompactToolResult`,
-`hasRewindPoint`, `rewindChainHead`, `skipDirsForPattern`). Re-derive only if files have moved — but
-note this checks EXISTENCE, not that the surrounding prose still describes them accurately, which is
-the harder half and has its own rule under *Writing this file*.
+**Verified 2026-07-27, recorded so the next pass can skip it**: every `src/` `web/` `scripts/`
+`.mxd/` `.hooks/` path cited anywhere in this file exists — the single miss, `src/direct-provider.
+test.ts`, is cited precisely BECAUSE it was deleted — and 18 sampled symbols this file claims live
+in a named file all do. Both are one-liners: extract the backticked paths and `test -e` each;
+extract the symbol names and grep. ⚠️ **They check EXISTENCE only.** Whether the prose around a
+symbol still DESCRIBES it is the harder half, it has its own rule under *Writing this file*, and no
+cheap check covers it.
 
 ## Changing code here
 
@@ -1958,8 +1959,8 @@ does.**
 
 ## Repair is a chain jump, never a truncation
 
-`buildSessionRepair` returns `{ chainToEid, appendEvents }`; the caller does `setChainHead` +
-`appendBatch` — literally the rollback mechanism. `chainToEid: null` means append-only. Poisoned
+`buildSessionRepair` computes a jump and its caller performs it — `setChainHead` + `appendBatch`,
+literally the rollback mechanism, with a null jump target meaning append-only. Poisoned
 events stay on disk and simply stop being reachable, **so the evidence needed to debug a corruption
 survives it**. Repair runs in `runAgentForNode` before the provider loop starts.
 
@@ -2409,12 +2410,11 @@ thinking blocks on mismatch. The OpenAI walker ignores thinking entirely.
 ## The LLM facility — single-turn, no tools, no session
 
 `src/llm.ts` wraps the existing provider adapters for plugins that need one-shot calls outside the
-agent loop (`createLLM({authGroup, model, defaultThinkingEffort})` → `run` / `stream`). It is
-strictly single-turn: no tools, no session state, no image input. It reuses `adapter.callAPI`,
-`buildResponseEvents`, `getTokenUsage` and `computeCost`, so it is mostly wiring; the plugin resolves
-`AuthGroup` and model from `MatrixConfig` itself, keeping the facility decoupled from config shape.
-Errors are exceptions (no error chunk), transient ones are retried by the SDK, and hitting
-`max_tokens` returns the text with `stopReason: "max_tokens"` rather than throwing.
+agent loop. It is strictly single-turn: no tools, no session state, no image input — and it is
+mostly wiring, reusing the adapter's own call, response-event, usage and cost functions. The plugin
+resolves `AuthGroup` and model from `MatrixConfig` itself, keeping the facility decoupled from
+config shape. Errors are exceptions (no error chunk), transient ones are retried by the SDK, and
+hitting `max_tokens` returns the text with `stopReason: "max_tokens"` rather than throwing.
 
 ⚠️ **SDK client construction is DUPLICATED from the provider class constructors, and this is the one
 thing here that will bite someone.** Beta headers and timeout are hand-matched to
@@ -2450,8 +2450,7 @@ plugin-namespaced data root.
 ```
 
 ⚠️ **`tree.json` is deliberately NOT in the repo.** The tree mutates constantly and committing it
-would pollute history. It has been listed under `<repo>/.mxd/` in this file before, wrongly, and
-that listing contradicted the layout above.
+would pollute history.
 
 The namespace exists so a second plugin's data parks beside matrix's rather than colliding at the
 top level, and it completes the "matrix is just a plugin" framing. Config merges in three layers,
@@ -2505,7 +2504,7 @@ Runtime exposes exactly two node kinds, discriminated by a **required** `type: s
 `orchestrator-tools.ts` for the backend and `.mxd/plugin/web/types.ts` for the frontend, because
 "folder" is a matrix convention and not a runtime kind. There is no `FolderNode` type. The MCP tools
 keep their user-facing names (`create_folder` etc.) and are sugar over one general-node API,
-`tracker.addGeneralNode(title, parentId, type, metadata?)`, which throws on `"task"`.
+`tracker.addGeneralNode`, which throws on `"task"`.
 
 `status` and `metadata` live on **`BaseTaskNode`**, not on matrix's `TaskNode`. `status` is genuinely
 runtime-generic — `createNode` inits it, `updateStatus` mutates it, `load()` migrates it, and the
@@ -2797,9 +2796,10 @@ Four gotchas, three of them environmental:
 **`search_tasks` enriches from the tracker, not from the index**: each hit gets the task's CURRENT
 title via a fresh `getTask`, and hits whose task has been deleted are dropped.
 
-**NEGATIVE RESULT, do not re-derive:** `bun:sqlite` **cannot** `loadExtension` — smoke-tested,
+**NEGATIVE RESULT, do not re-derive — except on a Bun upgrade, which is the only thing that can
+change it:** `bun:sqlite` **cannot** `loadExtension`. Smoke-tested;
 `new Database(":memory:").loadExtension("x")` throws *"This build of sqlite3 does not support
-dynamic extension loading"*. That killed the sqlite-vec plan and is why the vector phase went to a
+dynamic extension loading"*, and that one line is the whole re-check. That killed the sqlite-vec plan and is why the vector phase went to a
 pure-TS engine. The FTS5 index that preceded Orama worked correctly (MATCH, bm25, snippet,
 DELETE-by-column all verified); it was replaced for the vector story, not because it was broken.
 
@@ -3095,9 +3095,9 @@ zero delay; a lens with no plugin at all resolves immediately as undefined.
 
 A plugin is `.mxd/plugin/`: a manifest (`index.ts`), a worker-side `runtime.ts` supplying
 `ScopeOpts`, and a `web/` React component the shell lazy-loads. Matrix is one of these and is
-discovered by the same scan as any other. `ctx.scopeOpts: Map<projectId, ScopeOpts<T>>` holds the
-per-project configuration, and `buildMatrixScopeOpts` in `.mxd/plugin/scope-opts.ts` is the ONE
-place that knows matrix's tools, prompt and hooks.
+discovered by the same scan as any other. The per-project configuration lives in `ctx.scopeOpts`,
+and `buildMatrixScopeOpts` in `.mxd/plugin/scope-opts.ts` is the ONE place that knows matrix's
+tools, prompt and hooks.
 
 **The hook list is deliberately not reproduced here.** It lives in `src/runtime/context.ts`, it has
 grown several times, and two hooks have changed arity — a copy in this file would go stale silently
@@ -3320,9 +3320,8 @@ handler's own docstring already described the 401 behavior; the code just did no
 
 JWTs carry `sub` (`"cli" | "session" | "stream"`) and `sv` (secret version). `/events` accepts only
 `stream`; REST accepts only `cli`/`session`; a token with no `sv` always fails. `bumpSecretVersion`
-(POST `/auth/logout`) rotates it and invalidates every outstanding token. Lifetimes: session 30d,
-CLI 5min, stream 5min. `extractBearerToken` matches `/^Bearer[ \t]+(.+)$/i` because RFC 7235 makes
-the scheme case-insensitive.
+(POST `/auth/logout`) rotates it and invalidates every outstanding token. `extractBearerToken`
+matches `/^Bearer[ \t]+(.+)$/i` because RFC 7235 makes the scheme case-insensitive.
 
 ⚠️ **There is no auth cache, and do not add one back.** A previous `authDataCache` produced "the user
 ran `mxd auth` but the running daemon never re-read `auth.json`". `readAuthData` hits disk on every
@@ -4542,13 +4541,18 @@ them "while I'm here" is strong; it converts a nearly-finished bounded task into
 translation project, which is how the thing that was going to protect us gets abandoned halfway.
 Count them, file them (`01KYDBRDAPF13M5X0E7PGQVB0X`), ship the gate.
 
-### The census — negative results, so nobody re-runs this
+### The census, 2026-07-25 — negative results, so nobody re-runs this
+
+⚠️ **The date is the point of this heading, not decoration.** Everything below is a state claim with
+nothing that would ring if it stopped being true, and the heading tells you not to re-check — which
+is the one combination that lets a finding age into a lie undetected. Read every bullet as "true of
+the tree on 2026-07-25"; re-run the census if you are about to rely on one and the tree has moved.
 
 Every file-enumeration site in the repo was searched, deliberately with bash `grep -rn` rather than
 `search` — see *In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in
 your hand*, in the tools region. Conclusions:
 
-- **Every `Bun.Glob` in the repo is now correct** — three call sites, two in `search`, one in
+- **Every `Bun.Glob` in the repo was correct** — three call sites, two in `search`, one in
   `list_files`.
 - **File enumeration here is either a `Bun.Glob` or a flat, single-directory read of a directory we
   own with its filter written down** (a ULID regex, a `.jsonl` suffix). `readdir` returns dotfiles
@@ -4611,9 +4615,10 @@ DELETED a cast or a hack.** Four patterns, each a reusable diagnosis:
   round-trips as that variant.
 
 Two adjacent facts: `noUnusedLocals` cases are real, so delete them (a `_` prefix does not satisfy it
-for locals or imports, only for function params); and `check:ci` exits 0 with ~158 warnings, because
-warnings never fail the gate — **do not "fix" the warning count during a gate restoration**, since
-biome's suggested `!` → `?.` autofix is marked unsafe and silently changes assertion semantics.
+for locals or imports, only for function params); and `check:ci` exits 0 with a standing pile of
+warnings, because warnings never fail the gate — **do not "fix" the warning count during a gate
+restoration**, since biome's suggested `!` → `?.` autofix is marked unsafe and silently changes
+assertion semantics.
 
 ⚠️ **Why 24 errors accumulated is the more important half, and it is not "someone bypassed the
 gate": there was no gate to bypass.** This is the incident that *a checked-in hook file is not an
