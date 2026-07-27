@@ -4328,35 +4328,52 @@ missing rather than emitting a bare specifier that would 404 at runtime.
 ⚠️ **A test pins the hash SHAPE with `[a-z0-9]{8}`.** Bun could widen its hash in a future version;
 if it does, the manual CSS hash helper must be updated to match, and that test is what will tell you.
 
-## Type errors that were all casts, and the gate that never ran
+## What is actually gated (and what is not)
 
-Twenty-four `tsc` errors accumulated across six merges. **Every one of them was a workaround for a
-type the code already had correctly — zero `as unknown as` were added to fix them, all 24 fixes
-DELETED a cast or a hack.** Four patterns, each a reusable diagnosis:
+Answer this before assuming a green result means anything.
 
-- ⚠️ **`(node as Record<string, unknown>).status = …` in a test fixture** — the field is ordinary,
-  typed and writable. **A `Record<string, unknown>` cast on a domain object in a TEST is almost
-  always a fixture-seeding shortcut, not a type problem. Look for the setter.**
-- ⚠️ **A cast that fails with TS2352 means the type is MORE precise than you assumed, not less.**
-  `(db as Record<string, unknown>).tokenizer = …` errored because `AnyOrama` has no index
-  signature — and it declares `tokenizer` outright, so the plain assignment typechecks. **Read the
-  `.d.ts` before laundering through `unknown`.**
-- ⚠️ **`.filter(Boolean)` does NOT narrow.** `map(… | null).filter(Boolean)` still has type
-  `(T | null)[]`, so every later access is "possibly null". Use `flatMap` (`return []` to drop,
-  `return [v]` to keep), which infers the narrowed element type with no predicate. **Never "fix"
-  this with `!` — the compiler is right that `filter(Boolean)` told it nothing.**
-- ⚠️ **Reading a variant-only field off a union**: narrow on the `type` discriminant instead of
-  casting. The narrowing usually makes the test STRONGER, since it now also asserts the event
-  round-trips as that variant.
+| path | hook git looks for | gated? |
+|---|---|---|
+| direct `git commit` on main (memory curation, conflict resolution) | `pre-commit` | ✅ yes |
+| `git merge --no-ff <branch>` with a clean auto-commit | `pre-merge-commit` | ❌ **no — that file does not exist** |
+| a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | ✅ yes |
+| any commit inside a sub-task worktree | none (`core.hooksPath=/dev/null`) | ❌ no, by design |
 
-Two adjacent facts: `noUnusedLocals` cases are real, so delete them (a `_` prefix does not satisfy it
-for locals or imports, only for function params); and `check:ci` exits 0 with ~158 warnings, because
-warnings never fail the gate — **do not "fix" the warning count during a gate restoration**, since
-biome's suggested `!` → `?.` autofix is marked unsafe and silently changes assertion semantics.
+⚠️ **The clean merge — root's dominant path — is NOT gated, while the conflicting merge IS.** That is
+backwards from intuition, and it is why "the hook passed" says very little about an integration.
+Deliberately not fixed by adding `pre-merge-commit`: the branch model REQUIRES that intermediate
+merges be allowed to not typecheck, and gating every merge would just re-establish the routine
+`--no-verify` habit that hid 24 errors before. The options if it ever needs closing are to keep
+merges ungated and run `bash .hooks/pre-commit` by hand once per integration, to add the hook and
+accept `--no-verify` on intermediate merges, or to move enforcement off the commit hook entirely.
 
-⚠️ **Why 24 errors accumulated is the more important half, and it is not "someone bypassed the
-gate".** There was no gate to bypass — see *What is actually gated*. A **tracked** `.hooks/pre-commit`
-existed and was referenced in this file as if it were active, while nothing pointed at it.
+**Worktrees skip the hook on purpose** — sub-tasks commit constantly and a full typecheck plus lint
+plus tests on each would be unusable. To check the gate from a worktree, run
+`bash /path/to/main/.hooks/pre-commit` manually.
+
+⚠️ **`core.hooksPath` is LOCAL config (`.git/config`) and is not tracked, so a fresh clone is ungated
+again and looks identical to a gated one.** Install with `git config core.hooksPath .hooks`.
+
+> ⭐ **A checked-in hook file is not an enforced hook.** For a long time `.hooks/pre-commit` existed,
+> was referenced as if active, and nothing pointed at it — git was looking in `.git/hooks/`, which
+> held only `.sample` files. **Nobody was gated anywhere**, every `--no-verify` was a no-op against a
+> gate that did not exist, and the absence looked exactly like compliance. The only way to know is to
+> assert it: `git config core.hooksPath`.
+
+The hook runs typecheck, `check:ci`, `check-i18n.sh`, and `bun test --bail` on a smoke subset whose
+size it computes and prints on every run — never a literal, so the ratio cannot go stale and this
+file does not need to carry it. It also **fails before typecheck if it names a test file that no longer
+exists**, and stages `scripts/i18n-baseline.txt` when the i18n gate lowers it. See *Gates: a passing
+gate looks identical whether it read 8% or 100%*.
+
+**The smoke set is chosen, not accumulated**, which matters because the old one grew by whoever
+happened to write a test that day. Two criteria: (1) the round-trip proofs for checks the hook itself
+runs — `check-i18n.test.ts`, `data-paths.test.ts`, `pre-commit-hook.test.ts` — because a hook that
+runs a gate but not the gate's own test can print that gate's "passed" while the gate is dead; and
+(2) invariants that fail SILENTLY, which in this repo means the persistence layer (`event-store`,
+`events`), since the inherited four — daemon shell, project registry, task tree, worktrees — all fail
+loudly. Deliberately excluded: `walker-golden` (one step out from the on-disk chain, covered by the
+drift suite at merge time) and `message-editability` (breakage greys a button, which is visible).
 
 ## Gates: a passing gate looks identical whether it read 8% or 100%
 
@@ -4571,52 +4588,36 @@ is not evidence that it does not exist.** (Gotcha when you do call one: an unlis
 unconstrained argument types, so a numeric `count` arrives as a string and fails validation — pass
 the required argument alone.)
 
-## What is actually gated (and what is not)
+## Type errors that were all casts, and the gate that never ran
 
-Answer this before assuming a green result means anything.
+Twenty-four `tsc` errors accumulated across six merges. **Every one of them was a workaround for a
+type the code already had correctly — zero `as unknown as` were added to fix them, all 24 fixes
+DELETED a cast or a hack.** Four patterns, each a reusable diagnosis:
 
-| path | hook git looks for | gated? |
-|---|---|---|
-| direct `git commit` on main (memory curation, conflict resolution) | `pre-commit` | ✅ yes |
-| `git merge --no-ff <branch>` with a clean auto-commit | `pre-merge-commit` | ❌ **no — that file does not exist** |
-| a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | ✅ yes |
-| any commit inside a sub-task worktree | none (`core.hooksPath=/dev/null`) | ❌ no, by design |
+- ⚠️ **`(node as Record<string, unknown>).status = …` in a test fixture** — the field is ordinary,
+  typed and writable. **A `Record<string, unknown>` cast on a domain object in a TEST is almost
+  always a fixture-seeding shortcut, not a type problem. Look for the setter.**
+- ⚠️ **A cast that fails with TS2352 means the type is MORE precise than you assumed, not less.**
+  `(db as Record<string, unknown>).tokenizer = …` errored because `AnyOrama` has no index
+  signature — and it declares `tokenizer` outright, so the plain assignment typechecks. **Read the
+  `.d.ts` before laundering through `unknown`.**
+- ⚠️ **`.filter(Boolean)` does NOT narrow.** `map(… | null).filter(Boolean)` still has type
+  `(T | null)[]`, so every later access is "possibly null". Use `flatMap` (`return []` to drop,
+  `return [v]` to keep), which infers the narrowed element type with no predicate. **Never "fix"
+  this with `!` — the compiler is right that `filter(Boolean)` told it nothing.**
+- ⚠️ **Reading a variant-only field off a union**: narrow on the `type` discriminant instead of
+  casting. The narrowing usually makes the test STRONGER, since it now also asserts the event
+  round-trips as that variant.
 
-⚠️ **The clean merge — root's dominant path — is NOT gated, while the conflicting merge IS.** That is
-backwards from intuition, and it is why "the hook passed" says very little about an integration.
-Deliberately not fixed by adding `pre-merge-commit`: the branch model REQUIRES that intermediate
-merges be allowed to not typecheck, and gating every merge would just re-establish the routine
-`--no-verify` habit that hid 24 errors before. The options if it ever needs closing are to keep
-merges ungated and run `bash .hooks/pre-commit` by hand once per integration, to add the hook and
-accept `--no-verify` on intermediate merges, or to move enforcement off the commit hook entirely.
+Two adjacent facts: `noUnusedLocals` cases are real, so delete them (a `_` prefix does not satisfy it
+for locals or imports, only for function params); and `check:ci` exits 0 with ~158 warnings, because
+warnings never fail the gate — **do not "fix" the warning count during a gate restoration**, since
+biome's suggested `!` → `?.` autofix is marked unsafe and silently changes assertion semantics.
 
-**Worktrees skip the hook on purpose** — sub-tasks commit constantly and a full typecheck plus lint
-plus tests on each would be unusable. To check the gate from a worktree, run
-`bash /path/to/main/.hooks/pre-commit` manually.
-
-⚠️ **`core.hooksPath` is LOCAL config (`.git/config`) and is not tracked, so a fresh clone is ungated
-again and looks identical to a gated one.** Install with `git config core.hooksPath .hooks`.
-
-> ⭐ **A checked-in hook file is not an enforced hook.** For a long time `.hooks/pre-commit` existed,
-> was referenced as if active, and nothing pointed at it — git was looking in `.git/hooks/`, which
-> held only `.sample` files. **Nobody was gated anywhere**, every `--no-verify` was a no-op against a
-> gate that did not exist, and the absence looked exactly like compliance. The only way to know is to
-> assert it: `git config core.hooksPath`.
-
-The hook runs typecheck, `check:ci`, `check-i18n.sh`, and `bun test --bail` on a smoke subset whose
-size it computes and prints on every run — never a literal, so the ratio cannot go stale and this
-file does not need to carry it. It also **fails before typecheck if it names a test file that no longer
-exists**, and stages `scripts/i18n-baseline.txt` when the i18n gate lowers it. See *Gates: a passing
-gate looks identical whether it read 8% or 100%*.
-
-**The smoke set is chosen, not accumulated**, which matters because the old one grew by whoever
-happened to write a test that day. Two criteria: (1) the round-trip proofs for checks the hook itself
-runs — `check-i18n.test.ts`, `data-paths.test.ts`, `pre-commit-hook.test.ts` — because a hook that
-runs a gate but not the gate's own test can print that gate's "passed" while the gate is dead; and
-(2) invariants that fail SILENTLY, which in this repo means the persistence layer (`event-store`,
-`events`), since the inherited four — daemon shell, project registry, task tree, worktrees — all fail
-loudly. Deliberately excluded: `walker-golden` (one step out from the on-disk chain, covered by the
-drift suite at merge time) and `message-editability` (breakage greys a button, which is visible).
+⚠️ **Why 24 errors accumulated is the more important half, and it is not "someone bypassed the
+gate": there was no gate to bypass.** This is the incident that *a checked-in hook file is not an
+enforced hook* is about — nothing snuck past anything, the errors accumulated in the open, and the
+absence looked exactly like compliance.
 
 ## Two smaller standing facts
 
@@ -4658,8 +4659,12 @@ days of test-level debugging could not.
 - **Provider queue close**: check `queue.isClosed` after tool execution and `return` immediately.
 - ⚠️ **Never modify your own JSONL from inside an agent.** The current tool_call has no result yet, so
   you will read it as a false orphan.
-- ⚠️ **`delete_task` cascades** to all descendants AND their session JSONL. It returns 400 if the task
-  has children, which is the only thing standing between a misclick and unrecoverable loss.
+- ⚠️ **`delete_task` REFUSES any node with children** — `deleteTaskOp` throws on both the task and
+  the general-node branch, so you reparent or delete the children yourself first. `tracker.remove`
+  underneath it IS recursive and would take their session JSONL with it; that guard is the only
+  thing standing between a misclick and unrecoverable loss. Prose in this file, in the tool
+  description and in the system prompt all said the cascade was reachable, for months; it is not,
+  and describing a guard as a hazard makes agents avoid the tool where it is the right move.
 - ⚠️ **Abort-signal leak**: after a stop, the old `runAgentForNode` settles asynchronously. The catch
   and finally check `sessionWasReplaced` to suppress stale error events from a session that is
   already gone.
