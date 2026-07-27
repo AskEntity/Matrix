@@ -4444,3 +4444,82 @@ not a scenario, because today's scenario cannot occur, and someone reading it as
 reproduce it, fail, and conclude the test is wrong. It asserts both entries' **timestamps** rather
 than their count, because the failure being guarded is content-and-position substitution, and a
 count assertion passes against a collapse that kept two entries for some other reason.
+
+---
+
+## A verification whose reference was produced by the verifier is not a verification
+
+⚠️ **Checking an artifact against a description YOU wrote is a self-consistency check wearing
+verification's clothes, and from the inside it is indistinguishable from the real thing.**
+
+The instance, because the shape is what matters and the shape is invisible without it. A 2026-04-03
+documentation audit reported *"matrix-docs: index.md, why.md, concepts.md, architecture.md,
+getting-started.md — all verified clean"*. Its own session, ~320 events earlier, had sent the docs
+project the numbered change-list those files had just been edited from. So the audit compared the
+docs against its own instructions and found agreement. **Agreement was structurally guaranteed.**
+
+Two properties that make this hard to catch rather than merely embarrassing:
+
+- ⭐ **Distance manufactures the illusion.** 320 events is far more than enough to stop experiencing
+  a list as your own output; by the time it is read back it is simply *the criteria*. The defence is
+  not vigilance, it is asking **where did my reference come from** — a question with a checkable
+  answer, unlike "am I being circular", which has none.
+- ⚠️ **The verdict was `clean`, which is the one verdict that leaves no artifact to review.** A wrong
+  finding can be argued with. "Nothing to report" produces nothing anyone can check, so it is
+  accepted by default and inherited by everyone downstream — here for **115 days**, during which the
+  files were never re-examined.
+
+⚠️ **Corollary that bit the same audit: a "clean" verdict does not even cover the bytes it read.**
+Two commits landed on `architecture.md` AFTER it closed, one of them 12 hours later, and that commit
+introduced the `TreeNode: TaskNode | FolderNode` heading — a type that has never existed — which the
+next reviewer found in ten minutes by reading the table of contents. **Date the artifact, not the
+review**: a verdict names a commit or it names nothing.
+
+The reusable form: **a review is only evidence to the extent its reference is INDEPENDENT of the
+thing reviewed.** Code, a measurement, or a document written by someone else are independent. Your
+own change-list, your own task description, and your own previous summary are not.
+
+## ⭐ A checklist derived from the artifact can only find contradictions, never omissions
+
+**Walk a document and check each claim, and every finding you can possibly produce has the form
+"it says X, the code says Y". You cannot produce "the code has Z and the document has never
+mentioned it", because nothing in the document ever raised Z.** The audit above returned findings
+that were **100% contradictions and 0% omissions**, and that ratio was not a fact about the
+documents — it was a fact about the method.
+
+**This is the addition-list rule from *Gates* in a different medium**, which is the reason to keep it
+here rather than treat it as a documentation lesson: the document's own claims ARE the include-list,
+so it fails in the same silent direction — new subsystems simply are not covered and nothing
+anywhere says so. Measured on the same files: a whole-repo probe for concepts absent from all four
+docs returned **0 mentions** of the plugin layer, the Worker thread, per-plugin data roots, dual
+lenses, `/api/<plugin>/`, `eid`/`parentEid`, the active chain, the search index, embeddings,
+Edit/Rewind, `resultRounds`, or `agent_activity` — twelve subsystems, invisible to claim-checking
+because a document cannot contradict you about something it does not discuss.
+
+**So the omission pass needs its own instrument, and it runs in the opposite direction: start from
+the CODE, enumerate what exists, and ask which of those the reader would form a wrong model
+without.** That last clause is the bound — "the docs don't mention X" is true of a thousand X's, and
+without it the pass never terminates. A grep for each concept-name across the doc set is the cheap
+version and it is where the twelve came from.
+
+⚠️ **The trap for whoever runs it next: the omission pass makes the contradiction pass look
+thorough by comparison** — contradictions come with line numbers and quotes, omissions come with an
+absence, and an absence reads as a weaker finding while being the larger one.
+
+## ⚠️ Auditing a live repo: pin the commit, and expect it to move under you
+
+Mid-audit, the target repo gained two commits and `architecture.md` went **984 → 1015 lines**, which
+silently invalidated every line number collected up to that point and — worse — **fixed one of the
+findings**, so reporting it would have sent another team to re-do work they had just finished.
+
+Three habits, all cheap, none of which occur to you until it has happened once:
+
+1. **Record the target's HEAD when you start and re-check it before you report.** `git log --oneline`
+   costs nothing; a report whose line numbers are off by 31 costs the reader their trust in all of it.
+2. ⭐ **Re-derive line numbers mechanically from anchor TEXT at the end, never carry the numbers you
+   noted while reading.** A ~30-line script that greps each finding's quoted sentence and prints its
+   current line is proof against every edit that does not touch that sentence. Numbers you wrote down
+   by hand are a snapshot of a file that no longer exists.
+3. **Diff the range before re-reading everything.** `git diff <start-head> HEAD -- <file>` told me in
+   one command that exactly one section had changed, so re-verification was one section rather than
+   1015 lines.
