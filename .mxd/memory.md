@@ -126,12 +126,12 @@ add the row.
 | `.mxd/plugin/message-editability.ts` | where the three Edit/Rewind judgments meet, and the only place they may. Has zero imports, asserted by a test. |
 
 **Verified 2026-07-27, recorded so the next pass can skip it**: every `src/` `web/` `scripts/`
-`.mxd/` `.hooks/` path cited anywhere in this file exists — the single miss, `src/direct-provider.
-test.ts`, is cited precisely BECAUSE it was deleted — and 18 sampled symbols this file claims live
-in a named file all do. Both are one-liners: extract the backticked paths and `test -e` each;
-extract the symbol names and grep. ⚠️ **They check EXISTENCE only.** Whether the prose around a
-symbol still DESCRIBES it is the harder half, it has its own rule under *Writing this file*, and no
-cheap check covers it.
+`.mxd/` `.hooks/` path cited anywhere in this file exists — the single miss,
+`src/direct-provider.test.ts`, is cited precisely BECAUSE it was deleted — and 18 sampled symbols
+this file claims live in a named file all do. Both are one-liners: extract the backticked paths and
+`test -e` each; extract the symbol names and grep. ⚠️ **They check EXISTENCE only.** Whether the
+prose around a symbol still DESCRIBES it is the harder half, it has its own rule under
+*Writing this file*, and no cheap check covers it.
 
 ## Changing code here
 
@@ -290,10 +290,9 @@ an improvement is wrong. So: *if a reader of this code would want to simplify it
 why that fails; if nobody would touch it, this file should say nothing.* Do not ask "is this
 useful" — the answer is "somewhat" for every entry ever written, and that is how the file reached
 7,616 lines by 2026-07 (a compression pass then took it to ~3,400). Four things survive that
-question: how to operate here and what happens if you don't;
-why the design is shaped this way; **the places that look wrong but are right**; and negative
-results ("checked, it is not that"), which are recorded nowhere else because nobody opens a task for
-"it wasn't that".
+question: how to operate here and what happens if you don't; why the design is shaped this way;
+**the places that look wrong but are right**; and negative results ("checked, it is not that"),
+which are recorded nowhere else because nobody opens a task for "it wasn't that".
 
 **Write the current design as one narrative, not as a sequence of amendments.** A past state earns
 its lines only when a reader without it could not justify the current design, or would likely
@@ -326,9 +325,9 @@ curator integrates everything. That was a one-day workaround so parallel tasks w
 with a compression pass running on the same file, and it was written up here as a durable design
 within two hours of being invented, in the present tense, with a star on it. Worth leaving on the
 record: **a temporary measure looks most like a discovery at the moment it works**, because you can
-see the problem it solved and not the doors it closed. The rule three paragraphs down — *about to
-leave a sentence standing as CURRENT? verify it first* — did not fire, because the author was the
-person who had just invented it.
+see the problem it solved and not the doors it closed. The rule under **Daily maintenance** below —
+*about to leave a sentence standing as CURRENT? verify it first* — did not fire, because the author
+was the person who had just invented it.
 
 **Condensing is a separate periodic pass with four phases, in this order.** Full procedure:
 `.mxd/memory-reorg.md`.
@@ -454,8 +453,8 @@ intact.
   longer exists**: `buildAgentContext` (really `createAgentContext`), `sessionWasReplaced` (see
   below — its obvious correction is a phantom too), two deleted turn-builders standing where
   `adapter.buildUserTurn` now is, and an Edit/Rewind re-fetch consumer that had been removed
-  outright. Each fails the same way: a reader
-  greps it, gets nothing, and concludes the mechanism is gone.
+  outright. Each fails the same way: a reader greps it, gets nothing, and concludes the mechanism
+  is gone.
   ⚠️ **The endpoint of this survey is a DEFINITION, never another name** — the replacement you find
   in the source can itself be a phantom. `sessionWasReplaced` was corrected here to `wasReplaced`,
   which **also does not exist**: it appears three times in `agent-lifecycle.ts` and all three are
@@ -1080,24 +1079,24 @@ process survives). In a plain Bun process it exits the process outright, mid-fli
 included. **As of this writing nothing in this repo installs a `process.on("unhandledRejection")`
 net** — the only occurrence anywhere is one test that captures its own injected failure, and the
 handler decided on below (`01KYDESAKCW186VZ8GEK6TW91W`) deliberately does not change this
-paragraph's conclusion, only its legibility. So a floating rejected
-promise in the runtime is not noise in a log; it is a way to kill every agent in that project's lens
-and hand the daemon a backoff worker restart, and per *The self-bootstrap death chain* an
-`exit 133`-shaped worker death is indistinguishable from a real crash to anyone reading the log.
-**The hang was the mild half** — which is worth saying in those words, because the obvious framing
-("a parent waits forever") describes the bounded, recoverable consequence and silently sets the
-priority for the whole class from it.
+paragraph's conclusion, only its legibility. So a floating rejected promise in the runtime is not
+noise in a log; it is a way to kill every agent in that project's lens and hand the daemon a backoff
+worker restart, and per *The self-bootstrap death chain* an `exit 133`-shaped worker death is
+indistinguishable from a real crash to anyone reading the log. **The hang was the mild half** —
+which is worth saying in those words, because the obvious framing ("a parent waits forever")
+describes the bounded, recoverable consequence and silently sets the priority for the whole class
+from it.
 
 **Surveying for the shape needs two instruments neither of which is the obvious one.** A single-line
 `grep '\.catch(async'` returns zero hits in a repo that has one, and biome 2.4.10's
 `nursery/noFloatingPromises` is blind even to a planted violation — both written up under *In a
 self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand*, because the
 lesson is about instruments and not about promises. What works: a multiline search
-(`\.catch\(\s*async`) plus a ~120-line one-off over the real TypeScript checker — walk every `ExpressionStatement`, ask the
-checker whether the expression's type has a `then`, subtract `await` / `void` / `.catch(fn)` /
-`.then(a,b)`. Production carries one other continuation handler of the family,
-`backgroundChain.then(async …)` in `task-index.ts`, and that one is correct because its whole body
-is inside a try/catch.
+(`\.catch\(\s*async`) plus a ~120-line one-off over the real TypeScript checker — walk every
+`ExpressionStatement`, ask the checker whether the expression's type has a `then`, subtract
+`await` / `void` / `.catch(fn)` / `.then(a,b)`. Production carries one other continuation handler of
+the family, `backgroundChain.then(async …)` in `task-index.ts`, and that one is correct because its
+whole body is inside a try/catch.
 
 ⚠️ **The checker instrument has its own caveat, and it is not a defect: a type-level `Promise` arm
 is not a runtime promise.** The checker reports the declared union; whether the async arm is ever
@@ -1129,11 +1128,11 @@ swallowing catch this file keeps arguing against, and the distinction that resol
 handler does AFTER it logs*. Log-and-die is pure attribution: the semantics do not change by one
 byte, and an anonymous worker death becomes one that names the lens. Log-and-swallow is the
 swallowing catch at PROCESS scope, and it is worse than the per-site version, because the worker
-then carries on in an unknown state while writing JSONL and managing worktrees. ⚠️ **Installing a handler SUPPRESSES
-the default action, so log-and-die is not free** — the death has to be re-raised deliberately, and
-that is the part a test must pin. ⚠️ **And a net does not reduce the 11**: it makes failures
-visible, not correct. If anything it raises their priority, because you can finally see how often
-they fire.
+then carries on in an unknown state while writing JSONL and managing worktrees. ⚠️ **Installing a
+handler SUPPRESSES the default action, so log-and-die is not free** — the death has to be re-raised
+deliberately, and that is the part a test must pin. ⚠️ **And a net does not reduce the 11**: it
+makes failures visible, not correct. If anything it raises their priority, because you can finally
+see how often they fire.
 
 ## The done() payload, and the boundary it defends
 
@@ -1318,8 +1317,7 @@ a real configuration problem the user needs to see, and both of today's behaviou
 looping without the floor, silently never compacting with it — hide it equally well.
 
 This is the code-level half of `01KXNZHYSJFF0BVQJVPG2WC1RV` (the deadlock that crashed root on
-2026-07-15); that ticket has the
-incident, this is the exact condition.
+2026-07-15); that ticket has the incident, this is the exact condition.
 
 **Compact messages never get `messages_consumed`.** `handleImplicitYield` filters them out of
 `nonCompact` and only `nonCompact` is recorded, so on restart `findUnconsumedMessages` re-enqueues
@@ -1618,9 +1616,9 @@ rather than by three callers remembering.
 so an agent unsure where it is can always just say so. There was a shell `cd()` override that
 errored with *"already in this directory"*, and **every line of its body existed to produce that
 error** — it resolved the target only to compare it against `pwd`, and wrote no file anywhere. CWD
-tracking was, and is, entirely the EXIT trap. ⚠️ **Do not
-reintroduce a wrapper**: with the error gone the remainder is `cd() { builtin cd "$1"; }`, strictly
-worse than the builtin it shadows — it breaks `cd -`, and an empty argument stops meaning `$HOME`.
+tracking was, and is, entirely the EXIT trap. ⚠️ **Do not reintroduce a wrapper**: with the error
+gone the remainder is `cd() { builtin cd "$1"; }`, strictly worse than the builtin it shadows — it
+breaks `cd -`, and an empty argument stops meaning `$HOME`.
 
 The trade was priced wrong originally: it optimised the common case (a redundant `cd` costs a few
 tokens) against the rare one (a command running somewhere unintended, with every result still
@@ -2417,12 +2415,11 @@ own.** (Rule numbers below are that file's.) Measured against production with re
 blocks: `[u, a[thinking], u]`, `[u, a[text, thinking], u]` and `[u, a[text], a[thinking], u]` are
 all accepted. Trailing, `a[thinking]` is rejected — but so is `a[text]`, and **the SAME assistant
 message is accepted when it is not last**, which is what makes it rule 2 rather than a rule about
-thinking. Only the error string differs: a trailing thinking block
-says *"The final block in an assistant message cannot be `thinking`"*, trailing text says *"does not
-support assistant message prefill"*. ⚠️ **Do not read that wording as a separate constraint.** It
-fires only where rule 2 already fires, and reading it as its own rule is how someone builds a repair
-step to strip thinking tails that were never the problem — which was proposed here and cancelled by
-this measurement.
+thinking. Only the error string differs: a trailing thinking block says *"The final block in an
+assistant message cannot be `thinking`"*, trailing text says *"does not support assistant message
+prefill"*. ⚠️ **Do not read that wording as a separate constraint.** It fires only where rule 2
+already fires, and reading it as its own rule is how someone builds a repair step to strip thinking
+tails that were never the problem — which was proposed here and cancelled by this measurement.
 
 ⭐ **Consequence nothing else states: `buildUserTurn` packs `[...tool_results, ...queueMessages]` with
 tool_results FIRST, and that order is a real API requirement rather than style.** Put text before a
@@ -2856,9 +2853,10 @@ title via a fresh `getTask`, and hits whose task has been deleted are dropped.
 **NEGATIVE RESULT, do not re-derive — except on a Bun upgrade, which is the only thing that can
 change it:** `bun:sqlite` **cannot** `loadExtension`. Smoke-tested;
 `new Database(":memory:").loadExtension("x")` throws *"This build of sqlite3 does not support
-dynamic extension loading"*, and that one line is the whole re-check. That killed the sqlite-vec plan and is why the vector phase went to a
-pure-TS engine. The FTS5 index that preceded Orama worked correctly (MATCH, bm25, snippet,
-DELETE-by-column all verified); it was replaced for the vector story, not because it was broken.
+dynamic extension loading"*, and that one line is the whole re-check. That killed the sqlite-vec
+plan and is why the vector phase went to a pure-TS engine. The FTS5 index that preceded Orama
+worked correctly (MATCH, bm25, snippet, DELETE-by-column all verified); it was replaced for the
+vector story, not because it was broken.
 
 ## Retrieval that nobody acts on ⇒ guidance goes where the DECISION is
 
@@ -3700,10 +3698,10 @@ channel is what the first one was.** There used to be a `logAtBottom` boolean fe
 subsumed it. Two halves, fixed separately: the guard rejects a **false observation** (a clamp after
 a shrink), and the new-content effect no longer takes `autoScroll` as a dependency, which stops a
 **true observation from immediately executing** — the user scrolls into the 40px band, follow
-correctly arms, and the effect used to fire and yank them the rest of the way mid-gesture. **Arming is not acting**, and "go to the
-bottom now" already has its own channel (a monotonic `scrollToBottomRequest` counter). That fix was
-a deletion, and the effect reads `autoScrollRef` so "responds to content, not to intent" is explicit
-rather than implied by a deps array.
+correctly arms, and the effect used to fire and yank them the rest of the way mid-gesture. **Arming
+is not acting**, and "go to the bottom now" already has its own channel (a monotonic
+`scrollToBottomRequest` counter). That fix was a deletion, and the effect reads `autoScrollRef` so
+"responds to content, not to intent" is explicit rather than implied by a deps array.
 
 ⚠️ **`prevScrollRangeRef` may ONLY be advanced by `handleScroll`, and the danger is that the wrong
 version looks MORE thorough.** Letting a geometry-reading effect update it too makes the guard inert:
@@ -3875,7 +3873,7 @@ versus stay put).
 to the bottom mid-animation — observed live in a browser, not in tests. `setAutoScroll(false)` first,
 then an INSTANT `scrollIntoView({block: "center"})`.
 
-⚠️ **Test-harness gotcha with a real teeth**: `clearSessionState` drops log entries for a session
+⚠️ **Test-harness gotcha with real teeth**: `clearSessionState` drops log entries for a session
 transitioning to `pending`, so a fixture seeded with `status: "pending"` **wipes its own log** the
 moment the first `tree_updated` arrives. In happy-dom tests the SSE mock is a no-op so this never
 fires; in a real browser the activity log renders "No events yet" while the events endpoint returns
@@ -4190,12 +4188,12 @@ sign.** A synthetic 64-document benchmark said webgpu was 18% *faster*; the real
 says it is 30% *slower*, because real documents have a long tail (p50 206 chars, p90 3988, max
 19284), attention is O(n²), and `feature-extraction` does not truncate. The synthetic set had no
 tail, so it measured a different workload and answered confidently. Same shape as the remount-cost
-error in the viewport section: **a fixture whose content is too cheap cannot answer the question at
-all, and the danger is that it answers anyway.** (The device decision survived only because a second
-number — CPU time, 3044s vs 38.8s — was measured on the real corpus too.) And ⚠️ **a test that can
-fail for two different reasons cannot tell you which one happened** — a guard's entire value is
-being legible on the day it fires, so narrow it to presence-only rather than asserting an exact
-list.
+error under *The activity log's scroll position*: **a fixture whose content is too cheap cannot
+answer the question at all, and the danger is that it answers anyway.** (The device decision
+survived only because a second number — CPU time, 3044s vs 38.8s — was measured on the real corpus
+too.) And ⚠️ **a test that can fail for two different reasons cannot tell you which one happened** —
+a guard's entire value is being legible on the day it fires, so narrow it to presence-only rather
+than asserting an exact list.
 
 ⚠️ **Two implementations of the same guarantee cover for each other, and the tell is a mutation
 surviving that obviously should not have.** `walkFiles` sorted its output and then `jsSearch` sorted
