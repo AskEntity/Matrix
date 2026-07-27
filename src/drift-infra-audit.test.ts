@@ -2049,8 +2049,13 @@ describe("Walker golden snapshots: eventsToAnthropicMessages", () => {
 	});
 
 	test("empty assistant content → (empty) fallback", () => {
-		// Walker's defensive fallback — must NEVER produce empty content array
-		// (causes Anthropic 400). Golden test locks this invariant.
+		// ⚠️ This used to say "must NEVER produce empty content array (causes
+		// Anthropic 400)". An empty content ARRAY is legal — measured 200 on
+		// 2026-07-25 (PROBED_SHAPES in test-utils/api-message-rules.ts). What
+		// this fixture pins is the walker keeping the empty string rather than
+		// dropping the turn — and the shape it produces, `[{text:""}]`, is
+		// itself a 400 in every position. So this is a BEHAVIOUR SNAPSHOT of an
+		// unsendable output, not an invariant to defend. See draft 01KYDKK0.
 		const events: Event[] = [
 			// Start a tool_call/assistant_text sequence that ends up empty...
 			// Actually walker needs at least ONE of thinking/text/tool_call to
