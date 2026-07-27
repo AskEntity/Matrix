@@ -1105,7 +1105,7 @@ non-matrix scope whose `done()` carries `wordCount` and `mood`, and asserts they
 untouched and never appear in `done_notified`. **Testing with the default plugin's own fields cannot
 distinguish "passed through opaque" from "reconstructed into that plugin's shape"** — both produce
 the same round. Mutation-proofed empirically: reshaping `doneInput` into a fixed struct before
-`onDone` fails exactly that one test out of ~2500, and every matrix resultRounds test still passes.
+`onDone` fails exactly that ONE test, and every matrix resultRounds test still passes.
 
 ⚠️ **KNOWN LIMITATION: crash-recovery Phase 2 does not append a resultRound.** It is plugin-agnostic
 runtime code that sets status directly and never calls matrix's `onDone`, so a `done()` whose Phase
@@ -2155,7 +2155,7 @@ tool call is delivered between the `tool_call` and its `tool_result` but consume
 results, so in the log it appears **after the finished tool card**. Anything reasoning about a
 message's position must use the raw event batch, not the rendered entries — judging run-start off
 rendered entries calls exactly the blocked case a run start. Mutation-verified: swapping the input
-to the entries fails exactly two tests out of ~2760.
+to the entries fails exactly TWO tests.
 
 ---
 # Cache & Drift Prevention
