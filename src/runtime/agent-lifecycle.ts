@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
-import { DEFAULT_MODEL } from "../config.ts";
 import { rollOldTraceIdDirs } from "../debug-snapshot.ts";
 import {
 	buildSessionRepair,
@@ -1140,7 +1139,7 @@ export async function runAgentForNode(
 			taskId: nodeId,
 			resume: opts?.resume ?? eventStore.has(nodeId),
 			provider: agentCtx.provider.name,
-			model: effectiveModel ?? DEFAULT_MODEL,
+			model: effectiveModel,
 			traceId: loopTraceId,
 			ts: Date.now(),
 		});
