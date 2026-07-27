@@ -199,7 +199,11 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		images?: { base64: string; mediaType: string }[],
 	) {
 		if (!projectId) return;
-		if (!message.trim() && (!images || images.length === 0)) return;
+		// A message must carry text; images ride along with it. The composer
+		// disables Send and shows a hint, and both REST doors refuse it — this
+		// is the gate every submit passes through, including any caller that
+		// never renders a button.
+		if (!message.trim()) return;
 
 		// Check for slash commands before sending as a chat message
 		if (message.trim().startsWith("/")) {

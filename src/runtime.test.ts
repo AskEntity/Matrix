@@ -2196,7 +2196,9 @@ describe("POST /projects/:id/tasks/:nodeId/message (root node)", () => {
 		);
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as { error: string };
-		expect(body.error).toBe("content or images required");
+		expect(body.error).toBe(
+			"Message text is required — images alone cannot be sent",
+		);
 	});
 
 	test("auto-launches agent when no active session", async () => {

@@ -168,3 +168,49 @@ describe("handleClearRootSession resets token counters", () => {
 		}
 	});
 });
+
+/**
+ * handleSend is the composer's submit path, and it is a SECOND gate on the
+ * same rule the InputBar enforces — everything that reaches the network goes
+ * through here, including any future caller that never renders a button.
+ *
+ * The composer half (button `disabled`, Enter, and the hint) is pinned in
+ * `web/InputBar-image-requires-text.test.tsx`; the backend half at both REST
+ * doors in `src/image-requires-text.test.ts`.
+ */
+describe("handleSend requires text — an image alone is not sendable", () => {
+	const anImage = [{ base64: "iVBORw0KGgo=", mediaType: "image/png" }];
+
+	it("does not send when there are images but no text", async () => {
+		const { deps } = makeDeps();
+		const handlers = createActionHandlers(deps);
+
+		await handlers.handleSend("", anImage);
+
+		expect(deps.sendMessageToTask).not.toHaveBeenCalled();
+		expect(deps.start).not.toHaveBeenCalled();
+	});
+
+	it("does not send when the text is whitespace only", async () => {
+		const { deps } = makeDeps();
+		const handlers = createActionHandlers(deps);
+
+		await handlers.handleSend("   \n\t ", anImage);
+
+		expect(deps.sendMessageToTask).not.toHaveBeenCalled();
+		expect(deps.start).not.toHaveBeenCalled();
+	});
+
+	it("REGRESSION: sends text WITH images, images intact", async () => {
+		const { deps } = makeDeps();
+		const handlers = createActionHandlers(deps);
+
+		await handlers.handleSend("look at this", anImage);
+
+		expect(deps.sendMessageToTask).toHaveBeenCalledWith(
+			"task-a",
+			"look at this",
+			anImage,
+		);
+	});
+});

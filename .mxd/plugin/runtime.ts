@@ -129,11 +129,23 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 			}>()
 			.catch(() => null);
 
-		if (
-			!body?.eid ||
-			(!body?.content?.trim() && (!body?.images || body.images.length === 0))
-		) {
-			return c.json({ error: "eid and content or images required" }, 400);
+		// Two requirements, two answers. Collapsed into one message, "text is
+		// required" is a lie whenever the eid is what went missing, and it
+		// sends the caller looking at the wrong half of their request.
+		if (!body?.eid) {
+			return c.json({ error: "eid is required" }, 400);
+		}
+		// The second door on the same rule as `POST .../message` (see
+		// src/runtime/routes/tasks.ts): a message must carry text, and images
+		// are not a message on their own. The wording matches that door
+		// deliberately — one rule should not describe itself two ways — and
+		// `src/image-requires-text.test.ts` asserts both against one constant,
+		// so a change to either wording alone reddens.
+		if (!body.content?.trim()) {
+			return c.json(
+				{ error: "Message text is required — images alone cannot be sent" },
+				400,
+			);
 		}
 
 		const project = ctx.pm.get(projectId);
@@ -222,7 +234,7 @@ export function registerRoutes(app: Hono, ctx: RuntimeContext) {
 		const { createUserMessage } = await import(
 			"../../src/queue-message-factory.ts"
 		);
-		const msg = createUserMessage((body.content ?? "").trim(), {
+		const msg = createUserMessage(body.content.trim(), {
 			images: body.images,
 		});
 		await deliverMessage(ctx, project, nodeId, msg);
