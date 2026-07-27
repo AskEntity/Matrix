@@ -139,6 +139,10 @@ diff <(git show <phase1-commit>:.mxd/memory.md | grep '^# ') <(grep '^# ' .mxd/m
 #    - code fences balanced (odd count = a stray fence, mis-nests the rest of the document)
 #    - no code block containing a heading line
 #    - no '#### ' without a '### ' above it in its section
+
+# 5. position-dependent prose — the one kind of rot MOVING creates
+grep -nE '(see|See|under|Under|per|Per|in) \*[A-Z]'   # named refs: resolve each against the heading list
+grep -nEi 'paragraphs? (down|up|below|above)|section (above|below)|next door|the (next|previous) section|the [A-Z][a-z]+ (section|region)'
 ```
 
 Check 3 exists because of a real incident: a merge script swallowed an entire region heading and
@@ -146,6 +150,28 @@ reparented five sections. `comm` showed the three divider lines as removed and t
 churn; section count was unaffected. **Only the structural count caught it, and only because it was
 still being run.** Diffing the list beats counting it — a count tells you something moved, the diff
 tells you what.
+
+⭐ **Check 5 is phase 1's OWN hazard, and it is the only one that is.** Every other check guards
+against something any phase can do. This one guards against something only phase 1 does at scale:
+**phase 1 is the only phase that changes POSITION, and position-dependent prose is the only prose
+that a change of position falsifies.** Two families, and neither is findable by grepping the names
+you moved:
+
+- **Region-relative** — "written up under *X* **in the Gates section**", "see *Y*, **Daemon
+  region**". The section name still resolves; the region it names is now wrong.
+- **Purely positional** — "the rule **three paragraphs down**", "the self-bootstrap warning
+  **below**", "**next door**", "the section **above**". These have no name in them at all.
+
+Both are the *invalidated* rot kind — true when written, falsified by a change somewhere else, and
+**re-reading the sentence cannot detect it**, because nothing about the sentence is wrong on its
+face. Measured on the 2026-07-27 run: moving one subsection broke exactly two references, one of
+each family, and a name-grep over everything that moved returned neither.
+
+**So grep the position words, not the moved names**, and read every hit — a grep gives you
+candidates, not verdicts. Most hits are figurative ("the task above", "the layer below") and are
+discarded in a second. Do this at the END of phase 1, before the commit, and state the result in the
+commit message either way; "checked, none crossed" is worth recording, because the next curator will
+otherwise re-derive it.
 
 ---
 
