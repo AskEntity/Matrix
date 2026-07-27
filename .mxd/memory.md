@@ -434,6 +434,17 @@ disappeared"*, which is addressed to nobody.
   loop. A check that only looks for false claims walks straight past it. For this file specifically,
   after any rename pass, extract every `*Section Name*` reference and check it against the heading
   list — that is what found the third one.
+- ⭐ **Grep for the SENTENCE, not for the symbol.** A behaviour rule stated in prose lives in more
+  places than a grep for the CODE finds, and the distant surfaces are precisely the ones that do not
+  contain the identifier. Three surfaces of a removed `cd` rule were known; a fourth turned up only
+  by grepping the RULE itself, case-insensitively and with a tolerant pattern (`do ?n[o']t cd`),
+  which found `buildTaskPrompt`'s git-context block.
+  ⚠️ **The highest-risk prose surface here is the compaction checkpoint (`src/compaction.ts`), and
+  it is nowhere near the code it describes.** It is injected into an agent that has just lost its
+  history, so nothing in that agent's context can contradict a stale line — a rule that survives
+  there gets taught, fresh, to every compacted agent, and a grep scoped to the subsystem will never
+  reach it. When a rule of its does go, **invert** its test (`not.toContain`) rather than deleting
+  it, or the removal ends up pinned by nothing at all.
 - **Approved a side effect?** Grep for that too. Reviewing is how an `agent_idle` behavior change
   went unrecorded for months.
 - About to leave a sentence standing as CURRENT? Verify it first. Moving a sentence under a
@@ -1473,12 +1484,7 @@ point is to make the shortcut unnecessary, not forbidden.
 The "don't pipe" guidance lives in the bash tool's `description`, not in `system-prompts.ts`,
 because that is where the decision to pipe is made — while constructing the call.
 
----
-
 ## The bash result names its own working directory — and a one-shot warning could not
-
-*(Curator: this half belongs in the `bash` region of "Tools the Agent Calls"; the `cd` half below
-belongs beside it, and its last two bullets belong in "Writing this file" under prose rot.)*
 
 Every bash result whose working directory is not the agent's worktree root opens with a line naming
 it. Three states, and the quiet one is EXACTLY the root:
@@ -1539,11 +1545,11 @@ the very defect the line exists to remove. It is carried on the shape `formatBas
 foreground, `background_complete` and the `background` tool's status action get it by construction
 rather than by three callers remembering.
 
-## `cd` to the directory you are already in is a free no-op
-
-There was a shell `cd()` override that errored with *"already in this directory"*. **Every line of
-its body existed to produce that error** — it resolved the target only to compare it against `pwd`,
-and wrote no file anywhere. CWD tracking was, and is, entirely the EXIT trap. ⚠️ **Do not
+**The other end of the same guarantee: `cd` to the directory you are already in is a free no-op**,
+so an agent unsure where it is can always just say so. There was a shell `cd()` override that
+errored with *"already in this directory"*, and **every line of its body existed to produce that
+error** — it resolved the target only to compare it against `pwd`, and wrote no file anywhere. CWD
+tracking was, and is, entirely the EXIT trap. ⚠️ **Do not
 reintroduce a wrapper**: with the error gone the remainder is `cd() { builtin cd "$1"; }`, strictly
 worse than the builtin it shadows — it breaks `cd -`, and an empty argument stops meaning `$HOME`.
 
@@ -1557,19 +1563,6 @@ typo'd path is the wrong-directory command this whole area exists to prevent, we
 face. Pinned by four tests that pass identically before and after the change — a missing directory
 and a path that is a file both still fail with bash's own message naming the path, the rest of the
 command still runs in the original directory, and a bare `cd` still reaches `$HOME`.
-
-⭐ **A behaviour rule stated in prose lives in more places than a grep for the CODE finds.** Three
-surfaces were known here; a fourth turned up only by grepping the RULE itself, case-insensitively and
-with a tolerant pattern (`do ?n[o']t cd`), which found `buildTaskPrompt`'s git-context block. **Grep
-for the sentence, not for the symbol** — the symbol is exactly what the distant surfaces do not
-contain.
-
-⭐ **The compaction checkpoint (`src/compaction.ts`) is the highest-risk prose surface in this repo,
-and it is nowhere near the code it describes.** It is injected into an agent that has just lost its
-history, so nothing in that agent's context can contradict a stale line — a rule that survives there
-gets taught, fresh, to every compacted agent. When you change a behaviour, check it explicitly; a
-grep scoped to the subsystem will not reach it. Its test was **inverted** (`not.toContain`) rather
-than deleted, because deleting it would leave the removal pinned by nothing at all.
 
 ## Two filesystem-walk defects, in both tools that walk: a library default serving somebody else
 
