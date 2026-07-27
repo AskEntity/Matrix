@@ -19,6 +19,14 @@ import { McpClientManager } from "../../src/mcp-client.ts";
 import { createOrchestratorTools } from "../../src/orchestrator-tools.ts";
 import type { RuntimeContext, ScopeOpts } from "../../src/runtime/context.ts";
 import { resolveProjectConfig } from "../../src/runtime/helpers.ts";
+import {
+	createExecutionProbe,
+	dedupeHitsByTask,
+	type ExecutionProbe,
+	HIT_IDENTITY_LEGEND,
+	statusTag,
+	taskAges,
+} from "../../src/search-hit-format.ts";
 import { buildSystemPrompt } from "../../src/system-prompts.ts";
 import {
 	reconcileIndexDeferred,
@@ -48,40 +56,52 @@ const RELATED_TASKS_CHAR_LIMIT = 8000;
  * says the approach it is about to take was already tried — surface that
  * upward instead of silently obeying or silently ignoring it.
  */
-const RELATED_PAST_TASKS_HEADER =
-	"[Related past tasks] — pointers, not answers: each line is one truncated excerpt of one matched field. get_task the ones that look related and read their result rounds before you re-derive what they already cover. If one already tried the approach you are about to take, report that upward — its measurement probably still holds, its conclusion may have been superseded by the task you are doing now.";
+const RELATED_PAST_TASKS_HEADER = `[Related past tasks] — pointers, not answers: each line is one truncated excerpt of one matched field. get_task the ones that look related and read their result rounds before you re-derive what they already cover. If one already tried the approach you are about to take, report that upward — its measurement probably still holds, its conclusion may have been superseded by the task you are doing now. ${HIT_IDENTITY_LEGEND}`;
 
 /**
  * Format search hits into a concise work_context block.
- * Each hit is one line with title, task id, field, and snippet.
- * Truncated at RELATED_TASKS_CHAR_LIMIT to protect the context window.
+ *
+ * One line per TASK: what it is (status + whether it ever ran), what it is
+ * called, its id, both dates, and the matched excerpt. Truncated at
+ * RELATED_TASKS_CHAR_LIMIT to protect the context window.
+ *
+ * ⚠️ This block used to carry NEITHER status nor time — the parenthesis held
+ * the matched FIELD name, which reads like a status and is not one. A real
+ * consequence, from a root session's own opening context: a task closed four
+ * months earlier rendered as `(task 01KN4H…, description)` above an excerpt
+ * reading "## Fix … Update system prompt with this rule", i.e. as an
+ * outstanding to-do. It shares its identity vocabulary with the other two
+ * surfaces through `search-hit-format.ts` rather than spelling it out again
+ * here, because a format described in three places drifts in two of them.
  */
-function formatRelatedTasks(
+export function formatRelatedTasks(
 	hits: SearchHit[],
 	tracker: import("../../src/task-tracker.ts").TaskTracker,
+	hasExecuted: ExecutionProbe,
 ): string {
 	if (hits.length === 0) return "";
 
 	const lines: string[] = [RELATED_PAST_TASKS_HEADER];
 	let totalChars = lines[0]!.length;
+	const now = Date.now();
 
-	for (const hit of hits) {
+	// One line per task, not per matched field — the same task matching on both
+	// its title and its description used to render twice, spending two of the
+	// five slots this block has on one answer.
+	for (const hit of dedupeHitsByTask(hits)) {
 		const task = tracker.getTask(hit.taskId);
 		// Drop hits whose task has left the tree since indexing — the header
 		// tells the agent to get_task these, and a dead id is a wasted call.
 		// (formatTieredHits, the create_task/search_tasks formatter, has always
 		// done this; this block used to render them with the title "unknown".)
 		if (!task) continue;
-		const title = task.title;
-		const fieldLabel =
-			hit.field === "result" && hit.roundIndex !== undefined
-				? `result round ${hit.roundIndex}`
-				: hit.field;
 		const snippet = hit.snippet.slice(0, 150);
 		// Full taskId, not a truncated prefix + "…": the header tells the agent to
 		// get_task these, and an id it can paste is the cheapest way to make that
 		// instruction executable.
-		const line = `- "${title}" (task ${hit.taskId}, ${fieldLabel}): "${snippet}"`;
+		const line =
+			`- ${statusTag(task, hasExecuted)} "${task.title}" (task ${hit.taskId}) ` +
+			`${taskAges(task, now)} · matched ${hit.fields.join(", ")}: "${snippet}"`;
 
 		if (totalChars + line.length + 1 > RELATED_TASKS_CHAR_LIMIT) break;
 		lines.push(line);
@@ -190,7 +210,15 @@ export function buildMatrixScopeOpts(
 						);
 						const tracker = ctx.trackers.get(projId);
 						if (hits.length > 0 && tracker) {
-							const block = formatRelatedTasks(hits, tracker);
+							const block = formatRelatedTasks(
+								hits,
+								tracker,
+								createExecutionProbe(
+									ctx.config.dataDir,
+									projId,
+									ctx.config.dataRoot,
+								),
+							);
 							if (block) return base ? `${base}\n\n${block}` : block;
 						}
 					}

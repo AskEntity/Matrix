@@ -8,12 +8,22 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatTieredHits, searchTasks } from "./orchestrator-tools.ts";
+import type { ExecutionProbe } from "./search-hit-format.ts";
 import {
 	_clearDbCache,
 	_setEmbeddingPipeline,
 	reconcileIndex,
 } from "./task-index.ts";
 import { TaskTracker } from "./task-tracker.ts";
+
+/**
+ * Execution probes as fixtures. The real one reads the filesystem; these two
+ * pin the two answers so a test can state which case it is exercising instead
+ * of arranging evidence on disk. `createExecutionProbe` itself is covered in
+ * search-hit-format.test.ts.
+ */
+const ranProbe: ExecutionProbe = () => true;
+const neverRanProbe: ExecutionProbe = () => false;
 
 describe("formatTieredHits", () => {
 	let tempDir: string;
@@ -49,7 +59,7 @@ describe("formatTieredHits", () => {
 			},
 		];
 
-		const result = formatTieredHits(hits, tracker, 1);
+		const result = formatTieredHits(hits, tracker, 1, ranProbe);
 		expect(result).toContain("Fix session recovery");
 		expect(result).toContain("closed");
 		expect(result).toContain("Description:");
@@ -81,7 +91,7 @@ describe("formatTieredHits", () => {
 		];
 
 		// fullCount=0 → all hits are brief.
-		const result = formatTieredHits(hits, tracker, 0);
+		const result = formatTieredHits(hits, tracker, 0, ranProbe);
 		expect(result).toContain("Debug JSONL repair");
 		expect(result).toContain("closed");
 		expect(result).toContain("score: 0.42");
@@ -111,7 +121,7 @@ describe("formatTieredHits", () => {
 		];
 
 		// fullCount=1 → first hit is full, second is brief.
-		const result = formatTieredHits(hits, tracker, 1);
+		const result = formatTieredHits(hits, tracker, 1, ranProbe);
 		// Full hit has "Description:" and "Score:"
 		expect(result).toContain("Description:");
 		expect(result).toContain("Score: 0.90");
@@ -131,6 +141,7 @@ describe("formatTieredHits", () => {
 			hits,
 			tracker,
 			1,
+			ranProbe,
 			"[Related existing tasks]",
 		);
 		expect(result.startsWith("[Related existing tasks]")).toBe(true);
@@ -146,7 +157,7 @@ describe("formatTieredHits", () => {
 				score: 0.9,
 			},
 		];
-		const result = formatTieredHits(hits, tracker, 1);
+		const result = formatTieredHits(hits, tracker, 1, ranProbe);
 		expect(result).toBe("");
 	});
 
@@ -168,7 +179,7 @@ describe("formatTieredHits", () => {
 			},
 		];
 
-		const result = formatTieredHits(hits, tracker, 1);
+		const result = formatTieredHits(hits, tracker, 1, ranProbe);
 		// The description in the output should be at most 500 chars.
 		const descMatch = result.match(/Description: "([^"]*)"/);
 		expect(descMatch).toBeDefined();
@@ -193,7 +204,7 @@ describe("formatTieredHits", () => {
 			},
 		];
 
-		const result = formatTieredHits(hits, tracker, 1);
+		const result = formatTieredHits(hits, tracker, 1, ranProbe);
 		const resultMatch = result.match(/Latest result: "([^"]*)"/);
 		expect(resultMatch).toBeDefined();
 		expect(resultMatch![1]!.length).toBeLessThanOrEqual(300);
@@ -221,12 +232,155 @@ describe("formatTieredHits", () => {
 		}));
 
 		// All 30 as full hits — should stop before all 30 fit.
-		const result = formatTieredHits(hits, tracker, 30);
+		const result = formatTieredHits(hits, tracker, 30, ranProbe);
 		expect(result.length).toBeLessThanOrEqual(8000);
 		// But should have SOME entries.
 		expect(result).toContain("Task number 0");
 		// The last ones should be cut off.
 		expect(result).not.toContain("Task number 29");
+	});
+
+	// ── Identity: every tier answers what the task IS before its body is read ──
+
+	test("the entry LEADS with status, ahead of the title and the body", () => {
+		const t = tracker.addChild(
+			tracker.rootNodeId,
+			"A title long enough to push a trailing status off to the right margin",
+			"# GOAL … a description that reads like a conclusion",
+		);
+		tracker.updateStatus(t.id, "draft");
+		const hits = [
+			{ taskId: t.id, field: "description", snippet: "GOAL", score: 0.9 },
+		];
+
+		const result = formatTieredHits(hits, tracker, 1, neverRanProbe);
+		expect(result.startsWith("- [draft] ")).toBe(true);
+		// And it is genuinely ahead of both the title and the description.
+		expect(result.indexOf("[draft]")).toBeLessThan(result.indexOf("A title"));
+		expect(result.indexOf("[draft]")).toBeLessThan(
+			result.indexOf("Description:"),
+		);
+	});
+
+	test("closed splits on whether it ever ran — the two must not render alike", () => {
+		const t = tracker.addChild(tracker.rootNodeId, "Some task", "desc");
+		tracker.updateStatus(t.id, "closed");
+		const hits = [
+			{ taskId: t.id, field: "title", snippet: "Some task", score: 0.9 },
+		];
+
+		expect(formatTieredHits(hits, tracker, 1, ranProbe)).toContain(
+			"[closed · ran]",
+		);
+		expect(formatTieredHits(hits, tracker, 1, neverRanProbe)).toContain(
+			"[closed · never ran]",
+		);
+	});
+
+	test("both dates ride on full AND brief entries", () => {
+		const t = tracker.addChild(tracker.rootNodeId, "Dated task", "desc");
+		tracker.updateStatus(t.id, "closed");
+		const node = tracker.getTask(t.id)!;
+		node.createdAt = "2026-04-01T09:00:00.000Z";
+		node.updatedAt = "2026-07-13T09:00:00.000Z";
+		const hits = [
+			{ taskId: t.id, field: "title", snippet: "Dated task", score: 0.9 },
+		];
+
+		for (const fullCount of [1, 0]) {
+			const out = formatTieredHits(hits, tracker, fullCount, ranProbe);
+			expect(out).toContain("created 2026-04-01 (");
+			expect(out).toContain("record touched 2026-07-13 (");
+		}
+	});
+
+	/**
+	 * ⚠️ The brief tier is the one a reader SCANS, so it is where an unlabelled
+	 * old proposal is most likely to be taken for live work. Brevity may cost
+	 * the excerpts; it may not cost the identity.
+	 */
+	test("a brief entry keeps status + execution + id, and drops only the excerpts", () => {
+		const t = tracker.addChild(tracker.rootNodeId, "Brief task", "the desc");
+		tracker.updateStatus(t.id, "closed");
+		const hits = [
+			{ taskId: t.id, field: "title", snippet: "Brief task", score: 0.42 },
+		];
+
+		const out = formatTieredHits(hits, tracker, 0, neverRanProbe);
+		expect(out).toContain("[closed · never ran]");
+		expect(out).toContain(t.id);
+		expect(out).toContain("created ");
+		expect(out).toContain("score: 0.42");
+		expect(out).not.toContain("Description:");
+	});
+
+	// ── Dedup ──
+
+	test("one task matching several fields collapses to ONE entry", () => {
+		const t = tracker.addChild(tracker.rootNodeId, "Scroll bug", "follow mode");
+		tracker.updateStatus(t.id, "closed");
+		const hits = [
+			{
+				taskId: t.id,
+				field: "description",
+				snippet: "follow mode",
+				score: 0.9,
+			},
+			{ taskId: t.id, field: "title", snippet: "Scroll bug", score: 0.6 },
+		];
+
+		const out = formatTieredHits(hits, tracker, 5, ranProbe);
+		// One entry: the bullet appears once, and so does the description body
+		// that used to be repeated verbatim.
+		expect(out.split("\n").filter((l) => l.startsWith("- [")).length).toBe(1);
+		expect(out.split("Description:").length - 1).toBe(1);
+		// The extra match is kept as evidence, not discarded.
+		expect(out).toContain("Matched: description, title");
+	});
+
+	/**
+	 * ⚠️ Dedup must run BEFORE the tier split. Measured on a real
+	 * search_tasks(limit 6): three tasks filled all six slots, one of them
+	 * appearing once as a full entry and once as a brief one. Deduping after
+	 * the split leaves the slot arithmetic running on duplicates.
+	 */
+	test("dedup runs before the tier split — a duplicate cannot eat the second full slot", () => {
+		const a = tracker.addChild(tracker.rootNodeId, "Alpha", "alpha desc");
+		const b = tracker.addChild(tracker.rootNodeId, "Beta", "beta desc");
+		tracker.updateStatus(a.id, "closed");
+		tracker.updateStatus(b.id, "closed");
+		const hits = [
+			{ taskId: a.id, field: "description", snippet: "alpha desc", score: 0.9 },
+			{ taskId: a.id, field: "title", snippet: "Alpha", score: 0.8 },
+			{ taskId: b.id, field: "description", snippet: "beta desc", score: 0.7 },
+		];
+
+		// Two FULL slots for two distinct tasks: Beta must get the second one,
+		// not be demoted to brief by Alpha's duplicate.
+		const out = formatTieredHits(hits, tracker, 2, ranProbe);
+		expect(out.split("\n").filter((l) => l.startsWith("- [")).length).toBe(2);
+		expect(out).toContain("alpha desc");
+		expect(out).toContain("beta desc");
+		expect(out.split("Description:").length - 1).toBe(2);
+	});
+
+	test("a hit whose task left the tree does not consume a full slot either", () => {
+		const live = tracker.addChild(tracker.rootNodeId, "Live", "live desc");
+		tracker.updateStatus(live.id, "closed");
+		const hits = [
+			{ taskId: "gone-task-id", field: "title", snippet: "ghost", score: 0.99 },
+			{
+				taskId: live.id,
+				field: "description",
+				snippet: "live desc",
+				score: 0.5,
+			},
+		];
+
+		const out = formatTieredHits(hits, tracker, 1, ranProbe);
+		// The one full slot goes to the only renderable task.
+		expect(out).toContain("Description:");
+		expect(out).toContain("live desc");
 	});
 
 	test("result from latest round only (not older rounds)", () => {
@@ -248,7 +402,7 @@ describe("formatTieredHits", () => {
 			},
 		];
 
-		const result = formatTieredHits(hits, tracker, 1);
+		const result = formatTieredHits(hits, tracker, 1, ranProbe);
 		expect(result).toContain("latest round result");
 		expect(result).not.toContain("old round result");
 	});
@@ -289,7 +443,7 @@ describe("searchTasks", () => {
 		const dbPath = join(tempDir, "index.msp");
 		await reconcileIndex(dbPath, tracker);
 
-		const result = await searchTasks(dbPath, "auth token", tracker, {
+		const result = await searchTasks(dbPath, "auth token", tracker, ranProbe, {
 			fullCount: 1,
 			briefCount: 5,
 			excludeId: task2.id,
@@ -302,7 +456,12 @@ describe("searchTasks", () => {
 	});
 
 	test("returns empty string for empty query", async () => {
-		const result = await searchTasks(join(tempDir, "index.msp"), "  ", tracker);
+		const result = await searchTasks(
+			join(tempDir, "index.msp"),
+			"  ",
+			tracker,
+			ranProbe,
+		);
 		expect(result).toBe("");
 	});
 
@@ -312,6 +471,7 @@ describe("searchTasks", () => {
 			join(tempDir, "index.msp"),
 			"anything",
 			tracker,
+			ranProbe,
 		);
 		expect(result).toBe("");
 	});
@@ -328,9 +488,15 @@ describe("searchTasks", () => {
 		const dbPath = join(tempDir, "index.msp");
 		await reconcileIndex(dbPath, tracker);
 
-		const result = await searchTasks(dbPath, "auth session", tracker, {
-			header: "[Related]",
-		});
+		const result = await searchTasks(
+			dbPath,
+			"auth session",
+			tracker,
+			ranProbe,
+			{
+				header: "[Related]",
+			},
+		);
 		expect(result.startsWith("[Related]")).toBe(true);
 		expect(result).toContain("Auth session recovery");
 	});

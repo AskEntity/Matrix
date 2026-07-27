@@ -104,16 +104,19 @@ console.log(`  C (jsonl exists):      ${closed.filter((r) => r.c).length}`);
 // never reported, or reported but lost their log.
 const cNotA = closed.filter((r) => r.c && !r.a);
 const aNotC = closed.filter((r) => r.a && !r.c);
-console.log(`\n  closed, jsonl but NO rounds (ran, never done()): ${cNotA.length}`);
+console.log(
+	`\n  closed, jsonl but NO rounds (ran, never done()): ${cNotA.length}`,
+);
 for (const r of cNotA.slice(0, 10))
 	console.log(`     ${r.id} ${r.bytes}B  "${r.title}"`);
 console.log(`  closed, rounds but NO jsonl (log gone): ${aNotC.length}`);
-for (const r of aNotC.slice(0, 10))
-	console.log(`     ${r.id} "${r.title}"`);
+for (const r of aNotC.slice(0, 10)) console.log(`     ${r.id} "${r.title}"`);
 
 // Never-ran closed tasks by every signal.
 const neverRan = closed.filter((r) => !r.a && !r.b && !r.c);
-console.log(`\n  closed with NO signal at all (never executed): ${neverRan.length}`);
+console.log(
+	`\n  closed with NO signal at all (never executed): ${neverRan.length}`,
+);
 for (const r of neverRan.slice(0, 10)) console.log(`     ${r.id} "${r.title}"`);
 
 // How small can an existing jsonl be? A session that launched and died
@@ -131,7 +134,12 @@ for (const [status, list] of [...byStatus].sort()) {
 		const k = `${r.a ? "A" : "-"}${r.b ? "B" : "-"}${r.c ? "C" : "-"}`;
 		c.set(k, (c.get(k) ?? 0) + 1);
 	}
-	console.log(`  ${status.padEnd(12)} ${[...c].sort().map(([k, v]) => `${k}=${v}`).join("  ")}`);
+	console.log(
+		`  ${status.padEnd(12)} ${[...c]
+			.sort()
+			.map(([k, v]) => `${k}=${v}`)
+			.join("  ")}`,
+	);
 }
 console.log("\nthe disagreeing tasks:");
 for (const r of rows) {

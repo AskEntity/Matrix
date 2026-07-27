@@ -12810,6 +12810,84 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 		// and get_task.
 		const block = content.slice(content.lastIndexOf("[Related past tasks]"));
 		expect(block).toContain("get_task");
+
+		// Every hit self-reports what it IS before its excerpt is read. This
+		// block used to carry NEITHER status nor time — the parenthesis held the
+		// matched FIELD name, which reads like a status and is not one, and a
+		// four-month-old closed task rendered indistinguishably from live work.
+		const hitLine = block
+			.split("\n")
+			.find((l) => l.includes(pastChild.id)) as string;
+		expect(hitLine).toBeDefined();
+		// Status leads the line, ahead of the title.
+		expect(hitLine.startsWith("- [")).toBe(true);
+		expect(hitLine.indexOf("]")).toBeLessThan(hitLine.indexOf("Fix session"));
+		// Both dates, and the honest label on the one that gets bumped by
+		// bookkeeping. This child is `pending` (never launched), so it carries no
+		// execution marker — the marker is terminal-status-only.
+		expect(hitLine).toContain("[pending]");
+		expect(hitLine).toContain("created ");
+		expect(hitLine).toContain("record touched ");
+		expect(hitLine).toMatch(/created \d{4}-\d{2}-\d{2} \(/);
+		// The legend that explains the vocabulary travels with the block, since
+		// work_context arrives UNREQUESTED — nothing at call time primes it.
+		expect(block).toContain("never ran");
+	}, 20000);
+
+	test("work_context: a closed task that never ran says so, and one that ran says so", async () => {
+		ctx = await setupTestContext();
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+
+		// Two closed tasks, identical except for their execution evidence.
+		const ranTask = tracker.addChild(
+			tracker.rootNodeId,
+			"Session recovery: executed work",
+			"session recovery ring buffer",
+		);
+		tracker.updateStatus(ranTask.id, "closed");
+		tracker.updateCost(ranTask.id, 1.25);
+
+		const proposal = tracker.addChild(
+			tracker.rootNodeId,
+			"Session recovery: unexecuted proposal",
+			"session recovery ring buffer",
+		);
+		tracker.updateStatus(proposal.id, "closed");
+
+		tracker.getTask(tracker.rootNodeId)!.title = "Session recovery follow-up";
+		await tracker.save();
+		await reconcileIndex(indexDbPath(ctx), tracker);
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Starting work." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", result: "done" },
+				},
+			],
+		});
+		expect((await startAgent(ctx, instruction)).status).toBe(200);
+		expect(await waitForDone(ctx)).toBe("verify");
+
+		const events = await readSessionEvents(ctx, tracker.rootNodeId);
+		const workCtx = events.find((e) => {
+			if (e.type !== "message") return false;
+			return (
+				(e as { body?: { source?: string } }).body?.source === "work_context"
+			);
+		});
+		const content =
+			(workCtx as { body?: { content?: string } })?.body?.content ?? "";
+		const block = content.slice(content.lastIndexOf("[Related past tasks]"));
+
+		const line = (id: string) =>
+			block.split("\n").find((l) => l.includes(id)) ?? "";
+		// The whole point: two `closed` tasks whose descriptions mean opposite
+		// things must not render alike.
+		expect(line(ranTask.id)).toContain("[closed · ran]");
+		expect(line(proposal.id)).toContain("[closed · never ran]");
 	}, 20000);
 
 	test("work_context related block drops hits whose task left the tree", async () => {
@@ -12989,6 +13067,7 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 		existing.resultRounds = [
 			{ result: "Implemented token rotation with sliding window" },
 		];
+		tracker.updateStatus(existing.id, "closed");
 		await tracker.save();
 		await reconcileIndex(indexDbPath(ctx), tracker);
 
@@ -13030,6 +13109,14 @@ describe("Integration: memory index (Orama hybrid search)", () => {
 						// that makes a hit actionable. "get_task" appears nowhere else
 						// in this tool_result (the rest is the created node's JSON).
 						{ block: 0, type: "tool_result", contains: "get_task" },
+						// Every hit self-reports what it IS, on this surface too. The
+						// seeded task is closed AND carries a result round, so it must
+						// read as executed rather than as an unexecuted proposal.
+						{ block: 0, type: "tool_result", contains: "[closed · ran]" },
+						{ block: 0, type: "tool_result", contains: "record touched " },
+						// The legend travels with the block: create_task's hits arrive
+						// UNREQUESTED, so nothing at call time explains the vocabulary.
+						{ block: 0, type: "tool_result", contains: "never ran" },
 					],
 					blocks: [
 						{ type: "text", text: "Task created with related context." },
