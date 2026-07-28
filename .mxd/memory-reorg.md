@@ -26,6 +26,37 @@ This has a consequence that shapes the whole procedure:
 
 > **Phase 1 is not tidying. It is the detector for phase 2.**
 
+### Three kinds of rot, three detectors, none substituting for another
+
+| kind | is a correction written down anywhere? | what finds it |
+|---|---|---|
+| **Superseded** — a later change invalidated this | yes, but filed under the change, never under the claim | putting claim and correction in the same region |
+| **Drained** — a count or list quietly stopped being true | **no.** Nobody thinks they are correcting anything | checking against the source, item by item |
+| **Destroyed by understanding** — a curator deleted it as redundant | the content was there until we removed it | being forced to enumerate what you dropped |
+
+The drained kind has **no trigger at all**: a stale count and a fresh count look identical, so the
+interval between deliberate passes is how long a wrong number survives.
+
+⭐ **Symptoms are the retrieval key, and the third rot kind eats them.** `memory.md` is organised by
+cause and queried by symptom — the reader arrives holding "the buttons are missing", not "the event
+type was renamed". A symptom looks most redundant exactly when you have just understood its
+mechanism, which is exactly when it is most needed. Keep the conditional form — *"if you break this
+invariant, you will see X"* — and cut the perfect tense, *"in July we had a bug where…"*, which is
+addressed to nobody.
+
+⭐ **Before applying any rule, ask whether the thing in front of you is a CLAIM or an INSTANCE.**
+Every rule here targets what is presented as CURRENT STATE; none targets a string appearing in the
+file. An instance cannot rot — it records something that was true at a moment, and that moment does
+not change. *"You see `2116 pass / 2 fail` and cannot tell WHICH two"* is not a claim about the
+suite's size; the story is identical when the suite reaches three thousand, and deleting the number
+leaves it with no shape. The same pattern presented as state — *"the suite has 2116 tests"* —
+expires silently and is what the rule is for.
+
+⚠️ **This is the one phase-3 loss that nothing can detect.** A curator holding "do not record test
+counts" scans, finds three violations, deletes them, writes them into the enumeration, and is
+compliant at every step — while three arguments lose their skeletons. `comm` does not apply, nothing
+rings, and the content was there until we removed it.
+
 Contradictions are only visible when the claim and its refutation are in the same place. Reading the
 file top to bottom does NOT find them — by the time you reach the correction you have forgotten the
 original sentence forty sections back. Moving them adjacent is what makes them findable, and it is
@@ -38,6 +69,27 @@ why reordering must happen before, and separately from, any merging.
 Each phase is a separate commit (phase 2 may be several). The value comes from the phases staying
 **pure** — the moment you rewrite while moving, the phase-1 invariant is void, and once it is void
 nothing can verify what the file lost.
+
+**The order is forced, and each phase detects something no other one can:**
+
+| phase | what it does | what only it can detect |
+|---|---|---|
+| **1 · reorder** | move sections into subject regions, delete nothing | **superseded** — append-only files every new fact maximally far from the claim it refutes, so putting the two side by side is the only thing that surfaces the contradiction. One pass found 12. |
+| **2 · merge** | same-subject sections become one narrative | redundancy that is invisible while scattered. The sharp question is *找不同*: once the invariant is stated, an instance earns its lines only if it does NOT fit. |
+| **3 · condense** | delete; `comm` no longer applies, so enumerate every section's disposition | nothing, from the inside — the enumeration is the *only* thing keeping **destroyed by understanding** detectable at all |
+| **4 · read-through** | a fresh agent who did not see phases 1-3 | whether it still READS |
+
+Condensing before merging condenses N copies separately and keeps N. Merging before reordering
+cannot see what is the same subject while it is scattered.
+
+**Compression is not terseness.** Line count falls because seven sections became one, not because
+sentences became telegrams. Write every surviving sentence out properly.
+
+⭐ **`memory.md` has a RATE, not a size — so a line-count target is the wrong instrument.** Measured
+2026-07-25: sixteen sections dated that single day accounted for **1,784 of the file's 7,617 lines,
+23%**, and about **960 lines** after being rewritten at compressed density. **One heavy day produces
+more than a 1,000-line target would allow the whole file to be.** What holds is a rule with a
+trigger — merge a region when it passes some size, re-derive the criterion every Nth pass.
 
 ### Phase 1 — Reorder (move only)
 
@@ -173,6 +225,35 @@ discarded in a second. Do this at the END of phase 1, before the commit, and sta
 commit message either way; "checked, none crossed" is worth recording, because the next curator will
 otherwise re-derive it.
 
+### Check 6 — the BACKWARD identifier survey
+
+Extract every backticked identifier `memory.md` names and check each against the source. The forward
+direction (*"I renamed something, let me grep the file"*) only fires when someone remembers; the
+backward direction needs nobody to remember, which is why it finds a different set. Measured
+2026-07-27 over 485 identifiers: 41 absent from the repo, most of them deliberate deletion records —
+and **four were live present-tense guidance naming something that no longer exists**. Each fails the
+same way: a reader greps it, gets nothing, and concludes the mechanism is gone.
+
+⚠️ **The endpoint of this survey is a DEFINITION, never another name.** The replacement you find in
+the source can itself be a phantom: one correction pointed at `wasReplaced`, which **also does not
+exist** — it appears three times, all in comments, while the real local is `notReplaced` and its
+polarity is the opposite. After finding a candidate, ask the same question again: does *this* one
+have a definition?
+
+⚠️ **Plant a fake identifier in the input before believing the output.** On the first run a bash
+`while read` loop silently dropped its final line, and the planted control — added last — was the
+only thing that said so. A survey of 485 names that quietly checks 484 reports exactly like one that
+checks all of them. ⭐ **The control worked ONLY because it was last: put it where truncation risk is
+highest**, which for anything looping line by line is the final line.
+
+⚠️ **A control must be able to FAIL for the reason you are testing.** A reviewer reported two symbols
+as fabricated, having first confirmed with a positive control that grep could see that file's real
+exports — sound method, wrong control. The symbols were real and lived in a commit their branch had
+not merged, and the chosen control existed in BOTH versions, so it could not separate "this symbol
+is absent" from "my checkout is old". **Pick a control present under one hypothesis and absent under
+the other.** Corollary for a repo worked on in parallel branches: **prose on a branch can correctly
+point at code that only exists on `main` yet**, and it reads as fabricated to anyone on the branch.
+
 ---
 
 ## Scripts
@@ -232,10 +313,26 @@ next lookup.
   task's `done()` result, a config value, an upstream doc. The narrow reading is not hypothetical:
   a hand-compressed copy of two task results was written into a task description — by someone who
   had stated the rule that same day — because its perceived scope was "documentation vs code".
-- **Delete claims; keep measurements.** A measurement ("99.8% cache hit, 582 creation / 362K read")
-  is a RECORD: it stays true about the moment it describes and it is the evidence that a fix worked.
-  Applying the no-snapshots rule to it destroys evidence. What rots is the present tense — date it,
-  say what it measured, say where today's value lives.
+- **A measurement as EVIDENCE can go; a measurement as a DEFENCE LINE must stay.** The older form of
+  this rule was "delete claims, keep measurements", justified by measurements not rotting — true,
+  and "does not rot" is not the same as "earns its place". The sharper test is: **if this number
+  were gone, would anyone make a different decision?**
+  - **Yes → keep.** `webgpu 909s wall / 38.8s CPU` against `cpu 697s / 3044s CPU` defends a
+    counter-intuitive choice (we ship the option that is 30% slower in wall-clock), and anyone
+    arriving to "optimise" it will pick cpu and starve the machine. The number is the only defence
+    that decision has. Same for the 628 mock-generated error strings.
+  - **No → delete the number, keep the conclusion.** `68,664 files → 320, 153ms → 0.4ms` defends
+    "prune at descent", and the sentence *"the walk now costs what the ANSWER costs"* already
+    defends it completely. The number proved the fix worked, and that the fix works is in the code.
+  - What still rots either way is the present tense. Date it, say what it measured, say where the
+    current value lives. ⭐ And a kept measurement survives best **folded INTO the guardrail it
+    evidences** — standing alone as its own paragraph it reads as trivia and is the first thing the
+    next pass deletes.
+- **File a task's findings BY SUBJECT, not where the task lived.** A round's output is rarely one
+  thing: a walker rewrite also produced two lessons about mutation harnesses and one about how prose
+  rots. Filing all of it under the walker buries the other two where only someone already reading
+  about walkers will find them — which is nobody. Splitting that round three ways cost 117 net lines
+  against the ~200 it would have taken as one appended section.
 - **Understating a security surface is worse than overstating it.** The auth middleware's skip list
   was described twice, both times smaller than reality, because a later change (frontend paths
   becoming server-visible) enlarged the anonymous surface without touching either auth entry. When

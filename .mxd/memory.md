@@ -138,6 +138,33 @@ in a system you were not looking at. `WAKE_SIGNALS` went on listing `agent_stopp
 ever wake an external client by timing out. **Grep for the symbol as a string before trusting the
 error list, and check every boundary the type system does not cross.**
 
+⭐ **Changed a BEHAVIOUR? Grep for the PROSE that describes it** — in this file, in docstrings, in
+tool descriptions, in test names. This is the half the identifier rule misses, and it is the only
+thing that finds the second kind of prose rot:
+
+| kind | wrong when? | found by |
+|---|---|---|
+| **Fabricated** — a claim that was never true | the moment it is written | checking it against reality |
+| **Invalidated** — a true statement about a neighbour | **later**, when the neighbour changes | *nothing you can do by re-reading it* |
+
+Both appeared in one docstring on one day. The fabricated one was a benchmark quoted before the
+benchmark was run, caught by its author reading their own diff. The invalidated one was true when
+written, falsified two commits later by a change 300 lines away, and **auditing that same docstring
+for falsehoods did not catch it, because nothing about the sentence is wrong on its face.** Two
+directions to be careful in: *"changed nearby" is not "now false"*, and — the one that catches more —
+⭐ ***"still true" is not "still accurate"***: one sentence survived as an invariant while the
+mechanism under it was replaced, and a check looking only for false claims walks straight past that.
+
+⭐ **Grep for the SENTENCE, not just the symbol.** A behaviour rule stated in prose lives in more
+places than a grep for the CODE finds, and the distant surfaces are precisely the ones without the
+identifier in them. Three surfaces of a removed `cd` rule were known; a fourth turned up only by
+grepping the RULE itself with a tolerant pattern. ⚠️ **The highest-risk prose surface here is the
+compaction checkpoint (`src/compaction.ts`), and it is nowhere near the code it describes.** It is
+injected into an agent that has just lost its history, so nothing in that agent's context can
+contradict a stale line — a rule that survives there gets taught, fresh, to every compacted agent,
+and a grep scoped to the subsystem will never reach it. When one of its rules goes, **invert** its
+test (`not.toContain`) rather than deleting it, or the removal ends up pinned by nothing.
+
 ### Deleting a mechanism built on a false premise: separate the PREMISE from the OBLIGATION
 
 Having shown that the stated reason for some code is wrong, do **not** delete on that finding alone.
@@ -232,316 +259,58 @@ in its own region; this is the index.
 
 ## ⚠️ Writing this file
 
-Full reorganization procedure: `.mxd/memory-reorg.md`. What follows is what you need when writing or
-updating an entry, which is every session.
+What earns a place is the blockquote at the top of this file. **The reorganization procedure, the
+rot taxonomy, the condensing rules and the measurement test all live in `.mxd/memory-reorg.md`** —
+read them there, and put anything you learn about how this file fails there too. Two copies of a
+procedure is drift, which this file has a whole section about.
 
-**What earns a place.** Code can state what it does. It cannot state why the change that looks like
-an improvement is wrong. So: *if a reader of this code would want to simplify it, this file must say
-why that fails; if nobody would touch it, this file should say nothing.* Do not ask "is this
-useful" — the answer is "somewhat" for every entry ever written, and that is how the file grew past
-7,000 lines by 2026-07 before a compression pass roughly halved it. (`memory-reorg.md` is the record
-of what each run cost and produced; do not restate its numbers here — this sentence carried two that
-disagreed with it.) Four things survive that
-question: how to operate here and what happens if you don't; why the design is shaped this way;
-**the places that look wrong but are right**; and negative results ("checked, it is not that"),
-which are recorded nowhere else because nobody opens a task for "it wasn't that".
+**Never `write_file` this file.** It rewrites the whole thing, causing loss or duplication. Use
+`edit_file` (match the last lines, extend) or `echo >> .mxd/memory.md`. Update it BEFORE calling
+`done()`, and commit it alongside the code it describes.
 
-**Write the current design as one narrative, not as a sequence of amendments.** A past state earns
-its lines only when a reader without it could not justify the current design, or would likely
-reintroduce the old one — and then it is not history, it is a guardrail, and must be written as one:
-*"do not change Z back to Y; Y silently loses history when W"*. If you cannot write that sentence,
-delete the old state instead of striking it through. Strikethrough-plus-pointer produces a
-changelog, and a changelog is what every reader pays for on every launch.
-
-**Compression is not terseness.** Line count falls because seven sections became one, not because
-sentences became telegrams. Write every surviving sentence out properly.
-
-⭐ **This file has a RATE, not a size — so a line-count target is the wrong instrument.** Measured
-2026-07-25: sixteen sections dated that single day accounted for **1,784 of the file's 7,617 lines,
-23%**, and about **960 lines** after being rewritten at compressed density. **One heavy day produces
-more than a 1,000-line target would allow the whole file to be**, so any such target is met once and
-then exceeded within a week by ordinary work. What holds is a rule with a trigger — merge a region
-when it passes some size, re-derive the criterion every Nth pass — because a number only decides how
-much gets destroyed on the day it is chosen.
-
-**Writing and condensing are two separate activities, and only the first is everyone's job.**
-
-**Normally every task appends here itself**, in the round that learned the thing. That is the right
-default for a reason, not just for convenience: the agent who found it knows which detail is
-load-bearing, and a curator who did not do the work can only see which sentences *read* as redundant
-— which is the third rot kind below, applied at the moment the knowledge is freshest. Parallel
-appends collide in git sometimes; that is routine and root resolves it.
-
-⚠️ **A previous version of this paragraph said the opposite** — that tasks report in `done()` and one
-curator integrates everything. That was a one-day workaround so parallel tasks would not conflict
-with a compression pass running on the same file, and it was written up here as a durable design
-within two hours of being invented, in the present tense, with a star on it. Worth leaving on the
-record: **a temporary measure looks most like a discovery at the moment it works**, because you can
-see the problem it solved and not the doors it closed. The rule under **Daily maintenance** below —
-*about to leave a sentence standing as CURRENT? verify it first* — did not fire, because the author
-was the person who had just invented it.
-
-**Condensing is a separate periodic pass with four phases, in this order.** Full procedure:
-`.mxd/memory-reorg.md`.
-
-| phase | what it does | what only it can detect |
-|---|---|---|
-| **1 · reorder** | move sections into subject regions, delete nothing; verified by `comm -23` over the sorted lines | **superseded** — append-only files every new fact maximally far from the claim it refutes, so putting the two side by side is the only thing that surfaces the contradiction. One pass found 12. |
-| **2 · merge** | same-subject sections become one narrative | redundancy that is invisible while scattered. The sharp question is *找不同*: once the invariant is stated, an instance earns its lines only if it does NOT fit. |
-| **3 · condense** | delete; `comm` no longer applies, so enumerate every section's disposition instead | nothing, from the inside — the enumeration is the *only* thing keeping **destroyed by understanding** detectable at all |
-| **4 · read-through** | a fresh agent who did not see phases 1-3 | whether it still READS |
-
-**The order is forced.** Condensing before merging condenses N copies separately and keeps N.
-Merging before reordering cannot see what is the same subject while it is scattered. And phase 4
-must be somebody else: every curator so far has reported, unprompted and in almost the same words,
-that by the end they could no longer see what was missing.
-
-⭐ **Phase 3 is not achieved by fixing the writing style.** Measured on the most chronicle-dense
-region: everything explicitly marked as history was **175 of 896 lines, 20%** — deleting all of it
-takes that region to 720 where a 7× target needed 116. **The changelog is a real defect and it is
-not the bulk.** The rest only comes out by removing things the file currently says, which is why
-phase 3 must be given a target *composition* and not a target line count: the remaining material has
-no principled ordering among itself, so a number leaves the curator guessing which of four
-categories to cut.
-
-⚠️ **A curator marking their own entries overstates what has to be kept.** Sampling 20 self-marked
-items against the "what earns a place" question above: **11 passed, 3 borderline, 5 failed** — and
-all five failures were craft or method rather than looks-wrong-but-is-right. The protected share was
-overstated by about a third, in the direction that favoured the curator's own position. **Sample and
-report the result**, or the number carrying the decision is the one nobody checked.
-
-⚠️ **File a task's findings BY SUBJECT, not where the task lived.** A round's output is rarely one
-thing: a walker rewrite also produced two lessons about mutation harnesses and one about how prose
-rots. Filing all of it under the walker buries the other two where only someone already reading
-about walkers will find them — which is nobody, because they are not about walkers. Splitting that
-round three ways cost 117 net lines against the ~200 it would have taken as one appended section,
-and the saving is the smaller half of the point.
-
-**Three kinds of rot, three detectors, none substituting for another:**
-
-| kind | is a correction written down anywhere? | what finds it |
-|---|---|---|
-| **Superseded** — a later change invalidated this | yes, but filed under the change, never under the claim | putting claim and correction in the same region |
-| **Drained** — a count or list quietly stopped being true | **no.** Nobody thinks they are correcting anything | checking against the source, item by item |
-| **Destroyed by understanding** — a curator deleted it as redundant | the content was there until we removed it | being forced to enumerate what you dropped |
-
-The drained kind has **no trigger at all**: a stale count and a fresh count look identical, so the
-interval between deliberate passes is how long a wrong number survives.
-
-⭐ **Symptoms are the retrieval key, and the third rot kind eats them.** This file is organised by
-cause and queried by symptom: the reader arrives holding "the buttons are missing", not "the event
-type was renamed". A symptom looks most redundant exactly when you have just understood its
-mechanism, which is exactly when it is most needed. Keep the conditional form — *"if you break this
-invariant, you will see X"* — and cut the perfect tense — *"in July we had a bug where the buttons
-disappeared"*, which is addressed to nobody.
-
-⭐ **Before applying any rule below, ask whether the thing in front of you is a CLAIM or an
-INSTANCE. Every rule here targets what is presented as CURRENT STATE; none of them targets a string
-appearing in the file.** An instance cannot rot — it records something that was true at a moment,
-and that moment does not change. *"You see `2116 pass / 2 fail`, discover you cannot see WHICH two,
-re-run with `| grep fail`, and get a different flaky subset"* is not a claim about the suite's size;
-the story is identical when the suite reaches three thousand, and deleting the numbers leaves it
-with no shape. The same sentence pattern presented as state — *"the suite has 2116 tests"* — expires
-silently and is what the rule is for.
-
-⚠️ **This is the one phase-3 loss that nothing can detect.** A curator holding "do not record test
-counts" scans, finds three violations, deletes them, writes them into the enumeration, and is
-compliant at every step — while three arguments lose their skeletons. `comm` does not apply, nothing
-rings, and the content was there until we removed it. That is the **destroyed by understanding** rot
-kind, arriving through a correctly-applied rule.
-
-⚠️ **And when a measurement is sitting alone as its own paragraph, the move is to FOLD IT INTO the
-guardrail it evidences — never to delete it.** Alone it reads as trivia and is the first thing a
-compression pass takes; welded into the instruction it survives, with its date and its number
-intact.
-
-**Rules:**
-
-1. **If something else is the authoritative source, point at it rather than snapshotting it.**
-   Interfaces, counts, file paths, file lists — and equally another task's `done()` result, a config
-   value, an upstream doc. Write what the source cannot answer: why it is shaped this way, what bit
-   us, which rule is load-bearing. "See the `test.todo`s in X" stays true; "3 remain" does not.
-   ⚠️ Reading this as "documentation vs code" is too narrow, and that misreading is how a
-   hand-compressed copy of two task results ended up in a task description, written before those
-   tasks had even finished.
-   ⚠️ **A MEASUREMENT is a record, not a snapshot, and deleting it destroys evidence.** "99.8% cache
-   hit (582 creation / 362K read)" is proof that four specific fixes worked and stays true about the
-   moment it describes. What rots is the present tense. Date it, say what it measured, say where the
-   current value lives. **Delete claims; keep measurements.**
-   ⭐ **A measurement survives best folded INTO the guardrail it evidences, not standing as its own
-   paragraph.** "Prefix order is tools → system → messages, and a tools mismatch misses the entire
-   prefix; measured 99.8% hit after fixing it (2026-04, 582 creation / 362K read)" is one line that
-   keeps the number, the date and the instruction. As a separate paragraph the same number is the
-   first thing a compression pass deletes, because on its own it reads as trivia.
-   ⚠️ **The sharpest instance is the UNNAMED PLURAL, and this file was the source of one.** An entry
-   said *"rejected by both REST guards"* and never named them. That reads as precise while carrying
-   no way to check itself, so the next reader supplies the missing names from whatever is adjacent —
-   there, `/clarify`, from a nearby sentence about `/message` and `/clarify` sharing task-id
-   canonicalization — and then restates them with the original's confidence, in a task description,
-   as recorded fact. **"Both", "all three", "each of the N sites" without the names does not merely
-   go stale like any other count; it invites a confident fabrication that looks sourced.** Name
-   them, or say "grep X to find them".
-2. **Name things for what they ARE, not where they came from.** A check called "the phase-1
-   invariant" gets switched off after phase 1 — precisely when it starts being useful.
-3. **Anything probabilistic: one passing sample is not verification.** The complement of mutation
-   testing — that one makes a test fail on purpose, this one says a single green proves nothing.
-
-**Daily maintenance, all cheap:**
-
-- Changed an identifier? Grep it in this file.
-- ⭐ **Naming an identifier is what exposes a sentence to this rot; describing the BEHAVIOUR is
-  immune.** The same mechanism appears twice in this file, and only one instance rotted. *"The
-  session-identity check in the `finally` block prevents a dying agent from clobbering the cleanup
-  of the replacement agent"* — still exactly true, and it cannot go stale, because there is no name
-  in it to go stale. The other instance named the variable, the variable was renamed and inverted,
-  and the sentence became a pointer to nothing. **Prefer the behavioural form; spend a name only
-  where the reader needs it to FIND the thing** — and then it is load-bearing and belongs in the
-  backward survey below.
-- ⭐ **And periodically run that BACKWARDS: extract every backticked identifier this file names and
-  check each one against the source.** The forward direction only fires when someone remembers they
-  renamed something; the backward direction needs nobody to remember, which is why it finds a
-  different set. Measured 2026-07-27 over 485 identifiers: 41 absent from the repo, most of them
-  deliberate deletion records — and **four were live present-tense guidance naming something that no
-  longer exists**: `buildAgentContext` (really `createAgentContext`), `sessionWasReplaced` (see
-  below — its obvious correction is a phantom too), two deleted turn-builders standing where
-  `adapter.buildUserTurn` now is, and an Edit/Rewind re-fetch consumer that had been removed
-  outright. Each fails the same way: a reader greps it, gets nothing, and concludes the mechanism
-  is gone.
-  ⚠️ **The endpoint of this survey is a DEFINITION, never another name** — the replacement you find
-  in the source can itself be a phantom. `sessionWasReplaced` was corrected here to `wasReplaced`,
-  which **also does not exist**: it appears three times in `agent-lifecycle.ts` and all three are
-  comments, while the real local is `notReplaced` and its polarity is the opposite. Grep either
-  phantom and you hit those comments, which describe it as though it were there. So after finding a
-  candidate, ask the same question again: does *this* one have a definition?
-  ⚠️ **Plant a fake identifier in the input before believing the output.** On the first run of this
-  check a bash `while read` loop silently dropped its final line — and the planted control, added
-  last, was the only thing that said so. A survey of 485 names that quietly checks 484 reports
-  exactly like one that checks all of them. ⭐ **The control worked ONLY because it was last: put it
-  where truncation risk is highest**, which for anything looping line by line is the final line. A
-  control in the middle would have passed and told you nothing.
-  ⚠️ **And a control must be able to FAIL for the reason you are testing, or it proves only that the
-  instrument runs.** A reviewer reported two symbols in `api-message-rules.ts` as fabricated, having
-  first confirmed with a positive control that grep could see that file's real exports — sound
-  method, wrong control. The symbols were real and lived in a commit their branch had not merged,
-  and the control they picked existed in BOTH versions, so it could not separate "this symbol is
-  absent" from "my checkout is old". **Choose a control present under one hypothesis and absent
-  under the other**; any symbol from the same commit would have failed loudly and named the real
-  problem. ⚠️ Corollary for a repo worked on in parallel branches: **prose on a branch can correctly
-  point at code that only exists on `main` yet**, and it reads as fabricated to anyone standing on
-  the branch.
-- ⚠️ **Searching THIS file: anything over ~60 characters needs a multiline search.** The file is hard
-  wrapped near 100 columns and the wrap lands mid-phrase, so a single-line `grep` for a sentence you
-  can see with your own eyes returns **0**. Demonstrated on itself: `grep -c "text content blocks
-  must be non-empty"` → 0, multiline → 1, the phrase split across two lines. `git log -S"<long
-  phrase>"` fails the same way, so "when did this sentence arrive" archaeology comes back silently
-  empty. Same family as *a single-line grep is a claim about LINE BREAKS*, landing on the prose file
-  we grep most. **The damage is specific and it is the opposite of a missed match**: you conclude
-  the file does not say a thing, and write it a second time — which is precisely what a
-  reorganization exists to remove. Search a short fragment, or search with newlines collapsed.
-- ⭐ **Changed a BEHAVIOUR? Grep for prose that describes it — in this file, in docstrings, in tool
-  descriptions and in test names.** This is the rule the identifier one is missing, and it is the
-  only thing that finds the second kind of prose rot:
-
-  | kind | wrong when? | found by |
-  |---|---|---|
-  | **Fabricated** — a claim that was never true | the moment it is written | checking it against reality |
-  | **Invalidated** — a true statement about a neighbour | **later**, when the neighbour changes | *nothing you can do by re-reading it* |
-
-  Both kinds appeared in the same docstring on the same day. The fabricated one was a benchmark
-  quoted before the benchmark was run (`62,987 enumerated / 1,265 kept`; real: 68,664 → 320) and was
-  caught by its author reading their own diff. The invalidated one — *"`list_files` caps during its
-  walk, which is a different question"* — was true when written, falsified two commits later by a
-  change 300 lines away, and **auditing that same docstring for falsehoods did not catch it, because
-  nothing about the sentence is wrong on its face.** A third instance the same evening: a
-  cross-reference in this file, `see *Bun Worker env isolation*`, broken by the person merging away
-  the section it named. **Grep for the concept you just changed and read every hit; a grep gives you
-  candidates, not verdicts.** Two directions to be careful in: *"changed nearby" is not "now
-  false"*, and — the one that catches more — ⭐ ***"still true" is not "still accurate".*** The
-  sentence that caught this rule out was *"the skip filter runs INSIDE the walk loop, so the cap
-  counts files we KEEP"*: the **invariant survived and the mechanism did not**, because the cap still
-  counts kept files but is now guaranteed by pruning at descent rather than achieved by a filter in a
-  loop. A check that only looks for false claims walks straight past it. For this file specifically,
-  after any rename pass, extract every `*Section Name*` reference and check it against the heading
-  list — that is what found the third one.
-- ⭐ **Grep for the SENTENCE, not for the symbol.** A behaviour rule stated in prose lives in more
-  places than a grep for the CODE finds, and the distant surfaces are precisely the ones that do not
-  contain the identifier. Three surfaces of a removed `cd` rule were known; a fourth turned up only
-  by grepping the RULE itself, case-insensitively and with a tolerant pattern (`do ?n[o']t cd`),
-  which found `buildTaskPrompt`'s git-context block.
-  ⚠️ **The highest-risk prose surface here is the compaction checkpoint (`src/compaction.ts`), and
-  it is nowhere near the code it describes.** It is injected into an agent that has just lost its
-  history, so nothing in that agent's context can contradict a stale line — a rule that survives
-  there gets taught, fresh, to every compacted agent, and a grep scoped to the subsystem will never
-  reach it. When a rule of its does go, **invert** its test (`not.toContain`) rather than deleting
-  it, or the removal ends up pinned by nothing at all.
-- **Approved a side effect?** Grep for that too. Reviewing is how an `agent_idle` behavior change
-  went unrecorded for months.
-- About to leave a sentence standing as CURRENT? Verify it first. Moving a sentence under a
-  "current state" heading is **endorsing** it, not relocating it.
-- **Promised to do something later, once some condition holds?** Create a draft task for it *at that
-  moment*. A promise whose trigger exists only in one agent's context does not survive that agent
-  being interrupted, and it fails silently because nothing records that it was owed.
+⚠️ **Searching THIS file: anything over ~60 characters needs a multiline search.** It is hard wrapped
+near 100 columns and the wrap lands mid-phrase, so a single-line `grep` for a sentence you can see
+with your own eyes returns **0**. `git log -S"<long phrase>"` fails identically, so "when did this
+sentence arrive" archaeology comes back silently empty. **The damage is the opposite of a missed
+match**: you conclude the file does not say a thing, and then write it a second time — which is
+exactly what a reorganization exists to remove. Search a short fragment, or collapse newlines first.
 
 ## Editing the system prompt
 
 The system prompt is **universal** across every project that uses Matrix. Each project has its own
-`memory.md`, and agents elsewhere see the shared prompt plus THEIR memory — never ours. So:
+`memory.md`, and agents elsewhere see the shared prompt plus THEIR memory, never ours. So the prompt
+gets principles, roles, tool semantics and craft; this file gets matrix-internal implementation,
+architecture and pitfalls. The one matrix-internal detail the prompt is allowed to expose is the
+path where pre-compaction events are preserved, because a compacted agent otherwise has no way to
+read its own history.
 
-- **Prompt**: principles, roles, tool semantics, communication patterns, task lifecycle, craft —
-  anything true for any project using Matrix.
-- **This file**: matrix-internal implementation, architecture, pitfalls, design decisions.
+⚠️ **The craft lessons in THIS file cannot be relocated to the prompt, and the attempt is the
+proof.** It looks correct — "universal lessons belong in the universal prompt" follows directly from
+the split above — and it was executed far enough to measure: the movable part shrank from an
+estimated **310 lines to 82**, because **each rule here is welded to the specific thing that
+happened, and the weld is what makes it work.** A craft rule in the prompt with no evidence is a
+platitude every agent reads past; the same rule sitting next to the afternoon it cost is an
+argument. The split still holds for a genuine DUPLICATE, where the prompt states a principle and
+this file merely repeats it. It fails here because there is no duplicate: the prompt has the
+principle and this file has the only evidence for it. **Someone will propose the move again.**
 
-⚠️ **The limit on that rule, established by trying it: the craft lessons in this file cannot be
-relocated to the prompt, and the attempt is the proof.** It looks correct — "universal lessons belong
-in the universal prompt" follows directly from the split above — and it was executed far enough to
-measure. Applying "when in doubt keep the local instance" shrank the movable part from an estimated
-310 lines to **82**, because **each rule here is welded to the specific thing that happened, and the
-weld is what makes it work.** A craft rule in the prompt with no evidence is a platitude every agent
-reads past; the same rule sitting next to the afternoon it cost is an argument. Separating them
-leaves a platitude there and a stranded anecdote here, and neither half does the job the whole did.
-The general-moves/local-stays split is still right for a genuine **duplicate** — where the prompt
-already states the principle and this file repeats it. It fails here because there is no duplicate:
-the prompt has the principle and this file has the only evidence for it.
+⚠️ **The prompt contradicts itself across sessions and nothing catches it.** This file has regions
+and topical adjacency, so putting a claim next to its refutation is a move you can actually perform;
+**a prompt is one linear argument, and two sentences sixty lines apart are never brought together by
+anything.** It does not present as a conflict either — both are individually true and well written,
+and they only cancel when someone holds both at once, which is what the linear form prevents.
+Observed in two commits one session apart, same author: one added *"every unfinished break is state
+you carry, in a context that runs out"*, the other existed to establish *"compaction is a
+continuation, not a stopping point"*. Typecheck and biome only prove the template literal parses.
+**So read the recent prompt DIFFS before editing, not just the current text** — the text says what
+the prompt says, the diffs say what it has just *started* saying, which is the only place a fresh
+contradiction can come from. Then re-read the whole thing: the round that INTRODUCED that
+contradiction substituted a targeted grep for the full read, and the round that CAUGHT it did the
+full read and found a second collision as well.
 
-**The one matrix-internal detail the prompt is allowed to expose is the path where pre-compaction
-events are preserved**, because a compacted agent otherwise has no way to read its own history.
-
-⚠️ **Pitfall: "avoid internal" does NOT mean "delete the concept".** Told to strip matrix-internal
-detail, agents delete the whole section. It means strip implementation-specific words and keep the
-agent-experience concept — rewrite without `JSONL`, `checkpoint` and type names, keep the file path
-agents operationally need. **Preserve what agents experience; remove what only implementers reason
-about.**
-
-Read the full prompt before editing it; it is for all Matrix users, not our project notebook. Prefer
-a principle that generates behavior ("tests are our current truth") over a rule specifying one
-behavior ("don't contort architecture for old tests"). Keep explicit rules only where they protect a
-product property, such as the git worktree invariants.
-
-⚠️ **The prompt contradicts itself across sessions and nothing catches it.** Prompt edits rot the
-same three ways this file does, but the **superseded** kind is worse there because of the carrier.
-This file has regions and topical adjacency, so putting a claim next to its refutation is a move you
-can actually perform, and performing it is what makes the contradiction visible. **A prompt has no
-such mechanism** — it is one linear argument, and two sentences sixty lines apart are never brought
-together by anything. It does not present as a conflict either: **both sentences are individually
-true and well written**, and they only cancel when someone holds both at once, which is exactly what
-the linear form prevents. Observed in two commits one session apart, same file, same author: one
-added *"every unfinished break is state you carry, in a context that runs out"*, and the other
-existed to establish *"compaction is a continuation, not a stopping point"* — i.e. to deny the wall
-the first had just asserted. No gate can see this: the prompt is a template literal, so typecheck
-and biome only prove it parses, and the one test touching its content greps for hardcoded branch
-names.
-
-> **Before editing the prompt, read the recent prompt DIFFS, not just the current text**
-> (`git log -p -5 -- src/system-prompts.ts`). The current text tells you what the prompt says; the
-> recent diffs tell you what it has just *started* saying, which is the only place a fresh
-> contradiction can come from. Afterwards, grep the file for the concept you leaned on and read
-> every hit — the sentence that cancels yours will not share your wording.
-
-⚠️ **Why that step gets skipped**, from the same pair of sessions: the round that INTRODUCED the
-contradiction was required to re-read all 436 lines after editing and substituted a targeted grep,
-reasoning *"rather than burn context re-reading 436 lines verbatim"* — while sitting at zero
-compactions. The round that CAUGHT it did the full read, and the full read also found a second,
-subtler collision. **This rule is worth exactly as much as the willingness to pay for it.**
+⚠️ **"Avoid matrix-internal detail" does NOT mean "delete the concept".** Told to strip internal
+detail, agents delete the whole section. Strip implementation-specific words; keep the
+agent-experience concept.
 
 ---
 # How This Project Fools Itself
@@ -550,30 +319,25 @@ subtler collision. **This rule is worth exactly as much as the willingness to pa
 ## ⭐ Plausible and wrong
 
 > **The expensive failures here have not been mistakes that looked like mistakes. They have been
-> well-written, well-evidenced, plausible things that were wrong — and each one then LOWERED the bar
+> well-written, well-evidenced, plausible things that were wrong — and each one then LOWERED THE BAR
 > for everything downstream of it, because a check is only ever judged adequate against the
 > explanation you currently believe.**
 
 ⭐ **What installs a fiction here is never a guess. It is something that LOOKS like evidence** — a
 real error message carrying an unverified attribution, or a real published mechanism fitted to two
-data points. **A guess invites checking; a citation suppresses it.** That is why the sourced-looking
-story is the one that survives unchallenged long enough to become load-bearing, and it is why the
-detectors below are all about provenance rather than about plausibility.
+data points. **A guess invites checking; a citation suppresses it.** So the detectors below are all
+about provenance rather than about plausibility.
 
-**Member 1: an ENFORCED fiction manufactures its own evidence.** `ValidatingMockAPI` enforced a
-role-alternation rule that does not exist. Our JSONL history contains **628 occurrences of "Messages
-must alternate roles" — every one from our own mock and none from the API.** Four production
-mechanisms, one `test.todo` and one memory entry filed as a "reusable pattern" were built to avoid a
-400 that cannot happen.
+**An ENFORCED fiction manufactures its own evidence.** `ValidatingMockAPI` enforced a
+role-alternation rule that the Anthropic API does not have. **Our JSONL history contains 628
+occurrences of "Messages must alternate roles" — every one from our own mock and none from the
+API.** Four production mechanisms, one `test.todo` and one memory entry filed as a "reusable
+pattern" were built to avoid a 400 that cannot happen.
 
-How it got installed is the instructive part. The helper's own comment wrote down BOTH rules and then
-chose:
-
-> *"We don't assert the trailing-role rule because some walker outputs are intermediate and meant to
-> be extended. We DO assert the alternation and structural shape."*
-
-**That reasoning is correct.** Some walker outputs genuinely are conversation *prefixes* that end on
-assistant, and asserting the real rule would redden correct fixtures. So:
+How it got installed is the instructive part. The helper's own comment wrote down BOTH rules and
+then chose between them: asserting the REAL rule (no trailing assistant message) would have reddened
+correct fixtures, because some walker outputs are genuine conversation *prefixes* meant to be
+extended. **That reasoning is correct.** So:
 
 > ⚠️ **An inconvenient TRUE assertion plus a conveniently-green FALSE one means the false one gets
 > installed, and is then believed as fact. The fiction does not win on persuasiveness — it wins on
@@ -581,191 +345,93 @@ assistant, and asserting the real rule would redden correct fixtures. So:
 > strings from the rule that was *executed*, zero from the rule that was merely *documented*. **The
 > knowledge was never lost; the enforcement was.**
 
-⚠️ **Detector — do not audit whether the assertions are correct.** That comment was entirely correct.
-Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those two
-fork is where a fiction starts producing evidence.
-
-⭐ **The fork does not only arrive inherited — it can be born, in code written minutes earlier, and
-a green test is what lets it survive.** Measured instance (2026-07-25, `shouldLaunchAgent`): a
-docstring said *"a throw means LAUNCH — swallowing it into 'nothing to do' would turn a loud failure
-into a node that silently never comes back"*, while the code said `catch { return events }`, i.e.
-decide from the unrepaired log and let the tail settle it. **The test for it passed**, because the
-shapes that throw in practice happen to end in a user turn, so the fall-through launched anyway —
-*by coincidence*. Two lessons, and the second is the transferable one:
-
-- **A fixture that cannot distinguish the two rules is evidence for neither.** Same family as *a
-  test whose fixture cannot express the difference passes both ways*, but sharper here, because the
-  fixture was chosen from the failure mode that occurs in practice — which is exactly the fixture
-  that cannot separate them. The fix was to build one from the condition the rule NAMES (corrupt
-  JSONL, any shape) rather than from the instance you have seen, then pin *that the fixture is still
-  the hard case* in its own test.
-- ⚠️ **Names fork from behaviour the same way docstrings do.** The same function was called
-  `applyRepairInMemory` while writing nothing — naming, precisely, the in-memory-recovery
-  anti-pattern this codebase deleted. Nobody misreads a function they are writing; the cost lands on
-  whoever greps `memory` + `repair` next year and concludes the deleted path is back. **A verb that
-  promises an effect is the wrong verb for a projection** (`dryRun…`, `…View`, `project…`).
+⚠️ **Detector — do not audit whether the assertions are correct.** That comment was entirely
+correct. Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those
+two fork is where a fiction starts producing evidence. ⭐ **The fork does not only arrive inherited —
+it can be born in code written minutes earlier, and a green test is what lets it survive**, because
+the fixture chosen is the one drawn from the failure that happens in practice, which is exactly the
+fixture that cannot separate the two rules. Build the fixture from the condition the rule NAMES, not
+from the instance you have seen.
 
 **An over-strict test double bills you three ways, and the third leaves no artifact.** It creates
-complexity you pay for (the four mechanisms). It hides gaps — a fiction occupying the "role rules"
-slot stopped anyone asking what the real role rule was, so the true one got zero coverage and a
-reachable production 400 sat there unnoticed. And ⭐ **it VETOES correct code**: interrupting an agent
-before it emits anything, parking it, then sending another message produces `[…, user, user]` —
-legal, and the old mock rejected it, so the correct implementation could not be tested, the test was
-truncated at the park, and a comment was left saying the constraint was unverified. **Nothing was
-red. The feature simply acquired a reputation for being hard to test.** The first two produce
-artifacts you can go find; the third produces *absence*. **Ask what your test double has made people
-give up on, not only what it has made them build.**
+complexity you pay for. It hides gaps — a fiction occupying the "role rules" slot stopped anyone
+asking what the real role rule was, so the true one had zero coverage and a reachable production 400
+sat there unnoticed. And ⭐ **it VETOES correct code**: interrupt an agent before it emits anything,
+park it, send another message, and you get `[…, user, user]` — legal, and the old mock rejected it,
+so the correct implementation could not be tested and the feature quietly acquired a reputation for
+being hard to test. **Nothing was red. Ask what your test double has made people give up on, not
+only what it has made them build.**
 
-**The name was the other tell.** `assertStructurallyValidApiMessages` fused two different predicates
-— *structurally valid* (a prefix property) and *API messages* (a sendable-request property) — and
-code can only be one of them, so it silently became the weaker one plus a fictional bonus. **A name
-that claims "valid" without saying valid-for-what will drift to "matches what we imagined."** The fix
-was a new *concept*, not a stricter assertion: `wellFormedPrefixViolations` (first-must-be-user;
-pairing, but an answering run that RUNS OFF THE END of the array is incomplete rather than broken;
-orphan tool_results are violations at any position) and `sendableRequestViolations` (all of that plus
-trailing-role plus the last assistant's tool_uses answered by now). Note the trap's second half: the
-PAIRING rule has the same intermediate-state problem the trailing-role rule has, so whoever tried to
-assert the true rules with only one predicate available would have gone red on correct fixtures
-*twice*. **Courage was not the missing ingredient; the concept was.**
+⭐ **Zero existing tests went red when the true rules were finally added, and that is the finding
+rather than a disappointment. The fiction was not masking existing tests — it was masking the fact
+that nobody had written the missing one.** A gap does not turn red; it stays invisible until someone
+goes looking, which is why the probe had to be written by hand rather than discovered by running the
+suite.
 
-⭐ **Zero existing tests went red when the true rules were added, and that is the finding rather than
-a disappointment.** `validateRequest` only ever sees requests the loop actually decided to send, and
-the loop only sends when its state is right — except on the one reachable bug, which had no test at
-all. **The fiction was not masking existing tests. It was masking the fact that nobody had written
-the missing one.** A gap does not turn red; it stays invisible until someone goes looking, which is
-why the probe had to be written by hand rather than discovered by running the suite.
+**Three shorter members of the same family, each a different medium:**
 
-What DID go red was swapping the fused helper for the two real predicates: 10 tests, **every one a
-fixture that could never be sent to the API, and none fixed by loosening a rule** — six walker
-fixtures produced assistant-first output because they only cared about the assistant/tool region, and
-four prefix-byte-comparison fixtures opened with an orphan `tool_result`. Given a real conversation
-head they assert exactly what they always did. One did NOT get a head and is the interesting one: a
-dirty-JSONL scenario table claimed "the walker produces valid structure" for an *assistant-first*
-output. It does not, and **that is not hypothetical — a session was once permanently bricked by
-exactly that shape**, when a bare `compact_marker` left `readActive()` starting on an assistant turn.
+- **A wrong MECHANISM licenses a weaker test.** Chasing the CoreML NaN, a real published mechanism
+  was found and fitted to two data points — over-fitting to n=2 while carrying a citation. "FP16
+  overflows on long inputs" implies short inputs are safe, under which a single long probe is not
+  merely adequate but *well-chosen*. **The causal story silently set the bar, so the check that
+  would have caught it is the one the story talked you out of needing.**
+- **The cheapest instance to guard against is READING.** A short instruction was given a coherent
+  interpretation that fit its words, and acting on it would have deleted 660 lines of this file; the
+  reading was defended with "a revert restores anything lost", which is true and beside the point —
+  **the revert restores the lines, not the hour.** ⭐ **When an instruction is short and the action
+  it licenses is expensive or irreversible, one clarifying question is always cheaper than a
+  confident reading.** The temptation is strongest exactly when the reading is coherent, because
+  coherence feels like confirmation.
+- ⭐ **A measurement that contradicts your plan is not a result to report afterwards — it is a reason
+  to stop.** Mid-execution of that same deletion, the first rung measured 82 lines against an
+  estimate of 310, which already refuted the plan it was part of; the intent was to finish the cuts
+  and report the discrepancy after. **Nothing about that is careless — it is the ordinary shape of
+  finishing what you started**, which is exactly why it needs writing down: the surprising number
+  arrives while you are busy, and "I'll report it when I'm done" costs nothing to think and
+  everything if the plan was wrong.
 
-**Member 2: a plausible-but-wrong MECHANISM sets the verification bar.** Chasing the CoreML NaN in
-*Choosing an embedding device*, a real published mechanism was found — ORT's CoreML provider
-defaults to the NeuralNetwork model format, which implicitly casts to FP16 — and an explanation was
-built that fitted both data points. **That is over-fitting to n=2 while carrying a citation.**
+## Reviewing: whose reference is it, and what shape of finding can it produce
 
-> ⚠️ **A wrong mechanism does not merely fail to help — it LICENSES A WEAKER TEST, because a test's
-> adequacy is judged against the mechanism you currently believe.** "FP16 overflows on long inputs"
-> implies short inputs are safe, under which a single long probe is not merely adequate but
-> *well-chosen*. The weakened test then passes and confirms everything.
+Both halves came out of one 2026-04-03 documentation audit, and they compound.
 
-This is a different failure from trusting a result you should have checked: here a **causal story**
-silently sets the bar, so the check that would have caught it is the one the story talked you out of
-needing. It was caught only because the falsification test was treated as the deliverable and the
-hypothesis as packaging.
+⚠️ **A verification whose reference was produced by the verifier is not a verification.** That audit
+reported five files "all verified clean". Its own session, ~320 events earlier, had sent the docs
+project the numbered change-list those files had just been edited from — so it compared the docs
+against its own instructions, and **agreement was structurally guaranteed.** Two properties make
+this hard to catch rather than merely embarrassing. **Distance manufactures the illusion**: 320
+events is far more than enough to stop experiencing a list as your own output, and by the time it is
+read back it is simply *the criteria* — so the defence is not vigilance but asking **where did my
+reference come from**, a question with a checkable answer, unlike "am I being circular", which has
+none. And **`clean` is the one verdict that leaves nothing to review**, so it is accepted by default
+and inherited by everyone downstream; here for **115 days**. ⚠️ A "clean" verdict does not even cover
+the bytes it read — two commits landed on one of those files afterwards, one introducing a type that
+has never existed. **Date the artifact, not the review: a verdict names a commit or it names
+nothing.** The reusable form: **a review is evidence only to the extent its reference is INDEPENDENT
+of the thing reviewed.** Code, a measurement, or a document someone else wrote are independent. Your
+own change-list, task description or previous summary are not.
 
-⭐ **And the end of the story is better shaped than "the mechanism was wrong", which is why it is
-worth the lines.** A *variant* of the hypothesis was proposed — that the conversion step itself is
-the bug rather than FP16's range — and **it is correct**: `coreml` + `dtype: "fp16"` is clean on
-every input, because there is nothing left to convert. The decision does not move an inch anyway.
-CoreML measured 84.2ms/doc at 382.6ms CPU/doc against webgpu's 56.5/3.8 in the same run, fp16 doubles
-the weights on disk and in memory, and **`webgpu` + `fp16` does not even load** (`Invalid
-ShaderModule "LayerNorm"`). So fp16 unlocks the device we reject and breaks the one we ship. **A
-correct mechanism that changes no decision is still worth establishing** — it is what tells you the
-rejection rests on measurement rather than on the wrong story you started with.
+⭐ **A checklist derived from the artifact can only find contradictions, never omissions.** Walk a
+document checking each claim and every finding you can possibly produce has the form "it says X, the
+code says Y". You cannot produce "the code has Z and the document has never mentioned it", because
+nothing in the document ever raised Z. That audit's findings were **100% contradictions and 0%
+omissions**, and the ratio was a fact about the method, not about the documents: a whole-repo probe
+for concepts absent from all four docs found **twelve** invisible subsystems — the plugin layer, the
+Worker thread, dual lenses, `eid`/`parentEid`, the active chain, the search index, Edit/Rewind and
+more. **This is the addition-list failure from *Gates* in a different medium**, which is why it lives
+here rather than being filed as a documentation lesson. **The omission pass needs its own instrument
+and it runs in the opposite direction: start from the CODE, enumerate what exists, and ask which of
+those the reader would form a wrong model without** — that last clause is the bound, or the pass
+never terminates. ⚠️ The trap for whoever runs it: **the omission pass makes the contradiction pass
+look thorough by comparison**, because contradictions come with line numbers and quotes while
+omissions come with an absence, and an absence reads as the weaker finding while being the larger
+one.
 
-**Member 3: the class is not confined to code, and the cheapest instance to guard against is
-reading.** A
-short instruction was given a coherent interpretation that fit its words, and acting on that reading
-would have deleted 660 lines of this file; the reading was defended with "a revert restores anything
-lost", which is true and beside the point — **the revert restores the lines, not the hour.** Same
-shape as the two fictions above: a plausible account, held with more confidence than its evidence
-carried, silently lowering the bar for the check that would have caught it. ⭐ **When an instruction
-is short and the action it licenses is irreversible or expensive, one clarifying question is always
-cheaper than a confident reading.** The temptation is strongest exactly when the reading is
-coherent, because coherence feels like confirmation.
-
-⭐ **Fourth member, and the one you are most likely to commit while doing everything else right: a
-measurement that contradicts your plan is not a result to report afterwards — it is a reason to
-stop.** Mid-execution of that same deletion, the first rung was measured at 82 lines against an
-estimate of 310, which was already enough to refute the plan it was part of. The intent was to
-finish the cuts and report the discrepancy after. **Nothing about that is lazy or careless — it is
-the ordinary shape of finishing what you started**, which is exactly why it needs to be written
-down: the surprising number arrives while you are busy, and "I'll report it when I'm done" costs
-nothing to think and everything if the plan was wrong.
-
-## A verification whose reference was produced by the verifier is not a verification
-
-⚠️ **Checking an artifact against a description YOU wrote is a self-consistency check wearing
-verification's clothes, and from the inside it is indistinguishable from the real thing.**
-
-The instance, because the shape is what matters and the shape is invisible without it. A 2026-04-03
-documentation audit reported *"matrix-docs: index.md, why.md, concepts.md, architecture.md,
-getting-started.md — all verified clean"*. Its own session, ~320 events earlier, had sent the docs
-project the numbered change-list those files had just been edited from. So the audit compared the
-docs against its own instructions and found agreement. **Agreement was structurally guaranteed.**
-
-Two properties that make this hard to catch rather than merely embarrassing:
-
-- ⭐ **Distance manufactures the illusion.** 320 events is far more than enough to stop experiencing
-  a list as your own output; by the time it is read back it is simply *the criteria*. The defence is
-  not vigilance, it is asking **where did my reference come from** — a question with a checkable
-  answer, unlike "am I being circular", which has none.
-- ⚠️ **The verdict was `clean`, which is the one verdict that leaves no artifact to review.** A wrong
-  finding can be argued with. "Nothing to report" produces nothing anyone can check, so it is
-  accepted by default and inherited by everyone downstream — here for **115 days**, during which the
-  files were never re-examined.
-
-⚠️ **Corollary that bit the same audit: a "clean" verdict does not even cover the bytes it read.**
-Two commits landed on `architecture.md` AFTER it closed, one of them 12 hours later, and that commit
-introduced the `TreeNode: TaskNode | FolderNode` heading — a type that has never existed — which the
-next reviewer found in ten minutes by reading the table of contents. **Date the artifact, not the
-review**: a verdict names a commit or it names nothing.
-
-The reusable form: **a review is only evidence to the extent its reference is INDEPENDENT of the
-thing reviewed.** Code, a measurement, or a document written by someone else are independent. Your
-own change-list, your own task description, and your own previous summary are not.
-
-## ⭐ A checklist derived from the artifact can only find contradictions, never omissions
-
-**Walk a document and check each claim, and every finding you can possibly produce has the form
-"it says X, the code says Y". You cannot produce "the code has Z and the document has never
-mentioned it", because nothing in the document ever raised Z.** The audit above returned findings
-that were **100% contradictions and 0% omissions**, and that ratio was not a fact about the
-documents — it was a fact about the method.
-
-**This is the addition-list rule from *Gates* in a different medium**, which is the reason to keep it
-here rather than treat it as a documentation lesson: the document's own claims ARE the include-list,
-so it fails in the same silent direction — new subsystems simply are not covered and nothing
-anywhere says so. Measured on the same files: a whole-repo probe for concepts absent from all four
-docs returned **0 mentions** of the plugin layer, the Worker thread, per-plugin data roots, dual
-lenses, `/api/<plugin>/`, `eid`/`parentEid`, the active chain, the search index, embeddings,
-Edit/Rewind, `resultRounds`, or `agent_activity` — twelve subsystems, invisible to claim-checking
-because a document cannot contradict you about something it does not discuss.
-
-**So the omission pass needs its own instrument, and it runs in the opposite direction: start from
-the CODE, enumerate what exists, and ask which of those the reader would form a wrong model
-without.** That last clause is the bound — "the docs don't mention X" is true of a thousand X's, and
-without it the pass never terminates. A grep for each concept-name across the doc set is the cheap
-version and it is where the twelve came from.
-
-⚠️ **The trap for whoever runs it next: the omission pass makes the contradiction pass look
-thorough by comparison** — contradictions come with line numbers and quotes, omissions come with an
-absence, and an absence reads as a weaker finding while being the larger one.
-
-## ⚠️ Auditing a live repo: pin the commit, and expect it to move under you
-
-Mid-audit, the target repo gained two commits and `architecture.md` went **984 → 1015 lines**, which
-silently invalidated every line number collected up to that point and — worse — **fixed one of the
-findings**, so reporting it would have sent another team to re-do work they had just finished.
-
-Three habits, all cheap, none of which occur to you until it has happened once:
-
-1. **Record the target's HEAD when you start and re-check it before you report.** `git log --oneline`
-   costs nothing; a report whose line numbers are off by 31 costs the reader their trust in all of it.
-2. ⭐ **Re-derive line numbers mechanically from anchor TEXT at the end, never carry the numbers you
-   noted while reading.** A ~30-line script that greps each finding's quoted sentence and prints its
-   current line is proof against every edit that does not touch that sentence. Numbers you wrote down
-   by hand are a snapshot of a file that no longer exists.
-3. **Diff the range before re-reading everything.** `git diff <start-head> HEAD -- <file>` told me in
-   one command that exactly one section had changed, so re-verification was one section rather than
-   1015 lines.
-
+⚠️ **Auditing a live repo: pin the commit, and expect it to move under you.** Mid-audit the target
+gained two commits, one file went 984 → 1015 lines, every line number collected up to that point was
+silently invalidated, and — worse — **one of the findings was fixed**, so reporting it would have
+sent another team to redo work they had just finished. Record the target's HEAD when you start and
+re-check it before you report; **re-derive line numbers mechanically from anchor TEXT at the end,
+never carry the ones you noted while reading**; and diff the range before re-reading everything.
 ---
 # The Agent Loop
 ---
