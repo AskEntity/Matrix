@@ -2890,7 +2890,11 @@ dropping `rotate(90deg)`, `currentColor`, `sk-ant-…` and dotted i18n keys. The
 single lowercase word with no space is NOT reported**, so `alt="attached"` is a real bare string this
 gate cannot see, and **baseline 0 will not mean zero bare strings.** The trade is worth taking because
 **a gate with a bad hit rate teaches people to skim past it** — but a recall gap nobody wrote down is
-one commit from becoming exactly the defect this gate was just fixed for.
+one commit from becoming exactly the defect this gate was just fixed for. ⚠️ **This paragraph came
+within one commit of proving its own point**: a compression pass deleted it as supporting detail, and
+it was recovered only by a mechanical sweep asking whether each of the old file's warnings still had a
+landing place. Nothing about its absence would have rung — the gate would have kept printing a number
+that the next reader had no way to know was holed.
 
 ⭐ **A partial-hit gate plus a fix-only-what-it-flagged policy produces incoherent output.** This
 outlives any particular widening — a heuristic is partial by construction. When the i18n gate was
