@@ -1,9 +1,9 @@
 # Matrix Project Memory
 
-> Read on every session start. **This file holds the four things the code cannot hold: why we wanted
-> it this way (in the words the decision was made in), how the next person will trip, the places two
-> files three thousand lines apart are doing the same thing, and just enough implementation to make
-> those three readable.**
+> Read on every session start. **This file holds what the code cannot hold about itself.** Your
+> system prompt names the kinds that qualify; do not re-list them here, because two copies of one
+> list is how a category goes missing without anything going red — this blockquote already lost
+> "negative results" once, on the day it was written.
 >
 > It does not hold mechanism. The code states mechanism better than prose can, and prose about
 > mechanism rots without anything going red. If a paragraph you are writing would survive being
