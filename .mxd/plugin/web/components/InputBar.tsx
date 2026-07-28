@@ -306,9 +306,16 @@ export const InputBar = memo(function InputBar({
 	// …which is only half an affordance. Having just attached an image, the
 	// user needs to be told what to do, and a tooltip cannot tell them: it
 	// needs a hover, which Enter-to-send does not have and a keyboard user
-	// never performs. So the hint is always visible, from the moment of
-	// attaching, and it says what to DO rather than what is wrong.
-	const imageNeedsText = attachedImages.length > 0 && !prompt.trim();
+	// never performs. So the hint rides in the textarea's PLACEHOLDER: no
+	// hover needed, no DOM node of its own, no second layout shift under the
+	// thumbnails, it sits where the caret is about to go, and it clears itself
+	// the instant the user types — which is exactly when it stops being true.
+	//
+	// ⚠️ The test is `!prompt`, NOT `!prompt.trim()`. A placeholder is hidden
+	// by ANY content, whitespace included, so trimming here would set a
+	// placeholder the browser never paints — a flag claiming a hint nobody can
+	// see. The whitespace-only case is carried by the disabled Send button.
+	const imageNeedsText = attachedImages.length > 0 && !prompt;
 
 	const handleSubmit = useCallback(
 		(e: React.FormEvent | React.KeyboardEvent) => {
@@ -389,9 +396,6 @@ export const InputBar = memo(function InputBar({
 						</div>
 					))}
 				</div>
-			)}
-			{imageNeedsText && (
-				<div className="mxd-image-needs-text">{t("footer.imageNeedsText")}</div>
 			)}
 			{/* Editing indicator — shown when user clicked Edit on a message */}
 			{editRequest && (
@@ -495,11 +499,13 @@ export const InputBar = memo(function InputBar({
 					}
 				}}
 				placeholder={
-					targetNodeId
-						? t("footer.messageToTask", {
-								task: nodeMap.get(targetNodeId)?.title ?? "task",
-							})
-						: t("footer.sendMessage")
+					imageNeedsText
+						? t("footer.imageNeedsText")
+						: targetNodeId
+							? t("footer.messageToTask", {
+									task: nodeMap.get(targetNodeId)?.title ?? "task",
+								})
+							: t("footer.sendMessage")
 				}
 				disabled={!projectId}
 			/>

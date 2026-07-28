@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconHexagon, IconPause, IconTrash } from "./icons.tsx";
+import { IconHexagon, IconTrash } from "./icons.tsx";
 
 export const OrchestratorDetail = memo(function OrchestratorDetail({
 	isRootActive,
@@ -16,7 +16,6 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 	provider,
 	model,
 	onClearSession,
-	onStop,
 }: {
 	isRootActive: boolean;
 	nodes: TreeNode[];
@@ -30,7 +29,6 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 	provider?: string | null;
 	model?: string | null;
 	onClearSession?: () => void;
-	onStop?: () => void;
 }) {
 	const { t } = useLocale();
 
@@ -172,25 +170,14 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 					</div>
 				</div>
 			)}
-			<div
-				style={{
-					marginTop: "12px",
-					display: "flex",
-					gap: "8px",
-					alignItems: "center",
-				}}
-			>
-				{isRootActive && onStop && (
-					<button
-						type="button"
-						className="mxd-btn mxd-btn-sm mxd-btn-ghost"
-						onClick={onStop}
-					>
-						<IconPause size={12} />
-						{t("orch.pause")}
-					</button>
-				)}
-				{!isRootActive && onClearSession && (
+			{/*
+			 * Nothing here while the root agent is running, and that is the
+			 * point: "stop" has exactly one user-facing entry, the button
+			 * beside the composer, and it means "end this turn". This row
+			 * once held a second one that tore the whole session down.
+			 */}
+			{!isRootActive && onClearSession && (
+				<div style={{ marginTop: "12px" }}>
 					<button
 						type="button"
 						className="mxd-btn mxd-btn-sm mxd-btn-ghost"
@@ -199,8 +186,8 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 						<IconTrash size={12} />
 						{t("detail.clearSession")}
 					</button>
-				)}
-			</div>
+				</div>
+			)}
 		</div>
 	);
 });

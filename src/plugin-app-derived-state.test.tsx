@@ -99,7 +99,9 @@ function makeDeps(overrides?: Partial<Record<string, unknown>>) {
 		setActiveAgents: tracker("setActiveAgents"),
 		setOlderEventsAvailable: tracker("setOlderEventsAvailable"),
 		start: mock(async () => {}),
-		stop: mock(async () => {}),
+		// No `stop` fake: the teardown call is gone from ActionHandlerDeps, so
+		// a double for it would be a double for something production can no
+		// longer reach.
 		compact: mock(async () => {}),
 		sendMessageToTask: mock(async () => {}),
 		deleteTask: mock(async () => {}),
@@ -114,6 +116,48 @@ function makeDeps(overrides?: Partial<Record<string, unknown>>) {
 }
 
 // handleAddProject + handleDeleteProject moved to shell — tests removed
+
+describe("/stop is the same verb as the Stop button beside the composer", () => {
+	// "Stop" has one meaning for a user: end this turn. There is no second,
+	// wider stop anywhere on the user-facing surface — tearing the session
+	// down survives as a REST endpoint (and `mxd stop`) with no UI entry.
+	//
+	// ⚠️ Pinning "/stop does not error" would pass before AND after this
+	// change; a fixture that cannot express the difference is evidence for
+	// neither. What separates the two implementations is WHICH function runs
+	// and on WHICH task, so that is what is asserted.
+	// Driven through `handleSend`, which is the door the composer submits to —
+	// slash detection included. Calling the private dispatcher would have
+	// tested a step rather than the command.
+	it("interrupts the turn of the task being VIEWED, not root", async () => {
+		const { deps } = makeDeps();
+		// The fixture is only the hard case while these two differ — if they
+		// ever converge, the assertion below stops distinguishing "the viewed
+		// task" from "root" and quietly proves nothing.
+		expect(deps.targetNodeId).not.toBe(deps.rootNodeId);
+
+		await createActionHandlers(deps).handleSend("/stop");
+
+		expect(deps.interruptTask).toHaveBeenCalledTimes(1);
+		expect(deps.interruptTask).toHaveBeenCalledWith(deps.targetNodeId);
+		// Consumed as a command, not delivered as chat.
+		expect(deps.sendMessageToTask).not.toHaveBeenCalled();
+	});
+
+	it("is a no-op before a task is resolved, rather than starting one cold", async () => {
+		// targetNodeId is null only in the brand-new transient before
+		// useTasks resolves. Reachable — and the wrong answer here is loud:
+		// falling through to the chat path would `start()` an agent from a
+		// command whose whole purpose is to stop one.
+		const { deps } = makeDeps({ targetNodeId: null });
+
+		await createActionHandlers(deps).handleSend("/stop");
+
+		expect(deps.interruptTask).not.toHaveBeenCalled();
+		expect(deps.start).not.toHaveBeenCalled();
+		expect(deps.addLog).not.toHaveBeenCalled();
+	});
+});
 
 describe("handleCreateTask selects the newly created task", () => {
 	it("sets selectedTaskId to the new task's ID after creation", async () => {

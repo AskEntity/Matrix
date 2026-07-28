@@ -45,7 +45,6 @@ export const api = {
 	clarifications: (id: string) => projectUrl(id, "clarifications"),
 	agent: (id: string) => projectUrl(id, "agent"),
 	agentStatus: (id: string) => projectUrl(id, "agent", "status"),
-	stop: (id: string) => projectUrl(id, "stop"),
 	compact: (id: string) => projectUrl(id, "compact"),
 	clarify: (id: string) => projectUrl(id, "clarify"),
 	sessionsPrune: (id: string) => projectUrl(id, "sessions", "prune"),

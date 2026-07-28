@@ -439,17 +439,6 @@ export function useAgent(projectId: string) {
 		[authFetch, projectId],
 	);
 
-	const stop = useCallback(async () => {
-		const res = await authFetch(api.stop(projectId), {
-			method: "POST",
-		});
-		// 404 means the session was already gone; the backend broadcast the
-		// end of it either way, so there is no local state to reconcile.
-		if (!res.ok && res.status !== 404) {
-			throw new Error((await res.json()).error);
-		}
-	}, [authFetch, projectId]);
-
 	const continueTask = useCallback(
 		async (taskId: string, message?: string) => {
 			const body: Record<string, unknown> = {};
@@ -560,7 +549,6 @@ export function useAgent(projectId: string) {
 		model,
 		setModel,
 		start,
-		stop,
 		compact,
 		checkStatus,
 		continueTask,

@@ -95,7 +95,6 @@ const en: Translations = {
 	"orch.cacheWrite": "Cache Write",
 	"orch.cacheRead": "Cache Read",
 	"orch.output": "Output",
-	"orch.pause": "Interrupt",
 
 	// Status
 	"status.draft": "Draft",
@@ -232,7 +231,7 @@ const en: Translations = {
 		"Stop the current turn. Background commands keep running, and anything you send next goes to the same agent.",
 	"footer.attachImage": "Attach image",
 	"footer.dropImage": "Drop image to attach",
-	"footer.imageNeedsText": "Add some text to send",
+	"footer.imageNeedsText": "Add a message to send this image",
 	"footer.contextWindow": "Context",
 
 	"footer.compactAt": "Compact at",
@@ -482,7 +481,6 @@ const zh: Translations = {
 	"orch.cacheWrite": "缓存写入",
 	"orch.cacheRead": "缓存读取",
 	"orch.output": "输出",
-	"orch.pause": "中断",
 
 	// Status
 	"status.draft": "草稿",
@@ -617,7 +615,7 @@ const zh: Translations = {
 		"停止当前这一轮。后台命令继续运行，你接着发的消息还是给同一个 agent。",
 	"footer.attachImage": "附加图片",
 	"footer.dropImage": "拖放图片以添加",
-	"footer.imageNeedsText": "加一句文字才能发送",
+	"footer.imageNeedsText": "配一句话，就能把图片发出去",
 	"footer.contextWindow": "上下文",
 
 	"footer.compactAt": "压缩阈值",

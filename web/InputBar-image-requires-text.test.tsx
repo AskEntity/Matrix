@@ -15,8 +15,16 @@
  * The AFFORDANCE is the third thing pinned, and it is the reason a plain
  * disabled button was not enough: the user has just attached an image and
  * nothing happens. A tooltip would only reach a hover, which the Enter path
- * does not have and a keyboard user never performs — so the hint is always
- * visible, from the moment of attaching.
+ * does not have and a keyboard user never performs. So the hint rides in the
+ * textarea's PLACEHOLDER — no hover, no DOM node of its own, and it clears
+ * itself the instant the user types, which is exactly when it stops being
+ * true.
+ *
+ * ⚠️ Its condition is `!prompt`, NOT `!prompt.trim()`, and that asymmetry is
+ * pinned below: ANY content hides a placeholder, whitespace included, so
+ * trimming would assert a hint the browser never paints. The whitespace-only
+ * case is carried by the disabled Send button alone — which is why the test
+ * for it asserts the ABSENCE of the hint rather than its presence.
  *
  * ── Two harness facts, both measured, both non-obvious ──────────────────
  *
@@ -78,7 +86,7 @@ async function waitFor<T>(
 
 const NODE_ID = "node-image-text";
 /** What the user is told to DO, not what is wrong. */
-const HINT = "Add some text to send";
+const HINT = "Add a message to send this image";
 
 const imgFile = (name = "a.png", type = "image/png") =>
 	new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], name, { type });
@@ -145,13 +153,13 @@ async function renderInputBar(opts?: { draft?: string }) {
 
 	const sendButton = () =>
 		div.querySelector<HTMLButtonElement>("button.mxd-btn-run");
-	// ⚠️ A boolean, deliberately. `expect(domNode).toBeNull()` prints the node
-	// WITH its React fiber graph on failure — measured here at 182MB of output
-	// and a 43-second test, which is how a caught mutation came back looking
-	// like a survivor.
-	const hintShown = () => div.querySelector(".mxd-image-needs-text") !== null;
-	const hintText = () =>
-		div.querySelector(".mxd-image-needs-text")?.textContent ?? "";
+	// The hint has no element of its own — it IS the placeholder. Strings and
+	// booleans only: `expect(domNode).toBeNull()` prints the node WITH its
+	// React fiber graph on failure — measured here at 182MB of output and a
+	// 43-second test, which is how a caught mutation came back looking like a
+	// survivor.
+	const placeholder = () => textarea.placeholder;
+	const hintShown = () => textarea.placeholder === HINT;
 	const previews = () =>
 		div.querySelectorAll<HTMLImageElement>(".mxd-image-previews img");
 
@@ -185,7 +193,7 @@ async function renderInputBar(opts?: { draft?: string }) {
 		sent,
 		sendButton,
 		hintShown,
-		hintText,
+		placeholder,
 		previews,
 		attachImage,
 		insertText,
@@ -194,17 +202,27 @@ async function renderInputBar(opts?: { draft?: string }) {
 }
 
 describe("composer: an image alone is not sendable", () => {
-	test("image attached, no text → Send is disabled and the hint says what to do", async () => {
-		const { sendButton, hintShown, hintText, attachImage } =
+	test("image attached, no text → Send is disabled and the placeholder says what to do", async () => {
+		const { sendButton, hintShown, placeholder, attachImage, insertText } =
 			await renderInputBar();
 		expect(sendButton()?.disabled).toBe(true); // empty composer
 		expect(hintShown()).toBe(false);
+		const idlePlaceholder = placeholder(); // the ordinary "Message to …"
+		expect(idlePlaceholder.length).toBeGreaterThan(0);
 
 		await attachImage();
 
 		expect(sendButton()?.disabled).toBe(true);
 		await waitFor(hintShown);
-		expect(hintText()).toContain(HINT);
+		expect(placeholder()).toBe(HINT);
+
+		// …and it gets out of the way the moment the user does what it asked.
+		// A hint outliving its condition would sit on top of the target prompt
+		// for the rest of the session — the cost of borrowing a slot that
+		// already had a job.
+		await insertText("now with words");
+		expect(placeholder()).toBe(idlePlaceholder);
+		expect(sendButton()?.disabled).toBe(false);
 	});
 
 	test("image attached, no text → Enter does not send (with a positive control)", async () => {
@@ -234,7 +252,11 @@ describe("composer: an image alone is not sendable", () => {
 		await attachImage();
 
 		expect(sendButton()?.disabled).toBe(true);
-		expect(hintShown()).toBe(true);
+		// ⚠️ NO hint here, deliberately, and this is the assertion that pins
+		// `!prompt` over `!prompt.trim()`: whitespace is content, content hides
+		// a placeholder, so a hint set here is a hint the browser never paints.
+		// The disabled Send button carries this case on its own.
+		expect(hintShown()).toBe(false);
 		pressEnter();
 		await new Promise((r) => setTimeout(r, 30));
 		expect(sent).toHaveLength(0);
@@ -267,13 +289,15 @@ describe("composer: an image alone is not sendable", () => {
 		expect(sent[0]?.images).toBeUndefined();
 	});
 
-	test("an empty composer with no image shows no hint", async () => {
+	test("an empty composer with no image keeps its ordinary placeholder", async () => {
 		// The hint answers "you attached something and nothing happened". With
-		// nothing attached there is no question to answer, and a permanent
-		// line under an empty composer is noise.
-		const { hintShown, sendButton } = await renderInputBar();
+		// nothing attached there is no question to answer — and the slot it
+		// borrows is not free, so an unconditional hint would permanently
+		// replace the target prompt.
+		const { hintShown, placeholder, sendButton } = await renderInputBar();
 		await new Promise((r) => setTimeout(r, 30));
 		expect(hintShown()).toBe(false);
+		expect(placeholder()).toContain("task"); // the "Message to …" prompt
 		expect(sendButton()?.disabled).toBe(true);
 	});
 });
