@@ -390,6 +390,60 @@ suite.
   arrives while you are busy, and "I'll report it when I'm done" costs nothing to think and
   everything if the plan was wrong.
 
+## ⭐ Your instrument is a claim until you have made it fail
+
+**Every measuring thing in this repo has, at least once, answered confidently and wrongly — and the
+shape is always the same: it produces the COMFORTABLE answer.** A search returns `(no matches)` and
+you conclude nothing points there. A gate prints `All checks passed.` A mutation harness reports
+SURVIVED. A linter reports zero. **None of those look like a broken tool. They look like good news**,
+which is why nobody goes back to check them, and why the wrong answer is inherited by everyone
+downstream.
+
+> **A checker reporting ZERO is a claim about the checker until you have made it report ONE. Planting
+> is not diligence — it is the only thing that distinguishes "clean" from "not looking".**
+
+The roll-call, because the range is the argument — these are not one subsystem's bad week:
+
+| the instrument | what it reported | what was true |
+|---|---|---|
+| `search` | `(no matches)` | it could not see `.mxd/plugin/`, 34% of the source |
+| `check-i18n.sh` | `All checks passed.` | it had read 8% of the lines, and 1 syntactic form of 4 |
+| `.hooks/pre-commit` | `All checks passed.` | 4 of 141 test files, one of them deleted 4 months earlier |
+| biome `noFloatingPromises` | zero violations | zero *also* over a planted violation in the file it was checking |
+| a mutation harness | `SURVIVED` | macOS has no coreutils `timeout`, so the run never happened |
+| a mutation harness (again) | `SURVIVED` | it ran, against a test path that does not contain the mutated file's tests |
+| a per-frame scroll probe | "range unchanged" | 267ms of samples missing, because the thing being measured had blocked the main thread |
+| a three-signal task probe | `false` for all 551 tasks | `tree.json`'s `nodes` is an ARRAY, so `Object.entries` handed back indices as ids |
+| the `ps`-based autoResume audit | "auto-resume still costs 4 procs" | it was measuring an agent a human had started 14 seconds after boot |
+
+Four things a control has to be, each learned from one of those:
+
+- ⚠️ **Able to FAIL for the reason you are testing.** A reviewer confirmed with a positive control
+  that grep could see a file's real exports, then reported two of its symbols as fabricated — sound
+  method, wrong control. The symbols were real and lived in a commit their branch had not merged, and
+  the chosen control existed in BOTH versions, so it could not separate "this symbol is absent" from
+  "my checkout is old". **Pick a control present under one hypothesis and absent under the other.**
+- ⚠️ **Placed where the risk is.** A `while read` loop silently dropped its final line, and the
+  planted control worked **only because it was last**. A control in the middle would have passed and
+  told you nothing.
+- ⚠️ **Verified to have RUN, and to have run the thing that COVERS the subject.** "Did it run" and
+  "did it run the tests that cover this" are two questions, and only the second makes SURVIVED mean
+  anything.
+- ⚠️ **Of a resolution that can carry the measurement you specified.** "Record `scrollHeight` every
+  frame" is below the instrument's resolution the moment the event you are hunting blocks the main
+  thread, **and its failure mode is a silent false negative that reads exactly like a real result.**
+
+⭐ **Two corollaries that catch what planting does not.** A **uniform answer across a whole population
+is the signature of a broken instrument, not a finding** — 551/551 is not a result. And **a heuristic
+validated only where it works reads as verified**: the `ps` proxy was written against a boot where
+nothing else was happening, i.e. in exactly the condition where it cannot fail.
+
+⚠️ **Worst of all is when the rule that suppresses a redundant check is also suppressing the only
+detector a failure mode has** — *"ALWAYS use this for search tasks, NEVER invoke grep via bash"*, on
+a `search` that was blind. For as long as that bug lived, an agent that obeyed got the wrong answer
+and one that disobeyed got the right one. **A description that tells agents to stop cross-checking
+has to earn it.**
+
 ## Reviewing: whose reference is it, and what shape of finding can it produce
 
 Both halves came out of one 2026-04-03 documentation audit, and they compound.
@@ -907,11 +961,8 @@ something the agent had read 5 events earlier got double-checked immediately. **
 only conspicuous when it takes everything away, which is the case that matters least** — so do not
 file a bug in this family under "detectable" because of its output SHAPE.
 
-⭐ **The check that caught it is the one the tool description forbids** — *"ALWAYS use this for search
-tasks — NEVER invoke grep via bash"*. **A rule that suppresses a redundant check also suppresses the
-only detector its failure mode has.** For as long as the bug lived, an agent that obeyed got the
-wrong answer and one that disobeyed got the right one, which trains every agent reading a tool
-description to discount it. **A description that tells agents to stop cross-checking has to earn it.**
+The check that caught it is the one this tool's own description forbids — see *Your instrument is a
+claim until you have made it fail*, where that is the general rule.
 
 ### Two rules about compatibility worries, one of which is a trap
 
@@ -975,15 +1026,9 @@ made a regression here invisible.**
 the person who fixed the tool is the person with the most reason to believe it works.** The task that
 wrote down "a completeness survey run with a blind instrument returns a confident, wrong 'that's all
 of them'" then ran its own survey on the blind instrument. The warning and the violation were in the
-same task.
-
-⭐ **Generalised, because this is the standing pattern rather than a run of bad luck: a checker
-reporting ZERO is a claim about the checker until you have made it report ONE.** Four instruments
-answered confidently and wrongly in one week — a `search` that could not see a third of the source,
-two gates that read 8% and 3.6% and printed `All checks passed.`, and biome's
-`nursery/noFloatingPromises`, which reports zero over this repo **and zero over a planted violation in
-the file it is checking**. **Planting is not diligence; it is the only thing that distinguishes
-"clean" from "not looking".**
+same task. Everything else about instruments answering wrongly is in *Your instrument is a claim
+until you have made it fail*; what is specific here is that **the daemon is the reason your
+instrument can be stale while your source is correct.**
 
 ⚠️ **Sibling trap, and the cheaper half to forget: a single-line grep is a claim about LINE BREAKS.**
 `grep '\.catch(async'` returns **zero** hits in a repo that has one, because the formatter split the
@@ -1824,12 +1869,10 @@ the tool's own promise. It is not, **because the locations survive**: merging ke
 indices included, so every place inside the task that matched is still named. What dedup drops is a
 second copy of the same 500-char description and a second score, neither of which was ever a location.
 
-⭐ **Instrument note, reusable far beyond this: a uniform answer across a whole population is the
-signature of a broken instrument, not a finding.** The first probe of the three signals reported
-"session JSONL exists" as **false for all 551 tasks** — `tree.json`'s `nodes` is an ARRAY, and reading
-it with `Object.entries` hands back indices as ids, so every `existsSync` missed a file that was there.
-Believed, it would have "proved" the JSONL signal useless and handed the decision to `resultRounds`,
-i.e. to the 88% error above. **The probe now asserts its own premise before it reports anything.**
+⚠️ **The probe that produced that table was broken on its first run**, reporting "session JSONL
+exists" as false for all 551 tasks — and believed, it would have "proved" the JSONL signal useless and
+handed the decision to `resultRounds`, i.e. to the 88% error above. It now asserts its own premise
+before it reports anything. See *Your instrument is a claim until you have made it fail*.
 
 ---
 # Daemon, Worker & Transport
@@ -2408,17 +2451,15 @@ A real session has images with no reserved height, expandable cards and markdown
 a remount depends on how expensive the content is to rebuild, so a fixture made of cheap content
 cannot answer the question at all.**
 
-⭐ **The instrument's blind spot, and what it says about specifying measurements.** A per-frame probe
-classified that exact jump as `range UNCHANGED → not a clamp`. Wrong: the range collapsed and refilled
-**inside one frame**, and between the two DOM mutations there are **267ms containing ZERO samples where
-~16 were due at 60fps** — the main thread was blocked solid rebuilding 82 entries, so every rAF callback
-queued behind it. **"No dip in the samples" is not "no dip."** That is a systematic bias, not an edge
-case: **the operations that cause large displacement are exactly the operations that block the main
-thread long enough to hide themselves, so a per-frame instrument is least able to see precisely the
-moments it is most needed for.** Any instrument here needs an observation that survives a blocked thread
-— a count taken either side of the render, or a mutation record — not a sample taken during it. **Before
-specifying a measurement, check that the instrument's resolution can carry it**; the failure mode is a
-silent false negative that reads exactly like a real result.
+⚠️ **The per-frame probe watching all this reported `range UNCHANGED → not a clamp`, and was wrong**:
+the range collapsed and refilled **inside one frame**, and between the two DOM mutations there are
+**267ms containing ZERO samples where ~16 were due at 60fps**, because the main thread was blocked
+solid rebuilding 82 entries. **"No dip in the samples" is not "no dip."** The bias is systematic
+rather than an edge case — **the operations that cause large displacement are exactly the operations
+that block the main thread long enough to hide themselves** — so any instrument here needs an
+observation that survives a blocked thread: a count taken either side of the render, or a mutation
+record, never a sample taken during it. (General form: *Your instrument is a claim until you have made
+it fail*.)
 
 ⭐ **And the counterpart: stop collecting once the answer cannot change the action.** Exactly where in
 those 267ms the offset died does not alter the fix — do not remove the 82 nodes.
@@ -2725,15 +2766,10 @@ Four shapes mutation testing cannot see, each with a different cause:
   same array again, so deleting the sort inside the walk failed **no test at all**. Deleting the
   redundant one is what made the survivor testable.
 
-⚠️ **Check that the harness RAN before believing its verdict — "survived" is the comfortable answer for
-every mutation.** A harness wrapped its run in `timeout 180 bun test`; **macOS ships no coreutils
-`timeout`**, so the command failed, the run never happened, a `grep -c` on empty output returned 0, and
-**the harness reported the mutation as SURVIVED.** The only available signal was wall-clock: 234ms against
-an expected ~12s. ⚠️ **And a harness that RAN can still be aimed at the wrong files, which also reports
-SURVIVED**: a mutation to a plugin web file was checked with a test path that does not contain its tests.
-**"Did it run" and "did it run the tests that cover this" are two questions**, and only the second makes
-SURVIVED mean anything. **An instrument that fails by producing the comfortable answer is worse than one
-that errors.**
+⚠️ **`SURVIVED` is the comfortable answer, so it is the one to distrust** — twice a harness reported it
+without ever running the tests that cover the mutation. Both instances and the general rule are under
+*Your instrument is a claim until you have made it fail*; the local requirement is that a harness must
+refuse to print a verdict unless the file text actually changed AND bun printed a summary line.
 
 ⚠️ **`git checkout -- <file>` reverts to the last COMMIT, so it eats an uncommitted fix in the same
 file — including the fix you are mutating.** The tell is an "after revert" run showing the same failure
