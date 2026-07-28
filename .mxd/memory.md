@@ -1004,300 +1004,200 @@ that it does not exist.** (Gotcha: an unlisted tool has unconstrained argument t
 
 ## The event log: append-only, chained, and it never deletes
 
-One JSONL file per task. Every persisted event carries `eid` (12-char hex) and `parentEid` (the
-previous event's eid, or `null` for the first), stamped by `EventStore.append`/`appendBatch` —
-callers never set them. `EventStore.lastEventIds` holds the per-session chain head. Old files
-without eids are migrated on first read (linear chain, atomic temp+rename, idempotent).
-
-**Field naming**: `eid`/`parentEid`, not `id`/`parentId`, because `MessageEvent.id` already exists
-and means something else (the ULID of the two-phase message lifecycle). They are optional on the
-`Event` type because callers create events without them; after persistence they are always present.
-
-**Lines serialize the chain fields FIRST** (`{"eid":…,"parentEid":…,"type":…}`). Readability only —
-tailing a JSONL shows the chain without scrolling past a long `content`. Reading is order-agnostic,
-so pre-change lines with the fields at the tail read back identically and old files are not
-rewritten; the two forms coexist inside one file, pinned by a test.
+One JSONL file per task. Every persisted event carries `eid` and `parentEid`, stamped by the store —
+callers never set them. **The chain exists so that history can be ABANDONED without being destroyed:
+a rollback moves the head, the events after it simply stop being reachable, and the evidence needed
+to debug a corruption survives it.** Nothing in this codebase may address an event by file position.
 
 ⚠️ **`{ eid, parentEid, ...event }` is WRONG, and it looks right.** When the input already carries
 those keys the spread overwrites the fresh values with the stale ones, while the key POSITION stays
-first so the line looks correct. `withChainFields` destructures them off before spreading. Not
-hypothetical: `buildSessionRepair` re-appends unconsumed `message` events read out of the region it
-is about to drop, and with the naive spread they keep a `parentEid` pointing at an event that is no
-longer on the chain — the walk then hits a break and silently degrades to linear traversal, which
-can resurrect rolled-back events.
+first so the line looks correct. Not hypothetical: `buildSessionRepair` re-appends unconsumed
+`message` events read out of the region it is about to drop, and with the naive spread they keep a
+`parentEid` pointing at an event no longer on the chain — the walk then hits a break and silently
+degrades to linear traversal, **which can resurrect rolled-back events.**
 
 ⚠️ **`append`/`appendBatch` are fully SYNCHRONOUS and return the persisted copy. Do not "modernise"
-them to `fs.promises`.** Two independent things depend on the synchrony:
+them to `fs.promises.`** Two independent things depend on the synchrony. The **generation guard**
+needs the check and the write in the same microtask: the old async version let a `clear()` bump the
+generation and unlink the file while libuv still had the write queued, so the thread pool woke and
+**recreated the file it was writing to** — sub-millisecond and invisible normally, tens of ms under
+load. And the **failed-write rewind** only works while nothing can be stamped between the stamp and
+the write: defer the write and a burst in one tick gets stamped first, so the event after a failed
+one names a missing parent, the walk stops dead, and the agent resumes with a **silently truncated
+context**. Cost of sync I/O: one ~100-byte line, and writes were already serialized per session.
 
-1. **The generation guard.** The check and the filesystem write must happen in the same microtask.
-   The old code called an async `writeFn` after checking, so the sequence was: guard passes, libuv
-   schedules `open(O_APPEND | O_CREAT)` on the thread pool, the main thread is now free, a
-   `clear()` bumps the generation and unlinks the file, and the thread pool then wakes and
-   **recreates the file it was writing to**. The window is normally sub-millisecond and invisible;
-   under load it widens to tens of ms and produces "JSONL reappeared after Nms" flakes. Cost of
-   sync I/O: one ~100-byte line, microseconds on SSD, and writes were already serialized per
-   session anyway. There is also a post-check that unlinks a zombie if `clear()` ran during a write
-   — **decorative in the current fast path, and keep it**: it is the safety net for any future
-   caller that passes an async `writeFn`. And do not drop `appendFile` from the imports;
-   `copySessionFrom` still uses it.
-2. **The failed-write rewind.** `stampEvent` advances the chain head before the write, so on
-   ENOSPC/EIO the event never lands and the next event would name a parent that no line carries.
-   `rewindChainHead` undoes the advance. **That is only correct while nothing can be stamped between
-   the stamp and the write.** Defer the write and a burst in one tick gets stamped first: the event
-   after a failed one names a missing parent, the walk stops dead, and the agent resumes with a
-   **silently truncated context**. Synchronous keeps the cost of a failed write at "one event lost"
-   instead of "history lost". Pinned by a test that chmods the file read-only.
+**The general form of that second argument is worth carrying: it replaces *"correct because nothing
+happens to interleave"* with *"correct because nothing CAN"*.**
 
-The general form of that second argument is worth carrying: it replaces *"correct because nothing
-happens to interleave"* with *"correct because nothing CAN"*.
-
-`enqueueWrite` and its generation guard survive for `copySessionFrom`, the one genuinely async
-write. ⚠️ **Its docstring says outright that the guard has no reachable failure path today**, and
-that is deliberate: a mechanism that looks like protection but protects nothing is worse than none,
-because the next reader reads "there is a queue" as "there is protection".
-
-**`emitEvent` persists first and broadcasts the stamped copy**, so every observer — SSE included —
-gets the event's durable name at the instant the event exists. Ephemeral events (`text_delta`,
-`agent_activity`, `status`) are deliberately NOT stamped and never reach JSONL; they are not
-history.
-
-**`MessageQueue.enqueue(msg)` synchronously calls `onPersist(msg)` before delivery.** That is the
-one way a queue message reaches JSONL. `replay: true` skips it (already persisted); `quiet: true`
-suppresses the wake but NOT the persistence. A `traceId` means the message was produced inside an
-agent-loop run; no traceId means it came from outside any run.
-
-⚠️ **`createApp()` does NOT call `autoResumeProjects()`.** Tests that need resume behavior must call
-it explicitly, and anything wired into `onScopeResume` will not fire without it.
-
-`usage` events are persisted (the walker skips them as non-conversation content) and the UI attaches
-them to the nearest preceding `assistant_text` as a hover badge rather than a log entry. Compaction
-emits one too, marked estimated.
+`emitEvent` persists first and broadcasts the stamped copy, so every observer — SSE included — gets
+the event's durable name at the instant the event exists. Ephemeral events (`text_delta`,
+`agent_activity`, `status`) are deliberately never stamped and never reach JSONL; they are not
+history. `MessageQueue.enqueue` synchronously calls `onPersist` before delivery, and that is the one
+way a queue message reaches JSONL — `replay` skips it, `quiet` suppresses the wake but NOT the
+persistence.
 
 ## One boundary: the active chain
 
-"Which events count" had FOUR independent implementations. There is now one —
-`walkActiveChainIndices` in `events.ts` — and `readActive`, `readFromLastCompactMarker` and
-`copySessionFrom` all go through it. **Nothing addresses events by file position any more, and
-nothing deletes.**
+**"Which events count" had FOUR independent implementations.** There is now one —
+`walkActiveChainIndices` — and `readActive`, `readFromLastCompactMarker` and `copySessionFrom` all go
+through it.
 
 > The active chain ends at the `compact_started` of the last COMPLETED compaction. Inside that
 > compaction's window, only `type === "message"` survives.
 
-One backward scan does both jobs. `parentEid` always points at an earlier position, so scanning
-backward IS the lookup — no eid→index map, and a cycle is structurally impossible because the index
-only decreases. Walking back, a `compact_marker` opens the window and its `compact_started` closes
-the walk. `compact_marker` is always kept (the walker treats it as structural, the UI slices its log
-at it, and repair needs it to scope).
+One backward scan does both jobs, and because `parentEid` always points earlier, scanning backward IS
+the lookup — no eid→index map, and a cycle is structurally impossible because the index only
+decreases.
 
-**Why the window exists.** Messages delivered WHILE the summarizer runs land between
-`compact_started` and `compact_marker`. Ending the chain at the marker put those messages outside
-the active region while the `messages_consumed` that acknowledged them — written after the marker —
-was inside, so reconstruction resolved a consumption record referencing an id it had never seen and
-dropped the content silently. Measured on the root session: 22 compactions, 8 with stranded
-messages, 15 messages lost, 4 of them typed by a human. The live path was fine; only reconstruction
-(restart, fork, UI refetch) lost them, which is what made it pure live-vs-reconstruction drift.
-
-The type filter inside the window is equally load-bearing in the other direction: the summarizer's
-own `thinking`, its `<summary>` `assistant_text` and its `usage` must NOT come back, because the
-summary is already in the context as `compacted_resume`.
+**Why the window exists, measured.** Messages delivered WHILE the summarizer runs land between
+`compact_started` and `compact_marker`. Ending the chain at the marker put those messages outside the
+active region while the `messages_consumed` acknowledging them — written after the marker — was
+inside, so reconstruction resolved a consumption referencing an id it had never seen and dropped the
+content silently. On the root session: **22 compactions, 8 with stranded messages, 15 messages lost,
+4 of them typed by a human.** The live path was fine; only reconstruction (restart, fork, UI refetch)
+lost them. The type filter inside the window is equally load-bearing in the other direction — the
+summarizer's own thinking and `<summary>` text must NOT come back, because the summary is already in
+context as `compacted_resume`.
 
 ⚠️ **Do NOT encode the barrier as `compact_started.parentEid = null`.** It looks cleaner —
 termination collapses to the chain root and needs zero type knowledge — and it is wrong for two
-independently verified reasons:
+independently verified reasons. **A compaction is a 2-3 minute window whose outcome is unknown when
+`compact_started` is written**, so if the daemon dies inside it there is no summary but the chain root
+is already committed: the agent resumes with an empty context, `hasWorkContext` is false so a fresh
+work_context is injected, and it carries on like a newborn. No error, no crash — **silent total
+context loss**, recoverable only by hand-editing JSONL. And the type check has to exist anyway, for
+logs written before `compact_started` existed. The general form, after being talked out of this
+twice: **encoding structure in links fits a JUMP (rollback, repair — you know the target when you
+write it); a compaction is an INTERVAL whose validity depends on a result you do not have yet. Do not
+express an undetermined fact as a link.**
 
-1. **A compaction is a 2-3 minute window whose outcome is unknown when `compact_started` is
-   written** (measured durations from the root session: 124s, 178s, 145s). If the daemon dies inside
-   that window there is no summary at all, but the chain root is already committed — so the active
-   region becomes `[compact_started, window messages]`, the agent resumes with an empty context,
-   `hasWorkContext` is false so a fresh work_context is injected, and it carries on like a newborn.
-   No error, no crash: **silent total context loss**, recoverable only by hand-editing JSONL. Under
-   self-bootstrap, with dozens of restarts a day, that is a matter of time. The type rule handles it
-   for free: no marker means no barrier means full history stays reachable.
-2. **The type check has to exist anyway.** Logs written before `compact_started` existed have a
-   marker with no opener, and walking past such a marker would drag pre-compact user messages back
-   into the context. So emitting `null` only ADDS a mechanism on top of the one that must exist,
-   plus a migration over every existing session — otherwise a compacted session's whole 84MB
-   history floods back on the next restart.
+⚠️ **Being ON the active chain is NOT the same as being a legal rewind target**, and this is the most
+expensive corollary of the design. **The active chain is not a uniform `parentEid` chain — it is a
+CONSTRUCTED sequence.** The window messages are *spliced in* by the walker, adjacent in the resulting
+array but with parent links pointing into the region the summary replaced. Rewinding is a pure
+parent-link operation, so **it is only defined where construction order and chain order agree**,
+which excludes exactly those messages: set the head to one and the backward walk never meets a marker,
+so on a real session the entire summarized-away history returns at once with the summary stranded on
+an abandoned branch. **Making the window messages visible was correct; reading *visible* as *operable*
+is the error.** `hasRewindPoint` answers the separate question, and its test fails on the DAMAGE — it
+asserts the resurrected history is absent by name — so anyone relaxing the limit sees what they just
+did rather than a bare status code.
 
-The general form, after being talked out of this twice: **encoding structure in links fits a JUMP**
-(rollback, repair — you know the target when you write it). **A compaction is an INTERVAL whose
-validity depends on a result you do not have yet. Do not express an undetermined fact as a link.**
-
-⚠️ **No dangling-link handling, and nothing may produce one.** A `parentEid` naming an eid no line
-carries gets NO fallback — same rule as repair refusing to fix orphan tool_results: a state the
+**No dangling-link handling, and nothing may produce one.** A `parentEid` naming an eid no line
+carries gets NO fallback — same rule as repair refusing to fix orphan tool_results: **a state the
 runtime cannot produce must not have code that quietly patches it, or that code becomes a silencer
-for real structural bugs. It shows up as "the events before it stop rendering", which is what we
+for real structural bugs.** It shows up as "the events before it stop rendering", which is what we
 want. This is only honest because `rewindChainHead` closed the one path that could produce a dangle.
-(There *was* a dangling-link fallback, and deleting it was blocked until that writer bug was fixed.
-If you find yourself re-introducing one, go find the writer.)
-
-**An event with NO parentEid at all still ends chain-following, and everything before it is taken
-linearly.** That is the genuine chain root at index 0, and it is what lets a pre-eid log be read.
-
-⚠️ **Being ON the active chain is NOT the same as being a legal rewind target**, and this is the
-most expensive corollary of the design. **The active chain is not a uniform `parentEid` chain — it
-is a CONSTRUCTED sequence.** After the compaction point, array order and chain order are the same
-thing; the window messages are **spliced in** by the walker, adjacent in the resulting array but
-with parent links pointing into the region the summary replaced. Rewinding is a pure parent-link
-operation (`setChainHead(target.parentEid)`), so **it is only defined on the segment where
-construction order and chain order agree**, which excludes exactly the window messages. Measured:
-set the chain head to a window message and the backward walk never meets a marker, so the window
-mechanism never arms and the walk runs to the first line of the file — on a real session that is
-the entire summarized-away history returning at once, with the summary stranded on the abandoned
-branch. **Making the window messages visible was correct; reading *visible* as *operable* is the
-error.** A separate predicate (`hasRewindPoint`) answers "is there a state left to return to", and
-its test fails on the DAMAGE — it asserts the resurrected history is absent by name — so anyone
-relaxing that limit sees what they just did rather than a bare status code.
 
 **Fork had its own copy of the boundary and it produced three bugs, one irreversible.**
 `copySessionFrom` now calls `readActive`, because "wake up with the source's current context" IS
-readActive's definition. What a linear slice got wrong: rolled-back events were copied into the
-child (a slice ignores `parentEid` entirely); window messages were dropped; and the copied subset
-was not RE-LINKED — the active context is a FILTERED subset, so the copied events' original parents
-are absent from the child's file and copying links verbatim strands everything older. The copy keeps
-SOURCE eids (identity survives) and re-chains `parentEid`. ⚠️ **The compaction boundary events are
-deliberately NOT copied.** Only half of one can be (`compact_started` is outside the active region
-by definition), and a lone marker in the child reads as the legacy unpaired-marker shape — so the
-child would discard exactly the window messages it just inherited, with nothing left in its file to
-ever recover them. **That is the irreversible one: the source recovers on restart, a fork never
-does.**
+readActive's definition. A linear slice copied rolled-back events (a slice ignores `parentEid`),
+dropped window messages, and did not RE-LINK — the active context is a FILTERED subset, so the copied
+events' original parents are absent from the child's file and copying links verbatim strands
+everything older. ⚠️ **The compaction boundary events are deliberately NOT copied**: only half of one
+can be, and a lone marker in the child reads as the legacy unpaired-marker shape, so the child would
+discard exactly the window messages it just inherited. **That is the irreversible one — the source
+recovers on restart, a fork never does.**
 
 ## Repair is a chain jump, never a truncation
 
 `buildSessionRepair` computes a jump and its caller performs it — `setChainHead` + `appendBatch`,
-literally the rollback mechanism, with a null jump target meaning append-only. Poisoned
-events stay on disk and simply stop being reachable, **so the evidence needed to debug a corruption
-survives it**. Repair runs in `runAgentForNode` before the provider loop starts.
+literally the rollback mechanism. Two shapes: append-only (an orphaned tool_call gets its interrupted
+result) and jump-back (duplicate or out-of-order results). It runs before the provider loop starts.
 
-Two shapes: append-only (an orphaned tool_call gets its interrupted result, nothing dropped) and
-jump-back (duplicate or out-of-order results: chain back to the last good event, then append).
+⭐ **The whole inheritance from the design this replaced: an index computed in one space and consumed
+in another is a silent corruption engine.** Repair used to compute an index while the store truncated
+by physical line, and the two index spaces silently disagreed **twice** — once because the index was
+computed against the post-`compact_marker` slice while truncation counted from the top of the file
+(a compacted session lost its marker, its post-compact `session_config` and its summary, then got
+interrupted results referencing tool_calls that had just been cut: unrecoverable), and once because
+`read()` skips malformed lines while truncation counts raw ones. Both were fixed with a translation
+layer, and the translation layer was then deleted along with `truncateAfterLine` — because the second
+index space WAS the bug.
 
-⭐ **Nothing in this codebase may address an event by file position.** That rule is the whole
-inheritance from the design this replaced. Repair used to compute an index and the store used to
-slice by physical line, and the two index spaces silently disagreed **twice**: once because the
-index was computed against the post-`compact_marker` slice while truncation counted from the top of
-the file (so a compacted session lost its marker, its post-compact `session_config` and its summary,
-and then got interrupted results referencing tool_calls that had just been cut — unrecoverable), and
-once because `read()` skips malformed lines while truncation counts raw ones (so N crash-artifact
-lines made the cut land N lines early, silently destroying valid events). Both were fixed with a
-translation layer, and the translation layer was then deleted along with `truncateAfterLine`,
-`readWithLineMap` and `readActiveWithLineMap`, because the second index space was the bug. **An
-index computed in one space and consumed in another is a silent corruption engine.**
+Three details that will each look removable:
 
-Four details of the current repair that will each look removable:
+1. **A truncating repair ALWAYS appends at least one event.** `setChainHead` is pure in-memory; the
+   jump only reaches disk as the first appended event's `parentEid`. So both truncation strategies
+   append a status event LAST — last so it can never split a run of tool_results into two user turns.
+   Without it, repairing a session that resumes in pending-done would evaporate on restart and loop
+   forever.
+2. **Messages in the dropped region are replayed with fresh eids — ALL of them**, not just the ones
+   without a `messages_consumed`. A message consumed into a turn the repair just dropped is exactly
+   as absent as one that never arrived.
+3. ⚠️ **The synthetic status message is a USER message, and it is suppressed when the kept region ends
+   in a pending yield/done.** Appending a user message after an unanswered intended-orphan `tool_use`
+   breaks the pairing rule and produces a genuine 400. Older text called this an "alternation" guard;
+   alternation is fictional and this is not it. **The word "alternation" in this codebase is not a
+   reliable signal of anything — go read what the shape actually is.**
 
-1. ⚠️ **A truncating repair ALWAYS appends at least one event.** `setChainHead` is pure in-memory;
-   the jump only reaches disk as the first appended event's `parentEid`. So both truncation
-   strategies append a `status` event ("Session repaired: …") **LAST** — last so it can never split
-   a run of tool_results into two user turns (the walker skips `status`, but position still
-   matters for the collection loop). Without it, repairing a session that resumes in pending-done —
-   no orphan results, no replayed messages, status user-message suppressed — would evaporate on
-   restart and loop forever.
-2. ⚠️ **Messages in the dropped region are replayed with fresh eids — ALL of them, not just the ones
-   without a `messages_consumed`.** A message consumed into a turn the repair just dropped is
-   exactly as absent as one that never arrived.
-3. ⚠️ **The synthetic status message is a USER message, and it is suppressed when the kept region
-   ends in a pending yield/done.** Appending a user message after an unanswered intended-orphan
-   `tool_use` breaks the pairing rule and produces a genuine 400 (*"`tool_use` ids were found
-   without `tool_result` blocks immediately after"*). Verified by removing the guard. When the
-   session ends in pending yield/done it correctly resumes in that state, with no API-forcing user
-   message. ⚠️ Older text called this an "alternation" guard; alternation is fictional and this is
-   not it. **The word "alternation" in this codebase is not a reliable signal of anything — go read
-   what the shape actually is.**
-4. ⚠️ **`buildSessionRepair` THROWS if the event it must chain to has no eid.** Every event on an
-   active chain is stamped, so that can only mean the caller passed something that never came from a
-   store. A repair that cannot express its jump would leave the poison in place and loop forever —
-   better to ring.
-
-**What repair deliberately does NOT fix: an orphan `tool_result`** (a result with no matching call).
-The runtime cannot produce one, so repairing it would mask a real bug instead of fixing a real
-state.
-
-⚠️ **A synthetic message must not use `source: "system"`.** It was tried; `formatBodyForAI`'s
-default branch returns `""` and the UI's materialization switch had no case for it, so the repair
-reason **silently rendered as an empty string** in both places. Use `createUserMessage`. Do not add
-a new source variant to fix a rendering gap — reuse the visible one.
+⚠️ **A synthetic message must not use `source: "system"`.** It was tried; `formatBodyForAI`'s default
+branch returns `""` and the UI's materialization switch had no case for it, so the repair reason
+**silently rendered as an empty string** in both places. Use `createUserMessage` — do not add a new
+source variant to fix a rendering gap.
 
 ## Rollback and Edit
 
-`EventStore.setChainHead(sessionId, eid)` is one line: set the in-memory head. The NEXT appended
-event gets `parentEid = eid`, creating the jump — **the jump is carried by the first post-rollback
-event itself, so there is no marker event.** A `rollback_marker` type and an `appendRollback` method
-existed and were deleted; they were an implementation shortcut where one line of state does the job.
-
-**`/edit` is the single backend path.** A standalone `/rollback` endpoint existed alongside it and
-was deleted: `/edit` combines rollback and message delivery atomically and fully superseded it.
-Rewind is an Edit whose content did not change, so **one answer governs both buttons.**
+`setChainHead(sessionId, eid)` is one line: set the in-memory head. The NEXT appended event gets
+`parentEid = eid`, creating the jump — **the jump is carried by the first post-rollback event itself,
+so there is no marker event.** A `rollback_marker` type and an `appendRollback` method existed and
+were deleted. **`/edit` is the single backend path**; a standalone `/rollback` endpoint was deleted
+because `/edit` combines rollback and delivery atomically. Rewind is an Edit whose content did not
+change, so **one answer governs both buttons.**
 
 ### Which messages can be edited — three independent judgments, and do NOT unify them
 
 | module | question | the limit is on |
 |---|---|---|
-| `agent-activity.ts` `isWorking` | is the agent busy right now? | TIME |
-| `run-start.ts` `messageStartsRun` | did the agent ever run FROM this message? | MEANING |
-| `rewind-point.ts` `hasRewindPoint` | is there a state left to return to? | HISTORY |
+| `isWorking` | is the agent busy right now? | TIME |
+| `messageStartsRun` | did the agent ever run FROM this message? | MEANING |
+| `hasRewindPoint` | is there a state left to return to? | HISTORY |
 
 `message-editability.ts` is the only place they meet, and **its checkable boundary is that it has
-ZERO imports** — it consumes three verdicts and computes none, asserted by a test that reads the
-file. If it ever starts deciding something itself, that is when to split it.
+ZERO imports** — it consumes three verdicts and computes none. If it ever starts deciding something
+itself, that is when to split it.
 
-⚠️ **TOMBSTONE: two people tried to unify these on the same day. Do not.** Both attempts made the
-**same mistake — taking a PROPERTY of a thing for the thing itself.** *"The gates are one invariant
-at two timescales"* (both relate to unclosed tool calls, one asks "now" and one "at that position")
-is technically defensible and explains a USER concept by its IMPLEMENTATION consequence; an end user
-has no notion of an unmatched tool call. *"The message is in the active chain, therefore it is
-rewindable"* takes a property of a rewind target for the target. **API 400 is a symptom, not a
-reason**, and both framings leaned on it: even if the API accepted a rollback to a message the agent
-never ran from, the operation would still be **empty**, because it points at nothing. **Reasons must
-survive their failure mode disappearing.** The three judgments' only shared property is that all
-three grey the button, which is a fact about pixels.
+⚠️ **TOMBSTONE: two people tried to unify these on the same day. Do not.** Both made the **same
+mistake — taking a PROPERTY of a thing for the thing itself.** *"The gates are one invariant at two
+timescales"* explains a USER concept by its IMPLEMENTATION consequence; an end user has no notion of
+an unmatched tool call. *"The message is in the active chain, therefore it is rewindable"* takes a
+property of a rewind target for the target. **API 400 is a symptom, not a reason**, and both framings
+leaned on it — even if the API accepted a rollback to a message the agent never ran from, the
+operation would still be **empty**, because it points at nothing. **Reasons must survive their failure
+mode disappearing.** The three judgments' only shared property is that all three grey the button,
+which is a fact about pixels.
 
-**The rule is which user turn PICKED THE MESSAGE UP**, and the user's own phrasing is the concept:
-*only an independently sent message can be rewound*. "Run" means something only to someone who has
+**The rule is which user turn PICKED THE MESSAGE UP, and the user's own phrasing is the concept:
+*only an independently sent message can be rewound*.** "Run" means something only to someone who has
 read the provider loop. `buildUserTurn` packs `[...tool_results, ...queued messages]` into one turn,
-so **a turn carrying a tool_result is ANSWERING the agent's own previous output** and anything
-riding along in it did not start it; a turn with no tool_result exists *because* a message arrived.
-Both `messages_consumed` and the tool_results before it are persisted, so this is decidable from the
-log. Walk back from each `messages_consumed` to the turn boundary, and **skip unrecognised event
-types rather than treating them as boundaries** — detaching a tool_result from its consumption is
-the direction that wrongly calls a message editable.
+so **a turn carrying a tool_result is ANSWERING the agent's own previous output** and anything riding
+along in it did not start it; a turn with no tool_result exists *because* a message arrived. Both
+sides are persisted, so this is decidable from the log — walk back from each `messages_consumed` to
+the turn boundary, and skip unrecognised event types rather than treating them as boundaries.
 
-⚠️ **`yield`/`done` are the rule's best instance, not an exception to it.** Their results are
-written *at wake*, by the very message being judged, so they are that message's CONSEQUENCE and not
-its cause. An ordinary tool_result (bash, read_file) was already in flight before the message
-arrived, so it is prior work. **The direction of causation is the rule; comparing tool names is only
-how it is detected** — hence the predicate is `isPriorWork`, not `isPark`. This exception was
-predicted to disappear under the new rule and instead **grew**: 1513 of 2161 newly-blocked messages
-(70%) were yield turns, and it is the dominant shape for sub-agents, every one of which ends in
-`done()` and is later woken.
+⚠️ **`yield`/`done` are the rule's best instance, not an exception to it.** Their results are written
+*at wake*, by the very message being judged, so they are that message's CONSEQUENCE and not its
+cause; an ordinary tool_result was already in flight before the message arrived, so it is prior work.
+**The direction of causation is the rule; comparing tool names is only how it is detected** — hence
+the predicate is `isPriorWork`, not `isPark`. This exception was predicted to disappear under the new
+rule and instead **grew**: 1513 of 2161 newly-blocked messages were yield turns, and it is the
+dominant shape for sub-agents, every one of which ends in `done()` and is later woken.
 
 ⭐ **The evidence was being sampled at the wrong instant, and that is the reusable finding.** The
-first version tested for an unclosed tool_call at the message's **delivery** position. Real trace:
-a message arrived 10 seconds BEFORE the tool_call it was meant to be blocked by — at that moment the
-agent was thinking, composing the call, so nothing was outstanding yet — while a message arriving
-during the bash run was correctly blocked. Both were consumed together. The earlier analysis had
-concluded honestly that the log could not do better, because parking on `end_turn` writes no event
-and activity is deliberately never persisted, so "parked, waiting for you" and "waiting for the
-model" leave the identical trace: nothing. **That was accurate about the DELIVERY moment and
-irrelevant — consumption leaves a trace, and consumption is what answers the question. Looking for
-evidence at the wrong instant is what made the log look mute.**
+first version tested for an unclosed tool_call at the message's **delivery** position. Real trace: a
+message arrived 10 seconds BEFORE the tool_call it was meant to be blocked by — at that moment the
+agent was composing the call, so nothing was outstanding — while a message arriving during the bash
+run was correctly blocked. Both were consumed together. The earlier analysis had concluded honestly
+that the log could not do better, because parking on `end_turn` writes no event and activity is never
+persisted, so "parked, waiting for you" and "waiting for the model" leave the identical trace:
+nothing. **That was accurate about the DELIVERY moment and irrelevant — consumption leaves a trace,
+and consumption is what answers the question. Looking for evidence at the wrong instant is what made
+the log look mute.**
 
-Two sizing errors from the same work, both of the form *reasoning where observing was cheap*:
-
-- *"The thinking gap is where the agent spends least of its wall-clock time"* — true and beside the
-  point. **Wall-clock share is not share of user actions.** "Ask for something, then add one more
-  thing while it starts" is the most natural way to extend a request and lands squarely in that gap.
-- *"Root's last 2000 lines contain no yield/done, so this is mainly a sub-agent problem"* — the
-  observation was accurate and the generalisation was not; `tail -2000` reflects a recent habit, not
-  the session. The full log had 1513. ⚠️ **An accurate observation plus an over-broad generalisation
-  is harder to challenge than a guess, because it arrives with a number. Check the sampling window
-  on every figure, including your own.**
-
-Measured on a 3621-message session: editable 97.2% → 79.8%, and **NEW-only-editable = 0** — a
-one-way tightening that opens nothing the old rule blocked. `messageStartsRun` returns `undefined`
-for an unconsumed message, which is not a new state (the tri-state already existed for a message cut
-away by an earlier rewind); measured 0 of 3621 occurrences with no UI path to it, so **do not write
-logic for that branch.**
+⚠️ **An accurate observation plus an over-broad generalisation is harder to challenge than a guess,
+because it arrives with a number.** *"Root's last 2000 lines contain no yield/done, so this is mainly
+a sub-agent problem"* — the observation was accurate and `tail -2000` reflects a recent habit, not the
+session; the full log had 1513. **Check the sampling window on every figure, including your own.**
 
 ### Blocked buttons are greyed and explained, never hidden
 
@@ -1312,56 +1212,41 @@ stop" promises a remedy; on a permanently un-editable message the user waits, th
 button is still grey, and they cannot tell whether they waited wrong or the product is broken.
 **Never offer a remedy that will not work.** Keep the reason→string map exhaustive over the union
 rather than partial-with-fallback — that is what caught a missing i18n key the moment a third reason
-was added. Visible strings use the user's framing ("Not sent on its own — the agent picked this up
-along with work it was already doing"); the internal token stays, because it is part of the `/edit`
-response shape.
+was added.
 
 ## Every transport carries the event's name (eid)
 
-Four consumers wanted the same missing thing and were each about to grow their own locating
-mechanism: the Edit/Rewind gate, message deep-links, viewport addressing, and "is this event still
+**Four consumers wanted the same missing thing and were each about to grow their own locating
+mechanism**: the Edit/Rewind gate, message deep-links, viewport addressing, and "is this event still
 part of the conversation". They are one thing — **the frontend needs the persisted event identity on
-the path it actually receives events over** — and it was missing because `emitEvent` used to
-broadcast before persisting, so SSE clients were shown events they could not refer to. Persisting
-first fixed all four.
+the path it actually receives events over** — and it was missing because `emitEvent` used to broadcast
+before persisting, so SSE clients were shown events they could not refer to.
 
-**`LogEntry.id` is derived from the eid** (`Map<eid, number>`, never cleared — clearing it IS the
-failure it prevents). The log is replaced wholesale on every refetch, and a module counter made every
-key change every time: measured in a real session as one MutationObserver batch with
-`added: 82, removed: 82`, against `removed: 1` for a normal update in the same trace. Two entries
-exist BEFORE the event they are named after, and both **bind** their eid to the id they already have
-rather than re-deriving it: a streamed text/thinking block (built from `*_delta`, which is never
-persisted) learns its eid when the block closes, and a tool card is replaced in place by its
-`tool_pair` when the result lands — which is exactly when a user is most likely to have it expanded,
-and was a live bug on its own.
-
-⚠️ **`key={entry.eid ?? entry.id}` is the wrong shape** even though it looks simpler: it moves the
-key at the end of every streamed block, adding a per-block remount that does not exist today.
+**`LogEntry.id` is derived from the eid** via a map that is never cleared — clearing it IS the failure
+it prevents. The log is replaced wholesale on every refetch, and a module counter made every key
+change every time: measured as one MutationObserver batch with `added: 82, removed: 82` against
+`removed: 1` for a normal update. Two entries exist BEFORE the event they are named after, and both
+**bind** their eid to the id they already have rather than re-deriving it. ⚠️ **`key={entry.eid ??
+entry.id}` is the wrong shape** even though it looks simpler: it moves the key at the end of every
+streamed block, adding a per-block remount that does not exist today.
 
 ⚠️ **Active-chain membership needs its own bit, and this is the general reason:**
 
 > **eid is an IDENTITY — immutable, per event. Membership is a RELATION between an event and the
-> current chain head.** A rewind changes it for a whole stretch of log without touching a single
-> event in it. **An immutable identity cannot encode a mutable relation.**
+> current chain head.** A rewind changes it for a whole stretch of log without touching a single event
+> in it. **An immutable identity cannot encode a mutable relation.**
 
-So the raw-file fetch ("Load earlier history") marks each event `offChain: "summarized" |
-"abandoned"` via `classifyOffChain`, built on the one `walkActiveChainIndices`. **The client gets the
-ANSWER, never the algorithm** — a second chain walk in the browser is exactly what the one-boundary
-work removed. Marked only where it is not the obvious answer, because every other transport carries
-active events by construction; explicit-everywhere was considered and rejected, since the reader
-still has to choose what `undefined` means and it costs bytes on the hottest path.
-
-Refusal wording followed the same discipline: "No longer part of the conversation" was what the UI
-said when it could not tell — about every message in the batch, including ones still in it. It now
-says which way the message left, and **either reason outranks "the agent is busy", because that one
-promises a remedy that will never arrive.**
+So the raw-file fetch marks each event `offChain: "summarized" | "abandoned"`, built on the one
+`walkActiveChainIndices`. **The client gets the ANSWER, never the algorithm** — a second chain walk in
+the browser is exactly what the one-boundary work removed. Refusal wording followed the same
+discipline: "No longer part of the conversation" was what the UI said when it could not tell, about
+every message in the batch including ones still in it.
 
 ⚠️ **A user message renders where it was CONSUMED, not where it arrived.** A message typed during a
 tool call is delivered between the `tool_call` and its `tool_result` but consumed with that tool's
 results, so in the log it appears **after the finished tool card**. Anything reasoning about a
 message's position must use the raw event batch, not the rendered entries — judging run-start off
-rendered entries calls exactly the blocked case a run start. Mutation-verified: swapping the input
-to the entries fails exactly TWO tests.
+rendered entries calls exactly the blocked case a run start.
 
 ---
 # Cache & Drift Prevention
