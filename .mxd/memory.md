@@ -2857,54 +2857,40 @@ happy-dom, so the paired victim file runs clean and it looks like the mutation f
 
 ## Deleting code
 
-⭐ **"Test-only" is not "dead", and conflating them turns a cleanup into a risky migration.** An
-audit called `tool()` (in `tool-definition.ts`) production-dead and asked for its removal. It IS
-test-only — and it has 23 call sites, which makes it live test INFRASTRUCTURE. Deleting it would
-have been a 23-site migration that pulls auth and ParamDefs into unit tests written specifically to
-test `executeTool`'s Zod validation against a raw inputSchema; that changes what those tests test
-rather than reclaiming anything. **The real violation was sitting next to it** — `stripZodMeta` and
-`shapeToJsonSchema` existed verbatim in two files — and extracting those to a leaf module was the
-actual win. **When an audit says "dead", check whether it means "unreferenced" or "only referenced
-by tests"; the second is a different claim with a different answer.**
-
-**Names that no longer exist, so you do not go looking** (re-verified 2026-07-25, since a deletion
-record is the entry most likely to have been quietly undone): `persistent-queue.ts`,
-`openai-compatible-provider.ts` (the whole Chat Completions path, with `eventsToOpenAIMessages`),
-`hasPendingYield`, `truncateAfterLine` / `readWithLineMap` / `readActiveWithLineMap`,
-`formatPendingSection`, `combineSystemPrompt`, `buildExternalJsonSchema`, `resetAuthDataCache`,
-`clarifyTimeoutMs` and its whole config-through-UI vertical, `rollback_marker` / `appendRollback`,
-`await_background`, `stripEventForUI`, `RelocateBanner.tsx`, the `_cache_audit.ts` / `_token_audit.ts`
-scripts. ⚠️ **False positive to expect while checking**: a deleted function often still appears in
-comments that explain its deletion, so a bare grep count is not the answer.
+⭐ **"Test-only" is not "dead", and conflating them turns a cleanup into a risky migration.** An audit
+called `tool()` production-dead and asked for its removal. It IS test-only — and it has 23 call sites,
+which makes it live test INFRASTRUCTURE; deleting it would have been a 23-site migration that changes
+what those tests test rather than reclaiming anything. **The real violation was sitting next to it** —
+two helpers existed verbatim in two files — and extracting those was the actual win. **When an audit
+says "dead", check whether it means "unreferenced" or "only referenced by tests"; the second is a
+different claim with a different answer.**
 
 ⭐ **Deletion beats repair when a feature is duplicative AND the user wants it gone.** Project-wide
-"Clear All Sessions" (endpoint, CLI subcommand, settings button, slash command, `EventStore.clearAll`)
-was deleted rather than fixed, because repairing it needed an architectural decision about whether the
-shell may know plugin URL prefixes, and the feature had no unique use case — `reset_task` covers
-per-task reset, delete-and-re-add covers a project reset. ⚠️ **Do not confuse it with what was KEPT**:
-`EventStore.clear(sessionId)` (per-session), `POST /projects/:id/sessions/prune` (used by
-autoResume and the CLI), the per-task `sessions/clear` route behind the UI's "Clear Session" button,
-and the frontend's unrelated `clearSessionState` helper.
+"Clear All Sessions" (endpoint, CLI subcommand, settings button, slash command, `clearAll`) was deleted
+rather than fixed, because repairing it needed an architectural decision about whether the shell may
+know plugin URL prefixes, and the feature had no unique use case. ⚠️ **Do not confuse it with what was
+KEPT**: per-session `clear`, the sessions/prune endpoint, the per-task "Clear Session" route, and the
+frontend's unrelated `clearSessionState`.
+
+**Names that no longer exist, so you do not go looking**: `persistent-queue.ts`,
+`openai-compatible-provider.ts` (the whole Chat Completions path), `hasPendingYield`,
+`truncateAfterLine` / `readWithLineMap`, `combineSystemPrompt`, `resetAuthDataCache`,
+`rollback_marker` / `appendRollback`, `await_background`, `RelocateBanner.tsx`. ⚠️ **False positive to
+expect while checking**: a deleted function often still appears in comments explaining its deletion, so
+a bare grep count is not the answer.
 
 ## The build pipeline is content-addressed
 
-Every asset carries its content hash in its filename (`main-a1b2c3d4.js`) and is served
-`Cache-Control: public, max-age=31536000, immutable`. The HTML referencing them is
-`no-cache, must-revalidate`, so the browser always asks whether there is a new index and never asks
-whether the hashed JS is fresh. A daemon rebuild changes the hashed URLs, the next navigation learns
-them, and stale content is **impossible because stale URLs do not exist on disk**.
+Every asset carries its content hash in its filename and is served `immutable`; the HTML referencing
+them is `no-cache`. So the browser always asks whether there is a new index and never asks whether the
+hashed JS is fresh, and **stale content is impossible because stale URLs do not exist on disk.**
 
-⚠️ **Do not add `Cache-Control: no-store` anywhere as a fallback**, and do not add a query-string
-cache buster. Both are the cargo-cult reflex this design replaced: `no-store` re-downloads the whole
-shell on every reload, and query strings defeat CDN caching. Either a URL is content-addressable
-(immutable) or it is the index (no-cache).
-
-⚠️ **Never hardcode a logical asset URL** like `/app/web/main.js` — only the manifest knows the real
-hashed path. The importmap is built from that same manifest, and the build **throws** if an entry is
-missing rather than emitting a bare specifier that would 404 at runtime.
-
-⚠️ **A test pins the hash SHAPE with `[a-z0-9]{8}`.** Bun could widen its hash in a future version;
-if it does, the manual CSS hash helper must be updated to match, and that test is what will tell you.
+⚠️ **Do not add `Cache-Control: no-store` anywhere as a fallback, and do not add a query-string cache
+buster.** Both are the cargo-cult reflex this design replaced: `no-store` re-downloads the whole shell
+on every reload, and query strings defeat CDN caching. **Either a URL is content-addressable
+(immutable) or it is the index (no-cache).** ⚠️ **Never hardcode a logical asset URL** — only the
+manifest knows the real hashed path, and the build throws if an entry is missing rather than emitting a
+bare specifier that would 404 at runtime.
 
 ## What is actually gated (and what is not)
 
@@ -2919,256 +2905,146 @@ Answer this before assuming a green result means anything.
 
 ⚠️ **The clean merge — root's dominant path — is NOT gated, while the conflicting merge IS.** That is
 backwards from intuition, and it is why "the hook passed" says very little about an integration.
-Deliberately not fixed by adding `pre-merge-commit`: the branch model REQUIRES that intermediate
-merges be allowed to not typecheck, and gating every merge would just re-establish the routine
-`--no-verify` habit that hid 24 errors before. The options if it ever needs closing are to keep
-merges ungated and run `bash .hooks/pre-commit` by hand once per integration, to add the hook and
-accept `--no-verify` on intermediate merges, or to move enforcement off the commit hook entirely.
+Deliberately not fixed by adding `pre-merge-commit`: the branch model REQUIRES that intermediate merges
+be allowed to not typecheck, and gating every merge would re-establish the routine `--no-verify` habit
+that hid 24 errors before. Worktrees skip the hook on purpose — sub-tasks commit constantly. To check
+the gate from a worktree, run `bash /path/to/main/.hooks/pre-commit` by hand.
 
-**Worktrees skip the hook on purpose** — sub-tasks commit constantly and a full typecheck plus lint
-plus tests on each would be unusable. To check the gate from a worktree, run
-`bash /path/to/main/.hooks/pre-commit` manually.
-
-⚠️ **`core.hooksPath` is LOCAL config (`.git/config`) and is not tracked, so a fresh clone is ungated
-again and looks identical to a gated one.** Install with `git config core.hooksPath .hooks`.
+⚠️ **`core.hooksPath` is LOCAL config and is not tracked, so a fresh clone is ungated again and looks
+identical to a gated one.**
 
 > ⭐ **A checked-in hook file is not an enforced hook.** For a long time `.hooks/pre-commit` existed,
-> was referenced as if active, and nothing pointed at it — git was looking in `.git/hooks/`, which
-> held only `.sample` files. **Nobody was gated anywhere**, every `--no-verify` was a no-op against a
-> gate that did not exist, and the absence looked exactly like compliance. The only way to know is to
+> was referenced as if active, and nothing pointed at it — git was looking in `.git/hooks/`, which held
+> only `.sample` files. **Nobody was gated anywhere**, every `--no-verify` was a no-op against a gate
+> that did not exist, and **the absence looked exactly like compliance.** The only way to know is to
 > assert it: `git config core.hooksPath`.
 
-The hook runs typecheck, `check:ci`, `check-i18n.sh`, and `bun test --bail` on a smoke subset whose
-size it computes and prints on every run — never a literal, so the ratio cannot go stale and this
-file does not need to carry it. It also **fails before typecheck if it names a test file that no longer
-exists**, and stages `scripts/i18n-baseline.txt` when the i18n gate lowers it. See *Gates: a passing
-gate looks identical whether it read 8% or 100%*.
-
-**The smoke set is chosen, not accumulated**, which matters because the old one grew by whoever
-happened to write a test that day. Two criteria: (1) the round-trip proofs for checks the hook itself
-runs — `check-i18n.test.ts`, `data-paths.test.ts`, `pre-commit-hook.test.ts` — because a hook that
-runs a gate but not the gate's own test can print that gate's "passed" while the gate is dead; and
-(2) invariants that fail SILENTLY, which in this repo means the persistence layer (`event-store`,
-`events`), since the inherited four — daemon shell, project registry, task tree, worktrees — all fail
-loudly. Deliberately excluded: `walker-golden` (one step out from the on-disk chain, covered by the
-drift suite at merge time) and `message-editability` (breakage greys a button, which is visible).
+**The smoke set the hook runs is chosen, not accumulated**, on two criteria: the round-trip proofs for
+checks the hook itself runs (because a hook that runs a gate but not the gate's own test can print that
+gate's "passed" while the gate is dead), and invariants that fail SILENTLY — which here means the
+persistence layer, since the daemon shell, project registry, task tree and worktrees all fail loudly.
 
 ## Gates: a passing gate looks identical whether it read 8% or 100%
 
-Every gate in this repo has now been caught claiming more than it read, and they failed along **three
-independent axes**. That is the part to carry: fixing one axis leaves the others silently intact, and
-the output looks identical either way.
+**Every gate in this repo has now been caught claiming more than it read, and they failed along three
+INDEPENDENT axes. That is the part to carry: fixing one axis leaves the others silently intact, and the
+output looks identical either way.**
 
 | gate | axis | the claim | what it checked |
 |---|---|---|---|
-| `scripts/check-i18n.sh` | SCOPE | bare strings in JSX | 4 of 31 files — **927 of 11,534 lines (8%)** |
-| `scripts/check-i18n.sh` | DEPTH | bare strings | 1 syntactic form of 4 — **1 of 6** in `ErrorBoundary.tsx` |
-| `src/data-paths.test.ts` | PATTERN | only `data-paths.ts` builds paths from `dataRoot` | the 16 literal characters `dataRoot.slice(2)` |
+| `check-i18n.sh` | SCOPE | bare strings in JSX | 4 of 31 files — **927 of 11,534 lines (8%)** |
+| `check-i18n.sh` | DEPTH | bare strings | 1 syntactic form of 4 — **1 of 6** in one component |
+| `data-paths.test.ts` | PATTERN | only one file builds paths from `dataRoot` | the 16 literal characters `dataRoot.slice(2)` |
 | `.hooks/pre-commit` | SCOPE | `All checks passed.` | **4 of 141** test files, while NAMING five |
 
-All four are fixed. The i18n gate never touched the shell's own `SettingsPanel.tsx` or
-`AppHeader.tsx`, and never *any* of the 25-file plugin UI, which is where essentially every
-user-facing string in this product lives. The data-paths audit was proven dead by experiment rather
-than by reading: a `dataRoot.slice(2)` planted in `.mxd/plugin/scope-opts.ts` left it at 54 pass /
-0 fail.
-
-⚠️ **The sharpest instance, and it upgrades the class statement: an addition list does not merely
-fail to cover NEW code — it silently stops covering the code it explicitly NAMED.** The hook listed
-five test files and ran four. `src/direct-provider.test.ts` was deleted 2026-03-12, **four days after
-being added to that list**, and the hook went on naming it for 4.5 months while printing
-`All checks passed.` What made it silent is the runner: **`bun test` skips a path that does not exist
-and still exits 0.** So even the list's own stated scope was fiction, and nothing green anywhere
-carried that information.
-
-⭐ **Second detector for this family, worth as much as the finding: an addition list must FAIL when a
-listed item is ABSENT.** A checker that shrugs at a missing entry cannot tell *"we chose not to check
-this"* from *"this evaporated"*. Pin it with a test rather than only implementing it — a
-named-but-missing entry is precisely the condition nobody thinks to re-verify.
+⚠️ **The sharpest instance upgrades the class statement: an addition list does not merely fail to cover
+NEW code — it silently stops covering the code it explicitly NAMED.** The hook listed five test files
+and ran four. `src/direct-provider.test.ts` was deleted **four days after being added to that list**,
+and the hook went on naming it for 4.5 months while printing `All checks passed.` What made it silent
+is the runner: **`bun test` skips a path that does not exist and still exits 0.** ⭐ **So an addition
+list must FAIL when a listed item is ABSENT** — a checker that shrugs at a missing entry cannot tell
+*"we chose not to check this"* from *"this evaporated"*.
 
 ⭐ **Start from everything and subtract; do not enumerate what to include.** A subtract-list fails
-LOUDLY — something noisy shows up and someone adds an entry. An include-list fails SILENTLY: new
-code simply is not covered and nothing anywhere says so. `biome.json` (`"includes": ["**",
-"!.worktrees", …]`) and `tsconfig.json` (`exclude`, no `include`) both got this right with nobody
-maintaining them, and `tsc --noEmit --listFiles` really does put all 54 `.mxd/plugin/` files in its
-program. The one legitimate exception is performance, and it must be said out loud rather than
-implied — see the pre-commit hook below.
+LOUDLY — something noisy shows up and someone adds an entry. An include-list fails SILENTLY: new code
+simply is not covered and nothing anywhere says so. `biome.json` and `tsconfig.json` both got this
+right with nobody maintaining them. **The one legitimate exception is performance, and it must be said
+out loud rather than implied** — a full `bun test` is ~255-300s per commit, so the hook genuinely
+cannot subtract, and its remedy is the other half: **say what you ran.**
 
-⭐ **When a check is known dead, "the suite passes" is not evidence the fix worked** — the suite
-passed while it was dead. The evidence is the round trip: plant re-verified dead against the old
-audit, then plant → **1 test red naming the offending file**, then plant removed → green. A test
-whose value is entirely in the day it fires must be made to fire on purpose at least once.
+⭐ **An unqualified pass is worse than a narrow scope.** The i18n pass message carries the file count
+now, and **scanning 0 files is a failure, not a pass**. The count is the detector: re-narrowing drops
+it to 4 in front of whoever commits next. ⭐ **And the count must be COMPUTED, never written down** — a
+literal `5 of 140` is indistinguishable from a true one on the day it stops being true, which is the
+drained rot sitting inside the very sentence whose job is to describe scope. Both numbers are derived,
+so a re-narrowing prints `3 of 141` and a suite growing around a frozen list shows its own ratio
+worsening. **Every axis gets the same treatment**: the i18n gate prints its FORM count beside its file
+count, so a narrowing of depth is exactly as visible as a narrowing of scope.
 
-⭐ **An unqualified pass is worse than a narrow scope.** The pass message carries the file count now
-(`scanned 31 JSX file(s)`), and **scanning 0 files is a failure, not a pass**. The count is the
-detector: re-narrowing to `-maxdepth 1` drops it to 4 in front of whoever commits next. A test pins
-the same property in non-rotting form — scanned must exceed the number of non-test `.tsx` directly
-under `web/`, both sides measured — so the historical bug reports as `Expected: > 4, Received: 4`.
-
-⭐ **And the count must be COMPUTED, never written down.** A literal `5 of 140` is indistinguishable
-from a true one on the day it stops being true — the drained rot, sitting inside the very sentence
-whose job is to describe scope. The hook derives both numbers (`wc -w` over its own list,
-`git ls-files` for the suite), so a re-narrowing prints `3 of 141` in front of whoever commits next,
-and a suite growing around a frozen list shows its own ratio worsening. **Every axis gets the same
-treatment**: the i18n gate prints its FORM count beside its file count, so a narrowing of depth is
-exactly as visible as a narrowing of scope. That symmetry was the only thing really missing on
-either axis.
+⭐ **When a check is known dead, "the suite passes" is not evidence the fix worked** — the suite passed
+while it was dead. The evidence is the round trip: plant, re-verify dead against the old audit, then
+plant → **1 test red naming the offending file**, then plant removed → green. **A test whose value is
+entirely in the day it fires must be made to fire on purpose at least once.**
 
 ⭐ **A partial-hit gate plus a fix-only-what-it-flagged policy produces incoherent output.** This
-outlives any particular widening — a heuristic is partial by construction, and the four-form version
-still misses things. When it was single-line it flagged 1 of a component's 6 user-visible strings. Fixing
-that one leaves a component half translated and half English — worse than untouched, and it looks
-*handled*. **The unit of repair is the coherent unit, not the flagged line**; a gate that catches a
-subset tells you WHERE to look, not WHAT to fix. The judgement is per-case and the same round went
-the other way on purpose: in an 1800-line file containing an entire untranslated screen, fixing the
-flagged line's neighbours reproduces the same incoherence one level up, so the line was fixed alone
-and the rest filed.
-
-Two repair notes worth keeping. The heuristic's `>text<` detector matched `) => Promise<void>;` six
-times out of eleven hits, so the guard is `(^|[^=])>` — in real JSX the character before a closing
-`>` is an identifier char, a quote, `}`, `/` or a space, never `=`. **That is exactly the shape a
-lazy agent would use as cover for loosening the rule**, so it is pinned in both directions: an arrow
-type must NOT report, and real JSX text including a `>` in column 0 MUST. And **brand names go
-through `t()` with the same value in every locale**, which is what `"header.title": "Matrix"` has
-always done; an exemption list was considered and rejected as the entry point for the next fictional
-rule.
-
-**The heuristic knows four forms now** — `>text<` on one line; text on its own line with the tag
-closed on the one before; a user-visible prop (`title`/`alt`/`placeholder`/`aria-label`) carrying a
-literal; a ternary or fallback whose branches are text. 1 hit → **26, every one real**. Fixing DEPTH
-honestly would mean a TSX parser (enumerate JSXText and JSXAttribute, subtract what routes through
-`t()`); a regex cannot become one, so these forms ARE an addition list and the remedy is the printed
-form count rather than a pretence of completeness.
-
-⭐ **One rule bought the precision, and it is the reusable part: a user-visible string starts with a
-capital OR contains a space.** Unfiltered, the ternary form ran at **32%** — reporting
-`rotate(90deg)`, `currentColor`, `mxd-btn-stop`, `sk-ant-...` and dotted i18n keys like
-`rollback.rewindTitle`. Filtered, ~100%. ⚠️ **The recall it costs is stated where the rule lives and
-pinned by a test: a single lowercase word with no space is NOT reported**, so `alt="attached"` is a
-real bare string this gate cannot see, and **baseline 0 will not mean zero bare strings**. A
-deliberate recall gap nobody wrote down is one commit from becoming the next depth defect — which is
-exactly what this gate was just fixed for. The reason to take the trade at all: **a gate with a bad
-hit rate teaches people to skim past it**, and then it is worth less than nothing.
-
-⚠️ **`aria-label=` had been sitting in the gate's SVG skip list**, between `viewBox` and
-`strokeWidth` — an accessibility string a screen reader speaks, skipped as if it were path geometry.
-Pulling it out changes 0 existing hits, which is what makes the fix provably not a behaviour change
-anywhere else.
+outlives any particular widening — a heuristic is partial by construction. When the i18n gate was
+single-line it flagged 1 of a component's 6 user-visible strings; fixing that one leaves a component
+half translated and half English, **worse than untouched, and it looks *handled*.** **The unit of repair
+is the coherent unit, not the flagged line**; a gate that catches a subset tells you WHERE to look, not
+WHAT to fix.
 
 ⭐ **When a widened gate surfaces a real backlog, RATCHET — and make the baseline write itself down.**
 The widening found 26 pre-existing bare strings, so two things were true at once: the gate is correct
-and the repo cannot pass it. Failing every commit until a translation project finishes is not a
-strict gate, it is one that gets `--no-verify`'d, which leaves no trace — the way 24 type errors once
-accumulated. **A gate nobody can pass stops being evidence about anything.** So
-`scripts/i18n-baseline.txt` carries the measured debt, the gate fails on any RISE, and **rewrites the
-file downward on any FALL**. The rewrite is the load-bearing half, not convenience: a baseline only a
-human remembers to lower is a number that quietly stops being true, so fixing ten strings against a
-stale 26 lets ten new ones land unnoticed — the drained rot, reintroduced by the fix for it. The hook
-stages the file, so the lowered number rides in the commit that earned it. ⚠️ Known hole, accepted
-and recorded next to the baseline: it is ONE count, so removing one string and adding another in the
-same commit nets to zero. A per-file table closes it and is a bigger surface than the thing it
-protects.
+and the repo cannot pass it. **A gate nobody can pass stops being evidence about anything** — it just
+gets `--no-verify`'d, which leaves no trace, the way 24 type errors once accumulated. So a baseline file
+carries the measured debt, the gate fails on any RISE, and **rewrites the file downward on any FALL**.
+The rewrite is the load-bearing half rather than a convenience: a baseline only a human remembers to
+lower is a number that quietly stops being true, so fixing ten strings against a stale 26 lets ten new
+ones land unnoticed — **the drained rot, reintroduced by the fix for it.** ⚠️ Known hole, accepted and
+recorded next to the baseline: it is ONE count, so removing one string and adding another in the same
+commit nets to zero.
 
 ⚠️ **Do not let the string cleanup swallow the gate fix.** Widening flags a lot, and the pull to fix
-them "while I'm here" is strong; it converts a nearly-finished bounded task into an unbounded
-translation project, which is how the thing that was going to protect us gets abandoned halfway.
-Count them, file them (`01KYDBRDAPF13M5X0E7PGQVB0X`), ship the gate.
-
-### The census, 2026-07-25 — negative results, so nobody re-runs this
-
-⚠️ **The date is the point of this heading, not decoration.** Everything below is a state claim with
-nothing that would ring if it stopped being true, and the heading tells you not to re-check — which
-is the one combination that lets a finding age into a lie undetected. Read every bullet as "true of
-the tree on 2026-07-25"; re-run the census if you are about to rely on one and the tree has moved.
-
-Every file-enumeration site in the repo was searched, deliberately with bash `grep -rn` rather than
-`search` — see *In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in
-your hand*, in the tools region. Conclusions:
-
-- **Every `Bun.Glob` in the repo was correct** — three call sites, two in `search`, one in
-  `list_files`.
-- **File enumeration here is either a `Bun.Glob` or a flat, single-directory read of a directory we
-  own with its filter written down** (a ULID regex, a `.jsonl` suffix). `readdir` returns dotfiles
-  by default and here that is what we want, so no default is doing hidden work. **Do not go looking
-  again.**
-- **File-scope CLAIMS are made in exactly two places**: a `readdirSync` walk in a test, or a
-  config's include/exclude. Everything else that reads a file reads a file it names, where the scope
-  IS the claim.
-- **There is no CI.** `.github/` and `.gitlab-ci.yml` do not exist; the pre-commit hook is the only
-  gate runner in this repo.
-- ⚠️ **The hook itself was the third addition list** — 3.6% of the suite behind an unqualified
-  `All checks passed.` **Subtraction is genuinely infeasible here** (a full `bun test` is
-  ~255-300s per commit), which is the performance exception the rule leaves open, so the remedy was
-  the other half of the i18n fix: say what you ran. Now fixed, along with the two axis-siblings
-  below. **The census found no fourth; that census is done.**
+them "while I'm here" converts a nearly-finished bounded task into an unbounded translation project —
+which is how the thing that was going to protect us gets abandoned halfway. Count them, file them
+(`01KYDBRDAPF13M5X0E7PGQVB0X`), ship the gate.
 
 ⭐ **"Scope" is only one dimension an addition list can hide in — PATTERN is another, and it hides
 better**, because a widened scope makes a narrow pattern look thoroughly exercised. The data-paths
 audit's scope was fixed while its regex still matched sixteen literal characters, so
-`dataRoot.substring(2)`, `.replace("@/", "")`, `.split("@/")[1]`, `dataRoot[2]` and a
-formatter-wrapped `dataRoot\n\t.slice(2)` all passed in silence. Widened to *any* operation on a
-dataRoot-named value, it immediately found a real second site the narrow pattern could never have
-seen: `effectiveDataRoot` in `plugin.ts`, which is legitimate — dataRoot in, dataRoot out, never a
-path — and is now a NAMED allowlist entry carrying its reason, which is what makes the check a
-subtraction. Round trip: **the old regex caught 1 of 8 planted spellings; the new audit catches 8 of
-8 and names the file.** Two limits stated rather than left to be discovered: a direct rebind
-(`const r = cfg.dataRoot`) gets its own check, and a value laundered through a function return is out
-of reach of any grep. ⚠️ Requiring the call parens (`dataRoot.slice(`) is load-bearing — five doc
-comments in this repo end a sentence on the word and start the next with a capital, which a bare
-`dataRoot\.\w+` reads as a method call.
+`dataRoot.substring(2)`, `.replace("@/", "")` and a formatter-wrapped `dataRoot\n\t.slice(2)` all passed
+in silence. Round trip: **the old regex caught 1 of 8 planted spellings; the new audit catches 8 of 8
+and names the file.** Two limits stated rather than left to be discovered: a direct rebind gets its own
+check, and a value laundered through a function return is out of reach of any grep.
 
-⚠️ **NEGATIVE RESULT — branded types were believed to be the one direction that escapes the
-enumeration frame entirely, and they do not.** Probed with `tsc` rather than reasoned about: on
+**Negative results from the 2026-07-25 census, so nobody re-runs it** (state claims, true of the tree
+that day): **every `Bun.Glob` in the repo was correct**; file enumeration here is either a `Bun.Glob` or
+a flat read of a directory we own with its filter written down, so **do not go looking again**; file-scope
+CLAIMS are made in exactly two places, a `readdirSync` walk in a test and a config's include/exclude;
+and **there is no CI** — the pre-commit hook is the only gate runner in this repo.
+
+⚠️ **NEGATIVE RESULT — branded types were believed to be the one direction that escapes the enumeration
+frame entirely, and they do not.** Probed with `tsc` rather than reasoned about: on
 `type DataRoot = string & {__brand}`, **`dr.slice(2)` and `dr.substring(2)` both compile clean** — a
-branded string keeps every string method, so branding does not prevent the operation it was proposed
-to prevent. Meanwhile `const m: Manifest = { dataRoot: "@/plugin/foo" }` fails TS2322, so it *does*
-break plugin authors writing a plain JSON-shaped manifest. Refuted at both ends. Forbidding `.slice`
-needs a genuinely opaque non-string type with an unwrap at every serialize/log/compare site, and
-manifests are JSON. **Do not re-derive.**
+branded string keeps every string method. Meanwhile a plain JSON-shaped manifest object fails TS2322, so
+it *does* break plugin authors. Refuted at both ends; manifests are JSON. **Do not re-derive.**
 
 ## Type errors that were all casts, and the gate that never ran
 
-Twenty-four `tsc` errors accumulated across six merges. **Every one of them was a workaround for a
-type the code already had correctly — zero `as unknown as` were added to fix them, all 24 fixes
-DELETED a cast or a hack.** Four patterns, each a reusable diagnosis:
+Twenty-four `tsc` errors accumulated across six merges. **Every one was a workaround for a type the code
+already had correctly — zero `as unknown as` were added to fix them, and all 24 fixes DELETED a cast or
+a hack.** Four patterns, each a reusable diagnosis:
 
-- ⚠️ **`(node as Record<string, unknown>).status = …` in a test fixture** — the field is ordinary,
-  typed and writable. **A `Record<string, unknown>` cast on a domain object in a TEST is almost
-  always a fixture-seeding shortcut, not a type problem. Look for the setter.**
+- ⚠️ **`(node as Record<string, unknown>).status = …` in a test fixture** — the field is ordinary, typed
+  and writable. **A `Record<string, unknown>` cast on a domain object in a TEST is almost always a
+  fixture-seeding shortcut, not a type problem. Look for the setter.**
 - ⚠️ **A cast that fails with TS2352 means the type is MORE precise than you assumed, not less.**
-  `(db as Record<string, unknown>).tokenizer = …` errored because `AnyOrama` has no index
-  signature — and it declares `tokenizer` outright, so the plain assignment typechecks. **Read the
-  `.d.ts` before laundering through `unknown`.**
-- ⚠️ **`.filter(Boolean)` does NOT narrow.** `map(… | null).filter(Boolean)` still has type
-  `(T | null)[]`, so every later access is "possibly null". Use `flatMap` (`return []` to drop,
-  `return [v]` to keep), which infers the narrowed element type with no predicate. **Never "fix"
-  this with `!` — the compiler is right that `filter(Boolean)` told it nothing.**
-- ⚠️ **Reading a variant-only field off a union**: narrow on the `type` discriminant instead of
-  casting. The narrowing usually makes the test STRONGER, since it now also asserts the event
-  round-trips as that variant.
+  `(db as Record<string, unknown>).tokenizer` errored because `AnyOrama` has no index signature — and it
+  declares `tokenizer` outright, so the plain assignment typechecks. **Read the `.d.ts` before
+  laundering through `unknown`.**
+- ⚠️ **`.filter(Boolean)` does NOT narrow.** Use `flatMap`, which infers the narrowed element type with
+  no predicate. **Never "fix" this with `!` — the compiler is right that `filter(Boolean)` told it
+  nothing.**
+- ⚠️ **Reading a variant-only field off a union**: narrow on the `type` discriminant instead of casting.
+  The narrowing usually makes the test STRONGER.
 
-Two adjacent facts: `noUnusedLocals` cases are real, so delete them (a `_` prefix does not satisfy it
-for locals or imports, only for function params); and `check:ci` exits 0 with a standing pile of
-warnings, because warnings never fail the gate — **do not "fix" the warning count during a gate
-restoration**, since biome's suggested `!` → `?.` autofix is marked unsafe and silently changes
-assertion semantics.
-
-⚠️ **Why 24 errors accumulated is the more important half, and it is not "someone bypassed the
-gate": there was no gate to bypass.** This is the incident that *a checked-in hook file is not an
-enforced hook* is about — nothing snuck past anything, the errors accumulated in the open, and the
-absence looked exactly like compliance.
+⚠️ **Why 24 errors accumulated is the more important half, and it is not "someone bypassed the gate":
+there was no gate to bypass.** Nothing snuck past anything — the errors accumulated in the open, and the
+absence looked exactly like compliance. Two adjacent facts: `noUnusedLocals` cases are real, so delete
+them; and `check:ci` exits 0 with a standing pile of warnings, so **do not "fix" the warning count
+during a gate restoration**, since biome's suggested `!` → `?.` autofix is marked unsafe and silently
+changes assertion semantics.
 
 ## Two smaller standing facts
 
-`mxd` is installed globally via `bun link`; `package.json` has `"bin": { "mxd": "src/cli.ts" }` and
-the CLI carries a `#!/usr/bin/env bun` shebang.
+`mxd` is installed globally via `bun link`; `package.json` has `"bin": { "mxd": "src/cli.ts" }` and the
+CLI carries a `#!/usr/bin/env bun` shebang.
 
 ⚠️ **If `bun test` ever dies mid-suite, check the EXIT CODE rather than the summary.** Bun 1.3.7-1.3.8
-had a native bug that killed the whole test process with SIGTRAP (exit 133) on any Worker teardown —
-a libmalloc double-free in `pthread_exit` — so the crashing file ran first and "3 tests passed" was
-meaningless while every claim of a green suite from that era was worthless. Fixed by upgrading to
-1.3.14. The generalisable part is the check, and that a minimal 7-line repro (spawn a Worker,
-terminate, observe exit 133) plus a version matrix over isolated installs settled in minutes what
-days of test-level debugging could not.
+killed the whole test process with SIGTRAP on any Worker teardown, so the crashing file ran first and
+"3 tests passed" was meaningless — every claim of a green suite from that era was worthless. Fixed by
+upgrading. The generalisable part is the check, and that **a minimal 7-line repro plus a version matrix
+over isolated installs settled in minutes what days of test-level debugging could not.**
 
 ---
 # Reference & Pitfalls
@@ -3176,42 +3052,35 @@ days of test-level debugging could not.
 
 ## Known pitfalls
 
-- **This file**: never `write_file` to append. Use `edit_file` or `echo >>`.
-- ⚠️ **A generator called without `yield*` is a SILENT NO-OP.** After extracting a `yield`-ing block
-  into a helper, grep every call site for `yield*`. `foo()` on a `function*` builds a generator
-  object and discards it — the body never runs. **Nothing catches this**: legal TS, no diagnostic, no
-  lint warning, because the call genuinely returns a generator and the type system has no opinion
-  about whether anyone iterates it. Observed cost: two missing `yield*` meant a tool_result reached
-  neither JSONL nor `messages[]`, so requests went out with an unanswered `tool_use`.
-- **Git worktrees**: `extensions.worktreeConfig` required; `core.hooksPath` absolute.
-- **Biome**: typecheck BEFORE lint. No `!important`. No duplicate CSS properties. ⚠️ `bun run check`
-  runs `--write` and silently formats 70+ files — use `check:ci` when debugging, and split a
-  format-only sweep into its own commit.
-- **`noUncheckedIndexedAccess`**: an array index returns `T | undefined`.
-- ⚠️ **TS6133 and the `_` prefix**: `noUnusedLocals` does NOT respect a leading underscore for local
-  variables or destructured locals — only for function parameters. For unused destructured React
-  state use `const [, setX] = useState(...)`; for an unused `const`, delete it.
-- **Commits do not restart the daemon.** Restart it manually after code changes — and remember the
-  tools you call belong to the running daemon, not to your worktree.
-- **Concurrent ULID**: use the full 26-char `ulid()`. Sliced ULIDs collide within one millisecond.
-- **Provider queue close**: check `queue.isClosed` after tool execution and `return` immediately.
+- ⚠️ **A generator called without `yield*` is a SILENT NO-OP.** After extracting a `yield`-ing block into
+  a helper, grep every call site. `foo()` on a `function*` builds a generator object and discards it —
+  the body never runs. **Nothing catches this**: legal TS, no diagnostic, no lint warning, because the
+  call genuinely returns a generator and the type system has no opinion about whether anyone iterates
+  it. Observed cost: a tool_result reached neither JSONL nor `messages[]`, so requests went out with an
+  unanswered `tool_use`.
 - ⚠️ **Never modify your own JSONL from inside an agent.** The current tool_call has no result yet, so
   you will read it as a false orphan.
-- ⚠️ **`delete_task` REFUSES any node with children** — `deleteTaskOp` throws on both the task and
-  the general-node branch, so you reparent or delete the children yourself first. `tracker.remove`
-  underneath it IS recursive and would take their session JSONL with it; that guard is the only
-  thing standing between a misclick and unrecoverable loss. Prose in this file, in the tool
-  description and in the system prompt all said the cascade was reachable, for months; it is not,
-  and describing a guard as a hazard makes agents avoid the tool where it is the right move.
-- ⚠️ **Abort-signal leak**: after a stop, the old `runAgentForNode` settles asynchronously. The catch
-  and finally re-read the node and compare its session against the one they began with, so a dying
-  agent cannot emit stale error events over the replacement that already owns the node. ⚠️ Do not
-  reach for a name here: the readable one (`wasReplaced`) exists only in comments, and the real
-  local is its **negation** (`notReplaced`).
+- ⚠️ **`delete_task` REFUSES any node with children** — you reparent or delete the children yourself
+  first. `tracker.remove` underneath it IS recursive and would take their session JSONL with it; that
+  guard is the only thing standing between a misclick and unrecoverable loss. **Prose in this file, in
+  the tool description and in the system prompt all said the cascade was reachable, for months; it is
+  not, and describing a guard as a hazard makes agents avoid the tool where it is the right move.**
+- ⚠️ **Abort-signal leak**: after a stop, the old `runAgentForNode` settles asynchronously, so the catch
+  and finally re-read the node and compare its session against the one they began with — a dying agent
+  must not emit stale error events over the replacement that already owns the node. ⚠️ Do not reach for
+  a name here: the readable one (`wasReplaced`) exists only in comments, and the real local is its
+  **negation**.
+- **Commits do not restart the daemon.** Restart it manually after code changes — and remember the tools
+  you call belong to the running daemon, not to your worktree.
+- **Concurrent ULID**: use the full 26-char `ulid()`. Sliced ULIDs collide within one millisecond.
+- **Git worktrees**: `extensions.worktreeConfig` required; `core.hooksPath` absolute. **Biome**:
+  typecheck BEFORE lint; no `!important`; `bun run check` runs `--write` and silently formats 70+ files,
+  so use `check:ci` when debugging and split a format-only sweep into its own commit.
+- **`noUncheckedIndexedAccess`**: an array index returns `T | undefined`. ⚠️ **TS6133 and the `_`
+  prefix**: `noUnusedLocals` does NOT respect a leading underscore for local variables or destructured
+  locals — only for function parameters. Use `const [, setX] = useState(...)`, or delete the const.
 
 ## Known bugs and open design
-
-**Open design questions**, re-checked rather than carried forward:
 
 - **Subtree message routing.** The parent chain shipped — `send_message` walks upward through
   `getTaskAbove`, so any ancestor is reachable — but you can still only reach DIRECT sub tasks, not
@@ -3219,69 +3088,48 @@ days of test-level debugging could not.
 - **Tool search** — dynamic tool discovery instead of sending every tool. Anthropic has a server-side
   `defer_loading`; the user prefers a client-side design.
 
-## ⚠️ "Never offer a remedy that will not work" is not a UI rule — it costs MORE in a tool error
+## ⚠️ "Never offer a remedy that will not work" costs MORE in a tool error than in a UI
 
 The rule is already written down for greyed buttons under *Blocked buttons are greyed and explained,
-never hidden*. It reappeared twice in `closeTaskOp`, and the second medium is the expensive one:
-**a human reads a bad remedy and gives up; an agent DOES IT, collects the second refusal, and then
-invents a workaround.** What it invents is worse than the failure, because it is invisible.
+never hidden*. It reappeared twice in `closeTaskOp`, and **the second medium is the expensive one: a
+human reads a bad remedy and gives up; an agent DOES IT, collects the second refusal, and then invents a
+workaround — and what it invents is worse than the failure, because it is invisible.**
 
-**Instance 1 — the dead end (fixed).** `update_task {status:"closed"}` refuses with *"Use close_task
-instead"*, and `close_task` refused anything that was not `verify`/`failed`. **The first error named
-a road the second did not accept**, so a draft had no path to a terminal state at all. Observed
-damage: a superseded draft was marked done by writing `[已解决 by <id>]` into its **TITLE** — state
-encoded in a string, invisible to every status filter, so it sits in the active pool forever. That
-is the shape to watch for: *the workaround is legible to humans and to nothing else.* (⚠️ Correction
-to the entry that says "**`hideCompleted`** hides closed and failed only": the CLAIM is right and
-the NAME is a phantom — the sidebar filter is `FilterMode = "all" | "hide-closed" |
-"active-favorites"` in `.mxd/plugin/web/components/TaskTree.tsx`, and grepping `hideCompleted` lands
-on an i18n key. Closing a draft therefore does remove it from the pile, which is the whole point of
-this change.)
+**Instance 1 — the dead end.** `update_task {status:"closed"}` refuses with *"Use close_task instead"*,
+and `close_task` refused anything that was not `verify`/`failed`. **The first error named a road the
+second did not accept**, so a draft had no path to a terminal state at all. Observed damage: a superseded
+draft was marked done by writing `[已解决 by <id>]` into its **TITLE** — state encoded in a string,
+invisible to every status filter, so it sits in the active pool forever. **That is the shape to watch
+for: the workaround is legible to humans and to nothing else.** The fix is a SUBTRACTION with one member
+— only `in_progress` is refused. **Close means two things at once** (reclaim the resources, take it out
+of the active pool); a draft owns no worktree, branch or session, so for it only the second applies and
+the first is a **no-op, not a contradiction**. The old whitelist read that no-op as grounds to refuse.
 
-The fix is a SUBTRACTION with one member — only `in_progress` is refused. **Close means two things
-at once** (reclaim the resources, take it out of the active pool); a draft/pending owns no worktree,
-no branch and no session, so for it only the second applies and the first is a **no-op, not a
-contradiction**. The old whitelist read that no-op as grounds to refuse.
+**Instance 2 — the false remedy inside the guard that STAYS.** The old message was *"Cannot close a
+running task. Stop it first or wait for done()."* ⚠️ **`stopTask` never touches `status`, deliberately —
+a stopped task stays `in_progress` precisely so it can resume.** So stopping lands the caller back on
+the same refusal, and an agent cannot even take that road: **there is no stop tool.**
 
-**Instance 2 — the false remedy inside the guard that STAYS (fixed).** The old message was *"Cannot
-close a running task. **Stop it first** or wait for done()."* ⚠️ **`stopTask` never touches
-`status`, deliberately — a stopped task stays `in_progress` precisely so it can resume** (its own
-docstring says so; all 7 runtime `updateStatus` sites were checked and none is a stop). So stopping
-lands the caller back on this same refusal, and an agent cannot even take that road: **there is no
-stop tool.**
-
-⭐ **The fix for a false remedy is a SHORTER message, not a more complete one — and two drafts went
-the wrong way before this landed.** The instinct when correcting a wrong instruction is to explain:
-name the false path and why it fails, name the alternative, price it. Both intermediate drafts did
-exactly that, and both were wrong for one reason — **they generated COMPLETENESS where the reader
-needs an INSTRUCTION.** An error answers a single question, *what do I do now*; the answer here is
-"wait", so the message is `Cannot close a running task — wait for it to finish.` Each rejected
-clause fails a concrete test worth keeping:
+⭐ **The fix for a false remedy is a SHORTER message, not a more complete one — and two drafts went the
+wrong way before this landed.** The instinct when correcting a wrong instruction is to explain: name the
+false path, name the alternative, price it. Both intermediate drafts did exactly that, and both were
+wrong for one reason — **they generated COMPLETENESS where the reader needs an INSTRUCTION.** An error
+answers a single question, *what do I do now*; the answer here is "wait". Each rejected clause fails a
+concrete test worth keeping:
 
 - *"Note that STOPPING it does not help"* — a warning about an action the reader **cannot perform**.
   Worse, the fact that agents have no stop tool was written down in the report that argued for the
   sentence: it was known, and not applied. **Check what the reader can DO before writing them a
   warning.**
-- *"reset_task it first, which discards its session and worktree"* — `reset_task` genuinely unblocks
-  the close (→ pending → closable, true only because of this change), and it is a destructive option
-  nobody asked for. Handing someone a knife because they asked to tidy up is not helpfulness, and
-  attaching the price tag does not make it one.
-- *"done() sets verify or failed, both closable"* — internal state vocabulary, contributing nothing
-  to *what do I do now*.
-
-Pinned by a test asserting the message names waiting and contains neither `stop` nor `reset_task`,
-so the false remedy cannot return in either form — recommending it, or warning against it.
-
-**Negative result, verified rather than assumed** (the guard "looks like it already covers this" was
-the reason to check): `closeTaskOp`'s `if (node.worktreePath && node.branch)` really is a clean
-no-op for a resourceless task, and **close never calls `clearEventStore` at all — the callback sits
-in its signature unused, and that absence IS "task record + session preserved"**. Both are pinned by
-tests carrying a POSITIVE CONTROL in the same test (a *pending* task that does own a worktree still
-gets it removed; `deleteTaskOp` with the same capture does clear), because "the callback was not
-called" is equally consistent with "nothing in this build calls it".
+- *"reset_task it first, which discards its session and worktree"* — genuinely unblocks the close, and
+  is a destructive option nobody asked for. **Handing someone a knife because they asked to tidy up is
+  not helpfulness, and attaching the price tag does not make it one.**
+- *"done() sets verify or failed, both closable"* — internal state vocabulary, contributing nothing to
+  *what do I do now*.
 
 ⚠️ **Pre-existing race this widens without changing in kind**: `beforeChildLaunch` (a `git worktree
-add`, seconds) runs BEFORE `onLaunch` flips the status, so a task being launched is still readable
-as its old status. `close_task` has always been able to land in that window on a `verify`/`failed`
-task woken by `send_message`; it can now also land on a `pending` one. `deleteTaskOp` and
-`resetTaskOp` close this with `awaitLoopExit`; `closeTaskOp` never had it and still does not.
+add`, seconds) runs BEFORE `onLaunch` flips the status, so a task being launched is still readable as
+its old status. `close_task` has always been able to land in that window on a woken `verify`/`failed`
+task; it can now also land on a `pending` one. `deleteTaskOp` and `resetTaskOp` close this with
+`awaitLoopExit`; `closeTaskOp` never had it and still does not.
+
