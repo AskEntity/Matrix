@@ -116,6 +116,7 @@ must find.
 | `src/orchestrator-tools.ts` | every matrix tool definition **and** `buildAllToolDefs`, from which the external-MCP tool list is built |
 | `src/event-store.ts` | append-only JSONL. eid/parentEid chain, `setChainHead` for rollback and repair. **Never truncates.** |
 | `src/events.ts` | event types, `buildSessionRepair`, and `walkActiveChainIndices` — the ONE definition of "which events count" |
+| `src/event-converter.ts` | `walkEventsToMessages` — **"the walker"**, which is what this file calls it everywhere else and defines nowhere else: JSONL → `messages[]`. The live path delegates to its callbacks, so a live/reconstruction drift starts here. |
 | `src/task-operations.ts` | the shared CRUD ops. MCP and REST are both thin wrappers over these. |
 | `src/test-utils/api-message-rules.ts` | the MEASURED Anthropic message-shape rules, and the prefix-vs-sendable split |
 | `.mxd/plugin/scope-opts.ts` | `buildMatrixScopeOpts` — the one place that knows matrix's tools, prompt and hooks |
