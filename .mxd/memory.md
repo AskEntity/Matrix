@@ -332,48 +332,41 @@ extended. **That reasoning is correct.** So:
 
 ⚠️ **Detector — do not audit whether the assertions are correct.** That comment was entirely
 correct. Ask instead: **is the rule being ENFORCED the same rule that is DOCUMENTED?** Wherever those
-two fork is where a fiction starts producing evidence. ⭐ **The fork does not only arrive inherited —
-it can be born in code written minutes earlier, and a green test is what lets it survive**, because
-the fixture chosen is the one drawn from the failure that happens in practice, which is exactly the
-fixture that cannot separate the two rules. Build the fixture from the condition the rule NAMES, not
-from the instance you have seen.
+two fork is where a fiction starts producing evidence — and the fork can be born in code written
+minutes earlier, kept alive by a green test whose fixture is drawn from the failure that happens in
+practice, which is exactly the fixture that cannot separate the two rules.
 
 **An over-strict test double bills you three ways, and the third leaves no artifact.** It creates
 complexity you pay for. It hides gaps — a fiction occupying the "role rules" slot stopped anyone
-asking what the real role rule was, so the true one had zero coverage and a reachable production 400
-sat there unnoticed. And ⭐ **it VETOES correct code**: interrupt an agent before it emits anything,
-park it, send another message, and you get `[…, user, user]` — legal, and the old mock rejected it,
-so the correct implementation could not be tested and the feature quietly acquired a reputation for
-being hard to test. **Nothing was red. Ask what your test double has made people give up on, not
-only what it has made them build.**
+asking what the real role rule was. And ⭐ **it VETOES correct code**: the legal shape
+`[…, user, user]` was rejected, so the correct implementation could not be tested and the feature
+quietly acquired a reputation for being hard to test. **Nothing was red. Ask what your test double
+has made people give up on, not only what it has made them build.**
 
 ⭐ **Zero existing tests went red when the true rules were finally added, and that is the finding
 rather than a disappointment. The fiction was not masking existing tests — it was masking the fact
 that nobody had written the missing one.** A gap does not turn red; it stays invisible until someone
-goes looking, which is why the probe had to be written by hand rather than discovered by running the
-suite.
+goes looking.
 
 **Three shorter members of the same family, each a different medium:**
 
 - **A wrong MECHANISM licenses a weaker test.** Chasing the CoreML NaN, a real published mechanism
-  was found and fitted to two data points — over-fitting to n=2 while carrying a citation. "FP16
-  overflows on long inputs" implies short inputs are safe, under which a single long probe is not
-  merely adequate but *well-chosen*. **The causal story silently set the bar, so the check that
-  would have caught it is the one the story talked you out of needing.**
-- **The cheapest instance to guard against is READING.** A short instruction was given a coherent
-  interpretation that fit its words, and acting on it would have deleted 660 lines of this file; the
-  reading was defended with "a revert restores anything lost", which is true and beside the point —
-  **the revert restores the lines, not the hour.** ⭐ **When an instruction is short and the action
+  was fitted to two data points — over-fitting to n=2 while carrying a citation. "FP16 overflows on
+  long inputs" implies short inputs are safe, under which a single long probe is not merely adequate
+  but *well-chosen*. **The causal story silently set the bar, so the check that would have caught it
+  is the one the story talked you out of needing.**
+- ⭐ **The cheapest instance to guard against is READING. When an instruction is short and the action
   it licenses is expensive or irreversible, one clarifying question is always cheaper than a
-  confident reading.** The temptation is strongest exactly when the reading is coherent, because
-  coherence feels like confirmation.
+  confident reading** — and the temptation is strongest exactly when the reading is coherent, because
+  coherence feels like confirmation. A coherent misreading of a short instruction would have deleted
+  660 lines of this file, defended with "a revert restores anything lost": true, and beside the point,
+  because **the revert restores the lines, not the hour.**
 - ⭐ **A measurement that contradicts your plan is not a result to report afterwards — it is a reason
-  to stop.** Mid-execution of that same deletion, the first rung measured 82 lines against an
-  estimate of 310, which already refuted the plan it was part of; the intent was to finish the cuts
-  and report the discrepancy after. **Nothing about that is careless — it is the ordinary shape of
-  finishing what you started**, which is exactly why it needs writing down: the surprising number
-  arrives while you are busy, and "I'll report it when I'm done" costs nothing to think and
-  everything if the plan was wrong.
+  to stop.** Mid-execution of that same deletion, the first rung measured 82 lines against an estimate
+  of 310, already refuting the plan it was part of; the intent was to finish the cuts and report the
+  discrepancy after. **Nothing about that is careless — it is the ordinary shape of finishing what you
+  started**, which is why it needs writing down: the surprising number arrives while you are busy, and
+  "I'll report it when I'm done" costs nothing to think and everything if the plan was wrong.
 
 ## ⭐ Your instrument is a claim until you have made it fail
 
@@ -401,22 +394,16 @@ The roll-call, because the range is the argument — these are not one subsystem
 | a three-signal task probe | `false` for all 551 tasks | `tree.json`'s `nodes` is an ARRAY, so `Object.entries` handed back indices as ids |
 | the `ps`-based autoResume audit | "auto-resume still costs 4 procs" | it was measuring an agent a human had started 14 seconds after boot |
 
-Four things a control has to be, each learned from one of those:
-
-- ⚠️ **Able to FAIL for the reason you are testing.** A reviewer confirmed with a positive control
-  that grep could see a file's real exports, then reported two of its symbols as fabricated — sound
-  method, wrong control. The symbols were real and lived in a commit their branch had not merged, and
-  the chosen control existed in BOTH versions, so it could not separate "this symbol is absent" from
-  "my checkout is old". **Pick a control present under one hypothesis and absent under the other.**
-- ⚠️ **Placed where the risk is.** A `while read` loop silently dropped its final line, and the
-  planted control worked **only because it was last**. A control in the middle would have passed and
-  told you nothing.
-- ⚠️ **Verified to have RUN, and to have run the thing that COVERS the subject.** "Did it run" and
-  "did it run the tests that cover this" are two questions, and only the second makes SURVIVED mean
-  anything.
-- ⚠️ **Of a resolution that can carry the measurement you specified.** "Record `scrollHeight` every
-  frame" is below the instrument's resolution the moment the event you are hunting blocks the main
-  thread, **and its failure mode is a silent false negative that reads exactly like a real result.**
+Four things a control has to be, each learned from one of those. It must be **able to FAIL for the
+reason you are testing** — a reviewer confirmed with a positive control that grep could see a file's
+real exports, then reported two of its symbols as fabricated, but the symbols were real and lived in
+a commit their branch had not merged, and the chosen control existed in BOTH versions, so it could
+not separate "this symbol is absent" from "my checkout is old". It must be **placed where the risk
+is**: a `while read` loop silently dropped its final line, and the planted control worked only
+because it was last. It must be **verified to have RUN, and to have run the thing that COVERS the
+subject** — two different questions, and only the second makes SURVIVED mean anything. And it must be
+**of a resolution that can carry the measurement you specified**, because below that resolution the
+failure mode is a silent false negative that reads exactly like a real result.
 
 ⭐ **Two corollaries that catch what planting does not.** A **uniform answer across a whole population
 is the signature of a broken instrument, not a finding** — 551/551 is not a result. And **a heuristic
@@ -436,41 +423,37 @@ Both halves came out of one 2026-04-03 documentation audit, and they compound.
 ⚠️ **A verification whose reference was produced by the verifier is not a verification.** That audit
 reported five files "all verified clean". Its own session, ~320 events earlier, had sent the docs
 project the numbered change-list those files had just been edited from — so it compared the docs
-against its own instructions, and **agreement was structurally guaranteed.** Two properties make
-this hard to catch rather than merely embarrassing. **Distance manufactures the illusion**: 320
-events is far more than enough to stop experiencing a list as your own output, and by the time it is
-read back it is simply *the criteria* — so the defence is not vigilance but asking **where did my
-reference come from**, a question with a checkable answer, unlike "am I being circular", which has
-none. And **`clean` is the one verdict that leaves nothing to review**, so it is accepted by default
-and inherited by everyone downstream; here for **115 days**. ⚠️ A "clean" verdict does not even cover
-the bytes it read — two commits landed on one of those files afterwards, one introducing a type that
-has never existed. **Date the artifact, not the review: a verdict names a commit or it names
-nothing.** The reusable form: **a review is evidence only to the extent its reference is INDEPENDENT
-of the thing reviewed.** Code, a measurement, or a document someone else wrote are independent. Your
-own change-list, task description or previous summary are not.
+against its own instructions, and **agreement was structurally guaranteed.** **Distance manufactures
+the illusion**: 320 events is more than enough to stop experiencing a list as your own output, and by
+the time it is read back it is simply *the criteria* — so the defence is not vigilance but asking
+**where did my reference come from**, a question with a checkable answer, unlike "am I being
+circular", which has none. And **`clean` is the one verdict that leaves nothing to review**, so it is
+accepted by default and inherited downstream; here for **115 days**. ⚠️ It does not even cover the
+bytes it read — two commits landed on one of those files afterwards, one introducing a type that has
+never existed. **Date the artifact, not the review: a verdict names a commit or it names nothing.**
+The reusable form: **a review is evidence only to the extent its reference is INDEPENDENT of the
+thing reviewed.** Your own change-list, task description or previous summary are not.
 
 ⭐ **A checklist derived from the artifact can only find contradictions, never omissions.** Walk a
 document checking each claim and every finding you can possibly produce has the form "it says X, the
 code says Y". You cannot produce "the code has Z and the document has never mentioned it", because
 nothing in the document ever raised Z. That audit's findings were **100% contradictions and 0%
-omissions**, and the ratio was a fact about the method, not about the documents: a whole-repo probe
-for concepts absent from all four docs found **twelve** invisible subsystems — the plugin layer, the
-Worker thread, dual lenses, `eid`/`parentEid`, the active chain, the search index, Edit/Rewind and
-more. **This is the addition-list failure from *Gates* in a different medium**, which is why it lives
-here rather than being filed as a documentation lesson. **The omission pass needs its own instrument
-and it runs in the opposite direction: start from the CODE, enumerate what exists, and ask which of
-those the reader would form a wrong model without** — that last clause is the bound, or the pass
-never terminates. ⚠️ The trap for whoever runs it: **the omission pass makes the contradiction pass
-look thorough by comparison**, because contradictions come with line numbers and quotes while
-omissions come with an absence, and an absence reads as the weaker finding while being the larger
-one.
+omissions**, and the ratio was a fact about the method: a whole-repo probe for concepts absent from
+all four docs found **twelve** invisible subsystems, including the plugin layer, the Worker thread,
+dual lenses, the active chain and Edit/Rewind. **This is the addition-list failure from *Gates* in a
+different medium. The omission pass needs its own instrument, running in the opposite direction:
+start from the CODE, enumerate what exists, and ask which of those the reader would form a wrong
+model without** — that last clause is the bound, or the pass never terminates. ⚠️ The trap: **the
+omission pass makes the contradiction pass look thorough by comparison**, because contradictions come
+with line numbers and quotes while omissions come with an absence, and an absence reads as the weaker
+finding while being the larger one.
 
 ⚠️ **Auditing a live repo: pin the commit, and expect it to move under you.** Mid-audit the target
-gained two commits, one file went 984 → 1015 lines, every line number collected up to that point was
-silently invalidated, and — worse — **one of the findings was fixed**, so reporting it would have
-sent another team to redo work they had just finished. Record the target's HEAD when you start and
-re-check it before you report; **re-derive line numbers mechanically from anchor TEXT at the end,
-never carry the ones you noted while reading**; and diff the range before re-reading everything.
+gained two commits, every line number collected up to that point was silently invalidated, and —
+worse — **one of the findings was fixed**, so reporting it would have sent another team to redo work
+they had just finished. Record the target's HEAD when you start and re-check it before you report,
+and **re-derive line numbers mechanically from anchor TEXT at the end, never carry the ones you noted
+while reading.**
 ---
 # The Agent Loop
 ---
