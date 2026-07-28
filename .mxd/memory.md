@@ -797,326 +797,206 @@ whose `[22:06]` → `[11:04]` gap was only inferable from anomalous test duratio
 
 ## bash: bound the output rather than forbidding the workaround
 
-The tiered display exists because agents piped and redirected for a legitimate reason — context was
-genuinely at risk — and rules against it leak at the edges. Now context is bounded by the tool, so
-the instinct has nothing to act on. Under 1KB is inline only; up to 10KB is full inline plus a
-saved file; over 10KB is head 5KB + a truncation banner + tail 5KB, with the complete output on
-disk. Streams are merged by wrapping in `bash -c "(cmd) 2>&1"`, which makes an agent-written `2>&1`
-a harmless no-op. Foreground and background go through one `formatBashResult`, so a
-`background_complete` message is byte-identical to the foreground result for the same command.
+**Agents piped and redirected for a legitimate reason — context was genuinely at risk — and rules
+against it leak at the edges.** So the tool satisfies the need instead: under 1KB is inline only, up
+to 10KB is full inline plus a saved file, over 10KB is head 5KB + a banner + tail 5KB with the
+complete output on disk. Now the instinct has nothing to act on. Streams are merged by wrapping in
+`bash -c "(cmd) 2>&1"`, which makes an agent-written `2>&1` a harmless no-op, and foreground and
+background share one `formatBashResult` so a `background_complete` is byte-identical to the
+foreground result for the same command.
 
-⭐ **The framing generalises**: when agents repeatedly do X, ask whether the motivation is
-legitimate. If it is, make the tool satisfy it naturally instead of enforcing against it. **If you
-find yourself adding a parser, a rejection or a warning to the new tool, you have drifted** — the
-point is to make the shortcut unnecessary, not forbidden.
+⭐ **The framing generalises: when agents repeatedly do X, ask whether the motivation is legitimate,
+and if it is, make the tool satisfy it naturally instead of enforcing against it. If you find
+yourself adding a parser, a rejection or a warning to the new tool, you have drifted** — the point is
+to make the shortcut unnecessary, not forbidden.
 
-The "don't pipe" guidance lives in the bash tool's `description`, not in `system-prompts.ts`,
-because that is where the decision to pipe is made — while constructing the call.
+The "don't pipe" guidance lives in the bash tool's `description`, not in the system prompt, because
+that is where the decision to pipe is made — while constructing the call.
 
 ## The bash result names its own working directory — and a one-shot warning could not
 
-Every bash result whose working directory is not the agent's worktree root opens with a line naming
-it. Three states, and the quiet one is EXACTLY the root:
+**The failure this removes is invisible by construction.** After a `cd` out of the worktree every
+later command succeeds, `git status` reports cleanly, and the output looks authoritative. An agent in
+another project `cd`'d into this repo, missed the one-shot warning, then built a five-link evidence
+chain — empty `git status --porcelain`, `ls` returning "No such file or directory", a
+`git check-ignore` hit — and **filed a two-bug report against this daemon.** Every link was
+individually valid; they were answers about a different repository.
 
-| cwd | line |
-|---|---|
-| exactly your worktree root | *(nothing)* |
-| below your root | `[cwd: <dir>]` |
-| a different checkout | `[cwd: <dir> — OUTSIDE your worktree, which is <root>]` |
-
-**The failure it removes is invisible by construction**, which is why a stronger warning was not the
-fix: after a `cd` out of the worktree, every later command succeeds, `git status` reports cleanly,
-and the output looks authoritative. An agent in another project `cd`'d into this repo, missed the
-one-shot warning, then built a five-link evidence chain — empty `git status --porcelain`, `ls`
-returning "No such file or directory", a `git check-ignore` hit — and **filed a two-bug report
-against this daemon.** Every link was individually valid; they were answers about a different
-repository. Root hit the same shape twice in one day.
-
-⭐ **The general rule, worth more than the feature: a one-shot notification cannot signal a
-persistent condition — the notification's lifetime has to match the state's.** The old warning fired
-at the moment of the `cd` and never again, so it covered the one result the agent was already paying
-attention to and left silent every result where the mistake actually does its damage.
-
-⭐ **And the corollary that decided a live disagreement: once every affected result carries the
-state, the transition warning's firing condition is a strict SUBSET of it, so "keep both" means
-printing the same fact twice in one result.** Deleted. What is NOT redundant, and stays, is
-`workdir set to X from now on` — that reports an EVENT (you just moved), the notice reports a STATE
-(this is where the output above came from). Neither substitutes for the other, and the distinction is
-worth keeping in hand: it is the same one that separates an SSE delta from a snapshot.
+⭐ **The general rule, worth more than the feature: a one-shot notification cannot signal a persistent
+condition — the notification's lifetime has to match the state's.** The old warning fired at the
+moment of the `cd` and never again, so it covered the one result the agent was already paying
+attention to and left silent every result where the mistake actually does its damage. Now every
+result whose cwd is not the worktree root opens with a line naming it, and the quiet state is
+EXACTLY the root. ⭐ **Once every affected result carries the state, the transition warning's firing
+condition is a strict SUBSET of it**, so "keep both" means printing the same fact twice — deleted.
+What is NOT redundant is `workdir set to X from now on`: that reports an EVENT, the notice reports a
+STATE, and neither substitutes for the other. (Same distinction as an SSE delta versus a snapshot.)
 
 ⚠️ **Which checkout a directory belongs to is answered by `git rev-parse --show-toplevel`, and both
-obvious simplifications are wrong:**
+obvious simplifications are wrong.** A path-prefix test calls `.worktrees/<other-task>` "inside",
+because it IS under the main repo root — and for ROOT that covers *every* other agent's checkout,
+the single most dangerous place to stand unknowingly, where a write or a commit lands in someone
+else's in-flight work and looks entirely normal going in. A hand-rolled walk up to the nearest `.git`
+is wrong too, because **a linked worktree's `.git` is a FILE**, so an `isDirectory()` test resolves
+every agent worktree to the main repo — the one answer that makes another agent's checkout look like
+home. Asking git cannot drift from git.
 
-- **A path-prefix test** (`cwd.startsWith(worktreeRoot + "/")`) calls `.worktrees/<other-task>`
-  "inside", because it IS under the main repo root. For ROOT — whose worktree root is the repo root
-  — that covers *every* other agent's checkout, which is the single most dangerous place to stand
-  unknowingly: another branch, where a write or a commit lands in someone else's in-flight work and
-  looks entirely normal going in.
-- **A hand-rolled walk up to the nearest `.git`** is wrong in its naive form, because **a linked
-  worktree's `.git` is a FILE** (`gitdir: <repo>/.git/worktrees/<name>`), not a directory. An
-  `isDirectory()` test resolves every agent worktree to the main repo — the one answer that makes
-  another agent's checkout look like home. Asking git cannot drift from git, and `GIT_DIR`,
-  submodules and everything else come free. The test fixture is a real `git worktree add`, with a
-  test pinning that its `.git` really is a file, so the fixture cannot decay into one that every
-  implementation passes.
+The lookup rides in the exit trap that was already writing `pwd`, and the notice describes the
+directory the shell ENDED in. Its `2>/dev/null` is load-bearing: outside a repository `git rev-parse`
+fails loudly on stderr, that case is NORMAL, and merged mode would fold it into the command's own
+output.
 
-The lookup **rides in the EXIT trap that was already writing `pwd`** (a second line beside it), not
-in a daemon-side spawn — the shell is being paid for regardless. ⚠️ **The `2>/dev/null` on that trap
-is load-bearing, not tidiness**: outside a repository `git rev-parse` fails LOUDLY on stderr, that
-case is NORMAL rather than an error, and merged mode folds the subshell's stderr into the command's
-own output — so without it every command run from `/tmp` reports a git error it did not cause.
-Removing it reddens exactly one test. (The command's OWN git errors still surface, which is the
-distinction to preserve if you touch this.)
-
-The notice describes the directory the shell **ENDED** in, not the one it started in:
-`cd ~/.mxd && cat config.json` produces output about `~/.mxd`, and naming the worktree there would be
-the very defect the line exists to remove. It is carried on the shape `formatBashResult` takes, so
-foreground, `background_complete` and the `background` tool's status action get it by construction
-rather than by three callers remembering.
-
-**The other end of the same guarantee: `cd` to the directory you are already in is a free no-op**,
-so an agent unsure where it is can always just say so. There was a shell `cd()` override that
-errored with *"already in this directory"*, and **every line of its body existed to produce that
-error** — it resolved the target only to compare it against `pwd`, and wrote no file anywhere. CWD
-tracking was, and is, entirely the EXIT trap. ⚠️ **Do not reintroduce a wrapper**: with the error
-gone the remainder is `cd() { builtin cd "$1"; }`, strictly worse than the builtin it shadows — it
-breaks `cd -`, and an empty argument stops meaning `$HOME`.
-
-The trade was priced wrong originally: it optimised the common case (a redundant `cd` costs a few
-tokens) against the rare one (a command running somewhere unintended, with every result still
-looking authoritative). The guidance is now the opposite — **prefix a `cd` whenever you are not sure
-where you are.**
-
-⚠️ **Removing an error branch must not remove real errors.** A `cd` that silently does nothing on a
-typo'd path is the wrong-directory command this whole area exists to prevent, wearing a friendlier
-face. Pinned by four tests that pass identically before and after the change — a missing directory
-and a path that is a file both still fail with bash's own message naming the path, the rest of the
-command still runs in the original directory, and a bare `cd` still reaches `$HOME`.
+**The other end of the same guarantee: `cd` to the directory you are already in is a free no-op**, so
+an agent unsure where it is can just say so. There was a shell `cd()` override that errored with
+*"already in this directory"*, and **every line of its body existed to produce that error**; with the
+error gone the remainder is `cd() { builtin cd "$1"; }`, strictly worse than the builtin it shadows —
+it breaks `cd -`, and an empty argument stops meaning `$HOME`. Do not reintroduce a wrapper. The
+trade was priced wrong originally, optimising the common case (a redundant `cd` costs a few tokens)
+against the rare one (a command running somewhere unintended, with every result still looking
+authoritative). **Prefix a `cd` whenever you are not sure where you are.**
 
 ## Two filesystem-walk defects, in both tools that walk: a library default serving somebody else
 
 `search` and `list_files` each had the SAME two defects, and finding the pair a second time in the
 second tool is what turned two bug reports into a class.
 
-- **Neither walked hidden directories.** `Bun.Glob.scanSync` defaults to `dot: false` and nobody
-  passed the option. In this repo the hidden directory IS the source: `.mxd/plugin/` is every
-  ScopeOpts hook, every plugin REST route and the entire UI — **17,862 lines across 54 files, 34% of
-  all non-test source**, invisible to the primary search tool.
+- **Neither walked hidden directories**, because `Bun.Glob.scanSync` defaults to `dot: false` and
+  nobody passed the option. In this repo the hidden directory IS the source: `.mxd/plugin/` is every
+  ScopeOpts hook, every plugin REST route and the entire UI — **34% of all non-test source, invisible
+  to the primary search tool.**
 - **A glob with no slash was treated as a path pattern.** `*` does not cross `/` in `Bun.Glob`, so
-  `*.ts` — *the example printed in the tool's own description*, and what ripgrep's `--glob` means —
-  matched only files sitting directly in the search root, i.e. `(no matches)` from a repo root.
-  `normalizeGlobDepth` now promotes a slash-free glob to `**/<glob>`; a glob containing `/` is a
-  path pattern and passes through untouched, so `src/*.ts` stays anchored. Same split ripgrep makes.
+  `*.ts` — *the example printed in the tool's own description* — matched only files sitting directly
+  in the search root. A slash-free glob is now promoted to `**/<glob>`; one containing `/` is a path
+  pattern and passes through untouched. Same split ripgrep makes.
 
-**What makes this class invisible is that there is no line to review.** Nothing anywhere said "skip
+⭐ **What makes this class invisible is that there is no line to review.** Nothing anywhere said "skip
 hidden directories" or "match only the top level" — the semantic lived in a library's default, i.e.
-in the *absence* of an argument, and code review cannot catch an absence. Hence the discipline now
-in place at every walker: **decide every behaviour you depend on explicitly, even when you agree
-with what you would have got for free.** Stating a choice you were already getting by default is not
-noise; it is the semantic becoming visible and therefore reviewable. The hand-rolled walk that
-replaced these `scanSync` calls follows the same rule from the other side — it now *chooses* its
-symlink handling, its skip set and its sort rather than inheriting any of them, and each of those
-choices has a test.
+in the *absence* of an argument, and **code review cannot catch an absence.** Hence the discipline at
+every walker now: **decide every behaviour you depend on explicitly, even when you agree with what
+you would have got for free.** Stating a choice you were already getting is not noise; it is the
+semantic becoming visible and therefore reviewable.
 
-The second-order damage is why this is worth a section rather than a commit message: for as long as
-such a bug lives, **the tool's own description is teaching agents the wrong rule.** `list_files`'s
+⚠️ **The second-order damage is why this is a section rather than a commit message: for as long as
+such a bug lives, the tool's own description is teaching agents the wrong rule.** `list_files`'s
 examples were `"src/**/*.ts"`, `"**/*.test.ts"`, `"*.json"` — the first two anchored, the third
 silently meaning something else. The defect was never that `*.json` returned the wrong three files;
-it was that a reader **generalises from the neighbours**. Both tools now state the rule rather than
-implying it.
+it was that a reader **generalises from the neighbours**.
 
-### Four things that will look like oversights
-
-1. ⚠️ **The 500-file cap counts files we KEEP, never files we walked past.** Not an optimisation — a
-   correctness requirement, and now structurally guaranteed by pruning at descent (below) rather
-   than achieved by a filter inside the loop. Measured from the main checkout with `dot: true` and
-   no skip list, an any-depth `*.ts` filled **323 of its 500 slots with `.worktrees/` copies** of
-   files the caller already had, and never reached `web/`, `scripts/` or `.mxd/` at all, because
-   `.worktrees` is walked before `src`. **So `dot: true` alone is not a different flavour of wrong,
-   it is strictly worse than the bug**: the cap stops protecting you and starts guaranteeing you get
-   the copies. Do not ship the two halves separately.
-2. ⚠️ **`.worktrees/` in `DEFAULT_SKIP_DIRS` is load-bearing and costs nothing today, so it needs an
-   assertion.** Each sub-agent worktree is a full second copy of the repo — measured 63,975 files
-   across 3 live worktrees — so dropping it makes one search from main scan every file 4× and report
-   every hit 4×. The guard test will not fail before someone "tidies" the list, which is the entire
-   point of it.
-3. ⚠️ **Truncation is announced, and detected one PAST the cap**, so a project with exactly 500
-   files is not accused of having more. Silently returning 500 of 50,000 is the same failure as
-   silently not walking a directory.
-4. ⚠️ **`skipDirsForPattern(pattern)` is the default skips minus any directory the pattern NAMES.**
-   `search` can reach an excluded directory by pointing `path` into it or passing `excluded_dirs:
-   []`; `list_files` takes a pattern and nothing else, so a plain skip list would have deleted an
-   ability with no replacement. No new parameter — the caller's intent is already in the input, and
-   every param is a token every agent pays on every call. **Comparing against the trailing-slash
-   form is what keeps it from firing by accident**: a pattern hunting for `*build*.ts` does not
-   contain `build/`. When it misfires it hands over MORE files, never fewer, and every bug in this
-   family did its damage by handing over fewer without saying so.
-
-⭐ **`DEFAULT_SKIP_DIRS` is now the ONLY thing that decides what a search ignores**, which is what
-the code always claimed — `.git/` and `.worktrees/` were already listed explicitly, so `dot: false`
-was never anyone's intent. It is exported, and a test pins it against its prose copy in the
-`excluded_dirs` description, because a prose copy of a list is the drained rot kind: a stale list
-and a fresh list read identically.
+Two consequences that will look like oversights. **The 500-file cap counts files we KEEP, never files
+we walked past** — a correctness requirement, now structurally guaranteed by pruning at descent. With
+`dot: true` and no skip list, an any-depth `*.ts` filled **323 of its 500 slots with `.worktrees/`
+copies** of files the caller already had, and never reached `web/`, `scripts/` or `.mxd/` at all, so
+`dot: true` alone is not a different flavour of wrong but strictly worse than the bug: the cap stops
+protecting you and starts guaranteeing you get the copies. Do not ship the two halves separately. And
+**`.worktrees/` in `DEFAULT_SKIP_DIRS` is load-bearing while costing nothing today, so it needs an
+assertion** — each sub-agent worktree is a full second copy of the repo, and the guard test will not
+fail before someone "tidies" the list, which is the entire point of it.
 
 ### Detecting a silent under-report
 
 The failure mode is silent **by construction**: "no matches" and "never looked" produce a
-byte-identical tool_result. Nothing in a search result carries evidence that the search happened, so
-it can never be caught by inspecting the answer — only by a **collision with something you
-independently already know**. Three things generalise from how it was actually caught:
+byte-identical tool_result, so it can never be caught by inspecting the answer — only by a
+**collision with something you independently already know**. And you search for things you do NOT
+already know, so a false `(no matches)` is indistinguishable from the truth AND confirms your
+hypothesis, which is the most comfortable answer there is.
 
-1. ⚠️ **The empty result is the detectable one; the partial result is the dangerous one.** Same bug,
-   same tool, same agent, 38 seconds apart: a long confident answer that silently omitted the file
-   *defining* the symbol went unchallenged and was acted on 2 seconds later, while an empty result
-   for something the agent had read 5 events earlier got double-checked immediately. An
-   under-report is only conspicuous when it takes *everything* away, which is the case that matters
-   least.
-2. ⚠️ **Detection needs an independently-held fact at that exact instant.** You search for things
-   you do NOT already know — "are there other callers of X?" — and there a false `(no matches)` is
-   indistinguishable from the truth AND confirms your hypothesis, which is the most comfortable
-   answer there is. That is precisely the rename/delete check *Changing code here* tells you to run.
-   Do not file a bug under "detectable" because of its output SHAPE; ask whether it is detectable in
-   the situations it occurs in.
-3. ⚠️ **The check that caught it is the one the tool description forbids** — *"ALWAYS use this for
-   search tasks — NEVER invoke grep or rg via bash"* — and that suppression had already worked once
-   in the same minute. **A rule that suppresses a redundant check also suppresses the only detector
-   its failure mode has.** For as long as the bug lived, an agent that obeyed got the wrong answer
-   and one that disobeyed got the right one, which trains every agent reading a tool description to
-   discount it. A description that tells agents to stop cross-checking has to earn it.
+⚠️ **The empty result is the detectable one; the partial result is the dangerous one.** Same bug,
+same tool, same agent, 38 seconds apart: a long confident answer that silently omitted the file
+*defining* the symbol went unchallenged and was acted on 2 seconds later, while an empty result for
+something the agent had read 5 events earlier got double-checked immediately. **An under-report is
+only conspicuous when it takes everything away, which is the case that matters least** — so do not
+file a bug in this family under "detectable" because of its output SHAPE.
+
+⭐ **The check that caught it is the one the tool description forbids** — *"ALWAYS use this for search
+tasks — NEVER invoke grep via bash"*. **A rule that suppresses a redundant check also suppresses the
+only detector its failure mode has.** For as long as the bug lived, an agent that obeyed got the
+wrong answer and one that disobeyed got the right one, which trains every agent reading a tool
+description to discount it. **A description that tells agents to stop cross-checking has to earn it.**
 
 ### Two rules about compatibility worries, one of which is a trap
 
-*"A semantic that has never worked has no users"* settled the `search` glob change in one line: a
-caller wanting top-level-only would have been getting an empty result almost every time, so they
-cannot exist. ⚠️ **It proves nothing for `list_files`, where the same change was in front of the
-same person one line from done.** There, `list_files("*.json")` returned `package.json`,
-`tsconfig.json`, `biome.json` — three real, plausible files. The old semantic worked. **The rule is
-only decisive when the old output was EMPTY; when it was a plausible-looking subset it settles
-nothing** — and a rule is at its most dangerous exactly when it happens to point at the answer you
-already want. Checking its premise cost one command.
-
-The generalisation that does hold is stronger, and it is what decided the case:
+*"A semantic that has never worked has no users"* settled the `search` glob change in one line. It
+proves nothing for `list_files`, where the same change was one line from done: there
+`list_files("*.json")` returned `package.json`, `tsconfig.json`, `biome.json` — three real, plausible
+files. **The rule is only decisive when the old output was EMPTY**, and a rule is at its most
+dangerous exactly when it happens to point at the answer you already want.
 
 > **Before letting a compatibility worry veto a change, measure what the current behavior actually
 > produces.** Not "is anything calling this" — *what does the call return today, and does it answer
 > the question the caller was asking?*
 
-The empty-output rule is the trivial special case. The common and more dangerous one is non-empty
-output that does not answer the question, which is what happened here: the capability being
-defended was `list_files("*")` as a "show me this directory" affordance, and `scan()` defaults
-`onlyFiles: true`, so `*` returned the dozen loose files at the top of the repo and **not one
-directory** — no `src/`, no `web/`, no `.mxd/`. The tool could not answer "what is the shape of this
-project", which is what its own description claimed it was for, and `*` is the DEFAULT pattern.
-**The capability being protected did not exist.**
+The common and more dangerous case is non-empty output that does not answer the question, which is
+what happened here: the capability being defended was `list_files("*")` as a "show me this directory"
+affordance, and `scan()` defaults `onlyFiles: true`, so `*` returned a dozen loose files and **not
+one directory**. The tool could not answer "what is the shape of this project", which its own
+description claimed it was for, and `*` is the DEFAULT pattern. **The capability being protected did
+not exist.**
 
-### The fourth change to this family, and the one that is NOT a correctness bug
+### The fourth change to this family, and what a hand-rolled walk must reproduce
 
-The two defects above produced silently wrong answers from a library default. This one produced the
-**right answer at the wrong cost**, and its cause is architectural rather than a missing argument:
-both tools consulted the skip list about FILES after the walk instead of about DIRECTORIES during
-it, so every excluded directory was enumerated in full and then discarded. `dot: true` made an
-existing waste roughly 4× worse by adding `.worktrees/` (~21k files per live worktree) and `.git/`.
+The two defects above produced silently wrong answers. This one produced the **right answer at the
+wrong cost**: both tools consulted the skip list about FILES after the walk instead of about
+DIRECTORIES during it, so every excluded directory was enumerated in full and then discarded.
+`walkFiles` is now the ONE walker for both tools and prunes before opening a directory — **the walk
+now costs what the ANSWER costs.** ⚠️ **`list_files` had to move onto the same walk, and "doing just
+one is the smaller change" is the wrong instinct**: two tools sharing three predicates but disagreeing
+on WHEN to consult them give those predicates two meanings depending on the caller.
 
-`walkFiles(root, skipDirs, glob?)` is now the ONE walker for both tools, and `isInSkippedDir` is
-asked about a directory once, in its trailing-slash form, **before the directory is opened**.
-Measured 2026-07-25 from main with 2 live worktrees: **68,664 files enumerated to return 320 → 320
-to return 320**, 153ms → 0.4ms — which also beats the pre-`dot: true` code (18,239 files / 36ms),
-because pruning removes a waste that PREDATES the hidden-directory fix rather than paying for it.
-The durable claim is that **the walk now costs what the ANSWER costs**; the numbers are a dated
-reading of one tree.
-
-⚠️ **`list_files` had to move onto the same walk, and "doing just one is the smaller change" is the
-wrong instinct.** Two tools sharing three predicates but disagreeing on WHEN to consult them give
-those predicates two meanings depending on the caller, and the next person to change one has to hold
-both models. That is precisely the drift the shared predicates were introduced to prevent, so
-leaving one tool behind is a decision to create it.
-
-#### What a hand-rolled walk must reproduce, and where the tidy version fails silently
-
-⭐ **Symlinks: use `dirent.isFile()` / `isDirectory()`, NEVER `statSync`.** `readdirSync`'s dirents
-are lstat-based, so a symlink answers false to BOTH predicates and is dropped by both branches —
-which is exactly what `scanSync({onlyFiles: true})` did, verified against a symlink to a file, to a
-directory, a broken one, and a directory linked to its own ancestor.
-
-> **The tidiest-looking way to write this walk — `statSync` instead of lstat-based dirents — is
+> ⭐ **The tidiest-looking way to write this walk — `statSync` instead of lstat-based dirents — is
 > wrong, and wrong in a way that makes `dir/link -> dir` walk forever. Before this change NOTHING in
-> the suite would have gone red. 6 tests catch it now and all 6 are new.**
+> the suite would have gone red.**
 
-It is wrong twice over, and the second half is the one someone would defend as a feature: it also
-starts **returning symlinked files `search` has never returned**, so one file is reported two or
+`readdirSync`'s dirents are lstat-based, so a symlink answers false to BOTH `isFile()` and
+`isDirectory()` and is dropped by both branches — exactly what `scanSync({onlyFiles: true})` did.
+`statSync` is wrong twice over, and the second half is the one someone would defend as a feature: it
+also starts returning symlinked files `search` has never returned, so one file is reported two or
 three times under different paths. **Not following links is also the entire termination argument** —
 there is no visited-inode set and it needs none.
 
-⚠️ **Errors must THROW, not be swallowed.** `scanSync` throws on a missing root (ENOENT) and on an
-unreadable directory mid-walk (EACCES). The first version wrapped `readdirSync` in try/catch and
-continued — with a comment asserting that matched `scanSync`, written without measuring it.
-Swallowing turns "your path is wrong" and "the directory holding the definition is unreadable" into
-`(no matches)`, which is exactly the failure mode this family has already shipped twice.
+⚠️ **Errors must THROW, not be swallowed.** The first version wrapped `readdirSync` in try/catch and
+continued, with a comment asserting that matched `scanSync`, written without measuring it. Swallowing
+turns "your path is wrong" and "the directory holding the definition is unreadable" into
+`(no matches)` — exactly the failure mode this family has already shipped twice.
 
-⚠️ **Sort is load-bearing and must live in exactly ONE place.** `readdirSync` returns filesystem
-order (on APFS, a hash order). Order is part of the contract because both caps SLICE the sorted
-list, so in traversal order "the first N" is an arbitrary set that can differ between two runs over
-an unchanged tree. **Forward slashes are built by string concatenation, not `join()`** — the
-relative path is both what the caller sees and what the glob is matched against, and `join()` writes
-`\` on Windows.
-
-⚠️ **`list_files`'s cap bounds the RESULT and can no longer bound the walk, because sorted output
-and early termination are mutually exclusive.** You cannot know the alphabetically-first 500 files
-without having seen all of them. Accepted because the walk it no longer bounds is now the cheap one,
-and because the old early break never fired anyway: no pattern in this repo reaches 501 kept files —
-**which is exactly the condition that would have made a regression here invisible.** No parameter
-was added for a large-repo case we have not hit; if one arrives, the choice is sorted-and-complete
-versus early-and-arbitrary and it cannot be both.
-
-**The only case that regresses**: for an anchored glob (`src/*.ts`) `Bun.Glob` prunes the path
-prefix itself and this walk does not, so it is slower — 0.3ms → 0.4ms. Deliberately not chased.
+Sort must live in exactly ONE place, because both caps SLICE the sorted list, so in traversal order
+"the first N" is an arbitrary set that can differ between two runs over an unchanged tree. It follows
+that `list_files`'s cap bounds the RESULT and can no longer bound the walk — sorted output and early
+termination are mutually exclusive — which is fine now that the walk it no longer bounds is the cheap
+one, and which the old early break never exercised anyway, **exactly the condition that would have
+made a regression here invisible.**
 
 ## ⚠️ In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand
 
 > The tools an agent calls belong to the **running daemon**, not to anybody's worktree. So *"I just
-> fixed X, therefore I can use X"* is **false until the daemon restarts** — and it is false for
-> every other agent running at the same time.
+> fixed X, therefore I can use X"* is **false until the daemon restarts** — and false for every other
+> agent running at the same time.
 
-Measured hours after `search`'s fixes landed on main: `search("ErrorBoundary", glob: "**/*.tsx")`
-returned `(no matches)` while `grep -rn` returned 10 hits including the file that DEFINES it.
-
-**This makes the blind-instrument trap harder to avoid than it looks, because of who walks into
-it: the person who fixed the tool is the person with the most reason to believe it works.** The task
-that wrote down "a completeness survey run with a blind instrument returns a confident, wrong
-'that's all of them'" then ran its own survey on the blind instrument. The warning and the violation
-were in the same task. **A tool description's "always use this" has an unstated premise — that the
-tool works. Spend one call proving your instrument sees a file you already know exists before
-trusting a by-name survey.**
+**This makes the blind-instrument trap harder to avoid than it looks, because of who walks into it:
+the person who fixed the tool is the person with the most reason to believe it works.** The task that
+wrote down "a completeness survey run with a blind instrument returns a confident, wrong 'that's all
+of them'" then ran its own survey on the blind instrument. The warning and the violation were in the
+same task.
 
 ⭐ **Generalised, because this is the standing pattern rather than a run of bad luck: a checker
 reporting ZERO is a claim about the checker until you have made it report ONE.** Four instruments
 answered confidently and wrongly in one week — a `search` that could not see a third of the source,
-two gates that read 8% and 3.6% and printed `All checks passed.`, and (2026-07-25) biome 2.4.10's
-`nursery/noFloatingPromises`, which reports zero over this repo **and zero over a planted
-`async function boom(){throw new Error("x")} ; boom();` in the file it is checking**. Without that
-probe the survey would have been written up as "the type-aware linter finds none" — a false
-all-clear carrying a tool's authority, which is strictly worse than no check. **Planting is not
-diligence; it is the only thing that distinguishes "clean" from "not looking".**
+two gates that read 8% and 3.6% and printed `All checks passed.`, and biome's
+`nursery/noFloatingPromises`, which reports zero over this repo **and zero over a planted violation in
+the file it is checking**. **Planting is not diligence; it is the only thing that distinguishes
+"clean" from "not looking".**
 
-⚠️ **Sibling trap from the same survey, and the cheaper half to forget: a single-line grep is a
-claim about LINE BREAKS.** The shape being hunted was `.catch(async`, and `grep '\.catch(async'`
-returns **zero** hits in a repo that has one, because biome's formatter had split the call across
-two lines. A recommended instrument thus reported the whole class as already clean. Reach for a
-multiline search whenever the pattern spans a call boundary the formatter is free to break.
+⚠️ **Sibling trap, and the cheaper half to forget: a single-line grep is a claim about LINE BREAKS.**
+`grep '\.catch(async'` returns **zero** hits in a repo that has one, because the formatter split the
+call across two lines. Reach for a multiline search whenever the pattern spans a call boundary the
+formatter is free to break.
 
-⚠️ **Consequence for this file**: any "grepped it, nothing points there" conclusion recorded here
-before 2026-07-25 was reached with an instrument that could not see `.mxd/plugin/`, and the failure
-was silent in the direction that matters — a confident non-empty answer with the deciding file
-missing from it.
-
-⚠️ **Same family, and here the blind instrument is your own tool list: it is a frozen snapshot, not
-an inventory of what you can do.** The list you can see was frozen into `session_config` at session
-start; the daemon's handler registry holds more, and Anthropic dispatches any tool name to whatever
-handler exists. Root asserted "there is no WebSearch tool in this project" from reading its own
-56-entry list; `mcp__brave-search__brave_web_search` works, called by name. **"It is not in my list"
-is not evidence that it does not exist.** (Gotcha when you do call one: an unlisted tool has
-unconstrained argument types, so a numeric `count` arrives as a string and fails validation — pass
-the required argument alone.)
+⚠️ **Same family, and here the blind instrument is your own tool list: it is a frozen snapshot, not an
+inventory of what you can do.** The list you see was frozen into `session_config` at session start;
+the daemon's handler registry holds more, and Anthropic dispatches any tool name to whatever handler
+exists. Root asserted "there is no WebSearch tool in this project" from reading its own 56-entry list;
+`mcp__brave-search__brave_web_search` works, called by name. **"It is not in my list" is not evidence
+that it does not exist.** (Gotcha: an unlisted tool has unconstrained argument types, so a numeric
+`count` arrives as a string and fails validation — pass the required argument alone.)
 
 ---
 # Events, JSONL & the Active Chain
