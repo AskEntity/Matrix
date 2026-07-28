@@ -614,9 +614,14 @@ describe("folder-aware: close_task", () => {
 		// close_task refused anything but verify/failed, so the outcome ended
 		// up written into the TITLE, where no status filter can see it.
 		const agent = tracker.addTask("agent", "");
-		const draft = tracker.addChild(agent.id, "superseded idea", "why it mattered", {
-			draft: true,
-		});
+		const draft = tracker.addChild(
+			agent.id,
+			"superseded idea",
+			"why it mattered",
+			{
+				draft: true,
+			},
+		);
 		expect(tracker.getTask(draft.id)?.status).toBe("draft");
 
 		const result = await invokeCloseTask(agent.id, { taskId: draft.id });
