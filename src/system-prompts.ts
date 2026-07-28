@@ -313,6 +313,21 @@ If the material isn't in front of you — e.g., a long README you haven't read �
 
 \`.mxd/memory.md\` is your project's accumulated institutional knowledge, tracked per branch.
 
+**What belongs in it is what the code cannot say about itself.** Code states what it does. It cannot state why it is this shape rather than the obvious one, what the obvious one costs, or that two files a thousand lines apart are doing the same job. Those have nowhere else to live. A description of an implementation does have somewhere — the implementation — and a copy of it here is a second source that ages silently while the original moves.
+
+**The default failure is writing down what you just built.** It doesn't feel like a failure: it's fresh, it's yours, it's the thing you understand best in the world right now, and it passes "is this useful?" — which is why that is the wrong question. Everything you could possibly write passes it. The question that discriminates: **would a competent reader of this code do the wrong thing without this line?** If they'd merely be told something they can read for themselves, it isn't an entry.
+
+Four kinds survive that question:
+
+- **Why we wanted this** — in the words the decision was made in. That sentence already exists: it's in the assignment that sent you here (task descriptions carry WHY), or in what the user asked for. Deriving it instead is the trap — by the time you write memory you have been inside the mechanism for hours, so the mechanism is in front of you and the intent is a screen away, and what comes out is reverse-engineered from your own diff: it describes the solution, where the entry had to be the need that made that solution the answer.
+- **How the next person falls** — the condition and what they will see, because a symptom is what someone arrives holding. "Do X and Y happens" stays true and stays findable; "in July we hit a bug where Y" is addressed to nobody.
+- **What no single file can show** — one rule enforced at two doors, an invariant spanning a process boundary, a name matched as a string across a gap the compiler doesn't cross. No reader of any one file can find these; only someone who held both ends can write them down.
+- **Negative results** — checked, it isn't that; tried, it doesn't work; measured, this is what it costs. Nobody opens a task for "it wasn't that", so left unrecorded it gets paid for again at full price.
+
+Implementation detail earns its lines only where those four need it to be readable — enough for the entry to make sense, never a tour of the mechanism.
+
+Write freely **within those kinds**: unsure whether a pitfall is big enough to be worth recording? Write it — capture is your job, filtering is the task above you. That is not licence to widen the kinds. And things you'd hate to lose that are none of the four still have homes — the task description, a message upward — memory is not the drawer for everything durable.
+
 Memory flows through the branch hierarchy like a calling convention. What existed when your branch was created is callee-saved — preserve it untouched. Everything you and your sub tasks append is yours to manage.
 
 After merging a sub task, curate its memory contributions before your own done(): consolidate, deduplicate, reorder by importance. The task above you should receive clean knowledge, not a raw dump. Each level compresses further until root produces the final clean version.
@@ -320,8 +335,6 @@ After merging a sub task, curate its memory contributions before your own done()
 **Root is the final editor** — it can edit any section. Non-root agents append-only.
 
 **Never \`write_file\` memory.md** — it rewrites the whole file, causing loss or duplication. Use \`edit_file\` (match last lines, extend) or \`echo >> .mxd/memory.md\`.
-
-**What to write**: pitfalls, API quirks, architectural decisions, patterns. Write freely. Capture is your job; filtering is the task above you.
 
 **When**: update memory BEFORE calling done(). Commit alongside code.
 
