@@ -7,8 +7,22 @@ point where related material can be found together.
 Runs so far: **2026-07-25 phases 1-2**, 5,448 lines / 146 sections → 119, 18 commits. **2026-07-25
 phase 3 (condense)**, 7,616 → 3,797 lines and 136 → 81 sections across 17 regions, 24 commits,
 leaving zero `SUPERSEDED` banners and zero strikethroughs. **2026-07-25 phase 4**, six connective
-repairs. (The line count rose between the two runs because ordinary work continued — see
-`memory.md` on this file having a rate rather than a size.)
+repairs. **2026-07-28 rewrite**, 4,987 → ~3,050: a different exercise from the ones above, and the
+one that produced the two sieves below. (The line count rises between runs because ordinary work
+continues — see `memory.md` on this file having a rate rather than a size.)
+
+⭐ **That run's method is the reusable part, and it is not "read the file and find redundancy".** The
+file had lost its WHYs, and **the WHYs were never lost — they were sitting in the task tree**, in the
+description of the task that produced each section, often in the user's own words. The loss happens
+at the moment the entry is written: the author has just spent hours inside the mechanism, the
+mechanism is in front of them, and the intention is one screen away in a task description they do not
+re-open. So: **for each section, `search_tasks` for the task that produced it, read its WHY, and
+rewrite the section's opening with that sentence.** One measured instance — a 178-line section on
+`scrollRangeShrank`, thirty touch points and remount measurements, whose originating task opens
+*"if the AI is still producing output, the user gets locked into follow mode just by scrolling down —
+they can't read at their own pace"*, a sentence that appeared nowhere in the file. ⚠️ **Hit rate is
+uneven rather than zero, and the unevenness is the useful signal**: it tells you which sections
+genuinely have no recoverable WHY and therefore need one derived, instead of leaving you to guess.
 
 ---
 
@@ -143,6 +157,35 @@ currently says.
   principled ordering among itself, so a number leaves you guessing which category to cut. "Keep the
   looks-wrong-but-is-right entries and the operating procedure, drop the design rationale for things
   nobody would simplify" is executable and checkable; "get to N lines" is not.
+
+⭐ **Phase 3 needs TWO sieves, and having only the first is the standard way a condensing pass
+stalls.** Established on the 2026-07-28 run, which reached 3,100 lines and then spent an hour finding
+almost nothing more to cut:
+
+1. **Necessary — is it one of the four things that earn a place?** (why / pitfall / the thing no
+   single file can show / just enough implementation to read those three.) This answers *may it be in
+   memory.md*.
+2. **Sufficient — if this line were not here, what actually happens?** This answers *does it earn the
+   space*, and the first sieve cannot:
+   - **Silent, unbounded, and paid by someone other than the person who caused it** → keep. An empty
+     text block bricks a session permanently and repair does not cover it. A fictional API rule got
+     four production mechanisms built against it.
+   - **Rings immediately, is visible on the spot, and only bites the person editing that code** →
+     cut, however true and however real the pitfall. **That is the definition of the "very very small
+     thing that reads like a code comment copied out here".** Whoever writes that test will discover
+     in thirty minutes that happy-dom does not dispatch keydown, and those thirty minutes are not
+     what this file exists to prevent.
+
+**Negative results get the same second sieve; they are not exempt as a class.** *Expensive to
+re-derive AND the wrong conclusion is attractive* → keep (CoreML's NaN is not monotonic in input
+length, and a plausible length-threshold hypothesis would have shipped). *One command re-tests it and
+the entry itself says which command* → cut (`bun:sqlite` cannot `loadExtension`).
+
+⚠️ **Applying sieve 1 alone produces a defensible, wrong "we cannot compress further".** Measured on
+that run: a 24-paragraph sample scored 18 keeps against sieve 1, and the curator reported the file
+was near its floor. Under sieve 2 three whole blocks inside those 18 — a test environment's quirks, a
+markdown parser's grammar, and a list of compiler-and-linter gotchas — came out. **Every one of them
+was a true pitfall and a genuine member of the four categories.**
 - **Phase 1's `comm -23` invariant does not apply — you are deleting.** Its replacement is a
   per-section disposition list in each commit message. That enumeration is the ONLY thing that keeps
   the "destroyed by understanding" rot detectable from the inside.
