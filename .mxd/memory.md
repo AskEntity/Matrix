@@ -280,22 +280,15 @@ argument. The split still holds for a genuine DUPLICATE, where the prompt states
 this file merely repeats it. It fails here because there is no duplicate: the prompt has the
 principle and this file has the only evidence for it. **Someone will propose the move again.**
 
-⚠️ **The prompt contradicts itself across sessions and nothing catches it.** This file has regions
-and topical adjacency, so putting a claim next to its refutation is a move you can actually perform;
-**a prompt is one linear argument, and two sentences sixty lines apart are never brought together by
-anything.** It does not present as a conflict either — both are individually true and well written,
-and they only cancel when someone holds both at once, which is what the linear form prevents.
-Observed in two commits one session apart, same author: one added *"every unfinished break is state
-you carry, in a context that runs out"*, the other existed to establish *"compaction is a
-continuation, not a stopping point"*. **So read the recent prompt DIFFS before editing, not just the
-current text** — the diffs say what it has just *started* saying, which is the only place a fresh
-contradiction comes from — then re-read the whole thing. The round that INTRODUCED that contradiction
-substituted a targeted grep for the full read; the round that CAUGHT it did the full read and found a
-second collision as well.
-
-⚠️ **"Avoid matrix-internal detail" does NOT mean "delete the concept".** Told to strip internal
-detail, agents delete the whole section. Strip implementation-specific words; keep the
-agent-experience concept.
+⚠️ **The prompt contradicts itself across sessions and nothing catches it.** This file has regions, so
+putting a claim next to its refutation is a move you can actually perform; **a prompt is one linear
+argument, and two sentences sixty lines apart are never brought together by anything.** It does not
+present as a conflict either — both are individually true and well written, and they only cancel when
+someone holds both at once, which is exactly what the linear form prevents. Observed in two commits
+one session apart, same author: one added *"every unfinished break is state you carry, in a context
+that runs out"*, the other existed to establish *"compaction is a continuation, not a stopping
+point"*. **So read the recent prompt DIFFS before editing, then re-read the whole thing** — the round
+that INTRODUCED that contradiction substituted a targeted grep for the full read.
 
 ---
 # How This Project Fools Itself
@@ -465,14 +458,10 @@ call is an implicit yield, never an implicit done. `handleImplicitYield` is the 
 that stops working ends up, which is what keeps "what is this agent waiting for" from becoming five
 states.
 
-**On resume, four states are read off the JSONL SHAPE**, never off an in-memory flag:
-
-| shape | meaning | what happens |
-|---|---|---|
-| last tool_call is `yield` | explicit yield | bypass straight to `queue.wait` |
-| last tool_call is `done` | pending done | wait for messages, then write the done tool_result with wake context |
-| `hasPendingImplicitYield` | ended on `end_turn` | bypass to `queue.wait` → `handleImplicitYield` |
-| orphaned tool_calls repaired | interrupted | non-blocking queue drain → API call |
+**On resume the loop reads its state off the JSONL SHAPE — four of them — never off an in-memory
+flag.** That is the durability property the whole design rests on, and it is why every proposal that
+would add a fifth state gets weighed so carefully (see the interrupt marker below, which turned out
+not to be one).
 
 ⚠️ **`hasPendingImplicitYield` must stop at `messages_consumed`.** It used to walk straight over
 consumptions, land on the `assistant_text` from BEFORE the message, and report a park — so the loop
@@ -615,12 +604,9 @@ because both produce the same round.
 runtime code that sets status directly and never calls `onDone`; wiring it in would either break the
 boundary or route crash recovery through a plugin hook.
 
-⚠️ **Any change to a tool's required params has a transition window.** Tools are frozen in
-`session_config` until a compaction refreshes them, so an agent mid-session keeps calling the old
-shape, the obsolete param is stripped by zod, the required one is absent, and that done is rejected.
-It costs one round and retries correctly — expected, not a bug. ⚠️ And when you rename a param,
-**grep the FRONTEND**: done-card consumers read it BY NAME through index access, so typecheck cannot
-catch it and integration tests do not render. Same by-name blindness as *Changing code here*.
+⚠️ **When you rename a tool param, grep the FRONTEND**: done-card consumers read it BY NAME through
+index access, so typecheck cannot catch it and integration tests do not render — the cards would have
+quietly lost their text. Same by-name blindness as *Changing code here*.
 
 ## Duplicate yield or done in one turn
 
@@ -1015,18 +1001,15 @@ first so the line looks correct. Not hypothetical: `buildSessionRepair` re-appen
 `parentEid` pointing at an event no longer on the chain — the walk then hits a break and silently
 degrades to linear traversal, **which can resurrect rolled-back events.**
 
-⚠️ **`append`/`appendBatch` are fully SYNCHRONOUS and return the persisted copy. Do not "modernise"
-them to `fs.promises.`** Two independent things depend on the synchrony. The **generation guard**
-needs the check and the write in the same microtask: the old async version let a `clear()` bump the
-generation and unlink the file while libuv still had the write queued, so the thread pool woke and
-**recreated the file it was writing to** — sub-millisecond and invisible normally, tens of ms under
-load. And the **failed-write rewind** only works while nothing can be stamped between the stamp and
-the write: defer the write and a burst in one tick gets stamped first, so the event after a failed
-one names a missing parent, the walk stops dead, and the agent resumes with a **silently truncated
-context**. Cost of sync I/O: one ~100-byte line, and writes were already serialized per session.
-
-**The general form of that second argument is worth carrying: it replaces *"correct because nothing
-happens to interleave"* with *"correct because nothing CAN"*.**
+⚠️ **`append`/`appendBatch` are fully SYNCHRONOUS. Do not "modernise" them to `fs.promises`.** Two
+independent things depend on it, both failing silently: a `clear()` could bump the generation and
+unlink the file while the write was still queued, so the thread pool woke and **recreated the file it
+was writing to**; and the failed-write rewind only works while nothing can be stamped between the
+stamp and the write, so deferring it lets a burst in one tick get stamped first — the event after a
+failed one then names a missing parent, the walk stops dead, and **the agent resumes with a silently
+truncated context.** Cost of sync I/O: one ~100-byte line, and writes were already serialized per
+session. **The general form is worth carrying: it replaces *"correct because nothing happens to
+interleave"* with *"correct because nothing CAN"*.**
 
 Ephemeral events (`text_delta`, `agent_activity`, `status`) are deliberately never stamped and never
 reach JSONL; **they are not history**, and that is what makes "replaying the log cannot fake live
