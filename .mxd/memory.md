@@ -1255,53 +1255,45 @@ rendered entries calls exactly the blocked case a run start.
 ## Prompt cache: what is frozen, what refreshes, and what breaks a prefix
 
 A `session_config` event at the start of the JSONL holds the tools, `systemStable` and
-`systemVariable` for the session. It is **frozen between compactions**, and that freeze is the whole
-cache strategy: on resume everything is read back from the stored config rather than recomputed, so
-the prefix is byte-identical and hits. The one refresh point is compaction — see *The Agent Loop* §
-compaction, which also explains why the refresh is a correctness issue on OpenAI and only a DX issue
-on Anthropic.
+`systemVariable` for the session, and it is **frozen between compactions**. That freeze IS the cache
+strategy: on resume everything is read back from the stored config rather than recomputed, so the
+prefix is byte-identical and hits.
 
-⚠️ **The Anthropic prefix order is tools → system → messages, not system → tools → messages.** A
-tools mismatch is therefore a miss on the *entire* prefix, system and messages included. This is why
-tools are frozen at all: MCP servers connect asynchronously, so registration order is
-non-deterministic and an unfrozen tools array would reshuffle itself between runs. Freezing them as
-a provider-agnostic `JsonTool` (`{name, description, jsonSchema}`) in `session_config`, and emitting
-that event from `runProviderLoop` **after** tools are ready rather than from `agent-lifecycle` (where
-it captured `tools: []`), took restart to **99.8% cache hit and fork to 100%** — measured 2026-04,
-582 creation / 362K read and 0 creation / 365K read. That pair of numbers is the evidence those
-fixes work; for today's rate read `cache_creation` / `cache_read` off a real `usage` event.
+⚠️ **The Anthropic prefix order is tools → system → messages, not system → tools → messages, so a
+tools mismatch is a miss on the *entire* prefix.** This is why tools are frozen at all: MCP servers
+connect asynchronously, so registration order is non-deterministic and an unfrozen tools array would
+reshuffle itself between runs. Freezing them as a provider-agnostic `JsonTool` and emitting that
+event from `runProviderLoop` **after** tools are ready — rather than from `agent-lifecycle`, where it
+captured `tools: []` — is what took restart to a 99.8% cache hit and fork to 100%.
 
-Three cache breakpoints: tools, `systemVariable`, and the **last** user message. ⚠️ **Last, not
-second-to-last.** The last message sent to the API is always a user message, and Anthropic's
-20-block lookback caches everything before it; the previous second-to-last strategy caused a full
-miss whenever only one user message existed, which is exactly the post-compaction restart case.
+**Three cache breakpoints: tools, `systemVariable`, and the LAST user message.** ⚠️ Last, not
+second-to-last: the last message sent is always a user message and Anthropic's 20-block lookback
+caches everything before it, whereas the previous second-to-last strategy caused a full miss whenever
+only one user message existed — exactly the post-compaction restart case.
 
 ⚠️ **Never add a per-request `anthropic-beta` header.** It overrides the client's `defaultHeaders`,
-including the OAuth header (`oauth-2025-04-20`), and silently breaks OAuth mode. Extended cache TTL
-is GA and needs no beta header. Also note `{type: "ephemeral"}` and `{type: "ephemeral", ttl: "1h"}`
-are **different cache entries** — the TTL is part of prefix identity. `cacheTtl` lives in
-`session_config` (root `"1h"`, regular children unset = 5 min) and is inherited through fork, which
-is why it is deliberately NOT refreshed at compaction.
-
-⚠️ **Multiline queue content must stay ONE text block**, which today is `adapter.buildUserTurn`'s
-job. Two earlier per-shape builders split queue messages on `\n` into separate blocks while JSONL
-reconstruction merged them back into one — a guaranteed prefix mismatch on every resume, and the
-reason turn-building was collapsed onto a single path at all.
+including the OAuth header, and silently breaks OAuth mode. Extended cache TTL is GA and needs no
+beta header. Note also that `{type: "ephemeral"}` and `{type: "ephemeral", ttl: "1h"}` are
+**different cache entries** — the TTL is part of prefix identity, which is why `cacheTtl` lives in
+`session_config`, is inherited through fork, and is deliberately not refreshed at compaction.
 
 **Known residual, low priority**: `addAssistantMessage` stores the raw API response content in the
-SDK's key order, while JSONL reconstruction uses our manual key order. They happen to agree today
-(`{type, id, name, input, caller}` on both paths), so within a session `messages[]` is consistent.
-If the SDK ever changes key order this breaks silently.
+SDK's key order while JSONL reconstruction uses our manual key order. They happen to agree today, so
+within a session `messages[]` is consistent. If the SDK ever changes key order this breaks silently.
 
 ## The live path has no construction logic of its own
 
-`buildUserTurn` delegates to the walker's callbacks, so there is exactly one implementation per
-provider of "how a user turn is built", and the initial drain goes through
-`adapter.appendQueueMessagesToMessages` for the same reason. **The live path therefore cannot drift
-from JSONL reconstruction, structurally rather than by discipline** — which is the fix for the
-caption bug, where two independent constructions disagreed about whether an image carried its
-caption. If you are tempted to inline a bit of turn-building "just here", that is the thing being
-prevented.
+**Two independent constructions of "how a user turn is built" disagreed about whether an image
+carried its caption, and that is the bug this design deletes.** `buildUserTurn` delegates to the
+walker's callbacks, and the initial drain goes through `adapter.appendQueueMessagesToMessages` for
+the same reason, so there is exactly one implementation per provider. **The live path therefore
+cannot drift from JSONL reconstruction, structurally rather than by discipline.** If you are tempted
+to inline a bit of turn-building "just here", that is the thing being prevented.
+
+⚠️ **Multiline queue content must stay ONE text block.** Two earlier per-shape builders split queue
+messages on `\n` into separate blocks while JSONL reconstruction merged them back into one — a
+guaranteed prefix mismatch on every resume, and the reason turn-building was collapsed onto a single
+path at all.
 
 The yield and done tool_results are the two fixed strings the resume path writes: `"resumed."` for
 yield, and for done `"You previously called done(). New messages woke you up:"` plus the working
@@ -1309,8 +1301,8 @@ directory. Queue messages ride as separate text blocks after them, never embedde
 
 **Pre-API-call debug snapshots** land at `projects/<id>/debug/<taskId>/<traceId>/last.json`, one
 directory per `runAgentForNode`, ten most recent kept. A restart makes a new traceId directory, so
-the previous snapshot survives — diffing the two newest `last.json` files is the post-mortem for any
-drift or unexplained cache miss.
+the previous snapshot survives — **diffing the two newest `last.json` files is the post-mortem for
+any drift or unexplained cache miss.**
 
 ---
 # Providers & API
@@ -1318,109 +1310,76 @@ drift or unexplained cache miss.
 
 ## The server can do things it does not disclose, and only our own records catch it
 
-Twice now, the API has behaved in a way that is invisible from inside a single response, and both
-times the only detector was **comparing what we sent and stored against what came back.** Both times
-the first hypothesis was wrong and plausible. If you are ever debugging "the API behaved
-impossibly", read both before theorizing.
+**Twice now the API has behaved in a way that is invisible from inside a single response, and both
+times the only detector was comparing what we SENT and STORED against what came back.** Both times
+the first hypothesis was plausible and wrong.
 
 ### `response.model` cannot be trusted as ground truth
 
 A session showed a 70K-token cache miss with no explanation. Bit-exact replay settled it: two
-requests 9 minutes apart in one session were tokenized by two different tokenizers. The earlier
-request matched today's opus-4-6 output exactly (220,712 tokens); the later one matched opus-4-7
-exactly (284,800). Same body on the two tokenizers today: 220,712 versus 284,471, a pure ratio of
-**+28.9% on identical content**. Throughout, `response.model` kept reporting the declared model —
-the swap was entirely client-invisible, and opus-4-7 was not GA for another 12 days.
+requests 9 minutes apart in one session were tokenized by two different tokenizers — the earlier
+matched today's opus-4-6 exactly, the later matched opus-4-7 exactly, **+28.9% on identical
+content**. Throughout, `response.model` kept reporting the declared model, and opus-4-7 was not GA
+for another 12 days.
 
 > **A client declaring model X may receive model Y's output with no disclosed indicator.** The
 > tokenizer ratio is the most reliable post-hoc signal, and it is only visible at a cache-transition
-> moment.
-
-Observable side effects when this happens: unexplained cache misses whenever the tokenizer differed
-between prefix-write and the new call, and ~29% higher input-token counts for the same content.
+> moment. Observable side effects: unexplained cache misses, and ~29% higher input-token counts for
+> the same content.
 
 ⭐ **Forensic technique, model-agnostic: base64-decode a thinking block's `signature` — it embeds the
 serving model name**, independently of `response.model`. That is how "8 of 8 silent turns were served
 by a different model, 0 of 9,800 normal ones were" got established.
 
-⚠️ **Lesson from the replay itself: our JSONL survives format migrations but loses bit-fidelity
-against the code that wrote it.** The first replay attempt came out 10,515 tokens short because a
-later commit had changed the shape of one event type and a migration rewrote the old events, so the
-old walker dropped their content. **When you change a persisted event shape, preserve a pre-migration
-snapshot** — reproducibility against historical sessions depends on it.
+⚠️ **Our JSONL survives format migrations but loses bit-fidelity against the code that wrote it.**
+The first replay came out 10,515 tokens short because a later commit changed the shape of one event
+type and a migration rewrote the old events, so the old walker dropped their content. **When you
+change a persisted event shape, preserve a pre-migration snapshot** — reproducibility against
+historical sessions depends on it.
 
 ### Connector text is summarized server-side, and the model still sees the original
 
 ⚠️ **Scope: this is Fable-class behavior and Matrix has been on opus-class since. Treat the mechanism
 as dormant rather than gone, and the techniques as permanently useful.**
 
-Officially documented (AWS Bedrock, adaptive thinking): text emitted BETWEEN tool calls — "connector
-text" — is **summarized server-side and returned as a thinking block**, standard thinking shape, no
-new content-block type, with the signature carrying the encrypted original. **"No customer opt-in or
-opt-out."** SDK version is irrelevant.
-
-The scope rules explain why it looked intermittent: it applies only AFTER a tool_result exists in
-the conversation; SHORT segments may pass through unsummarized; and **a final assistant answer —
-text after all tool use, i.e. an `end_turn` — is UNAFFECTED and stays plain text.**
-
-**How it presents**, which is what to look for if it recurs: assistant turns stored as
-`[thinking, thinking, tool_use]`, where the SECOND thinking block is a server-generated summary of
-what should have been the visible reply — sometimes an English paraphrase of a Chinese one — carrying
-a signature, so in the UI the user's reply vanishes into the thinking fold. **Matrix is faithful
-here**: the SDK accumulator and the walker reproduce whatever blocks the server sent.
+Text emitted BETWEEN tool calls is summarized server-side and returned as a thinking block, with the
+signature carrying the encrypted original — officially documented, **no customer opt-in or opt-out**.
+It applies only AFTER a tool_result exists, short segments may pass through, and **a final assistant
+answer after all tool use is UNAFFECTED**. How it presents: assistant turns stored as
+`[thinking, thinking, tool_use]` where the second thinking block is a server-generated summary of
+what should have been the visible reply — so in the UI the user's reply vanishes into the thinking
+fold.
 
 ⚠️ **Operational mitigation: an agent whose last action is a user-facing reply should END ITS TURN
-rather than call `yield()`.** Replying and then calling yield in the same turn makes the reply
-*connector* text and it is summarized away. Matrix treats `end_turn` as an implicit yield with
-identical pause semantics, so nothing is lost. Explicit `yield()` is fine when no user-facing prose
-precedes it.
+rather than call `yield()`.** Replying and then yielding in the same turn makes the reply *connector*
+text and it is summarized away. Matrix treats `end_turn` as an implicit yield with identical pause
+semantics, so nothing is lost.
 
-⭐ **The proof.** A 12-digit canary was written only in visible reply text and kept out of every tool
-input; the client-side JSONL stored a paraphrase that mentioned "这串随机数" and **dropped the
-digits**, so the canary existed nowhere client-side. The next turn's agent recalled it verbatim, with
-the recall recorded in a tool input timestamped before any read. The signature's encrypted payload is
-decrypted server-side on echo-back and the original is reconstituted into the model's context.
-
-> **"Context = `messages[]`" is FALSE under this mechanism, and the model cannot detect the
+> ⭐ **"Context = `messages[]`" is FALSE under this mechanism, and the model cannot detect the
 > divergence from inside.** The model sees its own originals; the client and the user hold only
-> server-rewritten summaries.
+> server-rewritten summaries. **So an agent's memory of its own past replies is NOT evidence of what
+> the user saw.** When verifying user-visible behavior, read the JSONL or a debug snapshot — never
+> introspection. This is the most transferable thing here, and it applies to any divergence between
+> what a model believes it emitted and what was persisted.
 
-⭐ **An agent's memory of its own past replies is NOT evidence of what the user saw.** When verifying
-user-visible behavior, read the JSONL or a debug snapshot. Never trust introspection of your own
-context. This is the single most transferable thing here — it applies to any divergence between what
-a model believes it emitted and what was persisted.
-
-Three forensic techniques worth keeping, all model-agnostic:
-
-- **Canary protocol**: put a unique token in visible text ONLY, have the next turn record its recall
-  inside a TOOL INPUT before any read, then grep the client-side records. Tool inputs are the only
-  generation-time verbatim side channel, because they must be executed as written.
-- **Raw-response snapshot**: when block types look wrong, read
-  `debug/<taskId>/<traceId>/last-response.json` — written before tool execution, so a bash call can
-  read its OWN turn's response. Separates "the server sent this" from "we corrupted it" in one step.
-- **A clean `usage` event proves the API turn completed**, which rules out a mid-stream process
-  suspension (that would orphan the turn and trigger repair on resume). So `clean usage +
-  thinking-only shape` is an upstream silent turn, not a laptop-close.
+Two forensic techniques worth keeping. **The canary protocol**: put a unique token in visible text
+ONLY, have the next turn record its recall inside a TOOL INPUT before any read, then grep the
+client-side records — tool inputs are the only generation-time verbatim side channel, because they
+must be executed as written. (Run this way, the digits existed nowhere client-side and the next turn
+recalled them verbatim.) And **a clean `usage` event proves the API turn completed**, which rules out
+a mid-stream process suspension — so `clean usage + thinking-only shape` is an upstream silent turn,
+not a laptop-close.
 
 ⚠️ **The first diagnosis was SDK-version sniffing: plausible, matching the observed block shape, and
-wrong.** It produced an action (an SDK bump, kept, harmless) and a false verification — one clean
-post-restart sample, then recurrence within the hour. **A single passing sample is not verification
-when the phenomenon is intermittent by design**, and the scope rules above guarantee a clean sample
-is always available regardless of the fix. This is *Plausible and wrong* again, in its member-2
-shape: the wrong mechanism is what made one sample look like enough.
-
-**Two gaps deliberately left open** (waiting for real data rather than building for imagined cases):
-`buildResponseEvents` has no branch for a server-side `fallback` block, so a fallback hop would not
-be persisted and the post-restart walker would omit it, breaking the thinking hash chain; and
-`getStopReason` maps every non-`end_turn` reason to `"tool_use"` — see *An anomalous stop idles the
-agent silently* for what that costs.
+wrong.** It produced a false verification — one clean post-restart sample, then recurrence within the
+hour. **A single passing sample is not verification when the phenomenon is intermittent by design**,
+and the scope rules above guarantee a clean sample is always available regardless of the fix.
 
 ## The Anthropic message-shape rules, MEASURED
 
 **`src/test-utils/api-message-rules.ts` is the authoritative list — read it there, not here.** It
 carries each rule with the real 400 string it mirrors, plus `PROBED_SHAPES` (every shape we have
 actually sent, with the day we sent it) and `UNPROBED` (what we assert but have never asked the API).
-This section keeps only what that file cannot tell you.
 
 ⚠️ **Do not re-enumerate the rules here.** This section used to, opening "these four are the API's
 actual rules" — and it was **five** within two days, with the fifth sitting in the very next
@@ -1431,82 +1390,57 @@ and politely worded.
 ⚠️ **"NOT rules" in that file means MEASURED LEGAL, not never-objected-to, and that distinction is
 the whole bug.** From outside, a rule we never discovered and a shape we measured as legal read
 identically. `[{type:"text", text:""}]` sat under "NOT rules" as legal for two days and is in fact a
-400 in every position on either role. It is reachable: `walker-golden.test.ts` pins the walker
-rebuilding an empty `assistant_text` as exactly that block, repair does not cover it, and while both
-emit sites guard on truthiness (`if (partialText)`, `if (responseText)`), ⚠️ **whitespace-only passes
-truthiness** — so a model whose first streamed token is a newline, interrupted right there, bricks
-the session on every later request.
-
-⭐ **A `thinking` block is positionally identical to a text block, so it needs no clause of its
-own.** (Rule numbers below are that file's.) Measured against production with real signed thinking
-blocks: `[u, a[thinking], u]`, `[u, a[text, thinking], u]` and `[u, a[text], a[thinking], u]` are
-all accepted. Trailing, `a[thinking]` is rejected — but so is `a[text]`, and **the SAME assistant
-message is accepted when it is not last**, which is what makes it rule 2 rather than a rule about
-thinking. Only the error string differs: a trailing thinking block says *"The final block in an
-assistant message cannot be `thinking`"*, trailing text says *"does not support assistant message
-prefill"*. ⚠️ **Do not read that wording as a separate constraint.** It fires only where rule 2
-already fires, and reading it as its own rule is how someone builds a repair step to strip thinking
-tails that were never the problem — which was proposed here and cancelled by this measurement.
+400 in every position on either role. It is reachable: the walker rebuilds an empty `assistant_text`
+as exactly that block, repair does not cover it, and while both emit sites guard on truthiness,
+**whitespace-only passes truthiness** — so a model whose first streamed token is a newline,
+interrupted right there, bricks the session on every later request.
 
 ⭐ **Consequence nothing else states: `buildUserTurn` packs `[...tool_results, ...queueMessages]` with
 tool_results FIRST, and that order is a real API requirement rather than style.** Put text before a
 tool_result, or between two batches of them, and you get a production 400 with a fully green suite.
 Results split across several user messages are fine, in any order; `[R1, text]` then `[R2, …]` is a
-400 because the trailing text ended the run; `[text, R1]` is a 400 because block order inside the
-message matters.
+400 because the trailing text ended the run.
 
-**Rule 2's only production violator was a second compaction path for short sessions**, which sent a
-request ending on the assistant turn the agent had parked on. Writing the rules down is what turned
-it from an invisible gap into a red test; the path is deleted (see *Compaction: ONE path, and the
-two bricks a second one produced*) and `src/compact-short-session.test.ts` holds the shape.
-
-⚠️ **Probing the real API: the `systemPreamble` trap.** Any probe against the OAuth endpoint must
-send the auth group's `systemPreamble` as the FIRST system block, or every call 429s. A first-pass
-probe that omitted it produced a wall of rate limits that reads exactly like validation failure and
-nearly yielded the opposite conclusion.
+⚠️ **Probing the real API: the `systemPreamble` trap.** Any probe against the OAuth endpoint must send
+the auth group's `systemPreamble` as the FIRST system block, or every call 429s. A first-pass probe
+that omitted it produced a wall of rate limits that reads exactly like validation failure and nearly
+yielded the opposite conclusion.
 
 ## The two providers
 
 **There is ONE OpenAI provider: `OpenAIResponsesCompatibleProvider`.** The Chat Completions provider
-and its 1624-line test were deleted along with `eventsToOpenAIMessages`; **do not go looking for a
-"Chat Completions path" to compare against — there isn't one.** Both providers use the `openai` npm
-package, and `ChatCompletionMessageToolCall` is a union, so filter on `tc.type === "function"`.
-`DebugSnapshot.body` is exactly the object passed to the SDK.
-
-`executeTool` validates every built-in tool's input against its Zod schema at the boundary; external
-MCP tools have an empty `inputSchema` and skip validation.
+and its 1624-line test were deleted; **do not go looking for a "Chat Completions path" to compare
+against — there isn't one.** Both providers use the `openai` npm package, and
+`ChatCompletionMessageToolCall` is a union, so filter on `tc.type === "function"`.
 
 ⚠️ **Anthropic and OpenAI differ on whether an agent can call a tool that is not in its frozen list,
 and the difference is not cosmetic.** Anthropic uses free-form tool-name generation and the server
 dispatches any name to whatever handler exists — which is why `evaluate_script` can be hidden from
 `session_config` and still be callable if you know its name. **OpenAI Responses uses
-schema-constrained sampling**, masking the distribution to the supplied tool names, so an agent
-physically cannot call a tool it cannot see. `strict: false` relaxes optional-field validation, not
-tool-name enforcement. This is why refreshing tools at compaction is correctness-critical on OpenAI
-and merely nice on Anthropic.
+schema-constrained sampling**, masking the distribution to the supplied tool names. This is why
+refreshing tools at compaction is correctness-critical on OpenAI and merely nice on Anthropic.
 
 **Thinking events carry a `provider` field**, so switching providers automatically drops stale
-thinking blocks on mismatch. The OpenAI walker ignores thinking entirely.
+thinking blocks on mismatch. The OpenAI walker ignores thinking entirely. `executeTool` validates
+every built-in tool's input against its Zod schema at the boundary; external MCP tools have an empty
+`inputSchema` and skip validation.
 
 ## The LLM facility — single-turn, no tools, no session
 
 `src/llm.ts` wraps the existing provider adapters for plugins that need one-shot calls outside the
-agent loop. It is strictly single-turn: no tools, no session state, no image input — and it is
-mostly wiring, reusing the adapter's own call, response-event, usage and cost functions. The plugin
-resolves `AuthGroup` and model from `MatrixConfig` itself, keeping the facility decoupled from
-config shape. Errors are exceptions (no error chunk), transient ones are retried by the SDK, and
-hitting `max_tokens` returns the text with `stopReason: "max_tokens"` rather than throwing.
+agent loop: no tools, no session state, no image input, mostly wiring. Errors are exceptions,
+transient ones are retried by the SDK, and hitting `max_tokens` returns the text with
+`stopReason: "max_tokens"` rather than throwing.
 
 ⚠️ **SDK client construction is DUPLICATED from the provider class constructors, and this is the one
 thing here that will bite someone.** Beta headers and timeout are hand-matched to
-`AnthropicCompatibleProvider`. **Any future change to beta headers must update BOTH the class
+`AnthropicCompatibleProvider`, so **any future change to beta headers must update BOTH the class
 constructor AND `createAnthropicClient` in `src/llm.ts`** — nothing enforces it, and the failure
 would be OAuth breaking for plugin calls only.
 
 ⚠️ **Anthropic test mocks must set `sessionId`.** `ValidatingMockAPI` keys conversations by it; the
 facility generates a fresh ULID internally and writes it onto `client._currentSessionId` as a side
-channel, which is where the mock picks it up. `systemPreamble` is honored and passed through as the
-first system block; OpenAI has no equivalent field.
+channel, which is where the mock picks it up.
 
 ---
 # Data Model & Storage
