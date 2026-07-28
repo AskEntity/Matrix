@@ -2206,86 +2206,55 @@ were testing. Wrap fixture paths in `realpathSync`.
 
 > ⚠️ **Any code that treats root specially at the ROUTING, TARGETING or IDENTIFICATION level is
 > wrong. Root has an id like any other task; use it.** Only the TREE VISUALIZATION layer legitimately
-> knows which node is root, for drawing the hierarchy and the dedicated orchestrator tab. Every other
-> layer should be oblivious to which id happens to be root.
+> knows which node is root, for drawing the hierarchy and the orchestrator tab.
 
-This one anti-pattern produced five separate bugs over several weeks, and they look unrelated until
-you see the shape:
-
-- `targetNodeId = selectedTaskId ?? rootNodeId` — the pending-message filter then needed two
-  branches, one comparing ids and one accepting `taskId === null`, so it was coupled to whether
-  `rootNodeId` had populated yet. On a fresh mount, root-destined pending messages were **silently
-  dropped**.
-- `isOrchestratorNode = !selectedTaskId || selectedTaskId === rootNodeId` — `!selectedTaskId` is the
-  sentinel meaning "treat as root", entangling routing with state-initialization timing.
-- `tabScrollStateRef.get(selectedTaskId ?? "root")` — a literal string as a Map key, asymmetric with
-  the SET branch (which guarded on `if (prevTabId)` and skipped null), so **root's scroll state was
-  never persisted at all**.
-- `usageTaskId = targetNodeId ?? selectedTaskId ?? rootNodeId ?? nodes.find(…) ?? "orchestrator"` —
-  a four-deep fallback chain masking "nothing is selected" rather than rendering empty.
-- The URL stripped the task component when the view matched root, so a refresh left no task in the
-  URL at all.
+**This one anti-pattern produced five separate bugs over several weeks, and they look unrelated until
+you see the shape.** `targetNodeId = selectedTaskId ?? rootNodeId` made the pending-message filter
+need two branches, one of which accepted `taskId === null`, so on a fresh mount root-destined pending
+messages were **silently dropped**. `isOrchestratorNode = !selectedTaskId || …` made `!selectedTaskId`
+a sentinel meaning "treat as root", entangling routing with state-initialization timing.
+`tabScrollStateRef.get(selectedTaskId ?? "root")` used a literal string as a Map key, asymmetric with
+the SET branch, so **root's scroll state was never persisted at all**. A four-deep `usageTaskId`
+fallback chain masked "nothing is selected" rather than rendering empty. And the URL stripped the task
+component when the view matched root, so a refresh left no task in the URL.
 
 **The fix everywhere is the same: `selectedTaskId` carries the actual root id when viewing root.** No
-sentinel, no fallback. **If `selectedTaskId` is null, render nothing — it means "nothing selected
-yet", and that is a valid state rather than a bug to paper over.** The URL normalization closes the
-null window, so consumers stay simple: `AppFooter`'s filter is one comparison, and both views behave
-identically.
-
-Legitimate uses of `?? rootNodeId` that are NOT this anti-pattern: "where do I navigate after
-closing the last tab" (a navigation decision, resolving an array-out-of-bounds), and
-`if (!selectedTaskId) return` guards in destructive operations (asking "did the user actually click
-a sub-task", not routing).
+sentinel, no fallback. **If it is null, render nothing — that means "nothing selected yet", which is a
+valid state rather than a bug to paper over.** Legitimate uses of `?? rootNodeId` that are NOT this
+anti-pattern: "where do I navigate after closing the last tab" (a navigation decision), and
+`if (!selectedTaskId) return` guards in destructive operations (asking "did the user actually click a
+sub-task", not routing).
 
 ⭐ **Two design lessons came out of getting this wrong first.** The initial attempt built a
 localStorage cache of `rootNodeId` so the first render could be correct synchronously:
 
-> **When tempted to add a cache to make something synchronous, ask whether there is an existing
-> async truth you can wait for instead.** There was — `/projects/:id/tasks` already returns
-> `rootNodeId`. `useTasks` provides in 50-200ms exactly what the cache was caching, and a cache is
-> only useful if you reject async, which there was no reason to do. Caches buy a skipped fetch and
-> cost invalidation complexity forever.
+> **When tempted to add a cache to make something synchronous, ask whether there is an existing async
+> truth you can wait for instead.** There was — `/projects/:id/tasks` already returns `rootNodeId` in
+> 50-200ms. A cache is only useful if you reject async, and there was no reason to.
 
 > **Default to the loosest goal that satisfies the actual user need.** The goal was framed as "first
 > render must be correct", which *forces* a synchronous source and pulls in the cache. The real need
-> was "the pending banner appears within 200ms of refresh". "Correct after the first async settle"
-> satisfies it and needs no new machinery. An over-strict goal is how solution complexity gets in.
+> was "the pending banner appears within 200ms of refresh". **An over-strict goal is how solution
+> complexity gets in.**
 
 ## URL routing: each layer owns its own segment
 
-`/<projectId>/<pluginScope>/<pluginPath>`. The shell owns the `/<projectId>/<pluginScope>/` prefix;
-the plugin owns everything after it. The shell passes `pluginPath` down as a prop and
-`pushPluginPath(path, replace?)` back up.
-
-**Three invariants:**
-
-1. The shell NEVER reads or writes `<pluginPath>`; the plugin NEVER reads or writes `<projectId>` or
-   `<pluginScope>`.
-2. **The URL is THE routing source of truth.** Neither layer caches anything, so refresh and
-   back/forward are free. `replace = true` normalizes; the default `pushState` is for user actions.
-3. `selectedTaskId` is DERIVED from `pluginPath`, not `useState`. There is no hashchange listener
-   and no URL bookkeeping inside the plugin.
+`/<projectId>/<pluginScope>/<pluginPath>`. The shell owns the prefix; the plugin owns everything after
+it. Three invariants: neither layer reads or writes the other's segment; **the URL is THE routing
+source of truth**, so neither caches anything and refresh and back/forward are free; and
+`selectedTaskId` is DERIVED from `pluginPath` rather than being `useState`.
 
 ⭐ **The lesson, which is what makes this worth a section:**
 
 > **When two layers coordinate through a shared serialized blob — one hash, one query string, one
-> localStorage key — look for the segment each layer owns and give each direct access to only its
-> own. If "they must agree" is the contract, the contract is wrong: sooner or later they disagree.**
+> localStorage key — look for the segment each layer owns and give each direct access to only its own.
+> If "they must agree" is the contract, the contract is wrong: sooner or later they disagree.**
 
 That was not theoretical. The previous design put `#projectId/taskId` in one hash that both layers
-wrote: the shell wrote the project part directly via `window.location.hash`, the plugin wrote the
-task part, and they trampled each other on refresh and on every SSE update. The shell also never
-read the hash on mount, so it defaulted to `projects[0].id` regardless of the URL — meaning a
-refresh on a specific project sent task events to the wrong session. Back was broken because the
-shell created history entries the plugin did not know about.
-
-The server-side half — why a refresh on such a path reaches the shell at all — is the `GET` +
-`pm.has(firstSegment)` predicate in *Auth & External API*; it is one predicate for both the auth
-bypass and the SPA-fallback wildcard, deliberately.
-
-⚠️ **Testing this layer under happy-dom has its own trap — do NOT spy on `history.pushState` /
-`replaceState`** (limit 5 under *What happy-dom does not do*); unit-test the pure parse/build
-functions instead and leave routing integration to a real browser.
+wrote, and they trampled each other on refresh and on every SSE update. The shell also never read the
+hash on mount, so it defaulted to `projects[0].id` regardless of the URL — meaning **a refresh on a
+specific project sent task events to the wrong session.** Back was broken because the shell created
+history entries the plugin did not know about.
 
 ⚠️ **Process lesson, and it cost a wrong conclusion: never claim "pre-existing" without verifying
 against main properly.** The claim was that 18 failures predated the change. The verification used
@@ -2295,372 +2264,77 @@ true baseline main had zero failures.
 
 ## Pending messages are a projection of the event log
 
-Four successive fixes tried to patch a mutable `deferredMessages` map by changing *when* mutations
-happen — and each closed one race and left the model in place. **The mutable state was the bug.**
+**Four successive fixes tried to patch a mutable `deferredMessages` map by changing *when* mutations
+happen — and each closed one race and left the model in place. The mutable state was the bug.**
 
-`pendingReducer(state, action)` is a pure module-level function over `{type: "RESET"} | {type:
-"APPLY", event}`: a `message` event with an id and a non-compact source appends; a
-`messages_consumed` removes by id set; **every other event is a no-op.** Plugin.tsx drives it with a
-synchronous write-through ref plus `setState`, so a `messages_consumed` later in the same batch sees
-a message applied earlier in it.
+`pendingReducer(state, action)` is a pure module-level function: a `message` event with an id and a
+non-compact source appends, a `messages_consumed` removes by id set, **every other event is a no-op.**
+Invariants after the rewrite: pending is a pure function of the event log; **there is no imperative
+clear path**; compact-source messages never enter pending, filtered at APPLY, so the old model's need
+to *clear* a `[compact]` chip is gone; and `tree_updated` does NOT touch pending, because **a task's
+lifecycle status "pending" and a message's state "pending" are different concepts that happen to share
+a word.**
 
-**Invariants after the rewrite:**
-
-1. Pending is a pure function of the event log. The reducer is the only thing that changes it.
-2. **There is no imperative clear path.** `RESET` exists only for "replay from scratch".
-3. Compact-source messages never enter pending, filtered at APPLY. The old model had to *clear* a
-   `[compact]` chip; this one never adds it.
-4. `tree_updated` does NOT touch pending. **A task's lifecycle status "pending" and a message's
-   state "pending" are different concepts** that happen to share a word.
-
-⚠️ **Unconsumed messages stay pending forever, and that is correct**, per the user: if the agent
-never processed a message the UI should keep surfacing it. Silently clearing on compact was lying
-about what happened.
+⚠️ **Unconsumed messages stay pending forever, and that is correct**, per the user: if the agent never
+processed a message the UI should keep surfacing it. Silently clearing on compact was lying.
 
 ⚠️ **One thing outside the reducer affects pending, so the reducer alone is no longer the whole
-answer.** `handleEvent` suppresses an APPLY for a message id it already saw consumed in a batch
-(`batchConsumedIds`). The race: `processEventBatch` does RESET plus a full JSONL replay, correctly
-emptying pending — and then SSE catch-up events arriving *after* the batch can re-deliver a `message`
-whose `messages_consumed` was already in it, re-adding a chip that nothing will ever clear. The
-guard lives in the driver, not in the reducer, which stays pure. **Diagnosis worth keeping: all 22
-"unconsumed" messages in the JSONL were compact-source and correctly excluded; zero user messages
-were unconsumed. The backend was right and the bug was purely frontend timing.**
+answer.** The driver suppresses an APPLY for a message id it already saw consumed in the same batch,
+because a RESET-plus-replay correctly empties pending and then SSE catch-up events arriving *after* the
+batch can re-deliver a `message` whose consumption was already in it, re-adding a chip nothing will ever
+clear. The guard lives in the driver; the reducer stays pure. **Diagnosis worth keeping: all 22
+"unconsumed" messages in the JSONL were compact-source and correctly excluded, and zero user messages
+were unconsumed — the backend was right and the bug was purely frontend timing.**
 
-⭐ **The phase-discipline lesson from the last of the four patches, which outlived its own code:**
-when several event types mutate one structure, **they must all mutate in the same phase.** Three did
-it synchronously inside `processEvent`; `compact_marker` did it inside a deferred side-effect
-closure. In single-event mode there is no loop between the two, so both look equivalent; in batch
-mode the gap yawns open and a deferred clear wipes messages that arrived *after* the compact.
-**Search any `sideEffects:` closure for non-React-state mutations — that is the smoke.**
+⭐ **The phase-discipline lesson from the last of the four patches, which outlived its own code:** when
+several event types mutate one structure, **they must all mutate in the same phase.** Three did it
+synchronously inside `processEvent`; `compact_marker` did it inside a deferred side-effect closure. In
+single-event mode there is no loop between the two, so both look equivalent; in batch mode the gap yawns
+open and a deferred clear wipes messages that arrived *after* the compact. **Search any `sideEffects:`
+closure for non-React-state mutations — that is the smoke.**
 
 ## Partial events are monotonic snapshots
 
 `assistant_text` and `thinking` can arrive with `partial: true` — synthetic events injected by the
-events endpoint from `ctx.streamingText` / `ctx.streamingThinking`, never persisted and never
-produced by a provider. They exist so a mid-stream refresh does not lose what has streamed so far.
+events endpoint, never persisted, so a mid-stream refresh does not lose what has streamed so far.
 
-> **A partial event is a snapshot of content that only grows. Clients extend to the longer of
-> {current state, snapshot} and never shrink.**
+> **A partial event is a snapshot of content that only grows. Clients extend to the longer of {current
+> state, snapshot} and never shrink.**
 
-That rule is why the ops are `extend_text`/`extend_thinking` rather than `replace_*`. On reconnect
-the frontend does BOTH an SSE resume and a REST refetch, and the two deliver with opposite
-semantics — SSE deltas append, a REST snapshot clobbers. Without extend semantics you get either
-data loss (live "ABCDEF" overwritten by a stale "ABCDE") or duplication ("ABCDEFDEF"). Extend
-adopts a longer prefix-matching snapshot, ignores a shorter or equal one, and on a prefix mismatch
-prefers the longer and warns. **Final (non-partial) events still use `replace_*` — they are
+That is why the ops are `extend_*` rather than `replace_*`. On reconnect the frontend does BOTH an SSE
+resume and a REST refetch, and the two deliver with opposite semantics — SSE deltas append, a REST
+snapshot clobbers — so without extend you get either data loss (live "ABCDEF" overwritten by a stale
+"ABCDE") or duplication ("ABCDEFDEF"). **Final (non-partial) events still use `replace_*` — they are
 authoritative rather than snapshots.**
 
-⚠️ **Thinking specifically must extend rather than replace even though replace looks equivalent**:
-a partial thinking event has an empty `signature` (we do not know the real one until the block
-closes), and Anthropic needs that signature for prefix byte-identity on restart. Replace would
-overwrite it with nothing. Extend touches only the text, and the final event installs both.
+⚠️ **Thinking specifically must extend rather than replace even though replace looks equivalent**: a
+partial thinking event has an empty `signature`, and Anthropic needs that signature for prefix
+byte-identity on restart. Replace would overwrite it with nothing.
 
 ## `queueEntryToUIEvent` is THE UI materialization gate
 
-⚠️ **Every `QueueMessage.source` that should be visible in the activity log MUST have a case in
-`queueEntryToUIEvent`.** A missing case falls through to `default: null`, `materializeFromPending`
-produces null, and **the event class is silently dropped — no error, no warning, nothing in the
-DOM.** That is exactly what happened to post-compaction summaries: the message existed in JSONL and
-went through the full two-phase lifecycle, and the UI showed nothing. The placeholder text in
-`event-display.ts` was itself dead code, so the visible artifact was not even a wrong string.
-
-Adding a new source means three places, in order: the union member in `src/message-queue.ts`, the
-producer path, and this switch. Forget the third and the JSONL is perfect while the UI is empty.
-
-Related routing decision: `compact` and `compacted_resume` both skip `pendingReducer` deliberately,
-so no chip flashes during the brief emit→consume window. A new server-internal source belongs on
-that skip list too.
+⚠️ **Every `QueueMessage.source` that should be visible in the activity log MUST have a case here.** A
+missing case falls through to `default: null` and **the event class is silently dropped — no error, no
+warning, nothing in the DOM.** That is exactly what happened to post-compaction summaries: the message
+existed in JSONL and went through the full two-phase lifecycle, and the UI showed nothing. Adding a new
+source means three places, in order: the union member, the producer path, and this switch. **Forget the
+third and the JSONL is perfect while the UI is empty.**
 
 ## Project switch: remount, do not reset
 
-`<PluginUI key={`${projectId}/${selectedScope}`}>`. When either segment changes React unmounts the
-subtree and every `useState`/`useRef`/`useAgent` re-initialises from scratch.
+`<PluginUI key={`${projectId}/${selectedScope}`}>`. This replaced a 25-line effect that watched a
+`prevProjectId` ref and manually cleared **fourteen** pieces of state. ⭐ **"Detect that prop X changed
+and manually clear N pieces of local state" is a consistent smell, and the manual version cannot be kept
+correct** — every new `useState` added anywhere in the subtree has to be added to the reset list, and
+forgetting one leaks across projects. `key={X}` resets everything, **including state that does not exist
+yet.**
 
-This replaced a 25-line effect that watched a `prevProjectId` ref and manually cleared **fourteen**
-pieces of state. ⭐ **"Detect that prop X changed and manually clear N pieces of local state" is a
-consistent smell, and the manual version cannot be kept correct** — every new `useState` added
-anywhere in the subtree has to be added to the reset list, and forgetting one leaks across projects.
-`key={X}` resets everything, including state that does not exist yet.
-
-## Small facts that are not obvious from the code
-
-- **Events are fetched per-session, not per-project.** A forked session contains its parent's
-  events, so merging by project produces stale content.
-- **`hideCompleted` hides `closed` and `failed` only.** `verify` is actionable and must stay
-  visible; that is a product decision, not an oversight in the filter.
-- ⚠️ **The per-task draft debounce reads `targetRef.current`, not `targetNodeId` from the deps
-  array.** With the value in deps, a render transition saves the previous task's prompt under the
-  new task's `mxd-prompt-draft:<nodeId>` key.
-- `/compact` targets the VIEWED task: the backend reads `nodeId` from the POST body and falls back
-  to the root node.
-
----
-# Web UI — Components & Interactions
----
-
-## The activity log's scroll position: guard the property, not the list of causes
-
-Two user sentences define this whole subsystem, and everything below is downstream of them:
-
-> **"If the AI is still producing output, I only have to scroll down once and I'm locked into follow
-> mode — I can't read at my own pace."**
->
-> **"Load-earlier should work like a chat app's infinite scroll upward: reveal more above me and
-> LEAVE ME WHERE I AM. I wanted a bit more context and got thrown to the very top."**
-
-So: follow mode is armed by the user, never by the browser; and revealing history must not move the
-reader. Both were broken by the same underlying thing — **the log is the whole session's array,
-replaced wholesale on every refetch** — which is why they belong in one section.
-
-A survey of everything that reads, writes or invalidates the scroll offset found **30 touch points,
-not the 9 anyone could name** — including the browser itself, via `overflow-anchor`.
-
-⭐ **The predicate that works is `scrollRangeShrank(prev, current)`, where range = `scrollHeight −
-clientHeight`.** Two predicates were proposed on the *cause* side and one measurement killed both:
-"is the rendered content from the task being viewed" and "is the container non-scrollable" both miss
-an in-log search that leaves 449px of range — fully scrollable — where a `scrollTop` of 1200 is
-clamped to 449, which IS the new bottom, so the near-bottom test returns true and follow mode arms
-itself.
-
-> **This generalises and a cause-list does not.** This subsystem had already proven the cause side
-> cannot be enumerated — the survey started from "your nine are almost certainly incomplete" and
-> ended at 30. `scrollRangeShrank` tests **the property that makes an observation meaningless**, so it
-> covers causes nobody wrote down. The composer auto-growing is the proof: not a view parameter, not
-> anticipated, and it lands in the predicate for free.
-
-**Growth is deliberately NOT suspicious**: streaming grows every frame, and a user scrolling back to
-the bottom mid-stream must still be able to re-arm follow.
-
-**Observation and intent are two concepts, and there is exactly ONE channel carrying each.** Scroll
-position is an observation; `autoScroll` is an intent. The single place where an observation writes an
-intent is the door every hijack came through, and today it is guarded:
-`if (!shrank) onAutoScrollChange(atBottom)`. ⚠️ **Do not add a second reporting channel to
-re-establish the separation — the separation is already there, and a second channel is what the first
-one was.** Two halves were fixed separately: the guard rejects a **false observation** (a clamp after
-a shrink), and the new-content effect no longer takes `autoScroll` as a dependency, which stops a
-**true observation from immediately executing** — the user scrolls into the 40px band, follow
-correctly arms, and the effect used to yank them the rest of the way mid-gesture. **Arming is not
-acting**, and "go to the bottom now" has its own channel, a monotonic counter.
-
-⚠️ **`prevScrollRangeRef` may ONLY be advanced by the scroll handler, and the danger is that the wrong
-version looks MORE thorough.** Letting a geometry-reading effect update it too makes the guard inert:
-effects run at commit, the clamp's scroll event is dispatched by the browser *afterwards* (measured
-14ms later), so the effect writes the new small value first and the comparison becomes new-vs-new.
-Relatedly, **"only trust real user scrolls" is unimplementable** — a clamp-dispatched scroll event has
-`isTrusted === true`.
-
-### The culprit was not in the scroll code at all
-
-Symptom: *"from mid-output to output complete, my scroll gets yanked to somewhere above"* — only
-visible with follow OFF. The chain: the viewed agent goes idle → a refetch replaces every entry object
-→ new entry ids → new React keys → **the whole subtree unmounts and remounts**, and the offset does not
-survive the swap. Measured from inside the DOM mutation, `added: 82, removed: 82` in one batch against
-`removed: 1` for a normal update — **that is every React key changing, measured rather than inferred.**
-The lazy-render anchor is an accomplice, not the cause: it **observed and reproduced** a position that
-was already lost, which is what turns a one-frame flicker into a stuck state. **Fix the keys.**
-
-⚠️ **CORRECTION: "a wholesale replacement does not move the offset" is FALSE**, and an earlier round
-measured it four times and concluded otherwise. The measurements were honest; the fixture held ~60-80
-plain-text entries, cheap enough to tear down and rebuild that the collapse never survived to a layout.
-A real session has images with no reserved height, expandable cards and markdown tables. **The cost of
-a remount depends on how expensive the content is to rebuild, so a fixture made of cheap content
-cannot answer the question at all.**
-
-⭐ **The instrument's blind spot, and what it says about specifying measurements.** A per-frame probe
-classified that exact jump as `range UNCHANGED → not a clamp`. Wrong: the range collapsed and refilled
-**inside one frame**, and between the two DOM mutations there are **267ms containing ZERO samples where
-~16 were due at 60fps** — the main thread was blocked solid rebuilding 82 entries, so every rAF callback
-queued behind it. **"No dip in the samples" is not "no dip."** That is a systematic bias, not an edge
-case: **the operations that cause large displacement are exactly the operations that block the main
-thread long enough to hide themselves, so a per-frame instrument is least able to see precisely the
-moments it is most needed for.** Any instrument here needs an observation that survives a blocked thread
-— a count taken either side of the render, or a mutation record — not a sample taken during it. **Before
-specifying a measurement, check that the instrument's resolution can carry it**; the failure mode is a
-silent false negative that reads exactly like a real result.
-
-⭐ **And the counterpart: stop collecting once the answer cannot change the action.** Exactly where in
-those 267ms the offset died does not alter the fix — do not remove the 82 nodes.
-
-### Fixing a "you end up at the bottom anyway" mechanism makes older displacement visible
-
-This displacement had always been there. With follow ON, any content change re-triggered
-scroll-to-bottom, so **every** displacement was overwritten by the same endpoint and none produced a
-distinguishable symptom.
-
-> **In a subsystem with a mechanism that keeps forcing one endpoint, that mechanism is masking every
-> other bug that moves the same value.** Each masker you fix surfaces a symptom that has always been
-> there; the user reports it as new and it is not a regression, it is *newly visible*. This explains a
-> whole class of "I hit this often but cannot say when" reports, and it means a subsystem's bug count
-> can appear to grow while it is genuinely getting better.
-
-**Two deletions here, and neither was about the feature.** Per-tab scroll memory **never functioned**:
-the save ran in a passive effect keyed on the task id, which runs *after* commit — by which time the
-list had emptied and `scrollTop` was clamped to 0, so it saved a destroyed value, structurally. It was
-invisible because the follow-hijack it fed put you at the bottom anyway. ⭐ **Deleting an implementation
-that never had an effect is not deciding the feature should not exist — it is removing a lie.** The
-second was a `↓` button that Follow had subsumed two and a half weeks later; ⭐ **the cost of that narrow
-affordance was not the affordance** — deleting one `useState` cascaded to a whole reporting channel, a
-prop, a ref mirror and the `else` branch of two effects, all of which existed only to keep its
-visibility fresh. **When you delete a consumer, follow the data backwards to the producer before
-believing you are done**; the compiler stops at the prop.
-
-**Reusable method, from the round that finally caught it:** attribution beats reasoning — one
-reproduction with a probe tagging every programmatic write with who did it turned "something moved me
-and I don't know what" into two line numbers, where the previous round needed a 30-touch-point survey
-to reach a *worse* answer. **Diagnose by absence**: browser scroll anchoring goes through no JS path and
-fires no event, so "the offset moved and nobody wrote it" is itself the diagnosis. And **when you cannot
-reproduce, send the instrument to whoever can** — four increasingly faithful local attempts failed; one
-paste into the user's console succeeded immediately.
-
-## Rewind and Edit: report what the rollback does NOT undo
-
-`analyzeRollbackImpact` scans from the target entry to the end of the log, **skipping entries from other
-tasks** (rollback is per-session, so a sibling agent's bash must not be reported), and counts file / task
-/ message side effects plus a generic bucket. An unknown target yields an empty impact, so the dialog
-claims nothing rather than guessing.
-
-⚠️ **The read-only list is a WHITELIST, and that is the load-bearing choice.** `read_file`, `list_files`,
-`search`, `get_tree`, `get_task`, `background`, `yield` and friends are named safe; **anything not
-whitelisted and not categorised sets the generic warning.** Unknown tools — external MCP servers,
-`evaluate_script` — are never assumed safe.
-
-⚠️ **`done` is NOT read-only, and the first cut whitelisted it.** A range crossing a `done()` then
-rendered the green "nothing outside the conversation changes" box, which is a lie: `done()` flips the
-task's status AND delivers `task_complete` to the task above, which may already have woken, reviewed and
-merged. `done` now lives in both the task and message sets, which forced the classification loop from a
-first-match `else if` chain to **independent membership checks**.
-
-**Edit confirms at the moment ✎ is clicked, not at submit.** The warning's value is "before you decide
-to edit", and intercepting the submit would need draft restore on cancel.
-
-⚠️ **There is ONE "jump to bottom" mechanism, and it is a monotonic counter rather than
-`setAutoScroll(true)`.** The follow effect only fires when `visible.length` or `autoScroll` CHANGES, so
-rewinding while already at the bottom with an unchanged entry count changes neither and **nothing
-scrolls** — which is exactly why the "jumps to the top" symptom was reported as intermittent. ⚠️ And a
-smooth `scrollIntoView` loses to follow mode — jumping back to the edited message got snapped to the
-bottom mid-animation, observed live in a browser, not in tests. `setAutoScroll(false)` first, then an
-INSTANT scroll.
-
-⚠️ **Test-harness gotcha with real teeth**: `clearSessionState` drops log entries for a session
-transitioning to `pending`, so a fixture seeded with `status: "pending"` **wipes its own log** the moment
-the first `tree_updated` arrives. In happy-dom the SSE mock is a no-op so this never fires; in a real
-browser the log renders "No events yet" while the events endpoint returns data. **Seed live-smoke
-fixtures with `verify`** — a task that owns a session is never `pending` in reality. Related: after a
-rollback re-fetch the entries REMOUNT, so any element captured before the rebuild is detached.
-
-**Live smoke recipe, reusable**: temp dataDir + `projects.json` + `tree.json` + hand-written JSONL with
-an explicit eid/parentEid chain (so nothing auto-migrates), `createTestToken`, `createDaemon`,
-`Bun.serve`, then `localStorage.setItem("mxd-jwt", token)` in the browser. **A user message needs BOTH a
-`message` event carrying `id` and `eid` AND a `messages_consumed`** to materialize with its eid, and
-without it the Edit/Rewind buttons never appear.
-
-## Markdown rendering in agent replies
-
-A hand-written parser for a lightweight subset — fenced code, headings, blockquotes, one level of lists,
-hr, tables, inline code/strong/em/strike/link. No markdown library, no `dangerouslySetInnerHTML`, React
-elements only. **Strict grammar throughout, because a false positive is worse than a missing feature.**
-
-⚠️ **Parse order is load-bearing.** Fences FIRST, content verbatim, no table or inline parsing inside.
-Then tables. Then per-line blocks, with **hr checked BEFORE list**, since `- - -` is both. Then inline,
-where **code spans bind tightest** and protect their content even during the search for an emphasis
-closer. **A table requires the header and delimiter rows to have the SAME cell count**, and that guard is
-the entire defence against reading a thematic break or a piped prose line as a table.
-
-⚠️ **The plain fallback must stay byte-identical to no markdown at all.** When every block is a text run
-of only text nodes, the original string renders in a single `<span>` — the same element as before
-markdown existed. **Link safety is one gate in the parser**: only `^https?://` becomes an anchor;
-`javascript:`, `data:`, `file:` and relative URLs render as literal TEXT, and text containing only an
-unsafe link stays "plain" and renders its raw source.
-
-⚠️ **Emphasis uses whitespace-adjacency rules, NOT word boundaries — that is what makes it CJK-safe.** An
-opener must be followed by non-whitespace and a closer preceded by non-whitespace, so `周围**中文**相邻`
-works where `\b` would not. Deliberately absent, each for a concrete reason: `_underscore_` emphasis
-(snake_case identifiers), setext headings, backslash escapes (Windows paths), images, raw HTML. **The copy
-button copies the ORIGINAL markdown source**, so it re-pastes into another markdown surface verbatim.
-
-## Four interactions, each with one line that silently breaks it
-
-Unrelated except in the way that matters here: each depends on a single easy-to-delete line — an
-event-phase choice or a `preventDefault` — whose removal breaks the feature **without breaking a test or
-producing an error.**
-
-**Select-to-quote.** ⚠️ `onMouseDown={e => e.preventDefault()}` on the floating button is LOAD-BEARING:
-without it, mousedown collapses the selection, `selectionchange` unmounts the button, and the click never
-fires. ⚠️ **The rAF that inserts the quote has a required ORDER, all in ONE frame**: recompute the capped
-auto-grow height, then focus, then set the caret, then `scrollTop = scrollHeight`. Reading `scrollHeight`
-before the new height applies gives a stale value, so a long quote leaves the user typing below the fold
-— and **do NOT rely on the separate resize effect having run first**, because React 18 flushes passive
-effects asynchronously and rAF-versus-passive ordering is not guaranteed.
-
-**Global image drag-drop.** ⚠️ **RED LINE: never intercept internal HTML5 drags.** Task-tree and tab
-reorder set `dataTransfer` `text/plain`; every global handler gates on `types.includes("Files")`.
-⚠️ **The visual and functional halves are on different phases, and both choices are load-bearing.**
-Functional (`dragover`, `drop`) is on BUBBLE, because the composer's own drop handler calls
-`stopPropagation` — so a drop on the composer is handled there and does not also attach at the window.
-Visual (`dragenter`/`dragleave` depth counter) is on CAPTURE, so it fires before any inner bubble handler
-and cannot be desynced by that same `stopPropagation`, leaving no stuck overlay and needing no timer.
-(CDP cannot synthesize an OS-file drag, so tests inject synthetic drops.)
-
-**Sidebar filter toggle.** ⚠️ The reopen bug: open state lived in the parent and query state in the child,
-and the input had an `onBlur` that auto-closed when empty. Clicking the toggle while the input was focused
-and empty fired blur on **mousedown** (closing it) before the button's **click** (which read `false` and
-flipped it back). Fixed by one reducer over `{open, query}` with the invariant **closed ⟹ query === ""**,
-and by **removing `onBlur` entirely**. The behavior change is real and intended: an empty open search no
-longer collapses on click-away. If that is ever wanted back, use a document-level outside-click listener —
-**not** `input.onBlur`, which re-introduces the race.
-
-## Settings, stops, and the composer
-
-⚠️ **The mechanism everyone gets wrong: saving config takes effect on the NEXT run, with no restart.**
-Save → the daemon syncs to workers → the next `resolveProjectConfig` uses the new values. **Restart exists
-only to load newly deployed code.** The two got conflated because the restart button used to sit next to
-Save; the single **Save & Restart** button now merges both actions so the question does not arise. The
-panel has exactly two actions and **no confirm dialogs anywhere** — tab switching is deliberately not
-guarded, because each tab keeps an independent draft and a confirm there is crying wolf, which trains
-users to ignore the real ones.
-
-⚠️ **A save that silently fails looks exactly like a save that was reverted**, and this shipped: the draft
-dropped keys whose value became `""`, `buildPatch` then sent `null` for them, the server correctly rejected
-null on required global fields, `updateConfig` **did not check `res.ok`**, and the refetch reverted the UI —
-so the user saw their changes "disappear". **The server's null rejection was correct all along; the frontend
-was manufacturing the nulls.**
-
-**Two stops became one.** The composer's Stop ends the TURN; the Orchestrator panel held a second button and
-`/stop` was a third door, both calling teardown. All of them said "stop". ⭐ **Second instance of one shape,
-in the same component family: when a replacement lands, go back and look at what it replaced.** Neither
-leftover ever went red — the older affordance keeps working, which is exactly why nobody looks at it. The
-sharpening over the `↓` case: there both buttons shared one handler, so it was a duplicate ENTRY POINT; here
-they called different backends with opposite blast radii, so **the runtime had deliberately separated the two
-verbs and the UI went on offering both, handing the user the very confusion the architecture exists to
-prevent.** ⚠️ Do not "keep the escape hatch" by demoting the second control to a slash command — that is
-still two stops with the second one harder to find.
-
-⚠️ **Deleting a UI control leaves four orphans the compiler cannot see**, and this one had all four: its
-**i18n key** in every locale file (string-indexed), its **icon** (reachable only by name), its **URL
-builder**, and the **prose describing it**. Typecheck found only the prop chain.
-
-> ⭐ **Frontend code lives in TWO directories and is consumed from THREE.** `web/` is the shell,
-> `.mxd/plugin/web/` is the plugin UI — and `src/` imports plugin web modules too (in tests). **A grep
-> scoped "to the frontend" therefore misses a real edge**, and it misses it silently, in the direction
-> that says "nothing points here". Scope the grep to the repo, and let the compiler be the second
-> opinion, not the first.
-
-⚠️ **The composer's image hint is the placeholder, and its condition is `!prompt`, NOT `!prompt.trim()`
-— the trimmed version is the one that looks correct**, since every other gate in that component trims. A
-placeholder is hidden by ANY content, whitespace included, so trimming sets a hint the browser never
-paints: a flag claiming an affordance nobody can see. ⭐ **Borrowing a slot that already has a job means you
-owe it back** — one keystroke must restore `Message to "…"`, or an unconditional hint sits on top of the
-target prompt for the rest of the session.
-
-## Small component facts worth knowing
-
-- ⚠️ **A message must carry TEXT; images ride along with it and are never a message on their own.** Refused
-  at four gates — the Send button, the Enter path (which never touches the button), the send handler, and
-  both REST doors, which answer with one identical sentence asserted against a single constant.
-- **Read-only tools default to collapsed but keep their body** — a different thing from `isTitleOnly`,
-  which removes the body entirely.
-- ⚠️ **A `min-width` does not center-align a column whose content is wider than it.** The timestamp column
-  drifted right because the action-button row exceeded its `min-width` with `align-items: center`.
+**Small facts that are not obvious from the code:** events are fetched per-session, not per-project,
+because a forked session contains its parent's events and merging by project produces stale content;
+`hideCompleted` hides `closed` and `failed` only, since `verify` is actionable and must stay visible;
+⚠️ the per-task draft debounce reads `targetRef.current`, not `targetNodeId` from the deps array,
+because with the value in deps a render transition saves the previous task's prompt under the new task's
+key; and `/compact` targets the VIEWED task.
 
 ---
 # Testing
@@ -2669,119 +2343,80 @@ target prompt for the rest of the session.
 ## Three layers: intention → tests → architecture
 
 Tests are the single source of truth, and each layer can be challenged by the layer above but never
-captured by the layer below. Three mutations guard them: is this behavior what users actually want
-(intention); do the tests catch code changes (test); can the code evolve (architecture). Work
-bottom-up — write tests, then find the simplest architecture that passes them.
+captured by the layer below. **The reason is the project's founding one: an AI can hallucinate code but
+not a test result.** Three mutations guard the layers: is this behavior what users actually want
+(intention); do the tests catch code changes (test); can the code evolve (architecture). Work bottom-up
+— write tests, then find the simplest architecture that passes them.
 
 ## Integration tests are mandatory when a promise crosses a layer
 
 **Use an integration test — full agent loop, `ValidatingMockAPI`, observe what the mock receives —
-whenever:**
+whenever a prompt, tool description or user-facing string promises a specific SHAPE; whenever a change
+affects what the LLM sees; whenever the behavior crosses the agent-loop / tool-execution / JSONL
+boundary.**
 
-- a prompt, tool description or user-facing string promises a specific SHAPE ("output is bounded
-  ~10KB", "stdout and stderr are labeled separately", "the path appears at top and bottom");
-- a change affects what the LLM sees in a tool_result, system prompt or message;
-- the behavior crosses the agent-loop / tool-execution / JSONL / mock-reply boundary.
-
-A unit test proves a formatter returns X. **It does not prove the LLM observes X through MCP
-wrapping plus tool_result persistence plus the mock-reply path**, and the gap between those two is
-where prompt/code drift silently lives. The LLM then builds strategy on the lie, and no unit test
-catches it. If a prompt says "X", something must construct the real invocation, run the full loop,
-and assert the observed content matches X literally.
+A unit test proves a formatter returns X. **It does not prove the LLM observes X through MCP wrapping
+plus tool_result persistence plus the mock-reply path**, and the gap between those two is where
+prompt/code drift silently lives. The LLM then builds strategy on the lie, and no unit test catches it.
 
 ## The canonical user journey test is MANDATORY
 
-If the feature's name describes a user action — "fresh-install bootstrap", "sidebar toggle on
-desktop", "auto-save preserves output" — there **must** be a test that performs that exact action
-and asserts the user-observable result. Testing subcomponents, supporting algorithms and edge cases
-does not substitute. **The canonical path IS the feature; everything else is scaffolding.**
+If the feature's name describes a user action, there **must** be a test that performs that exact action
+and asserts the user-observable result. **The canonical path IS the feature; everything else is
+scaffolding.** Diagnostic: open your test file — is there a test whose whole shape is "do user-action X,
+observe X works for the user"? If not, the feature is untested no matter how many other tests pass.
 
-**Diagnostic**: open your test file. Is there a test whose whole shape is "do user-action X, observe
-X works for the user"? If not, the feature is untested no matter how many other tests pass.
-
-Four ways this fails silently, all observed:
-
-- **Test config ≠ production config.** The test calls `createDaemon({installRoot: fake})` directly
-  while production goes through `import.meta.main` with different flags. Only one path is tested.
-- **Subcomponents tested individually, never the chain.** Three green units and no test that starts
-  a real daemon and watches the whole flow.
-- **Partial-chain assertion.** "Marker written ✓" — and the GET response, the UI reading the flag,
-  and the backend guard are all unverified. The chain breaks after the first green check and no test
-  looks.
-- **Mocks matching the test rather than reality.** An in-process no-op `onBroadcast` where
-  production goes through postMessage; the structural differences at process boundaries are never
-  exercised.
-
-**Minimum bar**: cross the real process boundary; run the journey by hand before `done("passed")`,
-and if you cannot describe the concrete steps and what you observed, you have not verified it; test
-every observable consequence, not the first one. **"2003 tests pass" is not a merge gate. "I ran the
-feature the way a user would and it worked" is.**
+Four ways this fails silently, all observed: **test config ≠ production config** (the test calls
+`createDaemon` directly while production goes through `import.meta.main` with different flags);
+**subcomponents tested individually, never the chain**; **partial-chain assertion** ("marker written ✓"
+while the GET response, the UI reading the flag and the backend guard are all unverified); and **mocks
+matching the test rather than reality** (an in-process no-op `onBroadcast` where production goes through
+postMessage). **Minimum bar: cross the real process boundary, and run the journey by hand before
+`done("passed")`. "2003 tests pass" is not a merge gate. "I ran the feature the way a user would and it
+worked" is.**
 
 ## ⚠️ Every `throw` in a test double must quote the real error it mirrors
 
 **When a fake rejects something on the grounds that the real system would, the rejection message must
-carry the real system's own error string. If you cannot quote it, you have not verified it, and it
-does not belong in a predicate named after the real system.**
+carry the real system's own error string. If you cannot quote it, you have not verified it, and it does
+not belong in a predicate named after the real system.**
 
-This rule exists because it moves the failure to the moment of WRITING. The claim that cost us four
+This rule exists because **it moves the failure to the moment of WRITING.** The claim that cost us four
 production mechanisms propagated as a parenthesis in a bug report — *"Error from ValidatingMockAPI
-(matches real Anthropic)"* — which nobody ever checked. Under this rule the author goes looking for
-the API's wording, finds none, and stops there. **A rule is worth what its failure mode is worth,
-not what it says.**
+(matches real Anthropic)"* — which nobody ever checked. Under this rule the author goes looking for the
+API's wording, finds none, and stops there. **A rule is worth what its failure mode is worth, not what
+it says.**
 
-Three corollaries:
+Three corollaries. **Separate OUR expectations from THEIR rules, by name** — a check we want but the API
+does not enforce is fine, it just may not live inside something called `validateRequest`, because **a
+style rule hidden inside an API-validity predicate gets cited later as API behavior.** **A fake that is
+STRICTER than the real system is not "safe"**: it manufactures phantom bugs, and phantom bugs get fixed
+with real complexity. And ⭐ **fix the double BEFORE the code it guards, and treat that ordering as the
+point** — right after `ValidatingMockAPI` was made faithful, the next commit extracted a `yield`-ing
+block into a generator and omitted `yield*` at both call sites: legal TS, zero diagnostics, the whole
+effect silently gone. **8 tests caught it, all via the rule that had just been added; under the previous
+double every one of them would have been green.** The reason to fix the double first is not tidiness —
+it is that you are about to be the one it catches.
 
-- **Separate OUR expectations from THEIR rules, by name.** A check we want but the API does not
-  enforce is fine; it just may not live inside something called `validateRequest` or
-  `assertValidApiMessages`. Give it its own name and let tests opt in. **A style rule hidden inside
-  an API-validity predicate gets cited later as API behavior** — that is exactly how the alternation
-  fiction became a documented fact.
-- **A fake that is STRICTER than the real system is not "safe".** It manufactures phantom bugs, and
-  phantom bugs get fixed with real complexity. Strictness in a double is an unverified claim about
-  the system under test.
-- ⭐ **Fix the double BEFORE the code it guards, and treat that ordering as the point.** A faithful
-  double pays for itself on the very change that installs it. Measured inside one task: right after
-  `ValidatingMockAPI` was made to mirror the API, the next commit extracted a `yield`-ing block into
-  a generator and omitted `yield*` at both call sites — legal TS, zero diagnostics, the whole effect
-  silently gone, requests going out with an unanswered `tool_use`. **8 tests caught it, all via the
-  pairing rule that had just been added; under the previous double every one of them would have been
-  green.** The reason to fix the double first is not tidiness — it is that you are about to be the
-  one it catches.
+**Two harnesses exist because a whole bug class was invisible.** ⚠️ `createMatrixApp` wraps
+`ctx.onBroadcast` in `structuredClone`, because production's worker→shell postMessage boundary will
+reject anything else — a sweep once deleted a triple-JSON-serialize step that had been *accidentally*
+sanitizing payloads, production threw `DataCloneError` on every tree mutation, and **no integration test
+caught it because none exercised `structuredClone`.** ⚠️ `enableStrictToolErrors()` fails a test on any
+unacknowledged `is_error` tool_result, because the same regression made every task tool return `is_error`
+to the agent, dozens of tests invoked those tools, and **not one failed, because nothing asserted the
+error state.**
 
-## Two harnesses that exist because a whole bug class was invisible
+## Drift tests and correctness tests catch different things
 
-⚠️ **`createMatrixApp` wraps `ctx.onBroadcast` in `structuredClone`, and every broadcast payload must
-survive it**, because production's worker→shell postMessage boundary will reject anything else. This
-exists because a sweep deleted a triple-JSON-serialize step that had been *accidentally* sanitizing
-payloads — `broadcastTreeUpdate` was passing `tracker.allNodes()` with live `TaskSession` attached
-and relying on that accident. Post-sweep, production threw `DataCloneError` on every tree mutation
-and **no integration test caught it, because none of them exercised `structuredClone`.** Every
-broadcast site must either construct a plain object or explicitly strip runtime-only fields.
-
-⚠️ **`ValidatingMockAPI.enableStrictToolErrors()` fails a test on any unacknowledged `is_error`
-tool_result.** Same regression is why: the missing `stripSession` made every
-`create_task`/`update_task`/`delete_task` return `is_error` to the agent, dozens of tests invoked
-those tools, and **not one failed, because nothing asserted the error state.** Opt out three ways: a
-turn `assert` with `isError: true` (so tests that already express intent get coverage for free), a
-global allowlist entry, or per-test disable for scenarios that deliberately invoke error tools. The
-default allowlist contains the repair path's "Tool execution was interrupted by daemon restart",
-which is a system contract rather than a bug.
-
-## Drift tests and correctness tests catch different things — and unification created a blind spot
-
-**Drift invariant** (prefix-validation integration tests): full agent loop plus restart, asserting
-the live path and the reconstruction path produce identical bytes. It catches accidental parallel
-construction paths, bugs in the non-walker paths (initial drain, session repair, compaction rebuild,
-cache-control construction), and JSONL corruption.
-
-**Correctness invariant** (golden snapshots): invoke the walker directly and assert exact output
+**Drift invariant**: full agent loop plus restart, asserting the live path and the reconstruction path
+produce identical bytes. **Correctness invariant**: invoke the walker directly and assert exact output
 bytes.
 
-⚠️ **After the live path was unified to delegate to the walker, drift tests stopped being able to
-catch walker bugs — and this was confirmed experimentally, not reasoned.** Removing the caption
-handling from the walker leaves **all 27 integration prefix-validation tests passing**, because both
-paths are now consistently wrong. The golden snapshot catches it by asserting the expected
-`[text, image, caption]` output.
+⚠️ **After the live path was unified to delegate to the walker, drift tests stopped being able to catch
+walker bugs — and this was confirmed experimentally, not reasoned.** Removing the caption handling from
+the walker leaves **all 27 integration prefix-validation tests passing**, because both paths are now
+consistently wrong. The golden snapshot catches it.
 
 > ⭐ **Do not silently lose coverage when removing duplication.** Unifying two paths shifts
 > responsibility: convergence tests can no longer establish correctness, so correctness tests must
@@ -2791,238 +2426,162 @@ paths are now consistently wrong. The golden snapshot catches it by asserting th
 materializes only via `messages_consumed`. Without the consumption event it never renders, and your
 fixture is silently testing nothing.
 
-## Mutation testing: what to keep, and the two shapes it misses
+## Mutation testing: what to keep, and the shapes it misses
 
 **Keep every mutation that surprised you; cut every mutation that confirmed what you expected.** The
-confirming ones are verification records — "reverting X fails test Y" — and belong in a commit
-message. The surprising ones are discoveries about the test suite and are recorded nowhere else. The
-tell is the sentence next to the table: *"I expected this to fail and it did not, because…"*
+confirming ones are verification records and belong in a commit message. The tell is the sentence next
+to the table: *"I expected this to fail and it did not, because…"*
 
 ⚠️ **Guards need a two-sided mutation proof.** Everyone mutates the over-loose direction (delete the
-guard). Almost nobody mutates the over-strict one — **and over-strict is the typical way a guard
-fails**, because it reddens nothing and just silently stops a normal path working. Making a
-follow-mode effect never scroll, i.e. killing the entire feature, left **11 of 12 tests in that file
-green**, including four guard tests written the day before. So when you add a guard, explicitly write
-a test for what it must NOT block and verify that test still passes with the guard in place.
+guard). Almost nobody mutates the over-strict one — **and over-strict is the typical way a guard fails**,
+because it reddens nothing and just silently stops a normal path working. Making a follow-mode effect
+never scroll, i.e. killing the entire feature, left **11 of 12 tests in that file green**, including four
+guard tests written the day before.
 
-⚠️ **Mutation testing cannot find a transition point that was never written.** A missing
-`setActivity` on the way out of idle survived a full clean sweep — nothing failed, because nothing
-existed to remove. It was caught by reading the comment that argued for its absence. **When a
-comment argues why some code is unnecessary, that argument is the thing to check; the tests around
-it are all consistent with it by construction.**
+Four shapes mutation testing cannot see, each with a different cause:
 
-⚠️ **A test whose fixture cannot express the difference passes both ways.** Over-promotion of a glob
-was invisible because the fixture contained exactly one `src/`, so `src/*.ts` and `**/src/*.ts`
-returned the same files.
+- **A transition point that was never written.** A missing `setActivity` survived a full clean sweep —
+  nothing failed, because nothing existed to remove. It was caught by reading the comment that argued
+  for its absence. **When a comment argues why some code is unnecessary, that argument is the thing to
+  check; the tests around it are all consistent with it by construction.**
+- **A fixture that cannot express the difference.** Over-promotion of a glob was invisible because the
+  fixture contained exactly one `src/`.
+- ⚠️ **And the mirror image, which you will defend rather than fix: a fixture can be too REAL.**
+  Deleting a `b.type !== "text"` filter reddened NOTHING, because both tests used genuine shapes and
+  **no real Anthropic block type carries a `text` field at all**, so that filter and the narrowing below
+  it covered for each other perfectly. Only a synthetic block can see that line. **Realism is normally
+  what you want from a fixture, and here it is exactly what blinded it** — so "our fixtures are
+  faithful" is not an answer to "would this mutation be caught".
+- ⚠️ **Two implementations of the same guarantee cover for each other**, and the tell is a mutation
+  surviving that obviously should not have: `walkFiles` sorted its output and then the caller sorted the
+  same array again, so deleting the sort inside the walk failed **no test at all**. Deleting the
+  redundant one is what made the survivor testable.
 
-⚠️ **And the mirror image, which is the one you will defend rather than fix: a fixture can be too
-REAL to see the difference.** Deleting a `b.type !== "text"` filter reddened NOTHING, because both
-scoping tests used genuine shapes — an empty `tool_result`, a real thinking block — and **no real
-Anthropic block type carries a `text` field at all**, so that filter and the `typeof b.text ===
-"string"` narrowing below it covered for each other perfectly. Only a synthetic block, a non-`text`
-type that nevertheless has a `text` field, can see that line. Realism is normally the thing you want
-from a fixture, and here it is exactly what blinded it — so "our fixtures are faithful" is not an
-answer to "would this mutation be caught".
-
-⚠️ **The same defect in a PERFORMANCE fixture does not merely lose precision — it can reverse the
-sign.** A synthetic 64-document benchmark said webgpu was 18% *faster*; the real 1115-document corpus
-says it is 30% *slower*, because real documents have a long tail (p50 206 chars, p90 3988, max
-19284), attention is O(n²), and `feature-extraction` does not truncate. The synthetic set had no
-tail, so it measured a different workload and answered confidently. Same shape as the remount-cost
-error under *The activity log's scroll position*: **a fixture whose content is too cheap cannot
-answer the question at all, and the danger is that it answers anyway.** (The device decision
-survived only because a second number — CPU time, 3044s vs 38.8s — was measured on the real corpus
-too.) And ⚠️ **a test that can fail for two different reasons cannot tell you which one happened** —
-a guard's entire value is being legible on the day it fires, so narrow it to presence-only rather
-than asserting an exact list.
-
-⚠️ **Two implementations of the same guarantee cover for each other, and the tell is a mutation
-surviving that obviously should not have.** `walkFiles` sorted its output and then `jsSearch` sorted
-the same array again; deleting the sort *inside the walk* failed **no test at all**. Deleting the
-redundant one is what made the survivor testable. Same shape as the markdown parser's whitespace
-rules, where a symmetric fixture pinned neither half individually — **a defence-in-depth pair can
-hide the fact that neither half is actually pinned.**
-
-⚠️ **Check that the harness RAN before believing its verdict — "survived" is the comfortable answer
-for every mutation.** A mutation harness wrapped its run in `timeout 180 bun test`; **macOS ships no
-coreutils `timeout`**, so the command failed, the run never happened, `grep -c '^(fail)'` on empty
-output returned 0, and **the harness reported the mutation as SURVIVED** — which reads as a real and
-even reassuring result about your tests rather than as a broken instrument. The only available
-signal was wall-clock: 234ms against an expected ~12s. The fixed harness refuses to print a verdict
-unless the file text actually changed AND bun printed a summary line. **An instrument that fails by
-producing the comfortable answer is worse than one that errors**, and this is the same family as the
-blind `search` and the blocked-main-thread sampler: a false negative wearing evidence's clothes.
-
-⚠️ **A harness that RAN can still be aimed at the wrong files, and that also reports SURVIVED.**
-Same shape, second instance (2026-07-25): a mutation to `.mxd/plugin/web/event-handler.ts` was
-checked with `bun test web/ .mxd/plugin/web/` while the tests covering it live in
-`src/plugin-event-handler.test.ts`. Bun ran, printed a real summary, reported zero failures — a
-verdict about a set of tests that never touched the mutated code. **"Did it run" and "did it run
-the tests that cover this" are two questions**, and only the second one makes SURVIVED mean
-anything. Cheap check: a mutation reported as SURVIVED should name which tests it ran, so an
-implausible target is visible at the moment the verdict is printed.
+⚠️ **Check that the harness RAN before believing its verdict — "survived" is the comfortable answer for
+every mutation.** A harness wrapped its run in `timeout 180 bun test`; **macOS ships no coreutils
+`timeout`**, so the command failed, the run never happened, a `grep -c` on empty output returned 0, and
+**the harness reported the mutation as SURVIVED.** The only available signal was wall-clock: 234ms against
+an expected ~12s. ⚠️ **And a harness that RAN can still be aimed at the wrong files, which also reports
+SURVIVED**: a mutation to a plugin web file was checked with a test path that does not contain its tests.
+**"Did it run" and "did it run the tests that cover this" are two questions**, and only the second makes
+SURVIVED mean anything. **An instrument that fails by producing the comfortable answer is worse than one
+that errors.**
 
 ⚠️ **`git checkout -- <file>` reverts to the last COMMIT, so it eats an uncommitted fix in the same
-file — including the fix you are mutating.** Recorded again under a different symptom because the
-existing note reads as being about tidiness: mid-review a rename plus a behaviour fix were made,
-then a mutation was run to prove the new test fires, then reverted — and the revert silently took
-the whole uncommitted change with it. The tell was the "after revert" run showing the same failure
-count as the mutated run. **Commit before mutating** is not a style preference; the alternative
-loses work in a way that looks like the mutation still being applied.
+file — including the fix you are mutating.** The tell is an "after revert" run showing the same failure
+count as the mutated run. **Commit before mutating.**
 
-⭐ **When you replace an implementation but not its contract, a differential probe beats a green
-suite.** ~40 lines running the OLD path and the NEW one over 21 real cases — the actual repo, both
-checkouts, subdirectory roots, every glob shape, a synthetic symlink fixture, `excluded_dirs: []` at
-68,641 files — asserting **byte-identical output including order**. It found nothing, which is the
-point: it states "behaviour is unchanged" as a measurement over whole outputs, where a green suite
-can only state "the cases someone thought to write still pass".
+⭐ **When you replace an implementation but not its contract, a differential probe beats a green suite.**
+~40 lines running the OLD path and the NEW one over 21 real cases, asserting **byte-identical output
+including order**, found nothing — which is the point: it states "behaviour is unchanged" as a
+measurement over whole outputs, where a green suite can only state "the cases someone thought to write
+still pass".
 
 ## An assertion about an ERROR MESSAGE survives the behaviour being inverted
 
-⭐ **What earns this a section is not the rule. It is that the behaviour had shipped TWICE,
-deliberately, and was pinned by NOTHING.** `6be3a829` made the composer accept image-only;
-`10da7d33` made both REST doors accept it. The only test either commit touched was a single line:
+⭐ **What earns this a section is not the rule. It is that the behaviour had shipped TWICE, deliberately,
+and was pinned by NOTHING.** Two commits made image-only messages acceptable at two layers. The only test
+either commit touched was one line:
 
 ```diff
 -  expect(body.error).toBe("content is required");
 +  expect(body.error).toBe("content or images required");
 ```
 
-That reads as coverage. It is an assertion about a STRING, and it holds no matter which way the
-behaviour goes: the wording could survive untouched while image-only flipped from accepted to
-refused and back. Two rounds of authors, one green suite, zero tests of the thing.
+That reads as coverage. It is an assertion about a STRING, and it holds no matter which way the behaviour
+goes.
 
-> **An assertion about the text of a rejection is not an assertion about what is rejected.** Same
-> family as *a test whose fixture cannot express the difference passes both ways*, and it hides
-> better, because the diff LOOKS like the test was updated along with the behaviour.
+> **An assertion about the text of a rejection is not an assertion about what is rejected.** It hides
+> better than a fixture that cannot express the difference, because the diff LOOKS like the test was
+> updated along with the behaviour.
 
-**Detector, and it is cheap: for any behavioural claim, ask what the test would do if the behaviour
-were inverted.** If the answer is "still pass, possibly after changing one string", the behaviour is
-uncovered. Here the inversion needed 10 new tests across 4 gates and 0 flipped ones, because there
-was nothing to flip — a fact worth knowing before you go looking for the outdated tests a task
-description promises you.
+**Detector, and it is cheap: for any behavioural claim, ask what the test would do if the behaviour were
+inverted.** If the answer is "still pass, possibly after changing one string", the behaviour is
+uncovered. Here the inversion needed 10 new tests across 4 gates and **0 flipped ones, because there was
+nothing to flip** — worth knowing before you go looking for the outdated tests a task description
+promises you.
 
 ## Test fixtures and harness traps
 
 ⚠️ **A fixture with unstable identity silently loses its resolution.** If it regenerates entry ids on
-every render, every rerender is a full key change, the subtree remounts, MutationObserver fires, and
-— with follow mode on — *the remount itself* scrolls to the bottom. The test does not go red; it
-stops being able to see whether the code under test scrolled. Build the master array once and slice
-it, which is also what production does. **Whenever a test asserts something about an effect, check
-that the fixture is not producing that effect itself.**
+every render, every rerender is a full key change, the subtree remounts, and — with follow mode on —
+*the remount itself* scrolls to the bottom. The test does not go red; **it stops being able to see
+whether the code under test scrolled.** Build the master array once and slice it, which is also what
+production does. **Whenever a test asserts something about an effect, check that the fixture is not
+producing that effect itself.**
 
 ⚠️ **An unfaithful double does not only make tests lie — it makes the missing test unthinkable.**
-"Interrupt an agent mid-generation" had never been executed by any test in this suite, and not
-because anyone skipped it: `createMockAnthropicStream` ignored the request's AbortSignal outright, so
-every test that aborted mid-stream passed through a road that was open and led to the OPPOSITE of
-production. Nothing fails, nothing is marked todo; the behaviour simply is not the product's. Nobody
-writes "assert the abort actually aborts" when the harness cannot express the difference.
+"Interrupt an agent mid-generation" had never been executed by any test, and not because anyone skipped
+it: the mock stream ignored the request's AbortSignal outright, so every test that aborted mid-stream
+passed through a road that was open and led to the OPPOSITE of production. **Nobody writes "assert the
+abort actually aborts" when the harness cannot express the difference.** Relatedly, ⚠️ `activity ===
+"thinking"` does NOT mean a request is in flight — a session is BORN thinking, so a test that waits for
+`thinking` and then interrupts can land before the first API call exists and **passes every park
+assertion while testing nothing.** Key on `getRequestHistory().length >= 1`.
 
-⚠️ **`activity === "thinking"` does NOT mean a request is in flight.** A session is BORN thinking
-(setup is the residual state too), so a test that waits for `thinking` and then interrupts can land
-before the first API call exists — and it **passes every park assertion while testing nothing about
-aborting a request**. Key on `mockAPI.getRequestHistory().length >= 1`.
+⚠️ **A negative assertion is only worth the WAIT in front of it — and deleting a redundant channel can
+silently remove that wait.** The shape generalises to every "delete the duplicate" task: two guard tests
+awaited a report from a *redundant* channel and then asserted `expect(calls).toEqual([])`, so deleting
+the duplicate deleted the await and the negative assertion now runs before anything COULD have been
+reported. **It passes on a component that reports nothing at all — nothing goes red, in the same commit
+that "only removed a duplicate".** The fix is a positive control inside the same test. **Same rule with
+the ENVIRONMENT supplying the dead wiring**: the first version of "Enter with an image and no text does
+not send" **passed on code that had no guard at all**, because under happy-dom Enter never reached the
+handler.
 
 ### What happy-dom does not do — five limits, each probed
 
-Kept together because a test author hits them as one question ("why did nothing happen?"), and each
-one produces a **passing** test rather than an error.
+Kept together because a test author hits them as one question ("why did nothing happen?"), and **each
+produces a passing test rather than an error.**
 
-1. ⚠️ **It silently drops MutationObserver callbacks under GC pressure** (v20).
-   `MutationObserverListener` stores its callback in a `new WeakRef(...)` with no strong reference
-   anywhere, and dispatch does `callback.deref()` — so after any GC pass, mutations are delivered to
-   nothing, with **no error**. A test relying on MO delivery passes in isolation (no GC between
-   observe and mutate) and flakes inside the full suite. Real browsers hold strong refs per spec, so
-   production is fine. **Never let a happy-dom test depend on MutationObserver delivery.** Route the
-   behavior through a React effect and treat the MO path as a real-browser-only complement — and
-   stub a no-op MutationObserver so the mutation proof targets the effect branch exactly.
-2. ⚠️ **No layout, so geometry cannot be observed there.** It can still test the *causes* of
-   geometry — DOM order, commit granularity, whether a callback ran — which is far better than
-   dropping the test or mocking geometry brittlely. Anything genuinely about pixels needs a real
-   browser.
-3. ⚠️ **You cannot type into a React controlled input.** Both the native `input` event and the
-   `Object.getOwnPropertyDescriptor(...).value` setter trick fail to fire `onChange` (probed).
-   `.blur()` and keydown do work.
-4. ⚠️ **A key handler on a text input needs a FOCUS first, or it never runs** (measured 2026-07-27).
-   `textarea.dispatchEvent(new KeyboardEvent("keydown", …))` on a React-controlled textarea does not
-   reach `onKeyDown`: React's ChangeEventPlugin takes its polyfill branch under happy-dom and, on
-   any key event over a text input, calls `getInstIfValueChanged` with the fiber it recorded at
-   `focusin` — `null` when nothing was ever focused — and throws on that **before any listener
-   runs**. Call `.focus()` first and both `onKeyDown` and a dispatched `submit` work normally.
-5. ⚠️ **Do NOT spy on `window.history.pushState`/`replaceState`.** Instrumenting them in
-   `beforeEach` survives `GlobalRegistrator.unregister()` in ways nobody could diagnose and poisoned
-   every subsequent `web/*.test.tsx` file with ~18 spurious failures. To assert on history calls,
-   intercept at a layer the test owns (a harness wrapping the component and exposing captured
-   calls), or leave routing integration to a real browser and unit-test the pure parse/build
-   functions. Related: `history.replaceState` does **not** update `window.location.hash` here,
-   although real browsers do.
+1. ⚠️ **It silently drops MutationObserver callbacks under GC pressure** — the listener holds its
+   callback in a `WeakRef` with no strong reference anywhere, so after any GC pass mutations are
+   delivered to nothing, with **no error**. A test relying on MO delivery passes in isolation and flakes
+   inside the full suite. Real browsers hold strong refs per spec. **Never let a happy-dom test depend on
+   MutationObserver delivery.**
+2. ⚠️ **No layout, so geometry cannot be observed there.** It can still test the *causes* of geometry —
+   DOM order, commit granularity, whether a callback ran.
+3. ⚠️ **You cannot type into a React controlled input** — both the native `input` event and the
+   descriptor-setter trick fail to fire `onChange`. `.blur()` and keydown do work.
+4. ⚠️ **A key handler on a text input needs a FOCUS first, or it never runs.** React's ChangeEventPlugin
+   takes its polyfill branch under happy-dom and, on any key event over a text input, throws on the fiber
+   it recorded at `focusin` — `null` when nothing was ever focused — **before any listener runs.**
+5. ⚠️ **Do NOT spy on `history.pushState`/`replaceState`.** Instrumenting them in `beforeEach` survives
+   `GlobalRegistrator.unregister()` in ways nobody could diagnose and poisoned every subsequent
+   `web/*.test.tsx` file with ~18 spurious failures. Unit-test the pure parse/build functions instead.
 
 Taking 3 and 4 together, the way to drive a composer in a test is: **seed the draft through the
-component's own `localStorage` key (or a `quoteRequest` prop) for the text, `.focus()` + keydown for
-the submit.**
+component's own `localStorage` key for the text, `.focus()` + keydown for the submit.**
 
-⚠️ **A constant-vector mock makes every hybrid-search assertion vacuous.** If the fake embedder
-returns the same vector for every text, every document scores cosine 1.0 against every query, the
-whole index comes back, and any assertion about *which* documents matched passes silently. Three
-tests were written that way and were measuring nothing. Return a text-derived vector so different
-texts are orthogonal. ⚠️ And **hybrid search embeds the QUERY through the same pipeline**, so an
-embed counter read *after* a search has counted the query too — snapshot before searching.
+⚠️ **A constant-vector mock makes every hybrid-search assertion vacuous.** If the fake embedder returns
+the same vector for every text, every document scores cosine 1.0 against every query, the whole index
+comes back, and any assertion about *which* documents matched passes silently. Return a text-derived
+vector. (And hybrid search embeds the QUERY through the same pipeline, so an embed counter read after a
+search has counted the query too.)
 
-⚠️ **A negative assertion is only worth the WAIT in front of it — and deleting a redundant channel
-can silently remove that wait.** The shape, which generalises to every "delete the duplicate" task:
-two guard tests did `await waitFor(() => atBottomCalls.length > 0)` and then asserted
-`expect(autoScrollCalls).toEqual([])`. `atBottomCalls` came from a *redundant* reporting channel —
-so deleting the duplicate deletes the await, and the negative assertion now runs before anything
-COULD have been reported. It passes on a component that reports nothing at all. **Nothing goes red;
-the guard just stops being covered, in the same commit that "only removed a duplicate".** The fix is
-a positive control inside the same test: after asserting the thing was NOT triggered, make it
-trigger for real and require that. Same family as `waitFor(() => x === null || true)` below — both
-are assertions sampled before the moment they are about.
-
-⚠️ **The same rule with the environment, not a duplicate channel, supplying the dead wiring:
-a negative assertion driven through SYNTHETIC EVENTS needs a positive control in the same test.**
-The first version of "Enter with an image and no text does not send" **passed on code that had no
-guard at all**, because limit 4 above meant Enter never reached the handler. Nothing in the test
-looked wrong — the fixture was fine and the environment was the thing that could not express the
-difference. Give the same composer text, press the same key, require a send.
-
-Three smaller traps that each cost real time:
-
-- `await waitFor(() => x === null || true)` polls NOTHING (always true) and asserts before React
-  commits. Poll the real condition.
-- ⚠️ **`expect(domNode).toBeNull()` prints the node with its whole React fiber graph on failure**,
-  and the second cost is worse than the first. One such assertion produced a **227MB** log and a
-  60s test; another (182MB, 43s) **mangled bun's `(fail)` line, so a harness scraping that line
-  reported the mutation as SURVIVED** — the instrument was fine and its INPUT was destroyed by an
-  assertion elsewhere. Compare booleans in DOM tests, not for tidiness but for legibility on the one
-  day it fires.
-- **A bare "timed out waiting for X" tells you nothing.** Dump the last few events alongside it —
-  that turned two blind reruns into one answer.
+⚠️ **`expect(domNode).toBeNull()` prints the node with its whole React fiber graph on failure**, and the
+second cost is worse than the first: one such assertion produced a **227MB** log and a 60s test, and
+another **mangled bun's `(fail)` line, so a harness scraping that line reported a mutation as SURVIVED**
+— the instrument was fine and its INPUT was destroyed by an assertion elsewhere. Compare booleans in DOM
+tests. Two smaller ones: `await waitFor(() => x === null || true)` polls NOTHING and asserts before React
+commits; and a bare "timed out waiting for X" tells you nothing — dump the last few events alongside it.
 
 ## ⚠️ `bunfig.toml`'s preload is load-bearing; do not remove it
 
-`preload = ["./src/test-utils/preload.ts"]` does one thing: `import "react-dom/client"` once per
-process, before any test file.
+It does one thing: `import "react-dom/client"` once per process, before any test file. react-dom is a
+process-wide singleton and its scheduler binds to whatever timer machinery exists at **first import**. If
+that first import happens inside a registered happy-dom environment, the scheduler binds that window's
+machinery — and when that file's `afterAll` unregisters, **scheduled render work stops flushing for every
+subsequent test file in the process**: fast assertions fail and renders time out at 5s.
 
-react-dom is a process-wide singleton and its scheduler binds to whatever timer machinery exists at
-**first import**. If that first import happens inside a registered happy-dom environment, the
-scheduler binds that window's machinery — and when that file's `afterAll` calls
-`GlobalRegistrator.unregister()`, scheduled render work stops flushing for **every subsequent test
-file in the process**: fast assertions fail and renders time out at 5s. If the first import happens
-under plain bun globals the binding is bun-native and immortal, and all later register/unregister
-cycles are harmless.
-
-⚠️ **`bun test`'s file order is filesystem-dependent — not alphabetical, not mtime — so this is a
-latent landmine that any file addition can re-roll.** The baseline was green only because a benign
-file happened to run first; adding four web test files reshuffled the order and produced 52 failures
-across 11 files. **Do not remove the preload "because tests pass without it locally"**: passing
-depends on file order, which depends on the filesystem. The preload is what makes order irrelevant.
-
-Red herrings eliminated by probe, so nobody re-investigates: matchMedia mocks, happy-dom register
-options, and `IS_REACT_ACT_ENVIRONMENT` are all innocent. ⚠️ And one bisect trap: a mangled probe
-file whose `beforeAll` THROWS never registers happy-dom, so the paired victim file runs clean and it
-looks like the mutation fixed the problem. Validate that a probe passes on its own before trusting a
-bisect step.
+⚠️ **`bun test`'s file order is filesystem-dependent — not alphabetical, not mtime — so this is a latent
+landmine that any file addition can re-roll.** The baseline was green only because a benign file happened
+to run first; adding four web test files reshuffled the order and produced 52 failures across 11 files.
+**Do not remove the preload "because tests pass without it locally".** Red herrings eliminated by probe,
+so nobody re-investigates: matchMedia mocks, happy-dom register options and `IS_REACT_ACT_ENVIRONMENT`
+are all innocent. ⚠️ And one bisect trap: a mangled probe file whose `beforeAll` THROWS never registers
+happy-dom, so the paired victim file runs clean and it looks like the mutation fixed the problem.
+**Validate that a probe passes on its own before trusting a bisect step.**
 
 ---
 # Build, Tooling & Housekeeping
