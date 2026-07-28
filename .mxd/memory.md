@@ -194,7 +194,11 @@ Not hypotheticals; each has cost us real work.
 
 1. **The broken intermediate state feels more dangerous than it is.** Fear of a large change produces
    a revert, or a fallback that keeps the old path "just in case". Both are worse than the break: two
-   codepaths drift silently and nobody knows which one ran. Delete until ONE remains.
+   codepaths drift silently and nobody knows which one ran. Delete until ONE remains. **And the third
+   harm outlives the code — the dead path's VOCABULARY stays in people's heads**, which is why this
+   file has to keep saying that "alternation" names a rule that never existed, and why two people
+   independently tried to unify the same three Edit/Rewind judgments on one afternoon. Neither cost
+   was the old code; both were the model it left behind.
 2. **The existing shape is not a given.** "Why does this exist" beats "how do I make this work". And
    a "unification" that adds a third path is not a unification.
 3. **Imagined requirements get built.** Building a tool or an analyzer, agents default to handling
@@ -477,8 +481,9 @@ act*.
 > six weeks.
 
 **Measured 2026-07-25: one daemon boot auto-resumed 14 nodes, and every single one looked at its log,
-found nothing to do, and parked.** That cost 8 MCP-connected sessions, **32 subprocesses and 1.58 GB**
-— and a parked session never ends, so they were held for the daemon's life. `shouldLaunchAgent(events)`
+found nothing to do, and parked.** Only 8 of the 14 got as far as connecting MCP — the other lenses
+do not connect it at all — and those 8 cost **32 subprocesses and 1.58 GB**, held for the daemon's
+life, because a parked session never ends. `shouldLaunchAgent(events)`
 now answers "is anything owed here" BEFORE the session exists, because `runAgentForNode` connects
 MCP, builds work_context and writes `session_config` before it ever looks at the conversation.
 
@@ -1522,13 +1527,16 @@ the old single catch returned defaults for a CORRUPT file too.
 process, destroying unmerged work, and a pending `done()` then read `getTask() === undefined` in
 Phase 2 and hung the parent forever. Semantic chosen: reset-style, not close-style.
 
-⭐ **The same principle one layer out: a rule enforced at one of two doors is enforced nowhere**,
-because the other accepts the same payload — and the second door is reliably the one nobody
-remembers. A message reaches the runtime through **`POST …/message`** and **`POST …/edit`**; both take
-`images`, and `/clarify` does NOT and is not one of them. Both answer a text-less message with the
-same sentence asserted against ONE constant, so changing either wording alone reddens. **Test both
-doors in one file against one app, and "I closed the door" can no longer quietly mean "I closed a
-door".**
+⭐ **The same principle one layer out, and it is the one rule in this file with three independent
+sets of evidence: a rule enforced at N of M doors is enforced nowhere**, because the others accept
+the same payload — and the door nobody remembers is reliably the second one. Here a message reaches
+the runtime through **`POST …/message`** and **`POST …/edit`**; both take `images`, and `/clarify` does
+NOT and is not one of them. Both answer a text-less message with the same sentence asserted against
+ONE constant, so changing either wording alone reddens. **Test both doors in one file against one
+app, and "I closed the door" can no longer quietly mean "I closed a door".** The other two instances
+are a search-hit vocabulary shared by three renderers, and the composer's four text-required gates —
+both under their own sections, and both found the same way: by asking *how many places accept this
+payload*, never by reading the one place you were already editing.
 
 Same family, different layer — lifecycle guards that were simply missing: the **root node** cannot be
 deleted, closed or reset; `updateTaskOp` rejects `status: "closed"` and `"failed"`, because both are
@@ -1738,9 +1746,9 @@ carrying it, especially when you already agree with the conclusion.**
 
 *Retrieval that nobody acts on* made the blocks say what to DO with a hit. This one makes each hit
 say what it is — status, both dates, and for a terminal task whether it ever actually ran. All three
-surfaces share the vocabulary in `src/search-hit-format.ts`, because **a rule enforced at two of
-three renderers is enforced nowhere**: the third goes on handing out the old shape to a reader who
-cannot tell which renderer produced it.
+surfaces share the vocabulary in `src/search-hit-format.ts` — the N-of-M-doors rule from *The REST
+boundary must reuse the shared op*, in its second medium: the third renderer goes on handing out the
+old shape to a reader who cannot tell which renderer produced it.
 
 **Status LEADS the line now.** It was always rendered, at the END of the first line, where a long
 title pushes it to the right margin and the next thing the eye meets is a 300-char `Description:`
@@ -2060,6 +2068,15 @@ renders without running a real agent.
 ---
 
 ## Auth is always on, and the anonymous surface is four things
+
+⚠️ **Read this whole region as answering ONE of the two security questions. It is about
+authenticating the USER to the daemon. Nothing here — and nothing anywhere else — constrains the
+AGENT: there is no sandbox.** An agent has full filesystem, network and command access, bounded only
+by the OS user the daemon runs as. That is a deliberate and acceptable trade for single-user local
+software, and it is the stated blocker for ever hosting this. The failure it causes is a reader who
+finishes a hundred careful lines about tokens, masking and skip lists and concludes *security here is
+handled* — so **split every "is this safe?" in two: can an unauthenticated stranger reach it (this
+region answers that), and can a misbehaving agent do it (the answer is yes, always).**
 
 There is **no auth-disabled mode and no opt-out.** Every `createDaemon` unconditionally runs
 `ensureAuthInitialized`, and the middleware's "no jwtSecret → skip" branch is gone: an anonymous
