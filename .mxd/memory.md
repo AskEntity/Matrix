@@ -4132,10 +4132,23 @@ mirror in the shell's `web/i18n.ts` with no consumer, beside a `detail.stop` = "
 left from an even earlier stop button); its **icon** (`IconPause`, reachable only by name);
 its **URL builder** (`api.stop`); and the **prose describing it** (`SLASH_COMMANDS` still read
 "Stop the running agent"). Typecheck found only the prop chain and the newly-unused deps.
-⚠️ It also caught the one grep that was wrong: `api.stop` had a consumer in
-`src/plugin-url-namespace.test.ts` while the search had been scoped to `.mxd/plugin/web/` and
-`web/`. **Scope the grep to the repo, not to the subsystem** — the same narrowing that made
-the data-paths audit walk only `src/`.
+⚠️ It also caught the one grep that was wrong, and the edge it fell off is structural rather
+than careless: `api.stop`'s only remaining consumer was in `src/plugin-url-namespace.test.ts`,
+while the search had been scoped to `.mxd/plugin/web/` and `web/`.
+
+> ⭐ **Frontend code lives in TWO directories and is consumed from THREE.** `web/` is the
+> shell, `.mxd/plugin/web/` is the plugin UI — and `src/` imports plugin web modules too.
+> **A grep scoped "to the frontend" therefore misses a real edge**, and it misses it silently,
+> in the direction that says "nothing points here".
+
+Measured 2026-07-28 as evidence rather than as a current-state count: `grep -rl
+".mxd/plugin/web" src/ web/` gives 35 files in `web/` and 5 in `src/` — of which 3 are real
+imports (`plugin-app-derived-state`, `plugin-event-handler`, `plugin-url-namespace`, all
+tests), one writes fixture paths, and one only names the path in a comment. The production
+invariant that `src/` has no production import from `.mxd/plugin/` is intact; it is the TEST
+edge that breaks directory-scoped searching. Same narrowing that made the data-paths audit
+walk only `src/` — **scope the grep to the repo, and let the compiler be the second opinion,
+not the first.**
 
 **Pin which function runs and on which task.** "/stop does not error" is green before and
 after; the fixture can only express the difference while `targetNodeId` and `rootNodeId` are
