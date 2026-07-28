@@ -155,51 +155,37 @@ directions to be careful in: *"changed nearby" is not "now false"*, and — the 
 ⭐ ***"still true" is not "still accurate"***: one sentence survived as an invariant while the
 mechanism under it was replaced, and a check looking only for false claims walks straight past that.
 
-⭐ **Grep for the SENTENCE, not just the symbol.** A behaviour rule stated in prose lives in more
-places than a grep for the CODE finds, and the distant surfaces are precisely the ones without the
-identifier in them. Three surfaces of a removed `cd` rule were known; a fourth turned up only by
-grepping the RULE itself with a tolerant pattern. ⚠️ **The highest-risk prose surface here is the
-compaction checkpoint (`src/compaction.ts`), and it is nowhere near the code it describes.** It is
-injected into an agent that has just lost its history, so nothing in that agent's context can
-contradict a stale line — a rule that survives there gets taught, fresh, to every compacted agent,
-and a grep scoped to the subsystem will never reach it. When one of its rules goes, **invert** its
-test (`not.toContain`) rather than deleting it, or the removal ends up pinned by nothing.
+⭐ **And grep for the SENTENCE, not just the symbol** — a rule stated in prose lives in more places
+than a grep for the CODE finds, and the distant surfaces are exactly the ones without the identifier
+in them. ⚠️ **The highest-risk prose surface here is the compaction checkpoint (`src/compaction.ts`),
+and it is nowhere near the code it describes.** It is injected into an agent that has just lost its
+history, so nothing in that agent's context can contradict a stale line: a rule that survives there
+gets taught, fresh, to every compacted agent, and a grep scoped to the subsystem never reaches it.
 
 ### Deleting a mechanism built on a false premise: separate the PREMISE from the OBLIGATION
 
 Having shown that the stated reason for some code is wrong, do **not** delete on that finding alone.
 Answer two questions separately: what did it claim to prevent (the premise, now known false), and
 what does it still actually DO (the obligation, possibly real and load-bearing)? Delete only where
-the obligation is empty. Where it is real, keep the effect, relocate or re-justify it, and rewrite
-the comment to name the true reason.
-
-**Skip this and you delete a real guarantee along with the phantom, silently** — the premise was
-false, so nothing else was protecting the obligation, and the tests that covered it were usually
-written in the phantom's vocabulary too, so they go green or get "fixed" on the way out.
+the obligation is empty; where it is real, keep the effect, relocate it, and rewrite the comment to
+name the true reason. **Skip this and you delete a real guarantee along with the phantom, silently**
+— the premise was false, so nothing else was protecting the obligation, and the tests that covered
+it were usually written in the phantom's vocabulary too, so they go green on the way out.
 
 ⚠️ **Check for a COST as well as for redundancy: "harmless, leave it" is not the safe default it
 looks like, and the cost is usually written in the mechanism's own comment as an accepted
-trade-off.** One dead collapse helper replaced entries in place, so the day a second producer
-arrived two distinct entries would have rendered as one, carrying the last one's content at the
-**first one's timestamp** — a latent wrong answer parked in the code waiting for a new caller.
-Another such block answered every `done()` tool_call, which made resume detect a generic
-interrupted-resume instead of a done-resume, silently losing the woken agent's done-resume context.
+trade-off.** One dead collapse helper replaced entries in place, so the day a second producer arrived
+two distinct entries would have rendered as one, carrying the last one's content at the **first one's
+timestamp** — a latent wrong answer parked in the code waiting for a caller.
 
 ⭐ **The transferable half is what happens to the dead mechanism's TESTS, and the honest-looking move
-is the wrong one.** *"Invert rather than delete"* is the right rule for the tests of a removed
-FEATURE, and it does not reach the tests of a removed mechanism whose last producer is gone: those
-would assert "nothing collapsed because nothing was produced", which passes against every
-implementation including a deleted one. Three options, one right — delete mechanism and tests
-together; keep both and RE-AIM the tests at a surviving producer; or keep the mechanism with no
-coverage. **Re-aiming is the trap**, because it silently pins, as intended behaviour, whatever the
-mechanism happens to do to a producer it was never designed for: chosen by nobody, and thereafter
-defended by a test.
-
-⚠️ **A guard on an unreachable state has to say IN THE TEST that it is a contract test**, or the
-next reader tries to reproduce the scenario, fails, and concludes the test is wrong. Assert the
-property that would be violated (two entries' **timestamps**, not their count — the failure being
-guarded is content-and-position substitution, and a count assertion passes against a collapse that
-kept two entries for some other reason).
+is the wrong one.** *"Invert rather than delete"* is right for the tests of a removed FEATURE, and it
+does not reach the tests of a removed mechanism whose last producer is gone: those would assert
+"nothing collapsed because nothing was produced", which passes against every implementation including
+a deleted one. Three options, one right — delete mechanism and tests together; keep both and RE-AIM
+the tests at a surviving producer; or keep the mechanism with no coverage. **Re-aiming is the trap**,
+because it silently pins, as intended behaviour, whatever the mechanism happens to do to a producer
+it was never designed for: chosen by nobody, and thereafter defended by a test.
 
 ## Where agents predictably go wrong
 
@@ -301,12 +287,11 @@ anything.** It does not present as a conflict either — both are individually t
 and they only cancel when someone holds both at once, which is what the linear form prevents.
 Observed in two commits one session apart, same author: one added *"every unfinished break is state
 you carry, in a context that runs out"*, the other existed to establish *"compaction is a
-continuation, not a stopping point"*. Typecheck and biome only prove the template literal parses.
-**So read the recent prompt DIFFS before editing, not just the current text** — the text says what
-the prompt says, the diffs say what it has just *started* saying, which is the only place a fresh
-contradiction can come from. Then re-read the whole thing: the round that INTRODUCED that
-contradiction substituted a targeted grep for the full read, and the round that CAUGHT it did the
-full read and found a second collision as well.
+continuation, not a stopping point"*. **So read the recent prompt DIFFS before editing, not just the
+current text** — the diffs say what it has just *started* saying, which is the only place a fresh
+contradiction comes from — then re-read the whole thing. The round that INTRODUCED that contradiction
+substituted a targeted grep for the full read; the round that CAUGHT it did the full read and found a
+second collision as well.
 
 ⚠️ **"Avoid matrix-internal detail" does NOT mean "delete the concept".** Told to strip internal
 detail, agents delete the whole section. Strip implementation-specific words; keep the
@@ -1389,36 +1374,27 @@ as dormant rather than gone, and the techniques as permanently useful.**
 
 Text emitted BETWEEN tool calls is summarized server-side and returned as a thinking block, with the
 signature carrying the encrypted original — officially documented, **no customer opt-in or opt-out**.
-It applies only AFTER a tool_result exists, short segments may pass through, and **a final assistant
-answer after all tool use is UNAFFECTED**. How it presents: assistant turns stored as
-`[thinking, thinking, tool_use]` where the second thinking block is a server-generated summary of
+It applies only AFTER a tool_result exists, and **a final assistant answer after all tool use is
+UNAFFECTED**. It presents as `[thinking, thinking, tool_use]`, the second block being a summary of
 what should have been the visible reply — so in the UI the user's reply vanishes into the thinking
-fold.
-
-⚠️ **Operational mitigation: an agent whose last action is a user-facing reply should END ITS TURN
-rather than call `yield()`.** Replying and then yielding in the same turn makes the reply *connector*
-text and it is summarized away. Matrix treats `end_turn` as an implicit yield with identical pause
-semantics, so nothing is lost.
+fold. ⚠️ **Operational mitigation: an agent whose last action is a user-facing reply should END ITS
+TURN rather than call `yield()`**, because replying and then yielding in the same turn makes the reply
+*connector* text. `end_turn` is an implicit yield with identical pause semantics, so nothing is lost.
 
 > ⭐ **"Context = `messages[]`" is FALSE under this mechanism, and the model cannot detect the
 > divergence from inside.** The model sees its own originals; the client and the user hold only
 > server-rewritten summaries. **So an agent's memory of its own past replies is NOT evidence of what
-> the user saw.** When verifying user-visible behavior, read the JSONL or a debug snapshot — never
+> the user saw** — when verifying user-visible behavior, read the JSONL or a debug snapshot, never
 > introspection. This is the most transferable thing here, and it applies to any divergence between
 > what a model believes it emitted and what was persisted.
 
-Two forensic techniques worth keeping. **The canary protocol**: put a unique token in visible text
-ONLY, have the next turn record its recall inside a TOOL INPUT before any read, then grep the
-client-side records — tool inputs are the only generation-time verbatim side channel, because they
-must be executed as written. (Run this way, the digits existed nowhere client-side and the next turn
-recalled them verbatim.) And **a clean `usage` event proves the API turn completed**, which rules out
-a mid-stream process suspension — so `clean usage + thinking-only shape` is an upstream silent turn,
-not a laptop-close.
-
-⚠️ **The first diagnosis was SDK-version sniffing: plausible, matching the observed block shape, and
-wrong.** It produced a false verification — one clean post-restart sample, then recurrence within the
-hour. **A single passing sample is not verification when the phenomenon is intermittent by design**,
-and the scope rules above guarantee a clean sample is always available regardless of the fix.
+**The canary protocol proved it, and generalises**: put a unique token in visible text ONLY, have the
+next turn record its recall inside a TOOL INPUT before any read, then grep the client-side records —
+tool inputs are the only generation-time verbatim side channel, because they must be executed as
+written. Run that way, the digits existed nowhere client-side and the next turn recalled them
+verbatim. ⚠️ The first diagnosis had been SDK-version sniffing: plausible, matching the observed block
+shape, wrong, and "verified" by one clean post-restart sample before recurring within the hour. **A
+single passing sample is not verification when the phenomenon is intermittent by design.**
 
 ## The Anthropic message-shape rules, MEASURED
 
@@ -1473,19 +1449,11 @@ every built-in tool's input against its Zod schema at the boundary; external MCP
 ## The LLM facility — single-turn, no tools, no session
 
 `src/llm.ts` wraps the existing provider adapters for plugins that need one-shot calls outside the
-agent loop: no tools, no session state, no image input, mostly wiring. Errors are exceptions,
-transient ones are retried by the SDK, and hitting `max_tokens` returns the text with
-`stopReason: "max_tokens"` rather than throwing.
-
-⚠️ **SDK client construction is DUPLICATED from the provider class constructors, and this is the one
-thing here that will bite someone.** Beta headers and timeout are hand-matched to
-`AnthropicCompatibleProvider`, so **any future change to beta headers must update BOTH the class
-constructor AND `createAnthropicClient` in `src/llm.ts`** — nothing enforces it, and the failure
-would be OAuth breaking for plugin calls only.
-
-⚠️ **Anthropic test mocks must set `sessionId`.** `ValidatingMockAPI` keys conversations by it; the
-facility generates a fresh ULID internally and writes it onto `client._currentSessionId` as a side
-channel, which is where the mock picks it up.
+agent loop. ⚠️ **The one thing here that will bite someone: SDK client construction is DUPLICATED
+from the provider class constructors.** Beta headers and timeout are hand-matched to
+`AnthropicCompatibleProvider`, so **any change to beta headers must update BOTH the class constructor
+AND `createAnthropicClient`** — nothing enforces it, and the failure would be OAuth breaking for
+plugin calls only.
 
 ---
 # Data Model & Storage
@@ -2539,27 +2507,27 @@ without it the Edit/Rewind buttons never appear.
 
 ## Markdown rendering in agent replies
 
-A hand-written parser for a lightweight subset — fenced code, headings, blockquotes, one level of lists,
-hr, tables, inline code/strong/em/strike/link. No markdown library, no `dangerouslySetInnerHTML`, React
-elements only. **Strict grammar throughout, because a false positive is worse than a missing feature.**
+A hand-written parser for a lightweight subset. No markdown library, no `dangerouslySetInnerHTML`,
+React elements only. **Strict grammar throughout, because a false positive is worse than a missing
+feature** — which is the whole design, and the three things it buys are worth knowing before you
+"improve" it:
 
-⚠️ **Parse order is load-bearing.** Fences FIRST, content verbatim, no table or inline parsing inside.
-Then tables. Then per-line blocks, with **hr checked BEFORE list**, since `- - -` is both. Then inline,
-where **code spans bind tightest** and protect their content even during the search for an emphasis
-closer. **A table requires the header and delimiter rows to have the SAME cell count**, and that guard is
-the entire defence against reading a thematic break or a piped prose line as a table.
+- ⚠️ **Emphasis uses whitespace-adjacency rules, NOT word boundaries — that is what makes it
+  CJK-safe.** `周围**中文**相邻` works where `\b` would not. Deliberately absent, each for a concrete
+  reason: `_underscore_` emphasis (snake_case identifiers), setext headings, backslash escapes
+  (Windows paths), images, raw HTML.
+- ⚠️ **The plain fallback must stay byte-identical to no markdown at all.** When every block is a
+  text run of only text nodes, the original string renders in a single `<span>` — the same element as
+  before markdown existed. Text containing only an unsafe link stays "plain" and renders raw source;
+  only `^https?://` becomes an anchor, and `javascript:`, `data:`, `file:` and relative URLs render
+  as literal TEXT.
+- ⚠️ **Parse order is load-bearing**: fences first with content verbatim, then tables, then per-line
+  blocks with **hr checked BEFORE list** (`- - -` is both), then inline, where code spans bind
+  tightest. A table requires header and delimiter rows to have the SAME cell count, and that guard is
+  the entire defence against reading a thematic break or a piped prose line as a table.
 
-⚠️ **The plain fallback must stay byte-identical to no markdown at all.** When every block is a text run
-of only text nodes, the original string renders in a single `<span>` — the same element as before
-markdown existed. **Link safety is one gate in the parser**: only `^https?://` becomes an anchor;
-`javascript:`, `data:`, `file:` and relative URLs render as literal TEXT, and text containing only an
-unsafe link stays "plain" and renders its raw source.
-
-⚠️ **Emphasis uses whitespace-adjacency rules, NOT word boundaries — that is what makes it CJK-safe.** An
-opener must be followed by non-whitespace and a closer preceded by non-whitespace, so `周围**中文**相邻`
-works where `\b` would not. Deliberately absent, each for a concrete reason: `_underscore_` emphasis
-(snake_case identifiers), setext headings, backslash escapes (Windows paths), images, raw HTML. **The copy
-button copies the ORIGINAL markdown source**, so it re-pastes into another markdown surface verbatim.
+**The copy button copies the ORIGINAL markdown source**, so it re-pastes into another markdown
+surface verbatim.
 
 ## Four interactions, each with one line that silently breaks it
 
