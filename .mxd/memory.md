@@ -2400,439 +2400,267 @@ anywhere in the subtree has to be added to the reset list, and forgetting one le
 
 ## The activity log's scroll position: guard the property, not the list of causes
 
-A survey of everything that reads, writes or invalidates the log's scroll offset found **30 touch
-points, not the 9 anyone could name** — including the browser itself, via `overflow-anchor: auto`,
-which silently absorbs top-of-list insertions and is not implemented by Safari. Three clusters:
-measuring or writing during a transitional state (unpredictable symptoms, because the transient's
-duration is a network variable); addressing a viewport position by a **perishable identity** (a
-pixel offset, a module-counter entry id, a React component instance — deterministic losses, each
-disguised as some other feature behaving normally); and conditional renders in a flex row (cheap,
-cosmetic). Their common amplifier is that `logs` is the whole session's array, replaced wholesale
-on every refetch.
+Two user sentences define this whole subsystem, and everything below is downstream of them:
+
+> **"If the AI is still producing output, I only have to scroll down once and I'm locked into follow
+> mode — I can't read at my own pace."**
+>
+> **"Load-earlier should work like a chat app's infinite scroll upward: reveal more above me and
+> LEAVE ME WHERE I AM. I wanted a bit more context and got thrown to the very top."**
+
+So: follow mode is armed by the user, never by the browser; and revealing history must not move the
+reader. Both were broken by the same underlying thing — **the log is the whole session's array,
+replaced wholesale on every refetch** — which is why they belong in one section.
+
+A survey of everything that reads, writes or invalidates the scroll offset found **30 touch points,
+not the 9 anyone could name** — including the browser itself, via `overflow-anchor`.
 
 ⭐ **The predicate that works is `scrollRangeShrank(prev, current)`, where range = `scrollHeight −
 clientHeight`.** Two predicates were proposed on the *cause* side and one measurement killed both:
 "is the rendered content from the task being viewed" and "is the container non-scrollable" both miss
 an in-log search that leaves 449px of range — fully scrollable — where a `scrollTop` of 1200 is
 clamped to 449, which IS the new bottom, so the near-bottom test returns true and follow mode arms
-itself. All five measured failures share not emptiness but *the scrollable range got smaller and the
-browser pushed the offset to the new bottom*.
+itself.
 
 > **This generalises and a cause-list does not.** This subsystem had already proven the cause side
 > cannot be enumerated — the survey started from "your nine are almost certainly incomplete" and
-> ended at 30. `scrollRangeShrank` tests **the property that makes an observation meaningless**, so
-> it covers causes nobody wrote down. The composer auto-growing is the proof: not a view parameter,
-> not anticipated, and it lands in the predicate for free. It also collapsed two catalogued classes
-> into one — content-height changes inside the container and clientHeight changes outside it were
-> two classes only because they were sorted by *what changed*; sorted by *what it causes* they are
-> one thing.
+> ended at 30. `scrollRangeShrank` tests **the property that makes an observation meaningless**, so it
+> covers causes nobody wrote down. The composer auto-growing is the proof: not a view parameter, not
+> anticipated, and it lands in the predicate for free.
 
 **Growth is deliberately NOT suspicious**: streaming grows every frame, and a user scrolling back to
 the bottom mid-stream must still be able to re-arm follow.
 
 **Observation and intent are two concepts, and there is exactly ONE channel carrying each.** Scroll
-position is an observation; `autoScroll` is an intent, written by one observation and six intents,
-and the Follow button needs the intent concept. That single observation-writing-intent is the door
-every hijack came through, and today it is the only place the two meet:
-`if (!shrank) onAutoScrollChange(atBottom)` inside `handleScroll`. ⚠️ **Do not add a second
-reporting channel to re-establish the separation — the separation is already there, and a second
-channel is what the first one was.** There used to be a `logAtBottom` boolean feeding an icon-only
-`↓` button whose `onClick` was Follow's own handler; Follow arrived two and a half weeks later and
-subsumed it. Two halves, fixed separately: the guard rejects a **false observation** (a clamp after
+position is an observation; `autoScroll` is an intent. The single place where an observation writes an
+intent is the door every hijack came through, and today it is guarded:
+`if (!shrank) onAutoScrollChange(atBottom)`. ⚠️ **Do not add a second reporting channel to
+re-establish the separation — the separation is already there, and a second channel is what the first
+one was.** Two halves were fixed separately: the guard rejects a **false observation** (a clamp after
 a shrink), and the new-content effect no longer takes `autoScroll` as a dependency, which stops a
 **true observation from immediately executing** — the user scrolls into the 40px band, follow
-correctly arms, and the effect used to fire and yank them the rest of the way mid-gesture. **Arming
-is not acting**, and "go to the bottom now" already has its own channel (a monotonic
-`scrollToBottomRequest` counter). That fix was a deletion, and the effect reads `autoScrollRef` so
-"responds to content, not to intent" is explicit rather than implied by a deps array.
+correctly arms, and the effect used to yank them the rest of the way mid-gesture. **Arming is not
+acting**, and "go to the bottom now" has its own channel, a monotonic counter.
 
-⚠️ **`prevScrollRangeRef` may ONLY be advanced by `handleScroll`, and the danger is that the wrong
+⚠️ **`prevScrollRangeRef` may ONLY be advanced by the scroll handler, and the danger is that the wrong
 version looks MORE thorough.** Letting a geometry-reading effect update it too makes the guard inert:
 effects run at commit, the clamp's scroll event is dispatched by the browser *afterwards* (measured
 14ms later), so the effect writes the new small value first and the comparison becomes new-vs-new.
-The next person will read the single call site as a missed one.
-
-⚠️ **"Only trust real user scrolls" is unimplementable.** A clamp-dispatched scroll event has
-`isTrusted === true` and is indistinguishable from a user's at the event layer.
-
-⚠️ **In a right-aligned flex row, inserting a child moves only the siblings BEFORE it.** So
-conditionally-rendered controls belong *before* the persistent ones — cheaper than reserving blank
-space and with no side effects. This is what made the header jump 71.3px when the Follow pill
-appeared.
-
-### Two deletions here, and neither was about the feature
-
-`tabScrollStateRef` (per-tab scroll memory) **never functioned**: the save ran in a passive effect
-keyed on the task id, which runs *after* commit — by which time the list had emptied, the container
-had collapsed and `scrollTop` was clamped to 0. It saved a destroyed value, structurally. It was
-invisible because the follow-hijack it fed put you at the bottom anyway, which looked like normal
-follow behavior.
-
-⭐ **Deleting an implementation that never had an effect is not deciding the feature should not
-exist — it is removing a lie.** The real feature needs an address that survives a refetch, which is
-the same requirement as message deep-linking and active-chain membership: all three want persisted
-event identity on every entry regardless of transport.
-
-The `↓` button above is the second, and it is the harder kind to see: **a duplicate ENTRY POINT is
-not a duplicate mechanism, and unifying the mechanism does not clean it up.** The jump had already
-been collapsed to one `scrollBottomRequest` counter — which is precisely why two buttons could sit
-there unnoticed, both thin, both calling the same handler, both working. What made the pair visible
-was putting them side by side and asking what the older one still does that the newer one does not:
-nothing.
-
-⭐ **The cost of the narrow affordance was not the affordance.** Deleting one `useState` cascaded to
-a whole reporting channel — `ActivityLog`'s `onAtBottomChange` prop, its ref mirror,
-`reportAtBottom`, and the `else` branch of BOTH the `visible.length` effect and the
-MutationObserver, each of which existed only to keep that button's visibility fresh. **When you
-delete a consumer, follow the data backwards to the producer before believing you are done**; the
-compiler stops at the prop.
+Relatedly, **"only trust real user scrolls" is unimplementable** — a clamp-dispatched scroll event has
+`isTrusted === true`.
 
 ### The culprit was not in the scroll code at all
 
 Symptom: *"from mid-output to output complete, my scroll gets yanked to somewhere above"* — only
-visible with follow OFF. The chain: the viewed agent goes idle → a refetch replaces every entry
-object → new entry ids → new React keys → the whole subtree unmounts and remounts → **the offset
-does not survive the swap.** Measured from inside the DOM mutation:
-
-```
-t=87006  >>> REFETCH                   scrollTop 8089  scrollHeight 8823  children 85
-t=87032  dom-mutation  removed:1       scrollTop 8089  scrollHeight 8809
-t=87299  dom-mutation  added:82 removed:82   scrollTop 191   ← offset already gone
-t=87313  js-write 191 -> 191           (the lazy-render anchor, pinning it)
-```
-
-**`added:82 removed:82` is the direct observation of every React key changing.** With stable keys
-React reuses nodes and a normal update looks like the `removed:1` record — 82 out, 82 back,
-`children` unchanged, is key churn measured rather than inferred. Note what it does *not* show: the
-height is already restored by the time the observer's microtask runs, so "clamped to 0" is too
-specific; the honest statement is that **the offset does not survive a wholesale replacement**, and
-it lands wherever the intermediate geometry allowed (0 in one capture, 191 in another).
-
-**The lazy-render anchor is an accomplice, not the cause**, and the arithmetic proves it: it captured
-`scrollBottom = 8978 − 191 = 8787` against a `scrollHeight` of 8809-8978, so the offset was already
-near the top when it ran. It **observed and reproduced** a position that was lost before it
-existed rather than computing a wrong one — which is what turns a one-frame flicker into a stuck
-state, and why there is nothing to fix in the anchor. **Fix the keys.**
+visible with follow OFF. The chain: the viewed agent goes idle → a refetch replaces every entry object
+→ new entry ids → new React keys → **the whole subtree unmounts and remounts**, and the offset does not
+survive the swap. Measured from inside the DOM mutation, `added: 82, removed: 82` in one batch against
+`removed: 1` for a normal update — **that is every React key changing, measured rather than inferred.**
+The lazy-render anchor is an accomplice, not the cause: it **observed and reproduced** a position that
+was already lost, which is what turns a one-frame flicker into a stuck state. **Fix the keys.**
 
 ⚠️ **CORRECTION: "a wholesale replacement does not move the offset" is FALSE**, and an earlier round
 measured it four times and concluded otherwise. The measurements were honest; the fixture held ~60-80
-plain-text entries, which are cheap enough to tear down and rebuild that the collapse never survives
-to a layout. A real session has images with no reserved height, expandable cards and markdown tables.
-**The cost of a remount depends on how expensive the content is to rebuild, so a fixture made of
-cheap content cannot answer the question at all.**
+plain-text entries, cheap enough to tear down and rebuild that the collapse never survived to a layout.
+A real session has images with no reserved height, expandable cards and markdown tables. **The cost of
+a remount depends on how expensive the content is to rebuild, so a fixture made of cheap content
+cannot answer the question at all.**
 
-### The instrument's blind spot, and what it says about specifying measurements
+⭐ **The instrument's blind spot, and what it says about specifying measurements.** A per-frame probe
+classified that exact jump as `range UNCHANGED → not a clamp`. Wrong: the range collapsed and refilled
+**inside one frame**, and between the two DOM mutations there are **267ms containing ZERO samples where
+~16 were due at 60fps** — the main thread was blocked solid rebuilding 82 entries, so every rAF callback
+queued behind it. **"No dip in the samples" is not "no dip."** That is a systematic bias, not an edge
+case: **the operations that cause large displacement are exactly the operations that block the main
+thread long enough to hide themselves, so a per-frame instrument is least able to see precisely the
+moments it is most needed for.** Any instrument here needs an observation that survives a blocked thread
+— a count taken either side of the render, or a mutation record — not a sample taken during it. **Before
+specifying a measurement, check that the instrument's resolution can carry it**; the failure mode is a
+silent false negative that reads exactly like a real result.
 
-The per-frame probe classified that exact jump as `range UNCHANGED → scroll anchoring or user — NOT
-a clamp`. Wrong: the range collapsed and refilled **inside one frame**. Worse, `scrollHeight` never
-dipped in any sample — read literally that refutes "the container collapsed", and it does not, because
-**between the two DOM mutations there are 267ms containing ZERO samples where ~16 were due at 60fps.**
-The main thread was blocked solid rebuilding 82 entries, so every rAF callback and observer microtask
-queued behind it. **"No dip in the samples" is not "no dip."**
-
-⚠️ **That is a systematic bias, not an edge case: the operations that cause large displacement are
-exactly the operations that block the main thread long enough to hide themselves.** A per-frame
-instrument is least able to see precisely the moments it is most needed for. Any instrument here
-needs an observation that survives a blocked thread — a count taken either side of the render, or a
-mutation record — not a sample taken during it.
-
-⭐ **Before specifying a measurement, check that the instrument's resolution can carry it.** The
-request that prompted this was "record `scrollHeight` every frame across the window", which is below
-the instrument's resolution and whose failure mode is a **silent false negative** ("no dip, so not a
-remount") that reads exactly like a real result. That is more dangerous than reasoning wrongly,
-because it arrives wearing evidence's clothes. Three false negatives of this family landed in one
-day: an over-specified observation, a fixture whose content was too cheap to reproduce the effect,
-and a blocked-thread sampling gap. A fourth, twice in one session: **check what your selector
-actually points at before believing a null result** — `log.children[0]` is the "load earlier" bar,
-not an entry, so "the first node is still attached" was true on a build that remounts everything.
-
-⭐ **And the counterpart: stop collecting once the answer cannot change the action.** Exactly where
-in those 267ms the offset died does not alter the fix — do not remove the 82 nodes. Further rounds
-of user reproduction would have bought precision nobody would spend.
+⭐ **And the counterpart: stop collecting once the answer cannot change the action.** Exactly where in
+those 267ms the offset died does not alter the fix — do not remove the 82 nodes.
 
 ### Fixing a "you end up at the bottom anyway" mechanism makes older displacement visible
 
 This displacement had always been there. With follow ON, any content change re-triggered
 scroll-to-bottom, so **every** displacement was overwritten by the same endpoint and none produced a
-distinguishable symptom. Removing that overwrite is what made this one visible.
+distinguishable symptom.
 
 > **In a subsystem with a mechanism that keeps forcing one endpoint, that mechanism is masking every
 > other bug that moves the same value.** Each masker you fix surfaces a symptom that has always been
-> there; the user reports it as new and it is not a regression, it is *newly visible*. This explains
-> a whole class of "I hit this often but cannot say when" reports, and it means a subsystem's bug
-> count can appear to grow while it is genuinely getting better.
+> there; the user reports it as new and it is not a regression, it is *newly visible*. This explains a
+> whole class of "I hit this often but cannot say when" reports, and it means a subsystem's bug count
+> can appear to grow while it is genuinely getting better.
 
-### Reusable method
+**Two deletions here, and neither was about the feature.** Per-tab scroll memory **never functioned**:
+the save ran in a passive effect keyed on the task id, which runs *after* commit — by which time the
+list had emptied and `scrollTop` was clamped to 0, so it saved a destroyed value, structurally. It was
+invisible because the follow-hijack it fed put you at the bottom anyway. ⭐ **Deleting an implementation
+that never had an effect is not deciding the feature should not exist — it is removing a lie.** The
+second was a `↓` button that Follow had subsumed two and a half weeks later; ⭐ **the cost of that narrow
+affordance was not the affordance** — deleting one `useState` cascaded to a whole reporting channel, a
+prop, a ref mirror and the `else` branch of two effects, all of which existed only to keep its
+visibility fresh. **When you delete a consumer, follow the data backwards to the producer before
+believing you are done**; the compiler stops at the prop.
 
-- **Attribution beats reasoning here.** One reproduction with a probe that tags every programmatic
-  write with who did it turned "something moved me and I don't know what" into two exact line
-  numbers. The previous round needed a 30-touch-point survey to reach a *worse* answer.
-- **Diagnose by absence.** Browser scroll anchoring goes through no JS path and fires no event, so
-  "the offset moved and nobody wrote it" is itself the diagnosis. Instrument unclaimed movement, not
-  just the writers.
-- **A streaming mock provider is ~60 lines and puts a frontend bug on the real agent loop**: serve
-  Anthropic's SSE shape on a local port and set `ANTHROPIC_BASE_URL` (the daemon passes
-  `process.env` into the worker). You get real `text_delta`, real tool execution, real `end_turn`.
-- **When you cannot reproduce, send the instrument to whoever can.** Four increasingly faithful
-  local attempts failed; one paste into the user's console succeeded immediately.
+**Reusable method, from the round that finally caught it:** attribution beats reasoning — one
+reproduction with a probe tagging every programmatic write with who did it turned "something moved me
+and I don't know what" into two line numbers, where the previous round needed a 30-touch-point survey
+to reach a *worse* answer. **Diagnose by absence**: browser scroll anchoring goes through no JS path and
+fires no event, so "the offset moved and nobody wrote it" is itself the diagnosis. And **when you cannot
+reproduce, send the instrument to whoever can** — four increasingly faithful local attempts failed; one
+paste into the user's console succeeded immediately.
 
 ## Rewind and Edit: report what the rollback does NOT undo
 
-`analyzeRollbackImpact(entries, targetEid)` scans from the target entry to the end of the log,
-**skipping entries from other tasks** (rollback is per-session, so a sibling agent's bash must not be
-reported), and counts file / task / message side effects plus a generic bucket. An unknown
-`targetEid` yields an empty impact, so the dialog claims nothing rather than guessing.
+`analyzeRollbackImpact` scans from the target entry to the end of the log, **skipping entries from other
+tasks** (rollback is per-session, so a sibling agent's bash must not be reported), and counts file / task
+/ message side effects plus a generic bucket. An unknown target yields an empty impact, so the dialog
+claims nothing rather than guessing.
 
-⚠️ **The read-only list is a WHITELIST, and that is the load-bearing choice.** `read_file`,
-`list_files`, `search`, `search_tasks`, `get_tree`, `get_task`, `get_logs`, `list_projects`,
-`background`, `yield` are named safe; **anything not whitelisted and not categorised sets the generic
-warning.** Unknown tools — external MCP servers, `evaluate_script` — are never assumed safe. That is
-why it is not "warn only on the three known categories".
+⚠️ **The read-only list is a WHITELIST, and that is the load-bearing choice.** `read_file`, `list_files`,
+`search`, `get_tree`, `get_task`, `background`, `yield` and friends are named safe; **anything not
+whitelisted and not categorised sets the generic warning.** Unknown tools — external MCP servers,
+`evaluate_script` — are never assumed safe.
 
 ⚠️ **`done` is NOT read-only, and the first cut whitelisted it.** A range crossing a `done()` then
 rendered the green "nothing outside the conversation changes" box, which is a lie: `done()` flips the
-task's status AND delivers `task_complete` to the task above, which may already have woken, reviewed
-and merged. `done` now lives in both the task and message sets, which forced the classification loop
-from a first-match `else if` chain to **independent membership checks** — the sets are otherwise
-disjoint, so every single-category tool behaves exactly as before, pinned by a regression test.
-Re-checked at the same time: `yield` is a pure loop pause and `background`'s kill is a stop rather
-than a rollback-able state change, so both correctly stay whitelisted.
+task's status AND delivers `task_complete` to the task above, which may already have woken, reviewed and
+merged. `done` now lives in both the task and message sets, which forced the classification loop from a
+first-match `else if` chain to **independent membership checks**.
 
-**Edit confirms at the moment ✎ is clicked, not at submit.** The warning's value is "before you
-decide to edit", and intercepting the submit would need draft restore on cancel, since the composer
-clears the prompt on submit. Accepted trade-off: the actual POST then happens without a second
-confirm.
+**Edit confirms at the moment ✎ is clicked, not at submit.** The warning's value is "before you decide
+to edit", and intercepting the submit would need draft restore on cancel.
 
 ⚠️ **There is ONE "jump to bottom" mechanism, and it is a monotonic counter rather than
-`setAutoScroll(true)`.** The follow effect only fires when `visible.length` or `autoScroll` CHANGES,
-so rewinding while already at the bottom with an unchanged entry count changes neither and **nothing
-scrolls** — which is exactly why the "jumps to the top" symptom was reported as intermittent. The
-counter is applied in a `useLayoutEffect`, so it also runs before paint with no flash. This is a
-SIBLING of the "Load earlier history" bottom-relative anchor, not a change to it: same class of bug
-(a wholesale `entries` replacement invalidates the offset), opposite intent (land at the bottom
-versus stay put).
-
-⚠️ **A smooth `scrollIntoView` loses to follow mode.** Jumping back to the edited message got snapped
-to the bottom mid-animation — observed live in a browser, not in tests. `setAutoScroll(false)` first,
-then an INSTANT `scrollIntoView({block: "center"})`.
+`setAutoScroll(true)`.** The follow effect only fires when `visible.length` or `autoScroll` CHANGES, so
+rewinding while already at the bottom with an unchanged entry count changes neither and **nothing
+scrolls** — which is exactly why the "jumps to the top" symptom was reported as intermittent. ⚠️ And a
+smooth `scrollIntoView` loses to follow mode — jumping back to the edited message got snapped to the
+bottom mid-animation, observed live in a browser, not in tests. `setAutoScroll(false)` first, then an
+INSTANT scroll.
 
 ⚠️ **Test-harness gotcha with real teeth**: `clearSessionState` drops log entries for a session
-transitioning to `pending`, so a fixture seeded with `status: "pending"` **wipes its own log** the
-moment the first `tree_updated` arrives. In happy-dom tests the SSE mock is a no-op so this never
-fires; in a real browser the activity log renders "No events yet" while the events endpoint returns
-data. Seed live-smoke fixtures with `verify` — a task that owns a session is never `pending` in
-reality.
+transitioning to `pending`, so a fixture seeded with `status: "pending"` **wipes its own log** the moment
+the first `tree_updated` arrives. In happy-dom the SSE mock is a no-op so this never fires; in a real
+browser the log renders "No events yet" while the events endpoint returns data. **Seed live-smoke
+fixtures with `verify`** — a task that owns a session is never `pending` in reality. Related: after a
+rollback re-fetch the entries REMOUNT, so any element captured before the rebuild is detached.
 
-⚠️ **After a rollback re-fetch the log entries REMOUNT** (fresh ids → new React keys → new DOM
-nodes), so any element captured before the rebuild is detached. Re-query it.
-
-**Live smoke recipe, reusable**: temp dataDir + `projects.json` + `tree.json` + hand-written JSONL
-with an explicit eid/parentEid chain (so nothing auto-migrates) under
-`projects/<id>/plugin/matrix/`, `createTestToken`, `createDaemon`, `Bun.serve`. Then in the browser
-`localStorage.setItem("mxd-jwt", token)` and navigate. **A user message needs BOTH a `message` event
-carrying `id` and `eid` AND a `messages_consumed`** to materialize with its eid — the eid rides
-through `pendingReducer` → `materializeFromPending`, and without it the Edit/Rewind buttons never
-appear.
+**Live smoke recipe, reusable**: temp dataDir + `projects.json` + `tree.json` + hand-written JSONL with
+an explicit eid/parentEid chain (so nothing auto-migrates), `createTestToken`, `createDaemon`,
+`Bun.serve`, then `localStorage.setItem("mxd-jwt", token)` in the browser. **A user message needs BOTH a
+`message` event carrying `id` and `eid` AND a `messages_consumed`** to materialize with its eid, and
+without it the Edit/Rewind buttons never appear.
 
 ## Markdown rendering in agent replies
 
-A hand-written parser for a lightweight subset — fenced code, headings, blockquotes, one level of
-lists, hr, tables, and inline code/strong/em/strike/link. No markdown library, no
-`dangerouslySetInnerHTML`, React elements only. **Strict grammar throughout, because a false positive
-is worse than a missing feature.**
+A hand-written parser for a lightweight subset — fenced code, headings, blockquotes, one level of lists,
+hr, tables, inline code/strong/em/strike/link. No markdown library, no `dangerouslySetInnerHTML`, React
+elements only. **Strict grammar throughout, because a false positive is worse than a missing feature.**
 
-⚠️ **Parse order is load-bearing.** Fences FIRST, with their content verbatim and no table, block or
-inline parsing inside (an unclosed fence runs to EOF). Then tables. Then per-line blocks, with **hr
-checked BEFORE list**, since `- - -` is both. Then inline, where **code spans bind tightest** and
-protect their content even during the search for an emphasis closer.
-
-⚠️ **The plain fallback must stay byte-identical to no markdown at all.** When every block is a text
-run of only text nodes, the original string renders in a single `<span className>` — the same element
-as before markdown existed. Text containing only an unsafe link stays "plain" and renders its raw
-source.
-
-⚠️ **Link safety is one gate in the parser**: only `^https?://` (case-insensitive) becomes an anchor
-with `target="_blank" rel="noopener noreferrer"`. `javascript:`, `data:`, `file:` and relative URLs
-render as literal TEXT. Cells and inline nodes are React text children, so an `<img>` or `<b>` typed
-by the model stays visible text.
-
-⚠️ **Emphasis uses whitespace-adjacency rules, NOT word boundaries — that is what makes it
-CJK-safe.** An opener must be followed by non-whitespace and a closer preceded by non-whitespace, so
-`周围**中文**相邻` works where `\b` would not. A single-`*` closer must be a lone star, which is what
-allows `*a **b** c*`. Runs of 3+ markers are literal, on purpose. Deliberately absent, each for a
-concrete reason: `_underscore_` emphasis (snake_case identifiers), setext headings, backslash escapes
-(Windows paths), images, raw HTML.
-
-⚠️ **A table requires the header and delimiter rows to have the SAME cell count**, and that guard is
+⚠️ **Parse order is load-bearing.** Fences FIRST, content verbatim, no table or inline parsing inside.
+Then tables. Then per-line blocks, with **hr checked BEFORE list**, since `- - -` is both. Then inline,
+where **code spans bind tightest** and protect their content even during the search for an emphasis
+closer. **A table requires the header and delimiter rows to have the SAME cell count**, and that guard is
 the entire defence against reading a thematic break or a piped prose line as a table.
 
-⚠️ **The copy button copies the ORIGINAL markdown source**, not the rendered text, so it re-pastes
-into another markdown surface verbatim.
+⚠️ **The plain fallback must stay byte-identical to no markdown at all.** When every block is a text run
+of only text nodes, the original string renders in a single `<span>` — the same element as before
+markdown existed. **Link safety is one gate in the parser**: only `^https?://` becomes an anchor;
+`javascript:`, `data:`, `file:` and relative URLs render as literal TEXT, and text containing only an
+unsafe link stays "plain" and renders its raw source.
 
-⭐ **Mutation-testing finding worth keeping**: the symmetric math case alone did NOT pin the
-opener/closer whitespace rules individually — two tests were covering for each other, so a mutation
-survived. Each rule now has a dedicated asymmetric test (`** x**` stays literal; `**a ** b**` spans
-the whole run). **A defence-in-depth pair can hide the fact that neither half is actually pinned.**
-
-⚠️ Two biome traps in the parser: a `noArrayIndexKey` suppression on multiline JSX must sit directly
-above the `key={i}` attribute line, not above the element; and `useIterableCallbackReturn` requires
-every switch path to return, which is why the last case and `default:` are merged.
+⚠️ **Emphasis uses whitespace-adjacency rules, NOT word boundaries — that is what makes it CJK-safe.** An
+opener must be followed by non-whitespace and a closer preceded by non-whitespace, so `周围**中文**相邻`
+works where `\b` would not. Deliberately absent, each for a concrete reason: `_underscore_` emphasis
+(snake_case identifiers), setext headings, backslash escapes (Windows paths), images, raw HTML. **The copy
+button copies the ORIGINAL markdown source**, so it re-pastes into another markdown surface verbatim.
 
 ## Four interactions, each with one line that silently breaks it
 
-These features are unrelated except in the way that matters here: each depends on a single
-easy-to-delete line — an event-phase choice or a `preventDefault` — whose removal breaks the feature
-without breaking a test or producing an error.
+Unrelated except in the way that matters here: each depends on a single easy-to-delete line — an
+event-phase choice or a `preventDefault` — whose removal breaks the feature **without breaking a test or
+producing an error.**
 
-**Select-to-quote ("Ask Matrix").** ⚠️ **`onMouseDown={e => e.preventDefault()}` on the floating
-button is LOAD-BEARING**: without it, mousedown collapses the selection, `selectionchange` unmounts
-the button, and the click never fires. The request carries a `seq` counter so quoting the *same* text
-twice re-fires the consumer's effect.
+**Select-to-quote.** ⚠️ `onMouseDown={e => e.preventDefault()}` on the floating button is LOAD-BEARING:
+without it, mousedown collapses the selection, `selectionchange` unmounts the button, and the click never
+fires. ⚠️ **The rAF that inserts the quote has a required ORDER, all in ONE frame**: recompute the capped
+auto-grow height, then focus, then set the caret, then `scrollTop = scrollHeight`. Reading `scrollHeight`
+before the new height applies gives a stale value, so a long quote leaves the user typing below the fold
+— and **do NOT rely on the separate resize effect having run first**, because React 18 flushes passive
+effects asynchronously and rAF-versus-passive ordering is not guaranteed.
 
-⚠️ **The rAF that inserts the quote has a required ORDER, all in ONE frame**: recompute the capped
-auto-grow height, then focus, then set the caret to the end, then `scrollTop = scrollHeight`. Reading
-`scrollHeight` before the new height applies gives a stale value and the wrong scroll, so a long
-quote leaves the user typing below the fold. **Do NOT rely on the separate `[prompt]` resize effect
-having run first — React 18 flushes passive effects asynchronously and rAF-versus-passive ordering is
-not guaranteed.**
-
-**Global image drag-drop.** ⚠️ **RED LINE: never intercept internal HTML5 drags.** Task-tree reorder
-and tab reorder set `dataTransfer` `text/plain`; every global handler gates on
-`types.includes("Files")`, so internal drags pass through untouched. A file dropped on a task node is
-preventDefaulted by the tree (no browser navigation) and still bubbles to the window handler.
-
+**Global image drag-drop.** ⚠️ **RED LINE: never intercept internal HTML5 drags.** Task-tree and tab
+reorder set `dataTransfer` `text/plain`; every global handler gates on `types.includes("Files")`.
 ⚠️ **The visual and functional halves are on different phases, and both choices are load-bearing.**
 Functional (`dragover`, `drop`) is on BUBBLE, because the composer's own drop handler calls
-`stopPropagation` — so a drop on the composer is handled there and does not also attach at the
-window, which is what prevents a double-attach. Visual (`dragenter`/`dragleave` depth counter) is on
-CAPTURE, so it fires before any inner bubble handler and cannot be desynced by that same
-`stopPropagation`, leaving no stuck overlay and needing no timer or flicker heuristic.
+`stopPropagation` — so a drop on the composer is handled there and does not also attach at the window.
+Visual (`dragenter`/`dragleave` depth counter) is on CAPTURE, so it fires before any inner bubble handler
+and cannot be desynced by that same `stopPropagation`, leaving no stuck overlay and needing no timer.
+(CDP cannot synthesize an OS-file drag, so tests inject synthetic drops.)
 
-⚠️ **CDP cannot synthesize an OS-file drag** — `drag` is element-to-element only. Both tests and live
-smoke inject synthetic drops; "the browser does not open the file" rests on standard
-`preventDefault` semantics plus a human with a real file.
+**Sidebar filter toggle.** ⚠️ The reopen bug: open state lived in the parent and query state in the child,
+and the input had an `onBlur` that auto-closed when empty. Clicking the toggle while the input was focused
+and empty fired blur on **mousedown** (closing it) before the button's **click** (which read `false` and
+flipped it back). Fixed by one reducer over `{open, query}` with the invariant **closed ⟹ query === ""**,
+and by **removing `onBlur` entirely**. The behavior change is real and intended: an empty open search no
+longer collapses on click-away. If that is ever wanted back, use a document-level outside-click listener —
+**not** `input.onBlur`, which re-introduces the race.
 
-**Sidebar filter toggle.** ⚠️ The reopen bug: open state lived in the parent and query state in the
-child, and the input had an `onBlur` that auto-closed when empty. Clicking the toggle while the input
-was focused and empty fired blur on **mousedown** (closing it) before the button's **click** (which
-read `false` and flipped it back to `true`), so the box reopened. Fixed by one reducer over
-`{open, query}` with the invariant **closed ⟹ query === ""**, and by **removing `onBlur` entirely**.
-⚠️ **The behavior change is real and intended: an empty open search no longer collapses on
-click-away.** If that is ever wanted back, use a document-level outside-click listener — **not**
-`input.onBlur`, which re-introduces the race.
-
-⚠️ **The query was lifted to a controlled prop because happy-dom cannot type into a React controlled
-input** (limit 3 under *What happy-dom does not do*): filtering became testable by passing a prop
-instead of typing.
-
-## Settings: one Save & Restart button, and the misconception it encodes
-
-The panel has exactly two actions — **Save & Restart** (saves every dirty tab, then restarts the
-daemon) and **Revert** (resets all tabs to last-saved) — and **no confirm dialogs anywhere**. Closing
-the panel discards. Tab switching is deliberately not guarded, because each tab keeps an independent
-draft and a confirm there is crying wolf, which trains users to ignore the real ones.
+## Settings, stops, and the composer
 
 ⚠️ **The mechanism everyone gets wrong: saving config takes effect on the NEXT run, with no restart.**
-Save → the daemon syncs to workers → `ctx.globalConfig` updates → the next `resolveProjectConfig`
-uses the new values. **Restart exists only to load newly deployed code.** The two got conflated
-because the restart button used to sit next to Save; the single button now merges both actions so the
-question does not arise, and the restart control's own label says "load new code".
+Save → the daemon syncs to workers → the next `resolveProjectConfig` uses the new values. **Restart exists
+only to load newly deployed code.** The two got conflated because the restart button used to sit next to
+Save; the single **Save & Restart** button now merges both actions so the question does not arise. The
+panel has exactly two actions and **no confirm dialogs anywhere** — tab switching is deliberately not
+guarded, because each tab keeps an independent draft and a confirm there is crying wolf, which trains
+users to ignore the real ones.
 
-⚠️ **A save that silently fails looks exactly like a save that was reverted**, and this shipped: the
-draft dropped keys whose value became `""`, `buildPatch` then sent `null` for keys present in saved
-but absent from draft, the server correctly rejected null on required global fields with a 400,
-`updateConfig` **did not check `res.ok`**, and the refetch reverted the UI — so the user saw their
-changes "disappear". Two fixes, and both are needed: `buildPatch(draft, saved, allowNull)` omits
-nulls for global saves (repo and local keep `allowNull`, where null means "remove this override"),
-and `updateConfig` returns an error message that surfaces as an inline banner with the draft left
-dirty. **The server's null rejection was correct all along; the frontend was manufacturing the
-nulls.**
+⚠️ **A save that silently fails looks exactly like a save that was reverted**, and this shipped: the draft
+dropped keys whose value became `""`, `buildPatch` then sent `null` for them, the server correctly rejected
+null on required global fields, `updateConfig` **did not check `res.ok`**, and the refetch reverted the UI —
+so the user saw their changes "disappear". **The server's null rejection was correct all along; the frontend
+was manufacturing the nulls.**
 
-## Two stops became one, and the leftover was invisible for the usual reason
+**Two stops became one.** The composer's Stop ends the TURN; the Orchestrator panel held a second button and
+`/stop` was a third door, both calling teardown. All of them said "stop". ⭐ **Second instance of one shape,
+in the same component family: when a replacement lands, go back and look at what it replaced.** Neither
+leftover ever went red — the older affordance keeps working, which is exactly why nobody looks at it. The
+sharpening over the `↓` case: there both buttons shared one handler, so it was a duplicate ENTRY POINT; here
+they called different backends with opposite blast radii, so **the runtime had deliberately separated the two
+verbs and the UI went on offering both, handing the user the very confusion the architecture exists to
+prevent.** ⚠️ Do not "keep the escape hatch" by demoting the second control to a slash command — that is
+still two stops with the second one harder to find.
 
-The composer's Stop ends the TURN (`interruptTask`). The Orchestrator panel held a
-second button, and `/stop` was a third door, both calling `stop()` — which tears the session
-down. All of them said "stop". `/stop` now runs the composer button's path on the composer's
-task, the panel button is deleted, and `POST /projects/:id/stop` survives with **no
-conversational entry point at all** (`reset_task`, `delete_task` and shutdown need it, and
-`mxd stop` still reaches it).
+⚠️ **Deleting a UI control leaves four orphans the compiler cannot see**, and this one had all four: its
+**i18n key** in every locale file (string-indexed), its **icon** (reachable only by name), its **URL
+builder**, and the **prose describing it**. Typecheck found only the prop chain.
 
-⭐ **Second instance of one shape, in the same component family: when a replacement lands, go
-back and look at what it replaced.** `↓` was auto-follow's manual complement and Follow
-subsumed it two and a half weeks later; stop predates interrupt the same way (*Interrupt and
-stop are two abort channels* records that they were once one button). Neither leftover ever
-went red — the older affordance keeps working, which is exactly why nobody looks at it. The
-sharpening over the `↓` case: there both buttons shared one handler, so it was a duplicate
-ENTRY POINT. Here they called different backends with opposite blast radii — **the runtime had
-deliberately separated the two verbs and the UI went on offering both, so the confusion the
-architecture exists to prevent was handed straight to the user.**
+> ⭐ **Frontend code lives in TWO directories and is consumed from THREE.** `web/` is the shell,
+> `.mxd/plugin/web/` is the plugin UI — and `src/` imports plugin web modules too (in tests). **A grep
+> scoped "to the frontend" therefore misses a real edge**, and it misses it silently, in the direction
+> that says "nothing points here". Scope the grep to the repo, and let the compiler be the second
+> opinion, not the first.
 
-⚠️ **Do not "keep the escape hatch" by demoting the second control to a slash command.** That
-is still two stops with the second one harder to find; the problem was never how visible they
-were.
-
-⚠️ **Deleting a UI control leaves four orphans the compiler cannot see**, and this one had all
-four: its **i18n key** in every locale file (string-indexed — and `orch.pause` had a dead
-mirror in the shell's `web/i18n.ts` with no consumer, beside a `detail.stop` = "Interrupt"
-left from an even earlier stop button); its **icon** (`IconPause`, reachable only by name);
-its **URL builder** (`api.stop`); and the **prose describing it** (`SLASH_COMMANDS` still read
-"Stop the running agent"). Typecheck found only the prop chain and the newly-unused deps.
-⚠️ It also caught the one grep that was wrong, and the edge it fell off is structural rather
-than careless: `api.stop`'s only remaining consumer was in `src/plugin-url-namespace.test.ts`,
-while the search had been scoped to `.mxd/plugin/web/` and `web/`.
-
-> ⭐ **Frontend code lives in TWO directories and is consumed from THREE.** `web/` is the
-> shell, `.mxd/plugin/web/` is the plugin UI — and `src/` imports plugin web modules too.
-> **A grep scoped "to the frontend" therefore misses a real edge**, and it misses it silently,
-> in the direction that says "nothing points here".
-
-Measured 2026-07-28 as evidence rather than as a current-state count: `grep -rl
-".mxd/plugin/web" src/ web/` gives 35 files in `web/` and 5 in `src/` — of which 3 are real
-imports (`plugin-app-derived-state`, `plugin-event-handler`, `plugin-url-namespace`, all
-tests), one writes fixture paths, and one only names the path in a comment. The production
-invariant that `src/` has no production import from `.mxd/plugin/` is intact; it is the TEST
-edge that breaks directory-scoped searching. Same narrowing that made the data-paths audit
-walk only `src/` — **scope the grep to the repo, and let the compiler be the second opinion,
-not the first.**
-
-**Pin which function runs and on which task.** "/stop does not error" is green before and
-after; the fixture can only express the difference while `targetNodeId` and `rootNodeId` are
-distinct in it, so the test asserts that about itself first.
-
-## The composer's image hint is the placeholder, and its condition is deliberately un-trimmed
-
-An attachment with no message used to add a full-width line under the thumbnails — a second
-layout jump per paste, and a dangling imperative that reads as an error however quietly it is
-styled. The reasoning that put it there was right about tooltips (Enter-to-send has no hover,
-and a keyboard user never produces one) and then jumped from "not a tooltip" to "a permanent
-div of its own", past the slot that is already permanent and already where the caret is going.
-
-⚠️ **The condition is `!prompt`, NOT `!prompt.trim()` — and the trimmed version is the one that
-looks correct**, since every other gate in that component trims. A placeholder is hidden by ANY
-content, whitespace included, so trimming sets a hint the browser never paints: a flag claiming
-an affordance nobody can see. Whitespace-plus-attachment is carried by the disabled Send button
-alone, and the test asserts the ABSENCE of the hint there so that choice is pinned rather than
-assumed.
-
-⭐ **Borrowing a slot that already has a job means you owe it back.** The test pins that one
-keystroke restores `Message to "…"`; an unconditional hint would sit on top of the target
-prompt for the rest of the session.
+⚠️ **The composer's image hint is the placeholder, and its condition is `!prompt`, NOT `!prompt.trim()`
+— the trimmed version is the one that looks correct**, since every other gate in that component trims. A
+placeholder is hidden by ANY content, whitespace included, so trimming sets a hint the browser never
+paints: a flag claiming an affordance nobody can see. ⭐ **Borrowing a slot that already has a job means you
+owe it back** — one keystroke must restore `Message to "…"`, or an unconditional hint sits on top of the
+target prompt for the rest of the session.
 
 ## Small component facts worth knowing
 
-- ⚠️ **A message must carry TEXT; images ride along with it and are never a message on their own.**
-  Refused at four gates — `canSend` (the Send button), `handleSubmit` (Enter, which never touches the
-  button), `handlers.handleSend`, and both REST doors, `/message` and `/edit`, which answer with one
-  identical sentence asserted against a single constant so neither wording can drift alone. Note
-  `/clarify` is NOT one of the doors; it takes no images. The earlier permissive behaviour and the
-  fallbacks that served it (`content ?? ""` into `createUserMessage`, `"[image]"` into the parent
-  notification) are gone with their premise.
-- **Read-only tools default to collapsed but keep their body** (`isDefaultCollapsed`: `get_tree`,
-  `get_task`, `search_tasks`, `list_projects`). That is a different thing from `isTitleOnly`, which
-  removes the body entirely — users can still click to see results.
-- ⚠️ **A `min-width` does not center-align a column whose content is wider than it.** The timestamp
-  column drifted right because the action-button row (3×16px + gaps) exceeded its `min-width: 58px`
-  with `align-items: center`. Fixed with a hard `width` plus `flex-start`.
+- ⚠️ **A message must carry TEXT; images ride along with it and are never a message on their own.** Refused
+  at four gates — the Send button, the Enter path (which never touches the button), the send handler, and
+  both REST doors, which answer with one identical sentence asserted against a single constant.
+- **Read-only tools default to collapsed but keep their body** — a different thing from `isTitleOnly`,
+  which removes the body entirely.
+- ⚠️ **A `min-width` does not center-align a column whose content is wider than it.** The timestamp column
+  drifted right because the action-button row exceeded its `min-width` with `align-items: center`.
 
 ---
 # Testing
