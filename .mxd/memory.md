@@ -236,8 +236,8 @@ is not a missing mechanism**, so do not read one as the other.
 - **`deliverMessage` is THE message delivery path**: JSONL write → queue delivery → flush →
   auto-launch. No other code writes message events to JSONL.
 - **One codepath per task operation.** `src/task-operations.ts` holds create/update/delete/close/
-  reset/reorder; MCP and REST are thin wrappers. Behavioral differences are explicit (`if (editedBy
-  === "user")`), never a second implementation.
+  reset/reorder; MCP and REST are thin wrappers. Behavioral differences are explicit (`if
+  (editedBy === "user")`), never a second implementation.
 - **Messages have a two-phase lifecycle.** `message` persisted → frontend defers;
   `messages_consumed` → frontend materializes. `QueueMessage.ts`, `Event.ts` and the displayed
   `[HH:MM:SS]` are all the same value, set once at creation.
@@ -557,8 +557,8 @@ from its side. **Design rule: any code path that could silently hang a yielding 
 via `task_complete`.**
 
 **Writing that handler and making it survive its OWN failure are two different problems, and the
-second bites in exactly the shape the first was built to prevent.** The original was `.catch(async e
-=> {…})` doing error event → status flip → `save()` → deliver. An `async` function passed to
+second bites in exactly the shape the first was built to prevent.** The original was `.catch(async
+e => {…})` doing error event → status flip → `save()` → deliver. An `async` function passed to
 `.catch()` has nobody to catch **it**, so a rejected `save()` escaped as an unhandled rejection —
 and because the notification was last in a straight-line body, that rejection **skipped** it, so the
 handler whose entire purpose is "a parent must never wait forever" hung the parent at the one moment
@@ -2763,8 +2763,8 @@ mid-stream passed through a road that was open and led to the OPPOSITE of produc
 writes "assert the abort actually aborts" when the harness cannot express the difference.**
 Relatedly, `activity === "thinking"` does NOT mean a request is in flight — a session is BORN
 thinking, so a test that waits for `thinking` and then interrupts can land before the first API call
-exists and **passes every park assertion while testing nothing.** Key on `getRequestHistory().length
->= 1`.
+exists and **passes every park assertion while testing nothing.** Key on
+`getRequestHistory().length >= 1`.
 
 ⚠️ **A negative assertion is only worth the WAIT in front of it — and deleting a redundant channel
 can silently remove that wait.** The shape generalises to every "delete the duplicate" task: two
