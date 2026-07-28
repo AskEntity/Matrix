@@ -4103,6 +4103,63 @@ and `updateConfig` returns an error message that surfaces as an inline banner wi
 dirty. **The server's null rejection was correct all along; the frontend was manufacturing the
 nulls.**
 
+## Two stops became one, and the leftover was invisible for the usual reason
+
+The composer's Stop ends the TURN (`interruptTask`). The Orchestrator panel held a
+second button, and `/stop` was a third door, both calling `stop()` — which tears the session
+down. All of them said "stop". `/stop` now runs the composer button's path on the composer's
+task, the panel button is deleted, and `POST /projects/:id/stop` survives with **no
+conversational entry point at all** (`reset_task`, `delete_task` and shutdown need it, and
+`mxd stop` still reaches it).
+
+⭐ **Second instance of one shape, in the same component family: when a replacement lands, go
+back and look at what it replaced.** `↓` was auto-follow's manual complement and Follow
+subsumed it two and a half weeks later; stop predates interrupt the same way (*Interrupt and
+stop are two abort channels* records that they were once one button). Neither leftover ever
+went red — the older affordance keeps working, which is exactly why nobody looks at it. The
+sharpening over the `↓` case: there both buttons shared one handler, so it was a duplicate
+ENTRY POINT. Here they called different backends with opposite blast radii — **the runtime had
+deliberately separated the two verbs and the UI went on offering both, so the confusion the
+architecture exists to prevent was handed straight to the user.**
+
+⚠️ **Do not "keep the escape hatch" by demoting the second control to a slash command.** That
+is still two stops with the second one harder to find; the problem was never how visible they
+were.
+
+⚠️ **Deleting a UI control leaves four orphans the compiler cannot see**, and this one had all
+four: its **i18n key** in every locale file (string-indexed — and `orch.pause` had a dead
+mirror in the shell's `web/i18n.ts` with no consumer, beside a `detail.stop` = "Interrupt"
+left from an even earlier stop button); its **icon** (`IconPause`, reachable only by name);
+its **URL builder** (`api.stop`); and the **prose describing it** (`SLASH_COMMANDS` still read
+"Stop the running agent"). Typecheck found only the prop chain and the newly-unused deps.
+⚠️ It also caught the one grep that was wrong: `api.stop` had a consumer in
+`src/plugin-url-namespace.test.ts` while the search had been scoped to `.mxd/plugin/web/` and
+`web/`. **Scope the grep to the repo, not to the subsystem** — the same narrowing that made
+the data-paths audit walk only `src/`.
+
+**Pin which function runs and on which task.** "/stop does not error" is green before and
+after; the fixture can only express the difference while `targetNodeId` and `rootNodeId` are
+distinct in it, so the test asserts that about itself first.
+
+## The composer's image hint is the placeholder, and its condition is deliberately un-trimmed
+
+An attachment with no message used to add a full-width line under the thumbnails — a second
+layout jump per paste, and a dangling imperative that reads as an error however quietly it is
+styled. The reasoning that put it there was right about tooltips (Enter-to-send has no hover,
+and a keyboard user never produces one) and then jumped from "not a tooltip" to "a permanent
+div of its own", past the slot that is already permanent and already where the caret is going.
+
+⚠️ **The condition is `!prompt`, NOT `!prompt.trim()` — and the trimmed version is the one that
+looks correct**, since every other gate in that component trims. A placeholder is hidden by ANY
+content, whitespace included, so trimming sets a hint the browser never paints: a flag claiming
+an affordance nobody can see. Whitespace-plus-attachment is carried by the disabled Send button
+alone, and the test asserts the ABSENCE of the hint there so that choice is pinned rather than
+assumed.
+
+⭐ **Borrowing a slot that already has a job means you owe it back.** The test pins that one
+keystroke restores `Message to "…"`; an unconditional hint would sit on top of the target
+prompt for the rest of the session.
+
 ## Small component facts worth knowing
 
 - ⚠️ **A message must carry TEXT; images ride along with it and are never a message on their own.**
