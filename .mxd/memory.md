@@ -220,8 +220,9 @@ Not hypotheticals; each has cost us real work.
 
 ## Hard invariants
 
-Violating any of these produces silent corruption rather than an error. The reasoning for each lives
-in its own region; this is the index.
+Violating any of these produces silent corruption rather than an error. Each bullet is the whole
+rule; most are also argued out in their own region, a few are stated only here — **a missing region
+is not a missing mechanism**, so do not read one as the other.
 
 - **JSONL content fidelity.** What is written to JSONL is byte-identical to what was sent to the
   API. No truncation on persisted content — UI truncation happens at the rendering layer only.
@@ -248,7 +249,8 @@ in its own region; this is the index.
 What earns a place is the blockquote at the top of this file. **The reorganization procedure, the
 rot taxonomy, the condensing rules and the measurement test all live in `.mxd/memory-reorg.md`** —
 read them there, and put anything you learn about how this file fails there too. Two copies of a
-procedure is drift, which this file has a whole section about.
+procedure drift, for exactly the reason *The live path has no construction logic of its own* gives
+about code.
 
 **Never `write_file` this file.** It rewrites the whole thing, causing loss or duplication. Use
 `edit_file` (match the last lines, extend) or `echo >> .mxd/memory.md`. Update it BEFORE calling
@@ -352,8 +354,9 @@ goes looking.
   it licenses is expensive or irreversible, one clarifying question is always cheaper than a
   confident reading** — and the temptation is strongest exactly when the reading is coherent, because
   coherence feels like confirmation. A coherent misreading of a short instruction would have deleted
-  660 lines of this file, defended with "a revert restores anything lost": true, and beside the point,
-  because **the revert restores the lines, not the hour.**
+  660 lines of this file — it is the relocation *Editing the system prompt* refuses — defended with
+  "a revert restores anything lost": true, and beside the point, because **the revert restores the
+  lines, not the hour.**
 - ⭐ **A measurement that contradicts your plan is not a result to report afterwards — it is a reason
   to stop.** Mid-execution of that same deletion, the first rung measured 82 lines against an estimate
   of 310, already refuting the plan it was part of; the intent was to finish the cuts and report the
@@ -387,16 +390,17 @@ The roll-call, because the range is the argument — these are not one subsystem
 | a three-signal task probe | `false` for all 551 tasks | `tree.json`'s `nodes` is an ARRAY, so `Object.entries` handed back indices as ids |
 | the `ps`-based autoResume audit | "auto-resume still costs 4 procs" | it was measuring an agent a human had started 14 seconds after boot |
 
-Four things a control has to be, each learned from one of those. It must be **able to FAIL for the
-reason you are testing** — a reviewer confirmed with a positive control that grep could see a file's
-real exports, then reported two of its symbols as fabricated, but the symbols were real and lived in
-a commit their branch had not merged, and the chosen control existed in BOTH versions, so it could
-not separate "this symbol is absent" from "my checkout is old". It must be **placed where the risk
-is**: a `while read` loop silently dropped its final line, and the planted control worked only
-because it was last. It must be **verified to have RUN, and to have run the thing that COVERS the
-subject** — two different questions, and only the second makes SURVIVED mean anything. And it must be
-**of a resolution that can carry the measurement you specified**, because below that resolution the
-failure mode is a silent false negative that reads exactly like a real result.
+Four things a control has to be, each paid for by a real one — the last two by rows in that table,
+the first two by audits of this file itself (`.mxd/memory-reorg.md` § check 6). It must be **able to
+FAIL for the reason you are testing** — a reviewer confirmed with a positive control that grep could
+see a file's real exports, then reported two of its symbols as fabricated, but the symbols were real
+and lived in a commit their branch had not merged, and the chosen control existed in BOTH versions,
+so it could not separate "this symbol is absent" from "my checkout is old". It must be **placed
+where the risk is**: a `while read` loop silently dropped its final line, and the planted control
+worked only because it was last. It must be **verified to have RUN, and to have run the thing that
+COVERS the subject** — two different questions, and only the second makes SURVIVED mean anything.
+And it must be **of a resolution that can carry the measurement you specified**, because below that
+resolution the failure mode is a silent false negative that reads exactly like a real result.
 
 ⭐ **Two corollaries that catch what planting does not.** A **uniform answer across a whole population
 is the signature of a broken instrument, not a finding** — 551/551 is not a result. And **a heuristic
@@ -467,7 +471,8 @@ not to be one).
 consumptions, land on the `assistant_text` from BEFORE the message, and report a park — so the loop
 parked on a conversation ending in an unanswered user message and **a message drained into a turn the
 daemon died inside was silently never answered.** The window is a whole API call wide. `thinking` is
-deliberately still transparent to it (below).
+deliberately still transparent to it, for the reason given under *Only launching agents that will
+act*.
 
 ## Only launching agents that will act
 
@@ -726,7 +731,8 @@ now ONE explicit state in backend memory:
 The log records *"it became active at some past instant"*; replaying that as *"it is active now"* is a
 category error, and the old poll existed only to undo the error it had just made. Note the exact
 inversion against pending messages: pending IS a projection of a persistent log, so a reducer over
-events is right there. **The question to ask is "does this thing exist on disk?"**
+events is right there (*Pending messages are a projection of the event log*). **The question to ask
+is "does this thing exist on disk?"**
 
 `AgentActivity = "idle" | "thinking" | "tool"`, asymmetric on purpose. `tool` is the precise one because
 it is the only state with an unclosed tool_call, which is the one with an interrupt consequence. `idle`
@@ -1734,11 +1740,11 @@ carrying it, especially when you already agree with the conclusion.**
 
 ## Every hit says what it IS before its body is read
 
-The section above made the blocks say what to DO with a hit. This one makes each hit say what it is —
-status, both dates, and for a terminal task whether it ever actually ran. All three surfaces share the
-vocabulary in `src/search-hit-format.ts`, because **a rule enforced at two of three renderers is
-enforced nowhere**: the third goes on handing out the old shape to a reader who cannot tell which
-renderer produced it.
+*Retrieval that nobody acts on* made the blocks say what to DO with a hit. This one makes each hit
+say what it is — status, both dates, and for a terminal task whether it ever actually ran. All three
+surfaces share the vocabulary in `src/search-hit-format.ts`, because **a rule enforced at two of
+three renderers is enforced nowhere**: the third goes on handing out the old shape to a reader who
+cannot tell which renderer produced it.
 
 **Status LEADS the line now.** It was always rendered, at the END of the first line, where a long
 title pushes it to the right margin and the next thing the eye meets is a 300-char `Description:`
@@ -2354,7 +2360,8 @@ visible with follow OFF. The chain: the viewed agent goes idle → a refetch rep
 survive the swap. Measured from inside the DOM mutation, `added: 82, removed: 82` in one batch against
 `removed: 1` for a normal update — **that is every React key changing, measured rather than inferred.**
 The lazy-render anchor is an accomplice, not the cause: it **observed and reproduced** a position that
-was already lost, which is what turns a one-frame flicker into a stuck state. **Fix the keys.**
+was already lost, which is what turns a one-frame flicker into a stuck state. **Fix the keys** —
+*Every transport carries the event's name (eid)* is that fix, and this is the measurement behind it.
 
 ⚠️ **CORRECTION: "a wholesale replacement does not move the offset" is FALSE**, and an earlier round
 measured it four times and concluded otherwise. The measurements were honest; the fixture held ~60-80
@@ -2877,11 +2884,12 @@ cannot subtract, and its remedy is the other half: **say what you ran.**
 ⭐ **An unqualified pass is worse than a narrow scope.** The i18n pass message carries the file count
 now, and **scanning 0 files is a failure, not a pass**. The count is the detector: re-narrowing drops
 it to 4 in front of whoever commits next. ⭐ **And the count must be COMPUTED, never written down** — a
-literal `5 of 140` is indistinguishable from a true one on the day it stops being true, which is the
-drained rot sitting inside the very sentence whose job is to describe scope. Both numbers are derived,
-so a re-narrowing prints `3 of 141` and a suite growing around a frozen list shows its own ratio
-worsening. **Every axis gets the same treatment**: the i18n gate prints its FORM count beside its file
-count, so a narrowing of depth is exactly as visible as a narrowing of scope.
+literal `5 of 140` is indistinguishable from a true one on the day it stops being true — the drained
+rot, a count nobody experiences as a claim so nothing ever rings, sitting inside the very sentence
+whose job is to describe scope. Both numbers are derived, so a re-narrowing prints `3 of 141` and a
+suite growing around a frozen list shows its own ratio worsening. **Every axis gets the same
+treatment**: the i18n gate prints its FORM count beside its file count, so a narrowing of depth is
+exactly as visible as a narrowing of scope.
 
 ⭐ **When a check is known dead, "the suite passes" is not evidence the fix worked** — the suite passed
 while it was dead. The evidence is the round trip: plant, re-verify dead against the old audit, then
