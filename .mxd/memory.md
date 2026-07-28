@@ -4860,9 +4860,13 @@ invents a workaround.** What it invents is worse than the failure, because it is
 instead"*, and `close_task` refused anything that was not `verify`/`failed`. **The first error named
 a road the second did not accept**, so a draft had no path to a terminal state at all. Observed
 damage: a superseded draft was marked done by writing `[已解决 by <id>]` into its **TITLE** — state
-encoded in a string, invisible to `hideCompleted` and to every status filter, so it sits in the
-active pool forever. That is the shape to watch for: *the workaround is legible to humans and to
-nothing else.*
+encoded in a string, invisible to every status filter, so it sits in the active pool forever. That
+is the shape to watch for: *the workaround is legible to humans and to nothing else.* (⚠️ Correction
+to the entry that says "**`hideCompleted`** hides closed and failed only": the CLAIM is right and
+the NAME is a phantom — the sidebar filter is `FilterMode = "all" | "hide-closed" |
+"active-favorites"` in `.mxd/plugin/web/components/TaskTree.tsx`, and grepping `hideCompleted` lands
+on an i18n key. Closing a draft therefore does remove it from the pile, which is the whole point of
+this change.)
 
 The fix is a SUBTRACTION with one member — only `in_progress` is refused. **Close means two things
 at once** (reclaim the resources, take it out of the active pool); a draft/pending owns no worktree,
