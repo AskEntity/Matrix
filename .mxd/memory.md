@@ -1,13 +1,41 @@
 # Matrix Project Memory
 
-> Read on every session start. This file exists to record what the code cannot record about itself:
-> why the obvious simplification fails, what has already been checked and ruled out, and how to
-> operate here. Full design doc: `Matrix.md`.
+> Read on every session start. **This file holds the four things the code cannot hold: why we wanted
+> it this way (in the words the decision was made in), how the next person will trip, the places two
+> files three thousand lines apart are doing the same thing, and just enough implementation to make
+> those three readable.**
+>
+> It does not hold mechanism. The code states mechanism better than prose can, and prose about
+> mechanism rots without anything going red. If a paragraph you are writing would survive being
+> replaced by "read the function", delete it.
 
-## How to run tests — the command is exactly `bun test`
+## What this thing is, and the three facts the rest falls out of
 
-**`b u n (space) t e s t`. No flags, no arguments, no pipes, no redirects, no `&&`, no `2>&1`.**
-If what you are about to send to bash is not byte-identical to `bun test`, stop.
+**A self-bootstrapping multi-agent IDE. Every tab is a task, every task is a whole story. One
+person, a team's output. Agents branch off like shoots and are grafted back into the trunk.**
+
+Three facts. Almost every decision in this repo is downstream of one of them:
+
+1. **An AI can hallucinate code. It cannot hallucinate a test result or a compiler error.** So
+   execution is the only truth source, and *what a model believes it did* is never evidence — read
+   the JSONL, run the command, look at the bytes.
+2. **The context window fills.** Everything durable therefore lives outside it: the task tree, the
+   JSONL, this file. An agent running low continues from a summary rather than stopping.
+3. **The project runs on itself.** The tools you call belong to the *running daemon*, not to your
+   worktree — so fixing a tool does not fix the tool in your hand, and a bug you write can break the
+   thing you are writing it with.
+
+`Matrix.md` is the pre-launch design doc, in Chinese, and nobody should need it day to day. **If you
+go back to it to find out why we do something, that is a defect in THIS file — fix it here.**
+
+## Language
+
+Code, task tree and this file: English. `Matrix.md`: Chinese. Agent replies follow the sender's
+language.
+
+## How to run tests
+
+**The command is exactly `bun test`.** No flags, no arguments, no pipes, no redirects.
 
 ```bash
 bun test              # ALL tests (src/ + web/)
@@ -15,74 +43,47 @@ bun run typecheck     # tsc --noEmit
 bun run check         # biome — WRITES, and silently formats 70+ files. `check:ci` is read-only.
 ```
 
-**Piping is not size reduction, it is data loss.** The bash tool already merges stdout+stderr and
-already bounds what reaches you: over 10KB it shows head 5KB + tail 5KB and preserves the **whole**
-output in a file whose path it prints. A pipe consumes the stream before the tool ever sees it, so
-whatever `head`/`tail`/`grep` did not match is gone from the universe — not truncated, not on disk,
-not recoverable. The failure repeats with the same shape every time: pipe to `tail -8`, see
-`2116 pass / 2 fail`, discover you cannot see *which* two, re-run with `| grep fail`, get a
-different flaky subset because scheduling differs per run, and spend hours chasing a test that was
-never failing. Run it bare and read the saved file.
+**Piping is not size reduction, it is data loss.** The bash tool already bounds what reaches you and
+saves the complete output to a file whose path it prints, so a pipe can only remove evidence you
+cannot get back. The failure has one shape every time: pipe to `tail -8`, see `2116 pass / 2 fail`,
+discover you cannot see *which* two, re-run with `| grep fail`, and get a **different** flaky subset
+— because these tests flake at the scheduling level (ports, filesystem races, timer precision) and
+there is no file ordering guarantee, so the grep run is questioning a different run than the one
+that failed. Run it bare and read the saved file. ⚠️ Copy that path out of the tool result rather
+than typing one from memory: it lives under the per-user `$TMPDIR`, and `/tmp/mxd/` also exists and
+is empty, so a remembered path gives you "the tool lied to me".
 
-**Copy the output path out of the tool result. Never type one from memory.** The directory is
-`mxd/` under the OS temp dir, which on macOS is the per-user `$TMPDIR` (`/var/folders/…/T/mxd/`) and
-is **not** `/tmp`. `/tmp/mxd/` exists on a Mac and is empty, so a remembered path gives you "the
-tool lied to me" instead of your output.
-
-**Tests are independent and flake at the scheduling level** (port conflicts, filesystem races,
-timer precision). There is no file ordering guarantee, so "let me just run the failing file" may not
-reproduce it, and a `grep` run afterwards is questioning a *different* run than the one that failed.
-Suspect a flake? Run `bun test` five times and read all five saved files.
-
-⚠️ **The suite's EXIT CODE and its pass count are two different claims, and only the exit code covers
-what happens BETWEEN tests.** `2893 pass / 0 fail, exit 1` is not a contradiction to wave through —
-it is bun reporting an unhandled rejection that no individual test was in a position to fail on, and
-the headline number is accurate about exactly the thing it measures. **Read the exit code first;
-when it disagrees with the summary, the summary is the one describing less.** The rejection is
-printed as `# Unhandled error between tests` with a real stack, so the whole diagnosis is usually in
-the run you already have — see *An unhandled rejection is an outage here, not a log line* for why
-that stack matters far beyond the test suite.
-
-Do not record test counts in this file. They were ~500 short within three months, and a stale count
-is indistinguishable from a fresh one. ⚠️ **That forbids a count presented as CURRENT STATE, not the
-characters** — a count inside a worked example ("you see `2116 pass / 2 fail` and cannot tell WHICH
-two") is an instance, cannot expire, and loses its shape without the number. See *Writing this file*
-before deleting one.
-
-## Language
-
-Code, task tree and this file: English. `Matrix.md`: Chinese. Agent replies follow the sender's
-language.
+⚠️ **The exit code and the pass count are two different claims, and only the exit code covers what
+happens BETWEEN tests.** `2893 pass / 0 fail, exit 1` is not a contradiction to wave through — it is
+bun reporting an unhandled rejection that no individual test was positioned to fail on. Read the
+exit code first; when it disagrees with the summary, the summary is the one describing less. See
+*An unhandled rejection is an outage here, not a log line* for why that stack matters far beyond the
+test suite.
 
 ## How work moves through this repo
 
-**Root never commits code to main.** Not because "root delegates" as an abstract rule — because a
-direct commit destroys clean rollback. A wrong fix that went through branch→merge reverts as one
-operation. A wrong fix committed straight to main is interleaved with main's history and there is
-nothing clean to revert. We have cleanly reverted both a wrong-semantic merge and a
-wrong-architecture merge as single-commit operations, and only the branch model made that possible.
-Two gates before root touches any code: *could this fix be wrong?* (any code change could — always
-yes) and *if it is wrong, do I want `git revert <merge>` to be one operation?* (yes). Yes plus yes
-means it goes through a branch, with no exception for "it's small" or "I'm sure". The only
-direct-to-main operations are merge-conflict resolution, memory.md curation, and task-tree
-management. This is a property of the product's commit model, not a policy preference.
+**Root never commits code to main.** Not as an abstract division of labour — because a direct commit
+destroys clean rollback. A wrong fix that went through branch→merge reverts as ONE operation; the
+same fix committed straight to main is interleaved with main's history and there is nothing clean to
+revert. We have cleanly reverted both a wrong-semantic merge and a wrong-architecture merge exactly
+that way, and only the branch model made it possible. The only direct-to-main operations are
+merge-conflict resolution, memory curation, and task-tree management.
 
 **Whoever introduces a change owns every consequence of it** — prompt, UI, tests, docs, i18n.
 
-**Creating tasks is cheap; executing is deliberate.** While the user is discussing a design, draft
-and discuss. Start when they say go.
-
 **Merging is signing, and a green hook is a floor rather than a ceiling.** The hook checks syntax,
-types and pass count. It does not check whether the diff addresses every point of the task, whether
-layer boundaries held, whether the commit message matches the code, or whether the child's
-self-report matches the diff — and the last of those differs non-trivially, because a child reports
-what it *thinks* it did. Read `git diff main...<branch>` line by line before merging. The observed
-failure always has one shape: child done → `git log --oneline` + `--stat` → merge → post-merge bugs
-that a manual smoke caught immediately. Watch for single-line catastrophes (`autoRegisterSelf:
-false` shipped exactly this way) and for matrix-specific code leaking into daemon or shell.
+types and a smoke subset. It does not check whether the diff addresses every point of the task,
+whether layer boundaries held, or whether the child's self-report matches the diff — and that last
+one differs non-trivially, because a child reports what it *thinks* it did. Read
+`git diff main...<branch>` line by line before merging. The observed failure always has one shape:
+child done → `git log --stat` → merge → post-merge bugs that a manual smoke caught immediately.
+Watch for single-line catastrophes (`autoRegisterSelf: false` shipped exactly this way).
 
-**`evaluate_script` is runtime introspection only.** Never use it to reparent tasks, edit the tree,
-or run batch operations. Fix the tool instead.
+**Creating tasks is cheap; executing is deliberate.** Draft while the user is still discussing;
+start when they say go.
+
+⚠️ **`evaluate_script` is runtime introspection only.** Never use it to reparent tasks, edit the
+tree, or run batch operations. Fix the tool instead.
 
 ## The shape of the system
 
@@ -98,19 +99,15 @@ Daemon (src/daemon.ts — Hono HTTP shell, :7433)
 CLI (mxd) → HTTP → Daemon.   Browser → Daemon (assets + SSE) + Worker (API forwarding).
 ```
 
-- **Daemon** owns auth, projects, config, SSE, web build. It holds no agent logic.
-- **Worker** is a Bun Worker thread running the runtime: agents, tools, JSONL, trackers.
-- **Plugin** is `.mxd/plugin/` — ScopeOpts plus a web component. Matrix is itself a plugin,
-  discovered by the same scan as any other; it is not special-cased anywhere.
-- **Shell UI** (`web/`) is auth, header, project/scope selector. Plugin UI is a compiled React
-  component library, not an SPA, loaded with `React.lazy`.
-- Agent tree = task tree. Each task gets a worktree and a branch off its parent's branch.
-- Three-layer config: global < repo < local. Two providers: Anthropic, OpenAI Responses.
+The daemon holds no agent logic. The worker is a Bun Worker thread running the runtime. **Matrix
+itself is a plugin** in `.mxd/plugin/`, discovered by the same scan as any other and special-cased
+nowhere — that constraint is what keeps the runtime honest. Agent tree = task tree; each task gets a
+worktree and a branch off its parent's branch.
 
 **Files whose name does not tell you the thing you need to know.** Everything else is findable with
-`list_files`; this is the exception set. It fails by OMISSION — nothing ever contradicts it, it just
-quietly stops being the answer to "where do I start" — so if you add a file a newcomer must find,
-add the row.
+`list_files`; this is the exception set, and it fails by OMISSION — nothing ever contradicts it, it
+just quietly stops being the answer to "where do I start". Add a row when you add a file a newcomer
+must find.
 
 | file | the part you would not guess |
 |---|---|
@@ -125,131 +122,88 @@ add the row.
 | `.mxd/plugin/web/event-handler.ts` | UI event → log entries. `queueEntryToUIEvent` is the materialization gate; `pendingReducer` is pending. |
 | `.mxd/plugin/message-editability.ts` | where the three Edit/Rewind judgments meet, and the only place they may. Has zero imports, asserted by a test. |
 
-**Verified 2026-07-27, recorded so the next pass can skip it**: every `src/` `web/` `scripts/`
-`.mxd/` `.hooks/` path cited anywhere in this file exists — the single miss,
-`src/direct-provider.test.ts`, is cited precisely BECAUSE it was deleted — and 18 sampled symbols
-this file claims live in a named file all do. Both are one-liners: extract the backticked paths and
-`test -e` each; extract the symbol names and grep. ⚠️ **They check EXISTENCE only.** Whether the
-prose around a symbol still DESCRIBES it is the harder half, it has its own rule under
-*Writing this file*, and no cheap check covers it.
-
 ## Changing code here
 
-**Every bug fix asks two questions, not one.** What caused this specific bug, and why does the
-architecture make this *class* of bug easy? The recurring answers: duplicate codepaths, lifecycle
-dependency coupling, legacy fallbacks masking bugs, lazily-optional fields.
+**Every bug fix asks two questions, not one: what caused this specific bug, and why does the
+architecture make this CLASS of bug easy?** The recurring answers are duplicate codepaths, lifecycle
+coupling, legacy fallbacks masking bugs, and lazily-optional fields.
 
-⚠️ **The compiler enumerates only what it can TYPE.** Anything reaching a symbol *by name* is
-invisible to it: string-keyed dispatch, an event-type name matched across a process boundary, a
-field an external system keys on. **The compiler's silence means "nothing typed points here". It
-never means "nothing points here".** So grep for the symbol as a *string* before trusting the error
-list, and check every boundary the type system does not cross. The asymmetry is what makes this
-worth a paragraph: a typed break costs one compiler error and ten seconds, while a name-based break
-costs a silent, delayed, hard-to-attribute failure in a system you were not looking at. Deleting the
-`agent_idle` event type would have hung every external `send_user_message → yield_external →
-get_logs` workflow until timeout, because `yield_external` matches the type NAME in a string set —
-and the same class had already bitten us unnoticed for months, with `WAKE_SIGNALS` still listing
-`agent_stopped` and `orchestration_completed` long after both names were replaced, so a stopped
-agent could only ever wake an external client by timing out.
+⚠️ **The compiler enumerates only what it can TYPE. Its silence means "nothing typed points here" —
+it never means "nothing points here".** Anything reaching a symbol by NAME is invisible to it:
+string-keyed dispatch, an event-type name matched across a process boundary, a field an external
+system keys on. The asymmetry is what earns this a paragraph — a typed break costs one compiler
+error and ten seconds, while a name-based break costs a silent, delayed, hard-to-attribute failure
+in a system you were not looking at. `WAKE_SIGNALS` went on listing `agent_stopped` and
+`orchestration_completed` for months after both names were replaced, so a stopped agent could only
+ever wake an external client by timing out. **Grep for the symbol as a string before trusting the
+error list, and check every boundary the type system does not cross.**
 
 ### Deleting a mechanism built on a false premise: separate the PREMISE from the OBLIGATION
 
 Having shown that the stated reason for some code is wrong, do **not** delete on that finding alone.
-For each block answer two questions separately: what did it claim to prevent (the premise, now known
-false), and what does it actually still do (the obligation, possibly real and load-bearing)? Delete
-only where the obligation is empty. Where it is real, keep the effect, relocate or re-justify it,
-and rewrite the comment to name the true reason.
+Answer two questions separately: what did it claim to prevent (the premise, now known false), and
+what does it still actually DO (the obligation, possibly real and load-bearing)? Delete only where
+the obligation is empty. Where it is real, keep the effect, relocate or re-justify it, and rewrite
+the comment to name the true reason.
 
 **Skip this and you delete a real guarantee along with the phantom, silently** — the premise was
-false so nothing was protecting the obligation, and the tests that covered it were usually written
-in the phantom's vocabulary too, so they go green or get "fixed" on the way out.
+false, so nothing else was protecting the obligation, and the tests that covered it were usually
+written in the phantom's vocabulary too, so they go green or get "fixed" on the way out.
 
-⚠️ **A mechanism built on a phantom can also be actively harmful, so "harmless, leave it" is not the
-safe default it looks like.** Check for a COST, not only for redundancy — and the cost is usually
-written in the mechanism's own comment as an accepted trade-off. One such block answered every
-`done()` tool_call, which made resume detect a generic interrupted-resume instead of a done-resume,
-so the woken agent silently lost its done-resume context. Reverting it was a behavior fix.
+⚠️ **Check for a COST as well as for redundancy: "harmless, leave it" is not the safe default it
+looks like, and the cost is usually written in the mechanism's own comment as an accepted
+trade-off.** One dead collapse helper replaced entries in place, so the day a second producer
+arrived two distinct entries would have rendered as one, carrying the last one's content at the
+**first one's timestamp** — a latent wrong answer parked in the code waiting for a new caller.
+Another such block answered every `done()` tool_call, which made resume detect a generic
+interrupted-resume instead of a done-resume, silently losing the woken agent's done-resume context.
 
-#### The worked example — including what happens to the dead mechanism's TESTS
+⭐ **The transferable half is what happens to the dead mechanism's TESTS, and the honest-looking move
+is the wrong one.** *"Invert rather than delete"* is the right rule for the tests of a removed
+FEATURE, and it does not reach the tests of a removed mechanism whose last producer is gone: those
+would assert "nothing collapsed because nothing was produced", which passes against every
+implementation including a deleted one. Three options, one right — delete mechanism and tests
+together; keep both and RE-AIM the tests at a surviving producer; or keep the mechanism with no
+coverage. **Re-aiming is the trap**, because it silently pins, as intended behaviour, whatever the
+mechanism happens to do to a producer it was never designed for: chosen by nobody, and thereafter
+defended by a test.
 
-The first instance where all three questions came out "delete" (2026-07-25), and the voided premise
-was the same change's own. The activity log stopped rendering `▶ Agent started` / `⏹ Agent stopped`
-— `agent_start` and `agent_end` are still emitted, persisted and processed, and **both `case` bodies
-in `.mxd/plugin/web/event-handler.ts` still exist for their `sideEffects` alone**: one sets the
-provider/model display, the other the five values behind the token badge. ⚠️ Deleting a whole
-`case` because its visible output is gone blanks those with nothing red and no visible connection
-to a commit about hiding two lines.
-
-Removing the two `entries.push` calls also killed `collapseLifecycleEntries`, which folded runs of
-consecutive lifecycle entries down to the last one:
-
-- **Premise** — "restart bookkeeping produces runs of visual noise" — void, because that noise IS
-  what the change removes.
-- **Obligation** — empty. The sole remaining `type: "lifecycle"` producer is the interrupt notice,
-  and two of those cannot become adjacent: the notice is written AT the park, so a second one needs
-  the agent to have woken, which needs a message, which renders between them.
-- **Cost** — real, which is what makes "harmless, leave it" wrong here. It replaced in place
-  (`result[first] = last`), so the day a second lifecycle producer arrived, two distinct entries
-  would have rendered as one, carrying the last one's content at the **first one's timestamp**. Not
-  a neutral leftover; a latent wrong answer parked in the code waiting for a new caller.
-
-⭐ **The transferable half is what happens to the dead mechanism's TESTS, and the honest-looking
-move is the wrong one.** Four tests covered the collapse. They were not assertions that the deleted
-lines render, so *"invert rather than delete"* — the right rule for the tests of a removed feature —
-does not reach them: with no producer left they would assert "nothing collapsed because nothing was
-produced", which passes against every implementation including a deleted one. Three options, one
-right: delete mechanism and tests together; keep both and RE-AIM the tests at the surviving
-producer; or keep the mechanism with no coverage. **Re-aiming is the trap**, because it silently
-pins, as intended behaviour, whatever the mechanism happens to do to a producer it was never
-designed for — here "collapse two distinct user interrupts into one, at the wrong timestamp",
-chosen by nobody and thereafter defended by a test.
-
-⚠️ **A guard on an unreachable state has to say IN THE TEST that it is a contract test, or the next
-reader deletes it.** The replacement pins "processEventBatch does not collapse lifecycle entries" as
-a property of the whole `lifecycle` category, which will get producers that do not exist yet — it is
-not a scenario, because today's scenario cannot occur, and someone reading it as one will try to
-reproduce it, fail, and conclude the test is wrong. It asserts both entries' **timestamps** rather
-than their count, because the failure being guarded is content-and-position substitution, and a
-count assertion passes against a collapse that kept two entries for some other reason.
+⚠️ **A guard on an unreachable state has to say IN THE TEST that it is a contract test**, or the
+next reader tries to reproduce the scenario, fails, and concludes the test is wrong. Assert the
+property that would be violated (two entries' **timestamps**, not their count — the failure being
+guarded is content-and-position substitution, and a count assertion passes against a collapse that
+kept two entries for some other reason).
 
 ## Where agents predictably go wrong
 
-These are not hypotheticals; each has cost us real work.
+Not hypotheticals; each has cost us real work.
 
-1. **The broken intermediate state feels more dangerous than it is.** Fear of a large change
-   produces a revert, or a fallback that keeps the old path "just in case". Both are worse than the
-   break: two codepaths drift silently and nobody knows which one ran. Delete until ONE remains.
+1. **The broken intermediate state feels more dangerous than it is.** Fear of a large change produces
+   a revert, or a fallback that keeps the old path "just in case". Both are worse than the break: two
+   codepaths drift silently and nobody knows which one ran. Delete until ONE remains.
 2. **The existing shape is not a given.** "Why does this exist" beats "how do I make this work". And
    a "unification" that adds a third path is not a unification.
-3. **Imagined requirements get built.** Building a tool or analyzer, agents default to handling every
-   case they can imagine: classifications, category labels, filter flags, pattern-matched
+3. **Imagined requirements get built.** Building a tool or an analyzer, agents default to handling
+   every case they can imagine — classifications, category labels, filter flags, pattern-matched
    explanations. Each branch corresponds to an imagined need, not an observed one; half end up dead,
-   and the live half often hides the data patterns a raw dump would have shown. **Start with the
-   simplest raw dump and add heuristics only when real use exposes a concrete need.** A 50-line dump
-   beats a 500-line smart analyzer whose categories were invented at design time.
+   and the live half hides the data patterns a raw dump would have shown. **Start with the simplest
+   raw dump and add heuristics only when real use exposes a concrete need.**
 4. **"Start something new" wins locally and loses globally.** When a requirement appears, three
-   options exist: create a task fresh, create and fork context into it, or `send_message` an
-   existing (closed, verify, pending) task. The third is often correct and loses on every cheap
-   dimension — fresh description vs stale, clean session vs unknown state, one step vs two, and the
-   word "closed" reading as "finished" — so agents take the first and fragment context across
-   redundant trees. The same shape appears as handing work to a fresh agent instead of continuing.
-   Prompt alone has not fixed this; the mechanism design is draft `01KNZGYY4T6SYWVT66DK13XCPV`.
+   options exist: create a task fresh, create and fork context into it, or `send_message` an existing
+   (closed, verify, pending) task. The third is often correct and loses on every cheap dimension —
+   fresh description vs stale, clean session vs unknown state, one step vs two, and the word "closed"
+   reading as "finished" — so agents take the first and fragment context across redundant trees. The
+   same shape appears as handing work to a fresh agent instead of continuing. Prompt alone has not
+   fixed it; the mechanism design is draft `01KNZGYY4T6SYWVT66DK13XCPV`.
 5. **Context is a compaction boundary, not a deadline.** An agent that feels low on context starts
-   planning a handoff, cutting scope, or asking to be replaced. When context fills, the agent
-   continues from a summary; the task description and this file survive compaction by construction.
-   So a compacted agent strictly DOMINATES a replacement — same durable documents, plus a summary of
-   its own work, plus whatever tacit judgement survived. Running low is never a reason to hand off.
-   The only legitimate reason is that FAMILIARITY ITSELF has become the liability: a final
-   read-through, an adversarial review, anything where not knowing the material is the requirement
-   rather than the cost.
-   **Measured 2026-07-25**, because the claim that agents estimate their own budget badly had no
-   numbers under it. The agent offering a handoff was at 2.0M tokens / 891 events having **never
-   compacted once**, and estimated 2-3 sections left in it. Told to continue, it finished all 5
-   remaining plus an extra debt, ending at 3.0M / 1191 events, still zero compactions — roughly
-   twice its own estimate, never reaching the boundary it budgeted against. Two sibling tasks that
-   day sat at 2.0M / 928 and 2.0M / 649, also zero compactions. That is one day, one model, one
-   config: read it as "the estimate was off by ~2× and the wall was nowhere near", not as a
-   threshold. For where a session actually stands, count its own events and `compact_marker`s.
+   planning a handoff, cutting scope, or asking to be replaced. It continues from a summary instead,
+   with the task description and this file intact by construction — so a compacted agent strictly
+   DOMINATES a replacement. The only legitimate reason to hand off is that FAMILIARITY ITSELF has
+   become the liability: a final read-through, an adversarial review, anything where not knowing the
+   material is the requirement rather than the cost. ⚠️ **Agents estimate their own budget badly and
+   confidently**: the one that offered a handoff was at 2.0M tokens having **never compacted once**,
+   estimated 2-3 sections left in it, and on being told to continue finished all 5 plus an extra —
+   roughly twice its own estimate, never reaching the boundary it budgeted against.
 
 ## Hard invariants
 
@@ -257,28 +211,24 @@ Violating any of these produces silent corruption rather than an error. The reas
 in its own region; this is the index.
 
 - **JSONL content fidelity.** What is written to JSONL is byte-identical to what was sent to the
-  API. No `.slice()`, no truncation on persisted content. UI truncation happens at the rendering
-  layer only.
+  API. No truncation on persisted content — UI truncation happens at the rendering layer only.
 - **Tool results are three-part.** Every tool_result must (1) emit to JSONL, (2) yield to SSE, and
   (3) push to `messages[]`. Missing any one gives an orphan, a missing UI entry, or an API 400.
 - **Nothing writes to JSONL after a yield tool_call except the provider loop.** External events go
   to the queue, not to JSONL.
 - **Persist before broadcast.** `emitEvent` writes to JSONL first and broadcasts the *stamped* copy,
-  so every observer — SSE included — gets the event's durable name (`eid`/`parentEid`) at the
-  instant the event exists. `append`/`appendBatch` are fully synchronous and return the persisted
-  event; that synchrony is what makes chain-head rewind correct on a failed write, so it is
-  load-bearing, not a style choice.
+  so every observer gets the event's durable name at the instant the event exists.
 - **`deliverMessage` is THE message delivery path**: JSONL write → queue delivery → flush →
   auto-launch. No other code writes message events to JSONL.
 - **One codepath per task operation.** `src/task-operations.ts` holds create/update/delete/close/
-  reset/reorder. MCP and REST are thin wrappers; behavioral differences are explicit
+  reset/reorder; MCP and REST are thin wrappers. Behavioral differences are explicit
   (`if (editedBy === "user")`), never a second implementation.
 - **Messages have a two-phase lifecycle.** `message` persisted → frontend defers; `messages_consumed`
   → frontend materializes. `QueueMessage.ts`, `Event.ts` and the displayed `[HH:MM:SS]` are all the
   same value, set once at creation.
-- **Recovery must touch JSONL, not just memory.** In-memory `messages[]` and the JSONL events are
-  two data structures. A "fix" that only edits `messages[]` leaves the poison on disk and it comes
-  back on the next resume.
+- **Recovery must touch JSONL, not just memory.** In-memory `messages[]` and the JSONL events are two
+  data structures. A "fix" that only edits `messages[]` leaves the poison on disk and it comes back
+  on the next resume.
 
 ## ⚠️ Writing this file
 
@@ -822,14 +772,12 @@ Three habits, all cheap, none of which occur to you until it has happened once:
 
 ## How an agent runs, parks and wakes
 
-Root and child agents use the same launch function, `runAgentForNode` in `agent-lifecycle.ts`.
+**An agent never ends; it parks.** Completion is `done()` and nothing else — `end_turn` with no tool
+call is an implicit yield, never an implicit done. `handleImplicitYield` is the ONE place every path
+that stops working ends up, which is what keeps "what is this agent waiting for" from becoming five
+states.
 
-**The loop parks in exactly one place.** `handleImplicitYield` is where every path that stops
-working ends up — explicit `yield()` (intercepted by the provider before `executeTool`), `end_turn`
-(an implicit yield, never an implicit done), a done-resume waiting for messages, and an interrupted
-turn. Keeping one park is what stops "what is this agent waiting for" from becoming five states.
-
-**On resume, four states are read off the JSONL shape**, not off any in-memory flag:
+**On resume, four states are read off the JSONL SHAPE**, never off an in-memory flag:
 
 | shape | meaning | what happens |
 |---|---|---|
@@ -838,16 +786,11 @@ turn. Keeping one park is what stops "what is this agent waiting for" from becom
 | `hasPendingImplicitYield` | ended on `end_turn` | bypass to `queue.wait` → `handleImplicitYield` |
 | orphaned tool_calls repaired | interrupted | non-blocking queue drain → API call |
 
-There is no named helper for the explicit-yield case — `provider-shared.ts` reads it straight off
-the JSONL. Don't go looking for one; a `hasPendingYield` used to exist and was deleted with zero
-production callers. `hasPendingImplicitYield` (events.ts) is the implicit-yield one and is live.
-
-⚠️ **`hasPendingImplicitYield` must stop at `messages_consumed`.** It walks back for the last event
-that decides a role, and it used to skip straight over consumptions — landing on the `assistant_text`
-from BEFORE the message and reporting a park. Since `isYieldResume` is evaluated first and gates
-`isInterruptedResume` off, the loop then parked on a conversation ending in an unanswered user
-message: **a message drained into a turn the daemon died inside was silently never answered**, and
-the window is a whole API call wide. `thinking` is deliberately still transparent to it — see below.
+⚠️ **`hasPendingImplicitYield` must stop at `messages_consumed`.** It used to walk straight over
+consumptions, land on the `assistant_text` from BEFORE the message, and report a park — so the loop
+parked on a conversation ending in an unanswered user message and **a message drained into a turn the
+daemon died inside was silently never answered.** The window is a whole API call wide. `thinking` is
+deliberately still transparent to it (below).
 
 ## Only launching agents that will act
 
@@ -855,692 +798,332 @@ the window is a whole API call wide. `thinking` is deliberately still transparen
 > says nothing about whether anything is owed, and today's dormant nodes have been `in_progress` for
 > six weeks.
 
-`shouldLaunchAgent(events)` (events.ts) is asked by `autoResumeProjects` BEFORE `runAgentForNode`.
-It is an **extraction of what the loop already decides**, not a second opinion: every place the loop
-declines to call the API was already correct, and the whole change is evaluating that same judgment
-one level earlier. If the two ever disagree the loop wins and the predicate is wrong — either it
-refuses a launch that would have worked, or it pays full session construction for an agent that
-immediately parks. `should-launch.test.ts` holds a differential test that recomputes the loop's gate
-order from the real walker and the real repair and asserts agreement shape by shape, so a walker
-change reddens it even when every hand-written expectation still passes.
+**Measured 2026-07-25: one daemon boot auto-resumed 14 nodes, and every single one looked at its log,
+found nothing to do, and parked.** That cost 8 MCP-connected sessions, **32 subprocesses and 1.58 GB**
+— and a parked session never ends, so they were held for the daemon's life. `shouldLaunchAgent(events)`
+now answers "is anything owed here" BEFORE the session exists, because `runAgentForNode` connects
+MCP, builds work_context and writes `session_config` before it ever looks at the conversation.
 
-**Why it must run before the session exists**: `runAgentForNode` connects MCP, builds work_context
-and writes `session_config` before it looks at the conversation.
+**It is an EXTRACTION of what the loop already decides, not a second opinion.** Every place the loop
+declined to call the API was already correct; the change evaluates that same judgment one level
+earlier. If the two ever disagree the loop wins and the predicate is wrong.
 
-⭐ **Measured on the live daemon, 2026-07-25** — a full accounting rather than a total, because the
-task's own warning was *"if the number does not move, something other than agent sessions is
-spawning them, and that matters more than this fix"*:
+⚠️ **The cost did not vanish; it MOVED onto the path where a parent is waiting for its children.** A
+parent used to be launched at boot and sit parked, so a child's `task_complete` woke a live agent in
+microseconds; now that completion has to LAUNCH it. That is the intended trade, and it is invisible
+in "32 → 0", which says what stopped being spent at boot and nothing about where it goes when it IS
+needed. **Removing an eager cost relocates it to the moment of first use — ask what is waiting
+there.**
 
-| | | source |
-|---|---|---|
-| nodes auto-resumed at one boot (21:39:02, within one second) | **14** | the daemon log's `Auto-resuming` lines |
-| of those, that did any work | **0** — every one parked | their JSONL: no event after `agent_start` |
-| sessions that spawned MCP | **8** (only matrix-scope nodes connect MCP — the group-chat and story1001 scopes do not, which is what makes 14 launches cost 8 sessions' worth; 9 of the 14 were matrix-scope, so one did not get that far and is unexplained) | `ps` |
-| resulting subprocesses | **32 = 8 × 4** — exactly 4 per session, MCP being configured GLOBALLY so every session connects all of them | `ps` |
-| resident | **1.58 GB**, ~202 MB per dormant agent | `ps` |
-| still resident 85 minutes later | **unchanged** — a parked session never ends, so these are held for the daemon's life | `ps` |
+⭐ **The boundary condition on hoisting ANY such decision is not the obvious one.** It is **not** "the
+steps before the loop only read the log" — two of them manufacture input (`buildSessionRepair`
+appends synthetic tool_results; bgOrphan synthesis invents a `background_complete` out of nothing on
+disk). The rule is that **a decision can be hoisted iff every input it consumes is computable WITHOUT
+performing the step that would create it.** Both qualify, being pure functions whose caller does the
+writing. Stated the wrong way round, the next person concludes that a step which appends is
+disqualified — the opposite of what holds. ⚠️ **A corrupt log whose repair cannot be expressed
+LAUNCHES**, so it reaches `runAgentForNode` and gets reported; swallowing it into "nothing to do"
+turns a loud failure into a node that never comes back.
 
-⚠️ The source column is not decoration. An earlier draft said 13, from counting the LAST
-`agent_start` per session file — which silently drops any node that started more than once, and root
-had. **Counting per-file gives you "sessions that have ever started", not "started at this boot"**,
-and the two agree until exactly the node you most care about restarts.
+**The one genuinely new rule is the `interrupt` exclusion**, a subtraction with a single named member:
+it is the only message the loop writes ABOUT ITSELF rather than delivering as input. ⚠️ **It keys on
+`source`, and must not be widened to "quiet".** `quiet` describes one moment of delivery and **does
+not survive to JSONL**; worse, the generalisation is wrong on its own terms — crash-recovery
+`task_complete` is delivered quiet *specifically so it does not double-launch*, so a "quiet sources do
+not launch" rule strands a parent waiting on a child.
 
-Every process in the daemon's descendant tree was attributed to a session, so there is no other
-spawner.
+⚠️ **A log ending in `thinking` PARKS**, and the predicate agrees with the loop rather than
+out-guessing it: the turn is deferred, not lost, and the next message ends it
+`[…, assistant[thinking], user]`. **Measured against production, a thinking block is positionally
+IDENTICAL to a text block**; only the TRAILING assistant message 400s, which is the trailing-assistant
+rule wearing a different error string. A repair that dropped such a turn was built on the false
+premise and is deleted.
 
-**AFTER, measured on the first boot of the merged code: `launched 0/N` on every project — zero
-sessions created, across 8 projects and 10 resumable nodes, with nothing launching and then
-parking.** Root is in that list; it is alive because a human's message woke it, which is the design
-working rather than an exception. The MCP subprocesses alive at that moment belong to the agents a
-human was talking to, and the auto-resume boot batch is **32 → 0**.
-`scripts/survey-resume.ts` re-derives the decision from the tree; `scripts/measure-daemon-tree.sh`
-reports it.
-
-⚠️ **Take that number from the daemon's own `[autoResume] … launched X/N` line, never from the
-process tree.** `ps` carries no causal information: a session started by a user message and one
-started by auto-resume are byte-identical in it. The measuring script originally split the tree by
-"started within 30s of the daemon" as a proxy for "auto-resume made this", and on the very first
-boot after the fix it reported **`4 proc / 0.54 GB = 1 session`** for an agent the user had started
-14 seconds after boot — auto-resume's real cost was zero. **It reported the RELOCATED cost as the
-ELIMINATED cost**, which is precisely the confusion this measurement exists to prevent, and it
-reported it as a plausible number rather than as an error. The proxy had been written against a boot
-where nothing else was happening, i.e. validated in exactly the condition where it cannot fail —
-**a heuristic tested only where it works reads as verified.** ⚠️ Second-order: the log line can LAG,
-because the daemon's stdout is block-buffered when redirected to a file, so an empty autoResume
-block means "not flushed yet", NOT "launched nothing". The script says so instead of printing 0.
-
-⚠️ **The cost did not vanish; it MOVED — onto the path where a parent is waiting for its children,
-which is the one place it is felt.** A parent used to be launched at boot and sit parked, so a
-child's `task_complete` merely woke a live agent: microseconds. Now the parent is refused, so that
-same `task_complete` has to LAUNCH it — worktree checks, MCP connect, work_context, `session_config`.
-That is the intended trade, paying when work actually arrives instead of at every boot, and it is
-invisible in every number above: "32 → 0" says what stopped being spent at boot and nothing about
-where it goes when it IS needed. First observed as `MULTI1` (3 children → crash → restart → all complete →
-parent done) blowing its 45s budget on a contended run and passing in 15s alone — its budget now
-covers a cold launch that was not previously in it, so **this is where a load-related flake will
-surface first**, and reading it as contention alone would miss that the path genuinely got longer.
-The general form is worth more than the instance: **removing an eager cost does not delete it, it
-relocates it to the moment of first use — so ask what is waiting at that moment.**
-
-⭐ **The boundary condition on hoisting ANY such decision, which is not the obvious one:**
-
-> It is **not** "the steps before the loop only read the log" — two of them manufacture input.
-> `buildSessionRepair` appends synthetic tool_results and replays messages; bgOrphan synthesis
-> invents a `background_complete` message out of nothing on disk. The rule is that **the decision
-> can be hoisted iff every input it consumes is computable WITHOUT performing the step that would
-> create it.** Both of those are, because both are pure functions whose caller does the writing.
-
-Stated the wrong way round, the next person concludes a step that appends is disqualified from
-hoisting, which is the opposite of what holds. And the failure is silent in the one direction that
-matters: a step whose output is only knowable by running it would leave the log looking identical.
-The bgOrphan case was found by an existing restart test going from 587ms to a 30s timeout, not by
-reading — refusing to launch there loses the completion outright, so the agent never learns its
-command died and the UI shows it running forever.
-
-⚠️ **`dryRunRepair` computes what repair would produce and writes nothing.** Do not read it as the
-in-memory recovery path this codebase deleted (*"a fix that only edits `messages[]` leaves the
-poison on disk"*) — the real repair still happens on disk inside `runAgentForNode`. It was briefly
-named `applyRepairInMemory`, which named the anti-pattern exactly; a verb that promises an effect is
-the wrong verb for a projection. **A corrupt log whose repair cannot be expressed LAUNCHES**, so it
-reaches `runAgentForNode` where it gets reported; swallowing it into "nothing to do" turns a loud
-failure into a node that never comes back.
-
-**The one genuinely new rule is the `interrupt` exclusion**, and it is a subtraction with a single
-named member rather than a policy table. Any unconsumed message launches, because on resume
-`findUnconsumedMessages` re-enqueues all of them and `queue.wait()` returns immediately on a
-non-empty queue. `interrupt` is subtracted because it is the only message the loop writes ABOUT
-ITSELF rather than delivering as input. When it is the ONLY thing waiting it must **veto** — an
-interrupt landing before anything streamed leaves `messages_consumed → message(interrupt)`, and the
-consumption alone reads as work owed.
-
-⚠️ **It keys on `source`, and must not be widened to "quiet".** `quiet` is an argument to `enqueue`
-describing one moment — do not wake the waiter — and it is not part of the message, so **it does not
-survive to JSONL**; after a restart the quietness of a `tree_change` does not exist. Worse, the
-generalisation is wrong on its own terms: of the three quiet-delivery sites, Phase-2 crash-recovery
-`task_complete` is delivered quiet *specifically so it does not double-launch alongside autoResume*
-and **depends on being launched from recovery** — a "quiet-ish sources do not launch" rule strands a
-parent waiting on a child's completion after a crash. `source` also cannot separate upward from
-downward `send_message`, which share one source and differ by a direction that is not persisted.
-
-⚠️ **A log ending in `thinking` PARKS.** The model thought and died before it spoke, so the log ends
-mid-turn — but the loop reads the lone thinking as an assistant message and waits, and the predicate
-agrees with the loop rather than out-guessing it. The turn is deferred, not lost: the next message
-wakes the agent and the conversation ends `[…, assistant[thinking], user]`. **Measured against
-production Anthropic 2026-07-25: a thinking block is positionally IDENTICAL to a text block** —
-`u | a[thinking] | u` → 200, `u | a[text, thinking] | u` → 200, and only the TRAILING assistant
-message 400s (`The final block in an assistant message cannot be 'thinking'`), which is the
-trailing-assistant rule wearing a different error string. So there is nothing here to repair; a
-repair that dropped such a turn was built on that false premise and deleted.
-
-⚠️ Consequence for `classifyTail`: it reports `trailingThinkingOnly` SEPARATELY from `kind`, because
-its two consumers want opposite things. `hasPendingImplicitYield` walks THROUGH thinking (it asks
-which live resume branch runs, and a trailing thinking has never selected the yield branch); the
-launch decision treats it as a stop. Merging them would change the live path, which this work
-deliberately did not touch.
-
-**`launchingNodes` guards the window between "we decided to launch" and "the session exists".**
-⚠️ **Never add a node to `launchingNodes` from outside `runAgentForNode`.** `autoResumeProjects`
-once pre-registered every node it was about to launch; `runAgentForNode` checks the set and returns
-early, so no agent ever started. The lock is acquired atomically at the top of
-`ensureChildAgentRunning`, in one synchronous tick with no await before `beforeChildLaunch` — that
-placement is the fix for a real race, because `git worktree add` takes seconds and two concurrent
-launches both used to get through, with the loser's throw marking the node `failed` and sending a
-bogus `task_complete(failed)` to the parent while the winner was still running. A caller that
-already holds the lock passes `launchLockHeld`, and `runAgentForNode` then takes over releasing it
-on **every** exit path including the early "session already running" bail, so the caller cannot leak
-it. `beforeChildLaunch` is the SOLE worktree creator; the inline `wm.create` that `send_message`
-used to do, and the REST `/continue` path that called `beforeChildLaunch` outside the lock, were
-both deleted rather than made careful.
-
-**The session-identity check in the `finally` block** prevents a dying agent from clobbering the
-cleanup of the replacement agent that was launched to succeed it.
-
-**Retry backoff must be abort-aware.** Both the inner per-call retry and the outer retry
-(`abortableDelay`, 30/60/120s) race their sleep against the abort signal and re-check
-`signal.aborted` afterwards. Without that, a transient error parks the loop in a sleep, and a
-stop/reset blocks for up to 120s — past the daemon's 60s worker-forward timeout, producing a 504
-plus a retry racing the still-running first reset. ⚠️ **Test this with `stopTask`, not `stopAgent`**:
-`stopAgent`'s bounded 1s race masks the block entirely.
-
-**There is no in-memory recovery from a 400.** The old mechanism — pop the broken user message,
-splice in synthetic tool_results, retry once — was removed and its flags no longer exist. A
-non-transient 400 propagates, the agent stops, and the status stays `in_progress` so it is
-resumable; the next launch runs `buildSessionRepair` on the JSONL **before** the provider loop
-starts. The fix lives in persisted state rather than in volatile `messages[]`, which is the general
-rule for this codebase. Transient errors (429, 5xx, network) are still retried in-loop.
+**`launchingNodes` guards the window between "we decided to launch" and "the session exists", and the
+lock is acquired atomically at the top of `ensureChildAgentRunning` with no await before
+`beforeChildLaunch`.** That placement is the fix for a real race: `git worktree add` takes seconds,
+two concurrent launches both used to get through, and the loser's throw marked the node `failed` and
+sent a bogus `task_complete(failed)` while the winner was still running. `beforeChildLaunch` is the
+SOLE worktree creator. ⚠️ **Never add a node to `launchingNodes` from outside `runAgentForNode`** —
+`autoResumeProjects` once pre-registered every node it was about to launch, `runAgentForNode` saw the
+set and returned early, and no agent ever started.
 
 ## done() is two-phase, and both of Phase 2's invariants were learned the hard way
 
-**Phase 1 is agent-side**: close the queue, exit the loop, no status update. done() is an *intended
-orphan* like yield — no tool_result is written. **Phase 2 is daemon-side**: status → verify/failed,
-`task_complete` to the parent, and a `done_notified` marker for crash recovery.
-`findInterruptedDonePhase2` completes an interrupted Phase 2 on restart. `session = null` is the
-irreversibility boundary, and Phase 2 runs after session cleanup.
+**done() used to do everything inside the tool handler — status update, parent notification, queue
+close — and it raced with messages still arriving.** So: **Phase 1 is agent-side** (close the queue,
+exit the loop, no status update; done() is an *intended orphan* like yield, no tool_result written).
+**Phase 2 is daemon-side** (status → verify/failed, `task_complete` to the parent, `done_notified` for
+crash recovery). `session = null` is the irreversibility boundary.
 
-⚠️ **The loop promise must settle on EVERY path.** Phase 2 is wrapped in try/catch/finally with the
-`agentLoopPromises.delete` and the resolve inside the `finally`; a throw anywhere in Phase 2 is
-logged and not rethrown, because the task already did its work and a Phase-2 hiccup is not an agent
-failure. The reason this matters is not tidiness: `stopTask` awaits that promise with **no timeout**,
-so one leaked promise hangs the stop forever.
+⚠️ **`task_complete` must be DURABLE before `done_notified` is written.** The marker means "Phase 2
+finished", so if it lands while `task_complete` has not, a crash in that window leaves the parent
+waiting forever with nothing to re-deliver; the reverse window merely re-delivers a duplicate.
+**That asymmetry is the whole reason for the ordering — a duplicate completion is recoverable, a lost
+one hangs the parent.** The naive version looks fine, because the marker lands on this node's write
+queue synchronously while `task_complete` goes through `await getTracker` first.
 
-⚠️ **`task_complete` must be DURABLE before `done_notified` is written.** Both are awaited and the
-parent's store flushed before the marker. The marker means "Phase 2 finished", so if it can land
-while `task_complete` has not, a crash in that window leaves the parent waiting forever with nothing
-to re-deliver. The reverse window — marker written, crash before its own flush — re-delivers on
-restart, giving a duplicate completion. **That asymmetry is the whole reason for the ordering: a
-duplicate completion is recoverable, a lost one hangs the parent.** The naive version is easy to
-write and looks fine — a fire-and-forget `deliverMessage(...).catch()` followed immediately by
-`emitEvent(done_notified)` — because the marker lands on *this* node's write queue synchronously
-while `task_complete` goes through `await getTracker` first.
+⚠️ **The loop promise must settle on EVERY path**, resolve inside the `finally`, throws logged and not
+rethrown. `stopTask` awaits it with **no timeout**, so one leaked promise hangs the stop forever.
 
-**Auto-launch failure IS task completion**, and must be reported through the same channel. When
-`beforeChildLaunch` throws (missing hook file, worktree creation fails), the target never runs, so
-no done() ever fires, so no `task_complete` is ever delivered, and the sender's `yield` hangs
-forever. The catch in `deliverMessage` emits an error event, marks the node `failed`, and delivers
-`task_complete(success: false)` to the task above — the sender's yield then wakes through the
-existing resume flow with no new code path, because "failed before starting" and "failed during
-work" are indistinguishable from the sender's side. **Design rule: any code path that could silently
-hang a yielding parent must notify via `task_complete`.** Root launch failure is not handled — root
-has no task above it, and that is a separate problem.
+**Auto-launch failure IS task completion.** When `beforeChildLaunch` throws the target never runs, so
+no done() ever fires and the sender's `yield` hangs forever; `deliverMessage`'s catch marks the node
+`failed` and delivers `task_complete(success: false)`, and the sender wakes through the existing
+resume flow because "failed before starting" and "failed during work" are indistinguishable from its
+side. **Design rule: any code path that could silently hang a yielding parent must notify via
+`task_complete`.**
 
 ⚠️ **Writing that handler and making it survive its OWN failure are two different problems, and the
-second one bites in the shape the first one was built to prevent.** The original was
-`ensureChildAgentRunning(…).catch(async (e) => {…})`, doing in order: emit the error event, flip the
-status, `await tracker.save()`, then deliver `task_complete`. Two defects in one shape. An `async`
-function passed to `.catch()` has nobody to catch **it**, so a rejected `save()` escapes as an
-unhandled rejection; and because the notification is last in a straight-line body, that same
-rejection **skips** it. The handler whose entire purpose is "a parent must never wait forever" then
-hangs the parent — and it only ever runs when something has already gone wrong, which is the worst
-possible moment for a second failure to be silent: the first error is already in the log and the
-missing notification just looks like a slow child.
-
-**The shape that holds**: a NON-async `.catch` delegating to a named function
-(`reportAutoLaunchFailure`) where each COSMETIC step — the error event, and status-flip + save +
-broadcast — sits in its own try/catch and reports loudly, and the LOAD-BEARING `task_complete`
-delivery comes last but cannot be starved by any of them. The caller keeps a terminal `.catch`
-anyway, because "this function is written not to reject" is a claim and the caller is a `.catch`
-handler whose own rejection has nobody to catch it. ⚠️ **Do NOT collapse that into one try/catch
-around the whole body**: it converts a loud unhandled rejection into a silently skipped
-notification — the parent still hangs, and now nothing anywhere says so.
-
-The injected-failure test (`src/integration.test.ts`, "launch-failure handler survives its OWN
-failure") makes `tracker.save()` reject exactly once, from inside `beforeChildLaunch`, which is the
-last thing to run before the handler. ⚠️ **Its `await waitForIdle(ctx)` before the throw is
-load-bearing and looks like padding**: a fast-rejecting `save()` lets the notification overtake
-`send_message`'s own tool_result and ride along in the same user turn, so the parent never has to
-wake and the test silently stops exercising the wake it is named after. Real workspace prep takes
-seconds, so waiting is also the faithful ordering, not a contrivance.
-
-⚠️ **Phase 2 crash recovery must deliver `task_complete` with `quiet: true`.** Without it the
-delivery auto-launches the parent, and `autoResumeProjects` launches it too — a duplicate launch.
-Quiet still persists the message to JSONL, and `findUnconsumedMessages` recovers it when autoResume
-gets there.
-
-Two things that look like duplicate-launch bugs and are not: after a crash,
-`orchestration_completed` never emitted, so `orchestration_started` from before the crash plus one
-from the resume is **two consecutive starts and is normal** — assert on `traceId` uniqueness
-instead. And in a restart test, `shutdown()` is required before `recreateApp()`, or the old app's
-agent stays alive and the new app launches a second one for the same node; in a real crash the
-process is dead, so that shape cannot occur in production.
+second bites in exactly the shape the first was built to prevent.** The original was
+`ensureChildAgentRunning(…).catch(async e => {…})` doing error event → status flip → `save()` →
+deliver. An `async` function passed to `.catch()` has nobody to catch **it**, so a rejected `save()`
+escaped as an unhandled rejection — and because the notification was last in a straight-line body,
+that rejection **skipped** it. The handler whose entire purpose is "a parent must never wait forever"
+then hung the parent, at the one moment something had already gone wrong. **The shape that holds:** a
+NON-async `.catch` delegating to a named function where each COSMETIC step sits in its own try/catch
+and the LOAD-BEARING delivery comes last but cannot be starved. ⚠️ **Do NOT collapse that into one
+try/catch around the whole body** — it converts a loud unhandled rejection into a silently skipped
+notification.
 
 ### An unhandled rejection is an outage here, not a log line
 
-**Measured 2026-07-25.** A rejected promise with no handler inside a Bun **Worker** ends the worker
-thread: its own pending timers never run and the daemon sees `worker.onerror` (7-line repro — spawn
-a worker, `Promise.reject()` on a timer inside it, watch a later `setTimeout` never fire; the parent
-process survives). In a plain Bun process it exits the process outright, mid-flight continuations
-included. **As of this writing nothing in this repo installs a `process.on("unhandledRejection")`
-net** — the only occurrence anywhere is one test that captures its own injected failure, and the
-handler decided on below (`01KYDESAKCW186VZ8GEK6TW91W`) deliberately does not change this
-paragraph's conclusion, only its legibility. So a floating rejected promise in the runtime is not
-noise in a log; it is a way to kill every agent in that project's lens and hand the daemon a backoff
-worker restart, and per *The self-bootstrap death chain* an `exit 133`-shaped worker death is
-indistinguishable from a real crash to anyone reading the log. **The hang was the mild half** —
-which is worth saying in those words, because the obvious framing ("a parent waits forever")
-describes the bounded, recoverable consequence and silently sets the priority for the whole class
-from it.
+**Measured 2026-07-25: a rejected promise with no handler inside a Bun Worker ends the worker
+thread.** Its pending timers never run and the daemon sees `worker.onerror`; in a plain Bun process it
+exits the process outright. So a floating rejected promise in the runtime is a way to kill every agent
+in that project's lens, and per *The self-bootstrap death chain* that death is indistinguishable from
+a real crash to anyone reading the log. **The hang was the mild half** — worth saying in those words,
+because the obvious framing ("a parent waits forever") describes the bounded consequence and silently
+sets the priority for the whole class from it.
 
-**Surveying for the shape needs two instruments neither of which is the obvious one.** A single-line
-`grep '\.catch(async'` returns zero hits in a repo that has one, and biome 2.4.10's
-`nursery/noFloatingPromises` is blind even to a planted violation — both written up under *In a
-self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand*, because the
-lesson is about instruments and not about promises. What works: a multiline search
-(`\.catch\(\s*async`) plus a ~120-line one-off over the real TypeScript checker — walk every
-`ExpressionStatement`, ask the checker whether the expression's type has a `then`, subtract
-`await` / `void` / `.catch(fn)` / `.then(a,b)`. Production carries one other continuation handler of
-the family, `backgroundChain.then(async …)` in `task-index.ts`, and that one is correct because its
-whole body is inside a try/catch.
+⚠️ **`MessageQueue.enqueue()` returns `void | Promise<void>`**, returning the Promise exactly when the
+before-first-message hook is armed — a fresh session, and after every compaction re-arm. The idiom
+around it is a sync `try/catch` at five production sites including `deliverMessage`, and **a sync
+try/catch does not cover the async branch**: the rejection escapes and `return "enqueued"` reports a
+delivery that may not have happened. The full classified census (26 sites, 11 real) is in task
+`01KYDEFRM5WBDCRXPTGX75FYZ2`.
 
-⚠️ **The checker instrument has its own caveat, and it is not a defect: a type-level `Promise` arm
-is not a runtime promise.** The checker reports the declared union; whether the async arm is ever
-TAKEN is a question about the call site's configuration, answerable only per site. `queue.enqueue`
-is the case where it is taken (see below); Orama's `insert`/`remove` in `task-index.ts` are the case
-where it is not — measured with a 10-line probe in 35ms: under this repo's db config they return an
-id and a boolean synchronously, and `remove` of a missing id returns `false` rather than throwing.
-**Probe the call, do not read the `.d.ts`.**
-
-Two classes the survey turned up that a reader here should know before writing new code:
-
-- ⚠️ **`MessageQueue.enqueue()` returns `void | Promise<void>`**, and it returns the Promise exactly
-  when the before-first-message hook is armed — i.e. on a fresh session and after every compaction
-  re-arm, where the hook builds work_context through hybrid search. The idiom around it is
-  `try { queue.enqueue(msg) } catch { /* queue closed */ }` at five production sites including
-  `deliverMessage` itself. **A sync try/catch does not cover the async branch**: the rejection
-  escapes, and the `return "enqueued"` reports a delivery that may not have happened.
-- ⚠️ **`runAgentForNode` can reject** (its catch block does `await tracker.save()`, and the `finally`
-  awaits `mcpManager.disconnectAll()`), and the two REST `/continue` call sites float it with no
-  `.catch` at all — no notification either, which is the same defect this section is about, one
-  layer out.
-
-The full classified census — 26 server-side sites, 11 of them real, each with the reason it is or is
-not a hazard — lives in task `01KYDEFRM5WBDCRXPTGX75FYZ2`.
-
-⭐ **DECIDED 2026-07-25 (`01KYDESAKCW186VZ8GEK6TW91W`): the scope worker should install a
-`process.on("unhandledRejection")` handler that LOGS AND LETS THE THREAD DIE.** It looks like the
-swallowing catch this file keeps arguing against, and the distinction that resolves it is *what the
-handler does AFTER it logs*. Log-and-die is pure attribution: the semantics do not change by one
-byte, and an anonymous worker death becomes one that names the lens. Log-and-swallow is the
-swallowing catch at PROCESS scope, and it is worse than the per-site version, because the worker
-then carries on in an unknown state while writing JSONL and managing worktrees. ⚠️ **Installing a
-handler SUPPRESSES the default action, so log-and-die is not free** — the death has to be re-raised
-deliberately, and that is the part a test must pin. ⚠️ **And a net does not reduce the 11**: it
-makes failures visible, not correct. If anything it raises their priority, because you can finally
-see how often they fire.
+⭐ **DECIDED (`01KYDESAKCW186VZ8GEK6TW91W`): the worker should install an `unhandledRejection` handler
+that LOGS AND LETS THE THREAD DIE.** It looks like the swallowing catch this file keeps arguing
+against, and what resolves it is *what the handler does AFTER it logs*. Log-and-die is pure
+attribution — semantics unchanged, an anonymous worker death becomes one that names the lens.
+Log-and-swallow is the swallowing catch at PROCESS scope, and worse than the per-site version, because
+the worker carries on in an unknown state while writing JSONL and managing worktrees. ⚠️ Installing a
+handler SUPPRESSES the default action, so the death has to be re-raised deliberately.
 
 ## The done() payload, and the boundary it defends
 
-`done()` has exactly two agent-facing params: **`status`** (`passed`/`failed`, a runtime control bit
-that routes the node to verify/failed) and **`result`** (required, non-empty — everything the agent
-reports as content). `TaskNode.resultRounds?: DonePayload[]` gets ONE block APPENDED per `done()`,
-never overwritten, so a task woken and re-done N times carries N rounds in call order and the field
-is simply absent until the first done.
+**The runtime must not know what a plugin's completion MEANS.** `done()` has exactly two agent-facing
+params — `status` (a control bit routing the node to verify/failed) and `result` (required, non-empty,
+everything reported as content) — and `resultRounds` gets ONE block APPENDED per `done()`, never
+overwritten, so a task woken and re-done N times carries N rounds in call order.
 
-`src/done-payload.ts` holds the single schema. Add a content field there and the tool param, the
-type, the stored round and the normalizer all follow — no fan-out. ⚠️ **It imports only zod**, which
-is not an aesthetic choice: both `types.ts` (type layer) and `orchestrator-tools.ts` (tool layer)
-must import it, and anything heavier creates a cycle.
+⭐ **The boundary is the point of the design.** The runtime MAY read `status` and ONE completion-output
+string (every plugin has one). It MUST NOT carry the round structure or any other content field —
+those are read only inside matrix's `onDone`, and the runtime passes the raw done input through as an
+opaque `Record`. **The check is a grep**: `resultRounds`, `appendResultRound`, `parseDonePayload` and
+`DonePayload` appear in `src/runtime/*`, `runtime.ts`, `provider-shared.ts` and `events.ts` only
+inside boundary-explaining comments.
 
-⭐ **The runtime↔plugin boundary, which is the point of the whole design.** The runtime MAY read
-`status` and ONE completion-output string (`doneCompletionOutput(input)` = `input.result`, the
-"what happened" summary sent to the parent and recorded on the `done_notified` marker; every plugin
-has one). The runtime MUST NOT carry the round structure or any content field beyond that string —
-those are read only inside matrix's `onDone`, via `parseDonePayload`, and the runtime hands the raw
-done input through as an opaque `Record`. **The check is a grep**: `resultRounds`,
-`appendResultRound`, `parseDonePayload` and `DonePayload` appear in `src/runtime/*`, `runtime.ts`,
-`provider-shared.ts` and `events.ts` only inside boundary-explaining comments, never in code.
+⚠️ **`onDone` returns void.** It used to return a plugin struct that got spread into `done_notified`,
+letting a plugin inject arbitrary marker fields — removed, because the marker is write-only and only a
+synthetic test used the channel. Do not re-add a `T["done"] | void` shape "just in case".
 
-⚠️ **`onDone` returns void, and `done_notified` is always the runtime-standard `{status, result}`.**
-It used to return a plugin struct that got spread into the marker, letting a plugin inject arbitrary
-marker fields — removed, because the marker is write-only (nothing reads its fields; crash recovery
-recomputes from the tool_call) and only a synthetic test used the channel. Do not re-add a
-`T["done"] | void` shape "just in case".
-
-**Testing opacity requires data only the other layer understands.** The robustness test uses a
-non-matrix scope whose `done()` carries `wordCount` and `mood`, and asserts they reach `onDone`
-untouched and never appear in `done_notified`. **Testing with the default plugin's own fields cannot
-distinguish "passed through opaque" from "reconstructed into that plugin's shape"** — both produce
-the same round. Mutation-proofed empirically: reshaping `doneInput` into a fixed struct before
-`onDone` fails exactly that ONE test, and every matrix resultRounds test still passes.
+⭐ **Testing opacity requires data only the other layer understands** — the robustness test uses a
+non-matrix scope whose `done()` carries `wordCount` and `mood`. **Testing with the default plugin's
+own fields cannot distinguish "passed through opaque" from "reconstructed into that plugin's shape"**,
+because both produce the same round.
 
 ⚠️ **KNOWN LIMITATION: crash-recovery Phase 2 does not append a resultRound.** It is plugin-agnostic
-runtime code that sets status directly and never calls matrix's `onDone`, so a `done()` whose Phase
-2 was interrupted by a daemon crash loses its round. Wiring it in would either break the boundary
-above or route crash recovery through a plugin hook. The normal path — the overwhelming majority —
-captures correctly.
+runtime code that sets status directly and never calls `onDone`; wiring it in would either break the
+boundary or route crash recovery through a plugin hook.
 
-**`result` is enforced twice, and a rejected `done()` is harmless.** Zod rejects an absent result at
-`executeTool`; `beforeDone` rejects an empty or whitespace-only one with a steering message, before
-the git-clean check. Either way the tool_result is `isError`, and the loop's done-exit is gated on
-`!doneToolResult.isError`, so the loop does not exit, no Phase 2 runs, and no empty round is
-appended — the agent just sees the error and continues.
-
-Four gotchas that will each cost an hour:
-
-- ⚠️ **Zod strips unknown keys** (`z.object(inputSchema).safeParse`, no `.strict()`). So a caller
-  passing an obsolete param name does NOT fail on that param — it fails on the required one that is
-  now missing, which points at the wrong place.
-- ⚠️ **`parseDonePayload` must NOT use `donePayloadSchema.safeParse`.** The schema requires its
-  fields and raw done input may omit them, so safeParse rejects. Manual normalization only; it must
-  never throw.
-- ⚠️ **Required-ness comes from the tool's `decl`, not from the schema.** The param reuses the
-  schema's TYPE while `{kind: "explicit"}` vs `{kind: "optional"}` decides whether it is required —
-  which is how `result` is required on input while `parseDonePayload` still normalizes a missing one
-  to `""`, with no drift between the two.
-- ⚠️ **Any change to a tool's required params has a transition window.** Tools are frozen in
-  `session_config` until a compaction refreshes them, so an agent mid-session keeps calling the old
-  shape, the obsolete param is stripped, the required one is absent, and that done is rejected. It
-  costs that agent one round and it retries correctly. Know that this is expected, not a bug.
-
-### ⭐ Renaming a tool param: three things that bit us, all generic
-
-1. **Grep the FRONTEND.** Done-card consumers read the param BY NAME (`getArg(.., "summary")`,
-   `toolArgs?.summary`) through index/`any` access, so **typecheck cannot catch it and integration
-   tests do not render.** The done cards would have quietly lost their text; only a manual grep
-   found it. Same class as the compiler-only-types bound in *Changing code here*.
-2. **Grep the TARGET name before a blanket rename.** `doneSummary → doneResult` collided with two
-   pre-existing local `doneResult` variables.
-3. **Make a missed site LOUD rather than silent.** Because `result` became required, a missed call
-   site fails Zod, the done never completes, and the test times out — that enforcement WAS the
-   safety net. The one miss that got through the bulk replace was a **backtick template literal**
-   (`` result: `child ${label}…` ``), and it read as a 48-second flake rather than a regression.
-   Grep both `x: "` and `` x: ` ``, plus the shorthand `x }`.
-
-⚠️ **Not this concept, do not rename these**: compaction's `<summary>` tags and
-`SUMMARIZATION_INSTRUCTION`; `llm.ts`'s OpenAI Responses reasoning `summary[]` / `summary_text` (an
-API field); CLI cost/tree display; `get_logs`' "short summary" and `send_message`'s title; the
-generic `ToolDisplay.summary`; `compactedResume` ids. Two provider test files declare their own
-`done` tool with a `summary` schema and are CORRECT — they drive `provider.stream()` directly and
-never run the runtime loop.
+⚠️ **Any change to a tool's required params has a transition window.** Tools are frozen in
+`session_config` until a compaction refreshes them, so an agent mid-session keeps calling the old
+shape, the obsolete param is stripped by zod, the required one is absent, and that done is rejected.
+It costs one round and retries correctly — expected, not a bug. ⚠️ And when you rename a param,
+**grep the FRONTEND**: done-card consumers read it BY NAME through index access, so typecheck cannot
+catch it and integration tests do not render. Same by-name blindness as *Changing code here*.
 
 ## Duplicate yield or done in one turn
 
-The API can return several `yield` tool_calls in the same assistant turn. Two rules, both live:
+The API can return several `yield` tool_calls in one assistant turn. Repair skips the intended orphan
+— specifically the LAST tool_call, not "any yield/done" — and the extras emit to JSONL immediately
+while their live-path construction is DEFERRED, so on wake they bundle into ONE user message.
 
-1. **Repair skips the INTENDED orphan, which is specifically the LAST tool_call** — not "any
-   yield/done". Earlier yield/done orphans in the same turn are genuine repair targets and do get
-   interrupted results.
-2. **Extras emit to JSONL immediately** (orphan prevention) **but their live-path construction is
-   DEFERRED** via `pendingDuplicateYieldExtras`. On yield wake they bundle into the same
-   `buildUserTurn` call as the real yield, producing ONE user message of
-   `[...extras, real, ...queue]`.
+⭐ **The deferral is a live/walker BYTE-IDENTITY device, not an API-shape device**, and this was
+misunderstood for a long time:
 
-⭐ **The deferral is a live/walker BYTE-IDENTITY device, not an API-shape device.** This is the
-reusable rule and it was wrong for a long time:
+> Deferral is REQUIRED when the deferred tool_result is PERSISTED and lands ADJACENT to another one in
+> JSONL, because the walker merges adjacent tool_results into one user message and the live path must
+> match. It is UNNECESSARY when the message it would merge into is TRANSIENT.
 
-> Deferral is REQUIRED when the deferred tool_result is PERSISTED and lands ADJACENT to another one
-> in JSONL, because the walker's collection loop merges adjacent tool_results into one user message
-> and the live path must match. It is UNNECESSARY when the message it would merge into is TRANSIENT.
-
-⚠️ **Do not "simplify" `pendingDuplicateYieldExtras` away by analogy with the compaction deferrals
-that were deleted.** Nothing separates the extras' results from the real yield's in JSONL (the
-walker skips `message` events), so splitting the live push would require inventing a JSONL boundary
-event — strictly more machinery. The two compaction deferrals were removable for the opposite
-reason: the summarization instruction is never persisted at all, so nothing reconstructs it and
-there was nothing to stay byte-identical with. Both compaction sites now emit the tool_result and
-push its turn on the spot via one `emitAndPushCompactToolResult` generator.
-
-The justification these three sites *used* to share — role alternation — does not exist; see
-*The Anthropic message-shape rules, MEASURED*. What survives it is the **pairing** obligation: the
-assistant's yield/done `tool_use` must be answered before the request goes out. That is real, it is
-why the extras still ride in the same turn, and it is why the compaction paths still push them.
+⚠️ **So do not "simplify" it away by analogy with the compaction deferrals that were deleted.** Nothing
+separates the extras' results from the real yield's in JSONL, so splitting the live push would require
+inventing a JSONL boundary event — strictly more machinery. The compaction deferrals were removable for
+the opposite reason: the summarization instruction is never persisted at all.
 
 ⚠️ **Duplicate `done()` calls must exit as orphans. Do NOT emit tool_results for all of them.** That
 was tried, to avoid a repair path; it works, and it costs behavior — with every done answered, resume
 detects a generic interrupted-resume instead of a done-resume, so the woken agent silently loses its
-done-resume context. Reverting it was a behavior fix, not a style cleanup.
+done-resume context.
 
 ## Compaction: ONE path, and the two bricks a second one produced
 
-`/compact` enters the ordinary path unconditionally — `compact_started` → summarize →
-`compact_marker` → `session_config` → `compacted_resume` — whatever the conversation looks like. The
-`messages.length > 4` floor next to it binds **only the automatic token-threshold trigger**.
+`/compact` enters the ordinary path unconditionally, whatever the conversation looks like.
 
-⚠️ **Do NOT add a short-circuit for a conversation that is "too short to be worth compacting".**
-There was one, twice, and each version bricked sessions in its own way:
-
-- v1 emitted `compact_started` + `compact_marker` **without rebuilding context**. `readActive()`
-  then returns only post-marker events, so the next launch starts on an ASSISTANT turn and every
-  request 400s — recoverable only by `reset_task`.
-- v2 (the fix for v1) emitted a status, cleared the flag and `continue`d with nothing pushed — so
-  the very next request ended on the assistant message the agent had parked on: 400 *"This model
-  does not support assistant message prefill"*. **A fresh agent whose first turn ends with
-  `end_turn`, then `/compact`, reached it with no other setup.**
-
-**Shortness caused neither. Being a SECOND PATH did** — v1's bug was the missing rebuild, and v2
+⚠️ **Do NOT add a short-circuit for a conversation "too short to be worth compacting".** There was
+one, twice, and each bricked sessions in its own way: v1 emitted the markers **without rebuilding
+context**, so the next launch started on an ASSISTANT turn and every request 400s; v2 — the fix for
+v1 — cleared the flag and continued with nothing pushed, so the very next request ended on the
+assistant message the agent had parked on. **Shortness caused neither. Being a SECOND PATH did**: v2
 inherited the shape of the thing it was patching rather than the correctness of the path next to it.
 The cost of not having it is one API call and a near-useless summary when a human compacts a
-two-message session, which is the price of the user asking. `src/compact-short-session.test.ts` pins
-the journey and both brick properties (every request sendable; a `compact_marker` is never bare).
+two-message session, which is the price of the user asking.
 
-⭐ **What made the deletion safe is worth more than the deletion: the branch's one real obligation
-had already moved out of it.** It used to consume the pending yield/done tool_result and the
-duplicate-yield extras — the **pairing** rule, which is real. That consumption now happens where the
-tool_result is EMITTED (`emitAndPushCompactToolResult`), so the ordinary path inherits it for free.
-Confirmed by shape rather than by reading: dropping the `yield*` at one call site reddens **8 tests
-in `drift-lifecycle.test.ts` alone**. **This is a second worked example of *Deleting a mechanism built on
-a false premise: separate the PREMISE from the OBLIGATION*** — premise "too short to compact",
-obligation "answer the `tool_use`", and the deletion is only safe because the obligation was checked
-separately and found to live somewhere else.
+⭐ **What made the deletion safe is worth more than the deletion: the branch's one real obligation had
+already moved out of it.** It used to consume the pending tool_result and the duplicate-yield extras
+— the **pairing** rule, which is real. That now happens where the tool_result is EMITTED, so the
+ordinary path inherits it for free. A second worked example of *Deleting a mechanism built on a false
+premise: separate the PREMISE from the OBLIGATION*.
 
-⚠️ **STANDING DEFECT of the automatic trigger, older than the deletion above and unchanged by it: a
-session with ≤4 messages cannot auto-compact no matter how large it is.** One giant tool result
-(`get_logs`) puts a 3-message session over the threshold, and it then keeps calling the API instead
-of compacting until the context window rejects it. **It is not a consequence of removing the manual
-short path**, and reading it as one is how someone reverts that and gets the 400 back: the two used
-to be two independent `if`s — `manual && len <= 4` bailed out, `len > 4` ran the compaction — so
-`auto + len <= 4` already fell through BOTH and silently never compacted. Folding the manual case
-into the surviving condition changes the automatic path by zero bytes.
+⚠️ **STANDING DEFECT of the automatic trigger: a session with ≤4 messages cannot auto-compact no
+matter how large it is.** One giant tool result puts a 3-message session over the threshold and it
+keeps calling the API until the context window rejects it. **It is not a consequence of removing the
+manual short path** — the two used to be independent `if`s and `auto + len <= 4` already fell through
+both.
 
-⭐ **Why the floor is there at all, since "delete the magic 4" is the obvious reading of the
-paragraph above and it would reintroduce a worse bug.** Compaction sets `messages.length = 0` and
-pushes one `compacted_resume`, so a freshly compacted session sits at ~1 message. If the token count
-is STILL over threshold at that point — because the system prompt plus the tools plus the summary
-already exceed it — then with no floor the loop compacts again immediately, summarizes a
-one-message context, and repeats. The floor turns that into every ~3 turns instead of every turn.
+⭐ **Why the floor exists at all**, since "delete the magic 4" is the obvious reading and would
+reintroduce something worse: a freshly compacted session sits at ~1 message, so if the token count is
+STILL over threshold — system prompt plus tools plus summary already exceed it — the loop would
+compact again immediately, forever. **The floor is a PROXY, and a bad one: the condition it stands in
+for is "compacting will not reduce anything", which has nothing to do with message count.** ⚠️ **If
+you replace it, replace it with a measurement, not a smaller number** — compact, and if still over,
+say so loudly and stop auto-compacting for that session. "Even a full compaction cannot get this under
+the limit" is a real configuration problem the user needs to see, and both of today's behaviours hide
+it equally well. Code-level half of `01KXNZHYSJFF0BVQJVPG2WC1RV`.
 
-**So the floor is a PROXY, and a bad one: it does not prevent the loop, it slows it down, and the
-condition it is standing in for is "compacting will not reduce anything", which has nothing to do
-with how many messages there are.** That is why it produces the deadlock above — a count cannot
-distinguish "too small to be worth compacting" from "small but enormous".
-
-⚠️ **If you replace it, replace it with a measurement, not a smaller number.** Compact when over
-threshold; then if the post-compaction count is still over, **say so loudly and stop auto-compacting
-for that session** rather than looping. "Even a full compaction cannot get this under the limit" is
-a real configuration problem the user needs to see, and both of today's behaviours — silently
-looping without the floor, silently never compacting with it — hide it equally well.
-
-This is the code-level half of `01KXNZHYSJFF0BVQJVPG2WC1RV` (the deadlock that crashed root on
-2026-07-15); that ticket has the incident, this is the exact condition.
-
-**Compact messages never get `messages_consumed`.** `handleImplicitYield` filters them out of
-`nonCompact` and only `nonCompact` is recorded, so on restart `findUnconsumedMessages` re-enqueues
-the compact and the next session sees a spurious `manualCompactRequested`. Real, still there, no
-known bad effect — the consequence it was once blamed for was the alternation phantom.
-
-**Session config is refreshed at the compaction boundary, and only there.** Compaction wipes
-`messages[]`, so the cache is already lost, which makes it the one safe moment to re-emit
-`session_config` with current values: tools rebuilt from `request.mcpToolDefs`, system prompt
-refreshed from `request.refreshSystemPrompt()`. ⚠️ **`request.systemPrompt` must be updated too, not
-just the emitted event** — the next API call reads the former. That was the mutation-testing find
-here; refreshing only the event looks complete and leaves the next call on the stale prompt.
-`cacheTtl` is deliberately NOT refreshed, to preserve fork inheritance. Without a compaction,
-everything stays frozen from the stored config, which is what gives a byte-identical prefix and a
-cache hit on resume.
-
-Why the refresh matters differs by provider, and the difference is worth knowing: on Anthropic
-frozen tools are a DX problem, since the model can invoke a tool by name whether or not it is in the
-list. On OpenAI Responses it is a CORRECTNESS problem — schema-constrained sampling masks the token
-distribution to the supplied tool names, so an agent physically cannot call a tool that was not in
-its frozen `session_config`.
+**Session config is refreshed at the compaction boundary, and only there** — compaction wipes
+`messages[]`, so the cache is already lost, which makes it the one safe moment. ⚠️ **`request.systemPrompt`
+must be updated too, not just the emitted event**: the next API call reads the former, so refreshing
+only the event looks complete and leaves the next call on the stale prompt. `cacheTtl` is deliberately
+NOT refreshed, to preserve fork inheritance.
 
 ## Interrupt and stop are two abort channels, and they cannot be one
 
-`stopTask` is TEARDOWN: kill background processes, close the queue, drop the session, disconnect
-MCP. `interruptTask` ends the current TURN and leaves all of that alive. They were the same button
-in the UI before this, and they are opposite verbs.
+**An interrupt takes a running agent from mid-turn to idle-waiting-for-input and tears down nothing.**
+A stop is teardown: kill background processes, close the queue, drop the session, disconnect MCP.
+They were the same button in the UI before this, and they are opposite verbs.
 
-The signal is `TaskSession.interrupt` (`src/turn-interrupt.ts`), deliberately **not**
-`session.abortController`. Sharing one channel gives you either "an interrupt tore the session down"
-or "a teardown was mistaken for an interrupt so it could not tear down", and **both are silent**.
-They meet in exactly one place — the API call's signal, `AbortSignal.any([teardown, interrupt])` —
-and every reader checks `request.signal.aborted` FIRST, so teardown always wins.
+The signal is `TaskSession.interrupt`, deliberately **not** `session.abortController`. Sharing one
+channel gives you either "an interrupt tore the session down" or "a teardown was mistaken for an
+interrupt so it could not tear down", and **both are silent**. They meet in exactly one place —
+`AbortSignal.any([teardown, interrupt])` — and every reader checks teardown FIRST.
 
-⚠️ **`consume()` is called when the loop PARKS, not when it decides to.** The satisfying event is
-the loop actually parking, whichever path parked it. Clear the flag at the decision point instead
-and a stop landing in the same moment the agent goes idle on its own leaves the flag set, so the
-next message is swallowed into a park.
+**No repair is owed, and that is the point.** `stopTask` leaves tool_calls unclosed because the loop is
+already dead, so the next launch's repair writes *"interrupted by daemon restart"* — false whenever a
+human pressed stop, and re-read by the model on every later turn. An interrupt keeps the loop alive, so
+it closes its own tool_calls before parking.
 
-**No repair is owed, and that is the point of the design.** `stopTask` leaves the turn's tool_calls
-unclosed because the loop is already dead, and the next launch's repair then writes *"Tool execution
-was interrupted by daemon restart"* — false whenever a human pressed stop, and re-read by the model
-on every later turn. An interrupt keeps the loop alive, so the loop closes its own tool_calls before
-parking and repair finds nothing. Completeness is structural: `Promise.all` settles for every tool
-and `executeTool` never throws, so the only way to break it is bailing out early.
+**Partial assistant text is KEPT, deliberately.** It makes the interrupted state representable on disk
+with zero new resume states; it gives the user's next message a referent, because "no, don't do that"
+needs the text they were reading; and emitting it as a normal final `assistant_text` is what clears the
+UI's streaming partial. Never the thinking blocks (no signature), never a half-emitted `tool_use`.
 
-**Partial assistant text is KEPT, deliberately.** It makes the interrupted state representable on
-disk with zero new resume states (the log ends in `assistant_text`, which reads as
-`hasPendingImplicitYield`); it gives the user's next message a referent, because "no, don't do that"
-needs the text they were reading; and emitting it as a normal final `assistant_text` is what clears
-`ctx.streamingText`, so the UI's partial becomes final instead of lingering. Never the thinking
-blocks (no signature) and never a half-emitted `tool_use` (that is the orphan being removed).
+⚠️ **Do NOT front-run the queue when parking.** A message drained at the cancellation point would be
+merged into the turn's user message and then sat on — the loop would wait for a *further* message
+before calling the API, so "stop, do X instead" would look swallowed. Left in the queue,
+`handleImplicitYield` returns it immediately. ⚠️ **`consume()` is called when the loop PARKS, not when
+it decides to**; clear the flag at the decision point and a stop landing as the agent goes idle on its
+own leaves the flag set, swallowing the next message.
 
-⚠️ **Do NOT front-run the queue when parking.** The cancellation-point drain is skipped while
-interrupted. A message drained there would be merged into the turn's user message and then sat on —
-the loop would wait for a *further* message before calling the API, so "stop, do X instead" would
-look swallowed. Left in the queue, `handleImplicitYield` returns it immediately.
+**Compaction turns are not interruptible mid-flight** — the summarization instruction is already in
+`messages[]` and cutting there pairs "summarize yourself" with whatever the user says next. **`done()`
+wins a race with the stop button**, because that is completion, and marking it "not executed" would
+strand the parent forever.
 
-**Compaction turns are not interruptible mid-flight.** The summarization instruction is already in
-`messages[]`; cutting there would pair "summarize yourself" with whatever the user says next. The
-flag stays set and takes effect at the top of the next iteration.
-
-**`done()` wins a race with the stop button.** That is completion, not interruption; marking it "not
-executed" would strand the parent waiting forever.
-
-**Foreground tools have two verbs now.** `foregroundExecutions.resolve()` moves a command to
-background and it keeps running (the pre-existing verb); `interrupt()` terminates it and returns its
-output so far through the same formatter a normal completion uses. A model told only "interrupted"
-knows it ran a command and lost the result, which invites re-running something that already had side
-effects. Tools that cannot be stopped safely just run to completion — a half-written file is worse
-than a two-second wait.
-
-⚠️ **"I pressed stop, then restarted the daemon, and it started working again" USED to be an
-accepted boundary. It is now fixed, and the way the trade changed is the interesting part.**
-
-In the window *interrupt → restart with no message in between*, the log alone could not tell "the
-user stopped me" from "I died mid-work" — an interrupt during a tool leaves tool_results, i.e. a
-user turn, which is byte-for-byte what a daemon death inside an API call leaves. The stated price of
-fixing it was a persisted "interrupted, waiting" marker, i.e. a **fifth resume state**, which this
-design refuses.
-
-**What changed is that a persisted marker acquired a second, unrelated buyer**, so its cost is no
-longer charged to this problem alone. `shouldLaunchAgent` (see *Only launching agents that will
-act*) has to answer the same question — is anything owed here? — before a session exists, and it
-hits the identical ambiguity. One `message` event with `source: "interrupt"`, written by the loop at
-the park, settles both.
-
-⭐ **And it is NOT the fifth resume state the design refused.** That refusal was about the RESUME
-classification, which still reads exactly four shapes off the log and is untouched. The marker is an
-ordinary queue message — the same two-phase lifecycle, the same walker path, the same UI
-materialization as any other — that happens to be written by the loop about itself. **A cost
-rejected as "a new state in the state machine" can become payable as "an existing mechanism used
-once more", and those are worth re-pricing separately.** What made it cheap here: `source` is
-already persisted and already decides two other things (the text the model reads, how the UI renders
-it), so letting it decide a third adds no new concept.
-
-| interrupted during | log ends in | after restart |
-|---|---|---|
-| `thinking`, text had streamed | `assistant_text` + the interrupt notice | parked at idle ✓ |
-| `thinking`, nothing streamed yet | `messages_consumed` + the interrupt notice | parked at idle ✓ |
-| `tool` | tool_results + the interrupt notice | parked at idle ✓ |
-
-Row 2 is the one with **no other signal at all**: without the notice its log is identical to a
-daemon death mid-API-call, which must relaunch. Everything else about the interrupt design is
-unchanged — partial text is still kept, thinking is still discarded, no repair is owed.
-
-**`status` events are broadcast-only** (`isPersistedByEmitEvent` returns false), so the interrupt's
-"Interrupted by user" reaches clients and never reaches the log. Two consequences: it cannot sit
-between tool_results in a reconstruction that never sees it, and after a refresh the durable
-evidence is the interrupted tool_result's own text. ⚠️ A test asserted the opposite and failed —
-"emitEvent means it's in JSONL" is an easy assumption, and the repair path's own status event
-(written straight to the EventStore) makes it look true.
+⚠️ **"I pressed stop, then restarted the daemon, and it started working again" used to be an accepted
+boundary, and how the trade CHANGED is the transferable part.** In the window *interrupt → restart with
+no message between*, the log could not tell "the user stopped me" from "I died mid-work" — an interrupt
+during a tool leaves tool_results, byte-for-byte what a daemon death inside an API call leaves. The
+stated price of fixing it was a persisted marker, i.e. a **fifth resume state**, which this design
+refuses. **What changed is that the marker acquired a second, unrelated buyer**: `shouldLaunchAgent` has
+to answer the same question before a session exists. One `message` event with `source: "interrupt"`
+settles both. ⭐ **And it is NOT the fifth resume state** — resume still reads exactly four shapes; the
+marker is an ordinary queue message that happens to be written by the loop about itself. **A cost
+rejected as "a new state in the state machine" can become payable as "an existing mechanism used once
+more", and those are worth re-pricing separately.**
 
 ## Agent activity: live process state is asked for, never replayed
 
-> **State is never derived from the event log. On connect the client ASKS; while connected the
-> server PUSHES.**
+**"Is the agent working" was three layers of heuristics stacked on a boolean that itself had three
+sources** — a 500ms poll, a timer, and a correcting re-poll, each covering the layer above it. It is
+now ONE explicit state in backend memory:
 
-The log records *"it became active at some past instant"*. Replaying that as *"it is active now"* is
-a category error, and the old code had a poll (`checkAgentStatus()` after every event batch) whose
-only job was to undo the error it had just made. That poll was the bug report. Note the exact
+> **State is never derived from the event log. On connect the client ASKS; while connected the server
+> PUSHES.**
+
+The log records *"it became active at some past instant"*; replaying that as *"it is active now"* is a
+category error, and the old poll existed only to undo the error it had just made. Note the exact
 inversion against pending messages: pending IS a projection of a persistent log, so a reducer over
 events is right there. **The question to ask is "does this thing exist on disk?"**
 
-`AgentActivity = "idle" | "thinking" | "tool"`, and it is asymmetric on purpose. `tool` is the
-precise one because it is the only state with an unclosed tool_call, which is the one with an
-interrupt consequence. `idle` means the loop is parked on `queue.wait()`. **`thinking` is explicitly
-the residual** — every other way the loop is alive — which makes the following consequences rather
-than special cases: the outer-retry backoff is `thinking`, session setup before the loop starts is
-`thinking`, and a compaction turn is `thinking`. Known naming debt, deliberately unfixed: a
-compaction runs 2-3 minutes and "Thinking…" across it is the same kind of lie this model removed.
-Adding `compacting` later is a pure carve-OUT of the residual, which is cheap precisely because the
-residual is written down.
+`AgentActivity = "idle" | "thinking" | "tool"`, asymmetric on purpose. `tool` is the precise one because
+it is the only state with an unclosed tool_call, which is the one with an interrupt consequence. `idle`
+means parked on `queue.wait()`. **`thinking` is explicitly the residual** — every other way the loop is
+alive — which makes retry backoff, session setup and compaction turns consequences rather than special
+cases. Known naming debt, deliberately unfixed: a compaction runs 2-3 minutes and "Thinking…" across it
+is the same kind of lie this model removed; adding `compacting` later is a pure carve-OUT of the
+residual, cheap precisely because the residual is written down.
 
-⚠️ **Rejected framing, offered and vetoed: defining the states by what feedback the user sees**
-(spinner vs tool card). That defines backend state in terms of frontend rendering — the same class
-of error as deriving state from the log — and it collapses the moment a UI affordance is added.
+⚠️ **Rejected framing, offered and vetoed: defining the states by what feedback the user sees** (spinner
+vs tool card). That defines backend state in terms of frontend rendering — the same class of error as
+deriving it from the log — and collapses the moment a UI affordance is added.
 
-It lives on `TaskSession.activity`, so it dies with the session and there is no second lifecycle to
-keep in sync. **The field write and the broadcast must happen in the same function**, which is why
-the setter is passed INTO `handleImplicitYield` rather than the event being emitted there and the
-field written at its four call sites. Split them and call site number five gets only one half.
+It lives on `TaskSession.activity`, so it dies with the session and there is no second lifecycle to keep
+in sync. **The field write and the broadcast must happen in the same function**, which is why the setter
+is passed INTO `handleImplicitYield` rather than the event emitted there and the field written at its
+four call sites — split them and call site number five gets only one half.
 
-Two of the six transition points are worth stating explicitly, because both are the kind that get
-"simplified" out:
+⚠️ **`idle` is announced only when the loop will ACTUALLY park.** Not flicker avoidance: it is what makes
+`idle` mean "waiting for you" rather than "reached a yield point", and both consumers depend on the
+stronger meaning — `yield_external` wakes an external client on it, and the UI re-fetches JSONL on it.
 
-⚠️ **`idle` is announced only when the loop will ACTUALLY park (`!queue.hasPending`).** This is not
-flicker avoidance. It is what makes `idle` mean "waiting for you" rather than "reached a yield
-point", and both consumers depend on the stronger meaning: `yield_external` wakes an external client
-on it, and the UI re-fetches JSONL on it. It also keeps two provider test harnesses working — they
-script the loop by counting idles, and an unconditional announce adds a phantom startup idle that
-eats their first step.
+⚠️ **There is a `thinking` transition on the way OUT of idle, and the argument for omitting it was wrong
+in an instructive way.** The reasoning: every path leaving `handleImplicitYield` reaches the API block,
+so a second setter is unobservable — *the emitted event sequence is identical either way*. True, and
+irrelevant, because **consumers read the STORED value, not the event stream.** Without the transition
+the entire wake window reports `idle` for a loop that is provably not parked, and the documented
+`send_user_message → yield_external` workflow lands exactly there and is told the agent stopped working.
+**The structural fix is the dedupe, not the extra line**: `setActivity` early-returns on an unchanged
+state, which makes "an extra `setActivity` call is harmless" true, so you write a transition wherever the
+loop changes what it is doing and never reason about it again.
 
-⚠️ **There is a `thinking` transition on the way OUT of idle, and the argument for omitting it was
-wrong in an instructive way.** The reasoning was: every path leaving `handleImplicitYield` reaches
-the API block, so a second setter is unobservable — *the emitted event sequence is identical either
-way*. True about the event sequence, and irrelevant, because **consumers read the STORED value, not
-the event stream**. `yield_external`'s fast path and the connect-time snapshot both ask
-`session.activity` directly, so without the transition the entire wake window reports `idle` for a
-loop that is provably not parked, and the documented `send_user_message → yield_external` workflow
-lands exactly there and is told the agent stopped working. **The structural fix is the dedupe, not
-the extra line**: `setActivity` early-returns on an unchanged state, which makes "an extra
-`setActivity` call is harmless" a true statement, so you write a transition wherever the loop
-changes what it is doing and never reason about it again. Dedupe against a LOCAL rather than the
-session field, so the property also holds for a provider driven in a unit test with no session.
+**`agent_activity` is a broadcast-only delta and must never reach JSONL** — that is what makes "replaying
+history cannot fake-activate an agent" structurally true instead of corrected afterwards. A separate
+snapshot goes daemon→client on SSE connect, **sent even when empty**, because "nothing is running" is
+exactly what a client reconnecting after everything stopped needs in order to drop stale entries.
 
-**`agent_activity` is a broadcast-only delta and must never reach JSONL.** That is what makes
-"replaying history cannot fake-activate an agent" structurally true instead of corrected afterwards.
-A separate `agent_activity_snapshot` goes daemon→client on SSE connect, **sent even when empty**,
-because "nothing is running" is exactly the message a client reconnecting after everything stopped
-needs in order to drop stale entries. A delta rather than a snapshot per change because building a
-snapshot needs the tracker and the provider loop has none.
-
-⚠️ **A consumer that a grep for `activeAgents` does NOT find**, and the canonical local example of
-the by-name blindness described in *Changing code here*:
-
-1. `yield_external` subscribes to the `agent_idle` **event type name** in `WAKE_SIGNALS`
-   (`mcp-endpoint.ts`). It is matched now via a predicate on `agent_activity`
-   (`state === "idle" || state === null`), and **the reported reason string stays `"agent_idle"`
-   because that is the tool's external contract**, unrelated to our internal event names. In the
-   same file, ~15 lines apart, the fast path returns the *string* `"agent_idle"` off
-   `session.queue?.idle` — a different thing from the event type, and easy to conflate.
-⚠️ **There was a second — an idle-triggered re-fetch feeding Edit/Rewind — and it is gone entirely,
-not renamed. Do not re-add one.** The verdict is now computed IN RENDER from the pushed activity map
-(`isWorking(activity)` inside `LogEntryView`), so every `agent_activity` broadcast re-evaluates it
-for free; the other two inputs ride on the entry itself. A re-fetch would buy nothing and cost a
-wholesale replacement of the log — see the entry-key churn under *The activity log's scroll
-position*.
+⚠️ **A consumer that a grep for `activeAgents` does NOT find**, and the canonical local instance of the
+by-name blindness in *Changing code here*: `yield_external` subscribes to the `agent_idle` **event type
+name** in `WAKE_SIGNALS`. It is matched now via a predicate on `agent_activity`, and **the reported
+reason string stays `"agent_idle"` because that is the tool's external contract**, unrelated to our
+internal event names.
 
 ## An anomalous stop idles the agent silently
 
-An assistant turn that returns **thinking only** — no text block, no tool_call — makes the loop see
-`toolUses.length === 0`, treat it as end of turn, and implicitly yield. **With no user-visible
-signal.** The agent then waits for a message indefinitely, and a daemon restart just re-idles an
-implicit-yield agent rather than continuing it. For a root in conversation this is benign, because a
-human eventually pokes it. For an autonomous sub-agent nobody is watching it is an indefinite hang,
-and the parent's yield never wakes: the live case sat idle for **8 days**.
+An assistant turn returning **thinking only** — no text, no tool_call — makes the loop see
+`toolUses.length === 0`, treat it as end of turn, and implicitly yield **with no user-visible signal**.
+For a root in conversation this is benign; a human eventually pokes it. **For an autonomous sub-agent
+nobody is watching it is an indefinite hang, and the parent's yield never wakes: the live case sat idle
+for 8 days.** Our gap is that `getStopReason()` collapses every non-`end_turn` reason — `refusal`,
+`pause_turn`, `model_context_window_exceeded` — to `tool_use`. The guard (draft
+`01KXK69KKKGG4XHPH7EWGNY5AC`) is a persisted, user-visible error event **before** idling for any stop
+reason outside `{end_turn, tool_use}`, plus a bounded `pause_turn` continue.
 
-Our gap is that `getStopReason()` collapses every non-`end_turn` reason — including `refusal`,
-`pause_turn`, `model_context_window_exceeded`, `compaction` — to `tool_use`, and the loop idles
-without persisting or surfacing the anomaly. The guard (draft `01KXK69KKKGG4XHPH7EWGNY5AC`) is to
-emit a persisted, user-visible error event **before** idling for any stop reason outside
-`{end_turn, tool_use}`, plus a bounded `pause_turn` continue.
-
-⚠️ **Agent time perception is DATE-BLIND, and it fails confidently.** Context message timestamps are
-`[HH:MM:SS]` with no date. The 8-day agent woke and reported "~80 minutes", because 14:56 → 16:13
-looks same-day. **Ground truth is the epoch `ts` in the JSONL; the display stamps do not encode the
-date.** For any "how long was I stalled / when did this happen / is this stale" reasoning, read the
-epoch. Root hit the identical thing with an overnight test run whose `[22:06]` → `[11:04]` gap was
-invisible in the stamps and only inferable from anomalous test durations.
+⚠️ **Agent time perception is DATE-BLIND, and it fails confidently.** Context timestamps are `[HH:MM:SS]`
+with no date, so the 8-day agent woke and reported "~80 minutes" — 14:56 → 16:13 looks same-day.
+**Ground truth is the epoch `ts` in the JSONL.** Root hit the identical thing with an overnight test run
+whose `[22:06]` → `[11:04]` gap was only inferable from anomalous test durations.
 
 ---
 # Tools the Agent Calls
