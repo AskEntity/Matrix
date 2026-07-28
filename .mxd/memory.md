@@ -1448,12 +1448,10 @@ channel, which is where the mock picks it up.
 
 ## Where a project's data lives, and why it is in two places
 
-**`<repo>/.mxd/`** is tracked in the project's own repo: `config.json` (repo-scope), `memory.md`,
-`hooks/`, and `plugin/` if the project ships one.
-
-**`~/.mxd/`** is daemon runtime state on this machine and is never in git: global config, auth, the
-lock file, the web build cache, the project registry, and per project a `config.json` plus a
-plugin-namespaced data root.
+**`<repo>/.mxd/`** is tracked in the project's own repo: `config.json`, `memory.md`, `hooks/`, and
+`plugin/` if the project ships one. **`~/.mxd/`** is daemon runtime state on this machine and is
+never in git: global config, auth, the lock file, the web build cache, the project registry, and per
+project a `config.json` plus a plugin-namespaced data root.
 
 ```
 ~/.mxd/projects/<projectId>/
@@ -1465,171 +1463,120 @@ plugin-namespaced data root.
 ```
 
 ⚠️ **`tree.json` is deliberately NOT in the repo.** The tree mutates constantly and committing it
-would pollute history.
-
-The namespace exists so a second plugin's data parks beside matrix's rather than colliding at the
-top level, and it completes the "matrix is just a plugin" framing. Config merges in three layers,
-later overriding earlier: global `~/.mxd/config.json` < repo `<repo>/.mxd/config.json` < local
-`~/.mxd/projects/<id>/config.json`.
+would pollute history. The plugin namespace exists so a second plugin's data parks beside matrix's
+rather than colliding at the top level, which completes the "matrix is just a plugin" framing. Config
+merges in three layers: global < repo < local.
 
 **`src/data-paths.ts` is the ONE place that resolves a path from `dataRoot`.** Never apply a string
 operation to a `dataRoot` anywhere else — **any** spelling, not just `.slice(2)`; a grep test walks
-the whole repo and fails if a second site appears, with one named allowlist entry
-(`effectiveDataRoot`, which normalizes trailing slashes and returns a dataRoot rather than a path).
-Both halves of that audit were broken until 2026-07-25 and each was proven by planting rather than by
-reading: it walked only `src/`, so the very file that DEFINES `dataRoot` sat outside it, and it
-matched one literal spelling, so `.substring(2)` and `.replace("@/", "")` passed silently. See
-*Gates: a passing gate looks identical whether it read 8% or 100%*. Three lines of defence, and each
-one is there because the previous one might be relaxed:
-
-1. A strict regex at the input boundary (`/^@(\/[A-Za-z0-9_-]+)*$/`), checked at daemon startup and
-   at every resolve.
-2. One resolver, so a fix touches one file. There used to be four inline `.slice(2)` sites.
-3. A post-resolve invariant that the result is still inside the project root. ⚠️ Keep this even
-   though the regex already rejects traversal — `resolveDataRoot("@/../etc")` used to return
-   `dataDir/etc`, which is a cross-plugin attack, and belt-and-braces here is cheap.
+the whole repo and fails if a second site appears, with one named allowlist entry. Three lines of
+defence, and each is there because the previous one might be relaxed: a strict regex at the input
+boundary, one resolver so a fix touches one file, and a post-resolve invariant that the result is
+still inside the project root. ⚠️ **Keep the third even though the regex already rejects traversal** —
+`resolveDataRoot("@/../etc")` used to return `dataDir/etc`, which is a cross-plugin attack.
 
 ⚠️ **A malformed manifest is FATAL at startup, not a warning.** Import errors are recoverable (skip
 the plugin); validation errors are not. A malicious plugin declaring `dataRoot: "@/../etc"` must not
 be silently skipped while its legitimate siblings run.
 
-**Directory creation is lazy and happens at the owning plugin's data root.** The daemon used to
-eagerly `mkdir projects/<id>/tasks`, which hardcoded matrix's layout; `EventStore`'s constructor and
-`TaskTracker.save` now mkdir on first write. `tracker.save()` writes a temp sibling then renames,
-because POSIX rename is atomic and a crash mid-write must leave the old `tree.json` intact rather
-than truncated.
-
-Two gotchas that are not visible from the layout: a CLI tool reading JSONL directly must pass
-`"@/plugin/matrix"` to `projectTasksDir` rather than hardcoding `projects/<id>/tasks/`; and
-in-process test harnesses (`createApp` with no `dataRoot`) use the project-root layout by design,
-because they exercise runtime semantics rather than matrix's manifest — a daemon-level test goes
-through plugin discovery and does see the namespace.
+**Directory creation is lazy and happens at the owning plugin's data root** — the daemon used to
+eagerly mkdir `projects/<id>/tasks`, which hardcoded matrix's layout. `tracker.save()` writes a temp
+sibling then renames, because POSIX rename is atomic and a crash mid-write must leave the old
+`tree.json` intact rather than truncated.
 
 ## The node model: TaskNode | GeneralNode
 
 Runtime exposes exactly two node kinds, discriminated by a **required** `type: string` with no
-`undefined` fallback.
-
-- **TaskNode** (`type: "task"`) is launchable: session, git branch, lifecycle.
-- **GeneralNode** (any other string) is pure metadata plus tree position — no session, no lifecycle,
-  no agent. Matrix uses `"folder"` as its only flavour; another plugin could define `"chapter"`
-  without touching runtime code.
-
-`isTask` / `isGeneral` are runtime-exported type guards. **`isFolder` is matrix-plugin-local**, in
-`orchestrator-tools.ts` for the backend and `.mxd/plugin/web/types.ts` for the frontend, because
-"folder" is a matrix convention and not a runtime kind. There is no `FolderNode` type. The MCP tools
-keep their user-facing names (`create_folder` etc.) and are sugar over one general-node API,
-`tracker.addGeneralNode`, which throws on `"task"`.
-
-`status` and `metadata` live on **`BaseTaskNode`**, not on matrix's `TaskNode`. `status` is genuinely
-runtime-generic — `createNode` inits it, `updateStatus` mutates it, `load()` migrates it, and the
-default `shouldResume` keys on `in_progress` — so a plugin whose nodes are launchable inherits it and
-must not re-declare it. `metadata` is opaque: the runtime never reads it, only round-trips it.
-Persistence is free, because `save()` spreads all non-session fields and `load()` casts the raw
-object through; so is exposure through `get_task` / `get_tree`, because `stripSession` spreads
-everything.
-
-⚠️ **`tracker.setMetadata` REPLACES the whole object; it does not merge.** To update one key, read
-and spread. Same on the REST write path: `PATCH` with `metadata` absent leaves it untouched, but
-`PATCH` with a `metadata` object omitting a key makes that key DISAPPEAR. The caller sends the
-complete merged object. Deliberately **no** `metadata` param on MCP `create_task`/`update_task` —
-the only consumer is a plugin's REST UI, and an agent-facing opaque-metadata param is an imagined
-need.
-
-⚠️ **`load()` throws on a node with a missing `type`.** Every save writes it explicitly, so a
-typeless node means corrupted `tree.json` or a bug — not "legacy data" to be tolerated.
+`undefined` fallback. **TaskNode** (`type: "task"`) is launchable: session, git branch, lifecycle.
+**GeneralNode** (any other string) is pure metadata plus tree position. **Matrix uses `"folder"` as
+its only flavour, and "folder" is a matrix convention rather than a runtime kind** — which is why
+`isFolder` is plugin-local while `isTask`/`isGeneral` are runtime exports, why there is no
+`FolderNode` type, and why the folder MCP tools are sugar over one general-node API.
 
 ⚠️ **Folders must stay at ZERO behavior, forever.** Persistent tasks started as "just a flag" and
-grew into a disaster; this is the same shape. Every lifecycle operation (launch, done, close, reset,
-send_message) rejects folders at its entry point.
+grew into a disaster; this is the same shape. Every lifecycle operation rejects folders at its entry
+point.
+
+`status` and `metadata` live on **`BaseTaskNode`**, not on matrix's `TaskNode` — `status` is
+genuinely runtime-generic, and `metadata` is opaque: the runtime never reads it, only round-trips it.
+⚠️ **`tracker.setMetadata` REPLACES the whole object; it does not merge**, and the REST write path is
+the same — `PATCH` with `metadata` absent leaves it untouched, but `PATCH` with an object omitting a
+key makes that key DISAPPEAR. Deliberately **no** `metadata` param on MCP `create_task`/`update_task`:
+the only consumer is a plugin's REST UI, and an agent-facing opaque-metadata param is an imagined
+need.
 
 ⚠️ **`parentId` and task ownership are different questions, and 56 call sites had to be sorted into
 the two.** `parentId` is tree structure — UI, reparent, delete. `getTaskAbove()` / `getTasksBelow()`
 are task ownership — message routing, worktree branching, `task_complete` delivery — and **folders
-are transparent to ownership**. The one bug this audit found: a REST reorder endpoint used
+are transparent to ownership.** The one bug this audit found: a REST reorder endpoint used
 `getTask()` where it needed `get()`, because folders have children too.
-
-⚠️ **Use the POSITIVE type guard when destructuring after a guard.** `if (isGeneral(node)) return
-node; const {session, ...rest} = node;` started failing TS2700 once `status`/`metadata` moved up,
-because the negative narrowing collapsed `TaskNode` to `never`. `if (!isTask(node)) return node;`
-gives a concretely-narrowed `TaskNode` and identical runtime behavior.
-
-**Two hooks, two moments**: `seedTree(tracker, projectId)` runs once, only when a project's tree is
-first created, and is the worker-side complement to the daemon-side `onProjectInit` (which can
-create FILES but has no tracker, so it cannot create initial NODES). `onScopeResume` runs on every
-startup. Hooks receive `projectId` as well as `projectPath`, because a data-driven plugin needs the
-registry id to find its per-project data root while matrix only needs the checkout.
 
 ⚠️ **`JSON.stringify(TaskNode)` must NEVER include `session`** — it holds `messages[]`, `allTools`,
 the queue and an AbortController. Use `stripSession`. The failure is spectacular rather than subtle:
 a forked task with 700K tokens in `messages[]` updated its own description, produced a **2.95MB
-tool_result**, and doubled its own context from 735K to 1.75M until the API rejected it. Two of the
-four MCP tools returning a node were missing the strip.
+tool_result**, and doubled its own context from 735K to 1.75M until the API rejected it.
 
-**`DEFAULT_CONFIG` is `Object.freeze`d at module load** and `createApp()` defensive-clones it.
-Module-level constants must be frozen; a PATCH handler that mutates one poisons every later reader
-in the process.
+Three smaller facts: `load()` throws on a node with a missing `type`, so a typeless node means
+corrupted `tree.json` rather than "legacy data" to be tolerated; **use the POSITIVE type guard when
+destructuring after a guard** (`if (!isTask(node)) return node;`), because the negative narrowing
+collapses `TaskNode` to `never` once shared fields move up; and `DEFAULT_CONFIG` is `Object.freeze`d
+at module load, because a PATCH handler that mutates a module-level constant poisons every later
+reader in the process.
 
-**`baseBranch` is required when creating a worktree — no fallback.** The root node stores its branch
-at init and child worktrees branch from the parent's branch.
+**Two hooks, two moments**: `seedTree` runs once, only when a project's tree is first created, and is
+the worker-side complement to the daemon-side `onProjectInit` (which can create FILES but has no
+tracker, so it cannot create initial NODES). `onScopeResume` runs on every startup.
 
 ## The REST boundary must reuse the shared op, not re-implement it
 
 > **A REST route that touches a task lifecycle resource — session, JSONL, worktree, config — MUST
-> route through the same shared op the MCP path uses, or replicate its guard exactly.** Where they
-> drift, the REST side silently re-introduces a solved bug.
+> route through the same shared op the MCP path uses, or replicate its guard exactly. Where they
+> drift, the REST side silently re-introduces a solved bug.**
 
-That rule came from five bugs found together, all of them silent data loss rather than a crash, and
-the four that generalise are worth knowing individually:
+That rule came from five bugs found together, all of them silent data loss rather than a crash:
 
 ⚠️ **`c.json` does NOT throw on a live `session`.** SSE's `structuredClone` is *forced* to strip it,
-so the SSE path was safe by accident and every REST route returning a node was serializing the whole
+so the SSE path was safe by accident while every REST route returning a node serialized the whole
 queue, conversation and AbortController over the wire. One `serializeNode` helper now wraps every
-node response. **The lesson is that one transport's safety came from a constraint the other
-transport did not have.**
+node response. **The lesson is that one transport's safety came from a constraint the other transport
+did not have.**
 
-⚠️ **Worktree removal must use the STORED path and branch, never a re-slugified title.** Close,
-reset and delete used `wm.remove(node.id, slugify(node.title))`; a title can change after creation,
-so re-slugifying computes a different path and the real worktree is orphaned forever.
-`removeByPath(worktreePath, branch)` removes exactly what was stored.
+⚠️ **Worktree removal must use the STORED path and branch, never a re-slugified title.** Close, reset
+and delete used `slugify(node.title)`; a title can change after creation, so re-slugifying computes a
+different path and the real worktree is orphaned forever.
 
 ⚠️ **A config write must never be able to wipe credentials**, and it took three fixes because there
-were three doors. `PATCH /config/global` rejects null for any top-level field (global config is a
-COMPLETE config, so `delete next[k]` wrote an incomplete one). `createDaemon` RETHROWS a load
-failure instead of falling back to `{...DEFAULT_CONFIG}` — the silent fallback booted with empty
-`authGroups`, and the next save overwrote the on-disk credentials with nothing. And
-`loadGlobalConfig` distinguishes ENOENT (fresh install → defaults) from a read error or invalid JSON
-(throw), because the old single catch returned defaults for a CORRUPT file too, which is the same
-credential-wipe path with a different trigger.
+were three doors: `PATCH /config/global` rejects null for any top-level field (global config is a
+COMPLETE config, so `delete next[k]` wrote an incomplete one); `createDaemon` RETHROWS a load failure
+instead of falling back to `{...DEFAULT_CONFIG}`, because the silent fallback booted with empty
+`authGroups` and the next save overwrote the on-disk credentials with nothing; and `loadGlobalConfig`
+distinguishes ENOENT (fresh install → defaults) from a read error or invalid JSON (throw), because
+the old single catch returned defaults for a CORRUPT file too.
 
-⚠️ **`delete_task` must stop and await the running loop before cleanup.** It did neither what close
-does (reject `in_progress`) nor what reset does (await loop exit) — it went straight to removing the
-worktree under a live process, destroying unmerged work, and a pending `done()` then read
-`getTask() === undefined` in Phase 2 and hung the parent forever. Semantic chosen: reset-style
-("deleting a running task stops it first"), not close-style (reject).
-
-Same family, different layer — five lifecycle guards that were simply missing: the **root node**
-cannot be deleted, closed or reset (it is the tree anchor); `updateTaskOp` rejects `status: "closed"`
-and `status: "failed"`, because both are terminal states needing cleanup that a plain PATCH bypasses,
-leaking worktrees or orphaning Phase 2 (use `closeTaskOp`, or let `done("failed")` set it through
-`tracker.updateStatus`); REST `/message` and `/clarify` canonicalize a task-id prefix to the full id,
-validate the node exists and is a task rather than a folder, and reject `draft` the way MCP
-`send_message` always did.
+**`delete_task` must stop and await the running loop before cleanup.** It did neither what close does
+(reject `in_progress`) nor what reset does (await loop exit) — it removed the worktree under a live
+process, destroying unmerged work, and a pending `done()` then read `getTask() === undefined` in
+Phase 2 and hung the parent forever. Semantic chosen: reset-style, not close-style.
 
 ⭐ **The same principle one layer out: a rule enforced at one of two doors is enforced nowhere**,
 because the other accepts the same payload — and the second door is reliably the one nobody
-remembers. A message reaches the runtime through **`POST /projects/:id/tasks/:nodeId/message`**
-(`src/runtime/routes/tasks.ts`) and **`POST /projects/:id/tasks/:nodeId/edit`**
-(`.mxd/plugin/runtime.ts`); both take `images`, and `/clarify` does NOT and is not one of them.
-Both answer a text-less message with the same sentence, and `src/image-requires-text.test.ts`
-asserts both against ONE constant, so changing either wording alone reddens. Test both doors in one
-file against one app, and "I closed the door" can no longer quietly mean "I closed a door".
+remembers. A message reaches the runtime through **`POST …/message`** and **`POST …/edit`**; both take
+`images`, and `/clarify` does NOT and is not one of them. Both answer a text-less message with the
+same sentence asserted against ONE constant, so changing either wording alone reddens. **Test both
+doors in one file against one app, and "I closed the door" can no longer quietly mean "I closed a
+door".**
+
+Same family, different layer — lifecycle guards that were simply missing: the **root node** cannot be
+deleted, closed or reset; `updateTaskOp` rejects `status: "closed"` and `"failed"`, because both are
+terminal states needing cleanup that a plain PATCH bypasses; and REST `/message` and `/clarify`
+canonicalize a task-id prefix, validate the node is a task rather than a folder, and reject `draft`
+the way MCP `send_message` always did.
 
 ## Images
 
-`getImageDimensions(buffer)` parses PNG/JPEG headers, and `read_file` rejects anything over 8000px
-per dimension before it ever reaches a provider. Byte size is a provider-level concern
-(`validateImage?` on `ProviderAdapter`): Anthropic 5MB decoded, OpenAI 20MB.
+`getImageDimensions` parses PNG/JPEG headers, and `read_file` rejects anything over 8000px per
+dimension before it reaches a provider. Byte size is a provider-level concern (`validateImage?` on
+`ProviderAdapter`): Anthropic 5MB decoded, OpenAI 20MB.
 
 ---
 # Memory Index & Search
@@ -1637,116 +1584,101 @@ per dimension before it ever reaches a provider. Byte size is a provider-level c
 
 ## The search index — `src/task-index.ts`
 
-Indexes every task's **title**, **description** and **each done() round's result** at per-field,
-per-round granularity: one document per (task, field, round), id `${taskId}:${field}:${round}`, so
-every hit traces to an exact location and removal is targeted rather than a scan.
+**The tree accumulates decisions faster than anyone can remember them, so the index exists to make
+"has this been solved before" answerable instead of re-derived.** It indexes every task's **title**,
+**description** and **each done() round's result** at per-field, per-round granularity: one document
+per (task, field, round), so every hit traces to an exact location and removal is targeted rather
+than a scan.
 
-Orama (pure TS, no native deps) with the Mandarin tokenizer (jieba WASM) and EmbeddingGemma-300M
-768-dim embeddings. `mode: "hybrid"` fuses BM25 and cosine in one query and is cross-lingual in
-practice ("fix session recovery" ↔ "修复会话恢复" scores 0.81). If the embedding model fails to
-load it degrades to pure BM25, so the daemon is never blocked on a model download.
-
-⚠️ **Orama scores are higher = better.** The previous FTS5 engine was lower = better, so any
-comparison, sort or threshold carried over from that era is backwards.
+Orama (pure TS, no native deps) with the Mandarin tokenizer and EmbeddingGemma-300M embeddings, in
+`mode: "hybrid"` — BM25 and cosine fused in one query, cross-lingual in practice ("fix session
+recovery" ↔ "修复会话恢复" scores 0.81). If the model fails to load it degrades to pure BM25, so the
+daemon is never blocked on a model download. ⚠️ Orama scores are **higher = better**; the previous
+FTS5 engine was lower = better, so any comparison or threshold carried over from that era is
+backwards.
 
 ⭐ **Why the engine lives in `src/` and not in the plugin.** The red line is not "index code must sit
 in `.mxd/plugin/`" — `src/` is the neutral building-block layer. The real invariant is that
 **`src/runtime/*`, `runtime.ts` and `provider-shared.ts` contain ZERO occurrences of index / search /
-resultRounds, including in comments** (two hook comments had to be genericized because they said
-"search index"). The layout was then forced: `search_tasks` needs `availability: "both"`, the
-external-MCP list is built by `mcp-endpoint.ts` from `buildAllToolDefs()` in `orchestrator-tools.ts`,
-that is in `src/`, and `src/` may not import `.mxd/plugin/`. So the tool must be in
-`buildAllToolDefs` → the search function must be src-importable → the engine lives in `src/`.
+resultRounds, including in comments.** The layout was then forced: `search_tasks` needs
+`availability: "both"`, the external-MCP list is built from `buildAllToolDefs` in
+`orchestrator-tools.ts`, that is in `src/`, and `src/` may not import `.mxd/plugin/`. ⚠️ Likewise
+`onScopeResume` is named by EVENT, not by resource — that is what keeps the boundary grep clean.
 
-⚠️ **`onScopeResume(tracker, projectId)` is named by EVENT, not by resource**, and that is what keeps
-the boundary grep clean — no "index" or "search" token anywhere in the name. The runtime calls it
-once per project after the tracker loads and wraps it in try/catch; matrix's implementation happens
-to reconcile the index, and the runtime attaches no meaning to that. Its counterpart `seedTree` runs
-only on a fresh tree; this one runs every startup.
+**NEGATIVE RESULT, do not re-derive — except on a Bun upgrade, which is the only thing that can
+change it:** `bun:sqlite` **cannot** `loadExtension`. That killed the sqlite-vec plan and is why the
+vector phase went to a pure-TS engine. The FTS5 index that preceded Orama worked correctly; it was
+replaced for the vector story, not because it was broken.
 
 ### Staleness is a per-document content hash, and `updatedAt` was why boots got slower over time
 
 ⚠️ **Do not key staleness on `node.updatedAt`.** `task-tracker.ts` writes it in **16 places and only
-3 touch a field the index stores** (`updateTitle`, `updateDescription`, `appendResultRound`). A
-status transition, a cost update, assigning a worktree, or merely CREATING A CHILD — which bumps the
-**parent** — all marked a task stale. Two consequences explain the failure's shape: **the backlog
-grew with ACTIVITY rather than with content change, and it was only paid at boot**, so the longer
-the daemon stayed up the more expensive starting it became. Measured 2026-07-25: a full backfill
-took 4m13s against a 30s worker-init budget, and the daemon was unbootable for hours.
+3 touch a field the index stores.** A status transition, a cost update, or merely CREATING A CHILD —
+which bumps the **parent** — all marked a task stale. Two consequences explain the failure's shape:
+**the backlog grew with ACTIVITY rather than with content change, and it was only paid at boot, so
+the longer the daemon stayed up the more expensive starting it became.** A full backfill took 4m13s
+against a 30s worker-init budget, and the daemon was unbootable for hours.
 
-Staleness is now `sha256(v1 | model | dtype | text)` **per document** (per field, per round), stored
-in the sidecar as `{h, e}`. ⚠️ **Per-document is not a detail**: a whole-task hash re-embeds every
-result round because one word of the title changed, and the root task has dozens of rounds. Model
-identity is inside the hash, so a model or dtype change invalidates everything — which costs nothing
-on the day it happens (the rebuild runs in the background) and prevents **mixing two vector spaces
-in one index, a state that does not fail but returns plausible wrong answers.**
+Staleness is now `sha256(v1 | model | dtype | text)` **per document**. ⚠️ Per-document is not a
+detail: a whole-task hash re-embeds every result round because one word of the title changed, and the
+root task has dozens of rounds. Model identity is inside the hash, which prevents **mixing two vector
+spaces in one index — a state that does not fail, but returns plausible wrong answers.**
 
 ⚠️ **The second staleness clause is one-directional on purpose.** A document is stale if the hash
-differs, OR if it is stored without a real embedding (`e: false`) **and embeddings are now
-available**. Without that second clause the failure is permanent and silent: one offline first boot,
-or one run with `MXD_DISABLE_EMBEDDINGS`, writes zero vectors, the content hash calls them current
-forever, and the index serves keyword-only results with nothing anywhere reporting it. The reverse —
-embedded document, embeddings now disabled — is deliberately NOT stale, so turning embeddings off
-can never destroy vectors that already exist. Mutation-verified in both directions: making the
-clause symmetric fails exactly the "turning embeddings OFF does not destroy vectors" test.
+differs, OR if it is stored without a real embedding **and embeddings are now available**. Without
+that second clause the failure is permanent and silent: one offline first boot writes zero vectors,
+the content hash calls them current forever, and the index serves keyword-only results with nothing
+reporting it. The reverse — embedded document, embeddings now disabled — is deliberately NOT stale,
+so turning embeddings off can never destroy vectors that already exist.
 
-⚠️ **Migration treats "no hash" as UNKNOWN, not as stale.** An old sidecar has `indexedAt` and a flat
-id list; calling that stale would make **deploying this fix trigger the exact backfill it exists to
-prevent**, on every machine, on the next boot. The plan instead ADOPTS the current content's hash for
-documents the legacy entry already lists, without re-embedding — strictly no worse than what it
-replaces, because assuming those documents are current is precisely the claim `indexedAt` was
-already making. Documents the legacy entry does not list are genuinely absent and still get built.
+⚠️ **Migration treats "no hash" as UNKNOWN, not as stale.** An old sidecar has a flat id list, and
+calling that stale would make **deploying this fix trigger the exact backfill it exists to prevent**,
+on every machine, on the next boot. The plan instead ADOPTS the current content's hash for documents
+the legacy entry already lists — strictly no worse than what it replaces, because assuming those are
+current is precisely the claim the old sidecar was already making.
 
 ⭐ **The DB is persisted BEFORE the sidecar that claims it. Never the reverse.** Sidecar-first turns
 any failed `.msp` write into a silent permanent hole, because the sidecar says "indexed" and nothing
 ever revisits it. In the correct order every failure lands on "the sidecar is behind", which the next
-plan repairs — and **that is the whole reason an index write is safe to treat as loud-but-non-fatal.**
+plan repairs — **and that is the whole reason an index write is safe to treat as loud-but-non-fatal.**
 Renaming a task must not fail because search could not be written, and that trade is only honest
-because the failure is recoverable.
+because the failure is recoverable. ⚠️ **The invariant then bites you on the repair path**: because
+the sidecar can legitimately under-report the DB, the repair pass plans an `insert` for a document
+that is already there, and Orama's `insert` THROWS on a duplicate id — so the very failure the
+ordering exists to make recoverable would throw on the pass that recovers it. Remove before *every*
+insert.
 
-⚠️ **And the invariant then bites you on the repair path.** Because the sidecar can legitimately
-under-report the DB, the repair pass plans an `insert` for a document that is already there — and
-Orama's `insert` THROWS on a duplicate id. So the very failure the ordering exists to make
-recoverable would throw on the pass that recovers it. Fixed by removing before *every* insert, not
-only where the plan saw a prior document. Found by a test seeded with a legacy sidecar listing fewer
-ids than the index held; otherwise it surfaces only after a real crash in the write window.
+⚠️ **`onScopeResume` awaits the PLAN and nothing else, and the rule is categorical: anything that
+touches the `.msp` or the model is deferred — NOT "anything expensive."** `planIndex()` is pure and
+measured at 12ms for 1115 documents; `applyIndexPlan()` loads the 21MB index, lazily loads the model,
+and runs on a module-level **serialized** background chain so seven projects cannot backfill
+concurrently. **A cheapness judgement is something a future change gets wrong silently; a categorical
+rule can only be violated deliberately.** This matters because the worker's `ready` waits on
+autoResume, which awaits `onScopeResume`, and terminating the worker at that timeout is what took the
+daemon down.
 
-⚠️ **`onScopeResume` awaits the PLAN and nothing else, and the rule is categorical:
-anything that touches the `.msp` or the model is deferred — NOT "anything expensive."** `planIndex()`
-is pure (read the small sidecar, walk the tasks, hash each document, diff) and measured **12ms for
-1115 documents**. `applyIndexPlan()` loads the 21MB `.msp`, lazily loads the model at the first
-document that actually needs one, embeds and persists, on a module-level **serialized** background
-chain so seven projects cannot backfill concurrently. A cheapness judgement is something a future
-change gets wrong silently; a categorical rule can only be violated deliberately. This matters
-because `autoResumeProjects` awaits `onScopeResume` and the worker's `ready` waits on autoResume, so
-anything slow there spends the 30s init budget — and terminating the worker at that timeout is what
-took the daemon down.
+⭐ **Negative result, with its dependency, so it can be re-checked rather than inherited: do NOT batch
+embeddings across projects.** The expensive part — the model load — is *already* shared, because the
+pipeline is a module-level singleton and all projects live in one worker. Simulated on the real
+7-project tree: merging the small projects would save ~1-3s out of a 909s rebuild while coupling the
+projects and breaking the clean per-project plan/apply split. **An optimisation for a case your fix
+eliminates is dead code that looks like foresight** — ask when the case occurs *after* the change,
+not before. This inverts completely if the pipeline ever stops being a per-process singleton.
 
-⭐ **Negative result, with its dependency, so it can be re-checked rather than inherited: do NOT
-batch embeddings across projects.** The expensive part, the model load, is *already* shared —
-`getEmbeddingPipeline()` is a module-level singleton and all projects live in one worker. Simulated
-on the real 7-project tree: 64 batches today, 57 if the small projects merged, **saving ~1-3s out of
-a 909s rebuild** while coupling the projects and breaking the clean per-project plan/apply split.
-**An optimisation for a case your fix eliminates is dead code that looks like foresight** — ask when
-the case occurs *after* the change, not before. This inverts completely if `getEmbeddingPipeline()`
-ever stops being a per-process singleton.
+**Batching is length-sorted, and the sort is most of the win**, because a batch costs count × its
+longest member: on the real tree, tree order pads 1.49M chars to 4.74M char-equivalents while
+length-sorted pads to 1.58M.
 
-**Batching is length-sorted, and the sort is most of the win.** A batch costs count × its longest
-member, so a 4000-char result round interleaved with 31 titles makes all 32 cost 4000. Measured on
-the real tree: tree order pads 1.49M chars to **4.74M char-equivalents (3.2× waste)**; length-sorted
-pads to 1.58M (1.1×).
-
-⚠️ **SYMPTOM, known and unfixed: the index is case-sensitive.** `"Uppercase Widget Title"` is found
-by `Uppercase` and `Widget` and **not** by `uppercase` or `widget` — the mandarin tokenizer does not
-lowercase. Pre-existing; fixing it re-tokenizes every stored document.
+⚠️ **SYMPTOM, known and unfixed: the index is case-sensitive.** `"Uppercase Widget Title"` is found by
+`Widget` and **not** by `widget` — the mandarin tokenizer does not lowercase. Fixing it re-tokenizes
+every stored document.
 
 ### ⚠️ Choosing an embedding device: `auto` is the obvious answer and it silently corrupts the index
 
-On darwin, transformers.js resolves `device: "auto"` to `["coreml","webgpu","cpu"]`, so CoreML claims
-the graph — and **CoreML returns a 768-dim vector of NaN, L2 norm 0, for most inputs. Nothing
-raises.** `searchIndex`'s NaN-score guard then quietly redoes every query as pure BM25, so the
-product keeps working with semantic search deleted and no error anywhere. `auto` is also 7.4× slower
-than CPU.
+On darwin, transformers.js resolves `device: "auto"` to CoreML first — and **CoreML returns a 768-dim
+vector of NaN, L2 norm 0, for most inputs. Nothing raises.** The NaN-score guard then quietly redoes
+every query as pure BM25, **so the product keeps working with semantic search deleted and no error
+anywhere.** `auto` is also 7.4× slower than CPU.
 
 ⭐ **The failure is deterministic per input and NOT monotonic in length**, and this table is the
 load-bearing part:
@@ -1763,174 +1695,109 @@ inputs of different shapes through BOTH `embed` and `embedMany`, requiring every
 right-dimension and non-degenerate — batched separately, because **a batch is padded to its longest
 member, so a document that is finite alone is not necessarily finite in company.**
 
-⚠️ **Do not log `session.config.device`.** It reports the device that was REQUESTED, so it prints
-"coreml" just as confidently while emitting NaN. Log what was *proven*.
-
 ⭐ **Non-monotonic forecloses the workarounds, which is why "we don't know why" is a complete result
 rather than an unfinished investigation.** A length threshold would invite chunking, capping, or
 probing at the boundary — any of which could be made to look like it works. With no cheap input
-property that predicts the verdict, rejecting the device is the only sound response.
-
-**Negative results on the CoreML knobs, so nobody spends the afternoon again**: `mlComputeUnits:
-CPUOnly` / `CPUAndGPU`, `modelFormat: MLProgram + mlComputeUnits: ALL`, and
-`allowLowPrecisionAccumulationOnGPU: "0"` — **every one still NaN.** MLProgram is the documented fix
-for the FP16 cast and is either not reachable through transformers.js or not sufficient; ORT ignores
-unknown option keys silently, so those two cannot be distinguished from here.
-
-⚠️ **"webgpu vs coreml" is not "GPU vs not-GPU."** Both reach the same Metal GPU — webgpu via Dawn,
-CoreML via its own compiler; CoreML's extra reach is the ANE. **There is no MPS execution provider in
-ONNX Runtime** (that is a PyTorch concept), verified from the installed library rather than recalled:
-`listSupportedBackends()` returns cpu / webgpu / coreml, and the dylib exports zero metal symbols.
+property that predicts the verdict, rejecting the device is the only sound response. **Negative
+results on the CoreML knobs, so nobody spends the afternoon again**: `mlComputeUnits: CPUOnly` /
+`CPUAndGPU`, `modelFormat: MLProgram`, and `allowLowPrecisionAccumulationOnGPU: "0"` — **every one
+still NaN.** (`coreml` + `dtype: "fp16"` IS clean, because there is nothing left to convert — and it
+changes no decision, since fp16 doubles the weights and **`webgpu` + `fp16` does not even load.**)
 
 > ⭐ **webgpu is chosen for CPU CONTENTION, not for wall-clock — and on the real corpus it is 30%
-> SLOWER in wall-clock.** Full rebuild of 1115 documents / 1.49M chars: **cpu 697s wall / 3044s CPU;
-> webgpu 909s wall / 38.8s CPU.** 3044s of CPU is 4.4 cores saturated for twelve minutes next to
-> live agents, because the backfill runs alongside them. 38.8s is invisible. Anyone "optimising" this
-> back to wall-clock will pick cpu and starve the machine.
+> SLOWER in wall-clock.** Full rebuild of 1115 documents: **cpu 697s wall / 3044s CPU; webgpu 909s
+> wall / 38.8s CPU.** 3044s of CPU is 4.4 cores saturated for twelve minutes next to live agents,
+> because the backfill runs alongside them. 38.8s is invisible. **Anyone "optimising" this back to
+> wall-clock will pick cpu and starve the machine.**
 
-Four gotchas, three of them environmental:
+⚠️ **Do not log the REQUESTED device.** It prints "coreml" just as confidently while emitting NaN. Log
+what was *proven*. And note **"webgpu vs coreml" is not "GPU vs not-GPU"** — both reach the same Metal
+GPU; CoreML's extra reach is the ANE. **There is no MPS execution provider in ONNX Runtime** (that is
+a PyTorch concept), verified from the installed library rather than recalled.
 
-- ⚠️ **NaN scores trigger an automatic BM25 retry.** Documents indexed without a working embedding
-  pipeline get a zero vector; cosine on a zero vector is `0/0 = NaN` and hybrid fusion inherits it,
-  so *every* hit comes back `NaN`. `searchIndex` checks for a non-finite score and redoes the whole
-  search as pure fulltext.
-- ⚠️ **`MXD_DISABLE_EMBEDDINGS` exists because of a process-killing NAPI bug**, not for speed.
-  `@huggingface/transformers` has a static `import * as ONNX_NODE from "onnxruntime-node"` at module
-  scope; loading it registers the NAPI backend, and worker teardown then hits
-  `NAPI FATAL ERROR: Error::New napi_create_error` → SIGTRAP → **the whole test process dies.** The
-  env var short-circuits the pipeline so the backend is never registered. It must be passed to
-  workers via the Worker constructor's `env` option (see *Two transport bugs that corrupt
-  silently*, Daemon region — a `bunfig.toml [test.env]` entry does NOT reach a Worker). Priority is
-  explicit mock > env var > lazy load, so a test can still exercise hybrid paths with a mock while
-  the var is set.
-- ⚠️ **`sharp`/`libvips`**: Bun's global cache puts libvips at a versioned path sharp cannot find.
-  `scripts/fix-sharp-libvips.sh` symlinks it and is wired as `postinstall`.
-- ⚠️ **Orama's `where` only filters `enum` fields** and has no `ne` on them; `string`-typed fields
-  silently return empty. That is why all metadata lives in the sidecar and no query uses `where`.
-
-**`search_tasks` enriches from the tracker, not from the index**: each hit gets the task's CURRENT
-title via a fresh `getTask`, and hits whose task has been deleted are dropped.
-
-**NEGATIVE RESULT, do not re-derive — except on a Bun upgrade, which is the only thing that can
-change it:** `bun:sqlite` **cannot** `loadExtension`. Smoke-tested;
-`new Database(":memory:").loadExtension("x")` throws *"This build of sqlite3 does not support
-dynamic extension loading"*, and that one line is the whole re-check. That killed the sqlite-vec
-plan and is why the vector phase went to a pure-TS engine. The FTS5 index that preceded Orama
-worked correctly (MATCH, bm25, snippet, DELETE-by-column all verified); it was replaced for the
-vector story, not because it was broken.
+⚠️ **`MXD_DISABLE_EMBEDDINGS` exists because of a process-killing NAPI bug, not for speed** — see
+*An ORT session dies with the thread it lives on*. It must be passed to workers via the Worker
+constructor's `env` option; a `bunfig.toml [test.env]` entry does NOT reach a Worker.
 
 ## Retrieval that nobody acts on ⇒ guidance goes where the DECISION is
 
 Three surfaces inject prior art: `work_context`'s `[Related past tasks]`, `create_task`'s
-`[Related existing tasks]`, and `search_tasks`' tiered output (2 full hits + up to 5 one-line briefs,
-hard-capped at 8000 chars to protect the context window). All three worked and produced real hits.
-None of them said what to do with a hit, so the block read as a return value: scanned, then dropped.
-**Root's count for one day: `create_task` called 8 times, block returned 8 times, behaviour changed
-0 times, `search_tasks` called 0 times.**
+`[Related existing tasks]`, and `search_tasks`' tiered output. All three worked and produced real
+hits. **None of them said what to do with a hit, so the block read as a return value: scanned, then
+dropped. Root's count for one day: `create_task` called 8 times, block returned 8 times, behaviour
+changed 0 times, `search_tasks` called 0 times.**
 
 > ⭐ **Put the guidance where the decision is made. If the agent ASKED for the data, the tool
 > description reaches it in time — it still holds the intent it called with. If the data arrives
 > UNREQUESTED, only the payload reaches it.**
 
-So the guidance lives in `search_tasks`' description (asked for) and in the two block headers
-(unrequested), with no duplicated paragraph. ⚠️ **The bash "don't pipe" precedent does NOT transfer**:
-that decision is made while CONSTRUCTING the call, so the description is its decision moment. A
-description read before the call is guidance about something that does not yet exist in the agent's
-world.
-
-⚠️ **Matrix-specific tiebreaker, worth knowing on its own: tool descriptions are frozen in
-`session_config` until a compaction refreshes them, so a description change does not reach a running
-agent. Handler output reaches everyone on the next call.** For a fix motivated by "this failed
-today", that is decisive.
+⚠️ **The bash "don't pipe" precedent does NOT transfer**: that decision is made while CONSTRUCTING the
+call, so the description is its decision moment. A description read before the call is guidance about
+something that does not yet exist in the agent's world. ⚠️ **Matrix-specific tiebreaker, worth knowing
+on its own: tool descriptions are frozen in `session_config` until a compaction refreshes them, so a
+description change does not reach a running agent. Handler output reaches everyone on the next call.**
+For a fix motivated by "this failed today", that is decisive.
 
 **The two block headers are different sentences on purpose**, because the readers can do different
 things. `create_task`'s reader is ROUTING — it just made a task and is deciding where the work should
-live, so its menu is fold-the-conclusion-into-this-description (most common, and the one agents
-skip), fork, `send_message` the found task and delete this one, or nothing. `work_context`'s reader
-is already ASSIGNED the work and is deciding how to do it: read before re-deriving, and if a hit
-already tried the approach it is about to take, **surface that upward** rather than obeying or
-ignoring it. Three capability facts were verified rather than assumed, because the hypothesis handed
-over was half wrong: a working agent **cannot** `send_message` the task it found (the handler's
-direction check allows only ancestors and direct sub tasks); it **can** update its own task
-description; and it **can** `fork_task_context` (only the TARGET is subtree-restricted, the source
-is free) but only into a sub task it creates, so forking is a dispatch move rather than a
-use-this-knowledge move.
+live. `work_context`'s reader is already ASSIGNED the work and is deciding how to do it: read before
+re-deriving, and if a hit already tried the approach it is about to take, **surface that upward**
+rather than obeying or ignoring it. Three capability facts were verified rather than assumed: a
+working agent **cannot** `send_message` the task it found, it **can** update its own description, and
+it **can** `fork_task_context` only into a sub task it creates — so forking is a dispatch move rather
+than a use-this-knowledge move.
 
-⭐ **"Latest result" is the LAST round, and the last round is often trivial.** This is the single
-fact that makes an excerpt block structurally unable to answer anything. A real hit had 3 rounds:
-round 0 was the whole implementation, rounds 1-2 were CSS tweaks, so the block advertised the task
-as *"Restyled search hits as card-style items: background: var(--bg-subtle…)"* and everything worth
-reading was invisible. That is the shape of any task reawakened for follow-up, which is most closed
-tasks of any size. Hence the ordering inside the header: **the "these are excerpts and cannot tell
-you what a task concluded" reframe comes FIRST**, so the hits are read as an index. Put it after the
-hits and the agent has already formed a judgement from the excerpts.
+⭐ **"Latest result" is the LAST round, and the last round is often trivial.** This single fact makes
+an excerpt block structurally unable to answer anything: a real hit had 3 rounds, round 0 was the
+whole implementation, rounds 1-2 were CSS tweaks, so the block advertised the task as *"Restyled
+search hits as card-style items"* and everything worth reading was invisible. That is the shape of
+any task reawakened for follow-up, i.e. most closed tasks of any size. Hence the ordering inside the
+header: **the "these are excerpts and cannot tell you what a task concluded" reframe comes FIRST**, so
+the hits are read as an index — put it after the hits and the agent has already formed a judgement.
 
 **The reading rule that prevents a NEW error**: a past round is *a measurement plus a judgement made
 at the time*. The measurement usually still holds; the judgement may already be void — **and a new
-task on the subject is often itself the evidence that intent changed.** An agent that reads "we
-tried this and reverted" as a prohibition abandons a road it is currently supposed to walk.
+task on the subject is often itself the evidence that intent changed.** An agent that reads "we tried
+this and reverted" as a prohibition abandons a road it is currently supposed to walk.
 
 ⚠️ **An instruction you cannot execute is decoration.** Both fixes here are only worth doing BECAUSE
-the header now says "get_task these": the block prints the **full taskId** rather than
-`slice(0,12) + "…"` (12 chars resolves, the ellipsis does not, and a pasteable id costs ~70 chars),
-and dead hits are dropped rather than rendered as title `"unknown"` with a real-looking but
-unresolvable id.
+the header now says "get_task these": the block prints the **full taskId** rather than a truncated
+one (12 chars resolves, an ellipsis does not), and dead hits are dropped rather than rendered with a
+real-looking but unresolvable id.
 
 ⚠️ **Root's stated evidence did not support root's conclusion; a different fact did.** The argument
 offered was "I read the tool description and still dropped the block" — but `create_task`'s
 description had never mentioned the block, so that is evidence that an unexplained block does not
 self-explain, not evidence about description-placed guidance. The real support was next door: the
 system prompt already says "Search before building", and `search_tasks` was called 0 times that day.
-**Check that a conclusion's stated reason is the one actually carrying it, especially when you
-already agree with the conclusion.**
-
-⚠️ **Two mutations here mask each other and must be run SEPARATELY.** Reverting the full-id render
-and removing the dead-hit filter at the same time leaves the dead-hit test green, because it asserts
-`not.toContain(goneChild.id)` and a prefix render does not contain the full id. And the work_context
-assertion must be scoped to the block (`content.slice(content.lastIndexOf("[Related past tasks]"))`)
-— **work_context also preloads memory.md, which contains both the marker and the word `get_task`, so
-an unscoped `toContain` passes no matter what.**
-
-This does **not** replace draft `01KNZGYY4T6SYWVT66DK13XCPV` (a required `origin` param on
-`create_task`) and cannot: the block is **structurally late**, because the task already exists by the
-time the agent learns a related one does. Everything here is recovery. What changes is the evidence
-that draft needs — its premise was "prompt alone cannot fix this", and until now no prompt had tried.
-
-**`searchIndexSync` now has zero production callers.** It was written for a then-synchronous
-`buildWorkContext` and orphaned when that hook went async; only its own tests use it. Deleting a
-public export is its own decision, drafted as `01KYB46KTMNTW8E48YHE3KVXSR`.
+**Check that a conclusion's stated reason is the one actually carrying it, especially when you already
+agree with the conclusion.**
 
 ## Every hit says what it IS before its body is read
 
-The section above made the three blocks say what to DO with a hit. This one makes each hit say what
-it is — status, both dates, and for a terminal task whether it ever actually ran. Same three
-surfaces, and they now share the vocabulary in `src/search-hit-format.ts` instead of spelling it out
-three times, because a rule enforced at two of three renderers is enforced nowhere: the third goes on
-handing out the old shape to a reader who cannot tell which renderer produced it.
-`scripts/render-hit-samples.ts` renders all three against the real tree and the real index, which is
-the only way to answer the question that actually decides this design — scanning the output, can you
-separate a proposal from a finished task in the half-second it gets?
+The section above made the blocks say what to DO with a hit. This one makes each hit say what it is —
+status, both dates, and for a terminal task whether it ever actually ran. All three surfaces share the
+vocabulary in `src/search-hit-format.ts`, because **a rule enforced at two of three renderers is
+enforced nowhere**: the third goes on handing out the old shape to a reader who cannot tell which
+renderer produced it.
 
 **Status LEADS the line now.** It was always rendered, at the END of the first line, where a long
 title pushes it to the right margin and the next thing the eye meets is a 300-char `Description:`
-that reads like a conclusion. Measured cost of that placement: a `draft` whose description held a
-real measurement AND a never-executed proposal, separated from a finished task by four characters at
-the far right of the line.
+that reads like a conclusion. Measured cost of that placement: a `draft` whose description held a real
+measurement AND a never-executed proposal, separated from a finished task by four characters at the
+far right of the line.
 
-⚠️ **`updatedAt` renders as `record touched`, never as "last active", and the LABEL is the whole
-fix** — the field was always renderable. `task-tracker.ts` writes it in 16 places and 3 of them touch
-content; a status flip, a cost update, or merely creating a CHILD (which bumps the parent) all
-refresh it. Labelled as activity it shows an April task as worked-on today, which is worse than
-having no date: an authoritative-looking wrong number. `createdAt` is always beside it because it
-cannot drift. Both carry a relative age (`2026-04-01 (4mo ago)`), and that half is load-bearing
-rather than decorative — agents are date-blind and confident about it, so an absolute date alone
-re-runs the failure the date was added to fix.
+⚠️ **`updatedAt` renders as `record touched`, never as "last active", and the LABEL is the whole fix**
+— the field was always renderable. It is written in 16 places and 3 of them touch content, so labelled
+as activity it shows an April task as worked-on today, which is worse than having no date: an
+authoritative-looking wrong number. `createdAt` is always beside it because it cannot drift, and both
+carry a relative age, which is load-bearing rather than decorative — **agents are date-blind and
+confident about it**, so an absolute date alone re-runs the failure the date was added to fix.
 
 ⭐ **"Did it ever execute" is the UNION of three signals, not a choice among them — and it is the one
 thing here someone will try to simplify.** Each is one-directional POSITIVE evidence: a session file,
 a recorded cost and a reported round can only exist if the task ran. So OR-ing them cannot produce a
-false "ran", while every single member produces false "never ran"s. Measured on this repo's tree,
-2026-07-27:
+false "ran", while every single member produces false "never ran"s.
 
 | signal | really answers | its blind spot |
 |---|---|---|
@@ -1939,51 +1806,30 @@ false "ran", while every single member produces false "never ran"s. Measured on 
 | session JSONL | did it ever HAVE a session? | one closed task had a cost and no file — a session can be cleared by hand or by `reset_task` |
 
 `resultRounds` is the member that looks right, being literally "it finished and reported", and alone
-it would have relabelled **88% of this repo's executed history as an unexecuted proposal** — the
-worst answer available, because it is precisely backwards about what the description means. A live
-instance sits in the samples: one closed task that burned **$9.52 has zero rounds**, one metre from a
-closed task that genuinely never ran. ⚠️ `branch` / `worktreePath` cannot be used at all — close
-nulls them.
-
-**The marker is rendered on `closed` and `failed` only.** Terminal-status rather than a case list:
-while a status is live the question is still open, so the marker would be transient noise. It is also
-the only place both answers are common — 417 ran / 23 not for closed, against draft 2/104 and pending
-1/8, where a marker carries no information.
+it would have relabelled **88% of this repo's executed history as an unexecuted proposal** — the worst
+answer available, because it is precisely backwards about what the description means. ⚠️ `branch` /
+`worktreePath` cannot be used at all — close nulls them. The marker is rendered on `closed` and
+`failed` only: while a status is live the question is still open.
 
 ⚠️ **Dedup runs BEFORE the full/brief tier split, not after.** A real `search_tasks(limit 6)`: three
-tasks filled all six slots, one of them appearing once as a full entry and once as a brief one with
-its entire `Description:` paragraph repeated verbatim. Dedup afterwards leaves the slot arithmetic
-running on the duplicates. Merge the duplicates' field labels into the survivor
-(`Matched: description, title`) instead of dropping them — matching on two fields is relevance
-evidence, and it is the only thing the discarded hits carried. The tier is counted over RENDERED
-entries for the same reason: a hit whose task has left the tree used to consume a full slot and
-silently demote the next real one to brief.
+tasks filled all six slots, one appearing once as a full entry and once as a brief one with its entire
+`Description:` repeated verbatim. Merge the duplicates' field labels into the survivor rather than
+dropping them — matching on two fields is relevance evidence, and it is the only thing the discarded
+hits carried.
 
 ⭐ **Dedup is unconditional, and the objection against that is worth keeping because it is a good
-one.** `search_tasks` advertises "the best-matching LOCATIONS … WHICH field matched, the round
-index", so two hits inside one task ARE two answers there and collapsing them reads as a regression
-against the tool's own promise — which is why a per-caller `distinctTasks` flag was proposed first.
-It is not a regression, because **the locations survive**: merging keeps every label, round indices
-included (`Matched: result round 0, result round 3`), so every place inside the task that matched is
-still named. What dedup drops is a second copy of the same 500-char `Description:` and a second
-score, neither of which was ever a location. The promise is kept once it is read as *locations*
-rather than as *excerpts* — which is also what the header says these blocks are, so the two callers
-turned out to want the same thing and the flag was not needed.
-
-⚠️ **CORRECTION to the section above**: it describes `search_tasks`' output as "2 full hits + up to 5
-one-line briefs". Two things have drifted — the 2/5 split is `create_task`'s (`search_tasks` is
-`min(5, limit)` full), and the unit is now TASKS rather than hits.
+one.** `search_tasks` advertises "the best-matching LOCATIONS … WHICH field matched, the round index",
+so two hits inside one task ARE two answers there, and collapsing them reads as a regression against
+the tool's own promise. It is not, **because the locations survive**: merging keeps every label, round
+indices included, so every place inside the task that matched is still named. What dedup drops is a
+second copy of the same 500-char description and a second score, neither of which was ever a location.
 
 ⭐ **Instrument note, reusable far beyond this: a uniform answer across a whole population is the
 signature of a broken instrument, not a finding.** The first probe of the three signals reported
-"session JSONL exists" as **false for all 551 tasks** — `tree.json`'s `nodes` is an ARRAY, and
-reading it with `Object.entries` hands back indices as ids, so every `existsSync` missed a file that
-was there. Believed, it would have "proved" the JSONL signal useless and handed the decision to
-`resultRounds`, i.e. to the 88% error above. The probe now asserts its own premise — nodes is an
-array, a sampled id matches the ULID shape — before it reports anything. Smaller sibling from the
-same afternoon: a budget line counted entries by a leading `- ` and reported 7 for 5, because
-description bodies contain markdown bullets. Leading every entry with `[status]` is also what makes
-an entry distinguishable from the prose inside one.
+"session JSONL exists" as **false for all 551 tasks** — `tree.json`'s `nodes` is an ARRAY, and reading
+it with `Object.entries` hands back indices as ids, so every `existsSync` missed a file that was there.
+Believed, it would have "proved" the JSONL signal useless and handed the decision to `resultRounds`,
+i.e. to the 88% error above. **The probe now asserts its own premise before it reports anything.**
 
 ---
 # Daemon, Worker & Transport
