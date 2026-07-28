@@ -399,15 +399,34 @@ export async function closeTaskOp(
 		);
 	}
 
+	// The ONLY refused status, and it is a subtraction rather than a whitelist:
+	// closing pulls the worktree out from under a live agent. Everything else
+	// closes — including draft and pending, which own no worktree, no branch
+	// and no session. Close means two things at once ("reclaim the resources"
+	// and "take it out of the active pool"); for a resourceless task only the
+	// second applies and the first is a NO-OP, not a contradiction. The old
+	// verify-or-failed whitelist read that no-op as a reason to refuse, which
+	// left draft and pending with NO path to a terminal state at all —
+	// update_task rejects `status: "closed"` and points at close_task, and
+	// close_task then refused. A superseded draft could only be marked done by
+	// writing "[resolved]" into its TITLE, which encodes state in a string
+	// that no status filter can see.
+	//
+	// ⚠️ Do NOT put "stop it first" back into this message. `stopTask` does not
+	// touch status — a stopped task stays in_progress precisely so it can
+	// resume — so stopping lands the caller back on this same error, and an
+	// agent cannot stop a task anyway (there is no stop tool). Nor should this
+	// offer `reset_task`: it does unblock the close (→ pending → closable) and
+	// it discards the session and the worktree, which is not a trade to hand
+	// someone who only wanted to close a task.
+	//
+	// An error answers one question — what do I do now. Here the answer is
+	// "wait", so the message is "wait". Naming the roads that do not work, or
+	// the destructive one nobody asked for, is completeness rather than
+	// instruction.
 	if (node.status === "in_progress") {
 		throw new TaskOperationError(
-			"Cannot close a running task. Stop it first or wait for done().",
-		);
-	}
-
-	if (node.status !== "verify" && node.status !== "failed") {
-		throw new TaskOperationError(
-			`Cannot close a task with status "${node.status}". Only verify or failed tasks can be closed.`,
+			"Cannot close a running task — wait for it to finish.",
 		);
 	}
 

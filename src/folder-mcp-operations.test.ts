@@ -606,6 +606,28 @@ describe("folder-aware: close_task", () => {
 		expect(tracker.getTask(task.id)?.status).toBe("closed");
 	});
 
+	test("close a superseded DRAFT through the tool → succeeds, record intact", async () => {
+		// The journey this exists for: a draft's work got done inside another
+		// task, so the draft should leave the active pool WITHOUT losing the
+		// decision its description records. Before, there was no path at all —
+		// `update_task {status:"closed"}` answered "use close_task instead" and
+		// close_task refused anything but verify/failed, so the outcome ended
+		// up written into the TITLE, where no status filter can see it.
+		const agent = tracker.addTask("agent", "");
+		const draft = tracker.addChild(agent.id, "superseded idea", "why it mattered", {
+			draft: true,
+		});
+		expect(tracker.getTask(draft.id)?.status).toBe("draft");
+
+		const result = await invokeCloseTask(agent.id, { taskId: draft.id });
+
+		expect(result.isError).toBeFalsy();
+		expect(tracker.getTask(draft.id)?.status).toBe("closed");
+		// Closing is not deleting — the record and its reasoning survive.
+		expect(tracker.getTask(draft.id)?.title).toBe("superseded idea");
+		expect(tracker.getTask(draft.id)?.description).toBe("why it mattered");
+	});
+
 	test("close folder → fails (folders cannot be closed)", async () => {
 		const agent = tracker.addTask("agent", "");
 		const folder = tracker.addGeneralNode("Folder", agent.id, "folder");

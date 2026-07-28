@@ -22,6 +22,7 @@ import {
 } from "./task-operations.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { TurnInterrupt } from "./turn-interrupt.ts";
+import type { TaskStatus } from "./types.ts";
 
 let tempDir: string;
 let tracker: TaskTracker;
@@ -564,89 +565,170 @@ describe("deleteTaskOp", () => {
 // ── closeTaskOp ──
 
 describe("closeTaskOp", () => {
-	test("closes passed regular task — sets status to closed", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Task", "", {
+	/**
+	 * What close does with each status, as a SUBTRACTION with one member:
+	 * `in_progress` is refused because closing pulls the worktree out from
+	 * under a live agent. Everything else closes.
+	 *
+	 * A Record over the whole TaskStatus union rather than a list of cases —
+	 * adding a status to the union fails TYPECHECK right here until someone
+	 * decides what close does with it. A hand-written list of cases would
+	 * silently not cover it, which is how an addition list stops covering
+	 * things without anything going red.
+	 */
+	const CLOSE_BY_STATUS: Record<TaskStatus, "closes" | "refused"> = {
+		draft: "closes",
+		pending: "closes",
+		in_progress: "refused",
+		verify: "closes",
+		failed: "closes",
+		closed: "closes",
+	};
+
+	for (const [status, outcome] of Object.entries(CLOSE_BY_STATUS) as Array<
+		[TaskStatus, "closes" | "refused"]
+	>) {
+		test(`${status} → ${outcome === "closes" ? "closed" : "refused"}`, async () => {
+			const task = tracker.addChild(tracker.rootNodeId, status, "", {
+				editedBy: "agent",
+			});
+			tracker.updateStatus(task.id, status);
+
+			if (outcome === "refused") {
+				await expect(
+					closeTaskOp(tracker, task.id, makeCallbacks()),
+				).rejects.toThrow("Cannot close a running task");
+				expect(tracker.getTask(task.id)?.status).toBe(status);
+				return;
+			}
+
+			const result = await closeTaskOp(tracker, task.id, makeCallbacks());
+
+			expect(result.taskId).toBe(task.id);
+			expect(tracker.getTask(task.id)?.status).toBe("closed");
+		});
+	}
+
+	test("no worktree → pure status flip; the SAME call still removes one when it exists", async () => {
+		const removed: Array<{ worktreePath: string; branch: string }> = [];
+		const removeWorktree = async (
+			_taskId: string,
+			worktreePath: string,
+			branch: string,
+		) => {
+			removed.push({ worktreePath, branch });
+		};
+
+		// A draft owns no worktree, no branch and no session — assert the
+		// fixture really is resourceless, or this test could pass while
+		// measuring nothing.
+		const draft = tracker.addChild(tracker.rootNodeId, "Draft", "", {
 			editedBy: "agent",
 		});
-		tracker.updateStatus(task.id, "verify");
+		tracker.updateStatus(draft.id, "draft");
+		expect(tracker.getTask(draft.id)?.worktreePath).toBeFalsy();
+		expect(tracker.getTask(draft.id)?.branch).toBeFalsy();
+		expect(tracker.getTask(draft.id)?.session).toBeUndefined();
 
-		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
+		await closeTaskOp(tracker, draft.id, {
+			...makeCallbacks(),
+			removeWorktree,
+		});
+		expect(removed).toEqual([]);
+		expect(tracker.getTask(draft.id)?.status).toBe("closed");
 
-		expect(result.taskId).toBe(task.id);
-		const node = tracker.getTask(task.id);
-		expect(node?.status).toBe("closed");
-	});
-
-	test("verify → closed for regular tasks", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Verified", "", {
+		// POSITIVE CONTROL, in the same test: "removeWorktree was not called"
+		// is only evidence if this build calls it at all. The guard keys on
+		// the RESOURCES, not on the status — a pending task that DOES own a
+		// worktree (the launch window assigns one before the status flips)
+		// still gets it removed.
+		const pending = tracker.addChild(tracker.rootNodeId, "Pending", "", {
 			editedBy: "agent",
 		});
-		tracker.updateStatus(task.id, "verify");
+		tracker.assignWorktree(pending.id, "mxd/pending/wt", "/tmp/wt/pending");
 
-		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
-
-		expect(result.taskId).toBe(task.id);
-		const node = tracker.getTask(task.id);
-		expect(node?.status).toBe("closed");
+		await closeTaskOp(tracker, pending.id, {
+			...makeCallbacks(),
+			removeWorktree,
+		});
+		expect(removed).toEqual([
+			{ worktreePath: "/tmp/wt/pending", branch: "mxd/pending/wt" },
+		]);
+		expect(tracker.getTask(pending.id)?.worktreePath).toBeNull();
+		expect(tracker.getTask(pending.id)?.branch).toBeNull();
 	});
 
-	test("passed → closed (backward compat)", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Passed", "", {
+	test("close never clears the event store, at any status", async () => {
+		// CONTRACT test, not a scenario — do not go looking for the case that
+		// reproduces it. close_task's promise is "task record + session
+		// preserved", and closeTaskOp keeps it by never calling
+		// clearEventStore AT ALL; the callback sits in its signature unused.
+		// Wire it up and "closed tasks are the project's accumulated wealth"
+		// silently stops being true: send_message reactivates the task and the
+		// agent wakes with no memory of what it built.
+		const cleared: string[] = [];
+		const clearEventStore = (id: string) => {
+			cleared.push(id);
+		};
+
+		for (const status of ["draft", "pending", "verify", "failed"] as const) {
+			const task = tracker.addChild(tracker.rootNodeId, status, "", {
+				editedBy: "agent",
+			});
+			tracker.updateStatus(task.id, status);
+			await closeTaskOp(tracker, task.id, {
+				...makeCallbacks(),
+				clearEventStore,
+			});
+		}
+		expect(cleared).toEqual([]);
+
+		// POSITIVE CONTROL: same callback, same harness, on the op that DOES
+		// clear. Without it an empty array is equally consistent with "the
+		// capture never worked".
+		const doomed = tracker.addChild(tracker.rootNodeId, "Doomed", "", {
 			editedBy: "agent",
 		});
-		tracker.updateStatus(task.id, "verify");
-
-		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
-
-		expect(result.taskId).toBe(task.id);
-		const node = tracker.getTask(task.id);
-		expect(node?.status).toBe("closed");
-	});
-
-	test("failed → closed (backward compat)", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Failed", "", {
-			editedBy: "agent",
+		await deleteTaskOp(tracker, doomed.id, "user", {
+			...makeCallbacks(),
+			clearEventStore,
 		});
-		tracker.updateStatus(task.id, "failed");
-
-		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
-
-		expect(result.taskId).toBe(task.id);
-		const node = tracker.getTask(task.id);
-		expect(node?.status).toBe("closed");
+		expect(cleared).toEqual([doomed.id]);
 	});
 
-	test("rejects closing in_progress task", async () => {
+	test("the in_progress refusal names the remedy that works, and nothing else", async () => {
+		// Normally an assertion about the text of a rejection is not an
+		// assertion about anything — it survives the behaviour being inverted.
+		// Here the text IS the deliverable: the refusal is all the caller gets,
+		// and every way it can be wrong is wording rather than code.
 		const task = tracker.addChild(tracker.rootNodeId, "Running", "", {
 			editedBy: "agent",
 		});
 		tracker.updateStatus(task.id, "in_progress");
 
-		await expect(
-			closeTaskOp(tracker, task.id, makeCallbacks()),
-		).rejects.toThrow("Cannot close a running task");
-	});
+		const message = await closeTaskOp(tracker, task.id, makeCallbacks()).then(
+			() => "did not throw",
+			(e: Error) => e.message,
+		);
 
-	test("rejects closing pending task", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Pending", "", {
-			editedBy: "agent",
-		});
-		// Already pending by default
+		// The remedy that works. Also the positive control for the two
+		// negatives below — without it they would pass on an empty string.
+		expect(message).toContain("Cannot close a running task");
+		expect(message).toMatch(/wait/i);
 
-		await expect(
-			closeTaskOp(tracker, task.id, makeCallbacks()),
-		).rejects.toThrow('Cannot close a task with status "pending"');
-	});
+		// ⚠️ "Stop it first" was here and was a FALSE remedy: `stopTask`
+		// deliberately leaves a stopped task in_progress so it can resume, so
+		// stopping lands the caller back on this same error — and an agent
+		// cannot stop a task at all, there is no stop tool. Warning someone off
+		// an action they cannot perform is noise; naming it as a remedy is a
+		// dead end. Either way it does not belong here.
+		expect(message).not.toMatch(/stop/i);
 
-	test("rejects closing draft task", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Draft", "", {
-			editedBy: "agent",
-		});
-		tracker.updateStatus(task.id, "draft");
-
-		await expect(
-			closeTaskOp(tracker, task.id, makeCallbacks()),
-		).rejects.toThrow('Cannot close a task with status "draft"');
+		// `reset_task` DOES unblock the close (→ pending → closable, which is
+		// only true since this change) and it discards the session and the
+		// worktree. Not a trade to hand someone who only wanted to close a
+		// task, and not something to mention in passing.
+		expect(message).not.toMatch(/reset_task/i);
 	});
 
 	test("throws for nonexistent task", async () => {
