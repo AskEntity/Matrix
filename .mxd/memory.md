@@ -680,11 +680,8 @@ say so loudly and stop auto-compacting for that session. "Even a full compaction
 the limit" is a real configuration problem the user needs to see, and both of today's behaviours hide
 it equally well. Code-level half of `01KXNZHYSJFF0BVQJVPG2WC1RV`.
 
-**Session config is refreshed at the compaction boundary, and only there** — compaction wipes
-`messages[]`, so the cache is already lost, which makes it the one safe moment. ⚠️ **`request.systemPrompt`
-must be updated too, not just the emitted event**: the next API call reads the former, so refreshing
-only the event looks complete and leaves the next call on the stale prompt. `cacheTtl` is deliberately
-NOT refreshed, to preserve fork inheritance.
+**Session config is refreshed at the compaction boundary, and only there**, because compaction wipes
+`messages[]` so the cache is already lost — `cacheTtl` excepted, to preserve fork inheritance.
 
 ## Interrupt and stop are two abort channels, and they cannot be one
 
@@ -1031,12 +1028,9 @@ context**. Cost of sync I/O: one ~100-byte line, and writes were already seriali
 **The general form of that second argument is worth carrying: it replaces *"correct because nothing
 happens to interleave"* with *"correct because nothing CAN"*.**
 
-`emitEvent` persists first and broadcasts the stamped copy, so every observer — SSE included — gets
-the event's durable name at the instant the event exists. Ephemeral events (`text_delta`,
-`agent_activity`, `status`) are deliberately never stamped and never reach JSONL; they are not
-history. `MessageQueue.enqueue` synchronously calls `onPersist` before delivery, and that is the one
-way a queue message reaches JSONL — `replay` skips it, `quiet` suppresses the wake but NOT the
-persistence.
+Ephemeral events (`text_delta`, `agent_activity`, `status`) are deliberately never stamped and never
+reach JSONL; **they are not history**, and that is what makes "replaying the log cannot fake live
+state" structurally true rather than corrected afterwards.
 
 ## One boundary: the active chain
 
@@ -1751,12 +1745,10 @@ one (12 chars resolves, an ellipsis does not), and dead hits are dropped rather 
 real-looking but unresolvable id.
 
 ⚠️ **Root's stated evidence did not support root's conclusion; a different fact did.** The argument
-offered was "I read the tool description and still dropped the block" — but `create_task`'s
-description had never mentioned the block, so that is evidence that an unexplained block does not
-self-explain, not evidence about description-placed guidance. The real support was next door: the
-system prompt already says "Search before building", and `search_tasks` was called 0 times that day.
-**Check that a conclusion's stated reason is the one actually carrying it, especially when you already
-agree with the conclusion.**
+offered was "I read the tool description and still dropped the block" — but that description had never
+mentioned the block, so it is evidence that an unexplained block does not self-explain, not evidence
+about description-placed guidance. **Check that a conclusion's stated reason is the one actually
+carrying it, especially when you already agree with the conclusion.**
 
 ## Every hit says what it IS before its body is read
 
@@ -2427,13 +2419,11 @@ prop, a ref mirror and the `else` branch of two effects, all of which existed on
 visibility fresh. **When you delete a consumer, follow the data backwards to the producer before
 believing you are done**; the compiler stops at the prop.
 
-**Reusable method, from the round that finally caught it:** attribution beats reasoning — one
-reproduction with a probe tagging every programmatic write with who did it turned "something moved me
-and I don't know what" into two line numbers, where the previous round needed a 30-touch-point survey
-to reach a *worse* answer. **Diagnose by absence**: browser scroll anchoring goes through no JS path and
-fires no event, so "the offset moved and nobody wrote it" is itself the diagnosis. And **when you cannot
-reproduce, send the instrument to whoever can** — four increasingly faithful local attempts failed; one
-paste into the user's console succeeded immediately.
+**Reusable method:** attribution beats reasoning — one reproduction with a probe tagging every
+programmatic write with who did it turned "something moved me and I don't know what" into two line
+numbers, where the previous round needed a 30-touch-point survey to reach a *worse* answer. And
+**diagnose by absence**: browser scroll anchoring goes through no JS path and fires no event, so "the
+offset moved and nobody wrote it" is itself the diagnosis.
 
 ## Rewind and Edit: report what the rollback does NOT undo
 
@@ -2804,11 +2794,9 @@ vector. (And hybrid search embeds the QUERY through the same pipeline, so an emb
 search has counted the query too.)
 
 ⚠️ **`expect(domNode).toBeNull()` prints the node with its whole React fiber graph on failure**, and the
-second cost is worse than the first: one such assertion produced a **227MB** log and a 60s test, and
-another **mangled bun's `(fail)` line, so a harness scraping that line reported a mutation as SURVIVED**
-— the instrument was fine and its INPUT was destroyed by an assertion elsewhere. Compare booleans in DOM
-tests. Two smaller ones: `await waitFor(() => x === null || true)` polls NOTHING and asserts before React
-commits; and a bare "timed out waiting for X" tells you nothing — dump the last few events alongside it.
+second cost is worse than the first: one such assertion produced a 227MB log, and another **mangled
+bun's `(fail)` line, so a harness scraping that line reported a mutation as SURVIVED** — the instrument
+was fine and its INPUT was destroyed by an assertion elsewhere. Compare booleans in DOM tests.
 
 ## ⚠️ `bunfig.toml`'s preload is load-bearing; do not remove it
 
