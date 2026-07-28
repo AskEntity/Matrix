@@ -2952,6 +2952,91 @@ that draft needs — its premise was "prompt alone cannot fix this", and until n
 `buildWorkContext` and orphaned when that hook went async; only its own tests use it. Deleting a
 public export is its own decision, drafted as `01KYB46KTMNTW8E48YHE3KVXSR`.
 
+## Every hit says what it IS before its body is read
+
+The section above made the three blocks say what to DO with a hit. This one makes each hit say what
+it is — status, both dates, and for a terminal task whether it ever actually ran. Same three
+surfaces, and they now share the vocabulary in `src/search-hit-format.ts` instead of spelling it out
+three times, because a rule enforced at two of three renderers is enforced nowhere: the third goes on
+handing out the old shape to a reader who cannot tell which renderer produced it.
+`scripts/render-hit-samples.ts` renders all three against the real tree and the real index, which is
+the only way to answer the question that actually decides this design — scanning the output, can you
+separate a proposal from a finished task in the half-second it gets?
+
+**Status LEADS the line now.** It was always rendered, at the END of the first line, where a long
+title pushes it to the right margin and the next thing the eye meets is a 300-char `Description:`
+that reads like a conclusion. Measured cost of that placement: a `draft` whose description held a
+real measurement AND a never-executed proposal, separated from a finished task by four characters at
+the far right of the line.
+
+⚠️ **`updatedAt` renders as `record touched`, never as "last active", and the LABEL is the whole
+fix** — the field was always renderable. `task-tracker.ts` writes it in 16 places and 3 of them touch
+content; a status flip, a cost update, or merely creating a CHILD (which bumps the parent) all
+refresh it. Labelled as activity it shows an April task as worked-on today, which is worse than
+having no date: an authoritative-looking wrong number. `createdAt` is always beside it because it
+cannot drift. Both carry a relative age (`2026-04-01 (4mo ago)`), and that half is load-bearing
+rather than decorative — agents are date-blind and confident about it, so an absolute date alone
+re-runs the failure the date was added to fix.
+
+⭐ **"Did it ever execute" is the UNION of three signals, not a choice among them — and it is the one
+thing here someone will try to simplify.** Each is one-directional POSITIVE evidence: a session file,
+a recorded cost and a reported round can only exist if the task ran. So OR-ing them cannot produce a
+false "ran", while every single member produces false "never ran"s. Measured on this repo's tree,
+2026-07-27:
+
+| signal | really answers | its blind spot |
+|---|---|---|
+| `resultRounds` | did it REPORT? | postdates most of the tree — **365 of the 417 closed tasks that had run carried no round** |
+| `costUsd > 0` | did it SPEND? | one closed task had a session and no cost: launched, died before any usage landed |
+| session JSONL | did it ever HAVE a session? | one closed task had a cost and no file — a session can be cleared by hand or by `reset_task` |
+
+`resultRounds` is the member that looks right, being literally "it finished and reported", and alone
+it would have relabelled **88% of this repo's executed history as an unexecuted proposal** — the
+worst answer available, because it is precisely backwards about what the description means. A live
+instance sits in the samples: one closed task that burned **$9.52 has zero rounds**, one metre from a
+closed task that genuinely never ran. ⚠️ `branch` / `worktreePath` cannot be used at all — close
+nulls them.
+
+**The marker is rendered on `closed` and `failed` only.** Terminal-status rather than a case list:
+while a status is live the question is still open, so the marker would be transient noise. It is also
+the only place both answers are common — 417 ran / 23 not for closed, against draft 2/104 and pending
+1/8, where a marker carries no information.
+
+⚠️ **Dedup runs BEFORE the full/brief tier split, not after.** A real `search_tasks(limit 6)`: three
+tasks filled all six slots, one of them appearing once as a full entry and once as a brief one with
+its entire `Description:` paragraph repeated verbatim. Dedup afterwards leaves the slot arithmetic
+running on the duplicates. Merge the duplicates' field labels into the survivor
+(`Matched: description, title`) instead of dropping them — matching on two fields is relevance
+evidence, and it is the only thing the discarded hits carried. The tier is counted over RENDERED
+entries for the same reason: a hit whose task has left the tree used to consume a full slot and
+silently demote the next real one to brief.
+
+⭐ **Dedup is unconditional, and the objection against that is worth keeping because it is a good
+one.** `search_tasks` advertises "the best-matching LOCATIONS … WHICH field matched, the round
+index", so two hits inside one task ARE two answers there and collapsing them reads as a regression
+against the tool's own promise — which is why a per-caller `distinctTasks` flag was proposed first.
+It is not a regression, because **the locations survive**: merging keeps every label, round indices
+included (`Matched: result round 0, result round 3`), so every place inside the task that matched is
+still named. What dedup drops is a second copy of the same 500-char `Description:` and a second
+score, neither of which was ever a location. The promise is kept once it is read as *locations*
+rather than as *excerpts* — which is also what the header says these blocks are, so the two callers
+turned out to want the same thing and the flag was not needed.
+
+⚠️ **CORRECTION to the section above**: it describes `search_tasks`' output as "2 full hits + up to 5
+one-line briefs". Two things have drifted — the 2/5 split is `create_task`'s (`search_tasks` is
+`min(5, limit)` full), and the unit is now TASKS rather than hits.
+
+⭐ **Instrument note, reusable far beyond this: a uniform answer across a whole population is the
+signature of a broken instrument, not a finding.** The first probe of the three signals reported
+"session JSONL exists" as **false for all 551 tasks** — `tree.json`'s `nodes` is an ARRAY, and
+reading it with `Object.entries` hands back indices as ids, so every `existsSync` missed a file that
+was there. Believed, it would have "proved" the JSONL signal useless and handed the decision to
+`resultRounds`, i.e. to the 88% error above. The probe now asserts its own premise — nodes is an
+array, a sampled id matches the ULID shape — before it reports anything. Smaller sibling from the
+same afternoon: a budget line counted entries by a leading `- ` and reported 7 for 5, because
+description bodies contain markdown bullets. Leading every entry with `[status]` is also what makes
+an entry distinguishable from the prose inside one.
+
 ---
 # Daemon, Worker & Transport
 ---

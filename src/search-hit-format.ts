@@ -183,6 +183,24 @@ export interface DedupedHit extends SearchHit {
  * Multi-field matches are merged rather than dropped: a task that matched on
  * both its title and its description is more relevant than one that matched
  * once, and that is exactly what the discarded duplicates were evidence of.
+ *
+ * ⭐ Why this is unconditional, including for `search_tasks` — the objection is
+ * real and was raised before the work started (draft `01KYCQVA8CP2S0X6V1QDQSBH8X`):
+ * `search_tasks` advertises "the best-matching LOCATIONS … WHICH field matched
+ * …, the round index", so two hits inside one task ARE two answers there, and
+ * deduping them looks like a regression against the tool's own promise.
+ *
+ * It is not, because **the LOCATIONS survive** — merging keeps every label,
+ * round indices included (`Matched: result round 0, result round 3`), so the
+ * reader is still told every place inside the task that matched. What dedup
+ * drops is the second copy of the same 500-char `Description:` body and a
+ * second score, and neither of those was ever a location. That fits what these
+ * blocks are for: the header says outright that excerpts cannot tell you what a
+ * task concluded and that you must `get_task` it, so a hit's job is to point,
+ * and pointing twice at one task costs a slot that could have pointed at
+ * another. Hence no per-caller `distinctTasks` flag — the two callers wanted
+ * the same thing once the promise was read as locations rather than as
+ * excerpts.
  */
 export function dedupeHitsByTask(hits: SearchHit[]): DedupedHit[] {
 	const out: DedupedHit[] = [];
