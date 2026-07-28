@@ -1584,9 +1584,8 @@ resultRounds, including in comments.** The layout was then forced: `search_tasks
 `orchestrator-tools.ts`, that is in `src/`, and `src/` may not import `.mxd/plugin/`. ⚠️ Likewise
 `onScopeResume` is named by EVENT, not by resource — that is what keeps the boundary grep clean.
 
-**NEGATIVE RESULT, do not re-derive — except on a Bun upgrade, which is the only thing that can
-change it:** `bun:sqlite` **cannot** `loadExtension`. That killed the sqlite-vec plan and is why the
-vector phase went to a pure-TS engine. The FTS5 index that preceded Orama worked correctly; it was
+The engine is pure-TS because `bun:sqlite` cannot `loadExtension`, which killed the sqlite-vec plan
+(one line to re-check on a Bun upgrade). The FTS5 index that preceded Orama worked correctly; it was
 replaced for the vector story, not because it was broken.
 
 ### Staleness is a per-document content hash, and `updatedAt` was why boots got slower over time
@@ -2304,12 +2303,10 @@ correct** — every new `useState` added anywhere in the subtree has to be added
 forgetting one leaks across projects. `key={X}` resets everything, **including state that does not exist
 yet.**
 
-**Small facts that are not obvious from the code:** events are fetched per-session, not per-project,
-because a forked session contains its parent's events and merging by project produces stale content;
-`hideCompleted` hides `closed` and `failed` only, since `verify` is actionable and must stay visible;
-⚠️ the per-task draft debounce reads `targetRef.current`, not `targetNodeId` from the deps array,
-because with the value in deps a render transition saves the previous task's prompt under the new task's
-key; and `/compact` targets the VIEWED task.
+Two that stay silent: **events are fetched per-session, not per-project**, because a forked session
+contains its parent's events and merging by project produces stale content; and **the per-task draft
+debounce reads `targetRef.current`, not `targetNodeId` from the deps array**, because with the value
+in deps a render transition saves the previous task's prompt under the new task's key.
 
 ---
 # Web UI — Components & Interactions
@@ -2469,27 +2466,18 @@ without it the Edit/Rewind buttons never appear.
 
 ## Markdown rendering in agent replies
 
-A hand-written parser for a lightweight subset. No markdown library, no `dangerouslySetInnerHTML`,
+A hand-written parser for a lightweight subset — no markdown library, no `dangerouslySetInnerHTML`,
 React elements only. **Strict grammar throughout, because a false positive is worse than a missing
-feature** — which is the whole design, and the three things it buys are worth knowing before you
-"improve" it:
+feature**: that one sentence generates every rule in it, and the grammar's own tests state the rules
+better than prose can. Two things the tests do not say:
 
+- ⚠️ **Link safety is one gate in the parser, and it is the only security-relevant line in it.** Only
+  `^https?://` becomes an anchor; `javascript:`, `data:`, `file:` and relative URLs render as literal
+  TEXT, and text containing only an unsafe link stays "plain" and renders its raw source.
 - ⚠️ **Emphasis uses whitespace-adjacency rules, NOT word boundaries — that is what makes it
-  CJK-safe.** `周围**中文**相邻` works where `\b` would not. Deliberately absent, each for a concrete
-  reason: `_underscore_` emphasis (snake_case identifiers), setext headings, backslash escapes
-  (Windows paths), images, raw HTML.
-- ⚠️ **The plain fallback must stay byte-identical to no markdown at all.** When every block is a
-  text run of only text nodes, the original string renders in a single `<span>` — the same element as
-  before markdown existed. Text containing only an unsafe link stays "plain" and renders raw source;
-  only `^https?://` becomes an anchor, and `javascript:`, `data:`, `file:` and relative URLs render
-  as literal TEXT.
-- ⚠️ **Parse order is load-bearing**: fences first with content verbatim, then tables, then per-line
-  blocks with **hr checked BEFORE list** (`- - -` is both), then inline, where code spans bind
-  tightest. A table requires header and delimiter rows to have the SAME cell count, and that guard is
-  the entire defence against reading a thematic break or a piped prose line as a table.
-
-**The copy button copies the ORIGINAL markdown source**, so it re-pastes into another markdown
-surface verbatim.
+  CJK-safe**, so `周围**中文**相邻` works where `\b` would not. Anyone "fixing" it toward a standard
+  markdown implementation breaks every Chinese reply in the product, which no test of the parser
+  itself would obviously name.
 
 ## Four interactions, each with one line that silently breaks it
 
@@ -2497,30 +2485,28 @@ Unrelated except in the way that matters here: each depends on a single easy-to-
 event-phase choice or a `preventDefault` — whose removal breaks the feature **without breaking a test or
 producing an error.**
 
-**Select-to-quote.** ⚠️ `onMouseDown={e => e.preventDefault()}` on the floating button is LOAD-BEARING:
-without it, mousedown collapses the selection, `selectionchange` unmounts the button, and the click never
-fires. ⚠️ **The rAF that inserts the quote has a required ORDER, all in ONE frame**: recompute the capped
-auto-grow height, then focus, then set the caret, then `scrollTop = scrollHeight`. Reading `scrollHeight`
-before the new height applies gives a stale value, so a long quote leaves the user typing below the fold
-— and **do NOT rely on the separate resize effect having run first**, because React 18 flushes passive
-effects asynchronously and rAF-versus-passive ordering is not guaranteed.
+**Select-to-quote**: `onMouseDown={e => e.preventDefault()}` on the floating button is LOAD-BEARING —
+without it, mousedown collapses the selection, `selectionchange` unmounts the button, and the click
+never fires. ⚠️ **The rAF that inserts the quote has a required ORDER, all in ONE frame**: recompute
+the capped auto-grow height, then focus, then set the caret, then `scrollTop = scrollHeight`. Reading
+`scrollHeight` before the new height applies gives a stale value, so a long quote leaves the user
+typing below the fold — and **do NOT rely on the separate resize effect having run first**, because
+React 18 flushes passive effects asynchronously and rAF-versus-passive ordering is not guaranteed.
 
-**Global image drag-drop.** ⚠️ **RED LINE: never intercept internal HTML5 drags.** Task-tree and tab
-reorder set `dataTransfer` `text/plain`; every global handler gates on `types.includes("Files")`.
+**Global image drag-drop.** ⚠️ **RED LINE: never intercept internal HTML5 drags** — task-tree and tab
+reorder set `dataTransfer` `text/plain`, so every global handler gates on `types.includes("Files")`.
 ⚠️ **The visual and functional halves are on different phases, and both choices are load-bearing.**
-Functional (`dragover`, `drop`) is on BUBBLE, because the composer's own drop handler calls
-`stopPropagation` — so a drop on the composer is handled there and does not also attach at the window.
-Visual (`dragenter`/`dragleave` depth counter) is on CAPTURE, so it fires before any inner bubble handler
-and cannot be desynced by that same `stopPropagation`, leaving no stuck overlay and needing no timer.
-(CDP cannot synthesize an OS-file drag, so tests inject synthetic drops.)
+Functional is on BUBBLE, because the composer's own drop handler calls `stopPropagation`, so a drop
+there does not also attach at the window; visual (a `dragenter`/`dragleave` depth counter) is on
+CAPTURE, so it cannot be desynced by that same `stopPropagation` — no stuck overlay, and no timer or
+flicker heuristic needed.
 
-**Sidebar filter toggle.** ⚠️ The reopen bug: open state lived in the parent and query state in the child,
-and the input had an `onBlur` that auto-closed when empty. Clicking the toggle while the input was focused
-and empty fired blur on **mousedown** (closing it) before the button's **click** (which read `false` and
-flipped it back). Fixed by one reducer over `{open, query}` with the invariant **closed ⟹ query === ""**,
-and by **removing `onBlur` entirely**. The behavior change is real and intended: an empty open search no
-longer collapses on click-away. If that is ever wanted back, use a document-level outside-click listener —
-**not** `input.onBlur`, which re-introduces the race.
+**Sidebar filter toggle**: open state lived in the parent and query state in the child, and an
+`onBlur` auto-closed when empty — so clicking the toggle while focused and empty fired blur on
+**mousedown** (closing it) before the button's **click** (which read `false` and flipped it back).
+Fixed by one reducer over `{open, query}` with the invariant **closed ⟹ query === ""**, and by
+removing `onBlur`. ⚠️ If the auto-close is ever wanted back, use a document-level outside-click
+listener — **not** `input.onBlur`, which re-introduces the race.
 
 ## Settings, stops, and the composer
 
@@ -2565,15 +2551,10 @@ paints: a flag claiming an affordance nobody can see. ⭐ **Borrowing a slot tha
 owe it back** — one keystroke must restore `Message to "…"`, or an unconditional hint sits on top of the
 target prompt for the rest of the session.
 
-## Small component facts worth knowing
-
-- ⚠️ **A message must carry TEXT; images ride along with it and are never a message on their own.** Refused
-  at four gates — the Send button, the Enter path (which never touches the button), the send handler, and
-  both REST doors, which answer with one identical sentence asserted against a single constant.
-- **Read-only tools default to collapsed but keep their body** — a different thing from `isTitleOnly`,
-  which removes the body entirely.
-- ⚠️ **A `min-width` does not center-align a column whose content is wider than it.** The timestamp column
-  drifted right because the action-button row exceeded its `min-width` with `align-items: center`.
+⚠️ **A message must carry TEXT; images ride along with it and are never a message on their own** —
+refused at four gates, because the Enter path never touches the Send button and the two REST doors
+each accept the payload the other would have rejected. They answer with one identical sentence
+asserted against a single constant, so no wording can drift alone.
 
 ---
 # Testing
@@ -2763,29 +2744,23 @@ the ENVIRONMENT supplying the dead wiring**: the first version of "Enter with an
 not send" **passed on code that had no guard at all**, because under happy-dom Enter never reached the
 handler.
 
-### What happy-dom does not do — five limits, each probed
+### What happy-dom does not do
 
-Kept together because a test author hits them as one question ("why did nothing happen?"), and **each
-produces a passing test rather than an error.**
+Most of its gaps announce themselves within a minute — no layout, so no geometry; you cannot type into
+a React controlled input; a key handler needs a `.focus()` first or React throws before any listener
+runs. (Hence the way to drive a composer in a test: **seed the draft through the component's own
+`localStorage` key, `.focus()` + keydown for the submit.**) **Two do not announce themselves, and both
+are paid by someone other than the author:**
 
-1. ⚠️ **It silently drops MutationObserver callbacks under GC pressure** — the listener holds its
-   callback in a `WeakRef` with no strong reference anywhere, so after any GC pass mutations are
-   delivered to nothing, with **no error**. A test relying on MO delivery passes in isolation and flakes
-   inside the full suite. Real browsers hold strong refs per spec. **Never let a happy-dom test depend on
-   MutationObserver delivery.**
-2. ⚠️ **No layout, so geometry cannot be observed there.** It can still test the *causes* of geometry —
-   DOM order, commit granularity, whether a callback ran.
-3. ⚠️ **You cannot type into a React controlled input** — both the native `input` event and the
-   descriptor-setter trick fail to fire `onChange`. `.blur()` and keydown do work.
-4. ⚠️ **A key handler on a text input needs a FOCUS first, or it never runs.** React's ChangeEventPlugin
-   takes its polyfill branch under happy-dom and, on any key event over a text input, throws on the fiber
-   it recorded at `focusin` — `null` when nothing was ever focused — **before any listener runs.**
-5. ⚠️ **Do NOT spy on `history.pushState`/`replaceState`.** Instrumenting them in `beforeEach` survives
-   `GlobalRegistrator.unregister()` in ways nobody could diagnose and poisoned every subsequent
-   `web/*.test.tsx` file with ~18 spurious failures. Unit-test the pure parse/build functions instead.
-
-Taking 3 and 4 together, the way to drive a composer in a test is: **seed the draft through the
-component's own `localStorage` key for the text, `.focus()` + keydown for the submit.**
+- ⚠️ **It silently drops MutationObserver callbacks under GC pressure** — the listener holds its
+  callback in a `WeakRef` with no strong reference anywhere, so after any GC pass mutations are
+  delivered to nothing, with no error. **A test relying on MO delivery passes in isolation and flakes
+  inside the full suite**, which is then chased as a scheduling flake. Real browsers hold strong refs
+  per spec, so production is fine. **Never let a happy-dom test depend on MutationObserver delivery.**
+- ⚠️ **Do NOT spy on `history.pushState`/`replaceState`.** Instrumenting them in `beforeEach` survives
+  `GlobalRegistrator.unregister()` in ways nobody could diagnose, and **poisoned every subsequent
+  `web/*.test.tsx` file with ~18 spurious failures** — a cost that lands entirely on whoever runs the
+  suite next. Unit-test the pure parse/build functions instead.
 
 ⚠️ **A constant-vector mock makes every hybrid-search assertion vacuous.** If the fake embedder returns
 the same vector for every text, every document scores cosine 1.0 against every query, the whole index
@@ -3016,33 +2991,27 @@ over isolated installs settled in minutes what days of test-level debugging coul
 
 ## Known pitfalls
 
-- ⚠️ **A generator called without `yield*` is a SILENT NO-OP.** After extracting a `yield`-ing block into
-  a helper, grep every call site. `foo()` on a `function*` builds a generator object and discards it —
-  the body never runs. **Nothing catches this**: legal TS, no diagnostic, no lint warning, because the
-  call genuinely returns a generator and the type system has no opinion about whether anyone iterates
-  it. Observed cost: a tool_result reached neither JSONL nor `messages[]`, so requests went out with an
-  unanswered `tool_use`.
+Only the ones that stay silent and are paid by someone else. Anything the compiler, biome or a failing
+test tells you within a minute is deliberately not here.
+
+- ⚠️ **A generator called without `yield*` is a SILENT NO-OP.** After extracting a `yield`-ing block
+  into a helper, grep every call site. **Nothing catches this**: legal TS, no diagnostic, no lint
+  warning, because the call genuinely returns a generator and the type system has no opinion about
+  whether anyone iterates it. Observed cost: a tool_result reached neither JSONL nor `messages[]`, so
+  requests went out with an unanswered `tool_use`.
 - ⚠️ **Never modify your own JSONL from inside an agent.** The current tool_call has no result yet, so
   you will read it as a false orphan.
-- ⚠️ **`delete_task` REFUSES any node with children** — you reparent or delete the children yourself
-  first. `tracker.remove` underneath it IS recursive and would take their session JSONL with it; that
-  guard is the only thing standing between a misclick and unrecoverable loss. **Prose in this file, in
-  the tool description and in the system prompt all said the cascade was reachable, for months; it is
-  not, and describing a guard as a hazard makes agents avoid the tool where it is the right move.**
-- ⚠️ **Abort-signal leak**: after a stop, the old `runAgentForNode` settles asynchronously, so the catch
-  and finally re-read the node and compare its session against the one they began with — a dying agent
-  must not emit stale error events over the replacement that already owns the node. ⚠️ Do not reach for
-  a name here: the readable one (`wasReplaced`) exists only in comments, and the real local is its
-  **negation**.
-- **Commits do not restart the daemon.** Restart it manually after code changes — and remember the tools
-  you call belong to the running daemon, not to your worktree.
+- ⚠️ **`delete_task` REFUSES any node with children** — you reparent or delete them yourself first.
+  `tracker.remove` underneath it IS recursive and would take their session JSONL with it; that guard is
+  the only thing between a misclick and unrecoverable loss. **Prose in this file, in the tool
+  description and in the system prompt all said the cascade was reachable, for months; it is not, and
+  describing a guard as a hazard makes agents avoid the tool where it is the right move.**
 - **Concurrent ULID**: use the full 26-char `ulid()`. Sliced ULIDs collide within one millisecond.
-- **Git worktrees**: `extensions.worktreeConfig` required; `core.hooksPath` absolute. **Biome**:
-  typecheck BEFORE lint; no `!important`; `bun run check` runs `--write` and silently formats 70+ files,
-  so use `check:ci` when debugging and split a format-only sweep into its own commit.
-- **`noUncheckedIndexedAccess`**: an array index returns `T | undefined`. ⚠️ **TS6133 and the `_`
-  prefix**: `noUnusedLocals` does NOT respect a leading underscore for local variables or destructured
-  locals — only for function parameters. Use `const [, setX] = useState(...)`, or delete the const.
+- **Commits do not restart the daemon**, and the tools you call belong to the running daemon rather
+  than to your worktree.
+- ⚠️ **`bun run check` runs `--write` and silently formats 70+ files** — use `check:ci` when debugging,
+  and split a format-only sweep into its own commit, or the diff someone reviews is not the diff you
+  made.
 
 ## Known bugs and open design
 
