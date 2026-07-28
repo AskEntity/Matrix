@@ -23,7 +23,16 @@ import {
 	createTreeChange,
 } from "./queue-message-factory.ts";
 import * as R from "./resource-registry.ts";
-import { searchIndex } from "./task-index.ts";
+import {
+	createExecutionProbe,
+	type DedupedHit,
+	dedupeHitsByTask,
+	type ExecutionProbe,
+	HIT_IDENTITY_LEGEND,
+	statusTag,
+	taskAges,
+} from "./search-hit-format.ts";
+import { type SearchHit, searchIndex } from "./task-index.ts";
 import {
 	closeTaskOp,
 	createTaskOp,
@@ -197,24 +206,19 @@ const DEFAULT_BRIEF_COUNT = 10;
  * Emitted only when there is at least one live hit — formatTieredHits returns
  * "" for a header with no entries.
  */
-const RELATED_EXISTING_TASKS_HEADER =
-	'\n\n[Related existing tasks] — pointers, not answers: these are truncated excerpts, and "Latest result" is only the FINAL round, often a trivial follow-up. None of it tells you what a task concluded. get_task the ones that look related and read their result rounds. Then: fold what they concluded into this task\'s description (most often this one — cite the taskId); or fork_task_context from one; or send_message to one instead and delete this just-created task; or nothing, if they are unrelated. A past measurement usually still holds; a past "so we decided not to" may not — this new task can be why it changed.';
+const RELATED_EXISTING_TASKS_HEADER = `\n\n[Related existing tasks] — pointers, not answers: these are truncated excerpts, and "Latest result" is only the FINAL round, often a trivial follow-up. None of it tells you what a task concluded. get_task the ones that look related and read their result rounds. Then: fold what they concluded into this task's description (most often this one — cite the taskId); or fork_task_context from one; or send_message to one instead and delete this just-created task; or nothing, if they are unrelated. A past measurement usually still holds; a past "so we decided not to" may not — this new task can be why it changed. ${HIT_IDENTITY_LEGEND}`;
 
 /**
- * Format a FULL search result entry: title, description excerpt, latest
- * result round excerpt, taskId, status, matched field + snippet, score.
+ * Format a FULL search result entry: identity line (status + execution +
+ * taskId), ages, description excerpt, latest result round excerpt, every
+ * matched field + the best snippet, score.
  */
 function formatFullHit(
-	hit: {
-		taskId: string;
-		field: string;
-		roundIndex?: number;
-		snippet: string;
-		score: number;
-	},
+	hit: DedupedHit,
 	task: TaskNode,
+	hasExecuted: ExecutionProbe,
+	now: number,
 ): string {
-	const status = task.status ?? "unknown";
 	const desc = task.description
 		? `\n   Description: "${task.description.slice(0, DESCRIPTION_CHAR_LIMIT)}"`
 		: "";
@@ -224,66 +228,86 @@ function formatFullHit(
 	const result = lastRound?.result
 		? `\n   Latest result: "${lastRound.result.slice(0, RESULT_CHAR_LIMIT)}"`
 		: "";
-	const fieldLabel =
-		hit.field === "result" && hit.roundIndex !== undefined
-			? `result round ${hit.roundIndex}`
-			: hit.field;
-	const matchedField = `\n   Matched: ${fieldLabel} — "${hit.snippet.slice(0, 200)}"`;
-	return `- "${task.title}" (${hit.taskId}, ${status})${desc}${result}${matchedField}\n   Score: ${hit.score.toFixed(2)}`;
+	const matchedField = `\n   Matched: ${hit.fields.join(", ")} — "${hit.snippet.slice(0, 200)}"`;
+	return (
+		`- ${statusTag(task, hasExecuted)} "${task.title}" (${hit.taskId})` +
+		`\n   ${taskAges(task, now)}` +
+		`${desc}${result}${matchedField}\n   Score: ${hit.score.toFixed(2)}`
+	);
 }
 
 /**
- * Format a BRIEF search result entry: title, taskId, status, score.
+ * Format a BRIEF search result entry: the same identity — status, execution,
+ * taskId, both dates — then the score.
+ *
+ * ⚠️ The identity is NOT dropped here to save room. A brief entry is exactly
+ * the one a reader scans rather than studies, so it is where an unlabelled
+ * four-month-old proposal is most likely to be taken for live work. The
+ * matched-field list and the excerpts are what brevity costs; what the task IS
+ * survives into every tier.
  */
 function formatBriefHit(
-	hit: { taskId: string; score: number },
+	hit: DedupedHit,
 	task: TaskNode,
+	hasExecuted: ExecutionProbe,
+	now: number,
 ): string {
-	const status = task.status ?? "unknown";
-	return `- "${task.title}" (${hit.taskId}, ${status}) — score: ${hit.score.toFixed(2)}`;
+	return (
+		`- ${statusTag(task, hasExecuted)} "${task.title}" (${hit.taskId}) ` +
+		`${taskAges(task, now)} — score: ${hit.score.toFixed(2)}`
+	);
 }
 
 /**
  * Build a tiered text block from search hits. Stops appending once the total
  * character budget (TOTAL_CHAR_LIMIT) is exhausted.
  *
- * @param hits       Ranked search hits (best first).
- * @param tracker    Live tracker for fresh node data.
- * @param fullCount  How many of the top hits get the FULL treatment.
- * @param header     Optional header line (e.g. "[Related existing tasks]").
+ * @param hits        Ranked search hits (best first).
+ * @param tracker     Live tracker for fresh node data.
+ * @param fullCount   How many of the top TASKS get the FULL treatment.
+ * @param hasExecuted Probe answering "did this task ever run" — required, so
+ *                    the ran / never-ran marker can never silently degrade
+ *                    into a claim the caller had no evidence for.
+ * @param header      Optional header line (e.g. "[Related existing tasks]").
  * @returns Formatted text, or "" if no hits resolve to live tasks.
  */
 export function formatTieredHits(
-	hits: Array<{
-		taskId: string;
-		field: string;
-		roundIndex?: number;
-		snippet: string;
-		score: number;
-	}>,
+	hits: SearchHit[],
 	tracker: TaskTracker,
 	fullCount: number,
+	hasExecuted: ExecutionProbe,
 	header?: string,
 ): string {
 	const lines: string[] = [];
 	let totalChars = 0;
+	const now = Date.now();
 
 	if (header) {
 		lines.push(header);
 		totalChars += header.length + 1;
 	}
 
-	for (let i = 0; i < hits.length; i++) {
-		const hit = hits[i]!;
+	// One entry per TASK before the tier split — so fullCount counts distinct
+	// tasks rather than index positions a single task can occupy twice.
+	const deduped = dedupeHitsByTask(hits);
+
+	// Tier by position among the tasks actually RENDERED, not among the raw
+	// hits: a hit whose task left the tree is skipped, and letting it consume
+	// a full slot would silently demote the next real hit to a brief line.
+	let rendered = 0;
+	for (const hit of deduped) {
 		const task = tracker.getTask(hit.taskId);
 		if (!task) continue;
 
 		const line =
-			i < fullCount ? formatFullHit(hit, task) : formatBriefHit(hit, task);
+			rendered < fullCount
+				? formatFullHit(hit, task, hasExecuted, now)
+				: formatBriefHit(hit, task, hasExecuted, now);
 
 		if (totalChars + line.length + 1 > TOTAL_CHAR_LIMIT) break;
 		lines.push(line);
 		totalChars += line.length + 1;
+		rendered++;
 	}
 
 	return lines.length > (header ? 1 : 0) ? lines.join("\n") : "";
@@ -296,11 +320,16 @@ export function formatTieredHits(
  * semantic matching. Falls back to BM25-only if the embedding pipeline
  * is unavailable. Returns "" if the index isn't ready or query is empty.
  *
- * @param dbPath    Path to the Orama index file.
- * @param query     Search query string.
- * @param tracker   Live tracker for fresh node data + dead-hit filtering.
- * @param opts.fullCount   Top N hits with full info (default 5).
- * @param opts.briefCount  Next N hits with brief info (default 10).
+ * @param dbPath      Path to the Orama index file.
+ * @param query       Search query string.
+ * @param tracker     Live tracker for fresh node data + dead-hit filtering.
+ * @param hasExecuted Probe answering "did this task ever run" (see
+ *                    `createExecutionProbe`). Positional and required rather
+ *                    than an `opts` field: a missing probe would have to
+ *                    default to something, and every default here is a claim
+ *                    about history the caller did not make.
+ * @param opts.fullCount   Top N tasks with full info (default 5).
+ * @param opts.briefCount  Next N tasks with brief info (default 10).
  * @param opts.excludeId   Task id to exclude from results (e.g. self).
  * @param opts.header      Optional header line prepended to the output.
  */
@@ -308,6 +337,7 @@ export async function searchTasks(
 	dbPath: string,
 	query: string,
 	tracker: TaskTracker,
+	hasExecuted: ExecutionProbe,
 	opts?: {
 		fullCount?: number;
 		briefCount?: number;
@@ -327,7 +357,7 @@ export async function searchTasks(
 		return !!tracker.getTask(h.taskId);
 	});
 
-	return formatTieredHits(hits, tracker, fullCount, opts?.header);
+	return formatTieredHits(hits, tracker, fullCount, hasExecuted, opts?.header);
 }
 
 // ── All tool definitions ──
@@ -476,7 +506,12 @@ export function buildAllToolDefs() {
 				"to find whether a problem was solved before, or where a decision or " +
 				"lesson lives, instead of scanning the whole tree. A hit tells you " +
 				"WHERE, not WHAT — get_task it and read the result rounds, which is " +
-				"where the conclusion actually is.",
+				"where the conclusion actually is. " +
+				// This output has no header to carry the legend, and the decision to
+				// read a hit as live-or-historical is made when the results arrive.
+				// The description is what reaches an agent that ASKED, so it is where
+				// the vocabulary has to live for this surface.
+				HIT_IDENTITY_LEGEND,
 			params: {
 				projectId: {
 					schema: z.string(),
@@ -511,6 +546,7 @@ export function buildAllToolDefs() {
 					dbPath,
 					args.query as string,
 					tracker,
+					createExecutionProbe(dataDir, projectId, dataRoot),
 					{
 						fullCount: Math.min(5, limit),
 						briefCount: Math.max(0, limit - 5),
@@ -610,12 +646,18 @@ export function buildAllToolDefs() {
 						const query = [args.title, args.description]
 							.filter(Boolean)
 							.join(" ");
-						relatedBlock = await searchTasks(dbPath, query, tracker, {
-							fullCount: 2,
-							briefCount: 3,
-							excludeId: node.id,
-							header: RELATED_EXISTING_TASKS_HEADER,
-						});
+						relatedBlock = await searchTasks(
+							dbPath,
+							query,
+							tracker,
+							createExecutionProbe(dataDir, projectId, dataRoot),
+							{
+								fullCount: 2,
+								briefCount: 3,
+								excludeId: node.id,
+								header: RELATED_EXISTING_TASKS_HEADER,
+							},
+						);
 					} catch {
 						// Index not ready or search failed — silently skip.
 					}
