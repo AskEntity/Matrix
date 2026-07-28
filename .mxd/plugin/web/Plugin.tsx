@@ -706,7 +706,6 @@ function ProjectContent({
 		model: agentModel,
 		setModel: setAgentModel,
 		start,
-		stop,
 		checkStatus,
 		compact,
 		deleteTask,
@@ -1282,7 +1281,6 @@ function ProjectContent({
 
 	const {
 		handleSend,
-		handleStop,
 		handleClarifySubmit,
 		handleClearRootSession,
 		handleDeleteTask,
@@ -1320,7 +1318,6 @@ function ProjectContent({
 				setBackgroundProcesses,
 				setOlderEventsAvailable,
 				start,
-				stop,
 				compact,
 				sendMessageToTask,
 				deleteTask,
@@ -1340,7 +1337,6 @@ function ProjectContent({
 			pendingClarifications,
 			addLog,
 			start,
-			stop,
 			compact,
 			sendMessageToTask,
 			deleteTask,
@@ -2009,7 +2005,6 @@ function ProjectContent({
 								provider={agentProvider}
 								model={agentModel}
 								onClearSession={handleClearRootSession}
-								onStop={handleStop}
 							/>
 						</div>
 					) : selectedNode && isTask(selectedNode) ? (

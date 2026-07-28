@@ -77,7 +77,6 @@ interface ActionHandlerDeps {
 	>;
 
 	start: (opts: { prompt: string }) => Promise<void>;
-	stop: () => Promise<void>;
 	compact: (nodeId?: string) => Promise<void>;
 	sendMessageToTask: (
 		taskId: string,
@@ -115,7 +114,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		setPendingClarifications,
 		setIsCreatingTask,
 		start,
-		stop,
 		compact,
 		sendMessageToTask,
 		deleteTask,
@@ -146,16 +144,14 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			return true;
 		}
 		if (cmd === "/stop") {
-			try {
-				await stop();
-			} catch (err) {
-				addLog({
-					type: "error",
-					message: (err as Error).message,
-					taskId: "",
-					ts: Date.now(),
-				});
-			}
+			// The SAME path as the Stop button beside the composer, on the
+			// SAME task — "stop" means one thing to a user: end this turn.
+			// The session, the queue, MCP and background commands all stay
+			// alive, and the next message still reaches the same agent.
+			// (Tearing the session down is internal machinery — reset, delete,
+			// shutdown. It survives as a REST endpoint with no user-facing
+			// entry point at all.)
+			await handleInterrupt(targetNodeId);
 			return true;
 		}
 		// /settings removed — settings is shell's responsibility (header gear icon)
@@ -225,19 +221,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				// No target — start the orchestrator cold.
 				await start({ prompt: message.trim() });
 			}
-		} catch (err) {
-			addLog({
-				type: "error",
-				message: (err as Error).message,
-				taskId: "",
-				ts: Date.now(),
-			});
-		}
-	}
-
-	async function handleStop() {
-		try {
-			await stop();
 		} catch (err) {
 			addLog({
 				type: "error",
@@ -440,7 +423,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 
 	return {
 		handleSend,
-		handleStop,
 		handleClarifySubmit,
 		handleClearRootSession,
 		handleDeleteTask,

@@ -80,7 +80,6 @@ const en: Translations = {
 	"orch.cacheWrite": "Cache Write",
 	"orch.cacheRead": "Cache Read",
 	"orch.output": "Output",
-	"orch.pause": "Interrupt",
 
 	// Status
 	"status.draft": "Draft",
@@ -110,7 +109,6 @@ const en: Translations = {
 	"detail.clickToEdit": "Click to edit",
 	"detail.runningHint": "Task is running — send a message to update it",
 	"detail.noDescription": "No description",
-	"detail.stop": "Interrupt",
 	"detail.copyId": "Copy task ID",
 	"detail.copied": "Copied!",
 	"detail.clearSession": "Clear Session",
@@ -393,7 +391,6 @@ const zh: Translations = {
 	"orch.cacheWrite": "缓存写入",
 	"orch.cacheRead": "缓存读取",
 	"orch.output": "输出",
-	"orch.pause": "中断",
 
 	// Status
 	"status.draft": "草稿",
@@ -423,7 +420,6 @@ const zh: Translations = {
 	"detail.clickToEdit": "点击编辑",
 	"detail.runningHint": "任务正在运行 — 发送消息来更新",
 	"detail.noDescription": "暂无描述",
-	"detail.stop": "中断",
 	"detail.copyId": "复制任务ID",
 	"detail.copied": "已复制！",
 	"detail.clearSession": "清除会话",

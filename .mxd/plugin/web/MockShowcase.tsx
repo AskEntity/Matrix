@@ -644,7 +644,6 @@ function MockShowcaseInner() {
 								provider="anthropic"
 								model="claude-sonnet-4-20250514"
 								onClearSession={noop}
-								onStop={noop}
 							/>
 						</div>
 					) : selectedNode && isTask(selectedNode) ? (

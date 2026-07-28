@@ -75,7 +75,6 @@ describe("matrix plugin api.ts builders apply the namespace prefix", () => {
 			api.taskFork("p", "n"),
 			api.taskReorder("p", "n"),
 			api.taskContinue("p", "n"),
-			api.stop("p"),
 			api.compact("p"),
 			api.clarify("p"),
 			api.agent("p"),

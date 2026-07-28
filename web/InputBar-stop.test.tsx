@@ -9,6 +9,15 @@
  * "also do X", "that file is at Y" — and swapping the button away would delete
  * it. So this test asserts both buttons are present at once, not merely that
  * Stop appears.
+ *
+ * The second property, and the reason the Orchestrator panel is rendered at the
+ * bottom of a file named after the composer: this is the ONLY stop. The panel
+ * used to carry a second one that tore the whole session down while saying
+ * "Interrupt", so a user had to know which stop was which before they could use
+ * either. Both halves of that invariant are asserted in one file for the same
+ * reason `src/image-requires-text.test.ts` asserts both REST doors together — a
+ * rule enforced at one of two places is enforced nowhere, and the second place
+ * is reliably the one nobody remembers.
  */
 
 import {
@@ -140,6 +149,57 @@ describe("InputBar stop button", () => {
 		const stopBtn = await waitFor(() => stop(div));
 		stopBtn.click();
 		expect(calls).toBe(1);
+	});
+
+	test("the Orchestrator panel offers no second stop while root works", async () => {
+		// Rendered here rather than in a file of its own because the claim is
+		// about the PAIR: exactly one stop exists, and it is the composer's.
+		const { createRoot } = await import("react-dom/client");
+		const { createElement } = await import("react");
+		const { OrchestratorDetail } = await import(
+			"../.mxd/plugin/web/components/OrchestratorDetail.tsx"
+		);
+		const { LocaleProvider } = await import("../.mxd/plugin/web/i18n.ts");
+
+		const div = document.createElement("div");
+		document.body.appendChild(div);
+		const root = createRoot(div);
+		cleanups.push(() => {
+			root.unmount();
+			div.remove();
+		});
+
+		const renderPanel = (isRootActive: boolean) => {
+			root.render(
+				createElement(
+					LocaleProvider,
+					null,
+					createElement(OrchestratorDetail, {
+						isRootActive,
+						nodes: [],
+						rootNodeId: "root",
+						onClearSession: () => {},
+					}),
+				),
+			);
+		};
+
+		// Root is working: the whole action row is empty. Stopping a turn is
+		// the composer's job and there is nowhere else to ask for it.
+		renderPanel(true);
+		await waitFor(() => div.querySelector(".mxd-orch-detail"));
+		expect(div.querySelectorAll("button").length).toBe(0);
+
+		// POSITIVE CONTROL — the assertion above is only worth the wiring
+		// behind it. The row still renders its OTHER control, which sits one
+		// line from the deleted one and is the obvious collateral.
+		renderPanel(false);
+		const buttons = await waitFor(() => {
+			const found = div.querySelectorAll("button");
+			return found.length > 0 ? found : null;
+		});
+		expect(buttons.length).toBe(1);
+		expect(buttons[0]?.textContent).toContain("Clear");
 	});
 
 	test("Stop disappears again when the agent goes idle", async () => {

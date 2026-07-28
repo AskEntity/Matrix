@@ -7,7 +7,7 @@ export interface SlashCommand {
 
 export const SLASH_COMMANDS: SlashCommand[] = [
 	{ name: "compact", description: "Compact agent context" },
-	{ name: "stop", description: "Stop the running agent" },
+	{ name: "stop", description: "Stop the current turn" },
 	{ name: "clear", description: "Clear all session history" },
 	{ name: "settings", description: "Open settings panel" },
 ];

@@ -109,24 +109,11 @@ export function IconSend({ size = 14 }: { size?: number }) {
 	);
 }
 
-export function IconPause({ size = 14 }: { size?: number }) {
-	return (
-		<svg
-			aria-hidden="true"
-			width={size}
-			height={size}
-			viewBox="0 0 24 24"
-			fill="currentColor"
-		>
-			<rect x="5" y="3" width="5" height="18" rx="1" />
-			<rect x="14" y="3" width="5" height="18" rx="1" />
-		</svg>
-	);
-}
-
 /**
  * Stop — a single square, not two bars. Pause says "it will carry on where it
- * left off"; this ends the turn and hands control back to you.
+ * left off"; this ends the turn and hands control back to you. (There is no
+ * pause glyph in this set any more: the one control that used it promised
+ * resumption and delivered a session teardown.)
  */
 export function IconStop({ size = 13 }: { size?: number }) {
 	return (
