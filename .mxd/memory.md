@@ -504,12 +504,10 @@ needed. **Removing an eager cost relocates it to the moment of first use — ask
 there.**
 
 ⭐ **The boundary condition on hoisting ANY such decision is not the obvious one.** It is **not** "the
-steps before the loop only read the log" — two of them manufacture input (`buildSessionRepair`
-appends synthetic tool_results; bgOrphan synthesis invents a `background_complete` out of nothing on
-disk). The rule is that **a decision can be hoisted iff every input it consumes is computable WITHOUT
-performing the step that would create it.** Both qualify, being pure functions whose caller does the
-writing. Stated the wrong way round, the next person concludes that a step which appends is
-disqualified — the opposite of what holds. ⚠️ **A corrupt log whose repair cannot be expressed
+steps before the loop only read the log" — two of them manufacture input. The rule is that **a
+decision can be hoisted iff every input it consumes is computable WITHOUT performing the step that
+would create it**; stated the wrong way round, the next person concludes that a step which appends is
+disqualified, the opposite of what holds. ⚠️ **A corrupt log whose repair cannot be expressed
 LAUNCHES**, so it reaches `runAgentForNode` and gets reported; swallowing it into "nothing to do"
 turns a loud failure into a node that never comes back.
 
@@ -527,14 +525,12 @@ IDENTICAL to a text block**; only the TRAILING assistant message 400s, which is 
 rule wearing a different error string. A repair that dropped such a turn was built on the false
 premise and is deleted.
 
-**`launchingNodes` guards the window between "we decided to launch" and "the session exists", and the
-lock is acquired atomically at the top of `ensureChildAgentRunning` with no await before
-`beforeChildLaunch`.** That placement is the fix for a real race: `git worktree add` takes seconds,
-two concurrent launches both used to get through, and the loser's throw marked the node `failed` and
-sent a bogus `task_complete(failed)` while the winner was still running. `beforeChildLaunch` is the
-SOLE worktree creator. ⚠️ **Never add a node to `launchingNodes` from outside `runAgentForNode`** —
-`autoResumeProjects` once pre-registered every node it was about to launch, `runAgentForNode` saw the
-set and returned early, and no agent ever started.
+**`launchingNodes` guards the window between "we decided to launch" and "the session exists", and it
+must be taken with no await before `beforeChildLaunch`** — `git worktree add` takes seconds, two
+concurrent launches both used to get through, and the loser's throw marked the node `failed` and sent
+a bogus `task_complete(failed)` while the winner was still running. ⚠️ **Never add a node to it from
+outside `runAgentForNode`**: `autoResumeProjects` once pre-registered every node it was about to
+launch, `runAgentForNode` saw the set and returned early, and no agent ever started.
 
 ## done() is two-phase, and both of Phase 2's invariants were learned the hard way
 
@@ -563,15 +559,14 @@ side. **Design rule: any code path that could silently hang a yielding parent mu
 
 ⚠️ **Writing that handler and making it survive its OWN failure are two different problems, and the
 second bites in exactly the shape the first was built to prevent.** The original was
-`ensureChildAgentRunning(…).catch(async e => {…})` doing error event → status flip → `save()` →
-deliver. An `async` function passed to `.catch()` has nobody to catch **it**, so a rejected `save()`
-escaped as an unhandled rejection — and because the notification was last in a straight-line body,
-that rejection **skipped** it. The handler whose entire purpose is "a parent must never wait forever"
-then hung the parent, at the one moment something had already gone wrong. **The shape that holds:** a
-NON-async `.catch` delegating to a named function where each COSMETIC step sits in its own try/catch
-and the LOAD-BEARING delivery comes last but cannot be starved. ⚠️ **Do NOT collapse that into one
-try/catch around the whole body** — it converts a loud unhandled rejection into a silently skipped
-notification.
+`.catch(async e => {…})` doing error event → status flip → `save()` → deliver. An `async` function
+passed to `.catch()` has nobody to catch **it**, so a rejected `save()` escaped as an unhandled
+rejection — and because the notification was last in a straight-line body, that rejection **skipped**
+it, so the handler whose entire purpose is "a parent must never wait forever" hung the parent at the
+one moment something had already gone wrong. **The shape that holds:** a NON-async `.catch` where each
+COSMETIC step sits in its own try/catch and the LOAD-BEARING delivery comes last but cannot be
+starved. ⚠️ **Do NOT collapse that into one try/catch around the whole body** — it converts a loud
+unhandled rejection into a silently skipped notification.
 
 ### An unhandled rejection is an outage here, not a log line
 
@@ -592,11 +587,10 @@ delivery that may not have happened. The full classified census (26 sites, 11 re
 
 ⭐ **DECIDED (`01KYDESAKCW186VZ8GEK6TW91W`): the worker should install an `unhandledRejection` handler
 that LOGS AND LETS THE THREAD DIE.** It looks like the swallowing catch this file keeps arguing
-against, and what resolves it is *what the handler does AFTER it logs*. Log-and-die is pure
-attribution — semantics unchanged, an anonymous worker death becomes one that names the lens.
-Log-and-swallow is the swallowing catch at PROCESS scope, and worse than the per-site version, because
-the worker carries on in an unknown state while writing JSONL and managing worktrees. ⚠️ Installing a
-handler SUPPRESSES the default action, so the death has to be re-raised deliberately.
+against, and what resolves it is *what the handler does AFTER it logs*: log-and-die is pure
+attribution, turning an anonymous worker death into one that names the lens, while log-and-swallow is
+the swallowing catch at PROCESS scope — worse than the per-site version, because the worker carries on
+in an unknown state while writing JSONL and managing worktrees.
 
 ## The done() payload, and the boundary it defends
 
@@ -611,10 +605,6 @@ those are read only inside matrix's `onDone`, and the runtime passes the raw don
 opaque `Record`. **The check is a grep**: `resultRounds`, `appendResultRound`, `parseDonePayload` and
 `DonePayload` appear in `src/runtime/*`, `runtime.ts`, `provider-shared.ts` and `events.ts` only
 inside boundary-explaining comments.
-
-⚠️ **`onDone` returns void.** It used to return a plugin struct that got spread into `done_notified`,
-letting a plugin inject arbitrary marker fields — removed, because the marker is write-only and only a
-synthetic test used the channel. Do not re-add a `T["done"] | void` shape "just in case".
 
 ⭐ **Testing opacity requires data only the other layer understands** — the robustness test uses a
 non-matrix scope whose `done()` carries `wordCount` and `mood`. **Testing with the default plugin's
@@ -779,23 +769,22 @@ stronger meaning — `yield_external` wakes an external client on it, and the UI
 ⚠️ **There is a `thinking` transition on the way OUT of idle, and the argument for omitting it was wrong
 in an instructive way.** The reasoning: every path leaving `handleImplicitYield` reaches the API block,
 so a second setter is unobservable — *the emitted event sequence is identical either way*. True, and
-irrelevant, because **consumers read the STORED value, not the event stream.** Without the transition
-the entire wake window reports `idle` for a loop that is provably not parked, and the documented
+irrelevant, because **consumers read the STORED value, not the event stream.** Without it the whole wake
+window reports `idle` for a loop that is provably not parked, and the documented
 `send_user_message → yield_external` workflow lands exactly there and is told the agent stopped working.
 **The structural fix is the dedupe, not the extra line**: `setActivity` early-returns on an unchanged
-state, which makes "an extra `setActivity` call is harmless" true, so you write a transition wherever the
-loop changes what it is doing and never reason about it again.
+state, which makes "an extra call is harmless" true, so you write a transition wherever the loop changes
+what it is doing and never reason about it again.
 
 **`agent_activity` is a broadcast-only delta and must never reach JSONL** — that is what makes "replaying
 history cannot fake-activate an agent" structurally true instead of corrected afterwards. A separate
 snapshot goes daemon→client on SSE connect, **sent even when empty**, because "nothing is running" is
 exactly what a client reconnecting after everything stopped needs in order to drop stale entries.
 
-⚠️ **A consumer that a grep for `activeAgents` does NOT find**, and the canonical local instance of the
-by-name blindness in *Changing code here*: `yield_external` subscribes to the `agent_idle` **event type
-name** in `WAKE_SIGNALS`. It is matched now via a predicate on `agent_activity`, and **the reported
-reason string stays `"agent_idle"` because that is the tool's external contract**, unrelated to our
-internal event names.
+⚠️ **One consumer is invisible to a grep for `activeAgents`**, and it is the canonical local instance of
+the by-name blindness in *Changing code here*: `yield_external` subscribes to the `agent_idle` **event
+type name**, now matched via a predicate on `agent_activity`, and **the reported reason string stays
+`"agent_idle"` because that is the tool's external contract.**
 
 ## An anomalous stop idles the agent silently
 
