@@ -3318,20 +3318,6 @@ button.mxd-tool-card-header:hover {
 	background: var(--bg-tertiary);
 }
 
-/*
- * Shown under the thumbnails while attachments are waiting on a message.
- * Deliberately quiet — it is a prompt to keep typing, not an error. It sits
- * where the previews are so the answer is next to the question, and it is
- * always visible rather than a tooltip: Enter-to-send has no hover, and
- * neither does a keyboard user.
- */
-.mxd-image-needs-text {
-	width: 100%;
-	padding: 0 2px 2px;
-	font-size: 11px;
-	color: var(--text-faint);
-}
-
 /* Image preview thumbnails */
 .mxd-image-previews {
 	display: flex;
