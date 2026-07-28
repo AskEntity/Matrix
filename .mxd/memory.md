@@ -1837,202 +1837,138 @@ i.e. to the 88% error above. **The probe now asserts its own premise before it r
 
 ## Durability at the process boundaries
 
-**`shutdown()` order is fixed**: stop every running project's agent, then await residual
-`agentLoopPromises` (bounded 1s), then flush every EventStore. `stopAgent` awaits loop settlement
-with the same 1s bound, symmetric with `stopTask` — that closes the race between
-`POST /projects/:id/stop` returning and the `finally` block's `agent_end` / Phase 2 `done_notified` /
-MCP-disconnect writes, and it is what stops `DELETE /projects` → `rm -rf` racing in-flight writes.
-The final flush matters only for the one genuinely async write path (`copySessionFrom`) now that
-`append` is synchronous, but it is the correct shape and costs nothing.
+**`shutdown()` order is fixed**: stop every running project's agent, then await residual loop
+promises (bounded 1s), then flush every EventStore. `stopAgent` awaits loop settlement with the same
+bound, symmetric with `stopTask` — that closes the race between `POST /stop` returning and the
+`finally` block's `agent_end` / `done_notified` / MCP-disconnect writes, and it is what stops
+`DELETE /projects` → `rm -rf` racing in-flight writes.
 
-⚠️ **Do NOT call `fg.resolve()` in `stopAgent`.** It looks like the tidy way to deal with a
-foreground bash that is ignoring abort, and it moves the command cleanly to background — which
-**breaks the orphan-repair semantic**. A stuck tool is supposed to get bounded grace and then be
-left as an orphan, so `buildSessionRepair` synthesizes the interrupted tool_result on the next
-launch. Several restart tests depend on exactly that.
+⚠️ **Do NOT call `fg.resolve()` in `stopAgent`.** It looks like the tidy way to deal with a foreground
+bash that is ignoring abort, and it moves the command cleanly to background — which **breaks the
+orphan-repair semantic.** A stuck tool is supposed to get bounded grace and then be left as an orphan,
+so repair synthesizes the interrupted tool_result on the next launch.
 
 ⚠️ **The 1s bound was tuned under a single-run assumption and is now a known flake source.** Normal
-load today is 3-4 sub-agents each running the full suite plus root running it too, and under that
-contention `Restart B: crash during bash sleep` intermittently blows its 30s test timeout — it takes
-~2.6s on the runs where it passes, so this is contention rather than a marginal miss. **Triage
-shortcut: the suite's own total run time is a load probe** — measured 300.8s on the failing run
-against 267-269s on passing ones. Check that before suspecting your diff. Raising the test's timeout
-would only hide it; the open question is whether 1s still holds under parallel load
-(`01KYCMVKN14RRX0KK0H2CNTD9P`).
+load today is 3-4 sub-agents each running the full suite plus root running it too. **Triage shortcut:
+the suite's own total run time is a load probe** — 300.8s on the failing run against 267-269s on
+passing ones. Check that before suspecting your diff. Open question: whether 1s still holds under
+parallel load (`01KYCMVKN14RRX0KK0H2CNTD9P`).
 
-**Worker init has a 30s timeout** (`WORKER_INIT_TIMEOUT_MS`, overridable for tests). Without it a
-plugin whose `runtime.ts` hangs at top level hangs daemon boot forever — no log, no 503. On timeout
-the worker is terminated and the promise rejects with a message naming the plugin. Crash-restart
-uses exponential backoff `[2, 4, 8, 16, 30]s`, five attempts, then a circuit break with an SSE
-event; a worker that has been ready for 60s resets its attempt counter.
+**Worker init has a 30s timeout.** Without it a plugin whose `runtime.ts` hangs at top level hangs
+daemon boot forever — no log, no 503. ⚠️ **A `beforeAll` that calls `createDaemon` with a worker must
+budget ≥ that**, or on a real flake the test's own timer fires first and you get a useless "beforeAll
+timed out", **masking the daemon's much better "Worker init timed out: <plugin>" message that names
+the actual stuck plugin.** `createDaemon` costs ~213ms cold and ~346ms under heavy contention, so 30s
+has 100×+ headroom; a 15s budget had >40× and still flaked. **Do not try to fit it under 15s "to fail
+fast" — fast is meaningless when it fails on the wrong timer.**
 
-⚠️ **A `beforeAll` that calls `createDaemon` with a worker must budget ≥ `WORKER_INIT_TIMEOUT_MS`.**
-Otherwise on a real flake the test's own timer fires first and you get a useless "beforeAll timed
-out" with no diagnostic, **masking the daemon's much better "Worker init timed out: <plugin>"
-message that names the actual stuck plugin.** Measured cost of `createDaemon` with one global
-plugin: ~213ms cold, ~137ms warm, ~346ms under 24 CPU stressors plus 4 parallel `bun test` runs —
-worker spawn dominates every time. So 30s has 100×+ headroom; a 15s budget had >40× headroom and
-still produced rare flakes from scheduler stalls, and the test never observed which step stalled.
-**Do not try to fit it under 15s "to fail fast" — fast is meaningless when it fails on the wrong
-timer.** (`createTestToken` is HMAC only, 2-3ms — never the cause of a slow bootstrap.)
-
-**`.mxd.lock`** at the dataDir root is acquired with `O_EXCL` and holds `{pid, startedAt, version}`.
-A stale lock whose PID is dead is stolen; a live PID errors out. It is opt-in (`lockDataDir: true`),
-because tests run concurrent daemons on isolated tempdirs. ⚠️ **It refuses even when the lock holds
-our own PID** — a second `createDaemon` in one process is a test bug or a double-init, and surfacing
-it beats tolerating it. Release is sequenced in `shutdown()` after the workers are gone, **which
-means in practice it has almost never run** — see the next section. The steal-on-dead-PID path is not
-a fallback; it is the only path, and it has been load-bearing since embeddings landed.
-
-⚠️ **Test mocks must honor the abort signal.** A mock doing `setTimeout(resolve, 10000)` makes
-`stopAgent`'s loop-settlement await wait the full window. Real provider SDKs already respect abort;
-`abortableSleep(ms, req.signal)` brings mocks in line.
+**`.mxd.lock`** at the dataDir root is acquired with `O_EXCL` and holds `{pid, startedAt, version}`; a
+stale lock whose PID is dead is stolen, a live PID errors out. It is opt-in, because tests run
+concurrent daemons on isolated tempdirs. ⚠️ It refuses even when the lock holds our own PID — a second
+`createDaemon` in one process is a test bug, and surfacing it beats tolerating it.
 
 ## ⚠️ An ORT session dies with the thread it lives on — so it gets its own process
 
-**FIXED 2026-07-25.** The session now lives in a child process (`src/embedder-child.ts`), spawned by
-`src/embedder-client.ts`. Worker threads never load ORT. Keep it that way; the rest of this section
-is why, and what it cost to find out.
+**FIXED 2026-07-25.** The embedding session now lives in a child process. Worker threads never load
+ORT. Keep it that way; the rest of this section is why, and what it cost to find out.
 
-Measured one variable at a time, harness in `scripts/napi-repro/` (reproduces in ~2s):
+Measured one variable at a time:
 
 | where the session lives | thread ends by | result |
 |---|---|---|
 | worker thread, NO session (import only) | parent `terminate()` | **exit 0** |
 | worker thread | parent `terminate()`, device `cpu` | **exit 133** |
-| worker thread | parent `terminate()`, device `webgpu` | **exit 133** |
 | worker thread | worker's own `process.exit(0)` | **exit 133** |
 | worker thread, `dispose()` first | parent `terminate()` | **exit 133** |
 | **MAIN thread** | **`process.exit(0)`** | **exit 0** |
 
-`panic: NAPI FATAL ERROR: Error::New napi_create_error`. **The trigger is not `terminate()`, not the
-device, and not skipping `dispose()` — it is an ORT InferenceSession existing in a thread that is
-ENDING.** The last row is the whole fix: a process's main thread only ends when the process ends, and
-that path is clean. So give the session a process whose main thread owns it.
+**The trigger is not `terminate()`, not the device, and not skipping `dispose()` — it is an ORT
+InferenceSession existing in a thread that is ENDING.** The last row is the whole fix: a process's
+main thread only ends when the process ends. **Upgrading does not help — measured, do not
+re-litigate**: `onnxruntime-node` 1.24.3 → 1.27.0 still exits 133.
 
-**Upgrading does not help — measured, do not re-litigate.** bun 1.3.14 and transformers 4.2.0 are
-already the latest; `onnxruntime-node` 1.24.3 → **1.27.0 still exit 133**. The precedent that made
-this worth trying (a *different* bun worker-teardown crash that 1.3.7/1.3.8 → 1.3.14 did fix) does
-not extend to this one.
-
-**What it cost before the fix.** Grepping `daemon.err`: 13 of the last 20 process deaths carried this
-exact panic, at uptimes up to 18.4h — **as far as that log went back, this daemon had never once
-exited cleanly.** Three consequences, and the third is the expensive one:
-
-1. `releaseDataDirLock()` is sequenced AFTER worker teardown in `shutdown()`, so it had never run.
-   `.mxd.lock`'s steal-on-dead-PID path was not a fallback, it was the only path.
-2. Exit 133 is indistinguishable from a real crash to launchd and to a human — which is why 13 of
-   them went unremarked.
-3. It converted a slow startup into an unbootable machine: init exceeded the 30s budget → daemon
-   terminated the worker → the worker held a session → a recoverable "one plugin failed to load"
-   became a hard failure, 23 times over. **This is what the "segfault" in the index bug report
-   actually was**, not a memory blowup; the 2.26GB RSS was a symptom sitting next to the cause.
+**What it cost before the fix.** 13 of the last 20 process deaths carried this exact panic, at uptimes
+up to 18.4h — **as far as that log went back, this daemon had never once exited cleanly.** Three
+consequences, and the third is the expensive one: `releaseDataDirLock()` is sequenced after worker
+teardown so it had never run; **exit 133 is indistinguishable from a real crash to launchd and to a
+human**, which is why 13 of them went unremarked; and it converted a slow startup into an unbootable
+machine, because init exceeded the 30s budget → daemon terminated the worker → the worker held a
+session → a recoverable "one plugin failed to load" became a hard failure. **This is what the
+"segfault" in the index bug report actually was.**
 
 **Why a child process and not the alternatives.** Main-thread inference is crash-safe by the table
 above but blocks the HTTP shell that the worker architecture exists to protect. The WASM backend
-avoids NAPI entirely, but transformers' node build has no `wasm` device (only `coreml, webgpu, cpu`)
-and its web build assumes browser semantics — it fetches models by URL and cannot read the local
-cache. "Never terminate a worker holding a session" trades a native abort for a leaked thread and
-disables worker restart, the daemon's own crash-recovery mechanism, exactly when a plugin is
-misbehaving.
+avoids NAPI entirely, but transformers' node build has no `wasm` device and its web build assumes
+browser semantics. "Never terminate a worker holding a session" trades a native abort for a leaked
+thread and disables worker restart — the daemon's own crash-recovery mechanism — exactly when a plugin
+is misbehaving. **Cost of the fix is small and partly negative**: spawn + model load 939ms once, ~4ms
+of IPC per query, and the parent now burns 0.02s of user CPU for work that used to run on the thread
+next to the agent loop.
 
-**The cost is small and partly negative.** Spawn + model load + verify: 939ms, once, then warm. A
-search-query embed: 63ms median vs ~59ms in-process — ~4ms of IPC. Batched indexing: 12.8ms/doc
-wall. And the parent process now burns **0.02s of user CPU** for work that used to run on the worker
-thread next to the agent loop — the boundary moved inference off the thread that serves agents.
-Vectors cross as structured clone (`serialization: "advanced"`), so no JSON cost for Float32Array.
+**Lifecycle is inherited, not managed.** When the spawning thread goes away Bun closes the IPC channel
+and `disconnect` fires in the child, which exits — one mechanism covering worker terminate, worker
+restart and daemon shutdown, with no bookkeeping and no leaked 500MB process per restart. Deleting
+that handler is the quiet way to reintroduce a leak.
 
-**Lifecycle is inherited, not managed.** When the thread that spawned it goes away, Bun closes the
-IPC channel and `disconnect` fires in the child, which exits. One mechanism covers worker terminate,
-worker restart and daemon shutdown, with no bookkeeping in the parent and no leaked 500MB process per
-restart. Deleting that handler is the quiet way to reintroduce a leak.
-
-⚠️ **The regression that would silently undo this is one line: a static `import ... from
+⚠️ **The regression that would silently undo this is one line: a static `import … from
 "@huggingface/transformers"` in any module a worker loads.** Everything keeps working until the next
-shutdown, which is exactly how this sat unexamined for two days. `src/embedder-client.test.ts` greps
-`task-index.ts`, `embedder-client.ts` and `orchestrator-tools.ts` for that shape and fails on it —
-mutation-verified by reintroducing the import. `embedding.ts` may name the package, but only inside a
-function body, where `import()` loads nothing until the child calls it.
-
-**`MXD_DISABLE_EMBEDDINGS` is no longer a crash guard, and its comments now say so.** It was the
-test-side half of this hazard; it is now just "run BM25-only", which `bun test` uses to skip a 500MB
-model load and a per-suite child spawn it has no assertions about. Unsetting it is safe, only slower.
-A mock pipeline still takes priority over it, so vector-path tests are unaffected.
+shutdown, which is exactly how this sat unexamined for two days. A test greps three files for that
+shape.
 
 ## The self-bootstrap death chain, and the five worker-lifecycle bugs that formed it
 
-Agent commits bad code → daemon restarts → worker crashes → **permanent hang plus a held lock.**
-Five bugs in `daemon.ts` chained into that, and each is worth knowing because the failure is always
-"nothing happens" rather than an error:
+Agent commits bad code → daemon restarts → worker crashes → **permanent hang plus a held lock.** Five
+bugs in `daemon.ts` chained into that, and each is worth knowing because **the failure is always
+"nothing happens" rather than an error**:
 
 - **`worker.onerror` must reject the init promise.** It cleared the init timer and then did nothing;
-  Bun fires `onerror` *and* terminates the worker, so with the timer cleared and no reject, the
-  start promise hung forever with no timeout left to save it. An `initResolved` flag now decides:
-  during init → reject (boot failed, no restart scheduled); after init → schedule a backoff restart.
-- **`shutdown()` must tolerate dead workers.** `postMessage` throws `InvalidStateError` on a
-  terminated Bun Worker, and that throw skipped every remaining worker **and**
-  `releaseDataDirLock` — which is where the held lock in the chain came from. Try/catch per worker;
-  a dead one goes straight to terminate.
-- **A `{type:"error"}` message from the worker must also `terminate()` it.** Rejecting the init
-  promise alone left the thread alive consuming resources.
-- **Restart timers must be tracked and cleared on shutdown.** Bare `setTimeout` restart timers fired
-  *after* the lock was released and spawned zombie workers.
-- **Dead workers must be deleted from the `workers` map** on all three failure paths (timeout,
-  onerror, `{type:"error"}`).
+  Bun fires `onerror` *and* terminates the worker, so with the timer cleared and no reject, the start
+  promise hung forever with no timeout left to save it.
+- **`shutdown()` must tolerate dead workers.** `postMessage` throws on a terminated Bun Worker, and
+  that throw skipped every remaining worker **and** `releaseDataDirLock` — which is where the held
+  lock came from.
+- A `{type:"error"}` message from the worker must also `terminate()` it; restart timers must be
+  tracked and cleared on shutdown, or they fire *after* the lock is released and spawn zombies; and
+  dead workers must be deleted from the `workers` map on all three failure paths.
 
-⚠️ **Triggering `onerror` during init in a test is not obvious**: a plugin runtime with
-`setTimeout(() => { throw … }, 0)` followed by `await new Promise(r => setTimeout(r, 50))` gives the
-event loop a chance to run the 0ms timer while scope-worker is still in its init phase. The two
-approaches that seem simpler both fail — **`process.exit(1)` does NOT fire `onerror`** (silent
-death, only the timeout catches it), and a module-level `throw` is caught by scope-worker's own
-try/catch and becomes `{type:"error"}` instead.
+⚠️ **Triggering `onerror` during init in a test is not obvious**: use a plugin runtime with
+`setTimeout(() => { throw … }, 0)` plus a short await. The two approaches that seem simpler both fail
+— **`process.exit(1)` does NOT fire `onerror`** (silent death, only the timeout catches it), and a
+module-level `throw` is caught by scope-worker's own try/catch and becomes `{type:"error"}` instead.
 
 ## Two transport bugs that corrupt silently
 
-⚠️ **`response.text()` on a proxied response destroys binary data.** scope-worker used it for
-buffered HTTP responses forwarded back to the daemon; `text()` decodes as UTF-8, so **every byte
-above 0x7F becomes U+FFFD** — a 256-byte binary payload inflates to 512 bytes and a PNG header
-(first byte 0x89) becomes garbage. Fixed with `arrayBuffer()` plus a transferable postMessage
-(zero-copy); `new Response()` accepts both `string` and `ArrayBuffer` natively. Request bodies are
-*not* affected today only because they are JSON in practice — a binary request body (plugin file
-upload) needs the same fix on `forwardToWorker`.
+⚠️ **`response.text()` on a proxied response destroys binary data.** It decodes as UTF-8, so **every
+byte above 0x7F becomes U+FFFD** — a 256-byte binary payload inflates to 512 and a PNG header becomes
+garbage. Fixed with `arrayBuffer()` plus a transferable postMessage. Request bodies are *not* affected
+today only because they are JSON in practice; a binary request body needs the same fix.
 
-⚠️ **Bun Workers do NOT inherit `process.env` assignments from the parent thread.** They get their
-env from the OS process snapshot at spawn time, so `process.env.X = "Y"` in the main thread — and
-therefore `bunfig.toml [test.env]`, which sets `process.env` — is **invisible** to a file-based
-Worker. The only way through is the `env` option on the Worker constructor, and the daemon passes
-`{ env: process.env }`. Verified empirically, including the confusing part: **data-URL workers DO
-inherit it** (different codepath), so a minimal repro can "prove" the opposite of production.
+⚠️ **Bun Workers do NOT inherit `process.env` assignments from the parent thread.** They get their env
+from the OS process snapshot at spawn time, so `process.env.X = "Y"` in the main thread — and
+therefore `bunfig.toml [test.env]` — is **invisible** to a file-based Worker. The only way through is
+the `env` option on the Worker constructor. Verified empirically, including the confusing part:
+**data-URL workers DO inherit it**, so a minimal repro can "prove" the opposite of production.
 
 ## SSE catch-up must survive a restart: epoch-prefix every event id
 
 **Symptom: after a daemon restart, an open page stays blank until F5.** Per-lens seq counters restart
-at 0 on every boot. There was already a guard for a pre-restart cursor *beyond* the new tail, but
-not for one that falls *inside* the new incarnation's refilled range — and after a real restart
-agents auto-resume and stream, so the buffer refills past the browser's low cursor before it
-reconnects. `getEventsSince` then returned a wrong-epoch slice, catch-up was marked done, and the
-full initial state was never sent.
+at 0 on every boot. There was already a guard for a pre-restart cursor *beyond* the new tail, but not
+for one falling *inside* the new incarnation's refilled range — and after a real restart agents
+auto-resume and stream, so the buffer refills past the browser's low cursor before it reconnects.
+Catch-up was then marked done and the full initial state never sent.
 
-Every SSE `id:` is now `<epoch>-<seq>` where the epoch is minted once per `createDaemon`. Catch-up
-runs **only** when the cursor's epoch matches; a legacy bare-numeric cursor, a foreign epoch and
-garbage all fall through to full initial state. ⚠️ **`parseSseLastEventId` splits on the LAST dash**,
-because the epoch may contain dashes. ⚠️ **Both `id:` emit sites must use the formatter** — the live
-relay and the catch-up replay — since one bare-seq emit poisons the client's NEXT reconnect cursor.
-The client needs zero changes: EventSource echoes `Last-Event-ID` opaquely and only the server
-parses it.
+Every SSE `id:` is now `<epoch>-<seq>`, minted once per `createDaemon`, and catch-up runs **only** when
+the cursor's epoch matches. ⚠️ **Both `id:` emit sites must use the formatter** — the live relay and
+the catch-up replay — since one bare-seq emit poisons the client's NEXT reconnect cursor. The client
+needs zero changes: EventSource echoes `Last-Event-ID` opaquely.
 
-Two adjacent restart-window holes closed with it:
-
-⚠️ **There is ONE `worker.onmessage`, installed before init.** The old code used a temporary
-init-only handler and swapped in the runtime handler after `ready` — but **the worker posts
-`sse_event`s DURING init** (autoResume crash recovery runs with `onBroadcast` already wired), so
-those were dropped silently. Harmless on first boot with no clients; on a worker auto-restart, SSE
-clients are still connected daemon-side and miss every recovery event.
-
-⚠️ **`/events` initial state polls for worker readiness for 3s, and the 3s is deliberate, not the
-spec's 2s.** The restart backoff is 2s and expires exactly as the restarted worker *begins* init, so
-a 2s poll guarantees a miss for early-gap clients. A ready worker resolves on the first check with
-zero delay; a lens with no plugin at all resolves immediately as undefined.
+Two adjacent restart-window holes closed with it. ⚠️ **There is ONE `worker.onmessage`, installed
+before init**: the old code swapped in the runtime handler after `ready`, but **the worker posts
+`sse_event`s DURING init** (autoResume crash recovery runs with `onBroadcast` already wired), so those
+were dropped silently — harmless on first boot, but on a worker auto-restart the SSE clients are still
+connected daemon-side and miss every recovery event. And **`/events` initial state polls for worker
+readiness for 3s, deliberately not the spec's 2s**, because the restart backoff is 2s and expires
+exactly as the restarted worker *begins* init, so a 2s poll guarantees a miss for early-gap clients.
 
 ---
 # Plugin System
@@ -2040,182 +1976,125 @@ zero delay; a lens with no plugin at all resolves immediately as undefined.
 
 ## What a plugin is, and the boundaries that keep it one
 
-A plugin is `.mxd/plugin/`: a manifest (`index.ts`), a worker-side `runtime.ts` supplying
-`ScopeOpts`, and a `web/` React component the shell lazy-loads. Matrix is one of these and is
-discovered by the same scan as any other. The per-project configuration lives in `ctx.scopeOpts`,
-and `buildMatrixScopeOpts` in `.mxd/plugin/scope-opts.ts` is the ONE place that knows matrix's
-tools, prompt and hooks.
-
-**The hook list is deliberately not reproduced here.** It lives in `src/runtime/context.ts`, it has
-grown several times, and two hooks have changed arity — a copy in this file would go stale silently
-because there is no compiler between the two. What the type signature cannot tell you:
-
-⚠️ **Hooks are named by EVENT, never by resource.** `onTaskDelete`, not `removeWorkspace` — the
-latter presupposes that tasks HAVE workspaces, which is a plugin-specific assumption the runtime
-must not encode. Prose comments may say "workspace"; hook NAMES may not. The same rule is why the
-index reconciliation hook is called `onScopeResume`.
-
-Everything optional is genuinely optional — the runtime does `opts.hook?.(...)` and attaches no
-meaning to absence.
-
-**Four invariants, each checkable:**
+A plugin is `.mxd/plugin/`: a manifest, a worker-side `runtime.ts` supplying `ScopeOpts`, and a `web/`
+React component the shell lazy-loads. **Matrix is one of these and is discovered by the same scan as
+any other — that constraint is the only thing keeping the runtime honest**, and it is checkable:
 
 - `src/` has **ZERO** production imports from `.mxd/plugin/`. Delete the plugin and the shell still
-  compiles. (Test files and test-utils may import it; that is test infrastructure.)
-- Plugin web has **ZERO** imports from `../../../src/`. It reaches shared code through the
-  `@mxd/auth-context` and `@mxd/types` importmap aliases.
-- The runtime **throws** if `buildScopeOpts` is not provided. No silent fallback to a built-in
-  matrix scope — that fallback existed and was deleted.
+  compiles. (Test files may import it.)
+- Plugin web has **ZERO** imports from `../../../src/`; it reaches shared code through importmap
+  aliases.
+- The runtime **throws** if `buildScopeOpts` is not provided. No silent fallback to a built-in matrix
+  scope — that fallback existed and was deleted.
 - `src/runtime/*`, `runtime.ts` and `provider-shared.ts` mention no matrix concept, including in
   comments.
 
-**`BaseTaskNode` vs `TaskNode`**: the runtime is generic **at the type level** — `ScopeOpts<T>` and
-the `PluginTypes` generic are parameterized over `BaseTaskNode`, and matrix extends it with
-description, branch, worktreePath, cwd, color, costUsd, budgetUsd, resultRounds. ⚠️ **CAVEAT: only
-the hook interfaces are generic.** The concrete `TaskTracker` still stores matrix's
-`TaskNode | GeneralNode` directly and is not generic over `BaseTaskNode`, so "the runtime uses
-BaseTaskNode" is aspirational for the tracker. Full tracker generalization is future work.
+**The hook list is deliberately not reproduced here.** It lives in `src/runtime/context.ts`, it has
+grown several times, and two hooks have changed arity — a copy here would go stale silently because
+there is no compiler between the two. What the type signature cannot tell you: ⚠️ **hooks are named by
+EVENT, never by resource.** `onTaskDelete`, not `removeWorkspace` — the latter presupposes that tasks
+HAVE workspaces, which is a plugin-specific assumption the runtime must not encode. Prose comments may
+say "workspace"; hook NAMES may not.
+
+⚠️ **CAVEAT on "the runtime is generic": only the hook INTERFACES are.** The concrete `TaskTracker`
+still stores matrix's `TaskNode | GeneralNode` directly and is not generic over `BaseTaskNode`, so
+that claim is aspirational for the tracker.
 
 ## `/api/<plugin>/*` — explicit URLs, no hidden rewriting
 
-Plugin-owned routes live under `/api/<plugin-name>/*` on the wire. The daemon strips the prefix and
-the worker serves its routes as if at root. `pluginApiPrefix(name)` is the single source and is
-imported by the daemon router, the CLI, the plugin's `api.ts` URL builders, and `web/runtime-types.ts`
-— so a format change propagates atomically across all four.
+Plugin-owned routes live under `/api/<plugin-name>/*` on the wire; the daemon strips the prefix and
+the worker serves its routes as if at root. `pluginApiPrefix(name)` is the single source, imported by
+the daemon router, the CLI, the plugin's URL builders and `web/runtime-types.ts`, so a format change
+propagates atomically across all four.
 
 ⚠️ **The `app.all("*")` catch-all was REMOVED, and that is the point of the change.** An unprefixed
-plugin path now 404s instead of silently falling back to "the first global worker". `/version` and
-`/stats` needed explicit daemon-level forwarders because they had only ever been served by that
-catch-all. Daemon-owned paths stay at root: `/auth/*`, `/health`, `/version`, `/stats`, `/plugins`,
-`/global-context`, `/events`, `/projects` CRUD and `/projects/:id/config*`, `/vendor/*`, `/app/*`,
-`/restart-daemon`. Everything else under `/projects/:id/` is plugin-owned.
-
-External MCP clients configured against the old `/mcp` URL break, deliberately and with no
+plugin path now 404s instead of silently falling back to "the first global worker" — which is why
+`/version` and `/stats` needed explicit daemon-level forwarders: they had only ever been served by that
+catch-all. External MCP clients configured against the old `/mcp` URL break, deliberately and with no
 deprecation alias.
 
 ⚠️ **`pluginApiPrefix` lives in `src/plugin-url.ts`, which has ZERO imports, and it must stay that
-way.** `web/runtime-types.ts` re-exports it to browser code; when it lived in `plugin.ts` it dragged
-in `data-paths.ts` → `node:path`, and Bun's browser target polyfilled the entire module into every
-plugin's first-load bundle: **10,293 bytes → 281 bytes when it was split out, a 37× reduction.** A
-test builds the shared module and asserts it stays under 500 bytes, so any future server-only import
-that creeps into that graph fails loudly rather than quietly costing 10KB on first paint.
+way.** `web/runtime-types.ts` re-exports it to browser code; when it lived in `plugin.ts` it dragged in
+`data-paths.ts` → `node:path`, and Bun's browser target polyfilled the entire module into every
+plugin's first-load bundle: **10,293 bytes → 281 bytes when it was split out.** A test asserts the
+shared module stays under 500 bytes, so any future server-only import that creeps into that graph fails
+loudly rather than quietly costing 10KB on first paint.
 
 **Rejected alternatives, so nobody re-proposes them**: a shell `authFetch` wrapper would need a
 daemon-route passthrough list, coupling the shell to the daemon's internal routing table; and
-plugin-via-props data flow is cleaner long-term but was 100+ LOC of scope creep. Explicit URL
-construction at each layer means the plugin author sees exactly what hits the wire.
+plugin-via-props data flow is cleaner long-term but was 100+ LOC of scope creep.
 
 ## Additive dual lenses — a project is served by its own plugin AND by matrix
 
 A project that ships its own `.mxd/plugin/` is served by **both** its own scope and the global matrix
-scope, on separate per-scope data roots. `matrix:<id>` is the dev lens (coding, orchestration);
-`<own>:<id>` is the product lens. Shipping a plugin **ADDS** a lens and never removes the matrix one.
+scope, on separate per-scope data roots. `matrix:<id>` is the dev lens; `<own>:<id>` is the product
+lens. Shipping a plugin **ADDS** a lens and never removes the matrix one.
 
 ⚠️ **The first implementation made ownership EXCLUSIVE (`own ?? global`) and was reverted. Do not
-re-derive it.** Four reasons it is wrong, and the first is decisive:
+re-derive it.** Four reasons, and the first is decisive:
 
 1. **`<scope>:<project>` is a TWO-PART address, and its existence proves the relationship is dual.**
-   If a project mapped to one scope the prefix would be redundant. Exclusive collapsed it to
-   `scope = f(project)`.
-2. The design was always "parallel run loops — alongside, NOT override". Exclusive turned alongside
-   into override.
+   If a project mapped to one scope the prefix would be redundant.
+2. The design was always "parallel run loops — alongside, NOT override".
 3. Self-bootstrap requires coexistence: matrix is its own product, and "the product is a dev tool"
    only holds if a project opens in both lenses at once.
 4. Per-plugin `dataRoot` was built for exactly this and is wasted under exclusive.
 
 **If any routing decision tempts you toward "a project belongs to ONE plugin", that is this bug
-returning.**
+returning.** Consequences that follow and would otherwise look arbitrary: `scopesForProject` is all
+globals ∪ the project's own plugin, **globals-first**, so the default lens is dev/matrix;
+`projectsForPlugin` gives a global plugin **ALL** projects, with no double-resume because the lenses
+live in distinct data roots; and `DELETE /projects/:id` **fans out** a stop to every scope serving the
+project.
 
-Consequences that follow from additive and would otherwise look arbitrary: `scopesForProject` is
-all globals ∪ the project's own plugin, **globals-first**, so the default lens is dev/matrix;
-`projectsForPlugin` gives a global plugin **ALL** projects (matrix is every project's dev lens and
-must know them all to resume), with no double-resume because the lenses live in distinct data roots;
-`onProjectInit` runs per that list, so matrix scaffolds every project's dev lens; and `DELETE
-/projects/:id` **fans out** a stop to every scope serving the project, because a running agent in
-any lens must stop before data removal.
+**SSE is scope-aware, because a lens is `(projectId, scope)` and each lens has its own tree.** The ring
+buffer and seq counter are keyed by `lensKey = ${projectId}\u0000${scope}`, and the relay derives the
+lens from the *emitting* worker, so a product viewer never sees the dev tree.
 
-**SSE is scope-aware, because a lens is `(projectId, scope)` and each lens has its own tree.** The
-ring buffer and seq counter are keyed by `lensKey = ${projectId}\u0000${scope}` — `\u0000` cannot
-appear in a ULID or a plugin name, and is deliberately different from the worker key's `:`. The
-relay derives the lens from the *emitting* worker, so a product viewer never sees the dev tree. A
-project with no plugin of its own has one worker emitting one scope, so behavior is identical to
-before the change, which is the regression bar.
-
-**Default lens is dev-first (globals-first ordering).** Rationale: matrix is the foundation lens
-every project always has and the product lens is the ADDITION, so defaulting to product would make
-first load identical to the reverted exclusive model and **hide the addition** — the default should
-teach the model. Also the matrix lens always works while product workers are mid-build. A per-project
-configurable default is drafted (`01KTJZ07MC0VWM923SBDZHDRP8`); do not bake product-first globally
-while products are under development.
-
-⚠️ **Pre-existing noise, not a regression**: daemon tests that run `createDaemon` against the matrix
-repo log `onProjectInit failed … ENOTDIR .git/info`, because a git WORKTREE has `.git` as a FILE and
-`excludeWorktrees` tries to mkdir inside it. Caught and logged; succeeds on a normal checkout.
+**Default lens is dev-first**, because matrix is the foundation lens every project always has and the
+product lens is the ADDITION — defaulting to product would make first load identical to the reverted
+exclusive model and **hide the addition**. The default should teach the model.
 
 ## The plugin SDK: `mxd/plugin-sdk`, one zod, one live module
 
-An out-of-tree plugin imports `mxd/plugin-sdk` — a subpath of the real `mxd` package via its
-`exports` map — rather than counting `../`s. Bare-specifier resolution walks up `node_modules`, so it
-is depth-independent and works inside the plugin's own worktree with no dev symlink.
+An out-of-tree plugin imports `mxd/plugin-sdk` — a subpath of the real `mxd` package — rather than
+counting `../`s. ⚠️ Chosen over `@mxd/plugin-sdk` on purpose: the `@mxd/*` names are BROWSER virtual
+modules, a different mechanism, and a server package reusing that prefix would falsely imply kinship.
 
-⚠️ **Chosen over `@mxd/plugin-sdk` on purpose**: the `@mxd/*` names are BROWSER virtual modules
-(tsconfig paths + importmap), a different mechanism, and a server package reusing that prefix would
-falsely imply kinship.
+⭐ **It must stay a thin re-export and must never become a vendored copy.** Bun and Node dedupe modules
+by REALPATH, so a plugin importing through its `node_modules/mxd` symlink resolves to the same physical
+files and therefore the **same process singletons** the agent loop uses — in particular the module-level
+`_ctx` in `resource-registry.ts`. A vendored copy has a different realpath, a different `_ctx`, and
+**message delivery silently no-ops with no error.**
 
-⭐ **It must stay a thin re-export and must never become a vendored copy.** Bun and Node dedupe
-modules by REALPATH, so a plugin importing through its `node_modules/mxd` symlink resolves to the
-same physical files and therefore the **same process singletons** the agent loop uses — in
-particular the module-level `_ctx` in `resource-registry.ts`. A vendored copy has a different
-realpath, a different `_ctx`, and **message delivery silently no-ops with no error.** Proven by a
-probe outside the repo: `listNodes` returns the exact same node object the app's tracker holds,
-reference-identical.
+⭐ **`package.json` pins `zod` EXACT, and the caret must not come back.** The SDK does
+`export { z } from "zod"` so a plugin's `z.string()` passes matrix's `shapeToJsonSchema` — which only
+works when both sides are the same `ZodString` class. A caret let a consumer drift, producing two
+distinct Zod identities and a `defineTool` that stopped typechecking. **`package.json` is strict JSON
+and cannot hold a comment, so this paragraph is the only record of why.** The `@anthropic-ai/sdk` pin
+is exact for the same class of reason.
 
-⭐ **`package.json` pins `zod` EXACT (`"4.3.6"`), and the caret must not come back.** The SDK does
-`export { z } from "zod"` so a plugin's `z.string()` passes matrix's `shapeToJsonSchema` — which
-only works when both sides are the same `ZodString` class. A caret let a consumer drift to 4.4.3,
-producing two distinct Zod identities and a `defineTool` that stopped typechecking. **package.json
-is strict JSON and cannot hold a comment, so this paragraph is the only record of why.** The
-`@anthropic-ai/sdk` pin is exact for the same class of reason.
+**The `exports` map also GATES deep imports**, and that gating is load-bearing: `getTracker` and
+`deliverMessage` are un-importable, and only the narrowed pair reaches a plugin. **`deliverToNode` +
+`listNodes`** is semantic narrowing rather than cosmetic — delivery that cannot be misused, and a
+read-only snapshot that cannot mutate the tracker, versus full mutable access. `deliverToNode` is a thin
+wrapper over the ONE `deliverMessage` path, so it keeps the wake-an-idle-recipient semantic, and **no
+permission policy is baked in**: matrix's ancestor/sub-task restriction is matrix policy.
 
-**The `exports` map also GATES deep imports**, and that gating is load-bearing rather than
-incidental: `import "mxd/src/resource-registry.ts"` no longer resolves, so `getTracker` and
-`deliverMessage` are un-importable and only the narrowed pair reaches a plugin. Verified safe
-because nothing in the tree self-imports by bare specifier (matrix uses relative imports; the worker
-`import()`s plugins by absolute path).
-
-**The narrowed messaging API is `deliverToNode` + `listNodes`**, and the narrowing is semantic rather
-than cosmetic: `deliverToNode` exposes only delivery and cannot be misused, `listNodes` returns a
-fresh read-only snapshot of launchable nodes and cannot mutate the tracker — versus `getTracker`,
-which is full mutable access. `deliverToNode` is a thin wrapper over the ONE `deliverMessage` path,
-not a fork, so it keeps the wake-an-idle-recipient semantic. **No permission policy is baked in**;
-matrix's ancestor/sub-task restriction is matrix policy, and intra-project delivery is unrestricted
-with the plugin's own tools owning routing.
-
-⚠️ **`deliverToNode` throws "deliverMessage not registered" outside any agent loop.** `_ctx` is set
-by `initResourceRegistry` on the `createApp` path, but `_deliverMessage` is registered by
-`registerSideEffects`, which runs inside `createAgentContext` **at agent launch**. `listNodes` works
-without a launch; delivery does not. This is why its arrival is tested through a real loop rather
-than a bare `createApp`.
-
-**Still missing**: a plugin cannot define how its own message source renders — `formatQueueMessage`
-hardcodes a wrapper per built-in source. Drafted as `01KTJ5F5XTM32YNS6RSPW7R5PF`.
+⚠️ **`deliverToNode` throws "deliverMessage not registered" outside any agent loop.** `_ctx` is set on
+the `createApp` path, but `_deliverMessage` is registered inside `createAgentContext` **at agent
+launch**. `listNodes` works without a launch; delivery does not.
 
 ## What extraction actually moved
 
 `buildMatrixScopeOpts` moved into `.mxd/plugin/`; the **leaf utilities stayed in `src/`**
-(WorktreeManager, `createOrchestratorTools`, `buildSystemPrompt`, `slugify`, `McpClientManager`) and
-the plugin imports them, because plugin→src is the allowed direction. **The leak was
-`buildMatrixScopeOpts` living in `runtime/agent-lifecycle.ts`, not the utils.** `grep WorktreeManager
-src/runtime/` is zero, and that is the check.
-
-Worktree operations in runtime routes became hooks: reactivation calls the existing
-`beforeChildLaunch` (the semantics already matched exactly), and DELETE got `onTaskDelete`.
-
-Mock-showcase (a static data endpoint plus a component-development page) was registered
-**unconditionally in `src/runtime.ts`, so every plugin worker served it.** It is a FEATURE of the
-matrix plugin, not a plugin of its own, and now lives in `.mxd/plugin/routes/`. Its UI activates at
-`/<projectId>/matrix/mock-showcase`; the old `?mock=true` query param was dead. It is the place to
-visually confirm a new log-entry card renders without running a real agent.
+(WorktreeManager, `createOrchestratorTools`, `buildSystemPrompt`, `McpClientManager`) and the plugin
+imports them, because plugin→src is the allowed direction. **The leak was `buildMatrixScopeOpts` living
+in `runtime/agent-lifecycle.ts`, not the utils** — `grep WorktreeManager src/runtime/` is zero, and that
+is the check. Worktree operations in runtime routes became hooks. Mock-showcase was registered
+unconditionally in `src/runtime.ts`, so **every plugin worker served it**; it is a FEATURE of the matrix
+plugin and now lives in `.mxd/plugin/routes/`. It is the place to visually confirm a new log-entry card
+renders without running a real agent.
 
 ---
 # Auth & External API
@@ -2223,16 +2102,11 @@ visually confirm a new log-entry card renders without running a real agent.
 
 ## Auth is always on, and the anonymous surface is four things
 
-There is **no auth-disabled mode and no opt-out.** The `autoInitAuth` parameter was deleted, every
-`createDaemon` unconditionally runs `ensureAuthInitialized`, and the middleware's "no jwtSecret →
-skip" branch is gone: an anonymous request to a non-skip path is ALWAYS 401. Tests mint a token
-rather than disabling auth. Production binds `127.0.0.1` unless `MXD_BIND_HOST` is set — the old
-`*:7433` default was LAN-reachable during the bootstrap window.
-
-⚠️ **`readAuthData` throws on a parse failure, an empty file or a read error**, returning `{}` only
-for ENOENT (fresh install). And `writeAuthData` writes to a temp sibling and renames, so a crash
-mid-write cannot leave a truncated or empty `auth.json` — which, before auth became mandatory, was
-a file state that silently disabled auth entirely.
+There is **no auth-disabled mode and no opt-out.** Every `createDaemon` unconditionally runs
+`ensureAuthInitialized`, and the middleware's "no jwtSecret → skip" branch is gone: an anonymous
+request to a non-skip path is ALWAYS 401. Tests mint a token rather than disabling auth. Production
+binds `127.0.0.1` unless `MXD_BIND_HOST` is set — the old `*:7433` default was LAN-reachable during the
+bootstrap window.
 
 **Exactly four ways a request skips auth. This is the whole list**, and understating it is the wrong
 direction for an auth note to be wrong in:
@@ -2242,110 +2116,87 @@ direction for an auth note to be wrong in:
 2. The `/vendor/` and `/app/` prefixes — compiled bundles, no secrets.
 3. **`GET` + `isFrontendPath(path)`** — `/` exactly, or a first path segment that is a **currently
    registered project id**. This is the largest and least obvious part of the surface: tasks live at
-   `/<projectId>/<scope>/<taskPath>`, browsers do not send `Authorization` on navigation, so a
-   refresh must reach the shell — which is auth-content-free, and every API call it then makes goes
-   through this same middleware. Unregistered first segments 404 cleanly.
+   `/<projectId>/<scope>/<taskPath>`, browsers do not send `Authorization` on navigation, so a refresh
+   must reach the shell — which is auth-content-free, and every API call it then makes goes through
+   this same middleware.
 4. Nothing else. **Everything under `/auth/*` except `/auth/status` requires a token**, guarded by a
-   regression test asserting `GET /auth/bogus` → 401 — which exists because a former
-   `startsWith("/auth/")` skip would have silently exempted any future `/auth/*` route.
+   test asserting `GET /auth/bogus` → 401, which exists because a former `startsWith("/auth/")` skip
+   would have silently exempted any future `/auth/*` route.
 
-⚠️ **Item 3 is `GET`-only on purpose.** POST/PATCH to a frontend-shaped path stays 401; those are not
-legitimate SPA paths, and an honest 401 beats accidentally serving HTML.
-
-⚠️ **The predicate is `pm.has(firstSegment)`, not a ULID regex, and it is deliberately the SAME
-predicate used by the SPA-fallback wildcard** (`app.get("*")`). One predicate, one answer — there is
-no way to get "auth bypassed but the wildcard 404s". A regex was considered and rejected: a
-project's *existence* is the correctness condition, not its id format, and under a regex a stale or
-deleted id would load a broken SPA that immediately 404s on its own data fetches instead of 404ing
-cleanly. Backend route names never collide with project ids because ULIDs are 26 chars of base32.
+⚠️ **Item 3 is `GET`-only on purpose** — POST/PATCH to a frontend-shaped path stays 401. And **the
+predicate is `pm.has(firstSegment)`, not a ULID regex, deliberately the SAME predicate used by the
+SPA-fallback wildcard**: one predicate, one answer, so there is no way to get "auth bypassed but the
+wildcard 404s". A regex was considered and rejected — a project's *existence* is the correctness
+condition, not its id format, and under a regex a deleted id would load a broken SPA that 404s on its
+own data fetches instead of 404ing cleanly.
 
 ⚠️ **`/auth/logout` requires a valid token.** It was in the skip list, so any drive-by page could POST
-it and force a `bumpSecretVersion`, logging out every active user — CSRF denial of service. The
-handler's own docstring already described the 401 behavior; the code just did not agree.
+it and force a secret rotation, logging out every active user — CSRF denial of service. The handler's
+own docstring already described the 401 behavior; the code just did not agree.
 
 ## Tokens, credentials and the destructive-tool gate
 
 JWTs carry `sub` (`"cli" | "session" | "stream"`) and `sv` (secret version). `/events` accepts only
-`stream`; REST accepts only `cli`/`session`; a token with no `sv` always fails. `bumpSecretVersion`
-(POST `/auth/logout`) rotates it and invalidates every outstanding token. `extractBearerToken`
-matches `/^Bearer[ \t]+(.+)$/i` because RFC 7235 makes the scheme case-insensitive.
+`stream`; REST accepts only `cli`/`session`; a token with no `sv` always fails. **The long-lived session
+token never appears in a URL** — the frontend POSTs `/auth/stream-token` before every EventSource
+connect and passes a 5-minute token as `?token=`; the heartbeat re-verifies it and on expiry emits a
+named `auth_expired` event, which the client's watchdog turns into a fresh token. ⚠️ **`mxd watch` must
+do the same** — its own `sub: "cli"` token is rejected by `/events`, producing a 401 → reconnect → 401
+loop forever.
 
-⚠️ **There is no auth cache, and do not add one back.** A previous `authDataCache` produced "the user
-ran `mxd auth` but the running daemon never re-read `auth.json`". `readAuthData` hits disk on every
-call; it is a small local JSON file and the cost is negligible against that failure mode.
+⚠️ **There is no auth cache, and do not add one back.** A previous `authDataCache` produced "the user ran
+`mxd auth` but the running daemon never re-read `auth.json`". `readAuthData` hits disk on every call; it
+is a small local JSON file and the cost is negligible against that failure mode. Relatedly it **throws**
+on a parse failure, an empty file or a read error, returning `{}` only for ENOENT, and `writeAuthData`
+writes to a temp sibling and renames — before auth became mandatory, a truncated `auth.json` was a file
+state that silently disabled auth entirely.
 
-**The long-lived session token never appears in a URL.** The frontend POSTs `/auth/stream-token`
-(with the session Bearer) before every EventSource connect and passes the resulting 5-minute token
-as `?token=`; the SSE heartbeat re-verifies it and, on expiry or revocation, emits a named
-`auth_expired` event and closes the stream, which the client's watchdog turns into a fresh token and
-a new EventSource. **`mxd watch` must do the same** — its own `sub: "cli"` token is rejected by
-`/events`, producing a 401 → reconnect → 401 loop forever, and each reconnect must re-mint rather
-than reuse a possibly-revoked token.
+⚠️ **Credentials are masked on read and protected on write, in three places.** `maskConfig` replaces every
+credential on every config view; `mergeAuthGroups` preserves the plaintext when a client echoes back a
+masked value, which is what keeps the UI's "save the entire authGroups object" pattern safe; and
+`PATCH /projects/:id/config` and `/config/repo` **return 400 if the body contains `authGroups` or
+`defaultAuth`** — that last one was CLI-only enforcement before, so a non-friendly HTTP client could put
+its own credentials into a project's config and the next agent run would use them.
 
-⚠️ **Credentials are masked on read and protected on write, in three places.** `maskConfig` replaces
-every `authGroups.*.{apiKey, oauthToken, accessToken, refreshToken}` with `prefix…last4` on every
-config view including the resolved and local layers; `mergeAuthGroups` preserves the plaintext when
-a client echoes back a masked value, which is what keeps the UI's "save the entire authGroups
-object" pattern safe; and `PATCH /projects/:id/config` and `/config/repo` **return 400 if the body
-contains `authGroups` or `defaultAuth`**. That last one was CLI-only enforcement before, so a
-non-friendly HTTP client could put its own credentials into a project's config and the next agent
-run would use them.
+⚠️ **`auth.json` needs BOTH a mode on write and a chmod on init, because of a POSIX detail that looks like
+a bug.** Node's `writeFile(path, data, {mode})` only honors `mode` on file CREATION; overwriting an
+existing file silently preserves whatever mode the inode already has. So without a boot-time
+`ensureSecureFileMode`, an `auth.json` created by an older version stays `0o644` forever even after every
+rewrite, leaving `jwtSecret` world-readable and forgeable by any local user. The mask is
+`(mode & 0o077) !== 0`, so a user-hardened `0o400` is left alone.
 
-⚠️ **UI logout is server-first, and the order is the point**: `await authFetch('/auth/logout')` →
-`clearToken()` → reload. Clearing locally first leaves the session JWT valid on the server for up to
-30 days, so a stolen `localStorage` copy replays from another browser. If the POST fails the local
-clear still happens — the user's intent to end the session is unconditional.
+⚠️ **UI logout is server-first, and the order is the point**: POST logout → clear token → reload. Clearing
+locally first leaves the session JWT valid on the server for up to 30 days, so a stolen `localStorage`
+copy replays from another browser.
 
-⚠️ **`auth.json` needs BOTH a mode on write and a chmod on init, because of a POSIX detail that
-looks like a bug.** Node's `fs.writeFile(path, data, {mode})` only honors `mode` on file CREATION
-(`O_CREAT`); overwriting an existing file silently preserves whatever mode the inode already has. So
-`{mode: 0o600}` secures new files, and `ensureSecureFileMode` at daemon boot upgrades loose existing
-ones. Without the chmod pass, an `auth.json` created by an older version stays `0o644` forever even
-after every rewrite, leaving `jwtSecret` world-readable and forgeable by any local user. The mask is
-`(mode & 0o077) !== 0`, which fires only on a group/other bit and therefore leaves a user-hardened
-`0o400` alone.
-
-**Destructive tools check `requireSubtreePermission` at handler entry**: `update_task` (all
-mutations, not only reparent), `close_task`, `delete_task`, `reset_task`, and the three folder tools
-(resolving a folder to its nearest task ancestor). `reorder_tasks` and `fork_task_context` already
-had it; the point was making the whole destructive suite consistent.
-
-**Upstream errors are classified before they reach a user.** `classifyUpstreamError` maps
-`{status, keyword}` to `auth / rate_limit / credits / invalid_request / upstream_down / network /
-other` with a one-line headline, keeping the raw message (trimmed to 300 chars) for debugging.
-Users no longer see raw Anthropic JSON blobs.
-
-**Layering**: `tool-auth.ts` owns the opaque `Auth` type and `checkPermission(auth, mode, resource)`;
-`resource-registry.ts` owns handle-based global functions (`R.getTracker`, `R.emit`) with no
-closures; `tool-def.ts` owns `ParamDecl` with `bind`, so bound params are hidden from the agent and
-filled automatically. Every tool is a `ToolDef` with an auth-aware handler — there are no
-closure-based handlers left. `AuthGroup` is a discriminated union on `provider`.
+**Destructive tools check `requireSubtreePermission` at handler entry**: `update_task` (all mutations,
+not only reparent), `close_task`, `delete_task`, `reset_task`, and the three folder tools. **Upstream
+errors are classified before they reach a user** — `classifyUpstreamError` maps `{status, keyword}` to
+`auth / rate_limit / credits / …` with a one-line headline, keeping the raw message for debugging, so
+users no longer see raw Anthropic JSON blobs.
 
 ## The external MCP endpoint
 
-`POST /api/matrix/mcp` is a stateless MCP Streamable HTTP transport for external clients — no
-attach, no session state. Six tools, gated by `availability: "internal" | "external" | "both"` on
-every ToolDef. The intended workflow is `send_user_message` → `yield_external` → `get_logs`.
-`get_logs` is `"external"` rather than `"both"` because agents do not need to read each other's
-JSONL.
+`POST /api/matrix/mcp` is a stateless MCP Streamable HTTP transport — no attach, no session state. Six
+tools, gated by `availability: "internal" | "external" | "both"`. The intended workflow is
+`send_user_message` → `yield_external` → `get_logs`.
 
 ⚠️ **Anti-pattern this endpoint taught us: an attached external observer and a peer project are
-different relationships.** Layer 1 is asymmetric (an observer attached to a running agent); layer 2
-is symmetric (two projects as peers). **The same wire format does not make them the same semantic** —
-check symmetry before unifying two things that look alike on the wire.
+different relationships.** Layer 1 is asymmetric (an observer attached to a running agent); layer 2 is
+symmetric (two projects as peers). **The same wire format does not make them the same semantic** — check
+symmetry before unifying two things that look alike on the wire.
 
 ## CLI onboarding
 
-⚠️ **`mxd config auth add` auto-promotes the first group to `defaultAuth`.** Provider resolution
-reads `cfg.defaultAuth`, so add-without-promote was a half-command: a fresh user followed the README,
-ran `mxd config auth add anthropic --key …`, and the next `mxd send` threw "No auth group
-configured". Adding a *second* provider leaves the existing default alone and prints how to switch —
-we never silently clobber an existing pick.
+⚠️ **`mxd config auth add` auto-promotes the first group to `defaultAuth`.** Provider resolution reads
+`cfg.defaultAuth`, so add-without-promote was a half-command: a fresh user followed the README and the
+next `mxd send` threw "No auth group configured". Adding a *second* provider leaves the existing default
+alone — we never silently clobber an existing pick.
 
 ⚠️ **macOS test gotcha**: `mkdtemp(tmpdir())` returns `/var/folders/…` while a spawned subprocess's
-`process.cwd()` returns the resolved `/private/var/folders/…`. `resolveCurrentProject` compares
-strings, fails, and the CLI exits with "No project found for current directory" long before reaching
-whatever you were testing. Wrap fixture paths in `realpathSync`.
+`process.cwd()` returns the resolved `/private/var/folders/…`. `resolveCurrentProject` compares strings,
+fails, and the CLI exits with "No project found for current directory" long before reaching whatever you
+were testing. Wrap fixture paths in `realpathSync`.
 
 ---
 # Web UI — Routing, State & Event Handling
