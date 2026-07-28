@@ -4848,3 +4848,66 @@ days of test-level debugging could not.
   arbitrary descendants. That half is what remains open.
 - **Tool search** — dynamic tool discovery instead of sending every tool. Anthropic has a server-side
   `defer_loading`; the user prefers a client-side design.
+
+## ⚠️ "Never offer a remedy that will not work" is not a UI rule — it costs MORE in a tool error
+
+The rule is already written down for greyed buttons under *Blocked buttons are greyed and explained,
+never hidden*. It reappeared twice in `closeTaskOp`, and the second medium is the expensive one:
+**a human reads a bad remedy and gives up; an agent DOES IT, collects the second refusal, and then
+invents a workaround.** What it invents is worse than the failure, because it is invisible.
+
+**Instance 1 — the dead end (fixed).** `update_task {status:"closed"}` refuses with *"Use close_task
+instead"*, and `close_task` refused anything that was not `verify`/`failed`. **The first error named
+a road the second did not accept**, so a draft had no path to a terminal state at all. Observed
+damage: a superseded draft was marked done by writing `[已解决 by <id>]` into its **TITLE** — state
+encoded in a string, invisible to `hideCompleted` and to every status filter, so it sits in the
+active pool forever. That is the shape to watch for: *the workaround is legible to humans and to
+nothing else.*
+
+The fix is a SUBTRACTION with one member — only `in_progress` is refused. **Close means two things
+at once** (reclaim the resources, take it out of the active pool); a draft/pending owns no worktree,
+no branch and no session, so for it only the second applies and the first is a **no-op, not a
+contradiction**. The old whitelist read that no-op as grounds to refuse.
+
+**Instance 2 — the false remedy inside the guard that STAYS (fixed).** The old message was *"Cannot
+close a running task. **Stop it first** or wait for done()."* ⚠️ **`stopTask` never touches
+`status`, deliberately — a stopped task stays `in_progress` precisely so it can resume** (its own
+docstring says so; all 7 runtime `updateStatus` sites were checked and none is a stop). So stopping
+lands the caller back on this same refusal, and an agent cannot even take that road: **there is no
+stop tool.**
+
+⭐ **The fix for a false remedy is a SHORTER message, not a more complete one — and two drafts went
+the wrong way before this landed.** The instinct when correcting a wrong instruction is to explain:
+name the false path and why it fails, name the alternative, price it. Both intermediate drafts did
+exactly that, and both were wrong for one reason — **they generated COMPLETENESS where the reader
+needs an INSTRUCTION.** An error answers a single question, *what do I do now*; the answer here is
+"wait", so the message is `Cannot close a running task — wait for it to finish.` Each rejected
+clause fails a concrete test worth keeping:
+
+- *"Note that STOPPING it does not help"* — a warning about an action the reader **cannot perform**.
+  Worse, the fact that agents have no stop tool was written down in the report that argued for the
+  sentence: it was known, and not applied. **Check what the reader can DO before writing them a
+  warning.**
+- *"reset_task it first, which discards its session and worktree"* — `reset_task` genuinely unblocks
+  the close (→ pending → closable, true only because of this change), and it is a destructive option
+  nobody asked for. Handing someone a knife because they asked to tidy up is not helpfulness, and
+  attaching the price tag does not make it one.
+- *"done() sets verify or failed, both closable"* — internal state vocabulary, contributing nothing
+  to *what do I do now*.
+
+Pinned by a test asserting the message names waiting and contains neither `stop` nor `reset_task`,
+so the false remedy cannot return in either form — recommending it, or warning against it.
+
+**Negative result, verified rather than assumed** (the guard "looks like it already covers this" was
+the reason to check): `closeTaskOp`'s `if (node.worktreePath && node.branch)` really is a clean
+no-op for a resourceless task, and **close never calls `clearEventStore` at all — the callback sits
+in its signature unused, and that absence IS "task record + session preserved"**. Both are pinned by
+tests carrying a POSITIVE CONTROL in the same test (a *pending* task that does own a worktree still
+gets it removed; `deleteTaskOp` with the same capture does clear), because "the callback was not
+called" is equally consistent with "nothing in this build calls it".
+
+⚠️ **Pre-existing race this widens without changing in kind**: `beforeChildLaunch` (a `git worktree
+add`, seconds) runs BEFORE `onLaunch` flips the status, so a task being launched is still readable
+as its old status. `close_task` has always been able to land in that window on a `verify`/`failed`
+task woken by `send_message`; it can now also land on a `pending` one. `deleteTaskOp` and
+`resetTaskOp` close this with `awaitLoopExit`; `closeTaskOp` never had it and still does not.

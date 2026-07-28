@@ -1173,10 +1173,10 @@ export function buildAllToolDefs() {
 			name: "close_task",
 			availability: "internal",
 			description:
-				"Clean up a task's worktree and branch to reclaim disk space. " +
-				"Task record + session preserved — status set to 'closed'. " +
-				"Call this AFTER you have already merged the task's branch yourself. " +
-				"Use for merged tasks or deferred tasks where you want to free resources. " +
+				"Take a task out of the active pool — status set to 'closed'; task record + session are preserved. " +
+				"Its worktree and branch, if it has them, are removed to reclaim disk, so merge that branch yourself FIRST or the unmerged work is lost. " +
+				"A draft or pending task has neither, so closing it is a pure status flip: use that when a draft's work ended up being done elsewhere, instead of deleting the decision record or writing the outcome into its title. " +
+				"Only an in_progress task is refused. " +
 				"`send_message` later reactivates the closed task — session resumes with full prior memory, worktree rebuilt fresh off your current branch.",
 			params: {
 				projectId: {

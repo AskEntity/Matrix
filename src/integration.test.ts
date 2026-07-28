@@ -5227,7 +5227,9 @@ describe("Integration: tree operations", () => {
 							contains: "Updated Tree Task",
 						},
 					],
-					// Set status to "verify" before closing (close_task rejects pending/draft)
+					// Exercise update_task's status path on the way to close.
+					// NOT a precondition: close_task refuses only in_progress,
+					// so a pending task would close here too.
 					blocks: [
 						{
 							type: "tool_use",

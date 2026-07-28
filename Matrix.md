@@ -526,7 +526,7 @@ Orchestration Tools（MCP server "mxd"）：
   create_task(title, desc, parentId?, draft?, color?) → node
   update_task(taskId, { status?, title?, description?, draft?, parentId? }) → node
   delete_task(taskId) → remove node + worktree + branch recursively
-  close_task(taskId) → clean worktree/branch, set closed (node preserved, rejects in_progress/pending/draft)
+  close_task(taskId) → clean worktree/branch if any, set closed (node preserved, 只拒 in_progress)
   reset_task(taskId) → remove worktree/session, set pending (fresh retry)
   reorder_tasks(nodeId, children[]) → reorder child nodes
   create_folder(title, parentId?) → visual grouping node (no lifecycle)
@@ -1131,7 +1131,7 @@ interface ToolPlugin {
 | Tab-based IDE UI | VSCode 风格 preview/pin tabs。可折叠 sidebar。Activity/Description view mode。Favorite/pin。三模式筛选。 |
 | Folder nodes | TreeNode = TaskNode \| FolderNode。纯视觉分组，透明于 task ownership。create_folder/delete_folder/rename_folder。 |
 | Two-phase done() | Phase 1 agent 决定 → Phase 2 daemon 提交。Crash recovery via done_notified marker。 |
-| Verify status | done("passed") → verify 状态。close_task 只接受 verify/failed。 |
+| Verify status | done("passed") → verify 状态。close_task 只拒 in_progress —— draft/pending 无 worktree/branch/session，关闭就是纯状态翻转。 |
 | Configurable cache TTL | session_config.cacheTtl。Root 1h，child 5min default。Fork 继承。 |
 | traceId infrastructure | 每个 event 携带 traceId (ULID)。检测同一 session 上的 concurrent loops。 |
 | EventStore generation guard | 三层防御：stopTask await、generation guard（stale writes → no-op）、awaitLoopExit。 |
