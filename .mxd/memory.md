@@ -208,15 +208,10 @@ Not hypotheticals; each has cost us real work.
    reading as "finished" — so agents take the first and fragment context across redundant trees. The
    same shape appears as handing work to a fresh agent instead of continuing. Prompt alone has not
    fixed it; the mechanism design is draft `01KNZGYY4T6SYWVT66DK13XCPV`.
-5. **Context is a compaction boundary, not a deadline.** An agent that feels low on context starts
-   planning a handoff, cutting scope, or asking to be replaced. It continues from a summary instead,
-   with the task description and this file intact by construction — so a compacted agent strictly
-   DOMINATES a replacement. The only legitimate reason to hand off is that FAMILIARITY ITSELF has
-   become the liability: a final read-through, an adversarial review, anything where not knowing the
-   material is the requirement rather than the cost. ⚠️ **Agents estimate their own budget badly and
-   confidently**: the one that offered a handoff was at 2.0M tokens having **never compacted once**,
-   estimated 2-3 sections left in it, and on being told to continue finished all 5 plus an extra —
-   roughly twice its own estimate, never reaching the boundary it budgeted against.
+5. **Context is a compaction boundary, not a deadline** — the system prompt argues this in full; what
+   belongs here is the local measurement, because agents estimate their own budget **badly and
+   confidently**. The agent that offered a handoff was at 2.0M tokens having **never compacted once**,
+   estimated 2-3 sections left in it, and on being told to continue finished all 5 plus an extra.
 
 ## Hard invariants
 
@@ -2888,6 +2883,15 @@ while it was dead. The evidence is the round trip: plant, re-verify dead against
 plant → **1 test red naming the offending file**, then plant removed → green. **A test whose value is
 entirely in the day it fires must be made to fire on purpose at least once.**
 
+⚠️ **And the widened heuristic has a RECALL GAP that is stated on purpose, because an unwritten one
+is the next depth defect.** Precision came from one rule — *a user-visible string starts with a
+capital OR contains a space* — which took the noisiest form from **32% real hits to ~100%** by
+dropping `rotate(90deg)`, `currentColor`, `sk-ant-…` and dotted i18n keys. The price is that **a
+single lowercase word with no space is NOT reported**, so `alt="attached"` is a real bare string this
+gate cannot see, and **baseline 0 will not mean zero bare strings.** The trade is worth taking because
+**a gate with a bad hit rate teaches people to skim past it** — but a recall gap nobody wrote down is
+one commit from becoming exactly the defect this gate was just fixed for.
+
 ⭐ **A partial-hit gate plus a fix-only-what-it-flagged policy produces incoherent output.** This
 outlives any particular widening — a heuristic is partial by construction. When the i18n gate was
 single-line it flagged 1 of a component's 6 user-visible strings; fixing that one leaves a component
@@ -2933,29 +2937,17 @@ it *does* break plugin authors. Refuted at both ends; manifests are JSON. **Do n
 
 ## Type errors that were all casts, and the gate that never ran
 
-Twenty-four `tsc` errors accumulated across six merges. **Every one was a workaround for a type the code
-already had correctly — zero `as unknown as` were added to fix them, and all 24 fixes DELETED a cast or
-a hack.** Four patterns, each a reusable diagnosis:
-
-- ⚠️ **`(node as Record<string, unknown>).status = …` in a test fixture** — the field is ordinary, typed
-  and writable. **A `Record<string, unknown>` cast on a domain object in a TEST is almost always a
-  fixture-seeding shortcut, not a type problem. Look for the setter.**
-- ⚠️ **A cast that fails with TS2352 means the type is MORE precise than you assumed, not less.**
-  `(db as Record<string, unknown>).tokenizer` errored because `AnyOrama` has no index signature — and it
-  declares `tokenizer` outright, so the plain assignment typechecks. **Read the `.d.ts` before
-  laundering through `unknown`.**
-- ⚠️ **`.filter(Boolean)` does NOT narrow.** Use `flatMap`, which infers the narrowed element type with
-  no predicate. **Never "fix" this with `!` — the compiler is right that `filter(Boolean)` told it
-  nothing.**
-- ⚠️ **Reading a variant-only field off a union**: narrow on the `type` discriminant instead of casting.
-  The narrowing usually makes the test STRONGER.
+Twenty-four `tsc` errors accumulated across six merges, and the shape of the fix is the transferable
+part: **every one was a workaround for a type the code already had correctly — zero `as unknown as`
+were added, and all 24 fixes DELETED a cast or a hack.** The compiler will show you the individual
+cases; what it will not tell you is that **a cast failing with TS2352 means the type is MORE precise
+than you assumed, not less**, and that `.filter(Boolean)` does not narrow, so `!` is never the fix.
 
 ⚠️ **Why 24 errors accumulated is the more important half, and it is not "someone bypassed the gate":
-there was no gate to bypass.** Nothing snuck past anything — the errors accumulated in the open, and the
-absence looked exactly like compliance. Two adjacent facts: `noUnusedLocals` cases are real, so delete
-them; and `check:ci` exits 0 with a standing pile of warnings, so **do not "fix" the warning count
-during a gate restoration**, since biome's suggested `!` → `?.` autofix is marked unsafe and silently
-changes assertion semantics.
+there was no gate to bypass.** Nothing snuck past anything — the errors accumulated in the open, and
+the absence looked exactly like compliance. ⚠️ Relatedly, `check:ci` exits 0 with a standing pile of
+warnings, so **do not "fix" the warning count during a gate restoration**: biome's suggested
+`!` → `?.` autofix is marked unsafe and silently changes assertion semantics.
 
 ## Two smaller standing facts
 
