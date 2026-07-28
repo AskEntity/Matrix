@@ -265,6 +265,13 @@ missed match**: you conclude the file does not say a thing, and then write it a 
 is exactly what a reorganization exists to remove. Search a short fragment, or collapse newlines
 first.
 
+Two smaller facts about that hard wrap, both of which cost a cleanup pass. **`⚠️` is TWO code
+points, not one**, so wrapping by eye to "100 columns" silently overshoots on every line carrying
+one — one rewrite came out at 580 over-long lines that looked correct in an editor. And **a wrapped
+line must never BEGIN with `>`, `|`, `#`, `-` or `=`**: markdown reads those as block markers before
+it ever sees the inline code span they were part of, so breaking `` `x.length >= 1` `` across a line
+turns the rest of the paragraph into a blockquote.
+
 ## Editing the system prompt
 
 The system prompt is **universal** across every project that uses Matrix. Each project has its own
