@@ -2045,7 +2045,8 @@ frozen in `session_config`. **(2) A migration makes the marker non-uniform on pu
 commits have no id and new ones do; a prompt that routes through the id teaches an agent to read
 its ABSENCE as "no way to know who wrote this", which is false for the entire pre-migration
 history — **teaching the new mechanism is the very act that makes the old data look broken**, and
-it is this file's oldest shape, an empty result read as an answer. The route that needs no branch: the time coordinate works on every commit ever made, and
+it is this file's oldest shape, an empty result read as an answer. The route that needs no branch:
+the time coordinate works on every commit ever made, and
 a trailer, where one exists, is sitting in the commit body you were already told to read — **it
 announces itself, so it never needs a fallback clause that could read as a dead end.**
 
@@ -2054,6 +2055,13 @@ A prompt bullet telling agents to keep the branch name in the merge subject was 
 deleted — 1280 merges are the measurement that says people forget, so the medium that depends on
 remembering is the wrong one. It belongs wherever the worktree is set up, once, per branch. Code
 task, still being scoped with root.
+
+⚠️ **CORRECTION to an inherited entry, for whoever curates next.** *How work moves through this
+repo* ends its merge-link paragraph with **"Put the id in the message as well as the prose."** That
+was written earlier the same day and the decision above supersedes it: it is the manual instruction
+the user rejected, and it is asking agents to remember the exact thing 92% of them have already
+failed to remember. The measurement in both places is the same 102/1280 and should live in ONE of
+them. Keep the mechanism decision; drop the instruction.
 
 ## Every hit says what it IS before its body is read
 
