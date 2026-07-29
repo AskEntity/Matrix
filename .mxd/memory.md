@@ -329,6 +329,28 @@ the reader infers it unaided. **Anything shaped like *"so this leads to…"*, *"
 shape as…"* or *"measured, it was…"* is evidence: it belongs here, and in the prompt it is
 weight without instruction.** Fact stays, inference goes.
 
+⭐ **Describing a successful piece of archaeology is not a dispatchable instruction. The former only
+has to be TRUE; the latter also has to have a CALL behind it.** Three instances in one evening, in
+three different subsystems, which is what makes it a class rather than a slip: *"blame the line and
+you'll find the task"* (the id is on 102 of 1280 merges); *"carry the timestamp back to the task
+tree and ask what was being worked on then"* (`search_tasks` takes `projectId, query, limit` and
+`get_tree` takes `projectId, format, include_closed, include_details` — **there is no time
+predicate anywhere**, so this is a person scanning 577 nodes by eye); and *"send_message the task
+you found"* (a working agent can only reach ancestors in its parent chain and DIRECT sub tasks).
+Every one was written by someone who had really done it, or watched it work.
+
+**The check is one question and it is cheap: for every "you should X" you are about to write, name
+the tool call X is. If you cannot, it is prose, not an instruction.**
+
+⚠️ **The mechanism that produces it: recounting your own success COMPRESSES parallel routes into
+one, because in memory it was a single win.** Traced exactly here — the real work was two separate
+moves, *timestamp → grep the JSONL* and *concepts → `search_tasks` the tree*; the recounting came
+out as "use the time to locate it in the task tree and the JSONL", one route with the tree bolted
+onto the timestamp. That sentence was then inherited into a prompt instruction, so **the person who
+did the work was not the person who wrote the unexecutable line, and neither could have caught it
+alone** — the doer never issues the instruction, and the writer is working from a description that
+is already wrong. Ask for the call, not for the story.
+
 ---
 # How This Project Fools Itself
 ---
