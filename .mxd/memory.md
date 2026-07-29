@@ -1101,6 +1101,29 @@ can be, and a lone marker in the child reads as the legacy unpaired-marker shape
 discard exactly the window messages it just inherited. **That is the irreversible one — the source
 recovers on restart, a fork never does.**
 
+## The live path has no construction logic of its own
+
+**Two independent constructions of "how a user turn is built" disagreed about whether an image
+carried its caption, and that is the bug this design deletes.** `buildUserTurn` delegates to the
+walker's callbacks, and the initial drain goes through `adapter.appendQueueMessagesToMessages` for
+the same reason, so there is exactly one implementation per provider. **The live path therefore
+cannot drift from JSONL reconstruction, structurally rather than by discipline.** If you are tempted
+to inline a bit of turn-building "just here", that is the thing being prevented.
+
+⚠️ **Multiline queue content must stay ONE text block.** Two earlier per-shape builders split queue
+messages on `\n` into separate blocks while JSONL reconstruction merged them back into one — a
+guaranteed prefix mismatch on every resume, and the reason turn-building was collapsed onto a single
+path at all.
+
+The yield and done tool_results are the two fixed strings the resume path writes: `"resumed."` for
+yield, and for done `"You previously called done(). New messages woke you up:"` plus the working
+directory. Queue messages ride as separate text blocks after them, never embedded twice.
+
+**Pre-API-call debug snapshots** land at `projects/<id>/debug/<taskId>/<traceId>/last.json`, one
+directory per `runAgentForNode`, ten most recent kept. A restart makes a new traceId directory, so
+the previous snapshot survives — **diffing the two newest `last.json` files is the post-mortem for
+any drift or unexplained cache miss.**
+
 ## Repair is a chain jump, never a truncation
 
 `buildSessionRepair` computes a jump and its caller performs it — `setChainHead` + `appendBatch`,
@@ -1140,6 +1163,25 @@ reason **silently rendered as an empty string** in both places. Use `createUserM
 a new source variant to fix a rendering gap.
 
 ## Rollback and Edit
+
+**It exists because a vendor handed us a point fix and we refused it.** fable-5's streaming
+content-filter silently truncated turns, leaving empty and half-written messages in the UI, and
+Anthropic's official remedy was a configured fallback to a different model. We built the general
+capability instead — let the user go back and resend with DIFFERENT content, reworded or
+constrained or on another model — because that one capability subsumes the vendor-specific need
+and delivers interrupt, edit and restart along with it. **The catalyst is now moot and the feature
+stayed, which is the bet the decision was making**: a hardcoded fallback would have become dead code
+the day we changed models.
+
+⚠️ **SCOPE, decided with the user and never widened: a rollback moves MESSAGES and nothing
+else.** Files written, tasks created and commits made on the discarded branch stay made, so a
+rolled-back conversation can reference world-state produced by a branch no longer on the chain —
+an inconsistency that is ACCEPTED, not pending. That is why the impact dialog REPORTS what the
+rollback does not undo instead of undoing it, and why "roll the code back too" is a separate
+feature with its own decision (`01KY5H4QPFQ3M4Y5WWDJBFSQNB`) rather than a gap to be quietly
+filled. **Branching far back also invalidates the prompt cache from the fork onward, which is
+affordable only because every rollback is user-initiated** — anything that rolls back
+automatically makes the expensive shape routine.
 
 `setChainHead(sessionId, eid)` is one line: set the in-memory head. The NEXT appended event gets
 `parentEid = eid`, creating the jump — **the jump is carried by the first post-rollback event
@@ -1254,62 +1296,6 @@ message's position must use the raw event batch, not the rendered entries — ju
 rendered entries calls exactly the blocked case a run start.
 
 ---
-# Cache & Drift Prevention
----
-
-## Prompt cache: what is frozen, what refreshes, and what breaks a prefix
-
-A `session_config` event at the start of the JSONL holds the tools, `systemStable` and
-`systemVariable` for the session, and it is **frozen between compactions**. That freeze IS the cache
-strategy: on resume everything is read back from the stored config rather than recomputed, so the
-prefix is byte-identical and hits.
-
-⚠️ **The Anthropic prefix order is tools → system → messages, not system → tools → messages, so a
-tools mismatch is a miss on the *entire* prefix.** This is why tools are frozen at all: MCP servers
-connect asynchronously, so registration order is non-deterministic and an unfrozen tools array would
-reshuffle itself between runs. Freezing them as a provider-agnostic `JsonTool` and emitting that
-event from `runProviderLoop` **after** tools are ready — rather than from `agent-lifecycle`, where
-it captured `tools: []` — is what took restart to a 99.8% cache hit and fork to 100%.
-
-**Three cache breakpoints: tools, `systemVariable`, and the LAST user message.** Last, not
-second-to-last: the last message sent is always a user message and Anthropic's 20-block lookback
-caches everything before it, whereas the previous second-to-last strategy caused a full miss
-whenever only one user message existed — exactly the post-compaction restart case.
-
-⚠️ **Never add a per-request `anthropic-beta` header.** It overrides the client's `defaultHeaders`,
-including the OAuth header, and silently breaks OAuth mode. Extended cache TTL is GA and needs no
-beta header. Note also that `{type: "ephemeral"}` and `{type: "ephemeral", ttl: "1h"}` are
-**different cache entries** — the TTL is part of prefix identity, which is why `cacheTtl` lives in
-`session_config`, is inherited through fork, and is deliberately not refreshed at compaction.
-
-**Known residual, low priority**: `addAssistantMessage` stores the raw API response content in the
-SDK's key order while JSONL reconstruction uses our manual key order. They happen to agree today, so
-within a session `messages[]` is consistent. If the SDK ever changes key order this breaks silently.
-
-## The live path has no construction logic of its own
-
-**Two independent constructions of "how a user turn is built" disagreed about whether an image
-carried its caption, and that is the bug this design deletes.** `buildUserTurn` delegates to the
-walker's callbacks, and the initial drain goes through `adapter.appendQueueMessagesToMessages` for
-the same reason, so there is exactly one implementation per provider. **The live path therefore
-cannot drift from JSONL reconstruction, structurally rather than by discipline.** If you are tempted
-to inline a bit of turn-building "just here", that is the thing being prevented.
-
-⚠️ **Multiline queue content must stay ONE text block.** Two earlier per-shape builders split queue
-messages on `\n` into separate blocks while JSONL reconstruction merged them back into one — a
-guaranteed prefix mismatch on every resume, and the reason turn-building was collapsed onto a single
-path at all.
-
-The yield and done tool_results are the two fixed strings the resume path writes: `"resumed."` for
-yield, and for done `"You previously called done(). New messages woke you up:"` plus the working
-directory. Queue messages ride as separate text blocks after them, never embedded twice.
-
-**Pre-API-call debug snapshots** land at `projects/<id>/debug/<taskId>/<traceId>/last.json`, one
-directory per `runAgentForNode`, ten most recent kept. A restart makes a new traceId directory, so
-the previous snapshot survives — **diffing the two newest `last.json` files is the post-mortem for
-any drift or unexplained cache miss.**
-
----
 # Providers & API
 ---
 
@@ -1403,6 +1389,35 @@ Results split across several user messages are fine, in any order; `[R1, text]` 
 send the auth group's `systemPreamble` as the FIRST system block, or every call 429s. A first-pass
 probe that omitted it produced a wall of rate limits that reads exactly like validation failure and
 nearly yielded the opposite conclusion.
+
+## Prompt cache: what is frozen, what refreshes, and what breaks a prefix
+
+A `session_config` event at the start of the JSONL holds the tools, `systemStable` and
+`systemVariable` for the session, and it is **frozen between compactions**. That freeze IS the cache
+strategy: on resume everything is read back from the stored config rather than recomputed, so the
+prefix is byte-identical and hits.
+
+⚠️ **The Anthropic prefix order is tools → system → messages, not system → tools → messages, so a
+tools mismatch is a miss on the *entire* prefix.** This is why tools are frozen at all: MCP servers
+connect asynchronously, so registration order is non-deterministic and an unfrozen tools array would
+reshuffle itself between runs. Freezing them as a provider-agnostic `JsonTool` and emitting that
+event from `runProviderLoop` **after** tools are ready — rather than from `agent-lifecycle`, where
+it captured `tools: []` — is what took restart to a 99.8% cache hit and fork to 100%.
+
+**Three cache breakpoints: tools, `systemVariable`, and the LAST user message.** Last, not
+second-to-last: the last message sent is always a user message and Anthropic's 20-block lookback
+caches everything before it, whereas the previous second-to-last strategy caused a full miss
+whenever only one user message existed — exactly the post-compaction restart case.
+
+⚠️ **Never add a per-request `anthropic-beta` header.** It overrides the client's `defaultHeaders`,
+including the OAuth header, and silently breaks OAuth mode. Extended cache TTL is GA and needs no
+beta header. Note also that `{type: "ephemeral"}` and `{type: "ephemeral", ttl: "1h"}` are
+**different cache entries** — the TTL is part of prefix identity, which is why `cacheTtl` lives in
+`session_config`, is inherited through fork, and is deliberately not refreshed at compaction.
+
+**Known residual, low priority**: `addAssistantMessage` stores the raw API response content in the
+SDK's key order while JSONL reconstruction uses our manual key order. They happen to agree today, so
+within a session `messages[]` is consistent. If the SDK ever changes key order this breaks silently.
 
 ## The two providers
 
