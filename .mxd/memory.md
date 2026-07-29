@@ -3668,6 +3668,21 @@ read by `loadProjectRepoConfig`, never through `PATCH`, and `authGroups` is repl
 `resolveConfig` rather than merged) is `01KYQYRXST632196G3FNWTWF1X`, and it is hardening rather than
 a vulnerability: **there is no sandbox, so a hostile repo already owns you once an agent reads it.**
 
+⭐ **Counting doors is not enough — ask whether every door is a WRITE.** For *how can `defaultAuth`
+reach the repo layer*, there are three: `PATCH …/config/repo` (guarded), `mxd config set --project`
+(never guarded — writes `.mxd/config.json` directly, bypassing the daemon), and **`git clone`, where
+the file simply arrives and there is no write moment to guard at all.** So **no set of write-door
+guards can ever be complete here**, and that is what turns a read-boundary filter from the tidier
+option into the only one that finishes the job. The generalisation worth carrying past this case:
+*N-of-M-doors* silently assumes every door is an operation you can intercept. **When one door is
+"the state was already there when we arrived", enforcement has to move to the READ.**
+
+⚠️ **And a comment asserting that a sibling door is covered makes the doors rule actively
+misleading.** *"The CLI has the same check client-side"* sat above this guard and was false; the
+failure mode is not that you miss a door, it is that you read the claim, believe both are covered,
+and **stop looking** — the same shape as a gate printing a pass. Two config claims were asserted in
+one evening without checking, and this is the one that cost more, because it came with a citation.
+
 **Negative result on the test side, worth having before you go looking: the 26-bare-string i18n
 baseline did not move.** All new copy went through `t()`, and the two dead keys left behind by
 switching designs mid-task (`settings.authGlobalOnly`, `settings.modelRequiredOverride`) were
