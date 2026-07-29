@@ -34,8 +34,12 @@ export interface McpServerConfig {
 export type CacheTtl = "5m" | "1h";
 
 /**
- * Matrix global config — fully specified, no optional fields.
- * Project configs (repo/local) use `Partial<MatrixConfig>` as overlays.
+ * Matrix global config — fully specified, no optional fields. It is the BASE
+ * every overlay sits on, so "not chosen yet" is a present-but-empty value here
+ * (`model: ""`), never an absent key.
+ *
+ * The two project layers are `RepoConfig` and `LocalConfig` below. They are
+ * NOT `Partial<MatrixConfig>`: each has its own field set.
  */
 export interface MatrixConfig {
 	authGroups: Record<string, AuthGroup>;
@@ -56,13 +60,158 @@ export interface MatrixConfig {
 	};
 }
 
-/** Fields that can only be set in global config, not per-project. */
-export const GLOBAL_ONLY_FIELDS = ["authGroups", "port"] as const;
+/**
+ * The two per-project config layers, by where their file lives.
+ *
+ * | layer | file | reaches you via |
+ * |---|---|---|
+ * | `repo` | `<projectPath>/.mxd/config.json` | git — it arrives with `git clone` |
+ * | `local` | `<dataDir>/projects/<id>/config.json` | only ever written on this machine |
+ */
+export type ProjectLayer = "repo" | "local";
 
-/** Project-level config — partial overlay on global config. Excludes global-only fields. */
-export type ProjectConfig = Partial<
-	Omit<MatrixConfig, (typeof GLOBAL_ONLY_FIELDS)[number]>
+/**
+ * Which project layers may carry each config field.
+ *
+ * ⭐ This is the ONE declaration of the layers' field sets: `RepoConfig`,
+ * `LocalConfig` and the key lists the loaders project onto are all computed
+ * from it, so a field's classification and its type cannot disagree. The
+ * `satisfies Record<keyof MatrixConfig, …>` makes adding a field to
+ * `MatrixConfig` without classifying it here a compile error.
+ *
+ * ⚠️ `repo: false` on `model` and `defaultAuth` is a statement about TRUST, not
+ * about scope (user, 2026-07-29): the repo layer is git-tracked and arrives with
+ * a clone, so a repo you cloned would otherwise choose the model, the auth group
+ * and — via `authGroups`, which `resolveConfig` replaces wholesale rather than
+ * merging — the credentials every later agent run uses. The local layer never
+ * enters a repo, so it is as trusted as global; `defaultAuth` there is also only
+ * the NAME of a group that must already exist in the user's own global config,
+ * so nothing can be injected by setting it.
+ *
+ * ⚠️ `authGroups` and `port` are `false` everywhere for a DIFFERENT reason:
+ * they are global-only. `authGroups` happens to be both, and the two reasons
+ * must stay apart — `port` is global-only and has nothing to do with trust,
+ * `model` is untrusted from the repo and is not global-only.
+ */
+const CONFIG_FIELD_LAYERS = {
+	// Global only.
+	authGroups: { repo: false, local: false },
+	port: { repo: false, local: false },
+
+	// Global + local. Not from the repo — see the trust note above.
+	defaultAuth: { repo: false, local: true },
+	model: { repo: false, local: true },
+
+	// Any layer.
+	budgetUsd: { repo: true, local: true },
+	mcpServers: { repo: true, local: true },
+	selfBootstrap: { repo: true, local: true },
+	thinkingEffort: { repo: true, local: true },
+	cacheTtl: { repo: true, local: true },
+} as const satisfies Record<keyof MatrixConfig, Record<ProjectLayer, boolean>>;
+
+type FieldsIn<L extends ProjectLayer> = {
+	[K in keyof typeof CONFIG_FIELD_LAYERS]: (typeof CONFIG_FIELD_LAYERS)[K][L] extends true
+		? K
+		: never;
+}[keyof typeof CONFIG_FIELD_LAYERS];
+
+/** What one project layer may carry. Every field optional: absent = inherit. */
+export type LayerConfig<L extends ProjectLayer> = Partial<
+	Pick<MatrixConfig, FieldsIn<L>>
 >;
+
+export type RepoConfig = LayerConfig<"repo">;
+export type LocalConfig = LayerConfig<"local">;
+
+/**
+ * The table as a runtime lookup.
+ *
+ * ⚠️ A Map rather than property access on the object literal:
+ * `CONFIG_FIELD_LAYERS["__proto__"]` answers with `Object.prototype`, which is
+ * truthy, so every prototype-chain name (`__proto__`, `constructor`,
+ * `toString`) would resolve to a bogus entry and get classified by whichever
+ * branch its undefined flags happened to fall into. `Map.get` sees own entries
+ * only. It matters beyond the wrong sentence: `JSON.parse` yields `__proto__` as
+ * an OWN key, and a key that reaches the object `asLayerConfig` builds is
+ * ASSIGNED to it, where `__proto__` is a setter rather than a property.
+ */
+const FIELD_LAYERS: ReadonlyMap<
+	string,
+	Record<ProjectLayer, boolean>
+> = new Map(Object.entries(CONFIG_FIELD_LAYERS));
+
+/** Fields no project layer may carry — they exist only in global config. */
+export const GLOBAL_ONLY_FIELDS: readonly string[] = [...FIELD_LAYERS]
+	.filter(([, layers]) => !layers.repo && !layers.local)
+	.map(([key]) => key);
+
+/**
+ * Why `key` may not live in `layer`, or `null` if it may.
+ *
+ * One sentence, one place: the write doors (`PATCH …/config/{repo,local}`,
+ * `mxd config set --project`) return it as a refusal, and the loaders log it
+ * when they drop a key on read — so a user meets the same explanation whichever
+ * path they took, and neither door holds its own field list.
+ */
+export function configFieldRefusal(
+	layer: ProjectLayer,
+	key: string,
+): string | null {
+	const layers = FIELD_LAYERS.get(key);
+	if (!layers) return `"${key}" is not a config field.`;
+	if (layers[layer]) return null;
+	if (!layers.repo && !layers.local) {
+		return `"${key}" can only be set in global config.`;
+	}
+	// Everything left is settable somewhere and not here, and `layer` can only be
+	// "repo": repo ⊆ local always holds — a field the repo layer may set but the
+	// local one may not would be backwards, since local is the trusted side. That
+	// containment is asserted in `config.test.ts` rather than branched on here, so
+	// a classification that broke it reddens instead of getting a wrong sentence.
+	return `"${key}" cannot be set in repo config — it is git-tracked and travels with a clone, so it must not choose what an agent runs with. Set it in local or global config.`;
+}
+
+/**
+ * Project a parsed config object onto one layer's field set: a field this layer
+ * may not have does not survive, so nothing downstream has to reject it.
+ *
+ * ⭐ This is where the field sets are ENFORCED, and it has to be the read
+ * rather than the writes: of the three ways a field reaches the repo layer —
+ * `PATCH …/config/repo`, `mxd config set --project`, and `git clone` — the
+ * third has no write moment at all, so no set of write-door guards can be
+ * complete.
+ *
+ * ⚠️ A dropped key is reported, never dropped silently: a key that was ignored
+ * and a key that took effect are otherwise indistinguishable to whoever
+ * hand-wrote it.
+ *
+ * ⚠️ A key this version does not RECOGNISE is dropped like any other, and the
+ * alternative was considered and rejected (user, 2026-07-29). Carrying it —
+ * because it might be a field a NEWER matrix wrote into the git-tracked file —
+ * means a place to hold values this version cannot interpret and a path to write
+ * them back out, i.e. a forward-compatibility mechanism, and **we have no
+ * versioning to build one on.** When we do, a file from a newer version should
+ * say so and ask to be updated (`01KYR23QK9E4CJDD7XKV8Q1CE5`); that is a
+ * different feature, not a silent carry-through bolted onto the reader. So the
+ * treatment is uniform: it does not survive, and the warning makes it visible.
+ */
+export function asLayerConfig<L extends ProjectLayer>(
+	raw: Record<string, unknown>,
+	layer: L,
+	source: string,
+): LayerConfig<L> {
+	const kept: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(raw)) {
+		const refusal = configFieldRefusal(layer, key);
+		if (refusal === null) {
+			kept[key] = value;
+		} else {
+			console.warn(`[config] dropped from ${source}: ${refusal}`);
+		}
+	}
+	return kept as LayerConfig<L>;
+}
 
 /**
  * Default values for all MatrixConfig fields.
@@ -91,12 +240,22 @@ function globalConfigPath(): string {
 	return join(homedir(), ".mxd", "config.json");
 }
 
-async function readJsonConfig(path: string): Promise<ProjectConfig> {
+/**
+ * Read one project layer's file and project it onto that layer's field set.
+ * A missing or unparseable file is an absent overlay (`{}`) — unlike global
+ * config, a project layer is optional by design.
+ */
+async function readLayerConfig<L extends ProjectLayer>(
+	path: string,
+	layer: L,
+): Promise<LayerConfig<L>> {
+	let raw: Record<string, unknown>;
 	try {
-		return JSON.parse(await readFile(path, "utf-8")) as ProjectConfig;
+		raw = JSON.parse(await readFile(path, "utf-8")) as Record<string, unknown>;
 	} catch {
 		return {};
 	}
+	return asLayerConfig(raw, layer, path);
 }
 
 /**
@@ -157,13 +316,13 @@ export async function saveGlobalConfig(
 
 export async function loadProjectRepoConfig(
 	projectPath: string,
-): Promise<ProjectConfig> {
-	return readJsonConfig(join(projectPath, ".mxd", "config.json"));
+): Promise<RepoConfig> {
+	return readLayerConfig(join(projectPath, ".mxd", "config.json"), "repo");
 }
 
 export async function saveProjectRepoConfig(
 	projectPath: string,
-	config: ProjectConfig,
+	config: RepoConfig,
 ): Promise<void> {
 	const path = join(projectPath, ".mxd", "config.json");
 	await mkdir(dirname(path), { recursive: true });
@@ -173,14 +332,17 @@ export async function saveProjectRepoConfig(
 export async function loadProjectLocalConfig(
 	dataDir: string,
 	projectId: string,
-): Promise<ProjectConfig> {
-	return readJsonConfig(join(dataDir, "projects", projectId, "config.json"));
+): Promise<LocalConfig> {
+	return readLayerConfig(
+		join(dataDir, "projects", projectId, "config.json"),
+		"local",
+	);
 }
 
 export async function saveProjectLocalConfig(
 	dataDir: string,
 	projectId: string,
-	config: ProjectConfig,
+	config: LocalConfig,
 ): Promise<void> {
 	const path = join(dataDir, "projects", projectId, "config.json");
 	await mkdir(dirname(path), { recursive: true });
@@ -188,17 +350,26 @@ export async function saveProjectLocalConfig(
 }
 
 /**
- * Merge config layers. Each overlay spreads on top of the base.
- * Nested objects (mcpServers, cacheTtl) do shallow merge.
- * Scalar fields: overlay wins if defined.
+ * Merge the three layers. Nested objects (mcpServers, cacheTtl) shallow-merge;
+ * everything else is replaced by the later layer when present.
+ *
+ * ⚠️ The overlay rule is `value !== undefined`, so `""` IS an overriding value
+ * and an ABSENT key is what means inherit. The global config is the BASE here at
+ * every call site, which is why its `model: ""` can never climb over a project's
+ * choice; the reverse direction is reachable and deliberate.
+ *
+ * The parameters are positional and layer-typed rather than variadic: this is
+ * the one function where the three layers meet, so each one says which layer it
+ * is.
  */
 export function resolveConfig(
-	base: MatrixConfig,
-	...overlays: ProjectConfig[]
+	global: MatrixConfig,
+	repo: RepoConfig = {},
+	local: LocalConfig = {},
 ): MatrixConfig {
-	let result = { ...base };
+	let result = { ...global };
 
-	for (const overlay of overlays) {
+	for (const overlay of [repo, local] as Partial<MatrixConfig>[]) {
 		// Shallow-merge nested record fields
 		if (overlay.mcpServers) {
 			result.mcpServers = { ...result.mcpServers, ...overlay.mcpServers };

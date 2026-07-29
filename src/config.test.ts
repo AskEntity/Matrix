@@ -1,29 +1,42 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	configFieldRefusal,
 	DEFAULT_CONFIG,
+	GLOBAL_ONLY_FIELDS,
+	type LocalConfig,
 	loadGlobalConfig,
 	loadProjectLocalConfig,
 	loadProjectRepoConfig,
 	type MatrixConfig,
-	type ProjectConfig,
+	type RepoConfig,
 	resolveAuthGroup,
 	resolveConfig,
 	saveGlobalConfig,
 	saveProjectLocalConfig,
+	saveProjectRepoConfig,
 } from "./config.ts";
 
 describe("resolveConfig", () => {
 	test("overlay overrides base for scalar fields", () => {
 		const base = { ...DEFAULT_CONFIG, model: "global-model", budgetUsd: 10 };
-		const repo: ProjectConfig = { model: "repo-model", budgetUsd: 20 };
-		const local: ProjectConfig = { model: "local-model" };
+		const repo: RepoConfig = { budgetUsd: 20 };
+		const local: LocalConfig = { model: "local-model" };
 
 		const result = resolveConfig(base, repo, local);
 		expect(result.model).toBe("local-model");
 		expect(result.budgetUsd).toBe(20);
+	});
+
+	test("the later layer wins where both may set the field", () => {
+		const base = { ...DEFAULT_CONFIG, budgetUsd: 10 };
+		expect(
+			resolveConfig(base, { budgetUsd: 20 }, { budgetUsd: 30 }).budgetUsd,
+		).toBe(30);
+		// Absent in the later layer = inherit, so repo's value survives.
+		expect(resolveConfig(base, { budgetUsd: 20 }, {}).budgetUsd).toBe(20);
 	});
 
 	test("empty overlays keep base values", () => {
@@ -45,10 +58,10 @@ describe("resolveConfig", () => {
 				search: { command: "mcp-search" },
 			},
 		};
-		const repo: ProjectConfig = {
+		const repo: RepoConfig = {
 			mcpServers: { database: { command: "mcp-db" } },
 		};
-		const local: ProjectConfig = {
+		const local: LocalConfig = {
 			mcpServers: {
 				filesystem: {
 					command: "mcp-fs-v2",
@@ -70,7 +83,7 @@ describe("resolveConfig", () => {
 		});
 	});
 
-	test("authGroups are global-only (not overridable by project config)", () => {
+	test("authGroups pass through from global — no project layer has the field", () => {
 		const base: MatrixConfig = {
 			...DEFAULT_CONFIG,
 			authGroups: {
@@ -79,20 +92,29 @@ describe("resolveConfig", () => {
 			},
 		};
 
-		// Project overlays can't have authGroups — they pass through from base
-		const result = resolveConfig(base, { model: "test" });
+		const result = resolveConfig(
+			base,
+			{ budgetUsd: 5 },
+			{ defaultAuth: "personal" },
+		);
 		expect(result.authGroups.work?.provider).toBe("anthropic");
 		expect(result.authGroups.personal?.provider).toBe("openai");
+		// ⚠️ Read that as a claim about the TYPES and nothing more. `resolveConfig`
+		// spreads the keys an object REALLY has, so an `authGroups` that got past
+		// the loaders would replace the whole table — it is not in the shallow-merge
+		// set. What makes it unreachable is the projection at the read boundary,
+		// measured against a real file under "layer field sets" below. This test
+		// cannot see that difference and must not be read as covering it.
 	});
 
 	test("partial overlays merge correctly across all layers", () => {
 		const base: MatrixConfig = {
 			...DEFAULT_CONFIG,
 		};
-		const repo: ProjectConfig = {
+		const repo: RepoConfig = {
 			mcpServers: { git: { command: "mcp-git" } },
 		};
-		const local: ProjectConfig = {
+		const local: LocalConfig = {
 			defaultAuth: "team",
 		};
 
@@ -103,7 +125,7 @@ describe("resolveConfig", () => {
 
 	test("selfBootstrap boolean resolves with later overlay winning", () => {
 		const base = { ...DEFAULT_CONFIG, selfBootstrap: false };
-		const repo: ProjectConfig = { selfBootstrap: true };
+		const repo: RepoConfig = { selfBootstrap: true };
 
 		// repo wins over base
 		const result = resolveConfig(base, repo);
@@ -116,7 +138,7 @@ describe("resolveConfig", () => {
 
 	test("thinkingEffort resolves with later overlay winning", () => {
 		const base = { ...DEFAULT_CONFIG, thinkingEffort: 50 };
-		const repo: ProjectConfig = { thinkingEffort: 75 };
+		const repo: RepoConfig = { thinkingEffort: 75 };
 
 		const result = resolveConfig(base, repo);
 		expect(result.thinkingEffort).toBe(75);
@@ -138,14 +160,14 @@ describe("resolveConfig", () => {
 		expect(result.cacheTtl).toEqual({ root: "1h", child: "1h" });
 
 		// local overrides
-		const local: ProjectConfig = {
+		const local: LocalConfig = {
 			cacheTtl: { root: "5m", child: "5m" },
 		};
 		const result2 = resolveConfig(base, {}, local);
 		expect(result2.cacheTtl).toEqual({ root: "5m", child: "5m" });
 
 		// partial cacheTtl overlay merges with base
-		const partial: ProjectConfig = {
+		const partial: RepoConfig = {
 			cacheTtl: { root: "1h", child: "5m" },
 		};
 		const result3 = resolveConfig(base, partial);
@@ -171,29 +193,34 @@ describe("resolveConfig", () => {
 	test("an empty base model is overridden by a project layer, not the reverse", () => {
 		expect(DEFAULT_CONFIG.model).toBe("");
 
-		const fresh = resolveConfig(DEFAULT_CONFIG, { model: "claude-sonnet-4-6" });
+		const fresh = resolveConfig(
+			DEFAULT_CONFIG,
+			{},
+			{ model: "claude-sonnet-4-6" },
+		);
 		expect(fresh.model).toBe("claude-sonnet-4-6");
 
-		// Both layers present: last overlay wins, base's "" never resurfaces.
-		const both = resolveConfig(
-			DEFAULT_CONFIG,
-			{ model: "repo-model" },
-			{ model: "local-model" },
-		);
-		expect(both.model).toBe("local-model");
+		// The local layer is the only project layer with a `model` field at all —
+		// the repo layer has none, so there is no repo-over-local case to test.
+		expect(
+			resolveConfig(DEFAULT_CONFIG, {}, { model: "local-model" }).model,
+		).toBe("local-model");
 	});
 
-	test('an overlay carrying model "" DOES override — a visible empty, not a silent substitute', () => {
-		// The other direction is reachable: a hand-written `.mxd/config.json` with
-		// `"model": ""` overrides a real global model, because "" !== undefined.
-		// Recorded as the mechanism it is rather than endorsed. With the model
-		// fallbacks deleted, the consequence is an empty model name reaching the
-		// API — a failure the user can see and attribute — where it used to be a
-		// silent switch to whatever DEFAULT_MODEL happened to be.
+	test('a local overlay carrying model "" DOES override — a visible empty, not a silent substitute', () => {
+		// `""` overrides because the overlay rule is `value !== undefined`.
+		// ⚠️ CORRECTION to what this test used to say: it named a hand-written
+		// `.mxd/config.json` as the way in. That is the REPO layer, which no longer
+		// has a `model` field — the file can carry the key and the loader drops it.
+		// The reachable route is the LOCAL file (`<dataDir>/projects/<id>/config.json`),
+		// which is per-machine and trusted. Recorded as the mechanism it is rather
+		// than endorsed: with the model fallbacks deleted the consequence is an
+		// empty model name reaching the API — a failure the user can see and
+		// attribute — where it used to be a silent switch to DEFAULT_MODEL.
 		const base = { ...DEFAULT_CONFIG, model: "claude-sonnet-4-6" };
-		expect(resolveConfig(base, { model: "" }).model).toBe("");
+		expect(resolveConfig(base, {}, { model: "" }).model).toBe("");
 		// undefined is the "not set" signal, and it does NOT override.
-		expect(resolveConfig(base, { model: undefined }).model).toBe(
+		expect(resolveConfig(base, {}, { model: undefined }).model).toBe(
 			"claude-sonnet-4-6",
 		);
 	});
@@ -361,11 +388,11 @@ describe("file loading", () => {
 		const projectPath = join(tmpDir, "my-project");
 		const configDir = join(projectPath, ".mxd");
 		await mkdir(configDir, { recursive: true });
-		const config: ProjectConfig = { model: "test-model" };
+		const config: RepoConfig = { budgetUsd: 7 };
 		await writeFile(join(configDir, "config.json"), JSON.stringify(config));
 
 		const loaded = await loadProjectRepoConfig(projectPath);
-		expect(loaded.model).toBe("test-model");
+		expect(loaded.budgetUsd).toBe(7);
 	});
 
 	test("loadProjectRepoConfig returns empty for missing file", async () => {
@@ -377,7 +404,7 @@ describe("file loading", () => {
 		const projectId = "abc-123";
 		const configDir = join(tmpDir, "projects", projectId);
 		await mkdir(configDir, { recursive: true });
-		const config: ProjectConfig = { budgetUsd: 42 };
+		const config: LocalConfig = { budgetUsd: 42 };
 		await writeFile(join(configDir, "config.json"), JSON.stringify(config));
 
 		const loaded = await loadProjectLocalConfig(tmpDir, projectId);
@@ -391,7 +418,7 @@ describe("file loading", () => {
 
 	test("saveProjectLocalConfig creates directories and writes config", async () => {
 		const projectId = "new-project";
-		const config: ProjectConfig = {
+		const config: LocalConfig = {
 			model: "claude-4",
 			mcpServers: { test: { command: "test-cmd" } },
 		};
@@ -400,6 +427,259 @@ describe("file loading", () => {
 		const loaded = await loadProjectLocalConfig(tmpDir, projectId);
 		expect(loaded.model).toBe("claude-4");
 		expect(loaded.mcpServers?.test?.command).toBe("test-cmd");
+	});
+});
+
+// ── Layer field sets ──
+//
+// The repo layer is `<projectPath>/.mxd/config.json`: git-tracked, so it ARRIVES
+// WITH A CLONE. There is no write moment to guard on that route, which is why
+// the field set is enforced where the bytes are read. These tests are the
+// measured version of that: they write files by hand — the only thing a clone
+// does — and ask what survives.
+//
+// ⚠️ Both directions are asserted deliberately. A projection that dropped
+// everything would pass every "the untrusted field is gone" test, so each of
+// those has a sibling asserting the layer's own fields still arrive.
+
+describe("layer field sets", () => {
+	let tmpDir: string;
+	let projectPath: string;
+	const projectId = "proj-1";
+
+	beforeEach(async () => {
+		tmpDir = await mkdtemp(join(tmpdir(), "mxd-layer-test-"));
+		projectPath = join(tmpDir, "repo");
+		await mkdir(join(projectPath, ".mxd"), { recursive: true });
+		await mkdir(join(tmpDir, "projects", projectId), { recursive: true });
+	});
+
+	afterEach(async () => {
+		await rm(tmpDir, { recursive: true, force: true });
+	});
+
+	async function writeRepoFile(raw: Record<string, unknown>): Promise<void> {
+		await writeFile(
+			join(projectPath, ".mxd", "config.json"),
+			JSON.stringify(raw),
+		);
+	}
+
+	async function writeLocalFile(raw: Record<string, unknown>): Promise<void> {
+		await writeFile(
+			join(tmpDir, "projects", projectId, "config.json"),
+			JSON.stringify(raw),
+		);
+	}
+
+	test("a cloned repo config cannot choose the model, the auth group or the credentials", async () => {
+		// This is the whole task, as a file. Every field below is one the repo
+		// author would otherwise have picked for every agent run the user makes.
+		await writeRepoFile({
+			model: "claude-opus-5",
+			defaultAuth: "my-expensive",
+			authGroups: {
+				"my-cheap": { provider: "anthropic", apiKey: "sk-THEIRS" },
+			},
+		});
+		const mine: MatrixConfig = {
+			...DEFAULT_CONFIG,
+			model: "claude-sonnet-4-6",
+			defaultAuth: "my-cheap",
+			authGroups: {
+				"my-cheap": { provider: "anthropic", oauthToken: "tok-MINE" },
+				"my-expensive": { provider: "anthropic", apiKey: "sk-MINE" },
+			},
+		};
+
+		const repo = await loadProjectRepoConfig(projectPath);
+		expect(repo).toEqual({});
+
+		const resolved = resolveConfig(mine, repo, {});
+		expect(resolved.model).toBe("claude-sonnet-4-6");
+		expect(resolved.defaultAuth).toBe("my-cheap");
+		// ⭐ The one that matters most: `authGroups` is not in resolveConfig's
+		// shallow-merge set, so a surviving repo `authGroups` would have replaced
+		// the WHOLE table — the user's own group name pointing at someone else's
+		// endpoint, and `maskConfig` showing it as asterisks.
+		const cheap = resolved.authGroups["my-cheap"];
+		expect(cheap?.provider).toBe("anthropic");
+		expect(cheap && "oauthToken" in cheap ? cheap.oauthToken : null).toBe(
+			"tok-MINE",
+		);
+		expect(JSON.stringify(resolved)).not.toContain("THEIRS");
+	});
+
+	test("the repo layer keeps every field it does have", async () => {
+		// The positive control for the test above: a projection that returned `{}`
+		// unconditionally would pass it and fail here.
+		await writeRepoFile({
+			budgetUsd: 25,
+			selfBootstrap: true,
+			thinkingEffort: 40,
+			mcpServers: { git: { command: "mcp-git" } },
+			cacheTtl: { root: "5m", child: "5m" },
+		});
+		expect(await loadProjectRepoConfig(projectPath)).toEqual({
+			budgetUsd: 25,
+			selfBootstrap: true,
+			thinkingEffort: 40,
+			mcpServers: { git: { command: "mcp-git" } },
+			cacheTtl: { root: "5m", child: "5m" },
+		});
+	});
+
+	test("the local layer keeps model and defaultAuth — it never enters a repo", async () => {
+		await writeLocalFile({
+			model: "claude-opus-5",
+			defaultAuth: "work",
+			budgetUsd: 3,
+		});
+		expect(await loadProjectLocalConfig(tmpDir, projectId)).toEqual({
+			model: "claude-opus-5",
+			defaultAuth: "work",
+			budgetUsd: 3,
+		});
+	});
+
+	test("neither project layer can carry authGroups or port", async () => {
+		const globalOnly = {
+			authGroups: { evil: { provider: "openai", apiKey: "sk-THEIRS" } },
+			port: 9999,
+		};
+		await writeRepoFile({ ...globalOnly, budgetUsd: 1 });
+		await writeLocalFile({ ...globalOnly, budgetUsd: 2 });
+		expect(await loadProjectRepoConfig(projectPath)).toEqual({ budgetUsd: 1 });
+		expect(await loadProjectLocalConfig(tmpDir, projectId)).toEqual({
+			budgetUsd: 2,
+		});
+	});
+
+	// ⚠️ A key no layer declares is dropped like any other, and CARRYING it was
+	// considered and rejected (user, 2026-07-29): preserving a field a newer matrix
+	// might have written into this git-tracked file needs somewhere to hold values
+	// this version cannot interpret and a path to write them back out — a
+	// forward-compatibility mechanism, and there is no versioning to build one on.
+	// When there is, a file from a newer version should say so and ask to be
+	// updated, rather than being silently carried through by the reader.
+	test("a key that is not a config field at all is dropped too", async () => {
+		// A typo'd key used to sit in the file doing nothing, forever, in silence.
+		await writeRepoFile({ modle: "claude-opus-5", budgetUsd: 4 });
+		expect(await loadProjectRepoConfig(projectPath)).toEqual({ budgetUsd: 4 });
+	});
+
+	test("a prototype-chain name in the file reaches neither the result nor its prototype", async () => {
+		// `JSON.parse` gives `__proto__` as an OWN key, and assigning it onto a fresh
+		// object runs the setter. The field-set lookup is what stops it, and it stops
+		// it only because it goes through a Map: `TABLE["__proto__"]` answers with
+		// `Object.prototype`, which is truthy, so a bare lookup lands on the wrong
+		// branch by accident rather than on the right one by construction.
+		await writeFile(
+			join(projectPath, ".mxd", "config.json"),
+			'{"__proto__":{"polluted":true},"constructor":1,"budgetUsd":6}',
+		);
+		const loaded = await loadProjectRepoConfig(projectPath);
+		expect(loaded).toEqual({ budgetUsd: 6 });
+		expect(Object.getPrototypeOf(loaded)).toBe(Object.prototype);
+		expect((loaded as Record<string, unknown>).polluted).toBeUndefined();
+		expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+	});
+
+	test("dropping a key is REPORTED, not silent", async () => {
+		// Without this, the only difference between "ignored" and "took effect" is
+		// invisible to whoever hand-wrote the field.
+		const warnings: string[] = [];
+		const original = console.warn;
+		console.warn = (...args: unknown[]) => {
+			warnings.push(args.map(String).join(" "));
+		};
+		try {
+			await writeRepoFile({ model: "claude-opus-5" });
+			await loadProjectRepoConfig(projectPath);
+		} finally {
+			console.warn = original;
+		}
+		expect(warnings.length).toBe(1);
+		expect(warnings[0]).toContain("model");
+		expect(warnings[0]).toContain(join(projectPath, ".mxd", "config.json"));
+		// The reason travels with the report — the same sentence the write doors
+		// answer with.
+		expect(warnings[0]).toContain("git-tracked");
+	});
+
+	test("a repo write normalizes the file to the layer's field set", async () => {
+		// Consequence worth stating rather than discovering: the loader strips and
+		// the saver writes what it was given, so the next repo-config write removes
+		// a stale `model` from a git-tracked file. That is the intended direction —
+		// the key was doing nothing — and it shows up as an ordinary diff.
+		await writeRepoFile({ model: "claude-opus-5", budgetUsd: 8 });
+		const loaded = await loadProjectRepoConfig(projectPath);
+		await saveProjectRepoConfig(projectPath, { ...loaded, budgetUsd: 9 });
+		const onDisk = JSON.parse(
+			await readFile(join(projectPath, ".mxd", "config.json"), "utf-8"),
+		) as Record<string, unknown>;
+		expect(onDisk).toEqual({ budgetUsd: 9 });
+	});
+});
+
+describe("configFieldRefusal", () => {
+	test("a field the layer has is not refused", () => {
+		expect(configFieldRefusal("repo", "budgetUsd")).toBeNull();
+		expect(configFieldRefusal("local", "budgetUsd")).toBeNull();
+		expect(configFieldRefusal("local", "model")).toBeNull();
+		expect(configFieldRefusal("local", "defaultAuth")).toBeNull();
+	});
+
+	test("the repo refusal names TRUST, not scope", () => {
+		// The distinction the whole boundary rests on: `model` and `defaultAuth`
+		// ARE settable per project — just not from the layer that arrives with a
+		// clone. A "global only" wording would send the user to the wrong place.
+		for (const key of ["model", "defaultAuth"]) {
+			const refusal = configFieldRefusal("repo", key);
+			expect(refusal).toContain(key);
+			expect(refusal).toContain("git-tracked");
+			expect(refusal).not.toContain("only be set in global");
+		}
+	});
+
+	test("a global-only field is refused on both layers, as global-only", () => {
+		for (const layer of ["repo", "local"] as const) {
+			for (const key of GLOBAL_ONLY_FIELDS) {
+				expect(configFieldRefusal(layer, key)).toContain(
+					"only be set in global config",
+				);
+			}
+		}
+	});
+
+	test("a non-field is refused as a non-field", () => {
+		expect(configFieldRefusal("repo", "modle")).toContain("not a config field");
+		expect(configFieldRefusal("local", "__proto__")).toContain(
+			"not a config field",
+		);
+	});
+
+	test("every MatrixConfig field is classified, and global-only is derived", () => {
+		// The `satisfies Record<keyof MatrixConfig, …>` on the table catches an
+		// unclassified field at compile time; this catches it if that constraint is
+		// ever loosened, and states the partition in one readable place.
+		const fields = Object.keys(DEFAULT_CONFIG);
+		const repoOk = fields.filter((k) => configFieldRefusal("repo", k) === null);
+		const localOk = fields.filter(
+			(k) => configFieldRefusal("local", k) === null,
+		);
+		for (const key of fields) {
+			expect(configFieldRefusal("repo", key) ?? "").not.toContain(
+				"not a config field",
+			);
+		}
+		expect(new Set<string>(GLOBAL_ONLY_FIELDS)).toEqual(
+			new Set(
+				fields.filter((k) => !repoOk.includes(k) && !localOk.includes(k)),
+			),
+		);
+		// Repo ⊆ local: the repo layer is the narrower of the two, always.
+		expect(repoOk.filter((k) => !localOk.includes(k))).toEqual([]);
 	});
 });
 

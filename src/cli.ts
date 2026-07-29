@@ -12,11 +12,12 @@ import {
 import { runAnalyzeCache } from "./cli-analyze-cache.ts";
 import {
 	type AuthGroup,
+	configFieldRefusal,
 	GLOBAL_ONLY_FIELDS,
+	type LocalConfig,
 	loadGlobalConfig,
 	loadProjectRepoConfig,
 	type MatrixConfig,
-	type ProjectConfig,
 	resolveConfig,
 	saveGlobalConfig,
 	saveProjectRepoConfig,
@@ -946,10 +947,14 @@ async function handleConfig(args: string[]): Promise<void> {
 			await saveGlobalConfig(cfg);
 			console.log(`Set ${key} = ${value} (global)`);
 		} else if (isProject) {
-			if ((GLOBAL_ONLY_FIELDS as readonly string[]).includes(key)) {
-				console.error(
-					`"${key}" is a global-only setting. Use --global instead.`,
-				);
+			// `--project` writes the REPO layer (`<projectPath>/.mxd/config.json`),
+			// which has its own field set. Refuse here rather than writing a key the
+			// next read would drop: a write that succeeds and then does nothing is
+			// the failure this whole boundary exists to avoid, and the user is
+			// standing right here when it happens.
+			const refusal = configFieldRefusal("repo", key);
+			if (refusal) {
+				console.error(refusal);
 				process.exit(1);
 			}
 			const projectPath = findProjectPath();
@@ -987,7 +992,14 @@ async function handleConfig(args: string[]): Promise<void> {
 			);
 			process.exit(1);
 		} else if (isProject) {
-			if ((GLOBAL_ONLY_FIELDS as readonly string[]).includes(key)) {
+			// ⚠️ Deliberately NOT the repo layer's field set, unlike `set` above.
+			// `unset` can only REMOVE a key, which always moves the file toward its
+			// legal shape — and the person who most needs it is exactly the one whose
+			// cloned `.mxd/config.json` carries a `model` the loader now drops.
+			// Refusing that would be a guard standing between a user and the cleanup.
+			// The global-only check stays because it is a scoping message, not a
+			// trust one.
+			if (GLOBAL_ONLY_FIELDS.includes(key)) {
 				console.error(
 					`"${key}" is a global-only setting. Use --global instead.`,
 				);
@@ -1018,7 +1030,7 @@ async function handleConfig(args: string[]): Promise<void> {
 		const repoCfg = projectPath ? await loadProjectRepoConfig(projectPath) : {};
 
 		// Try to get local config via daemon API
-		let localCfg: ProjectConfig = {};
+		let localCfg: LocalConfig = {};
 		try {
 			const projectId = await resolveCurrentProject();
 			if (projectId) {

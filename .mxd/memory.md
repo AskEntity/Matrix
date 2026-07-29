@@ -3846,3 +3846,77 @@ and passing one downward as fact costs a sub-task a measurement round.
 the tool could have said something and did not, and the third was fixed by writing the missing
 alternative down. **Prefer that shape: when a rule is broken by someone who knows it, ask what made
 the act look like a different act.**
+
+## Each config layer has its own TYPE, and that is what deleted the validation question
+
+**DECIDED 2026-07-29 (user), and it is the half that closes the door with no write moment:
+*"三层各有自己的类型…如果你设置的 config 你的 field 里没有,自然而然就不对了。以后不需要再纠结
+validation 了。"*** `RepoConfig` and `LocalConfig` are now computed from ONE classification table in
+`src/config.ts`, and each loader projects its file onto that layer's field set. **A field outside a
+layer's set does not exist after the read, so nothing downstream has to reject it** — and every
+argument that used to surround this (which fields the guard should hold, whether
+`GLOBAL_ONLY_FIELDS` is its home, whether `null` / `""` / absent is legal) loses its subject,
+because all of it came from ONE type serving three layers with different semantics.
+
+⚠️ **The instinct it replaces is a blacklist plus a filter, and that is the same defect
+relocated** — one more field list to maintain, one more N-of-M-doors argument. The test for
+whether you built the right thing: the types must be COMPUTED from the classification so the two
+cannot disagree, and `satisfies Record<keyof MatrixConfig, …>` must make an unclassified new field
+a compile error. That one declaration also feeds both write doors' refusal WORDING and the
+read-path log, so a user meets the same sentence whichever way they arrived.
+
+⚠️ **A repo write now NORMALIZES a git-tracked file.** The loader strips and the saver writes what
+it was handed, so the next `PATCH …/config/repo` or `mxd config set --project` silently removes a
+stale `model` from `.mxd/config.json`. Intended for a KNOWN field — the key was already doing
+nothing — but it is a diff nobody asked for, in someone's tracked file.
+
+⚠️ **A key NO layer declares is dropped the same way, and carrying it was considered and REJECTED
+(user, 2026-07-29).** The hazard is real and was traced: `.mxd/config.json` is git-tracked, the
+saver writes back what the loader handed it, so an older matrix editing one field deletes a field a
+NEWER matrix wrote, as an ordinary commit. **The user's answer is that this is a missing-versioning
+problem, not a loader problem**: *"现在我们并没有 proper 的 versioning…以后有 versioning 之后,自然而
+然的 如果你读到新版本 应该说让你去更新"* — reading a newer config should say *upgrade your matrix*
+rather than absorb it silently. Filed as `01KYR23QK9E4CJDD7XKV8Q1CE5`, deliberately not built here.
+
+⭐ **The reusable half, and it is root's rather than mine: a consequence traced correctly does not
+make the fix derived from it correctly priced.** The trace above was right. The remedy proposed from
+it — "keep the unknown key, one branch" — was not one branch: `asLayerConfig` returns
+`LayerConfig<L>`, so passing unknown keys through either makes that return type a lie for everything
+downstream or needs them held aside on read and re-merged at save, i.e. a preservation channel
+through read→edit→write in three functions, for a case that has never occurred. **The correctness of
+the diagnosis lends nothing to the price of the cure, and a cost stated as one branch by the person
+who wants the cure is the one to re-derive.**
+
+⚠️ **Look a classification table up through a `Map`, never property access on the object
+literal.** `TABLE["__proto__"]` answers with `Object.prototype`, which is TRUTHY, so every
+prototype-chain name (`__proto__`, `constructor`, `toString`) resolves to a bogus entry and is
+classified by whichever branch its undefined flags happen to fall into. It is not only a wrong
+sentence: `JSON.parse` yields `__proto__` as an OWN key, so a key that passes the check is then
+ASSIGNED to the result object, where `__proto__` is a setter rather than a property. **Found by a
+test asserting the refusal's WORDING** — every prototype name was already being refused, for a
+reason that was not the true one, which is the shape *is the rule being ENFORCED the same rule
+that is DOCUMENTED* warns about.
+
+**NEGATIVE RESULT — stripping `authGroups` from the LOCAL layer is not a new policy, so do not go
+looking for the decision.** `Partial<Omit<MatrixConfig, GLOBAL_ONLY_FIELDS>>` has excluded it from
+BOTH project layers since it was written; only the runtime disagreed, because `resolveConfig`
+spreads the keys an object REALLY has and the loaders were bare `readJsonConfig` calls. This makes
+the runtime agree with a type that was already declared, which is why the change needed no new
+rule.
+
+⭐ **A test asserting that a value is MASKED cannot survive the value becoming unreachable, and
+inverting it is right where re-aiming would be wrong.** `/config/all`'s old test hand-wrote
+`authGroups` into both project files and asserted the response masked them. Masking is correct and
+still there — but with the projection in place nothing can produce that value, so the assertion
+would have pinned the handling of an input nothing can generate. It now asserts ABSENCE plus *the
+plaintext appears nowhere in the payload*, which is mechanism-independent, and PATCHes a real
+group into global in the same test so masking stays pinned where it still has a producer. The old
+name carried the mechanism (`masks authGroups in every layer`), which is what made the staleness
+visible.
+
+**Two things the user ruled OUT, recorded so nobody proposes them a third time.** `mcpServers`
+shallow-merging in from the repo layer **stays exactly as it is** —
+*"mcp 你就别添油加醋了 这个保持现状"*; root raised the `command`/`args`-get-spawned concern and was
+overruled. And `budgetUsd` / `thinkingEffort` are cost levers that would belong to the same trust
+principle if it were ever systematised; they were deliberately not circled, so they are candidates,
+not licence.
