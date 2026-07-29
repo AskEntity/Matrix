@@ -202,6 +202,15 @@ describe("daemon pipeline (legacy)", () => {
 		);
 		expect(seed.status).toBe(200);
 
+		// Read the model BEFORE the rejected PATCH, because "untouched" has to be
+		// asserted as EQUALITY. This used to be `expect(cfg.model).toBeTruthy()`,
+		// which passed only because DEFAULT_CONFIG.model was a non-empty string —
+		// with no default model it is "", so truthiness now fails on a config the
+		// PATCH never touched, while still not catching a PATCH that replaced the
+		// model with some OTHER value. Equality catches both.
+		const beforeRes = await fetch(new Request("http://localhost/config/global"));
+		const before = (await beforeRes.json()) as { model: string };
+
 		// Attempt to delete a required field by sending null — must be rejected.
 		// (Pre-fix this wrote an incomplete config that wiped ALL credentials on
 		// the next restart.)
@@ -216,13 +225,15 @@ describe("daemon pipeline (legacy)", () => {
 		const err = (await res.json()) as { error: string };
 		expect(err.error).toContain("model");
 
-		// Config is untouched: model still present, credentials preserved.
+		// Config is untouched: model unchanged and still a string (the field was
+		// not deleted), credentials preserved.
 		const getRes = await fetch(new Request("http://localhost/config/global"));
 		const cfg = (await getRes.json()) as {
 			model: string;
 			authGroups: Record<string, unknown>;
 		};
-		expect(cfg.model).toBeTruthy();
+		expect(typeof cfg.model).toBe("string");
+		expect(cfg.model).toBe(before.model);
 		expect(cfg.authGroups.main).toBeDefined();
 	});
 

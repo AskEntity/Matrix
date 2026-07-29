@@ -3568,3 +3568,41 @@ strings did NOT move the i18n baseline (still `26 known, 0 new`).** That is the 
 gap doing exactly what it says — a single lowercase word with no space is structurally invisible
 to the gate — so **the baseline is not holed by this commit**; two real bare strings simply left
 the repo without ever having been counted.
+
+## The model and the credential are chosen, never defaulted
+
+**DECIDED 2026-07-29 (user): *"我觉得压根就不该有一个 DEFAULT_MODEL"*, and *"所有用 env 决定模型
+或者 key 的 删掉"*.** One rule rather than two preferences: **a constant or an environment variable
+standing in for the user's choice means an agent runs a model nobody selected, and the log then
+records a name nobody chose.** `DEFAULT_MODEL` is gone, `DEFAULT_CONFIG.model` is `""`, and both
+providers take `model` and `opts` as REQUIRED parameters. Only matrix's own `MXD_*` variables may
+still be read. The argument that made it safe rather than merely wanted: the fallbacks were covering
+a state the validator already rejects, so three of the four `?? DEFAULT_MODEL` branches were
+unreachable — and the one path that reaches them is the `"model": null` hole they were masking.
+
+⭐ **Deleting a named constant does not find its literal twins.** The grep for `DEFAULT_MODEL` found
+all four of its call sites and could not see `model ?? "gpt-4o"` in the OpenAI provider — the same
+mechanism spelled as a literal, in a file the change was already touching. **Chase the SHAPE (a
+fallback sitting in the model slot), not the name.**
+
+⚠️ **Measured: the env fallbacks had ZERO test coverage.** Restoring `?? process.env.OPENAI_API_KEY`
+reddens exactly ONE test — the inverted guard written with the deletion — while 24 others in that
+file stay green. That is also what separates the guard from the re-aiming trap: **the producer it
+consumes still exists** (a shell really can hold `OPENAI_API_KEY`), the test SETS it, and the
+assertion is that the value did not land. The vacuous inversion memory warns about is the opposite,
+asserting nothing happened where nothing could be produced.
+
+⚠️ **Nothing in production guards an empty or absent model, and no test can see one.** After the
+deletion `""` and `null` both travel to the API untouched; `ValidatingMockAPI` substitutes `model ??
+"claude-sonnet-4-6"` and never checks emptiness, so **a suite that is green with `model: ""`
+everywhere says nothing about whether a fresh install works.** Whoever closes the `"model": null`
+hole (`01KYJ27S0N3VBXQTFVNQ3FB879`) inherits a decision this created: reject empty/null at load and
+`DEFAULT_CONFIG.model = ""` fails its own validator, so `mxd config init` writes a config the loader
+refuses. *global config is a COMPLETE config* and *empty is invalid* cannot both hold.
+
+**NEGATIVE RESULT — the `""`-overlay worry does not exist in the direction it was raised.**
+`resolveConfig` overlays on `value !== undefined`, so `""` IS an overriding value — but the global
+layer is the BASE at all three production call sites (`daemon.ts`, `runtime/helpers.ts`, `cli.ts`),
+so an empty global model can never climb over a project's. The REVERSE is reachable and is now
+pinned by a test: a hand-written `.mxd/config.json` carrying `"model": ""` does override, and its
+consequence is a visible empty model instead of a silent switch to sonnet.
