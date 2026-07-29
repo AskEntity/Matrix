@@ -351,6 +351,41 @@ did the work was not the person who wrote the unexecutable line, and neither cou
 alone** — the doer never issues the instruction, and the writer is working from a description that
 is already wrong. Ask for the call, not for the story.
 
+⭐ **Its other half: a familiar pattern name is a HYPOTHESIS to check, never an argument.** Same
+evening, 2026-07-29. A prompt line said *"check `get_tree` for closed tasks in the same area"*,
+which is wrong because `get_tree` hides closed by default; fixing the line to say `search_tasks`
+was the whole fix. A proposal to ALSO make `get_tree` disclose what it filtered was framed as *"the
+half the prompt cannot reach"*, root recognised **N-of-M-doors**, and approved on the strength of
+the name. **But that rule is about one RULE enforced at several entrances, and nothing here was
+being enforced — a piece of ADVICE was being corrected, and advice exists only in the prompt. There
+was never a second door.** Cost: zero real defects fixed, plus a nearly-shipped break of
+`get_tree`'s external MCP contract (`availability: "both"`, so clients `JSON.parse`
+`content[0].text`, and the note was concatenated onto it) — a bug that existed *only* because of
+the scope expansion.
+
+**The discriminator was already in this file and went unused: a real blind instrument makes a CLAIM
+it does not honour.** `All checks passed.` claims every check and read 8%. `search` claimed the
+repo and could not see `.mxd/plugin/`. **`get_tree` claims nothing** — it returns a tree, and its
+own parameter description says closed are excluded by default, in the schema the caller is looking
+at. No claim, no lie, and therefore no empty-result-that-reads-as-an-answer. **Before filing
+something as a blind instrument, quote the assertion it fails to keep. If you cannot quote one, it
+is not this bug.**
+
+⚠️ **The test written to prove the feature worked was also the evidence it was broken.** It read
+`JSON.parse(text.slice(0, text.indexOf("\n\n[")))` — **a payload that needs string surgery before
+it parses is not JSON**, and that line was authored, run green, and re-read during a mutation pass
+without the question being asked. No existing test caught the real break either, because every
+fixture that parses `get_tree` output happens to contain no closed tasks: *the fixture cannot
+express the difference*, in the one direction where production always can. **Being forced to
+pre-process your own output to assert on it is a finding about the output, not a detail of the
+test.**
+
+**Two things that made the retraction cheap, both worth repeating deliberately.** The behaviour
+change was a SEPARATE commit from the prose, on the reasoning that the user might want only the
+prose — so undoing it was one `git revert` with no surgery and nothing else disturbed. And the
+question that killed it was the plainest one available, asked by the user: *"how did a system-prompt
+task get to needing a change in `get_tree`? It does exactly what it is meant to do."*
+
 ---
 # How This Project Fools Itself
 ---
