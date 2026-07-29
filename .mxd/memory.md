@@ -3536,3 +3536,35 @@ things in this repo precisely because it has not been eroded yet, and the first 
 teaches the next person that exemptions are available. **Deleting the file deleted the exemption
 with it; an audit catching a new file is evidence the audit works, never a formality to route
 around.**
+
+## `get_tree` returns a minimal projection, and the switch that widened it is gone
+
+**DECIDED 2026-07-29 (user): *"它应该不能 include detail,把这个能力删了。然后 with closed 可以有。"***
+`include_details` returned `stripSession(node)` — the whole node — and on the real 578-node tree
+that measured **~114K tokens alone and ~631K with `include_closed`, from one call**. Same shape as
+the 2.95MB `update_task` tool_result already recorded above, except **no anomaly was required to
+reach it**: root spent ~114K on `{format:"flat", include_details:true}` merely to count running
+tasks, the most natural use of the parameter that existed. `include_closed` stays, both
+directions. Correction to the parameter list quoted earlier in this file: `get_tree` now takes
+`projectId, format, include_closed` — the *"no time predicate anywhere"* point it was making is
+unaffected.
+
+⭐ **The reusable half is how the consumer count was taken. Two UI sites matched a grep for
+`include_details` and NEITHER was a consumer: they read whether the caller PASSED the argument, to
+print a "detailed" badge, and never touched a field of the response.** So the deletion was
+projection-only and no renderer lost data. **An argument-reader and a data-reader are
+indistinguishable in a grep for the parameter name** — both hits sit in a UI file and mention the
+flag — so decide which one each hit is before pricing a removal, or a pure-badge site reads as a
+dependency and vetoes it.
+
+⚠️ **Nothing pinned the projection, and the two pre-existing `get_tree` tests could not have.**
+Under a mutation restoring whole nodes they both stayed GREEN — they assert `nodes.length > 0` and
+the absence of `(you)`, i.e. that the call did not crash. Pinned now by an exact key-set assertion
+plus named absences, on a fixture carrying a description, a cost, a result round AND a branch,
+because with an empty fixture every absence assertion passes against the detailed form too.
+
+**MEASURED, and reassuring rather than alarming: deleting the two `parts.push("detailed")` bare
+strings did NOT move the i18n baseline (still `26 known, 0 new`).** That is the documented recall
+gap doing exactly what it says — a single lowercase word with no space is structurally invisible
+to the gate — so **the baseline is not holed by this commit**; two real bare strings simply left
+the repo without ever having been counted.

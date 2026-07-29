@@ -884,12 +884,14 @@ describe("TaskTracker: resultRounds (memory-index capture)", () => {
 		]);
 	});
 
-	test("stripSession (the serialization get_task/get_tree use) preserves resultRounds", () => {
+	test("stripSession (the serialization get_task uses) preserves resultRounds", () => {
 		const task = tracker.addChild(tracker.rootNodeId, "T", "desc");
 		tracker.appendResultRound(task.id, { result: "r" });
 		const node = tracker.getTask(task.id);
 		if (!node) throw new Error("node missing");
-		// get_task / get_tree return stripSession(node) — resultRounds must survive.
+		// get_task / create_task / update_task return stripSession(node) —
+		// resultRounds must survive. get_tree returns a minimal projection and
+		// never carried them.
 		expect(stripSession(node).resultRounds).toEqual([{ result: "r" }]);
 	});
 });
