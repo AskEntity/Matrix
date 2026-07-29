@@ -1936,9 +1936,19 @@ the task" is decoration 92% of the time. What works 100% of the time, and was us
 cosmetically), then carry that timestamp to the tree and ask what was running then. In one of those
 two, the commit's own subject named only the other half of its change, so the message actively
 misled and the **timestamp** was what recovered it. **The prompt teaches only the time route** —
-find when the line arrived, then read that commit and the ones around it, since what landed
-alongside is usually what it was for. The id shortcut is deliberately absent from the prompt: at 8%
-it would be decoration, and preserving it is a mechanism problem (below), not something to teach.
+find when the line arrived, then read that commit *and the ones around it*, since what landed
+alongside is usually what it was for.
+
+⭐ **The id is deliberately absent from the prompt, and the reason outlives the 8%.** Two of them,
+either one sufficient. **(1) Never write today's breakage into a universal, frozen document.** The
+8% is being fixed (below), and on the day it is, a prompt sentence saying the link is usually gone
+goes on teaching that with nothing anywhere to turn it red — it is shared by every project and
+frozen in `session_config`. **(2) A migration makes the marker non-uniform on purpose**, so old
+commits have no id and new ones do; a prompt that routes through the id teaches an agent to read
+its ABSENCE as "no way to know who wrote this", which is false for the entire pre-migration
+history. The route that needs no branch: the time coordinate works on every commit ever made, and
+a trailer, where one exists, is sitting in the commit body you were already told to read — **it
+announces itself, so it never needs a fallback clause that could read as a dead end.**
 
 **DECIDED 2026-07-29 (user): preserving the link going forward is a MECHANISM, not an instruction.**
 A prompt bullet telling agents to keep the branch name in the merge subject was written and then
