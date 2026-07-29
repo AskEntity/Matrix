@@ -380,9 +380,18 @@ is why this ended up here instead of shipping:
   heavy-context path to deprecate.
 
 **So the lesson survives with a different diagnosis: the shape did not hold, but not because the
-tool was fine — because the tool's problem is not at that door.** It is not "one rule missing an
-entrance"; it is "this tool was largely superseded once search existed". Handler output disclosing a
-count fixes none of bluntness, whole-tree scope, or the binary filter.
+tool was fine — because the tool's problem is not at that door.** Handler output disclosing a count
+fixes none of bluntness, whole-tree scope, or the binary filter.
+
+⭐ **The transferable distinction, worth more than the retraction: "several PARTS of one design" and
+"several ENTRANCES to one rule" feel identical on site and have OPPOSITE remedies.** Entrances ask
+you to COMPLETE — deploy the same rule at the door you missed, and the work is mechanical because
+the decision was already made. Parts ask you to DECIDE — go read the design and judge whether the
+unbuilt part is still the right thing to build, because it was never agreed, only proposed. Here the
+three surviving bullets of that April design were mistaken for a missing entrance, so **a completion
+action was executed against something that needed a decision** — which is why it produced a patch
+nobody had chosen, at a layer nobody had picked. **The tell is cheap: for an entrance you can name
+the rule and point at where it already runs. If you cannot, you are holding a proposal.**
 
 ⭐ **"This is not a problem" is an assertion that needs evidence, and it is asked for evidence far
 less often than "this IS a problem".** A claim of a defect gets challenged, reproduced, measured; an
