@@ -146,17 +146,39 @@ describe("subtree permission on destructive tools", () => {
 		// by default and someone widens the set deliberately, instead of
 		// arriving free with nothing going red.
 		//
-		// The handler cannot distinguish "a declared field I predate" from "an
-		// undeclared field that reached me", so an unknown key is a faithful
-		// stand-in for tomorrow's param. (In production zod strips undeclared
-		// keys before the handler; a future DECLARED one gets through.)
+		// An unknown key stands in for tomorrow's param, and it has to RIDE
+		// ALONG WITH a real one to be a faithful stand-in. Alone it no longer
+		// reaches the gate at all: the handler refuses a call with no settable
+		// param before asking about authority, and it knows which params are
+		// settable because that list is derived from the declarations — so an
+		// undeclared key alone is "you supplied nothing", while tomorrow's
+		// DECLARED param is a field the gate must judge. Pairing it with an
+		// ungated field reproduces the second case, and is the smuggling shape
+		// besides.
 		const r = await invokeAs(tracker, tempDir, agentId, "update_task", {
 			taskId: siblingId,
+			title: "rides along",
 			budgetUsd: 5,
 		});
 		expect(r.isError).toBe(true);
 		expect(r.content[0].text).toContain("not your task or descendant");
 		expect(r.content[0].text).toContain("budgetUsd");
+		// Refused whole — the ungated field it travelled with did NOT land.
+		expect(tracker.getTask(siblingId)?.title).toBe("sibling");
+	});
+
+	test("an unknown param alone is refused before authority is considered", async () => {
+		// Pins the ORDER the test above depends on. It is also the better
+		// answer: an agent that typo'd a parameter name has a broken call, not
+		// a permissions problem, and telling it "not your task or descendant"
+		// would be a false remedy — it CAN edit that node's prose.
+		const r = await invokeAs(tracker, tempDir, agentId, "update_task", {
+			taskId: siblingId,
+			budgetUsd: 5,
+		});
+		expect(r.isError).toBe(true);
+		expect(r.content[0].text).not.toContain("not your task or descendant");
+		expect(tracker.getTask(siblingId)?.title).toBe("sibling");
 	});
 
 	test("a refused status does not smuggle the title through with it", async () => {

@@ -171,12 +171,75 @@ export interface UpdateTaskOpts {
 	parentId?: string;
 	color?: string | null;
 	/**
+	 * 1:1 agent-branch binding. REST-only in practice — agents do not set their
+	 * own branch — but it lives here rather than at the route because it is a
+	 * field of the same update: applied at the route it was one more mutation
+	 * that outlived a rejected `status` in the same request.
+	 */
+	branch?: string;
+	/**
 	 * Plugin-owned opaque metadata. REPLACE semantics — the whole object is
 	 * replaced (mirrors tracker.setMetadata), never deep-merged. To update a
 	 * single key, the caller reads current metadata and sends the merged object.
 	 * `undefined` means "leave existing metadata untouched".
 	 */
 	metadata?: Record<string, unknown>;
+}
+
+/**
+ * Every field of `UpdateTaskOpts`, as data — used to answer "did this call ask
+ * for anything at all?" and to name the other fields in a refusal.
+ *
+ * ⚠️ It is pinned to the interface IN BOTH DIRECTIONS by the two lines below,
+ * so it cannot become a second list that drifts. `satisfies` rejects a name
+ * that is not a field; `_UpdateFieldsAreExhaustive` rejects a field that is
+ * not named here. Adding a field to `UpdateTaskOpts` without touching this is
+ * a compile error, which is the only version of this that stays true.
+ *
+ * Deliberately NOT shared with `UNGATED_UPDATE_FIELDS` in orchestrator-tools:
+ * that one is a permission list over MCP ARGUMENT names (it has
+ * `old_description`, it has no `branch`), this one is the shared op's own
+ * fields. Different vocabularies for different layers — and neither can drift
+ * silently, because that one is a subtract-list where a new field lands on the
+ * gated side and this one is compiler-pinned.
+ */
+const UPDATE_FIELDS = [
+	"status",
+	"title",
+	"description",
+	"draft",
+	"parentId",
+	"color",
+	"branch",
+	"metadata",
+] as const satisfies readonly (keyof UpdateTaskOpts)[];
+
+type _UpdateFieldsAreExhaustive =
+	Exclude<keyof UpdateTaskOpts, (typeof UPDATE_FIELDS)[number]> extends never
+		? true
+		: ["UPDATE_FIELDS is missing a field of UpdateTaskOpts"];
+const _updateFieldsExhaustive: _UpdateFieldsAreExhaustive = true;
+void _updateFieldsExhaustive;
+
+/**
+ * Name the fields this call asked for besides the one being refused, so the
+ * error can answer the question the caller actually has — "what happened to
+ * the REST of my update?" — instead of only naming the field it rejected.
+ */
+function otherFieldsIn(updates: UpdateTaskOpts, except: string): string[] {
+	return UPDATE_FIELDS.filter(
+		(f) => f !== except && updates[f] !== undefined,
+	) as unknown as string[];
+}
+
+/** `<reason>` plus what it means for everything else in the same call. */
+function refuse(reason: string, updates: UpdateTaskOpts, field: string): never {
+	const others = otherFieldsIn(updates, field);
+	throw new TaskOperationError(
+		others.length === 0
+			? reason
+			: `${reason} Nothing was applied: ${others.join(", ")} ${others.length === 1 ? "is" : "are"} unchanged too — re-send the whole update without ${field}.`,
+	);
 }
 
 export async function updateTaskOp(
@@ -197,25 +260,73 @@ export async function updateTaskOp(
 			`Cannot update non-task node as task: ${nodeId}`,
 		);
 
-	if (updates.parentId !== undefined) {
-		tracker.reparent(nodeId, updates.parentId);
+	// ─────────────────────────────────────────────────────────────────────
+	// PHASE 1 — VALIDATE. Nothing has been applied yet, so every throw below
+	// leaves the task byte-identical to how the caller found it.
+	//
+	// This used to be one pass that validated and applied as it went, in
+	// function-body order, so a refusal in the middle left the fields ABOVE it
+	// applied and the fields BELOW it silently dropped — a partial update whose
+	// shape was decided by line numbers, which is not something any caller can
+	// see. Worse, no tracker mutator saves; only the `tracker.save()` at the
+	// end of this function does. So the applied half lived in memory only and
+	// diverged from tree.json until an unrelated operation's save() published
+	// it — or a restart evaporated it.
+	//
+	// The permission gate one layer up (orchestrator-tools) is already atomic:
+	// it refuses the whole call before any field lands. This makes the layer
+	// below agree with it.
+	// ─────────────────────────────────────────────────────────────────────
+
+	const requested = UPDATE_FIELDS.filter((f) => updates[f] !== undefined);
+	if (requested.length === 0) {
+		// Reporting success for a call that changed nothing is the failure mode
+		// this repo keeps paying for: the caller cannot tell "done" from "no-op",
+		// so it moves on. Unknown keys are stripped upstream (Zod, and REST body
+		// destructuring), which is exactly how a plausible wrong parameter name
+		// arrives here as an empty update.
+		throw new TaskOperationError(
+			`update_task changed nothing: no updatable field was supplied. It accepts: ${UPDATE_FIELDS.join(", ")}.`,
+		);
 	}
-	if (updates.status !== undefined) {
+
+	if (updates.status === "closed") {
 		// "closed" and "failed" are lifecycle-terminal states that require
 		// cleanup (worktree removal, JSONL clear, task_complete delivery).
 		// Allowing them via a plain PATCH bypasses closeTaskOp / done() and
 		// leaks worktrees + branches. Force callers through the proper ops.
-		if (updates.status === "closed") {
-			throw new TaskOperationError(
-				'Cannot set status to "closed" via update. Use close_task instead.',
-			);
-		}
-		if (updates.status === "failed") {
-			throw new TaskOperationError(
-				'Cannot set status to "failed" via update. Status "failed" is set by done("failed") or lifecycle operations.',
-			);
-		}
+		refuse(
+			'Cannot set status to "closed" via update. Use close_task instead.',
+			updates,
+			"status",
+		);
+	}
+	if (updates.status === "failed") {
+		refuse(
+			'Cannot set status to "failed" via update. Status "failed" is set by done("failed") or lifecycle operations.',
+			updates,
+			"status",
+		);
+	}
+	if (updates.parentId !== undefined) {
+		// Ask whether the move is legal before anything else is applied — the
+		// same check `reparent` runs, so the wording and the rules cannot drift.
+		tracker.assertCanReparent(nodeId, updates.parentId);
+	}
+
+	// ─────────────────────────────────────────────────────────────────────
+	// PHASE 2 — APPLY. Everything below is known-legal, so no ordering here
+	// can produce a partial update. Add new REJECTIONS to phase 1, never here.
+	// ─────────────────────────────────────────────────────────────────────
+
+	if (updates.parentId !== undefined) {
+		tracker.reparent(nodeId, updates.parentId);
+	}
+	if (updates.status !== undefined) {
 		tracker.updateStatus(nodeId, updates.status, editedBy);
+	}
+	if (updates.branch !== undefined) {
+		tracker.assignBranch(nodeId, updates.branch);
 	}
 	if (updates.title !== undefined) {
 		tracker.updateTitle(nodeId, updates.title, editedBy);
