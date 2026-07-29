@@ -1411,12 +1411,56 @@ and its 1624-line test were deleted; **do not go looking for a "Chat Completions
 against — there isn't one.** Both providers use the `openai` npm package, and
 `ChatCompletionMessageToolCall` is a union, so filter on `tc.type === "function"`.
 
-**Anthropic and OpenAI differ on whether an agent can call a tool that is not in its frozen list,
-and the difference is not cosmetic.** Anthropic uses free-form tool-name generation and the server
-dispatches any name to whatever handler exists — which is why `evaluate_script` can be hidden from
-`session_config` and still be callable if you know its name. **OpenAI Responses uses
-schema-constrained sampling**, masking the distribution to the supplied tool names. This is why
-refreshing tools at compaction is correctness-critical on OpenAI and merely nice on Anthropic.
+**Whether an agent can call a tool that is NOT in its frozen list is measured on Anthropic and has
+never been measured on OpenAI — and this file stated both halves in one voice for four months.**
+Keeping them apart is the point of the two paragraphs below: you should be able to tell which half
+somebody checked without leaving the page.
+
+**Anthropic — MEASURED 2026-07-29, `claude-opus-5`, `scripts/probe-hidden-tool.ts`.** The tools
+array holds `get_weather` alone while the system prompt describes a hidden `send_email` in exactly
+the shape matrix uses for `evaluate_script`; the model returns `tool_use(send_email)` with correct
+arguments, twice. **Every run is preceded by its positive control** — same prompt, `send_email` IN
+the array — because *"it did not call the hidden tool"* and *"it did not want to"* are byte-identical
+output, and the control is not ceremony: on `claude-sonnet-4-6` it 400s, so that model's probe
+concludes nothing. First observed 2026-04-05, when root called `create_folder` by name out of a
+session frozen before that tool existed. ⚠️ **A hidden tool needs TWO properties, and the old
+wording — *"the server dispatches any name to whatever handler exists"* — collapsed them into one
+place that was not even the right one.** The API's half is the half measured above: the model can
+generate a name the tools array does not contain. Matrix's half is `executeTool` looking that name
+up in its own handler map, answering an unregistered one with an ordinary `Unknown tool: X` error
+result; the server dispatches nothing, it returns a block. **Neither half suffices alone** — on a
+provider that really did mask names our lookup would simply never be handed one. That misattribution
+is this section's theme in miniature: it stood for four months because `executeTool` goes on looking
+names up either way, and **code that keeps working cannot tell you somebody wrote its behaviour down
+as the server's.**
+
+**OpenAI — NOT measured, and the provenance is the part worth having.** *"Responses uses
+schema-constrained sampling, masking the distribution to the supplied tool names"*, with the rider
+that `strict: false` relaxes optional-field validation but not tool-name enforcement, arrived
+2026-04-05 from THE USER, in conversation, phrased as a recollection (*"我记得"*), and reached this
+file 103 minutes later as an absolute (*"physically cannot"*). **External knowledge we never
+verified is a different thing from an invention** — it is worth the distinction, because it tells
+you who to ask. Read but NOT measured, and pointing the other way: OpenAI's docs scope `strict` to
+the ARGUMENTS matching the schema and say nothing about names, and OpenAI's own guidance suggests a
+system message to stop models calling functions that were not provided — advice that presupposes it
+happens.
+
+⚠️ **2026-07-29 could not measure it either, and why is worth more than the failure: THE OPENAI
+PROVIDER IS NOT IN USE.** We bootstrap on Anthropic and always have. Both stored OpenAI credentials
+had expired — `~/.mxd/config.json`'s on 2026-04-10, `~/.codex/auth.json`'s on 2026-01-19 — and that
+is the symptom rather than the cause; nothing refreshes them either (`void this.refreshToken`, draft
+`01KYQJQC0Z3NQR51E8CPWNQQZA`). No traffic means no 400, no flake and no report, so **nothing we
+believe about OpenAI has been able to be contradicted by reality for months.**
+
+⭐ **Read that as an instruction, not a disclaimer: treat every OpenAI sentence in this file as
+unchecked by default, and every Anthropic one as load-bearing until it isn't.** The two are written
+in the same voice today and are not the same grade of evidence — the Anthropic claims get hit by
+bootstrap traffic every day and fail loudly when wrong, while an OpenAI claim can only be wrong in
+private. **Where this one lands: the design conclusion it carries — *refreshing tools at compaction
+is correctness-critical on OpenAI and merely nice on Anthropic* — therefore rests on an unverified
+asymmetry, about a provider nobody runs, that reality has no way to correct.** Keep the refresh; it
+is right for the Anthropic reason measured above. Do not restate the asymmetry as `physically
+cannot` again.
 
 **Thinking events carry a `provider` field**, so switching providers automatically drops stale
 thinking blocks on mismatch. The OpenAI walker ignores thinking entirely. `executeTool` validates
