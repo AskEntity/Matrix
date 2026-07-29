@@ -3557,7 +3557,7 @@ may present a missing trailer as "no provenance".
 
 | file | its part of the mechanism |
 |---|---|
-| `src/worktree-manager.ts` | `git config --worktree matrix.taskId <id>` at creation |
+| `src/worktree-manager.ts` | `git config --worktree mxd.taskId <id>` at creation |
 | `.mxd/hooks/setup_worktree.sh` | points `core.hooksPath` at `.hooks/worktree` |
 | `.hooks/worktree/prepare-commit-msg` | reads that config, appends the trailer |
 
@@ -3598,4 +3598,4 @@ answer ambiguously for every consumer.
 **Root's own commits carry no trailer** — root works in the main worktree, which never runs the
 setup hook. Accepted; root's id is a constant. The same boundary applies in time: the trailer
 starts on worktrees created AFTER this lands, and every worktree alive today keeps `/dev/null`
-and no `matrix.taskId`.
+and no `mxd.taskId`.

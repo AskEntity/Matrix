@@ -8,7 +8,7 @@ cd "$1"
 bun install --frozen-lockfile
 
 # Git hooks for this worktree. `.hooks/worktree` holds prepare-commit-msg and
-# nothing else — it stamps `Task-Id: <matrix.taskId>` on every commit made here,
+# nothing else — it stamps `Task-Id: <mxd.taskId>` on every commit made here,
 # which is what lets `git blame` reach the task that wrote a line.
 #
 # Deliberately NOT `.hooks` itself: that directory also holds pre-commit

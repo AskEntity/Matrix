@@ -161,7 +161,7 @@ describe("WorktreeManager", () => {
 		const info = await mgr.create(taskId, "identity", defaultBranch);
 
 		const recorded = (
-			await exec(["git", "config", "--worktree", "matrix.taskId"], info.path)
+			await exec(["git", "config", "--worktree", "mxd.taskId"], info.path)
 		).trim();
 		expect(recorded).toBe(taskId);
 	});
@@ -439,7 +439,7 @@ describe("WorktreeManager", () => {
 			).toBe(1);
 		});
 
-		test("no matrix.taskId means no trailer, and the commit still lands", async () => {
+		test("no mxd.taskId means no trailer, and the commit still lands", async () => {
 			// The main repo has the hook available but no task identity — which is
 			// root's situation, and every pre-migration commit's situation. A missing
 			// trailer must never be a failed commit.

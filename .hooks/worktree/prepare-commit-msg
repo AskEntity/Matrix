@@ -13,7 +13,7 @@
 # commits, because a clean merge carries no changes. An id living only on merge
 # commits is an id for a commit nobody is holding.
 #
-# The id comes from `matrix.taskId` in git config, written per-worktree by
+# The id comes from `mxd.taskId` in git config, written per-worktree by
 # WorktreeManager at creation time. Deliberately NOT parsed out of the worktree
 # path: the path shape is an implementation detail that has changed before, and
 # git config is the durable place to record a worktree's identity.
@@ -31,7 +31,7 @@ msg_file="$1"
 [ -n "$msg_file" ] || exit 0
 [ -f "$msg_file" ] || exit 0
 
-task_id=$(git config --get matrix.taskId 2>/dev/null) || task_id=""
+task_id=$(git config --get mxd.taskId 2>/dev/null) || task_id=""
 [ -n "$task_id" ] || exit 0
 
 # Do nothing when the message is empty (only blanks and comments). git aborts

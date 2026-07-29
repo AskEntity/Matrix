@@ -17,7 +17,7 @@ interface WorktreeInfo {
  *
  * Worktree setup:
  * - extensions.worktreeConfig is enabled so per-worktree git config works
- * - The task id is recorded as `matrix.taskId` in per-worktree git config
+ * - The task id is recorded as `mxd.taskId` in per-worktree git config
  * - Hooks default to off (core.hooksPath = /dev/null); the setup hook may override
  * - Setup hook (.mxd/hooks/setup_worktree.sh) is run
  */
@@ -48,7 +48,7 @@ export class WorktreeManager {
 	 * Create a worktree for a task.
 	 * Sets up a fully isolated environment:
 	 * 1. Creates worktree with new branch
-	 * 2. Records the task id in per-worktree git config (`matrix.taskId`)
+	 * 2. Records the task id in per-worktree git config (`mxd.taskId`)
 	 * 3. Disables hooks (so child agents don't trigger parent project's pre-commit)
 	 * 4. Runs .mxd/hooks/setup_worktree.sh, which may override any of the above
 	 */
@@ -85,7 +85,7 @@ export class WorktreeManager {
 			// wrote a line. Deliberately config and not the path: the path shape is
 			// an implementation detail that has changed before, and per-worktree
 			// config is where a worktree's identity durably belongs.
-			await this.git(["config", "--worktree", "matrix.taskId", taskId], wtPath)
+			await this.git(["config", "--worktree", "mxd.taskId", taskId], wtPath)
 				.exited;
 
 			// Hooks default to off — child agents must not trigger the parent
