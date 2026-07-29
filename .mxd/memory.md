@@ -3422,3 +3422,102 @@ failing test tells you within a minute is deliberately not here.
   refusal to `in_progress` widened it to `pending` too — we made it more reachable without
   changing it in kind. `deleteTaskOp` and `resetTaskOp` close this with `awaitLoopExit`;
   `closeTaskOp` never had it and still does not. Draft `01KYNAKQDJTMVXWCQ3T62FHMZA`.
+
+## A partial update is not "half of an update" — it is a write nobody can see
+
+**`updateTaskOp` validated and applied in ONE pass, in function-body order, and threw partway.**
+`parentId` sat above the status check and `title` below it, so `{parentId, title, status:"closed"}`
+reparented the node, dropped the title, and reported only that status was refused. **The shape of
+the partial update was decided by LINE NUMBERS, which is not something any caller can see** — so
+"the whole call was refused, I'll retry" is the correct-looking move that replays a reparent which
+already happened. Now: phase 1 validates everything, phase 2 applies everything.
+
+⚠️ **The half nobody predicts: NO tracker mutator saves.** `save()` is defined once in
+`task-tracker.ts` and called zero times inside it; the only save is the one at the END of the op. So
+a field applied before a throw **lives in memory only, and `tree.json` still holds the old value**
+— until some UNRELATED operation's `save()` publishes it, or a restart evaporates it. Measured, not
+reasoned: a rejected update followed by an innocent rename of a different node committed the
+abandoned reparent to disk. **A mutator that does not persist is not "a smaller write", it is a
+write with no owner** — whoever saves next inherits it, and the caller who was told "refused" is not
+that person.
+
+⭐ **The reported symptom and the discriminating test are DIFFERENT CASES, and the task description
+asked for the wrong one.** It specified: assert that after `{title, status:"closed"}` throws, the
+title did not change. **That assertion is green against the broken implementation** — title sat
+after the throw, so it never landed either way. Measured both directions: it goes red only against a
+mutation that moves the status check to the END, so it catches "the check drifted downward" and is
+blind to the bug that was actually filed. The tests that catch both are the ones about a field
+applied BEFORE the throw — `parentId`, and `branch` at the REST door. **For the reported case the
+entire user-visible fix is the ERROR STRING**, which now names the other fields in the call and says
+they are unchanged too. Worth generalising: *"assert the other field did not change"* is the right
+instinct, and it only bites when that field could have changed — otherwise it is
+*a fixture that cannot express the difference* wearing the clothes of a careful test.
+
+**One correct implementation, defeated by a line placed BEFORE it.** REST `PATCH` called
+`tracker.assignBranch()` four lines above `updateTaskOp`, so `{branch, status:"closed"}` left the
+branch assigned on a 400. This is *a rule enforced at N of M doors* in its cleanest form — not two
+implementations drifting, but **one right implementation that something upstream of it renders
+untrue.** `branch` now goes through the op. ⚠️ **Widening a shared op's input type is a moment to
+check the tool schema**: `branch` is worktree lifecycle, and an agent editing another task's branch
+desynchronizes the tree from the worktrees on disk with nothing going red until a later close
+deletes a branch that is wrong or still in use. It did not leak — verified with a positive control,
+and pinned by a test, because it is true today only by the coincidence of two facts stated nowhere
+near each other (the tool does not declare the param; the handler does not forward it).
+
+**Two field lists that cannot drift, without merging them.** The "did you ask for anything?" check
+and `UNGATED_UPDATE_FIELDS` are different vocabularies — MCP argument names have `old_description`
+and no `branch`; the op's own fields are the reverse — so one list cannot serve both. Neither can go
+stale silently, by two different mechanisms: the op's is compiler-pinned to `UpdateTaskOpts` in both
+directions (`satisfies` one way, an `Exclude<>` assertion the other), and the gate's is a
+subtract-list where a new field lands on the gated side. **"Don't create a second list" is not the
+rule; "no list may be able to drift in silence" is** — and a refusal that must speak the CALLER's
+vocabulary is a real reason for a second one, because naming `branch` to an agent that cannot set it
+is a remedy that will not work.
+
+**NEGATIVE RESULT — no `tree.json` was ever corrupted this way.** All 561 task JSONLs, 452,731
+lines: 1269 `update_task` calls, 21 carrying a rejected status, **zero** combining that with a
+`parentId`. The scanner reports its own positive control first — it proves it can see the 373 calls
+that DO carry a `parentId` before it is allowed to print a zero — because *a checker reporting ZERO
+is a claim about the checker*. Re-runnable: `scripts/scan-partial-update-damage.ts`.
+
+⭐ **The one instance that DID fire is where two separately-filed defects turn out to be one call.**
+The single silently-dropped field in that whole history is a `title`, 2026-07-28, on task
+`01KYCQVA8CP2S0X6V1QDQSBH8X` — **and that task's title today is the `[已解决 by …]` string named in
+*"Never offer a remedy that will not work"* as the damage from `closeTaskOp`'s dead end.** Same
+call. They COMPOUND: the dead end forced a workaround that encodes state where only a human can read
+it, and the partial update then made that workaround **take two attempts to land**. Neither defect
+looks like more than a papercut on its own, and the two of them together lost data *and* left
+unsearchable state. **Two small defects can multiply — and you only ever see it by tracing one
+concrete incident through both, never by reading either bug report.**
+
+## Which probes get committed — `scripts/` had a habit and no rule
+
+Probes kept accumulating in `scripts/` with nothing written down about which ones belong there, so
+"commit the probe" read as an unconditional convention. It is not one, and the criterion is sharper
+than "is it still useful":
+
+> ⭐ **A committed probe is worth the space iff the thing it measures can change WITHOUT any test
+> going red.** That is the whole question. Not how good the probe is, not how hard it was to write.
+
+Three live instances, one per answer:
+
+| probe | measures | verdict |
+|---|---|---|
+| `probe-hidden-tool.ts` | **an external system** — whether Anthropic dispatches an unlisted tool name | KEEP. It can change under us on any Tuesday and nothing here would go red. |
+| `scan-partial-update-damage.ts` | **accumulated history** — has this bug ever fired, across every JSONL | KEEP. No test can pin the past, and it carries its own positive control. |
+| ~~`probe-update-task-partial.ts`~~ | **our own code**, already pinned by 20 tests | CUT. |
+
+⭐ **The counter-intuitive half, which is what makes this worth writing down: being covered by tests
+is the reason to DELETE a probe, not to keep it.** Where a probe and a test guard the same fact, the
+test wins unconditionally — *it runs itself*, and the probe only works if a human remembers it
+exists. A probe that duplicates a test is not redundant-but-harmless; it is a second, weaker copy
+that will drift, and whose narration goes stale the moment the bug it describes is fixed.
+
+⚠️ **And price the cost on the right side of the ledger.** That probe called `updateTaskOp` with
+`dataPaths: null`, so `task-index-coverage.test.ts` — a whole-repo SUBTRACT-list audit — caught it,
+correctly. The reflex is to add an exemption row and call the cost "one line". **It is not: the cost
+is an audit that no longer means what it meant.** A subtract-list is one of the more expensive
+things in this repo precisely because it has not been eroded yet, and the first exemption is what
+teaches the next person that exemptions are available. **Deleting the file deleted the exemption
+with it; an audit catching a new file is evidence the audit works, never a formality to route
+around.**

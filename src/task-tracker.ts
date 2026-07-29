@@ -388,8 +388,20 @@ export class TaskTracker {
 		if (isTask(parent)) parent.updatedAt = new Date().toISOString();
 	}
 
-	/** Move a node to a new parent. Validates no circular dependency. Works for both tasks and folders. */
-	reparent(nodeId: string, newParentId: string): void {
+	/**
+	 * The rules a reparent must satisfy, resolved once and returned so the
+	 * mutator below cannot re-look-up something different from what was checked.
+	 *
+	 * Separate from `reparent` because a caller applying SEVERAL fields has to
+	 * know this one is legal BEFORE it applies any of them — see the two-phase
+	 * contract on `updateTaskOp`. Kept as one implementation on purpose: a
+	 * second copy of the cycle walk is a guarantee that can drift from the
+	 * mutation it guards.
+	 */
+	private validateReparent(
+		nodeId: string,
+		newParentId: string,
+	): { node: TreeNode; newParent: TreeNode } {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
 		const newParent = this.nodes.get(newParentId);
@@ -408,6 +420,20 @@ export class TaskTracker {
 			if (!current.parentId) break;
 			current = this.nodes.get(current.parentId);
 		}
+		return { node, newParent };
+	}
+
+	/**
+	 * Throw if `reparent(nodeId, newParentId)` would throw — and change nothing.
+	 * Same errors, same wording, because it is literally the same check.
+	 */
+	assertCanReparent(nodeId: string, newParentId: string): void {
+		this.validateReparent(nodeId, newParentId);
+	}
+
+	/** Move a node to a new parent. Validates no circular dependency. Works for both tasks and folders. */
+	reparent(nodeId: string, newParentId: string): void {
+		const { node, newParent } = this.validateReparent(nodeId, newParentId);
 
 		// Already under the same parent — nothing to do
 		if (node.parentId === newParentId) return;

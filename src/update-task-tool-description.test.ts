@@ -91,6 +91,21 @@ describe("update_task tool description mental model", () => {
 		expect(desc).toContain("descendant");
 	});
 
+	test("main description states the update is all-or-nothing", () => {
+		// The decision this informs is made while constructing the call: an agent
+		// that believes a refused field is the ONLY thing that did not land will
+		// re-send just that field, and silently lose the rest of its edit. The
+		// behaviour is pinned in update-task-atomicity.test.ts; this pins the
+		// PROMISE, which is the half a refactor can delete without going red.
+		const desc = getUpdateTaskTool().description;
+
+		expect(desc).toContain("the whole call");
+		expect(desc).toContain("NO field is applied");
+		expect(desc).toContain("re-send the entire update");
+		// And that an empty update is refused rather than reported as success.
+		expect(desc).toContain("a call that changes nothing is an error");
+	});
+
 	test("`description` param description says it replaces the ENTIRE field", () => {
 		const tool = getUpdateTaskTool();
 		const schema = tool.jsonSchema as {

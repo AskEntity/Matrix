@@ -45,7 +45,7 @@ import type { TaskTracker } from "./task-tracker.ts";
 import { getDescendantIds } from "./task-utils.ts";
 import type { Auth } from "./tool-auth.ts";
 import { checkPermission } from "./tool-auth.ts";
-import { defineTool, toToolDefinition } from "./tool-def.ts";
+import { defineTool, type ParamDefs, toToolDefinition } from "./tool-def.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import { createDoneTool, createYieldTool } from "./tools/prefab.ts";
 import {
@@ -156,6 +156,98 @@ const UNGATED_UPDATE_FIELDS = new Set([
 	"new_description",
 	"color",
 ]);
+
+/**
+ * `update_task`'s parameters, hoisted so the handler can NAME them.
+ *
+ * The refusal for a call that changes nothing has to list the parameters that
+ * do work, and that list must be the schema itself rather than a copy of it —
+ * a hand-written second list is how a tool ends up advertising a parameter it
+ * no longer takes, which is the one error this refusal exists to prevent.
+ */
+const UPDATE_TASK_PARAMS = {
+	projectId: {
+		schema: z.string(),
+		decl: { kind: "bind", from: "projectId" },
+	},
+	taskId: {
+		schema: z.string().describe("Task node ID"),
+		decl: { kind: "explicit" },
+	},
+	status: {
+		schema: z
+			.enum([
+				"draft",
+				"pending",
+				"in_progress",
+				"verify",
+				"failed",
+				"closed",
+			])
+			.optional(),
+		decl: { kind: "optional" },
+		description: "New status",
+	},
+	title: {
+		schema: z.string().optional(),
+		decl: { kind: "optional" },
+		description: "New title",
+	},
+	description: {
+		schema: z.string().optional(),
+		decl: { kind: "optional" },
+		description:
+			"Replaces the ENTIRE description field (full rewrite). " +
+			"Use this for major rewrites. For local edits, prefer " +
+			"old_description/new_description to avoid accidentally dropping content.",
+	},
+	old_description: {
+		schema: z.string().optional(),
+		decl: { kind: "optional" },
+		description:
+			"Exact substring to find in the current description. Must be unique. " +
+			"ONLY this substring is replaced — the rest of the description stays " +
+			"byte-identical. Same semantics as edit_file's old_string. " +
+			"If you intend to replace the whole description, use the `description` parameter instead.",
+	},
+	new_description: {
+		schema: z.string().optional(),
+		decl: { kind: "optional" },
+		description:
+			"Replacement string for the old_description match. Same semantics as " +
+			"edit_file's new_string — only what matched old_description is replaced, " +
+			"nothing else in the description changes.",
+	},
+	draft: {
+		schema: z.boolean().optional(),
+		decl: { kind: "optional" },
+		description:
+			"Set draft flag. true = status becomes 'draft', false = status becomes 'pending'.",
+	},
+	parentId: {
+		schema: z.string().optional(),
+		decl: { kind: "optional" },
+		description:
+			"New parent task ID. Moves the task under this parent (reparent).",
+	},
+	color: {
+		schema: z.string().optional(),
+		decl: { kind: "optional" },
+		description:
+			"Color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex). " +
+			"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
+	},
+} satisfies ParamDefs;
+
+/**
+ * The parameters an agent can actually supply to change something: every
+ * `optional` param. `bind`/`explicit` (projectId, taskId) are routing — they
+ * say WHICH task, never WHAT to change.
+ */
+const UPDATE_TASK_SETTABLE = Object.entries(UPDATE_TASK_PARAMS)
+	.filter(([, p]) => p.decl.kind === "optional")
+	.map(([name]) => name);
+
 
 /** Get project path for a task (worktree path or repo root). */
 function getProjectPath(projectId: string, taskId: string | null): string {
@@ -710,7 +802,11 @@ export function buildAllToolDefs() {
 			availability: "internal",
 			description:
 				"Update a task node. All fields except taskId are optional — " +
-				"provide only the fields you want to change.\n\n" +
+				"provide only the fields you want to change. At least one of them is " +
+				"required: a call that changes nothing is an error, not a no-op.\n\n" +
+				"**All of it or none of it.** If any field is refused, the whole call " +
+				"is refused and NO field is applied — including ones the error does " +
+				"not mention. Fix what was refused and re-send the entire update.\n\n" +
 				"**Scope**: `title`, `description` and `color` can be set on ANY task, " +
 				"anywhere in the tree — correcting a task you filed elsewhere is the same " +
 				"act as filing it. `status`, `draft` and `parentId` need the target to be " +
@@ -723,79 +819,7 @@ export function buildAllToolDefs() {
 				"and everything else stays byte-identical. " +
 				"If `old_description` is not unique, provide more surrounding context to disambiguate. " +
 				"Cannot combine `description` with `old_description`/`new_description`.",
-			params: {
-				projectId: {
-					schema: z.string(),
-					decl: { kind: "bind", from: "projectId" },
-				},
-				taskId: {
-					schema: z.string().describe("Task node ID"),
-					decl: { kind: "explicit" },
-				},
-				status: {
-					schema: z
-						.enum([
-							"draft",
-							"pending",
-							"in_progress",
-							"verify",
-							"failed",
-							"closed",
-						])
-						.optional(),
-					decl: { kind: "optional" },
-					description: "New status",
-				},
-				title: {
-					schema: z.string().optional(),
-					decl: { kind: "optional" },
-					description: "New title",
-				},
-				description: {
-					schema: z.string().optional(),
-					decl: { kind: "optional" },
-					description:
-						"Replaces the ENTIRE description field (full rewrite). " +
-						"Use this for major rewrites. For local edits, prefer " +
-						"old_description/new_description to avoid accidentally dropping content.",
-				},
-				old_description: {
-					schema: z.string().optional(),
-					decl: { kind: "optional" },
-					description:
-						"Exact substring to find in the current description. Must be unique. " +
-						"ONLY this substring is replaced — the rest of the description stays " +
-						"byte-identical. Same semantics as edit_file's old_string. " +
-						"If you intend to replace the whole description, use the `description` parameter instead.",
-				},
-				new_description: {
-					schema: z.string().optional(),
-					decl: { kind: "optional" },
-					description:
-						"Replacement string for the old_description match. Same semantics as " +
-						"edit_file's new_string — only what matched old_description is replaced, " +
-						"nothing else in the description changes.",
-				},
-				draft: {
-					schema: z.boolean().optional(),
-					decl: { kind: "optional" },
-					description:
-						"Set draft flag. true = status becomes 'draft', false = status becomes 'pending'.",
-				},
-				parentId: {
-					schema: z.string().optional(),
-					decl: { kind: "optional" },
-					description:
-						"New parent task ID. Moves the task under this parent (reparent).",
-				},
-				color: {
-					schema: z.string().optional(),
-					decl: { kind: "optional" },
-					description:
-						"Color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex). " +
-						"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
-				},
-			},
+			params: UPDATE_TASK_PARAMS,
 			handler: async (args, auth) => {
 				try {
 					const tracker = R.getTracker(args.projectId as string);
@@ -804,6 +828,43 @@ export function buildAllToolDefs() {
 							content: [{ type: "text", text: "Project not found" }],
 							isError: true,
 						};
+
+					// A call that can change nothing is refused, not answered with
+					// the unchanged task and no error.
+					//
+					// Unknown keys never reach here — executeTool's Zod parse STRIPS
+					// them — so `old_string`/`new_string` (edit_file's names, one
+					// door down, and the slip that actually happened) arrive as an
+					// update with no fields at all. The old behaviour returned the
+					// task and reported success, so the caller moved on and the edit
+					// was gone.
+					//
+					// updateTaskOp refuses this too, and that is the real guarantee
+					// — it covers REST as well. This one exists for its WORDING: the
+					// op can only name its own fields, which would send an agent
+					// after `branch`/`metadata` (not reachable from here) and never
+					// mention `old_description` (reachable, and what the slip was
+					// reaching for). Never offer a remedy that will not work.
+					const supplied = UPDATE_TASK_SETTABLE.filter(
+						(p) => (args as Record<string, unknown>)[p] !== undefined,
+					);
+					if (supplied.length === 0) {
+						return {
+							content: [
+								{
+									type: "text",
+									text:
+										"Error: update_task changed nothing — no updatable parameter was supplied. " +
+										`It takes: ${UPDATE_TASK_SETTABLE.join(", ")}. ` +
+										"(Unrecognized parameter names are dropped before this tool sees " +
+										"them, so a wrong name arrives here as an empty update — note that " +
+										"the surgical-edit params are old_description/new_description, NOT " +
+										"edit_file's old_string/new_string.)",
+								},
+							],
+							isError: true,
+						};
+					}
 
 					// What is defended here is STRUCTURE and LIFECYCLE, not the node.
 					//

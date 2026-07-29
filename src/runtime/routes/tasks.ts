@@ -245,11 +245,6 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		}
 
 		try {
-			// REST-only: branch assignment (agents don't manually set branches)
-			if (body.branch !== undefined) {
-				tracker.assignBranch(nodeId, body.branch);
-			}
-
 			const node = await updateTaskOp(
 				tracker,
 				nodeId,
@@ -267,6 +262,10 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 					draft: body.draft,
 					parentId: body.parentId,
 					color: body.color,
+					// REST-only (agents don't set their own branch), but it goes
+					// THROUGH the op rather than being applied before it: assigned
+					// here it survived a refusal further down the same request.
+					branch: body.branch,
 					metadata: body.metadata,
 				},
 				"user",
