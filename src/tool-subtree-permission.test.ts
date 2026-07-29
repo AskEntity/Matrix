@@ -3,12 +3,18 @@
  * `checkPermission(auth, "subtree", ...)` on its target.
  *
  * The gap this closes (Audit G H1): `close_task`, `delete_task`,
- * `reset_task`, `update_task` (non-reparent), and folder ops previously
- * ran without any scope check. A bug/hallucination in one agent could
- * delete a sibling's worktree + JSONL with no recovery path.
+ * `reset_task`, `update_task` (structure + lifecycle), and folder ops
+ * previously ran without any scope check. A bug/hallucination in one agent
+ * could delete a sibling's worktree + JSONL with no recovery path.
  *
  * Pattern: two-task tree (agent + sibling). Agent calls the tool on the
  * sibling — must get `not your task or descendant`, sibling state intact.
+ *
+ * ⚠️ `update_task` is the one tool that is only PARTLY gated, and both
+ * halves are pinned here on purpose — over-strict is the way this class of
+ * guard fails, and over-strict reddens nothing. Title/description/color are
+ * ungated (recording intent, same act as `create_task`); status/draft/
+ * parentId stay gated (lifecycle and structure someone else owns).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -67,29 +73,87 @@ describe("subtree permission on destructive tools", () => {
 		await rm(tempDir, { recursive: true });
 	});
 
-	// ── update_task ──
+	// ── update_task: the ungated half (title / description / color) ──
 
-	test("agent cannot update_task on sibling's title/description/status", async () => {
+	test("agent CAN update_task title/description/color on a foreign node", async () => {
 		const r1 = await invokeAs(tracker, tempDir, agentId, "update_task", {
 			taskId: siblingId,
-			title: "hijacked",
+			title: "corrected title",
 		});
-		expect(r1.isError).toBe(true);
-		expect(r1.content[0].text).toContain("not your task or descendant");
-		expect(tracker.getTask(siblingId)?.title).toBe("sibling");
+		expect(r1.isError).toBeFalsy();
+		expect(tracker.getTask(siblingId)?.title).toBe("corrected title");
 
 		const r2 = await invokeAs(tracker, tempDir, agentId, "update_task", {
 			taskId: siblingId,
-			description: "rewritten",
+			description: "the provenance paragraph it found afterwards",
 		});
-		expect(r2.isError).toBe(true);
+		expect(r2.isError).toBeFalsy();
+		expect(tracker.getTask(siblingId)?.description).toBe(
+			"the provenance paragraph it found afterwards",
+		);
 
 		const r3 = await invokeAs(tracker, tempDir, agentId, "update_task", {
 			taskId: siblingId,
-			status: "closed",
+			color: "purple",
 		});
-		expect(r3.isError).toBe(true);
-		expect(tracker.getTask(siblingId)?.status).not.toBe("closed");
+		expect(r3.isError).toBeFalsy();
+		expect(tracker.getTask(siblingId)?.color).toBeTruthy();
+	});
+
+	test("agent CAN surgically edit a foreign node's description (old/new)", async () => {
+		// The live instance: an agent typo'd a `color` argument into the
+		// description text of a task it had just created elsewhere, and could
+		// not take it back out.
+		tracker.updateDescription(siblingId, "real text\ncolor: blue");
+		const r = await invokeAs(tracker, tempDir, agentId, "update_task", {
+			taskId: siblingId,
+			old_description: "\ncolor: blue",
+			new_description: "",
+		});
+		expect(r.isError).toBeFalsy();
+		expect(tracker.getTask(siblingId)?.description).toBe("real text");
+	});
+
+	// ── update_task: the gated half (status / draft / parentId) ──
+
+	test("agent cannot set status on a foreign node", async () => {
+		// "verify" is the case that MATTERS: it would land if ungated, and it
+		// puts work in someone's merge queue that they did not finish.
+		// ("closed" is refused downstream anyway, which is exactly why it was
+		// the wrong thing for the old blanket gate to justify itself with.)
+		const r1 = await invokeAs(tracker, tempDir, agentId, "update_task", {
+			taskId: siblingId,
+			status: "verify",
+		});
+		expect(r1.isError).toBe(true);
+		expect(r1.content[0].text).toContain("not your task or descendant");
+		expect(tracker.getTask(siblingId)?.status).toBe("pending");
+
+		// `draft` is a status setter wearing another name — draft:false makes a
+		// foreign draft startable.
+		tracker.updateStatus(siblingId, "draft");
+		const r2 = await invokeAs(tracker, tempDir, agentId, "update_task", {
+			taskId: siblingId,
+			draft: false,
+		});
+		expect(r2.isError).toBe(true);
+		expect(tracker.getTask(siblingId)?.status).toBe("draft");
+	});
+
+	test("a refused status does not smuggle the title through with it", async () => {
+		// The gate runs before ANY field is applied, so a mixed call is refused
+		// whole. And the refusal must say which half was refused — an agent told
+		// only "not your task" concludes prose edits are impossible too, and goes
+		// off to invent a workaround.
+		const r = await invokeAs(tracker, tempDir, agentId, "update_task", {
+			taskId: siblingId,
+			title: "hijacked",
+			status: "verify",
+		});
+		expect(r.isError).toBe(true);
+		expect(tracker.getTask(siblingId)?.title).toBe("sibling");
+		expect(r.content[0].text).toContain("status");
+		expect(r.content[0].text).toContain("description");
 	});
 
 	test("agent CAN update its own task", async () => {
