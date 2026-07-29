@@ -1946,7 +1946,8 @@ goes on teaching that with nothing anywhere to turn it red — it is shared by e
 frozen in `session_config`. **(2) A migration makes the marker non-uniform on purpose**, so old
 commits have no id and new ones do; a prompt that routes through the id teaches an agent to read
 its ABSENCE as "no way to know who wrote this", which is false for the entire pre-migration
-history. The route that needs no branch: the time coordinate works on every commit ever made, and
+history — **teaching the new mechanism is the very act that makes the old data look broken**, and
+it is this file's oldest shape, an empty result read as an answer. The route that needs no branch: the time coordinate works on every commit ever made, and
 a trailer, where one exists, is sitting in the commit body you were already told to read — **it
 announces itself, so it never needs a fallback clause that could read as a dead end.**
 
