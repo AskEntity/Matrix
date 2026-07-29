@@ -3627,3 +3627,49 @@ was built from the visible tail, executed, and **7 more sites appeared that had 
 all along**. **The number is what does the damage** — without it the truncation is obvious, and
 with it you believe you have enumerated. Redirect to a file and take the sites from the whole
 file, never from a tail.
+## Reading a field with `?? ""` destroys a state the storage layer represents
+
+**DECIDED 2026-07-29 (user), and it settles the question the DEFAULT_MODEL deletion left open:
+*"global auth 默认是空白，model 是 `""`. project 和 local 的话 auth 默认是 undefined，ui 表现为 tick 了
+inherit，选择框消失"*.** So the three-layer semantic is now stated end to end: **global is a COMPLETE
+config, so every key is present and "not chosen yet" is `""`; overlays are `Partial`, so an ABSENT
+key is inherit.** `""` is therefore load-bearing at the global layer — a second reason, on top of
+the earlier boundary, not to touch what it means in `resolveConfig`.
+
+⭐ **The UI bug the user reported is one operator: `(draft.model as string | undefined) ?? ""` at
+READ time.** Past that line `undefined` (inherit) and `""` (an explicit empty override) are one
+value, so the state could not be rendered — and, worse, could not be EXITED: typing then deleting
+left `""` in the draft and no gesture anywhere set it back to `undefined`, making the panel a
+one-way door into an empty override. **Derive the state from the raw value FIRST, then coalesce
+for the control** — the reverse order is what erases it. The panel already had the right
+convention one screen away (`SettingBoolField`: *"Three states: undefined (inherit), true,
+false"*), so this was a rule enforced at some of its doors rather than a missing mechanism.
+
+⚠️ **The legal field sets of the two PROJECT layers differ, and the axis is TRUST rather than
+scoping.** `model` and `defaultAuth` are settable on **global** and on **local**, and are **not
+rendered at all** on the **project** tab — because the repo layer is
+`<projectPath>/.mxd/config.json`, git-tracked and **arriving with `git clone`**, so a repo you
+cloned could otherwise choose the model and the auth group every later agent run uses. The local
+layer under `~/.mxd/` never enters a repo.
+**That is why `GLOBAL_ONLY_FIELDS` is the wrong home for the rule: the field is not global-only, it
+is not-from-the-repo** — and it is why the three tabs are not variations of one form.
+`rejectCredentialFields` is layer-aware for the same reason (repo refuses `defaultAuth`, local
+allows it, `authGroups` refused on both).
+
+⚠️ **On the way there, a guard was found sitting on one of two doors with the other one open, and
+what it actually did was break the UI.** Its comment claimed *"The CLI has the same check
+client-side"* — measured false: `mxd config set defaultAuth <name> --project` tests only
+`GLOBAL_ONLY_FIELDS` and writes straight to `.mxd/config.json`, while the same CLI's default path
+goes through the endpoint and 400s. Meanwhile the guard made **every** Root Auth change on a project
+tab fail, the option labelled "inherit" included, because that option's value was `""`. **Before
+pricing a guard's removal, measure what the other doors already allow — and check whether the thing
+it is really stopping is your own UI.** The deeper hole it never covered (a cloned repo config is
+read by `loadProjectRepoConfig`, never through `PATCH`, and `authGroups` is replaced wholesale by
+`resolveConfig` rather than merged) is `01KYQYRXST632196G3FNWTWF1X`, and it is hardening rather than
+a vulnerability: **there is no sandbox, so a hostile repo already owns you once an agent reads it.**
+
+**Negative result on the test side, worth having before you go looking: the 26-bare-string i18n
+baseline did not move.** All new copy went through `t()`, and the two dead keys left behind by
+switching designs mid-task (`settings.authGlobalOnly`, `settings.modelRequiredOverride`) were
+deleted with their design rather than left as orphans — the four-orphan rule (i18n key, icon, URL
+builder, prose) applies to a control you *considered* and dropped, not only to one you delete.
