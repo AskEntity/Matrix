@@ -595,35 +595,34 @@ function buildMockData() {
 		m,
 	);
 
-	// get_tree (with details + closed)
+	// get_tree (with closed). The payload mirrors the real minimal projection —
+	// no description, no costUsd — so the showcase cannot advertise a response
+	// shape the tool is unable to produce.
 	m = pushResolved(
 		events,
 		TOOL_GET_TREE,
-		{ format: "flat", include_details: true, include_closed: true },
+		{ format: "flat", include_closed: true },
 		JSON.stringify({
 			nodes: [
 				{
 					id: ROOT_ID,
 					title: "Root",
 					status: "in_progress",
-					description: "Root orchestrator",
-					costUsd: 2.45,
+					parentId: null,
 					children: [taskIds.inProgress, taskIds.closed],
 				},
 				{
 					id: taskIds.inProgress,
 					title: "Refactor event system",
 					status: "in_progress",
-					description: "Migrate to discriminated unions.",
-					costUsd: 0.73,
+					parentId: ROOT_ID,
 					children: [],
 				},
 				{
 					id: taskIds.closed,
 					title: "Database migration tool",
 					status: "closed",
-					description: "Built schema migration tool.",
-					costUsd: 0.89,
+					parentId: ROOT_ID,
 					children: [],
 				},
 			],
@@ -1224,7 +1223,7 @@ function buildMockData() {
 		},
 		m,
 	);
-	m = pushPending(events, TOOL_GET_TREE, { include_details: true }, m);
+	m = pushPending(events, TOOL_GET_TREE, { include_closed: true }, m);
 	m = pushPending(events, TOOL_GET_TASK, { taskId: taskIds.verify }, m);
 	m = pushPending(
 		events,

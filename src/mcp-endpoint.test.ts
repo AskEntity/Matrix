@@ -247,6 +247,128 @@ describe("MCP endpoint", () => {
 				expect(node.title).not.toContain("(you)");
 			}
 		});
+
+		// ── The projection is minimal, and there is no way to widen it ──
+		//
+		// `include_details` used to return stripSession(node) — the whole node.
+		// Measured on the real 578-node tree it cost ~114K tokens alone and
+		// ~631K together with include_closed, i.e. one call could exhaust a
+		// context window. It is deleted; these tests pin the projection so a
+		// "just add the fields back" change goes red.
+		//
+		// The fixture carries a description, a cost, a result round AND a
+		// branch/worktree on purpose: every one of those is a field the old
+		// detailed form returned. With an empty fixture the absence assertions
+		// below would pass against the detailed form too, and prove nothing.
+		test("the projection is exactly {id,title,status,children,parentId} — no node internals", async () => {
+			const projectId = await createProject("test-project");
+			const tracker = await getTracker(server.ctx, projectId);
+			const child = tracker.addChild(
+				tracker.rootNodeId,
+				"Fixture task",
+				"A description long enough to notice if it leaks",
+			);
+			tracker.updateCost(child.id, 12.34);
+			tracker.appendResultRound(child.id, { result: "a reported round" });
+			tracker.assignWorktree(child.id, "mxd/fixture/branch", "/tmp/fixture-wt");
+
+			const result = await mcpCallTool(hono, "get_tree", { projectId });
+			expect(result.isError).toBeFalsy();
+			const node = getJson(result).nodes.find(
+				(n: { id: string }) => n.id === child.id,
+			);
+			expect(node).toBeDefined();
+
+			// Named absences: these are the fields the deleted parameter advertised.
+			expect(node.description).toBeUndefined();
+			expect(node.costUsd).toBeUndefined();
+			expect(node.resultRounds).toBeUndefined();
+			expect(node.branch).toBeUndefined();
+			expect(node.worktreePath).toBeUndefined();
+
+			// And the exhaustive form, which also catches a field nobody here
+			// thought to name.
+			expect(Object.keys(node).sort()).toEqual([
+				"children",
+				"id",
+				"parentId",
+				"status",
+				"title",
+			]);
+		});
+
+		test("a caller still passing include_details gets the minimal form, not an error", async () => {
+			// get_tree is availability:"both", so external MCP clients may still
+			// send the old parameter, and running agents hold a frozen tool
+			// description until they compact. Zod has no .strict(), so an unknown
+			// key is stripped rather than refused — silently narrowed, never broken.
+			const projectId = await createProject("test-project");
+			const tracker = await getTracker(server.ctx, projectId);
+			const child = tracker.addChild(
+				tracker.rootNodeId,
+				"Fixture task",
+				"A description long enough to notice if it leaks",
+			);
+
+			const result = await mcpCallTool(hono, "get_tree", {
+				projectId,
+				include_details: true,
+			});
+			expect(result.isError).toBeFalsy();
+			const node = getJson(result).nodes.find(
+				(n: { id: string }) => n.id === child.id,
+			);
+			expect(node.description).toBeUndefined();
+			expect(Object.keys(node).sort()).toEqual([
+				"children",
+				"id",
+				"parentId",
+				"status",
+				"title",
+			]);
+		});
+
+		test("include_details is no longer advertised, include_closed still is", async () => {
+			const tools = await mcpListTools(hono);
+			const schema = tools.find((t) => t.name === "get_tree")?.inputSchema as {
+				properties: Record<string, unknown>;
+			};
+			expect(schema.properties).not.toHaveProperty("include_details");
+			expect(schema.properties).toHaveProperty("include_closed");
+		});
+
+		// ── include_closed survives, both directions ──
+		//
+		// Asserted with a closed task actually present: a fixture with no closed
+		// task cannot tell "the filter works" from "the filter is gone".
+		test("include_closed hides closed tasks by default and reveals them when set", async () => {
+			const projectId = await createProject("test-project");
+			const tracker = await getTracker(server.ctx, projectId);
+			const open = tracker.addChild(tracker.rootNodeId, "Open task", "d");
+			const shut = tracker.addChild(tracker.rootNodeId, "Closed task", "d");
+			tracker.updateStatus(shut.id, "closed");
+
+			const ids = (args: Record<string, unknown>) =>
+				mcpCallTool(hono, "get_tree", { projectId, ...args }).then((r) =>
+					getJson(r).nodes.map((n: { id: string }) => n.id),
+				);
+
+			const without = await ids({});
+			expect(without).toContain(open.id);
+			expect(without).not.toContain(shut.id);
+
+			const with_ = await ids({ include_closed: true });
+			expect(with_).toContain(open.id);
+			expect(with_).toContain(shut.id);
+
+			// A hidden node must also leave its parent's children list, or the
+			// caller gets an id it cannot resolve in the same response.
+			const rootWithout = getJson(
+				await mcpCallTool(hono, "get_tree", { projectId }),
+			).nodes.find((n: { id: string }) => n.id === tracker.rootNodeId);
+			expect(rootWithout.children).toContain(open.id);
+			expect(rootWithout.children).not.toContain(shut.id);
+		});
 	});
 
 	describe("get_task", () => {

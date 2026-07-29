@@ -477,7 +477,7 @@ export function buildAllToolDefs() {
 			name: "get_tree",
 			availability: "both",
 			description:
-				"Get the current task tree. Returns all nodes with their status, branch, and hierarchy.",
+				"Get the current task tree. Returns each node's id, title, status and place in the hierarchy. It is a shallow view by design — to read one node's description and details, call get_task.",
 			params: {
 				projectId: {
 					schema: z.string(),
@@ -492,12 +492,6 @@ export function buildAllToolDefs() {
 					decl: { kind: "optional" },
 					description:
 						"Include closed tasks in the result. Default false — closed tasks are hidden to reduce noise.",
-				},
-				include_details: {
-					schema: z.boolean().optional(),
-					decl: { kind: "optional" },
-					description:
-						"Include full details (description, branch, worktreePath, color, costUsd, etc.) for each node. Default false — returns only id, title, status, children, parentId.",
 				},
 			},
 			handler: async (args, auth) => {
@@ -519,33 +513,26 @@ export function buildAllToolDefs() {
 				const visibleIds = new Set(nodes.map((n) => n.id));
 				const filterChildren = (children: string[]) =>
 					children.filter((id) => visibleIds.has(id));
-				const result = args.include_details
-					? nodes.map((n) => {
-							if (!isTask(n))
-								return { ...n, children: filterChildren(n.children) };
-							const rest = stripSession(n);
-							return {
-								...rest,
-								children: filterChildren(rest.children),
-								...(isMe(rest.id) ? { you: true } : {}),
-							};
-						})
-					: nodes.map((n) => {
-							const node: Record<string, unknown> = {
-								id: n.id,
-								title: n.title + (isMe(n.id) ? " (you)" : ""),
-								children: filterChildren(n.children),
-								parentId: n.parentId,
-							};
-							if (isTask(n)) {
-								node.status = n.status;
-							} else {
-								// General nodes (folder, future plugin types) expose their
-								// discriminator so observers can distinguish kinds.
-								node.type = n.type;
-							}
-							return node;
-						});
+				// The projection is minimal and there is no switch to widen it.
+				// Returning whole nodes measured ~114K tokens on a 578-node tree,
+				// ~631K together with include_closed — one call able to exhaust a
+				// context window. Read one node with get_task instead.
+				const result = nodes.map((n) => {
+					const node: Record<string, unknown> = {
+						id: n.id,
+						title: n.title + (isMe(n.id) ? " (you)" : ""),
+						children: filterChildren(n.children),
+						parentId: n.parentId,
+					};
+					if (isTask(n)) {
+						node.status = n.status;
+					} else {
+						// General nodes (folder, future plugin types) expose their
+						// discriminator so observers can distinguish kinds.
+						node.type = n.type;
+					}
+					return node;
+				});
 				return {
 					content: [
 						{

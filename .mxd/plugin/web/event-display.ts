@@ -262,7 +262,6 @@ export function getToolTitle(
 		case TOOL_GET_TREE: {
 			const parts: string[] = [];
 			if (toolArgs?.format === "tree") parts.push("tree");
-			if (toolArgs?.include_details) parts.push("detailed");
 			if (toolArgs?.include_closed) parts.push("with closed");
 			return parts.length > 0 ? `Task Tree (${parts.join(", ")})` : "Task Tree";
 		}

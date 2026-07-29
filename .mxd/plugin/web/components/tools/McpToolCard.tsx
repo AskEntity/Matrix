@@ -164,7 +164,6 @@ export function McpToolCardBody({
 		case "get_tree": {
 			const opts: string[] = [];
 			if (toolArgs?.format === "tree") opts.push("tree format");
-			if (toolArgs?.include_details) opts.push("detailed");
 			if (toolArgs?.include_closed) opts.push("with closed");
 			const formatted =
 				isOk && resultContent
