@@ -3580,10 +3580,23 @@ still be read. The argument that made it safe rather than merely wanted: the fal
 a state the validator already rejects, so three of the four `?? DEFAULT_MODEL` branches were
 unreachable — and the one path that reaches them is the `"model": null` hole they were masking.
 
-⭐ **Deleting a named constant does not find its literal twins.** The grep for `DEFAULT_MODEL` found
-all four of its call sites and could not see `model ?? "gpt-4o"` in the OpenAI provider — the same
-mechanism spelled as a literal, in a file the change was already touching. **Chase the SHAPE (a
-fallback sitting in the model slot), not the name.**
+⭐ **Deleting a named constant does not find its literal twins, and there were THREE.** The grep for
+`DEFAULT_MODEL` found all four of its call sites and could not see `model ?? "gpt-4o"` in the OpenAI
+provider constructor, `config.model || "gpt-4o"` in `createLLM`'s openai branch — three lines below
+the anthropic branch the same commit had just fixed — or `request.model ?? "claude-sonnet-4-6"` in
+`runProviderLoop`. **Chase the SHAPE (a fallback sitting in the model slot), not the name**: `grep
+'claude-sonnet-4-6\|"gpt-4o"'` found all three in one pass, after a `DEFAULT_MODEL` grep had come
+back clean and been believed.
+
+⚠️ **The `runProviderLoop` one is the expensive shape: a precedent task deleted this exact lie at
+ONE CONSUMER and left the SOURCE.** `01KYJ1775HCFY1VQ4QT36JXFTP` removed `?? DEFAULT_MODEL` from the
+`agent_start` event because a substituted name made the log claim a model nobody chose — while the
+loop-local it reads from went on substituting a literal into **~12 event payloads** plus the
+context-window lookup. *A rule enforced at N of M doors* in the model-name medium, and the doors are
+a producer and its consumers rather than two peers: **fixing a consumer leaves every other consumer
+wrong and looks like the fix.** `AgentRequest.model` is now required, which made the compiler
+enumerate the rest — 24 errors, **all in test files, zero in production**, because both providers
+already funnel `model: request.model ?? this.model` before entering the loop.
 
 ⚠️ **Measured: the env fallbacks had ZERO test coverage.** Restoring `?? process.env.OPENAI_API_KEY`
 reddens exactly ONE test — the inverted guard written with the deletion — while 24 others in that
@@ -3606,3 +3619,11 @@ layer is the BASE at all three production call sites (`daemon.ts`, `runtime/help
 so an empty global model can never climb over a project's. The REVERSE is reachable and is now
 pinned by a test: a hand-written `.mxd/config.json` carrying `"model": ""` does override, and its
 consequence is a visible empty model instead of a silent switch to sonnet.
+
+⚠️ **A correct COUNT next to a truncated LIST reads as a complete enumeration — the sharpest form
+of the no-piping rule yet.** Following the compiler cascade here, `tsc | tail -30` was paired with
+a `grep -c` over the same output reporting 24 errors, and the count felt like verification: a plan
+was built from the visible tail, executed, and **7 more sites appeared that had been in the head
+all along**. **The number is what does the damage** — without it the truncation is obvious, and
+with it you believe you have enumerated. Redirect to a file and take the sites from the whole
+file, never from a tail.

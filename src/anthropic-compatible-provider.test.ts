@@ -3550,6 +3550,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: queueWithPrompt("Say hello", testDir),
 		});
@@ -3617,6 +3618,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -3709,6 +3711,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -3824,6 +3827,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue,
 		});
@@ -3959,6 +3963,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue,
 		});
@@ -4025,6 +4030,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -4303,6 +4309,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -4475,6 +4482,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			setMessages: (msgs) => {
@@ -4611,6 +4619,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			setMessages: (msgs) => {
@@ -4795,6 +4804,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			setMessages: (msgs) => {
@@ -5087,6 +5097,7 @@ describe("adaptive thinking display", () => {
 			buildSystemPrompt: () => ({ stable: "sys", variable: "var" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize.",
+			model: "claude-sonnet-4-6",
 			queue: queueWithPrompt("hello", tmpDir),
 		});
 
@@ -5110,6 +5121,7 @@ describe("adaptive thinking display", () => {
 			buildSystemPrompt: () => ({ stable: "sys", variable: "var" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize.",
+			model: "claude-sonnet-4-6",
 			queue: queueWithPrompt("hello", tmpDir),
 		});
 
@@ -5182,6 +5194,7 @@ describe("Abort signal stops inner retry immediately", () => {
 				buildSystemPrompt: () => ({ stable: "test", variable: "" }),
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize the conversation.",
+				model: "claude-sonnet-4-6",
 				emit: () => {},
 				queue: queueWithPrompt("test"),
 				signal: abortController.signal,
@@ -5227,6 +5240,7 @@ describe("Abort signal stops inner retry immediately", () => {
 				buildSystemPrompt: () => ({ stable: "test", variable: "" }),
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize the conversation.",
+				model: "claude-sonnet-4-6",
 				emit: () => {},
 				queue: queueWithPrompt("test"),
 				signal: abortController.signal,
@@ -5289,6 +5303,7 @@ describe("Abort signal stops inner retry immediately", () => {
 			buildSystemPrompt: () => ({ stable: "test", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit: () => {},
 			queue: queueWithPrompt("test"),
 		});

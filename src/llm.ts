@@ -656,7 +656,7 @@ export function createLLM(config: LLMConfig): LLMClient {
 		);
 	}
 	if (config.authGroup.provider === "openai") {
-		const model = config.model || "gpt-4o";
+		const model = config.model;
 		const { baseUrl, authToken, accountId } = resolveOpenAIAuth(
 			config.authGroup,
 		);

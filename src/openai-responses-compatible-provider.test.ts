@@ -227,6 +227,7 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 				buildSystemPrompt: () => ({ stable: "stable", variable: "variable" }),
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize the conversation.",
+				model: "gpt-4.1-mini",
 				queue: queueWithPrompt("Do the thing"),
 				mcpToolDefs: {
 					mxd: [
@@ -735,6 +736,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				}),
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize the conversation.",
+				model: "gpt-4.1-mini",
 				queue: queueWithPrompt("Please finish", tmpDir),
 				mcpToolDefs: {
 					mxd: [
@@ -840,6 +842,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				}),
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize the conversation.",
+				model: "gpt-4.1-mini",
 				queue: queueWithPrompt("Please inspect the schema"),
 				mcpToolDefs: {
 					mxd: [
@@ -1010,6 +1013,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				buildSystemPrompt: () => ({ stable: "Stable", variable: "Variable" }),
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize the conversation.",
+				model: "gpt-4o-mini",
 				queue,
 
 				mcpToolDefs: {
@@ -1166,6 +1170,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				buildSystemPrompt: () => ({ stable: "Stable", variable: "Variable" }),
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize the conversation.",
+				model: "gpt-4.1-mini",
 				queue: execQueue,
 				mcpToolDefs: {
 					mxd: [

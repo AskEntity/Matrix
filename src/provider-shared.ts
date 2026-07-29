@@ -692,7 +692,12 @@ export async function* runProviderLoop(
 	sessionId: string,
 	queue?: MessageQueue,
 ): AsyncGenerator<EventSpec, AgentResult> {
-	const model = request.model ?? "claude-sonnet-4-6"; // default overridden by provider
+	// Required, with no fallback: this value is written into ~12 event payloads
+	// and picks the context window, so a substituted constant here makes the log
+	// report a model nobody chose. Both providers set `model: request.model ??
+	// this.model` before entering the loop, and `this.model` is a required
+	// constructor arg, so production always arrives with it set.
+	const model = request.model;
 
 	// ── Context window + compaction thresholds ──
 	const contextWindow = await adapter.getContextWindow(model);

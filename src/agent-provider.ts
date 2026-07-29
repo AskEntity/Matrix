@@ -30,8 +30,8 @@ export interface AgentRequest {
 	/** Raw MCP tool definitions for direct API forwarding (for AnthropicCompatibleProvider). */
 	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
 	mcpToolDefs?: Record<string, ToolDefinition<any>[]>;
-	/** Claude model to use (e.g. 'claude-sonnet-4-6', 'claude-opus-4-6'). */
-	model?: string;
+	/** Model to use, e.g. "claude-sonnet-4-6". Required: no layer substitutes one. */
+	model: string;
 	/** External MessageQueue for message delivery. */
 	queue?: MessageQueue;
 	/** Callback to check if this agent has running children (for implicit yield on end_turn). */

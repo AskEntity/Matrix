@@ -208,7 +208,9 @@ describe("daemon pipeline (legacy)", () => {
 		// with no default model it is "", so truthiness now fails on a config the
 		// PATCH never touched, while still not catching a PATCH that replaced the
 		// model with some OTHER value. Equality catches both.
-		const beforeRes = await fetch(new Request("http://localhost/config/global"));
+		const beforeRes = await fetch(
+			new Request("http://localhost/config/global"),
+		);
 		const before = (await beforeRes.json()) as { model: string };
 
 		// Attempt to delete a required field by sending null — must be rejected.
