@@ -76,6 +76,21 @@ describe("update_task tool description mental model", () => {
 		expect(desc).toContain("Cannot combine");
 	});
 
+	test("main description states which fields are subtree-gated and which are not", () => {
+		// The asymmetry is not guessable from the param list, and the decision
+		// it informs ("can I fix the description of a task I filed elsewhere?")
+		// is made while constructing the call — so it belongs here.
+		const desc = getUpdateTaskTool().description;
+
+		expect(desc).toContain("ANY task");
+		// The three free fields, named.
+		expect(desc).toContain("`title`, `description` and `color`");
+		// The three gated ones, named — `draft` especially, since it reads as a
+		// flag rather than as the status setter it is.
+		expect(desc).toContain("`status`, `draft` and `parentId`");
+		expect(desc).toContain("descendant");
+	});
+
 	test("`description` param description says it replaces the ENTIRE field", () => {
 		const tool = getUpdateTaskTool();
 		const schema = tool.jsonSchema as {

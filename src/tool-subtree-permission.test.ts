@@ -140,6 +140,25 @@ describe("subtree permission on destructive tools", () => {
 		expect(tracker.getTask(siblingId)?.status).toBe("draft");
 	});
 
+	test("a field the gate has never heard of is gated, not free", async () => {
+		// The list is a SUBTRACT-list: prose fields are named, everything else
+		// gates. So a param added to update_task later lands on the gated side
+		// by default and someone widens the set deliberately, instead of
+		// arriving free with nothing going red.
+		//
+		// The handler cannot distinguish "a declared field I predate" from "an
+		// undeclared field that reached me", so an unknown key is a faithful
+		// stand-in for tomorrow's param. (In production zod strips undeclared
+		// keys before the handler; a future DECLARED one gets through.)
+		const r = await invokeAs(tracker, tempDir, agentId, "update_task", {
+			taskId: siblingId,
+			budgetUsd: 5,
+		});
+		expect(r.isError).toBe(true);
+		expect(r.content[0].text).toContain("not your task or descendant");
+		expect(r.content[0].text).toContain("budgetUsd");
+	});
+
 	test("a refused status does not smuggle the title through with it", async () => {
 		// The gate runs before ANY field is applied, so a mixed call is refused
 		// whole. And the refusal must say which half was refused — an agent told

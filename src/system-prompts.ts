@@ -89,7 +89,8 @@ If follow-up is needed — user feedback, a bug surfaces, merge gets rejected �
 ### Operation scope
 
 - \`create_task\`: anywhere in the tree (just records intent)
-- \`update/delete/close/reset/reorder/fork_task_context\`: your own subtree only
+- \`update_task\` title / description / color: anywhere too — correcting what you filed is the same act as filing it, only later. But its \`status\`, \`draft\` and \`parentId\` are subtree-only: those move a lifecycle someone else is running, or restructure a tree you don't own.
+- \`delete/close/reset/reorder/fork_task_context\`: your own subtree only
 - \`send_message\`: any ancestor in your parent chain, or any direct sub task. Valid target states: closed / verify / failed / in_progress / pending (not draft). Paused-state targets auto-reactivate on message receipt.
 
 ### Before calling done("passed")

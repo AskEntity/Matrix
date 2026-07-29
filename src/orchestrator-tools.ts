@@ -140,6 +140,23 @@ function requireSubtreePermission(
 	return null;
 }
 
+/**
+ * The `update_task` fields an agent may set on ANY node, its own or not.
+ *
+ * Everything NOT listed here is gated on subtree permission — see the
+ * argument at the gate itself. `projectId`/`taskId` are routing rather than
+ * content, so they never gate anything on their own.
+ */
+const UNGATED_UPDATE_FIELDS = new Set([
+	"projectId",
+	"taskId",
+	"title",
+	"description",
+	"old_description",
+	"new_description",
+	"color",
+]);
+
 /** Get project path for a task (worktree path or repo root). */
 function getProjectPath(projectId: string, taskId: string | null): string {
 	const tracker = R.getTracker(projectId);
@@ -694,6 +711,10 @@ export function buildAllToolDefs() {
 			description:
 				"Update a task node. All fields except taskId are optional — " +
 				"provide only the fields you want to change.\n\n" +
+				"**Scope**: `title`, `description` and `color` can be set on ANY task, " +
+				"anywhere in the tree — correcting a task you filed elsewhere is the same " +
+				"act as filing it. `status`, `draft` and `parentId` need the target to be " +
+				"you or your descendant.\n\n" +
 				"**Editing the description field**: treat it like a file. " +
 				"Use `description` for a full rewrite (replaces the ENTIRE field). " +
 				"Use `old_description` + `new_description` for surgical edits — " +
@@ -809,11 +830,17 @@ export function buildAllToolDefs() {
 					// instance is unreachable from here: updateTaskOp refuses
 					// "closed" and "failed" outright, and close_task has its own
 					// subtree check.
-					const gated = [
-						args.status !== undefined && "status",
-						args.draft !== undefined && "draft",
-						args.parentId !== undefined && "parentId",
-					].filter((f): f is string => typeof f === "string");
+					//
+					// ⚠️ Written as a SUBTRACT-list on purpose. The rule is "these
+					// named fields record intent; everything else exercises
+					// authority", so a param added to this tool later is gated by
+					// default and someone hits the refusal and widens the set
+					// deliberately. Listing the GATED fields instead states today's
+					// complement, and the next field silently lands on the free
+					// side with nothing going red.
+					const gated = Object.entries(args)
+						.filter(([k, v]) => v !== undefined && !UNGATED_UPDATE_FIELDS.has(k))
+						.map(([k]) => k);
 					if (gated.length > 0) {
 						const permError = requireSubtreePermission(
 							auth,
