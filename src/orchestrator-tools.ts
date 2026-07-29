@@ -384,28 +384,6 @@ export async function searchTasks(
 	return formatTieredHits(hits, tracker, fullCount, hasExecuted, opts?.header);
 }
 
-/**
- * Disclose what `get_tree` filtered out, with the NUMBER.
- *
- * The filter used to be silent, so a project full of finished work answered
- * "nothing here" and that answer was byte-identical to the truth — the caller
- * had no way to tell "nobody has worked on this" from "you asked the wrong
- * question". Saying merely "some were hidden" would not fix it: that sentence
- * is true whether 1 or 200 were dropped, and it is the count that tells you
- * whether looking further is worth it.
- *
- * The guidance rides in the PAYLOAD rather than in the tool description
- * because nobody asked for this fact — the description is read while the call
- * is constructed, when there is no result to reason about yet. Emitted only
- * when something was actually hidden; nothing hidden, nothing to disclose,
- * and the result stays pure JSON.
- */
-function hiddenClosedNote(count: number): string {
-	if (count <= 0) return "";
-	const plural = count === 1 ? "task" : "tasks";
-	return `\n\n[${count} closed ${plural} hidden. Pass include_closed: true to see them — or search_tasks, which finds prior work by relevance and reaches closed tasks by default.]`;
-}
-
 // ── All tool definitions ──
 
 export function buildAllToolDefs() {
@@ -451,11 +429,8 @@ export function buildAllToolDefs() {
 					: (nodeId: string) =>
 							checkPermission(auth, "exact", { taskId: nodeId });
 				let nodes = tracker.allNodes();
-				let hiddenClosed = 0;
 				if (!args.include_closed) {
-					const before = nodes.length;
 					nodes = nodes.filter((n) => !isTask(n) || n.status !== "closed");
-					hiddenClosed = before - nodes.length;
 				}
 				const visibleIds = new Set(nodes.map((n) => n.id));
 				const filterChildren = (children: string[]) =>
@@ -491,9 +466,7 @@ export function buildAllToolDefs() {
 					content: [
 						{
 							type: "text",
-							text:
-								JSON.stringify({ nodes: result }, null, 2) +
-								hiddenClosedNote(hiddenClosed),
+							text: JSON.stringify({ nodes: result }, null, 2),
 						},
 					],
 				};
