@@ -372,6 +372,18 @@ describe("WorktreeManager", () => {
 				await exec(["git", "log", "-1", "--format=%s"], info.path)
 			).trim();
 			expect(subject).toBe("do the work");
+
+			// Half this repo's commit messages are Chinese, so a hook that ever stops
+			// delegating to interpret-trailers and starts slicing text itself has to
+			// fail here rather than in production.
+			await writeFile(join(info.path, "more.txt"), "more\n");
+			await exec(["git", "add", "-A"], info.path);
+			await exec(["git", "commit", "-m", "修复：会话恢复丢消息"], info.path);
+
+			expect(await readTrailer(info.path)).toBe(taskId);
+			expect(
+				(await exec(["git", "log", "-1", "--format=%s"], info.path)).trim(),
+			).toBe("修复：会话恢复丢消息");
 		});
 
 		test("a merge made inside the worktree carries a READABLE id", async () => {
