@@ -117,6 +117,59 @@ async function renderModelsAuth(args: RenderArgs): Promise<{
 	};
 }
 
+async function renderBool(args: {
+	tab: ActiveTab;
+	layers?: Partial<ThreeLayerConfig>;
+	draft?: Record<string, unknown>;
+}): Promise<{
+	div: HTMLDivElement;
+	patches: Record<string, unknown>[];
+	unmount: () => void;
+}> {
+	const { createRoot } = await import("react-dom/client");
+	const { createElement } = await import("react");
+	const { SettingBoolField } = await import("./components/SettingsPanel.tsx");
+	const { LocaleProvider } = await import("./i18n.ts");
+
+	const layers: ThreeLayerConfig = {
+		global: args.layers?.global ?? {},
+		repo: args.layers?.repo ?? {},
+		local: args.layers?.local ?? {},
+		resolved: args.layers?.resolved ?? {},
+	};
+	const patches: Record<string, unknown>[] = [];
+
+	const div = document.createElement("div");
+	document.body.appendChild(div);
+	const root = createRoot(div);
+	root.render(
+		createElement(
+			LocaleProvider,
+			null,
+			createElement(SettingBoolField, {
+				label: "Self bootstrap",
+				field: "selfBootstrap",
+				tab: args.tab,
+				layers,
+				draft: args.draft ?? {},
+				onDraftChange: (patch: Record<string, unknown>) => {
+					patches.push(patch);
+				},
+			}),
+		),
+	);
+	await new Promise((r) => setTimeout(r, 10));
+
+	return {
+		div,
+		patches,
+		unmount: () => {
+			root.unmount();
+			div.remove();
+		},
+	};
+}
+
 /** The two `.mxd-settings-field` rows, in document order: Auth then Model. */
 function rows(div: HTMLElement): { auth: HTMLElement; model: HTMLElement } {
 	const found = div.querySelectorAll(".mxd-settings-field");
@@ -346,6 +399,103 @@ describe("Models & Auth: inherit is the absence of the key, not an empty string"
 			const values = [...select.options].map((o) => o.value);
 			expect(values.includes("")).toBe(false);
 			expect(values).toEqual(["work", "personal"]);
+		} finally {
+			r.unmount();
+		}
+	});
+
+	test("bool field: key absent → ticked, and the value checkbox is GONE", async () => {
+		const r = await renderBool({
+			tab: "local",
+			layers: { global: { selfBootstrap: true } },
+			draft: {},
+		});
+		try {
+			const boxes = r.div.querySelectorAll('input[type="checkbox"]');
+			// Exactly one checkbox: the inherit toggle. The VALUE checkbox is hidden,
+			// because while inheriting there is no own-value to show — it used to
+			// render the inherited boolean, visually identical to an explicit
+			// setting apart from a small "(inherited)".
+			expect(boxes.length).toBe(1);
+			expect((boxes[0] as HTMLInputElement).checked).toBe(true);
+			expect(r.div.textContent?.includes("true")).toBe(true);
+		} finally {
+			r.unmount();
+		}
+	});
+
+	// ─── The round trip that did not exist ───
+	test("bool field: ticking Inherit from an explicit value returns to undefined", async () => {
+		// The old onChange was `{ [field]: e.target.checked }`, which ALWAYS wrote a
+		// boolean — so one click set the field forever and no gesture anywhere
+		// could clear it. Its comment claimed "indeterminate = inherit" while
+		// `indeterminate` was set nowhere in the file.
+		const r = await renderBool({
+			tab: "local",
+			layers: { global: { selfBootstrap: true } },
+			draft: { selfBootstrap: false },
+		});
+		try {
+			const boxes = r.div.querySelectorAll('input[type="checkbox"]');
+			expect(boxes.length).toBe(2); // value + inherit toggle
+			const inheritBox = boxes[1] as HTMLInputElement;
+			expect(inheritBox.checked).toBe(false);
+			inheritBox.click();
+			await new Promise((res) => setTimeout(res, 10));
+			expect(r.patches.length).toBe(1);
+			expect("selfBootstrap" in (r.patches[0] ?? {})).toBe(true);
+			expect(r.patches[0]?.selfBootstrap).toBe(undefined);
+		} finally {
+			r.unmount();
+		}
+	});
+
+	test('bool field: unticking seeds a BOOLEAN, not the string "true"', async () => {
+		// inheritedValue() returns a display string, so seeding the draft from it
+		// directly would put "true" into a boolean field and it would be written to
+		// the config that way. Nothing else in the suite would notice.
+		const r = await renderBool({
+			tab: "local",
+			layers: { global: { selfBootstrap: true } },
+			draft: {},
+		});
+		try {
+			const inheritBox = r.div.querySelector(
+				'input[type="checkbox"]',
+			) as HTMLInputElement;
+			inheritBox.click();
+			await new Promise((res) => setTimeout(res, 10));
+			expect(r.patches[0]?.selfBootstrap).toBe(true);
+			expect(typeof r.patches[0]?.selfBootstrap).toBe("boolean");
+		} finally {
+			r.unmount();
+		}
+	});
+
+	test("bool field: an explicit false is not confused with inheriting false", async () => {
+		const r = await renderBool({
+			tab: "local",
+			layers: { global: { selfBootstrap: false } },
+			draft: { selfBootstrap: false },
+		});
+		try {
+			const boxes = r.div.querySelectorAll('input[type="checkbox"]');
+			expect(boxes.length).toBe(2);
+			expect((boxes[0] as HTMLInputElement).checked).toBe(false); // own value
+			expect((boxes[1] as HTMLInputElement).checked).toBe(false); // not inheriting
+		} finally {
+			r.unmount();
+		}
+	});
+
+	test("bool field: global tab has no inherit toggle", async () => {
+		const r = await renderBool({
+			tab: "global",
+			layers: { global: { selfBootstrap: true } },
+			draft: { selfBootstrap: true },
+		});
+		try {
+			expect(r.div.querySelectorAll('input[type="checkbox"]').length).toBe(1);
 		} finally {
 			r.unmount();
 		}
