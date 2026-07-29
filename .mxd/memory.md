@@ -1006,6 +1006,47 @@ list; `mcp__brave-search__brave_web_search` works, called by name. **"It is not 
 evidence that it does not exist.** (Gotcha: an unlisted tool has unconstrained argument types, so a
 numeric `count` arrives as a string and fails validation — pass the required argument alone.)
 
+## ⚠️ "Never offer a remedy that will not work" costs MORE in a tool error than in a UI
+
+The rule is already written down for greyed buttons under *Blocked buttons are greyed and explained,
+never hidden*. It reappeared twice in `closeTaskOp`, and **the second medium is the expensive one: a
+human reads a bad remedy and gives up; an agent DOES IT, collects the second refusal, and then
+invents a workaround — and what it invents is worse than the failure, because it is invisible.**
+
+**Instance 1 — the dead end.** `update_task {status:"closed"}` refuses with *"Use close_task
+instead"*, and `close_task` refused anything that was not `verify`/`failed`. **The first error named
+a road the second did not accept**, so a draft had no path to a terminal state at all. Observed
+damage: a superseded draft was marked done by writing `[已解决 by <id>]` into its **TITLE** — state
+encoded in a string, invisible to every status filter, so it sits in the active pool forever. **That
+is the shape to watch for: the workaround is legible to humans and to nothing else.** The fix is a
+SUBTRACTION with one member — only `in_progress` is refused. **Close means two things at once**
+(reclaim the resources, take it out of the active pool); a draft owns no worktree, branch or
+session, so for it only the second applies and the first is a **no-op, not a contradiction**. The
+old whitelist read that no-op as grounds to refuse.
+
+**Instance 2 — the false remedy inside the guard that STAYS.** The old message was *"Cannot close a
+running task. Stop it first or wait for done()."* ⚠️ **`stopTask` never touches `status`,
+deliberately — a stopped task stays `in_progress` precisely so it can resume.** So stopping lands
+the caller back on the same refusal, and an agent cannot even take that road: **there is no stop
+tool.**
+
+⭐ **The fix for a false remedy is a SHORTER message, not a more complete one — and two drafts went
+the wrong way before this landed.** The instinct when correcting a wrong instruction is to explain:
+name the false path, name the alternative, price it. Both intermediate drafts did exactly that, and
+both were wrong for one reason — **they generated COMPLETENESS where the reader needs an
+INSTRUCTION.** An error answers a single question, *what do I do now*; the answer here is "wait".
+Each rejected clause fails a concrete test worth keeping:
+
+- *"Note that STOPPING it does not help"* — a warning about an action the reader **cannot perform**.
+  Worse, the fact that agents have no stop tool was written down in the report that argued for the
+  sentence: it was known, and not applied. **Check what the reader can DO before writing them a
+  warning.**
+- *"reset_task it first, which discards its session and worktree"* — genuinely unblocks the close,
+  and is a destructive option nobody asked for. **Handing someone a knife because they asked to tidy
+  up is not helpfulness, and attaching the price tag does not make it one.**
+- *"done() sets verify or failed, both closable"* — internal state vocabulary, contributing nothing
+  to *what do I do now*.
+
 ---
 # Events, JSONL & the Active Chain
 ---
@@ -1940,6 +1981,15 @@ always "nothing happens" rather than an error**:
 fail — **`process.exit(1)` does NOT fire `onerror`** (silent death, only the timeout catches it),
 and a module-level `throw` is caught by scope-worker's own try/catch and becomes `{type:"error"}`
 instead.
+
+⚠️ **STANDING RULE, and the death chain above is the argument for it: never delete the external
+boot path.** The catastrophic form of self-bootstrapping is not a crash — it is breaking the file
+editing, command execution or daemon startup that you would need IN ORDER TO FIX IT, which is a
+compiler emitting a broken compiler when the broken one is the only one you have. So matrix must
+stay rebuildable and startable from outside itself: a plain shell, a bare `bun test`, a `git`
+checkout, the CLI on `$PATH`. Rust keeps mrustc for exactly this reason. **The low frequency IS
+the hazard** — an external path that looks unused is what a cleanup deletes with nobody objecting,
+and the day it is missed is the day nothing can reach the code to put it back.
 
 ## Two transport bugs that corrupt silently
 
@@ -3084,51 +3134,9 @@ failing test tells you within a minute is deliberately not here.
   arbitrary descendants. That half is what remains open.
 - **Tool search** — dynamic tool discovery instead of sending every tool. Anthropic has a
   server-side `defer_loading`; the user prefers a client-side design.
-
-## ⚠️ "Never offer a remedy that will not work" costs MORE in a tool error than in a UI
-
-The rule is already written down for greyed buttons under *Blocked buttons are greyed and explained,
-never hidden*. It reappeared twice in `closeTaskOp`, and **the second medium is the expensive one: a
-human reads a bad remedy and gives up; an agent DOES IT, collects the second refusal, and then
-invents a workaround — and what it invents is worse than the failure, because it is invisible.**
-
-**Instance 1 — the dead end.** `update_task {status:"closed"}` refuses with *"Use close_task
-instead"*, and `close_task` refused anything that was not `verify`/`failed`. **The first error named
-a road the second did not accept**, so a draft had no path to a terminal state at all. Observed
-damage: a superseded draft was marked done by writing `[已解决 by <id>]` into its **TITLE** — state
-encoded in a string, invisible to every status filter, so it sits in the active pool forever. **That
-is the shape to watch for: the workaround is legible to humans and to nothing else.** The fix is a
-SUBTRACTION with one member — only `in_progress` is refused. **Close means two things at once**
-(reclaim the resources, take it out of the active pool); a draft owns no worktree, branch or
-session, so for it only the second applies and the first is a **no-op, not a contradiction**. The
-old whitelist read that no-op as grounds to refuse.
-
-**Instance 2 — the false remedy inside the guard that STAYS.** The old message was *"Cannot close a
-running task. Stop it first or wait for done()."* ⚠️ **`stopTask` never touches `status`,
-deliberately — a stopped task stays `in_progress` precisely so it can resume.** So stopping lands
-the caller back on the same refusal, and an agent cannot even take that road: **there is no stop
-tool.**
-
-⭐ **The fix for a false remedy is a SHORTER message, not a more complete one — and two drafts went
-the wrong way before this landed.** The instinct when correcting a wrong instruction is to explain:
-name the false path, name the alternative, price it. Both intermediate drafts did exactly that, and
-both were wrong for one reason — **they generated COMPLETENESS where the reader needs an
-INSTRUCTION.** An error answers a single question, *what do I do now*; the answer here is "wait".
-Each rejected clause fails a concrete test worth keeping:
-
-- *"Note that STOPPING it does not help"* — a warning about an action the reader **cannot perform**.
-  Worse, the fact that agents have no stop tool was written down in the report that argued for the
-  sentence: it was known, and not applied. **Check what the reader can DO before writing them a
-  warning.**
-- *"reset_task it first, which discards its session and worktree"* — genuinely unblocks the close,
-  and is a destructive option nobody asked for. **Handing someone a knife because they asked to tidy
-  up is not helpfulness, and attaching the price tag does not make it one.**
-- *"done() sets verify or failed, both closable"* — internal state vocabulary, contributing nothing
-  to *what do I do now*.
-
-**Pre-existing race this widens without changing in kind**: `beforeChildLaunch` (a `git worktree
-add`, seconds) runs BEFORE `onLaunch` flips the status, so a task being launched is still readable
-as its old status. `close_task` has always been able to land in that window on a woken
-`verify`/`failed` task; it can now also land on a `pending` one. `deleteTaskOp` and `resetTaskOp`
-close this with `awaitLoopExit`; `closeTaskOp` never had it and still does not.
-
+- **`close_task` can land inside the launch window.** `beforeChildLaunch` (a `git worktree add`,
+  seconds) runs BEFORE `onLaunch` flips the status, so a task being launched is still readable as
+  its old status. It could always land there on a woken `verify`/`failed` task; narrowing the
+  refusal to `in_progress` widened it to `pending` too — we made it more reachable without
+  changing it in kind. `deleteTaskOp` and `resetTaskOp` close this with `awaitLoopExit`;
+  `closeTaskOp` never had it and still does not. Draft `01KYNAKQDJTMVXWCQ3T62FHMZA`.
