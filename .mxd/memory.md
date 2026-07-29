@@ -3140,3 +3140,59 @@ failing test tells you within a minute is deliberately not here.
   refusal to `in_progress` widened it to `pending` too — we made it more reachable without
   changing it in kind. `deleteTaskOp` and `resetTaskOp` close this with `awaitLoopExit`;
   `closeTaskOp` never had it and still does not. Draft `01KYNAKQDJTMVXWCQ3T62FHMZA`.
+
+## A permission list sorted by MECHANISM groups recording with destroying
+
+⚠️ **CORRECTION to *Tokens, credentials and the destructive-tool gate*, which says `update_task`
+checks `requireSubtreePermission` on "all mutations, not only reparent".** That is no longer true
+and the reason it changed is the entry. `title`, `description` and `color` are ungated — settable
+on ANY node, anywhere in the tree. `status`, `draft` and `parentId` keep the check.
+
+**The blanket gate's stated justification was void, and it named its own refutation.** The comment
+above it defended exactly one case: `status="closed"` triggering worktree+JSONL cleanup. That case
+is unreachable through the tool — `updateTaskOp` refuses `"closed"` and `"failed"` outright, and
+`close_task` runs its own subtree check. So apply the premise/obligation split field by field, and
+the obligation is real for structure and lifecycle and **empty for prose**: `create_task` already
+lets you author that exact text at that exact tree position, so the gate never prevented a bad edit
+— it only prevented the FIX.
+
+⭐ **What the old rule got wrong is the axis it sorted on.** April freed `create_task` and left
+`update_task` grouped with delete/close/reset, by MECHANISM — "these all modify an existing node".
+Sorted by ACT, editing a description is *recording intent*, the same act as `create_task`, later in
+time. **Grouping by "mutates a node" takes a property of the thing for the thing itself** — the
+error the Edit/Rewind tombstone exists to warn about, in a second medium. The April principle is not
+weakened by this, it is applied more precisely: recording intent is free wherever you are;
+exercising authority over someone's tree or lifecycle is not.
+
+**The cost was paid in lost knowledge rather than in error messages, and the second instance is the
+one with no room to argue.** One agent filed a draft outside its subtree (allowed), then found the
+provenance that turned it from "a new rule" into "restore a shipped invariant", and could not append
+it — the paragraph became a message asking root to paste it in by hand. The other put a `color`
+argument into the `description` TEXT of a task it had created **two minutes earlier**, and was
+refused permission to take it back out. Nothing warned at creation; the refusal arrived later.
+**A model that lets you write a thing but not correct it does not prevent bad edits — it converts
+good ones into someone else's chore, and the record it leaves is one its own author cannot fix.**
+
+**`draft` is a status setter wearing another name**, and it is why the gated set is three fields and
+not two: `updateTaskOp` runs `updateStatus(id, draft ? "draft" : "pending")`, so `draft: false` on a
+foreign draft makes it startable. It is pinned by its own mutation — riding along with `status`
+would let it fall out silently the next time that line is edited.
+
+**The gate is a SUBTRACT-list — the named prose fields are free, everything else gates.** Same
+behaviour as listing the three gated fields; the difference is that a param added to this tool later
+lands on the GATED side and someone hits the refusal and widens the set deliberately. An
+include-list of gated fields puts it on the free side with nothing going red. Same rule as *Gates*,
+different medium: a permission list, not a checker.
+
+⚠️ **NEGATIVE RESULT — REST `PATCH /projects/:id/tasks/:nodeId` has no subtree gate, and that
+is not an omission.** Subtree permission is a concept about an AGENT's identity: `Auth`. REST is the
+user, `editedBy: "user"`, and `createHumanAuth` grants every permission by construction. Both doors
+already share `updateTaskOp`, so the one-codepath invariant was never in question here. **"Add the
+missing check to REST" is a plausible-looking fix that locks the user out of their own tree.**
+
+**Only the refusal string reaches a running agent.** Tool descriptions are frozen in
+`session_config` until compaction, so the description carries the durable statement of the rule and
+the refusal carries the actionable half: it names WHICH field was refused and says the prose fields
+are editable from anywhere. Without that, an agent told only "not your task or descendant" concludes
+prose edits are impossible too — the `closeTaskOp` dead-end shape, whose damage is the workaround
+the agent then invents.

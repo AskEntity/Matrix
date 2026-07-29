@@ -839,7 +839,9 @@ export function buildAllToolDefs() {
 					// complement, and the next field silently lands on the free
 					// side with nothing going red.
 					const gated = Object.entries(args)
-						.filter(([k, v]) => v !== undefined && !UNGATED_UPDATE_FIELDS.has(k))
+						.filter(
+							([k, v]) => v !== undefined && !UNGATED_UPDATE_FIELDS.has(k),
+						)
 						.map(([k]) => k);
 					if (gated.length > 0) {
 						const permError = requireSubtreePermission(
