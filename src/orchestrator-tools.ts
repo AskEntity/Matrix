@@ -176,14 +176,7 @@ const UPDATE_TASK_PARAMS = {
 	},
 	status: {
 		schema: z
-			.enum([
-				"draft",
-				"pending",
-				"in_progress",
-				"verify",
-				"failed",
-				"closed",
-			])
+			.enum(["draft", "pending", "in_progress", "verify", "failed", "closed"])
 			.optional(),
 		decl: { kind: "optional" },
 		description: "New status",
@@ -247,7 +240,6 @@ const UPDATE_TASK_PARAMS = {
 const UPDATE_TASK_SETTABLE = Object.entries(UPDATE_TASK_PARAMS)
 	.filter(([, p]) => p.decl.kind === "optional")
 	.map(([name]) => name);
-
 
 /** Get project path for a task (worktree path or repo root). */
 function getProjectPath(projectId: string, taskId: string | null): string {
