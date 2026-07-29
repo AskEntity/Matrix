@@ -3810,9 +3810,9 @@ a different shape.** Reviewing a merge is not "switching branches". Wanting the 
 deliberation. **Root gets no warning either: `git checkout` succeeded silently, and the pipe
 returned exit 0, so two of the three left no trace at all.**
 
-Two concrete remedies rather than more vigilance. **To READ another branch use `git show <ref>:<path>`
-or `git grep <pat> <ref>`** — the prohibition had no alternative stated next to it, which is the
-whole reason it was reached for (see *Known pitfalls*). And **the comment one has its own entry**
+Two concrete remedies rather than more vigilance. **To READ another branch use `git show
+<ref>:<path>` or `git grep <pat> <ref>`** — the prohibition had no alternative next to it, which is
+the whole reason it was reached for (see *Known pitfalls*). And **the comment one has its own entry**
 under the `?? ""` section: a comment naming three states is not evidence that three states exist,
 and passing one downward as fact costs a sub-task a measurement round.
 
