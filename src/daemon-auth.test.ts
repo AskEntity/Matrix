@@ -536,14 +536,13 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 		expect(body.error).toContain("global");
 	});
 
-	// INTENT CHANGED 2026-07-29 (user, via 01KYQXV3K33EV8488H34G80KMS): a
-	// per-project `defaultAuth` is ACCEPTED. It was refused here "defensively"
-	// while `mxd config set defaultAuth <name> --project` wrote the same field
-	// straight to disk, so the guard only ever closed the door the settings UI
-	// uses — where it made every Root Auth change on a project tab a 400. The
-	// premise is credential INJECTION, and a group name is not a credential.
-	// The authGroups tests either side of this one are the real guard.
-	test("PATCH /projects/:id/config ACCEPTS defaultAuth (a name, not a credential)", async () => {
+	// INTENT CHANGED 2026-07-29 (user, via 01KYQXV3K33EV8488H34G80KMS): the LOCAL
+	// layer accepts `defaultAuth`; the repo layer still refuses it (test below).
+	// `~/.mxd/` never enters a repo, and there the guard's premise — credential
+	// INJECTION — does not reach, because a group name is not a credential and the
+	// group must already exist in the user's own global config. The authGroups
+	// tests around these remain the real guard, on both layers.
+	test("PATCH /projects/:id/config ACCEPTS defaultAuth on the local layer (a name, not a credential)", async () => {
 		const res = await ctx.daemon.fetch(
 			new Request(`http://localhost/projects/${projectId}/config`, {
 				method: "PATCH",
@@ -607,9 +606,12 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 		expect(body.error).toContain("authGroups");
 	});
 
-	// The SECOND door for the same rule — tested here beside the first so that
-	// "I closed the door" cannot quietly mean "I closed a door".
-	test("PATCH /projects/:id/config/repo ACCEPTS defaultAuth (same rule, second door)", async () => {
+	// The two project layers have DIFFERENT legal field sets, and the axis is
+	// trust: the repo layer is git-tracked and arrives with a clone, the local
+	// layer lives under ~/.mxd and never enters a repo. Both doors are asserted
+	// in this one file so that a layer-aware guard cannot silently become
+	// layer-blind in either direction.
+	test("PATCH /projects/:id/config/repo REFUSES defaultAuth — the repo layer is git-tracked", async () => {
 		const res = await ctx.daemon.fetch(
 			new Request(`http://localhost/projects/${projectId}/config/repo`, {
 				method: "PATCH",
@@ -618,6 +620,25 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 					"content-type": "application/json",
 				},
 				body: JSON.stringify({ defaultAuth: "some-group" }),
+			}),
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("defaultAuth");
+		// The reason must name the trust boundary, not "global only" — defaultAuth
+		// is NOT in GLOBAL_ONLY_FIELDS and the local layer accepts it.
+		expect(body.error).toContain("git-tracked");
+	});
+
+	test("PATCH /projects/:id/config/repo still accepts a non-auth field (the guard is not layer-wide)", async () => {
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config/repo`, {
+				method: "PATCH",
+				headers: {
+					Authorization: `Bearer ${ctx.sessionToken}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ budgetUsd: 12 }),
 			}),
 		);
 		expect(res.status).toBe(200);
