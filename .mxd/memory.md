@@ -310,6 +310,25 @@ in a context that runs out"*, the other existed to establish *"compaction is a c
 stopping point"*. **So read the recent prompt DIFFS before editing, then re-read the whole thing** —
 the round that INTRODUCED that contradiction substituted a targeted grep for the full read.
 
+⭐ **The split above is stated by CONTENT and was never stated by FORM, so the content lands in the
+right file while THIS file's voice comes with it.** Measured 2026-07-29 on `src/system-prompts.ts`:
+**zero `⚠️`, zero `⭐`, zero `❗`, zero `✅` in 459 lines** — 86 `**bold**` and 39 all-caps, and
+its hardest rules are bold plus one clause of why (*"**Never** `git checkout` to switch branches
+— it corrupts the worktree."*). This file has 100 `⚠️` and 36 `⭐`. An agent that has just spent
+an hour in here adds one to the prompt without ever deciding to. **The reason the prompt has none is
+structural, not stylistic: this file is SCANNED region by region, so a marker is a landing point;
+the prompt is read start to finish, so a marker can only claim "this line matters more than the
+other 458" — and every one of those was argued in individually.** Current count is zero, so adding
+one is opening a precedent, which needs its own argument.
+
+**The same split governs SENTENCES, and the test is instruction vs inference.** The user's edit is
+the template: from *"it lists structure, not relevance, and it hides closed tasks by default, so it
+reports an area full of finished work as empty and that report is indistinguishable from the
+truth"*, the tail was cut and the facts kept. The tail is true, it is this file's own sentence, and
+the reader infers it unaided. **Anything shaped like *"so this leads to…"*, *"which is the same
+shape as…"* or *"measured, it was…"* is evidence: it belongs here, and in the prompt it is
+weight without instruction.** Fact stays, inference goes.
+
 ---
 # How This Project Fools Itself
 ---
@@ -1916,8 +1935,13 @@ the task" is decoration 92% of the time. What works 100% of the time, and was us
 `git log -S'<phrase>'` for **when a line arrived** (`git blame` answers who touched it last, often
 cosmetically), then carry that timestamp to the tree and ask what was running then. In one of those
 two, the commit's own subject named only the other half of its change, so the message actively
-misled and the **timestamp** was what recovered it. The prompt states it in that order, and §4 now
-also says to stop severing the link going forward.
+misled and the **timestamp** was what recovered it. The prompt states it in that order.
+
+**DECIDED 2026-07-29 (user): preserving the link going forward is a MECHANISM, not an instruction.**
+A prompt bullet telling agents to keep the branch name in the merge subject was written and then
+deleted — 1280 merges are the measurement that says people forget, so the medium that depends on
+remembering is the wrong one. It belongs wherever the worktree is set up, once, per branch. Code
+task, still being scoped with root.
 
 ## Every hit says what it IS before its body is read
 

@@ -200,7 +200,6 @@ Merging a sub task's branch:
 - Resolve conflicts with \`edit_file\`
 - \`close_task\` after merge
 - Intermediate merges may not typecheck (\`--no-verify\`). Final state must pass all hooks.
-- Keep the branch name in the merge subject — it's the only pointer from merged code back to the task. Put your message in the body: \`-m "Merge branch '<branch>'" -m "<your message>"\`.
 
 For large parallel efforts, merge incrementally. When a sub task commits, merge into your branch. Notify other running sub tasks to merge your branch. This keeps everyone on latest and prevents conflict buildup.
 
