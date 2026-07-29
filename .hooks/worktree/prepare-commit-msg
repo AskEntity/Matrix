@@ -1,0 +1,59 @@
+#!/bin/sh
+#
+# Attach `Task-Id: <id>` as a git trailer to every commit made inside an agent
+# worktree, so a line of code can be traced back to the task that wrote it.
+#
+# WHY a trailer and not the subject line: the subject is the one field a human
+# (or agent) wants to write well, and `git merge -m "<a good sentence>"`
+# overwrites git's default `Merge branch 'mxd/<taskId>/…'`. That is how the link
+# died in 92% of this repo's merge commits — the more carefully you write, the
+# more reliably the id is gone. A trailer does not compete for that field.
+#
+# WHY every commit and not just the merge: `git blame` lands on non-merge
+# commits, because a clean merge carries no changes. An id living only on merge
+# commits is an id for a commit nobody is holding.
+#
+# The id comes from `matrix.taskId` in git config, written per-worktree by
+# WorktreeManager at creation time. Deliberately NOT parsed out of the worktree
+# path: the path shape is an implementation detail that has changed before, and
+# git config is the durable place to record a worktree's identity.
+#
+# Installed by .mxd/hooks/setup_worktree.sh, which points core.hooksPath at THIS
+# directory — holding prepare-commit-msg and nothing else. Worktrees deliberately
+# skip .hooks/pre-commit: agents commit very frequently and that gate runs
+# typecheck plus a test subset. Recording provenance must not become gating.
+#
+# This hook NEVER fails the commit. A non-zero exit from prepare-commit-msg
+# aborts the commit, i.e. a bug in here would take away the one thing an agent
+# needs in order to fix it. Failures warn on stderr and exit 0.
+
+msg_file="$1"
+[ -n "$msg_file" ] || exit 0
+[ -f "$msg_file" ] || exit 0
+
+task_id=$(git config --get matrix.taskId 2>/dev/null) || task_id=""
+[ -n "$task_id" ] || exit 0
+
+# Do nothing when the message is empty (only blanks and comments). git aborts
+# such a commit; adding a trailer would make it non-empty and commit anyway,
+# with the trailer as the subject line. Measured, not hypothetical.
+if ! grep -qv -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$msg_file"; then
+	exit 0
+fi
+
+# MERGE_MSG arrives with NO trailing newline (measured, git 2.44), unlike
+# COMMIT_EDITMSG. interpret-trailers then joins the trailer to the subject with
+# a single newline instead of a blank line, and git's own trailer parser cannot
+# read that back — `%(trailers:key=Task-Id)` returns empty. So every merge made
+# inside a worktree would carry an unreadable id.
+if [ -n "$(tail -c1 "$msg_file")" ]; then
+	printf '\n' >>"$msg_file"
+fi
+
+# --if-exists doNothing is what makes this idempotent, which --amend needs.
+if ! git interpret-trailers --if-exists doNothing \
+	--trailer "Task-Id: $task_id" --in-place "$msg_file" 2>/dev/null; then
+	echo "prepare-commit-msg: failed to attach Task-Id: $task_id" >&2
+fi
+
+exit 0

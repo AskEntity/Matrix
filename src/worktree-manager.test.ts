@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync, statSync } from "node:fs";
+import {
+	chmod,
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorktreeManager } from "./worktree-manager.ts";
@@ -38,6 +45,46 @@ async function addSetupHook(dir: string, script: string): Promise<void> {
 	await chmod(join(hookDir, "setup_worktree.sh"), 0o755);
 	await exec(["git", "add", "-A"], dir);
 	await exec(["git", "commit", "-m", "add setup hook"], dir);
+}
+
+/**
+ * Copy THIS repo's real `.hooks/worktree/prepare-commit-msg` into the fixture and
+ * point a setup hook at it, exactly as `.mxd/hooks/setup_worktree.sh` does.
+ *
+ * The shipped script is the thing under test — a fixture-local reimplementation
+ * would pass while the real hook was broken. Only the dependency install is
+ * dropped, because a fixture repo has no package.json to install from.
+ */
+async function installTrailerHook(dir: string): Promise<void> {
+	const hookDir = join(dir, ".hooks", "worktree");
+	await mkdir(hookDir, { recursive: true });
+	const real = join(
+		import.meta.dir,
+		"..",
+		".hooks",
+		"worktree",
+		"prepare-commit-msg",
+	);
+	await writeFile(
+		join(hookDir, "prepare-commit-msg"),
+		await readFile(real, "utf-8"),
+		"utf-8",
+	);
+	await chmod(join(hookDir, "prepare-commit-msg"), 0o755);
+	await addSetupHook(
+		dir,
+		'#!/bin/bash\nset -e\ngit config --worktree core.hooksPath "$1/.hooks/worktree"\n',
+	);
+}
+
+/** The Task-Id trailer as git itself parses it — not a substring match. */
+async function readTrailer(cwd: string): Promise<string> {
+	return (
+		await exec(
+			["git", "log", "-1", "--format=%(trailers:key=Task-Id,valueonly)"],
+			cwd,
+		)
+	).trim();
 }
 
 describe("WorktreeManager", () => {
@@ -83,15 +130,40 @@ describe("WorktreeManager", () => {
 		expect(value).toBe("true");
 	});
 
-	test("create disables hooks per-worktree", async () => {
+	test("create defaults hooks off per-worktree", async () => {
 		const taskId = "abcdef12-3456-7890-abcd-ef1234567890";
 		const info = await mgr.create(taskId, "setup", defaultBranch);
 
-		// Check that core.hooksPath is set to /dev/null in the worktree
+		// The fixture's setup hook doesn't touch hooksPath, so the framework
+		// default stands: no hooks at all in the worktree.
 		const hooksPath = (
 			await exec(["git", "config", "--worktree", "core.hooksPath"], info.path)
 		).trim();
 		expect(hooksPath).toBe("/dev/null");
+	});
+
+	test("the setup hook can override the hooks default", async () => {
+		await addSetupHook(
+			repoDir,
+			'#!/bin/bash\nset -e\ngit config --worktree core.hooksPath "$1/.my-hooks"\n',
+		);
+		const taskId = "abcdef12-3456-7890-abcd-ef1234567891";
+		const info = await mgr.create(taskId, "own-hooks", defaultBranch);
+
+		const hooksPath = (
+			await exec(["git", "config", "--worktree", "core.hooksPath"], info.path)
+		).trim();
+		expect(hooksPath).toBe(join(info.path, ".my-hooks"));
+	});
+
+	test("create records the task id in per-worktree git config", async () => {
+		const taskId = "abcdef12-3456-7890-abcd-ef1234567892";
+		const info = await mgr.create(taskId, "identity", defaultBranch);
+
+		const recorded = (
+			await exec(["git", "config", "--worktree", "matrix.taskId"], info.path)
+		).trim();
+		expect(recorded).toBe(taskId);
 	});
 
 	test("create from specific base branch", async () => {
@@ -274,5 +346,174 @@ describe("WorktreeManager", () => {
 		expect(branches).not.toContain(
 			"mxd/55667788-1111-2222-3333-444444444444/bad-hook",
 		);
+	});
+
+	/**
+	 * The user action is "an agent commits inside its worktree"; the observable
+	 * result is that the commit names its task in a form a machine can read.
+	 * Every assertion here goes through `%(trailers:key=…)` — git's own parser —
+	 * because a trailer that is present as TEXT but unreadable as a TRAILER is
+	 * the exact failure this hook was measured into shape against.
+	 */
+	describe("Task-Id trailer", () => {
+		const taskId = "01KYQMNB0DPAZ3XJGATTW2NQAP";
+
+		test("an ordinary commit carries the id, and the subject is untouched", async () => {
+			await installTrailerHook(repoDir);
+			const info = await mgr.create(taskId, "trailer", defaultBranch);
+
+			await writeFile(join(info.path, "work.txt"), "work\n");
+			await exec(["git", "add", "-A"], info.path);
+			await exec(["git", "commit", "-m", "do the work"], info.path);
+
+			expect(await readTrailer(info.path)).toBe(taskId);
+			// Not competing for the subject line is the whole reason for a trailer.
+			const subject = (
+				await exec(["git", "log", "-1", "--format=%s"], info.path)
+			).trim();
+			expect(subject).toBe("do the work");
+		});
+
+		test("a merge made inside the worktree carries a READABLE id", async () => {
+			await installTrailerHook(repoDir);
+			const info = await mgr.create(taskId, "merger", defaultBranch);
+
+			// Something to merge in, produced outside the worktree.
+			await exec(["git", "checkout", "-b", "side"], repoDir);
+			await writeFile(join(repoDir, "side.txt"), "side\n");
+			await exec(["git", "add", "-A"], repoDir);
+			await exec(["git", "commit", "-m", "side work"], repoDir);
+			await exec(["git", "checkout", defaultBranch], repoDir);
+
+			// A carefully written merge message — the exact move that destroys the
+			// link when the id lives in the subject line.
+			await exec(
+				[
+					"git",
+					"merge",
+					"--no-ff",
+					"side",
+					"-m",
+					"Integrate the thing that does the stuff",
+				],
+				info.path,
+			);
+
+			// MERGE_MSG arrives without a trailing newline, so a naive
+			// interpret-trailers call glues the trailer onto the subject and git can
+			// no longer parse it back. Asserting through %(trailers:…) is what makes
+			// this test able to see that.
+			expect(await readTrailer(info.path)).toBe(taskId);
+			const subject = (
+				await exec(["git", "log", "-1", "--format=%s"], info.path)
+			).trim();
+			expect(subject).toBe("Integrate the thing that does the stuff");
+		});
+
+		test("amending does not stack duplicate trailers", async () => {
+			await installTrailerHook(repoDir);
+			const info = await mgr.create(taskId, "amender", defaultBranch);
+
+			await writeFile(join(info.path, "work.txt"), "work\n");
+			await exec(["git", "add", "-A"], info.path);
+			await exec(["git", "commit", "-m", "first"], info.path);
+			await exec(["git", "commit", "--amend", "--no-edit"], info.path);
+			await exec(["git", "commit", "--amend", "-m", "reworded"], info.path);
+
+			expect(await readTrailer(info.path)).toBe(taskId);
+			const body = await exec(["git", "log", "-1", "--format=%B"], info.path);
+			expect(
+				body.split("\n").filter((l) => l.startsWith("Task-Id:")).length,
+			).toBe(1);
+		});
+
+		test("no matrix.taskId means no trailer, and the commit still lands", async () => {
+			// The main repo has the hook available but no task identity — which is
+			// root's situation, and every pre-migration commit's situation. A missing
+			// trailer must never be a failed commit.
+			await installTrailerHook(repoDir);
+			await exec(
+				[
+					"git",
+					"config",
+					"core.hooksPath",
+					join(repoDir, ".hooks", "worktree"),
+				],
+				repoDir,
+			);
+
+			await writeFile(join(repoDir, "rooty.txt"), "root\n");
+			await exec(["git", "add", "-A"], repoDir);
+			await exec(["git", "commit", "-m", "root does its own work"], repoDir);
+
+			expect(await readTrailer(repoDir)).toBe("");
+			const subject = (
+				await exec(["git", "log", "-1", "--format=%s"], repoDir)
+			).trim();
+			expect(subject).toBe("root does its own work");
+		});
+
+		test("a message that already names a task keeps exactly that one id", async () => {
+			// Reached by `git commit -c <sha>` and by cherry-pick, where the message
+			// travels in from another task's worktree. DECIDED: the pre-existing id
+			// wins — the line of code came from there, and a commit carrying TWO
+			// Task-Id values makes `%(trailers:key=Task-Id)` ambiguous for every
+			// consumer. That is `--if-exists doNothing`; the amend case alone cannot
+			// tell it apart from `addIfDifferent`, this can.
+			await installTrailerHook(repoDir);
+			const info = await mgr.create(taskId, "inherited", defaultBranch);
+			const otherId = "01KN8DXBPGQBFT1WG17A85P1X1";
+
+			await writeFile(join(info.path, "work.txt"), "work\n");
+			await exec(["git", "add", "-A"], info.path);
+			await exec(
+				["git", "commit", "-m", "carried over", "-m", `Task-Id: ${otherId}`],
+				info.path,
+			);
+
+			expect(await readTrailer(info.path)).toBe(otherId);
+			const body = await exec(["git", "log", "-1", "--format=%B"], info.path);
+			expect(
+				body.split("\n").filter((l) => l.startsWith("Task-Id:")).length,
+			).toBe(1);
+		});
+
+		test("the shipped setup hook is what wires the trailer hook up", async () => {
+			// No fixture can run the real .mxd/hooks/setup_worktree.sh — it installs
+			// dependencies — so the one line that points core.hooksPath at the hook in
+			// PRODUCTION is unreachable from a behavioural test. This pins the wiring
+			// against its three silent breakages: the line deleted, the directory
+			// renamed, the hook losing its executable bit (git skips it, mutely).
+			const repoRoot = join(import.meta.dir, "..");
+			const script = await readFile(
+				join(repoRoot, ".mxd", "hooks", "setup_worktree.sh"),
+				"utf-8",
+			);
+			expect(script).toContain('core.hooksPath "$1/.hooks/worktree"');
+
+			const hook = join(repoRoot, ".hooks", "worktree", "prepare-commit-msg");
+			expect(existsSync(hook)).toBe(true);
+			expect((statSync(hook).mode & 0o111) !== 0).toBe(true);
+		});
+
+		test("an empty message stays empty rather than becoming the trailer", async () => {
+			// The hook adding content to an otherwise-empty message would turn git's
+			// "aborting, empty commit message" into a commit whose subject line is
+			// `Task-Id: …`. Measured, then guarded.
+			await installTrailerHook(repoDir);
+			const info = await mgr.create(taskId, "emptymsg", defaultBranch);
+
+			await writeFile(join(info.path, "work.txt"), "work\n");
+			await exec(["git", "add", "-A"], info.path);
+			const before = (
+				await exec(["git", "rev-parse", "HEAD"], info.path)
+			).trim();
+			await exec(["git", "commit", "-m", ""], info.path);
+
+			const after = (
+				await exec(["git", "rev-parse", "HEAD"], info.path)
+			).trim();
+			expect(after).toBe(before);
+		});
 	});
 });

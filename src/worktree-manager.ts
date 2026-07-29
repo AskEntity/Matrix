@@ -17,8 +17,9 @@ interface WorktreeInfo {
  *
  * Worktree setup:
  * - extensions.worktreeConfig is enabled so per-worktree git config works
- * - Hooks are disabled per-worktree (core.hooksPath = /dev/null)
- * - Setup hook (.mxd/hooks/setup_worktree.sh) is run if present
+ * - The task id is recorded as `matrix.taskId` in per-worktree git config
+ * - Hooks default to off (core.hooksPath = /dev/null); the setup hook may override
+ * - Setup hook (.mxd/hooks/setup_worktree.sh) is run
  */
 export class WorktreeManager {
 	constructor(
@@ -47,8 +48,9 @@ export class WorktreeManager {
 	 * Create a worktree for a task.
 	 * Sets up a fully isolated environment:
 	 * 1. Creates worktree with new branch
-	 * 2. Disables hooks (so child agents don't trigger parent project's pre-commit)
-	 * 3. Runs .mxd/hooks/setup_worktree.sh if present
+	 * 2. Records the task id in per-worktree git config (`matrix.taskId`)
+	 * 3. Disables hooks (so child agents don't trigger parent project's pre-commit)
+	 * 4. Runs .mxd/hooks/setup_worktree.sh, which may override any of the above
 	 */
 	async create(
 		taskId: string,
@@ -76,9 +78,21 @@ export class WorktreeManager {
 		}
 
 		try {
-			// Disable hooks for this worktree — child agents must not trigger
-			// the parent project's pre-commit hook (which runs typecheck/lint/test
-			// against the main project, not the worktree's isolated code)
+			// Record which task owns this worktree, so anything running inside it
+			// can ask git rather than guess. The consumer today is the project's
+			// prepare-commit-msg hook, which turns this into a `Task-Id:` trailer
+			// on every commit — the link that lets `git blame` reach the task that
+			// wrote a line. Deliberately config and not the path: the path shape is
+			// an implementation detail that has changed before, and per-worktree
+			// config is where a worktree's identity durably belongs.
+			await this.git(["config", "--worktree", "matrix.taskId", taskId], wtPath)
+				.exited;
+
+			// Hooks default to off — child agents must not trigger the parent
+			// project's pre-commit hook (which runs typecheck/lint/test against the
+			// main project, not the worktree's isolated code). The setup hook below
+			// runs after this and may point core.hooksPath somewhere narrower;
+			// that is the project's call, not the framework's.
 			await this.git(
 				["config", "--worktree", "core.hooksPath", "/dev/null"],
 				wtPath,

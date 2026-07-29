@@ -3536,3 +3536,66 @@ things in this repo precisely because it has not been eroded yet, and the first 
 teaches the next person that exemptions are available. **Deleting the file deleted the exemption
 with it; an audit catching a new file is evidence the audit works, never a formality to route
 around.**
+
+## The code→task link is a trailer on every commit, wired by three files no compiler joins
+
+**WHY, in the user's words: *"所有的 commit 都有信息"* — every commit carries its own
+provenance.** The old link was structurally MISALIGNED, not merely thin: the id rode on git's
+default `Merge branch 'mxd/<taskId>/…'`, and **`git blame` never lands on a merge**, because a
+clean merge carries no changes. So even a surviving id named a commit nobody was holding.
+Measured here: 3755 commits, 1285 merges, **2470 non-merges, which are the ones blame hands
+you**; of the merges only 102 still named a task, because `git merge -m "<a good sentence>"`
+overwrites exactly that line. Two stacked problems, and the 8% is the smaller one. **A trailer
+on every commit made inside the worktree dissolves both**: no merge message has to be written
+any particular way, and the commit blame gives you carries both its own id and its own message
+— the closest explanation of that line that exists.
+
+⚠️ **CORRECTION to *Retrieval that nobody acts on*, which says "DECIDED, NOT IMPLEMENTED …
+zero lines written": implemented 2026-07-29.** Its migration constraint is unchanged and is
+the half to keep reading — the 1280 historical commits will never have a trailer, so nothing
+may present a missing trailer as "no provenance".
+
+| file | its part of the mechanism |
+|---|---|
+| `src/worktree-manager.ts` | `git config --worktree matrix.taskId <id>` at creation |
+| `.mxd/hooks/setup_worktree.sh` | points `core.hooksPath` at `.hooks/worktree` |
+| `.hooks/worktree/prepare-commit-msg` | reads that config, appends the trailer |
+
+⚠️ **`.hooks/worktree` holds `prepare-commit-msg` and nothing else, and aiming it at `.hooks`
+instead is the tempting near-miss**: that directory holds `pre-commit` (typecheck + a test
+subset), which worktrees skip deliberately because agents commit constantly. Recording
+provenance and gating a commit are separate decisions — whether the gate comes back is
+`01KNJ7PT19V1HE1ZRT5KW8X043`'s question, not this one's.
+
+⚠️ **CORRECTION to *What is actually gated*: its sub-task-worktree row now reads wrong.**
+`core.hooksPath` in a worktree is `<wt>/.hooks/worktree`, not `/dev/null` — and the gating
+answer is still **no**, because that directory contains no gate. Someone who checks the config
+and stops there concludes the opposite.
+
+**Two ways the next person falls, both measured rather than reasoned:**
+
+- ⚠️ **`MERGE_MSG` arrives with NO trailing newline; `COMMIT_EDITMSG` does.** Hand the former
+  to `git interpret-trailers --in-place` and the trailer is joined to the subject by a single
+  newline, after which **git's own parser no longer sees a trailer**:
+  `%(trailers:key=Task-Id,valueonly)` comes back empty while the text sits plainly in `%B`.
+  Every merge made inside a worktree lands there. Append a newline first. **This is why an
+  assertion about a trailer must go through `%(trailers:…)` and never through a substring of
+  the message.**
+- ⚠️ **An empty message plus a hook that adds content is a commit whose SUBJECT is
+  `Task-Id: …`.** git aborts such a commit only because it is empty, and the hook rescues it
+  into existence. Guard on "nothing but blanks and comments" and do nothing.
+
+**The hook never exits non-zero.** A failing `prepare-commit-msg` aborts the commit, so a bug
+in there takes away the one thing an agent needs in order to fix it — the self-bootstrap death
+chain. It warns on stderr instead.
+
+**Two decisions that look like details.** The id comes from git config, **never** from parsing
+the worktree path: the path shape has changed before, and config is where a worktree's identity
+durably lives. And `--if-exists doNothing` makes an inherited `Task-Id` (`git commit -c`,
+cherry-pick) win over ours, because one commit carrying two ids makes `%(trailers:key=Task-Id)`
+answer ambiguously for every consumer.
+
+**Root's own commits carry no trailer** — root works in the main worktree, which never runs the
+setup hook. Accepted; root's id is a constant. The same boundary applies in time: the trailer
+starts on worktrees created AFTER this lands, and every worktree alive today keeps `/dev/null`
+and no `matrix.taskId`.
