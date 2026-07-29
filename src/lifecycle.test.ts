@@ -1960,6 +1960,7 @@ describe("lifecycle: child completion notification paths", () => {
 				queue: firstQueue,
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize.",
+				model: "test-model",
 			},
 		});
 		expect(result1.exitReason).toBe("interrupted");
@@ -2001,6 +2002,7 @@ describe("lifecycle: child completion notification paths", () => {
 				queue: secondQueue,
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize.",
+				model: "test-model",
 			},
 		});
 		expect(result2.exitReason).toBe("interrupted");
@@ -2106,6 +2108,7 @@ describe("lifecycle: child completion notification paths", () => {
 				emit,
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize.",
+				model: "test-model",
 			},
 		});
 
@@ -2185,6 +2188,7 @@ describe("lifecycle: child completion notification paths", () => {
 				queue: deadlockQueue,
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize.",
+				model: "test-model",
 			},
 		});
 

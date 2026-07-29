@@ -159,6 +159,44 @@ describe("resolveConfig", () => {
 		const result2 = resolveConfig(DEFAULT_CONFIG, { budgetUsd: 50 });
 		expect(result2.budgetUsd).toBe(50);
 	});
+
+	// `DEFAULT_CONFIG.model` is "" since there is no default model any more. The
+	// worry that motivated these two: the overlay rule is `value !== undefined`,
+	// so "" IS an overriding value — could a fresh install's empty model clobber a
+	// project's choice? Measured, not assumed: no, because at all three
+	// production call sites (daemon.ts, runtime/helpers.ts, cli.ts) the global
+	// layer is the BASE and only repo/local are overlays. The empty string cannot
+	// travel upward. Pinning the direction so a call site that passes the global
+	// config as an overlay reddens here.
+	test("an empty base model is overridden by a project layer, not the reverse", () => {
+		expect(DEFAULT_CONFIG.model).toBe("");
+
+		const fresh = resolveConfig(DEFAULT_CONFIG, { model: "claude-sonnet-4-6" });
+		expect(fresh.model).toBe("claude-sonnet-4-6");
+
+		// Both layers present: last overlay wins, base's "" never resurfaces.
+		const both = resolveConfig(
+			DEFAULT_CONFIG,
+			{ model: "repo-model" },
+			{ model: "local-model" },
+		);
+		expect(both.model).toBe("local-model");
+	});
+
+	test('an overlay carrying model "" DOES override — a visible empty, not a silent substitute', () => {
+		// The other direction is reachable: a hand-written `.mxd/config.json` with
+		// `"model": ""` overrides a real global model, because "" !== undefined.
+		// Recorded as the mechanism it is rather than endorsed. With the model
+		// fallbacks deleted, the consequence is an empty model name reaching the
+		// API — a failure the user can see and attribute — where it used to be a
+		// silent switch to whatever DEFAULT_MODEL happened to be.
+		const base = { ...DEFAULT_CONFIG, model: "claude-sonnet-4-6" };
+		expect(resolveConfig(base, { model: "" }).model).toBe("");
+		// undefined is the "not set" signal, and it does NOT override.
+		expect(resolveConfig(base, { model: undefined }).model).toBe(
+			"claude-sonnet-4-6",
+		);
+	});
 });
 
 describe("resolveAuthGroup", () => {

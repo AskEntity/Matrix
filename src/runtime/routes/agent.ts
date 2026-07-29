@@ -1,5 +1,4 @@
 import type { Hono } from "hono";
-import { DEFAULT_MODEL } from "../../config.ts";
 import {
 	createCompactMessage,
 	createUserMessage,
@@ -35,7 +34,7 @@ export function registerAgentRoutes(app: Hono, ctx: RuntimeContext) {
 			project.id,
 		);
 		const provider = getProjectProvider(ctx, effectiveCfg);
-		const model = effectiveCfg.model ?? DEFAULT_MODEL;
+		const model = effectiveCfg.model;
 		// Check if root agent is running via tracker node session
 		const tracker = ctx.trackers.get(project.id);
 		const running = tracker

@@ -29,7 +29,7 @@ export { projectDebugDir, projectTasksDir, projectTreeJsonPath };
 /** Create an AgentProvider from an AuthGroup, model, and optional thinking effort. */
 function createProviderFromAuth(
 	authGroup: AuthGroup,
-	model?: string,
+	model: string,
 	thinkingEffort?: number,
 ): AgentProvider {
 	if (authGroup.provider === "anthropic") {

@@ -3454,6 +3454,14 @@ failing test tells you within a minute is deliberately not here.
 - **`bun run check` runs `--write` and silently formats 70+ files** — use `check:ci` when debugging,
   and split a format-only sweep into its own commit, or the diff someone reviews is not the diff you
   made.
+- ⚠️ **To READ another branch, use `git show <ref>:<path>` or `git grep <pat> <ref>` — never check it
+  out.** *"Never `git checkout` to switch branches"* is stated as a bare prohibition in the system
+  prompt with no alternative beside it, and root violated it while reviewing a merge for the most
+  ordinary reason there is: wanting to grep the branch. **A prohibition with no remedy gets violated
+  by whoever has the legitimate need** — the same shape as the bash-piping rule, which was fixed by
+  satisfying the motivation rather than forbidding it. Recovery is `git checkout main` and costs
+  nothing *if the tree was clean and nothing rebuilt in the window*; neither is guaranteed, and the
+  daemon serves the web build out of the main worktree.
 
 ## Known bugs and open design
 
@@ -3661,3 +3669,124 @@ answer ambiguously for every consumer.
 setup hook. Accepted; root's id is a constant. The same boundary applies in time: the trailer
 starts on worktrees created AFTER this lands, and every worktree alive today keeps `/dev/null`
 and no `mxd.taskId`.
+
+## The model and the credential are chosen, never defaulted
+
+**DECIDED 2026-07-29 (user): *"我觉得压根就不该有一个 DEFAULT_MODEL"*, and *"所有用 env 决定模型
+或者 key 的 删掉"*.** One rule rather than two preferences: **a constant or an environment variable
+standing in for the user's choice means an agent runs a model nobody selected, and the log then
+records a name nobody chose.** `DEFAULT_MODEL` is gone, `DEFAULT_CONFIG.model` is `""`, and both
+providers take `model` and `opts` as REQUIRED parameters. Only matrix's own `MXD_*` variables may
+still be read. The argument that made it safe rather than merely wanted: the fallbacks were covering
+a state the validator already rejects, so three of the four `?? DEFAULT_MODEL` branches were
+unreachable — and the one path that reaches them is the `"model": null` hole they were masking.
+
+⭐ **Deleting a named constant does not find its literal twins, and there were THREE.** The grep for
+`DEFAULT_MODEL` found all four of its call sites and could not see `model ?? "gpt-4o"` in the OpenAI
+provider constructor, `config.model || "gpt-4o"` in `createLLM`'s openai branch — three lines below
+the anthropic branch the same commit had just fixed — or `request.model ?? "claude-sonnet-4-6"` in
+`runProviderLoop`. **Chase the SHAPE (a fallback sitting in the model slot), not the name**: `grep
+'claude-sonnet-4-6\|"gpt-4o"'` found all three in one pass, after a `DEFAULT_MODEL` grep had come
+back clean and been believed.
+
+⚠️ **The `runProviderLoop` one is the expensive shape: a precedent task deleted this exact lie at
+ONE CONSUMER and left the SOURCE.** `01KYJ1775HCFY1VQ4QT36JXFTP` removed `?? DEFAULT_MODEL` from the
+`agent_start` event because a substituted name made the log claim a model nobody chose — while the
+loop-local it reads from went on substituting a literal into **~12 event payloads** plus the
+context-window lookup. *A rule enforced at N of M doors* in the model-name medium, and the doors are
+a producer and its consumers rather than two peers: **fixing a consumer leaves every other consumer
+wrong and looks like the fix.** `AgentRequest.model` is now required, which made the compiler
+enumerate the rest — 24 errors, **all in test files, zero in production**, because both providers
+already funnel `model: request.model ?? this.model` before entering the loop.
+
+⚠️ **Measured: the env fallbacks had ZERO test coverage.** Restoring `?? process.env.OPENAI_API_KEY`
+reddens exactly ONE test — the inverted guard written with the deletion — while 24 others in that
+file stay green. That is also what separates the guard from the re-aiming trap: **the producer it
+consumes still exists** (a shell really can hold `OPENAI_API_KEY`), the test SETS it, and the
+assertion is that the value did not land. The vacuous inversion memory warns about is the opposite,
+asserting nothing happened where nothing could be produced.
+
+⚠️ **Nothing in production guards an empty or absent model, and no test can see one.** After the
+deletion `""` and `null` both travel to the API untouched; `ValidatingMockAPI` substitutes `model ??
+"claude-sonnet-4-6"` and never checks emptiness, so **a suite that is green with `model: ""`
+everywhere says nothing about whether a fresh install works.** Whoever closes the `"model": null`
+hole (`01KYJ27S0N3VBXQTFVNQ3FB879`) inherits a decision this created: reject empty/null at load and
+`DEFAULT_CONFIG.model = ""` fails its own validator, so `mxd config init` writes a config the loader
+refuses. *global config is a COMPLETE config* and *empty is invalid* cannot both hold.
+
+**NEGATIVE RESULT — the `""`-overlay worry does not exist in the direction it was raised.**
+`resolveConfig` overlays on `value !== undefined`, so `""` IS an overriding value — but the global
+layer is the BASE at all three production call sites (`daemon.ts`, `runtime/helpers.ts`, `cli.ts`),
+so an empty global model can never climb over a project's. The REVERSE is reachable and is now
+pinned by a test: a hand-written `.mxd/config.json` carrying `"model": ""` does override, and its
+consequence is a visible empty model instead of a silent switch to sonnet.
+
+⚠️ **A correct COUNT next to a truncated LIST reads as a complete enumeration — the sharpest form
+of the no-piping rule yet.** Following the compiler cascade here, `tsc | tail -30` was paired with
+a `grep -c` over the same output reporting 24 errors, and the count felt like verification: a plan
+was built from the visible tail, executed, and **7 more sites appeared that had been in the head
+all along**. **The number is what does the damage** — without it the truncation is obvious, and
+with it you believe you have enumerated. Redirect to a file and take the sites from the whole
+file, never from a tail.
+## Reading a field with `?? ""` destroys a state the storage layer represents
+
+**DECIDED 2026-07-29 (user), and it settles the question the DEFAULT_MODEL deletion left open:
+*"global auth 默认是空白，model 是 `""`. project 和 local 的话 auth 默认是 undefined，ui 表现为 tick 了
+inherit，选择框消失"*.** So the three-layer semantic is now stated end to end: **global is a COMPLETE
+config, so every key is present and "not chosen yet" is `""`; overlays are `Partial`, so an ABSENT
+key is inherit.** `""` is therefore load-bearing at the global layer — a second reason, on top of
+the earlier boundary, not to touch what it means in `resolveConfig`.
+
+⭐ **The UI bug the user reported is one operator: `(draft.model as string | undefined) ?? ""` at
+READ time.** Past that line `undefined` (inherit) and `""` (an explicit empty override) are one
+value, so the state could not be rendered — and, worse, could not be EXITED: typing then deleting
+left `""` in the draft and no gesture anywhere set it back to `undefined`, making the panel a
+one-way door into an empty override. **Derive the state from the raw value FIRST, then coalesce
+for the control** — the reverse order is what erases it. The panel already had the right
+convention one screen away (`SettingBoolField`: *"Three states: undefined (inherit), true,
+false"*), so this was a rule enforced at some of its doors rather than a missing mechanism.
+
+⚠️ **The legal field sets of the two PROJECT layers differ, and the axis is TRUST rather than
+scoping.** `model` and `defaultAuth` are settable on **global** and on **local**, and are **not
+rendered at all** on the **project** tab — because the repo layer is
+`<projectPath>/.mxd/config.json`, git-tracked and **arriving with `git clone`**, so a repo you
+cloned could otherwise choose the model and the auth group every later agent run uses. The local
+layer under `~/.mxd/` never enters a repo.
+**That is why `GLOBAL_ONLY_FIELDS` is the wrong home for the rule: the field is not global-only, it
+is not-from-the-repo** — and it is why the three tabs are not variations of one form.
+`rejectCredentialFields` is layer-aware for the same reason (repo refuses `defaultAuth`, local
+allows it, `authGroups` refused on both).
+
+⚠️ **On the way there, a guard was found sitting on one of two doors with the other one open, and
+what it actually did was break the UI.** Its comment claimed *"The CLI has the same check
+client-side"* — measured false: `mxd config set defaultAuth <name> --project` tests only
+`GLOBAL_ONLY_FIELDS` and writes straight to `.mxd/config.json`, while the same CLI's default path
+goes through the endpoint and 400s. Meanwhile the guard made **every** Root Auth change on a project
+tab fail, the option labelled "inherit" included, because that option's value was `""`. **Before
+pricing a guard's removal, measure what the other doors already allow — and check whether the thing
+it is really stopping is your own UI.** The deeper hole it never covered (a cloned repo config is
+read by `loadProjectRepoConfig`, never through `PATCH`, and `authGroups` is replaced wholesale by
+`resolveConfig` rather than merged) is `01KYQYRXST632196G3FNWTWF1X`, and it is hardening rather than
+a vulnerability: **there is no sandbox, so a hostile repo already owns you once an agent reads it.**
+
+⭐ **Counting doors is not enough — ask whether every door is a WRITE.** For *how can `defaultAuth`
+reach the repo layer*, there are three: `PATCH …/config/repo` (guarded), `mxd config set --project`
+(never guarded — writes `.mxd/config.json` directly, bypassing the daemon), and **`git clone`, where
+the file simply arrives and there is no write moment to guard at all.** So **no set of write-door
+guards can ever be complete here**, and that is what turns a read-boundary filter from the tidier
+option into the only one that finishes the job. The generalisation worth carrying past this case:
+*N-of-M-doors* silently assumes every door is an operation you can intercept. **When one door is
+"the state was already there when we arrived", enforcement has to move to the READ.**
+
+⚠️ **And that same false comment carries a second, separate lesson: a comment asserting that a
+sibling door is covered makes the doors rule actively misleading.** The failure mode is not that you
+miss a door — it is that you read the claim, believe both are covered, and **stop looking**, the
+same shape as a gate printing a pass. Root relayed it to a sub-task as fact and the sub-task found
+it false by measuring. Two config claims were asserted in one evening without checking, and this is
+the one that cost more, **because it came with a citation**.
+
+**Negative result on the test side, worth having before you go looking: the 26-bare-string i18n
+baseline did not move.** All new copy went through `t()`, and the two dead keys left behind by
+switching designs mid-task (`settings.authGlobalOnly`, `settings.modelRequiredOverride`) were
+deleted with their design rather than left as orphans — the four-orphan rule (i18n key, icon, URL
+builder, prose) applies to a control you *considered* and dropped, not only to one you delete.

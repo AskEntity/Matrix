@@ -4,7 +4,6 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import {
 	DEFAULT_CONFIG,
-	DEFAULT_MODEL,
 	loadGlobalConfig,
 	resolveAuthGroup,
 } from "./config.ts";
@@ -189,7 +188,7 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 
 		if (c.req.query("check_model") === "true") {
 			const authGroup = resolveAuthGroup(ctx.globalConfig);
-			const modelName = ctx.globalConfig.model ?? DEFAULT_MODEL;
+			const modelName = ctx.globalConfig.model;
 
 			const apiKey =
 				authGroup?.provider === "anthropic" ? authGroup.apiKey : undefined;

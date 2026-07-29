@@ -5,7 +5,6 @@ import type {
 	Tool,
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
-import { DEFAULT_MODEL } from "./config.ts";
 import {
 	debugResponsePath,
 	writeDebugResponse,
@@ -406,7 +405,7 @@ function mapThinkingEffort(
 export function createAnthropicAdapter(
 	client: Anthropic,
 	useOAuth: boolean,
-	opts?: {
+	opts: {
 		outerRetryDelayMs?: (attempt: number, error: unknown) => number;
 		thinkingEffort?: number;
 		systemPreamble?: string;
@@ -453,7 +452,7 @@ export function createAnthropicAdapter(
 			// Variable part (role + date) gets its own cache breakpoint.
 			// systemPreamble (from auth group config) prepended as first block when present.
 			const { stable, variable } = params.systemPrompt;
-			const preamble = opts?.systemPreamble;
+			const preamble = opts.systemPreamble;
 			const systemBlocks: TextBlockParam[] = [
 				// Preamble — customizable first system block from auth group config
 				...(preamble
@@ -508,7 +507,7 @@ export function createAnthropicAdapter(
 				params.cacheTtl,
 			);
 
-			const adaptiveEffort = opts?.thinkingEffort
+			const adaptiveEffort = opts.thinkingEffort
 				? mapThinkingEffort(opts.thinkingEffort)
 				: null;
 			const createParams = {
@@ -878,7 +877,7 @@ export function createAnthropicAdapter(
 			return { ok: true as const };
 		},
 
-		getOuterRetryDelayMs: opts?.outerRetryDelayMs,
+		getOuterRetryDelayMs: opts.outerRetryDelayMs,
 
 		buildResult(params): AgentResult {
 			return {
@@ -914,8 +913,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	outerRetryDelayMs?: (attempt: number, error: unknown) => number;
 
 	constructor(
-		model?: string,
-		opts?: {
+		model: string,
+		opts: {
 			apiKey?: string;
 			oauthToken?: string;
 			thinkingEffort?: number;
@@ -923,15 +922,15 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			baseUrl?: string;
 		},
 	) {
-		const apiKey = opts?.apiKey ?? process.env.ANTHROPIC_API_KEY;
-		const oauthToken = opts?.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN;
+		const apiKey = opts.apiKey;
+		const oauthToken = opts.oauthToken;
 		this.useOAuth = Boolean(oauthToken && !apiKey);
-		this.systemPreamble = opts?.systemPreamble;
+		this.systemPreamble = opts.systemPreamble;
 		// 1 hour timeout — compaction with very large contexts under API load can be slow
 		const timeout = 60 * 60 * 1000;
 		// Base URL override → SDK baseURL. Undefined leaves the SDK default
 		// (api.anthropic.com, or ANTHROPIC_BASE_URL env) in place.
-		const baseURL = opts?.baseUrl;
+		const baseURL = opts.baseUrl;
 		const betaFeatures = [
 			"interleaved-thinking-2025-05-14",
 			"context-management-2025-06-27",
@@ -964,8 +963,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				},
 			});
 		}
-		this.model = model ?? DEFAULT_MODEL;
-		this.thinkingEffort = opts?.thinkingEffort;
+		this.model = model;
+		this.thinkingEffort = opts.thinkingEffort;
 	}
 
 	async execute(request: AgentRequest): Promise<AgentResult> {

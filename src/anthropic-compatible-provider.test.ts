@@ -3515,11 +3515,9 @@ describe("Event deterministic verification", () => {
 	function createMockedProvider(
 		streamFn: (params: unknown) => ReturnType<typeof createMockStream>,
 	) {
-		// Set env so constructor doesn't warn
-		const savedKey = process.env.ANTHROPIC_API_KEY;
-		process.env.ANTHROPIC_API_KEY = "test-key";
-		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6");
-		process.env.ANTHROPIC_API_KEY = savedKey;
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+			apiKey: "test-key",
+		});
 
 		// Replace the client's messages.stream with our mock
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
@@ -3552,6 +3550,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: queueWithPrompt("Say hello", testDir),
 		});
@@ -3619,6 +3618,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -3711,6 +3711,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -3826,6 +3827,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue,
 		});
@@ -3961,6 +3963,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue,
 		});
@@ -4027,6 +4030,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -4305,6 +4309,7 @@ describe("Event deterministic verification", () => {
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			mcpToolDefs: {
@@ -4416,10 +4421,9 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 	function createProvider(
 		streamFn: (params: unknown) => ReturnType<typeof createMockStream>,
 	) {
-		const savedKey = process.env.ANTHROPIC_API_KEY;
-		process.env.ANTHROPIC_API_KEY = "test-key";
-		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6");
-		process.env.ANTHROPIC_API_KEY = savedKey;
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+			apiKey: "test-key",
+		});
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
 		(provider as any).client = {
 			messages: {
@@ -4478,6 +4482,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			setMessages: (msgs) => {
@@ -4614,6 +4619,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			setMessages: (msgs) => {
@@ -4798,6 +4804,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 			buildSystemPrompt: () => ({ stable: "You are helpful.", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit,
 			queue: testQueue,
 			setMessages: (msgs) => {
@@ -5064,13 +5071,10 @@ describe("adaptive thinking display", () => {
 			stopReason: "end_turn",
 		});
 
-		const savedKey = process.env.ANTHROPIC_API_KEY;
-		process.env.ANTHROPIC_API_KEY = "test-key";
 		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
 			apiKey: "test-key",
 			...(thinkingEffort !== undefined ? { thinkingEffort } : {}),
 		});
-		process.env.ANTHROPIC_API_KEY = savedKey;
 
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
 		(provider as any).client = {
@@ -5093,6 +5097,7 @@ describe("adaptive thinking display", () => {
 			buildSystemPrompt: () => ({ stable: "sys", variable: "var" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize.",
+			model: "claude-sonnet-4-6",
 			queue: queueWithPrompt("hello", tmpDir),
 		});
 
@@ -5116,6 +5121,7 @@ describe("adaptive thinking display", () => {
 			buildSystemPrompt: () => ({ stable: "sys", variable: "var" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize.",
+			model: "claude-sonnet-4-6",
 			queue: queueWithPrompt("hello", tmpDir),
 		});
 
@@ -5140,10 +5146,9 @@ describe("Abort signal stops inner retry immediately", () => {
 	});
 
 	function createProviderWithStreamFn(streamFn: (params: unknown) => unknown) {
-		const savedKey = process.env.ANTHROPIC_API_KEY;
-		process.env.ANTHROPIC_API_KEY = "test-key";
-		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6");
-		process.env.ANTHROPIC_API_KEY = savedKey;
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+			apiKey: "test-key",
+		});
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
 		(provider as any).client = {
 			messages: {
@@ -5189,6 +5194,7 @@ describe("Abort signal stops inner retry immediately", () => {
 				buildSystemPrompt: () => ({ stable: "test", variable: "" }),
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize the conversation.",
+				model: "claude-sonnet-4-6",
 				emit: () => {},
 				queue: queueWithPrompt("test"),
 				signal: abortController.signal,
@@ -5234,6 +5240,7 @@ describe("Abort signal stops inner retry immediately", () => {
 				buildSystemPrompt: () => ({ stable: "test", variable: "" }),
 				buildWorkContext: () => null,
 				buildSummarizationPrompt: () => "Summarize the conversation.",
+				model: "claude-sonnet-4-6",
 				emit: () => {},
 				queue: queueWithPrompt("test"),
 				signal: abortController.signal,
@@ -5296,6 +5303,7 @@ describe("Abort signal stops inner retry immediately", () => {
 			buildSystemPrompt: () => ({ stable: "test", variable: "" }),
 			buildWorkContext: () => null,
 			buildSummarizationPrompt: () => "Summarize the conversation.",
+			model: "claude-sonnet-4-6",
 			emit: () => {},
 			queue: queueWithPrompt("test"),
 		});

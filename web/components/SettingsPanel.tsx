@@ -160,29 +160,123 @@ function SettingBoolField({
 
 // ---- Models & Auth Section (shared across all tabs) ----
 
-function ModelsAuthSection({
+/**
+ * "Inherit" is the ABSENCE of the key in this layer's file — that is the config
+ * model's own representation (`ProjectConfig = Partial<>`), and `buildPatch`
+ * already turns an `undefined` draft value into the `null` that deletes the key.
+ *
+ * ⚠️ Which is why the checkbox is not decoration. Without it, `undefined`
+ * (inherit) and `""` (explicit empty) render as the SAME empty text box, and
+ * worse, typing-then-deleting leaves `""` in the draft with no gesture anywhere
+ * that returns to `undefined` — so the panel could only ever move a project
+ * INTO an explicit empty override, never back out. A project-layer `""`
+ * overrides a real global value (`resolveConfig` overlays on
+ * `value !== undefined`), and since no fallback substitutes a model any more,
+ * that empty string now reaches the API.
+ */
+function isInheriting(draft: Record<string, unknown>, field: string): boolean {
+	return draft[field] === undefined;
+}
+
+/** Checkbox + a rendering of what is being inherited. Never shown on global. */
+function InheritToggle({
+	field,
+	inherited,
+	draft,
+	onDraftChange,
+}: {
+	field: string;
+	inherited: string | undefined;
+	draft: Record<string, unknown>;
+	onDraftChange: (patch: Record<string, unknown>) => void;
+}) {
+	const { t } = useLocale();
+	const inheriting = isInheriting(draft, field);
+	// Showing WHAT is inherited is most of the feature: "inheriting" alone
+	// trades an invisible state for a better-labelled invisible state, and the
+	// question a user has is "what will this project actually use".
+	const shown =
+		inherited === undefined || inherited === ""
+			? t("settings.inheritNotSet")
+			: inherited;
+
+	return (
+		<label className="mxd-settings-inherit-toggle">
+			<input
+				type="checkbox"
+				checked={inheriting}
+				onChange={(e) =>
+					onDraftChange({
+						// Ticking clears the key. Unticking seeds the value currently in
+						// effect, so the user edits from what they have rather than from
+						// an empty box — and the UI never authors an empty string.
+						[field]: e.target.checked ? undefined : (inherited ?? ""),
+					})
+				}
+			/>
+			<span className="mxd-settings-inherit-label">
+				{t("settings.inheritLabel")}
+			</span>
+			{inheriting && (
+				<span className="mxd-settings-inherited-hint">
+					{t("settings.inheritingValue", { value: shown })}
+				</span>
+			)}
+		</label>
+	);
+}
+
+// Exported for the standalone render in web/SettingsPanel-inherit.test.tsx —
+// same reason CacheTtlSection is: mounting the whole panel drags in fetches and
+// a dozen unrelated sections.
+export function ModelsAuthSection({
 	layer,
+	layers,
 	authGroupNames,
 	draft,
 	onDraftChange,
 }: {
 	layer: "global" | "project" | "local";
+	layers: ThreeLayerConfig;
 	authGroupNames: string[];
 	draft: Record<string, unknown>;
 	onDraftChange: (patch: Record<string, unknown>) => void;
 }) {
 	const { t } = useLocale();
+
+	// ⚠️ The PROJECT (repo) tab does not render these fields at all, and the axis
+	// is TRUST rather than scoping (user, 2026-07-29): the repo layer is
+	// `<projectPath>/.mxd/config.json`, which is git-tracked and arrives with a
+	// clone, so a cloned repo must not be able to choose the model or the auth
+	// group an agent runs with. The local layer is under `~/.mxd/` and never
+	// enters a repo. So the legal field sets of the two project layers genuinely
+	// differ — this is not `GLOBAL_ONLY_FIELDS`, which is a different axis.
+	// Offering a control the daemon refuses (`rejectCredentialFields`, repo layer)
+	// would also be a remedy that cannot work.
+	if (layer === "project") return null;
+
 	const isGlobal = layer === "global";
 
+	const inheritedAuth = inheritedValue(layers, layer, "defaultAuth");
+	const inheritedModel = inheritedValue(layers, layer, "model");
+	const authInheriting = !isGlobal && isInheriting(draft, "defaultAuth");
+	const modelInheriting = !isGlobal && isInheriting(draft, "model");
+
+	// ⚠️ The `?? ""` below is safe ONLY because `modelInheriting` above already
+	// captured the distinction from the raw draft. Reading `?? ""` first and
+	// deriving state from it afterwards is the collapse this section is about:
+	// past that point `undefined` (inherit) and `""` (an explicit empty override)
+	// are one value, and the inherit state can be neither rendered nor exited.
 	const defaultAuth = (draft.defaultAuth as string | undefined) ?? "";
 	const model = (draft.model as string | undefined) ?? "";
-	// Build Root Auth options
-	const rootAuthOptions: { value: string; label: string }[] = [];
-	if (!isGlobal) {
-		rootAuthOptions.push({ value: "", label: t("settings.inheritOption") });
-	} else {
-		rootAuthOptions.push({ value: "", label: t("settings.authGroupNone") });
-	}
+	// Root Auth options. On a project tab "" is NOT offered: it used to be
+	// labelled "— Inherit —" there, which is the overload being removed, and as an
+	// explicit project override it would mean "this project has no auth group",
+	// which only breaks the project's agent. Inherit is the tickbox; global keeps
+	// its "— None —" because global genuinely can have no auth configured yet.
+	const rootAuthOptions: { value: string; label: string }[] = isGlobal
+		? [{ value: "", label: t("settings.authGroupNone") }]
+		: [];
 	for (const name of authGroupNames) {
 		rootAuthOptions.push({ value: name, label: name });
 	}
@@ -193,36 +287,60 @@ function ModelsAuthSection({
 				{t("settings.sectionModels")}
 			</div>
 
-			{/* Root Auth */}
+			{/* Root Auth. Symmetric with Model: inheriting hides the select.
+			    The old select offered every group name PLUS an option labelled
+			    "inherit" whose value was "", and `rejectCredentialFields` 400'd
+			    any defaultAuth string — so EVERY Root Auth change on a project tab
+			    failed, the inherit one included. The guard now lets a group NAME
+			    through (a name is not a credential; `authGroups` is still refused),
+			    and inherit is the absence of the key rather than an empty string. */}
 			<div className="mxd-settings-field">
 				<span className="mxd-settings-label">{t("settings.rootAuth")}</span>
-				<select
-					className="mxd-select mxd-settings-input"
-					value={defaultAuth}
-					onChange={(e) => onDraftChange({ defaultAuth: e.target.value })}
-				>
-					{rootAuthOptions.map((opt) => (
-						<option key={opt.value} value={opt.value}>
-							{opt.label}
-						</option>
-					))}
-				</select>
+				{!authInheriting && (
+					<select
+						className="mxd-select mxd-settings-input"
+						value={defaultAuth}
+						onChange={(e) => onDraftChange({ defaultAuth: e.target.value })}
+					>
+						{rootAuthOptions.map((opt) => (
+							<option key={opt.value} value={opt.value}>
+								{opt.label}
+							</option>
+						))}
+					</select>
+				)}
+				{!isGlobal && (
+					<InheritToggle
+						field="defaultAuth"
+						inherited={inheritedAuth}
+						draft={draft}
+						onDraftChange={onDraftChange}
+					/>
+				)}
 			</div>
 
-			{/* Root Model */}
+			{/* Root Model. Inheriting hides the input — the tickbox plus the
+			    inherited value IS the state, so an empty box can no longer be the
+			    way it is shown. */}
 			<div className="mxd-settings-field">
 				<span className="mxd-settings-label">{t("settings.rootModel")}</span>
-				<input
-					type="text"
-					className="mxd-settings-input"
-					placeholder={
-						isGlobal
-							? t("settings.rootModelPlaceholder")
-							: t("settings.inheritOption")
-					}
-					value={model}
-					onChange={(e) => onDraftChange({ model: e.target.value })}
-				/>
+				{!modelInheriting && (
+					<input
+						type="text"
+						className="mxd-settings-input"
+						placeholder={t("settings.rootModelPlaceholder")}
+						value={model}
+						onChange={(e) => onDraftChange({ model: e.target.value })}
+					/>
+				)}
+				{!isGlobal && (
+					<InheritToggle
+						field="model"
+						inherited={inheritedModel}
+						draft={draft}
+						onDraftChange={onDraftChange}
+					/>
+				)}
 			</div>
 		</div>
 	);
@@ -1030,6 +1148,7 @@ function GlobalTab({
 
 			<ModelsAuthSection
 				layer="global"
+				layers={layers}
 				authGroupNames={authGroupNames}
 				draft={draft}
 				onDraftChange={onDraftChange}
@@ -1096,6 +1215,7 @@ function ProjectTab({
 		<div className="mxd-tab-content">
 			<ModelsAuthSection
 				layer={tab}
+				layers={layers}
 				authGroupNames={authGroupNames}
 				draft={draft}
 				onDraftChange={onDraftChange}
@@ -1326,6 +1446,27 @@ export const SettingsPanel = memo(function SettingsPanel({
 				const err = await updateGlobal(patch);
 				if (err) {
 					setSaveError(err);
+					return;
+				}
+			}
+		}
+		// An UNTICKED-but-empty override would write `""`, which overrides a real
+		// global value with an empty string — for model that now reaches the API
+		// (no fallback substitutes one any more), and for defaultAuth it means
+		// "this project has no auth group". Ticking Inherit is how you clear an
+		// override; an empty control is not. Both project layers are checked,
+		// because either door can author the same value.
+		for (const draftLayer of [draftRepo, draftLocal]) {
+			for (const field of ["model", "defaultAuth"] as const) {
+				const override = draftLayer[field] as string | undefined;
+				if (override !== undefined && !override.trim()) {
+					window.alert(
+						t("settings.overrideEmpty", {
+							field: t(
+								field === "model" ? "settings.rootModel" : "settings.rootAuth",
+							),
+						}),
+					);
 					return;
 				}
 			}

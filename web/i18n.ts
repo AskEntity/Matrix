@@ -150,6 +150,11 @@ const en: Translations = {
 	"settings.restartDaemonRestarting": "Saving & Restarting…",
 	"settings.loading": "Loading…",
 	"settings.inherit": "Inherit from lower layer",
+	"settings.inheritLabel": "Inherit",
+	"settings.inheritingValue": "inheriting: {value}",
+	"settings.inheritNotSet": "not set on any layer",
+	"settings.overrideEmpty":
+		"{field} override is empty. Tick Inherit to use the inherited value, or set one.",
 	"settings.layerGlobal": "Global",
 	"settings.layerRepo": "Repo",
 	"settings.layerLocal": "Local",
@@ -460,6 +465,11 @@ const zh: Translations = {
 	"settings.restartDaemonRestarting": "保存并重启中…",
 	"settings.loading": "加载中…",
 	"settings.inherit": "继承下层配置",
+	"settings.inheritLabel": "继承",
+	"settings.inheritingValue": "继承中：{value}",
+	"settings.inheritNotSet": "所有层级均未设置",
+	"settings.overrideEmpty":
+		"{field} 覆盖为空。请勾选「继承」以使用继承值，或填写一个值。",
 	"settings.layerGlobal": "全局",
 	"settings.layerRepo": "仓库",
 	"settings.layerLocal": "本地",

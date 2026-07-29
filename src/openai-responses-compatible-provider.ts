@@ -910,8 +910,8 @@ export class OpenAIResponsesCompatibleProvider implements AgentProvider {
 	maxRetries?: number;
 
 	constructor(
-		model?: string,
-		opts?: {
+		model: string,
+		opts: {
 			apiKey?: string;
 			accessToken?: string;
 			refreshToken?: string;
@@ -919,21 +919,16 @@ export class OpenAIResponsesCompatibleProvider implements AgentProvider {
 			baseUrl?: string;
 		},
 	) {
-		this.baseUrl =
-			opts?.baseUrl ??
-			process.env.OPENAI_BASE_URL ??
-			process.env.OPENAI_API_BASE ??
-			"https://api.openai.com/v1";
-		this.authToken =
-			opts?.apiKey ?? opts?.accessToken ?? process.env.OPENAI_API_KEY ?? "";
-		this.refreshToken = opts?.refreshToken ?? "";
-		this.accountId = opts?.accountId;
+		this.baseUrl = opts.baseUrl ?? "https://api.openai.com/v1";
+		this.authToken = opts.apiKey ?? opts.accessToken ?? "";
+		this.refreshToken = opts.refreshToken ?? "";
+		this.accountId = opts.accountId;
 		if (!this.authToken) {
 			console.warn(
 				"OpenAIResponsesCompatibleProvider: no OpenAI credential configured. Calls will fail.",
 			);
 		}
-		this.model = model ?? "gpt-4o";
+		this.model = model;
 	}
 
 	async execute(request: AgentRequest): Promise<AgentResult> {

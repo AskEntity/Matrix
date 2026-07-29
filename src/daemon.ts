@@ -222,29 +222,44 @@ function maskConfig<T extends Partial<MatrixConfig>>(config: T): T {
 }
 
 /**
- * Reject any PATCH body that tries to set credential fields on a per-project
- * config layer (repo or local). Returns an error message if a forbidden
- * field is present, null otherwise.
+ * Reject any PATCH body that tries to inject CREDENTIALS through a per-project
+ * config layer (repo or local). Returns an error message if a forbidden field is
+ * present, null otherwise.
  *
  * `authGroups` is marked global-only in `GLOBAL_ONLY_FIELDS` — allowing it
  * through would be a credential-injection surface: an attacker who can PATCH
  * a project's config with their own authGroups could have every subsequent
  * agent run use their credentials (Audit R7 P1.4).
  *
- * `defaultAuth` is technically per-project legal (a project can pick which
- * existing auth group to use) but is rejected here defensively — the CLI
- * already refused it pre-server, and the audit report called it out
- * alongside `authGroups` as part of the credential-layer attack surface.
+ * ⚠️ `defaultAuth` is refused on the REPO layer and allowed on LOCAL, and the
+ * axis is TRUST rather than scoping (user, 2026-07-29). The repo layer is
+ * `<projectPath>/.mxd/config.json` — git-tracked, and it arrives with `git
+ * clone`, so a repo you cloned could point every later agent run at an auth
+ * group of its choosing. The local layer lives under `~/.mxd/` and never enters
+ * a repo. That is also why `GLOBAL_ONLY_FIELDS` is the wrong home for this: the
+ * field is not global-only, it is not-from-the-repo.
  *
- * The CLI has the same check client-side (`src/cli.ts`), but defense of
- * record must not rely on a friendly client.
+ * On the local layer the premise genuinely does not reach: `defaultAuth` carries
+ * only the NAME of a group that must already exist in the user's own global
+ * config, so nothing is injected.
+ *
+ * ⚠️ Note the old comment here claimed *"The CLI has the same check
+ * client-side"*. It does not: `mxd config set defaultAuth <name> --project`
+ * tests only `GLOBAL_ONLY_FIELDS` and writes straight to `.mxd/config.json`, so
+ * the repo-layer write this refuses is still reachable from the CLI. Closing
+ * that is the read-boundary work in `01KYQYRXST632196G3FNWTWF1X`, which is where
+ * a cloned config carrying `authGroups` is handled too — `loadProjectRepoConfig`
+ * is a bare read and never passes through here.
  */
-function rejectCredentialFields(body: Partial<MatrixConfig>): string | null {
+function rejectCredentialFields(
+	body: Partial<MatrixConfig>,
+	layer: "repo" | "local",
+): string | null {
 	if (body.authGroups != null) {
 		return "authGroups can only be set in global config (use PATCH /config/global)";
 	}
-	if (body.defaultAuth != null) {
-		return "defaultAuth can only be set in global config (use PATCH /config/global)";
+	if (layer === "repo" && body.defaultAuth != null) {
+		return "defaultAuth cannot be set in repo config — it is git-tracked and travels with a clone. Use the Local tab, or PATCH /config/global";
 	}
 	return null;
 }
@@ -1765,7 +1780,7 @@ export async function createDaemon(opts: {
 			"./config.ts"
 		);
 		const partial = await c.req.json<Partial<MatrixConfig>>();
-		const rejection = rejectCredentialFields(partial);
+		const rejection = rejectCredentialFields(partial, "repo");
 		if (rejection) return c.json({ error: rejection }, 400);
 		const existing = await loadProjectRepoConfig(project.path);
 		const merged = { ...existing };
@@ -1818,7 +1833,7 @@ export async function createDaemon(opts: {
 			"./config.ts"
 		);
 		const partial = await c.req.json<Partial<MatrixConfig>>();
-		const rejection = rejectCredentialFields(partial);
+		const rejection = rejectCredentialFields(partial, "local");
 		if (rejection) return c.json({ error: rejection }, 400);
 		const existing = await loadProjectLocalConfig(dataDir, project.id);
 		const merged = { ...existing };

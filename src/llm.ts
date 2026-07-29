@@ -48,7 +48,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createAnthropicAdapter } from "./anthropic-compatible-provider.ts";
-import { type AuthGroup, DEFAULT_MODEL } from "./config.ts";
+import { type AuthGroup } from "./config.ts";
 import type { EventSpec } from "./events.ts";
 import { createOpenAIResponsesAdapter } from "./openai-responses-compatible-provider.ts";
 import type { ProviderAdapter } from "./provider-shared.ts";
@@ -410,9 +410,8 @@ function createAnthropicClient(authGroup: AuthGroup): {
 			`createAnthropicClient: expected anthropic auth group, got ${authGroup.provider}`,
 		);
 	}
-	const apiKey = authGroup.apiKey ?? process.env.ANTHROPIC_API_KEY;
-	const oauthToken =
-		authGroup.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN;
+	const apiKey = authGroup.apiKey;
+	const oauthToken = authGroup.oauthToken;
 	const useOAuth = Boolean(oauthToken && !apiKey);
 	// Same beta headers as the full provider — keep behavior consistent so
 	// a plugin using the facility gets the same model configuration as an
@@ -502,16 +501,8 @@ function resolveOpenAIAuth(authGroup: AuthGroup): {
 			`resolveOpenAIAuth: expected openai auth group, got ${authGroup.provider}`,
 		);
 	}
-	const baseUrl =
-		authGroup.baseUrl ??
-		process.env.OPENAI_BASE_URL ??
-		process.env.OPENAI_API_BASE ??
-		"https://api.openai.com/v1";
-	const authToken =
-		authGroup.apiKey ??
-		authGroup.accessToken ??
-		process.env.OPENAI_API_KEY ??
-		"";
+	const baseUrl = authGroup.baseUrl ?? "https://api.openai.com/v1";
+	const authToken = authGroup.apiKey ?? authGroup.accessToken ?? "";
 	if (!authToken) {
 		console.warn(
 			"[llm] OpenAI auth group has no apiKey/accessToken — calls will 401 at the API.",
@@ -651,7 +642,7 @@ export function createLLM(config: LLMConfig): LLMClient {
 	const defaultEffort = config.defaultThinkingEffort ?? 0;
 
 	if (config.authGroup.provider === "anthropic") {
-		const model = config.model || DEFAULT_MODEL;
+		const model = config.model;
 		const { client, useOAuth } = createAnthropicClient(config.authGroup);
 		return buildLLMClient(
 			{
@@ -665,7 +656,7 @@ export function createLLM(config: LLMConfig): LLMClient {
 		);
 	}
 	if (config.authGroup.provider === "openai") {
-		const model = config.model || "gpt-4o";
+		const model = config.model;
 		const { baseUrl, authToken, accountId } = resolveOpenAIAuth(
 			config.authGroup,
 		);
