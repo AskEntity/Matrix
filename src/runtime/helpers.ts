@@ -37,6 +37,7 @@ function createProviderFromAuth(
 			apiKey: authGroup.apiKey,
 			oauthToken: authGroup.oauthToken,
 			systemPreamble: authGroup.systemPreamble,
+			baseUrl: authGroup.baseUrl,
 			thinkingEffort,
 		});
 	}

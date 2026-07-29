@@ -275,6 +275,37 @@ describe("resolveAuthGroup", () => {
 		expect(group?.provider).toBe("openai");
 		expect("systemPreamble" in (group ?? {})).toBe(false);
 	});
+
+	test("anthropic auth group includes baseUrl", () => {
+		const cfg: MatrixConfig = {
+			...DEFAULT_CONFIG,
+			authGroups: {
+				claude: {
+					provider: "anthropic",
+					apiKey: "sk-test",
+					baseUrl: "https://proxy.example.com",
+				},
+			},
+		};
+		const group = resolveAuthGroup(cfg, "claude");
+		expect(group?.provider).toBe("anthropic");
+		if (group?.provider === "anthropic") {
+			expect(group.baseUrl).toBe("https://proxy.example.com");
+		}
+	});
+
+	test("baseUrl undefined when not set", () => {
+		const cfg: MatrixConfig = {
+			...DEFAULT_CONFIG,
+			authGroups: {
+				claude: { provider: "anthropic", apiKey: "sk-test" },
+			},
+		};
+		const group = resolveAuthGroup(cfg, "claude");
+		if (group?.provider === "anthropic") {
+			expect(group.baseUrl).toBeUndefined();
+		}
+	});
 });
 
 describe("file loading", () => {

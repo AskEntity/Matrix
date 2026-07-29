@@ -423,11 +423,15 @@ function createAnthropicClient(authGroup: AuthGroup): {
 		"effort-2025-11-24",
 	];
 	const timeout = 60 * 60 * 1000;
+	// Base URL override → SDK baseURL. Undefined leaves the SDK default
+	// (api.anthropic.com, or ANTHROPIC_BASE_URL env) in place.
+	const baseURL = authGroup.baseUrl;
 	if (useOAuth) {
 		return {
 			client: new Anthropic({
 				authToken: oauthToken,
 				timeout,
+				...(baseURL ? { baseURL } : {}),
 				defaultHeaders: {
 					"anthropic-beta": ["oauth-2025-04-20", ...betaFeatures].join(","),
 				},
@@ -440,6 +444,7 @@ function createAnthropicClient(authGroup: AuthGroup): {
 			client: new Anthropic({
 				apiKey,
 				timeout,
+				...(baseURL ? { baseURL } : {}),
 				defaultHeaders: { "anthropic-beta": betaFeatures.join(",") },
 			}),
 			useOAuth: false,
@@ -450,6 +455,7 @@ function createAnthropicClient(authGroup: AuthGroup): {
 	return {
 		client: new Anthropic({
 			timeout,
+			...(baseURL ? { baseURL } : {}),
 			defaultHeaders: { "anthropic-beta": betaFeatures.join(",") },
 		}),
 		useOAuth: false,

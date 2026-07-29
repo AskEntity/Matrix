@@ -8,6 +8,8 @@ export interface AnthropicAuthGroup {
 	oauthToken?: string;
 	/** Prepended as the first system text block when non-empty. */
 	systemPreamble?: string;
+	/** API base URL override (SDK `baseURL`). When unset, the SDK default applies. */
+	baseUrl?: string;
 }
 
 export interface OpenAIAuthGroup {

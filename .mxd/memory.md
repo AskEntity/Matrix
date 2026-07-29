@@ -1536,10 +1536,11 @@ every built-in tool's input against its Zod schema at the boundary; external MCP
 
 `src/llm.ts` wraps the existing provider adapters for plugins that need one-shot calls outside the
 agent loop. **The one thing here that will bite someone: SDK client construction is DUPLICATED from
-the provider class constructors.** Beta headers and timeout are hand-matched to
-`AnthropicCompatibleProvider`, so **any change to beta headers must update BOTH the class
-constructor AND `createAnthropicClient`** — nothing enforces it, and the failure would be OAuth
-breaking for plugin calls only.
+the provider class constructors — twice over.** Beta headers, timeout and the auth-group `baseUrl`
+(→ SDK `baseURL`) are hand-matched to `AnthropicCompatibleProvider`, so **any change to those must
+update ALL THREE sites: the class constructor, `createAnthropicClient` in `llm.ts`, AND the
+`check_model` handler in `runtime.ts`** — nothing enforces it, and the failure would be OAuth (or a
+custom base URL) breaking for plugin calls or the settings model check only.
 
 ---
 # Data Model & Storage

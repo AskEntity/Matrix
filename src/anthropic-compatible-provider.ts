@@ -920,6 +920,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			oauthToken?: string;
 			thinkingEffort?: number;
 			systemPreamble?: string;
+			baseUrl?: string;
 		},
 	) {
 		const apiKey = opts?.apiKey ?? process.env.ANTHROPIC_API_KEY;
@@ -928,6 +929,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		this.systemPreamble = opts?.systemPreamble;
 		// 1 hour timeout — compaction with very large contexts under API load can be slow
 		const timeout = 60 * 60 * 1000;
+		// Base URL override → SDK baseURL. Undefined leaves the SDK default
+		// (api.anthropic.com, or ANTHROPIC_BASE_URL env) in place.
+		const baseURL = opts?.baseUrl;
 		const betaFeatures = [
 			"interleaved-thinking-2025-05-14",
 			"context-management-2025-06-27",
@@ -937,6 +941,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			this.client = new Anthropic({
 				authToken: oauthToken,
 				timeout,
+				...(baseURL ? { baseURL } : {}),
 				defaultHeaders: {
 					"anthropic-beta": ["oauth-2025-04-20", ...betaFeatures].join(","),
 				},
@@ -945,6 +950,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			this.client = new Anthropic({
 				apiKey,
 				timeout,
+				...(baseURL ? { baseURL } : {}),
 				defaultHeaders: {
 					"anthropic-beta": betaFeatures.join(","),
 				},
@@ -952,6 +958,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		} else {
 			this.client = new Anthropic({
 				timeout,
+				...(baseURL ? { baseURL } : {}),
 				defaultHeaders: {
 					"anthropic-beta": betaFeatures.join(","),
 				},

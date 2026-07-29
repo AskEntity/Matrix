@@ -264,6 +264,7 @@ function AuthGroupEditor({
 			if (apiKeyValue) g.apiKey = apiKeyValue;
 			if (oauthToken) g.oauthToken = oauthToken;
 			if (systemPreamble) g.systemPreamble = systemPreamble;
+			if (baseUrl) g.baseUrl = baseUrl;
 		} else {
 			if (apiKeyValue) g.apiKey = apiKeyValue;
 			if (accessToken) g.accessToken = accessToken;
@@ -332,6 +333,16 @@ function AuthGroupEditor({
 							placeholder={t("settings.systemPreamblePlaceholder")}
 							value={systemPreamble}
 							onChange={(e) => setSystemPreamble(e.target.value)}
+						/>
+					</label>
+					<label className="mxd-settings-field">
+						<span className="mxd-settings-label">{t("settings.baseUrl")}</span>
+						<input
+							type="text"
+							className="mxd-settings-input"
+							placeholder="https://api.anthropic.com"
+							value={baseUrl}
+							onChange={(e) => setBaseUrl(e.target.value)}
 						/>
 					</label>
 				</>

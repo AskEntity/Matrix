@@ -1104,6 +1104,7 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 				provider: "anthropic",
 				...(apiKey ? { apiKey } : {}),
 				...(oauthToken ? { oauthToken } : {}),
+				...(baseUrl ? { baseUrl } : {}),
 			};
 		} else {
 			if (!apiKey && !accessToken) {

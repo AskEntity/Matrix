@@ -157,4 +157,29 @@ describe("P2.1: `mxd config auth add` auto-promotes first group to defaultAuth",
 		// a "clever" fix might have chosen.
 		expect(written.defaultAuth).toBe("anthropic");
 	});
+
+	test("`auth add anthropic --base-url …` persists baseUrl on the group", async () => {
+		// --base-url used to be silently dropped for provider=anthropic
+		// (only the openai branch forwarded it), so a proxy endpoint set
+		// via CLI never reached the SDK client.
+		await seedConfig({ defaultAuth: "", authGroups: {} });
+
+		const { code, stdout, stderr } = await runAuthAdd(
+			"anthropic",
+			"--provider",
+			"anthropic",
+			"--key",
+			"sk-ant-test-proxy",
+			"--base-url",
+			"https://proxy.example.com",
+		);
+		expect(code, `stdout: ${stdout}; stderr: ${stderr}`).toBe(0);
+
+		const written = JSON.parse(await readFile(configPath, "utf-8"));
+		expect(written.authGroups.anthropic).toEqual({
+			provider: "anthropic",
+			apiKey: "sk-ant-test-proxy",
+			baseUrl: "https://proxy.example.com",
+		});
+	});
 });

@@ -5012,6 +5012,29 @@ describe("systemPreamble", () => {
 	});
 });
 
+// ── baseUrl tests ──
+
+describe("baseUrl", () => {
+	test("baseUrl option is passed to the SDK client as baseURL", () => {
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+			apiKey: "test-key",
+			baseUrl: "https://proxy.example.com",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: inspecting private client
+		const client = (provider as any).client as Anthropic;
+		expect(client.baseURL).toBe("https://proxy.example.com");
+	});
+
+	test("without baseUrl: SDK default baseURL is used", () => {
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+			apiKey: "test-key",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: inspecting private client
+		const client = (provider as any).client as Anthropic;
+		expect(client.baseURL).toBe("https://api.anthropic.com");
+	});
+});
+
 // ── Adaptive thinking: display opt-in ──
 // The default `display` for adaptive thinking was `"summarized"` on Opus 4.6
 // but changed to `"omitted"` on Opus 4.7. Matrix persists thinking to JSONL

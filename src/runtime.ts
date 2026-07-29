@@ -196,19 +196,27 @@ export function createApp(config: RuntimeConfig = defaultConfig) {
 			const oauthToken =
 				authGroup?.provider === "anthropic" ? authGroup.oauthToken : undefined;
 			const useOAuth = Boolean(oauthToken && !apiKey);
+			const baseURL =
+				authGroup?.provider === "anthropic" ? authGroup.baseUrl : undefined;
 
 			let client: Anthropic;
 			if (useOAuth) {
 				client = new Anthropic({
 					authToken: oauthToken,
+					...(baseURL ? { baseURL } : {}),
 					defaultHeaders: {
 						"anthropic-beta": "oauth-2025-04-20",
 					},
 				});
 			} else if (apiKey) {
-				client = new Anthropic({ apiKey });
+				client = new Anthropic({
+					apiKey,
+					...(baseURL ? { baseURL } : {}),
+				});
 			} else {
-				client = new Anthropic();
+				client = new Anthropic({
+					...(baseURL ? { baseURL } : {}),
+				});
 			}
 
 			const preamble =
