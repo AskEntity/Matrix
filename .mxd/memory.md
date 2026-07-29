@@ -3790,3 +3790,33 @@ baseline did not move.** All new copy went through `t()`, and the two dead keys 
 switching designs mid-task (`settings.authGlobalOnly`, `settings.modelRequiredOverride`) were
 deleted with their design rather than left as orphans — the four-orphan rule (i18n key, icon, URL
 builder, prose) applies to a control you *considered* and dropped, not only to one you delete.
+
+## ⚠️ The rules are written for the worker's situation, and root's operations look exempt
+
+**Measured on one root session, 2026-07-29: root broke three rules it had quoted at children that
+same evening.** Not from disagreeing with any of them — each time the rule simply did not seem to be
+about what root was doing:
+
+| the rule | what root did | why it felt exempt |
+|---|---|---|
+| *Never `git checkout` to switch branches* | `git checkout --detach <child-branch>` in the MAIN worktree, to grep it | "I am not switching work, I am peeking" |
+| *Run `bun test` bare; a pipe is data loss* | `bun test 2>&1 \| tail -25`, twice | "I only need the pass/fail line" |
+| *An AI cannot hallucinate a test result* | relayed two CODE COMMENTS to a sub-task as measured fact | a comment is in the repo, so it reads as evidence |
+
+⭐ **The mechanism is not laziness, it is that the rules are phrased for the situation they were
+learned in — a worker running a suite, a worker reading a file — and root's version of the act has
+a different shape.** Reviewing a merge is not "switching branches". Wanting the summary line is not
+"truncating evidence". So the rule is recognised, judged inapplicable, and violated, all without
+deliberation. **Root gets no warning either: `git checkout` succeeded silently, and the pipe
+returned exit 0, so two of the three left no trace at all.**
+
+Two concrete remedies rather than more vigilance. **To READ another branch use `git show <ref>:<path>`
+or `git grep <pat> <ref>`** — the prohibition had no alternative stated next to it, which is the
+whole reason it was reached for (see *Known pitfalls*). And **the comment one has its own entry**
+under the `?? ""` section: a comment naming three states is not evidence that three states exist,
+and passing one downward as fact costs a sub-task a measurement round.
+
+⚠️ **Do not read this as "root should be more careful."** Both traceless violations are cases where
+the tool could have said something and did not, and the third was fixed by writing the missing
+alternative down. **Prefer that shape: when a rule is broken by someone who knows it, ask what made
+the act look like a different act.**
