@@ -3742,9 +3742,35 @@ READ time.** Past that line `undefined` (inherit) and `""` (an explicit empty ov
 value, so the state could not be rendered — and, worse, could not be EXITED: typing then deleting
 left `""` in the draft and no gesture anywhere set it back to `undefined`, making the panel a
 one-way door into an empty override. **Derive the state from the raw value FIRST, then coalesce
-for the control** — the reverse order is what erases it. The panel already had the right
-convention one screen away (`SettingBoolField`: *"Three states: undefined (inherit), true,
-false"*), so this was a rule enforced at some of its doors rather than a missing mechanism.
+for the control** — the reverse order is what erases it.
+
+⚠️ **CORRECTION to the first version of this entry, which said the panel "already had the right
+convention one screen away" and quoted `SettingBoolField`'s *"Three states: undefined (inherit),
+true, false / indeterminate = inherit"*. That comment describes a control that was never built:
+`indeterminate` is set NOWHERE in the file, and the onChange was `{ [field]: e.target.checked }`,
+which always writes a boolean — so the third state could be DISPLAYED (a small "(inherited)") and
+never returned to. One click and the field was explicitly set forever.** What the panel actually had
+one screen away was the right *vocabulary*, the right *display*, and **the same one-way door**. Both
+fields are fixed now, sharing one `InheritToggle`, because a 3-state value cannot live on a 2-state
+checkbox — the inherit state needs its own control.
+
+⭐ **A comment naming three states is not evidence of three states.** That quote was read as a
+measurement and relayed as one, which is the same failure as *"The CLI has the same check
+client-side"* in the paragraph below — **twice in one evening, a comment was passed along as a
+verified fact, and both times it described a sibling mechanism that did not exist.** The damage is
+identical in shape to a gate printing a pass: you believe the thing is covered and **stop looking**.
+The check is cheap and it is the one that was skipped both times — **grep for the mechanism, not for
+the sentence claiming it** (`indeterminate` → zero hits; the CLI's guard → `GLOBAL_ONLY_FIELDS`
+only).
+
+**DECIDED — `SettingNumberField` KEEPS the implicit "empty box = inherit" convention, considered
+rather than missed.** It is a third convention in one panel, which is a real cost, and it is the one
+argument for converting it. Against, decisively: it is **not broken the way the other two were** —
+`e.target.value ? Number(...) : undefined` already round-trips, so clearing the box returns to
+inherit, and the inherited value already renders as the placeholder. **A number has no `""` state,
+so "empty" there can only mean absent** — the ambiguity the user objected to requires a competing
+legal empty value, which is exactly what `model` and `defaultAuth` had and a number does not. Adding
+a tickbox would be a second way to reach a state the control can already reach.
 
 ⚠️ **The legal field sets of the two PROJECT layers differ, and the axis is TRUST rather than
 scoping.** `model` and `defaultAuth` are settable on **global** and on **local**, and are **not

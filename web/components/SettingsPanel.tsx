@@ -118,7 +118,8 @@ function SettingNumberField({
 	);
 }
 
-function SettingBoolField({
+// Exported for web/SettingsPanel-inherit.test.tsx — see ModelsAuthSection.
+export function SettingBoolField({
 	label,
 	field,
 	tab,
@@ -135,25 +136,40 @@ function SettingBoolField({
 }) {
 	const inherited = inheritedValue(layers, tab, field);
 	const value = draft[field] as boolean | undefined;
+	const isGlobal = tab === "global";
+	const inheriting = !isGlobal && isInheriting(draft, field);
 
-	// Three states: undefined (inherit), true, false
-	// Checkbox: checked = true, unchecked but set = false, indeterminate = inherit
-	const isSet = value !== undefined;
-	const checked = isSet ? value : inherited === "true";
-
+	// ⚠️ This field used to carry the comment "Three states: undefined
+	// (inherit), true, false / indeterminate = inherit" while `indeterminate` was
+	// set NOWHERE in the file, and its onChange was
+	// `{ [field]: e.target.checked }` — which ALWAYS writes a boolean. So the
+	// third state could be displayed (a small "(inherited)") and never returned
+	// to: one click and the field was explicitly set forever. The same one-way
+	// door as ModelsAuthSection, 40 lines apart, and the comment made the panel
+	// look like it already had the mechanism. A 3-state value does not fit a
+	// 2-state checkbox; the inherit state needs its own control.
 	return (
 		<div className="mxd-settings-field">
 			<span className="mxd-settings-label">{label}</span>
-			<label className="mxd-settings-toggle">
-				<input
-					type="checkbox"
-					checked={checked}
-					onChange={(e) => onDraftChange({ [field]: e.target.checked })}
+			{!inheriting && (
+				<label className="mxd-settings-toggle">
+					<input
+						type="checkbox"
+						checked={value ?? false}
+						onChange={(e) => onDraftChange({ [field]: e.target.checked })}
+					/>
+				</label>
+			)}
+			{!isGlobal && (
+				<InheritToggle
+					field={field}
+					inherited={inherited}
+					// A string would land in a boolean field — see InheritToggle.
+					valueOnUntick={inherited === "true"}
+					draft={draft}
+					onDraftChange={onDraftChange}
 				/>
-				{!isSet && tab !== "global" && (
-					<span className="mxd-settings-inherited-hint">(inherited)</span>
-				)}
-			</label>
+			)}
 		</div>
 	);
 }
@@ -178,15 +194,25 @@ function isInheriting(draft: Record<string, unknown>, field: string): boolean {
 	return draft[field] === undefined;
 }
 
-/** Checkbox + a rendering of what is being inherited. Never shown on global. */
+/**
+ * Checkbox + a rendering of what is being inherited. Never shown on global.
+ *
+ * `valueOnUntick` is what unticking writes, and it is the CALLER's job because
+ * only the call site knows the field's type: `inheritedValue()` returns a
+ * display STRING, so a boolean field seeded from it would be handed `"true"`.
+ * A 3-state value cannot live on a 2-state checkbox, which is the whole reason
+ * this control is separate from the one holding the value.
+ */
 function InheritToggle({
 	field,
 	inherited,
+	valueOnUntick,
 	draft,
 	onDraftChange,
 }: {
 	field: string;
 	inherited: string | undefined;
+	valueOnUntick: unknown;
 	draft: Record<string, unknown>;
 	onDraftChange: (patch: Record<string, unknown>) => void;
 }) {
@@ -210,7 +236,7 @@ function InheritToggle({
 						// Ticking clears the key. Unticking seeds the value currently in
 						// effect, so the user edits from what they have rather than from
 						// an empty box — and the UI never authors an empty string.
-						[field]: e.target.checked ? undefined : (inherited ?? ""),
+						[field]: e.target.checked ? undefined : valueOnUntick,
 					})
 				}
 			/>
@@ -313,6 +339,7 @@ export function ModelsAuthSection({
 					<InheritToggle
 						field="defaultAuth"
 						inherited={inheritedAuth}
+						valueOnUntick={inheritedAuth ?? ""}
 						draft={draft}
 						onDraftChange={onDraftChange}
 					/>
@@ -337,6 +364,7 @@ export function ModelsAuthSection({
 					<InheritToggle
 						field="model"
 						inherited={inheritedModel}
+						valueOnUntick={inheritedModel ?? ""}
 						draft={draft}
 						onDraftChange={onDraftChange}
 					/>
