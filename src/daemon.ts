@@ -222,29 +222,33 @@ function maskConfig<T extends Partial<MatrixConfig>>(config: T): T {
 }
 
 /**
- * Reject any PATCH body that tries to set credential fields on a per-project
- * config layer (repo or local). Returns an error message if a forbidden
- * field is present, null otherwise.
+ * Reject any PATCH body that tries to inject CREDENTIALS through a per-project
+ * config layer (repo or local). Returns an error message if a forbidden field is
+ * present, null otherwise.
  *
  * `authGroups` is marked global-only in `GLOBAL_ONLY_FIELDS` — allowing it
  * through would be a credential-injection surface: an attacker who can PATCH
  * a project's config with their own authGroups could have every subsequent
  * agent run use their credentials (Audit R7 P1.4).
  *
- * `defaultAuth` is technically per-project legal (a project can pick which
- * existing auth group to use) but is rejected here defensively — the CLI
- * already refused it pre-server, and the audit report called it out
- * alongside `authGroups` as part of the credential-layer attack surface.
+ * ⚠️ `defaultAuth` USED to be refused here too, and that was removed
+ * deliberately (2026-07-29). Separating the premise from the obligation: the
+ * premise is credential injection, and `defaultAuth` carries only the NAME of a
+ * group that must already exist in the user's own global config — no credential
+ * crosses this door, so the premise never reached it. `GLOBAL_ONLY_FIELDS`
+ * agrees: it lists `authGroups` and `port`, not `defaultAuth`.
  *
- * The CLI has the same check client-side (`src/cli.ts`), but defense of
- * record must not rely on a friendly client.
+ * ⚠️ And the obligation was already unmet, which is the part that decided it.
+ * The old comment here claimed *"The CLI has the same check client-side"* — it
+ * does not. `mxd config set defaultAuth <name> --project` tests only
+ * `GLOBAL_ONLY_FIELDS` and writes straight to `.mxd/config.json` on disk, so a
+ * per-project defaultAuth has always been reachable one door over. This guard
+ * refused only the door the settings UI uses, which made the UI's Root Auth
+ * control 400 on every change while the CLI wrote the same field happily.
  */
 function rejectCredentialFields(body: Partial<MatrixConfig>): string | null {
 	if (body.authGroups != null) {
 		return "authGroups can only be set in global config (use PATCH /config/global)";
-	}
-	if (body.defaultAuth != null) {
-		return "defaultAuth can only be set in global config (use PATCH /config/global)";
 	}
 	return null;
 }

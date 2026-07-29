@@ -536,7 +536,14 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 		expect(body.error).toContain("global");
 	});
 
-	test("PATCH /projects/:id/config rejects defaultAuth with 400", async () => {
+	// INTENT CHANGED 2026-07-29 (user, via 01KYQXV3K33EV8488H34G80KMS): a
+	// per-project `defaultAuth` is ACCEPTED. It was refused here "defensively"
+	// while `mxd config set defaultAuth <name> --project` wrote the same field
+	// straight to disk, so the guard only ever closed the door the settings UI
+	// uses — where it made every Root Auth change on a project tab a 400. The
+	// premise is credential INJECTION, and a group name is not a credential.
+	// The authGroups tests either side of this one are the real guard.
+	test("PATCH /projects/:id/config ACCEPTS defaultAuth (a name, not a credential)", async () => {
 		const res = await ctx.daemon.fetch(
 			new Request(`http://localhost/projects/${projectId}/config`, {
 				method: "PATCH",
@@ -544,12 +551,40 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 					Authorization: `Bearer ${ctx.sessionToken}`,
 					"content-type": "application/json",
 				},
-				body: JSON.stringify({ defaultAuth: "evil" }),
+				body: JSON.stringify({ defaultAuth: "some-group" }),
 			}),
 		);
-		expect(res.status).toBe(400);
-		const body = (await res.json()) as { error: string };
-		expect(body.error).toContain("defaultAuth");
+		expect(res.status).toBe(200);
+		// And it must actually land — a 200 that dropped the field would look
+		// identical from the status code alone.
+		const after = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				headers: { Authorization: `Bearer ${ctx.sessionToken}` },
+			}),
+		);
+		const cfg = (await after.json()) as { defaultAuth?: string };
+		expect(cfg.defaultAuth).toBe("some-group");
+	});
+
+	test("PATCH /projects/:id/config accepts null defaultAuth — that is how the UI clears an override to inherit", async () => {
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				method: "PATCH",
+				headers: {
+					Authorization: `Bearer ${ctx.sessionToken}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ defaultAuth: null }),
+			}),
+		);
+		expect(res.status).toBe(200);
+		const after = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config`, {
+				headers: { Authorization: `Bearer ${ctx.sessionToken}` },
+			}),
+		);
+		const cfg = (await after.json()) as Record<string, unknown>;
+		expect("defaultAuth" in cfg).toBe(false);
 	});
 
 	test("PATCH /projects/:id/config/repo rejects authGroups with 400", async () => {
@@ -572,7 +607,9 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 		expect(body.error).toContain("authGroups");
 	});
 
-	test("PATCH /projects/:id/config/repo rejects defaultAuth with 400", async () => {
+	// The SECOND door for the same rule — tested here beside the first so that
+	// "I closed the door" cannot quietly mean "I closed a door".
+	test("PATCH /projects/:id/config/repo ACCEPTS defaultAuth (same rule, second door)", async () => {
 		const res = await ctx.daemon.fetch(
 			new Request(`http://localhost/projects/${projectId}/config/repo`, {
 				method: "PATCH",
@@ -580,10 +617,10 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 					Authorization: `Bearer ${ctx.sessionToken}`,
 					"content-type": "application/json",
 				},
-				body: JSON.stringify({ defaultAuth: "evil" }),
+				body: JSON.stringify({ defaultAuth: "some-group" }),
 			}),
 		);
-		expect(res.status).toBe(400);
+		expect(res.status).toBe(200);
 	});
 
 	test("PATCH /projects/:id/config still accepts non-credential fields (regression guard)", async () => {
