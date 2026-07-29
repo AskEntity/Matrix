@@ -356,20 +356,42 @@ evening, 2026-07-29. A prompt line said *"check `get_tree` for closed tasks in t
 which is wrong because `get_tree` hides closed by default; fixing the line to say `search_tasks`
 was the whole fix. A proposal to ALSO make `get_tree` disclose what it filtered was framed as *"the
 half the prompt cannot reach"*, root recognised **N-of-M-doors**, and approved on the strength of
-the name. **But that rule is about one RULE enforced at several entrances, and nothing here was
-being enforced — a piece of ADVICE was being corrected, and advice exists only in the prompt. There
-was never a second door.** Cost: zero real defects fixed, plus a nearly-shipped break of
-`get_tree`'s external MCP contract (`availability: "both"`, so clients `JSON.parse`
-`content[0].text`, and the note was concatenated onto it) — a bug that existed *only* because of
-the scope expansion.
+the name. **But that rule is about one RULE enforced at several entrances, and nothing was being
+enforced here — the note fixed no defect of `get_tree`'s, so it was a patch applied at the wrong
+layer.** Cost: zero real defects fixed, plus a nearly-shipped break of `get_tree`'s external MCP
+contract (`availability: "both"`, so clients `JSON.parse` `content[0].text`, and the note was
+concatenated onto it) — a bug that existed *only* because of the scope expansion.
 
-**The discriminator was already in this file and went unused: a real blind instrument makes a CLAIM
-it does not honour.** `All checks passed.` claims every check and read 8%. `search` claimed the
-repo and could not see `.mxd/plugin/`. **`get_tree` claims nothing** — it returns a tree, and its
-own parameter description says closed are excluded by default, in the schema the caller is looking
-at. No claim, no lie, and therefore no empty-result-that-reads-as-an-answer. **Before filing
-something as a blind instrument, quote the assertion it fails to keep. If you cannot quote one, it
-is not this bug.**
+⚠️ **The first retraction reached for a stronger claim than it had, and that claim was FALSE:
+*"`get_tree` has no defect — it does exactly what it declares."*** It came from correctly
+establishing that `get_tree` is **not a blind instrument** and then silently upgrading that to *not
+a bad tool*. Those are different assertions and only the first was checked. **`get_tree` IS a poor
+tool, filed twice in April and still open** — and the answer was in the tree the whole time, which
+is why this ended up here instead of shipping:
+
+- **`01KN8CQRHE7CADWE8FJ0THN32Y`** (2026-04-03): it returns `tracker.allNodes()` to EVERY agent
+  regardless of position, so a deep worker gets 50+ nodes and thousands of tokens of other people's
+  domains. Proposal: subtree + ancestor chain by default.
+- **`01KNCQB6W2WWSRRB7VQ362PHFB`** (2026-04-04) lists *get_tree returns ALL nodes*, *hideCompleted
+  is binary show/hide*, and ***No search*** as bullets of ONE problem, and proposes `search_tasks`
+  in the same document. **So `search_tasks` shipping (2026-07-15) implemented one quarter of that
+  design; the other three quarters are exactly the `get_tree` complaints.** The index design
+  (`01KWCQEBAS6FG9ME4TNTZ88JV1`) separately names `get_tree{include_details:true}` as a
+  heavy-context path to deprecate.
+
+**So the lesson survives with a different diagnosis: the shape did not hold, but not because the
+tool was fine — because the tool's problem is not at that door.** It is not "one rule missing an
+entrance"; it is "this tool was largely superseded once search existed". Handler output disclosing a
+count fixes none of bluntness, whole-tree scope, or the binary filter.
+
+⭐ **"This is not a problem" is an assertion that needs evidence, and it is asked for evidence far
+less often than "this IS a problem".** A claim of a defect gets challenged, reproduced, measured; an
+all-clear closes the subject. Two of this file's most expensive entries are all-clears that nobody
+re-opened — *"all verified clean"* for 115 days, and every gate that printed a pass. **The
+discriminator for the narrow question is still good and still worth using: a real blind instrument
+makes a CLAIM it does not honour** (`All checks passed.` over 8% of lines; `search` over a repo it
+could not fully see), and `get_tree` asserts nothing, so it is not that bug. **Just do not let "not
+that bug" answer "not a bug".**
 
 ⚠️ **The test written to prove the feature worked was also the evidence it was broken.** It read
 `JSON.parse(text.slice(0, text.indexOf("\n\n[")))` — **a payload that needs string surgery before
@@ -384,7 +406,13 @@ test.**
 change was a SEPARATE commit from the prose, on the reasoning that the user might want only the
 prose — so undoing it was one `git revert` with no surgery and nothing else disturbed. And the
 question that killed it was the plainest one available, asked by the user: *"how did a system-prompt
-task get to needing a change in `get_tree`? It does exactly what it is meant to do."*
+task get to needing a change in `get_tree`?"*
+
+⚠️ **Third time in one evening that the answer was already in the tree and someone searched
+elsewhere first** — the other two being the `update_task` status question and this file's own
+history. **Both retractions above were avoidable by one `search_tasks("get_tree")`**, which is the
+tool the entire task was about adding pointers to. Reaching for the tree is not yet reflex even
+while writing the prompt that tells everyone to reach for it.
 
 ---
 # How This Project Fools Itself
