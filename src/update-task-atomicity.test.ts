@@ -105,11 +105,12 @@ describe("updateTaskOp applies every field or none", () => {
 	// for a different reason. It earns its place only as documentation of the
 	// reported symptom.
 	//
-	// The discriminating tests in this file are the ones about a field that
-	// used to be applied BEFORE the throw: `parentId` here, and `branch` at the
-	// REST door. If you are checking whether atomicity still holds, those are
-	// the ones that answer; if you mutate the code and only this one stays
-	// green, you have learned nothing.
+	// MEASURED, so nobody has to guess how much this test is worth: against the
+	// real pre-fix implementation it was GREEN, and against a mutation that
+	// moves the status check to the END of the function it goes red. So it
+	// catches "the check drifted downward" and is blind to the bug that was
+	// actually reported. The tests that catch BOTH are the ones about a field
+	// applied BEFORE the throw: `parentId` here, `branch` at the REST door.
 	//
 	// The task description asked for exactly this assertion. It is not enough,
 	// and the reason is the fixture-cannot-express-the-difference shape: a
