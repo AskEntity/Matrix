@@ -79,6 +79,15 @@ main...<branch>` line by line before merging. The observed failure always has on
 → `git log --stat` → merge → post-merge bugs that a manual smoke caught immediately. Watch for
 single-line catastrophes (`autoRegisterSelf: false` shipped exactly this way).
 
+⚠️ **The merge commit message is the ONLY durable link from a line of code back to the task that
+wrote it, and writing a good one destroys it.** Branches are `mxd/<taskId>/…`, so git's default
+*"Merge branch 'mxd/01K…'"* carries the id; passing `-m "<a sentence about what landed>"` replaces
+it, and `close_task` then deletes the branch, so nothing anywhere names the task again. **Measured
+2026-07-29: 102 of 1280 merge commits (8%) carry a taskId, and the ten most recent were all
+orphans** — the habit gets *worse* the more carefully you write. Put the id in the message as well
+as the prose. Until the backlog is unrecoverable-by-construction, "blame it to find the task" is an
+instruction that fails 92% of the time, so reach for `search_tasks` on the concept instead.
+
 **Creating tasks is cheap; executing is deliberate.** Draft while the user is still discussing;
 start when they say go.
 
