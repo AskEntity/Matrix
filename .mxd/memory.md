@@ -1872,6 +1872,53 @@ never mentioned the block, so it is evidence that an unexplained block does not 
 evidence about description-placed guidance. **Check that a conclusion's stated reason is the one
 actually carrying it, especially when you already agree with the conclusion.**
 
+### The same rule in the prompt, where the THIRD case lives
+
+⭐ **Both cases above presuppose a call HAPPENED** — the agent asked, or the payload landed. The
+third is the one the system prompt owns: **no call happens at all**, because the agent does not
+recognise that the question in its hand is one the code can never answer. There is no payload and no
+description in view at that moment, so the prompt is the only surface that exists, and the rule that
+sent guidance to the payload sends this to the prompt.
+
+⚠️ **The freeze argument applies to the prompt too and does NOT settle it.** `session_config`
+freezes the system prompt exactly as it freezes tool descriptions, so a prompt edit reaches a
+running agent only after a compaction. That prices **urgency, not medium**: handler output won
+above because that fix had to work *today*, whereas a standing disposition can wait one compaction
+— and a prompt line that is *wrong* is frozen too, which argues for landing the fix rather than
+deferring it.
+
+**A prompt line that names a tool inherits that tool's blind spots, and nothing ever goes red.**
+*"Check `get_tree` for closed/pending/draft tasks in the same area"* was written 2026-04-17 and was
+correct then; `search_tasks` did not exist until 2026-07-15. `get_tree` hides closed tasks by
+default and does not say how many it dropped, so an agent obeying that line reads an area full of
+finished work as empty. **Six prompt sites asserted that past work is wealth and the commit that
+introduced `search_tasks` wired ONE of them** — the N-of-M-doors rule in the medium where no
+compiler, test or gate can notice. When you add a capability, grep the PROSE that has been promising
+it.
+
+⭐ **The failure is classification, not compliance, and the hardest instance proves it: the
+misfiled question arrives DRESSED as a code question.** Asked where a known `update_task` defect
+stood, root's first move was to grep `updateTaskOp` — while the task existed, was `pending`, and
+had been created **by root itself 21 hours earlier**, twenty minutes after root had discussed this
+exact failure and opened a task about it. **Reminders were present in triplicate and it still
+happened**, so "remind harder" is refuted; what was missing was a way to tell the classes apart.
+The tell that does it: **source cannot distinguish a defect that is known, filed and half-designed
+from one nobody has ever noticed — byte-identical on disk.** Same for a constraint that still
+binds versus one that expired. And the grep was pure loss rather than a partial win: it returned
+field order, which the task already contained alongside the incident, the reachable-worse
+combination, two design routes and the acceptance criteria — root had to read the task regardless.
+
+⚠️ **MEASURED 2026-07-29: 102 of 1280 merge commits name a task. Git's gift is the TIME COORDINATE,
+not the id.** The code→task link rides on the merge subject carrying the branch name
+(`mxd/<taskId>/<slug>`), and `git merge -m "<a good sentence>"` overwrites exactly that — **the
+better the merge message reads, the more reliably the link is gone.** So "blame it and you'll find
+the task" is decoration 92% of the time. What works 100% of the time, and was used twice that night:
+`git log -S'<phrase>'` for **when a line arrived** (`git blame` answers who touched it last, often
+cosmetically), then carry that timestamp to the tree and ask what was running then. In one of those
+two, the commit's own subject named only the other half of its change, so the message actively
+misled and the **timestamp** was what recovered it. The prompt states it in that order, and §4 now
+also says to stop severing the link going forward.
+
 ## Every hit says what it IS before its body is read
 
 *Retrieval that nobody acts on* made the blocks say what to DO with a hit. This one makes each hit
