@@ -1,11 +1,21 @@
 /**
  * E2E tests: real agent execution through the daemon API.
  *
- * Run with:
- *   source .env && export CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_MODEL
- *   bun test src/e2e.test.ts
+ * Run with EITHER credential — whichever you have:
+ *   ANTHROPIC_API_KEY=sk-… bun test src/e2e.test.ts
+ *   CLAUDE_CODE_OAUTH_TOKEN=… bun test src/e2e.test.ts
  *
- * Skipped by default (requires auth token).
+ * The model is a literal below, not an env read — no variable chooses it.
+ *
+ * Skipped by default. This entry point is the ONLY place here that reads the
+ * environment: it opens the gate and hands the credential and model to the
+ * constructor explicitly. The provider itself reads no environment variable, so
+ * exporting one it used to consume cannot change which model or key is used.
+ *
+ * ⚠️ The gate keyed on ANTHROPIC_API_KEY while the instructions above said to
+ * export CLAUDE_CODE_OAUTH_TOKEN — written four hours apart on 2026-03-08 — so
+ * anyone following them got the whole suite skipped, silently, for 4.7 months.
+ * Gate and credential resolution must name the same variables or this recurs.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
@@ -15,7 +25,16 @@ import { join } from "node:path";
 import { AnthropicCompatibleProvider } from "./anthropic-compatible-provider.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 
-const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
+/**
+ * The suite's credential, read once here. Either form works — the provider
+ * accepts both slots and picks OAuth when only the token is present, so the gate
+ * has to admit both or it refuses a setup the provider would have served.
+ */
+const E2E_API_KEY = process.env.ANTHROPIC_API_KEY;
+const E2E_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+const hasCredential = Boolean(E2E_API_KEY || E2E_OAUTH_TOKEN);
+/** Explicit: nothing infers this from the environment or from a constant. */
+const E2E_MODEL = "claude-sonnet-4-6";
 
 /** Poll until agent finishes for a project. Returns when no agent is running. */
 async function waitForAgent(
@@ -33,7 +52,7 @@ async function waitForAgent(
 	throw new Error(`Agent did not finish within ${timeoutMs}ms`);
 }
 
-describe.skipIf(!hasApiKey)("E2E: AnthropicCompatibleProvider", () => {
+describe.skipIf(!hasCredential)("E2E: AnthropicCompatibleProvider", () => {
 	let tempDir: string;
 	let dataDir: string;
 	let app: ReturnType<typeof createApp>["app"];
@@ -43,7 +62,13 @@ describe.skipIf(!hasApiKey)("E2E: AnthropicCompatibleProvider", () => {
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-e2e-direct-data-"));
 		const result = createApp({
 			dataDir,
-			agentProvider: new AnthropicCompatibleProvider(),
+			// Both are passed explicitly; the gate above is what guarantees one of
+			// them is present. Each slot is omitted when empty rather than passed as
+			// undefined, because the provider picks OAuth on `oauthToken && !apiKey`.
+			agentProvider: new AnthropicCompatibleProvider(E2E_MODEL, {
+				...(E2E_API_KEY ? { apiKey: E2E_API_KEY } : {}),
+				...(E2E_OAUTH_TOKEN ? { oauthToken: E2E_OAUTH_TOKEN } : {}),
+			}),
 		});
 		app = result.app;
 	});

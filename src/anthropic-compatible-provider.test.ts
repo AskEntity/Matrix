@@ -3515,11 +3515,9 @@ describe("Event deterministic verification", () => {
 	function createMockedProvider(
 		streamFn: (params: unknown) => ReturnType<typeof createMockStream>,
 	) {
-		// Set env so constructor doesn't warn
-		const savedKey = process.env.ANTHROPIC_API_KEY;
-		process.env.ANTHROPIC_API_KEY = "test-key";
-		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6");
-		process.env.ANTHROPIC_API_KEY = savedKey;
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+			apiKey: "test-key",
+		});
 
 		// Replace the client's messages.stream with our mock
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
@@ -4416,10 +4414,9 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 	function createProvider(
 		streamFn: (params: unknown) => ReturnType<typeof createMockStream>,
 	) {
-		const savedKey = process.env.ANTHROPIC_API_KEY;
-		process.env.ANTHROPIC_API_KEY = "test-key";
-		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6");
-		process.env.ANTHROPIC_API_KEY = savedKey;
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+			apiKey: "test-key",
+		});
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
 		(provider as any).client = {
 			messages: {
@@ -5064,13 +5061,10 @@ describe("adaptive thinking display", () => {
 			stopReason: "end_turn",
 		});
 
-		const savedKey = process.env.ANTHROPIC_API_KEY;
-		process.env.ANTHROPIC_API_KEY = "test-key";
 		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
 			apiKey: "test-key",
 			...(thinkingEffort !== undefined ? { thinkingEffort } : {}),
 		});
-		process.env.ANTHROPIC_API_KEY = savedKey;
 
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
 		(provider as any).client = {
@@ -5140,10 +5134,9 @@ describe("Abort signal stops inner retry immediately", () => {
 	});
 
 	function createProviderWithStreamFn(streamFn: (params: unknown) => unknown) {
-		const savedKey = process.env.ANTHROPIC_API_KEY;
-		process.env.ANTHROPIC_API_KEY = "test-key";
-		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6");
-		process.env.ANTHROPIC_API_KEY = savedKey;
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+			apiKey: "test-key",
+		});
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
 		(provider as any).client = {
 			messages: {

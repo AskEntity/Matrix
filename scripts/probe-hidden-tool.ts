@@ -366,9 +366,14 @@ async function main(): Promise<void> {
 	console.log(`provider: ${which}`);
 
 	if (group.provider === "anthropic") {
-		const model = process.argv[3] ?? cfg.model ?? "claude-opus-5";
-		const oauthToken = group.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN;
-		const apiKey = group.apiKey ?? process.env.ANTHROPIC_API_KEY;
+		// `||` not `??`: a fresh config carries model "" (no default model exists
+		// any more), and an empty model name would reach the API as an empty model
+		// name. Credentials come from the auth group ONLY — an env fallback here
+		// would let the probe authenticate on a machine where matrix itself cannot,
+		// which is the blind-instrument failure this repo keeps paying for.
+		const model = process.argv[3] || cfg.model || "claude-opus-5";
+		const oauthToken = group.oauthToken;
+		const apiKey = group.apiKey;
 		const useOAuth = Boolean(oauthToken && !apiKey);
 		// Beta headers copied from src/llm.ts's createAnthropicClient — the
 		// OAuth header must ride in defaultHeaders or OAuth mode breaks.
@@ -407,10 +412,8 @@ async function main(): Promise<void> {
 	}
 
 	const model = process.argv[3] ?? "gpt-5.1-codex";
-	const baseUrl =
-		group.baseUrl ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
-	const token =
-		group.apiKey ?? group.accessToken ?? process.env.OPENAI_API_KEY ?? "";
+	const baseUrl = group.baseUrl ?? "https://api.openai.com/v1";
+	const token = group.apiKey ?? group.accessToken ?? "";
 	if (!token) {
 		console.error("openai auth group has no apiKey/accessToken.");
 		process.exit(1);

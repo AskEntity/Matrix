@@ -1924,8 +1924,8 @@ export function createMockedProviderWithMock(
 		// biome-ignore lint/suspicious/noExplicitAny: dynamic import for test isolation
 		require("../anthropic-compatible-provider.ts") as any;
 
-	const savedKey = process.env.ANTHROPIC_API_KEY;
-	process.env.ANTHROPIC_API_KEY = "test-key";
+	// No env save/restore: `apiKey` below is what the provider uses, and it has
+	// stopped consulting the environment at all, so there is nothing to shadow.
 	const provider = new AnthropicCompatibleProvider(
 		model ?? "claude-sonnet-4-6",
 		{
@@ -1933,7 +1933,6 @@ export function createMockedProviderWithMock(
 			...(opts?.systemPreamble ? { systemPreamble: opts.systemPreamble } : {}),
 		},
 	);
-	process.env.ANTHROPIC_API_KEY = savedKey;
 
 	// Replace the client's messages.stream with our mock.
 	// The provider sets mockClient._currentSessionId before each stream call

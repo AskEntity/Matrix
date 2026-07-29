@@ -64,8 +64,6 @@ export type ProjectConfig = Partial<
 	Omit<MatrixConfig, (typeof GLOBAL_ONLY_FIELDS)[number]>
 >;
 
-export const DEFAULT_MODEL = "claude-sonnet-4-6";
-
 /**
  * Default values for all MatrixConfig fields.
  *
@@ -78,7 +76,7 @@ export const DEFAULT_MODEL = "claude-sonnet-4-6";
 export const DEFAULT_CONFIG: MatrixConfig = Object.freeze({
 	authGroups: Object.freeze({}),
 	defaultAuth: "",
-	model: DEFAULT_MODEL,
+	model: "",
 
 	budgetUsd: -1,
 	mcpServers: Object.freeze({}),

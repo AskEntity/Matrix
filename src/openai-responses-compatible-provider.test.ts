@@ -113,34 +113,46 @@ function mockFunctionCall(opts: {
 }
 
 describe("OpenAIResponsesCompatibleProvider constructor", () => {
-	const originalKey = process.env.OPENAI_API_KEY;
-
-	afterAll(() => {
-		if (originalKey) {
-			process.env.OPENAI_API_KEY = originalKey;
-		} else {
-			delete process.env.OPENAI_API_KEY;
-		}
-	});
-
+	// No env save/restore here: the constructor reads no environment variable, so
+	// what the shell happens to hold cannot reach it. An empty opts IS "no
+	// credential configured" — the state the warning is about.
 	test("warns when no credential is configured", () => {
-		const saved = process.env.OPENAI_API_KEY;
-		delete process.env.OPENAI_API_KEY;
 		const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
 		try {
-			expect(() => new OpenAIResponsesCompatibleProvider()).not.toThrow();
+			expect(
+				() => new OpenAIResponsesCompatibleProvider("gpt-4.1-mini", {}),
+			).not.toThrow();
 			expect(warnSpy).toHaveBeenCalledWith(
 				expect.stringContaining("no OpenAI credential configured"),
 			);
 		} finally {
-			process.env.OPENAI_API_KEY = saved;
+			warnSpy.mockRestore();
+		}
+	});
+
+	// Inverted guard for a DELETED feature, not a re-aimed test of a deleted
+	// mechanism: the producer it consumes still exists (a shell really can hold
+	// OPENAI_API_KEY), so this reddens the moment the fallback comes back —
+	// verified by mutation. Nothing else in the suite pins it: the env fallback
+	// itself never had a test, so its absence would not have had one either.
+	test("a populated OPENAI_API_KEY in the environment is NOT picked up", () => {
+		const saved = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "sk-env-should-be-ignored";
+		const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			new OpenAIResponsesCompatibleProvider("gpt-4.1-mini", {});
+			// Reached the "no credential" branch => the env value never landed.
+			expect(warnSpy).toHaveBeenCalledWith(
+				expect.stringContaining("no OpenAI credential configured"),
+			);
+		} finally {
+			if (saved === undefined) delete process.env.OPENAI_API_KEY;
+			else process.env.OPENAI_API_KEY = saved;
 			warnSpy.mockRestore();
 		}
 	});
 
 	test("accepts access token via constructor apiKey slot", () => {
-		const saved = process.env.OPENAI_API_KEY;
-		delete process.env.OPENAI_API_KEY;
 		const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
 		try {
 			expect(
@@ -151,7 +163,6 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 			).not.toThrow();
 			expect(warnSpy).not.toHaveBeenCalled();
 		} finally {
-			process.env.OPENAI_API_KEY = saved;
 			warnSpy.mockRestore();
 		}
 	});
