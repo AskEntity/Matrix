@@ -99,6 +99,10 @@ type ToolErrorResult = {
  * For folders, permission resolves to the nearest task ancestor — folders
  * have no ownership of their own, they inherit from the enclosing task.
  *
+ * `hint` is appended to the refusal when the caller is only PARTLY gated, so
+ * the reader is not left to infer that everything about the node is off
+ * limits. Only `update_task` needs it today.
+ *
  * Returns a tool error result on denial, or `null` to proceed.
  */
 function requireSubtreePermission(
@@ -106,6 +110,7 @@ function requireSubtreePermission(
 	projectId: string,
 	nodeId: string,
 	opName: string,
+	hint?: string,
 ): ToolErrorResult | null {
 	const tracker = R.getTracker(projectId);
 	if (!tracker) return null; // downstream handler will report "Project not found"
@@ -124,7 +129,9 @@ function requireSubtreePermission(
 			content: [
 				{
 					type: "text",
-					text: `${opName}: ${nodeId} is not your task or descendant`,
+					text:
+						`${opName}: ${nodeId} is not your task or descendant` +
+						(hint ? `. ${hint}` : ""),
 				},
 			],
 			isError: true,
@@ -132,6 +139,23 @@ function requireSubtreePermission(
 	}
 	return null;
 }
+
+/**
+ * The `update_task` fields an agent may set on ANY node, its own or not.
+ *
+ * Everything NOT listed here is gated on subtree permission — see the
+ * argument at the gate itself. `projectId`/`taskId` are routing rather than
+ * content, so they never gate anything on their own.
+ */
+const UNGATED_UPDATE_FIELDS = new Set([
+	"projectId",
+	"taskId",
+	"title",
+	"description",
+	"old_description",
+	"new_description",
+	"color",
+]);
 
 /** Get project path for a task (worktree path or repo root). */
 function getProjectPath(projectId: string, taskId: string | null): string {
@@ -687,6 +711,10 @@ export function buildAllToolDefs() {
 			description:
 				"Update a task node. All fields except taskId are optional — " +
 				"provide only the fields you want to change.\n\n" +
+				"**Scope**: `title`, `description` and `color` can be set on ANY task, " +
+				"anywhere in the tree — correcting a task you filed elsewhere is the same " +
+				"act as filing it. `status`, `draft` and `parentId` need the target to be " +
+				"you or your descendant.\n\n" +
 				"**Editing the description field**: treat it like a file. " +
 				"Use `description` for a full rewrite (replaces the ENTIRE field). " +
 				"Use `old_description` + `new_description` for surgical edits — " +
@@ -777,17 +805,55 @@ export function buildAllToolDefs() {
 							isError: true,
 						};
 
-					// Gate EVERY update_task against subtree permission (not just
-					// reparent). status/description/color/title edits on a sibling
-					// or parent are still destructive (e.g. status=closed triggers
-					// worktree+JSONL cleanup). Agents may still update themselves.
-					const permError = requireSubtreePermission(
-						auth,
-						args.projectId as string,
-						args.taskId as string,
-						"Cannot update_task",
-					);
-					if (permError) return permError;
+					// What is defended here is STRUCTURE and LIFECYCLE, not the node.
+					//
+					// `parentId` restructures a tree the agent does not own.
+					// `status`/`draft` move a node through a lifecycle someone else
+					// is running — flipping a sibling to `verify` puts work in their
+					// merge queue that they did not finish, and `draft: false` makes
+					// a foreign draft startable. Those keep the check.
+					//
+					// `title`/`description`/`color` do not. `create_task` already
+					// lets an agent author that exact prose at that exact tree
+					// position; gating the FIX while allowing the WRITE does not
+					// prevent a bad edit, it converts a good one into someone else's
+					// chore. Twice observed: an agent that filed a draft outside its
+					// subtree and then could not append the provenance that turned
+					// it from "a new rule" into "restore a shipped invariant", and
+					// one that typo'd a `color` argument into the description TEXT
+					// of a task it had created two minutes earlier and could not
+					// take it back out. Editing a description is recording intent —
+					// the same act as create_task, later in time.
+					//
+					// The blanket gate this replaces named exactly one instance,
+					// `status="closed"` triggering worktree+JSONL cleanup, and that
+					// instance is unreachable from here: updateTaskOp refuses
+					// "closed" and "failed" outright, and close_task has its own
+					// subtree check.
+					//
+					// ⚠️ Written as a SUBTRACT-list on purpose. The rule is "these
+					// named fields record intent; everything else exercises
+					// authority", so a param added to this tool later is gated by
+					// default and someone hits the refusal and widens the set
+					// deliberately. Listing the GATED fields instead states today's
+					// complement, and the next field silently lands on the free
+					// side with nothing going red.
+					const gated = Object.entries(args)
+						.filter(
+							([k, v]) => v !== undefined && !UNGATED_UPDATE_FIELDS.has(k),
+						)
+						.map(([k]) => k);
+					if (gated.length > 0) {
+						const permError = requireSubtreePermission(
+							auth,
+							args.projectId as string,
+							args.taskId as string,
+							`Cannot update_task ${gated.join("/")}`,
+							"Its title, description and color are editable from anywhere — " +
+								"only status, draft and parentId need authority over the node.",
+						);
+						if (permError) return permError;
+					}
 
 					// Reparent also requires permission on the NEW parent.
 					if (args.parentId !== undefined) {
