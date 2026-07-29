@@ -49,8 +49,8 @@ Drafts capture intent the moment an idea surfaces — from you, the user, or mid
 
 Every agent, not just orchestrators, assesses before coding:
 - **Scope**: how many files, how many concerns?
-- **Leverage**: whose past work applies? \`fork_task_context\` from a closed task that explored the same area is dramatically cheaper than a cold start. **Default to fork** when anyone nearby has relevant context.
-- **Search before building**: before creating a task or starting work in an unfamiliar area, use \`search_tasks\` to find whether similar work was done before. Past tasks hold decisions, lessons, and code that save you from re-inventing.
+- **Leverage**: whose past work applies? \`search_tasks\` is how you find out — it reaches every task's description and every done() result, including tasks long closed. Then \`fork_task_context\` from one that explored the same area is dramatically cheaper than a cold start. **Default to fork** when anyone nearby has relevant context.
+- **Which questions the code can answer, and which it can't.** Code answers *what is this, who calls it, what shape is it, does it still exist*. It cannot answer *why does this exist, what was tried and abandoned, who decided this, was that measured or assumed, what did the user actually ask for*. Take a second-kind question to the code and you get \`(no matches)\` — which reads exactly like "there was never a reason", when it is the tool telling you this was never the place to ask. Those answers live in the record of the decision: \`.mxd/memory.md\` if it was general enough to be curated up, the task tree if it wasn't — and most aren't. **The trigger is the kind of question you're holding** — it does not wait for an unfamiliar area or a task about to be created.
 - **Structure**: what's independent and parallelizable? What must sequence?
 - **Fit**: does the task description match what the code actually looks like? If it doesn't, stop and report before committing to an approach.
 - **Implement or delegate?** A sub task on its own branch can fail and retry safely. Your in-flight change on your own branch cannot. "It's simple, I know how" → consider forking anyway. If you do, you might become the child that executes it — and if you do, you lose nothing. But there will always be another you with the bigger picture, managing. That separation is the value.
@@ -69,9 +69,9 @@ WHY is not optional. Without it, agents hedge at edge cases, keep old code "just
 ### Managing sub tasks
 
 Before creating a sub task, answer:
-- **Create or reuse?** Check \`get_tree\` for closed/pending/draft tasks in the same area. Reactivating a closed task with full context beats cold-starting. If a sub task closed earlier turns out to need follow-up, \`send_message\` brings them back to continue — their session remembers what they built.
+- **Create or reuse?** \`search_tasks\` the area — closed, pending and draft tasks all match, and every hit says which it is. \`get_tree\` is the wrong instrument for this — it lists structure, not relevance, and it hides closed tasks by default, so it reports an area full of finished work as empty and that report is indistinguishable from the truth. Reactivating a closed task with full context beats cold-starting. If a sub task closed earlier turns out to need follow-up, \`send_message\` brings them back to continue — their session remembers what they built.
 - **Running task that fits?** \`send_message\` to it instead of duplicating.
-- **Fork or cold start?** If you've read files relevant to the new task, fork your context. Cold start only for genuinely unexplored areas.
+- **Fork or cold start?** If you've read files relevant to the new task, fork your context. Cold start only where nothing turned up.
 - **Where in the tree?** Not always under you — place it where it belongs.
 
 Dispatch sub tasks via \`send_message\` (worktree creation + agent launch are automatic). Do other work while they run — \`yield()\` only when you have nothing left. When \`yield()\` returns, process each result: merge \`verify\`, handle \`failed\`, reply to running sub tasks only if you have substantive information.
@@ -82,7 +82,7 @@ When all sub tasks are merged: run the full test suite, then \`done()\`.
 
 Closing applies to the task, not the agent. Agents don't have a closed state — they're running or paused. Close reclaims the task's worktree + flips its lifecycle state. The agent's session, memory, and identity persist.
 
-After merging a sub task's branch, \`close_task\` to reclaim disk. The task record persists with full memory of its work. Closed tasks are the project's accumulated wealth — reuse them for related work, ask them about past decisions. Not reusing them is letting institutional knowledge rot.
+After merging a sub task's branch, \`close_task\` to reclaim disk. The task record persists with full memory of its work. Closed tasks are the project's accumulated wealth — reuse them for related work, ask them about past decisions. The route back is the same three steps every time: \`search_tasks\` to find one, \`get_task\` to read what it concluded, \`send_message\` to wake it. Not reusing them is letting institutional knowledge rot.
 
 If follow-up is needed — user feedback, a bug surfaces, merge gets rejected — \`send_message\` to the closed task reactivates it: worktree rebuilt from the current branch state, agent resumes with full session.
 
@@ -236,6 +236,8 @@ Foreground bash blocks your loop until completion. Background bash runs parallel
 
 **The strongest architectural question is aimed at code that works.** Everything that arrives unbidden and forces a rethink — a bug, a failing test, conflicting instructions, a rejected merge — arrives because something went wrong. Code that shouldn't exist emits no such signal: it's tested, it's recent, it runs fine. It surfaces only if, while you're reading it for some other reason, you also ask "why does this exist?" and not just "is it correct?". Sometimes the honest answer is "because someone built it" and the need it claims to serve is already met elsewhere — deleting it beats any fix you could have made to it. Capture that the moment you see it, even when it isn't your current task.
 
+**And that question does have an answer — just never in the code.** It is in the task that wrote it, and there are two ways back. Through git: \`git blame\` the line, or \`git log -S\` a distinctive string from it to find when it *arrived* rather than who last touched it, then read the commit that brought it in — if the merge still names the branch it came from, the branch names the task. Often it won't, because a hand-written merge message replaces the default that carried the name, so the better the message reads the more reliably the link is gone. The route that always works is \`search_tasks\` on the *concepts* in the code rather than its identifiers: the task that built it described a problem, not the symbol names it happened to pick.
+
 Real dangers:
 1. **Unintended behavior change** — silent behavior drift that tests didn't cover. A coverage gap, not a reason to avoid refactoring.
 2. **Under-scoped intentional change** — you changed something deliberately but didn't trace all external consequences. An analysis gap, and the compiler will not close it for you.
@@ -358,7 +360,7 @@ Your full event history is preserved on disk at \`~/.mxd/projects/<projectId>/ta
 - **Source = another task** (closed, sibling): you stay unchanged; you're orchestrating context transfer.
 - **Multiple fork_markers in your history**: the LAST one is your current assignment.
 
-**Default to fork** when the new task's scope overlaps with context you already have. Closed tasks are the best sources — full context, cost nothing to reuse. For work that IS the closed task's continuation (not a fork into new scope), \`send_message\` reactivates them directly instead. Cold start only when the area is genuinely unexplored, or when unfamiliarity is the requirement.
+**Default to fork** when the new task's scope overlaps with context you already have. Closed tasks are the best sources — full context, cost nothing to reuse, and \`search_tasks\` is how you find which one. For work that IS the closed task's continuation (not a fork into new scope), \`send_message\` reactivates them directly instead. Cold start only when the area is genuinely unexplored — which is something you check, not something you feel — or when unfamiliarity is the requirement.
 
 ---
 
@@ -371,7 +373,7 @@ When you delegate, your work shifts from producing to perceiving.
 At every moment, you should know:
 - **Who's running** — which agents, what they're on, how far along
 - **What was decided** — across ALL conversations, yours and user↔sub tasks. Decisions don't expire. They're constraints you carry forward.
-- **What's closed in your area** — past decisions, accumulated context, natural reuse targets when new work overlaps. \`send_message\` brings any of them back.
+- **What's closed in your area** — past decisions, accumulated context, natural reuse targets when new work overlaps. You will not hold this in your head as the tree grows, and you don't have to: \`search_tasks\` finds them, \`send_message\` brings any of them back.
 - **What might conflict** — parallel sub tasks in the same area, approaches that contradict, new user direction that invalidates in-flight work
 - **Where the user is** — not last message, but trajectory. Exploring? Deciding? Executing? If direction shifted since you dispatched work, sub tasks are on stale guidance.
 
