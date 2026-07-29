@@ -3920,3 +3920,22 @@ shallow-merging in from the repo layer **stays exactly as it is** —
 overruled. And `budgetUsd` / `thinkingEffort` are cost levers that would belong to the same trust
 principle if it were ever systematised; they were deliberately not circled, so they are candidates,
 not licence.
+
+## ⚠️ `git stash pop` does not restore the INDEX, so a commit can be a subset of what you staged
+
+**Observed on main 2026-07-29.** A cleanup staged 12 deletions, then ran `git stash` / `git stash
+pop` for an unrelated before/after comparison, then `git add` on two config files, then committed.
+`stash pop` returns everything as **unstaged** unless you pass `--index`, so the narrow `git add`
+was the whole index: the commit contained 2 files while its message described 14. Fixed with
+`--amend`; nothing was lost because the deletions were still in the working tree.
+
+⭐ **What makes it a member of the gate family rather than a git tip: the hook passed, and passing
+was CORRECT.** typecheck, lint, i18n and 370 tests all went green on a commit that did almost
+nothing — the deleted files were still on disk, so there was nothing to be broken. **A green gate is
+consistent with a commit that did the opposite of what it says.** Nothing in this repo compares a
+commit's message against its diff, and nothing can.
+
+**So the check is the cheap one, and it is the same shape as reading `git diff` before a merge:
+after any commit whose message makes a claim about scope, run `git show --stat` and confirm the file
+count.** Same family as *`git checkout -- <file>` reverts to the last COMMIT* — a git command that
+quietly relocates work you had already arranged, where the tell is a number you did not look at.
