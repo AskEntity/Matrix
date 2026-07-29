@@ -1,8 +1,0 @@
-{
-	"name": "retrieval-exp",
-	"private": true,
-	"description": "Retrieval experiment harness for the memory-index design (embedding/FTS recall measurements on the real task corpus). Not part of the product build.",
-	"dependencies": {
-		"@huggingface/transformers": "^3.0.0"
-	}
-}
