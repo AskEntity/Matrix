@@ -1119,6 +1119,16 @@ list; `mcp__brave-search__brave_web_search` works, called by name. **"It is not 
 evidence that it does not exist.** (Gotcha: an unlisted tool has unconstrained argument types, so a
 numeric `count` arrives as a string and fails validation — pass the required argument alone.)
 
+⚠️ **Third member, and the one that bites hardest in THIS repo: `--include='*.ts' --include='*.sh'`
+silently excludes every git hook, because a hook has NO FILE EXTENSION.** Caught during the
+`matrix.taskId` → `mxd.taskId` rename: the extension-scoped grep reported a complete rename while
+`.hooks/worktree/prepare-commit-msg` — **the file holding the READ** — still looked for the old key,
+which would have left the mechanism silently doing nothing with every writer updated. Same family as
+the two above: the filter is invisible in the output, and the answer looks complete. **Re-verify any
+rename with one whole-tree grep carrying no `--include` at all.** The extensionless set here is
+small and load-bearing: `.hooks/pre-commit`, `.hooks/worktree/prepare-commit-msg`, and anything
+`core.hooksPath` ever points at.
+
 ## ⚠️ "Never offer a remedy that will not work" costs MORE in a tool error than in a UI
 
 The rule is already written down for greyed buttons under *Blocked buttons are greyed and explained,
@@ -1671,6 +1681,20 @@ pollute history. The plugin namespace exists so a second plugin's data parks bes
 than colliding at the top level, which completes the "matrix is just a plugin" framing. Config
 merges in three layers: global < repo < local.
 
+⚠️ **`resolveConfig(base, ...overlays)` takes GLOBAL as the base at all three production sites, and
+`""` is an overriding value** (the test is `value !== undefined`). So the reachable direction is a
+repo or local `"model": ""` **erasing a real global model** — desirable for a project pinned to a
+single-model endpoint, a silent downgrade when it is a typo. The reverse is structurally impossible:
+a global `""` is the thing being overridden and can never climb.
+
+⭐ **Root asserted that backwards TWICE in one evening, and the mechanism of the error is the entry,
+because the line above already said `global < repo < local` and was read past both times.** The
+false claim came wrapped in a *correctly recalled* mechanism — `value !== undefined` is exactly
+right — and **naming a real mechanism precisely is what makes a wrong direction look checked**; it
+was even carrying the instruction *"test it, don't assume"*, which the child obeyed and thereby
+refuted the sentence it was attached to. More information was not the missing thing. **The detector
+is one read: for any "A overrides B" claim, name which of them is the function's FIRST argument.**
+
 **`src/data-paths.ts` is the ONE place that resolves a path from `dataRoot`.** Never apply a string
 operation to a `dataRoot` anywhere else — **any** spelling, not just `.slice(2)`; a grep test walks
 the whole repo and fails if a second site appears, with one named allowlist entry. Three lines of
@@ -2048,9 +2072,9 @@ landed>"` replaces exactly that line, after which `close_task` deletes the branc
 names the task again. **The habit gets worse the more carefully you write.**
 
 **DECIDED 2026-07-29 (user): preserving it going forward is a MECHANISM, not an instruction —
-DECIDED, NOT IMPLEMENTED (draft `01KYQMNB0DPAZ3XJGATTW2NQAP`, zero lines written).** Shape agreed
-with the user: install a `prepare-commit-msg` hook when the worktree is created, emitting a
-`Task-Id:` trailer; measured to survive `-m`, and readable with `git log
+SHIPPED the same day (`01KYQMNB0DPAZ3XJGATTW2NQAP`; see *The code→task link is a trailer on every
+commit*).** A `prepare-commit-msg` hook wired when the worktree is created emits a `Task-Id:`
+trailer; measured to survive `-m`, and readable with `git log
 --format='%(trailers:key=Task-Id,valueonly)'`. **An earlier attempt to do this as a prompt bullet
 was written and deleted: the measurement above is precisely the evidence that agents do not
 remember, so using it to justify "remember to do it manually" runs the evidence backwards.**
@@ -3245,14 +3269,21 @@ Answer this before assuming a green result means anything.
 | direct `git commit` on main (memory curation, conflict resolution) | `pre-commit` | ✅ yes |
 | `git merge --no-ff <branch>` with a clean auto-commit | `pre-merge-commit` | ❌ **no — that file does not exist** |
 | a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | ✅ yes |
-| any commit inside a sub-task worktree | none (`core.hooksPath=/dev/null`) | ❌ no, by design |
+| any commit inside a sub-task worktree | `prepare-commit-msg` only (see below) | ❌ no GATE, by design |
 
 ⚠️ **The clean merge — root's dominant path — is NOT gated, while the conflicting merge IS.** That
 is backwards from intuition, and it is why "the hook passed" says very little about an integration.
 Deliberately not fixed by adding `pre-merge-commit`: the branch model REQUIRES that intermediate
 merges be allowed to not typecheck, and gating every merge would re-establish the routine
-`--no-verify` habit that hid 24 errors before. Worktrees skip the hook on purpose — sub-tasks commit
+`--no-verify` habit that hid 24 errors before. Worktrees skip the gate on purpose — sub-tasks commit
 constantly. To check the gate from a worktree, run `bash /path/to/main/.hooks/pre-commit` by hand.
+
+⚠️ **A worktree's `core.hooksPath` is a real directory, and reading it is how you conclude the
+opposite of the truth.** It points at `<wt>/.hooks/worktree`, which contains `prepare-commit-msg`
+and NOTHING else — provenance, not gating. It was `/dev/null` until the trailer mechanism landed,
+so the old *"hooks are disabled in worktrees"* shorthand now reads as false while the gating answer
+it was standing in for is unchanged. **`git config core.hooksPath` answers "is a hook wired", never
+"is a gate wired" — list the directory.**
 
 **`core.hooksPath` is LOCAL config and is not tracked, so a fresh clone is ungated again and looks
 identical to a gated one.**
@@ -3568,3 +3599,65 @@ strings did NOT move the i18n baseline (still `26 known, 0 new`).** That is the 
 gap doing exactly what it says — a single lowercase word with no space is structurally invisible
 to the gate — so **the baseline is not holed by this commit**; two real bare strings simply left
 the repo without ever having been counted.
+
+## The code→task link is a trailer on every commit, wired by three files no compiler joins
+
+**WHY, in the user's words: *"所有的 commit 都有信息"* — every commit carries its own
+provenance.** The old link was structurally MISALIGNED, not merely thin: the id rode on git's
+default `Merge branch 'mxd/<taskId>/…'`, and **`git blame` never lands on a merge**, because a
+clean merge carries no changes. So even a surviving id named a commit nobody was holding.
+Measured here: 3755 commits, 1285 merges, **2470 non-merges, which are the ones blame hands
+you**; of the merges only 102 still named a task, because `git merge -m "<a good sentence>"`
+overwrites exactly that line. Two stacked problems, and the 8% is the smaller one. **A trailer
+on every commit made inside the worktree dissolves both**: no merge message has to be written
+any particular way, and the commit blame gives you carries both its own id and its own message
+— the closest explanation of that line that exists.
+
+**The migration constraint stated where this was first decided is unchanged and is the half to
+keep reading**: the 1280 historical commits will never have a trailer, so nothing may present a
+missing trailer as "no provenance".
+
+| file | its part of the mechanism |
+|---|---|
+| `src/worktree-manager.ts` | `git config --worktree mxd.taskId <id>` at creation |
+| `.mxd/hooks/setup_worktree.sh` | points `core.hooksPath` at `.hooks/worktree` |
+| `.hooks/worktree/prepare-commit-msg` | reads that config, appends the trailer |
+
+⚠️ **`.hooks/worktree` holds `prepare-commit-msg` and nothing else, and aiming it at `.hooks`
+instead is the tempting near-miss**: that directory holds `pre-commit` (typecheck + a test
+subset), which worktrees skip deliberately because agents commit constantly. Recording
+provenance and gating a commit are separate decisions — whether the gate comes back is
+`01KNJ7PT19V1HE1ZRT5KW8X043`'s question, not this one's.
+
+⚠️ **CORRECTION to *What is actually gated*: its sub-task-worktree row now reads wrong.**
+`core.hooksPath` in a worktree is `<wt>/.hooks/worktree`, not `/dev/null` — and the gating
+answer is still **no**, because that directory contains no gate. Someone who checks the config
+and stops there concludes the opposite.
+
+**Two ways the next person falls, both measured rather than reasoned:**
+
+- ⚠️ **`MERGE_MSG` arrives with NO trailing newline; `COMMIT_EDITMSG` does.** Hand the former
+  to `git interpret-trailers --in-place` and the trailer is joined to the subject by a single
+  newline, after which **git's own parser no longer sees a trailer**:
+  `%(trailers:key=Task-Id,valueonly)` comes back empty while the text sits plainly in `%B`.
+  Every merge made inside a worktree lands there. Append a newline first. **This is why an
+  assertion about a trailer must go through `%(trailers:…)` and never through a substring of
+  the message.**
+- ⚠️ **An empty message plus a hook that adds content is a commit whose SUBJECT is
+  `Task-Id: …`.** git aborts such a commit only because it is empty, and the hook rescues it
+  into existence. Guard on "nothing but blanks and comments" and do nothing.
+
+**The hook never exits non-zero.** A failing `prepare-commit-msg` aborts the commit, so a bug
+in there takes away the one thing an agent needs in order to fix it — the self-bootstrap death
+chain. It warns on stderr instead.
+
+**Two decisions that look like details.** The id comes from git config, **never** from parsing
+the worktree path: the path shape has changed before, and config is where a worktree's identity
+durably lives. And `--if-exists doNothing` makes an inherited `Task-Id` (`git commit -c`,
+cherry-pick) win over ours, because one commit carrying two ids makes `%(trailers:key=Task-Id)`
+answer ambiguously for every consumer.
+
+**Root's own commits carry no trailer** — root works in the main worktree, which never runs the
+setup hook. Accepted; root's id is a constant. The same boundary applies in time: the trailer
+starts on worktrees created AFTER this lands, and every worktree alive today keeps `/dev/null`
+and no `mxd.taskId`.
