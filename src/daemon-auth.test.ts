@@ -650,6 +650,26 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 		expect(body.error).toContain("git-tracked");
 	});
 
+	test("PATCH /projects/:id/config/repo REFUSES a key that is not a config field", async () => {
+		// No layer declares it, so the read boundary would drop it — writing it and
+		// having it evaporate at the next read is the silent-success failure this door
+		// exists to prevent. The CLI door answers the same way (`cli.test.ts`), and
+		// both take the wording from the one `configFieldRefusal`.
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config/repo`, {
+				method: "PATCH",
+				headers: {
+					Authorization: `Bearer ${ctx.sessionToken}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ modle: "claude-opus-5" }),
+			}),
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("not a config field");
+	});
+
 	test("PATCH /projects/:id/config/repo accepts null for a field the layer does not have — that is how a stale key is removed", async () => {
 		// A cloned `.mxd/config.json` carrying `model` must be fixable. Refusing the
 		// deletion would be a guard standing between the user and the legal shape.

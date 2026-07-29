@@ -164,15 +164,17 @@ export function configFieldRefusal(
 	if (!layers.repo && !layers.local) {
 		return `"${key}" can only be set in global config.`;
 	}
-	if (layer === "repo") {
-		return `"${key}" cannot be set in repo config — it is git-tracked and travels with a clone, so it must not choose what an agent runs with. Set it in local or global config.`;
-	}
-	return `"${key}" cannot be set in local config. Set it in global config.`;
+	// Everything left is settable somewhere and not here, and `layer` can only be
+	// "repo": repo ⊆ local always holds — a field the repo layer may set but the
+	// local one may not would be backwards, since local is the trusted side. That
+	// containment is asserted in `config.test.ts` rather than branched on here, so
+	// a classification that broke it reddens instead of getting a wrong sentence.
+	return `"${key}" cannot be set in repo config — it is git-tracked and travels with a clone, so it must not choose what an agent runs with. Set it in local or global config.`;
 }
 
 /**
- * Project a parsed config object onto one layer's field set. A key the layer
- * does not have does not survive, so nothing downstream has to reject it.
+ * Project a parsed config object onto one layer's field set: a field this layer
+ * may not have does not survive, so nothing downstream has to reject it.
  *
  * ⭐ This is where the field sets are ENFORCED, and it has to be the read
  * rather than the writes: of the three ways a field reaches the repo layer —
@@ -183,6 +185,16 @@ export function configFieldRefusal(
  * ⚠️ A dropped key is reported, never dropped silently: a key that was ignored
  * and a key that took effect are otherwise indistinguishable to whoever
  * hand-wrote it.
+ *
+ * ⚠️ A key this version does not RECOGNISE is dropped like any other, and the
+ * alternative was considered and rejected (user, 2026-07-29). Carrying it —
+ * because it might be a field a NEWER matrix wrote into the git-tracked file —
+ * means a place to hold values this version cannot interpret and a path to write
+ * them back out, i.e. a forward-compatibility mechanism, and **we have no
+ * versioning to build one on.** When we do, a file from a newer version should
+ * say so and ask to be updated (`01KYR23QK9E4CJDD7XKV8Q1CE5`); that is a
+ * different feature, not a silent carry-through bolted onto the reader. So the
+ * treatment is uniform: it does not survive, and the warning makes it visible.
  */
 export function asLayerConfig<L extends ProjectLayer>(
 	raw: Record<string, unknown>,
@@ -195,7 +207,7 @@ export function asLayerConfig<L extends ProjectLayer>(
 		if (refusal === null) {
 			kept[key] = value;
 		} else {
-			console.warn(`[config] ignored in ${source}: ${refusal}`);
+			console.warn(`[config] dropped from ${source}: ${refusal}`);
 		}
 	}
 	return kept as LayerConfig<L>;

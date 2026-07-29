@@ -162,8 +162,9 @@ function SettingBoolField({
 
 /**
  * "Inherit" is the ABSENCE of the key in this layer's file — that is the config
- * model's own representation (`ProjectConfig = Partial<>`), and `buildPatch`
- * already turns an `undefined` draft value into the `null` that deletes the key.
+ * model's own representation (each layer's type is a `Partial` of the fields that
+ * layer may carry: `LocalConfig`, `RepoConfig`), and `buildPatch` already turns
+ * an `undefined` draft value into the `null` that deletes the key.
  *
  * ⚠️ Which is why the checkbox is not decoration. Without it, `undefined`
  * (inherit) and `""` (explicit empty) render as the SAME empty text box, and
@@ -250,9 +251,11 @@ export function ModelsAuthSection({
 	// clone, so a cloned repo must not be able to choose the model or the auth
 	// group an agent runs with. The local layer is under `~/.mxd/` and never
 	// enters a repo. So the legal field sets of the two project layers genuinely
-	// differ — this is not `GLOBAL_ONLY_FIELDS`, which is a different axis.
-	// Offering a control the daemon refuses (`rejectCredentialFields`, repo layer)
-	// would also be a remedy that cannot work.
+	// differ — this is not `GLOBAL_ONLY_FIELDS`, which is a different axis. It is
+	// the repo layer's TYPE that says so now (`RepoConfig` has neither field), so
+	// the daemon refuses both of them and a cloned config carrying one is stripped
+	// when it is read. Offering a control that lands on that refusal would be a
+	// remedy that cannot work.
 	if (layer === "project") return null;
 
 	const isGlobal = layer === "global";
@@ -289,11 +292,13 @@ export function ModelsAuthSection({
 
 			{/* Root Auth. Symmetric with Model: inheriting hides the select.
 			    The old select offered every group name PLUS an option labelled
-			    "inherit" whose value was "", and `rejectCredentialFields` 400'd
-			    any defaultAuth string — so EVERY Root Auth change on a project tab
-			    failed, the inherit one included. The guard now lets a group NAME
-			    through (a name is not a credential; `authGroups` is still refused),
-			    and inherit is the absence of the key rather than an empty string. */}
+			    "inherit" whose value was "", and the daemon's guard 400'd any
+			    defaultAuth string — so EVERY Root Auth change on a project tab
+			    failed, the inherit one included. `defaultAuth` is now part of the
+			    LOCAL layer's field set (a group name is not a credential, and the
+			    name must already exist in the user's own global config), while
+			    `authGroups` is in no project layer's set, and inherit is the absence
+			    of the key rather than an empty string. */}
 			<div className="mxd-settings-field">
 				<span className="mxd-settings-label">{t("settings.rootAuth")}</span>
 				{!authInheriting && (

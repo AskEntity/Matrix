@@ -137,10 +137,10 @@ describe("Models & Auth: inherit is the absence of the key, not an empty string"
 	// The trust boundary, and the reason the three tabs are not variations of one
 	// form: `<projectPath>/.mxd/config.json` is git-tracked and arrives with `git
 	// clone`, so the repo layer must not choose the model or the auth group an
-	// agent runs with. `~/.mxd/`'s local layer never enters a repo. The daemon
-	// agrees on the auth half (`rejectCredentialFields` refuses defaultAuth on the
-	// repo layer), so rendering the control here would also be offering a remedy
-	// that cannot work.
+	// agent runs with. `~/.mxd/`'s local layer never enters a repo. ⚠️ The backend
+	// agrees on BOTH fields now, not just on auth — neither is in `RepoConfig`, so
+	// each is refused at the write doors and stripped when a cloned config is READ.
+	// Rendering either control here would be offering a remedy that cannot work.
 	test("PROJECT tab renders no Models & Auth section at all — the repo layer is untrusted", async () => {
 		const r = await renderModelsAuth({
 			layer: "project",

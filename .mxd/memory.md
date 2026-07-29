@@ -3811,8 +3811,25 @@ read-path log, so a user meets the same sentence whichever way they arrived.
 
 ⚠️ **A repo write now NORMALIZES a git-tracked file.** The loader strips and the saver writes what
 it was handed, so the next `PATCH …/config/repo` or `mxd config set --project` silently removes a
-stale `model` from `.mxd/config.json`. Intended — the key was already doing nothing — but it is a
-diff nobody asked for, in someone's tracked file.
+stale `model` from `.mxd/config.json`. Intended for a KNOWN field — the key was already doing
+nothing — but it is a diff nobody asked for, in someone's tracked file.
+
+⚠️ **A key NO layer declares is dropped the same way, and carrying it was considered and REJECTED
+(user, 2026-07-29).** The hazard is real and was traced: `.mxd/config.json` is git-tracked, the
+saver writes back what the loader handed it, so an older matrix editing one field deletes a field a
+NEWER matrix wrote, as an ordinary commit. **The user's answer is that this is a missing-versioning
+problem, not a loader problem**: *"现在我们并没有 proper 的 versioning…以后有 versioning 之后,自然而
+然的 如果你读到新版本 应该说让你去更新"* — reading a newer config should say *upgrade your matrix*
+rather than absorb it silently. Filed as `01KYR23QK9E4CJDD7XKV8Q1CE5`, deliberately not built here.
+
+⭐ **The reusable half, and it is root's rather than mine: a consequence traced correctly does not
+make the fix derived from it correctly priced.** The trace above was right. The remedy proposed from
+it — "keep the unknown key, one branch" — was not one branch: `asLayerConfig` returns
+`LayerConfig<L>`, so passing unknown keys through either makes that return type a lie for everything
+downstream or needs them held aside on read and re-merged at save, i.e. a preservation channel
+through read→edit→write in three functions, for a case that has never occurred. **The correctness of
+the diagnosis lends nothing to the price of the cure, and a cost stated as one branch by the person
+who wants the cure is the one to re-derive.**
 
 ⚠️ **Look a classification table up through a `Map`, never property access on the object
 literal.** `TABLE["__proto__"]` answers with `Object.prototype`, which is TRUTHY, so every

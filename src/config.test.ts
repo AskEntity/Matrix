@@ -555,6 +555,13 @@ describe("layer field sets", () => {
 		});
 	});
 
+	// ⚠️ A key no layer declares is dropped like any other, and CARRYING it was
+	// considered and rejected (user, 2026-07-29): preserving a field a newer matrix
+	// might have written into this git-tracked file needs somewhere to hold values
+	// this version cannot interpret and a path to write them back out — a
+	// forward-compatibility mechanism, and there is no versioning to build one on.
+	// When there is, a file from a newer version should say so and ask to be
+	// updated, rather than being silently carried through by the reader.
 	test("a key that is not a config field at all is dropped too", async () => {
 		// A typo'd key used to sit in the file doing nothing, forever, in silence.
 		await writeRepoFile({ modle: "claude-opus-5", budgetUsd: 4 });
@@ -562,12 +569,11 @@ describe("layer field sets", () => {
 	});
 
 	test("a prototype-chain name in the file reaches neither the result nor its prototype", async () => {
-		// `JSON.parse` gives `__proto__` as an OWN key, and assigning it onto a
-		// fresh object runs the setter. The field-set lookup is what stops it, and
-		// it only stops it because it asks `Object.hasOwn` — a bare lookup answers
-		// `CONFIG_FIELD_LAYERS["__proto__"]` with `Object.prototype`, which is
-		// truthy, and lands on the wrong branch by accident rather than on the
-		// right one by construction.
+		// `JSON.parse` gives `__proto__` as an OWN key, and assigning it onto a fresh
+		// object runs the setter. The field-set lookup is what stops it, and it stops
+		// it only because it goes through a Map: `TABLE["__proto__"]` answers with
+		// `Object.prototype`, which is truthy, so a bare lookup lands on the wrong
+		// branch by accident rather than on the right one by construction.
 		await writeFile(
 			join(projectPath, ".mxd", "config.json"),
 			'{"__proto__":{"polluted":true},"constructor":1,"budgetUsd":6}',
