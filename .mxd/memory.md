@@ -3315,3 +3315,35 @@ it, and the partial update then made that workaround **take two attempts to land
 looks like more than a papercut on its own, and the two of them together lost data *and* left
 unsearchable state. **Two small defects can multiply — and you only ever see it by tracing one
 concrete incident through both, never by reading either bug report.**
+
+## Which probes get committed — `scripts/` had a habit and no rule
+
+Probes kept accumulating in `scripts/` with nothing written down about which ones belong there, so
+"commit the probe" read as an unconditional convention. It is not one, and the criterion is sharper
+than "is it still useful":
+
+> ⭐ **A committed probe is worth the space iff the thing it measures can change WITHOUT any test
+> going red.** That is the whole question. Not how good the probe is, not how hard it was to write.
+
+Three live instances, one per answer:
+
+| probe | measures | verdict |
+|---|---|---|
+| `probe-hidden-tool.ts` | **an external system** — whether Anthropic dispatches an unlisted tool name | KEEP. It can change under us on any Tuesday and nothing here would go red. |
+| `scan-partial-update-damage.ts` | **accumulated history** — has this bug ever fired, across every JSONL | KEEP. No test can pin the past, and it carries its own positive control. |
+| ~~`probe-update-task-partial.ts`~~ | **our own code**, already pinned by 20 tests | CUT. |
+
+⭐ **The counter-intuitive half, which is what makes this worth writing down: being covered by tests
+is the reason to DELETE a probe, not to keep it.** Where a probe and a test guard the same fact, the
+test wins unconditionally — *it runs itself*, and the probe only works if a human remembers it
+exists. A probe that duplicates a test is not redundant-but-harmless; it is a second, weaker copy
+that will drift, and whose narration goes stale the moment the bug it describes is fixed.
+
+⚠️ **And price the cost on the right side of the ledger.** That probe called `updateTaskOp` with
+`dataPaths: null`, so `task-index-coverage.test.ts` — a whole-repo SUBTRACT-list audit — caught it,
+correctly. The reflex is to add an exemption row and call the cost "one line". **It is not: the cost
+is an audit that no longer means what it meant.** A subtract-list is one of the more expensive
+things in this repo precisely because it has not been eroded yet, and the first exemption is what
+teaches the next person that exemptions are available. **Deleting the file deleted the exemption
+with it; an audit catching a new file is evidence the audit works, never a formality to route
+around.**

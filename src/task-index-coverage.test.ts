@@ -90,21 +90,6 @@ const SANCTIONED: Record<string, string> = {
 		"rename_folder only — folders are general nodes and are never indexed",
 };
 
-/**
- * Files that call a content-changing op but are not a request path, so
- * `dataPaths: null` is the honest answer rather than a missed index write.
- *
- * Same discipline as SANCTIONED: a row is a CLAIM about the file, not a way to
- * make a test pass. The exact-equality assertion below still names every
- * caller, so a new one fails loudly whichever list it belongs in.
- */
-const NOT_A_REQUEST_PATH: Record<string, string> = {
-	"src/task-operations.ts":
-		"defines the ops — its `dataPaths` mentions are the parameter and its docs",
-	"scripts/probe-update-task-partial.ts":
-		"one-shot diagnostic on a throwaway tree in $TMPDIR — there is no index for it to keep in step",
-};
-
 describe("audit: every indexed-content mutation is paired with an index write", () => {
 	test("no unsanctioned production caller mutates an indexed field", () => {
 		const offenders = sourceFiles(REPO_ROOT)
@@ -158,16 +143,15 @@ describe("audit: every indexed-content mutation is paired with an index write", 
 			),
 		);
 
-		// Two call sites, the file that defines the ops, and one diagnostic.
+		// Two call sites, plus the file that defines the ops.
 		expect(callers.map(rel).sort()).toEqual([
-			"scripts/probe-update-task-partial.ts",
 			"src/orchestrator-tools.ts",
 			"src/runtime/routes/tasks.ts",
 			"src/task-operations.ts",
 		]);
 
 		for (const file of callers) {
-			if (rel(file) in NOT_A_REQUEST_PATH) continue;
+			if (rel(file) === "src/task-operations.ts") continue;
 			const src = readFileSync(file, "utf-8");
 			const nullish = src.match(/dataPaths:\s*(null|undefined)/g) ?? [];
 			expect({ file: rel(file), nullDataPaths: nullish }).toEqual({
