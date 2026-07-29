@@ -79,15 +79,6 @@ main...<branch>` line by line before merging. The observed failure always has on
 → `git log --stat` → merge → post-merge bugs that a manual smoke caught immediately. Watch for
 single-line catastrophes (`autoRegisterSelf: false` shipped exactly this way).
 
-⚠️ **The merge commit message is the ONLY durable link from a line of code back to the task that
-wrote it, and writing a good one destroys it.** Branches are `mxd/<taskId>/…`, so git's default
-*"Merge branch 'mxd/01K…'"* carries the id; passing `-m "<a sentence about what landed>"` replaces
-it, and `close_task` then deletes the branch, so nothing anywhere names the task again. **Measured
-2026-07-29: 102 of 1280 merge commits (8%) carry a taskId, and the ten most recent were all
-orphans** — the habit gets *worse* the more carefully you write. Put the id in the message as well
-as the prose. Until the backlog is unrecoverable-by-construction, "blame it to find the task" is an
-instruction that fails 92% of the time, so reach for `search_tasks` on the concept instead.
-
 **Creating tasks is cheap; executing is deliberate.** Draft while the user is still discussing;
 start when they say go.
 
@@ -2050,18 +2041,24 @@ the time coordinate works on every commit ever made, and
 a trailer, where one exists, is sitting in the commit body you were already told to read — **it
 announces itself, so it never needs a fallback clause that could read as a dead end.**
 
-**DECIDED 2026-07-29 (user): preserving the link going forward is a MECHANISM, not an instruction.**
-A prompt bullet telling agents to keep the branch name in the merge subject was written and then
-deleted — 1280 merges are the measurement that says people forget, so the medium that depends on
-remembering is the wrong one. It belongs wherever the worktree is set up, once, per branch. Code
-task, still being scoped with root.
+**Why the link breaks, which is the WHY for the decision below:** branches are `mxd/<taskId>/…`, so
+git's default *"Merge branch 'mxd/01K…'"* carries the id — and `-m "<a sentence about what
+landed>"` replaces exactly that line, after which `close_task` deletes the branch and nothing
+names the task again. **The habit gets worse the more carefully you write.**
 
-⚠️ **CORRECTION to an inherited entry, for whoever curates next.** *How work moves through this
-repo* ends its merge-link paragraph with **"Put the id in the message as well as the prose."** That
-was written earlier the same day and the decision above supersedes it: it is the manual instruction
-the user rejected, and it is asking agents to remember the exact thing 92% of them have already
-failed to remember. The measurement in both places is the same 102/1280 and should live in ONE of
-them. Keep the mechanism decision; drop the instruction.
+**DECIDED 2026-07-29 (user): preserving it going forward is a MECHANISM, not an instruction —
+DECIDED, NOT IMPLEMENTED (draft `01KYQMNB0DPAZ3XJGATTW2NQAP`, zero lines written).** Shape agreed
+with the user: install a `prepare-commit-msg` hook when the worktree is created, emitting a
+`Task-Id:` trailer; measured to survive `-m`, and readable with `git log
+--format='%(trailers:key=Task-Id,valueonly)'`. **An earlier attempt to do this as a prompt bullet
+was written and deleted: the measurement above is precisely the evidence that agents do not
+remember, so using it to justify "remember to do it manually" runs the evidence backwards.**
+
+⚠️ **Migration constraint on the CONSUMER side, decided with the same breath and easy to lose:
+the 1280 historical commits will never have a trailer, so nothing that reads one may present its
+ABSENCE as "no provenance".** Route through the time coordinate, which holds for every commit ever
+made, and treat a trailer as an accelerator where it happens to exist. Build it the other way round
+and you have shipped an empty-result-read-as-an-answer — the shape counted all day in this region.
 
 ## Every hit says what it IS before its body is read
 
