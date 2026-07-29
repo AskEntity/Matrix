@@ -1935,9 +1935,13 @@ the task" is decoration 92% of the time. What works 100% of the time, and was us
 `git log -S'<phrase>'` for **when a line arrived** (`git blame` answers who touched it last, often
 cosmetically), then carry that timestamp to the tree and ask what was running then. In one of those
 two, the commit's own subject named only the other half of its change, so the message actively
-misled and the **timestamp** was what recovered it. **The prompt teaches only the time route** —
-find when the line arrived, then read that commit *and the ones around it*, since what landed
-alongside is usually what it was for.
+misled and the **timestamp** was what recovered it. **The prompt teaches only what git can answer
+on its own** — find when the line arrived, then read that commit *and the ones around it*, since
+what landed alongside is usually what it was for. ⚠️ **The hop we actually performed — carry the
+timestamp to the tree and ask what was running then — is deliberately NOT in the prompt, and this
+is the reason to check before re-adding it: there is no call that does it.** `search_tasks` is
+relevance-ranked with no time predicate, and `get_tree` has no time filter either, so that step is
+a human scanning by eye. Written as an instruction it is *an instruction you cannot execute*.
 
 ⭐ **The id is deliberately absent from the prompt, and the reason outlives the 8%.** Two of them,
 either one sufficient. **(1) Never write today's breakage into a universal, frozen document.** The

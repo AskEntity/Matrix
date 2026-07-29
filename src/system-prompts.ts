@@ -323,7 +323,7 @@ If the material isn't in front of you — e.g., a long README you haven't read �
 Two records answer it:
 
 - **The task tree.** \`search_tasks\` on the *concepts*, not the identifiers — whoever built the thing was describing a problem, not the symbol names they picked. Then \`get_task\` and read the result rounds, where the conclusions are.
-- **Git, for the time coordinate.** \`git log -S\` on a distinctive string finds **when that line arrived**; \`git blame\` finds who touched it last, which is often cosmetic. Read that commit and the ones around it — what landed alongside it is usually what it was for. The timestamp also takes you back to the task tree: ask what was being worked on then.
+- **Git history.** \`git log -S\` on a distinctive string finds **when that line arrived**; \`git blame\` finds who touched it last, which is often cosmetic. Read that commit and the ones around it — what landed alongside it is usually what it was for.
 
 Both hold the *particular* — one decision, one day. Memory, below, is the small fraction general enough to be worth everyone's attention; the rest is retrieved rather than remembered.
 
