@@ -79,15 +79,6 @@ main...<branch>` line by line before merging. The observed failure always has on
 → `git log --stat` → merge → post-merge bugs that a manual smoke caught immediately. Watch for
 single-line catastrophes (`autoRegisterSelf: false` shipped exactly this way).
 
-⚠️ **The merge commit message is the ONLY durable link from a line of code back to the task that
-wrote it, and writing a good one destroys it.** Branches are `mxd/<taskId>/…`, so git's default
-*"Merge branch 'mxd/01K…'"* carries the id; passing `-m "<a sentence about what landed>"` replaces
-it, and `close_task` then deletes the branch, so nothing anywhere names the task again. **Measured
-2026-07-29: 102 of 1280 merge commits (8%) carry a taskId, and the ten most recent were all
-orphans** — the habit gets *worse* the more carefully you write. Put the id in the message as well
-as the prose. Until the backlog is unrecoverable-by-construction, "blame it to find the task" is an
-instruction that fails 92% of the time, so reach for `search_tasks` on the concept instead.
-
 **Creating tasks is cheap; executing is deliberate.** Draft while the user is still discussing;
 start when they say go.
 
@@ -309,6 +300,119 @@ two commits one session apart, same author: one added *"every unfinished break i
 in a context that runs out"*, the other existed to establish *"compaction is a continuation, not a
 stopping point"*. **So read the recent prompt DIFFS before editing, then re-read the whole thing** —
 the round that INTRODUCED that contradiction substituted a targeted grep for the full read.
+
+⭐ **The split above is stated by CONTENT and was never stated by FORM, so the content lands in the
+right file while THIS file's voice comes with it.** Measured 2026-07-29 on `src/system-prompts.ts`:
+**zero `⚠️`, zero `⭐`, zero `❗`, zero `✅` in 459 lines** — 86 `**bold**` and 39 all-caps, and
+its hardest rules are bold plus one clause of why (*"**Never** `git checkout` to switch branches
+— it corrupts the worktree."*). This file has 100 `⚠️` and 36 `⭐`. An agent that has just spent
+an hour in here adds one to the prompt without ever deciding to. **The reason the prompt has none is
+structural, not stylistic: this file is SCANNED region by region, so a marker is a landing point;
+the prompt is read start to finish, so a marker can only claim "this line matters more than the
+other 458" — and every one of those was argued in individually.** Current count is zero, so adding
+one is opening a precedent, which needs its own argument.
+
+**The same split governs SENTENCES, and the test is instruction vs inference.** The user's edit is
+the template: from *"it lists structure, not relevance, and it hides closed tasks by default, so it
+reports an area full of finished work as empty and that report is indistinguishable from the
+truth"*, the tail was cut and the facts kept. The tail is true, it is this file's own sentence, and
+the reader infers it unaided. **Anything shaped like *"so this leads to…"*, *"which is the same
+shape as…"* or *"measured, it was…"* is evidence: it belongs here, and in the prompt it is
+weight without instruction.** Fact stays, inference goes.
+
+⭐ **Describing a successful piece of archaeology is not a dispatchable instruction. The former only
+has to be TRUE; the latter also has to have a CALL behind it.** Three instances in one evening, in
+three different subsystems, which is what makes it a class rather than a slip: *"blame the line and
+you'll find the task"* (the id is on 102 of 1280 merges); *"carry the timestamp back to the task
+tree and ask what was being worked on then"* (`search_tasks` takes `projectId, query, limit` and
+`get_tree` takes `projectId, format, include_closed, include_details` — **there is no time
+predicate anywhere**, so this is a person scanning 577 nodes by eye); and *"send_message the task
+you found"* (a working agent can only reach ancestors in its parent chain and DIRECT sub tasks).
+Every one was written by someone who had really done it, or watched it work.
+
+**The check is one question and it is cheap: for every "you should X" you are about to write, name
+the tool call X is. If you cannot, it is prose, not an instruction.**
+
+⚠️ **The mechanism that produces it: recounting your own success COMPRESSES parallel routes into
+one, because in memory it was a single win.** Traced exactly here — the real work was two separate
+moves, *timestamp → grep the JSONL* and *concepts → `search_tasks` the tree*; the recounting came
+out as "use the time to locate it in the task tree and the JSONL", one route with the tree bolted
+onto the timestamp. That sentence was then inherited into a prompt instruction, so **the person who
+did the work was not the person who wrote the unexecutable line, and neither could have caught it
+alone** — the doer never issues the instruction, and the writer is working from a description that
+is already wrong. Ask for the call, not for the story.
+
+⭐ **Its other half: a familiar pattern name is a HYPOTHESIS to check, never an argument.** Same
+evening, 2026-07-29. A prompt line said *"check `get_tree` for closed tasks in the same area"*,
+which is wrong because `get_tree` hides closed by default; fixing the line to say `search_tasks`
+was the whole fix. A proposal to ALSO make `get_tree` disclose what it filtered was framed as *"the
+half the prompt cannot reach"*, root recognised **N-of-M-doors**, and approved on the strength of
+the name. **But that rule is about one RULE enforced at several entrances, and nothing was being
+enforced here — the note fixed no defect of `get_tree`'s, so it was a patch applied at the wrong
+layer.** Cost: zero real defects fixed, plus a nearly-shipped break of `get_tree`'s external MCP
+contract (`availability: "both"`, so clients `JSON.parse` `content[0].text`, and the note was
+concatenated onto it) — a bug that existed *only* because of the scope expansion.
+
+⚠️ **The first retraction reached for a stronger claim than it had, and that claim was FALSE:
+*"`get_tree` has no defect — it does exactly what it declares."*** It came from correctly
+establishing that `get_tree` is **not a blind instrument** and then silently upgrading that to *not
+a bad tool*. Those are different assertions and only the first was checked. **`get_tree` IS a poor
+tool, filed twice in April and still open** — and the answer was in the tree the whole time, which
+is why this ended up here instead of shipping:
+
+- **`01KN8CQRHE7CADWE8FJ0THN32Y`** (2026-04-03): it returns `tracker.allNodes()` to EVERY agent
+  regardless of position, so a deep worker gets 50+ nodes and thousands of tokens of other people's
+  domains. Proposal: subtree + ancestor chain by default.
+- **`01KNCQB6W2WWSRRB7VQ362PHFB`** (2026-04-04) lists *get_tree returns ALL nodes*, *hideCompleted
+  is binary show/hide*, and ***No search*** as bullets of ONE problem, and proposes `search_tasks`
+  in the same document. **So `search_tasks` shipping (2026-07-15) implemented one quarter of that
+  design; the other three quarters are exactly the `get_tree` complaints.** The index design
+  (`01KWCQEBAS6FG9ME4TNTZ88JV1`) separately names `get_tree{include_details:true}` as a
+  heavy-context path to deprecate.
+
+**So the lesson survives with a different diagnosis: the shape did not hold, but not because the
+tool was fine — because the tool's problem is not at that door.** Handler output disclosing a count
+fixes none of bluntness, whole-tree scope, or the binary filter.
+
+⭐ **The transferable distinction, worth more than the retraction: "several PARTS of one design" and
+"several ENTRANCES to one rule" feel identical on site and have OPPOSITE remedies.** Entrances ask
+you to COMPLETE — deploy the same rule at the door you missed, and the work is mechanical because
+the decision was already made. Parts ask you to DECIDE — go read the design and judge whether the
+unbuilt part is still the right thing to build, because it was never agreed, only proposed. Here the
+three surviving bullets of that April design were mistaken for a missing entrance, so **a completion
+action was executed against something that needed a decision** — which is why it produced a patch
+nobody had chosen, at a layer nobody had picked. **The tell is cheap: for an entrance you can name
+the rule and point at where it already runs. If you cannot, you are holding a proposal.**
+
+⭐ **"This is not a problem" is an assertion that needs evidence, and it is asked for evidence far
+less often than "this IS a problem".** A claim of a defect gets challenged, reproduced, measured; an
+all-clear closes the subject. Two of this file's most expensive entries are all-clears that nobody
+re-opened — *"all verified clean"* for 115 days, and every gate that printed a pass. **The
+discriminator for the narrow question is still good and still worth using: a real blind instrument
+makes a CLAIM it does not honour** (`All checks passed.` over 8% of lines; `search` over a repo it
+could not fully see), and `get_tree` asserts nothing, so it is not that bug. **Just do not let "not
+that bug" answer "not a bug".**
+
+⚠️ **The test written to prove the feature worked was also the evidence it was broken.** It read
+`JSON.parse(text.slice(0, text.indexOf("\n\n[")))` — **a payload that needs string surgery before
+it parses is not JSON**, and that line was authored, run green, and re-read during a mutation pass
+without the question being asked. No existing test caught the real break either, because every
+fixture that parses `get_tree` output happens to contain no closed tasks: *the fixture cannot
+express the difference*, in the one direction where production always can. **Being forced to
+pre-process your own output to assert on it is a finding about the output, not a detail of the
+test.**
+
+**Two things that made the retraction cheap, both worth repeating deliberately.** The behaviour
+change was a SEPARATE commit from the prose, on the reasoning that the user might want only the
+prose — so undoing it was one `git revert` with no surgery and nothing else disturbed. And the
+question that killed it was the plainest one available, asked by the user: *"how did a system-prompt
+task get to needing a change in `get_tree`?"*
+
+⚠️ **Third time in one evening that the answer was already in the tree and someone searched
+elsewhere first** — the other two being the `update_task` status question and this file's own
+history. **Both retractions above were avoidable by one `search_tasks("get_tree")`**, which is the
+tool the entire task was about adding pointers to. Reaching for the tree is not yet reflex even
+while writing the prompt that tells everyone to reach for it.
 
 ---
 # How This Project Fools Itself
@@ -1872,6 +1976,90 @@ offered was "I read the tool description and still dropped the block" — but th
 never mentioned the block, so it is evidence that an unexplained block does not self-explain, not
 evidence about description-placed guidance. **Check that a conclusion's stated reason is the one
 actually carrying it, especially when you already agree with the conclusion.**
+
+### The same rule in the prompt, where the THIRD case lives
+
+⭐ **Both cases above presuppose a call HAPPENED** — the agent asked, or the payload landed. The
+third is the one the system prompt owns: **no call happens at all**, because the agent does not
+recognise that the question in its hand is one the code can never answer. There is no payload and no
+description in view at that moment, so the prompt is the only surface that exists, and the rule that
+sent guidance to the payload sends this to the prompt.
+
+⚠️ **The freeze argument applies to the prompt too and does NOT settle it.** `session_config`
+freezes the system prompt exactly as it freezes tool descriptions, so a prompt edit reaches a
+running agent only after a compaction. That prices **urgency, not medium**: handler output won
+above because that fix had to work *today*, whereas a standing disposition can wait one compaction
+— and a prompt line that is *wrong* is frozen too, which argues for landing the fix rather than
+deferring it.
+
+**A prompt line that names a tool inherits that tool's blind spots, and nothing ever goes red.**
+*"Check `get_tree` for closed/pending/draft tasks in the same area"* was written 2026-04-17 and was
+correct then; `search_tasks` did not exist until 2026-07-15. `get_tree` hides closed tasks by
+default and does not say how many it dropped, so an agent obeying that line reads an area full of
+finished work as empty. **Six prompt sites asserted that past work is wealth and the commit that
+introduced `search_tasks` wired ONE of them** — the N-of-M-doors rule in the medium where no
+compiler, test or gate can notice. When you add a capability, grep the PROSE that has been promising
+it.
+
+⭐ **The failure is classification, not compliance, and the hardest instance proves it: the
+misfiled question arrives DRESSED as a code question.** Asked where a known `update_task` defect
+stood, root's first move was to grep `updateTaskOp` — while the task existed, was `pending`, and
+had been created **by root itself 21 hours earlier**, twenty minutes after root had discussed this
+exact failure and opened a task about it. **Reminders were present in triplicate and it still
+happened**, so "remind harder" is refuted; what was missing was a way to tell the classes apart.
+The tell that does it: **source cannot distinguish a defect that is known, filed and half-designed
+from one nobody has ever noticed — byte-identical on disk.** Same for a constraint that still
+binds versus one that expired. And the grep was pure loss rather than a partial win: it returned
+field order, which the task already contained alongside the incident, the reachable-worse
+combination, two design routes and the acceptance criteria — root had to read the task regardless.
+
+⚠️ **MEASURED 2026-07-29: 102 of 1280 merge commits name a task. Git's gift is the TIME COORDINATE,
+not the id.** The code→task link rides on the merge subject carrying the branch name
+(`mxd/<taskId>/<slug>`), and `git merge -m "<a good sentence>"` overwrites exactly that — **the
+better the merge message reads, the more reliably the link is gone.** So "blame it and you'll find
+the task" is decoration 92% of the time. What works 100% of the time, and was used twice that night:
+`git log -S'<phrase>'` for **when a line arrived** (`git blame` answers who touched it last, often
+cosmetically), then carry that timestamp to the tree and ask what was running then. In one of those
+two, the commit's own subject named only the other half of its change, so the message actively
+misled and the **timestamp** was what recovered it. **The prompt teaches only what git can answer
+on its own** — find when the line arrived, then read that commit *and the ones around it*, since
+what landed alongside is usually what it was for. ⚠️ **The hop we actually performed — carry the
+timestamp to the tree and ask what was running then — is deliberately NOT in the prompt, and this
+is the reason to check before re-adding it: there is no call that does it.** `search_tasks` is
+relevance-ranked with no time predicate, and `get_tree` has no time filter either, so that step is
+a human scanning by eye. Written as an instruction it is *an instruction you cannot execute*.
+
+⭐ **The id is deliberately absent from the prompt, and the reason outlives the 8%.** Two of them,
+either one sufficient. **(1) Never write today's breakage into a universal, frozen document.** The
+8% is being fixed (below), and on the day it is, a prompt sentence saying the link is usually gone
+goes on teaching that with nothing anywhere to turn it red — it is shared by every project and
+frozen in `session_config`. **(2) A migration makes the marker non-uniform on purpose**, so old
+commits have no id and new ones do; a prompt that routes through the id teaches an agent to read
+its ABSENCE as "no way to know who wrote this", which is false for the entire pre-migration
+history — **teaching the new mechanism is the very act that makes the old data look broken**, and
+it is this file's oldest shape, an empty result read as an answer. The route that needs no branch:
+the time coordinate works on every commit ever made, and
+a trailer, where one exists, is sitting in the commit body you were already told to read — **it
+announces itself, so it never needs a fallback clause that could read as a dead end.**
+
+**Why the link breaks, which is the WHY for the decision below:** branches are `mxd/<taskId>/…`, so
+git's default *"Merge branch 'mxd/01K…'"* carries the id — and `-m "<a sentence about what
+landed>"` replaces exactly that line, after which `close_task` deletes the branch and nothing
+names the task again. **The habit gets worse the more carefully you write.**
+
+**DECIDED 2026-07-29 (user): preserving it going forward is a MECHANISM, not an instruction —
+DECIDED, NOT IMPLEMENTED (draft `01KYQMNB0DPAZ3XJGATTW2NQAP`, zero lines written).** Shape agreed
+with the user: install a `prepare-commit-msg` hook when the worktree is created, emitting a
+`Task-Id:` trailer; measured to survive `-m`, and readable with `git log
+--format='%(trailers:key=Task-Id,valueonly)'`. **An earlier attempt to do this as a prompt bullet
+was written and deleted: the measurement above is precisely the evidence that agents do not
+remember, so using it to justify "remember to do it manually" runs the evidence backwards.**
+
+⚠️ **Migration constraint on the CONSUMER side, decided with the same breath and easy to lose:
+the 1280 historical commits will never have a trailer, so nothing that reads one may present its
+ABSENCE as "no provenance".** Route through the time coordinate, which holds for every commit ever
+made, and treat a trailer as an accelerator where it happens to exist. Build it the other way round
+and you have shipped an empty-result-read-as-an-answer — the shape counted all day in this region.
 
 ## Every hit says what it IS before its body is read
 
