@@ -1935,7 +1935,10 @@ the task" is decoration 92% of the time. What works 100% of the time, and was us
 `git log -S'<phrase>'` for **when a line arrived** (`git blame` answers who touched it last, often
 cosmetically), then carry that timestamp to the tree and ask what was running then. In one of those
 two, the commit's own subject named only the other half of its change, so the message actively
-misled and the **timestamp** was what recovered it. The prompt states it in that order.
+misled and the **timestamp** was what recovered it. **The prompt teaches only the time route** —
+find when the line arrived, then read that commit and the ones around it, since what landed
+alongside is usually what it was for. The id shortcut is deliberately absent from the prompt: at 8%
+it would be decoration, and preserving it is a mechanism problem (below), not something to teach.
 
 **DECIDED 2026-07-29 (user): preserving the link going forward is a MECHANISM, not an instruction.**
 A prompt bullet telling agents to keep the branch name in the merge subject was written and then
