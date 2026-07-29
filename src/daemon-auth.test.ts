@@ -630,6 +630,51 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 		expect(body.error).toContain("git-tracked");
 	});
 
+	test("PATCH /projects/:id/config/repo REFUSES model — same trust boundary as defaultAuth", async () => {
+		// This door used to accept `model` while the UI said the repo layer must not
+		// choose one, and the rule was enforced for exactly one of its two fields.
+		// It is one field set now, so the two cannot come apart again.
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config/repo`, {
+				method: "PATCH",
+				headers: {
+					Authorization: `Bearer ${ctx.sessionToken}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ model: "claude-opus-5" }),
+			}),
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("model");
+		expect(body.error).toContain("git-tracked");
+	});
+
+	test("PATCH /projects/:id/config/repo accepts null for a field the layer does not have — that is how a stale key is removed", async () => {
+		// A cloned `.mxd/config.json` carrying `model` must be fixable. Refusing the
+		// deletion would be a guard standing between the user and the legal shape.
+		const { writeFile: wf, mkdir: mk } = await import("node:fs/promises");
+		await mk(join(ctx.tempDir, "proj", ".mxd"), { recursive: true });
+		await wf(
+			join(ctx.tempDir, "proj", ".mxd", "config.json"),
+			JSON.stringify({ model: "claude-opus-5", budgetUsd: 3 }),
+		);
+		const res = await ctx.daemon.fetch(
+			new Request(`http://localhost/projects/${projectId}/config/repo`, {
+				method: "PATCH",
+				headers: {
+					Authorization: `Bearer ${ctx.sessionToken}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ model: null }),
+			}),
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as Record<string, unknown>;
+		expect("model" in body).toBe(false);
+		expect(body.budgetUsd).toBe(3);
+	});
+
 	test("PATCH /projects/:id/config/repo still accepts a non-auth field (the guard is not layer-wide)", async () => {
 		const res = await ctx.daemon.fetch(
 			new Request(`http://localhost/projects/${projectId}/config/repo`, {
@@ -661,10 +706,18 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 		expect(body.budgetUsd).toBe(42);
 	});
 
-	test("GET /projects/:id/config/all masks authGroups in every layer (Audit R7 P1.4)", async () => {
-		// Simulate a malicious actor writing authGroups directly to the
-		// on-disk repo config file (bypassing our PATCH guard). The GET
-		// endpoint MUST still mask the value — defense in depth.
+	// ⚠️ INVERTED 2026-07-29. This test used to write `authGroups` into both
+	// project-layer files by hand and assert the GET response MASKED them. The
+	// masking was correct and is still there; what changed is that the value can
+	// no longer arrive — both loaders project their file onto the layer's field
+	// set, and no project layer has `authGroups`. Asserting the mask now would
+	// assert that a value nothing can produce is being handled.
+	//
+	// The obligation is unchanged and is what this asserts: no credential leaves
+	// over the wire. It is checked twice, once per mechanism — the injected one is
+	// GONE (projection), the user's own real one is MASKED (`resolved`, which is
+	// the layer that still has a producer).
+	test("GET /projects/:id/config/all — a hand-written authGroups in a project layer never reaches the response", async () => {
 		const { writeFile: wf } = await import("node:fs/promises");
 		const { mkdir: mk } = await import("node:fs/promises");
 		const repoConfigPath = join(ctx.tempDir, "proj", ".mxd", "config.json");
@@ -699,29 +752,55 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 			}),
 		);
 
+		// The user's OWN group, through the one door that may set credentials. It is
+		// what keeps the masking of `resolved` covered here now that the project
+		// layers cannot carry a group at all.
+		const patch = await ctx.daemon.fetch(
+			new Request("http://localhost/config/global", {
+				method: "PATCH",
+				headers: {
+					Authorization: `Bearer ${ctx.sessionToken}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					authGroups: {
+						mine: {
+							provider: "anthropic",
+							apiKey: "sk-ant-mine-plaintext-9876543210",
+						},
+					},
+				}),
+			}),
+		);
+		expect(patch.status).toBe(200);
+
 		const res = await ctx.daemon.fetch(
 			new Request(`http://localhost/projects/${projectId}/config/all`, {
 				headers: { Authorization: `Bearer ${ctx.sessionToken}` },
 			}),
 		);
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as {
+		const text = await res.text();
+		const body = JSON.parse(text) as {
 			repo: { authGroups?: Record<string, { apiKey?: string }> };
 			local: { authGroups?: Record<string, { apiKey?: string }> };
+			resolved: { authGroups?: Record<string, { apiKey?: string }> };
 		};
-		// repo layer — injected plaintext is masked
-		const repoEvil = body.repo.authGroups?.evil;
-		expect(repoEvil?.apiKey).toBeDefined();
-		expect(repoEvil?.apiKey).not.toContain("injected");
-		expect(repoEvil?.apiKey).toContain("…");
-		// local layer — same
-		const localEvil2 = body.local.authGroups?.evil2;
-		expect(localEvil2?.apiKey).toBeDefined();
-		expect(localEvil2?.apiKey).not.toContain("injected");
-		expect(localEvil2?.apiKey).toContain("…");
+		// Gone from both project layers — not masked, absent.
+		expect(body.repo.authGroups).toBeUndefined();
+		expect(body.local.authGroups).toBeUndefined();
+		// Nowhere in the payload at all, under any key. This assertion is
+		// independent of the mechanism, so it survives the next change to it.
+		expect(text.includes("injected")).toBe(false);
+		expect(text.includes("evil")).toBe(false);
+		// Meanwhile the real group is present and masked.
+		const mine = body.resolved.authGroups?.mine;
+		expect(mine?.apiKey).toBeDefined();
+		expect(mine?.apiKey).toContain("…");
+		expect(text.includes("mine-plaintext")).toBe(false);
 	});
 
-	test("GET /projects/:id/config masks authGroups if injected", async () => {
+	test("GET /projects/:id/config — a hand-written authGroups is not returned at all", async () => {
 		const { writeFile: wf } = await import("node:fs/promises");
 		const { mkdir: mk } = await import("node:fs/promises");
 		const localConfigPath = join(
@@ -740,6 +819,7 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 						apiKey: "sk-ant-injected-plaintext-0123456789",
 					},
 				},
+				budgetUsd: 5,
 			}),
 		);
 
@@ -749,12 +829,12 @@ describe("daemon: PATCH /projects/:id/config rejects credential fields (Audit R7
 			}),
 		);
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as {
-			authGroups?: Record<string, { apiKey?: string }>;
-		};
-		const evil = body.authGroups?.evil;
-		expect(evil?.apiKey).toBeDefined();
-		expect(evil?.apiKey).not.toContain("injected");
-		expect(evil?.apiKey).toContain("…");
+		const text = await res.text();
+		const body = JSON.parse(text) as Record<string, unknown>;
+		expect("authGroups" in body).toBe(false);
+		expect(text.includes("injected")).toBe(false);
+		// The local layer's own fields still arrive — otherwise this test would
+		// also pass against an endpoint that returned nothing.
+		expect(body.budgetUsd).toBe(5);
 	});
 });

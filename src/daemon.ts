@@ -36,8 +36,12 @@ import {
 } from "./auth.ts";
 import {
 	type AuthGroup,
+	asLayerConfig,
+	configFieldRefusal,
+	type LayerConfig,
 	loadGlobalConfig,
 	type MatrixConfig,
+	type ProjectLayer,
 	saveGlobalConfig,
 } from "./config.ts";
 import {
@@ -222,46 +226,59 @@ function maskConfig<T extends Partial<MatrixConfig>>(config: T): T {
 }
 
 /**
- * Reject any PATCH body that tries to inject CREDENTIALS through a per-project
- * config layer (repo or local). Returns an error message if a forbidden field is
- * present, null otherwise.
+ * Refuse a PATCH body that carries a field the layer does not have. Returns the
+ * first refusal, or null when every field is legal for that layer.
  *
- * `authGroups` is marked global-only in `GLOBAL_ONLY_FIELDS` — allowing it
- * through would be a credential-injection surface: an attacker who can PATCH
- * a project's config with their own authGroups could have every subsequent
- * agent run use their credentials (Audit R7 P1.4).
+ * The field sets and the wording both come from `configFieldRefusal` — this
+ * function holds no list of its own, so it cannot drift from the types, and the
+ * same sentence reaches a CLI user and a reader of the daemon log.
  *
- * ⚠️ `defaultAuth` is refused on the REPO layer and allowed on LOCAL, and the
- * axis is TRUST rather than scoping (user, 2026-07-29). The repo layer is
- * `<projectPath>/.mxd/config.json` — git-tracked, and it arrives with `git
- * clone`, so a repo you cloned could point every later agent run at an auth
- * group of its choosing. The local layer lives under `~/.mxd/` and never enters
- * a repo. That is also why `GLOBAL_ONLY_FIELDS` is the wrong home for this: the
- * field is not global-only, it is not-from-the-repo.
+ * ⚠️ A `null` value is always accepted, whatever the field: that is how the UI
+ * clears an override, and deleting a key the layer may not carry moves the file
+ * TOWARD its legal shape. A user whose cloned `.mxd/config.json` carries `model`
+ * must be able to take it out.
  *
- * On the local layer the premise genuinely does not reach: `defaultAuth` carries
- * only the NAME of a group that must already exist in the user's own global
- * config, so nothing is injected.
- *
- * ⚠️ Note the old comment here claimed *"The CLI has the same check
- * client-side"*. It does not: `mxd config set defaultAuth <name> --project`
- * tests only `GLOBAL_ONLY_FIELDS` and writes straight to `.mxd/config.json`, so
- * the repo-layer write this refuses is still reachable from the CLI. Closing
- * that is the read-boundary work in `01KYQYRXST632196G3FNWTWF1X`, which is where
- * a cloned config carrying `authGroups` is handled too — `loadProjectRepoConfig`
- * is a bare read and never passes through here.
+ * This is the WRITE half. It is not the enforcement — `asLayerConfig` at the
+ * read boundary is, because `git clone` has no write moment to guard. What this
+ * adds is that a write which would have been silently ignored fails LOUDLY, at
+ * the moment the user makes it.
  */
-function rejectCredentialFields(
-	body: Partial<MatrixConfig>,
-	layer: "repo" | "local",
+function rejectFieldsOutsideLayer(
+	body: Record<string, unknown>,
+	layer: ProjectLayer,
 ): string | null {
-	if (body.authGroups != null) {
-		return "authGroups can only be set in global config (use PATCH /config/global)";
-	}
-	if (layer === "repo" && body.defaultAuth != null) {
-		return "defaultAuth cannot be set in repo config — it is git-tracked and travels with a clone. Use the Local tab, or PATCH /config/global";
+	for (const [key, value] of Object.entries(body)) {
+		if (value === null || value === undefined) continue;
+		const refusal = configFieldRefusal(layer, key);
+		if (refusal) return refusal;
 	}
 	return null;
+}
+
+/**
+ * Apply a PATCH body to one layer's stored config: a null/undefined value
+ * deletes the key, any other value replaces it.
+ *
+ * The result goes back through `asLayerConfig`, which is the one function that
+ * produces a layer config anywhere in the system — so what lands on disk is that
+ * layer's field set by construction, not because this handler remembered to
+ * check. Nothing can be dropped here in practice: `rejectFieldsOutsideLayer` has
+ * already answered 400 to any foreign field carrying a value.
+ */
+function mergeLayerPatch<L extends ProjectLayer>(
+	existing: LayerConfig<L>,
+	patch: Record<string, unknown>,
+	layer: L,
+): LayerConfig<L> {
+	const merged: Record<string, unknown> = { ...existing };
+	for (const [key, value] of Object.entries(patch)) {
+		if (value === null || value === undefined) {
+			delete merged[key];
+		} else {
+			merged[key] = value;
+		}
+	}
+	return asLayerConfig(merged, layer, `PATCH ${layer} config`);
 }
 
 /** `true` if `incoming` is the masked form of `existing`. */
@@ -1779,18 +1796,14 @@ export async function createDaemon(opts: {
 		const { loadProjectRepoConfig, saveProjectRepoConfig } = await import(
 			"./config.ts"
 		);
-		const partial = await c.req.json<Partial<MatrixConfig>>();
-		const rejection = rejectCredentialFields(partial, "repo");
+		const partial = await c.req.json<Record<string, unknown>>();
+		const rejection = rejectFieldsOutsideLayer(partial, "repo");
 		if (rejection) return c.json({ error: rejection }, 400);
-		const existing = await loadProjectRepoConfig(project.path);
-		const merged = { ...existing };
-		for (const [k, v] of Object.entries(partial)) {
-			if (v === null || v === undefined) {
-				delete (merged as unknown as Record<string, unknown>)[k];
-			} else {
-				(merged as unknown as Record<string, unknown>)[k] = v;
-			}
-		}
+		const merged = mergeLayerPatch(
+			await loadProjectRepoConfig(project.path),
+			partial,
+			"repo",
+		);
 		await saveProjectRepoConfig(project.path, merged);
 		return c.json(merged);
 	});
@@ -1805,11 +1818,13 @@ export async function createDaemon(opts: {
 			loadProjectLocalConfig(dataDir, project.id),
 		]);
 		const resolved = resolveConfig(globalConfig, repoConfig, localConfig);
-		// Every layer is masked — project layers are TYPED as credential-free
-		// (`ProjectConfig` excludes `authGroups`), but the on-disk JSON is
-		// untyped and a malicious actor could have injected credentials into
-		// `.mxd/config.json` or `<dataDir>/projects/<id>/config.json` by hand.
-		// Masking unconditionally closes that leak (Audit R7 P1.4).
+		// Every layer is masked. The premise this used to cite — "the project
+		// layers are typed as credential-free but the on-disk JSON is untyped, so
+		// hand-injected credentials could reach here" — no longer holds: both
+		// loaders project onto their layer's field set, so `authGroups` written by
+		// hand into either file is gone before this line. The OBLIGATION is
+		// untouched and is what the masking is for: no credential leaves over the
+		// wire. `global` and `resolved` carry the real ones (Audit R7 P1.4).
 		return c.json({
 			global: maskConfig(globalConfig),
 			repo: maskConfig(repoConfig),
@@ -1832,18 +1847,14 @@ export async function createDaemon(opts: {
 		const { loadProjectLocalConfig, saveProjectLocalConfig } = await import(
 			"./config.ts"
 		);
-		const partial = await c.req.json<Partial<MatrixConfig>>();
-		const rejection = rejectCredentialFields(partial, "local");
+		const partial = await c.req.json<Record<string, unknown>>();
+		const rejection = rejectFieldsOutsideLayer(partial, "local");
 		if (rejection) return c.json({ error: rejection }, 400);
-		const existing = await loadProjectLocalConfig(dataDir, project.id);
-		const merged = { ...existing };
-		for (const [k, v] of Object.entries(partial)) {
-			if (v === null || v === undefined) {
-				delete (merged as unknown as Record<string, unknown>)[k];
-			} else {
-				(merged as unknown as Record<string, unknown>)[k] = v;
-			}
-		}
+		const merged = mergeLayerPatch(
+			await loadProjectLocalConfig(dataDir, project.id),
+			partial,
+			"local",
+		);
 		await saveProjectLocalConfig(dataDir, project.id, merged);
 		return c.json(merged);
 	});

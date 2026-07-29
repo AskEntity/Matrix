@@ -16,7 +16,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -105,5 +105,67 @@ describe("cli: AUTH_JSON_PATH respects MXD_DATA_DIR", () => {
 		// Fallback path: HOME/.mxd/auth.json, not HOME/auth.json.
 		expect(existsSync(join(fakeHome, ".mxd", "auth.json"))).toBe(true);
 		expect(existsSync(join(fakeHome, "auth.json"))).toBe(false);
+	});
+});
+
+// `mxd config set … --project` writes `<projectPath>/.mxd/config.json` DIRECTLY,
+// bypassing the daemon entirely — so the refusal the HTTP door gives is not the
+// one this door gives, and for a long time this one gave none at all. It is
+// asserted here in the same file as the daemon door's own test would be in
+// `daemon-auth.test.ts`, because "the rule is enforced at some of its doors" is
+// the failure this boundary keeps producing.
+describe("cli: config set --project respects the repo layer's field set", () => {
+	let projectPath: string;
+
+	beforeEach(async () => {
+		// `findProjectPath` walks up looking for `.git`, so the fixture needs one.
+		projectPath = await mkdtemp(join(tmpdir(), "mxd-cli-cfg-"));
+		await mkdir(join(projectPath, ".git"), { recursive: true });
+	});
+
+	afterEach(async () => {
+		await rm(projectPath, { recursive: true, force: true });
+	});
+
+	function runConfigSet(args: string[]) {
+		return Bun.spawn(["bun", CLI_PATH, "config", ...args], {
+			cwd: projectPath,
+			env: { ...process.env },
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+	}
+
+	test("model is refused, with the reason, and nothing is written", async () => {
+		const proc = runConfigSet(["set", "model", "claude-opus-5", "--project"]);
+		const exitCode = await proc.exited;
+		const stderr = await new Response(proc.stderr).text();
+		expect(exitCode).toBe(1);
+		expect(stderr).toContain("model");
+		expect(stderr).toContain("git-tracked");
+		// The refusal happens BEFORE the write. Writing and letting the next read
+		// drop it is the exact failure this door exists to avoid: from the user's
+		// side a successful write that does nothing is indistinguishable from one
+		// that worked.
+		expect(existsSync(join(projectPath, ".mxd", "config.json"))).toBe(false);
+	});
+
+	test("defaultAuth is refused too", async () => {
+		const proc = runConfigSet(["set", "defaultAuth", "work", "--project"]);
+		expect(await proc.exited).toBe(1);
+		const stderr = await new Response(proc.stderr).text();
+		expect(stderr).toContain("defaultAuth");
+	});
+
+	test("a field the repo layer does have is still written", async () => {
+		// Positive control: without this, a door that refused everything would pass
+		// both tests above.
+		const proc = runConfigSet(["set", "budgetUsd", "25", "--project"]);
+		const stderr = await new Response(proc.stderr).text();
+		expect(await proc.exited, `stderr: ${stderr}`).toBe(0);
+		const written = JSON.parse(
+			await readFile(join(projectPath, ".mxd", "config.json"), "utf-8"),
+		) as Record<string, unknown>;
+		expect(written).toEqual({ budgetUsd: 25 });
 	});
 });
