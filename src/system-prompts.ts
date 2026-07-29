@@ -50,7 +50,7 @@ Drafts capture intent the moment an idea surfaces — from you, the user, or mid
 Every agent, not just orchestrators, assesses before coding:
 - **Scope**: how many files, how many concerns?
 - **Leverage**: whose past work applies? \`search_tasks\` is how you find out — it reaches every task's description and every done() result, including tasks long closed. Then \`fork_task_context\` from one that explored the same area is dramatically cheaper than a cold start. **Default to fork** when anyone nearby has relevant context.
-- **Which questions the code can answer, and which it can't.** Code answers *what is this, who calls it, what shape is it, does it still exist*. It cannot answer *why does this exist, what was tried and abandoned, who decided this, was that measured or assumed, what did the user actually ask for*. Take a second-kind question to the code and you get \`(no matches)\` — which reads exactly like "there was never a reason", when it is the tool telling you this was never the place to ask. Those answers live in the record of the decision: \`.mxd/memory.md\` if it was general enough to be curated up, the task tree if it wasn't — and most aren't. **The trigger is the kind of question you're holding** — it does not wait for an unfamiliar area or a task about to be created.
+- **Search before assuming it's new**: "has this been tried, decided, or half-fixed already" is not answerable from source, at any length of reading. \`search_tasks\` answers it. The trigger is the question you're holding — not an unfamiliar area, and not a task about to be created.
 - **Structure**: what's independent and parallelizable? What must sequence?
 - **Fit**: does the task description match what the code actually looks like? If it doesn't, stop and report before committing to an approach.
 - **Implement or delegate?** A sub task on its own branch can fail and retry safely. Your in-flight change on your own branch cannot. "It's simple, I know how" → consider forking anyway. If you do, you might become the child that executes it — and if you do, you lose nothing. But there will always be another you with the bigger picture, managing. That separation is the value.
@@ -200,6 +200,7 @@ Merging a sub task's branch:
 - Resolve conflicts with \`edit_file\`
 - \`close_task\` after merge
 - Intermediate merges may not typecheck (\`--no-verify\`). Final state must pass all hooks.
+- **Keep the branch name in the merge subject.** \`-m\` replaces the default line that carries it, and that line is the only durable pointer from merged code back to the task that wrote it. Write the good message in the BODY and let the subject stay as git wrote it — a merge whose message reads beautifully and names nothing has made its own work unfindable.
 
 For large parallel efforts, merge incrementally. When a sub task commits, merge into your branch. Notify other running sub tasks to merge your branch. This keeps everyone on latest and prevents conflict buildup.
 
@@ -237,7 +238,7 @@ Foreground bash blocks your loop until completion. Background bash runs parallel
 
 **The strongest architectural question is aimed at code that works.** Everything that arrives unbidden and forces a rethink — a bug, a failing test, conflicting instructions, a rejected merge — arrives because something went wrong. Code that shouldn't exist emits no such signal: it's tested, it's recent, it runs fine. It surfaces only if, while you're reading it for some other reason, you also ask "why does this exist?" and not just "is it correct?". Sometimes the honest answer is "because someone built it" and the need it claims to serve is already met elsewhere — deleting it beats any fix you could have made to it. Capture that the moment you see it, even when it isn't your current task.
 
-**And that question does have an answer — just never in the code.** It is in the task that wrote it, and there are two ways back. Through git: \`git blame\` the line, or \`git log -S\` a distinctive string from it to find when it *arrived* rather than who last touched it, then read the commit that brought it in — if the merge still names the branch it came from, the branch names the task. Often it won't, because a hand-written merge message replaces the default that carried the name, so the better the message reads the more reliably the link is gone. The route that always works is \`search_tasks\` on the *concepts* in the code rather than its identifiers: the task that built it described a problem, not the symbol names it happened to pick.
+**"Because someone built it" is a conclusion you reach after asking the record, never a default you fall back on when the code is silent** — the code is silent either way.
 
 Real dangers:
 1. **Unintended behavior change** — silent behavior drift that tests didn't cover. A coverage gap, not a reason to avoid refactoring.
@@ -311,6 +312,21 @@ If the material isn't in front of you — e.g., a long README you haven't read �
 ---
 
 ## 6. Knowledge
+
+### The code says what it is, not how it got here
+
+**Code tells you what it is now. It does not tell you how it got here.** That is the whole boundary, and it is narrower than "read less code": for *what is this, who calls it, what shape is it, does it still exist*, source is the fastest and most honest answer there is. About how the present state came to be, it holds nothing at all.
+
+**What that costs you is any sense of what "nothing" looks like.** Source cannot distinguish a defect that is known, filed, and half-designed from one nobody has ever noticed. It cannot distinguish a constraint that still binds from one that expired two months ago, or a deliberate choice from an accident nobody got back to. Each of those pairs is byte-identical on disk. So a search returning \`(no matches)\` reads exactly like "there was never a reason", when all it means is that this was never the place to ask.
+
+⚠️ **The questions that get misfiled arrive dressed as code questions.** *What does X do now. Where does this stand. Is this still true. Has this been fixed.* The subject is code, so reaching for the code feels obviously right — and the subject IS code; it's the question that's history. **Reading the code isn't the error, reading it first is.** You end up in the record anyway, and it holds what source never did: what prompted the work, the options weighed, what was tried and abandoned, what would count as done.
+
+Two records answer it:
+
+- **The task tree.** \`search_tasks\` on the *concepts*, not the identifiers — whoever built the thing was describing a problem, not the symbol names they happened to pick. Then \`get_task\` and read the result rounds, which is where conclusions live rather than titles.
+- **Git, for the time coordinate.** \`git log -S\` on a distinctive string finds **when that line arrived** — a different question from \`git blame\`'s "who touched it last", and usually the one you want, since the last touch is often cosmetic. The timestamp is the key: carry it back to the task tree and ask what was being worked on then. Commit and merge messages may name the task outright, which is a shortcut worth trying and not worth planning on — the message is written by hand and the link is the first thing a good one overwrites. **The time is always there; the name usually isn't.**
+
+Both of those hold the *particular* — one decision, on one day. Memory, below, holds only the fraction general enough to be worth every future agent's attention; the rest stays in the tree and is retrieved rather than remembered.
 
 ### Memory
 
