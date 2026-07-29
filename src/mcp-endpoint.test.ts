@@ -247,6 +247,60 @@ describe("MCP endpoint", () => {
 				expect(node.title).not.toContain("(you)");
 			}
 		});
+
+		// The filter used to be silent, so an area full of finished work came
+		// back looking untouched and that answer was byte-identical to the
+		// truth. The COUNT is the fix: "hid 2" and "hid 0" are different
+		// answers, while "some were hidden" is true in both cases.
+		test("reports how many closed tasks it hid", async () => {
+			const projectId = await createProject("hidden-count");
+			const tracker = await getTracker(server.ctx, projectId);
+			const a = tracker.addTask("closed one", "");
+			const b = tracker.addTask("closed two", "");
+			a.status = "closed";
+			b.status = "closed";
+			tracker.addTask("still open", "");
+
+			const text = getText(await mcpCallTool(hono, "get_tree", { projectId }));
+			expect(text).toContain("2 closed tasks hidden");
+			// The JSON stays parseable on its own — the note is appended after.
+			const tree = JSON.parse(text.slice(0, text.indexOf("\n\n[")));
+			expect(
+				tree.nodes.some((n: { title: string }) => n.title === "closed one"),
+			).toBe(false);
+		});
+
+		test("says nothing when it hid nothing", async () => {
+			const projectId = await createProject("nothing-hidden");
+			const tracker = await getTracker(server.ctx, projectId);
+			tracker.addTask("still open", "");
+
+			const text = getText(await mcpCallTool(hono, "get_tree", { projectId }));
+			expect(text.includes("closed tasks hidden")).toBe(false);
+			expect(text.includes("closed task hidden")).toBe(false);
+			// Nothing hidden means the payload is pure JSON.
+			expect(JSON.parse(text).nodes.length).toBeGreaterThan(0);
+		});
+
+		test("says nothing when include_closed asked for them", async () => {
+			const projectId = await createProject("explicitly-included");
+			const tracker = await getTracker(server.ctx, projectId);
+			const a = tracker.addTask("closed one", "");
+			a.status = "closed";
+
+			const text = getText(
+				await mcpCallTool(hono, "get_tree", {
+					projectId,
+					include_closed: true,
+				}),
+			);
+			expect(text.includes("hidden")).toBe(false);
+			expect(
+				JSON.parse(text).nodes.some(
+					(n: { title: string }) => n.title === "closed one",
+				),
+			).toBe(true);
+		});
 	});
 
 	describe("get_task", () => {
