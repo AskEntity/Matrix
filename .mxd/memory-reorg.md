@@ -431,9 +431,7 @@ set arrives with the rule text attached, so adjudicating it is reading one sente
 > and it is also why an unowned cold-read report loses the only coverage that set ever gets.
 
 **Yield of the bold-span pass, so the next run can price it:** nine further losses on top of the
-nine the token probe found, one of which is the sharpest single instance in the run — *a negative
-result deleted out of a list of negative results whose stated purpose is "so nobody spends the
-afternoon again"*. The exception that made the list safe to act on went; the list kept its promise.
+nine the token probe found, one of which is a rule of its own and is stated below.
 
 **State the yield with a SCOPE CLAUSE naming what was adjudicated at rule granularity, because a
 count in a result round is read as a completed measurement.** This run reported *"9 real losses, all
@@ -443,6 +441,30 @@ token-level adjudication of identifiers/numbers/CJK and rule-level adjudication 
 **And record an inconsistency you find in the INPUT as inherited, explicitly.** A rewrite is the
 obvious suspect for every inconsistency discovered after it, so *"this was already in the input"*
 costs one clause and stops a future pass paying to re-investigate work that was faithful.
+
+### Compressing a list of NEGATIVES inverts it. It does not weaken it
+
+A negative-results list exists to stop somebody spending an afternoon, so **its promise is
+EXHAUSTION** — and that is the one place where dropping a member does not cost a little coverage, it
+reverses the entry.
+
+Measured instance. The input read *"NEGATIVE RESULTS on the CoreML knobs, so nobody spends the
+afternoon again: `mlComputeUnits: CPUOnly`/`CPUAndGPU`, `modelFormat: MLProgram`,
+`allowLowPrecisionAccumulationOnGPU` — every one still NaN"*, followed by a parenthetical:
+**`coreml` plus `dtype: "fp16"` IS clean, it changes no decision because fp16 doubles the weights,
+and `webgpu` plus `fp16` does not even load.** The rewrite kept the list and dropped the
+parenthetical.
+
+> **The list now enumerates every knob that fails and omits the only one that works. It does not
+> merely fail to prevent the afternoon — it AIMS the reader at it**, because the single experiment
+> left unmentioned is the one a reader tries next, and the surrounding sentence promises that trying
+> it is unnecessary. *The promise was kept and the exception that made it true was deleted.*
+
+**It will look safe to the next curator for the same reason it looked safe here.** An exception
+inside a list of failures reads as a qualification of a point already made, and every other kind of
+list in this document really does compress by dropping its weakest member. **Before shortening any
+list, ask what its promise is. Where the promise is "these are all of them", it cannot be shortened
+at all** — only replaced by a shorter list that is still complete.
 
 ### Symptom scarcity is a standing property of this file, not one curator's slip
 
