@@ -5125,6 +5125,130 @@ describe("baseUrl", () => {
 	});
 });
 
+// ── The deleted credential env fallbacks stay deleted ──
+//
+// 2026-07-29 (289a3bf2) deleted two env reads from this constructor, in one pair
+// of lines:
+//     const apiKey     = opts.apiKey     ?? process.env.ANTHROPIC_API_KEY;
+//     const oauthToken = opts.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN;
+// These are inverted guards for a DELETED feature, not re-aimed tests of a
+// deleted mechanism: the producer they consume still exists — a shell really can
+// hold either name — so each reddens the moment ITS OWN `??` comes back.
+// Verified by mutation, one line at a time as well as both together.
+//
+// WHY this side needs them more than the OpenAI side, which is the reverse of
+// the usual argument: we bootstrap on Anthropic every day, so a wrong ASSERTION
+// here explodes at once. A restored FALLBACK does the opposite — it reads the
+// shell and everything keeps working. No 400, no flake, nobody reports it.
+// Traffic can falsify a wrong assertion; it cannot falsify a fallback growing
+// back, because a fallback's whole job is to make things keep working. So the
+// high-traffic path is where this kind of test is most necessary, not least.
+//
+// ⚠️ Unlike the OpenAI provider there is no `console.warn` to key on: the
+// no-credential branch here neither warns nor throws, it builds a
+// credential-less client. The signal is which credential the client ends up
+// holding, and which branch built it.
+//
+// ⚠️ MEASURED, and it is why the obvious fixture is absent: for
+// ANTHROPIC_API_KEY, an empty `opts` CANNOT express the difference. The SDK is a
+// second reader of that same variable — `if (apiKey === undefined) apiKey =
+// readEnv('ANTHROPIC_API_KEY')` in @anthropic-ai/sdk's client constructor — so
+// `client.apiKey` is the env value either way, today and with the fallback
+// restored. What does differ is the BRANCH: a truthy apiKey turns `useOAuth`
+// off, so a shell-held key silently outranks the OAuth token the user
+// configured. That collision is the second fixture below.
+//
+// ⚠️ For the same reason there is deliberately NO sentinel for
+// ANTHROPIC_AUTH_TOKEN: it is the SDK's own name and was never ours (`git log
+// -S` finds zero commits), and the SDK really does pick it up (measured:
+// client.authToken becomes the env value). Asserting it is ignored would assert
+// the opposite of reality.
+
+describe("the deleted credential env fallbacks stay deleted", () => {
+	const CREDENTIAL_ENV = [
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"CLAUDE_CODE_OAUTH_TOKEN",
+	] as const;
+
+	/**
+	 * Run `fn` with exactly `vars` set among the credential env names — every
+	 * other one deleted — restoring all of them afterwards on every path.
+	 *
+	 * Deleting the ones we are not setting is not tidiness. The restored
+	 * fallback computes `useOAuth = Boolean(oauthToken && !apiKey)`, so a
+	 * developer whose shell holds ANTHROPIC_API_KEY would suppress the OAuth
+	 * branch and the mutation would leave these tests GREEN on their machine. A
+	 * fixture has to pin every input the branch reads, or its redness depends on
+	 * whose shell it ran in.
+	 *
+	 * Restoring is equally load-bearing in the other direction: a leaked
+	 * ANTHROPIC_API_KEY pollutes every later test that builds an Anthropic
+	 * provider, in the direction that makes them look like they work.
+	 */
+	function withCredentialEnv<T>(
+		vars: Partial<Record<(typeof CREDENTIAL_ENV)[number], string>>,
+		fn: () => T,
+	): T {
+		const saved = CREDENTIAL_ENV.map(
+			(k) => [k, process.env[k]] as const satisfies readonly [string, unknown],
+		);
+		try {
+			for (const k of CREDENTIAL_ENV) delete process.env[k];
+			for (const [k, v] of Object.entries(vars)) process.env[k] = v;
+			return fn();
+		} finally {
+			for (const [k, v] of saved) {
+				if (v === undefined) delete process.env[k];
+				else process.env[k] = v;
+			}
+		}
+	}
+
+	/** The two observables that separate the branches of the constructor. */
+	function credentialShape(provider: AnthropicCompatibleProvider): {
+		authToken: string | null;
+		beta: string;
+	} {
+		// biome-ignore lint/suspicious/noExplicitAny: private client, protected _options
+		const client = (provider as any).client;
+		return {
+			authToken: client.authToken,
+			beta: client._options?.defaultHeaders?.["anthropic-beta"] ?? "",
+		};
+	}
+
+	test("a populated CLAUDE_CODE_OAUTH_TOKEN is NOT picked up", () => {
+		const { authToken, beta } = withCredentialEnv(
+			{ CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-env-should-be-ignored" },
+			() =>
+				credentialShape(
+					new AnthropicCompatibleProvider("claude-sonnet-4-6", {}),
+				),
+		);
+		// The env value never landed as a credential…
+		expect(authToken).not.toBe("sk-ant-oat-env-should-be-ignored");
+		// …and the OAuth branch was never entered, which is what reading it does.
+		expect(beta).not.toContain("oauth-2025-04-20");
+	});
+
+	test("a populated ANTHROPIC_API_KEY does NOT outrank a configured OAuth token", () => {
+		const { authToken, beta } = withCredentialEnv(
+			{ ANTHROPIC_API_KEY: "sk-env-should-be-ignored" },
+			() =>
+				credentialShape(
+					new AnthropicCompatibleProvider("claude-sonnet-4-6", {
+						oauthToken: "configured-oauth-token",
+					}),
+				),
+		);
+		// The configured credential is the one that reached the client…
+		expect(authToken).toBe("configured-oauth-token");
+		// …and the OAuth branch ran, which a truthy env apiKey switches off.
+		expect(beta).toContain("oauth-2025-04-20");
+	});
+});
+
 // ── Adaptive thinking: display opt-in ──
 // The default `display` for adaptive thinking was `"summarized"` on Opus 4.6
 // but changed to `"omitted"` on Opus 4.7. Matrix persists thinking to JSONL
