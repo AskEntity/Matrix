@@ -531,8 +531,7 @@ export function createOpenAIResponsesAdapter(
 			return resolveContextWindow({
 				endpoint: apiRoot,
 				model,
-				listModels: async () =>
-					fetchOpenAIModels(apiRoot, await credentials()),
+				listModels: async () => fetchOpenAIModels(apiRoot, await credentials()),
 			});
 		},
 

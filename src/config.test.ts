@@ -252,23 +252,19 @@ describe("resolveAuthGroup", () => {
 		});
 	});
 
-	test("preserves OpenAI OAuth-style tokens", () => {
+	test("preserves an OpenAI group pointed at codex's auth.json", () => {
 		const cfg: MatrixConfig = {
 			...DEFAULT_CONFIG,
 			authGroups: {
 				openai: {
 					provider: "openai",
-					accessToken: "eyJhbGciOiJIUzI1NiJ9.payload.sig",
-					refreshToken: "refresh-token",
-					accountId: "account_123",
+					authJsonPath: "~/.codex/auth.json",
 				},
 			},
 		};
 		expect(resolveAuthGroup(cfg, "openai")).toEqual({
 			provider: "openai",
-			accessToken: "eyJhbGciOiJIUzI1NiJ9.payload.sig",
-			refreshToken: "refresh-token",
-			accountId: "account_123",
+			authJsonPath: "~/.codex/auth.json",
 		});
 	});
 
@@ -731,5 +727,69 @@ describe("loadGlobalConfig", () => {
 		const path = join(tmpDir, "config.json");
 		await writeFile(path, "{ this is not valid json ");
 		await expect(loadGlobalConfig(path)).rejects.toThrow(/not valid JSON/i);
+	});
+
+	/**
+	 * Inverted guard for a REMOVED field, and the producer still exists: a
+	 * config written by an older matrix, or by hand, really can carry
+	 * `accessToken`. Silence would be the worst outcome available — the user's
+	 * OpenAI calls fail while the config file visibly still contains a token, so
+	 * the file itself argues that nothing is wrong.
+	 */
+	test.each([
+		["accessToken", "eyJhbGciOiJIUzI1NiJ9.payload.sig"],
+		["refreshToken", "refresh-token-abc"],
+		["accountId", "account_123"],
+	])("a config still carrying %s warns and names the way out", async (field, value) => {
+		const path = join(tmpDir, "config.json");
+		await saveGlobalConfig(
+			{
+				...DEFAULT_CONFIG,
+				authGroups: {
+					oai: { provider: "openai", [field]: value } as never,
+				},
+			},
+			path,
+		);
+		const warnings: string[] = [];
+		const original = console.warn;
+		console.warn = (msg: string) => warnings.push(String(msg));
+		try {
+			await loadGlobalConfig(path);
+		} finally {
+			console.warn = original;
+		}
+		const warning = warnings.find((w) => w.includes(field));
+		expect(warning).toBeDefined();
+		// Names the group, so a user with several knows which to edit...
+		expect(warning).toContain('"oai"');
+		// ...and the replacement, so the warning is actionable rather than a
+		// bare "this is gone".
+		expect(warning).toContain("authJsonPath");
+		// The reason, not just the mechanics: the copy was always the wrong
+		// model, which is why there is no migration that keeps the token.
+		expect(warning).toMatch(/rotate/i);
+	});
+
+	test("a config with no removed fields warns about nothing", async () => {
+		const path = join(tmpDir, "config.json");
+		await saveGlobalConfig(
+			{
+				...DEFAULT_CONFIG,
+				authGroups: {
+					oai: { provider: "openai", authJsonPath: "~/.codex/auth.json" },
+				},
+			},
+			path,
+		);
+		const warnings: string[] = [];
+		const original = console.warn;
+		console.warn = (msg: string) => warnings.push(String(msg));
+		try {
+			await loadGlobalConfig(path);
+		} finally {
+			console.warn = original;
+		}
+		expect(warnings).toEqual([]);
 	});
 });

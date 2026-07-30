@@ -295,8 +295,10 @@ describe("daemon: config masks API keys", () => {
 					oai: {
 						provider: "openai",
 						apiKey: "sk-oai-secret-abcdef",
-						accessToken: "access-xyz-1234",
-						refreshToken: "refresh-xyz-1234",
+					},
+					oaiFile: {
+						provider: "openai",
+						authJsonPath: "/home/someone/.codex/auth.json",
 					},
 				},
 			}),
@@ -309,7 +311,7 @@ describe("daemon: config masks API keys", () => {
 	});
 	afterEach(() => teardown(ctx));
 
-	test("GET /config/global masks apiKey / oauthToken / accessToken / refreshToken", async () => {
+	test("GET /config/global masks apiKey / oauthToken, and leaves authJsonPath readable", async () => {
 		const res = await ctx.daemon.fetch(
 			new Request("http://localhost/config/global", {
 				headers: { Authorization: `Bearer ${ctx.sessionToken}` },
@@ -327,14 +329,18 @@ describe("daemon: config masks API keys", () => {
 		const oai = body.authGroups.oai;
 		if (oai?.provider !== "openai") throw new Error("expected openai");
 		expect(oai.apiKey).toContain("…");
-		expect(oai.apiKey).not.toContain("secret");
-		expect(oai.accessToken).toContain("…");
 		// Mutation guard: the `…` ellipsis alone is theater — a mask that
 		// returns `${token}…` would leak the full plaintext yet still pass
 		// `toContain("…")`. Assert the plaintext token itself is absent.
-		expect(oai.accessToken).not.toContain("access-xyz-1234");
-		expect(oai.refreshToken).toContain("…");
-		expect(oai.refreshToken).not.toContain("refresh-xyz-1234");
+		expect(oai.apiKey).not.toContain("secret");
+
+		// The other direction, and it is a real requirement rather than an
+		// absence of one: `authJsonPath` is a PATH, so masking it would hide the
+		// one thing the user needs to see — which file this group reads. The
+		// secret it leads to never enters config at all.
+		const oaiFile = body.authGroups.oaiFile;
+		if (oaiFile?.provider !== "openai") throw new Error("expected openai");
+		expect(oaiFile.authJsonPath).toBe("/home/someone/.codex/auth.json");
 	});
 
 	test("PATCH /config/global preserves plaintext when client echoes masked value", async () => {

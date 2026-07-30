@@ -12,9 +12,10 @@ interface AuthGroup {
 	provider: "anthropic" | "openai";
 	apiKey?: string;
 	oauthToken?: string;
-	accessToken?: string;
-	refreshToken?: string;
-	accountId?: string;
+	/** OpenAI only: path to the auth.json the codex CLI writes. Read at each
+	 * use, never copied into config — see `src/codex-auth.ts`. This shape is
+	 * hand-kept in sync with `OpenAIAuthGroup`; `web/` cannot import `src/`. */
+	authJsonPath?: string;
 	baseUrl?: string;
 	systemPreamble?: string;
 }
@@ -401,9 +402,7 @@ function AuthGroupEditor({
 	);
 	const [apiKeyValue, setApiKeyValue] = useState(group.apiKey ?? "");
 	const [oauthToken, setOauthToken] = useState(group.oauthToken ?? "");
-	const [accessToken, setAccessToken] = useState(group.accessToken ?? "");
-	const [refreshToken, setRefreshToken] = useState(group.refreshToken ?? "");
-	const [accountId, setAccountId] = useState(group.accountId ?? "");
+	const [authJsonPath, setAuthJsonPath] = useState(group.authJsonPath ?? "");
 	const [baseUrl, setBaseUrl] = useState(group.baseUrl ?? "");
 	const [systemPreamble, setSystemPreamble] = useState(
 		group.systemPreamble ?? "",
@@ -418,9 +417,7 @@ function AuthGroupEditor({
 			if (baseUrl) g.baseUrl = baseUrl;
 		} else {
 			if (apiKeyValue) g.apiKey = apiKeyValue;
-			if (accessToken) g.accessToken = accessToken;
-			if (refreshToken) g.refreshToken = refreshToken;
-			if (accountId) g.accountId = accountId;
+			if (authJsonPath) g.authJsonPath = authJsonPath;
 			if (baseUrl) g.baseUrl = baseUrl;
 		}
 		onSave(editName.trim() || name, g);
@@ -499,40 +496,19 @@ function AuthGroupEditor({
 				</>
 			) : (
 				<>
+					{/* A path, so type="text" and no masking: the secret lives in the
+					    file, never in config, and you have to be able to see which
+					    file you pointed at. */}
 					<label className="mxd-settings-field">
 						<span className="mxd-settings-label">
-							{t("settings.accessToken")}
-						</span>
-						<input
-							type="password"
-							className="mxd-settings-input"
-							placeholder={t("settings.optionalFallback")}
-							value={accessToken}
-							onChange={(e) => setAccessToken(e.target.value)}
-						/>
-					</label>
-					<label className="mxd-settings-field">
-						<span className="mxd-settings-label">
-							{t("settings.refreshToken")}
-						</span>
-						<input
-							type="password"
-							className="mxd-settings-input"
-							placeholder={t("settings.optionalFallback")}
-							value={refreshToken}
-							onChange={(e) => setRefreshToken(e.target.value)}
-						/>
-					</label>
-					<label className="mxd-settings-field">
-						<span className="mxd-settings-label">
-							{t("settings.accountId")}
+							{t("settings.authJsonPath")}
 						</span>
 						<input
 							type="text"
 							className="mxd-settings-input"
-							placeholder={t("settings.optionalFallback")}
-							value={accountId}
-							onChange={(e) => setAccountId(e.target.value)}
+							placeholder="~/.codex/auth.json"
+							value={authJsonPath}
+							onChange={(e) => setAuthJsonPath(e.target.value)}
 						/>
 					</label>
 					<label className="mxd-settings-field">
@@ -603,13 +579,17 @@ function AuthGroupsSection({
 		setEditingGroup(null);
 	};
 
-	const maskedKey = (group: AuthGroup): string => {
-		const key =
-			group.apiKey ||
-			group.oauthToken ||
-			group.accessToken ||
-			group.refreshToken ||
-			group.accountId;
+	/**
+	 * What this group authenticates with, in one line.
+	 *
+	 * Not `maskedKey` any more, because one of the two answers is not a key and
+	 * must NOT be masked: `authJsonPath` is a filesystem path, and which file the
+	 * group reads is exactly what this row exists to tell you. The secret behind
+	 * it never enters config.
+	 */
+	const credentialSummary = (group: AuthGroup): string => {
+		if (group.authJsonPath) return group.authJsonPath;
+		const key = group.apiKey || group.oauthToken;
 		if (!key) return "—";
 		return `${key.slice(0, 6)}…${key.slice(-4)}`;
 	};
@@ -641,7 +621,9 @@ function AuthGroupsSection({
 							<span className="mxd-auth-group-name">{name}</span>
 							<span className="mxd-auth-group-provider">
 								<span className="mxd-auth-group-badge">{group.provider}</span>
-								<span className="mxd-auth-group-key">{maskedKey(group)}</span>
+								<span className="mxd-auth-group-key">
+									{credentialSummary(group)}
+								</span>
 							</span>
 						</button>
 					)}

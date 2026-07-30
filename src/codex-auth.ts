@@ -1,5 +1,22 @@
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { OpenAIAuthGroup } from "./config.ts";
+
+/**
+ * Expand a leading `~/`, because the documented location of this file IS
+ * `~/.codex/auth.json` and the two places a user types it — a settings text
+ * field and a JSON config file — do not go through a shell.
+ *
+ * Without this the failure is invisible rather than merely inconvenient: the
+ * error would quote back the exact path they typed, which looks correct, while
+ * the read was attempted somewhere under the process's cwd.
+ */
+function expandHome(path: string): string {
+	if (path === "~") return homedir();
+	if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+	return path;
+}
 
 /**
  * The credential material one OpenAI call needs.
@@ -70,7 +87,12 @@ function jwtExpiry(token: string): number | null {
  * tokens codex just refreshed. An expired token is therefore an ERROR with an
  * instruction, never something we try to refresh ourselves.
  */
-export async function readCodexAuth(path: string): Promise<OpenAICredential> {
+export async function readCodexAuth(
+	configuredPath: string,
+): Promise<OpenAICredential> {
+	// Errors quote the RESOLVED path, not what was configured: "~/.codex/auth.json
+	// does not exist" is unfalsifiable to the reader, the absolute path is not.
+	const path = expandHome(configuredPath);
 	let text: string;
 	try {
 		text = await readFile(path, "utf-8");

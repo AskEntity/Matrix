@@ -415,7 +415,7 @@ async function main(): Promise<void> {
 	const model = process.argv[3] ?? "gpt-5.1-codex";
 	const baseUrl = group.baseUrl ?? "https://api.openai.com/v1";
 	if (!group.apiKey && !group.authJsonPath) {
-		console.error('openai auth group has neither apiKey nor authJsonPath.');
+		console.error("openai auth group has neither apiKey nor authJsonPath.");
 		process.exit(1);
 	}
 	const adapter = createOpenAIResponsesAdapter(

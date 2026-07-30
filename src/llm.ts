@@ -52,7 +52,7 @@ import {
 	type OpenAICredentialSource,
 	openAICredentialSource,
 } from "./codex-auth.ts";
-import { type AuthGroup } from "./config.ts";
+import type { AuthGroup } from "./config.ts";
 import type { EventSpec } from "./events.ts";
 import { createOpenAIResponsesAdapter } from "./openai-responses-compatible-provider.ts";
 import type { ProviderAdapter } from "./provider-shared.ts";
