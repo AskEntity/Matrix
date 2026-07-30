@@ -487,8 +487,17 @@ export interface ProviderTokenUsage {
  * budget check, event emission). The adapter only handles provider-specific operations.
  */
 export interface ProviderAdapter {
-	/** Get context window size for a model. May be async (e.g. OpenAI fetches from API). */
-	getContextWindow(model: string): number | Promise<number>;
+	/**
+	 * Ask the endpoint for this model's context window.
+	 *
+	 * Async and able to throw, both structurally: the window is a property of
+	 * the DEPLOYMENT rather than of the model (`k3` is 1M and `k3-256k` is
+	 * 256K at one host), so it cannot be known without asking. The signature
+	 * used to allow a plain `number`, and the only thing that could ever have
+	 * returned one was a local guess — which is what `src/context-window.ts`
+	 * exists to have deleted.
+	 */
+	getContextWindow(model: string): Promise<number>;
 
 	/** Get per-million-token pricing for a model. */
 	getModelPricing(model: string): { inputPer1M: number; outputPer1M: number };

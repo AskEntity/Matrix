@@ -12,6 +12,7 @@ import type { Event } from "../events.ts";
 import type { QueueMessage } from "../message-queue.ts";
 import { deliverMessage } from "../runtime/agent-lifecycle.ts";
 import { createApp } from "../runtime.ts";
+import { TEST_CONFIG } from "../test-utils.ts";
 import { ulid } from "../ulid.ts";
 import { matrixBuildScopeOpts } from "./matrix-scope.ts";
 import {
@@ -54,6 +55,7 @@ export async function setupEmissionTestContext(): Promise<EmissionTestContext> {
 
 	const projectId = ulid();
 	const appResult = createApp({
+		initialConfig: TEST_CONFIG,
 		dataDir,
 		agentProvider: provider,
 		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],

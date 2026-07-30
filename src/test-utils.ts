@@ -2,6 +2,7 @@
  * Shared test utilities for building mock contexts.
  */
 
+import { DEFAULT_CONFIG, type MatrixConfig } from "./config.ts";
 import type { MessageQueue } from "./message-queue.ts";
 import type { ProjectStore } from "./project-store.ts";
 import {
@@ -14,6 +15,32 @@ import type { TaskTracker } from "./task-tracker.ts";
 import { type Auth, createAgentAuth } from "./tool-auth.ts";
 import { TurnInterrupt } from "./turn-interrupt.ts";
 import type { Project, TaskNode, TaskSession } from "./types.ts";
+
+/**
+ * The model a test deployment runs. Listed by the mock endpoint's catalogue
+ * (`MEASURED_ANTHROPIC_CATALOGUE`), which is the real production response.
+ */
+export const TEST_MODEL = "claude-sonnet-4-6";
+
+/**
+ * `createApp` config for any test that actually RUNS an agent.
+ *
+ * ⚠️ Pass this wherever a test injects `agentProvider`. Without it
+ * `ctx.globalConfig` is `DEFAULT_CONFIG`, whose `model` is `""` — so
+ * `request.model` reaches the provider empty, and until 2026-07-29 the context
+ * window for that non-existent model came back as 200_000 from a substring
+ * test that `""` merely failed. Now the endpoint is the only source
+ * (`src/context-window.ts`), so an undeclared model is an error instead of a
+ * number nobody chose.
+ *
+ * That the whole suite ran this way is the reason memory.md says a green suite
+ * "says nothing about whether a fresh install works". Declaring the model is
+ * what a real deployment does.
+ */
+export const TEST_CONFIG: MatrixConfig = {
+	...DEFAULT_CONFIG,
+	model: TEST_MODEL,
+};
 
 /**
  * Build a minimal RuntimeContext for tests that call createOrchestratorTools directly.

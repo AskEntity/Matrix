@@ -46,6 +46,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { TEST_CONFIG } from "./test-utils.ts";
 import type { BaseTaskNode, TaskNode } from "./types.ts";
 import { ulid } from "./ulid.ts";
 
@@ -83,6 +84,7 @@ async function setupTestContext(): Promise<TestContext> {
 
 	const projectId = ulid();
 	const appResult = createApp({
+		initialConfig: TEST_CONFIG,
 		dataDir,
 		agentProvider: provider,
 		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],

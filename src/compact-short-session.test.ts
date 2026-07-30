@@ -52,6 +52,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { TEST_CONFIG } from "./test-utils.ts";
 import { ulid } from "./ulid.ts";
 
 interface Ctx {
@@ -83,6 +84,7 @@ async function setup(): Promise<Ctx> {
 	const provider = createMockedProviderWithMock(mockAPI);
 	const projectId = ulid();
 	const app = createApp({
+		initialConfig: TEST_CONFIG,
 		dataDir,
 		agentProvider: provider,
 		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
@@ -256,6 +258,7 @@ describe("/compact on a short session", () => {
 		await ctx.app.shutdown();
 		await new Promise((r) => setTimeout(r, 100));
 		ctx.app = createApp({
+			initialConfig: TEST_CONFIG,
 			dataDir: ctx.dataDir,
 			agentProvider: createMockedProviderWithMock(ctx.mockAPI),
 			projects: [

@@ -5,6 +5,7 @@ import type {
 	Tool,
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
+import { resolveContextWindow } from "./context-window.ts";
 import {
 	debugResponsePath,
 	writeDebugResponse,
@@ -30,24 +31,6 @@ import { formatQueueMessage } from "./task-utils.ts";
 import type { JsonTool } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
-
-/**
- * Get context window size for a model.
- * Claude Opus 4.6 and Sonnet 4.6 have 1M context by default.
- * Older models and Haiku use the standard 200k context window.
- * @internal Exported for testing
- */
-export function getContextWindow(model: string): number {
-	// Opus 4.6+ and Sonnet 4.6+ support 1M context natively
-	if (
-		model.includes("mythos") ||
-		model.includes("fable") ||
-		model.includes("opus") ||
-		model.includes("sonnet-4")
-	)
-		return 1_000_000;
-	return 200_000;
-}
 
 /** Per-million-token pricing by model family. */
 const MODEL_PRICING: Record<
@@ -412,8 +395,23 @@ export function createAnthropicAdapter(
 	},
 ): ProviderAdapter {
 	return {
-		getContextWindow(model: string): number {
-			return getContextWindow(model);
+		/**
+		 * The SDK client already carries this deployment's base URL, auth and
+		 * headers — including the OAuth beta header — so asking through it is
+		 * the only way to reach the endpoint without hand-building a FOURTH
+		 * copy of the client construction (see the three existing sites in
+		 * memory.md). `limit: 1000` is a single page: both endpoints we run
+		 * against answer `has_more: false` well inside it, and a deployment
+		 * that ever exceeds it reports "does not list <model>" with the ids it
+		 * did return, rather than a wrong number.
+		 */
+		getContextWindow(model: string): Promise<number> {
+			return resolveContextWindow({
+				endpoint: client.baseURL,
+				model,
+				listModels: async () =>
+					(await client.models.list({ limit: 1000 })).data,
+			});
 		},
 
 		getModelPricing(model: string) {

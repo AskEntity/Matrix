@@ -30,6 +30,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import { TEST_CONFIG } from "./test-utils.ts";
 import { ulid } from "./ulid.ts";
 
 // ── Realistic signature (long base64 string, matching production format) ──
@@ -511,6 +512,7 @@ async function setupTestContext(): Promise<TestContext> {
 	const provider = createMockedProviderWithMock(mockAPI);
 	const projectId = ulid();
 	const appResult = createApp({
+		initialConfig: TEST_CONFIG,
 		dataDir,
 		agentProvider: provider,
 		projects: [{ id: projectId, name: basename(projectDir), path: projectDir }],
@@ -641,6 +643,7 @@ async function recreateApp(
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedProviderWithMock(ctx.mockAPI);
 	const newApp = createApp({
+		initialConfig: TEST_CONFIG,
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
 		projects: [

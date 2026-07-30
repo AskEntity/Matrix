@@ -1,4 +1,11 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+	afterAll,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	test,
+} from "bun:test";
 import { chmodSync, realpathSync, statSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,8 +19,8 @@ import { z } from "zod";
 import {
 	AnthropicCompatibleProvider,
 	addMessagesCacheControl,
+	createAnthropicAdapter,
 	eventsToAnthropicMessages,
-	getContextWindow,
 	getModelPricing,
 } from "./anthropic-compatible-provider.ts";
 import {
@@ -23,12 +30,15 @@ import {
 	getCompactionThresholds,
 	SUMMARIZATION_INSTRUCTION,
 } from "./compaction.ts";
+import { clearContextWindowCache } from "./context-window.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event, EventSpec } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import { createOrchestratorTools } from "./orchestrator-tools.ts";
+import type { ProviderAdapter } from "./provider-shared.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
+import { createMockAnthropicClient } from "./test-utils/mock-anthropic-api.ts";
 import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
 import { type ParamDefs, toToolDefinition } from "./tool-def.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
@@ -199,21 +209,104 @@ describe("getModelPricing", () => {
 	});
 });
 
-describe("getContextWindow", () => {
-	test("returns 1M for opus models", () => {
-		expect(getContextWindow("claude-opus-4-6")).toBe(1_000_000);
+/**
+ * These replace four tests that asserted a local substring guess
+ * (`model.includes("opus") → 1_000_000`). The guess is deleted, so there is
+ * nothing left to assert about it — what survives is the inversion: the
+ * adapter must ASK, and must refuse to answer when the endpoint will not.
+ *
+ * Every case here is a real measurement from 2026-07-29. Read against the old
+ * guess, the first two are the bug: it returned 200_000 for a 1M model and
+ * 1_000_000 for a 200K one, in both directions, with nothing going red.
+ */
+describe("adapter.getContextWindow asks the endpoint", () => {
+	function adapterAgainst(
+		models: Array<Record<string, unknown>>,
+		baseURL = "https://api.anthropic.test",
+	): { adapter: ProviderAdapter; calls: () => number } {
+		let calls = 0;
+		const client = {
+			baseURL,
+			models: {
+				list: async () => {
+					calls++;
+					return { data: models };
+				},
+			},
+		} as unknown as Anthropic;
+		return {
+			adapter: createAnthropicAdapter(client, false, {}),
+			calls: () => calls,
+		};
+	}
+
+	beforeEach(() => {
+		clearContextWindowCache();
 	});
 
-	test("returns 1M for sonnet 4.6 models", () => {
-		expect(getContextWindow("claude-sonnet-4-6")).toBe(1_000_000);
+	test("takes the endpoint's number over what the old substring guess said", async () => {
+		// Measured: api.anthropic.com reports 1,000,000 for sonnet-5. The
+		// deleted guess matched on the literal "sonnet-4" and answered 200_000.
+		const { adapter } = adapterAgainst([
+			{ id: "claude-sonnet-5", type: "model", max_input_tokens: 1_000_000 },
+		]);
+		expect(await adapter.getContextWindow("claude-sonnet-5")).toBe(1_000_000);
 	});
 
-	test("returns 200k for haiku models", () => {
-		expect(getContextWindow("claude-haiku-4-5-20251001")).toBe(200_000);
+	test("an old opus really is 200K, where the guess said 1M", async () => {
+		// Measured. The guess matched bare "opus" and answered 1_000_000 — the
+		// dangerous direction: compact at ~900K against an API refusing at 200K.
+		const { adapter } = adapterAgainst([
+			{
+				id: "claude-opus-4-1-20250805",
+				type: "model",
+				max_input_tokens: 200_000,
+			},
+		]);
+		expect(await adapter.getContextWindow("claude-opus-4-1-20250805")).toBe(
+			200_000,
+		);
 	});
 
-	test("returns 200k for unknown models", () => {
-		expect(getContextWindow("gpt-4")).toBe(200_000);
+	test("throws instead of falling back when the endpoint does not list the model", async () => {
+		const { adapter } = adapterAgainst([
+			{ id: "claude-opus-5", type: "model", max_input_tokens: 1_000_000 },
+		]);
+		await expect(adapter.getContextWindow("claude-opus-9")).rejects.toThrow(
+			/does not list it/,
+		);
+	});
+
+	test("throws when the endpoint itself is unreachable", async () => {
+		const client = {
+			baseURL: "https://api.anthropic.test",
+			models: {
+				list: async () => {
+					throw new Error("connect ECONNREFUSED");
+				},
+			},
+		} as unknown as Anthropic;
+		const adapter = createAnthropicAdapter(client, false, {});
+		await expect(adapter.getContextWindow("claude-opus-5")).rejects.toThrow(
+			/ECONNREFUSED/,
+		);
+	});
+
+	test("asks once per endpoint+model, and separately per endpoint", async () => {
+		const a = adapterAgainst(
+			[{ id: "k3", type: "model", context_length: 1_048_576 }],
+			"https://api.kimi.test/coding",
+		);
+		const b = adapterAgainst(
+			[{ id: "k3", type: "model", context_length: 262_144 }],
+			"https://mirror.kimi.test/coding",
+		);
+		expect(await a.adapter.getContextWindow("k3")).toBe(1_048_576);
+		expect(await a.adapter.getContextWindow("k3")).toBe(1_048_576);
+		expect(a.calls()).toBe(1);
+		// Same model id, different deployment — must NOT read the first answer.
+		expect(await b.adapter.getContextWindow("k3")).toBe(262_144);
+		expect(b.calls()).toBe(1);
 	});
 });
 
@@ -3521,12 +3614,7 @@ describe("Event deterministic verification", () => {
 
 		// Replace the client's messages.stream with our mock
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
-		(provider as any).client = {
-			messages: {
-				stream: streamFn,
-				countTokens: async () => ({ input_tokens: 100 }),
-			},
-		};
+		(provider as any).client = createMockAnthropicClient({ stream: streamFn });
 		return provider;
 	}
 
@@ -4425,12 +4513,7 @@ describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => 
 			apiKey: "test-key",
 		});
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
-		(provider as any).client = {
-			messages: {
-				stream: streamFn,
-				countTokens: async () => ({ input_tokens: 100 }),
-			},
-		};
+		(provider as any).client = createMockAnthropicClient({ stream: streamFn });
 		return provider;
 	}
 
@@ -5077,15 +5160,12 @@ describe("adaptive thinking display", () => {
 		});
 
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
-		(provider as any).client = {
-			messages: {
-				stream: (params: Record<string, unknown>) => {
-					capturedParams = params;
-					return createMockStream(response, ["ok"]);
-				},
-				countTokens: async () => ({ input_tokens: 100 }),
+		(provider as any).client = createMockAnthropicClient({
+			stream: (params: Record<string, unknown>) => {
+				capturedParams = params;
+				return createMockStream(response, ["ok"]);
 			},
-		};
+		});
 
 		return { provider, getParams: () => capturedParams };
 	}
@@ -5150,12 +5230,7 @@ describe("Abort signal stops inner retry immediately", () => {
 			apiKey: "test-key",
 		});
 		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
-		(provider as any).client = {
-			messages: {
-				stream: streamFn,
-				countTokens: async () => ({ input_tokens: 100 }),
-			},
-		};
+		(provider as any).client = createMockAnthropicClient({ stream: streamFn });
 		return provider;
 	}
 

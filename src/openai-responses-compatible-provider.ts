@@ -6,6 +6,7 @@ import type {
 	ResponseOutputMessage,
 } from "openai/resources/responses/responses";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
+import { resolveContextWindow } from "./context-window.ts";
 import {
 	debugResponsePath,
 	writeDebugResponse,
@@ -89,36 +90,6 @@ const OPENAI_PRICING: Record<
 	"gpt-5.3-codex": { inputPer1M: 1.5, outputPer1M: 6 },
 };
 
-const CONTEXT_WINDOWS: Record<string, number> = {
-	"gpt-4.1": 1_047_576,
-	"gpt-4.1-mini": 1_047_576,
-	"gpt-4.1-nano": 1_047_576,
-	"gpt-4o": 128_000,
-	"gpt-4o-mini": 128_000,
-	"gpt-4-turbo": 128_000,
-	"gpt-5": 400_000,
-	"gpt-5.4": 1_050_000,
-	"gpt-5.4-mini": 400_000,
-	"gpt-5.4-nano": 400_000,
-	o3: 200_000,
-	"o3-mini": 200_000,
-	"o4-mini": 200_000,
-	o1: 200_000,
-	"o1-mini": 128_000,
-	"o1-pro": 200_000,
-	"gpt-5-codex": 400_000,
-	"gpt-5.1-codex": 400_000,
-	"gpt-5.2-codex": 400_000,
-	"gpt-5.3-codex": 400_000,
-};
-
-const DEFAULT_CONTEXT_WINDOW = 128_000;
-const contextWindowCache = new Map<string, number>();
-
-export function clearContextWindowCache(): void {
-	contextWindowCache.clear();
-}
-
 export function getModelPricing(model: string): {
 	inputPer1M: number;
 	outputPer1M: number;
@@ -137,76 +108,65 @@ export function getModelPricing(model: string): {
 	};
 }
 
-export function getContextWindow(model: string): number {
-	if (CONTEXT_WINDOWS[model]) return CONTEXT_WINDOWS[model];
-	const sortedKeys = Object.keys(CONTEXT_WINDOWS).sort(
-		(a, b) => b.length - a.length,
-	);
-	for (const key of sortedKeys) {
-		const window = CONTEXT_WINDOWS[key];
-		if (model.startsWith(key) && window) return window;
-	}
-	return DEFAULT_CONTEXT_WINDOW;
-}
-
 function resolveResponsesEndpoint(baseUrl: string): string {
 	return baseUrl.endsWith("/responses") ? baseUrl : `${baseUrl}/responses`;
 }
 
-function canFetchModels(baseUrl: string): boolean {
-	return !baseUrl.endsWith("/responses");
+/**
+ * The API root: what you get by stripping the `/responses` path off a
+ * configured base URL. This is the deployment's identity — the cache key for
+ * its context windows, and the prefix every other route hangs off.
+ */
+function resolveApiRoot(baseUrl: string): string {
+	return baseUrl.replace(/\/responses$/, "");
 }
 
 function isCodexEndpoint(endpoint: string): boolean {
 	return endpoint.includes("chatgpt.com/backend-api/codex/responses");
 }
 
-export async function fetchContextWindowFromAPI(
-	baseUrl: string,
+/**
+ * GET the endpoint's model list.
+ *
+ * Throws on anything other than a 200 carrying a `data` array — the caller
+ * turns that into an error naming the endpoint and the model. It used to
+ * swallow every failure and return null so the static table could take over;
+ * with the table gone, swallowing would only hide WHY we cannot answer.
+ *
+ * ⚠️ Known and accepted: `api.openai.com/v1/models` does not report context
+ * length at all, and the codex catalog routes answer 401 with our current
+ * credentials (they are being replaced by `01KYR55VZ4ZHCNVS9B6JH4DDZX`). So
+ * this provider currently fails at startup rather than guessing — which costs
+ * nothing today, since it is not the provider we bootstrap on, and is honest:
+ * an endpoint that will not state its own limit is one we cannot safely pick a
+ * compaction point for.
+ */
+async function fetchOpenAIModels(
+	apiRoot: string,
 	authToken: string,
-	model: string,
-): Promise<number | null> {
-	if (!canFetchModels(baseUrl)) return null;
-	const cached = contextWindowCache.get(model);
-	if (cached !== undefined) return cached;
+	accountId: string | undefined,
+): Promise<unknown[]> {
+	const url = `${apiRoot}/models`;
+	// The same auth material `streamResponsesAPI` sends to this host. Whether
+	// the account header is REQUIRED here is unverified — the codex endpoint
+	// 401s on the bearer token before it could matter — so this mirrors the
+	// one working path rather than claiming to know what /models wants.
+	const headers: Record<string, string> = {
+		Authorization: `Bearer ${authToken}`,
+	};
+	if (accountId) headers["ChatGPT-Account-Id"] = accountId;
 
-	try {
-		const response = await fetch(`${baseUrl}/models`, {
-			method: "GET",
-			headers: {
-				Authorization: `Bearer ${authToken}`,
-			},
-		});
-		if (!response.ok) return null;
-
-		const data = (await response.json()) as {
-			data?: Array<{ id: string; context_length?: number }>;
-		};
-		if (!Array.isArray(data.data)) return null;
-
-		let contextLength: number | undefined;
-		for (const m of data.data) {
-			if (m.id === model) {
-				contextLength = m.context_length;
-				break;
-			}
-		}
-		if (contextLength === undefined) {
-			for (const m of data.data) {
-				if (m.id.startsWith(model) || model.startsWith(m.id)) {
-					contextLength = m.context_length;
-					break;
-				}
-			}
-		}
-		if (typeof contextLength === "number" && contextLength > 0) {
-			contextWindowCache.set(model, contextLength);
-			return contextLength;
-		}
-	} catch {
-		// Ignore network and parse errors, fall back to static table.
+	const response = await fetch(url, { method: "GET", headers });
+	if (!response.ok) {
+		throw new Error(
+			`GET ${url} returned ${response.status} ${response.statusText}`,
+		);
 	}
-	return null;
+	const body = (await response.json()) as { data?: unknown };
+	if (!Array.isArray(body.data)) {
+		throw new Error(`GET ${url} returned 200 with no "data" array`);
+	}
+	return body.data;
 }
 
 function openaiImagePart(img: EventImageData): {
@@ -550,14 +510,14 @@ export function createOpenAIResponsesAdapter(
 	accountId?: string,
 	opts?: { maxRetries?: number },
 ): ProviderAdapter {
+	const apiRoot = resolveApiRoot(baseUrl);
 	return {
-		async getContextWindow(model: string): Promise<number> {
-			const apiContextWindow = await fetchContextWindowFromAPI(
-				baseUrl,
-				authToken,
+		getContextWindow(model: string): Promise<number> {
+			return resolveContextWindow({
+				endpoint: apiRoot,
 				model,
-			);
-			return apiContextWindow ?? getContextWindow(model);
+				listModels: () => fetchOpenAIModels(apiRoot, authToken, accountId),
+			});
 		},
 
 		getModelPricing(model: string) {
