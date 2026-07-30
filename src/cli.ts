@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
 	encryptWithPublicKey,
@@ -22,6 +21,7 @@ import {
 	saveGlobalConfig,
 	saveProjectRepoConfig,
 } from "./config.ts";
+import { resolveDataDir } from "./data-paths.ts";
 import { pluginApiPrefix } from "./plugin-url.ts";
 
 const _pkg = JSON.parse(
@@ -30,10 +30,11 @@ const _pkg = JSON.parse(
 const VERSION = _pkg.version;
 
 const DAEMON_URL = process.env.MXD_DAEMON_URL ?? "http://localhost:7433";
-// Must stay in lockstep with daemon.ts's production entry block. If the daemon
-// runs with a custom MXD_DATA_DIR, the CLI must sign with the same jwtSecret —
-// otherwise the token is verified against the wrong secret and rejected.
-const DATA_DIR = process.env.MXD_DATA_DIR ?? join(homedir(), ".mxd");
+// In lockstep with the daemon BY CONSTRUCTION now, rather than by two copies of
+// one expression: if the daemon runs with a custom MXD_DATA_DIR, the CLI must
+// sign with the same jwtSecret — otherwise the token is verified against the
+// wrong secret and rejected.
+const DATA_DIR = resolveDataDir();
 const AUTH_JSON_PATH = join(DATA_DIR, "auth.json");
 
 /**
@@ -1275,10 +1276,14 @@ async function handleHealth(): Promise<void> {
 // ── Daemon management via launchctl ──
 
 const PLIST_LABEL = "dev.matrix.daemon";
+// HOME is correct HERE and only here: macOS genuinely puts LaunchAgents under
+// the home directory. It is not our data dir and must not move with it.
 const PLIST_DIR = `${process.env.HOME}/Library/LaunchAgents`;
 const PLIST_PATH = `${PLIST_DIR}/${PLIST_LABEL}.plist`;
 const MXD_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const LOG_DIR = `${process.env.HOME}/.mxd/logs`;
+// The daemon's logs are runtime state, so they live in the data dir. Was
+// `${HOME}/.mxd/logs`, which ignored MXD_DATA_DIR — one of the five answers.
+const LOG_DIR = join(DATA_DIR, "logs");
 
 function daemonPlist(): string {
 	const bunPath = process.argv[0]; // bun binary that's running this CLI

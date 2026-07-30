@@ -16,7 +16,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -167,5 +167,119 @@ describe("cli: config set --project respects the repo layer's field set", () => 
 			await readFile(join(projectPath, ".mxd", "config.json"), "utf-8"),
 		) as Record<string, unknown>;
 		expect(written).toEqual({ budgetUsd: 25 });
+	});
+});
+
+/**
+ * Global config is the SECOND thing the CLI locates in the data dir, and for a
+ * long time it located it somewhere else.
+ *
+ * `AUTH_JSON_PATH` above is `join(DATA_DIR, "auth.json")` and has its own test
+ * and its own comment about staying in lockstep with the daemon. Four lines
+ * away, `config.ts`'s `globalConfigPath()` was `join(homedir(), ".mxd",
+ * "config.json")` — the same file only while `MXD_DATA_DIR` is unset, while the
+ * daemon reads `join(dataDir, "config.json")`. One door closed, the adjacent one
+ * open, in the same file as the comment warning about exactly this.
+ *
+ * MEASURED before the fix: two configs on disk, `MXD_DATA_DIR` pointing at the
+ * first, `mxd config auth list` printed the group from the SECOND. So `mxd
+ * config set … --global` exited 0 having edited a file nothing reads.
+ */
+describe("cli: global config lives in the data dir, same as the daemon reads", () => {
+	let dataDir: string;
+	let fakeHome: string;
+
+	/**
+	 * A complete MatrixConfig — `loadGlobalConfig` throws on a partial one.
+	 *
+	 * The distinguishing value is an auth GROUP NAME, because `config auth list`
+	 * is the read path that touches no daemon. `mxd config` with no subcommand
+	 * resolves all three layers and would need one running.
+	 */
+	function completeConfig(marker: string, over: Record<string, unknown> = {}) {
+		return JSON.stringify({
+			authGroups: { [marker]: { provider: "anthropic", apiKey: "sk-test" } },
+			defaultAuth: marker,
+			model: "",
+			budgetUsd: -1,
+			mcpServers: {},
+			port: 7433,
+			selfBootstrap: false,
+			thinkingEffort: 0,
+			cacheTtl: { root: "1h", child: "5m" },
+			...over,
+		});
+	}
+
+	beforeEach(async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-cli-gcfg-data-"));
+		fakeHome = await mkdtemp(join(tmpdir(), "mxd-cli-gcfg-home-"));
+		await mkdir(join(fakeHome, ".mxd"), { recursive: true });
+		// Both files exist and are DISTINGUISHABLE. A fixture with only one
+		// config cannot express the difference between the two paths — it would
+		// pass against either.
+		await writeFile(
+			join(dataDir, "config.json"),
+			completeConfig("group-in-data-dir", { model: "model-in-data-dir" }),
+		);
+		await writeFile(
+			join(fakeHome, ".mxd", "config.json"),
+			completeConfig("group-in-home", { model: "model-in-home" }),
+		);
+	});
+
+	afterEach(async () => {
+		await rm(dataDir, { recursive: true, force: true });
+		await rm(fakeHome, { recursive: true, force: true });
+	});
+
+	function runCli(args: string[]) {
+		return Bun.spawn(["bun", CLI_PATH, ...args], {
+			env: { ...process.env, MXD_DATA_DIR: dataDir, HOME: fakeHome },
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+	}
+
+	test("config auth list reads the data dir's config, not HOME's", async () => {
+		const proc = runCli(["config", "auth", "list"]);
+		const stderr = await new Response(proc.stderr).text();
+		expect(await proc.exited, `stderr: ${stderr}`).toBe(0);
+		const out = await new Response(proc.stdout).text();
+		expect(out).toContain("group-in-data-dir");
+		expect(out).not.toContain("group-in-home");
+	});
+
+	test("config set --global writes the data dir's config and leaves HOME's alone", async () => {
+		const proc = runCli(["config", "set", "model", "chosen-by-user", "--global"]);
+		const stderr = await new Response(proc.stderr).text();
+		expect(await proc.exited, `stderr: ${stderr}`).toBe(0);
+
+		const inDataDir = JSON.parse(
+			await readFile(join(dataDir, "config.json"), "utf-8"),
+		);
+		expect(inDataDir.model).toBe("chosen-by-user");
+
+		// The other half of the assertion, and the one that fails against the
+		// old code: a write that lands in the wrong file looks identical to a
+		// correct one from the caller's side.
+		const inHome = JSON.parse(
+			await readFile(join(fakeHome, ".mxd", "config.json"), "utf-8"),
+		);
+		expect(inHome.model).toBe("model-in-home");
+	});
+
+	test("with MXD_DATA_DIR unset it falls back to HOME/.mxd/config.json", async () => {
+		// The control: the fallback still works, so the test above cannot pass
+		// merely because HOME was ignored everywhere.
+		const { MXD_DATA_DIR: _omit, ...env } = process.env;
+		const proc = Bun.spawn(["bun", CLI_PATH, "config", "auth", "list"], {
+			env: { ...env, HOME: fakeHome },
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const stderr = await new Response(proc.stderr).text();
+		expect(await proc.exited, `stderr: ${stderr}`).toBe(0);
+		expect(await new Response(proc.stdout).text()).toContain("group-in-home");
 	});
 });

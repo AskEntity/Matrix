@@ -495,3 +495,96 @@ describe("source audit — ONLY data-paths.ts turns a dataRoot into a path", () 
 		}
 	});
 });
+
+// ── the data dir itself: ONE derivation, and nobody reads HOME for it ──
+
+/**
+ * Any read of the user's home directory: `homedir()` or `process.env.HOME`.
+ *
+ * The audit above polices paths built from a `dataRoot`. This one polices the
+ * level above it — WHERE our data dir is — and it exists because that question
+ * had FIVE independent answers, three of which silently ignored
+ * `MXD_DATA_DIR`:
+ *
+ *   src/cli.ts        MXD_DATA_DIR ?? join(homedir(), ".mxd")   ✅ correct
+ *   src/daemon.ts     the same expression, character for character
+ *   src/config.ts     join(homedir(), ".mxd", "config.json")    ❌ ignored it
+ *   src/runtime.ts    dataDir: join(homedir(), ".mxd")          ❌ ignored it
+ *   src/cli.ts        `${process.env.HOME}/.mxd/logs`           ❌ ignored it
+ *
+ * ⭐ The two byte-identical duplicates are what let the other three drift:
+ * nobody ever had to reconcile anything, because there was never one place to
+ * reconcile. So the fix is not "correct the three" — it is that there be one.
+ *
+ * MEASURED before the fix: this audit listed 6 offenders across 5 files
+ * (`cli-analyze-cache.ts` had a sixth, a default parameter). That run is this
+ * test's positive control — it has fired, on purpose, once.
+ */
+const HOME_READ = /\bhomedir\s*\(\s*\)|process\.env\.HOME\b/;
+
+/**
+ * A line that opens as a comment. Skipped, because the sibling audit above
+ * learned this the expensive way in the other direction: its pattern once
+ * matched PROSE and it bought precision with a required `\(`, which cannot help
+ * here — the whole point of the comments this fix leaves behind is that they
+ * quote `join(homedir(), ".mxd")` as the thing that was deleted.
+ *
+ * Known hole, deliberate: `const x = /* c *\/ homedir()` on one line would slip
+ * through. Nobody writes that, and the alternative — reddening on prose — trains
+ * people to weaken the audit, which costs more than the hole.
+ */
+const COMMENT_LINE = /^\s*(?:\/\/|\*|\/\*)/;
+
+/**
+ * Home reads that are NOT our data dir, named individually with the reason.
+ * Subtraction: the audit starts from EVERY home read in the repo and removes
+ * these, so a new one lands on the offending side and goes red by itself.
+ */
+const ALLOWED_HOME_READS = [
+	{
+		file: "src/data-paths.ts",
+		marker: "MXD_DATA_DIR",
+		why: "THE one derivation — resolveDataDir(). Everything else takes it from here.",
+	},
+	{
+		file: "src/codex-auth.ts",
+		marker: '"~',
+		why: "expanding a `~` the USER typed. That is what `~` means; we are not choosing a location.",
+	},
+	{
+		file: "src/cli.ts",
+		marker: "Library/LaunchAgents",
+		why: "macOS genuinely puts LaunchAgents under HOME. Not our data dir, and must not move with it.",
+	},
+];
+
+describe("source audit — ONE derivation of the data dir, and HOME is not it", () => {
+	const REPO_ROOT = join(import.meta.dir, "..");
+
+	test("no file derives our data dir from HOME", () => {
+		const offenders: string[] = [];
+		for (const f of auditableSourceFiles(REPO_ROOT)) {
+			const rel = f.slice(REPO_ROOT.length + 1);
+			for (const line of readFileSync(f, "utf-8").split("\n")) {
+				if (!HOME_READ.test(line) || COMMENT_LINE.test(line)) continue;
+				const allowed = ALLOWED_HOME_READS.some(
+					(a) => a.file === rel && line.includes(a.marker),
+				);
+				if (allowed) continue;
+				offenders.push(`${rel}: ${line.trim()}`);
+			}
+		}
+		expect(offenders).toEqual([]);
+	});
+
+	test("every allowlist entry still corresponds to a real home read", () => {
+		// An allowlist is a subtraction only while its entries are real. A stale
+		// entry is a standing permission for something nobody is doing — and it
+		// would also hide the line that replaced it.
+		for (const a of ALLOWED_HOME_READS) {
+			const lines = readFileSync(join(REPO_ROOT, a.file), "utf-8").split("\n");
+			const hit = lines.some((l) => HOME_READ.test(l) && l.includes(a.marker));
+			expect(hit).toBe(true);
+		}
+	});
+});
