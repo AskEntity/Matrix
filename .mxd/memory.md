@@ -202,6 +202,23 @@ a tail they were unrepresentative of.
 > reporting zero, and it will never prompt anyone to say so.** Plant against it too, and state any
 > loss count with a SCOPE CLAUSE naming what was adjudicated and at what granularity.
 
+**A grep for a SYMBOL cannot answer a question about a BEHAVIOUR, and the empty result looks the
+same either way.** Root searched `hasRunningChildren`, found it genuinely dead, and concluded that
+`done()` has no running-children guard. The guard was live the whole time — in `createDoneTool`'s
+own handler body, and there since 2026-04-14. **The symbol was dead and the rule was enforced;
+nothing about the empty grep distinguished those two.**
+
+**The amplifier was the enumeration, and it is what overruled a human.** Root then listed *"done()'s
+three rejection paths"* — assembled entirely from the places it already knew to look, never reading
+the handler body where the guard lives. **A list of what you found is not a list of what exists, and
+writing it as an enumeration is what makes it read as complete.** The user had stated the rule
+correctly (*「现在不能了 父任务不能done的」*), was talked out of it by that list, conceded
+(*「可能是我一直以为有这功能」*), and was right the entire time. **When a person's recollection
+contradicts your search, the search is the one with a known failure mode** — and the cost is not the
+wrong answer, it is that they stop trusting a correct memory. It recurred: three days later the
+retraction existed as a draft and root repeated the refuted claim to the same user, who corrected it
+from memory a second time.
+
 **Worst is when the rule that suppresses a redundant check is also suppressing the only detector a
 failure mode has** — *"ALWAYS use this for search, NEVER invoke grep via bash"*, on a `search` that
 was blind. For as long as that bug lived, an agent that obeyed got the wrong answer and one that
@@ -4312,10 +4329,14 @@ always valid. Unrelated tasks, never. **The parent chain shipped and the subtree
 **That draft also carries a live defect nobody has fixed, and it belongs to the silent indefinite
 hang class: agent→ancestor is the ONLY delivery direction in this system that cannot start its
 target.** The `isUpward` branch of `send_message` delivers with `{ quiet: true }`, and `quiet` does
-exactly one thing — skip auto-launch when the agent is not running. The premise that made this look
-safe, *"parents are already running or it's root"*, is false: a task orchestrator can call `done()`
-while its own sub tasks are still working, and `done()` tears the session down. So a sub task
-calling `send_message(requestReply: true)` to a stopped ancestor gets its message persisted and
+exactly one thing — skip auto-launch when the agent is not running. **The reachable path is NOT the
+obvious one.** *"A parent can `done()` while its children run, so an ancestor may be stopped"* is
+FALSE and has been since 2026-04-14: `createDoneTool`'s handler in `src/tools/prefab.ts` collects
+descendants and refuses while any of them holds a session, and matrix's `done` IS that prefab. What
+remains reachable is an ancestor whose session went away for a reason `done()` did not cause — **the
+user pressed stop** (`stopTask` deliberately leaves `status` alone, so the node still reads
+`in_progress`), a root that was never launched, or a node left un-resumed after a restart. So a sub
+task calling `send_message(requestReply: true)` to such an ancestor gets its message persisted and
 nothing else, then yields exactly as the prompt instructs, and waits forever with nothing anywhere
 reporting it. **Three surfaces say three different things**: the tool description promises every
 pending/closed target launches on receipt, `task_complete` on the normal Phase 2 path really does
