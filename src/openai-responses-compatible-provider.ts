@@ -146,11 +146,53 @@ function isCodexEndpoint(endpoint: string): boolean {
  * an endpoint that will not state its own limit is one we cannot safely pick a
  * compaction point for.
  */
+/**
+ * `client_version` is REQUIRED by the codex catalog (omit it and the route 400s
+ * with `{'loc': ('query','client_version'), 'msg': 'Field required'}`), and its
+ * only function is to FILTER the list: each entry carries a
+ * `minimal_client_version`, and the server withholds anything the named build
+ * could not drive. MEASURED 2026-07-30 — `0.144.0` → 7 models, `0.143.0` → 4,
+ * `0.50.0` → **200 with zero models**.
+ *
+ * ⭐ **We send the maximum, meaning "apply no version filter", and that is not
+ * the same species as the constants this module deleted.** `DEFAULT_MODEL` and
+ * `DEFAULT_CONTEXT_WINDOW` stood IN FOR AN ANSWER — a number nobody chose
+ * flowing into a decision. This flows into no answer: the window still comes
+ * entirely from the response. It is a request modifier, and the only thing it
+ * asserts is "do not narrow my catalogue".
+ *
+ * Why the alternatives lose:
+ * - **Hardcoding a real version** (`0.146.0`) is the deleted defect exactly: it
+ *   is chosen once, and the day the server raises its floor it degrades to an
+ *   empty list — silently, because an empty list used to read as "your model is
+ *   not listed".
+ * - **Reading the local `codex --version`** claims to be a codex build we are
+ *   not (we send `originator: "matrix"` and implement none of the feature
+ *   matrix those gates describe), and makes our answer depend on whether the
+ *   user happens to have that CLI installed and how old it is — the same class
+ *   as reading a model name out of the environment.
+ * - **`0.0.0`** also returns all 7, and is the WORSE lie of the two: `999.0.0`
+ *   returning everything follows directly from `>= minimal_client_version`,
+ *   which is the visible mechanism, while `0.0.0` returning everything works
+ *   for a reason we cannot see and would break without warning.
+ *
+ * Filtering is pure loss here regardless: we never SELECT from this list — the
+ * user already picked a model — so a narrower catalogue can only fail a lookup
+ * for a model we are about to send traffic to anyway.
+ *
+ * ⚠️ Sent unconditionally, with no `isCodexEndpoint` branch, and that is
+ * measured rather than assumed: `api.openai.com/v1/models` answers identically
+ * with and without it (same 401 `invalid_api_key`, so it is ignored rather than
+ * rejected — an unknown-parameter rejection would be a 400), and kimi returns
+ * the same 4 models either way.
+ */
+const NO_VERSION_FILTER = "999.0.0";
+
 async function fetchOpenAIModels(
 	apiRoot: string,
 	credential: OpenAICredential,
 ): Promise<unknown[]> {
-	const url = `${apiRoot}/models`;
+	const url = `${apiRoot}/models?client_version=${NO_VERSION_FILTER}`;
 	// The same auth material `streamResponsesAPI` sends to this host.
 	//
 	// MEASURED 2026-07-30 against a live codex token: this route answers 200
@@ -173,11 +215,27 @@ async function fetchOpenAIModels(
 			`GET ${url} returned ${response.status} ${response.statusText}`,
 		);
 	}
-	const body = (await response.json()) as { data?: unknown };
-	if (!Array.isArray(body.data)) {
-		throw new Error(`GET ${url} returned 200 with no "data" array`);
+	// The envelope key follows the dialect too: OpenAI and every
+	// OpenAI-compatible endpoint say `data`, the codex catalog says `models`.
+	// Read either, for the same reason `resolveContextWindow` reads three window
+	// keys — one path across dialects rather than a branch per endpoint.
+	const body = (await response.json()) as { data?: unknown; models?: unknown };
+	const list = Array.isArray(body.data)
+		? body.data
+		: Array.isArray(body.models)
+			? body.models
+			: null;
+	if (list === null) {
+		throw new Error(
+			`GET ${url} returned 200 with neither a "data" nor a "models" array`,
+		);
 	}
-	return body.data;
+	return list;
+}
+
+/** How the model list was asked for, for an error to name. */
+function modelsRequestDetail(apiRoot: string): string {
+	return `GET ${apiRoot}/models?client_version=${NO_VERSION_FILTER}`;
 }
 
 function openaiImagePart(img: EventImageData): {
@@ -532,6 +590,7 @@ export function createOpenAIResponsesAdapter(
 				endpoint: apiRoot,
 				model,
 				listModels: async () => fetchOpenAIModels(apiRoot, await credentials()),
+				requestDetail: modelsRequestDetail(apiRoot),
 			});
 		},
 

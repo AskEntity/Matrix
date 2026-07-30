@@ -4003,6 +4003,84 @@ with a `baseUrl` — so `client.models.list()` needs no hand-built copy of the a
 standing warning above is that beta headers, timeout and baseUrl are already hand-matched at three
 sites with nothing enforcing agreement; this did not make it four.
 
+### ⚠️ CORRECTION to the paragraph above: the codex path was TWO failures stacked behind one 401
+
+**That sentence — *"the codex catalog routes answer 401 … so the OpenAI path now fails at startup"*
+— implied that fixing the credentials would make the path answer. MEASURED 2026-07-30 against a live
+token: it does not.** The endpoint returns 200 now, and `fetchOpenAIModels` could not read a single
+field of it: `client_version` is a REQUIRED query parameter (omit it → 400 `Field required`), the
+envelope is `{models:[…]}` not `{data:[…]}`, entries are keyed `slug` with no `id`, and the window
+is under `context_window`. Four independent mismatches, any one of which was enough.
+
+⭐ **The transferable part is the shape, not the fields: a 401 masks every later disagreement, and
+the ones behind it are only separable once it is gone.** Nothing was wrong with the earlier
+measurement — the 401 was real and the conclusion drawn from it was the honest one available. It was
+still half wrong, because *"authentication failed"* and *"we cannot read this dialect"* are one
+observation until the first is fixed. **So a conclusion of the form "X is blocked on Y" is a
+prediction about what happens after Y, and it should be labelled as one rather than as a finding.**
+
+**Third dialect, read through the SAME path — no `isCodexEndpoint` branch.** `ID_KEYS = [id, slug]`
+alongside `WINDOW_KEYS = [max_input_tokens, context_length, context_window]`, and the envelope
+reader takes `data ?? models`. That is the existing rule (*the key follows the protocol dialect, not
+the configured provider*) extended, not forked.
+
+⚠️ **THIRD measured member of the limit-shaped-but-wrong family, and this one is inside a dialect we
+now read: codex's `max_context_window`.** MEASURED — `gpt-5.4` reports `context_window: 272000` and
+`max_context_window: 1000000` in the same entry, **3.68× apart**, likewise `codex-auto-review`;
+`context_window` is what this deployment grants, `max_context_window` is the model's ceiling
+somewhere else. **Five of the seven live models have the two keys EQUAL, so a fixture drawn from
+those five cannot tell them apart** — only `gpt-5.4` can, which is why the test uses it. Reading the
+wrong key over-estimates, the direction that walks into the compaction deadlock. (The 272,000 also
+independently re-confirms the codex input cap already recorded above, from a second source.)
+
+## ⭐ An empty 200 is a REFUSAL wearing the shape of an answer
+
+**DECIDED 2026-07-30.** *The endpoint is the only source; if it will not answer, throw* quietly
+assumes an endpoint either answers or fails. **A 200 carrying an empty list is neither.** MEASURED
+on the codex catalog: `client_version=0.144.0` → 7 models, `0.143.0` → **4**, `0.50.0` → **200 with
+zero**. The list is silently filtered by a parameter WE send.
+
+**So an empty list gets its own error, ahead of the not-found case.** Classifying it as "the
+endpoint does not list your model" is wrong twice over: it blames a config field, and editing that
+field cannot help — *never offer a remedy that will not work*, in the one medium where the reader
+then goes and does it. The refusal error instead says the endpoint enumerated nothing and names the
+request that produced it (`requestDetail`, supplied by the provider because only the provider knows
+what it sent).
+
+⭐ **`client_version` is sent at the MAXIMUM (`999.0.0`), meaning "apply no version filter", and that
+is not the species of constant this module deleted.** `DEFAULT_MODEL` and `DEFAULT_CONTEXT_WINDOW`
+stood IN FOR AN ANSWER — a number nobody chose flowing into a decision. This flows into no answer:
+the window still comes entirely from the response. **The discriminator worth keeping is "does this
+value substitute for a fact, or modify a request".** Why the alternatives lose:
+
+- **A real pinned version** (`0.146.0`) IS the deleted defect: chosen once, and the day the server
+  raises its floor it degrades to an empty list — which is exactly why the empty-list case had to
+  stop reading as "your model is not listed" before this was safe to ship.
+- **Reading the local `codex --version`** claims to be a codex build we are not (we send
+  `originator: "matrix"` and implement none of the feature matrix those `minimal_client_version`
+  gates describe), and makes our answer depend on whether that CLI happens to be installed and how
+  old it is — the same class as reading a model name out of the environment.
+- **`0.0.0`**, which also returns all 7, is the worse of the two lies: `999.0.0` returning
+  everything follows from `>= minimal_client_version`, the visible mechanism, while `0.0.0`
+  returning everything works for a reason we cannot see. **Prefer the sentinel whose behaviour
+  follows from the mechanism you can read.**
+
+Filtering is pure loss here regardless — we never SELECT from this list, the user already picked a
+model — so a narrower catalogue can only fail a lookup for a model we are about to send traffic to.
+
+⚠️ **Sent unconditionally with no endpoint branch, and that is measured rather than assumed:**
+`api.openai.com/v1/models` answers identically with and without it (the same 401 `invalid_api_key`,
+so it is ignored rather than rejected — an unknown-parameter rejection would be a 400), and kimi
+returns the same 4 models either way.
+
+⚠️ **Two test doubles matched the models route with `urlStr.endsWith("/models")`, which a required
+query string silently breaks — and the symptom does not name the cause.** In
+`mock-openai-responses-api.ts` the request fell through to the next branch and raised `Unexpected
+URL`, which reads as the provider calling the wrong route. **Match `new URL(u).pathname`, not the
+whole URL.** Same shape as the extensionless-file grep: a matcher that looks exact and is silently
+narrower than the thing it matches.
+
+
 ## The integration suite was running a configuration no install can have
 
 ⭐ **Deleting the last context-window guess turned 333 tests across 21 files red, all one cause — and

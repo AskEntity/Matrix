@@ -520,7 +520,13 @@ export class ValidatingMockResponsesAPI {
 				: url instanceof URL
 					? url.toString()
 					: url.url;
-		if (urlStr.endsWith("/models")) {
+		// ⚠️ Match the PATH, not the whole URL. The models request carries a
+		// required `client_version` query string (the codex catalog 400s without
+		// it), so an `endsWith("/models")` guard stops recognising it — and the
+		// symptom is not a failed model lookup but `Unexpected URL` from the
+		// branch below, which reads like the provider called the wrong route.
+		const path = new URL(urlStr).pathname;
+		if (path.endsWith("/models")) {
 			return new Response(
 				JSON.stringify({
 					data: [{ id: "gpt-4.1-mini", context_length: 1_047_576 }],
@@ -531,7 +537,7 @@ export class ValidatingMockResponsesAPI {
 				},
 			);
 		}
-		if (!urlStr.endsWith("/responses")) {
+		if (!path.endsWith("/responses")) {
 			throw new MockResponsesValidationError(`Unexpected URL: ${urlStr}`);
 		}
 		const bodyText = typeof init?.body === "string" ? init.body : "";

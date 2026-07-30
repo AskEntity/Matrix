@@ -82,6 +82,76 @@ describe("which key the window is read from", () => {
 		).toBe(1_048_576);
 	});
 
+	/**
+	 * ⭐ The codex catalog is a THIRD dialect and disagrees on all three of
+	 * envelope, name key and window key. Entry copied from the live response
+	 * (2026-07-30, `client_version=999.0.0`), trimmed to the fields that matter
+	 * plus the ones that make it a trap.
+	 */
+	test("codex's dialect: window under context_window, name under slug", async () => {
+		const { listModels } = listing([
+			{
+				slug: "gpt-5.5",
+				display_name: "GPT-5.5",
+				context_window: 272_000,
+				max_context_window: 272_000,
+				minimal_client_version: "0.124.0",
+			},
+		]);
+		expect(
+			await resolveContextWindow({
+				endpoint: "https://chatgpt.com/backend-api/codex",
+				model: "gpt-5.5",
+				listModels,
+			}),
+		).toBe(272_000);
+	});
+
+	/**
+	 * ⚠️ MEASURED 2026-07-30, and the reason this test exists rather than a
+	 * comment: on `gpt-5.4` the codex catalog reports `context_window: 272000`
+	 * NEXT TO `max_context_window: 1000000` — 3.68× apart. `context_window` is
+	 * what this deployment grants; `max_context_window` is the model's ceiling
+	 * somewhere else. Reading the wrong one over-estimates, which is the
+	 * direction that walks into the compaction deadlock.
+	 *
+	 * Five of the seven live models have the two keys EQUAL, so a fixture drawn
+	 * from those five cannot tell them apart — this entry is `gpt-5.4`
+	 * specifically because it is one of the two that can. The mutation that
+	 * proves it: add `max_context_window` to WINDOW_KEYS before
+	 * `context_window` and this goes red at 1,000,000.
+	 */
+	test("max_context_window is NOT the window this deployment grants", async () => {
+		const { listModels } = listing([
+			{
+				slug: "gpt-5.4",
+				context_window: 272_000,
+				max_context_window: 1_000_000,
+			},
+		]);
+		expect(
+			await resolveContextWindow({
+				endpoint: "https://chatgpt.com/backend-api/codex",
+				model: "gpt-5.4",
+				listModels,
+			}),
+		).toBe(272_000);
+	});
+
+	test("an entry with no name key at all is skipped, not crashed on", async () => {
+		const { listModels } = listing([
+			{ context_window: 999 },
+			{ slug: "gpt-5.5", context_window: 272_000 },
+		]);
+		expect(
+			await resolveContextWindow({
+				endpoint: "e",
+				model: "gpt-5.5",
+				listModels,
+			}),
+		).toBe(272_000);
+	});
+
 	test("max_input_tokens wins when an entry somehow carries both", async () => {
 		const { listModels } = listing([
 			{ id: "m", max_input_tokens: 200_000, context_length: 999 },
@@ -311,14 +381,52 @@ describe("what a miss tells the user", () => {
 		);
 	});
 
-	test("an endpoint that lists nothing says so rather than reading as a network error", async () => {
+	/**
+	 * ⭐ An empty list is a REFUSAL, not an answer — the third state this module
+	 * had no name for. MEASURED 2026-07-30: the codex catalog answers 200 with
+	 * zero models when `client_version` is below its floor, so the cause sits in
+	 * a parameter WE send, not in the user's config.
+	 *
+	 * This test replaces one that asserted the miss wording with
+	 * `Models it does list: (none)`. That sentence was about the user's model
+	 * name, which is a remedy that cannot work — they would edit the config and
+	 * nothing would change.
+	 */
+	test("an endpoint that enumerates nothing is a refusal, not a missing model", async () => {
+		const call = resolveContextWindow({
+			endpoint: "https://chatgpt.com/backend-api/codex",
+			model: "gpt-5.5",
+			listModels: async () => [],
+		});
+		await expect(call).rejects.toThrow(/enumerated no models at all/);
+		await expect(call).rejects.toThrow(/refusal to answer/);
+		// Must NOT read as a statement about the configured model.
+		await expect(call).rejects.not.toThrow(/does not list it/);
+		await expect(call).rejects.not.toThrow(/Did you mean/);
+	});
+
+	test("the refusal names the request, so the blame lands on the right suspect", async () => {
+		await expect(
+			resolveContextWindow({
+				endpoint: "https://chatgpt.com/backend-api/codex",
+				model: "gpt-5.5",
+				listModels: async () => [],
+				requestDetail:
+					"GET https://chatgpt.com/backend-api/codex/models?client_version=999.0.0",
+			}),
+		).rejects.toThrow(/asked as: GET .*client_version=999\.0\.0/);
+	});
+
+	test("with no requestDetail the refusal still reads as a sentence", async () => {
 		await expect(
 			resolveContextWindow({
 				endpoint: "https://empty.example",
 				model: "m",
 				listModels: async () => [],
 			}),
-		).rejects.toThrow(/does not list it. Models it does list: \(none\)/);
+		).rejects.toThrow(
+			/is unavailable, so the cause is more likely the request than the configured model\.$/,
+		);
 	});
 
 	test("an unreachable endpoint carries the underlying reason", async () => {
