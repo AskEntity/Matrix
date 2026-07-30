@@ -4003,6 +4003,84 @@ with a `baseUrl` — so `client.models.list()` needs no hand-built copy of the a
 standing warning above is that beta headers, timeout and baseUrl are already hand-matched at three
 sites with nothing enforcing agreement; this did not make it four.
 
+### ⚠️ CORRECTION to the paragraph above: the codex path was TWO failures stacked behind one 401
+
+**That sentence — *"the codex catalog routes answer 401 … so the OpenAI path now fails at startup"*
+— implied that fixing the credentials would make the path answer. MEASURED 2026-07-30 against a live
+token: it does not.** The endpoint returns 200 now, and `fetchOpenAIModels` could not read a single
+field of it: `client_version` is a REQUIRED query parameter (omit it → 400 `Field required`), the
+envelope is `{models:[…]}` not `{data:[…]}`, entries are keyed `slug` with no `id`, and the window
+is under `context_window`. Four independent mismatches, any one of which was enough.
+
+⭐ **The transferable part is the shape, not the fields: a 401 masks every later disagreement, and
+the ones behind it are only separable once it is gone.** Nothing was wrong with the earlier
+measurement — the 401 was real and the conclusion drawn from it was the honest one available. It was
+still half wrong, because *"authentication failed"* and *"we cannot read this dialect"* are one
+observation until the first is fixed. **So a conclusion of the form "X is blocked on Y" is a
+prediction about what happens after Y, and it should be labelled as one rather than as a finding.**
+
+**Third dialect, read through the SAME path — no `isCodexEndpoint` branch.** `ID_KEYS = [id, slug]`
+alongside `WINDOW_KEYS = [max_input_tokens, context_length, context_window]`, and the envelope
+reader takes `data ?? models`. That is the existing rule (*the key follows the protocol dialect, not
+the configured provider*) extended, not forked.
+
+⚠️ **THIRD measured member of the limit-shaped-but-wrong family, and this one is inside a dialect we
+now read: codex's `max_context_window`.** MEASURED — `gpt-5.4` reports `context_window: 272000` and
+`max_context_window: 1000000` in the same entry, **3.68× apart**, likewise `codex-auto-review`;
+`context_window` is what this deployment grants, `max_context_window` is the model's ceiling
+somewhere else. **Five of the seven live models have the two keys EQUAL, so a fixture drawn from
+those five cannot tell them apart** — only `gpt-5.4` can, which is why the test uses it. Reading the
+wrong key over-estimates, the direction that walks into the compaction deadlock. (The 272,000 also
+independently re-confirms the codex input cap already recorded above, from a second source.)
+
+## ⭐ An empty 200 is a REFUSAL wearing the shape of an answer
+
+**DECIDED 2026-07-30.** *The endpoint is the only source; if it will not answer, throw* quietly
+assumes an endpoint either answers or fails. **A 200 carrying an empty list is neither.** MEASURED
+on the codex catalog: `client_version=0.144.0` → 7 models, `0.143.0` → **4**, `0.50.0` → **200 with
+zero**. The list is silently filtered by a parameter WE send.
+
+**So an empty list gets its own error, ahead of the not-found case.** Classifying it as "the
+endpoint does not list your model" is wrong twice over: it blames a config field, and editing that
+field cannot help — *never offer a remedy that will not work*, in the one medium where the reader
+then goes and does it. The refusal error instead says the endpoint enumerated nothing and names the
+request that produced it (`requestDetail`, supplied by the provider because only the provider knows
+what it sent).
+
+⭐ **`client_version` is sent at the MAXIMUM (`999.0.0`), meaning "apply no version filter", and that
+is not the species of constant this module deleted.** `DEFAULT_MODEL` and `DEFAULT_CONTEXT_WINDOW`
+stood IN FOR AN ANSWER — a number nobody chose flowing into a decision. This flows into no answer:
+the window still comes entirely from the response. **The discriminator worth keeping is "does this
+value substitute for a fact, or modify a request".** Why the alternatives lose:
+
+- **A real pinned version** (`0.146.0`) IS the deleted defect: chosen once, and the day the server
+  raises its floor it degrades to an empty list — which is exactly why the empty-list case had to
+  stop reading as "your model is not listed" before this was safe to ship.
+- **Reading the local `codex --version`** claims to be a codex build we are not (we send
+  `originator: "matrix"` and implement none of the feature matrix those `minimal_client_version`
+  gates describe), and makes our answer depend on whether that CLI happens to be installed and how
+  old it is — the same class as reading a model name out of the environment.
+- **`0.0.0`**, which also returns all 7, is the worse of the two lies: `999.0.0` returning
+  everything follows from `>= minimal_client_version`, the visible mechanism, while `0.0.0`
+  returning everything works for a reason we cannot see. **Prefer the sentinel whose behaviour
+  follows from the mechanism you can read.**
+
+Filtering is pure loss here regardless — we never SELECT from this list, the user already picked a
+model — so a narrower catalogue can only fail a lookup for a model we are about to send traffic to.
+
+⚠️ **Sent unconditionally with no endpoint branch, and that is measured rather than assumed:**
+`api.openai.com/v1/models` answers identically with and without it (the same 401 `invalid_api_key`,
+so it is ignored rather than rejected — an unknown-parameter rejection would be a 400), and kimi
+returns the same 4 models either way.
+
+⚠️ **Two test doubles matched the models route with `urlStr.endsWith("/models")`, which a required
+query string silently breaks — and the symptom does not name the cause.** In
+`mock-openai-responses-api.ts` the request fell through to the next branch and raised `Unexpected
+URL`, which reads as the provider calling the wrong route. **Match `new URL(u).pathname`, not the
+whole URL.** Same shape as the extensionless-file grep: a matcher that looks exact and is silently
+narrower than the thing it matches.
+
+
 ## The integration suite was running a configuration no install can have
 
 ⭐ **Deleting the last context-window guess turned 333 tests across 21 files red, all one cause — and
@@ -4145,6 +4223,85 @@ question: **`client_version=0.50.0` returns 200 with an EMPTY list** — a third
 `context_window: 272000`, independently confirming the 272,000 already recorded for GPT-5.5 here.
 Filed as `01KYRD862V1JCXNHJ3YZDR3KCH`.
 
+## The trailer hook checks its own work, and WHERE that check can live is the whole finding
+
+⭐ **A `pre-commit` audit of trailer damage is structurally blind, and the reason is worth more
+than the check: the commits that CAN be damaged are exactly the ones a `pre-commit` hook never
+sees.** `.hooks/worktree/` holds `prepare-commit-msg` and nothing else, so pre-commit never runs
+in a worktree; a clean `--no-ff` merge runs no hook at all; so a gate there sees only root's own
+direct commits on main — which carry no trailer whatsoever and therefore cannot exhibit the
+defect. **Three files have to be held at once to see that** (the hooks directory, WorktreeManager's
+config write, git's merge behaviour), which is why it was invisible to two people in a row.
+
+**Second reason, independent and worth stating because it generalises past this hook: an audit of
+history cannot be a gate.** The damage it reports is in a commit that already exists, so a blocking
+check refuses your innocent new commit until someone rewrites history. ⚠️ **A gate you cannot
+satisfy by doing the right thing teaches bypassing, and the habit then costs you the checks it was
+good at.**
+
+So the check lives in `prepare-commit-msg`, warns on stderr, and never fails — the one moment the
+author can still `--amend`.
+
+⭐ **The mechanism, and why it is not a second reader implementation:
+`git interpret-trailers --no-divider --parse <msgfile>` applies git's OWN last-paragraph rule to
+the pending message.** Measured to agree with `%(trailers:key=Task-Id,valueonly)` on the resulting
+commit for **11 of 11** shapes — the divider damage, its fix, a trailer glued to the subject, and
+messages trailed by comment or scissors blocks, which is the half that would otherwise warn
+spuriously on every editor commit.
+
+⚠️ **`--no-divider` is load-bearing on the PARSE call too, not only on the write call**: without it
+the check inherits the divider rule the writer just stopped honouring, and then it disagrees with
+the reader in both directions at once. A mutation dropping it reddens both halves of the pair.
+
+**That pair is the point — the guard has a test for each direction.** Deleting the check reddens
+"warns when the trailer would not read back"; making it warn unconditionally reddens "stays silent
+on the same message". Over-strict is the direction nobody tests, and here it is the expensive one: a
+check that cries on every commit gets read as wallpaper within a day.
+
+⚠️ **The state is now unreachable through a correct writer, so the test breaks the WRITER on
+purpose** — `installTrailerHook` takes a mutation that strips one flag from the shipped script,
+leaving the code under test verbatim. A check for an unknown FOURTH cause cannot be tested any other
+way, and a fixture-local reimplementation would have passed against a broken hook.
+
+## ⚠️ The SDK reads the credential env itself, so deleting our fallback did not stop a shell key
+
+**CAVEAT to *The model and the credential are chosen, never defaulted*, not a contradiction of it:
+deleting our `?? process.env.ANTHROPIC_API_KEY` did NOT stop a shell-held key from reaching the
+API.** The Anthropic SDK is a second reader of the same variable — its constructor does
+`if (apiKey === undefined) apiKey = readEnv('ANTHROPIC_API_KEY')`, and the same for
+`ANTHROPIC_AUTH_TOKEN`. So with zero env reads left in `src/`,
+`new AnthropicCompatibleProvider(model, {})` still yields a client whose `apiKey` is whatever the
+shell holds. **What the deletion actually removed is the BRANCH CHOICE**, and that is the part worth
+defending: a truthy `apiKey` sets `useOAuth = false`, so before the deletion an ambient key silently
+outranked the OAuth token the user had configured.
+
+⭐ **So the obvious sentinel for that deletion is VACUOUS, and it looks like the careful test.** Set
+`ANTHROPIC_API_KEY`, construct with empty opts, assert `client.apiKey` is not the env value: it
+fails TODAY, and its inverse passes under the restored fallback too — the two worlds are
+byte-identical at that observable. **A second producer downstream of the one you deleted destroys
+the observable you would naturally assert on**; you have to find one that still differs, which here
+is the collision fixture — env key vs a CONFIGURED `oauthToken`, asserting the configured one won
+and the OAuth beta header is present. Measured: that reddens on the apiKey line alone, and a
+`CLAUDE_CODE_OAUTH_TOKEN` sentinel reddens on the oauth line alone. `git log -S` is what tells you
+which names were ever yours: 15 commits touched `ANTHROPIC_API_KEY`, and **`ANTHROPIC_AUTH_TOKEN`
+has ZERO — it was never ours, it is the SDK's, and a sentinel claiming we ignore it would assert
+the opposite of measured reality.**
+
+⚠️ **An env sentinel must DELETE its sibling credential vars, not just set the one under test —
+measured false-green otherwise.** With both `??`s restored (the shape a real revert has, since the
+two lines went together) and the delete-loop removed, the `CLAUDE_CODE_OAUTH_TOKEN` test **PASSES**
+on a machine whose shell holds `ANTHROPIC_API_KEY`, because `useOAuth = Boolean(oauthToken &&
+!apiKey)` and the ambient key suppresses the branch being watched. With the loop, it fails. **A
+fixture's redness must not depend on whose shell it ran in** — and matrix developers plausibly do
+hold that variable, so this is the normal case rather than the exotic one.
+
+**Two smaller things this cost, both cheap to re-pay.** The Anthropic no-credential branch neither
+warns nor throws — it builds a credential-less client — so the OpenAI sentinel's `console.warn`
+hook does not transfer, and the signal has to be which credential the client ended up holding.
+And a negative assertion on a header (`not.toContain("oauth-2025-04-20")`) passes just as happily
+on a header you failed to READ, so it needs a positive control beside it asserting a beta feature
+that is always sent; verified by making the accessor path wrong and watching the control fire.
+
 ## The CLI and the daemon must agree about the user's config, and nothing checks that they do
 
 **They are two processes reading one file, so every disagreement is silent.** MEASURED 2026-07-30,
@@ -4180,6 +4337,13 @@ ephemeral port. The rule from the model/credential deletions is *an env var must
 a question config already answers*. **An explicit override losing to nothing is fine; a DEFAULT that
 overrides config is the bug.**
 
+⚠️ **The same audit moved `LOG_DIR` from `${HOME}/.mxd/logs` to `<data dir>/logs`, and that is a
+user-visible change nobody asked for.** Anyone running with `MXD_DATA_DIR` set will find the
+daemon's logs somewhere new. It is kept because logs are runtime state and a log directory ignoring
+`MXD_DATA_DIR` is the same defect as a config path ignoring it; the risk that would have made it
+wrong — the installed daemon logging somewhere the CLI does not look — does not exist, because the
+plist bakes in the absolute path the CLI resolved.
+
 **An unreadable config is REPORTED and then falls back, and both halves are deliberate.** Reporting,
 because silently substituting a port is the defect itself. Falling back, because the remedy the
 message names (`mxd config init`) is a CLI command — a throw at module load takes away the only tool
@@ -4192,7 +4356,8 @@ production or in any test — while `resolveTaskJsonlPath`'s identical-looking d
 **opposite**: its one caller never passed anything, so the default WAS the value and
 `mxd analyze-cache` read `~/.mxd` however the env was set. ⭐ **Two defaults written the same way,
 one unreachable and one load-bearing; only counting callers tells them apart, and the reflex fix
-(point both at the new function) is wrong for one of them.** Also: `ProjectManager`'s `getByPath` and
+(point both at the new function) is wrong for one of them. A default's value is decided entirely by
+who OMITS the argument, which is the one thing its definition cannot show you.** Also: `ProjectManager`'s `getByPath` and
 `ensureProject` have **zero production callers**, which is most of the answer to the path-identity
 question filed as `01KYSBAA41QRBA7GY3ZQ9M9RBR`.
 

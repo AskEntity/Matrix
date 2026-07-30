@@ -66,26 +66,72 @@ export interface ContextWindowLookup {
 	 * and model names.
 	 */
 	listModels: () => Promise<unknown[]>;
+	/**
+	 * How the model list was asked for — a URL, typically. Appended to the
+	 * error when the endpoint answers with NO entries at all.
+	 *
+	 * It exists because that particular failure is usually OUR fault rather
+	 * than the user's: the codex catalog filters its whole list on a
+	 * `client_version` query parameter we send, so an empty answer points at
+	 * the request, not at the config. Naming the request is what makes the
+	 * error land on the right suspect. Optional — an endpoint with no such
+	 * parameter has nothing to disclose.
+	 */
+	requestDetail?: string;
 }
 
 /**
- * The two keys we read, and the ONLY two.
+ * Where an entry's NAME lives. Three dialects, one lookup.
+ *
+ * OpenAI and Anthropic both say `id`; the codex catalog says `slug` and carries
+ * no `id` at all. This list extends the same rule the window keys follow — read
+ * every dialect's spelling and let the response decide — rather than branching
+ * on which endpoint we think we are talking to.
+ */
+const ID_KEYS = ["id", "slug"] as const;
+
+function readId(entry: Record<string, unknown>): string | null {
+	for (const key of ID_KEYS) {
+		const value = entry[key];
+		if (typeof value === "string" && value.length > 0) return value;
+	}
+	return null;
+}
+
+/**
+ * The three keys we read, and the ONLY three.
  *
  * ⚠️ The key name follows the PROTOCOL DIALECT, not the configured provider —
- * so read both and let the response decide. kimi's auth group is
+ * so read all of them and let the response decide. kimi's auth group is
  * `provider: "anthropic"` and its response looks Anthropic all over (`type`,
  * `display_name`, `created_at`, an envelope with `first_id`/`has_more`) while
  * putting the number under OpenAI's `context_length`. A client that picks the
  * key from the provider type looks for `max_input_tokens`, does not find it,
- * and reports 200000 with 1M sitting in the next field.
+ * and reports 200000 with 1M sitting in the next field. The codex catalog is a
+ * third dialect again: `context_window`, keyed by `slug`, wrapped in `models`.
  *
- * ⚠️ And nothing outside this list, however much it looks like a limit.
- * Anthropic's `max_tokens` sits right beside `max_input_tokens` and is the
- * OUTPUT cap (128,000 next to a 1,000,000 window) — that confusion is
- * LiteLLM #14876. OpenClaw #88596 read xAI's `long_context_threshold`, a
- * PRICING breakpoint, and reported a 1M model as 200K.
+ * ⚠️ And nothing outside this list, however much it looks like a limit. Three
+ * measured members of that family now, which is why this warning is a list and
+ * not an anecdote:
+ *
+ * - Anthropic's `max_tokens` sits right beside `max_input_tokens` and is the
+ *   OUTPUT cap — 128,000 next to a 1,000,000 window. LiteLLM #14876.
+ * - xAI's `long_context_threshold` is a PRICING breakpoint. OpenClaw #88596
+ *   read it as the window and reported a 1M model as 200K.
+ * - ⭐ codex's **`max_context_window`** is the model's ceiling SOMEWHERE ELSE,
+ *   not what this deployment grants. MEASURED 2026-07-30: `gpt-5.4` reports
+ *   `context_window: 272000` and `max_context_window: 1000000` in the same
+ *   entry — **3.68× apart**, and the same for `codex-auto-review`. Five of the
+ *   seven models have them equal, so a fixture drawn from those five cannot
+ *   tell the two keys apart; only `gpt-5.4` can. Reading the wrong one
+ *   over-estimates, which is the direction that walks into the compaction
+ *   deadlock.
  */
-const WINDOW_KEYS = ["max_input_tokens", "context_length"] as const;
+const WINDOW_KEYS = [
+	"max_input_tokens",
+	"context_length",
+	"context_window",
+] as const;
 
 function readWindow(entry: Record<string, unknown>): number | null {
 	for (const key of WINDOW_KEYS) {
@@ -154,13 +200,30 @@ function suggestId(model: string, ids: string[]): string | null {
  * where it used to work. That is why a miss SUGGESTS rather than resolves —
  * see `suggestId`.
  *
- * @throws if the endpoint cannot be reached, does not list the model, or lists
- * it without a window. There is no fallback and no config override by design.
+ * ⭐ **An EMPTY list is a refusal, not an answer**, and it is a third state this
+ * module originally had no name for. The thesis is "the endpoint is the only
+ * source; if it will not answer, throw" — which quietly assumes an endpoint
+ * either answers or fails. A 200 carrying `[]` is neither: it is a refusal
+ * wearing the shape of a complete reply. MEASURED 2026-07-30: the codex catalog
+ * returns 200 with zero models for `client_version=0.50.0`, seven for
+ * `0.144.0`, and **four** for `0.143.0` — so the list is silently filtered by a
+ * parameter WE send.
+ *
+ * Classifying it as "the endpoint does not list your model" is wrong twice: it
+ * blames a config field the user would then edit, and editing it cannot help.
+ * That is *never offer a remedy that will not work*. So an empty list gets its
+ * own error, which says the endpoint declined to enumerate anything and names
+ * the request that produced it.
+ *
+ * @throws if the endpoint cannot be reached, enumerates nothing, does not list
+ * the model, or lists it without a window. There is no fallback and no config
+ * override by design.
  */
 export async function resolveContextWindow({
 	endpoint,
 	model,
 	listModels,
+	requestDetail,
 }: ContextWindowLookup): Promise<number> {
 	const key = cacheKey(endpoint, model);
 	const cached = cache.get(key);
@@ -181,9 +244,21 @@ export async function resolveContextWindow({
 	for (const entry of entries) {
 		if (!entry || typeof entry !== "object") continue;
 		const record = entry as Record<string, unknown>;
-		if (typeof record.id !== "string") continue;
-		ids.push(record.id);
-		if (record.id === model) match = record;
+		const id = readId(record);
+		if (id === null) continue;
+		ids.push(id);
+		if (id === model) match = record;
+	}
+
+	// The refusal case, kept ahead of the miss case so it cannot be reported as
+	// a statement about `model` — see the doc above.
+	if (ids.length === 0) {
+		throw new Error(
+			`Cannot determine the context window for "${model}": ${endpoint} enumerated no models at all. ` +
+				`That is a refusal to answer rather than a statement that "${model}" is unavailable, so the cause is more likely the request than the configured model` +
+				(requestDetail ? ` — asked as: ${requestDetail}` : "") +
+				".",
+		);
 	}
 
 	if (!match) {
@@ -191,7 +266,7 @@ export async function resolveContextWindow({
 		throw new Error(
 			`Cannot determine the context window for "${model}": ${endpoint} does not list it. ` +
 				(suggestion ? `Did you mean "${suggestion}"? ` : "") +
-				`Models it does list: ${ids.length > 0 ? ids.join(", ") : "(none)"}.`,
+				`Models it does list: ${ids.join(", ")}.`,
 		);
 	}
 

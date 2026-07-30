@@ -1378,6 +1378,12 @@ const PLIST_PATH = `${PLIST_DIR}/${PLIST_LABEL}.plist`;
 const MXD_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 // The daemon's logs are runtime state, so they live in the data dir. Was
 // `${HOME}/.mxd/logs`, which ignored MXD_DATA_DIR — one of the five answers.
+//
+// ⚠️ USER-VISIBLE: anyone running with MXD_DATA_DIR set will find the daemon's
+// logs somewhere new. Deliberate — a log directory that ignores MXD_DATA_DIR is
+// the same defect as a config path that ignores it. The risk that would have
+// made it the wrong call (an installed daemon logging where the CLI does not
+// look) does not exist: the plist bakes in the absolute path resolved here.
 const LOG_DIR = join(DATA_DIR, "logs");
 
 function daemonPlist(): string {

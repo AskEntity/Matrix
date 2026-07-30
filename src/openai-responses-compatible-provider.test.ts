@@ -63,7 +63,13 @@ function withModelsList(
 				: url instanceof URL
 					? url.toString()
 					: url.url;
-		if (urlStr.endsWith("/models")) return modelsListResponse();
+		// Match the PATH, not the whole URL: the models request now carries a
+		// required `client_version` query string, and an endsWith("/models")
+		// guard silently stops recognising it — which shows up as every runLoop
+		// test getting an SSE body where it asked for a model list.
+		if (new URL(urlStr).pathname.endsWith("/models")) {
+			return modelsListResponse();
+		}
 		return handler(urlStr, init);
 	}) as unknown as typeof fetch;
 }
@@ -450,7 +456,12 @@ describe("OpenAI adapter.getContextWindow asks the endpoint", () => {
 					staticCredential("token"),
 				);
 				expect(await adapter.getContextWindow("gpt-4o")).toBe(131072);
-				expect(urls()).toEqual(["https://api.example.com/v1/models"]);
+				// The version filter is part of the request, deliberately asserted:
+				// dropping it 400s the codex catalog, and pinning a REAL version
+				// here would degrade to an empty list as the server floor rises.
+				expect(urls()).toEqual([
+					"https://api.example.com/v1/models?client_version=999.0.0",
+				]);
 			},
 		);
 	});
@@ -470,7 +481,9 @@ describe("OpenAI adapter.getContextWindow asks the endpoint", () => {
 					staticCredential("token"),
 				);
 				expect(await adapter.getContextWindow("gpt-4o")).toBe(131072);
-				expect(urls()).toEqual(["https://api.example.com/v1/models"]);
+				expect(urls()).toEqual([
+					"https://api.example.com/v1/models?client_version=999.0.0",
+				]);
 			},
 		);
 	});
@@ -484,7 +497,7 @@ describe("OpenAI adapter.getContextWindow asks the endpoint", () => {
 					staticCredential("token"),
 				);
 				await expect(adapter.getContextWindow("gpt-5-codex")).rejects.toThrow(
-					/chatgpt\.com\/backend-api\/codex\/models returned 401/,
+					/chatgpt\.com\/backend-api\/codex\/models\?client_version=[\d.]+ returned 401/,
 				);
 			},
 		);
@@ -507,6 +520,91 @@ describe("OpenAI adapter.getContextWindow asks the endpoint", () => {
 				await expect(adapter.getContextWindow("gpt-4o")).rejects.toThrow(
 					/neither max_input_tokens nor context_length/,
 				);
+			},
+		);
+	});
+
+	/**
+	 * ⭐ The codex catalog disagrees on the ENVELOPE too — `{models:[…]}` where
+	 * every OpenAI-compatible endpoint says `{data:[…]}`. Before this, the
+	 * provider threw `returned 200 with no "data" array` on a perfectly good
+	 * reply. Payload copied from the live response (2026-07-30).
+	 */
+	test("reads the codex envelope: models[] keyed by slug, window in context_window", async () => {
+		await withFetch(
+			async () =>
+				new Response(
+					JSON.stringify({
+						models: [
+							{ slug: "gpt-5.5", context_window: 272_000 },
+							{
+								slug: "gpt-5.4",
+								context_window: 272_000,
+								max_context_window: 1_000_000,
+							},
+						],
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				),
+			async (urls) => {
+				const adapter = createOpenAIResponsesAdapter(
+					"https://chatgpt.com/backend-api/codex/responses",
+					staticCredential("token"),
+				);
+				expect(await adapter.getContextWindow("gpt-5.5")).toBe(272_000);
+				// The API root is derived by stripping /responses, and the version
+				// filter rides along — omit it and the real endpoint 400s.
+				expect(urls()).toEqual([
+					"https://chatgpt.com/backend-api/codex/models?client_version=999.0.0",
+				]);
+			},
+		);
+	});
+
+	test("neither data nor models is a reportable failure, not a silent empty list", async () => {
+		await withFetch(
+			async () =>
+				new Response(JSON.stringify({ object: "list" }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			async () => {
+				const adapter = createOpenAIResponsesAdapter(
+					"https://api.example.com/v1",
+					staticCredential("token"),
+				);
+				await expect(adapter.getContextWindow("gpt-4o")).rejects.toThrow(
+					/neither a "data" nor a "models" array/,
+				);
+			},
+		);
+	});
+
+	/**
+	 * ⚠️ The whole reason `requestDetail` exists. MEASURED: the codex catalog
+	 * answers 200 with zero models when `client_version` is under its floor, so
+	 * this failure is caused by a parameter WE send. The error has to point
+	 * there — telling the user their model is not listed sends them to edit a
+	 * config field that cannot fix it.
+	 */
+	test("an empty catalogue blames the request, not the configured model", async () => {
+		await withFetch(
+			async () =>
+				new Response(JSON.stringify({ models: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			async () => {
+				const adapter = createOpenAIResponsesAdapter(
+					"https://chatgpt.com/backend-api/codex/responses",
+					staticCredential("token"),
+				);
+				const call = adapter.getContextWindow("gpt-5.5");
+				await expect(call).rejects.toThrow(/enumerated no models at all/);
+				await expect(call).rejects.toThrow(
+					/asked as: GET .*\/models\?client_version=[\d.]+/,
+				);
+				await expect(call).rejects.not.toThrow(/does not list it/);
 			},
 		);
 	});
