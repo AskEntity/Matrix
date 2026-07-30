@@ -505,8 +505,11 @@ function historyToResponsesInput(
  */
 export async function* streamResponsesAPI(params: {
 	endpoint: string;
-	authToken: string;
-	accountId?: string;
+	/**
+	 * The credential SOURCE, handed to the SDK — never a resolved token. See the
+	 * `apiKey` comment below for what that buys and where the line falls.
+	 */
+	credentials: OpenAICredentialSource;
 	body: ResponseCreateParams;
 	signal?: AbortSignal;
 	/** Override max retries for testing. SDK default: 2. */
@@ -515,10 +518,18 @@ export async function* streamResponsesAPI(params: {
 	const endpoint = resolveResponsesEndpoint(params.endpoint);
 	const codex = isCodexEndpoint(endpoint);
 
+	// ⚠️ THE LINE: the token goes to the SDK, the account id stays ours.
+	// `ChatGPT-Account-Id` is a header, and `defaultHeaders` is fixed when the
+	// client is built, so there is no per-request slot to hand it to — this
+	// resolve is what fills it. It also means a credential that cannot be read at
+	// all fails HERE, with our own message intact, rather than inside the SDK's
+	// `Failed to get token from 'apiKey' function: …` wrapper.
+	const { accountId } = await params.credentials();
+
 	// Build SDK client with appropriate base URL and headers.
 	const defaultHeaders: Record<string, string> = {};
-	if (params.accountId) {
-		defaultHeaders["ChatGPT-Account-Id"] = params.accountId;
+	if (accountId) {
+		defaultHeaders["ChatGPT-Account-Id"] = accountId;
 	}
 	if (codex) {
 		defaultHeaders.originator = "matrix";
@@ -534,16 +545,35 @@ export async function* streamResponsesAPI(params: {
 	// project our traffic was attributed to, with no config field anywhere. Same
 	// rule the Anthropic client sites now follow: env does not get to answer.
 	//
-	// `apiKey` and `baseURL` need no `null` here — both are always passed. That is
-	// true today by other requirements rather than by intent, so it is pinned by a
-	// test rather than left to hold on its own. ⚠️ `apiKey`'s type is `string |
-	// ApiKeySetter | undefined` with NO `null`, so if `authToken` ever became
-	// optional there would be no way to stop OPENAI_API_KEY from filling it: the
-	// thing to keep true is that `authToken` stays required. (`apiKey: ""` does
-	// suppress the read and emits a header with an empty bearer token — measured,
-	// and not a workaround.)
+	// ⭐ `apiKey` gets the SOURCE, not a token. The SDK's own slot is `string |
+	// ApiKeySetter | undefined` where `ApiKeySetter = () => Promise<string>`, and
+	// a function there is invoked before EVERY request: `makeRequest` awaits
+	// `prepareOptions` → `_callApiKey` → `authHeaders`, and `retryRequest`
+	// re-enters `makeRequest`. Retries therefore re-read the file.
+	//
+	// That is not tidiness. `maxRetries` below is 2, so one call can send three
+	// HTTP requests, and codex rewrites `auth.json` behind us on its own schedule
+	// — a token resolved once at the top of the call and reused is exactly the
+	// copied-credential bug `OpenAICredentialSource` exists to prevent, narrowed
+	// to a window of seconds instead of days. Per-turn was the best a resolved
+	// string could do; per-request is what the design was always asking for.
+	//
+	// It is also the whole env story at this slot, and `null` is not available
+	// here the way it is for organization/project: a function is not `undefined`,
+	// so the `apiKey = readEnv('OPENAI_API_KEY')` default never fires. Same rule
+	// as those two, reached by a different mechanism. (MEASURED, with a real
+	// token as the positive control: a setter returning `""` throws `Expected
+	// 'apiKey' function argument to return a string` and ZERO requests leave the
+	// process, where the static `""` this replaced sent `Bearer ` and collected a
+	// misleading 401. Unreachable through `openAICredentialSource`, so it is
+	// recorded here rather than pinned by a test that would only be asserting the
+	// SDK's behaviour.)
+	//
+	// `baseURL` is likewise always passed explicitly, so `OPENAI_BASE_URL` cannot
+	// choose the destination — the same rule `resolveAnthropicBaseUrl` states on
+	// the Anthropic side.
 	const client = new OpenAI({
-		apiKey: params.authToken,
+		apiKey: async () => (await params.credentials()).authToken,
 		baseURL: endpoint.replace(/\/responses$/, ""),
 		organization: null,
 		project: null,
@@ -593,9 +623,10 @@ export async function* streamResponsesAPI(params: {
 }
 
 /**
- * @param credentials Asked at every call, never resolved once and captured —
- * see `OpenAICredentialSource`. Passing a resolved token here instead is the
- * one change that would silently reintroduce the copied-credential bug.
+ * @param credentials Asked at every REQUEST, never resolved once and captured —
+ * see `OpenAICredentialSource`, and `streamResponsesAPI` for how the SDK does
+ * the asking. Resolving it to a token anywhere on the way down is the one
+ * change that would silently reintroduce the copied-credential bug.
  */
 export function createOpenAIResponsesAdapter(
 	baseUrl: string,
@@ -665,14 +696,13 @@ export function createOpenAIResponsesAdapter(
 				body: body as unknown as Record<string, unknown>,
 			});
 
-			// Resolved HERE, per call, rather than captured when the adapter was
-			// built: an agent loop outlives many codex refreshes.
-			const credential = await credentials();
-
+			// Handed down as a SOURCE, not resolved here: the SDK asks it before
+			// every request, so a retry inside this one call re-reads the file.
+			// An agent loop outlives many codex refreshes; so, occasionally, does
+			// a single call.
 			const response = yield* streamResponsesAPI({
 				endpoint: baseUrl,
-				authToken: credential.authToken,
-				accountId: credential.accountId,
+				credentials,
 				body,
 				signal: params.signal,
 				maxRetries: opts?.maxRetries,

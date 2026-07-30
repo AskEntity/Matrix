@@ -47,13 +47,20 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  * restoring all of them afterwards on every path.
  *
  * If `fn` returns a promise the restore is deferred until it settles, because env
- * has to still be in place when the client is CONSTRUCTED. ⚠️ MEASURED: at all
- * four of today's doors the client is built in the SYNCHRONOUS PREFIX of the
- * call — a sync callback, an async function before its first await, an async
- * generator's first `next()` — so the deferral changes no outcome right now.
- * It is here because the fragile case fails by PASSING: put one `await` before a
- * client construction and a restore-on-return fixture sees no leak and reports
- * clean. `sdk-client-env.test.ts` pins both halves.
+ * has to still be in place when the client is CONSTRUCTED.
+ *
+ * ⭐ CORRECTION to the note written here one day earlier, which said the deferral
+ * "changes no outcome" because all four doors built their client in the
+ * SYNCHRONOUS PREFIX of the call. It is LOAD-BEARING as of the change that made
+ * `streamResponsesAPI` hand the credential SOURCE to the SDK: that generator now
+ * awaits `credentials()` for the account-id header before `new OpenAI(...)`, so
+ * its door sits in the fragile row. MEASURED both ways, with the org/project
+ * `null`s deleted so production really does leak: deferral intact → the door
+ * test is RED and names the two shell headers; deferral removed → the same
+ * vulnerable production is GREEN. **The future-proofing became the only thing
+ * keeping that test able to fail, one day after it was written off as
+ * theoretical** — which is the argument for building it, not against it.
+ * `sdk-client-env.test.ts` pins both halves.
  *
  * ⚠️ Both SDKs snapshot `globalThis.fetch` in their constructor
  * (`this.fetch = options.fetch ?? getDefaultFetch()`), so a test that also

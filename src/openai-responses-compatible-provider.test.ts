@@ -381,6 +381,84 @@ describe("the credential is re-read at every use", () => {
 		}
 	});
 
+	/**
+	 * ⭐ THE discriminating fixture, and the reason it has to be a RETRY.
+	 *
+	 * "the setter was passed in" and "the setter was called once" are both true
+	 * of the resolved string this replaced — one call, one resolve, either way —
+	 * so neither can express the difference. Only a SECOND HTTP request inside
+	 * ONE call can, and `maxRetries` is what produces one.
+	 *
+	 * The scenario is the real one rather than an abstract counter: codex
+	 * rewrites `auth.json` while our first attempt is in flight. With a token
+	 * resolved at the top of the call, the retry re-sent the value that had just
+	 * been rotated away — and collected an auth error that reads like a bad
+	 * credential.
+	 *
+	 * ⚠️ The account id is deliberately asserted as UNCHANGED across the two
+	 * requests, because that is where the line falls: `ChatGPT-Account-Id` is a
+	 * header, `defaultHeaders` is fixed when the client is built, and the SDK's
+	 * per-request slot takes the token only. The second file has no account id at
+	 * all and the header keeps the first one.
+	 */
+	test("a rewrite BETWEEN a request and its retry is carried by the retry", async () => {
+		const bearers: string[] = [];
+		const accounts: Array<string | undefined> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+			const h = new Headers(init?.headers);
+			bearers.push(h.get("authorization") ?? "");
+			accounts.push(h.get("chatgpt-account-id") ?? undefined);
+			if (bearers.length === 1) {
+				// codex refreshes the file while the first attempt is in flight.
+				await writeToken("second-token");
+				// 500 is what makes the SDK retry; `retry-after-ms: 0` is what keeps
+				// its exponential backoff out of the suite's runtime.
+				return new Response("upstream boom", {
+					status: 500,
+					headers: { "retry-after-ms": "0" },
+				});
+			}
+			return sseResponse([
+				{
+					event: "response.created",
+					data: { response: { id: "resp-1", status: "in_progress" } },
+				},
+				{
+					event: "response.completed",
+					data: { response: mockOAIResponse({}) },
+				},
+			]);
+		}) as unknown as typeof fetch;
+
+		try {
+			await writeToken("first-token", "acct-1");
+			const gen = streamResponsesAPI({
+				endpoint: "https://api.openai.com/v1",
+				credentials: openAICredentialSource({
+					provider: "openai",
+					authJsonPath: authPath,
+				}),
+				body: {
+					model: "gpt-4.1-mini",
+					instructions: "test",
+					input: [],
+					tools: [],
+					stream: true,
+					store: false,
+				} as Parameters<typeof streamResponsesAPI>[0]["body"],
+				maxRetries: 2,
+			});
+			let next = await gen.next();
+			while (!next.done) next = await gen.next();
+
+			expect(bearers).toEqual(["Bearer first-token", "Bearer second-token"]);
+			expect(accounts).toEqual(["acct-1", "acct-1"]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	test("an apiKey group needs no file and answers the same value twice", async () => {
 		const source = openAICredentialSource({
 			provider: "openai",
@@ -1484,7 +1562,7 @@ describe("streamResponsesAPI (SDK-based)", () => {
 		globalThis.fetch = fetchMock;
 		const gen = streamResponsesAPI({
 			endpoint: "https://api.openai.com/v1",
-			authToken: "test-key",
+			credentials: staticCredential("test-key"),
 			body: baseBody,
 			maxRetries: 0, // disable SDK retries for error tests
 			...overrides,
