@@ -4417,6 +4417,11 @@ Two properties of that instrument worth reusing. **Its errors must fall on the f
 ever ADDS a candidate; the opposite bias would hide a phantom, and hiding is the whole failure being
 hunted. And **a planted control has to exercise the form the defect actually lives in**: phantoms
 sit overwhelmingly in JSDoc, so a control planted only in a `//` line proves the wrong branch.
+Third, learned by watching it break: **once an instrument is committed it becomes part of the corpus
+it searches**, so `const PLANTED = "zzControl"` puts the control's own name into the haystack and
+every run afterwards reports MISSED. Build such names at runtime. It failed in the safe direction —
+which is the only reason anyone saw it, and the reason to check: **a control that can read its own
+name out of the haystack can only ever under-report.**
 
 **An ABSENCE is a universal claim, so a truncated list can never support one — with or without a
 count beside it.** This is stronger than *a correct COUNT next to a truncated LIST*, which is about
