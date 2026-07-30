@@ -4795,6 +4795,7 @@ does not soften *an optimisation for a case your fix eliminates is dead code tha
 foresight* — the difference is that the deferral deleted a CLASS (any await upstream of any client
 construction) rather than serving a scenario, and a class does not stop existing when today's
 callers happen to miss it.
+
 ## ⭐ A migration that adds an identifier makes it non-uniform FOREVER — two instances, two subsystems
 
 **Every reader of a newly-introduced id needs a DEFINED rendering for the pre-migration half, and
