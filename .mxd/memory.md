@@ -149,13 +149,14 @@ that finds the second kind of prose rot:
 | **Invalidated** — a true statement about a neighbour | **later**, when the neighbour changes | *nothing you can do by re-reading it* |
 | **Vestigial** — a true statement whose content is a DIFF against a version only the author saw | the moment it is written, and it never stops reading as content | asking what a reader who never saw the old version learns from it |
 
-Both appeared in one docstring on one day. The fabricated one was a benchmark quoted before the
-benchmark was run, caught by its author reading their own diff. The invalidated one was true when
-written, falsified two commits later by a change 300 lines away, and **auditing that same docstring
-for falsehoods did not catch it, because nothing about the sentence is wrong on its face.** Two
-directions to be careful in: *"changed nearby" is not "now false"*, and — the one that catches more
-— ***"still true" is not "still accurate"***: one sentence survived as an invariant while the
-mechanism under it was replaced, and a check looking only for false claims walks straight past that.
+The first two appeared in one docstring on one day. The fabricated one was a benchmark quoted
+before the benchmark was run, caught by its author reading their own diff. The invalidated one was
+true when written, falsified two commits later by a change 300 lines away, and **auditing that
+same docstring for falsehoods did not catch it, because nothing about the sentence is wrong on its
+face.** Two directions to be careful in: *"changed nearby" is not "now false"*, and — the one that
+catches more — ***"still true" is not "still accurate"***: one sentence survived as an invariant
+while the mechanism under it was replaced, and a check looking only for false claims walks straight
+past that.
 
 ⭐ **The vestigial kind is the one an accuracy audit can never catch, because it is not inaccurate.**
 Found 2026-07-30 in the system prompt: *"Trigger on the question you're holding — not on an
