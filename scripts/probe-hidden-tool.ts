@@ -52,6 +52,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createAnthropicAdapter } from "../src/anthropic-compatible-provider.ts";
+import { openAICredentialSource } from "../src/codex-auth.ts";
 import { type AuthGroup, loadGlobalConfig } from "../src/config.ts";
 import type { EventSpec } from "../src/events.ts";
 import { createOpenAIResponsesAdapter } from "../src/openai-responses-compatible-provider.ts";
@@ -413,12 +414,14 @@ async function main(): Promise<void> {
 
 	const model = process.argv[3] ?? "gpt-5.1-codex";
 	const baseUrl = group.baseUrl ?? "https://api.openai.com/v1";
-	const token = group.apiKey ?? group.accessToken ?? "";
-	if (!token) {
-		console.error("openai auth group has no apiKey/accessToken.");
+	if (!group.apiKey && !group.authJsonPath) {
+		console.error("openai auth group has neither apiKey nor authJsonPath.");
 		process.exit(1);
 	}
-	const adapter = createOpenAIResponsesAdapter(baseUrl, token, group.accountId);
+	const adapter = createOpenAIResponsesAdapter(
+		baseUrl,
+		openAICredentialSource(group),
+	);
 	console.log(`model   : ${model}`);
 	console.log(`endpoint: ${baseUrl}`);
 

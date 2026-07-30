@@ -879,9 +879,7 @@ function printResolvedConfig(cfg: MatrixConfig): void {
 				if (group.oauthToken) keys.push("oauthToken");
 			} else {
 				if (group.apiKey) keys.push("apiKey");
-				if (group.accessToken) keys.push("accessToken");
-				if (group.refreshToken) keys.push("refreshToken");
-				if (group.accountId) keys.push("accountId");
+				if (group.authJsonPath) keys.push(`authJson=${group.authJsonPath}`);
 				if (group.baseUrl) keys.push(`base=${group.baseUrl}`);
 			}
 			console.log(
@@ -1050,7 +1048,7 @@ async function handleConfig(args: string[]): Promise<void> {
 		console.log("");
 		console.log("  Use: mxd config set <key> <value> [--global|--project]");
 		console.log(
-			"       mxd config auth add <name> --provider <p> [--key <k> | --access-token <t>]",
+			"       mxd config auth add <name> --provider <p> [--key <k> | --auth-json <path>]",
 		);
 		console.log("       mxd config auth list");
 	} else {
@@ -1072,9 +1070,7 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 		let provider: "anthropic" | "openai" = "anthropic";
 		let apiKey: string | undefined;
 		let oauthToken: string | undefined;
-		let accessToken: string | undefined;
-		let refreshToken: string | undefined;
-		let accountId: string | undefined;
+		let authJsonPath: string | undefined;
 		let baseUrl: string | undefined;
 		const isProject = args.includes("--project");
 
@@ -1093,12 +1089,8 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 				apiKey = args[++i] as string;
 			} else if (arg === "--oauth-token" && i + 1 < args.length) {
 				oauthToken = args[++i] as string;
-			} else if (arg === "--access-token" && i + 1 < args.length) {
-				accessToken = args[++i] as string;
-			} else if (arg === "--refresh-token" && i + 1 < args.length) {
-				refreshToken = args[++i] as string;
-			} else if (arg === "--account-id" && i + 1 < args.length) {
-				accountId = args[++i] as string;
+			} else if (arg === "--auth-json" && i + 1 < args.length) {
+				authJsonPath = args[++i] as string;
 			} else if (arg === "--base-url" && i + 1 < args.length) {
 				baseUrl = args[++i] as string;
 			}
@@ -1119,18 +1111,25 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 				...(baseUrl ? { baseUrl } : {}),
 			};
 		} else {
-			if (!apiKey && !accessToken) {
+			if (!apiKey && !authJsonPath) {
 				console.error(
-					"OpenAI auth requires --key <api-key> or --access-token <token>",
+					"OpenAI auth requires --key <api-key> (OpenAI platform API) or --auth-json <path> (the auth.json the codex CLI writes, usually ~/.codex/auth.json)",
+				);
+				process.exit(1);
+			}
+			// Rejected rather than silently preferring one: they reach DIFFERENT
+			// endpoints, so a group carrying both would quietly ignore one and the
+			// user would see no effect from the flag they just passed.
+			if (apiKey && authJsonPath) {
+				console.error(
+					"OpenAI auth takes --key or --auth-json, not both: --key is the OpenAI platform API, --auth-json is the codex endpoint.",
 				);
 				process.exit(1);
 			}
 			group = {
 				provider: "openai",
 				...(apiKey ? { apiKey } : {}),
-				...(accessToken ? { accessToken } : {}),
-				...(refreshToken ? { refreshToken } : {}),
-				...(accountId ? { accountId } : {}),
+				...(authJsonPath ? { authJsonPath } : {}),
 				...(baseUrl ? { baseUrl } : {}),
 			};
 		}
@@ -1192,14 +1191,10 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 				if (group.apiKey) {
 					maskedKeys.push(`key=${group.apiKey.slice(0, 10)}...`);
 				}
-				if (group.accessToken) {
-					maskedKeys.push("access=***");
-				}
-				if (group.refreshToken) {
-					maskedKeys.push("refresh=***");
-				}
-				if (group.accountId) {
-					maskedKeys.push(`account=${group.accountId.slice(0, 6)}...`);
+				// Shown in full: a path is not a secret, and which file you pointed
+				// at is the one thing you need to see here.
+				if (group.authJsonPath) {
+					maskedKeys.push(`authJson=${group.authJsonPath}`);
 				}
 				if (group.baseUrl) {
 					maskedKeys.push(`base=${group.baseUrl}`);
@@ -1224,7 +1219,7 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 	} else {
 		console.error("Usage:");
 		console.error(
-			"  mxd config auth add <name> --provider <anthropic|openai> [--key <key> | --access-token <token>] [--refresh-token <token>] [--account-id <id>] [--base-url <url>]",
+			"  mxd config auth add <name> --provider <anthropic|openai> [--key <key> | --oauth-token <token> | --auth-json <path>] [--base-url <url>]",
 		);
 		console.error("  mxd config auth list");
 		console.error("  mxd config auth remove <name> [--global|--project]");
@@ -1693,7 +1688,7 @@ switch (command) {
 			"    config set <key> <value> [--global|--project]  Set a config value",
 		);
 		console.log(
-			"    config auth add <name>   Add auth group (--provider, --key/--access-token)",
+			"    config auth add <name>   Add auth group (--provider, --key/--auth-json)",
 		);
 		console.log("    config auth list         List auth groups");
 		console.log("    config auth remove <name>  Remove auth group");

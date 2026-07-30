@@ -195,9 +195,7 @@ const en: Translations = {
 	"settings.systemPreamble": "System Preamble",
 	"settings.systemPreamblePlaceholder":
 		"Optional first system block (for OAuth identity)",
-	"settings.accessToken": "Access Token",
-	"settings.refreshToken": "Refresh Token",
-	"settings.accountId": "Account ID",
+	"settings.authJsonPath": "Codex auth.json path",
 	"settings.baseUrl": "Base URL",
 	"settings.optionalFallback": "Optional fallback",
 	"settings.authGroupName": "auth group name",
@@ -579,9 +577,7 @@ const zh: Translations = {
 	"settings.systemPreamble": "系统前言",
 	"settings.systemPreamblePlaceholder":
 		"可选的首个系统文本块（用于 OAuth 身份标识）",
-	"settings.accessToken": "Access Token",
-	"settings.refreshToken": "Refresh Token",
-	"settings.accountId": "Account ID",
+	"settings.authJsonPath": "Codex auth.json 路径",
 	"settings.baseUrl": "基础 URL",
 	"settings.optionalFallback": "可选备用",
 	"settings.authGroupName": "认证组名称",

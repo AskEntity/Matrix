@@ -48,7 +48,11 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createAnthropicAdapter } from "./anthropic-compatible-provider.ts";
-import { type AuthGroup } from "./config.ts";
+import {
+	type OpenAICredentialSource,
+	openAICredentialSource,
+} from "./codex-auth.ts";
+import type { AuthGroup } from "./config.ts";
 import type { EventSpec } from "./events.ts";
 import { createOpenAIResponsesAdapter } from "./openai-responses-compatible-provider.ts";
 import type { ProviderAdapter } from "./provider-shared.ts";
@@ -493,8 +497,7 @@ async function* streamAnthropic(
 
 function resolveOpenAIAuth(authGroup: AuthGroup): {
 	baseUrl: string;
-	authToken: string;
-	accountId?: string;
+	credentials: OpenAICredentialSource;
 } {
 	if (authGroup.provider !== "openai") {
 		throw new Error(
@@ -502,27 +505,21 @@ function resolveOpenAIAuth(authGroup: AuthGroup): {
 		);
 	}
 	const baseUrl = authGroup.baseUrl ?? "https://api.openai.com/v1";
-	const authToken = authGroup.apiKey ?? authGroup.accessToken ?? "";
-	if (!authToken) {
+	if (!authGroup.apiKey && !authGroup.authJsonPath) {
 		console.warn(
-			"[llm] OpenAI auth group has no apiKey/accessToken — calls will 401 at the API.",
+			'[llm] OpenAI auth group has neither "apiKey" nor "authJsonPath" — calls will fail.',
 		);
 	}
-	return {
-		baseUrl,
-		authToken,
-		accountId: authGroup.accountId,
-	};
+	return { baseUrl, credentials: openAICredentialSource(authGroup) };
 }
 
 async function* streamOpenAI(
 	baseUrl: string,
-	authToken: string,
-	accountId: string | undefined,
+	credentials: OpenAICredentialSource,
 	model: string,
 	req: LLMRequest,
 ): AsyncGenerator<LLMChunk, void> {
-	const adapter = createOpenAIResponsesAdapter(baseUrl, authToken, accountId);
+	const adapter = createOpenAIResponsesAdapter(baseUrl, credentials);
 	// OpenAI Responses adapter's `callAPI` accepts Matrix's `HistoryMessage`
 	// shape which is a superset of `{role, content: string}`. Pass flat role
 	// list straight in.
@@ -553,8 +550,7 @@ type ProviderState =
 	| {
 			provider: "openai";
 			baseUrl: string;
-			authToken: string;
-			accountId?: string;
+			credentials: OpenAICredentialSource;
 	  };
 
 /**
@@ -582,13 +578,7 @@ function buildLLMClient(
 				req,
 			);
 		}
-		return streamOpenAI(
-			state.baseUrl,
-			state.authToken,
-			state.accountId,
-			model,
-			req,
-		);
+		return streamOpenAI(state.baseUrl, state.credentials, model, req);
 	}
 
 	return {
@@ -657,11 +647,9 @@ export function createLLM(config: LLMConfig): LLMClient {
 	}
 	if (config.authGroup.provider === "openai") {
 		const model = config.model;
-		const { baseUrl, authToken, accountId } = resolveOpenAIAuth(
-			config.authGroup,
-		);
+		const { baseUrl, credentials } = resolveOpenAIAuth(config.authGroup);
 		return buildLLMClient(
-			{ provider: "openai", baseUrl, authToken, accountId },
+			{ provider: "openai", baseUrl, credentials },
 			model,
 			defaultEffort,
 		);

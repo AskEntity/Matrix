@@ -196,11 +196,13 @@ function maskAuthGroup(group: AuthGroup): AuthGroup {
 			oauthToken: maskSecret(group.oauthToken),
 		};
 	}
+	// `authJsonPath` is deliberately NOT masked: it is a filesystem path, not a
+	// credential, and the user has to be able to see and edit which file they
+	// pointed at. The secret it leads to never enters config — it is read from
+	// disk at each use and never stored here.
 	return {
 		...group,
 		apiKey: maskSecret(group.apiKey),
-		accessToken: maskSecret(group.accessToken),
-		refreshToken: maskSecret(group.refreshToken),
 	};
 }
 
@@ -321,11 +323,11 @@ function mergeAuthGroup(
 			oauthToken: keep("oauthToken"),
 		};
 	}
+	// Only `apiKey` is masked on the way out, so only `apiKey` can arrive as a
+	// masked echo. `authJsonPath` round-trips as itself.
 	return {
 		...incoming,
 		apiKey: keep("apiKey"),
-		accessToken: keep("accessToken"),
-		refreshToken: keep("refreshToken"),
 	};
 }
 

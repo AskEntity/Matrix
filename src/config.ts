@@ -12,12 +12,32 @@ export interface AnthropicAuthGroup {
 	baseUrl?: string;
 }
 
+/**
+ * Two credential sources, mutually exclusive.
+ *
+ * - `apiKey` — a platform API key, for `api.openai.com`.
+ * - `authJsonPath` — a path to the `auth.json` the `codex` CLI maintains, for
+ *   the codex endpoint. We only ever READ it.
+ *
+ * ⚠️ The two do not cross: the ChatGPT OAuth token in `auth.json` lacks the
+ * scope the platform API requires, and a platform key is not what the codex
+ * endpoint accepts.
+ *
+ * ⭐ There is deliberately no `accessToken` / `refreshToken` here, and the
+ * reason is ownership rather than convenience (user, 2026-07-29). OpenAI
+ * ROTATES the refresh token on every refresh, so a second copy of the pair is
+ * not a snapshot that goes stale — it is a competitor for one chain, and
+ * whichever side refreshes first invalidates the other. Measured on this
+ * machine: the copy in our config and the one in `~/.codex/auth.json` had
+ * DIFFERENT access and refresh tokens, and both were dead. The chain belongs to
+ * the `codex` CLI; we are a reader of the file it writes.
+ */
 export interface OpenAIAuthGroup {
 	provider: "openai";
 	apiKey?: string;
-	accessToken?: string;
-	refreshToken?: string;
-	accountId?: string;
+	/** Path to codex's `auth.json`. Read at every use — never cached, because
+	 * codex refreshes it behind us and a cache is the copy problem again. */
+	authJsonPath?: string;
 	baseUrl?: string;
 }
 
@@ -302,7 +322,46 @@ export async function loadGlobalConfig(path?: string): Promise<MatrixConfig> {
 				"Run `mxd config init` to create a complete config, or add the missing fields manually.",
 		);
 	}
+	warnRemovedAuthFields(raw.authGroups, resolvedPath);
 	return raw as unknown as MatrixConfig;
+}
+
+/** Fields an OpenAI auth group used to carry, with what replaces each. */
+const REMOVED_OPENAI_AUTH_FIELDS: ReadonlyMap<string, string> = new Map([
+	["accessToken", "authJsonPath"],
+	["refreshToken", "authJsonPath"],
+	["accountId", "authJsonPath (read from the file's tokens.account_id)"],
+]);
+
+/**
+ * Warn about credential fields that no longer exist, naming the way forward.
+ *
+ * ⚠️ These do not go through `asLayerConfig`'s drop-and-warn — `authGroups` is
+ * global-only, and global config is validated rather than projected, so a
+ * removed field inside a group is simply never read again. Silence there is the
+ * worst available outcome: the user's OpenAI calls start failing and the config
+ * still visibly contains a token, so the file itself argues that it is fine.
+ *
+ * Warn, never repair. Rewriting the file would mean deciding on the user's
+ * behalf which auth.json they meant, and this loader is also the path
+ * `mxd config` reads before saving — a fix applied here would rewrite
+ * credentials as a side effect of an unrelated command.
+ */
+function warnRemovedAuthFields(authGroups: unknown, source: string): void {
+	if (!authGroups || typeof authGroups !== "object") return;
+	for (const [name, group] of Object.entries(
+		authGroups as Record<string, unknown>,
+	)) {
+		if (!group || typeof group !== "object") continue;
+		for (const [field, replacement] of REMOVED_OPENAI_AUTH_FIELDS) {
+			if (!Object.hasOwn(group, field)) continue;
+			console.warn(
+				`[config] auth group "${name}" in ${source} carries "${field}", which no longer exists. ` +
+					"This was never a field that merely moved: OpenAI ROTATES the refresh token on every refresh, so a copy kept here and the codex CLI's own copy were two claimants to one chain — whichever refreshed first silently invalidated the other, and the copy stored here is almost certainly dead already. " +
+					`Set "${replacement}" to the path of codex's auth.json (usually ~/.codex/auth.json) and matrix will read it at each use; run \`codex login\` if that file has expired.`,
+			);
+		}
+	}
 }
 
 export async function saveGlobalConfig(
