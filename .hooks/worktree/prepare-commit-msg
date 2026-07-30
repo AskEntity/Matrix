@@ -41,6 +41,13 @@ if ! grep -qv -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$msg_file"; then
 	exit 0
 fi
 
+# The newline guard below and --no-divider on the call are ONE fact wearing two
+# faces: interpret-trailers has its own opinion about where a commit message
+# ENDS, and it does not match the reader's. Any time it places the trailer
+# somewhere that is not the last paragraph as `%(trailers:…)` sees it, the id
+# sits in `%B` looking perfect while the parser reports nothing at all. If you
+# are here adding a third guard, that is the thing to go looking for.
+#
 # MERGE_MSG arrives with NO trailing newline (measured, git 2.44), unlike
 # COMMIT_EDITMSG. interpret-trailers then joins the trailer to the subject with
 # a single newline instead of a blank line, and git's own trailer parser cannot
@@ -51,7 +58,14 @@ if [ -n "$(tail -c1 "$msg_file")" ]; then
 fi
 
 # --if-exists doNothing is what makes this idempotent, which --amend needs.
-if ! git interpret-trailers --if-exists doNothing \
+#
+# --no-divider: a line of `---` is the format-patch divider (there it precedes
+# the diffstat), and interpret-trailers stops the message at it, inserting the
+# trailer BEFORE it. The asymmetry is the whole mechanism — only the WRITER
+# honours `---`; the reader simply takes the last paragraph, so a trailer parked
+# above the divider stops being a trailer. Measured on a real commit: without
+# this flag any message using a horizontal rule loses its id.
+if ! git interpret-trailers --no-divider --if-exists doNothing \
 	--trailer "Task-Id: $task_id" --in-place "$msg_file" 2>/dev/null; then
 	echo "prepare-commit-msg: failed to attach Task-Id: $task_id" >&2
 fi

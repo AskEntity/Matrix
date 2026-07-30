@@ -4026,3 +4026,42 @@ test may replace it, including with `[]`. Answering whatever model it is asked a
 deleted default back inside the harness, where nothing could ever go red. **And four hand-written
 copies of the SDK client stub lived in one test file**, none of them able to answer `models.list`;
 they are now one `createMockAnthropicClient`. Four copies of a fake is four places to miss one.
+
+## Extends *The code→task link is a trailer*: a third message-end trap, and the one generalisation
+
+⭐ **`git interpret-trailers` has its own opinion about where a commit message ENDS, and it does not
+match the reader's.** Three traps in this hook now, and all three are that one fact: whenever the
+trailer is placed somewhere that is not the last paragraph *as `%(trailers:…)` sees it*, the id sits
+in `%B` looking perfect and the parser reports nothing. The next one will look unrelated too — this
+is the sentence that says where to look.
+
+⚠️ **The third: a line beginning `---` is the format-patch divider, so interpret-trailers stops the
+message there and inserts the trailer ABOVE it — above the divider it is not the last paragraph and
+therefore not a trailer.** The asymmetry is one-sided and is the whole mechanism: only the WRITER
+honours `---`; the reader just takes the last paragraph. Fix is one flag, `--no-divider`. Found the
+way it will always be found — a real task's first commit came out with no id, from a body containing
+`--- the 333 red tests were the deletion working ---`.
+
+**MEASURED 2026-07-30, and the result is a NEGATIVE one worth more than the fix — `---` is the whole
+class, not one spelling of it.** Eight markers, real commits, read back through git's parser:
+
+| in the body | readable without the flag? |
+|---|---|
+| `---`, and `--- any text ---` | **NO** |
+| `----------`, `___`, `***`, `-- `, `--`, `diff --git a/x b/x` | yes, all six |
+
+So `--no-divider` disables the single end-of-message heuristic that exists rather than guarding one
+spelling — it is not an addition list, and **there is nothing else to go and guard.** Note the
+asymmetry someone will trip over: git wants `---` followed by whitespace or end-of-line, so a LONGER
+markdown rule (`----------`) is safe while the short one is not, and `---` is the common spelling.
+
+⚠️ **A grep for a FLAG NAME in a file that documents that flag in prose is not a check** — it
+matched the comment and self-reported "the flag is present" in the run where it had just been
+stripped, in two separate instruments in one round. Key a control on the invocation you made, never
+on the text of the file you mutated. Same family as the extension-scoped grep that missed the
+extensionless hook during the `mxd.taskId` rename: **both times the instrument searched the artifact
+instead of the action.**
+
+**Do NOT add a test asserting `----------` still works.** It passes without the flag too, so it
+cannot express the difference — the only discriminating shape is a line of exactly `---` or
+`--- text`.

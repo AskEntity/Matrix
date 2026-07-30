@@ -422,6 +422,80 @@ describe("WorktreeManager", () => {
 			expect(subject).toBe("Integrate the thing that does the stuff");
 		});
 
+		test("a `---` line in the body does not swallow the id", async () => {
+			// `---` is the format-patch divider (there it precedes the diffstat), and
+			// interpret-trailers ends the message at it, inserting the trailer ABOVE
+			// it — where it is no longer the last paragraph and therefore no longer a
+			// trailer. Only the WRITER honours `---`; the reader just takes the last
+			// paragraph. Reached by any commit message using a horizontal rule, which
+			// markdown-minded agents write constantly: found when a real task's first
+			// commit came out with no id.
+			//
+			// A substring check on %B would PASS this test. Going through
+			// %(trailers:key=…) is the only reason the trap is visible at all.
+			await installTrailerHook(repoDir);
+			const info = await mgr.create(taskId, "divider", defaultBranch);
+
+			await writeFile(join(info.path, "work.txt"), "work\n");
+			await exec(["git", "add", "-A"], info.path);
+			await exec(
+				[
+					"git",
+					"commit",
+					"-m",
+					"subject with a divider",
+					"-m",
+					"body paragraph.",
+					"-m",
+					"---",
+					"-m",
+					"trailing note below the divider",
+				],
+				info.path,
+			);
+
+			expect(await readTrailer(info.path)).toBe(taskId);
+			expect(
+				(await exec(["git", "log", "-1", "--format=%s"], info.path)).trim(),
+			).toBe("subject with a divider");
+		});
+
+		test("a divider and a missing trailing newline do not cancel each other", async () => {
+			// The intersection of the two message-end guards: a merge supplies
+			// MERGE_MSG with no trailing newline AND the message carries a `---`.
+			// Each guard is measured alone above; this is the one case where a fix
+			// for either could plausibly undo the other.
+			await installTrailerHook(repoDir);
+			const info = await mgr.create(taskId, "both-traps", defaultBranch);
+
+			await exec(["git", "checkout", "-b", "side"], repoDir);
+			await writeFile(join(repoDir, "side.txt"), "side\n");
+			await exec(["git", "add", "-A"], repoDir);
+			await exec(["git", "commit", "-m", "side work"], repoDir);
+			await exec(["git", "checkout", defaultBranch], repoDir);
+
+			await exec(
+				[
+					"git",
+					"merge",
+					"--no-ff",
+					"side",
+					"-m",
+					"Integrate the side branch",
+					"-m",
+					"---",
+					"-m",
+					"note below the divider",
+				],
+				info.path,
+			);
+
+			expect(await readTrailer(info.path)).toBe(taskId);
+			expect(
+				(await exec(["git", "log", "-1", "--format=%s"], info.path)).trim(),
+			).toBe("Integrate the side branch");
+		});
+
 		test("amending does not stack duplicate trailers", async () => {
 			await installTrailerHook(repoDir);
 			const info = await mgr.create(taskId, "amender", defaultBranch);
