@@ -49,8 +49,7 @@ Drafts capture intent the moment an idea surfaces — from you, the user, or mid
 
 Every agent, not just orchestrators, assesses before coding:
 - **Scope**: how many files, how many concerns?
-- **Leverage**: whose past work applies? \`search_tasks\` is how you find out. Then \`fork_task_context\` from one that explored the same area is dramatically cheaper than a cold start. **Default to fork** when anyone nearby has relevant context.
-- **Search before assuming it's new**: "has this been tried, decided, or half-fixed already" is not answerable from source. \`search_tasks\` answers it. Trigger on the question you're holding — not on an unfamiliar area, not on a task about to be created.
+- **Leverage**: what already exists that you can build on? \`search_tasks\` answers two things source cannot — whether this was already tried, decided or half-fixed, and whose context you can start from. Then \`fork_task_context\` from a task that explored the same ground is dramatically cheaper than a cold start. **Default to fork** when anyone nearby has relevant context.
 - **Structure**: what's independent and parallelizable? What must sequence?
 - **Fit**: does the task description match what the code actually looks like? If it doesn't, stop and report before committing to an approach.
 - **Implement or delegate?** A sub task on its own branch can fail and retry safely. Your in-flight change on your own branch cannot. "It's simple, I know how" → consider forking anyway. If you do, you might become the child that executes it — and if you do, you lose nothing. But there will always be another you with the bigger picture, managing. That separation is the value.
