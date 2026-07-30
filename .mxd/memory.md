@@ -204,6 +204,31 @@ and RE-AIM the tests at a surviving producer; or keep the mechanism with no cove
 the trap**, because it silently pins, as intended behaviour, whatever the mechanism happens to do to
 a producer it was never designed for: chosen by nobody, and thereafter defended by a test.
 
+### Make the operation repeatable and a whole class of reasoning disappears
+
+**Four places in this repo solved a "did somebody already do this?" problem the same way — by making
+the operation safe to run again — and every time the win was not the line saved, it was the
+REASONING retired.**
+
+- **`setActivity` early-returns on an unchanged state.** Because an extra call is now harmless, you
+  write a transition wherever the loop changes what it is doing and never think about call sites
+  again. The alternative is reasoning, at each site, about whether some other site already set it —
+  and that is exactly the reasoning that left the whole wake window reporting `idle` for a loop that
+  was provably not parked.
+- **`cd` to the directory you are already in is a free no-op**, which is what makes *"prefix a `cd`
+  whenever you are not sure where you are"* an instruction anybody can actually follow. The shell
+  override that errored with *"already in this directory"* turned a cheap habit into a decision.
+- **The index repair pass removes before EVERY insert.** Orama's `insert` throws on a duplicate id
+  and the sidecar can legitimately under-report the DB, so the pass whose whole job is recovering
+  from a half-written state has to tolerate being run against an already-correct one.
+- **The trailer hook passes `--if-exists doNothing`**, so a commit that already carries a `Task-Id`
+  keeps the one it inherited instead of acquiring a second.
+
+**The tell that you are here: you are about to write a check whose only purpose is to find out
+whether an earlier step already ran.** That check is a second source of truth about the same fact,
+and it will be wrong at the one moment it matters. Making the operation repeatable deletes it
+outright.
+
 ## Where agents predictably go wrong
 
 Not hypotheticals; each has cost us real work.
@@ -3487,8 +3512,8 @@ three classes share no remedy.
 
 **Fix the MECHANISM, never the test name.** Written up by instance this reads as three flaky tests;
 measured, two runs of one unchanged tree failed two DIFFERENT ones, so the victim set is not those
-three — it is *any timing-sensitive restart test*, and patching names is whack-a-mole the fourth test
-wins. The three mechanisms really are distinct: TIMING, PORT COLLISION, and a genuine RACE
+three — it is *any timing-sensitive restart test*, and patching names is whack-a-mole the fourth
+test wins. The three mechanisms really are distinct: TIMING, PORT COLLISION, and a genuine RACE
 (`tracker.save()` renaming into a dataDir that `afterEach` has already deleted, while an agent the
 test itself auto-launched is still writing).
 
@@ -3499,7 +3524,10 @@ variance and all green means load rather than your diff. Then compare the two fu
 harder claim than duration alone, though collection itself jitters (3212 vs 3213 observed), so it is
 evidence when equal and not a refutation when not. **The ~290s total-run probe is a DIRECTION, not a
 classifier**: it sees "the whole machine is slowing" and is blind to "this test always had a race" —
-the race above surfaced on a 272s run. When it does not fire, nothing has been ruled out.
+the race above surfaced on a 272s run. When it does not fire, nothing has been ruled out. The
+numbers behind the threshold, which are what makes it usable at all: the one failing run measured
+**300.8s against 267-269s** on the three passing runs of identical code, and later samples put
+failing runs at 313s / 324s / 327s against green runs at 278 / 280 / 283 / 286s.
 
 **Check whether you caused it yourself.** An agent can manufacture this flake against itself by
 starting a second background `bun test` that overlaps the first; two recorded data points are
@@ -3795,8 +3823,8 @@ failing test tells you within a minute is deliberately not here.
   AND launched, because you created them; any RUNNING agent in your own subtree at any depth may be
   messaged only, because reaching a live grandchild is coordination while starting one is a remote
   boot that belongs to its direct parent; any ancestor may be messaged only, because escalation is
-  always valid. Unrelated tasks, never. **The parent chain shipped and the subtree half did not**, so
-  today you can reach any ancestor and only DIRECT sub tasks.
+  always valid. Unrelated tasks, never. **The parent chain shipped and the subtree half did not**,
+  so today you can reach any ancestor and only DIRECT sub tasks.
 
   **That draft also carries a live defect nobody has fixed, and it belongs to the silent indefinite
   hang class: agent→ancestor is the ONLY delivery direction in this system that cannot start its
@@ -3812,14 +3840,14 @@ failing test tells you within a minute is deliberately not here.
   opposite behaviour depending on which channel it used. Commit `ecfff7ce` (2026-03-31) added `quiet`
   deliberately and recorded the mechanism without the reason. A defensible position may exist — a
   parent the user stopped should not be dragged back by its children — but `task_complete` already
-  violates it, so **at least two of the three have to move.** Deferred by the user 2026-07-25: settle
-  the policy question first (may a descendant start an ancestor?), then make all three agree.
+  violates it, so **at least two of the three have to move.** Deferred by the user 2026-07-25:
+  settle the policy question first (may a descendant start an ancestor?), then make all three agree.
 - **Tool search** — dynamic tool discovery instead of sending every tool, so a large MCP tool set
   stops costing context on every request. Anthropic's server-side answer is `defer_loading: true` on
   the deferred definitions plus a `tool_search` server tool that injects one on demand; the user
   prefers a client-side design. **The reason for that preference is not in the record** — the draft
-  `01KN8WP20GTS34D1D6WAQPKJBV` states the server mechanism and the cross-provider gap (OpenAI may not
-  support it) and never says why we would rather own it, so whoever picks this up is re-deciding
+  `01KN8WP20GTS34D1D6WAQPKJBV` states the server mechanism and the cross-provider gap (OpenAI may
+  not support it) and never says why we would rather own it, so whoever picks this up is re-deciding
   rather than implementing.
 - **`close_task` can land inside the launch window. This is a race condition between closing a task
   and starting its agent, and the racing window is `git worktree add` — seconds wide.**
@@ -4106,8 +4134,8 @@ value, so the state could not be rendered — and, worse, could not be EXITED: t
 left `""` in the draft and no gesture anywhere set it back to `undefined`, making the panel a
 one-way door into an empty override. **This is *Two situations, one observation* in the UI layer,
 and it is the instance that shows the collision is not only a diagnosis problem: once two states
-share one value, a control built on that value cannot REACH one of them.** **Derive the state from the raw value FIRST, then coalesce
-for the control** — the reverse order is what erases it.
+share one value, a control built on that value cannot REACH one of them.** **Derive the state from
+the raw value FIRST, then coalesce for the control** — the reverse order is what erases it.
 
 ⚠️ **CORRECTION to the first version of this entry, which said the panel "already had the right
 convention one screen away" and quoted `SettingBoolField`'s *"Three states: undefined (inherit),
@@ -4801,8 +4829,9 @@ two sites of one shape:
 
 ⭐ **DECIDED (user, 2026-07-30): *"不能让任何人去读 HOME,而是从 data dir
 或者默认 home derive 出来"*.** One exported derivation — `resolveDataDir()` in
-`data-paths.ts` — and everything takes the value from there. A whole-repo audit fails on any other read of HOME for our data, with two
-allowlisted exceptions carrying their reasons: `PLIST_DIR`, because macOS genuinely puts
+`data-paths.ts` — and everything takes the value from there. A whole-repo audit fails on any other
+read of HOME for our data, with two allowlisted exceptions carrying their reasons: `PLIST_DIR`,
+because macOS genuinely puts
 LaunchAgents under HOME and it must **not** move with our data dir, and codex-auth expanding a `~`
 the user typed.
 
@@ -5174,8 +5203,8 @@ check whenever an id is introduced:
 | event `eid` | every event before stamping | **3296 of 397,771 events (0.83%)**, newest **2026-04-16**; oldest stamped 2026-03-31 |
 
 ⭐ **The sharper half, shared by both: the pre-migration population and the population you most want
-are THE SAME POPULATION.** A retrieval tool reaches for the oldest history — that is what it is for —
-so the hole sits exactly where the value is. `search_logs`' motivating find is a **2026-04-05**
+are THE SAME POPULATION.** A retrieval tool reaches for the oldest history — that is what it is for
+— so the hole sits exactly where the value is. `search_logs`' motivating find is a **2026-04-05**
 event, inside the unstamped window. A reader that drops unnamed events, or that refuses to render
 them, is broken precisely on its best case while looking correct on every fixture.
 
@@ -5213,19 +5242,19 @@ containing one would fail to match lines that do contain it. Not worth it.
 ⭐ **Where the text lives is NOT uniform, and the task description that warned about this got two of
 its three rows wrong.** Measured: `message` → `body`, `assistant_text` → **`content`**, `thinking` →
 **`thinking`**, `tool_call` → `input` (no `body` at all), `tool_result` → `content`. The brief said
-`assistant_text` and `thinking` both used `body`. **So the fix is not a better per-type table — it is
-not having one:** walk every string leaf and SUBTRACT a named set of identifier/blob fields
+`assistant_text` and `thinking` both used `body`. **So the fix is not a better per-type table — it
+is not having one:** walk every string leaf and SUBTRACT a named set of identifier/blob fields
 (`eid`, `taskId`, `signature`, `source`, …). A new event type is then searchable for free, where an
 include-list of "fields worth reading" fails silently forever.
 
-⚠️ **`signature` is the expensive subtraction**: thinking is 22MB of root's session and much of it is
-base64.
+⚠️ **`signature` is the expensive subtraction**: thinking is 22MB of root's session and much of it
+is base64.
 
 **Kind = type + its discriminator** (`message:user`, `tool_call:mcp__mxd__bash`), filters match a
 group by prefix. Default = everything MINUS `tool_result` (14,320 events / 33.9MB),
 `message:work_context` (22 events / 4.5MB) and `session_config` (31 events / 3.0MB). ⭐ **The
-principle for adding a fourth is not size — it is that all three are COPIES OF SOMETHING ELSE**, so a
-hit inside one crowds out content that exists nowhere else. `message:user` is the single biggest
+principle for adding a fourth is not size — it is that all three are COPIES OF SOMETHING ELSE**, so
+a hit inside one crowds out content that exists nowhere else. `message:user` is the single biggest
 category and is the whole point.
 
 ⚠️ **Whatever is skipped, the header SAYS SO, and a zero result lists the kinds the file does hold.**
@@ -5237,8 +5266,8 @@ silently confirms whatever the caller already believed.
 `01KP1B56XZX4BT56EGTKS5K74Y` measured `get_logs` at 60KB+/call in **April 2026** and traced it to
 `tool_result` content plus thinking-signature blobs; that is why `hideToolResults` defaults true and
 signatures are stripped. **RE-MEASURED 2026-07-30: `get_logs(begin=0, end=2)` — TWO events — still
-returns ~60KB, now from `work_context` preloading the whole of `memory.md`.** The April fix works and
-simply does not cover this path.
+returns ~60KB, now from `work_context` preloading the whole of `memory.md`.** The April fix works
+and simply does not cover this path.
 
 > **One oversized category was identified and mitigated, and a different one grew into the same
 > envelope. A byte-keyed cap survives that substitution; a cap keyed on "which event types are big"
@@ -5349,8 +5378,8 @@ always stopped would be searching 0.4% of the thing it exists to search.
 ⭐ **What `"past"` still excludes, and the risk it retires:** it keeps following the chain, so a
 rewound branch stays gone. The worry was that the walk might break on the pre-eid files and silently
 lose the oldest history. MEASURED across all 455 real sessions: **398,792 of 399,057 events
-(99.93%)**, and **454 of the 455 files lose nothing at all** — the shortfall is one file's 265 events
-on branches five rollbacks walked away from. The pre-eid files traverse fine because a null
+(99.93%)**, and **454 of the 455 files lose nothing at all** — the shortfall is one file's 265
+events on branches five rollbacks walked away from. The pre-eid files traverse fine because a null
 `parentEid` sets the walk's target to null, so it takes the next event unconditionally.
 
 ⚠️ **BEHAVIOUR CHANGE, intended: a forked session now shows its inherited parent history.** That
