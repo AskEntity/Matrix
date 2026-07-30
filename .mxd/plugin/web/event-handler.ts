@@ -1459,8 +1459,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						return [...entries.slice(0, i), replacement];
 					}
 				}
-				// Fallback: no compact_started found (e.g., historical replay starting
-				// from compact_marker via readFromLastCompactMarker). Just append.
+				// Fallback: no compact_started found — a log written before
+				// compact_started existed, where the marker is all there is.
+				// (A replay that STARTED at the marker was the other way to reach
+				// this, and that truncation is gone: the backend now serves the
+				// chain-walked events, which include the compaction window.)
 				return [...entries, replacement];
 			}
 			case "resolve_tool": {

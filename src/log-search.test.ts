@@ -28,6 +28,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { projectTasksDir } from "./data-paths.ts";
+import { EventStore } from "./event-store.ts";
 import {
 	DEFAULT_EXCLUDED_KINDS,
 	eventKind,
@@ -39,6 +40,7 @@ import {
 	searchTaskLog,
 } from "./log-search.ts";
 import { createOrchestratorTools } from "./orchestrator-tools.ts";
+import * as R from "./resource-registry.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { initMockResourceRegistry } from "./test-utils.ts";
@@ -135,21 +137,32 @@ const ev = {
 	}),
 };
 
-function writeLog(events: unknown[], extraLines: string[] = []): string {
+/**
+ * A log on disk, reachable the way production reaches one: through an
+ * `EventStore` rooted at its directory. The engine takes the STORE, not a path
+ * — the file walk, the chain and the compaction boundary all belong there, and
+ * a fixture that handed it a path would be testing a reader that no longer
+ * exists.
+ */
+function writeLog(
+	events: unknown[],
+	extraLines: string[] = [],
+): { store: EventStore; id: string } {
 	const dir = mkdtempSync(join(tmpdir(), "log-search-"));
-	const file = join(dir, "T.jsonl");
 	writeFileSync(
-		file,
+		join(dir, "T.jsonl"),
 		`${[...events.map((e) => JSON.stringify(e)), ...extraLines].join("\n")}\n`,
 	);
-	return file;
+	return { store: new EventStore(dir), id: "T" };
 }
 
-const search = (file: string, opts: LogSearchOptions) =>
-	searchTaskLog(file, opts);
+type Log = { store: EventStore; id: string };
 
-const render = async (file: string, opts: LogSearchOptions) =>
-	formatLogSearchResult(await search(file, opts), "T", opts.query);
+const search = (log: Log, opts: LogSearchOptions) =>
+	searchTaskLog(log.store, log.id, opts);
+
+const render = async (log: Log, opts: LogSearchOptions) =>
+	formatLogSearchResult(await search(log, opts), "T", opts.query);
 
 // ── The fixture's own property ──
 
@@ -185,13 +198,13 @@ describe("the fixture can express the difference", () => {
 
 describe("text extraction does not assume one field", () => {
 	test("finds the same word in four different layouts", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.message("user", { content: "the wombat decided" }),
 			ev.assistantText("a wombat reply"),
 			ev.thinking("wombat reasoning"),
 			ev.toolCall("mcp__mxd__bash", { command: "echo wombat" }),
 		]);
-		const r = await search(file, { query: "wombat" });
+		const r = await search(log, { query: "wombat" });
 		expect(r.matchingEvents).toBe(4);
 		expect(r.hits.map((h) => h.field).sort()).toEqual([
 			"body.content",
@@ -226,8 +239,8 @@ describe("text extraction does not assume one field", () => {
 	});
 
 	test("a signature blob is never searchable", async () => {
-		const file = writeLog([ev.thinking("prose")]);
-		const r = await search(file, { query: "BASE64SIGNATUREBLOB" });
+		const log = writeLog([ev.thinking("prose")]);
+		const r = await search(log, { query: "BASE64SIGNATUREBLOB" });
 		expect(r.matchingEvents).toBe(0);
 	});
 });
@@ -253,12 +266,12 @@ describe("kinds", () => {
 	});
 
 	test("a bare group name selects every member", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.message("user", { content: "shared" }),
 			ev.message("task_message", { content: "shared" }),
 			ev.assistantText("shared"),
 		]);
-		const r = await search(file, { query: "shared", kinds: ["message"] });
+		const r = await search(log, { query: "shared", kinds: ["message"] });
 		expect(r.matchingEvents).toBe(2);
 		expect(r.hits.map((h) => h.kind)).toEqual([
 			"message:user",
@@ -267,11 +280,11 @@ describe("kinds", () => {
 	});
 
 	test("an exact kind selects only itself", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.message("user", { content: "shared" }),
 			ev.message("task_message", { content: "shared" }),
 		]);
-		const r = await search(file, { query: "shared", kinds: ["message:user"] });
+		const r = await search(log, { query: "shared", kinds: ["message:user"] });
 		expect(r.matchingEvents).toBe(1);
 	});
 });
@@ -280,22 +293,22 @@ describe("kinds", () => {
 
 describe("default exclusions are honest", () => {
 	test("tool_result and work_context are not searched by default", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.toolResult("bash", "needle in command output"),
 			ev.message("work_context", { content: "needle inside copied memory.md" }),
 			ev.assistantText("needle in a reply"),
 		]);
-		const r = await search(file, { query: "needle" });
+		const r = await search(log, { query: "needle" });
 		expect(r.matchingEvents).toBe(1);
 		expect(r.hits[0]?.kind).toBe("assistant_text");
 	});
 
 	test("both are reachable when named — default-off is not off", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.toolResult("bash", "needle in command output"),
 			ev.message("work_context", { content: "needle inside copied memory.md" }),
 		]);
-		const r = await search(file, {
+		const r = await search(log, {
 			query: "needle",
 			kinds: ["tool_result", "message:work_context"],
 		});
@@ -306,15 +319,15 @@ describe("default exclusions are honest", () => {
 		// ⚠️ The load-bearing assertion of this file. A zero result and a result
 		// that never looked are byte-identical without this line, and the wrong
 		// one silently confirms whatever the caller already believed.
-		const file = writeLog([ev.toolResult("bash", "needle")]);
-		const out = await render(file, { query: "needle" });
+		const log = writeLog([ev.toolResult("bash", "needle")]);
+		const out = await render(log, { query: "needle" });
 		for (const kind of DEFAULT_EXCLUDED_KINDS) expect(out).toContain(kind);
 		expect(out).toContain("NOT searched");
 	});
 
 	test("naming kinds explicitly means nothing is silently skipped", async () => {
-		const file = writeLog([ev.assistantText("needle")]);
-		const out = await render(file, {
+		const log = writeLog([ev.assistantText("needle")]);
+		const out = await render(log, {
 			query: "needle",
 			kinds: ["assistant_text"],
 		});
@@ -327,9 +340,13 @@ describe("default exclusions are honest", () => {
 describe("an absence always says which absence it is", () => {
 	test("no session file is not the same answer as no matches", async () => {
 		const out = formatLogSearchResult(
-			await search(join(tmpdir(), "does-not-exist-9d8f7.jsonl"), {
-				query: "x",
-			}),
+			await search(
+				{
+					store: new EventStore(mkdtempSync(join(tmpdir(), "empty-"))),
+					id: "T",
+				},
+				{ query: "x" },
+			),
 			"T",
 			"x",
 		);
@@ -338,11 +355,11 @@ describe("an absence always says which absence it is", () => {
 	});
 
 	test("zero matches reports the kinds the file does hold", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.message("user", { content: "hello" }),
 			ev.assistantText("hi"),
 		]);
-		const out = await render(file, { query: "absent-term" });
+		const out = await render(log, { query: "absent-term" });
 		expect(out).toContain("No matches");
 		expect(out).toContain("message:user 1");
 		expect(out).toContain("assistant_text 1");
@@ -350,8 +367,8 @@ describe("an absence always says which absence it is", () => {
 
 	test("a malformed line is counted and reported, never silently dropped", async () => {
 		// Measured: root's own 113MB session contains exactly one such line.
-		const file = writeLog([ev.assistantText("needle")], ["{not json at all"]);
-		const r = await search(file, { query: "needle" });
+		const log = writeLog([ev.assistantText("needle")], ["{not json at all"]);
+		const r = await search(log, { query: "needle" });
 		expect(r.malformedLines).toBe(1);
 		const out = formatLogSearchResult(r, "T", "needle");
 		expect(out).toContain("could not be parsed");
@@ -361,8 +378,8 @@ describe("an absence always says which absence it is", () => {
 		// Truncating before matching would lose every match past the cut and
 		// report a confident zero. The match here sits far beyond the excerpt.
 		const long = `${"x".padEnd(8000, "x")}needle${"y".padEnd(500, "y")}`;
-		const file = writeLog([ev.assistantText(long)]);
-		const r = await search(file, { query: "needle" });
+		const log = writeLog([ev.assistantText(long)]);
+		const r = await search(log, { query: "needle" });
 		expect(r.matchingEvents).toBe(1);
 		expect(r.hits[0]?.excerpt).toContain("needle");
 		expect(r.hits[0]?.fieldChars).toBe(long.length);
@@ -404,19 +421,19 @@ describe("output is bounded by BYTES, never by event count", () => {
 		// MEASURED motivation: `get_logs(begin=0, end=2)` returns ~60KB because
 		// event 1 is `work_context`; one `message:user` in root's session is
 		// 1.68MB. Capping the number of events bounds nothing at all.
-		const file = writeLog([
+		const log = writeLog([
 			ev.message("user", { content: `needle ${"q".repeat(2_000_000)}` }),
 		]);
-		const out = await render(file, { query: "needle" });
+		const out = await render(log, { query: "needle" });
 		expect(out.length).toBeLessThan(LOG_SEARCH_LIMITS.totalChars);
 		expect(out).toContain("2,000,007 chars");
 	});
 
 	test("an excerpt that was cut says so, and says how much", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.assistantText(`start needle ${"w".repeat(9000)}`),
 		]);
-		const r = await search(file, { query: "needle" });
+		const r = await search(log, { query: "needle" });
 		expect(r.hits[0]?.excerpt.length).toBeLessThanOrEqual(
 			LOG_SEARCH_LIMITS.matchExcerptChars + 2,
 		);
@@ -425,11 +442,11 @@ describe("output is bounded by BYTES, never by event count", () => {
 	});
 
 	test("context excerpts are truncated too", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.assistantText("A".repeat(5000)),
 			ev.assistantText("needle"),
 		]);
-		const r = await search(file, { query: "needle", context: 1 });
+		const r = await search(log, { query: "needle", context: 1 });
 		expect(r.hits[0]?.before[0]?.text.length).toBeLessThanOrEqual(
 			LOG_SEARCH_LIMITS.contextExcerptChars + 1,
 		);
@@ -442,8 +459,8 @@ describe("output is bounded by BYTES, never by event count", () => {
 		// failure it allows is a header saying "N matching events" above zero
 		// hits — which reads as a broken search, not as a cap doing its job.
 		// Reachable only at a small budget, hence the injected one.
-		const file = writeLog([ev.assistantText(`needle ${"z".repeat(5000)}`)]);
-		const r = await search(file, { query: "needle", context: 0 });
+		const log = writeLog([ev.assistantText(`needle ${"z".repeat(5000)}`)]);
+		const r = await search(log, { query: "needle", context: 0 });
 		const out = formatLogSearchResult(r, "T", "needle", Date.now(), 10);
 		expect(out).toContain("needle");
 		expect(out).toContain("#1");
@@ -493,12 +510,12 @@ describe("output is bounded by BYTES, never by event count", () => {
 
 describe("context", () => {
 	test("a hit carries the events either side of it", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.message("user", { content: "the question" }),
 			ev.assistantText("needle answer"),
 			ev.message("user", { content: "the follow-up" }),
 		]);
-		const r = await search(file, { query: "needle", context: 1 });
+		const r = await search(log, { query: "needle", context: 1 });
 		expect(r.hits[0]?.before[0]?.text).toBe("the question");
 		expect(r.hits[0]?.after[0]?.text).toBe("the follow-up");
 	});
@@ -506,7 +523,7 @@ describe("context", () => {
 	test("textless bookkeeping events are not context", async () => {
 		// Measured on real output: without this, `usage` and `messages_consumed`
 		// filled the context slots and rendered as `(no text)`.
-		const file = writeLog([
+		const log = writeLog([
 			ev.message("user", { content: "the question" }),
 			ev.usage(),
 			ev.assistantText("needle answer"),
@@ -514,7 +531,7 @@ describe("context", () => {
 			ev.usage(),
 			ev.message("user", { content: "the follow-up" }),
 		]);
-		const r = await search(file, { query: "needle", context: 1 });
+		const r = await search(log, { query: "needle", context: 1 });
 		expect(r.hits[0]?.before[0]?.text).toBe("the question");
 		expect(r.hits[0]?.after[0]?.text).toBe("the follow-up");
 	});
@@ -522,18 +539,18 @@ describe("context", () => {
 	test("two adjacent matches are each other's context", async () => {
 		// The first implementation fed trailing context only from NON-matching
 		// events, so a cluster of hits rendered with nothing after it.
-		const file = writeLog([
+		const log = writeLog([
 			ev.assistantText("needle one"),
 			ev.assistantText("needle two"),
 		]);
-		const r = await search(file, { query: "needle", context: 1 });
+		const r = await search(log, { query: "needle", context: 1 });
 		expect(r.hits[0]?.after[0]?.text).toBe("needle two");
 		expect(r.hits[1]?.before[0]?.text).toBe("needle one");
 	});
 
 	test("an event is never its own context", async () => {
-		const file = writeLog([ev.assistantText("needle alone")]);
-		const r = await search(file, { query: "needle", context: 2 });
+		const log = writeLog([ev.assistantText("needle alone")]);
+		const r = await search(log, { query: "needle", context: 2 });
 		expect(r.hits[0]?.after).toEqual([]);
 		expect(r.hits[0]?.before).toEqual([]);
 	});
@@ -545,12 +562,12 @@ describe("context", () => {
 		// events with identical truncated text, which repair produces: messages
 		// in a dropped region are replayed with fresh eids. Verified rather than
 		// assumed, then pinned here so the invariant is not left to eyeballing.
-		const file = writeLog([
+		const log = writeLog([
 			ev.assistantText("one"),
 			ev.assistantText("needle"),
 			ev.assistantText("three"),
 		]);
-		const r = await search(file, { query: "needle", context: 3 });
+		const r = await search(log, { query: "needle", context: 3 });
 		const before = new Set(r.hits[0]?.before.map((c) => c.eid));
 		for (const a of r.hits[0]?.after ?? [])
 			expect(before.has(a.eid)).toBe(false);
@@ -560,21 +577,21 @@ describe("context", () => {
 
 	test("context text is the longest field, not the first", async () => {
 		// A tool_call's first leaf is the tool NAME; the command is what matters.
-		const file = writeLog([
+		const log = writeLog([
 			ev.toolCall("mcp__mxd__bash", { command: "git log --oneline -20" }),
 			ev.assistantText("needle"),
 		]);
-		const r = await search(file, { query: "needle", context: 1 });
+		const r = await search(log, { query: "needle", context: 1 });
 		expect(r.hits[0]?.before[0]?.text).toBe("git log --oneline -20");
 	});
 
 	test("context=0 returns none", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.assistantText("before"),
 			ev.assistantText("needle"),
 			ev.assistantText("after"),
 		]);
-		const r = await search(file, { query: "needle", context: 0 });
+		const r = await search(log, { query: "needle", context: 0 });
 		expect(r.hits[0]?.before).toEqual([]);
 		expect(r.hits[0]?.after).toEqual([]);
 	});
@@ -584,8 +601,8 @@ describe("context", () => {
 
 describe("hits are named by eid, and the pre-eid half is named as such", () => {
 	test("a stamped event renders its eid", async () => {
-		const file = writeLog([ev.assistantText("needle")]);
-		const out = await render(file, { query: "needle" });
+		const log = writeLog([ev.assistantText("needle")]);
+		const out = await render(log, { query: "needle" });
 		expect(out).toMatch(/eid=[0-9a-f]{12}/);
 	});
 
@@ -593,8 +610,8 @@ describe("hits are named by eid, and the pre-eid half is named as such", () => {
 		// MEASURED: 3296 of 397,771 events carry no eid, newest 2026-04-16 —
 		// and they are the OLDEST history, which is what this tool reaches for.
 		// The motivating find is a 2026-04-05 event, inside that window.
-		const file = writeLog([ev.preEid("needle from before stamping")]);
-		const r = await search(file, { query: "needle" });
+		const log = writeLog([ev.preEid("needle from before stamping")]);
+		const r = await search(log, { query: "needle" });
 		expect(r.matchingEvents).toBe(1);
 		expect(r.hits[0]?.eid).toBeUndefined();
 	});
@@ -604,8 +621,8 @@ describe("hits are named by eid, and the pre-eid half is named as such", () => {
 		// must find NOTHING rather than capture a placeholder that reads like a
 		// real name. Same migration rule as the `Task-Id:` commit trailer: a
 		// missing identifier may never be presented as a real one.
-		const file = writeLog([ev.preEid("needle from before stamping")]);
-		const out = await render(file, { query: "needle" });
+		const log = writeLog([ev.preEid("needle from before stamping")]);
+		const out = await render(log, { query: "needle" });
 		expect(out).toContain("predates eid stamping");
 		expect(out.includes("eid=")).toBe(false);
 	});
@@ -614,11 +631,11 @@ describe("hits are named by eid, and the pre-eid half is named as such", () => {
 		// `.mxd/memory.md`: "Nothing in this codebase may address an event by
 		// file position." A rollback moves the chain head, so an index means
 		// different things before and after it while an eid never does.
-		const file = writeLog([
+		const log = writeLog([
 			ev.assistantText("filler one"),
 			ev.assistantText("needle"),
 		]);
-		const out = await render(file, { query: "needle", context: 1 });
+		const out = await render(log, { query: "needle", context: 1 });
 		expect(out).not.toMatch(/\bline \d+/i);
 		expect(out).not.toMatch(/\b(offset|cursor|index)\b/i);
 	});
@@ -628,44 +645,44 @@ describe("hits are named by eid, and the pre-eid half is named as such", () => {
 
 describe("query is a regular expression", () => {
 	test("alternation works — the counting use case", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.assistantText("a unified and simplified approach"),
 			ev.assistantText("nothing here"),
 		]);
-		const r = await search(file, { query: "unified|simplified" });
+		const r = await search(log, { query: "unified|simplified" });
 		expect(r.totalMatches).toBe(2);
 		expect(r.matchingEvents).toBe(1);
 	});
 
 	test("case sensitivity is opt-in", async () => {
-		const file = writeLog([ev.assistantText("Widget")]);
-		expect((await search(file, { query: "widget" })).matchingEvents).toBe(0);
+		const log = writeLog([ev.assistantText("Widget")]);
+		expect((await search(log, { query: "widget" })).matchingEvents).toBe(0);
 		expect(
-			(await search(file, { query: "widget", caseInsensitive: true }))
+			(await search(log, { query: "widget", caseInsensitive: true }))
 				.matchingEvents,
 		).toBe(1);
 	});
 
 	test("an invalid pattern throws rather than returning a confident zero", async () => {
-		const file = writeLog([ev.assistantText("x")]);
-		await expect(search(file, { query: "(unclosed" })).rejects.toThrow();
+		const log = writeLog([ev.assistantText("x")]);
+		await expect(search(log, { query: "(unclosed" })).rejects.toThrow();
 	});
 
 	test("a zero-length match terminates", async () => {
 		// `x*` matches the empty string at every position; a naive exec loop
 		// never advances and hangs the agent that called it.
-		const file = writeLog([ev.assistantText("abc")]);
-		const r = await search(file, { query: "q*" });
+		const log = writeLog([ev.assistantText("abc")]);
+		const r = await search(log, { query: "q*" });
 		expect(r.totalMatches).toBeGreaterThan(0);
 		expect(r.hits).toHaveLength(1);
 	});
 
 	test("CJK matches without any escaping", async () => {
 		// The motivating query was literally a Chinese phrase.
-		const file = writeLog([
+		const log = writeLog([
 			ev.message("user", { content: "我记得之前做过这个优化" }),
 		]);
-		const r = await search(file, { query: "我记得" });
+		const r = await search(log, { query: "我记得" });
 		expect(r.matchingEvents).toBe(1);
 		expect(r.hits[0]?.excerpt).toContain("我记得");
 	});
@@ -678,9 +695,9 @@ describe("rendering", () => {
 		// Agents are date-blind and confidently so; one read a 8-day gap as 80
 		// minutes. The absolute form travels to other logs, the relative one
 		// answers "does this still count".
-		const file = writeLog([ev.assistantText("needle", 1_775_000_000_000)]);
+		const log = writeLog([ev.assistantText("needle", 1_775_000_000_000)]);
 		const out = formatLogSearchResult(
-			await search(file, { query: "needle" }),
+			await search(log, { query: "needle" }),
 			"T",
 			"needle",
 			1_775_000_000_000 + 86_400_000 * 3,
@@ -690,20 +707,20 @@ describe("rendering", () => {
 	});
 
 	test("the header states matching events and total matches separately", async () => {
-		const file = writeLog([ev.assistantText("needle needle")]);
-		const out = await render(file, { query: "needle" });
+		const log = writeLog([ev.assistantText("needle needle")]);
+		const out = await render(log, { query: "needle" });
 		expect(out).toContain("1 matching event");
 		expect(out).toContain("2 matches in total");
 	});
 
 	test("the header states how many events the filter removed", async () => {
-		const file = writeLog([
+		const log = writeLog([
 			ev.assistantText("needle"),
 			ev.toolResult("bash", "not searched"),
 			ev.toolResult("bash", "not searched either"),
 		]);
-		const out = await render(file, { query: "needle" });
-		expect(out).toContain("searched 1 of 3 events");
+		const out = await render(log, { query: "needle" });
+		expect(out).toContain("searched 1 of 3 reachable events");
 	});
 });
 
@@ -744,13 +761,19 @@ describe("the search_logs tool", () => {
 			`${events.map((e) => JSON.stringify(e)).join("\n")}\n`,
 		);
 
-		const { auth } = initMockResourceRegistry({
+		const { auth, ctx } = initMockResourceRegistry({
 			tracker,
 			projectId,
 			projectPath: dir,
 			taskId: task.id,
 			dataDir: dir,
 		});
+		// Production always has one per project; the tool reaches the file
+		// through it, which is what makes a CLOSED task searchable.
+		ctx.eventStores.set(
+			projectId,
+			new EventStore(projectTasksDir(dir, projectId)),
+		);
 		const { toolDefs } = createOrchestratorTools(auth, projectId, task.id);
 		const tool = toolDefs.find((t) => t.name === "search_logs");
 		if (!tool) throw new Error("search_logs not registered");
@@ -778,15 +801,15 @@ describe("the search_logs tool", () => {
 		expect(out).toContain("1 matching event");
 	});
 
-	test("no event store for the project is not an error", async () => {
-		// A closed task has no session, so `getEventStore` throws. The file on
-		// disk is still the whole answer — the flush is an optimisation for a
-		// RUNNING task, never a precondition.
-		const { tool, taskId } = await closedTaskWithLog([
-			ev.assistantText("needle"),
-		]);
-		const out = await call(tool, { taskId, query: "needle" });
-		expect(out).toContain("1 matching event");
+	test("a task that never ran is told apart from one with no matches", async () => {
+		// The under-report guard at the TOOL level: the store resolves a JSONL
+		// by id whether or not it exists, so the two must not collapse.
+		const { tool } = await closedTaskWithLog([ev.assistantText("needle")]);
+		const tracker = R.getTracker("proj1");
+		const other = tracker?.addChild(tracker.rootNodeId, "Never ran", "d");
+		const out = await call(tool, { taskId: other?.id, query: "needle" });
+		expect(out).toContain("never run");
+		expect(out).not.toContain("matching event");
 	});
 
 	test("an unknown task is refused, not answered with zero matches", async () => {
@@ -858,17 +881,69 @@ describe("a hit does not overstate what it shows", () => {
 		// from. Labelling the count as the field's would be a small dishonesty
 		// the reader has no way to detect — the excerpt shows one, the line
 		// claims three.
-		const file = writeLog([
+		const log = writeLog([
 			ev.message("task_message", {
 				title: "needle in the title",
 				content: "needle in the content, needle again",
 			}),
 		]);
-		const r = await search(file, { query: "needle" });
+		const r = await search(log, { query: "needle" });
 		expect(r.matchingEvents).toBe(1);
 		expect(r.totalMatches).toBe(3);
 		const out = formatLogSearchResult(r, "T", "needle");
 		expect(out).toContain("in this event");
 		expect(out).toMatch(/excerpt from body\.\w+/);
+	});
+});
+
+// ── The boundary: what search is FOR ─────────────────────────────────────
+
+describe("search walks past compaction", () => {
+	/** A log whose oldest turn has been summarized away. */
+	const compactedLog = () =>
+		writeLog([
+			ev.message("user", { content: "我记得 the needle was here" }),
+			ev.assistantText("agreeing with the needle"),
+			{ type: "compact_started", taskId: "T", ts: 1_775_000_000_100 },
+			{
+				type: "compact_marker",
+				savedTokens: 5000,
+				taskId: "T",
+				ts: 1_775_000_000_200,
+			},
+			ev.assistantText("life after compaction"),
+		]);
+
+	test("a match in summarized-away history IS found", async () => {
+		// ⚠️ THE PROPERTY THIS FEATURE EXISTS FOR, and it survived a mutation
+		// flipping the default to "stop" because every other fixture in this
+		// file contains no compaction — a fixture that cannot express the
+		// difference. MEASURED on root's session: the stopping walk keeps 294
+		// of 71,524 events (0.4%), because 38 compactions summarized the rest.
+		// Searching only the current context would search 0.4% of the thing.
+		const r = await search(compactedLog(), { query: "我记得" });
+		expect(r.matchingEvents).toBe(1);
+		expect(r.hits[0]?.excerpt).toContain("the needle was here");
+	});
+
+	test("…and 'stop' is what would have hidden it", async () => {
+		// The positive control for the test above: the same fixture, the same
+		// query, the boundary the AI and the UI use — and the hit is gone. This
+		// is what makes the assertion above a measurement rather than a hope.
+		const r = await search(compactedLog(), {
+			query: "我记得",
+			boundary: "stop",
+		});
+		expect(r.matchingEvents).toBe(0);
+	});
+
+	test("the post-compaction turn is reachable at either setting", async () => {
+		const past = await search(compactedLog(), { query: "life after" });
+		const stop = await search(compactedLog(), {
+			query: "life after",
+			boundary: "stop",
+		});
+		expect(past.matchingEvents).toBe(1);
+		expect(stop.matchingEvents).toBe(1);
 	});
 });

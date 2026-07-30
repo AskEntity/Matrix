@@ -3,7 +3,7 @@
  *
  * Tests three layers:
  * 1. walkActiveChainIndices (pure function — chain walk correctness)
- * 2. EventStore readActive/readFromLastCompactMarker with rollback
+ * 2. EventStore readActive with rollback
  * 3. Full integration: REST endpoint → agent resume from rolled-back state
  */
 import { afterEach, describe, expect, test } from "bun:test";
@@ -167,7 +167,7 @@ describe("walkActiveChainIndices", () => {
 		// A marker with no compact_started before it (a log written before
 		// compact_started existed) ends the walk at the marker. The marker
 		// itself is kept: the walker treats it as structural, and
-		// readFromLastCompactMarker slices the UI log at it.
+		// buildSessionRepair needs it to locate the repairable region.
 		const indices = walkActiveChainIndices(events);
 		expect(indices).toEqual([1, 2, 3]);
 	});
@@ -302,7 +302,7 @@ describe("walkActiveChainIndices", () => {
 	});
 });
 
-// ── EventStore: readActive + readFromLastCompactMarker with rollback ──
+// ── EventStore: readActive with rollback ──
 
 describe("EventStore rollback", () => {
 	let dataDir: string;
@@ -387,56 +387,10 @@ describe("EventStore rollback", () => {
 		expect(assistantText.content).toBe("new response");
 	});
 
-	test("readFromLastCompactMarker skips rolled-back events", async () => {
-		await setup();
-		await store.append("s1", {
-			type: "session_config",
-			tools: [],
-			systemStable: "",
-			systemVariable: "",
-			taskId: "t1",
-			ts: 1,
-		} as Event);
-		await store.append("s1", {
-			type: "message",
-			id: "m1",
-			body: { source: "user", id: "m1", content: "Q", ts: 2 } as any,
-			taskId: "t1",
-			ts: 2,
-		} as Event);
-		await store.append("s1", {
-			type: "messages_consumed",
-			messageIds: ["m1"],
-			taskId: "t1",
-			ts: 3,
-		} as Event);
-		await store.append("s1", {
-			type: "assistant_text",
-			content: "bad",
-			taskId: "t1",
-			ts: 4,
-		} as Event);
-		await store.flushSession("s1");
-
-		const all = store.read("s1");
-		const target = all.find((e) => e.type === "messages_consumed");
-		store.setChainHead("s1", target!.eid!);
-		await store.append("s1", {
-			type: "assistant_text",
-			content: "good",
-			taskId: "t1",
-			ts: 6,
-		} as Event);
-		await store.flushSession("s1");
-
-		const result = store.readFromLastCompactMarker("s1");
-		// Only the "good" assistant_text, not the "bad" one
-		const assistantTexts = result.events.filter(
-			(e) => e.type === "assistant_text",
-		) as Array<{ content: string }>;
-		expect(assistantTexts.length).toBe(1);
-		expect(assistantTexts[0]!.content).toBe("good");
-	});
+	// NOTE: the rolled-back-events case is covered by "readActive skips
+	// rolled-back events via setChainHead" above. There was a second copy here
+	// aimed at `readFromLastCompactMarker`; that function is deleted, and a
+	// duplicate re-pointed at the survivor would have pinned nothing new.
 
 	test("setChainHead causes next event's parentEid to jump to target", async () => {
 		await setup();
@@ -666,17 +620,9 @@ describe("Edit/Rewind consistency across refresh and restart", () => {
 		assertActiveEventsCorrect(active, "readActive (immediate)");
 	});
 
-	test("Scenario 2: readFromLastCompactMarker (page refresh / GET taskEvents)", async () => {
-		dataDir = await mkdtemp(join(tmpdir(), "rollback-consistency-"));
-		const store = new EventStore(dataDir);
-		await seedSessionWithRollback(store, "s1");
-
-		const result = store.readFromLastCompactMarker("s1");
-		assertActiveEventsCorrect(
-			result.events,
-			"readFromLastCompactMarker (refresh)",
-		);
-	});
+	// Scenario 2 was "the page-refresh reader agrees with the provider reader".
+	// There is one reader now, so the comparison has no second term and the
+	// test is deleted rather than re-pointed at readActive twice.
 
 	test("Scenario 3: daemon restart — fresh EventStore reads same JSONL", async () => {
 		dataDir = await mkdtemp(join(tmpdir(), "rollback-consistency-"));
@@ -688,15 +634,9 @@ describe("Edit/Rewind consistency across refresh and restart", () => {
 
 		const active = store2.readActive("s1");
 		assertActiveEventsCorrect(active, "readActive (restart)");
-
-		const fromCompact = store2.readFromLastCompactMarker("s1");
-		assertActiveEventsCorrect(
-			fromCompact.events,
-			"readFromLastCompactMarker (restart)",
-		);
 	});
 
-	test("All three scenarios produce identical event sequences", async () => {
+	test("immediate and post-restart reads produce identical sequences", async () => {
 		dataDir = await mkdtemp(join(tmpdir(), "rollback-consistency-"));
 		const store = new EventStore(dataDir);
 		await seedSessionWithRollback(store, "s1");
@@ -704,33 +644,21 @@ describe("Edit/Rewind consistency across refresh and restart", () => {
 		// Scenario 1: immediate readActive
 		const immediate = store.readActive("s1");
 
-		// Scenario 2: readFromLastCompactMarker (page refresh)
-		const refresh = store.readFromLastCompactMarker("s1");
-
 		// Scenario 3: daemon restart
 		const restartStore = new EventStore(dataDir);
 		const restart = restartStore.readActive("s1");
-		const restartRefresh = restartStore.readFromLastCompactMarker("s1");
 
-		// All four must produce the exact same event types
+		// Both must produce the exact same event types
 		const immTypes = immediate.map((e) => e.type);
-		const refTypes = refresh.events.map((e) => e.type);
 		const rstTypes = restart.map((e) => e.type);
-		const rstRefTypes = restartRefresh.events.map((e) => e.type);
 
-		expect(refTypes).toEqual(immTypes);
 		expect(rstTypes).toEqual(immTypes);
-		expect(rstRefTypes).toEqual(immTypes);
 
-		// All four must have the exact same eids (same identity)
+		// …and the exact same eids (same identity, not merely the same shapes)
 		const immEids = immediate.map((e) => e.eid);
-		const refEids = refresh.events.map((e) => e.eid);
 		const rstEids = restart.map((e) => e.eid);
-		const rstRefEids = restartRefresh.events.map((e) => e.eid);
 
-		expect(refEids).toEqual(immEids);
 		expect(rstEids).toEqual(immEids);
-		expect(rstRefEids).toEqual(immEids);
 	});
 
 	test("Multiple rollbacks: only latest branch visible across restart", async () => {
@@ -803,13 +731,6 @@ describe("Edit/Rewind consistency across refresh and restart", () => {
 			.filter((e) => e.type === "assistant_text")
 			.map((e) => (e as any).content);
 		expect(assistantsAfter).toEqual(["attempt 3 (final)"]);
-
-		// readFromLastCompactMarker also consistent
-		const fromCompactAfter = store2.readFromLastCompactMarker("s1");
-		const assistantsCompact = fromCompactAfter.events
-			.filter((e) => e.type === "assistant_text")
-			.map((e) => (e as any).content);
-		expect(assistantsCompact).toEqual(["attempt 3 (final)"]);
 	});
 });
 

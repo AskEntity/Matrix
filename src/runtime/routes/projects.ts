@@ -23,9 +23,11 @@ export function registerProjectRoutes(app: Hono, ctx: RuntimeContext) {
 
 		for (const sessionId of eventStore.listSessions()) {
 			if (afterCompact) {
-				const result = eventStore.readFromLastCompactMarker(sessionId);
-				if (result.hasOlderEvents) hasOlderEvents = true;
-				for (const event of result.events) {
+				const events = eventStore.readActive(sessionId);
+				if (events.length < eventStore.countEvents(sessionId)) {
+					hasOlderEvents = true;
+				}
+				for (const event of events) {
 					all.push(event as unknown as Record<string, unknown>);
 				}
 			} else {

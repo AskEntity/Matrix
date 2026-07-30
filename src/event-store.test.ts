@@ -165,7 +165,7 @@ describe("EventStore", () => {
 
 		const active = store.readActive("s1");
 		// The marker itself is kept — the walker treats it as structural, and
-		// readFromLastCompactMarker slices the UI log at it.
+		// buildSessionRepair needs it to locate the repairable region.
 		expect(active).toMatchObject([
 			{ type: "compact_marker", savedTokens: 5000 },
 			{
@@ -236,9 +236,19 @@ describe("EventStore", () => {
 		expect(store.readActive("missing")).toEqual([]);
 	});
 
-	// ── readFromLastCompactMarker ────────────────────────────────────────
+	// ── readActive: the boundary that used to be a second function ───────
+	//
+	// These were `readFromLastCompactMarker` tests. That function applied a
+	// SECOND truncation on top of the chain walk, starting at `compact_marker`,
+	// and it is deleted. Where the answer is genuinely unchanged the test is
+	// re-pointed; where it asserted the deleted behaviour it is INVERTED, so
+	// the file says what changed instead of quietly pinning whatever falls out.
 
-	test("readFromLastCompactMarker returns all events when no compact_marker", async () => {
+	/** The flag the deleted function returned, expressed as what it means. */
+	const hasOlder = (id: string) =>
+		store.readActive(id).length < store.countEvents(id);
+
+	test("no compact_marker → every event, and no older history", async () => {
 		const events: Event[] = [
 			{
 				type: "message",
@@ -250,12 +260,15 @@ describe("EventStore", () => {
 			{ type: "assistant_text", content: "hi", taskId: "test", ts: 1001 },
 		];
 		await store.appendBatch("s1", events);
-		const result = store.readFromLastCompactMarker("s1");
-		expect(stripChainFields(result.events)).toEqual(events);
-		expect(result.hasOlderEvents).toBe(false);
+		expect(stripChainFields(store.readActive("s1"))).toEqual(events);
+		expect(hasOlder("s1")).toBe(false);
 	});
 
-	test("readFromLastCompactMarker returns events from last compact_marker (inclusive)", async () => {
+	test("an UNPAIRED compact_marker still ends the chain at the marker", async () => {
+		// Unchanged behaviour, and it is the walk's own rule rather than the
+		// deleted truncation: a `compact_marker` with no `compact_started`
+		// before it is a log written before `compact_started` existed, so the
+		// marker is all there is to stop at.
 		const events: Event[] = [
 			{
 				type: "message",
@@ -270,12 +283,7 @@ describe("EventStore", () => {
 				taskId: "test",
 				ts: 1001,
 			},
-			{
-				type: "compact_marker",
-				savedTokens: 5000,
-				taskId: "test",
-				ts: 2000,
-			},
+			{ type: "compact_marker", savedTokens: 5000, taskId: "test", ts: 2000 },
 			{
 				type: "assistant_text",
 				content: "new response",
@@ -285,15 +293,9 @@ describe("EventStore", () => {
 		];
 		await store.appendBatch("s1", events);
 
-		const result = store.readFromLastCompactMarker("s1");
-		expect(result.hasOlderEvents).toBe(true);
-		expect(result.events).toMatchObject([
-			{
-				type: "compact_marker",
-				savedTokens: 5000,
-				taskId: "test",
-				ts: 2000,
-			},
+		expect(hasOlder("s1")).toBe(true);
+		expect(store.readActive("s1")).toMatchObject([
+			{ type: "compact_marker", savedTokens: 5000, taskId: "test", ts: 2000 },
 			{
 				type: "assistant_text",
 				content: "new response",
@@ -303,7 +305,7 @@ describe("EventStore", () => {
 		]);
 	});
 
-	test("readFromLastCompactMarker with multiple markers uses the last one", async () => {
+	test("multiple unpaired markers stop at the last one", async () => {
 		const events: Event[] = [
 			{
 				type: "message",
@@ -312,60 +314,22 @@ describe("EventStore", () => {
 				taskId: "test",
 				ts: 1000,
 			},
-			{
-				type: "compact_marker",
-				savedTokens: 1000,
-				taskId: "test",
-				ts: 2000,
-			},
-			{
-				type: "message",
-				id: "",
-				body: { source: "user", id: "test-id", ts: 0, content: "mid" },
-				taskId: "test",
-				ts: 2001,
-			},
-			{
-				type: "compact_marker",
-				savedTokens: 2000,
-				taskId: "test",
-				ts: 3000,
-			},
-			{
-				type: "assistant_text",
-				content: "latest",
-				taskId: "test",
-				ts: 3001,
-			},
+			{ type: "compact_marker", savedTokens: 1000, taskId: "test", ts: 2000 },
+			{ type: "assistant_text", content: "middle", taskId: "test", ts: 2001 },
+			{ type: "compact_marker", savedTokens: 2000, taskId: "test", ts: 3000 },
+			{ type: "assistant_text", content: "newest", taskId: "test", ts: 3001 },
 		];
 		await store.appendBatch("s1", events);
 
-		const result = store.readFromLastCompactMarker("s1");
-		expect(result.hasOlderEvents).toBe(true);
-		expect(result.events).toMatchObject([
-			{
-				type: "compact_marker",
-				savedTokens: 2000,
-				taskId: "test",
-				ts: 3000,
-			},
-			{
-				type: "assistant_text",
-				content: "latest",
-				taskId: "test",
-				ts: 3001,
-			},
+		expect(store.readActive("s1")).toMatchObject([
+			{ type: "compact_marker", savedTokens: 2000, taskId: "test", ts: 3000 },
+			{ type: "assistant_text", content: "newest", taskId: "test", ts: 3001 },
 		]);
 	});
 
-	test("readFromLastCompactMarker with compact_marker at index 0", async () => {
+	test("a marker at index 0 leaves nothing older", async () => {
 		const events: Event[] = [
-			{
-				type: "compact_marker",
-				savedTokens: 100,
-				taskId: "test",
-				ts: 1000,
-			},
+			{ type: "compact_marker", savedTokens: 100, taskId: "test", ts: 1000 },
 			{
 				type: "assistant_text",
 				content: "after marker",
@@ -375,20 +339,25 @@ describe("EventStore", () => {
 		];
 		await store.appendBatch("s1", events);
 
-		const result = store.readFromLastCompactMarker("s1");
-		expect(result.hasOlderEvents).toBe(false);
-		expect(stripChainFields(result.events)).toEqual(events);
+		expect(hasOlder("s1")).toBe(false);
+		expect(stripChainFields(store.readActive("s1"))).toEqual(events);
 	});
 
-	test("readFromLastCompactMarker returns empty for non-existent session", () => {
-		const result = store.readFromLastCompactMarker("missing");
-		expect(result.events).toEqual([]);
-		expect(result.hasOlderEvents).toBe(false);
+	test("a non-existent session is empty, not an error", () => {
+		expect(store.readActive("missing")).toEqual([]);
+		expect(hasOlder("missing")).toBe(false);
 	});
 
-	test("readFromLastCompactMarker skips pre-fork events in forked session", async () => {
+	// ── INVERTED: the fork truncation is gone ────────────────────────────
+
+	test("a forked session now KEEPS its inherited parent history", async () => {
+		// ⚠️ INVERTED, not re-pointed. The deleted function treated
+		// `fork_marker` as a start point, so the UI hid history the model could
+		// see. A forked session's context legitimately includes it — that
+		// disagreement between what the model reads and what the user is shown
+		// is the thing being removed, and this test now asserts the new answer
+		// rather than being re-aimed at whatever falls out.
 		const events: Event[] = [
-			// Pre-fork: copied from parent session (with parent's taskId)
 			{
 				type: "assistant_text",
 				content: "parent content",
@@ -403,14 +372,12 @@ describe("EventStore", () => {
 				taskId: "parent-id",
 				ts: 1001,
 			},
-			// Fork barrier
 			{
 				type: "fork_marker",
 				sourceTaskId: "parent-id",
 				taskId: "child-id",
 				ts: 2000,
 			},
-			// Post-fork: child's own events
 			{
 				type: "assistant_text",
 				content: "child content",
@@ -420,25 +387,16 @@ describe("EventStore", () => {
 		];
 		await store.appendBatch("forked", events);
 
-		const result = store.readFromLastCompactMarker("forked");
-		expect(result.hasOlderEvents).toBe(true);
-		expect(result.events).toMatchObject([
-			{
-				type: "fork_marker",
-				sourceTaskId: "parent-id",
-				taskId: "child-id",
-				ts: 2000,
-			},
-			{
-				type: "assistant_text",
-				content: "child content",
-				taskId: "child-id",
-				ts: 3000,
-			},
-		]);
+		const active = store.readActive("forked");
+		expect(active).toHaveLength(4);
+		expect(active[0]).toMatchObject({ content: "parent content" });
+		expect(hasOlder("forked")).toBe(false);
 	});
 
-	test("readFromLastCompactMarker uses compact_marker when it comes after fork_marker", async () => {
+	test("in a forked session an unpaired compact_marker still stops the walk", async () => {
+		// The other half of the inversion: `fork_marker` no longer acts as a
+		// barrier, but a `compact_marker` after it still does — so the change is
+		// specific to fork rather than a general loosening.
 		const events: Event[] = [
 			{
 				type: "assistant_text",
@@ -473,9 +431,8 @@ describe("EventStore", () => {
 		];
 		await store.appendBatch("forked-compact", events);
 
-		const result = store.readFromLastCompactMarker("forked-compact");
-		expect(result.hasOlderEvents).toBe(true);
-		expect(result.events).toMatchObject([
+		expect(hasOlder("forked-compact")).toBe(true);
+		expect(store.readActive("forked-compact")).toMatchObject([
 			{
 				type: "compact_marker",
 				savedTokens: 1000,
@@ -489,6 +446,102 @@ describe("EventStore", () => {
 				ts: 4000,
 			},
 		]);
+	});
+
+	// ── THE REGRESSION: messages delivered while the summarizer ran ──────
+
+	test("a message inside the compaction window survives — the reason the second truncation was deleted", async () => {
+		// ⚠️ THE FIXTURE HAS TO BE CONSTRUCTED, and this note is why nobody
+		// should simplify it later. The chain walk ends at `compact_started`;
+		// the marker is LATER; the messages delivered while the summarizer ran
+		// lie between them, and `walkActiveChainIndices` splices them in
+		// deliberately. `readFromLastCompactMarker` then sliced from the MARKER
+		// — dropping exactly what the walk exists to preserve.
+		//
+		// MEASURED across this project's sessions: 38 completed compactions, 15
+		// with at least one message in the window, 27 messages, overwhelmingly
+		// `user` and `user_message_forwarded` — e.g. "我发现了，orchestrator根本
+		// compact不了，这怎么办". Not a corner case.
+		//
+		// A fixture drawn from root's CURRENT tail cannot show this: its barrier
+		// sits at index 0, so both behaviours return the same thing. The window
+		// has to contain a message, which is why this fixture is built by hand.
+		const events: Event[] = [
+			{
+				type: "assistant_text",
+				content: "summarized away",
+				taskId: "test",
+				ts: 1000,
+			},
+			{ type: "compact_started", taskId: "test", ts: 2000 },
+			{
+				type: "message",
+				id: "in-window",
+				body: {
+					source: "user",
+					id: "in-window",
+					ts: 2100,
+					content: "typed while the summarizer was running",
+				},
+				taskId: "test",
+				ts: 2100,
+			},
+			{ type: "compact_marker", savedTokens: 9000, taskId: "test", ts: 3000 },
+			{
+				type: "assistant_text",
+				content: "after compaction",
+				taskId: "test",
+				ts: 4000,
+			},
+		];
+		await store.appendBatch("s1", events);
+
+		const active = store.readActive("s1");
+		const contents = active.map((e) =>
+			e.type === "message" && "content" in e.body ? e.body.content : null,
+		);
+		expect(contents).toContain("typed while the summarizer was running");
+		// and the summarized-away history really is gone
+		expect(active.map((e) => e.type)).not.toContain("assistant_text_missing");
+		expect(
+			active.some(
+				(e) => e.type === "assistant_text" && e.content === "summarized away",
+			),
+		).toBe(false);
+	});
+
+	test("boundary 'past' walks through the compaction, 'stop' does not", async () => {
+		const events: Event[] = [
+			{
+				type: "assistant_text",
+				content: "summarized away",
+				taskId: "test",
+				ts: 1000,
+			},
+			{ type: "compact_started", taskId: "test", ts: 2000 },
+			{ type: "compact_marker", savedTokens: 9000, taskId: "test", ts: 3000 },
+			{
+				type: "assistant_text",
+				content: "after compaction",
+				taskId: "test",
+				ts: 4000,
+			},
+		];
+		await store.appendBatch("s1", events);
+
+		const stopped = store.readActive("s1", "stop");
+		const past = store.readActive("s1", "past");
+		expect(
+			stopped.some(
+				(e) => e.type === "assistant_text" && e.content === "summarized away",
+			),
+		).toBe(false);
+		expect(
+			past.some(
+				(e) => e.type === "assistant_text" && e.content === "summarized away",
+			),
+		).toBe(true);
+		expect(past.length).toBeGreaterThan(stopped.length);
 	});
 
 	// ── readBefore ───────────────────────────────────────────────────────
@@ -1115,5 +1168,263 @@ describe("EventStore", () => {
 		expect(events).toHaveLength(1);
 		expect(events[0]?.type).toBe("agent_start");
 		expect(events.find((e) => e.type === "error")).toBeUndefined();
+	});
+});
+
+// ── streamEvents: the ONE file walk ──────────────────────────────────────
+
+describe("EventStore.streamEvents — the one file walk", () => {
+	let dir: string;
+	let store: EventStore;
+
+	beforeEach(() => {
+		dir = join(TEST_DIR, "stream");
+		if (existsSync(dir)) rmSync(dir, { recursive: true });
+		store = new EventStore(dir);
+	});
+	afterEach(() => {
+		if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+	});
+
+	const sample = (n: number): Event[] =>
+		Array.from({ length: n }, (_, i) => ({
+			type: "assistant_text" as const,
+			content: `event ${i} ${"padding ".repeat(20)}`,
+			taskId: "t",
+			ts: 1000 + i,
+		}));
+
+	test("yields exactly what read() returns, event for event", async () => {
+		// ⭐ The instrument for a driver swap: byte-identity over WHOLE outputs,
+		// not over the cases someone thought to assert. Run against the real
+		// 114.9MB session while building this, it compared 71,571 events and
+		// found every one `JSON.stringify`-identical at the same index.
+		await store.appendBatch("s1", sample(200));
+		const viaRead = store.read("s1");
+		const viaStream: Event[] = [];
+		store.streamEvents("s1", (e) => {
+			viaStream.push(e);
+		});
+		expect(viaStream.map((e) => JSON.stringify(e))).toEqual(
+			viaRead.map((e) => JSON.stringify(e)),
+		);
+	});
+
+	test("survives an event larger than the read chunk", async () => {
+		// A single 1.68MB `message:user` exists in production and spans many
+		// 256KB chunks. The line loop has to reassemble it.
+		const big = "x".repeat(700_000);
+		await store.appendBatch("s1", [
+			{ type: "assistant_text", content: big, taskId: "t", ts: 1 },
+			{ type: "assistant_text", content: "after", taskId: "t", ts: 2 },
+		]);
+		const got: Event[] = [];
+		store.streamEvents("s1", (e) => {
+			got.push(e);
+		});
+		expect(got).toHaveLength(2);
+		expect((got[0] as { content: string }).content.length).toBe(700_000);
+		expect((got[1] as { content: string }).content).toBe("after");
+	});
+
+	test("a multi-byte character split across a chunk boundary is not corrupted", async () => {
+		// The reason a StringDecoder is used rather than a plain toString():
+		// a chunk boundary can land mid-sequence, and the naive form yields
+		// U+FFFD. CJK is 3 bytes each, so a long run crosses many boundaries.
+		const cjk = "我记得之前做过这个优化。".repeat(30_000);
+		await store.appendBatch("s1", [
+			{ type: "assistant_text", content: cjk, taskId: "t", ts: 1 },
+		]);
+		const got: Event[] = [];
+		store.streamEvents("s1", (e) => {
+			got.push(e);
+		});
+		expect((got[0] as { content: string }).content).toBe(cjk);
+		expect((got[0] as { content: string }).content).not.toContain("\uFFFD");
+	});
+
+	test("malformed lines are counted and skipped, not thrown", async () => {
+		await store.appendBatch("s1", sample(2));
+		await Bun.write(
+			join(dir, "s1.jsonl"),
+			`${await Bun.file(join(dir, "s1.jsonl")).text()}{not json\n`,
+		);
+		const got: Event[] = [];
+		const malformed = store.streamEvents("s1", (e) => {
+			got.push(e);
+		});
+		expect(got).toHaveLength(2);
+		expect(malformed).toBe(1);
+	});
+
+	test("a missing session yields nothing and reports no damage", () => {
+		let n = 0;
+		expect(
+			store.streamEvents("nope", () => {
+				n++;
+			}),
+		).toBe(0);
+		expect(n).toBe(0);
+	});
+
+	// ⚠️ THE property that made this a separate method rather than a tidier
+	// spelling of read().
+	test("streamEvents does NOT migrate an eid-less file, while read() DOES", async () => {
+		// MEASURED on a copy of a real session: read() took it from 154,958 to
+		// 158,980 bytes and stamped the first event. 3296 events in this
+		// project carry no eid (newest 2026-04-16) and they live in the OLDEST
+		// files — exactly what a search of old history is reaching for. A
+		// reader that only wants to LOOK must not rewrite what it looks at.
+		const path = join(dir, "old.jsonl");
+		const legacy = [
+			{ type: "assistant_text", content: "one", taskId: "t", ts: 1 },
+			{ type: "assistant_text", content: "two", taskId: "t", ts: 2 },
+		];
+		await Bun.write(
+			path,
+			`${legacy.map((e) => JSON.stringify(e)).join("\n")}\n`,
+		);
+		const before = await Bun.file(path).text();
+
+		const seen: Event[] = [];
+		store.streamEvents("old", (e) => {
+			seen.push(e);
+		});
+		expect(seen).toHaveLength(2);
+		expect(await Bun.file(path).text()).toBe(before); // untouched
+
+		// and the positive control: read() really does rewrite it, so the test
+		// above is asserting a difference rather than the absence of a mechanism
+		store.read("old");
+		const after = await Bun.file(path).text();
+		expect(after).not.toBe(before);
+		expect(JSON.parse(after.split("\n")[0] as string).eid).toBeTruthy();
+	});
+
+	test("countEvents counts without materialising", async () => {
+		await store.appendBatch("s1", sample(37));
+		expect(store.countEvents("s1")).toBe(37);
+		expect(store.countEvents("missing")).toBe(0);
+	});
+});
+
+describe("EventStore.streamActive — the boundary is an argument", () => {
+	let dir: string;
+	let store: EventStore;
+
+	beforeEach(() => {
+		dir = join(TEST_DIR, "stream-active");
+		if (existsSync(dir)) rmSync(dir, { recursive: true });
+		store = new EventStore(dir);
+	});
+	afterEach(() => {
+		if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+	});
+
+	const compacted: Event[] = [
+		{ type: "assistant_text", content: "old", taskId: "t", ts: 1 },
+		{ type: "compact_started", taskId: "t", ts: 2 },
+		{ type: "compact_marker", savedTokens: 1, taskId: "t", ts: 3 },
+		{ type: "assistant_text", content: "new", taskId: "t", ts: 4 },
+	];
+
+	const contents = (b?: "stop" | "past") => {
+		const out: string[] = [];
+		store.streamActive(
+			"s1",
+			(e) => {
+				if (e.type === "assistant_text") out.push(e.content);
+			},
+			b,
+		);
+		return out;
+	};
+
+	test("'stop' hides summarized history, 'past' reaches it", async () => {
+		await store.appendBatch("s1", compacted);
+		expect(contents("stop")).toEqual(["new"]);
+		expect(contents("past")).toEqual(["old", "new"]);
+	});
+
+	test("defaults to 'stop' — the caller that does not ask is unaffected", async () => {
+		await store.appendBatch("s1", compacted);
+		expect(contents()).toEqual(["new"]);
+	});
+
+	test("agrees with readActive at both settings", async () => {
+		// The two forms differ only in whether they materialise. If they ever
+		// disagree, one of them has grown its own idea of which events count.
+		await store.appendBatch("s1", compacted);
+		for (const b of ["stop", "past"] as const) {
+			const streamed: string[] = [];
+			store.streamActive("s1", (e) => streamed.push(e.eid ?? ""), b);
+			expect(streamed).toEqual(
+				store.readActive("s1", b).map((e) => e.eid ?? ""),
+			);
+		}
+	});
+
+	test("'past' still excludes a rolled-back branch", async () => {
+		// Walking past the compaction is not walking off the chain. This is
+		// what makes search unable to find text the user explicitly rewound —
+		// measured at 265 of 71,524 events on the largest real session, and 0
+		// on 454 of the 455 others.
+		await store.appendBatch("s1", [
+			{ type: "assistant_text", content: "keep", taskId: "t", ts: 1 },
+		]);
+		await store.flushSession("s1");
+		const head = store.read("s1")[0]?.eid;
+		await store.append("s1", {
+			type: "assistant_text",
+			content: "abandoned",
+			taskId: "t",
+			ts: 2,
+		} as Event);
+		await store.flushSession("s1");
+		store.setChainHead("s1", head as string);
+		await store.append("s1", {
+			type: "assistant_text",
+			content: "after rewind",
+			taskId: "t",
+			ts: 3,
+		} as Event);
+		await store.flushSession("s1");
+
+		expect(contents("past")).toEqual(["keep", "after rewind"]);
+	});
+
+	test("a missing session streams nothing", () => {
+		let n = 0;
+		store.streamActive("nope", () => {
+			n++;
+		});
+		expect(n).toBe(0);
+	});
+});
+
+describe("EventStore.streamEvents — a file with no trailing newline", () => {
+	const dir = join(TEST_DIR, "no-trailing-nl");
+	afterEach(() => {
+		if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+	});
+
+	test("the last line is still an event", async () => {
+		// Every file this store WRITES ends in a newline, so no fixture built
+		// from appendBatch can see this — the mutation that dropped the final
+		// `take(pending)` survived the whole suite. `read()` returned that
+		// trailing partial line (split("\n") yields it), so the streaming walk
+		// has to as well or a truncated write silently loses its last event.
+		const store = new EventStore(dir);
+		await Bun.write(
+			join(dir, "s1.jsonl"),
+			`${JSON.stringify({ type: "assistant_text", content: "first", taskId: "t", ts: 1 })}\n${JSON.stringify({ type: "assistant_text", content: "last", taskId: "t", ts: 2 })}`,
+		);
+		const got: Event[] = [];
+		store.streamEvents("s1", (e) => {
+			got.push(e);
+		});
+		expect(got).toHaveLength(2);
+		expect((got[1] as { content: string }).content).toBe("last");
+		expect(store.countEvents("s1")).toBe(2);
 	});
 });

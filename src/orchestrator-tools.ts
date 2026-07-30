@@ -14,7 +14,7 @@
 // readFileSync removed — work_context hook handles memory injection
 import { join } from "node:path";
 import { z } from "zod";
-import { projectIndexDbPath, projectTasksDir } from "./data-paths.ts";
+import { projectIndexDbPath } from "./data-paths.ts";
 import { donePayloadSchema } from "./done-payload.ts";
 import type { EventSpec } from "./events.ts";
 import {
@@ -1932,8 +1932,9 @@ export function buildAllToolDefs() {
 					};
 				const eventStore = R.getEventStore(projectId);
 				await eventStore.flushSession(taskId);
-				const { events: allEvents, hasOlderEvents } =
-					eventStore.readFromLastCompactMarker(taskId);
+				const allEvents = eventStore.readActive(taskId);
+				const hasOlderEvents =
+					allEvents.length < eventStore.countEvents(taskId);
 				const begin = args.begin;
 				const end = args.end;
 				// Apply cursor range — precise slice, no limit needed
@@ -2037,24 +2038,18 @@ export function buildAllToolDefs() {
 						isError: true,
 					};
 
+				// The store owns the file walk, the chain and the boundary — this
+				// handler owns none of them. A closed task has no session, but the
+				// store still resolves its JSONL by id, which is the whole reason
+				// a closed task is searchable at all.
+				const eventStore = R.getEventStore(projectId);
 				// A running task may hold recent events in the write queue. Flushing
 				// is what makes "search my own conversation" see the current turn.
-				try {
-					await R.getEventStore(projectId).flushSession(taskId);
-				} catch {
-					// No event store for this project (or no session) — the file on
-					// disk is still the answer for a closed task.
-				}
-
-				const { dataDir, dataRoot } = R.getDataPaths();
-				const file = join(
-					projectTasksDir(dataDir, projectId, dataRoot),
-					`${taskId}.jsonl`,
-				);
+				await eventStore.flushSession(taskId);
 
 				let result: Awaited<ReturnType<typeof searchTaskLog>>;
 				try {
-					result = await searchTaskLog(file, {
+					result = await searchTaskLog(eventStore, taskId, {
 						query,
 						caseInsensitive: args.case_insensitive as boolean | undefined,
 						kinds: args.kinds as string[] | undefined,

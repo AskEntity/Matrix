@@ -644,13 +644,15 @@ export function registerTaskRoutes(app: Hono, ctx: RuntimeContext) {
 		};
 
 		if (afterCompact) {
-			const result = eventStore.readFromLastCompactMarker(nodeId);
-			const events = result.events.map(
-				(e) => e as unknown as Record<string, unknown>,
-			);
+			const active = eventStore.readActive(nodeId);
+			// "Is there history this view excludes?" — the flag that used to be
+			// computed from the compact_marker barrier. Now it is simply the two
+			// counts, which is the same answer with nothing to keep in sync.
+			const hasOlderEvents = active.length < eventStore.countEvents(nodeId);
+			const events = active.map((e) => e as unknown as Record<string, unknown>);
 			return c.json({
 				events: appendPartial(events),
-				hasOlderEvents: result.hasOlderEvents,
+				hasOlderEvents,
 			});
 		}
 

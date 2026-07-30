@@ -95,8 +95,7 @@ function buildExternalOnlyToolDefs(ctx: RuntimeContext): AnyToolDef[] {
 				// Read cursor before delivery — stable snapshot of "where we are now"
 				const eventStore = R.getEventStore(projectId);
 				await eventStore.flushSession(taskId);
-				const { events } = eventStore.readFromLastCompactMarker(taskId);
-				const cursor = events.length;
+				const cursor = eventStore.readActive(taskId).length;
 
 				const message = createUserMessage(content);
 
@@ -182,7 +181,7 @@ function buildExternalOnlyToolDefs(ctx: RuntimeContext): AnyToolDef[] {
 					// Provide cursor so caller can pass it directly to get_logs
 					const eventStore = R.getEventStore(projectId);
 					await eventStore.flushSession(taskId);
-					const { events } = eventStore.readFromLastCompactMarker(taskId);
+					const events = eventStore.readActive(taskId);
 					return {
 						content: [
 							{
