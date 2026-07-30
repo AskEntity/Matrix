@@ -147,6 +147,7 @@ that finds the second kind of prose rot:
 |---|---|---|
 | **Fabricated** — a claim that was never true | the moment it is written | checking it against reality |
 | **Invalidated** — a true statement about a neighbour | **later**, when the neighbour changes | *nothing you can do by re-reading it* |
+| **Vestigial** — a true statement whose content is a DIFF against a version only the author saw | the moment it is written, and it never stops reading as content | asking what a reader who never saw the old version learns from it |
 
 Both appeared in one docstring on one day. The fabricated one was a benchmark quoted before the
 benchmark was run, caught by its author reading their own diff. The invalidated one was true when
@@ -155,6 +156,20 @@ for falsehoods did not catch it, because nothing about the sentence is wrong on 
 directions to be careful in: *"changed nearby" is not "now false"*, and — the one that catches more
 — ***"still true" is not "still accurate"***: one sentence survived as an invariant while the
 mechanism under it was replaced, and a check looking only for false claims walks straight past that.
+
+⭐ **The vestigial kind is the one an accuracy audit can never catch, because it is not inaccurate.**
+Found 2026-07-30 in the system prompt: *"Trigger on the question you're holding — not on an
+unfamiliar area, not on a task about to be created."* Both negations named the two triggers a
+PREVIOUS revision had used. To the author, mid-correction, that clause was the whole point; to every
+reader afterwards it is a comparison with something they cannot see, so it carries **zero
+information** while occupying the position of an instruction. **It survived a full read-through and
+a deliberate contradiction hunt in the same file**, because those look for statements that fight
+each other or fight reality, and this one does neither. The user caught it by asking the only
+question that finds it: *what does this tell someone who never saw the old version?* **Grep
+candidates are cheap — any "not X, not Y" whose X and Y appear nowhere else** — and
+the same round proved the grep is only a candidate list, since every other negation in that file
+(`instead of duplicating`, `not something you feel`, `not a stopping point`) names something the
+reader can see and is doing real work.
 
 ⚠️ **And grep for the SENTENCE, not just the symbol** — a rule stated in prose lives in more places
 than a grep for the CODE finds, and the distant surfaces are exactly the ones without the identifier
