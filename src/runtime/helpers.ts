@@ -43,9 +43,7 @@ function createProviderFromAuth(
 	}
 	return new OpenAIResponsesCompatibleProvider(model, {
 		apiKey: authGroup.apiKey,
-		accessToken: authGroup.accessToken,
-		refreshToken: authGroup.refreshToken,
-		accountId: authGroup.accountId,
+		authJsonPath: authGroup.authJsonPath,
 		baseUrl: authGroup.baseUrl,
 	});
 }

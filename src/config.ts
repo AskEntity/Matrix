@@ -12,12 +12,32 @@ export interface AnthropicAuthGroup {
 	baseUrl?: string;
 }
 
+/**
+ * Two credential sources, mutually exclusive.
+ *
+ * - `apiKey` — a platform API key, for `api.openai.com`.
+ * - `authJsonPath` — a path to the `auth.json` the `codex` CLI maintains, for
+ *   the codex endpoint. We only ever READ it.
+ *
+ * ⚠️ The two do not cross: the ChatGPT OAuth token in `auth.json` lacks the
+ * scope the platform API requires, and a platform key is not what the codex
+ * endpoint accepts.
+ *
+ * ⭐ There is deliberately no `accessToken` / `refreshToken` here, and the
+ * reason is ownership rather than convenience (user, 2026-07-29). OpenAI
+ * ROTATES the refresh token on every refresh, so a second copy of the pair is
+ * not a snapshot that goes stale — it is a competitor for one chain, and
+ * whichever side refreshes first invalidates the other. Measured on this
+ * machine: the copy in our config and the one in `~/.codex/auth.json` had
+ * DIFFERENT access and refresh tokens, and both were dead. The chain belongs to
+ * the `codex` CLI; we are a reader of the file it writes.
+ */
 export interface OpenAIAuthGroup {
 	provider: "openai";
 	apiKey?: string;
-	accessToken?: string;
-	refreshToken?: string;
-	accountId?: string;
+	/** Path to codex's `auth.json`. Read at every use — never cached, because
+	 * codex refreshes it behind us and a cache is the copy problem again. */
+	authJsonPath?: string;
 	baseUrl?: string;
 }
 

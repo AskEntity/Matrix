@@ -9,10 +9,11 @@ import {
 	spyOn,
 	test,
 } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { openAICredentialSource, staticCredential } from "./codex-auth.ts";
 import { clearContextWindowCache } from "./context-window.ts";
 import type { Event, EventSpec } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
@@ -209,7 +210,14 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 		}
 	});
 
-	test("uses accessToken when apiKey is absent", async () => {
+	/**
+	 * The canonical journey for the codex path: point an auth group at the file
+	 * the codex CLI writes, run an agent, and the token inside that file is what
+	 * reaches the API. This replaces the old `accessToken` test — the capability
+	 * ("a credential that is not an apiKey reaches the Authorization header")
+	 * survived; only where it is read from changed.
+	 */
+	test("uses the token inside authJsonPath when apiKey is absent", async () => {
 		let authHeader: string | undefined;
 		const originalFetch = globalThis.fetch;
 		const doneArgs = JSON.stringify({ status: "passed", result: "ok" });
@@ -261,9 +269,19 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 			},
 		) as unknown as typeof fetch;
 
+		const dir = await mkdtemp(join(tmpdir(), "codex-auth-"));
+		const authPath = join(dir, "auth.json");
+		await writeFile(
+			authPath,
+			JSON.stringify({
+				OPENAI_API_KEY: null,
+				tokens: { access_token: "token-from-file", account_id: "acct-1" },
+			}),
+		);
+
 		try {
 			const provider = new OpenAIResponsesCompatibleProvider("gpt-4.1-mini", {
-				accessToken: "access-token-123",
+				authJsonPath: authPath,
 			});
 			const result = await provider.execute({
 				buildSystemPrompt: () => ({ stable: "stable", variable: "variable" }),
@@ -279,11 +297,91 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 					],
 				},
 			});
-			expect(authHeader).toBe("Bearer access-token-123");
+			expect(authHeader).toBe("Bearer token-from-file");
 			expect(result.exitReason).toBe("done_passed");
 		} finally {
 			globalThis.fetch = originalFetch;
+			await rm(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+/**
+ * The design's central claim, at the layer that could break it.
+ *
+ * ⭐ These pass if and only if nothing between the auth group and the request
+ * captures a token. A single `const token = await credentials()` hoisted out of
+ * a call — the tidy-looking refactor — reverts us to holding a copy of a
+ * credential codex rotates, which is the bug the whole shape exists to prevent,
+ * and no other test in the suite would notice.
+ */
+describe("the credential is re-read at every use", () => {
+	let dir: string;
+	let authPath: string;
+
+	beforeEach(async () => {
+		clearContextWindowCache();
+		dir = await mkdtemp(join(tmpdir(), "codex-auth-"));
+		authPath = join(dir, "auth.json");
+	});
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	async function writeToken(token: string, accountId?: string): Promise<void> {
+		await writeFile(
+			authPath,
+			JSON.stringify({
+				OPENAI_API_KEY: null,
+				tokens: {
+					access_token: token,
+					...(accountId ? { account_id: accountId } : {}),
+				},
+			}),
+		);
+	}
+
+	test("a rewrite between two calls is picked up by the second", async () => {
+		const bearers: Array<string | undefined> = [];
+		const accounts: Array<string | undefined> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+			const h = new Headers(init?.headers);
+			bearers.push(h.get("authorization") ?? undefined);
+			accounts.push(h.get("chatgpt-account-id") ?? undefined);
+			return new Response(
+				JSON.stringify({ data: [{ id: "m", context_length: 1000 }] }),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as unknown as typeof fetch;
+
+		try {
+			await writeToken("first-token", "acct-first");
+			const adapter = createOpenAIResponsesAdapter(
+				"https://api.example.com/v1",
+				openAICredentialSource({ provider: "openai", authJsonPath: authPath }),
+			);
+			expect(await adapter.getContextWindow("m")).toBe(1000);
+
+			// codex refreshes the file behind us — the thing that actually happens.
+			await writeToken("second-token", "acct-second");
+			clearContextWindowCache();
+			expect(await adapter.getContextWindow("m")).toBe(1000);
+
+			expect(bearers).toEqual(["Bearer first-token", "Bearer second-token"]);
+			expect(accounts).toEqual(["acct-first", "acct-second"]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("an apiKey group needs no file and answers the same value twice", async () => {
+		const source = openAICredentialSource({
+			provider: "openai",
+			apiKey: "sk-static",
+		});
+		expect((await source()).authToken).toBe("sk-static");
+		expect((await source()).authToken).toBe("sk-static");
 	});
 });
 
@@ -349,7 +447,7 @@ describe("OpenAI adapter.getContextWindow asks the endpoint", () => {
 			async (urls) => {
 				const adapter = createOpenAIResponsesAdapter(
 					"https://api.example.com/v1",
-					"token",
+					staticCredential("token"),
 				);
 				expect(await adapter.getContextWindow("gpt-4o")).toBe(131072);
 				expect(urls()).toEqual(["https://api.example.com/v1/models"]);
@@ -369,7 +467,7 @@ describe("OpenAI adapter.getContextWindow asks the endpoint", () => {
 			async (urls) => {
 				const adapter = createOpenAIResponsesAdapter(
 					"https://api.example.com/v1/responses",
-					"token",
+					staticCredential("token"),
 				);
 				expect(await adapter.getContextWindow("gpt-4o")).toBe(131072);
 				expect(urls()).toEqual(["https://api.example.com/v1/models"]);
@@ -383,7 +481,7 @@ describe("OpenAI adapter.getContextWindow asks the endpoint", () => {
 			async () => {
 				const adapter = createOpenAIResponsesAdapter(
 					"https://chatgpt.com/backend-api/codex/responses",
-					"token",
+					staticCredential("token"),
 				);
 				await expect(adapter.getContextWindow("gpt-5-codex")).rejects.toThrow(
 					/chatgpt\.com\/backend-api\/codex\/models returned 401/,
@@ -404,7 +502,7 @@ describe("OpenAI adapter.getContextWindow asks the endpoint", () => {
 			async () => {
 				const adapter = createOpenAIResponsesAdapter(
 					"https://api.openai.com/v1",
-					"token",
+					staticCredential("token"),
 				);
 				await expect(adapter.getContextWindow("gpt-4o")).rejects.toThrow(
 					/neither max_input_tokens nor context_length/,
@@ -423,7 +521,7 @@ describe("OpenAI adapter.getContextWindow asks the endpoint", () => {
 			async () => {
 				const adapter = createOpenAIResponsesAdapter(
 					"https://api.example.com/v1",
-					"token",
+					staticCredential("token"),
 				);
 				const call = adapter.getContextWindow("gpt-4o");
 				await expect(call).rejects.toThrow(/Did you mean "gpt-4o-2024-08-06"/);

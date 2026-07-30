@@ -6,6 +6,11 @@ import type {
 	ResponseOutputMessage,
 } from "openai/resources/responses/responses";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
+import {
+	type OpenAICredential,
+	type OpenAICredentialSource,
+	openAICredentialSource,
+} from "./codex-auth.ts";
 import { resolveContextWindow } from "./context-window.ts";
 import {
 	debugResponsePath,
@@ -143,18 +148,24 @@ function isCodexEndpoint(endpoint: string): boolean {
  */
 async function fetchOpenAIModels(
 	apiRoot: string,
-	authToken: string,
-	accountId: string | undefined,
+	credential: OpenAICredential,
 ): Promise<unknown[]> {
 	const url = `${apiRoot}/models`;
-	// The same auth material `streamResponsesAPI` sends to this host. Whether
-	// the account header is REQUIRED here is unverified — the codex endpoint
-	// 401s on the bearer token before it could matter — so this mirrors the
-	// one working path rather than claiming to know what /models wants.
+	// The same auth material `streamResponsesAPI` sends to this host.
+	//
+	// MEASURED 2026-07-30 against a live codex token: this route answers 200
+	// with and 200 without `ChatGPT-Account-Id`, byte-identical, and 401 with no
+	// Authorization at all. So the account header is NOT required here — it is
+	// sent because the codex CLI sends it and the responses path has never been
+	// probed without it. (An earlier note called the header unverified because
+	// the token was expired and everything 401'd; that reason is gone, this one
+	// replaces it.)
 	const headers: Record<string, string> = {
-		Authorization: `Bearer ${authToken}`,
+		Authorization: `Bearer ${credential.authToken}`,
 	};
-	if (accountId) headers["ChatGPT-Account-Id"] = accountId;
+	if (credential.accountId) {
+		headers["ChatGPT-Account-Id"] = credential.accountId;
+	}
 
 	const response = await fetch(url, { method: "GET", headers });
 	if (!response.ok) {
@@ -504,10 +515,14 @@ export async function* streamResponsesAPI(params: {
 	throw new Error("Stream ended without response.completed event");
 }
 
+/**
+ * @param credentials Asked at every call, never resolved once and captured —
+ * see `OpenAICredentialSource`. Passing a resolved token here instead is the
+ * one change that would silently reintroduce the copied-credential bug.
+ */
 export function createOpenAIResponsesAdapter(
 	baseUrl: string,
-	authToken: string,
-	accountId?: string,
+	credentials: OpenAICredentialSource,
 	opts?: { maxRetries?: number },
 ): ProviderAdapter {
 	const apiRoot = resolveApiRoot(baseUrl);
@@ -516,7 +531,8 @@ export function createOpenAIResponsesAdapter(
 			return resolveContextWindow({
 				endpoint: apiRoot,
 				model,
-				listModels: () => fetchOpenAIModels(apiRoot, authToken, accountId),
+				listModels: async () =>
+					fetchOpenAIModels(apiRoot, await credentials()),
 			});
 		},
 
@@ -572,10 +588,14 @@ export function createOpenAIResponsesAdapter(
 				body: body as unknown as Record<string, unknown>,
 			});
 
+			// Resolved HERE, per call, rather than captured when the adapter was
+			// built: an agent loop outlives many codex refreshes.
+			const credential = await credentials();
+
 			const response = yield* streamResponsesAPI({
 				endpoint: baseUrl,
-				authToken,
-				accountId,
+				authToken: credential.authToken,
+				accountId: credential.accountId,
 				body,
 				signal: params.signal,
 				maxRetries: opts?.maxRetries,
@@ -862,28 +882,32 @@ export function createOpenAIResponsesAdapter(
 export class OpenAIResponsesCompatibleProvider implements AgentProvider {
 	readonly name = "openai";
 	private baseUrl: string;
-	private authToken: string;
-	private refreshToken: string;
-	private accountId?: string;
+	private credentials: OpenAICredentialSource;
 	private model: string;
 	/** Override SDK max retries for testing. SDK default: 2. */
 	maxRetries?: number;
 
+	/**
+	 * ⭐ The provider holds a credential SOURCE, not a credential. There is no
+	 * `refreshToken` field and no refresh logic, because we do not own the
+	 * rotation chain — `authJsonPath` points at the file the codex CLI refreshes,
+	 * and we re-read it. That deletes the `void this.refreshToken` dead field
+	 * this class used to carry (and with it draft `01KYQJQC0Z3NQR51E8CPWNQQZA`,
+	 * which existed to make that refresh actually work).
+	 */
 	constructor(
 		model: string,
 		opts: {
 			apiKey?: string;
-			accessToken?: string;
-			refreshToken?: string;
-			accountId?: string;
+			authJsonPath?: string;
 			baseUrl?: string;
 		},
 	) {
 		this.baseUrl = opts.baseUrl ?? "https://api.openai.com/v1";
-		this.authToken = opts.apiKey ?? opts.accessToken ?? "";
-		this.refreshToken = opts.refreshToken ?? "";
-		this.accountId = opts.accountId;
-		if (!this.authToken) {
+		this.credentials = openAICredentialSource({ provider: "openai", ...opts });
+		// A construction-time signal for a state that would otherwise only show up
+		// at the first API call. The call itself throws, with the same instruction.
+		if (!opts.apiKey && !opts.authJsonPath) {
 			console.warn(
 				"OpenAIResponsesCompatibleProvider: no OpenAI credential configured. Calls will fail.",
 			);
@@ -927,11 +951,9 @@ export class OpenAIResponsesCompatibleProvider implements AgentProvider {
 		sessionId: string,
 		queue?: MessageQueue,
 	): AsyncGenerator<EventSpec, AgentResult> {
-		void this.refreshToken;
 		const adapter = createOpenAIResponsesAdapter(
 			this.baseUrl,
-			this.authToken,
-			this.accountId,
+			this.credentials,
 			{ maxRetries: this.maxRetries },
 		);
 		const effectiveRequest = {
