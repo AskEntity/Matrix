@@ -22,6 +22,17 @@ async function exec(cmd: string[], cwd: string): Promise<string> {
 	return new Response(proc.stdout).text();
 }
 
+/** Same, but returns stderr — where a git hook's warnings come out. */
+async function execErr(cmd: string[], cwd: string): Promise<string> {
+	const proc = Bun.spawn(cmd, {
+		cwd,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	await proc.exited;
+	return new Response(proc.stderr).text();
+}
+
 async function initRepo(dir: string): Promise<void> {
 	await exec(["git", "init"], dir);
 	await exec(["git", "config", "user.email", "test@test.com"], dir);
@@ -55,7 +66,16 @@ async function addSetupHook(dir: string, script: string): Promise<void> {
  * would pass while the real hook was broken. Only the dependency install is
  * dropped, because a fixture repo has no package.json to install from.
  */
-async function installTrailerHook(dir: string): Promise<void> {
+async function installTrailerHook(
+	dir: string,
+	/**
+	 * Optional mutation of the shipped script. Only for testing the hook's own
+	 * self-check, which can no longer be reached while the writer is correct —
+	 * the mutation breaks the WRITER so the CHECK, still verbatim, has something
+	 * to catch.
+	 */
+	mutate?: (script: string) => string,
+): Promise<void> {
 	const hookDir = join(dir, ".hooks", "worktree");
 	await mkdir(hookDir, { recursive: true });
 	const real = join(
@@ -65,9 +85,10 @@ async function installTrailerHook(dir: string): Promise<void> {
 		"worktree",
 		"prepare-commit-msg",
 	);
+	const script = await readFile(real, "utf-8");
 	await writeFile(
 		join(hookDir, "prepare-commit-msg"),
-		await readFile(real, "utf-8"),
+		mutate ? mutate(script) : script,
 		"utf-8",
 	);
 	await chmod(join(hookDir, "prepare-commit-msg"), 0o755);
@@ -458,6 +479,53 @@ describe("WorktreeManager", () => {
 			expect(
 				(await exec(["git", "log", "-1", "--format=%s"], info.path)).trim(),
 			).toBe("subject with a divider");
+		});
+
+		test("the hook warns when its own trailer would not read back", async () => {
+			// The detector for a FOURTH message-end trap. All three known causes are
+			// fixed, so this state is now unreachable through a correct writer — the
+			// only honest way to test the check is to break the WRITER. One flag is
+			// stripped from the shipped script; the check itself is verbatim.
+			//
+			// It must WARN and not fail: the author can still `--amend` here, and by
+			// the time an audit sees the damage the commit already exists.
+			await installTrailerHook(repoDir, (s) =>
+				s.replace("--no-divider --if-exists", "--if-exists"),
+			);
+			const info = await mgr.create(taskId, "selfcheck", defaultBranch);
+
+			await writeFile(join(info.path, "work.txt"), "work\n");
+			await exec(["git", "add", "-A"], info.path);
+			const stderr = await execErr(
+				["git", "commit", "-m", "subject", "-m", "---", "-m", "note"],
+				info.path,
+			);
+
+			// The commit landed (warn, never fail) and the id really is unreadable.
+			expect(await readTrailer(info.path)).toBe("");
+			expect(
+				(await exec(["git", "log", "-1", "--format=%s"], info.path)).trim(),
+			).toBe("subject");
+			expect(stderr).toContain("will NOT");
+			expect(stderr).toContain("LAST paragraph");
+		});
+
+		test("the healthy hook stays silent on the same message", async () => {
+			// Negative half of the pair. Without this, a check that warned on EVERY
+			// commit would pass the test above and nobody would notice until the
+			// warning had been ignored into wallpaper.
+			await installTrailerHook(repoDir);
+			const info = await mgr.create(taskId, "no-false-alarm", defaultBranch);
+
+			await writeFile(join(info.path, "work.txt"), "work\n");
+			await exec(["git", "add", "-A"], info.path);
+			const stderr = await execErr(
+				["git", "commit", "-m", "subject", "-m", "---", "-m", "note"],
+				info.path,
+			);
+
+			expect(await readTrailer(info.path)).toBe(taskId);
+			expect(stderr).not.toContain("will NOT");
 		});
 
 		test("a divider and a missing trailing newline do not cancel each other", async () => {

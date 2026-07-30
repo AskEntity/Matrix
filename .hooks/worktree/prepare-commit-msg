@@ -70,4 +70,25 @@ if ! git interpret-trailers --no-divider --if-exists doNothing \
 	echo "prepare-commit-msg: failed to attach Task-Id: $task_id" >&2
 fi
 
+# Verify our own work. Three separate causes have already parked the trailer
+# somewhere the reader cannot see it, and all three were SILENT — the id sat in
+# `%B` looking perfect. This is the detector for the fourth.
+#
+# `--no-divider --parse` applies git's OWN last-paragraph rule to the pending
+# message, so this is not a second reader implementation — it is the same code
+# asked at hook time. Measured to agree with `%(trailers:key=Task-Id,valueonly)`
+# on the resulting commit for 11 of 11 shapes, including the divider damage, its
+# fix, and messages trailed by comment or scissors blocks (which would otherwise
+# warn spuriously on the editor path).
+#
+# WARN, never fail. This is the last moment the author can still fix it with
+# `--amend`, and a gate here could not be satisfied by doing the right thing:
+# the damage it would report is in a commit that already exists.
+if ! git interpret-trailers --no-divider --parse "$msg_file" 2>/dev/null |
+	grep -q '^Task-Id:'; then
+	echo "prepare-commit-msg: Task-Id: $task_id is in the message but will NOT" \
+		"read back — git takes the trailer block from the LAST paragraph, and" \
+		"something else is there. Amend so the message ends with the trailer." >&2
+fi
+
 exit 0

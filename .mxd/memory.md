@@ -4065,3 +4065,43 @@ instead of the action.**
 **Do NOT add a test asserting `----------` still works.** It passes without the flag too, so it
 cannot express the difference — the only discriminating shape is a line of exactly `---` or
 `--- text`.
+
+## The trailer hook checks its own work, and WHERE that check can live is the whole finding
+
+⭐ **A `pre-commit` audit of trailer damage is structurally blind, and the reason is worth more
+than the check: the commits that CAN be damaged are exactly the ones a `pre-commit` hook never
+sees.** `.hooks/worktree/` holds `prepare-commit-msg` and nothing else, so pre-commit never runs
+in a worktree; a clean `--no-ff` merge runs no hook at all; so a gate there sees only root's own
+direct commits on main — which carry no trailer whatsoever and therefore cannot exhibit the
+defect. **Three files have to be held at once to see that** (the hooks directory, WorktreeManager's
+config write, git's merge behaviour), which is why it was invisible to two people in a row.
+
+**Second reason, independent and worth stating because it generalises past this hook: an audit of
+history cannot be a gate.** The damage it reports is in a commit that already exists, so a blocking
+check refuses your innocent new commit until someone rewrites history. ⚠️ **A gate you cannot
+satisfy by doing the right thing teaches bypassing, and the habit then costs you the checks it was
+good at.**
+
+So the check lives in `prepare-commit-msg`, warns on stderr, and never fails — the one moment the
+author can still `--amend`.
+
+⭐ **The mechanism, and why it is not a second reader implementation:
+`git interpret-trailers --no-divider --parse <msgfile>` applies git's OWN last-paragraph rule to
+the pending message.** Measured to agree with `%(trailers:key=Task-Id,valueonly)` on the resulting
+commit for **11 of 11** shapes — the divider damage, its fix, a trailer glued to the subject, and
+messages trailed by comment or scissors blocks, which is the half that would otherwise warn
+spuriously on every editor commit.
+
+⚠️ **`--no-divider` is load-bearing on the PARSE call too, not only on the write call**: without it
+the check inherits the divider rule the writer just stopped honouring, and then it disagrees with
+the reader in both directions at once. A mutation dropping it reddens both halves of the pair.
+
+**That pair is the point — the guard has a test for each direction.** Deleting the check reddens
+"warns when the trailer would not read back"; making it warn unconditionally reddens "stays silent
+on the same message". Over-strict is the direction nobody tests, and here it is the expensive one: a
+check that cries on every commit gets read as wallpaper within a day.
+
+⚠️ **The state is now unreachable through a correct writer, so the test breaks the WRITER on
+purpose** — `installTrailerHook` takes a mutation that strips one flag from the shipped script,
+leaving the code under test verbatim. A check for an unknown FOURTH cause cannot be tested any other
+way, and a fixture-local reimplementation would have passed against a broken hook.
