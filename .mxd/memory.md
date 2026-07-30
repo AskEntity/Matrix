@@ -4061,64 +4061,6 @@ setup hook. Accepted; root's id is a constant. The same boundary applies in time
 starts on worktrees created AFTER this lands, and every worktree alive today keeps `/dev/null`
 and no `mxd.taskId`.
 
-## The model and the credential are chosen, never defaulted
-
-**DECIDED 2026-07-29 (user): *"我觉得压根就不该有一个 DEFAULT_MODEL"*, and *"所有用 env 决定模型
-或者 key 的 删掉"*.** One rule rather than two preferences: **a constant or an environment variable
-standing in for the user's choice means an agent runs a model nobody selected, and the log then
-records a name nobody chose.** `DEFAULT_MODEL` is gone, `DEFAULT_CONFIG.model` is `""`, and both
-providers take `model` and `opts` as REQUIRED parameters. Only matrix's own `MXD_*` variables may
-still be read. The argument that made it safe rather than merely wanted: the fallbacks were covering
-a state the validator already rejects, so three of the four `?? DEFAULT_MODEL` branches were
-unreachable — and the one path that reaches them is the `"model": null` hole they were masking.
-
-⭐ **Deleting a named constant does not find its literal twins, and there were THREE.** The grep for
-`DEFAULT_MODEL` found all four of its call sites and could not see `model ?? "gpt-4o"` in the OpenAI
-provider constructor, `config.model || "gpt-4o"` in `createLLM`'s openai branch — three lines below
-the anthropic branch the same commit had just fixed — or `request.model ?? "claude-sonnet-4-6"` in
-`runProviderLoop`. **Chase the SHAPE (a fallback sitting in the model slot), not the name**: `grep
-'claude-sonnet-4-6\|"gpt-4o"'` found all three in one pass, after a `DEFAULT_MODEL` grep had come
-back clean and been believed.
-
-⚠️ **The `runProviderLoop` one is the expensive shape: a precedent task deleted this exact lie at
-ONE CONSUMER and left the SOURCE.** `01KYJ1775HCFY1VQ4QT36JXFTP` removed `?? DEFAULT_MODEL` from the
-`agent_start` event because a substituted name made the log claim a model nobody chose — while the
-loop-local it reads from went on substituting a literal into **~12 event payloads** plus the
-context-window lookup. *A rule enforced at N of M doors* in the model-name medium, and the doors are
-a producer and its consumers rather than two peers: **fixing a consumer leaves every other consumer
-wrong and looks like the fix.** `AgentRequest.model` is now required, which made the compiler
-enumerate the rest — 24 errors, **all in test files, zero in production**, because both providers
-already funnel `model: request.model ?? this.model` before entering the loop.
-
-⚠️ **Measured: the env fallbacks had ZERO test coverage.** Restoring `?? process.env.OPENAI_API_KEY`
-reddens exactly ONE test — the inverted guard written with the deletion — while 24 others in that
-file stay green. That is also what separates the guard from the re-aiming trap: **the producer it
-consumes still exists** (a shell really can hold `OPENAI_API_KEY`), the test SETS it, and the
-assertion is that the value did not land. The vacuous inversion memory warns about is the opposite,
-asserting nothing happened where nothing could be produced.
-
-⚠️ **Nothing in production guards an empty or absent model, and no test can see one.** After the
-deletion `""` and `null` both travel to the API untouched; `ValidatingMockAPI` substitutes `model ??
-"claude-sonnet-4-6"` and never checks emptiness, so **a suite that is green with `model: ""`
-everywhere says nothing about whether a fresh install works.** Whoever closes the `"model": null`
-hole (`01KYJ27S0N3VBXQTFVNQ3FB879`) inherits a decision this created: reject empty/null at load and
-`DEFAULT_CONFIG.model = ""` fails its own validator, so `mxd config init` writes a config the loader
-refuses. *global config is a COMPLETE config* and *empty is invalid* cannot both hold.
-
-**NEGATIVE RESULT — the `""`-overlay worry does not exist in the direction it was raised.**
-`resolveConfig` overlays on `value !== undefined`, so `""` IS an overriding value — but the global
-layer is the BASE at all three production call sites (`daemon.ts`, `runtime/helpers.ts`, `cli.ts`),
-so an empty global model can never climb over a project's. The REVERSE is reachable and is now
-pinned by a test: a hand-written `.mxd/config.json` carrying `"model": ""` does override, and its
-consequence is a visible empty model instead of a silent switch to sonnet.
-
-⚠️ **A correct COUNT next to a truncated LIST reads as a complete enumeration — the sharpest form
-of the no-piping rule yet.** Following the compiler cascade here, `tsc | tail -30` was paired with
-a `grep -c` over the same output reporting 24 errors, and the count felt like verification: a plan
-was built from the visible tail, executed, and **7 more sites appeared that had been in the head
-all along**. **The number is what does the damage** — without it the truncation is obvious, and
-with it you believe you have enumerated. Redirect to a file and take the sites from the whole
-file, never from a tail.
 ## Reading a field with `?? ""` destroys a state the storage layer represents
 
 **DECIDED 2026-07-29 (user), and it settles the question the DEFAULT_MODEL deletion left open:
@@ -4400,7 +4342,8 @@ sites with nothing enforcing agreement; this did not make it four.
 
 **That sentence — *"the codex catalog routes answer 401 … so the OpenAI path now fails at startup"*
 — implied that fixing the credentials would make the path answer. MEASURED 2026-07-30 against a live
-token: it does not.** The endpoint returns 200 now, and `fetchOpenAIModels` could not read a single
+token: it does not** (`01KYRD862V1JCXNHJ3YZDR3KCH`)**.** The endpoint returns 200 now, and
+`fetchOpenAIModels` could not read a single
 field of it: `client_version` is a REQUIRED query parameter (omit it → 400 `Field required`), the
 envelope is `{models:[…]}` not `{data:[…]}`, entries are keyed `slug` with no `id`, and the window
 is under `context_window`. Four independent mismatches, any one of which was enough.
@@ -4547,74 +4490,252 @@ wanted it, the caption is read as decoration. Let a bucket claim only its own pr
 `Task-Id:` line in the message") and describe what happens to be in it separately. **Distinct from
 the grep failure above: there the instrument never worked; here it always did.**
 
-## A credential someone else rotates is READ at every use — a copy is a second claimant
 
-**DECIDED 2026-07-29 (user): *"把 config 做成,api key,没有别的选项。access token 和
-ref token 选项去掉。换成 auth.json path"*.** An OpenAI auth group now holds `apiKey`
-**or** `authJsonPath` — a path to the `auth.json` the codex CLI maintains, which we only
-ever read. `accessToken`, `refreshToken` and `accountId` are gone from config; the account
-id is read out of the file.
+## Nothing ambient may decide what we send, where we send it, or who pays
 
-**The reason is ownership, and it is what makes the design non-obvious.** OpenAI **rotates** the
-refresh token on every refresh, invalidating the previous one. So two copies of the pair are not
-one live value and one going stale — they are two claimants to a single chain, and whichever
-refreshes first turns the other into waste paper. Measured on this machine: our config's copy and
-codex's file held **different** access AND refresh tokens, both dead. **So "read the file" is not
-the lazy option, it is the only correct one: the chain belongs to codex, we are a reader.** Its
-corollary is what a future change will get wrong: **an expired token is an ERROR with an
-instruction, never something we refresh** — refreshing means writing the file, and rewriting it
-from anything we hold discards the tokens codex just wrote.
+Three fields decide every request this system makes: which model, which credential, which host. All
+three used to have a second, invisible answer sitting behind the configured one, and in each case
+the invisible answer won whenever the configured one was merely absent. The user settled it in one
+line — "我觉得压根就不该有一个 DEFAULT_MODEL", and then "所有用 env 决定模型或者 key 的 删掉" — and
+the reason generalises past the three fields:
 
-⚠️ **CORRECTION to *The two providers*, which says both stored OpenAI credentials had expired,
-`~/.codex/auth.json`'s on 2026-01-19, and that "nothing refreshes them either".** The second half is
-false and the first is stale: **codex refreshes that file, and did so at `2026-07-30T00:01:10Z` —
-one minute after the task to stop copying it was filed.** With a live token the codex endpoint
-answers 200, so the provider is no longer unreachable; what remains true, and is the part that
-sentence was really carrying, is that **we do not bootstrap on OpenAI, so nothing there is corrected
-by traffic.** (`void this.refreshToken` is gone too — the provider holds a credential SOURCE.)
+> A constant or an environment variable standing in for the user's choice means an agent runs
+> against something nobody selected, and the log afterwards records a name nobody chose. The failure
+> is not that the value is wrong. It is that the value is unattributable.
 
-⭐ **The transferable half is about the reading, not the file.** That 2026-01-19 was measured and
-true when taken, and it was passed forward twice — into a task description and then a briefing
-— as a current fact, *inside an argument about the file self-rotating*. **A reading of a
-self-rotating value has a shelf life by construction, so quoting one as ground truth is a category
-error however carefully it was measured.** The rule that falls out and is worth applying to any
-externally-owned state: **no reading of such a file may survive as a constant, a cached value, or a
-comment stating a date** — including a fresh one. Ask the file.
+So `DEFAULT_MODEL` is gone, `DEFAULT_CONFIG.model` is `""`, both providers take `model` and `opts`
+as REQUIRED parameters, `getContextWindow` returns a `Promise<number>` it obtained from the endpoint,
+and the credential reaches the SDK as a function rather than a string. Only matrix's own `MXD_*`
+variables may still be read. What made the deletion safe rather than merely wanted: the fallbacks
+were covering a state the validator already rejects, so three of the four `?? DEFAULT_MODEL`
+branches were unreachable, and the one path that does reach them is the `"model": null` hole they
+were masking (`01KYJ27S0N3VBXQTFVNQ3FB879`).
 
-⚠️ **`ChatGPT-Account-Id` is MEASURED not required for codex `/models`** (200 with and without,
-byte-identical; 401 with no `Authorization` as the positive control). It is still sent, because
-codex sends it and the **responses** path was never probed without it. ⭐ **The first 2×2 said
-the opposite and the ORDER CONTROL killed it**: `/models/catalog` answered 403 (an HTML block page)
-without the header and 404 with it, which reads exactly like a header requirement — reversing the
-order moved the 403 onto the with-header call, then both settled at 404. **A first-hit edge block
-and a real header requirement are indistinguishable in the payload; only the permutation separates
-them.**
+**Deleting a named constant does not find its literal twins, and there were three.** The grep for
+`DEFAULT_MODEL` found all four of its call sites and could not see `model ?? "gpt-4o"` in the OpenAI
+provider constructor, `config.model || "gpt-4o"` in `createLLM`'s openai branch three lines below the
+anthropic branch the same commit had just fixed, or `request.model ?? "claude-sonnet-4-6"` in
+`runProviderLoop`. **Chase the SHAPE — a fallback sitting in the model slot — not the name:** `grep
+'claude-sonnet-4-6\|"gpt-4o"'` found all three in one pass, after a `DEFAULT_MODEL` grep had come
+back clean and been believed.
 
-⚠️ **The compiler found 8 files; a whole-tree grep found 5 more, and the loudest was a UI
-with three live inputs for fields that no longer existed.** `web/` cannot import
-`src/config.ts` (asserted
-plugin boundary), so `web/components/SettingsPanel.tsx` declares its OWN copy of the auth-group
-shape — deleting three fields from the real type produced **zero** errors there while two password
-inputs went on collecting them, plus **12 orphan i18n keys** across two files × two locales. **That
-8:5 ratio is the entry: the typed half and the by-name half are the same order of magnitude here,
-and only one of them reddens.** Filed as `01KYRD9GS9HCW8145H5C5ES6MZ`.
+The `runProviderLoop` one is the expensive shape, and it has a precedent worth reading as a warning
+rather than as a success. `01KYJ1775HCFY1VQ4QT36JXFTP` deleted this exact lie at ONE CONSUMER — the
+`agent_start` event, because a substituted name made the log claim a model nobody chose — and left
+the SOURCE, so the loop-local it reads from went on substituting a literal into roughly twelve event
+payloads plus the context-window lookup. That is *a rule enforced at N of M doors* where the doors
+are a producer and its consumers rather than two peers, and it is the nastier arrangement: **fixing a
+consumer leaves every other consumer wrong and looks exactly like the fix.** `AgentRequest.model` is
+required now, which made the compiler enumerate the rest — 24 errors, all in test files and none in
+production, because both providers already funnel `model: request.model ?? this.model` before
+entering the loop.
 
-**Two smaller decisions that will look arbitrary.** A path is **never masked** — `authJsonPath` is
-not a credential, the secret never enters config, and which file you pointed at is the one thing the
-settings row exists to tell you; so `maskAuthGroup` and the CLI both leave it verbatim, and the test
-pins the *absence* of masking. And `readCodexAuth` **expands a leading `~/`**, because the
-documented location is `~/.codex/auth.json` and neither place a user types it — a settings text
-field, a JSON config file — goes through a shell; without expansion the error quotes back the
-exact string they typed, which looks correct.
+Two things nobody should re-derive. **The env fallbacks had ZERO test coverage**: restoring
+`?? process.env.OPENAI_API_KEY` reddens exactly one test, the inverted guard written with the
+deletion, while 24 others in that file stay green. That guard is not the re-aiming trap this file
+warns about elsewhere, and the difference is that **its producer still exists** — a shell really can
+hold `OPENAI_API_KEY`, the test SETS it, and the assertion is that the value did not land. And the
+`""`-overlay worry points the other way from how it was first raised: `resolveConfig` overlays on
+`value !== undefined`, so `""` IS an overriding value, but the global layer is the BASE at all three
+production call sites, so an empty global model can never climb over a project's. The reverse is
+reachable and pinned by a test.
 
-**NEGATIVE RESULT — codex `/models` does not answer `fetchOpenAIModels`, so fixing the credential
-did NOT make the context-window path work for that endpoint.** Four mismatches (`client_version` is
-a required query param; envelope is `{models}` not `{data}`; entries keyed `slug` not `id`; window
-is `context_window` not `max_input_tokens`/`context_length`), plus a fifth that is a design
-question: **`client_version=0.50.0` returns 200 with an EMPTY list** — a third state between
-"answered" and "refused" that `src/context-window.ts`'s thesis has no slot for. All 7 models report
-`context_window: 272000`, independently confirming the 272,000 already recorded for GPT-5.5 here.
-Filed as `01KYRD862V1JCXNHJ3YZDR3KCH`.
+**Nothing in production guards an empty or absent model, and no test can see one.** After the
+deletion `""` and `null` both travel to the API untouched, and `ValidatingMockAPI` substitutes
+`model ?? "claude-sonnet-4-6"` without checking emptiness — so **a suite that is green with
+`model: ""` everywhere says nothing about whether a fresh install works.** Whoever closes the
+`"model": null` hole inherits a contradiction this created: reject empty at load and
+`DEFAULT_CONFIG.model = ""` fails its own validator, so `mxd config init` writes a config the loader
+refuses. *Global config is a COMPLETE config* and *empty is invalid* cannot both hold.
+
+### The SDK is a second reader of the same variable, so deleting our own reads was half the job
+
+Deleting our `?? process.env.ANTHROPIC_API_KEY` did **not** stop a shell-held key from reaching the
+API. The Anthropic SDK's constructor does `if (apiKey === undefined) apiKey = readEnv(...)`, and the
+same for `ANTHROPIC_AUTH_TOKEN`, so with zero env reads left in `src/` a client built with empty
+opts still carries whatever the shell holds. What our deletion actually removed was the BRANCH
+CHOICE: a truthy `apiKey` sets `useOAuth = false`, so before it an ambient key silently outranked the
+OAuth token the user had configured.
+
+> **A dependency's default parameter is a DOOR, and it is the one door nothing in this repo can
+> grep.** `grep process.env src/` came back clean while env decided the credential on every request.
+> The detector that works: for any value we resolve from config, ask **who else reads this name**,
+> and go read the constructor of whatever we hand it to.
+
+**And it was never "env silently outranks config" — it was a HARD FAILURE pointing the wrong way.**
+`authHeaders()` emits one header per filled slot and the API rejects a request carrying both
+`x-api-key` and `authorization`, so anyone whose shell held `ANTHROPIC_API_KEY` for some other
+project **could not use the OAuth path at all**, and the auth error blamed their OAuth token. That is
+the path we bootstrap on every day. Read "a credential env var is set" as a break, not a preference.
+
+`undefined` and "I did not pass it" are the same thing to an SDK that tests `=== undefined`, and
+**`null` is the only other spelling** — its own signature is `string | null | undefined`, and
+Anthropic's tracker treats `null` as the documented opt-out (`anthropic-sdk-csharp#47`). **NEGATIVE
+RESULT: there is no disable-env option to go looking for**; the open request for one
+(`claude-code#12047`) is against the Claude Code SDK, a different product.
+
+**Three sites hand-build an Anthropic client and nothing enforces that they agree**:
+`AnthropicCompatibleProvider`'s constructor, `createAnthropicClient` in `llm.ts`, and the
+`check_model` handler in `runtime.ts`. Beta headers, timeout and the auth-group `baseUrl` were
+already hand-matched across them; this made that agreement load-bearing for a correctness property
+rather than for cosmetics. **`check_model` is the site where getting it wrong hurt most, and "it
+shares the bug" understates it**: it backs the Settings *check model* button, which is exactly what a
+user presses while diagnosing this failure — so it did not merely fail too, it reproduced the
+both-headers rejection and reported that the OAuth token the user had just configured was bad. **When
+ranking doors, ask which one somebody arrives at while already confused.**
+
+**How that third door came to be missing from the plan is worth more than the door.** The list was
+built by grepping `new Anthropic` in the two files already open and then written up as a table — and
+a grep of the files you are editing is not a population. This file already named the third site, in a
+warning put there by a commit whose own message says the previous note claiming two was wrong. **The
+record was consultable and was not consulted.** Cheap detector, and it is the question a grep cannot
+answer for you: *what would tell me this list is complete, other than the list?*
+
+### One object literal per client, so a forgotten slot is unrepresentable
+
+The three-branch fix left the omission POSSIBLE and merely absent — a fourth branch added next year
+reopens it and nothing goes red. So all three sites build their client from **one object literal
+naming every credential slot**, with `useOAuth` deciding which one is `null`. Same move as
+`OpenAICredentialSource` becoming a function type so that holding a token is not expressible, and as
+`getContextWindow` returning a promise so that a local guess is not expressible. `|| null` rather
+than `?? null`, and the type is the reason: both locals are `string | undefined`, and `undefined` in
+a slot is precisely what sends the SDK to env.
+
+MEASURED, because the justification written first was wrong and only a mutation said so:
+
+| passed | `authHeaders` builds | request sent? |
+|---|---|---|
+| `apiKey: null` | nothing | no — the SDK refuses |
+| `apiKey: ""` | `x-api-key: ""` | **no** — `validateHeaders` refuses anyway |
+| `authToken: ""` | `Authorization: Bearer` | **YES — malformed, and it goes out** |
+
+So for `apiKey` the two spellings are indistinguishable, which is why that mutation SURVIVED: an
+equivalent mutant rather than a coverage gap. The dangerous slot is the other one, and
+`useOAuth = Boolean(oauthToken && !apiKey)` is the whole reason `authToken: ""` is unreachable — **do
+not simplify that guard without re-reading this.** The order the error happened in is the
+transferable part: the justification went into a comment, then a test was written to pin it, and the
+test passed against both spellings. **A comment stating a behaviour is not evidence of it, including
+when you wrote it ten minutes ago.** A test that WOULD distinguish them was considered and rejected,
+because it has to construct the SDK directly with `authToken: ""` and would pin the SDK's behaviour
+rather than ours; the empty-string test that stayed asserts the guarantee that IS ours — a cleared
+credential field in config produces no credential — and its docstring says plainly that it does not
+catch the `||`.
+
+**Behaviour change, intended: with nothing configured the client holds nothing**, so the SDK throws
+*"Could not resolve authentication method…"* before building a request, instead of quietly running on
+the shell's key. Same trade as deleting `DEFAULT_MODEL`: an unconfigured value became visible instead
+of substituted.
+
+### The host, and who gets billed
+
+`ANTHROPIC_BASE_URL` was the same defect one field over, and its archaeology is unusually clean.
+`authGroup.baseUrl` is typed, in Settings, in the CLI and in `config.json`; the variable was ambient,
+undocumented, and silently authoritative **whenever the typed field was unset** — because the SDK
+takes `baseURL` as a default parameter reading it, so omitting the option WAS consent. The string
+entered this repo one day before it was removed, in a comment, in the very commit that added the
+typed field (`cdad315a`). **A comment that documents a behaviour without endorsing it is exactly how
+an accident survives review** — it reads as *considered*, and nothing distinguishes it from
+*decided*. `resolveAnthropicBaseUrl` in `src/config.ts` is now the one answer, called by all three
+sites, and it is behaviourally identical to what the SDK would have done (`baseURL ||
+'https://api.anthropic.com'`), which is the point: it changes who decides, not what happens.
+
+The OpenAI door is the same rule and a different currency. `openai`'s constructor takes **all five**
+slots as default parameters, so there is not even an `=== undefined` test to sidestep — a slot you
+omit is a slot env fills. `organization` and `project` were never passed, so `OPENAI_ORG_ID` and
+`OPENAI_PROJECT_ID` became `OpenAI-Organization` and `OpenAI-Project` headers on every request, and
+the consequence is vendor-documented rather than inferred: *"If no header is provided, the default
+organization will be billed."* It was surveyed and reported before it was fixed
+(`01KYSD71GAYKD5AAT48C0MFKQN`), which is why the finding and the decision are dated a day apart. **That is env deciding billing attribution**, which is why it belongs
+to a rule about credentials although neither field is one. Both are pinned to `null` now (user:
+「env 不许决定」). `apiKey` and `baseURL` were already clean because we always pass them — but that
+was a side effect of other requirements rather than a decision, so the test asserts all four names.
+
+**One asymmetry to keep true rather than work around: `apiKey`'s type is `string | ApiKeySetter |
+undefined`, with no `null`.** If `authToken` ever became optional there would be no way to spell "do
+not read env" for it, so **the thing to preserve is that `authToken` stays required.** `apiKey: ""`
+does suppress the read and then sends `Authorization: Bearer` with nothing after it — suppression
+achieved, request malformed, 401 with a misleading message. Not a workaround.
+
+### A credential somebody else owns is READ at every use; a copy is a second claimant
+
+The user's decision was to delete the copy: "把 config 做成,api key,没有别的选项。access token 和
+ref token 选项去掉。换成 auth.json path". An OpenAI auth group now holds `apiKey` **or**
+`authJsonPath` — a path to the `auth.json` the codex CLI maintains, which we only ever read.
+`accessToken`, `refreshToken` and `accountId` are gone from config; the account id is read out of the
+file.
+
+**The reason is ownership, and it is what makes the design non-obvious.** OpenAI ROTATES the refresh
+token on every refresh, invalidating the previous one. So two copies of the pair are not one live
+value and one going stale — **they are two claimants to a single chain, and whichever refreshes first
+turns the other into waste paper.** Measured on this machine: our config's copy and codex's file held
+different access AND refresh tokens, both dead. So reading the file is not the lazy option, it is the
+only correct one; the chain belongs to codex and we are a reader. The corollary a future change will
+get wrong: **an expired token is an ERROR with an instruction, never something we refresh** —
+refreshing means writing that file, and rewriting it from anything we hold discards what codex just
+wrote.
+
+**The credential therefore reaches the openai SDK as a FUNCTION, and only a RETRY can tell that
+apart.** The `apiKey` slot accepts `() => Promise<string>`, invoked before EVERY request —
+`makeRequest` awaits `prepareOptions` → `_callApiKey` → `authHeaders`, and `retryRequest` re-enters
+`makeRequest`. We had hand-built exactly that shape as `OpenAICredentialSource`, then resolved it
+ourselves and handed the SDK a static string, **downgrading a per-REQUEST capability to per-TURN**.
+With `maxRetries: 2` one call sends up to three HTTP requests on one token while codex rotates on its
+own schedule, so the retry re-sent a token that had just been rotated away and collected an auth
+error that reads like a bad credential. Passing a function is also the only way to stop
+`OPENAI_API_KEY` filling that slot, since its type has no `null`. It had been deliberately deferred
+once (`01KYSE0N667GMYDC81057J3NX8`) on the correct ground that it is a behavioural change needing a
+test that drives a real retry and asserts the SECOND request carries a NEW token; that is exactly the
+test that now pins it.
+
+**The line, and it is not "everything goes to the SDK": the token goes to the SDK, the account id
+stays ours.** `ChatGPT-Account-Id` is a header and `defaultHeaders` is fixed when the client is built,
+so `streamResponsesAPI` still resolves the source once for it — and that resolve pays twice, because
+it is also where an unreadable credential fails with OUR message instead of inside the SDK's
+`Failed to get token from 'apiKey' function: …` wrapper.
+
+Three measured facts around it. `ChatGPT-Account-Id` is **not required** for codex `/models` (200
+with and without, byte-identical; 401 with no `Authorization` as the positive control) and is still
+sent, because codex sends it and the **responses** path was never probed without it — and the first
+2×2 said the opposite until an ORDER CONTROL killed it: `/models/catalog` answered 403 (an HTML block
+page) without the header and 404 with it, which reads exactly like a header requirement, and
+reversing the order moved the 403 onto the with-header call before both settled at 404. **A
+first-hit edge block and a real header requirement are indistinguishable in the payload; only the
+permutation separates them.** A path is **never masked** — `authJsonPath` is not a credential, the
+secret never enters config, and which file you pointed at is the one thing that settings row exists
+to tell you — so the test pins the ABSENCE of masking. And `readCodexAuth` expands a leading `~/`,
+because the documented location is `~/.codex/auth.json` and neither place a user types it goes
+through a shell.
+
+**CORRECTION to *The two providers*, which says both stored OpenAI credentials had expired and that
+nothing refreshes them: the second half is false and the first is stale.** Codex refreshes that file,
+and did so at `2026-07-30T00:01:10Z`, one minute after the task to stop copying it was filed. With a
+live token the codex endpoint answers 200, so the provider is not unreachable; what remains true, and
+is what that sentence was really carrying, is that **we do not bootstrap on OpenAI, so nothing there
+is corrected by traffic.**
+
+> **The transferable half is about the reading, not the file. A reading of a self-rotating value has
+> a shelf life by construction, so quoting one as ground truth is a category error however carefully
+> it was measured.** That 2026-01-19 expiry was true when taken and was passed forward twice — into a
+> task description and then a briefing — as a current fact, inside an argument about the file
+> rotating itself. **No reading of externally-owned state may survive as a constant, a cached value,
+> or a comment stating a date, including a fresh one. Ask the file.**
+
+**MEASURED and worth knowing before you trust any of this in production: none of these variables can
+reach an INSTALLED daemon.** `daemonPlist()` forwards `PATH` and `HOME` and nothing else, so every
+env-decides-the-credential-or-host effect above only ever applied to a daemon started from an
+interactive shell. That is not a reason to relax — **it is precisely the bootstrap path, which is us,
+every day** — but state it that way round rather than as "any user with the variable exported".
+One env reader remains, out of product scope and worth knowing before you trust it:
+`scripts/probe-hidden-tool.ts` builds its own client with no `baseURL`, so a shell variable can
+silently redirect the probe we use to measure what the API does.
+
+**The compiler found 8 files; a whole-tree grep found 5 more, and the loudest was a settings UI with
+three live inputs for fields that no longer existed.** `web/` cannot import `src/config.ts` — the
+plugin boundary is asserted by a test — so `web/components/SettingsPanel.tsx` declares its OWN copy of
+the auth-group shape, and deleting three fields from the real type produced **zero** errors there
+while two password inputs went on collecting them, plus 12 orphan i18n keys across two files and two
+locales. **The 8:5 ratio is the entry: the typed half and the by-name half are the same order of
+magnitude here, and only one of them reddens.** Filed as `01KYRD9GS9HCW8145H5C5ES6MZ`.
 
 ## The trailer hook checks its own work, and WHERE that check can live is the whole finding
 
@@ -4656,160 +4777,7 @@ purpose** — `installTrailerHook` takes a mutation that strips one flag from th
 leaving the code under test verbatim. A check for an unknown FOURTH cause cannot be tested any other
 way, and a fixture-local reimplementation would have passed against a broken hook.
 
-## ⚠️ The SDK reads the credential env itself, so deleting our fallback did not stop a shell key
 
-**CAVEAT to *The model and the credential are chosen, never defaulted*, not a contradiction of it:
-deleting our `?? process.env.ANTHROPIC_API_KEY` did NOT stop a shell-held key from reaching the
-API.** The Anthropic SDK is a second reader of the same variable — its constructor does
-`if (apiKey === undefined) apiKey = readEnv('ANTHROPIC_API_KEY')`, and the same for
-`ANTHROPIC_AUTH_TOKEN`. So with zero env reads left in `src/`,
-`new AnthropicCompatibleProvider(model, {})` still yields a client whose `apiKey` is whatever the
-shell holds. **What the deletion actually removed is the BRANCH CHOICE**, and that is the part worth
-defending: a truthy `apiKey` sets `useOAuth = false`, so before the deletion an ambient key silently
-outranked the OAuth token the user had configured.
-
-⭐ **So the obvious sentinel for that deletion is VACUOUS, and it looks like the careful test.** Set
-`ANTHROPIC_API_KEY`, construct with empty opts, assert `client.apiKey` is not the env value: it
-fails TODAY, and its inverse passes under the restored fallback too — the two worlds are
-byte-identical at that observable. **A second producer downstream of the one you deleted destroys
-the observable you would naturally assert on**; you have to find one that still differs, which here
-is the collision fixture — env key vs a CONFIGURED `oauthToken`, asserting the configured one won
-and the OAuth beta header is present. Measured: that reddens on the apiKey line alone, and a
-`CLAUDE_CODE_OAUTH_TOKEN` sentinel reddens on the oauth line alone. `git log -S` is what tells you
-which names were ever yours: 15 commits touched `ANTHROPIC_API_KEY`, and **`ANTHROPIC_AUTH_TOKEN`
-has ZERO — it was never ours, it is the SDK's, and a sentinel claiming we ignore it would assert
-the opposite of measured reality.**
-
-⚠️ **An env sentinel must DELETE its sibling credential vars, not just set the one under test —
-measured false-green otherwise.** With both `??`s restored (the shape a real revert has, since the
-two lines went together) and the delete-loop removed, the `CLAUDE_CODE_OAUTH_TOKEN` test **PASSES**
-on a machine whose shell holds `ANTHROPIC_API_KEY`, because `useOAuth = Boolean(oauthToken &&
-!apiKey)` and the ambient key suppresses the branch being watched. With the loop, it fails. **A
-fixture's redness must not depend on whose shell it ran in** — and matrix developers plausibly do
-hold that variable, so this is the normal case rather than the exotic one.
-
-**Two smaller things this cost, both cheap to re-pay.** The Anthropic no-credential branch neither
-warns nor throws — it builds a credential-less client — so the OpenAI sentinel's `console.warn`
-hook does not transfer, and the signal has to be which credential the client ended up holding.
-And a negative assertion on a header (`not.toContain("oauth-2025-04-20")`) passes just as happily
-on a header you failed to READ, so it needs a positive control beside it asserting a beta feature
-that is always sent; verified by making the accessor path wrong and watching the control fire.
-
-## FIXED: env cannot reach the SDK — `null` in every credential slot, at all three client sites
-
-**The section above discovered the hole; this closed it.** Every place that hand-builds an Anthropic
-client now names EVERY credential slot in EVERY branch, with the unused one set to `null`.
-
-**WHY, in the user's words (2026-07-29): *「所有用 env 决定模型或者 key 的 删掉」*.** The earlier
-commit deleted our own `??` reads and the rule still did not hold, because the SDK is a second
-reader of the same names — so that deletion was half of one job, not a finished one.
-
-⚠️ **It was not "env silently outranks config", it was a HARD FAILURE pointing the wrong way.**
-`authHeaders()` emits one header per filled slot, and the API REJECTS a request carrying both
-`x-api-key` and `authorization`. So anyone whose shell held `ANTHROPIC_API_KEY` for some other
-project **could not use the OAuth path at all**, and the auth error blamed their OAuth token. That
-is the path we bootstrap on every day. **Read "a credential env var is set" as a break, not a
-preference.**
-
-⚠️ **`undefined` and "I didn't pass it" are the SAME THING to the SDK, and `null` is the only other
-spelling.** It reads env for any slot that is `=== undefined`, its own signature is `string | null |
-undefined`, and Anthropic's issue tracker treats `null` as the documented way to opt out
-(`anthropic-sdk-csharp#47`). **NEGATIVE RESULT — there is no disable-env option to look for.** The
-open request for one (`claude-code#12047`) is against the Claude Code SDK, a different product.
-
-⭐ **A dependency's default parameter is a DOOR, and it is the one door nothing here can grep.**
-*A rule enforced at N of M doors is enforced nowhere* has always been about our own call sites; this
-is the same rule where door M lives in `node_modules`, so no amount of auditing `src/` can see it —
-`grep process.env src/` came back clean while env decided the credential on every request. The
-detector that works: for any value we resolve from config, ask **who else reads this name**, and
-read the constructor of whatever we hand it to.
-
-**The three sites, which nothing enforces:** `AnthropicCompatibleProvider`'s constructor,
-`createAnthropicClient` in `llm.ts`, and the `check_model` handler in `runtime.ts`. All three are
-hand-matched copies; the standing warning about them is above and it is now load-bearing for a
-correctness property, not just for beta headers.
-
-⚠️ **`check_model` is where getting this wrong hurt MOST, and "it shares the bug" understates it.**
-It backs the Settings *check model* button — what a user presses precisely while diagnosing
-this failure — so it did not merely fail too, it **actively misdirected**: reproduce the
-both-headers rejection and report that the OAuth token the user had just configured was bad. The
-other two sites at least fail where the work is. **When ranking doors, ask which one someone
-arrives at while already confused.**
-
-⭐ **How that door came to be missing from the task description, worth more than the door: the list
-was built by grepping `new Anthropic` in the two files already open, then written as a table — and a
-grep of the files you are editing is not a population.** THIS FILE already named the third site, in
-the standing warning above, put there by a commit whose own message says the previous note claiming
-two was wrong. **The record was consulted-able and was not consulted**, which is the same shape as
-`get_tree`-instead-of-`search_tasks` in a different medium. Cheap detector, and it is the question
-the grep cannot answer: *what would tell me this list is complete, other than the list?*
-
-⚠️ **A side effect worth knowing on its own: `check_model`'s only test accepted `ok` OR `error`, so
-on a machine whose shell held `ANTHROPIC_API_KEY` it made a REAL call to `api.anthropic.com` during
-`bun test` — and passed either way.** An either-way assertion cannot tell a hermetic run from a
-networked one. The new sentinel asserts **zero requests left the process**, which can.
-
-**Behaviour change, intended: with no credential configured the client holds none**, so the SDK
-throws *"Could not resolve authentication method…"* before it builds the request, instead of quietly
-running on the shell's key. Same trade as deleting `DEFAULT_MODEL` — an unconfigured value became
-visible instead of substituted. Measured: zero requests leave the process in that state.
-
-⚠️ **The sentinels assert the HEADER SET, because that is the only observable that differs.**
-`client.apiKey` is byte-identical either way (the SDK reads that var too), which the section above
-records. Two observables, one per door, and the pair is deliberate: the provider's tests read
-`client.authHeaders({})`, and `llm.ts`'s go through `createLLM` with `fetch` intercepted and assert
-the credential headers of the actual request — **so the wire test is the positive control for the
-narrower one's observable.** Verified red-then-green, one `null` at a time, at both doors: each
-mutation reddens exactly its own branch's test and no other.
-
-**NEGATIVE RESULT — the OpenAI half is clean where it matters and NOT clean everywhere.** Reported
-rather than fixed (`01KYSD71GAYKD5AAT48C0MFKQN`): `openai`'s constructor takes **all five** slots as
-default parameters, so `undefined` reads env for every one — but our single `new OpenAI(...)` always
-passes `apiKey` (a required `string`) and always passes `baseURL`, so neither the credential nor the
-destination can come from env. What does: `organization` and `project` are never passed, so
-`OPENAI_ORG_ID` / `OPENAI_PROJECT_ID` become `OpenAI-Organization` / `OpenAI-Project` headers on
-every request — env deciding a request attribute nobody configured.
-
-### DECIDED 2026-07-30: `ANTHROPIC_BASE_URL` stops working — the host is chosen, like the model
-
-**The endpoint had TWO mechanisms and the invisible one won by default.** `authGroup.baseUrl` is
-typed, in Settings, in the CLI and in `config.json`; `ANTHROPIC_BASE_URL` is ambient, undocumented,
-and was silently authoritative *whenever the typed one was unset* — because the SDK takes `baseURL`
-as a default parameter reading that variable, so **omitting the option was the same as consenting to
-it.** Duplicate codepaths, with the extra property that the hidden one decides where our prompts and
-our code are sent. `resolveAnthropicBaseUrl` in `src/config.ts` is now the one place that answers
-it, called by all three client sites.
-
-**It was never a chosen escape hatch, and the archaeology is unusually clean: the string entered
-this repo YESTERDAY, in a comment, in the commit that added the typed field** (`cdad315a`, which
-wired `baseUrl` at all three sites, with a UI field, an i18n key, a CLI flag and two-sided tests).
-That comment described the SDK's fallback in the unset case; it never said the fallback was wanted.
-⭐ **A comment that documents a behaviour without endorsing it is exactly how an accident survives
-review** — it reads as "considered", and nothing distinguishes it from "decided".
-
-⚠️ **MEASURED, and it bounds this whole family: none of these variables can reach an INSTALLED
-daemon.** `daemonPlist()` forwards `PATH` and `HOME` and nothing else, so every env-decides-the-
-credential/host effect in this region only ever applied to a daemon started from an interactive
-shell. That is not a reason to relax — **it is precisely the bootstrap path, i.e. us, every day** —
-but state it that way round rather than as "any user with the variable exported".
-
-**The test that had to change is the tell, and it changed for a reason nobody would have guessed
-from reading it.** `"without baseUrl: SDK default baseURL is used"` asserted
-`client.baseURL === "https://api.anthropic.com"` and passed — on a machine whose shell did not set
-`ANTHROPIC_BASE_URL`. Same shape as the credential fixtures: **its greenness was a fact about the
-person running it.** Both baseUrl tests now pin the variable, and the unset one is renamed to say
-who chooses.
-
-**Behaviourally identical, deliberately: the SDK's own default is
-`baseURL || 'https://api.anthropic.com'`**, so passing that string changes *who decides* and not
-*what happens*. One SDK side effect, checked
-rather than assumed: an explicit `baseURL` sets the client's internal `_baseURLIsExplicit`, which
-only governs whether a `profile` credential may supply a host — and we never pass `profile`.
-
-⚠️ **Remaining env reader, out of product scope but worth knowing before you trust it:
-`scripts/probe-hidden-tool.ts` builds its own client with no `baseURL`.** So a shell variable can
-silently redirect the probe we use to measure what the API does — *your instrument is a claim* in
-the one place that costs a wrong measurement rather than a wrong request.
 
 
 ## The CLI and the daemon must agree about the user's config, and nothing checks that they do
@@ -4939,38 +4907,6 @@ refused side where somebody notices. The instance most likely to be hit is a typ
 silently vanished, creating a group against Anthropic's own endpoint with someone else's key, and
 every call 401'd as if the key were bad.
 
-### The same rule at the OpenAI door: `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID` decided who was billed
-
-**DECIDED 2026-07-30 (user): *「env 不许决定」*** — which settled the question the earlier draft had
-parked as needing judgment. `organization` and `project` are now pinned to `null` at the one
-`new OpenAI(...)` site.
-
-⚠️ **`openai`'s constructor is the more thorough version of the same hazard: ALL FIVE slots are
-DEFAULT PARAMETERS**, so there is not even an `=== undefined` test to sidestep — a slot you omit
-is a slot env fills. **The consequence is vendor-documented rather than inferred:** *"If no header
-is provided, the default organization will be billed."* So this is env deciding **billing
-attribution**, which is why it counts under a rule about credentials even though org and project
-are not credentials.
-
-**MEASURED, our real call shape, shell holding all four names:** `openai-organization` and
-`openai-project` arrived as the shell's values on every request; with the two `null`s, neither
-appears. `apiKey` and `baseURL` were already clean — both are always passed — but **that was a side
-effect of other requirements, not a decision**, so the test asserts all four names rather than the
-two that leaked.
-
-⚠️ **The remaining asymmetry, worth one line because the obvious workaround is worse: `apiKey`'s
-type is `string | ApiKeySetter | undefined`, with NO `null`.** So if `authToken` ever became
-optional there would be no way to spell "do not read env" for it — **the thing to keep true is that
-`authToken` stays required.** `apiKey: ""` does suppress the read and then sends
-`Authorization: Bearer` with nothing after it: suppression achieved, request malformed, 401 with a
-misleading message. Not a workaround.
-
-**NEGATIVE RESULT — do NOT reach for the `ApiKeySetter` function form while here.** `apiKey` accepts
-`() => Promise<string>`, invoked before each request, which is what our `OpenAICredentialSource`
-already is; passing it would suppress env as a side effect. It is a separate design change with a
-real behavioural consequence — `maxRetries: 2` means retries currently reuse a token resolved once
-per call — and it needs a test that drives an actual retry and asserts the SECOND request carries a
-NEW token. `01KYSE0N667GMYDC81057J3NX8`.
 
 ### ⚠️ These env fixtures work by an accident of where the first `await` sits
 
@@ -5063,43 +4999,6 @@ found it from a failure, because there would not have been one. `withClientEnv` 
 restore when the callback returns a promise, and `src/test-utils/sdk-client-env.test.ts` exists
 because **a fixture is an instrument, and an instrument is a claim until you have made it fail.**
 
-### One literal per client, so a forgotten credential slot is unrepresentable
-
-**The three-branch fix left the omission POSSIBLE and merely absent** — a fourth branch added next
-year reopens it and nothing goes red. All three sites now build their client from **one object
-literal** naming every credential slot, with `useOAuth` choosing which one is `null`. Same move as
-`OpenAICredentialSource` becoming a function type so holding a token is not expressible, and
-`getContextWindow` returning `Promise<number>` so a local guess is not expressible.
-
-⚠️ **`|| null`, and the type reason is the load-bearing one:** both locals are `string | undefined`,
-and `undefined` in a slot is precisely what sends the SDK to env, so the coalesce is what keeps the
-hole closed rather than a nicety.
-
-⭐ **MEASURED, and it refutes the justification I wrote first: the two slots do NOT treat `""`
-alike.**
-
-| passed | authHeaders builds | request sent? |
-|---|---|---|
-| `apiKey: null` | nothing | no — SDK refuses |
-| `apiKey: ""` | `x-api-key: ""` | **no** — `validateHeaders` refuses anyway |
-| `authToken: ""` | `Authorization: Bearer` | **YES — malformed, and it goes out** |
-
-So for `apiKey`, `||` and `??` are indistinguishable, which is why that mutation **SURVIVED** — an
-equivalent mutant, not a coverage gap. The dangerous slot is the other one, and
-`useOAuth = Boolean(oauthToken && !apiKey)` is the whole reason `authToken: ""` is unreachable. **Do
-not "simplify" that guard without re-reading this.**
-
-⚠️ **The transferable half is the order in which I got it wrong: I wrote the justification into a
-comment, then wrote a test to pin it, and only the MUTATION said the claim was false.** The test
-passed against both spellings — *a fixture that cannot express the difference* — and the comment
-read as measured because it was specific. **A comment stating a behaviour is not evidence of it,
-including when you are the one who just wrote it.** Same failure as the `indeterminate` comment
-describing a control that was never built, one day later, in my own diff.
-
-⚠️ **A test that would distinguish them was considered and REJECTED**: it would have to construct
-the SDK directly with `authToken: ""`, which pins the SDK's behaviour rather than ours. The
-empty-string test that stayed asserts the guarantee that IS ours — a cleared credential field in
-config produces "no credential" — and its docstring says plainly that it does not catch the `||`.
 
 ## An installed service records a decision; it must not look one up at login
 
@@ -5146,49 +5045,6 @@ install.** Apple's own parser is the acceptance check for it (`plutil -lint`, `p
 EnvironmentVariables.MXD_DATA_DIR raw`), used by hand rather than in the suite, since it exists
 only on darwin.
 
-## The credential goes to the openai SDK as a FUNCTION, and only a RETRY can tell that apart
-
-**The SDK's `apiKey` slot is `string | ApiKeySetter | undefined`, `ApiKeySetter = () =>
-Promise<string>`, and a function there is invoked before EVERY request** — `makeRequest` awaits
-`prepareOptions` → `_callApiKey` → `authHeaders`, and `retryRequest` re-enters `makeRequest`. We had
-hand-built precisely that shape as `OpenAICredentialSource`, then resolved it ourselves and handed
-the SDK a static string, **downgrading a per-REQUEST capability to per-TURN.** `maxRetries` is 2, so
-one call sends up to three HTTP requests on one token while codex rotates `auth.json` on its own
-schedule: the retry re-sent a token that had just been rotated away, and collected an auth error
-that reads like a bad credential.
-
-⚠️ **THE LINE, and it is not "everything goes to the SDK": the token goes to the SDK, the account id
-stays ours.** `ChatGPT-Account-Id` is a header and `defaultHeaders` is fixed when the client is
-built, so `streamResponsesAPI` still resolves the source once for it. That resolve pays twice — it
-is also where an unreadable credential fails with OUR message, instead of inside the SDK's `Failed
-to get token from 'apiKey' function: …` wrapper (which does preserve the full text, and the original
-in `cause`). Passing a function is ALSO the only way to stop `OPENAI_API_KEY` filling that slot,
-since its type has no `null`. MEASURED with a real token as the positive control: a setter returning
-`""` throws and **zero requests leave the process**, where the static `""` it replaced sent
-`Bearer ` and collected a misleading 401. Deliberately NOT pinned by a test —
-`openAICredentialSource` cannot produce an empty token, so the test would only assert the SDK's
-behaviour.
-
-⭐ **Moving a capability from per-N to per-M needs a fixture holding TWO M's inside ONE N; every
-weaker assertion is green against both implementations.** "the function was passed" and "the
-function was called once" are both true of the static string — one call, one resolve, either way.
-What works: rewrite `auth.json` from inside the fetch mock, answer the first attempt with 500 plus
-`retry-after-ms: 0`, assert the SECOND request carried the SECOND token. Against the
-resolved-string mutant exactly ONE test in the repo goes red and its message IS the diagnosis
-(`"Bearer first-token"` twice). ⚠️ `retry-after-ms: 0` is what keeps it at 2.7ms — the same shape
-on a bare 429 costs 397ms of the SDK's backoff.
-
-⭐ **A fixture built for a case that did not exist became the only thing keeping a test able to
-fail, ONE DAY later.** `withClientEnv` defers its env restore when the callback returns a promise,
-and the note shipped with it said this "changes no outcome at any of today's four doors" because
-every client was built in the callback's synchronous prefix. Putting `await credentials()` above
-`new OpenAI(...)` moved the OpenAI door into the fragile row. MEASURED both ways, with the
-`organization: null, project: null` deleted so production genuinely leaks: **deferral intact → RED,
-naming both shell headers; deferral removed → the same vulnerable production reports CLEAN.** This
-does not soften *an optimisation for a case your fix eliminates is dead code that looks like
-foresight* — the difference is that the deferral deleted a CLASS (any await upstream of any client
-construction) rather than serving a scenario, and a class does not stop existing when today's
-callers happen to miss it.
 
 ## ⭐ A migration that adds an identifier makes it non-uniform FOREVER — two instances, two subsystems
 
