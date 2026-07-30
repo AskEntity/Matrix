@@ -1121,9 +1121,12 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 		let authJsonPath: string | undefined;
 		let baseUrl: string | undefined;
 		const isProject = args.includes("--project");
+		/** Which credential flags were actually typed, for the checks below. */
+		const seen = new Set<string>();
 
 		for (let i = 2; i < args.length; i++) {
 			const arg = args[i];
+			if (arg?.startsWith("--")) seen.add(arg);
 			if (arg === "--provider" && i + 1 < args.length) {
 				const p = args[++i] as string;
 				if (p !== "anthropic" && p !== "openai") {
@@ -1142,6 +1145,45 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 			} else if (arg === "--base-url" && i + 1 < args.length) {
 				baseUrl = args[++i] as string;
 			}
+		}
+
+		// A flag that was accepted and then ignored is the failure this whole
+		// command keeps producing: `--base-url` was dropped for anthropic groups
+		// (fixed), `--key` with `--auth-json` was one flag ignored out of two
+		// (fixed, by refusing), and these are the last two forms of it. The rule,
+		// stated once: a flag the chosen provider has no field for is REFUSED.
+		//
+		// Refused rather than warned-about, because the group is written to disk
+		// either way and a warning above a success line reads as advice. The user
+		// is standing right here; a re-run costs them one line.
+		const FLAGS_BY_PROVIDER = {
+			anthropic: ["--key", "--oauth-token"],
+			openai: ["--key", "--auth-json"],
+		} as const;
+		// Every flag this command understands. A SUBTRACT-list: a flag added to
+		// the parser above and forgotten here lands on the refused side, where
+		// somebody notices, rather than being silently swallowed.
+		const COMMON_FLAGS = ["--provider", "--base-url", "--project"];
+		const credentialFlags: readonly string[] = FLAGS_BY_PROVIDER[provider];
+		const other = provider === "anthropic" ? "openai" : "anthropic";
+
+		for (const flag of seen) {
+			if (credentialFlags.includes(flag) || COMMON_FLAGS.includes(flag)) {
+				continue;
+			}
+			// Name where the flag DOES belong when we know, because "unknown
+			// flag" leaves the reader guessing at a typo they cannot see.
+			const belongsElsewhere = (
+				FLAGS_BY_PROVIDER[other] as readonly string[]
+			).includes(flag);
+			console.error(
+				belongsElsewhere
+					? `${flag} belongs to --provider ${other}, and this group is --provider ${provider}. ` +
+							`${provider} auth takes ${credentialFlags.join(" or ")}.`
+					: `Unknown flag: ${flag}. ` +
+							`Known: ${[...credentialFlags, ...COMMON_FLAGS].join(", ")}.`,
+			);
+			process.exit(1);
 		}
 
 		let group: AuthGroup;
@@ -1266,8 +1308,14 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 		console.log(`Removed auth group "${name}" from global config.`);
 	} else {
 		console.error("Usage:");
+		// Per provider, because the credential flags are NOT interchangeable: an
+		// `--auth-json` on an anthropic group is refused now, and a usage line
+		// listing all three as one set would send the user straight into it.
 		console.error(
-			"  mxd config auth add <name> --provider <anthropic|openai> [--key <key> | --oauth-token <token> | --auth-json <path>] [--base-url <url>]",
+			"  mxd config auth add <name> --provider anthropic --key <key> | --oauth-token <token> [--base-url <url>]",
+		);
+		console.error(
+			"  mxd config auth add <name> --provider openai    --key <key> | --auth-json <path>   [--base-url <url>]",
 		);
 		console.error("  mxd config auth list");
 		console.error("  mxd config auth remove <name> [--global|--project]");

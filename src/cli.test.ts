@@ -251,7 +251,13 @@ describe("cli: global config lives in the data dir, same as the daemon reads", (
 	});
 
 	test("config set --global writes the data dir's config and leaves HOME's alone", async () => {
-		const proc = runCli(["config", "set", "model", "chosen-by-user", "--global"]);
+		const proc = runCli([
+			"config",
+			"set",
+			"model",
+			"chosen-by-user",
+			"--global",
+		]);
 		const stderr = await new Response(proc.stderr).text();
 		expect(await proc.exited, `stderr: ${stderr}`).toBe(0);
 

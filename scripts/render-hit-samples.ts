@@ -22,9 +22,9 @@ import {
 	projectIndexDbPath,
 	projectTasksDir,
 	projectTreeJsonPath,
+	resolveDataDir,
 } from "../src/data-paths.ts";
 import { formatTieredHits } from "../src/orchestrator-tools.ts";
-import { resolveDataDir } from "../src/data-paths.ts";
 import { createExecutionProbe } from "../src/search-hit-format.ts";
 import { searchIndex } from "../src/task-index.ts";
 import { TaskTracker } from "../src/task-tracker.ts";
