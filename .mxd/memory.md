@@ -49,8 +49,8 @@ cannot get back. The failure has one shape every time: pipe to `tail -8`, see `2
 discover you cannot see *which* two, re-run with `| grep fail`, and get a **different** flaky subset
 — because these tests flake at the scheduling level (ports, filesystem races, timer precision) and
 there is no file ordering guarantee, so the grep run is questioning a different run than the one
-that failed. Run it bare and read the saved file. ⚠️ Copy that path out of the tool result rather
-than typing one from memory: it lives under the per-user `$TMPDIR`, and `/tmp/mxd/` also exists and
+that failed. Run it bare and read the saved file. **Copy that path out of the tool result rather
+than typing one from memory**: it lives under the per-user `$TMPDIR`, and `/tmp/mxd/` also exists and
 is empty, so a remembered path gives you "the tool lied to me".
 
 **The exit code and the pass count are two different claims, and only the exit code covers what
@@ -129,7 +129,7 @@ must find.
 architecture make this CLASS of bug easy?** The recurring answers are duplicate codepaths, lifecycle
 coupling, legacy fallbacks masking bugs, and lazily-optional fields.
 
-⭐ **The compiler enumerates only what it can TYPE. Its silence means "nothing typed points here" —
+**The compiler enumerates only what it can TYPE. Its silence means "nothing typed points here" —
 it never means "nothing points here".** Anything reaching a symbol by NAME is invisible to it:
 string-keyed dispatch, an event-type name matched across a process boundary, a field an external
 system keys on. The asymmetry is what earns this a paragraph — a typed break costs one compiler
@@ -158,7 +158,7 @@ catches more — ***"still true" is not "still accurate"***: one sentence surviv
 while the mechanism under it was replaced, and a check looking only for false claims walks straight
 past that.
 
-⭐ **The vestigial kind is the one an accuracy audit can never catch, because it is not inaccurate.**
+**The vestigial kind is the one an accuracy audit can never catch, because it is not inaccurate.**
 Found 2026-07-30 in the system prompt: *"Trigger on the question you're holding — not on an
 unfamiliar area, not on a task about to be created."* Both negations named the two triggers a
 PREVIOUS revision had used. To the author, mid-correction, that clause was the whole point; to every
@@ -172,7 +172,7 @@ the same round proved the grep is only a candidate list, since every other negat
 (`instead of duplicating`, `not something you feel`, `not a stopping point`) names something the
 reader can see and is doing real work.
 
-⚠️ **And grep for the SENTENCE, not just the symbol** — a rule stated in prose lives in more places
+**And grep for the SENTENCE, not just the symbol** — a rule stated in prose lives in more places
 than a grep for the CODE finds, and the distant surfaces are exactly the ones without the identifier
 in them. **The highest-risk prose surface here is the compaction checkpoint (`src/compaction.ts`),
 and it is nowhere near the code it describes.** It is injected into an agent that has just lost its
@@ -307,7 +307,7 @@ write has landed — which of the two possible worlds can you come back from?**
   two data structures. A "fix" that only edits `messages[]` leaves the poison on disk and it comes
   back on the next resume.
 
-## ⚠️ Writing this file
+## Writing this file
 
 What earns a place is the blockquote at the top of this file. **The reorganization procedure, the
 rot taxonomy, the condensing rules and the measurement test all live in `.mxd/memory-reorg.md`** —
@@ -319,7 +319,7 @@ about code.
 `edit_file` (match the last lines, extend) or `echo >> .mxd/memory.md`. Update it BEFORE calling
 `done()`, and commit it alongside the code it describes.
 
-⚠️ **Searching THIS file: anything over ~60 characters needs a multiline search.** It is hard
+**Searching THIS file: anything over ~60 characters needs a multiline search.** It is hard
 wrapped near 100 columns and the wrap lands mid-phrase, so a single-line `grep` for a sentence you
 can see with your own eyes returns **0**. `git log -S"<long phrase>"` fails identically, so "when
 did this sentence arrive" archaeology comes back silently empty. **The damage is the opposite of a
@@ -327,12 +327,14 @@ missed match**: you conclude the file does not say a thing, and then write it a 
 is exactly what a reorganization exists to remove. Search a short fragment, or collapse newlines
 first.
 
-Two smaller facts about that hard wrap, both of which cost a cleanup pass. **`⚠️` is TWO code
-points, not one**, so wrapping by eye to "100 columns" silently overshoots on every line carrying
-one — one rewrite came out at 580 over-long lines that looked correct in an editor. And **a wrapped
-line must never BEGIN with `>`, `|`, `#`, `-` or `=`**: markdown reads those as block markers before
-it ever sees the inline code span they were part of, so breaking `` `x.length >= 1` `` across a line
-turns the rest of the paragraph into a blockquote.
+Two more facts about that hard wrap, both of which cost a cleanup pass. **A wrapped line must never
+BEGIN with `>`, `|`, `#`, `-` or `=`**: markdown reads those as block markers before it ever sees the
+inline code span they were part of, so breaking `` `x.length >= 1` `` across a line turns the rest of
+the paragraph into a blockquote. And **"100 columns" is not one measurement** — bytes, code points
+and display columns all differ here, because the file carries Chinese in its decision quotes and a
+CJK character is one code point occupying two columns. Wrap against code points and check the
+result; an earlier rewrite trusted an editor's ruler and came out at 580 over-long lines that looked
+correct on screen.
 
 ## Editing the system prompt
 
@@ -343,7 +345,7 @@ architecture and pitfalls. The one matrix-internal detail the prompt is allowed 
 path where pre-compaction events are preserved, because a compacted agent otherwise has no way to
 read its own history.
 
-⭐ **The craft lessons in THIS file cannot be relocated to the prompt, and the attempt is the
+**The craft lessons in THIS file cannot be relocated to the prompt, and the attempt is the
 proof.** It looks correct — "universal lessons belong in the universal prompt" follows directly from
 the split above — and it was executed far enough to measure: the movable part shrank from an
 estimated **310 lines to 82**, because **each rule here is welded to the specific thing that
@@ -353,7 +355,7 @@ argument. The split still holds for a genuine DUPLICATE, where the prompt states
 this file merely repeats it. It fails here because there is no duplicate: the prompt has the
 principle and this file has the only evidence for it. **Someone will propose the move again.**
 
-⚠️ **The prompt contradicts itself across sessions and nothing catches it.** This file has regions,
+**The prompt contradicts itself across sessions and nothing catches it.** This file has regions,
 so putting a claim next to its refutation is a move you can actually perform; **a prompt is one
 linear argument, and two sentences sixty lines apart are never brought together by anything.** It
 does not present as a conflict either — both are individually true and well written, and they only
@@ -363,16 +365,16 @@ in a context that runs out"*, the other existed to establish *"compaction is a c
 stopping point"*. **So read the recent prompt DIFFS before editing, then re-read the whole thing** —
 the round that INTRODUCED that contradiction substituted a targeted grep for the full read.
 
-⭐ **The split above is stated by CONTENT and was never stated by FORM, so the content lands in the
-right file while THIS file's voice comes with it.** Measured 2026-07-29 on `src/system-prompts.ts`:
-**zero `⚠️`, zero `⭐`, zero `❗`, zero `✅` in 459 lines** — 86 `**bold**` and 39 all-caps, and
-its hardest rules are bold plus one clause of why (*"**Never** `git checkout` to switch branches
-— it corrupts the worktree."*). This file has 100 `⚠️` and 36 `⭐`. An agent that has just spent
-an hour in here adds one to the prompt without ever deciding to. **The reason the prompt has none is
-structural, not stylistic: this file is SCANNED region by region, so a marker is a landing point;
-the prompt is read start to finish, so a marker can only claim "this line matters more than the
-other 458" — and every one of those was argued in individually.** Current count is zero, so adding
-one is opening a precedent, which needs its own argument.
+**Neither document uses attention markers, and the reason is worth keeping now that the contrast
+that taught it is gone.** Measured 2026-07-29 on `src/system-prompts.ts`: zero of them in 459 lines,
+against 86 `**bold**` and 39 all-caps, with its hardest rules carried by bold plus one clause of why
+(*"**Never** `git checkout` to switch branches — it corrupts the worktree."*). This file used to
+carry 306, and an agent that had just spent an hour in here would add one to the prompt without ever
+deciding to. **The user removed them from this file too (2026-07-30), which retires the import
+hazard and leaves the underlying rule, which was always the better argument: a marker claims that a
+line matters more than the lines around it without making the case, and emphasis has to be earned
+per line.** Bold the assertion, and let the sentence say why it is one. Adding a marker back to
+either document is opening a precedent and needs its own argument.
 
 **The same split governs SENTENCES, and the test is instruction vs inference.** The user's edit is
 the template: from *"it lists structure, not relevance, and it hides closed tasks by default, so it
@@ -382,7 +384,7 @@ the reader infers it unaided. **Anything shaped like *"so this leads to…"*, *"
 shape as…"* or *"measured, it was…"* is evidence: it belongs here, and in the prompt it is
 weight without instruction.** Fact stays, inference goes.
 
-⭐ **Describing a successful piece of archaeology is not a dispatchable instruction. The former only
+**Describing a successful piece of archaeology is not a dispatchable instruction. The former only
 has to be TRUE; the latter also has to have a CALL behind it.** Three instances in one evening, in
 three different subsystems, which is what makes it a class rather than a slip: *"blame the line and
 you'll find the task"* (the id is on 102 of 1280 merges); *"carry the timestamp back to the task
@@ -395,7 +397,7 @@ Every one was written by someone who had really done it, or watched it work.
 **The check is one question and it is cheap: for every "you should X" you are about to write, name
 the tool call X is. If you cannot, it is prose, not an instruction.**
 
-⚠️ **The mechanism that produces it: recounting your own success COMPRESSES parallel routes into
+**The mechanism that produces it: recounting your own success COMPRESSES parallel routes into
 one, because in memory it was a single win.** Traced exactly here — the real work was two separate
 moves, *timestamp → grep the JSONL* and *concepts → `search_tasks` the tree*; the recounting came
 out as "use the time to locate it in the task tree and the JSONL", one route with the tree bolted
@@ -404,7 +406,7 @@ did the work was not the person who wrote the unexecutable line, and neither cou
 alone** — the doer never issues the instruction, and the writer is working from a description that
 is already wrong. Ask for the call, not for the story.
 
-⭐ **Its other half: a familiar pattern name is a HYPOTHESIS to check, never an argument.** Same
+**Its other half: a familiar pattern name is a HYPOTHESIS to check, never an argument.** Same
 evening, 2026-07-29. A prompt line said *"check `get_tree` for closed tasks in the same area"*,
 which is wrong because `get_tree` hides closed by default; fixing the line to say `search_tasks`
 was the whole fix. A proposal to ALSO make `get_tree` disclose what it filtered was framed as *"the
@@ -415,7 +417,7 @@ layer.** Cost: zero real defects fixed, plus a nearly-shipped break of `get_tree
 contract (`availability: "both"`, so clients `JSON.parse` `content[0].text`, and the note was
 concatenated onto it) — a bug that existed *only* because of the scope expansion.
 
-⚠️ **The first retraction reached for a stronger claim than it had, and that claim was FALSE:
+**The first retraction reached for a stronger claim than it had, and that claim was FALSE:
 *"`get_tree` has no defect — it does exactly what it declares."*** It came from correctly
 establishing that `get_tree` is **not a blind instrument** and then silently upgrading that to *not
 a bad tool*. Those are different assertions and only the first was checked. **`get_tree` IS a poor
@@ -436,7 +438,7 @@ is why this ended up here instead of shipping:
 tool was fine — because the tool's problem is not at that door.** Handler output disclosing a count
 fixes none of bluntness, whole-tree scope, or the binary filter.
 
-⭐ **The transferable distinction, worth more than the retraction: "several PARTS of one design" and
+**The transferable distinction, worth more than the retraction: "several PARTS of one design" and
 "several ENTRANCES to one rule" feel identical on site and have OPPOSITE remedies.** Entrances ask
 you to COMPLETE — deploy the same rule at the door you missed, and the work is mechanical because
 the decision was already made. Parts ask you to DECIDE — go read the design and judge whether the
@@ -446,7 +448,7 @@ action was executed against something that needed a decision** — which is why 
 nobody had chosen, at a layer nobody had picked. **The tell is cheap: for an entrance you can name
 the rule and point at where it already runs. If you cannot, you are holding a proposal.**
 
-⭐ **"This is not a problem" is an assertion that needs evidence, and it is asked for evidence far
+**"This is not a problem" is an assertion that needs evidence, and it is asked for evidence far
 less often than "this IS a problem".** A claim of a defect gets challenged, reproduced, measured; an
 all-clear closes the subject. Two of this file's most expensive entries are all-clears that nobody
 re-opened — *"all verified clean"* for 115 days, and every gate that printed a pass. **The
@@ -455,7 +457,7 @@ makes a CLAIM it does not honour** (`All checks passed.` over 8% of lines; `sear
 could not fully see), and `get_tree` asserts nothing, so it is not that bug. **Just do not let "not
 that bug" answer "not a bug".**
 
-⚠️ **The test written to prove the feature worked was also the evidence it was broken.** It read
+**The test written to prove the feature worked was also the evidence it was broken.** It read
 `JSON.parse(text.slice(0, text.indexOf("\n\n[")))` — **a payload that needs string surgery before
 it parses is not JSON**, and that line was authored, run green, and re-read during a mutation pass
 without the question being asked. No existing test caught the real break either, because every
@@ -470,7 +472,7 @@ prose — so undoing it was one `git revert` with no surgery and nothing else di
 question that killed it was the plainest one available, asked by the user: *"how did a system-prompt
 task get to needing a change in `get_tree`?"*
 
-⚠️ **Third time in one evening that the answer was already in the tree and someone searched
+**Third time in one evening that the answer was already in the tree and someone searched
 elsewhere first** — the other two being the `update_task` status question and this file's own
 history. **Both retractions above were avoidable by one `search_tasks("get_tree")`**, which is the
 tool the entire task was about adding pointers to. Reaching for the tree is not yet reflex even
@@ -480,14 +482,14 @@ while writing the prompt that tells everyone to reach for it.
 # How This Project Fools Itself
 ---
 
-## ⭐ Plausible and wrong
+## Plausible and wrong
 
 > **The expensive failures here have not been mistakes that looked like mistakes. They have been
 > well-written, well-evidenced, plausible things that were wrong — and each one then LOWERED THE BAR
 > for everything downstream of it, because a check is only ever judged adequate against the
 > explanation you currently believe.**
 
-⭐ **What installs a fiction here is never a guess. It is something that LOOKS like evidence** — a
+**What installs a fiction here is never a guess. It is something that LOOKS like evidence** — a
 real error message carrying an unverified attribution, or a real published mechanism fitted to two
 data points. **A guess invites checking; a citation suppresses it.** So the detectors below are all
 about provenance rather than about plausibility.
@@ -549,7 +551,7 @@ goes looking.
   while you are busy, and "I'll report it when I'm done" costs nothing to think and everything if
   the plan was wrong.
 
-## ⭐ Your instrument is a claim until you have made it fail
+## Your instrument is a claim until you have made it fail
 
 **Every measuring thing in this repo has, at least once, answered confidently and wrongly — and the
 shape is always the same: it produces the COMFORTABLE answer.** A search returns `(no matches)` and
@@ -695,7 +697,7 @@ never existed. **Date the artifact, not the review: a verdict names a commit or 
 The reusable form: **a review is evidence only to the extent its reference is INDEPENDENT of the
 thing reviewed.** Your own change-list, task description or previous summary are not.
 
-⭐ **A checklist derived from the artifact can only find contradictions, never omissions.** Walk a
+**A checklist derived from the artifact can only find contradictions, never omissions.** Walk a
 document checking each claim and every finding you can possibly produce has the form "it says X, the
 code says Y". You cannot produce "the code has Z and the document has never mentioned it", because
 nothing in the document ever raised Z. That audit's findings were **100% contradictions and 0%
@@ -731,7 +733,7 @@ flag.** That is the durability property the whole design rests on, and it is why
 would add a fifth state gets weighed so carefully (see the interrupt marker below, which turned out
 not to be one).
 
-⚠️ **`hasPendingImplicitYield` must stop at `messages_consumed`.** It used to walk straight over
+**`hasPendingImplicitYield` must stop at `messages_consumed`.** It used to walk straight over
 consumptions, land on the `assistant_text` from BEFORE the message, and report a park — so the loop
 parked on a conversation ending in an unanswered user message and **a message drained into a turn
 the daemon died inside was silently never answered.** The window is a whole API call wide.
@@ -762,7 +764,7 @@ in "32 → 0", which says what stopped being spent at boot and nothing about whe
 needed. **Removing an eager cost relocates it to the moment of first use — ask what is waiting
 there.**
 
-⭐ **The boundary condition on hoisting ANY such decision is not the obvious one.** It is **not**
+**The boundary condition on hoisting ANY such decision is not the obvious one.** It is **not**
 "the steps before the loop only read the log" — two of them manufacture input. The rule is that **a
 decision can be hoisted iff every input it consumes is computable WITHOUT performing the step that
 would create it**; stated the wrong way round, the next person concludes that a step which appends
@@ -771,7 +773,7 @@ LAUNCHES**, so it reaches `runAgentForNode` and gets reported; swallowing it int
 turns a loud failure into a node that never comes back.
 
 **The one genuinely new rule is the `interrupt` exclusion**, a subtraction with a single named
-member: it is the only message the loop writes ABOUT ITSELF rather than delivering as input. ⚠️ **It
+member: it is the only message the loop writes ABOUT ITSELF rather than delivering as input. **It
 keys on `source`, and must not be widened to "quiet".** `quiet` describes one moment of delivery and
 **does not survive to JSONL**; worse, the generalisation is wrong on its own terms — crash-recovery
 `task_complete` is delivered quiet *specifically so it does not double-launch*, so a "quiet sources
@@ -791,7 +793,7 @@ decided to launch" and "the session exists".** It must be taken with no await be
 loser's throw marked the node `failed` and sent a bogus `task_complete(failed)` while the winner was
 still running. **Two guards over one window, added years apart for different symptoms, and the third
 consumer of that window has none** — which is why the close bug reads as unrelated until you notice
-they are all timing the same seconds. ⚠️ **Never add a node to it
+they are all timing the same seconds. **Never add a node to it
 from outside `runAgentForNode`**: `autoResumeProjects` once pre-registered every node it was about
 to launch, `runAgentForNode` saw the set and returned early, and no agent ever started.
 
@@ -803,14 +805,14 @@ exit the loop, no status update; done() is an *intended orphan* like yield, no t
 **Phase 2 is daemon-side** (status → verify/failed, `task_complete` to the parent, `done_notified`
 for crash recovery). `session = null` is the irreversibility boundary.
 
-⚠️ **`task_complete` must be DURABLE before `done_notified` is written.** The marker means "Phase 2
+**`task_complete` must be DURABLE before `done_notified` is written.** The marker means "Phase 2
 finished", so if it lands while `task_complete` has not, a crash in that window leaves the parent
 waiting forever with nothing to re-deliver; the reverse window merely re-delivers a duplicate.
 **That asymmetry is the whole reason for the ordering — a duplicate completion is recoverable, a
 lost one hangs the parent.** The naive version looks fine, because the marker lands on this node's
 write queue synchronously while `task_complete` goes through `await getTracker` first.
 
-⚠️ **The loop promise must settle on EVERY path**, resolve inside the `finally`, throws logged and
+**The loop promise must settle on EVERY path**, resolve inside the `finally`, throws logged and
 not rethrown. `stopTask` awaits it with **no timeout**, so one leaked promise hangs the stop
 forever.
 
@@ -853,7 +855,7 @@ indistinguishable from a real crash to anyone reading the log. **The hang was th
 worth saying in those words, because the obvious framing ("a parent waits forever") describes the
 bounded consequence and silently sets the priority for the whole class from it.
 
-⚠️ **`MessageQueue.enqueue()` returns `void | Promise<void>`**, returning the Promise exactly when
+**`MessageQueue.enqueue()` returns `void | Promise<void>`**, returning the Promise exactly when
 the before-first-message hook is armed — a fresh session, and after every compaction re-arm. The
 idiom around it is a sync `try/catch` at five production sites including `deliverMessage`, and **a
 sync try/catch does not cover the async branch**: the rejection escapes and `return "enqueued"`
@@ -890,7 +892,7 @@ shape"**, because both produce the same round.
 runtime code that sets status directly and never calls `onDone`; wiring it in would either break the
 boundary or route crash recovery through a plugin hook.
 
-⚠️ **When you rename a tool param, grep the FRONTEND**: done-card consumers read it BY NAME through
+**When you rename a tool param, grep the FRONTEND**: done-card consumers read it BY NAME through
 index access, so typecheck cannot catch it and integration tests do not render — the cards would
 have quietly lost their text. Same by-name blindness as *Changing code here*.
 
@@ -908,12 +910,12 @@ misunderstood for a long time:
 > in JSONL, because the walker merges adjacent tool_results into one user message and the live path
 > must match. It is UNNECESSARY when the message it would merge into is TRANSIENT.
 
-⚠️ **So do not "simplify" it away by analogy with the compaction deferrals that were deleted.**
+**So do not "simplify" it away by analogy with the compaction deferrals that were deleted.**
 Nothing separates the extras' results from the real yield's in JSONL, so splitting the live push
 would require inventing a JSONL boundary event — strictly more machinery. The compaction deferrals
 were removable for the opposite reason: the summarization instruction is never persisted at all.
 
-⚠️ **Duplicate `done()` calls must exit as orphans. Do NOT emit tool_results for all of them.** That
+**Duplicate `done()` calls must exit as orphans. Do NOT emit tool_results for all of them.** That
 was tried, to avoid a repair path; it works, and it costs behavior — with every done answered,
 resume detects a generic interrupted-resume instead of a done-resume, so the woken agent silently
 loses its done-resume context.
@@ -922,7 +924,7 @@ loses its done-resume context.
 
 `/compact` enters the ordinary path unconditionally, whatever the conversation looks like.
 
-⚠️ **Do NOT add a short-circuit for a conversation "too short to be worth compacting".** There was
+**Do NOT add a short-circuit for a conversation "too short to be worth compacting".** There was
 one, twice, and each bricked sessions in its own way: v1 emitted the markers **without rebuilding
 context**, so the next launch started on an ASSISTANT turn and every request 400s; v2 — the fix for
 v1 — cleared the flag and continued with nothing pushed, so the very next request ended on the
@@ -943,7 +945,7 @@ calling the API until the context window rejects it. **It is not a consequence o
 manual short path** — the two used to be independent `if`s and `auto + len <= 4` already fell
 through both.
 
-⚠️ **Why the floor exists at all**, since "delete the magic 4" is the obvious reading and would
+**Why the floor exists at all**, since "delete the magic 4" is the obvious reading and would
 reintroduce something worse: a freshly compacted session sits at ~1 message, so if the token count
 is STILL over threshold — system prompt plus tools plus summary already exceed it — the loop would
 compact again immediately, forever. **The floor is a PROXY, and a bad one: the condition it stands
@@ -979,7 +981,7 @@ that" needs the text they were reading; and emitting it as a normal final `assis
 clears the UI's streaming partial. Never the thinking blocks (no signature), never a half-emitted
 `tool_use`.
 
-⚠️ **Do NOT front-run the queue when parking.** A message drained at the cancellation point would be
+**Do NOT front-run the queue when parking.** A message drained at the cancellation point would be
 merged into the turn's user message and then sat on — the loop would wait for a *further* message
 before calling the API, so "stop, do X instead" would look swallowed. Left in the queue,
 `handleImplicitYield` returns it immediately. **`consume()` is called when the loop PARKS, not when
@@ -991,7 +993,7 @@ its own leaves the flag set, swallowing the next message.
 **`done()` wins a race with the stop button**, because that is completion, and marking it "not
 executed" would strand the parent forever.
 
-⭐ **"I pressed stop, then restarted the daemon, and it started working again" used to be an accepted
+**"I pressed stop, then restarted the daemon, and it started working again" used to be an accepted
 boundary, and how the trade CHANGED is the transferable part.** In the window *interrupt → restart
 with no message between*, the log could not tell "the user stopped me" from "I died mid-work" — an
 interrupt during a tool leaves tool_results, byte-for-byte what a daemon death inside an API call
@@ -1041,12 +1043,12 @@ keep in sync. **The field write and the broadcast must happen in the same functi
 the setter is passed INTO `handleImplicitYield` rather than the event emitted there and the field
 written at its four call sites — split them and call site number five gets only one half.
 
-⚠️ **`idle` is announced only when the loop will ACTUALLY park.** Not flicker avoidance: it is what
+**`idle` is announced only when the loop will ACTUALLY park.** Not flicker avoidance: it is what
 makes `idle` mean "waiting for you" rather than "reached a yield point", and both consumers depend
 on the stronger meaning — `yield_external` wakes an external client on it, and the UI re-fetches
 JSONL on it.
 
-⚠️ **There is a `thinking` transition on the way OUT of idle, and the argument for omitting it was
+**There is a `thinking` transition on the way OUT of idle, and the argument for omitting it was
 wrong in an instructive way.** The reasoning: every path leaving `handleImplicitYield` reaches the
 API block, so a second setter is unobservable — *the emitted event sequence is identical either
 way*. True, and irrelevant, because **consumers read the STORED value, not the event stream.**
@@ -1110,7 +1112,7 @@ complete output on disk. Now the instinct has nothing to act on. Streams are mer
 background share one `formatBashResult` so a `background_complete` is byte-identical to the
 foreground result for the same command.
 
-⭐ **The framing generalises: when agents repeatedly do X, ask whether the motivation is legitimate,
+**The framing generalises: when agents repeatedly do X, ask whether the motivation is legitimate,
 and if it is, make the tool satisfy it naturally instead of enforcing against it. If you find
 yourself adding a parser, a rejection or a warning to the new tool, you have drifted** — the point
 is to make the shortcut unnecessary, not forbidden.
@@ -1127,7 +1129,7 @@ evidence chain — empty `git status --porcelain`, `ls` returning "No such file 
 check-ignore` hit — and **filed a two-bug report against this daemon.** Every link was individually
 valid; they were answers about a different repository.
 
-⭐ **The general rule, worth more than the feature: a one-shot notification cannot signal a
+**The general rule, worth more than the feature: a one-shot notification cannot signal a
 persistent condition — the notification's lifetime has to match the state's.** The old warning fired
 at the moment of the `cd` and never again, so it covered the one result the agent was already paying
 attention to and left silent every result where the mistake actually does its damage. Now every
@@ -1137,7 +1139,7 @@ condition is a strict SUBSET of it**, so "keep both" means printing the same fac
 What is NOT redundant is `workdir set to X from now on`: that reports an EVENT, the notice reports a
 STATE, and neither substitutes for the other. (Same distinction as an SSE delta versus a snapshot.)
 
-⚠️ **Which checkout a directory belongs to is answered by `git rev-parse --show-toplevel`, and both
+**Which checkout a directory belongs to is answered by `git rev-parse --show-toplevel`, and both
 obvious simplifications are wrong.** A path-prefix test calls `.worktrees/<other-task>` "inside",
 because it IS under the main repo root — and for ROOT that covers *every* other agent's checkout,
 the single most dangerous place to stand unknowingly, where a write or a commit lands in someone
@@ -1174,7 +1176,7 @@ second tool is what turned two bug reports into a class.
   in the search root. A slash-free glob is now promoted to `**/<glob>`; one containing `/` is a path
   pattern and passes through untouched. Same split ripgrep makes.
 
-⭐ **What makes this class invisible is that there is no line to review.** Nothing anywhere said
+**What makes this class invisible is that there is no line to review.** Nothing anywhere said
 "skip hidden directories" or "match only the top level" — the semantic lived in a library's default,
 i.e. in the *absence* of an argument, and **code review cannot catch an absence.** Hence the
 discipline at every walker now: **decide every behaviour you depend on explicitly, even when you
@@ -1207,7 +1209,7 @@ one. And you search for things you do NOT
 already know, so a false `(no matches)` is indistinguishable from the truth AND confirms your
 hypothesis, which is the most comfortable answer there is.
 
-⚠️ **The empty result is the detectable one; the partial result is the dangerous one.** Same bug,
+**The empty result is the detectable one; the partial result is the dangerous one.** Same bug,
 same tool, same agent, 38 seconds apart: a long confident answer that silently omitted the file
 *defining* the symbol went unchallenged and was acted on 2 seconds later, while an empty result for
 something the agent had read 5 events earlier got double-checked immediately. **An under-report is
@@ -1257,7 +1259,7 @@ also starts returning symlinked files `search` has never returned, so one file i
 three times under different paths. **Not following links is also the entire termination argument** —
 there is no visited-inode set and it needs none.
 
-⚠️ **Errors must THROW, not be swallowed.** The first version wrapped `readdirSync` in try/catch and
+**Errors must THROW, not be swallowed.** The first version wrapped `readdirSync` in try/catch and
 continued, with a comment asserting that matched `scanSync`, written without measuring it.
 Swallowing turns "your path is wrong" and "the directory holding the definition is unreadable" into
 `(no matches)` — exactly the failure mode this family has already shipped twice.
@@ -1269,7 +1271,7 @@ and early termination are mutually exclusive — which is fine now that the walk
 is the cheap one, and which the old early break never exercised anyway, **exactly the condition that
 would have made a regression here invisible.**
 
-## ⚠️ In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand
+## In a self-bootstrapping project, fixing a tool's SOURCE does not fix the tool in your hand
 
 > The tools an agent calls belong to the **running daemon**, not to anybody's worktree. So *"I just
 > fixed X, therefore I can use X"* is **false until the daemon restarts** — and false for every
@@ -1283,7 +1285,7 @@ were in the same task. Everything else about instruments answering wrongly is in
 a claim until you have made it fail*; what is specific here is that **the daemon is the reason your
 instrument can be stale while your source is correct.**
 
-⚠️ **Sibling trap, and the cheaper half to forget: a single-line grep is a claim about LINE
+**Sibling trap, and the cheaper half to forget: a single-line grep is a claim about LINE
 BREAKS.** `grep '\.catch(async'` returns **zero** hits in a repo that has one, because the formatter
 split the call across two lines. Reach for a multiline search whenever the pattern spans a call
 boundary the formatter is free to break.
@@ -1296,7 +1298,7 @@ list; `mcp__brave-search__brave_web_search` works, called by name. **"It is not 
 evidence that it does not exist.** (Gotcha: an unlisted tool has unconstrained argument types, so a
 numeric `count` arrives as a string and fails validation — pass the required argument alone.)
 
-⚠️ **Third member, and the one that bites hardest in THIS repo: `--include='*.ts' --include='*.sh'`
+**Third member, and the one that bites hardest in THIS repo: `--include='*.ts' --include='*.sh'`
 silently excludes every git hook, because a hook has NO FILE EXTENSION.** Caught during the
 `matrix.taskId` → `mxd.taskId` rename: the extension-scoped grep reported a complete rename while
 `.hooks/worktree/prepare-commit-msg` — **the file holding the READ** — still looked for the old key,
@@ -1306,7 +1308,7 @@ rename with one whole-tree grep carrying no `--include` at all.** The extensionl
 small and load-bearing: `.hooks/pre-commit`, `.hooks/worktree/prepare-commit-msg`, and anything
 `core.hooksPath` ever points at.
 
-## ⚠️ "Never offer a remedy that will not work" costs MORE in a tool error than in a UI
+## "Never offer a remedy that will not work" costs MORE in a tool error than in a UI
 
 The rule is already written down for greyed buttons under *Blocked buttons are greyed and explained,
 never hidden*. It reappeared twice in `closeTaskOp`, and **the second medium is the expensive one: a
@@ -1325,12 +1327,12 @@ session, so for it only the second applies and the first is a **no-op, not a con
 old whitelist read that no-op as grounds to refuse.
 
 **Instance 2 — the false remedy inside the guard that STAYS.** The old message was *"Cannot close a
-running task. Stop it first or wait for done()."* ⚠️ **`stopTask` never touches `status`,
+running task. Stop it first or wait for done()."* **`stopTask` never touches `status`,
 deliberately — a stopped task stays `in_progress` precisely so it can resume.** So stopping lands
 the caller back on the same refusal, and an agent cannot even take that road: **there is no stop
 tool.**
 
-⭐ **The fix for a false remedy is a SHORTER message, not a more complete one — and two drafts went
+**The fix for a false remedy is a SHORTER message, not a more complete one — and two drafts went
 the wrong way before this landed.** The instinct when correcting a wrong instruction is to explain:
 name the false path, name the alternative, price it. Both intermediate drafts did exactly that, and
 both were wrong for one reason — **they generated COMPLETENESS where the reader needs an
@@ -1358,14 +1360,14 @@ callers never set them. **The chain exists so that history can be ABANDONED with
 a rollback moves the head, the events after it simply stop being reachable, and the evidence needed
 to debug a corruption survives it.** Nothing in this codebase may address an event by file position.
 
-⚠️ **`{ eid, parentEid, ...event }` is WRONG, and it looks right.** When the input already carries
+**`{ eid, parentEid, ...event }` is WRONG, and it looks right.** When the input already carries
 those keys the spread overwrites the fresh values with the stale ones, while the key POSITION stays
 first so the line looks correct. Not hypothetical: `buildSessionRepair` re-appends unconsumed
 `message` events read out of the region it is about to drop, and with the naive spread they keep a
 `parentEid` pointing at an event no longer on the chain — the walk then hits a break and silently
 degrades to linear traversal, **which can resurrect rolled-back events.**
 
-⚠️ **`append`/`appendBatch` are fully SYNCHRONOUS. Do not "modernise" them to `fs.promises`.** Two
+**`append`/`appendBatch` are fully SYNCHRONOUS. Do not "modernise" them to `fs.promises`.** Two
 independent things depend on it, both failing silently: a `clear()` could bump the generation and
 unlink the file while the write was still queued, so the thread pool woke and **recreated the file
 it was writing to**; and the failed-write rewind only works while nothing can be stamped between the
@@ -1402,7 +1404,7 @@ refetch) lost them. The type filter inside the window is equally load-bearing in
 — the summarizer's own thinking and `<summary>` text must NOT come back, because the summary is
 already in context as `compacted_resume`.
 
-⚠️ **Do NOT encode the barrier as `compact_started.parentEid = null`.** It looks cleaner —
+**Do NOT encode the barrier as `compact_started.parentEid = null`.** It looks cleaner —
 termination collapses to the chain root and needs zero type knowledge — and it is wrong for two
 independently verified reasons. **A compaction is a 2-3 minute window whose outcome is unknown when
 `compact_started` is written**, so if the daemon dies inside it there is no summary but the chain
@@ -1414,7 +1416,7 @@ of this twice: **encoding structure in links fits a JUMP (rollback, repair — y
 when you write it); a compaction is an INTERVAL whose validity depends on a result you do not have
 yet. Do not express an undetermined fact as a link.**
 
-⚠️ **Being ON the active chain is NOT the same as being a legal rewind target**, and this is the
+**Being ON the active chain is NOT the same as being a legal rewind target**, and this is the
 most expensive corollary of the design. **The active chain is not a uniform `parentEid` chain — it
 is a CONSTRUCTED sequence.** The window messages are *spliced in* by the walker, adjacent in the
 resulting array but with parent links pointing into the region the summary replaced. Rewinding is a
@@ -1456,7 +1458,7 @@ the same reason, so there is exactly one implementation per provider. **The live
 cannot drift from JSONL reconstruction, structurally rather than by discipline.** If you are tempted
 to inline a bit of turn-building "just here", that is the thing being prevented.
 
-⚠️ **Multiline queue content must stay ONE text block.** Two earlier per-shape builders split queue
+**Multiline queue content must stay ONE text block.** Two earlier per-shape builders split queue
 messages on `\n` into separate blocks while JSONL reconstruction merged them back into one — a
 guaranteed prefix mismatch on every resume, and the reason turn-building was collapsed onto a single
 path at all.
@@ -1477,7 +1479,7 @@ literally the rollback mechanism. Two shapes: append-only (an orphaned tool_call
 interrupted result) and jump-back (duplicate or out-of-order results). It runs before the provider
 loop starts.
 
-⭐ **The whole inheritance from the design this replaced: an index computed in one space and consumed
+**The whole inheritance from the design this replaced: an index computed in one space and consumed
 in another is a silent corruption engine.** Repair used to compute an index while the store
 truncated by physical line, and the two index spaces silently disagreed **twice** — once because the
 index was computed against the post-`compact_marker` slice while truncation counted from the top of
@@ -1497,13 +1499,13 @@ Three details that will each look removable:
 2. **Messages in the dropped region are replayed with fresh eids — ALL of them**, not just the ones
    without a `messages_consumed`. A message consumed into a turn the repair just dropped is exactly
    as absent as one that never arrived.
-3. ⚠️ **The synthetic status message is a USER message, and it is suppressed when the kept region
+3. **The synthetic status message is a USER message, and it is suppressed when the kept region
    ends in a pending yield/done.** Appending a user message after an unanswered intended-orphan
    `tool_use` breaks the pairing rule and produces a genuine 400. Older text called this an
    "alternation" guard; alternation is fictional and this is not it. **The word "alternation" in
    this codebase is not a reliable signal of anything — go read what the shape actually is.**
 
-⚠️ **A synthetic message must not use `source: "system"`.** It was tried; `formatBodyForAI`'s
+**A synthetic message must not use `source: "system"`.** It was tried; `formatBodyForAI`'s
 default branch returns `""` and the UI's materialization switch had no case for it, so the repair
 reason **silently rendered as an empty string** in both places. Use `createUserMessage` — do not add
 a new source variant to fix a rendering gap.
@@ -1519,7 +1521,7 @@ and delivers interrupt, edit and restart along with it. **The catalyst is now mo
 stayed, which is the bet the decision was making**: a hardcoded fallback would have become dead code
 the day we changed models.
 
-⚠️ **SCOPE, decided with the user and never widened: a rollback moves MESSAGES and nothing
+**SCOPE, decided with the user and never widened: a rollback moves MESSAGES and nothing
 else.** Files written, tasks created and commits made on the discarded branch stay made, so a
 rolled-back conversation can reference world-state produced by a branch no longer on the chain —
 an inconsistency that is ACCEPTED, not pending. That is why the impact dialog REPORTS what the
@@ -1548,7 +1550,7 @@ content did not change, so **one answer governs both buttons.**
 ZERO imports** — it consumes three verdicts and computes none. If it ever starts deciding something
 itself, that is when to split it.
 
-⚠️ **TOMBSTONE: two people tried to unify these on the same day. Do not.** Both made the **same
+**TOMBSTONE: two people tried to unify these on the same day. Do not.** Both made the **same
 mistake — taking a PROPERTY of a thing for the thing itself.** *"The gates are one invariant at two
 timescales"* explains a USER concept by its IMPLEMENTATION consequence; an end user has no notion of
 an unmatched tool call. *"The message is in the active chain, therefore it is rewindable"* takes a
@@ -1575,7 +1577,7 @@ hence the predicate is `isPriorWork`, not `isPark`. This exception was predicted
 the new rule and instead **grew**: 1513 of 2161 newly-blocked messages were yield turns, and it is
 the dominant shape for sub-agents, every one of which ends in `done()` and is later woken.
 
-⭐ **The evidence was being sampled at the wrong instant, and that is the reusable finding.** The
+**The evidence was being sampled at the wrong instant, and that is the reusable finding.** The
 first version tested for an unclosed tool_call at the message's **delivery** position. Real trace: a
 message arrived 10 seconds BEFORE the tool_call it was meant to be blocked by — at that moment the
 agent was composing the call, so nothing was outstanding — while a message arriving during the bash
@@ -1599,7 +1601,7 @@ silently vanishing control reads as broken, and the cases that most need an expl
 the ones left with no affordance to carry one; and the row is ✎ ↺ ⧉, so hiding makes Copy change
 position and a list ends up with two-button and three-button rows.
 
-⚠️ **Precedence is permanent-outranks-transient, not whichever the code tests first**:
+**Precedence is permanent-outranks-transient, not whichever the code tests first**:
 `unknown_message` → `no_rewind_point` → `did_not_start_run` → `agent_busy`. "Wait for the agent to
 stop" promises a remedy; on a permanently un-editable message the user waits, the agent stops, the
 button is still grey, and they cannot tell whether they waited wrong or the product is broken.
@@ -1640,7 +1642,7 @@ key change every time: measured as one MutationObserver batch with `added: 82, r
 entry.id}` is the wrong shape** even though it looks simpler: it moves the key at the end of every
 streamed block, adding a per-block remount that does not exist today.
 
-⭐ **Active-chain membership needs its own bit, and this is the general reason:**
+**Active-chain membership needs its own bit, and this is the general reason:**
 
 > **eid is an IDENTITY — immutable, per event. Membership is a RELATION between an event and the
 > current chain head.** A rewind changes it for a whole stretch of log without touching a single
@@ -1706,7 +1708,7 @@ END ITS TURN rather than call `yield()`**, because replying and then yielding in
 the reply *connector* text. `end_turn` is an implicit yield with identical pause semantics, so
 nothing is lost.
 
-> ⭐ **"Context = `messages[]`" is FALSE under this mechanism, and the model cannot detect the
+> **"Context = `messages[]`" is FALSE under this mechanism, and the model cannot detect the
 > divergence from inside.** The model sees its own originals; the client and the user hold only
 > server-rewritten summaries. **So an agent's memory of its own past replies is NOT evidence of what
 > the user saw** — when verifying user-visible behavior, read the JSONL or a debug snapshot, never
@@ -1728,13 +1730,13 @@ carries each rule with the real 400 string it mirrors, plus `PROBED_SHAPES` (eve
 actually sent, with the day we sent it) and `UNPROBED` (what we assert but have never asked the
 API).
 
-⚠️ **Do not re-enumerate the rules here.** This section used to, opening "these four are the API's
+**Do not re-enumerate the rules here.** This section used to, opening "these four are the API's
 actual rules" — and it was **five** within two days, with the fifth sitting in the very next
 paragraph, added later and reading as an elaboration rather than as the refutation it was. Nobody
 noticed, because a list and its correction do not look like a contradiction when they are adjacent
 and politely worded.
 
-⚠️ **"NOT rules" in that file means MEASURED LEGAL, not never-objected-to, and that distinction is
+**"NOT rules" in that file means MEASURED LEGAL, not never-objected-to, and that distinction is
 the whole bug.** From outside, a rule we never discovered and a shape we measured as legal read
 identically. `[{type:"text", text:""}]` sat under "NOT rules" as legal for two days and is in fact a
 400 in every position on either role. It is reachable: the walker rebuilds an empty `assistant_text`
@@ -1748,7 +1750,7 @@ tool_result, or between two batches of them, and you get a production 400 with a
 Results split across several user messages are fine, in any order; `[R1, text]` then `[R2, …]` is a
 400 because the trailing text ended the run.
 
-⚠️ **Probing the real API: the `systemPreamble` trap.** Any probe against the OAuth endpoint must
+**Probing the real API: the `systemPreamble` trap.** Any probe against the OAuth endpoint must
 send the auth group's `systemPreamble` as the FIRST system block, or every call 429s. A first-pass
 probe that omitted it produced a wall of rate limits that reads exactly like validation failure and
 nearly yielded the opposite conclusion.
@@ -1760,7 +1762,7 @@ A `session_config` event at the start of the JSONL holds the tools, `systemStabl
 strategy: on resume everything is read back from the stored config rather than recomputed, so the
 prefix is byte-identical and hits.
 
-⚠️ **The Anthropic prefix order is tools → system → messages, not system → tools → messages, so a
+**The Anthropic prefix order is tools → system → messages, not system → tools → messages, so a
 tools mismatch is a miss on the *entire* prefix.** This is why tools are frozen at all: MCP servers
 connect asynchronously, so registration order is non-deterministic and an unfrozen tools array would
 reshuffle itself between runs. Freezing them as a provider-agnostic `JsonTool` and emitting that
@@ -1772,7 +1774,7 @@ second-to-last: the last message sent is always a user message and Anthropic's 2
 caches everything before it, whereas the previous second-to-last strategy caused a full miss
 whenever only one user message existed — exactly the post-compaction restart case.
 
-⚠️ **Never add a per-request `anthropic-beta` header.** It overrides the client's `defaultHeaders`,
+**Never add a per-request `anthropic-beta` header.** It overrides the client's `defaultHeaders`,
 including the OAuth header, and silently breaks OAuth mode. Extended cache TTL is GA and needs no
 beta header. Note also that `{type: "ephemeral"}` and `{type: "ephemeral", ttl: "1h"}` are
 **different cache entries** — the TTL is part of prefix identity, which is why `cacheTtl` lives in
@@ -1801,7 +1803,7 @@ arguments, twice. **Every run is preceded by its positive control** — same pro
 the array — because *"it did not call the hidden tool"* and *"it did not want to"* are byte-identical
 output, and the control is not ceremony: on `claude-sonnet-4-6` it 400s, so that model's probe
 concludes nothing. First observed 2026-04-05, when root called `create_folder` by name out of a
-session frozen before that tool existed. ⚠️ **A hidden tool needs TWO properties, and the old
+session frozen before that tool existed. **A hidden tool needs TWO properties, and the old
 wording — *"the server dispatches any name to whatever handler exists"* — collapsed them into one
 place that was not even the right one.** The API's half is the half measured above: the model can
 generate a name the tools array does not contain. Matrix's half is `executeTool` looking that name
@@ -1823,14 +1825,14 @@ the ARGUMENTS matching the schema and say nothing about names, and OpenAI's own 
 system message to stop models calling functions that were not provided — advice that presupposes it
 happens.
 
-⚠️ **2026-07-29 could not measure it either, and why is worth more than the failure: THE OPENAI
+**2026-07-29 could not measure it either, and why is worth more than the failure: THE OPENAI
 PROVIDER IS NOT IN USE.** We bootstrap on Anthropic and always have. Both stored OpenAI credentials
 had expired — `~/.mxd/config.json`'s on 2026-04-10, `~/.codex/auth.json`'s on 2026-01-19 — and that
 is the symptom rather than the cause; nothing refreshes them either (`void this.refreshToken`, draft
 `01KYQJQC0Z3NQR51E8CPWNQQZA`). No traffic means no 400, no flake and no report, so **nothing we
 believe about OpenAI has been able to be contradicted by reality for months.**
 
-⭐ **Read that as an instruction, not a disclaimer: treat every OpenAI sentence in this file as
+**Read that as an instruction, not a disclaimer: treat every OpenAI sentence in this file as
 unchecked by default, and every Anthropic one as load-bearing until it isn't.** The two are written
 in the same voice today and are not the same grade of evidence — the Anthropic claims get hit by
 bootstrap traffic every day and fail loudly when wrong, while an OpenAI claim can only be wrong in
@@ -1880,13 +1882,13 @@ pollute history. The plugin namespace exists so a second plugin's data parks bes
 than colliding at the top level, which completes the "matrix is just a plugin" framing. Config
 merges in three layers: global < repo < local.
 
-⚠️ **`resolveConfig(base, ...overlays)` takes GLOBAL as the base at all three production sites, and
+**`resolveConfig(base, ...overlays)` takes GLOBAL as the base at all three production sites, and
 `""` is an overriding value** (the test is `value !== undefined`). So the reachable direction is a
 repo or local `"model": ""` **erasing a real global model** — desirable for a project pinned to a
 single-model endpoint, a silent downgrade when it is a typo. The reverse is structurally impossible:
 a global `""` is the thing being overridden and can never climb.
 
-⭐ **Root asserted that backwards TWICE in one evening, and the mechanism of the error is the entry,
+**Root asserted that backwards TWICE in one evening, and the mechanism of the error is the entry,
 because the line above already said `global < repo < local` and was read past both times.** The
 false claim came wrapped in a *correctly recalled* mechanism — `value !== undefined` is exactly
 right — and **naming a real mechanism precisely is what makes a wrong direction look checked**; it
@@ -1899,7 +1901,7 @@ operation to a `dataRoot` anywhere else — **any** spelling, not just `.slice(2
 the whole repo and fails if a second site appears, with one named allowlist entry. Three lines of
 defence, and each is there because the previous one might be relaxed: a strict regex at the input
 boundary, one resolver so a fix touches one file, and a post-resolve invariant that the result is
-still inside the project root. ⚠️ **Keep the third even though the regex already rejects traversal**
+still inside the project root. **Keep the third even though the regex already rejects traversal**
 — `resolveDataRoot("@/../etc")` used to return `dataDir/etc`, which is a cross-plugin attack.
 
 **A malformed manifest is FATAL at startup, not a warning.** Import errors are recoverable (skip the
@@ -1980,7 +1982,7 @@ transport did not have.**
 and delete used `slugify(node.title)`; a title can change after creation, so re-slugifying computes
 a different path and the real worktree is orphaned forever.
 
-⚠️ **A config write must never be able to wipe credentials**, and it took three fixes because there
+**A config write must never be able to wipe credentials**, and it took three fixes because there
 were three doors: `PATCH /config/global` rejects null for any top-level field (global config is a
 COMPLETE config, so `delete next[k]` wrote an incomplete one); `createDaemon` RETHROWS a load
 failure instead of falling back to `{...DEFAULT_CONFIG}`, because the silent fallback booted with
@@ -1993,7 +1995,7 @@ does (reject `in_progress`) nor what reset does (await loop exit) — it removed
 live process, destroying unmerged work, and a pending `done()` then read `getTask() === undefined`
 in Phase 2 and hung the parent forever. Semantic chosen: reset-style, not close-style.
 
-⭐ **The same principle one layer out, and it is the one rule in this file with three independent
+**The same principle one layer out, and it is the one rule in this file with three independent
 sets of evidence: a rule enforced at N of M doors is enforced nowhere**, because the others accept
 the same payload — and the door nobody remembers is reliably the second one. Here a message reaches
 the runtime through **`POST …/message`** and **`POST …/edit`**; both take `images`, and `/clarify`
@@ -2048,7 +2050,7 @@ replaced for the vector story, not because it was broken.
 
 ### Staleness is a per-document content hash, and `updatedAt` was why boots got slower over time
 
-⚠️ **Do not key staleness on `node.updatedAt`.** `task-tracker.ts` writes it in **16 places and only
+**Do not key staleness on `node.updatedAt`.** `task-tracker.ts` writes it in **16 places and only
 3 touch a field the index stores.** A status transition, a cost update, or merely CREATING A CHILD —
 which bumps the **parent** — all marked a task stale. Two consequences explain the failure's shape:
 **the backlog grew with ACTIVITY rather than with content change, and it was only paid at boot, so
@@ -2060,20 +2062,20 @@ a whole-task hash re-embeds every result round because one word of the title cha
 task has dozens of rounds. Model identity is inside the hash, which prevents **mixing two vector
 spaces in one index — a state that does not fail, but returns plausible wrong answers.**
 
-⚠️ **The second staleness clause is one-directional on purpose.** A document is stale if the hash
+**The second staleness clause is one-directional on purpose.** A document is stale if the hash
 differs, OR if it is stored without a real embedding **and embeddings are now available**. Without
 that second clause the failure is permanent and silent: one offline first boot writes zero vectors,
 the content hash calls them current forever, and the index serves keyword-only results with nothing
 reporting it. The reverse — embedded document, embeddings now disabled — is deliberately NOT stale,
 so turning embeddings off can never destroy vectors that already exist.
 
-⚠️ **Migration treats "no hash" as UNKNOWN, not as stale.** An old sidecar has a flat id list, and
+**Migration treats "no hash" as UNKNOWN, not as stale.** An old sidecar has a flat id list, and
 calling that stale would make **deploying this fix trigger the exact backfill it exists to
 prevent**, on every machine, on the next boot. The plan instead ADOPTS the current content's hash
 for documents the legacy entry already lists — strictly no worse than what it replaces, because
 assuming those are current is precisely the claim the old sidecar was already making.
 
-⭐ **The DB is persisted BEFORE the sidecar that claims it. Never the reverse.** Sidecar-first turns
+**The DB is persisted BEFORE the sidecar that claims it. Never the reverse.** Sidecar-first turns
 any failed `.msp` write into a silent permanent hole, because the sidecar says "indexed" and nothing
 ever revisits it. In the correct order every failure lands on "the sidecar is behind", which the
 next plan repairs — **and that is the whole reason an index write is safe to treat as
@@ -2084,7 +2086,7 @@ repair path**: because the sidecar can legitimately under-report the DB, the rep
 the very failure the ordering exists to make recoverable would throw on the pass that recovers it.
 Remove before *every* insert.
 
-⚠️ **`onScopeResume` awaits the PLAN and nothing else, and the rule is categorical: anything that
+**`onScopeResume` awaits the PLAN and nothing else, and the rule is categorical: anything that
 touches the `.msp` or the model is deferred — NOT "anything expensive."** `planIndex()` is pure and
 measured at 12ms for 1115 documents; `applyIndexPlan()` loads the 21MB index, lazily loads the
 model, and runs on a module-level **serialized** background chain so seven projects cannot backfill
@@ -2109,7 +2111,7 @@ length-sorted pads to 1.58M.
 `Widget` and **not** by `widget` — the mandarin tokenizer does not lowercase. Fixing it re-tokenizes
 every stored document.
 
-### ⚠️ Choosing an embedding device: `auto` is the obvious answer and it silently corrupts the index
+### Choosing an embedding device: `auto` is the obvious answer and it silently corrupts the index
 
 On darwin, transformers.js resolves `device: "auto"` to CoreML first — and **CoreML returns a
 768-dim vector of NaN, L2 norm 0, for most inputs. Nothing raises.** The NaN-score guard then
@@ -2140,13 +2142,13 @@ results on the CoreML knobs, so nobody spends the afternoon again**: `mlComputeU
 still NaN.** (`coreml` + `dtype: "fp16"` IS clean, because there is nothing left to convert — and it
 changes no decision, since fp16 doubles the weights and **`webgpu` + `fp16` does not even load.**)
 
-> ⭐ **webgpu is chosen for CPU CONTENTION, not for wall-clock — and on the real corpus it is 30%
+> **webgpu is chosen for CPU CONTENTION, not for wall-clock — and on the real corpus it is 30%
 > SLOWER in wall-clock.** Full rebuild of 1115 documents: **cpu 697s wall / 3044s CPU; webgpu 909s
 > wall / 38.8s CPU.** 3044s of CPU is 4.4 cores saturated for twelve minutes next to live agents,
 > because the backfill runs alongside them. 38.8s is invisible. **Anyone "optimising" this back to
 > wall-clock will pick cpu and starve the machine.**
 
-⚠️ **Do not log the REQUESTED device.** It prints "coreml" just as confidently while emitting NaN.
+**Do not log the REQUESTED device.** It prints "coreml" just as confidently while emitting NaN.
 Log what was *proven*. And note **"webgpu vs coreml" is not "GPU vs not-GPU"** — both reach the same
 Metal GPU; CoreML's extra reach is the ANE. **There is no MPS execution provider in ONNX Runtime**
 (that is a PyTorch concept), verified from the installed library rather than recalled.
@@ -2163,11 +2165,11 @@ of them said what to do with a hit, so the block read as a return value: scanned
 Root's count for one day: `create_task` called 8 times, block returned 8 times, behaviour changed 0
 times, `search_tasks` called 0 times.**
 
-> ⭐ **Put the guidance where the decision is made. If the agent ASKED for the data, the tool
+> **Put the guidance where the decision is made. If the agent ASKED for the data, the tool
 > description reaches it in time — it still holds the intent it called with. If the data arrives
 > UNREQUESTED, only the payload reaches it.**
 
-⚠️ **The bash "don't pipe" precedent does NOT transfer**: that decision is made while CONSTRUCTING
+**The bash "don't pipe" precedent does NOT transfer**: that decision is made while CONSTRUCTING
 the call, so the description is its decision moment. A description read before the call is guidance
 about something that does not yet exist in the agent's world. **Matrix-specific tiebreaker, worth
 knowing on its own: tool descriptions are frozen in `session_config` until a compaction refreshes
@@ -2197,7 +2199,7 @@ at the time*. The measurement usually still holds; the judgement may already be 
 task on the subject is often itself the evidence that intent changed.** An agent that reads "we
 tried this and reverted" as a prohibition abandons a road it is currently supposed to walk.
 
-⚠️ **An instruction you cannot execute is decoration.** Both fixes here are only worth doing BECAUSE
+**An instruction you cannot execute is decoration.** Both fixes here are only worth doing BECAUSE
 the header now says "get_task these": the block prints the **full taskId** rather than a truncated
 one (12 chars resolves, an ellipsis does not), and dead hits are dropped rather than rendered with a
 real-looking but unresolvable id.
@@ -2210,13 +2212,13 @@ actually carrying it, especially when you already agree with the conclusion.**
 
 ### The same rule in the prompt, where the THIRD case lives
 
-⭐ **Both cases above presuppose a call HAPPENED** — the agent asked, or the payload landed. The
+**Both cases above presuppose a call HAPPENED** — the agent asked, or the payload landed. The
 third is the one the system prompt owns: **no call happens at all**, because the agent does not
 recognise that the question in its hand is one the code can never answer. There is no payload and no
 description in view at that moment, so the prompt is the only surface that exists, and the rule that
 sent guidance to the payload sends this to the prompt.
 
-⚠️ **The freeze argument applies to the prompt too and does NOT settle it.** `session_config`
+**The freeze argument applies to the prompt too and does NOT settle it.** `session_config`
 freezes the system prompt exactly as it freezes tool descriptions, so a prompt edit reaches a
 running agent only after a compaction. That prices **urgency, not medium**: handler output won
 above because that fix had to work *today*, whereas a standing disposition can wait one compaction
@@ -2232,7 +2234,7 @@ introduced `search_tasks` wired ONE of them** — the N-of-M-doors rule in the m
 compiler, test or gate can notice. When you add a capability, grep the PROSE that has been promising
 it.
 
-⭐ **The failure is classification, not compliance, and the hardest instance proves it: the
+**The failure is classification, not compliance, and the hardest instance proves it: the
 misfiled question arrives DRESSED as a code question.** Asked where a known `update_task` defect
 stood, root's first move was to grep `updateTaskOp` — while the task existed, was `pending`, and
 had been created **by root itself 21 hours earlier**, twenty minutes after root had discussed this
@@ -2244,7 +2246,7 @@ binds versus one that expired. And the grep was pure loss rather than a partial 
 field order, which the task already contained alongside the incident, the reachable-worse
 combination, two design routes and the acceptance criteria — root had to read the task regardless.
 
-⚠️ **MEASURED 2026-07-29: 102 of 1280 merge commits name a task. Git's gift is the TIME COORDINATE,
+**MEASURED 2026-07-29: 102 of 1280 merge commits name a task. Git's gift is the TIME COORDINATE,
 not the id.** The code→task link rides on the merge subject carrying the branch name
 (`mxd/<taskId>/<slug>`), and `git merge -m "<a good sentence>"` overwrites exactly that — **the
 better the merge message reads, the more reliably the link is gone.** So "blame it and you'll find
@@ -2254,13 +2256,13 @@ cosmetically), then carry that timestamp to the tree and ask what was running th
 two, the commit's own subject named only the other half of its change, so the message actively
 misled and the **timestamp** was what recovered it. **The prompt teaches only what git can answer
 on its own** — find when the line arrived, then read that commit *and the ones around it*, since
-what landed alongside is usually what it was for. ⚠️ **The hop we actually performed — carry the
+what landed alongside is usually what it was for. **The hop we actually performed — carry the
 timestamp to the tree and ask what was running then — is deliberately NOT in the prompt, and this
 is the reason to check before re-adding it: there is no call that does it.** `search_tasks` is
 relevance-ranked with no time predicate, and `get_tree` has no time filter either, so that step is
 a human scanning by eye. Written as an instruction it is *an instruction you cannot execute*.
 
-⭐ **The id is deliberately absent from the prompt, and the reason outlives the 8%.** Two of them,
+**The id is deliberately absent from the prompt, and the reason outlives the 8%.** Two of them,
 either one sufficient. **(1) Never write today's breakage into a universal, frozen document.** The
 8% is being fixed (below), and on the day it is, a prompt sentence saying the link is usually gone
 goes on teaching that with nothing anywhere to turn it red — it is shared by every project and
@@ -2286,7 +2288,7 @@ trailer; measured to survive `-m`, and readable with `git log
 was written and deleted: the measurement above is precisely the evidence that agents do not
 remember, so using it to justify "remember to do it manually" runs the evidence backwards.**
 
-⚠️ **Migration constraint on the CONSUMER side, decided with the same breath and easy to lose:
+**Migration constraint on the CONSUMER side, decided with the same breath and easy to lose:
 the 1280 historical commits will never have a trailer, so nothing that reads one may present its
 ABSENCE as "no provenance".** Route through the time coordinate, which holds for every commit ever
 made, and treat a trailer as an accelerator where it happens to exist. Build it the other way round
@@ -2294,7 +2296,7 @@ and you have shipped an empty-result-read-as-an-answer — the shape counted all
 
 ### The trigger that is not another reminder
 
-⭐ **This region already records that reminding harder is REFUTED** — three simultaneous reminders
+**This region already records that reminding harder is REFUTED** — three simultaneous reminders
 and the failure still happened, because what was missing was a way to tell the classes of question
 apart. **A 2026-07-30 prompt section could easily be read as the refuted approach and deleted as
 such, so the distinction is written down here: a reminder asks you to remember; this names a state
@@ -2308,14 +2310,14 @@ four converging consumers believed to be root's own, completed and closed 2026-0
 task filed for "the identifier problem" as new framing, whose whole design including the option
 about to be re-derived sat in a 2026-03-24 draft; a "60KB per call" figure reported to a sub task as
 fresh, measured 2026-04-12; and a positional-cursor *defect* that was a deliberate 2026-04-05 design
-made when event count was the only primitive. ⚠️ **In all four, searching stopped after ONE round
+made when event count was the only primitive. **In all four, searching stopped after ONE round
 and only continued because the user pushed — and each further round found something more important
 than the last.** Hence *"one query is not a search; stop when a round adds nothing, not when a round
 finally returns something."* The scale of the gap, counted over root's whole 110MB session log
 (2026-07-30, re-measured rather than inherited): of **14,453 tool calls**, `search` (files) **955**,
 `read_file` **775**, `bash` **4320**, and `search_tasks` **42**. Pick the denominator deliberately,
 because the three available ones differ by 6×: **23** file-searches per tree-search, **41** if
-read_file counts as consulting the tree, **144** against everything that touches the working tree. ⚠️ **Counting it needs `{"type":"tool_call","tool":"…"}` — the field is `tool`,
+read_file counts as consulting the tree, **144** against everything that touches the working tree. **Counting it needs `{"type":"tool_call","tool":"…"}` — the field is `tool`,
 not `name`.** A first pass grepping `"name":"mcp__mxd__search_tasks"` returned **10** — a plausible
 small number that would have "confirmed" the thesis while actually matching that string inside
 tool_result CONTENT, since results quote the text of other calls. **The wrong instrument answered in
@@ -2324,13 +2326,13 @@ the believable direction, on the very claim it was asked about.**
 **Where the file-search reflex went, and the file it is actually in.** *"When you search files, ask
 whether you should search tasks"* is a decision made while CONSTRUCTING a `search` call — the agent
 still holds the intent it called with — so by this region's own rule it belongs in that tool's
-description, not the prompt and emphatically not handler output. ⚠️ **The file-search `search` is
+description, not the prompt and emphatically not handler output. **The file-search `search` is
 defined in `src/tools/definitions.ts`, NOT in `orchestrator-tools.ts`**, which holds `search_tasks`
 and `search_logs`; a task description sent an agent to the wrong file. Fixed in the same edit: the
 old wording **"ALWAYS use this for search tasks"** became readable as "use this for `search_tasks`"
 the day that tool shipped — a name collision that only appears once a neighbour is named.
 
-⚠️ **Writing advocacy for a thing is when you overclaim for it, and the overclaim lands as a
+**Writing advocacy for a thing is when you overclaim for it, and the overclaim lands as a
 contradiction of a correction that already exists.** Drafting the section above produced *"the tree
 … is never the thing that was wrong."* It is false, and worse it is **precisely inverted**: the
 `create_task` and `work_context` headers exist to say a past measurement usually holds while a past
@@ -2361,7 +2363,7 @@ an authoritative-looking wrong number. `createdAt` is always beside it because i
 both carry a relative age, which is load-bearing rather than decorative — **agents are date-blind
 and confident about it**, so an absolute date alone re-runs the failure the date was added to fix.
 
-⭐ **"Did it ever execute" is the UNION of three signals, not a choice among them — and it is the one
+**"Did it ever execute" is the UNION of three signals, not a choice among them — and it is the one
 thing here someone will try to simplify.** Each is one-directional POSITIVE evidence: a session
 file, a recorded cost and a reported round can only exist if the task ran. So OR-ing them cannot
 produce a false "ran", while every single member produces false "never ran"s.
@@ -2378,7 +2380,7 @@ worst answer available, because it is precisely backwards about what the descrip
 / `worktreePath` cannot be used at all — close nulls them. The marker is rendered on `closed` and
 `failed` only: while a status is live the question is still open.
 
-⚠️ **Dedup runs BEFORE the full/brief tier split, not after.** A real `search_tasks(limit 6)`: three
+**Dedup runs BEFORE the full/brief tier split, not after.** A real `search_tasks(limit 6)`: three
 tasks filled all six slots, one appearing once as a full entry and once as a brief one with its
 entire `Description:` repeated verbatim. Merge the duplicates' field labels into the survivor rather
 than dropping them — matching on two fields is relevance evidence, and it is the only thing the
@@ -2409,7 +2411,7 @@ bound, symmetric with `stopTask` — that closes the race between `POST /stop` r
 `finally` block's `agent_end` / `done_notified` / MCP-disconnect writes, and it is what stops
 `DELETE /projects` → `rm -rf` racing in-flight writes.
 
-⚠️ **Do NOT call `fg.resolve()` in `stopAgent`.** It looks like the tidy way to deal with a
+**Do NOT call `fg.resolve()` in `stopAgent`.** It looks like the tidy way to deal with a
 foreground bash that is ignoring abort, and it moves the command cleanly to background — which
 **breaks the orphan-repair semantic.** A stuck tool is supposed to get bounded grace and then be
 left as an orphan, so repair synthesizes the interrupted tool_result on the next launch.
@@ -2424,7 +2426,7 @@ picture, the triage order and the reason not to just raise the number are under 
 usually passes gets filed as weather* (`01KYCMVKN14RRX0KK0H2CNTD9P`).
 
 **Worker init has a 30s timeout.** Without it a plugin whose `runtime.ts` hangs at top level hangs
-daemon boot forever — no log, no 503. ⚠️ **A `beforeAll` that calls `createDaemon` with a worker
+daemon boot forever — no log, no 503. **A `beforeAll` that calls `createDaemon` with a worker
 must budget ≥ that**, or on a real flake the test's own timer fires first and you get a useless
 "beforeAll timed out", **masking the daemon's much better "Worker init timed out: <plugin>" message
 that names the actual stuck plugin.** `createDaemon` costs ~213ms cold and ~346ms under heavy
@@ -2436,7 +2438,7 @@ a stale lock whose PID is dead is stolen, a live PID errors out. It is opt-in, b
 concurrent daemons on isolated tempdirs. It refuses even when the lock holds our own PID — a second
 `createDaemon` in one process is a test bug, and surfacing it beats tolerating it.
 
-## ⚠️ An ORT session dies with the thread it lives on — so it gets its own process
+## An ORT session dies with the thread it lives on — so it gets its own process
 
 **FIXED 2026-07-25.** The embedding session now lives in a child process. Worker threads never load
 ORT. Keep it that way; the rest of this section is why, and what it cost to find out.
@@ -2479,7 +2481,7 @@ channel and `disconnect` fires in the child, which exits — one mechanism cover
 worker restart and daemon shutdown, with no bookkeeping and no leaked 500MB process per restart.
 Deleting that handler is the quiet way to reintroduce a leak.
 
-⚠️ **The regression that would silently undo this is one line: a static `import … from
+**The regression that would silently undo this is one line: a static `import … from
 "@huggingface/transformers"` in any module a worker loads.** Everything keeps working until the next
 shutdown, which is exactly how this sat unexamined for two days. A test greps three files for that
 shape.
@@ -2506,7 +2508,7 @@ fail — **`process.exit(1)` does NOT fire `onerror`** (silent death, only the t
 and a module-level `throw` is caught by scope-worker's own try/catch and becomes `{type:"error"}`
 instead.
 
-⚠️ **STANDING RULE, and the death chain above is the argument for it: never delete the external
+**STANDING RULE, and the death chain above is the argument for it: never delete the external
 boot path.** The catastrophic form of self-bootstrapping is not a crash — it is breaking the file
 editing, command execution or daemon startup that you would need IN ORDER TO FIX IT, which is a
 compiler emitting a broken compiler when the broken one is the only one you have. So matrix must
@@ -2517,13 +2519,13 @@ and the day it is missed is the day nothing can reach the code to put it back.
 
 ## Two transport bugs that corrupt silently
 
-⚠️ **`response.text()` on a proxied response destroys binary data.** It decodes as UTF-8, so **every
+**`response.text()` on a proxied response destroys binary data.** It decodes as UTF-8, so **every
 byte above 0x7F becomes U+FFFD** — a 256-byte binary payload inflates to 512 and a PNG header
 becomes garbage. Fixed with `arrayBuffer()` plus a transferable postMessage. Request bodies are
 *not* affected today only because they are JSON in practice; a binary request body needs the same
 fix.
 
-⚠️ **Bun Workers do NOT inherit `process.env` assignments from the parent thread.** They get their
+**Bun Workers do NOT inherit `process.env` assignments from the parent thread.** They get their
 env from the OS process snapshot at spawn time, so `process.env.X = "Y"` in the main thread — and
 therefore `bunfig.toml [test.env]` — is **invisible** to a file-based Worker. The only way through
 is the `env` option on the Worker constructor. Verified empirically, including the confusing part:
@@ -2554,7 +2556,7 @@ when the cursor's epoch matches. **Both `id:` emit sites must use the formatter*
 and the catch-up replay — since one bare-seq emit poisons the client's NEXT reconnect cursor. The
 client needs zero changes: EventSource echoes `Last-Event-ID` opaquely.
 
-Two adjacent restart-window holes closed with it. ⚠️ **There is ONE `worker.onmessage`, installed
+Two adjacent restart-window holes closed with it. **There is ONE `worker.onmessage`, installed
 before init**: the old code swapped in the runtime handler after `ready`, but **the worker posts
 `sse_event`s DURING init** (autoResume crash recovery runs with `onBroadcast` already wired), so
 those were dropped silently — harmless on first boot, but on a worker auto-restart the SSE clients
@@ -2607,7 +2609,7 @@ plugin path now 404s instead of silently falling back to "the first global worke
 that catch-all. External MCP clients configured against the old `/mcp` URL break, deliberately and
 with no deprecation alias.
 
-⚠️ **`pluginApiPrefix` lives in `src/plugin-url.ts`, which has ZERO imports, and it must stay that
+**`pluginApiPrefix` lives in `src/plugin-url.ts`, which has ZERO imports, and it must stay that
 way.** `web/runtime-types.ts` re-exports it to browser code; when it lived in `plugin.ts` it dragged
 in `data-paths.ts` → `node:path`, and Bun's browser target polyfilled the entire module into every
 plugin's first-load bundle: **10,293 bytes → 281 bytes when it was split out.** A test asserts the
@@ -2624,7 +2626,7 @@ A project that ships its own `.mxd/plugin/` is served by **both** its own scope 
 matrix scope, on separate per-scope data roots. `matrix:<id>` is the dev lens; `<own>:<id>` is the
 product lens. Shipping a plugin **ADDS** a lens and never removes the matrix one.
 
-⭐ **The first implementation made ownership EXCLUSIVE (`own ?? global`) and was reverted. Do not
+**The first implementation made ownership EXCLUSIVE (`own ?? global`) and was reverted. Do not
 re-derive it.** Four reasons, and the first is decisive:
 
 1. **`<scope>:<project>` is a TWO-PART address, and its existence proves the relationship is dual.**
@@ -2656,13 +2658,13 @@ counting `../`s. Chosen over `@mxd/plugin-sdk` on purpose: the `@mxd/*` names ar
 modules, a different mechanism, and a server package reusing that prefix would falsely imply
 kinship.
 
-⭐ **It must stay a thin re-export and must never become a vendored copy.** Bun and Node dedupe
+**It must stay a thin re-export and must never become a vendored copy.** Bun and Node dedupe
 modules by REALPATH, so a plugin importing through its `node_modules/mxd` symlink resolves to the
 same physical files and therefore the **same process singletons** the agent loop uses — in
 particular the module-level `_ctx` in `resource-registry.ts`. A vendored copy has a different
 realpath, a different `_ctx`, and **message delivery silently no-ops with no error.**
 
-⚠️ **`package.json` pins `zod` EXACT, and the caret must not come back.** The SDK does `export { z }
+**`package.json` pins `zod` EXACT, and the caret must not come back.** The SDK does `export { z }
 from "zod"` so a plugin's `z.string()` passes matrix's `shapeToJsonSchema` — which only works when
 both sides are the same `ZodString` class. A caret let a consumer drift, producing two distinct Zod
 identities and a `defineTool` that stopped typechecking. **`package.json` is strict JSON and cannot
@@ -2676,7 +2678,7 @@ read-only snapshot that cannot mutate the tracker, versus full mutable access. `
 thin wrapper over the ONE `deliverMessage` path, so it keeps the wake-an-idle-recipient semantic,
 and **no permission policy is baked in**: matrix's ancestor/sub-task restriction is matrix policy.
 
-⚠️ **`deliverToNode` throws "deliverMessage not registered" outside any agent loop.** `_ctx` is set
+**`deliverToNode` throws "deliverMessage not registered" outside any agent loop.** `_ctx` is set
 on the `createApp` path, but `_deliverMessage` is registered inside `createAgentContext` **at agent
 launch**. `listNodes` works without a launch; delivery does not.
 
@@ -2697,7 +2699,7 @@ confirm a new log-entry card renders without running a real agent.
 
 ## Auth is always on, and the anonymous surface is four things
 
-⚠️ **Read this whole region as answering ONE of the two security questions. It is about
+**Read this whole region as answering ONE of the two security questions. It is about
 authenticating the USER to the daemon. Nothing here — and nothing anywhere else — constrains the
 AGENT: there is no sandbox.** An agent has full filesystem, network and command access, bounded only
 by the OS user the daemon runs as. That is a deliberate and acceptable trade for single-user local
@@ -2734,7 +2736,7 @@ wildcard 404s". A regex was considered and rejected — a project's *existence* 
 condition, not its id format, and under a regex a deleted id would load a broken SPA that 404s on
 its own data fetches instead of 404ing cleanly.
 
-⚠️ **`/auth/logout` requires a valid token.** It was in the skip list, so any drive-by page could
+**`/auth/logout` requires a valid token.** It was in the skip list, so any drive-by page could
 POST it and force a secret rotation, logging out every active user — CSRF denial of service. The
 handler's own docstring already described the 401 behavior; the code just did not agree.
 
@@ -2748,7 +2750,7 @@ expiry emits a named `auth_expired` event, which the client's watchdog turns int
 **`mxd watch` must do the same** — its own `sub: "cli"` token is rejected by `/events`, producing a
 401 → reconnect → 401 loop forever.
 
-⚠️ **There is no auth cache, and do not add one back.** A previous `authDataCache` produced "the
+**There is no auth cache, and do not add one back.** A previous `authDataCache` produced "the
 user ran `mxd auth` but the running daemon never re-read `auth.json`". `readAuthData` hits disk on
 every call; it is a small local JSON file and the cost is negligible against that failure mode.
 Relatedly it **throws** on a parse failure, an empty file or a read error, returning `{}` only for
@@ -2763,7 +2765,7 @@ safe; and `PATCH /projects/:id/config` and `/config/repo` **return 400 if the bo
 HTTP client could put its own credentials into a project's config and the next agent run would use
 them.
 
-⚠️ **`auth.json` needs BOTH a mode on write and a chmod on init, because of a POSIX detail that
+**`auth.json` needs BOTH a mode on write and a chmod on init, because of a POSIX detail that
 looks like a bug.** Node's `writeFile(path, data, {mode})` only honors `mode` on file CREATION;
 overwriting an existing file silently preserves whatever mode the inode already has. So without a
 boot-time `ensureSecureFileMode`, an `auth.json` created by an older version stays `0o644` forever
@@ -2794,7 +2796,7 @@ the obligation is real for structure and lifecycle and **empty for prose**: `cre
 lets you author that exact text at that exact tree position, so the gate never prevented a bad edit
 — it only prevented the FIX.
 
-⭐ **What the old rule got wrong is the axis it sorted on.** April freed `create_task` and left
+**What the old rule got wrong is the axis it sorted on.** April freed `create_task` and left
 `update_task` grouped with delete/close/reset, by MECHANISM — "these all modify an existing node".
 Sorted by ACT, editing a description is *recording intent*, the same act as `create_task`, later in
 time. **Grouping by "mutates a node" takes a property of the thing for the thing itself** — the
@@ -2822,7 +2824,7 @@ lands on the GATED side and someone hits the refusal and widens the set delibera
 include-list of gated fields puts it on the free side with nothing going red. Same rule as *Gates*,
 different medium: a permission list, not a checker.
 
-⚠️ **NEGATIVE RESULT — REST `PATCH /projects/:id/tasks/:nodeId` has no subtree gate, and that
+**NEGATIVE RESULT — REST `PATCH /projects/:id/tasks/:nodeId` has no subtree gate, and that
 is not an omission.** Subtree permission is a concept about an AGENT's identity: `Auth`. REST is the
 user, `editedBy: "user"`, and `createHumanAuth` grants every permission by construction. Both doors
 already share `updateTaskOp`, so the one-codepath invariant was never in question here. **"Add the
@@ -2864,7 +2866,7 @@ whatever you were testing. Wrap fixture paths in `realpathSync`.
 
 ## Root is a regular task: the null-sentinel anti-pattern
 
-> ⭐ **Any code that treats root specially at the ROUTING, TARGETING or IDENTIFICATION level is
+> **Any code that treats root specially at the ROUTING, TARGETING or IDENTIFICATION level is
 > wrong. Root has an id like any other task; use it.** Only the TREE VISUALIZATION layer
 > legitimately knows which node is root, for drawing the hierarchy and the orchestrator tab.
 
@@ -2904,7 +2906,7 @@ after it. Three invariants: neither layer reads or writes the other's segment; *
 routing source of truth**, so neither caches anything and refresh and back/forward are free; and
 `selectedTaskId` is DERIVED from `pluginPath` rather than being `useState`.
 
-⭐ **The lesson, which is what makes this worth a section:**
+**The lesson, which is what makes this worth a section:**
 
 > **When two layers coordinate through a shared serialized blob — one hash, one query string, one
 > localStorage key — look for the segment each layer owns and give each direct access to only its
@@ -2916,7 +2918,7 @@ the hash on mount, so it defaulted to `projects[0].id` regardless of the URL —
 on a specific project sent task events to the wrong session.** Back was broken because the shell
 created history entries the plugin did not know about.
 
-⚠️ **Process lesson, and it cost a wrong conclusion: never claim "pre-existing" without verifying
+**Process lesson, and it cost a wrong conclusion: never claim "pre-existing" without verifying
 against main properly.** The claim was that 18 failures predated the change. The verification used
 `git stash` — **which does not revert already-committed work**; `git reset --hard HEAD^` was needed.
 And even correctly reverted, the baseline must be a bare full `bun test`, not `bun test web/`: on
@@ -2949,7 +2951,7 @@ will ever clear. The guard lives in the driver; the reducer stays pure. **Diagno
 all 22 "unconsumed" messages in the JSONL were compact-source and correctly excluded, and zero user
 messages were unconsumed — the backend was right and the bug was purely frontend timing.**
 
-⭐ **The phase-discipline lesson from the last of the four patches, which outlived its own code:**
+**The phase-discipline lesson from the last of the four patches, which outlived its own code:**
 when several event types mutate one structure, **they must all mutate in the same phase.** Three did
 it synchronously inside `processEvent`; `compact_marker` did it inside a deferred side-effect
 closure. In single-event mode there is no loop between the two, so both look equivalent; in batch
@@ -2989,7 +2991,7 @@ byte-identity on restart. Replace would overwrite it with nothing.
 
 ## `queueEntryToUIEvent` is THE UI materialization gate
 
-⚠️ **Every `QueueMessage.source` that should be visible in the activity log MUST have a case here.**
+**Every `QueueMessage.source` that should be visible in the activity log MUST have a case here.**
 A missing case falls through to `default: null` and **the event class is silently dropped — no
 error, no warning, nothing in the DOM.** That is exactly what happened to post-compaction summaries:
 the message existed in JSONL and went through the full two-phase lifecycle, and the UI showed
@@ -3034,7 +3036,7 @@ for the whole map instead of the two reported symptoms (`01KYBN3AG5PD2H1K09HS9XA
 argument worth reusing: **nine mechanisms were already writing that one number and were already
 known to fight each other, so fixing any single symptom without the map is adding a tenth.**
 
-⭐ **The predicate that works is `scrollRangeShrank(prev, current)`, where range = `scrollHeight −
+**The predicate that works is `scrollRangeShrank(prev, current)`, where range = `scrollHeight −
 clientHeight`.** Two predicates were proposed on the *cause* side and one measurement killed both:
 "is the rendered content from the task being viewed" and "is the container non-scrollable" both miss
 an in-log search that leaves 449px of range — fully scrollable — where a `scrollTop` of 1200 is
@@ -3061,7 +3063,7 @@ observation from immediately executing** — the user scrolls into the 40px band
 arms, and the effect used to yank them the rest of the way mid-gesture. **Arming is not acting**,
 and "go to the bottom now" has its own channel, a monotonic counter.
 
-⚠️ **`prevScrollRangeRef` may ONLY be advanced by the scroll handler, and the danger is that the
+**`prevScrollRangeRef` may ONLY be advanced by the scroll handler, and the danger is that the
 wrong version looks MORE thorough.** Letting a geometry-reading effect update it too makes the guard
 inert: effects run at commit, the clamp's scroll event is dispatched by the browser *afterwards*
 (measured 14ms later), so the effect writes the new small value first and the comparison becomes
@@ -3136,12 +3138,12 @@ other tasks** (rollback is per-session, so a sibling agent's bash must not be re
 file / task / message side effects plus a generic bucket. An unknown target yields an empty impact,
 so the dialog claims nothing rather than guessing.
 
-⚠️ **The read-only list is a WHITELIST, and that is the load-bearing choice.** `read_file`,
+**The read-only list is a WHITELIST, and that is the load-bearing choice.** `read_file`,
 `list_files`, `search`, `get_tree`, `get_task`, `background`, `yield` and friends are named safe;
 **anything not whitelisted and not categorised sets the generic warning.** Unknown tools — external
 MCP servers, `evaluate_script` — are never assumed safe.
 
-⚠️ **`done` is NOT read-only, and the first cut whitelisted it.** A range crossing a `done()` then
+**`done` is NOT read-only, and the first cut whitelisted it.** A range crossing a `done()` then
 rendered the green "nothing outside the conversation changes" box, which is a lie: `done()` flips
 the task's status AND delivers `task_complete` to the task above, which may already have woken,
 reviewed and merged. `done` now lives in both the task and message sets, which forced the
@@ -3158,7 +3160,7 @@ smooth `scrollIntoView` loses to follow mode — jumping back to the edited mess
 bottom mid-animation, observed live in a browser, not in tests. `setAutoScroll(false)` first, then
 an INSTANT scroll.
 
-⚠️ **Test-harness gotcha with real teeth**: `clearSessionState` drops log entries for a session
+**Test-harness gotcha with real teeth**: `clearSessionState` drops log entries for a session
 transitioning to `pending`, so a fixture seeded with `status: "pending"` **wipes its own log** the
 moment the first `tree_updated` arrives. In happy-dom the SSE mock is a no-op so this never fires;
 in a real browser the log renders "No events yet" while the events endpoint returns data. **Seed
@@ -3179,7 +3181,7 @@ React elements only. **Strict grammar throughout, because a false positive is wo
 feature**: that one sentence generates every rule in it, and the grammar's own tests state the rules
 better than prose can. Two things the tests do not say:
 
-- ⚠️ **Link safety is one gate in the parser, and it is the only security-relevant line in it.**
+- **Link safety is one gate in the parser, and it is the only security-relevant line in it.**
   Only `^https?://` becomes an anchor; `javascript:`, `data:`, `file:` and relative URLs render as
   literal TEXT, and text containing only an unsafe link stays "plain" and renders its raw source.
 - **Emphasis uses whitespace-adjacency rules, NOT word boundaries — that is what makes it
@@ -3307,7 +3309,7 @@ goes through postMessage). **Minimum bar: cross the real process boundary, and r
 hand before `done("passed")`. "2003 tests pass" is not a merge gate. "I ran the feature the way a
 user would and it worked" is.**
 
-## ⚠️ Every `throw` in a test double must quote the real error it mirrors
+## Every `throw` in a test double must quote the real error it mirrors
 
 **When a fake rejects something on the grounds that the real system would, the rejection message
 must carry the real system's own error string. If you cannot quote it, you have not verified it, and
@@ -3350,7 +3352,7 @@ walker bugs — and this was confirmed experimentally, not reasoned.** Removing 
 from the walker leaves **all 27 integration prefix-validation tests passing**, because both paths
 are now consistently wrong. The golden snapshot catches it.
 
-> ⭐ **Do not silently lose coverage when removing duplication.** Unifying two paths shifts
+> **Do not silently lose coverage when removing duplication.** Unifying two paths shifts
 > responsibility: convergence tests can no longer establish correctness, so correctness tests must
 > re-establish what the drift tests used to provide.
 
@@ -3364,7 +3366,7 @@ fixture is silently testing nothing.
 confirming ones are verification records and belong in a commit message. The tell is the sentence
 next to the table: *"I expected this to fail and it did not, because…"*
 
-⚠️ **Guards need a two-sided mutation proof.** Everyone mutates the over-loose direction (delete the
+**Guards need a two-sided mutation proof.** Everyone mutates the over-loose direction (delete the
 guard). Almost nobody mutates the over-strict one — **and over-strict is the typical way a guard
 fails**, because it reddens nothing and just silently stops a normal path working. Making a
 follow-mode effect never scroll, i.e. killing the entire feature, left **11 of 12 tests in that file
@@ -3378,7 +3380,7 @@ Four shapes mutation testing cannot see, each with a different cause:
   thing to check; the tests around it are all consistent with it by construction.**
 - **A fixture that cannot express the difference.** Over-promotion of a glob was invisible because
   the fixture contained exactly one `src/`.
-- ⭐ **And the mirror image, which you will defend rather than fix: a fixture can be too REAL.**
+- **And the mirror image, which you will defend rather than fix: a fixture can be too REAL.**
   Deleting a `b.type !== "text"` filter reddened NOTHING, because both tests used genuine shapes and
   **no real Anthropic block type carries a `text` field at all**, so that filter and the narrowing
   below it covered for each other perfectly. Only a synthetic block can see that line. **Realism is
@@ -3389,13 +3391,13 @@ Four shapes mutation testing cannot see, each with a different cause:
   the same array again, so deleting the sort inside the walk failed **no test at all**. Deleting the
   redundant one is what made the survivor testable.
 
-⚠️ **`SURVIVED` is the comfortable answer, so it is the one to distrust** — twice a harness reported
+**`SURVIVED` is the comfortable answer, so it is the one to distrust** — twice a harness reported
 it without ever running the tests that cover the mutation. Both instances and the general rule are
 under *Your instrument is a claim until you have made it fail*; the local requirement is that a
 harness must refuse to print a verdict unless the file text actually changed AND bun printed a
 summary line.
 
-⚠️ **`git checkout -- <file>` reverts to the last COMMIT, so it eats an uncommitted fix in the same
+**`git checkout -- <file>` reverts to the last COMMIT, so it eats an uncommitted fix in the same
 file — including the fix you are mutating.** The tell is an "after revert" run showing the same
 failure count as the mutated run. **Commit before mutating.**
 
@@ -3438,7 +3440,7 @@ whether the code under test scrolled.** Build the master array once and slice it
 production does. **Whenever a test asserts something about an effect, check that the fixture is not
 producing that effect itself.**
 
-⚠️ **An unfaithful double does not only make tests lie — it makes the missing test unthinkable.**
+**An unfaithful double does not only make tests lie — it makes the missing test unthinkable.**
 "Interrupt an agent mid-generation" had never been executed by any test, and not because anyone
 skipped it: the mock stream ignored the request's AbortSignal outright, so every test that aborted
 mid-stream passed through a road that was open and led to the OPPOSITE of production. **Nobody
@@ -3448,7 +3450,7 @@ thinking, so a test that waits for `thinking` and then interrupts can land befor
 exists and **passes every park assertion while testing nothing.** Key on
 `getRequestHistory().length >= 1`.
 
-⚠️ **A negative assertion is only worth the WAIT in front of it — and deleting a redundant channel
+**A negative assertion is only worth the WAIT in front of it — and deleting a redundant channel
 can silently remove that wait.** The shape generalises to every "delete the duplicate" task: two
 guard tests awaited a report from a *redundant* channel and then asserted
 `expect(calls).toEqual([])`, so deleting the duplicate deleted the await and the negative assertion
@@ -3466,7 +3468,7 @@ listener runs. (Hence the way to drive a composer in a test: **seed the draft th
 component's own `localStorage` key, `.focus()` + keydown for the submit.**) **Two do not announce
 themselves, and both are paid by someone other than the author:**
 
-- ⚠️ **It silently drops MutationObserver callbacks under GC pressure** — the listener holds its
+- **It silently drops MutationObserver callbacks under GC pressure** — the listener holds its
   callback in a `WeakRef` with no strong reference anywhere, so after any GC pass mutations are
   delivered to nothing, with no error. **A test relying on MO delivery passes in isolation and
   flakes inside the full suite**, which is then chased as a scheduling flake. Real browsers hold
@@ -3483,7 +3485,7 @@ index comes back, and any assertion about *which* documents matched passes silen
 text-derived vector. (And hybrid search embeds the QUERY through the same pipeline, so an embed
 counter read after a search has counted the query too.)
 
-⚠️ **`expect(domNode).toBeNull()` prints the node with its whole React fiber graph on failure**, and
+**`expect(domNode).toBeNull()` prints the node with its whole React fiber graph on failure**, and
 the second cost is worse than the first: one such assertion produced a 227MB log, and another
 **mangled bun's `(fail)` line, so a harness scraping that line reported a mutation as SURVIVED** —
 the instrument was fine and its INPUT was destroyed by an assertion elsewhere. Compare booleans in
@@ -3549,7 +3551,7 @@ worktree add` plus the hook, and git is disk- and `index.lock`-bound, hence seri
 suites would then be contending on git rather than on CPU, which also explains why the pure-JS setup
 segment did not slow at all. To confirm it, measure `git worktree add` itself under load.
 
-## ⚠️ `bunfig.toml`'s preload is load-bearing; do not remove it
+## `bunfig.toml`'s preload is load-bearing; do not remove it
 
 It does one thing: `import "react-dom/client"` once per process, before any test file. react-dom is
 a process-wide singleton and its scheduler binds to whatever timer machinery exists at **first
@@ -3558,7 +3560,7 @@ binds that window's machinery — and when that file's `afterAll` unregisters, *
 stops flushing for every subsequent test file in the process**: fast assertions fail and renders
 time out at 5s.
 
-⚠️ **`bun test`'s file order is filesystem-dependent — not alphabetical, not mtime — so this is a
+**`bun test`'s file order is filesystem-dependent — not alphabetical, not mtime — so this is a
 latent landmine that any file addition can re-roll.** The baseline was green only because a benign
 file happened to run first; adding four web test files reshuffled the order and produced 52 failures
 across 11 files. **Do not remove the preload "because tests pass without it locally".** Red herrings
@@ -3574,7 +3576,7 @@ step.**
 
 ## Deleting code
 
-⭐ **"Test-only" is not "dead", and conflating them turns a cleanup into a risky migration.** An
+**"Test-only" is not "dead", and conflating them turns a cleanup into a risky migration.** An
 audit called `tool()` production-dead and asked for its removal. It IS test-only — and it has 23
 call sites, which makes it live test INFRASTRUCTURE; deleting it would have been a 23-site migration
 that changes what those tests test rather than reclaiming anything. **The real violation was sitting
@@ -3602,7 +3604,7 @@ Every asset carries its content hash in its filename and is served `immutable`; 
 them is `no-cache`. So the browser always asks whether there is a new index and never asks whether
 the hashed JS is fresh, and **stale content is impossible because stale URLs do not exist on disk.**
 
-⚠️ **Do not add `Cache-Control: no-store` anywhere as a fallback, and do not add a query-string
+**Do not add `Cache-Control: no-store` anywhere as a fallback, and do not add a query-string
 cache buster.** Both are the cargo-cult reflex this design replaced: `no-store` re-downloads the
 whole shell on every reload, and query strings defeat CDN caching. **Either a URL is
 content-addressable (immutable) or it is the index (no-cache).** **Never hardcode a logical asset
@@ -3615,19 +3617,19 @@ Answer this before assuming a green result means anything.
 
 | path | hook git looks for | gated? |
 |---|---|---|
-| direct `git commit` on main (memory curation, conflict resolution) | `pre-commit` | ✅ yes |
-| `git merge --no-ff <branch>` with a clean auto-commit | `pre-merge-commit` | ❌ **no — that file does not exist** |
-| a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | ✅ yes |
-| any commit inside a sub-task worktree | `prepare-commit-msg` only (see below) | ❌ no GATE, by design |
+| direct `git commit` on main (memory curation, conflict resolution) | `pre-commit` | yes |
+| `git merge --no-ff <branch>` with a clean auto-commit | `pre-merge-commit` | **no — that file does not exist** |
+| a merge that CONFLICTS, then `git commit` after resolving | `pre-commit` | yes |
+| any commit inside a sub-task worktree | `prepare-commit-msg` only (see below) | no GATE, by design |
 
-⚠️ **The clean merge — root's dominant path — is NOT gated, while the conflicting merge IS.** That
+**The clean merge — root's dominant path — is NOT gated, while the conflicting merge IS.** That
 is backwards from intuition, and it is why "the hook passed" says very little about an integration.
 Deliberately not fixed by adding `pre-merge-commit`: the branch model REQUIRES that intermediate
 merges be allowed to not typecheck, and gating every merge would re-establish the routine
 `--no-verify` habit that hid 24 errors before. Worktrees skip the gate on purpose — sub-tasks commit
 constantly. To check the gate from a worktree, run `bash /path/to/main/.hooks/pre-commit` by hand.
 
-⚠️ **A worktree's `core.hooksPath` is a real directory, and reading it is how you conclude the
+**A worktree's `core.hooksPath` is a real directory, and reading it is how you conclude the
 opposite of the truth.** It points at `<wt>/.hooks/worktree`, which contains `prepare-commit-msg`
 and NOTHING else — provenance, not gating. It was `/dev/null` until the trailer mechanism landed,
 so the old *"hooks are disabled in worktrees"* shorthand now reads as false while the gating answer
@@ -3637,7 +3639,7 @@ it was standing in for is unchanged. **`git config core.hooksPath` answers "is a
 **`core.hooksPath` is LOCAL config and is not tracked, so a fresh clone is ungated again and looks
 identical to a gated one.**
 
-> ⭐ **A checked-in hook file is not an enforced hook.** For a long time `.hooks/pre-commit` existed,
+> **A checked-in hook file is not an enforced hook.** For a long time `.hooks/pre-commit` existed,
 > was referenced as if active, and nothing pointed at it — git was looking in `.git/hooks/`, which
 > held only `.sample` files. **Nobody was gated anywhere**, every `--no-verify` was a no-op against
 > a gate that did not exist, and **the absence looked exactly like compliance.** The only way to
@@ -3662,7 +3664,7 @@ intact, and the output looks identical either way.**
 | `data-paths.test.ts` | PATTERN | only one file builds paths from `dataRoot` | the 16 literal characters `dataRoot.slice(2)` |
 | `.hooks/pre-commit` | SCOPE | `All checks passed.` | **4 of 141** test files, while NAMING five |
 
-⚠️ **The sharpest instance upgrades the class statement: an addition list does not merely fail to
+**The sharpest instance upgrades the class statement: an addition list does not merely fail to
 cover NEW code — it silently stops covering the code it explicitly NAMED.** The hook listed five
 test files and ran four. `src/direct-provider.test.ts` was deleted **four days after being added to
 that list**, and the hook went on naming it for 4.5 months while printing `All checks passed.` What
@@ -3670,7 +3672,7 @@ made it silent is the runner: **`bun test` skips a path that does not exist and 
 **So an addition list must FAIL when a listed item is ABSENT** — a checker that shrugs at a missing
 entry cannot tell *"we chose not to check this"* from *"this evaporated"*.
 
-⭐ **Start from everything and subtract; do not enumerate what to include.** A subtract-list fails
+**Start from everything and subtract; do not enumerate what to include.** A subtract-list fails
 LOUDLY — something noisy shows up and someone adds an entry. An include-list fails SILENTLY: new
 code simply is not covered and nothing anywhere says so. `biome.json` and `tsconfig.json` both got
 this right with nobody maintaining them. **The one legitimate exception is performance, and it must
@@ -3692,7 +3694,7 @@ while it was dead. The evidence is the round trip: plant, re-verify dead against
 plant → **1 test red naming the offending file**, then plant removed → green. **A test whose value
 is entirely in the day it fires must be made to fire on purpose at least once.**
 
-⚠️ **And the widened heuristic has a RECALL GAP that is stated on purpose, because an unwritten one
+**And the widened heuristic has a RECALL GAP that is stated on purpose, because an unwritten one
 is the next depth defect.** Precision came from one rule — *a user-visible string starts with a
 capital OR contains a space* — which took the noisiest form from **32% real hits to ~100%** by
 dropping `rotate(90deg)`, `currentColor`, `sk-ant-…` and dotted i18n keys. The price is that **a
@@ -3712,7 +3714,7 @@ half translated and half English, **worse than untouched, and it looks *handled*
 repair is the coherent unit, not the flagged line**; a gate that catches a subset tells you WHERE to
 look, not WHAT to fix.
 
-⚠️ **When a widened gate surfaces a real backlog, RATCHET — and make the baseline write itself
+**When a widened gate surfaces a real backlog, RATCHET — and make the baseline write itself
 down.** The widening found 26 pre-existing bare strings, so two things were true at once: the gate
 is correct and the repo cannot pass it. **A gate nobody can pass stops being evidence about
 anything** — it just gets `--no-verify`'d, which leaves no trace, the way 24 type errors once
@@ -3723,12 +3725,12 @@ so fixing ten strings against a stale 26 lets ten new ones land unnoticed — **
 reintroduced by the fix for it.** Known hole, accepted and recorded next to the baseline: it is ONE
 count, so removing one string and adding another in the same commit nets to zero.
 
-⚠️ **Do not let the string cleanup swallow the gate fix.** Widening flags a lot, and the pull to fix
+**Do not let the string cleanup swallow the gate fix.** Widening flags a lot, and the pull to fix
 them "while I'm here" converts a nearly-finished bounded task into an unbounded translation project
 — which is how the thing that was going to protect us gets abandoned halfway. Count them, file them
 (`01KYDBRDAPF13M5X0E7PGQVB0X`), ship the gate.
 
-⚠️ **"Scope" is only one dimension an addition list can hide in — PATTERN is another, and it hides
+**"Scope" is only one dimension an addition list can hide in — PATTERN is another, and it hides
 better**, because a widened scope makes a narrow pattern look thoroughly exercised. The data-paths
 audit's scope was fixed while its regex still matched sixteen literal characters, so
 `dataRoot.substring(2)`, `.replace("@/", "")` and a formatter-wrapped `dataRoot\n\t.slice(2)` all
@@ -3758,7 +3760,7 @@ were added, and all 24 fixes DELETED a cast or a hack.** The compiler will show 
 cases; what it will not tell you is that **a cast failing with TS2352 means the type is MORE precise
 than you assumed, not less**, and that `.filter(Boolean)` does not narrow, so `!` is never the fix.
 
-⚠️ **Why 24 errors accumulated is the more important half, and it is not "someone bypassed the
+**Why 24 errors accumulated is the more important half, and it is not "someone bypassed the
 gate": there was no gate to bypass.** Nothing snuck past anything — the errors accumulated in the
 open, and the absence looked exactly like compliance. Relatedly, `check:ci` exits 0 with a standing
 pile of warnings, so **do not "fix" the warning count during a gate restoration**: biome's suggested
@@ -3785,7 +3787,7 @@ not.**
 Only the ones that stay silent and are paid by someone else. Anything the compiler, biome or a
 failing test tells you within a minute is deliberately not here.
 
-- ⚠️ **A generator called without `yield*` is a SILENT NO-OP.** After extracting a `yield`-ing block
+- **A generator called without `yield*` is a SILENT NO-OP.** After extracting a `yield`-ing block
   into a helper, grep every call site. **Nothing catches this**: legal TS, no diagnostic, no lint
   warning, because the call genuinely returns a generator and the type system has no opinion about
   whether anyone iterates it. Observed cost: a tool_result reached neither JSONL nor `messages[]`,
@@ -3803,7 +3805,7 @@ failing test tells you within a minute is deliberately not here.
 - **`bun run check` runs `--write` and silently formats 70+ files** — use `check:ci` when debugging,
   and split a format-only sweep into its own commit, or the diff someone reviews is not the diff you
   made.
-- ⚠️ **To READ another branch, use `git show <ref>:<path>` or `git grep <pat> <ref>` — never check it
+- **To READ another branch, use `git show <ref>:<path>` or `git grep <pat> <ref>` — never check it
   out.** *"Never `git checkout` to switch branches"* is stated as a bare prohibition in the system
   prompt with no alternative beside it, and root violated it while reviewing a merge for the most
   ordinary reason there is: wanting to grep the branch. **A prohibition with no remedy gets violated
@@ -3877,7 +3879,7 @@ the partial update was decided by LINE NUMBERS, which is not something any calle
 "the whole call was refused, I'll retry" is the correct-looking move that replays a reparent which
 already happened. Now: phase 1 validates everything, phase 2 applies everything.
 
-⚠️ **The half nobody predicts: NO tracker mutator saves.** `save()` is defined once in
+**The half nobody predicts: NO tracker mutator saves.** `save()` is defined once in
 `task-tracker.ts` and called zero times inside it; the only save is the one at the END of the op. So
 a field applied before a throw **lives in memory only, and `tree.json` still holds the old value**
 — until some UNRELATED operation's `save()` publishes it, or a restart evaporates it. Measured, not
@@ -3886,7 +3888,7 @@ abandoned reparent to disk. **A mutator that does not persist is not "a smaller 
 write with no owner** — whoever saves next inherits it, and the caller who was told "refused" is not
 that person.
 
-⭐ **The reported symptom and the discriminating test are DIFFERENT CASES, and the task description
+**The reported symptom and the discriminating test are DIFFERENT CASES, and the task description
 asked for the wrong one.** It specified: assert that after `{title, status:"closed"}` throws, the
 title did not change. **That assertion is green against the broken implementation** — title sat
 after the throw, so it never landed either way. Measured both directions: it goes red only against a
@@ -3902,7 +3904,7 @@ instinct, and it only bites when that field could have changed — otherwise it 
 `tracker.assignBranch()` four lines above `updateTaskOp`, so `{branch, status:"closed"}` left the
 branch assigned on a 400. This is *a rule enforced at N of M doors* in its cleanest form — not two
 implementations drifting, but **one right implementation that something upstream of it renders
-untrue.** `branch` now goes through the op. ⚠️ **Widening a shared op's input type is a moment to
+untrue.** `branch` now goes through the op. **Widening a shared op's input type is a moment to
 check the tool schema**: `branch` is worktree lifecycle, and an agent editing another task's branch
 desynchronizes the tree from the worktrees on disk with nothing going red until a later close
 deletes a branch that is wrong or still in use. It did not leak — verified with a positive control,
@@ -3925,7 +3927,7 @@ lines: 1269 `update_task` calls, 21 carrying a rejected status, **zero** combini
 that DO carry a `parentId` before it is allowed to print a zero — because *a checker reporting ZERO
 is a claim about the checker*. Re-runnable: `scripts/scan-partial-update-damage.ts`.
 
-⭐ **The one instance that DID fire is where two separately-filed defects turn out to be one call.**
+**The one instance that DID fire is where two separately-filed defects turn out to be one call.**
 The single silently-dropped field in that whole history is a `title`, 2026-07-28, on task
 `01KYCQVA8CP2S0X6V1QDQSBH8X` — **and that task's title today is the `[已解决 by …]` string named in
 *"Never offer a remedy that will not work"* as the damage from `closeTaskOp`'s dead end.** Same
@@ -3941,7 +3943,7 @@ Probes kept accumulating in `scripts/` with nothing written down about which one
 "commit the probe" read as an unconditional convention. It is not one, and the criterion is sharper
 than "is it still useful":
 
-> ⭐ **A committed probe is worth the space iff the thing it measures can change WITHOUT any test
+> **A committed probe is worth the space iff the thing it measures can change WITHOUT any test
 > going red.** That is the whole question. Not how good the probe is, not how hard it was to write.
 
 Three live instances, one per answer:
@@ -3952,13 +3954,13 @@ Three live instances, one per answer:
 | `scan-partial-update-damage.ts` | **accumulated history** — has this bug ever fired, across every JSONL | KEEP. No test can pin the past, and it carries its own positive control. |
 | ~~`probe-update-task-partial.ts`~~ | **our own code**, already pinned by 20 tests | CUT. |
 
-⭐ **The counter-intuitive half, which is what makes this worth writing down: being covered by tests
+**The counter-intuitive half, which is what makes this worth writing down: being covered by tests
 is the reason to DELETE a probe, not to keep it.** Where a probe and a test guard the same fact, the
 test wins unconditionally — *it runs itself*, and the probe only works if a human remembers it
 exists. A probe that duplicates a test is not redundant-but-harmless; it is a second, weaker copy
 that will drift, and whose narration goes stale the moment the bug it describes is fixed.
 
-⚠️ **And price the cost on the right side of the ledger.** That probe called `updateTaskOp` with
+**And price the cost on the right side of the ledger.** That probe called `updateTaskOp` with
 `dataPaths: null`, so `task-index-coverage.test.ts` — a whole-repo SUBTRACT-list audit — caught it,
 correctly. The reflex is to add an exemption row and call the cost "one line". **It is not: the cost
 is an audit that no longer means what it meant.** A subtract-list is one of the more expensive
@@ -3979,7 +3981,7 @@ directions. Correction to the parameter list quoted earlier in this file: `get_t
 `projectId, format, include_closed` — the *"no time predicate anywhere"* point it was making is
 unaffected.
 
-⭐ **The reusable half is how the consumer count was taken. Two UI sites matched a grep for
+**The reusable half is how the consumer count was taken. Two UI sites matched a grep for
 `include_details` and NEITHER was a consumer: they read whether the caller PASSED the argument, to
 print a "detailed" badge, and never touched a field of the response.** So the deletion was
 projection-only and no renderer lost data. **An argument-reader and a data-reader are
@@ -3987,7 +3989,7 @@ indistinguishable in a grep for the parameter name** — both hits sit in a UI f
 flag — so decide which one each hit is before pricing a removal, or a pure-badge site reads as a
 dependency and vetoes it.
 
-⚠️ **Nothing pinned the projection, and the two pre-existing `get_tree` tests could not have.**
+**Nothing pinned the projection, and the two pre-existing `get_tree` tests could not have.**
 Under a mutation restoring whole nodes they both stayed GREEN — they assert `nodes.length > 0` and
 the absence of `(you)`, i.e. that the call did not crash. Pinned now by an exact key-set assertion
 plus named absences, on a fixture carrying a description, a cost, a result round AND a branch,
@@ -4022,27 +4024,27 @@ missing trailer as "no provenance".
 | `.mxd/hooks/setup_worktree.sh` | points `core.hooksPath` at `.hooks/worktree` |
 | `.hooks/worktree/prepare-commit-msg` | reads that config, appends the trailer |
 
-⚠️ **`.hooks/worktree` holds `prepare-commit-msg` and nothing else, and aiming it at `.hooks`
+**`.hooks/worktree` holds `prepare-commit-msg` and nothing else, and aiming it at `.hooks`
 instead is the tempting near-miss**: that directory holds `pre-commit` (typecheck + a test
 subset), which worktrees skip deliberately because agents commit constantly. Recording
 provenance and gating a commit are separate decisions — whether the gate comes back is
 `01KNJ7PT19V1HE1ZRT5KW8X043`'s question, not this one's.
 
-⚠️ **CORRECTION to *What is actually gated*: its sub-task-worktree row now reads wrong.**
+**CORRECTION to *What is actually gated*: its sub-task-worktree row now reads wrong.**
 `core.hooksPath` in a worktree is `<wt>/.hooks/worktree`, not `/dev/null` — and the gating
 answer is still **no**, because that directory contains no gate. Someone who checks the config
 and stops there concludes the opposite.
 
 **Two ways the next person falls, both measured rather than reasoned:**
 
-- ⚠️ **`MERGE_MSG` arrives with NO trailing newline; `COMMIT_EDITMSG` does.** Hand the former
+- **`MERGE_MSG` arrives with NO trailing newline; `COMMIT_EDITMSG` does.** Hand the former
   to `git interpret-trailers --in-place` and the trailer is joined to the subject by a single
   newline, after which **git's own parser no longer sees a trailer**:
   `%(trailers:key=Task-Id,valueonly)` comes back empty while the text sits plainly in `%B`.
   Every merge made inside a worktree lands there. Append a newline first. **This is why an
   assertion about a trailer must go through `%(trailers:…)` and never through a substring of
   the message.**
-- ⚠️ **An empty message plus a hook that adds content is a commit whose SUBJECT is
+- **An empty message plus a hook that adds content is a commit whose SUBJECT is
   `Task-Id: …`.** git aborts such a commit only because it is empty, and the hook rescues it
   into existence. Guard on "nothing but blanks and comments" and do nothing.
 
@@ -4070,7 +4072,7 @@ config, so every key is present and "not chosen yet" is `""`; overlays are `Part
 key is inherit.** `""` is therefore load-bearing at the global layer — a second reason, on top of
 the earlier boundary, not to touch what it means in `resolveConfig`.
 
-⭐ **The UI bug the user reported is one operator: `(draft.model as string | undefined) ?? ""` at
+**The UI bug the user reported is one operator: `(draft.model as string | undefined) ?? ""` at
 READ time.** Past that line `undefined` (inherit) and `""` (an explicit empty override) are one
 value, so the state could not be rendered — and, worse, could not be EXITED: typing then deleting
 left `""` in the draft and no gesture anywhere set it back to `undefined`, making the panel a
@@ -4079,7 +4081,7 @@ and it is the instance that shows the collision is not only a diagnosis problem:
 share one value, a control built on that value cannot REACH one of them.** **Derive the state from
 the raw value FIRST, then coalesce for the control** — the reverse order is what erases it.
 
-⚠️ **CORRECTION to the first version of this entry, which said the panel "already had the right
+**CORRECTION to the first version of this entry, which said the panel "already had the right
 convention one screen away" and quoted `SettingBoolField`'s *"Three states: undefined (inherit),
 true, false / indeterminate = inherit"*. That comment describes a control that was never built:
 `indeterminate` is set NOWHERE in the file, and the onChange was `{ [field]: e.target.checked }`,
@@ -4089,7 +4091,7 @@ one screen away was the right *vocabulary*, the right *display*, and **the same 
 fields are fixed now, sharing one `InheritToggle`, because a 3-state value cannot live on a 2-state
 checkbox — the inherit state needs its own control.
 
-⭐ **A comment naming three states is not evidence of three states.** That quote was read as a
+**A comment naming three states is not evidence of three states.** That quote was read as a
 measurement and relayed as one, which is the same failure as *"The CLI has the same check
 client-side"* in the paragraph below — **twice in one evening, a comment was passed along as a
 verified fact, and both times it described a sibling mechanism that did not exist.** The damage is
@@ -4107,7 +4109,7 @@ so "empty" there can only mean absent** — the ambiguity the user objected to r
 legal empty value, which is exactly what `model` and `defaultAuth` had and a number does not. Adding
 a tickbox would be a second way to reach a state the control can already reach.
 
-⚠️ **The legal field sets of the two PROJECT layers differ, and the axis is TRUST rather than
+**The legal field sets of the two PROJECT layers differ, and the axis is TRUST rather than
 scoping.** `model` and `defaultAuth` are settable on **global** and on **local**, and are **not
 rendered at all** on the **project** tab — because the repo layer is
 `<projectPath>/.mxd/config.json`, git-tracked and **arriving with `git clone`**, so a repo you
@@ -4118,7 +4120,7 @@ is not-from-the-repo** — and it is why the three tabs are not variations of on
 `rejectCredentialFields` is layer-aware for the same reason (repo refuses `defaultAuth`, local
 allows it, `authGroups` refused on both).
 
-⚠️ **On the way there, a guard was found sitting on one of two doors with the other one open, and
+**On the way there, a guard was found sitting on one of two doors with the other one open, and
 what it actually did was break the UI.** Its comment claimed *"The CLI has the same check
 client-side"* — measured false: `mxd config set defaultAuth <name> --project` tests only
 `GLOBAL_ONLY_FIELDS` and writes straight to `.mxd/config.json`, while the same CLI's default path
@@ -4130,7 +4132,7 @@ read by `loadProjectRepoConfig`, never through `PATCH`, and `authGroups` is repl
 `resolveConfig` rather than merged) is `01KYQYRXST632196G3FNWTWF1X`, and it is hardening rather than
 a vulnerability: **there is no sandbox, so a hostile repo already owns you once an agent reads it.**
 
-⭐ **Counting doors is not enough — ask whether every door is a WRITE.** For *how can `defaultAuth`
+**Counting doors is not enough — ask whether every door is a WRITE.** For *how can `defaultAuth`
 reach the repo layer*, there are three: `PATCH …/config/repo` (guarded), `mxd config set --project`
 (never guarded — writes `.mxd/config.json` directly, bypassing the daemon), and **`git clone`, where
 the file simply arrives and there is no write moment to guard at all.** So **no set of write-door
@@ -4139,7 +4141,7 @@ option into the only one that finishes the job. The generalisation worth carryin
 *N-of-M-doors* silently assumes every door is an operation you can intercept. **When one door is
 "the state was already there when we arrived", enforcement has to move to the READ.**
 
-⚠️ **And that same false comment carries a second, separate lesson: a comment asserting that a
+**And that same false comment carries a second, separate lesson: a comment asserting that a
 sibling door is covered makes the doors rule actively misleading.** The failure mode is not that you
 miss a door — it is that you read the claim, believe both are covered, and **stop looking**, the
 same shape as a gate printing a pass. Root relayed it to a sub-task as fact and the sub-task found
@@ -4152,7 +4154,7 @@ switching designs mid-task (`settings.authGlobalOnly`, `settings.modelRequiredOv
 deleted with their design rather than left as orphans — the four-orphan rule (i18n key, icon, URL
 builder, prose) applies to a control you *considered* and dropped, not only to one you delete.
 
-## ⚠️ The rules are written for the worker's situation, and root's operations look exempt
+## The rules are written for the worker's situation, and root's operations look exempt
 
 **Measured on one root session, 2026-07-29: root broke three rules it had quoted at children that
 same evening.** Not from disagreeing with any of them — each time the rule simply did not seem to be
@@ -4164,7 +4166,7 @@ about what root was doing:
 | *Run `bun test` bare; a pipe is data loss* | `bun test 2>&1 \| tail -25`, twice | "I only need the pass/fail line" |
 | *An AI cannot hallucinate a test result* | relayed two CODE COMMENTS to a sub-task as measured fact | a comment is in the repo, so it reads as evidence |
 
-⭐ **The mechanism is not laziness, it is that the rules are phrased for the situation they were
+**The mechanism is not laziness, it is that the rules are phrased for the situation they were
 learned in — a worker running a suite, a worker reading a file — and root's version of the act has
 a different shape.** Reviewing a merge is not "switching branches". Wanting the summary line is not
 "truncating evidence". So the rule is recognised, judged inapplicable, and violated, all without
@@ -4177,7 +4179,7 @@ the whole reason it was reached for (see *Known pitfalls*). And **the comment on
 under the `?? ""` section: a comment naming three states is not evidence that three states exist,
 and passing one downward as fact costs a sub-task a measurement round.
 
-⚠️ **Do not read this as "root should be more careful."** Both traceless violations are cases where
+**Do not read this as "root should be more careful."** Both traceless violations are cases where
 the tool could have said something and did not, and the third was fixed by writing the missing
 alternative down. **Prefer that shape: when a rule is broken by someone who knows it, ask what made
 the act look like a different act.**
@@ -4193,19 +4195,19 @@ argument that used to surround this (which fields the guard should hold, whether
 `GLOBAL_ONLY_FIELDS` is its home, whether `null` / `""` / absent is legal) loses its subject,
 because all of it came from ONE type serving three layers with different semantics.
 
-⚠️ **The instinct it replaces is a blacklist plus a filter, and that is the same defect
+**The instinct it replaces is a blacklist plus a filter, and that is the same defect
 relocated** — one more field list to maintain, one more N-of-M-doors argument. The test for
 whether you built the right thing: the types must be COMPUTED from the classification so the two
 cannot disagree, and `satisfies Record<keyof MatrixConfig, …>` must make an unclassified new field
 a compile error. That one declaration also feeds both write doors' refusal WORDING and the
 read-path log, so a user meets the same sentence whichever way they arrived.
 
-⚠️ **A repo write now NORMALIZES a git-tracked file.** The loader strips and the saver writes what
+**A repo write now NORMALIZES a git-tracked file.** The loader strips and the saver writes what
 it was handed, so the next `PATCH …/config/repo` or `mxd config set --project` silently removes a
 stale `model` from `.mxd/config.json`. Intended for a KNOWN field — the key was already doing
 nothing — but it is a diff nobody asked for, in someone's tracked file.
 
-⚠️ **A key NO layer declares is dropped the same way, and carrying it was considered and REJECTED
+**A key NO layer declares is dropped the same way, and carrying it was considered and REJECTED
 (user, 2026-07-29).** The hazard is real and was traced: `.mxd/config.json` is git-tracked, the
 saver writes back what the loader handed it, so an older matrix editing one field deletes a field a
 NEWER matrix wrote, as an ordinary commit. **The user's answer is that this is a missing-versioning
@@ -4213,7 +4215,7 @@ problem, not a loader problem**: *"现在我们并没有 proper 的 versioning�
 然的 如果你读到新版本 应该说让你去更新"* — reading a newer config should say *upgrade your matrix*
 rather than absorb it silently. Filed as `01KYR23QK9E4CJDD7XKV8Q1CE5`, deliberately not built here.
 
-⭐ **The reusable half, and it is root's rather than mine: a consequence traced correctly does not
+**The reusable half, and it is root's rather than mine: a consequence traced correctly does not
 make the fix derived from it correctly priced.** The trace above was right. The remedy proposed from
 it — "keep the unknown key, one branch" — was not one branch: `asLayerConfig` returns
 `LayerConfig<L>`, so passing unknown keys through either makes that return type a lie for everything
@@ -4222,7 +4224,7 @@ through read→edit→write in three functions, for a case that has never occurr
 the diagnosis lends nothing to the price of the cure, and a cost stated as one branch by the person
 who wants the cure is the one to re-derive.**
 
-⚠️ **Look a classification table up through a `Map`, never property access on the object
+**Look a classification table up through a `Map`, never property access on the object
 literal.** `TABLE["__proto__"]` answers with `Object.prototype`, which is TRUTHY, so every
 prototype-chain name (`__proto__`, `constructor`, `toString`) resolves to a bogus entry and is
 classified by whichever branch its undefined flags happen to fall into. It is not only a wrong
@@ -4239,7 +4241,7 @@ spreads the keys an object REALLY has and the loaders were bare `readJsonConfig`
 the runtime agree with a type that was already declared, which is why the change needed no new
 rule.
 
-⭐ **A test asserting that a value is MASKED cannot survive the value becoming unreachable, and
+**A test asserting that a value is MASKED cannot survive the value becoming unreachable, and
 inverting it is right where re-aiming would be wrong.** `/config/all`'s old test hand-wrote
 `authGroups` into both project files and asserted the response masked them. Masking is correct and
 still there — but with the projection in place nothing can produce that value, so the assertion
@@ -4256,7 +4258,7 @@ overruled. And `budgetUsd` / `thinkingEffort` are cost levers that would belong 
 principle if it were ever systematised; they were deliberately not circled, so they are candidates,
 not licence.
 
-## ⚠️ `git stash pop` does not restore the INDEX, so a commit can be a subset of what you staged
+## `git stash pop` does not restore the INDEX, so a commit can be a subset of what you staged
 
 **Observed on main 2026-07-29.** A cleanup staged 12 deletions, then ran `git stash` / `git stash
 pop` for an unrelated before/after comparison, then `git add` on two config files, then committed.
@@ -4264,7 +4266,7 @@ pop` for an unrelated before/after comparison, then `git add` on two config file
 was the whole index: the commit contained 2 files while its message described 14. Fixed with
 `--amend`; nothing was lost because the deletions were still in the working tree.
 
-⭐ **What makes it a member of the gate family rather than a git tip: the hook passed, and passing
+**What makes it a member of the gate family rather than a git tip: the hook passed, and passing
 was CORRECT.** typecheck, lint, i18n and 370 tests all went green on a commit that did almost
 nothing — the deleted files were still on disk, so there was nothing to be broken. **A green gate is
 consistent with a commit that did the opposite of what it says.** Nothing in this repo compares a
@@ -4286,40 +4288,40 @@ table and `DEFAULT_CONTEXT_WINDOW` in the OpenAI one. `src/context-window.ts` as
 **Both directions were live and both were silent, which is the whole reason nothing was red.**
 `claude-sonnet-5` measures 1,000,000 and we guessed 200,000 — the guess matched the literal
 `sonnet-4`, so a new generation simply fell through. `claude-opus-4-1-20250805` measures 200,000 and
-we guessed 1,000,000, because bare `opus` matched everything. ⚠️ **The over-estimate is the
+we guessed 1,000,000, because bare `opus` matched everything. **The over-estimate is the
 dangerous half**: compacting at ~900K against an API that refuses at 200K walks into the compaction
 deadlock recorded above. 200000 and 1000000 are both entirely normal numbers to see.
 
-⭐ **Read BOTH keys — `max_input_tokens ?? context_length` — because the key follows the PROTOCOL
+**Read BOTH keys — `max_input_tokens ?? context_length` — because the key follows the PROTOCOL
 DIALECT, not the configured provider.** kimi's auth group is `provider: "anthropic"` with a
 `baseUrl`, and its models response looks Anthropic all over (`type`, `display_name`, `created_at`,
 an envelope with `first_id`/`has_more`) while putting the number under OpenAI's name. Pick the key
 from the provider type and you get a confident 200000 with 1M sitting in the next field.
 
-⚠️ **And read nothing else, however limit-shaped it looks.** Anthropic's `max_tokens` sits directly
+**And read nothing else, however limit-shaped it looks.** Anthropic's `max_tokens` sits directly
 beside `max_input_tokens` and is the OUTPUT cap — 128,000 next to a 1,000,000 window — which is the
 LiteLLM #14876 confusion. OpenClaw #88596 read xAI's `long_context_threshold`, a PRICING breakpoint,
 and reported a 1M model as 200K.
 
-⚠️ **Cache on `baseUrl + model`, never on the model alone.** `k3` is 1M and `k3-256k` is 256K at ONE
+**Cache on `baseUrl + model`, never on the model alone.** `k3` is 1M and `k3-256k` is 256K at ONE
 host; GPT-5.5 is 1,050,000 on OpenAI's own API and 272,000 of input through the codex endpoint. A
 model does not even have one NAME across deployments — Haiku 4.5 is `claude-haiku-4-5-20251001` on
 the Claude API, `anthropic.claude-haiku-4-5-20251001-v1:0` on Bedrock and
 `claude-haiku-4-5@20251001` on Vertex. The endpoint is the thing that knows.
 
-⭐ **Matching is EXACT on the model id, and the reason is not "prefixes are sloppy".** `/v1/models`
+**Matching is EXACT on the model id, and the reason is not "prefixes are sloppy".** `/v1/models`
 is keyed by model **ID**; an **alias** is a separate documented name that the server resolves to
 whatever snapshot it currently points at, and it is designed to MOVE. So there is no correct
 client-side alias→ID mapping — a prefix match gets today's answer right by naming convention, and
 the day an alias is repointed it silently follows list order instead of the official mapping. The
 non-alias cases fall out of the same rule: `claude-opus-4` is a prefix of both a 1M id and a 200K
-one. ⚠️ **MEASURED COST, accepted**: `claude-haiku-4-5` is NOT among the 11 ids the endpoint lists
+one. **MEASURED COST, accepted**: `claude-haiku-4-5` is NOT among the 11 ids the endpoint lists
 and the messages API accepts it anyway (200), so exact matching really does break a config that
 works today. That is why a miss **suggests** the single prefix candidate and resolves nothing —
 suggest, never resolve, because an id the user writes into config is chosen and auditable while one
 we resolved for them is guessed and invisible. All four of Anthropic's dated models have exactly one
-candidate, so the suggestion covers every alias in play. ⚠️ Do not "fix" aliases by reading
-`response.model` off a probe call: it expands them, and this file already records it measured as NOT
+candidate, so the suggestion covers every alias in play. **Do not "fix" aliases by reading
+`response.model` off a probe call**: it expands them, and this file already records it measured as NOT
 ground truth.
 
 **NEGATIVE RESULTS, so nobody re-derives them.** OpenRouter is public, carries `context_length` on
@@ -4338,7 +4340,7 @@ with a `baseUrl` — so `client.models.list()` needs no hand-built copy of the a
 standing warning above is that beta headers, timeout and baseUrl are already hand-matched at three
 sites with nothing enforcing agreement; this did not make it four.
 
-### ⚠️ CORRECTION to the paragraph above: the codex path was TWO failures stacked behind one 401
+### CORRECTION to the paragraph above: the codex path was TWO failures stacked behind one 401
 
 **That sentence — *"the codex catalog routes answer 401 … so the OpenAI path now fails at startup"*
 — implied that fixing the credentials would make the path answer. MEASURED 2026-07-30 against a live
@@ -4348,7 +4350,7 @@ field of it: `client_version` is a REQUIRED query parameter (omit it → 400 `Fi
 envelope is `{models:[…]}` not `{data:[…]}`, entries are keyed `slug` with no `id`, and the window
 is under `context_window`. Four independent mismatches, any one of which was enough.
 
-⭐ **The transferable part is the shape, not the fields: a 401 masks every later disagreement, and
+**The transferable part is the shape, not the fields: a 401 masks every later disagreement, and
 the ones behind it are only separable once it is gone.** Nothing was wrong with the earlier
 measurement — the 401 was real and the conclusion drawn from it was the honest one available. It was
 still half wrong, because *"authentication failed"* and *"we cannot read this dialect"* are one
@@ -4360,7 +4362,7 @@ alongside `WINDOW_KEYS = [max_input_tokens, context_length, context_window]`, an
 reader takes `data ?? models`. That is the existing rule (*the key follows the protocol dialect, not
 the configured provider*) extended, not forked.
 
-⚠️ **THIRD measured member of the limit-shaped-but-wrong family, and this one is inside a dialect we
+**THIRD measured member of the limit-shaped-but-wrong family, and this one is inside a dialect we
 now read: codex's `max_context_window`.** MEASURED — `gpt-5.4` reports `context_window: 272000` and
 `max_context_window: 1000000` in the same entry, **3.68× apart**, likewise `codex-auto-review`;
 `context_window` is what this deployment grants, `max_context_window` is the model's ceiling
@@ -4369,7 +4371,7 @@ those five cannot tell them apart** — only `gpt-5.4` can, which is why the tes
 wrong key over-estimates, the direction that walks into the compaction deadlock. (The 272,000 also
 independently re-confirms the codex input cap already recorded above, from a second source.)
 
-## ⭐ An empty 200 is a REFUSAL wearing the shape of an answer
+## An empty 200 is a REFUSAL wearing the shape of an answer
 
 **DECIDED 2026-07-30.** *The endpoint is the only source; if it will not answer, throw* quietly
 assumes an endpoint either answers or fails. **A 200 carrying an empty list is neither.** MEASURED
@@ -4383,7 +4385,7 @@ then goes and does it. The refusal error instead says the endpoint enumerated no
 request that produced it (`requestDetail`, supplied by the provider because only the provider knows
 what it sent).
 
-⭐ **`client_version` is sent at the MAXIMUM (`999.0.0`), meaning "apply no version filter", and that
+**`client_version` is sent at the MAXIMUM (`999.0.0`), meaning "apply no version filter", and that
 is not the species of constant this module deleted.** `DEFAULT_MODEL` and `DEFAULT_CONTEXT_WINDOW`
 stood IN FOR AN ANSWER — a number nobody chose flowing into a decision. This flows into no answer:
 the window still comes entirely from the response. **The discriminator worth keeping is "does this
@@ -4404,12 +4406,12 @@ value substitute for a fact, or modify a request".** Why the alternatives lose:
 Filtering is pure loss here regardless — we never SELECT from this list, the user already picked a
 model — so a narrower catalogue can only fail a lookup for a model we are about to send traffic to.
 
-⚠️ **Sent unconditionally with no endpoint branch, and that is measured rather than assumed:**
+**Sent unconditionally with no endpoint branch, and that is measured rather than assumed:**
 `api.openai.com/v1/models` answers identically with and without it (the same 401 `invalid_api_key`,
 so it is ignored rather than rejected — an unknown-parameter rejection would be a 400), and kimi
 returns the same 4 models either way.
 
-⚠️ **Two test doubles matched the models route with `urlStr.endsWith("/models")`, which a required
+**Two test doubles matched the models route with `urlStr.endsWith("/models")`, which a required
 query string silently breaks — and the symptom does not name the cause.** In
 `mock-openai-responses-api.ts` the request fell through to the next branch and raised `Unexpected
 URL`, which reads as the provider calling the wrong route. **Match `new URL(u).pathname`, not the
@@ -4419,7 +4421,7 @@ narrower than the thing it matches.
 
 ## The integration suite was running a configuration no install can have
 
-⭐ **Deleting the last context-window guess turned 333 tests across 21 files red, all one cause — and
+**Deleting the last context-window guess turned 333 tests across 21 files red, all one cause — and
 the cause was in the harness, not in production.** `DEFAULT_CONFIG.model` is `""`, tests inject
 `agentProvider` and never `initialConfig`, so `model: ""` travelled config resolution → provider
 construction → `agent_start` (into the durable log) → the request, with nothing on that path
@@ -4434,7 +4436,7 @@ compaction thresholds, so naming it at the call site is the point rather than bo
 file that had always named its model (`openai-responses-integration.test.ts`, `gpt-4.1-mini`) was
 the one file that stayed green.
 
-⚠️ **A test double standing in for an endpoint has to be able to REFUSE.** `ValidatingMockAPI`
+**A test double standing in for an endpoint has to be able to REFUSE.** `ValidatingMockAPI`
 serves the measured production catalogue — 11 real ids with their real `max_input_tokens` — and a
 test may replace it, including with `[]`. Answering whatever model it is asked about would put the
 deleted default back inside the harness, where nothing could ever go red. **And four hand-written
@@ -4443,13 +4445,13 @@ they are now one `createMockAnthropicClient`. Four copies of a fake is four plac
 
 ## Extends *The code→task link is a trailer*: a third message-end trap, and the one generalisation
 
-⭐ **`git interpret-trailers` has its own opinion about where a commit message ENDS, and it does not
+**`git interpret-trailers` has its own opinion about where a commit message ENDS, and it does not
 match the reader's.** Three traps in this hook now, and all three are that one fact: whenever the
 trailer is placed somewhere that is not the last paragraph *as `%(trailers:…)` sees it*, the id sits
 in `%B` looking perfect and the parser reports nothing. The next one will look unrelated too — this
 is the sentence that says where to look.
 
-⚠️ **The third: a line beginning `---` is the format-patch divider, so interpret-trailers stops the
+**The third: a line beginning `---` is the format-patch divider, so interpret-trailers stops the
 message there and inserts the trailer ABOVE it — above the divider it is not the last paragraph and
 therefore not a trailer.** The asymmetry is one-sided and is the whole mechanism: only the WRITER
 honours `---`; the reader just takes the last paragraph. Fix is one flag, `--no-divider`. Found the
@@ -4469,7 +4471,7 @@ spelling — it is not an addition list, and **there is nothing else to go and g
 asymmetry someone will trip over: git wants `---` followed by whitespace or end-of-line, so a LONGER
 markdown rule (`----------`) is safe while the short one is not, and `---` is the common spelling.
 
-⚠️ **A grep for a FLAG NAME in a file that documents that flag in prose is not a check** — it
+**A grep for a FLAG NAME in a file that documents that flag in prose is not a check** — it
 matched the comment and self-reported "the flag is present" in the run where it had just been
 stripped, in two separate instruments in one round. Key a control on the invocation you made, never
 on the text of the file you mutated. Same family as the extension-scoped grep that missed the
@@ -4480,11 +4482,11 @@ instead of the action.**
 cannot express the difference — the only discriminating shape is a line of exactly `---` or
 `--- text`.
 
-⚠️ **The sibling failure, where the instrument WORKED and only its CAPTION lied.** The commit-trailer
+**The sibling failure, where the instrument WORKED and only its CAPTION lied.** The commit-trailer
 audit counted correctly and printed its bucket as `(pre-migration)` — a *cause* the scan never
 tested, and already false when written, since that bucket also holds every clean `--no-ff` merge
 root makes on main (no hook runs there). Nothing caught it until root's own merge moved the number
-seconds after the file landed. ⭐ **A counting instrument can be right in its number and lying in
+seconds after the file landed. **A counting instrument can be right in its number and lying in
 its label, and the label is the part nobody audits** — the number gets checked because someone
 wanted it, the caption is read as decoration. Let a bucket claim only its own predicate ("no
 `Task-Id:` line in the message") and describe what happens to be in it separately. **Distinct from
@@ -4740,7 +4742,7 @@ magnitude here, and only one of them reddens.** Filed as `01KYRD9GS9HCW8145H5C5E
 
 ## The trailer hook checks its own work, and WHERE that check can live is the whole finding
 
-⭐ **A `pre-commit` audit of trailer damage is structurally blind, and the reason is worth more
+**A `pre-commit` audit of trailer damage is structurally blind, and the reason is worth more
 than the check: the commits that CAN be damaged are exactly the ones a `pre-commit` hook never
 sees.** `.hooks/worktree/` holds `prepare-commit-msg` and nothing else, so pre-commit never runs
 in a worktree; a clean `--no-ff` merge runs no hook at all; so a gate there sees only root's own
@@ -4750,21 +4752,21 @@ config write, git's merge behaviour), which is why it was invisible to two peopl
 
 **Second reason, independent and worth stating because it generalises past this hook: an audit of
 history cannot be a gate.** The damage it reports is in a commit that already exists, so a blocking
-check refuses your innocent new commit until someone rewrites history. ⚠️ **A gate you cannot
+check refuses your innocent new commit until someone rewrites history. **A gate you cannot
 satisfy by doing the right thing teaches bypassing, and the habit then costs you the checks it was
 good at.**
 
 So the check lives in `prepare-commit-msg`, warns on stderr, and never fails — the one moment the
 author can still `--amend`.
 
-⭐ **The mechanism, and why it is not a second reader implementation:
+**The mechanism, and why it is not a second reader implementation:
 `git interpret-trailers --no-divider --parse <msgfile>` applies git's OWN last-paragraph rule to
 the pending message.** Measured to agree with `%(trailers:key=Task-Id,valueonly)` on the resulting
 commit for **11 of 11** shapes — the divider damage, its fix, a trailer glued to the subject, and
 messages trailed by comment or scissors blocks, which is the half that would otherwise warn
 spuriously on every editor commit.
 
-⚠️ **`--no-divider` is load-bearing on the PARSE call too, not only on the write call**: without it
+**`--no-divider` is load-bearing on the PARSE call too, not only on the write call**: without it
 the check inherits the divider rule the writer just stopped honouring, and then it disagrees with
 the reader in both directions at once. A mutation dropping it reddens both halves of the pair.
 
@@ -4773,7 +4775,7 @@ the reader in both directions at once. A mutation dropping it reddens both halve
 on the same message". Over-strict is the direction nobody tests, and here it is the expensive one: a
 check that cries on every commit gets read as wallpaper within a day.
 
-⚠️ **The state is now unreachable through a correct writer, so the test breaks the WRITER on
+**The state is now unreachable through a correct writer, so the test breaks the WRITER on
 purpose** — `installTrailerHook` takes a mutation that strips one flag from the shipped script,
 leaving the code under test verbatim. A check for an unknown FOURTH cause cannot be tested any other
 way, and a fixture-local reimplementation would have passed against a broken hook.
@@ -4796,7 +4798,7 @@ two sites of one shape:
   change. Changing it lost every CLI command to *"Daemon is not reachable at
   http://localhost:7433"*: true, useless, unfalsifiable from outside.
 
-⭐ **DECIDED (user, 2026-07-30): *"不能让任何人去读 HOME,而是从 data dir
+**DECIDED (user, 2026-07-30): *"不能让任何人去读 HOME,而是从 data dir
 或者默认 home derive 出来"*.** One exported derivation — `resolveDataDir()` in
 `data-paths.ts` — and everything takes the value from there. A whole-repo audit fails on any other
 read of HOME for our data, with two allowlisted exceptions carrying their reasons: `PLIST_DIR`,
@@ -4804,20 +4806,20 @@ because macOS genuinely puts
 LaunchAgents under HOME and it must **not** move with our data dir, and codex-auth expanding a `~`
 the user typed.
 
-⚠️ **The two byte-identical duplicates are WHY the other three drifted.** `cli.ts` and `daemon.ts`
+**The two byte-identical duplicates are WHY the other three drifted.** `cli.ts` and `daemon.ts`
 carried `MXD_DATA_DIR ?? join(homedir(), ".mxd")` character for character, while `config.ts`,
 `runtime.ts` and cli.ts's `LOG_DIR` each dropped the env half — plus three more in `scripts/` that a
 grep of `src/` never saw. **Nobody ever had to reconcile anything, because there was no one place to
 reconcile.** So a duplicate is not just a maintenance cost: it is the absence of the site where a
 divergence would have been noticed.
 
-⚠️ **Do NOT read this as "delete the env fallbacks", and over-applying that would break the suite:**
+**Do NOT read this as "delete the env fallbacks", and over-applying that would break the suite:**
 `MXD_DATA_DIR` is how tests get an isolated data dir and `MXD_DAEMON_URL` is how they reach an
 ephemeral port. The rule from the model/credential deletions is *an env var must not silently answer
 a question config already answers*. **An explicit override losing to nothing is fine; a DEFAULT that
 overrides config is the bug.**
 
-⚠️ **The same audit moved `LOG_DIR` from `${HOME}/.mxd/logs` to `<data dir>/logs`, and that is a
+**The same audit moved `LOG_DIR` from `${HOME}/.mxd/logs` to `<data dir>/logs`, and that is a
 user-visible change nobody asked for.** Anyone running with `MXD_DATA_DIR` set will find the
 daemon's logs somewhere new. It is kept because logs are runtime state and a log directory ignoring
 `MXD_DATA_DIR` is the same defect as a config path ignoring it; the risk that would have made it
@@ -4834,14 +4836,14 @@ case: a missing file is a fresh install and returns defaults.
 (`dataDir: join(homedir(), ".mxd")`) was **dead** — zero callers ever omitted the argument, in
 production or in any test — while `resolveTaskJsonlPath`'s identical-looking default was the
 **opposite**: its one caller never passed anything, so the default WAS the value and
-`mxd analyze-cache` read `~/.mxd` however the env was set. ⭐ **Two defaults written the same way,
+`mxd analyze-cache` read `~/.mxd` however the env was set. **Two defaults written the same way,
 one unreachable and one load-bearing; only counting callers tells them apart, and the reflex fix
 (point both at the new function) is wrong for one of them. A default's value is decided entirely by
 who OMITS the argument, which is the one thing its definition cannot show you.** Also: `ProjectManager`'s `getByPath` and
 `ensureProject` have **zero production callers**, which is most of the answer to the path-identity
 question filed as `01KYSBAA41QRBA7GY3ZQ9M9RBR`.
 
-## ⚠️ A source audit written in the same commit as its fix matches its own explanation
+## A source audit written in the same commit as its fix matches its own explanation
 
 **Three times in one evening.** The audit greps for the expression you just deleted, and the fix
 leaves behind comments that QUOTE that expression as the thing that was wrong — so the instrument
@@ -4850,11 +4852,11 @@ precision with a required `\(`, which cannot help here: `join(homedir(), ".mxd")
 character-identical to the code. **Skip comment-opening lines.** Rewording the prose instead is the
 wrong repair — it teaches the next person that the audit is the thing to bend.
 
-⚠️ **And collect offending LINES; never assert on the file text.**
+**And collect offending LINES; never assert on the file text.**
 `expect(wholeFile).not.toContain(x)` prints all 1600 lines of `cli.ts` into the log on failure, the
 same shape as the 227MB run already recorded here.
 
-## ⭐ A workaround in the fixtures is where a production bug goes to be forgotten
+## A workaround in the fixtures is where a production bug goes to be forgotten
 
 **This file recorded the TEST half of a real production defect and not the defect.** The entry said
 *"macOS test gotcha: `mkdtemp(tmpdir())` returns `/var/folders/…` while a spawned subprocess's
@@ -4869,7 +4871,7 @@ pressure to fix it, and the note you write to help the next person teaches the w
 answer.** So ask of any "test gotcha" you are about to record: **is this a fact about the test
 environment, or a defect the test is absorbing on production's behalf?**
 
-⚠️ **The fixture for such a fix must not borrow the platform's symlink.** macOS hands you
+**The fixture for such a fix must not borrow the platform's symlink.** macOS hands you
 `/tmp → /private/tmp` for free, but `/tmp` is a real directory on Linux — so relying on it is *a
 fixture that cannot express the difference*, passing against the broken code by testing nothing.
 Build an explicit `symlinkSync` and assert the link differs from its target.
@@ -4885,7 +4887,7 @@ hygiene, so an unrelated test cannot fail with a path-resolution message.
 where the cwd notice has always resolved symlinks because **a linked worktree's `.git` is a FILE**.
 Another file answered the same question (do these two paths name one directory) with `===`.
 **Neither was wrong on its own terms; the repo held two standards for one primitive.** Now
-`src/real-path.ts`, imported by both. ⚠️ The fallback is the load-bearing half: `realpathSync`
+`src/real-path.ts`, imported by both. **The fallback is the load-bearing half**: `realpathSync`
 **throws** on a path that does not exist, and both callers COMPARE paths rather than read them — a
 deleted project directory or a typo'd `--project` must still compare — so returning the literal
 makes the worst case the old behaviour instead of a crash.
@@ -4898,7 +4900,7 @@ anywhere**, so a client asking for a draft got **201 plus a `pending` task** —
 dispatchable — and `draft` vs `pending` is the "can this execute" bit. It is pinned now the way
 `UPDATE_FIELDS` is: a list in the test `satisfies readonly (keyof CreateTaskOpts)[]` plus an
 `Exclude<>` exhaustiveness assertion, so the NEXT field is a compile error in a file that names the
-route. ⚠️ **The pin ties the list to the INTERFACE, not the list to the test bodies** — it cannot
+route. **The pin ties the list to the INTERFACE, not the list to the test bodies** — it cannot
 know a field is merely named there, and that limit is stated beside it.
 
 **The `auth add` flag check is the same rule in argv**, extending tonight's `--key`/`--auth-json`
@@ -5017,7 +5019,7 @@ on `~/.mxd`, so the CLI's own token is rejected by the service the CLI just inst
 health` answers `Daemon: undefined vundefined (uptime: NaNs)` while **exiting 0**. (That exit 0 on
 a 401 is a second door of `01KYSBCBNWEWYM2GHF0KH8QW0H`, filed there rather than fixed here.)
 
-⭐ **When two candidate implementations agree on the COMMON input, the test that separates them
+**When two candidate implementations agree on the COMMON input, the test that separates them
 uses the UNCOMMON one — and that is the test nobody writes first.** Mutation-measured here:
 forwarding `MXD_DATA_DIR` through the `["PATH","HOME"]` loop instead of baking it kills exactly ONE
 of seven tests, the case where the shell has NO `MXD_DATA_DIR`, because a forwarding implementation
@@ -5028,7 +5030,7 @@ the difference* reached from the other end: not a fixture too poor to show a bug
 from the input where both answers coincide. **Ask which input the candidates AGREE on, and test the
 other one.**
 
-⚠️ **Such a test must DELETE the variable rather than assume it is absent**, or whether it can
+**Such a test must DELETE the variable rather than assume it is absent**, or whether it can
 go red depends on whose shell ran it. Same discipline the credential sentinels needed the same day
 (*The SDK reads the credential env itself*), arrived at independently — which is the argument for
 it being a rule rather than a knack.
@@ -5036,15 +5038,15 @@ it being a rule rather than a knack.
 **An installer IS testable without touching the real machine: a stub `launchctl` earlier on PATH
 plus a temp `HOME`.** `Bun.spawn` resolves the binary through the CHILD env's PATH (measured), so
 the CLI subprocess gets the stub, and `PLIST_DIR` is built from `process.env.HOME`, so the plist
-lands in the temp tree instead of `~/Library/LaunchAgents`. ⚠️ The baked value is user-supplied
-and lands inside XML, so every interpolated string in that document is escaped — an unescaped `&`
+lands in the temp tree instead of `~/Library/LaunchAgents`. **The baked value is user-supplied
+and lands inside XML, so every interpolated string in that document is escaped** — an unescaped `&`
 in a data dir produces a plist launchd cannot parse, and **that failure arrives at login, not at
 install.** Apple's own parser is the acceptance check for it (`plutil -lint`, `plutil -extract
 EnvironmentVariables.MXD_DATA_DIR raw`), used by hand rather than in the suite, since it exists
 only on darwin.
 
 
-## ⭐ A migration that adds an identifier makes it non-uniform FOREVER — two instances, two subsystems
+## A migration that adds an identifier makes it non-uniform FOREVER — two instances, two subsystems
 
 **Every reader of a newly-introduced id needs a DEFINED rendering for the pre-migration half, and
 the default failure is that teaching the new mechanism is the very act that makes the old data look
@@ -5056,19 +5058,19 @@ check whenever an id is introduced:
 | `Task-Id:` commit trailer | every commit before the hook landed | 1280 historical commits, and 92% of merges never named a task anyway |
 | event `eid` | every event before stamping | **3296 of 397,771 events (0.83%)**, newest **2026-04-16**; oldest stamped 2026-03-31 |
 
-⭐ **The sharper half, shared by both: the pre-migration population and the population you most want
+**The sharper half, shared by both: the pre-migration population and the population you most want
 are THE SAME POPULATION.** A retrieval tool reaches for the oldest history — that is what it is for
 — so the hole sits exactly where the value is. `search_logs`' motivating find is a **2026-04-05**
 event, inside the unstamped window. A reader that drops unnamed events, or that refuses to render
 them, is broken precisely on its best case while looking correct on every fixture.
 
-**The resolution both times: render the hit and say the name is missing.** ⚠️ And make the absence
-**structural, not typographic** — `search_logs` emits NO `eid=` token at all rather than
+**The resolution both times: render the hit and say the name is missing.** **And make the absence
+structural, not typographic** — `search_logs` emits NO `eid=` token at all rather than
 `eid=(none)`, so anything parsing for `eid=([0-9a-f]{12})` finds nothing and concludes "absent"
 instead of capturing a placeholder that reads like a real name. Pinned by a test asserting
 `out.includes("eid=") === false`.
 
-⚠️ **Root asserted "every hit is identified by eid" from the memory rule alone** (*Nothing in this
+**Root asserted "every hit is identified by eid" from the memory rule alone** (*Nothing in this
 codebase may address an event by file position* — which is correct, and positional addressing stays
 out). The rule was right; its universality was not, and one scan of the corpus was what showed it.
 **A rule quoted from this file is a hypothesis about the data until somebody counts.**
@@ -5081,19 +5083,19 @@ user's own words survive before anyone retold them. Description is written after
 retelling), a result round after the work (another) — and the hedge in *"我记得…"* was lost between
 those two retellings while carrying a design conclusion for four months.
 
-⚠️ **SCOPE, and the thing to refuse: one task, scanned on demand, NO index.** Rebuilding the existing
+**SCOPE, and the thing to refuse: one task, scanned on demand, NO index.** Rebuilding the existing
 index over 1115 SHORT documents costs 697s wall / 3044s CPU; this project's 454 session files are
 **600MB**. A global conversation index is not a smaller version of that problem.
 
 **Measured on the largest real file (root's session, 113.5MB / 71,148 events, 2026-07-30):** full
-streaming parse **154ms**, full search ~300ms. ⭐ **So the cost that needed bounding was MEMORY, not
+streaming parse **154ms**, full search ~300ms. **So the cost that needed bounding was MEMORY, not
 time** — hold the parsed events and you cost hundreds of MB inside the worker running the agent
 loop. Stream and reduce each event immediately; never accumulate. **NEGATIVE RESULT: a raw substring
 pre-filter before `JSON.parse` measured 51ms vs 154ms — a real 3× on something already negligible,
 bought with a silent soundness hole**, since JSON escapes `"`, `\` and control chars so any query
 containing one would fail to match lines that do contain it. Not worth it.
 
-⭐ **Where the text lives is NOT uniform, and the task description that warned about this got two of
+**Where the text lives is NOT uniform, and the task description that warned about this got two of
 its three rows wrong.** Measured: `message` → `body`, `assistant_text` → **`content`**, `thinking` →
 **`thinking`**, `tool_call` → `input` (no `body` at all), `tool_result` → `content`. The brief said
 `assistant_text` and `thinking` both used `body`. **So the fix is not a better per-type table — it
@@ -5101,21 +5103,21 @@ is not having one:** walk every string leaf and SUBTRACT a named set of identifi
 (`eid`, `taskId`, `signature`, `source`, …). A new event type is then searchable for free, where an
 include-list of "fields worth reading" fails silently forever.
 
-⚠️ **`signature` is the expensive subtraction**: thinking is 22MB of root's session and much of it
+**`signature` is the expensive subtraction**: thinking is 22MB of root's session and much of it
 is base64.
 
 **Kind = type + its discriminator** (`message:user`, `tool_call:mcp__mxd__bash`), filters match a
 group by prefix. Default = everything MINUS `tool_result` (14,320 events / 33.9MB),
-`message:work_context` (22 events / 4.5MB) and `session_config` (31 events / 3.0MB). ⭐ **The
+`message:work_context` (22 events / 4.5MB) and `session_config` (31 events / 3.0MB). **The
 principle for adding a fourth is not size — it is that all three are COPIES OF SOMETHING ELSE**, so
 a hit inside one crowds out content that exists nowhere else. `message:user` is the single biggest
 category and is the whole point.
 
-⚠️ **Whatever is skipped, the header SAYS SO, and a zero result lists the kinds the file does hold.**
+**Whatever is skipped, the header SAYS SO, and a zero result lists the kinds the file does hold.**
 Otherwise "no matches" and "you searched the wrong kinds" are byte-identical, and the wrong one
 silently confirms whatever the caller already believed.
 
-### ⭐ Cap on BYTES, never on event count — and why a type-keyed cap would have rotted
+### Cap on BYTES, never on event count — and why a type-keyed cap would have rotted
 
 `01KP1B56XZX4BT56EGTKS5K74Y` measured `get_logs` at 60KB+/call in **April 2026** and traced it to
 `tool_result` content plus thinking-signature blobs; that is why `hideToolResults` defaults true and
@@ -5130,19 +5132,19 @@ and simply does not cover this path.
 And a count bounds nothing regardless: one `message:user` in root's session is **1.68MB**, so a
 single event can outweigh every other event combined.
 
-⚠️ **The over-strict half of a budget guard is invisible, and it was the ONE survivor of 30
+**The over-strict half of a budget guard is invisible, and it was the ONE survivor of 30
 mutations.** Dropping the "always render the first hit" escape reddens nothing, because with
 production's numbers one hit can never fill the budget — so the failure it allows (a header
 announcing *"166 matching events"* above zero hits, which reads as a broken search) is unreachable
 *today* and one raised `maxContext` away from shipping. Two things fix it, and both were needed: an
 **injectable budget** so the failing path can be exercised at all, and an assertion that
 `MAX_SINGLE_HIT_CHARS < totalChars` — **a relationship between two constants declared far apart,
-i.e. an invariant that holds by coincidence until someone edits one of them.** ⚠️ Injecting the
-budget then created its own survivor: a mutation ignoring the parameter is harmless in production
+i.e. an invariant that holds by coincidence until someone edits one of them.** **Injecting the
+budget then created its own survivor**: a mutation ignoring the parameter is harmless in production
 (every real call takes the default) and **silently makes the over-strict test vacuous**, so it needs
 a positive control asserting a smaller budget really does produce a smaller result.
 
-⚠️ **A zero-length-match regex (`q*`) is a SYNCHRONOUS infinite loop, and no test timeout can
+**A zero-length-match regex (`q*`) is a SYNCHRONOUS infinite loop, and no test timeout can
 interrupt it** — measured: the mutation harness sat for 622s and bun's per-test timeout never fired,
 because the blocked event loop cannot run it. `if (m[0].length === 0) re.lastIndex++` is the whole
 guard. **On macOS there is no coreutils `timeout`**, so a harness must bound the run itself and
@@ -5154,32 +5156,32 @@ always `usage` or `messages_consumed`, and the first render showed `(no text)` u
 Context text is the **longest** leaf, not the first — a `tool_call`'s first leaf is the tool NAME, so
 "first" rendered every bash call as the bare string `mcp__mxd__bash` with the command one field away.
 
-⭐ **`availability` gates ONLY the external MCP list.** `createOrchestratorTools` maps every def with
+**`availability` gates ONLY the external MCP list.** `createOrchestratorTools` maps every def with
 no filter at all, so internal agents receive `"external"`-declared tools too — which is why
 `get_logs`, declared `"external"`, is callable from inside the agent loop. **So the flag is a claim
 about the external list and NOT a statement of who can call the tool**; do not read it as one, and
 do not copy a neighbouring tool's value without checking what it produces.
 
-⚠️ **CORRECTION to *The external MCP endpoint*, which says "Six tools": it is SEVEN as of
+**CORRECTION to *The external MCP endpoint*, which says "Six tools": it is SEVEN as of
 2026-07-30** — `search_logs` is `availability: "both"`. The count is the rot here, not the list: a
 number written in prose is indistinguishable from a true one on the day it stops being true, and
 nothing anywhere goes red. `src/mcp-endpoint.test.ts` pins the external list with `toContain` per
 name, i.e. an ADDITION list, so it cannot notice a tool that leaves either — it is the weaker half
 of the pin and worth knowing before trusting it.
 
-## ⭐ `read()` is not a read, and "synchronous" is not "whole file"
+## `read()` is not a read, and "synchronous" is not "whole file"
 
 Two beliefs about `EventStore` that were each wrong in a way that shaped a design before anyone
 checked. Both cost a round.
 
-⚠️ **`read()` MIGRATES.** A file whose first event lacks an `eid` is rewritten in place — MEASURED
+**`read()` MIGRATES.** A file whose first event lacks an `eid` is rewritten in place — MEASURED
 on a copy of a real session, **154,958 bytes in, 158,980 out, first event stamped**. Nothing in the
 name says so, and the files it fires on are the OLDEST ones (3296 unstamped events, newest
 2026-04-16), which is exactly the population an old-history search reaches for. **A reader that only
 wants to LOOK must not rewrite what it looks at**, which is why `streamEvents` exists beside it
 rather than being a tidier spelling of it. Callers that want migration keep calling `read()`.
 
-⭐ **`readFileSync` is one way to be synchronous, not the meaning of it.** A whole design round was
+**`readFileSync` is one way to be synchronous, not the meaning of it.** A whole design round was
 spent on a trilemma — make `read()` async and pay `await` at 9 production + 154 test sites, or keep
 it sync and let search cost +552MB — built on treating *synchronous* and *materialises the whole
 file* as one property. `openSync` + `readSync` + `StringDecoder` is the counter-example: synchronous
@@ -5199,17 +5201,17 @@ That last row is why `ChainLink` is a named type: it is the entire input to `wal
 so the backward walk is affordable on a stream. **Widening it back to `Event` closes that door
 silently.**
 
-⚠️ **STATED TRADE: the sync walk BLOCKS the worker thread** — linear at **~120ms per 100MB**, worst
+**STATED TRADE: the sync walk BLOCKS the worker thread** — linear at **~120ms per 100MB**, worst
 case **133ms** on the largest file in the entire corpus (114.9MB; measured across 573 session files
 in all projects). Bounded memory bought with a blocked thread, chosen deliberately. The async form
 buys ~16MB of peak and is not worth an async ripple.
 
-⭐ **The instrument for a driver swap is byte-identity over WHOLE outputs, not a green suite.**
+**The instrument for a driver swap is byte-identity over WHOLE outputs, not a green suite.**
 `streamEvents` vs the old whole-file loop: **71,571 events, `JSON.stringify`-identical at every
 index**, malformed line skipped at the same position with the same warning. A suite can only say
 "the cases someone thought to assert still pass".
 
-## ⭐ The second truncation was excluding exactly what the first one preserved
+## The second truncation was excluding exactly what the first one preserved
 
 **DECIDED 2026-07-30 (user): *「一起删吧。直接删掉单独的 readFromLastCompactMarker。如今的 read
 active 增加选项包含/不包含 compact」***. So there is ONE walk and the compaction boundary is an
@@ -5221,7 +5223,7 @@ argument: `walkActiveChainIndices(events, "stop" | "past")`, surfaced on `readAc
 lie the messages delivered while the summarizer was running — the ones the walk **splices in
 deliberately**, because reconstruction loses them otherwise. MEASURED project-wide: **38 completed
 compactions, 15 with at least one message in the window, 27 messages**, overwhelmingly `user` and
-`user_message_forwarded` (*"我发现了，orchestrator根本compact不了，这怎么办"*). ⚠️ **A fixture drawn
+`user_message_forwarded` (*"我发现了，orchestrator根本compact不了，这怎么办"*). **A fixture drawn
 from root's CURRENT tail cannot show this — its barrier sits at index 0, so both behaviours return
 the same thing.** The regression fixture has to be constructed with a message inside the window.
 
@@ -5229,19 +5231,19 @@ the same thing.** The regression fixture has to be constructed with a message in
 71,524 events (0.4%)** on root's session, because 38 compactions summarized the rest. A search that
 always stopped would be searching 0.4% of the thing it exists to search.
 
-⭐ **What `"past"` still excludes, and the risk it retires:** it keeps following the chain, so a
+**What `"past"` still excludes, and the risk it retires:** it keeps following the chain, so a
 rewound branch stays gone. The worry was that the walk might break on the pre-eid files and silently
 lose the oldest history. MEASURED across all 455 real sessions: **398,792 of 399,057 events
 (99.93%)**, and **454 of the 455 files lose nothing at all** — the shortfall is one file's 265
 events on branches five rollbacks walked away from. The pre-eid files traverse fine because a null
 `parentEid` sets the walk's target to null, so it takes the next event unconditionally.
 
-⚠️ **BEHAVIOUR CHANGE, intended: a forked session now shows its inherited parent history.** That
+**BEHAVIOUR CHANGE, intended: a forked session now shows its inherited parent history.** That
 function also treated `fork_marker` as a start point, so the UI hid context the model could always
 see. Several tests asserted that absence and were INVERTED rather than re-pointed — including one
 whose real subject turned out to be the opposite direction (root never sees the child's work), which
 still holds.
 
-⚠️ `hasOlderEvents` was computed from that barrier. It survives as
+`hasOlderEvents` was computed from that barrier. It survives as
 `readActive(id).length < countEvents(id)` — the same answer with nothing to keep in sync, and
 `countEvents` streams so it costs no memory.
