@@ -44,9 +44,15 @@ export interface OpenAICredential {
  * goes stale; it is a second claimant to a chain we do not own. Reading at each
  * use is what makes codex the owner and matrix the reader.
  *
- * Cost is one `readFile` of a small local JSON file per API turn — the same
- * trade `readAuthData` makes, and for the same reason: the alternative failure
- * is "the user re-authenticated and the running daemon never noticed".
+ * "Every use" is per HTTP REQUEST, not per agent turn: `streamResponsesAPI`
+ * hands this function to the OpenAI SDK's `apiKey` slot, which invokes it before
+ * every attempt, so an SDK retry inside one call re-reads the file. The one
+ * place that is not true is the `ChatGPT-Account-Id` header — see the line
+ * drawn in that function.
+ *
+ * Cost is one `readFile` of a small local JSON file per request — the same trade
+ * `readAuthData` makes, and for the same reason: the alternative failure is "the
+ * user re-authenticated and the running daemon never noticed".
  */
 export type OpenAICredentialSource = () => Promise<OpenAICredential>;
 

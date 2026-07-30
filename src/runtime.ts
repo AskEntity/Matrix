@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import {
 	DEFAULT_CONFIG,
 	loadGlobalConfig,
+	resolveAnthropicBaseUrl,
 	resolveAuthGroup,
 } from "./config.ts";
 import {
@@ -195,28 +196,34 @@ export function createApp(config: RuntimeConfig) {
 			const oauthToken =
 				authGroup?.provider === "anthropic" ? authGroup.oauthToken : undefined;
 			const useOAuth = Boolean(oauthToken && !apiKey);
-			const baseURL =
-				authGroup?.provider === "anthropic" ? authGroup.baseUrl : undefined;
+			// Always explicit — an omitted `baseURL` is read from ANTHROPIC_BASE_URL
+			// by the SDK, so this button would check a host the environment picked.
+			// See resolveAnthropicBaseUrl for the decision.
+			const baseURL = resolveAnthropicBaseUrl(
+				authGroup?.provider === "anthropic" ? authGroup.baseUrl : undefined,
+			);
 
-			let client: Anthropic;
-			if (useOAuth) {
-				client = new Anthropic({
-					authToken: oauthToken,
-					...(baseURL ? { baseURL } : {}),
-					defaultHeaders: {
-						"anthropic-beta": "oauth-2025-04-20",
-					},
-				});
-			} else if (apiKey) {
-				client = new Anthropic({
-					apiKey,
-					...(baseURL ? { baseURL } : {}),
-				});
-			} else {
-				client = new Anthropic({
-					...(baseURL ? { baseURL } : {}),
-				});
-			}
+			// ⚠️ Every credential slot named in every branch, unused one `null`. The
+			// third of the three sites that hand-build an Anthropic client, and the
+			// one where getting this wrong hurts most: this handler backs the
+			// Settings "check model" button, which is what a user reaches for while
+			// diagnosing exactly this failure. An `undefined` slot is read from env
+			// by the SDK, and a client holding both credentials sends both
+			// `x-api-key` and `authorization`, which the API rejects — so a shell
+			// key used to make this button report that the configured OAuth token
+			// was bad. See anthropic-compatible-provider.ts's constructor.
+			// Nothing configured means the client holds nothing, so the check reports
+			// an error naming the missing credential instead of silently testing the
+			// shell's. `defaultHeaders` keeps a conditional because a header map is
+			// not a slot env can fill; the credential slots do not.
+			const client = new Anthropic({
+				apiKey: useOAuth ? null : apiKey || null,
+				authToken: useOAuth ? oauthToken || null : null,
+				baseURL,
+				...(useOAuth
+					? { defaultHeaders: { "anthropic-beta": "oauth-2025-04-20" } }
+					: {}),
+			});
 
 			const preamble =
 				authGroup?.provider === "anthropic"

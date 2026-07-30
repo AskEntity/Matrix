@@ -1386,23 +1386,61 @@ const MXD_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 // look) does not exist: the plist bakes in the absolute path resolved here.
 const LOG_DIR = join(DATA_DIR, "logs");
 
-function daemonPlist(): string {
-	const bunPath = process.argv[0]; // bun binary that's running this CLI
+/**
+ * XML-escape a value interpolated into the plist.
+ *
+ * Every string below that comes from outside this file goes through here. It
+ * was previously applied to the two forwarded env values only, which was
+ * enough while every other interpolation was a path we chose; `MXD_DATA_DIR`
+ * is user-supplied and `LOG_DIR` is built from it, so an `&` in a data dir
+ * would emit a plist launchd cannot parse.
+ */
+function xmlEscape(value: string): string {
+	return value
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
+}
 
-	// Only forward PATH and HOME — API keys now live in config.json
+/** One `<key>/<string>` pair inside the plist's `EnvironmentVariables` dict. */
+function plistEnvEntry(key: string, value: string): string {
+	return `\t\t\t<key>${key}</key>\n\t\t\t<string>${xmlEscape(value)}</string>`;
+}
+
+function daemonPlist(): string {
+	// The bun binary running this CLI. `process.execPath` rather than
+	// `process.argv[0]` — same value (verified), and it is typed `string`
+	// where the indexed read is `string | undefined`, so escaping it needs no
+	// cast and no invented fallback for a case that cannot happen.
+	const bunPath = process.execPath;
+
+	// Two kinds of entry, and the difference between them is the point.
+	//
+	// FORWARDED — PATH and HOME are copied from the installing shell. They
+	// describe the machine rather than a choice, so whatever the shell has is
+	// the right answer. (API keys were forwarded here once; they live in
+	// config.json now.)
+	//
+	// BAKED — MXD_DATA_DIR is written in as the absolute path THIS process
+	// resolved, never copied from the environment. A forwarded variable would
+	// depend on what launchd happens to hold at login: a different environment
+	// from the installing shell, and one the user cannot see. A baked path
+	// depends on nothing — it records the decision made at install time, which
+	// is what installing a service means. Same treatment as StandardOutPath
+	// below, which bakes the log dir resolved from this same value; one
+	// mechanism for "make the plist self-consistent", not two.
+	//
+	// Without it, `MXD_DATA_DIR=/data/mxd mxd daemon install` installs a daemon
+	// that runs on `~/.mxd`: an empty project registry, so the user's own
+	// projects are invisible to their own service, and a jwtSecret in a
+	// different auth.json than the one the CLI signs with, so every token the
+	// CLI mints is rejected. Neither side reports anything.
 	const envEntries: string[] = [];
 	for (const key of ["PATH", "HOME"]) {
 		const val = process.env[key];
-		if (val) {
-			const escaped = val
-				.replace(/&/g, "&amp;")
-				.replace(/</g, "&lt;")
-				.replace(/>/g, "&gt;");
-			envEntries.push(
-				`\t\t\t<key>${key}</key>\n\t\t\t<string>${escaped}</string>`,
-			);
-		}
+		if (val) envEntries.push(plistEnvEntry(key, val));
 	}
+	envEntries.push(plistEnvEntry("MXD_DATA_DIR", DATA_DIR));
 
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1412,12 +1450,12 @@ function daemonPlist(): string {
 \t<string>${PLIST_LABEL}</string>
 \t<key>ProgramArguments</key>
 \t<array>
-\t\t<string>${bunPath}</string>
+\t\t<string>${xmlEscape(bunPath)}</string>
 \t\t<string>run</string>
-\t\t<string>${MXD_ROOT}/src/daemon.ts</string>
+\t\t<string>${xmlEscape(`${MXD_ROOT}/src/daemon.ts`)}</string>
 \t</array>
 \t<key>WorkingDirectory</key>
-\t<string>${MXD_ROOT}</string>
+\t<string>${xmlEscape(MXD_ROOT)}</string>
 \t<key>EnvironmentVariables</key>
 \t<dict>
 ${envEntries.join("\n")}
@@ -1427,9 +1465,9 @@ ${envEntries.join("\n")}
 \t<key>KeepAlive</key>
 \t<true/>
 \t<key>StandardOutPath</key>
-\t<string>${LOG_DIR}/daemon.log</string>
+\t<string>${xmlEscape(`${LOG_DIR}/daemon.log`)}</string>
 \t<key>StandardErrorPath</key>
-\t<string>${LOG_DIR}/daemon.err</string>
+\t<string>${xmlEscape(`${LOG_DIR}/daemon.err`)}</string>
 </dict>
 </plist>`;
 }
@@ -1467,6 +1505,12 @@ async function handleDaemon(args: string[]): Promise<void> {
 			}
 			console.log("Daemon installed and started.");
 			console.log(`  Plist: ${PLIST_PATH}`);
+			// The plist bakes this path in, and it lives in
+			// ~/Library/LaunchAgents where nobody will ever look — so this line
+			// is the only place the user sees which data dir the service they
+			// just installed will run on. A choice made on their behalf and
+			// never shown is the failure mode here; the value itself is fine.
+			console.log(`  Data:  ${DATA_DIR}`);
 			console.log(`  Logs:  ${LOG_DIR}/daemon.log`);
 			// LOCAL_DAEMON_URL, not DAEMON_URL: this line describes the daemon
 			// `install` just launched, which is on this machine whatever

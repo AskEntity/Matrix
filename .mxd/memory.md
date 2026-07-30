@@ -4302,6 +4302,123 @@ And a negative assertion on a header (`not.toContain("oauth-2025-04-20")`) passe
 on a header you failed to READ, so it needs a positive control beside it asserting a beta feature
 that is always sent; verified by making the accessor path wrong and watching the control fire.
 
+## FIXED: env cannot reach the SDK — `null` in every credential slot, at all three client sites
+
+**The section above discovered the hole; this closed it.** Every place that hand-builds an Anthropic
+client now names EVERY credential slot in EVERY branch, with the unused one set to `null`.
+
+**WHY, in the user's words (2026-07-29): *「所有用 env 决定模型或者 key 的 删掉」*.** The earlier
+commit deleted our own `??` reads and the rule still did not hold, because the SDK is a second
+reader of the same names — so that deletion was half of one job, not a finished one.
+
+⚠️ **It was not "env silently outranks config", it was a HARD FAILURE pointing the wrong way.**
+`authHeaders()` emits one header per filled slot, and the API REJECTS a request carrying both
+`x-api-key` and `authorization`. So anyone whose shell held `ANTHROPIC_API_KEY` for some other
+project **could not use the OAuth path at all**, and the auth error blamed their OAuth token. That
+is the path we bootstrap on every day. **Read "a credential env var is set" as a break, not a
+preference.**
+
+⚠️ **`undefined` and "I didn't pass it" are the SAME THING to the SDK, and `null` is the only other
+spelling.** It reads env for any slot that is `=== undefined`, its own signature is `string | null |
+undefined`, and Anthropic's issue tracker treats `null` as the documented way to opt out
+(`anthropic-sdk-csharp#47`). **NEGATIVE RESULT — there is no disable-env option to look for.** The
+open request for one (`claude-code#12047`) is against the Claude Code SDK, a different product.
+
+⭐ **A dependency's default parameter is a DOOR, and it is the one door nothing here can grep.**
+*A rule enforced at N of M doors is enforced nowhere* has always been about our own call sites; this
+is the same rule where door M lives in `node_modules`, so no amount of auditing `src/` can see it —
+`grep process.env src/` came back clean while env decided the credential on every request. The
+detector that works: for any value we resolve from config, ask **who else reads this name**, and
+read the constructor of whatever we hand it to.
+
+**The three sites, which nothing enforces:** `AnthropicCompatibleProvider`'s constructor,
+`createAnthropicClient` in `llm.ts`, and the `check_model` handler in `runtime.ts`. All three are
+hand-matched copies; the standing warning about them is above and it is now load-bearing for a
+correctness property, not just for beta headers.
+
+⚠️ **`check_model` is where getting this wrong hurt MOST, and "it shares the bug" understates it.**
+It backs the Settings *check model* button — what a user presses precisely while diagnosing
+this failure — so it did not merely fail too, it **actively misdirected**: reproduce the
+both-headers rejection and report that the OAuth token the user had just configured was bad. The
+other two sites at least fail where the work is. **When ranking doors, ask which one someone
+arrives at while already confused.**
+
+⭐ **How that door came to be missing from the task description, worth more than the door: the list
+was built by grepping `new Anthropic` in the two files already open, then written as a table — and a
+grep of the files you are editing is not a population.** THIS FILE already named the third site, in
+the standing warning above, put there by a commit whose own message says the previous note claiming
+two was wrong. **The record was consulted-able and was not consulted**, which is the same shape as
+`get_tree`-instead-of-`search_tasks` in a different medium. Cheap detector, and it is the question
+the grep cannot answer: *what would tell me this list is complete, other than the list?*
+
+⚠️ **A side effect worth knowing on its own: `check_model`'s only test accepted `ok` OR `error`, so
+on a machine whose shell held `ANTHROPIC_API_KEY` it made a REAL call to `api.anthropic.com` during
+`bun test` — and passed either way.** An either-way assertion cannot tell a hermetic run from a
+networked one. The new sentinel asserts **zero requests left the process**, which can.
+
+**Behaviour change, intended: with no credential configured the client holds none**, so the SDK
+throws *"Could not resolve authentication method…"* before it builds the request, instead of quietly
+running on the shell's key. Same trade as deleting `DEFAULT_MODEL` — an unconfigured value became
+visible instead of substituted. Measured: zero requests leave the process in that state.
+
+⚠️ **The sentinels assert the HEADER SET, because that is the only observable that differs.**
+`client.apiKey` is byte-identical either way (the SDK reads that var too), which the section above
+records. Two observables, one per door, and the pair is deliberate: the provider's tests read
+`client.authHeaders({})`, and `llm.ts`'s go through `createLLM` with `fetch` intercepted and assert
+the credential headers of the actual request — **so the wire test is the positive control for the
+narrower one's observable.** Verified red-then-green, one `null` at a time, at both doors: each
+mutation reddens exactly its own branch's test and no other.
+
+**NEGATIVE RESULT — the OpenAI half is clean where it matters and NOT clean everywhere.** Reported
+rather than fixed (`01KYSD71GAYKD5AAT48C0MFKQN`): `openai`'s constructor takes **all five** slots as
+default parameters, so `undefined` reads env for every one — but our single `new OpenAI(...)` always
+passes `apiKey` (a required `string`) and always passes `baseURL`, so neither the credential nor the
+destination can come from env. What does: `organization` and `project` are never passed, so
+`OPENAI_ORG_ID` / `OPENAI_PROJECT_ID` become `OpenAI-Organization` / `OpenAI-Project` headers on
+every request — env deciding a request attribute nobody configured.
+
+### DECIDED 2026-07-30: `ANTHROPIC_BASE_URL` stops working — the host is chosen, like the model
+
+**The endpoint had TWO mechanisms and the invisible one won by default.** `authGroup.baseUrl` is
+typed, in Settings, in the CLI and in `config.json`; `ANTHROPIC_BASE_URL` is ambient, undocumented,
+and was silently authoritative *whenever the typed one was unset* — because the SDK takes `baseURL`
+as a default parameter reading that variable, so **omitting the option was the same as consenting to
+it.** Duplicate codepaths, with the extra property that the hidden one decides where our prompts and
+our code are sent. `resolveAnthropicBaseUrl` in `src/config.ts` is now the one place that answers
+it, called by all three client sites.
+
+**It was never a chosen escape hatch, and the archaeology is unusually clean: the string entered
+this repo YESTERDAY, in a comment, in the commit that added the typed field** (`cdad315a`, which
+wired `baseUrl` at all three sites, with a UI field, an i18n key, a CLI flag and two-sided tests).
+That comment described the SDK's fallback in the unset case; it never said the fallback was wanted.
+⭐ **A comment that documents a behaviour without endorsing it is exactly how an accident survives
+review** — it reads as "considered", and nothing distinguishes it from "decided".
+
+⚠️ **MEASURED, and it bounds this whole family: none of these variables can reach an INSTALLED
+daemon.** `daemonPlist()` forwards `PATH` and `HOME` and nothing else, so every env-decides-the-
+credential/host effect in this region only ever applied to a daemon started from an interactive
+shell. That is not a reason to relax — **it is precisely the bootstrap path, i.e. us, every day** —
+but state it that way round rather than as "any user with the variable exported".
+
+**The test that had to change is the tell, and it changed for a reason nobody would have guessed
+from reading it.** `"without baseUrl: SDK default baseURL is used"` asserted
+`client.baseURL === "https://api.anthropic.com"` and passed — on a machine whose shell did not set
+`ANTHROPIC_BASE_URL`. Same shape as the credential fixtures: **its greenness was a fact about the
+person running it.** Both baseUrl tests now pin the variable, and the unset one is renamed to say
+who chooses.
+
+**Behaviourally identical, deliberately: the SDK's own default is
+`baseURL || 'https://api.anthropic.com'`**, so passing that string changes *who decides* and not
+*what happens*. One SDK side effect, checked
+rather than assumed: an explicit `baseURL` sets the client's internal `_baseURLIsExplicit`, which
+only governs whether a `profile` credential may supply a host — and we never pass `profile`.
+
+⚠️ **Remaining env reader, out of product scope but worth knowing before you trust it:
+`scripts/probe-hidden-tool.ts` builds its own client with no `baseURL`.** So a shell variable can
+silently redirect the probe we use to measure what the API does — *your instrument is a claim* in
+the one place that costs a wrong measurement rather than a wrong request.
+
+
 ## The CLI and the daemon must agree about the user's config, and nothing checks that they do
 
 **They are two processes reading one file, so every disagreement is silent.** MEASURED 2026-07-30,
@@ -4428,6 +4545,256 @@ refused side where somebody notices. The instance most likely to be hit is a typ
 silently vanished, creating a group against Anthropic's own endpoint with someone else's key, and
 every call 401'd as if the key were bad.
 
+### The same rule at the OpenAI door: `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID` decided who was billed
+
+**DECIDED 2026-07-30 (user): *「env 不许决定」*** — which settled the question the earlier draft had
+parked as needing judgment. `organization` and `project` are now pinned to `null` at the one
+`new OpenAI(...)` site.
+
+⚠️ **`openai`'s constructor is the more thorough version of the same hazard: ALL FIVE slots are
+DEFAULT PARAMETERS**, so there is not even an `=== undefined` test to sidestep — a slot you omit
+is a slot env fills. **The consequence is vendor-documented rather than inferred:** *"If no header
+is provided, the default organization will be billed."* So this is env deciding **billing
+attribution**, which is why it counts under a rule about credentials even though org and project
+are not credentials.
+
+**MEASURED, our real call shape, shell holding all four names:** `openai-organization` and
+`openai-project` arrived as the shell's values on every request; with the two `null`s, neither
+appears. `apiKey` and `baseURL` were already clean — both are always passed — but **that was a side
+effect of other requirements, not a decision**, so the test asserts all four names rather than the
+two that leaked.
+
+⚠️ **The remaining asymmetry, worth one line because the obvious workaround is worse: `apiKey`'s
+type is `string | ApiKeySetter | undefined`, with NO `null`.** So if `authToken` ever became
+optional there would be no way to spell "do not read env" for it — **the thing to keep true is that
+`authToken` stays required.** `apiKey: ""` does suppress the read and then sends
+`Authorization: Bearer` with nothing after it: suppression achieved, request malformed, 401 with a
+misleading message. Not a workaround.
+
+**NEGATIVE RESULT — do NOT reach for the `ApiKeySetter` function form while here.** `apiKey` accepts
+`() => Promise<string>`, invoked before each request, which is what our `OpenAICredentialSource`
+already is; passing it would suppress env as a side effect. It is a separate design change with a
+real behavioural consequence — `maxRetries: 2` means retries currently reuse a token resolved once
+per call — and it needs a test that drives an actual retry and asserts the SECOND request carries a
+NEW token. `01KYSE0N667GMYDC81057J3NX8`.
+
+### ⚠️ These env fixtures work by an accident of where the first `await` sits
+
+**MEASURED 2026-07-30. An env fixture that restores when its callback RETURNS can only see a client
+constructed in that callback's synchronous prefix**, and all four of our doors happen to qualify:
+
+| shape | env visible at construction? | which door |
+|---|---|---|
+| sync callback | yes | `createLLM` |
+| async fn, before its first `await` | yes | `check_model` via `app.request` |
+| async generator's first `next()` | yes | `streamResponsesAPI` |
+| async fn, AFTER an `await` | **NO** | none today |
+
+⭐ **The fragile case fails by PASSING** — env is already gone, the client reads the real shell,
+the fixture reports no leak and the test goes green. So one `await` added upstream of any client
+construction silently blinds every one of these tests at once. `withClientEnv` therefore defers its
+restore when the callback returns a promise; it changes no outcome today and exists to delete that
+class. **`src/test-utils/sdk-client-env.test.ts` is the instrument's own test suite** — the fixture
+is an instrument, and *an instrument is a claim until you have made it fail*.
+
+⚠️ **Sibling trap in the same family, met while probing: both SDKs snapshot `globalThis.fetch` in
+their CONSTRUCTOR** (`this.fetch = options.fetch ?? getDefaultFetch()`, and the shim returns the
+current global). A fetch-intercepting test must install its stub BEFORE the client is built — get it
+backwards and the call goes to the real `api.openai.com`, which is exactly what a first probe here
+did: it reported `headers: {} … leaked: NONE`, a clean bill of health produced by talking to the
+internet.
+
+### ⭐ Assert at the RECEIVER: a decoy endpoint that testifies beats any assertion on our own client
+
+**`src/env-cannot-decide.test.ts` is the shape.** Two real listeners on ephemeral ports; config
+names endpoint 1, the env var names endpoint 2; assert what CROSSED THE WIRE. It exists because the
+obvious observable was provably vacuous — `client.apiKey` is byte-identical with and without the
+fix, since the SDK reads that variable too — and the workaround (find a collision fixture where the
+branch differs) is a detour the receiver never needs.
+
+**Endpoint 2 is a TRAP THAT TESTIFIES, not a silence.** It records method, path and the credential
+headers of anything it catches, so a regression's failure message **is** the diagnosis: the request
+moved from `target` to `decoy`, carrying `x-api-key: configured-api-key`, at `/v1/messages`. A
+boolean decoy gives you `expected false, got true` and the next person rebuilds the scenario. It
+also catches leaks nobody wrote a case for, because the whole header map is compared.
+
+⚠️ **Both endpoints must be asserted in ONE `toEqual`, and the first version of this file got it
+wrong in a way worth remembering.** Two properties are needed — the target really RECEIVED something
+(or a fixture that sends nothing reads clean) and the decoy testifies. Written as sequential
+`expect`s, **the arrival assertion fails first and aborts the test, so the testimony never prints**:
+measured, a mutation that sent every request to the decoy reported only `Expected: 1 Received: 0`.
+One assertion over `{target, decoy}` gives a diff carrying the whole picture. **Two requirements
+that each look satisfied can cancel through assertion ORDER.**
+
+⚠️ **No vendor protocol was implemented, and that is the load-bearing simplification: both listeners
+answer 400**, a status neither SDK retries, because the observable is ARRIVAL rather than a
+successful turn. **`check_model` is the cheapest real door in the repo** — it calls
+`messages.create`, not `.stream`, and never asks `/v1/models`, so ~10 lines of listener buys the
+whole chain from a `config.json` in a temp dir through `loadGlobalConfig` → `resolveAuthGroup` →
+`createProviderFromConfig` → SDK → wire. The agent LOOP is the one door this cannot reach; that
+needs a real SSE mock and stays filed as `01KMNYSM4JBJ3FPZCQPFZF6T3Q`.
+
+⚠️ **A default that is a REAL host makes one case unreachable receiver-side.** With no `baseUrl`
+configured we now target `api.anthropic.com`, so that case would make a genuine outbound call — and
+a GLOBAL fetch stub is not the fix, because it makes the decoy unreachable and *"the decoy caught
+nothing"* becomes a tautology. **A trap that cannot be triggered is not a trap.** The shape that
+works: a stub that refuses EXACTLY ONE host and forwards everything else to the real fetch, plus a
+POSITIVE assertion that the blocked request really targeted that host.
+
+**Consolidation this justified: three fetch-interception describes were deleted** (in `llm.test.ts`,
+`runtime.test.ts`, `openai-responses-compatible-provider.test.ts`) because the receiver version
+subsumes them at those doors. ⚠️ **The provider constructor's own sentinels were KEPT** — no door
+reaches `AnthropicCompatibleProvider`'s client without running a loop, so `authHeaders()` there is
+the only coverage of the busiest path, not a duplicate. **Check which door each test actually
+reaches before calling it redundant.**
+
+### ⭐ A state-restoring fixture is only as wide as its callback's synchronous prefix
+
+**And an `await` moved into that prefix disables it SILENTLY.** MEASURED 2026-07-30 on the env
+fixture every credential sentinel in this repo stands on. Where the thing under test is CONSTRUCTED
+decides whether the fixture can see anything at all:
+
+| callback shape | state visible at construction? |
+|---|---|
+| sync | yes |
+| async fn, before its first `await` | yes |
+| async generator's first `next()` | yes |
+| async fn, AFTER an `await` | **no** |
+
+⭐ **All four of our doors happened to qualify, which is the entry: "it works" and "it works for a
+reason" were indistinguishable here, so this was found by READING rather than by any test going
+red.** The failure direction is the invisible one — every env test goes green while asserting
+nothing, because the client reads the real shell and the fixture reports no leak. Nobody would have
+found it from a failure, because there would not have been one. `withClientEnv` now defers its
+restore when the callback returns a promise, and `src/test-utils/sdk-client-env.test.ts` exists
+because **a fixture is an instrument, and an instrument is a claim until you have made it fail.**
+
+### One literal per client, so a forgotten credential slot is unrepresentable
+
+**The three-branch fix left the omission POSSIBLE and merely absent** — a fourth branch added next
+year reopens it and nothing goes red. All three sites now build their client from **one object
+literal** naming every credential slot, with `useOAuth` choosing which one is `null`. Same move as
+`OpenAICredentialSource` becoming a function type so holding a token is not expressible, and
+`getContextWindow` returning `Promise<number>` so a local guess is not expressible.
+
+⚠️ **`|| null`, and the type reason is the load-bearing one:** both locals are `string | undefined`,
+and `undefined` in a slot is precisely what sends the SDK to env, so the coalesce is what keeps the
+hole closed rather than a nicety.
+
+⭐ **MEASURED, and it refutes the justification I wrote first: the two slots do NOT treat `""`
+alike.**
+
+| passed | authHeaders builds | request sent? |
+|---|---|---|
+| `apiKey: null` | nothing | no — SDK refuses |
+| `apiKey: ""` | `x-api-key: ""` | **no** — `validateHeaders` refuses anyway |
+| `authToken: ""` | `Authorization: Bearer` | **YES — malformed, and it goes out** |
+
+So for `apiKey`, `||` and `??` are indistinguishable, which is why that mutation **SURVIVED** — an
+equivalent mutant, not a coverage gap. The dangerous slot is the other one, and
+`useOAuth = Boolean(oauthToken && !apiKey)` is the whole reason `authToken: ""` is unreachable. **Do
+not "simplify" that guard without re-reading this.**
+
+⚠️ **The transferable half is the order in which I got it wrong: I wrote the justification into a
+comment, then wrote a test to pin it, and only the MUTATION said the claim was false.** The test
+passed against both spellings — *a fixture that cannot express the difference* — and the comment
+read as measured because it was specific. **A comment stating a behaviour is not evidence of it,
+including when you are the one who just wrote it.** Same failure as the `indeterminate` comment
+describing a control that was never built, one day later, in my own diff.
+
+⚠️ **A test that would distinguish them was considered and REJECTED**: it would have to construct
+the SDK directly with `authToken: ""`, which pins the SDK's behaviour rather than ours. The
+empty-string test that stayed asserts the guarantee that IS ours — a cleared credential field in
+config produces "no credential" — and its docstring says plainly that it does not catch the `||`.
+
+## An installed service records a decision; it must not look one up at login
+
+**DECIDED 2026-07-30 (root, from the `LOG_DIR` precedent in the same function): `mxd daemon
+install` BAKES the data dir `resolveDataDir()` resolved into the plist, as an absolute path.** Not
+forwarded from the environment, and that difference is the entry: **a forwarded variable is
+evaluated in launchd's login environment — neither the installing shell's, nor anything the user
+can see — while a baked path is evaluated once, at install, which is what installing a service
+means.** The plist already treated `LOG_DIR` exactly this way (`StandardOutPath` is an absolute
+literal), so baking the data dir is that ONE mechanism reaching the value `LOG_DIR` is derived
+from, rather than a second mechanism beside it. `["PATH", "HOME"]` stays a forwarding list of two
+and did not grow a third entry: those describe the machine, so whatever the shell has is right for
+them.
+
+MEASURED end to end, and the symptom is worth recognising because neither side reports anything:
+with the plist silent, `MXD_DATA_DIR=/data/mxd mxd init . && mxd daemon install` installs a daemon
+on `~/.mxd`, so the CLI's own token is rejected by the service the CLI just installed, and `mxd
+health` answers `Daemon: undefined vundefined (uptime: NaNs)` while **exiting 0**. (That exit 0 on
+a 401 is a second door of `01KYSBCBNWEWYM2GHF0KH8QW0H`, filed there rather than fixed here.)
+
+⭐ **When two candidate implementations agree on the COMMON input, the test that separates them
+uses the UNCOMMON one — and that is the test nobody writes first.** Mutation-measured here:
+forwarding `MXD_DATA_DIR` through the `["PATH","HOME"]` loop instead of baking it kills exactly ONE
+of seven tests, the case where the shell has NO `MXD_DATA_DIR`, because a forwarding implementation
+SKIPS an unset variable and emits no entry while a baking one emits the resolved default. With the
+variable SET the two emit identical bytes, so the fixture anyone writes first — export it, confirm
+it arrives — cannot distinguish the implementations at all. This is *a fixture that cannot express
+the difference* reached from the other end: not a fixture too poor to show a bug, but one drawn
+from the input where both answers coincide. **Ask which input the candidates AGREE on, and test the
+other one.**
+
+⚠️ **Such a test must DELETE the variable rather than assume it is absent**, or whether it can
+go red depends on whose shell ran it. Same discipline the credential sentinels needed the same day
+(*The SDK reads the credential env itself*), arrived at independently — which is the argument for
+it being a rule rather than a knack.
+
+**An installer IS testable without touching the real machine: a stub `launchctl` earlier on PATH
+plus a temp `HOME`.** `Bun.spawn` resolves the binary through the CHILD env's PATH (measured), so
+the CLI subprocess gets the stub, and `PLIST_DIR` is built from `process.env.HOME`, so the plist
+lands in the temp tree instead of `~/Library/LaunchAgents`. ⚠️ The baked value is user-supplied
+and lands inside XML, so every interpolated string in that document is escaped — an unescaped `&`
+in a data dir produces a plist launchd cannot parse, and **that failure arrives at login, not at
+install.** Apple's own parser is the acceptance check for it (`plutil -lint`, `plutil -extract
+EnvironmentVariables.MXD_DATA_DIR raw`), used by hand rather than in the suite, since it exists
+only on darwin.
+
+## The credential goes to the openai SDK as a FUNCTION, and only a RETRY can tell that apart
+
+**The SDK's `apiKey` slot is `string | ApiKeySetter | undefined`, `ApiKeySetter = () =>
+Promise<string>`, and a function there is invoked before EVERY request** — `makeRequest` awaits
+`prepareOptions` → `_callApiKey` → `authHeaders`, and `retryRequest` re-enters `makeRequest`. We had
+hand-built precisely that shape as `OpenAICredentialSource`, then resolved it ourselves and handed
+the SDK a static string, **downgrading a per-REQUEST capability to per-TURN.** `maxRetries` is 2, so
+one call sends up to three HTTP requests on one token while codex rotates `auth.json` on its own
+schedule: the retry re-sent a token that had just been rotated away, and collected an auth error
+that reads like a bad credential.
+
+⚠️ **THE LINE, and it is not "everything goes to the SDK": the token goes to the SDK, the account id
+stays ours.** `ChatGPT-Account-Id` is a header and `defaultHeaders` is fixed when the client is
+built, so `streamResponsesAPI` still resolves the source once for it. That resolve pays twice — it
+is also where an unreadable credential fails with OUR message, instead of inside the SDK's `Failed
+to get token from 'apiKey' function: …` wrapper (which does preserve the full text, and the original
+in `cause`). Passing a function is ALSO the only way to stop `OPENAI_API_KEY` filling that slot,
+since its type has no `null`. MEASURED with a real token as the positive control: a setter returning
+`""` throws and **zero requests leave the process**, where the static `""` it replaced sent
+`Bearer ` and collected a misleading 401. Deliberately NOT pinned by a test —
+`openAICredentialSource` cannot produce an empty token, so the test would only assert the SDK's
+behaviour.
+
+⭐ **Moving a capability from per-N to per-M needs a fixture holding TWO M's inside ONE N; every
+weaker assertion is green against both implementations.** "the function was passed" and "the
+function was called once" are both true of the static string — one call, one resolve, either way.
+What works: rewrite `auth.json` from inside the fetch mock, answer the first attempt with 500 plus
+`retry-after-ms: 0`, assert the SECOND request carried the SECOND token. Against the
+resolved-string mutant exactly ONE test in the repo goes red and its message IS the diagnosis
+(`"Bearer first-token"` twice). ⚠️ `retry-after-ms: 0` is what keeps it at 2.7ms — the same shape
+on a bare 429 costs 397ms of the SDK's backoff.
+
+⭐ **A fixture built for a case that did not exist became the only thing keeping a test able to
+fail, ONE DAY later.** `withClientEnv` defers its env restore when the callback returns a promise,
+and the note shipped with it said this "changes no outcome at any of today's four doors" because
+every client was built in the callback's synchronous prefix. Putting `await credentials()` above
+`new OpenAI(...)` moved the OpenAI door into the fragile row. MEASURED both ways, with the
+`organization: null, project: null` deleted so production genuinely leaks: **deferral intact → RED,
+naming both shell headers; deferral removed → the same vulnerable production reports CLEAN.** This
+does not soften *an optimisation for a case your fix eliminates is dead code that looks like
+foresight* — the difference is that the deferral deleted a CLASS (any await upstream of any client
+construction) rather than serving a scenario, and a class does not stop existing when today's
+callers happen to miss it.
 ## ⭐ A migration that adds an identifier makes it non-uniform FOREVER — two instances, two subsystems
 
 **Every reader of a newly-introduced id needs a DEFINED rendering for the pre-migration half, and
