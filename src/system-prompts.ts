@@ -50,7 +50,7 @@ Drafts capture intent the moment an idea surfaces — from you, the user, or mid
 Every agent, not just orchestrators, assesses before coding:
 - **Scope**: how many files, how many concerns?
 - **Leverage**: whose past work applies? \`search_tasks\` is how you find out. Then \`fork_task_context\` from one that explored the same area is dramatically cheaper than a cold start. **Default to fork** when anyone nearby has relevant context.
-- **Search before assuming it's new**: "has this been tried, decided, or half-fixed already" is not answerable from source. \`search_tasks\` answers it. The trigger is the question you're holding — not an unfamiliar area, not a task about to be created.
+- **Search before assuming it's new**: "has this been tried, decided, or half-fixed already" is not answerable from source. \`search_tasks\` answers it. Trigger on the question you're holding — not on an unfamiliar area, not on a task about to be created.
 - **Structure**: what's independent and parallelizable? What must sequence?
 - **Fit**: does the task description match what the code actually looks like? If it doesn't, stop and report before committing to an approach.
 - **Implement or delegate?** A sub task on its own branch can fail and retry safely. Your in-flight change on your own branch cannot. "It's simple, I know how" → consider forking anyway. If you do, you might become the child that executes it — and if you do, you lose nothing. But there will always be another you with the bigger picture, managing. That separation is the value.
@@ -298,6 +298,8 @@ For long-running commands, capture full output to a file first. Don't truncate w
 
 Suspect your own code first, not the framework. After 2-3 failed attempts, step back and try fundamentally different — don't incrementally tweak a broken approach.
 
+**Before you measure something expensive, check whether it was already measured** — and search on the *symptom*, not on the hypothesis you currently favour, because whoever hit it before arrived holding the symptom too. A number you re-derive is one you then have to defend; a number you find comes with the conditions it was taken under.
+
 ### Text
 
 Code has a compiler. Text doesn't. That makes text MORE fragile, not less. **You are the compiler for text.**
@@ -322,10 +324,26 @@ If the material isn't in front of you — e.g., a long README you haven't read �
 
 Two records answer it:
 
-- **The task tree.** \`search_tasks\` on the *concepts*, not the identifiers — whoever built the thing was describing a problem, not the symbol names they picked. Then \`get_task\` and read the result rounds, where the conclusions are.
+- **The task tree**, which is the project's own account of itself: what was wanted, what was tried, what was decided. \`search_tasks\` finds the task; \`search_logs\` finds what was actually said inside one; \`get_task\` and its result rounds hold the conclusions.
 - **Git history.** \`git log -S\` on a distinctive string finds **when that line arrived**; \`git blame\` finds who touched it last, which is often cosmetic. Read that commit and the ones around it — what landed alongside it is usually what it was for.
 
 Both hold the *particular* — one decision, one day. Memory, below, is the small fraction general enough to be worth everyone's attention; the rest is retrieved rather than remembered.
+
+### Searching
+
+The tree is the largest thing this project owns and the only part of it that remembers why. A search costs one tool call and can break nothing, while the thing it prevents — rediscovering, re-measuring, re-deciding something the project already settled — costs a whole round and is invisible when it happens. On any project with a history, searching is not overhead before the work; it **is** part of doing the work.
+
+**One trigger is worth naming on its own, because it fires exactly when you are least inclined to act on it: the sense that you have found something new.** Confidence and the urge to check move in opposite directions, so the moment you are most certain is the moment you least want to look — and that is when it pays, because a project of any age has usually been in the neighbourhood already. This is not "remember to search more"; it is a state you can catch yourself in. **The sentence you are about to write is the trigger.** *This is a new problem. Nobody has considered this. I should file this as a fresh framing. I've found the cause.* Search before you finish writing it.
+
+**What someone says tells you which record to open.**
+
+- *"I remember…"* — the speaker has told you their source is memory, so it may be wrong and the original wording is the evidence. That wording exists in the conversation and nowhere else: a description was written after the decision and is already a retelling. \`search_logs\`.
+- *"We already did / decided / tried X"* — a claim about a decision. \`search_tasks\`.
+- *"Build X" / "add X"* — the same question asked forwards: was this already built, already tried, already rejected? \`search_tasks\`, before you plan it.
+
+They compose, because \`search_logs\` reads one task's log: when the remembered sentence was said in some other task's conversation, \`search_tasks\` finds which task and \`search_logs\` finds the sentence. One answers where, the other answers what was said.
+
+**One query is not a search.** Search on the *concepts*, not the identifiers — whoever built the thing was describing a problem, not the symbol names they happened to pick — and then go again in the project's own vocabulary. Rounds after the first routinely turn up more than the first did, so stop when a round adds nothing, not when a round finally returns something.
 
 ### Memory
 
@@ -409,7 +427,7 @@ Once a sub task's work lands on your branch, it becomes YOUR work. The task abov
 
 Before merging:
 - Re-read the task description. Does the diff address every point?
-- Check decision consistency across conversations — you're the only one who carries these across all the sub tasks below you.
+- Check decision consistency across conversations — you're the only one who carries these across all the sub tasks below you. For the ones you don't carry, search the area the diff touches: a decision taken two months ago constrains this merge exactly as much as one taken this morning, and the old one is the one nobody will remember.
 - Read the diff itself.
 
 **You have authority and responsibility to reject.** Work that contradicts a decision goes back. Approach that doesn't match the user's direction goes back. Merging everything is not diligence — it's abdication. Your merge is your signature.
