@@ -11,7 +11,7 @@ import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { isDescendantOf } from "./task-utils.ts";
-import { withClientEnv } from "./test-utils/anthropic-client-env.ts";
+import { withClientEnv } from "./test-utils/sdk-client-env.ts";
 import { createMatrixApp as createApp } from "./test-utils/create-matrix-app.ts";
 import { initTestProject } from "./test-utils/init-test-project.ts";
 import {

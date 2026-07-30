@@ -38,7 +38,7 @@ import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import type { ProviderAdapter } from "./provider-shared.ts";
 import { resetResourceRegistry } from "./resource-registry.ts";
 import { TaskTracker } from "./task-tracker.ts";
-import { withClientEnv } from "./test-utils/anthropic-client-env.ts";
+import { withClientEnv } from "./test-utils/sdk-client-env.ts";
 import { createMockAnthropicClient } from "./test-utils/mock-anthropic-api.ts";
 import { attachMockSession, initMockResourceRegistry } from "./test-utils.ts";
 import { type ParamDefs, toToolDefinition } from "./tool-def.ts";

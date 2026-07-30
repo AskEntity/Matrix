@@ -19,7 +19,7 @@ import {
 	runLLM,
 	streamLLM,
 } from "./llm.ts";
-import { withClientEnv } from "./test-utils/anthropic-client-env.ts";
+import { withClientEnv } from "./test-utils/sdk-client-env.ts";
 import { ValidatingMockAPI } from "./test-utils/mock-anthropic-api.ts";
 import {
 	createMockedResponsesProviderWithMock,

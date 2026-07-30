@@ -4544,3 +4544,62 @@ dropped. Its table is a **subtract**-list, so a flag added to the parser and for
 refused side where somebody notices. The instance most likely to be hit is a typo — `--baseurl`
 silently vanished, creating a group against Anthropic's own endpoint with someone else's key, and
 every call 401'd as if the key were bad.
+
+### The same rule at the OpenAI door: `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID` decided who was billed
+
+**DECIDED 2026-07-30 (user): *「env 不许决定」*** — which settled the question the earlier draft had
+parked as needing judgment. `organization` and `project` are now pinned to `null` at the one
+`new OpenAI(...)` site.
+
+⚠️ **`openai`'s constructor is the more thorough version of the same hazard: ALL FIVE slots are
+DEFAULT PARAMETERS**, so there is not even an `=== undefined` test to sidestep — a slot you omit
+is a slot env fills. **The consequence is vendor-documented rather than inferred:** *"If no header
+is provided, the default organization will be billed."* So this is env deciding **billing
+attribution**, which is why it counts under a rule about credentials even though org and project
+are not credentials.
+
+**MEASURED, our real call shape, shell holding all four names:** `openai-organization` and
+`openai-project` arrived as the shell's values on every request; with the two `null`s, neither
+appears. `apiKey` and `baseURL` were already clean — both are always passed — but **that was a side
+effect of other requirements, not a decision**, so the test asserts all four names rather than the
+two that leaked.
+
+⚠️ **The remaining asymmetry, worth one line because the obvious workaround is worse: `apiKey`'s
+type is `string | ApiKeySetter | undefined`, with NO `null`.** So if `authToken` ever became
+optional there would be no way to spell "do not read env" for it — **the thing to keep true is that
+`authToken` stays required.** `apiKey: ""` does suppress the read and then sends
+`Authorization: Bearer` with nothing after it: suppression achieved, request malformed, 401 with a
+misleading message. Not a workaround.
+
+**NEGATIVE RESULT — do NOT reach for the `ApiKeySetter` function form while here.** `apiKey` accepts
+`() => Promise<string>`, invoked before each request, which is what our `OpenAICredentialSource`
+already is; passing it would suppress env as a side effect. It is a separate design change with a
+real behavioural consequence — `maxRetries: 2` means retries currently reuse a token resolved once
+per call — and it needs a test that drives an actual retry and asserts the SECOND request carries a
+NEW token. `01KYSE0N667GMYDC81057J3NX8`.
+
+### ⚠️ These env fixtures work by an accident of where the first `await` sits
+
+**MEASURED 2026-07-30. An env fixture that restores when its callback RETURNS can only see a client
+constructed in that callback's synchronous prefix**, and all four of our doors happen to qualify:
+
+| shape | env visible at construction? | which door |
+|---|---|---|
+| sync callback | yes | `createLLM` |
+| async fn, before its first `await` | yes | `check_model` via `app.request` |
+| async generator's first `next()` | yes | `streamResponsesAPI` |
+| async fn, AFTER an `await` | **NO** | none today |
+
+⭐ **The fragile case fails by PASSING** — env is already gone, the client reads the real shell,
+the fixture reports no leak and the test goes green. So one `await` added upstream of any client
+construction silently blinds every one of these tests at once. `withClientEnv` therefore defers its
+restore when the callback returns a promise; it changes no outcome today and exists to delete that
+class. **`src/test-utils/sdk-client-env.test.ts` is the instrument's own test suite** — the fixture
+is an instrument, and *an instrument is a claim until you have made it fail*.
+
+⚠️ **Sibling trap in the same family, met while probing: both SDKs snapshot `globalThis.fetch` in
+their CONSTRUCTOR** (`this.fetch = options.fetch ?? getDefaultFetch()`, and the shim returns the
+current global). A fetch-intercepting test must install its stub BEFORE the client is built — get it
+backwards and the call goes to the real `api.openai.com`, which is exactly what a first probe here
+did: it reported `headers: {} … leaked: NONE`, a clean bill of health produced by talking to the
+internet.
