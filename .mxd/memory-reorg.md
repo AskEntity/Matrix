@@ -361,3 +361,39 @@ returned 457 candidates of which 8 were pointers. Check a named list you wrote d
 **And the probe is an instrument.** This run's coverage probe required ALL of a section's strings to
 be present when the intent was ANY, and reported one false loss — in a run whose entire subject was
 that a green report proves nothing about what was read.
+
+### The token probe is PER-SITE, so a correct drop can orphan a surviving use
+
+**This is the failure mode of the adjudication the 180-to-9 ratio describes, and it means the 9
+accidents are not the only cost of the 180 deliberate drops. Each deliberate drop is also a
+candidate ORPHANING.**
+
+Worked instance from this run, found afterwards by somebody else. A model codename appeared twice,
+about a thousand lines apart. One site GROUNDED it — a sentence naming the model whose behaviour
+prompted a feature. The other DEPENDED on it — a scope note reading *"this is X-class behaviour"*,
+which is only meaningful to a reader who has met X. The rewrite generalised the grounding site,
+which was correct in isolation and correct by this document's own list, since model-name examples
+are exactly what a rewrite is supposed to drop. It kept the dependent site byte-identical.
+
+**Neither half of the probe could see the result.** The dropped token fired, was adjudicated, and
+the adjudication was right about the site it was looking at. The dependent site was never flagged,
+because that site lost nothing — it is unchanged. **The probe asks "present before, absent after" of
+one identifier at a time, and an orphaning is a relation between two sites.**
+
+The check that closes it is cheap and belongs in the adjudication loop rather than after it:
+
+> **For every identifier you are about to record as a deliberate drop, take its longest alphabetic
+> run and grep the OUTPUT for it, case-insensitively.** `fable-5` dropped, `Fable` survives, one
+> hit, one pass.
+
+**It matters for NAMES, not for symbols.** A dropped symbol usually still has a definition in the
+source, so a surviving use remains resolvable by the reader. A codename, a vendor generation, a
+project or an incident name has no definition anywhere but this file — so deleting its only
+introduction leaves every other use permanently unreadable, and nothing in the file or the repo can
+repair it.
+
+**The repair is not to define the term.** Grounding it again re-adds the very material the drop
+correctly removed. Either restore just enough at the SURVIVING site to make the sentence stand
+alone, or delete the clause that depends on it — and prefer the second when the paragraph itself
+says the mechanism is dormant, because a definition maintained for a dormant mechanism is a line
+paid for on every launch forever.
