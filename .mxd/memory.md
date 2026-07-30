@@ -2319,9 +2319,10 @@ finally returns something."* The scale of the gap, counted over root's whole 110
 because the three available ones differ by 6×: **23** file-searches per tree-search, **41** if
 read_file counts as consulting the tree, **144** against everything that touches the working tree.
 **Counting it needs `{"type":"tool_call","tool":"…"}` — the field is `tool`, not `name`.** A first
-pass grepping `"name":"mcp__mxd__search_tasks"` returned **10** — a plausible small number that would have "confirmed" the thesis while actually matching that string inside
-tool_result CONTENT, since results quote the text of other calls. **The wrong instrument answered in
-the believable direction, on the very claim it was asked about.**
+pass grepping `"name":"mcp__mxd__search_tasks"` returned **10** — a plausible small number that
+would have "confirmed" the thesis while actually matching that string inside tool_result CONTENT,
+since results quote the text of other calls. **The wrong instrument answered in the believable
+direction, on the very claim it was asked about.**
 
 **Where the file-search reflex went, and the file it is actually in.** *"When you search files, ask
 whether you should search tasks"* is a decision made while CONSTRUCTING a `search` call — the agent
