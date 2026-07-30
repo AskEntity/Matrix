@@ -664,6 +664,84 @@ that finds it: *what does this tell someone who never saw the old version?* Grep
 cheap — any "not X, not Y" whose X and Y appear nowhere else — but the grep is a candidate list
 only, since most negations name something the reader can see and are doing real work.
 
+## A symbol that lives ONLY in the comments describing it
+
+*Changed a behaviour? Grep for the PROSE that describes it* tells you to grep. This is the case
+where the grep ANSWERS — three ways a name in a comment can be dead, and the middle column is all
+the person checking ever sees:
+
+| variant | grepping the name shows | outcome |
+|---|---|---|
+| the symbol was deleted | nothing | **caught** |
+| the symbol exists, nobody calls it | hits, every one true | missed, and merely stale |
+| **the symbol survives only in the prose describing it** | **hits, every one prose** | **missed, and it reads as CONFIRMATION** |
+
+The third is the expensive one because those comments describe the thing as if it were running, so
+whoever looks the name up gets supporting text. **Grep for a DEFINITION, never for a name** —
+`grep -n 'function <name>\|const <name> ='` — and **the endpoint of the chase is a definition, never
+another name**, because the replacement you find can itself be a phantom: `wasReplaced` appears
+three times in `agent-lifecycle.ts`, all comments, while the real local is `notReplaced` and its
+polarity is the opposite, so a mechanical rename inverts every sentence it touches.
+
+**Ask `git log -S"<dead name>" --all` before you pick a replacement.** The commit that removed a
+symbol usually names its successor in the message, and that is evidence where the nearest plausible
+export is a guess. Measured: `runChildAgentInBackground` was five comment hits with zero definition,
+and `6c46e2f3` says *"Rename runChildAgentInBackground to runAgentForNode"* — while the plausible
+guess, the exported launcher three lines below one of those comments, was `ensureChildAgentRunning`,
+which does not call the function whose docstring that comment is, and which the restart path skips
+entirely (`autoResume` calls `runAgentForNode` directly). **A name proposed from PROXIMITY survives
+review exactly as well as one derived from the CALLER, and the two costs are not equal: proximity is
+free, because the wrong name is already on screen, while the caller costs one grep — the grep that
+"I can see the answer from here" is precisely what talks you out of.** Both people in the loop paid
+it: the author of the original comment, and the reviewer who corrected three other stale claims in
+the same task description that same evening and passed the unverified replacement name through
+untouched. **Nobody in a chain of two ran the grep, and the description they produced was ABOUT
+names rotting.**
+
+**The census, and the discriminator that made it actionable.** `scripts/comment-phantom-survey.ts`
+extracts identifier-shaped words from every TS comment and reports those with zero occurrences in
+comment-stripped code: 326 files, 1,235 distinct candidates, **152 with no code occurrence** — of
+which about a dozen names across ~25 sites were the defect and the rest were external API names or
+legitimate deletion records. **TENSE separates them, and nothing else does.** *"X used to do Y, it
+is gone"* is correct prose that must stay; the same name in the present tense, or standing in a list
+of current examples, is the defect — and **no mechanical check can tell those apart, because to a
+grep, to a compiler and to a reviewer scanning a column of names they are the same name with the
+same zero definitions.** The discriminator is a VERB, visible only to someone reading the sentence,
+which is why the survey's output is a list to be read rather than a gate to be passed.
+
+Two properties of that instrument worth reusing. **Its errors must fall on the false-positive side**
+— the scanner does not track regex literals, so it can misread a `/…/` body as a comment, which only
+ever ADDS a candidate; the opposite bias would hide a phantom, and hiding is the whole failure being
+hunted. And **a planted control has to exercise the form the defect actually lives in**: phantoms
+sit overwhelmingly in JSDoc, so a control planted only in a `//` line proves the wrong branch.
+Third, learned by watching it break: **once an instrument is committed it becomes part of the corpus
+it searches**, so `const PLANTED = "zzControl"` puts the control's own name into the haystack and
+every run afterwards reports MISSED. Build such names at runtime. It failed in the safe direction —
+which is the only reason anyone saw it, and the reason to check: **a control that can read its own
+name out of the haystack can only ever under-report.**
+
+**An ABSENCE is a universal claim, so a truncated list can never support one — with or without a
+count beside it.** This is stronger than *a correct COUNT next to a truncated LIST*, which is about
+believing you finished an enumeration: here no amount of belief helps, because *"no line says X"*
+quantifies over lines the pipe threw away. Paid: `git grep -n handleInjectMessage | head -5`
+returned five hits, all comments, and the phantom was half-written before the definition turned up
+on the seventh line. **Piping to `head` is not economy on any command whose output is meant to prove
+that a name has no definition — it invalidates the conclusion.**
+
+Two things the sweep found that no rename would have: `.mxd/plugin/index.ts` promised that
+pre-existing data is moved into the plugin namespace by a one-shot migration **at daemon startup**,
+which `acb887d2` deleted — a reader would believe an old-layout data dir converts itself. **Before
+rewriting a comment like that, check whether the need it describes is still real, or the repair
+launders a data gap into an accurate sentence.** Measured here, so nobody re-derives it: the
+migration was deleted because it had already RUN, not because it was judged unnecessary (*"After P4
+migration executed on disk … no legacy data in the wild"*), and today 14 of 15 projects under
+`~/.mxd/projects/` hold nothing but `plugin/`, while the fifteenth carries one stray **0-byte**
+`tasks/*.jsonl` whose 432KB twin sits in the new layout. **No unconverted data exists, so the
+comment was the whole defect.** And in `lifecycle.test.ts` a test's header comment listed *"done()
+handler updates tracker status"* sixty lines above that same test's assertion that status is **not**
+updated. **Prose and code contradicting each other inside one file, with nothing red**, is the
+ordinary state of a comment nobody re-runs.
+
 ## Hard invariants
 
 Violating any of these produces silent corruption rather than an error. **They are two families, and
@@ -911,6 +989,68 @@ own fields cannot distinguish "passed through opaque" from "reconstructed into t
 **KNOWN LIMITATION: crash-recovery Phase 2 does not append a resultRound.** It is plugin-agnostic
 runtime code that sets status directly and never calls `onDone`; wiring it in would either break the
 boundary or route crash recovery through a plugin hook.
+
+## A request inside a `done()` result is owed to nobody
+
+**A result round is append-only history. It can RECORD a request; nothing executes it, and nothing
+turns red when it is ignored** — so *actioned* and *forgotten* leave the identical trace. That is
+*Two situations, one observation* in the one medium every task in this system ends with.
+
+**The need is real, and it has already invented a vocabulary with no receiver on the other end.**
+Measured by `scripts/scan-unowned-requests.ts` over every result round in every registered lens (134
+rounds, 727 tasks, 572K chars): **28 rounds carry request-shaped prose, 15 of them naming no task id
+anywhere**, and the ADDRESSED form appears in six spellings across six tasks that
+could not have copied each other — `FINDING ROOT SHOULD ACT ON`, `TWO THINGS FOR ROOT`, `FOR ROOT`
+plus *three things I could not do myself*, `FOUR THINGS FOR ROOT TO DECIDE OR KNOW`, `Open for
+root`, and *left for root to decide whether it becomes a task*. *When agents repeatedly do X, ask
+whether the motivation is legitimate*: it is, so this wants a destination rather than a prohibition.
+
+**The failure is not that nobody reads it. It is that the reader has a LIFETIME.** The 2026-07-30
+cold read placed 8 findings out of scope; re-checked against the file two hours later, **6 were
+already fixed**, and one of the two survivors was a pair of forward references the reader had
+judged fine — so the residue was ONE item. That reads like a success and it is a coincidence:
+reading the commits' `Task-Id` trailers, every fix was committed by the CHILD that had just merged
+the report, inside the 90 minutes before it closed. What executed those requests was a second agent
+that happened to still be alive. **And the outcome cannot tell you which findings were ACTIONED** —
+three are named in one commit's subject line, while the `Drained` taxonomy row came back inside an
+unrelated pass restoring 13 dropped rules.
+
+**The previous run is the other end of that range: the same step with the executor gone.** The
+2026-07-25 cold read's report was never actioned. Five days later a full regeneration re-derived
+its placement, region-balance and cross-reference findings as a side effect of reorganising — and
+every finding that needed its own separate act, define a term, add a map, delete a label, died.
+**A process that lands only the findings a later pass would have regenerated anyway is getting
+nothing from the cold read**, which is the half nothing else can produce. One round of
+`01KYQKY5S2826C4SNMWM0MVN6T` shows both behaviours at once: one finding it FILED as a node, one it
+left as *"for root to decide whether it becomes a task"*. Both got done, because somebody was
+attending. `01KYJ4E7JERXZFJCQDB5SB9GQ6`'s did not, and a human cleaned it up by hand two days later.
+
+> **`close_task` is the deadline.** A request still in prose when its task closes is not pending —
+> it is gone, and the round it lives in will not be read again.
+
+**The remedy is the one medium here that holds OWED rather than RECORDED: a node.** `create_task` is
+unrestricted anywhere in the tree, so the reporter can always file, and the result then names the
+id. That is also what finally separates the two worlds inside a single sentence: **an owned request
+carries an id and an unowned one does not.** 13 of those 28 rounds already do it, so the rule
+codifies a practice rather than inventing one. **SCOPE on both counts: the scan matches sentence
+SHAPE, and "names an id" is a proxy** — the id may belong to something else in the same round. Read
+the hits before quoting the number as an adjudicated backlog.
+
+**Answer the obvious objection in the text, or the rule reads as bookkeeping.** *"There are ~130
+drafts nobody has actioned, so filing a node changes nothing."* The node does not promise action; it
+changes the failure mode. An unactioned node is `pending`, statused, searchable and visible in the
+tree — a backlog you can see and decide against. An unactioned paragraph is not a backlog at all,
+because nothing records that it is owed. **The win is converting gone into pending**, and 130
+visible drafts is a decision where an unknown number of buried requests is not.
+
+**NEGATIVE RESULT — do not give `done()` a `requests` field.** `lessons` was exactly that shape and
+was deleted on the user's call (`01KXKCJW9P26RPPXKCTGDV4BPJ`), and ownership kills it independently:
+a typed list inside an append-only round still has no status, and it would stand beside
+`create_task` as a second way to create a task. **`done()` also cannot warn** — it is an intended
+orphan that writes no tool_result, so nothing said there ever reaches the agent. The doors that do
+reach one are the `result` param's own description, read at the moment the sentence is being
+written, and the system prompt at both ends: *Before calling done("passed")* for the writer,
+*Merging is signing* for the reader.
 
 ## Duplicate yield or done in one turn
 
@@ -4366,143 +4506,3 @@ say a past measurement usually holds while a past *"so we decided not to"* may n
 delete the false sentence and add nothing** — the true version is already in the payload headers,
 and restating it in the prompt would be the same paragraph in two places, free to drift. **Silence
 where another surface already speaks is correct; an assertion in the opposite direction is not.**
-
-## A request inside a `done()` result is owed to nobody
-
-**A result round is append-only history. It can RECORD a request; nothing executes it, and nothing
-turns red when it is ignored** — so *actioned* and *forgotten* leave the identical trace. That is
-*Two situations, one observation* in the one medium every task in this system ends with.
-
-**The need is real, and it has already invented a vocabulary with no receiver on the other end.**
-Measured by `scripts/scan-unowned-requests.ts` over every result round in every registered lens (134
-rounds, 727 tasks, 572K chars): **28 rounds carry request-shaped prose, 15 of them naming no task id
-anywhere**, and the ADDRESSED form appears in six spellings across six tasks that
-could not have copied each other — `FINDING ROOT SHOULD ACT ON`, `TWO THINGS FOR ROOT`, `FOR ROOT`
-plus *three things I could not do myself*, `FOUR THINGS FOR ROOT TO DECIDE OR KNOW`, `Open for
-root`, and *left for root to decide whether it becomes a task*. *When agents repeatedly do X, ask
-whether the motivation is legitimate*: it is, so this wants a destination rather than a prohibition.
-
-**The failure is not that nobody reads it. It is that the reader has a LIFETIME.** The 2026-07-30
-cold read placed 8 findings out of scope; re-checked against the file two hours later, **6 were
-already fixed**, and one of the two survivors was a pair of forward references the reader had
-judged fine — so the residue was ONE item. That reads like a success and it is a coincidence:
-reading the commits' `Task-Id` trailers, every fix was committed by the CHILD that had just merged
-the report, inside the 90 minutes before it closed. What executed those requests was a second agent
-that happened to still be alive. **And the outcome cannot tell you which findings were ACTIONED** —
-three are named in one commit's subject line, while the `Drained` taxonomy row came back inside an
-unrelated pass restoring 13 dropped rules.
-
-**The previous run is the other end of that range: the same step with the executor gone.** The
-2026-07-25 cold read's report was never actioned. Five days later a full regeneration re-derived
-its placement, region-balance and cross-reference findings as a side effect of reorganising — and
-every finding that needed its own separate act, define a term, add a map, delete a label, died.
-**A process that lands only the findings a later pass would have regenerated anyway is getting
-nothing from the cold read**, which is the half nothing else can produce. One round of
-`01KYQKY5S2826C4SNMWM0MVN6T` shows both behaviours at once: one finding it FILED as a node, one it
-left as *"for root to decide whether it becomes a task"*. Both got done, because somebody was
-attending. `01KYJ4E7JERXZFJCQDB5SB9GQ6`'s did not, and a human cleaned it up by hand two days later.
-
-> **`close_task` is the deadline.** A request still in prose when its task closes is not pending —
-> it is gone, and the round it lives in will not be read again.
-
-**The remedy is the one medium here that holds OWED rather than RECORDED: a node.** `create_task` is
-unrestricted anywhere in the tree, so the reporter can always file, and the result then names the
-id. That is also what finally separates the two worlds inside a single sentence: **an owned request
-carries an id and an unowned one does not.** 13 of those 28 rounds already do it, so the rule
-codifies a practice rather than inventing one. **SCOPE on both counts: the scan matches sentence
-SHAPE, and "names an id" is a proxy** — the id may belong to something else in the same round. Read
-the hits before quoting the number as an adjudicated backlog.
-
-**Answer the obvious objection in the text, or the rule reads as bookkeeping.** *"There are ~130
-drafts nobody has actioned, so filing a node changes nothing."* The node does not promise action; it
-changes the failure mode. An unactioned node is `pending`, statused, searchable and visible in the
-tree — a backlog you can see and decide against. An unactioned paragraph is not a backlog at all,
-because nothing records that it is owed. **The win is converting gone into pending**, and 130
-visible drafts is a decision where an unknown number of buried requests is not.
-
-**NEGATIVE RESULT — do not give `done()` a `requests` field.** `lessons` was exactly that shape and
-was deleted on the user's call (`01KXKCJW9P26RPPXKCTGDV4BPJ`), and ownership kills it independently:
-a typed list inside an append-only round still has no status, and it would stand beside
-`create_task` as a second way to create a task. **`done()` also cannot warn** — it is an intended
-orphan that writes no tool_result, so nothing said there ever reaches the agent. The doors that do
-reach one are the `result` param's own description, read at the moment the sentence is being
-written, and the system prompt at both ends: *Before calling done("passed")* for the writer,
-*Merging is signing* for the reader.
-
-## A symbol that lives ONLY in the comments describing it
-
-Belongs beside *Changed a behaviour? Grep for the PROSE that describes it* — it is that rule's
-missing detector. Three ways a name in a comment can be dead, and the middle column is all the
-person checking ever sees:
-
-| variant | grepping the name shows | outcome |
-|---|---|---|
-| the symbol was deleted | nothing | **caught** |
-| the symbol exists, nobody calls it | hits, every one true | missed, and merely stale |
-| **the symbol survives only in the prose describing it** | **hits, every one prose** | **missed, and it reads as CONFIRMATION** |
-
-The third is the expensive one because those comments describe the thing as if it were running, so
-whoever looks the name up gets supporting text. **Grep for a DEFINITION, never for a name** —
-`grep -n 'function <name>\|const <name> ='` — and **the endpoint of the chase is a definition, never
-another name**, because the replacement you find can itself be a phantom: `wasReplaced` appears
-three times in `agent-lifecycle.ts`, all comments, while the real local is `notReplaced` and its
-polarity is the opposite, so a mechanical rename inverts every sentence it touches.
-
-**Ask `git log -S"<dead name>" --all` before you pick a replacement.** The commit that removed a
-symbol usually names its successor in the message, and that is evidence where the nearest plausible
-export is a guess. Measured: `runChildAgentInBackground` was five comment hits with zero definition,
-and `6c46e2f3` says *"Rename runChildAgentInBackground to runAgentForNode"* — while the plausible
-guess, the exported launcher three lines below one of those comments, was `ensureChildAgentRunning`,
-which does not call the function whose docstring that comment is, and which the restart path skips
-entirely (`autoResume` calls `runAgentForNode` directly). **A name proposed from PROXIMITY survives
-review exactly as well as one derived from the CALLER, and the two costs are not equal: proximity is
-free, because the wrong name is already on screen, while the caller costs one grep — the grep that
-"I can see the answer from here" is precisely what talks you out of.** Both people in the loop paid
-it: the author of the original comment, and the reviewer who corrected three other stale claims in
-the same task description that same evening and passed the unverified replacement name through
-untouched. **Nobody in a chain of two ran the grep, and the description they produced was ABOUT
-names rotting.**
-
-**The census, and the discriminator that made it actionable.** `scripts/comment-phantom-survey.ts`
-extracts identifier-shaped words from every TS comment and reports those with zero occurrences in
-comment-stripped code: 326 files, 1,235 distinct candidates, **152 with no code occurrence** — of
-which about a dozen names across ~25 sites were the defect and the rest were external API names or
-legitimate deletion records. **TENSE separates them, and nothing else does.** *"X used to do Y, it
-is gone"* is correct prose that must stay; the same name in the present tense, or standing in a list
-of current examples, is the defect — and **no mechanical check can tell those apart, because to a
-grep, to a compiler and to a reviewer scanning a column of names they are the same name with the
-same zero definitions.** The discriminator is a VERB, visible only to someone reading the sentence,
-which is why the survey's output is a list to be read rather than a gate to be passed.
-
-Two properties of that instrument worth reusing. **Its errors must fall on the false-positive side**
-— the scanner does not track regex literals, so it can misread a `/…/` body as a comment, which only
-ever ADDS a candidate; the opposite bias would hide a phantom, and hiding is the whole failure being
-hunted. And **a planted control has to exercise the form the defect actually lives in**: phantoms
-sit overwhelmingly in JSDoc, so a control planted only in a `//` line proves the wrong branch.
-Third, learned by watching it break: **once an instrument is committed it becomes part of the corpus
-it searches**, so `const PLANTED = "zzControl"` puts the control's own name into the haystack and
-every run afterwards reports MISSED. Build such names at runtime. It failed in the safe direction —
-which is the only reason anyone saw it, and the reason to check: **a control that can read its own
-name out of the haystack can only ever under-report.**
-
-**An ABSENCE is a universal claim, so a truncated list can never support one — with or without a
-count beside it.** This is stronger than *a correct COUNT next to a truncated LIST*, which is about
-believing you finished an enumeration: here no amount of belief helps, because *"no line says X"*
-quantifies over lines the pipe threw away. Paid: `git grep -n handleInjectMessage | head -5`
-returned five hits, all comments, and the phantom was half-written before the definition turned up
-on the seventh line. **Piping to `head` is not economy on any command whose output is meant to prove
-that a name has no definition — it invalidates the conclusion.**
-
-Two things the sweep found that no rename would have: `.mxd/plugin/index.ts` promised that
-pre-existing data is moved into the plugin namespace by a one-shot migration **at daemon startup**,
-which `acb887d2` deleted — a reader would believe an old-layout data dir converts itself. **Before
-rewriting a comment like that, check whether the need it describes is still real, or the repair
-launders a data gap into an accurate sentence.** Measured here, so nobody re-derives it: the
-migration was deleted because it had already RUN, not because it was judged unnecessary (*"After P4
-migration executed on disk … no legacy data in the wild"*), and today 14 of 15 projects under
-`~/.mxd/projects/` hold nothing but `plugin/`, while the fifteenth carries one stray **0-byte**
-`tasks/*.jsonl` whose 432KB twin sits in the new layout. **No unconverted data exists, so the
-comment was the whole defect.** And in `lifecycle.test.ts` a test's header comment listed *"done()
-handler updates tracker status"* sixty lines above that same test's assertion that status is **not**
-updated. **Prose and code contradicting each other inside one file, with nothing red**, is the
-ordinary state of a comment nobody re-runs.
