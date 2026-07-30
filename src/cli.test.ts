@@ -15,7 +15,7 @@
  * module-load path resolution (not a reimplementation of it).
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -428,5 +428,145 @@ describe("cli: the daemon URL comes from the configured port", () => {
 			.filter(({ line }) => /7433|process\.env\.PORT\b/.test(line))
 			.map(({ line, n }) => `${n}: ${line.trim()}`);
 		expect(offenders).toEqual([]);
+	});
+});
+
+/**
+ * A project is found by WHICH DIRECTORY a path names, not by how it is spelled.
+ *
+ * `resolveCurrentProject` compared `process.cwd()` against each registered path
+ * as a STRING, and `resolveProject` did the same for an explicit path argument.
+ * `process.cwd()` is always the physical path, while a registered path is
+ * whatever was typed — so a project registered through a symlink (on macOS
+ * every `/tmp/...` is one) answered "No project found for current directory"
+ * from inside its own directory.
+ *
+ * ⚠️ memory recorded only the TEST-side workaround for this ("wrap fixture paths
+ * in realpathSync") — `cli-audit-r7-p2_2.test.ts` still carries the comment
+ * explaining that production string-compares. Once a problem is routed around in
+ * the tests, nobody looks at the production half again. Both doors are fixed
+ * here; that comment is corrected in the same commit.
+ */
+describe("cli: a project is found through a symlinked path", () => {
+	let root: string;
+	let realDir: string;
+	let linkDir: string;
+	let dataDir: string;
+	let server: ReturnType<typeof Bun.serve> | null = null;
+	const PROJECT_ID = "01SYMLINKPROJECT0000000000";
+
+	beforeEach(async () => {
+		root = await mkdtemp(join(tmpdir(), "mxd-cli-link-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-cli-link-data-"));
+		realDir = join(root, "real");
+		linkDir = join(root, "link");
+		await mkdir(realDir, { recursive: true });
+		// An EXPLICIT symlink rather than relying on macOS's /tmp → /private/tmp:
+		// on Linux /tmp is a real directory, so a platform-borrowed symlink makes
+		// this a fixture that cannot express the difference — it would pass
+		// against the broken code by testing nothing.
+		symlinkSync(realDir, linkDir);
+	});
+
+	afterEach(async () => {
+		server?.stop();
+		server = null;
+		await rm(root, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
+	});
+
+	/**
+	 * A daemon holding ONE project, registered at `registeredPath`. Records
+	 * every path asked for, so the test can see the resolution succeed.
+	 */
+	function startFakeDaemon(registeredPath: string): { paths: string[] } {
+		const paths: string[] = [];
+		server = Bun.serve({
+			port: 0,
+			fetch(req) {
+				const { pathname } = new URL(req.url);
+				paths.push(pathname);
+				if (pathname === "/projects") {
+					return Response.json([
+						{ id: PROJECT_ID, name: "linked", path: registeredPath },
+					]);
+				}
+				if (pathname.endsWith("/tasks")) {
+					return Response.json({ rootNodeId: null, nodes: [] });
+				}
+				// Everything else 404s — in particular `GET /projects/<a path>`,
+				// which is how `resolveProject` probes the argument as an ID
+				// before trying it as a path.
+				return new Response("nope", { status: 404 });
+			},
+		});
+		if (server.port == null) throw new Error("fake daemon got no port");
+		return { paths };
+	}
+
+	function runCli(args: string[], cwd: string) {
+		return Bun.spawn(["bun", CLI_PATH, ...args], {
+			cwd,
+			env: {
+				...process.env,
+				MXD_DATA_DIR: dataDir,
+				MXD_DAEMON_URL: `http://localhost:${server?.port}`,
+			},
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+	}
+
+	test("the fixture's symlink really differs from its target", () => {
+		// The positive control. If these were equal the two tests below would
+		// pass against string comparison and prove nothing.
+		expect(realpathSync(linkDir)).toBe(realpathSync(realDir));
+		expect(realpathSync(linkDir)).not.toBe(linkDir);
+	});
+
+	test("cwd inside the symlink finds a project registered at the symlink", async () => {
+		// The reported bug. `process.cwd()` comes back as `.../real`, the
+		// registry says `.../link`.
+		const { paths } = startFakeDaemon(linkDir);
+		const proc = runCli(["tasks"], linkDir);
+		const stderr = await new Response(proc.stderr).text();
+		expect(await proc.exited, `stderr: ${stderr}`).toBe(0);
+		expect(stderr).not.toContain("No project found");
+		expect(paths).toContain(`/api/matrix/projects/${PROJECT_ID}/tasks`);
+	});
+
+	test("cwd in a SUBDIRECTORY of the symlink finds it too", async () => {
+		// The prefix branch of the same comparison — `cwd.startsWith(path + "/")`
+		// — which is the one an agent working in a subdir actually hits.
+		const { paths } = startFakeDaemon(linkDir);
+		const sub = join(linkDir, "nested", "deeper");
+		await mkdir(sub, { recursive: true });
+		const proc = runCli(["tasks"], sub);
+		const stderr = await new Response(proc.stderr).text();
+		expect(await proc.exited, `stderr: ${stderr}`).toBe(0);
+		expect(paths).toContain(`/api/matrix/projects/${PROJECT_ID}/tasks`);
+	});
+
+	test("an explicit path argument matches the same project spelled either way", async () => {
+		// The second door: `mxd tasks <path>`. Registered physical, asked for by
+		// the symlink — the mirror of the case above, and it used to answer
+		// "Project not found: <path>".
+		const { paths } = startFakeDaemon(realpathSync(realDir));
+		const proc = runCli(["tasks", linkDir], root);
+		const stderr = await new Response(proc.stderr).text();
+		expect(await proc.exited, `stderr: ${stderr}`).toBe(0);
+		expect(stderr).not.toContain("Project not found");
+		expect(paths).toContain(`/api/matrix/projects/${PROJECT_ID}/tasks`);
+	});
+
+	test("a path that is not a project is still refused", async () => {
+		// The control on the other side: realpath must not make everything
+		// match. `root` is the symlink's PARENT, which is not the project.
+		startFakeDaemon(linkDir);
+		const proc = runCli(["tasks", root], root);
+		expect(await proc.exited).toBe(1);
+		expect(await new Response(proc.stderr).text()).toContain(
+			"Project not found",
+		);
 	});
 });

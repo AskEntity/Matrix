@@ -24,6 +24,7 @@ import {
 } from "./config.ts";
 import { resolveDataDir } from "./data-paths.ts";
 import { pluginApiPrefix } from "./plugin-url.ts";
+import { isSameOrInside, realpathOr } from "./real-path.ts";
 
 const _pkg = JSON.parse(
 	await Bun.file(new URL("../package.json", import.meta.url).pathname).text(),
@@ -619,10 +620,13 @@ async function resolveProject(idOrPath?: string): Promise<string | null> {
 		const res = await api(`/projects/${idOrPath}`);
 		if (res.ok) return idOrPath;
 
-		// Try as path
+		// Try as path. Compared by which DIRECTORY it names, not by spelling:
+		// `mxd tasks /tmp/foo` must find the project registered as
+		// `/private/tmp/foo`, and vice versa.
 		const listRes = await api("/projects");
 		const projects = (await listRes.json()) as { id: string; path: string }[];
-		const match = projects.find((p) => p.path === idOrPath);
+		const wanted = realpathOr(idOrPath);
+		const match = projects.find((p) => realpathOr(p.path) === wanted);
 		if (match) return match.id;
 
 		console.error(`Project not found: ${idOrPath}`);
@@ -637,10 +641,11 @@ async function resolveCurrentProject(): Promise<string | null> {
 	const res = await api("/projects");
 	const projects = (await res.json()) as { id: string; path: string }[];
 
-	// Find project whose path matches or is a parent of cwd
-	const match = projects.find(
-		(p) => cwd === p.path || cwd.startsWith(`${p.path}/`),
-	);
+	// Find the project whose directory holds cwd. `process.cwd()` is always the
+	// PHYSICAL path while a registered path is whatever was typed, so a string
+	// compare answered "No project found for current directory" from inside the
+	// project's own directory — on macOS for every project under /tmp.
+	const match = projects.find((p) => isSameOrInside(cwd, p.path));
 
 	if (!match) {
 		console.error(

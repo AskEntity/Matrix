@@ -2,7 +2,6 @@ import {
 	existsSync,
 	mkdirSync,
 	readFileSync,
-	realpathSync,
 	statSync,
 	unlinkSync,
 } from "node:fs";
@@ -10,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessageQueue } from "../message-queue.ts";
 import { createBackgroundComplete } from "../queue-message-factory.ts";
+import { realpathOr } from "../real-path.ts";
 import { ulid } from "../ulid.ts";
 
 // ── Output directory ──
@@ -131,15 +131,6 @@ function cleanupBgFiles(bg: BackgroundProcess): void {
 }
 
 // ── Which directory a result came from ──
-
-/** realpath, falling back to the literal path when it cannot be resolved. */
-function realpathOr(p: string): string {
-	try {
-		return realpathSync(p);
-	} catch {
-		return p;
-	}
-}
 
 /** Where a directory stands relative to the agent's own checkout. */
 export type CwdRelation = "own_root" | "inside_own" | "outside";
