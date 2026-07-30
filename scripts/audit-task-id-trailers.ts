@@ -44,8 +44,18 @@ async function git(args: string[], cwd: string): Promise<string> {
 interface Scan {
 	/** Task-Id present and readable by git's own parser. */
 	readable: number;
-	/** No Task-Id at all — every commit predating the mechanism. */
-	absent: number;
+	/**
+	 * No `Task-Id:` line in the message. That is the whole claim — this counter
+	 * must never be labelled with a CAUSE, because the scan tests none.
+	 *
+	 * ⚠️ It was labelled `(pre-migration)` and that was already false when
+	 * written: it also holds every merge root makes on main, since a clean
+	 * `--no-ff` merge runs no hook. Caught by root's own merge moving the number
+	 * seconds after this file landed. The failure is the one this file's own
+	 * docstring warns about — an explanation the detector never tested, offered
+	 * in the reassuring direction.
+	 */
+	noTrailer: number;
 	/** THE DAMAGE: in %B, invisible to the parser. */
 	unreadable: { sha: string; subject: string }[];
 }
@@ -55,14 +65,14 @@ async function scan(repo: string): Promise<Scan> {
 		["log", `--format=%H${US}%(trailers:key=Task-Id,valueonly)${US}%B${RS}`],
 		repo,
 	);
-	const out: Scan = { readable: 0, absent: 0, unreadable: [] };
+	const out: Scan = { readable: 0, noTrailer: 0, unreadable: [] };
 	for (const rec of log.split(RS)) {
 		const trimmed = rec.replace(/^\n+/, "");
 		if (!trimmed) continue;
 		const [sha, parsed, body] = trimmed.split(US);
 		if (!sha || body === undefined) continue;
 		const inBody = body.split("\n").some((l) => l.startsWith("Task-Id:"));
-		if (!inBody) out.absent++;
+		if (!inBody) out.noTrailer++;
 		else if (parsed?.trim()) out.readable++;
 		else {
 			out.unreadable.push({
@@ -98,11 +108,11 @@ async function positiveControl(): Promise<void> {
 
 		const got = await scan(dir);
 		const ok =
-			got.readable === 1 && got.absent === 1 && got.unreadable.length === 1;
+			got.readable === 1 && got.noTrailer === 1 && got.unreadable.length === 1;
 		if (!ok) {
 			throw new Error(
 				`positive control FAILED — detector saw readable=${got.readable} ` +
-					`absent=${got.absent} unreadable=${got.unreadable.length}, ` +
+					`noTrailer=${got.noTrailer} unreadable=${got.unreadable.length}, ` +
 					"expected 1/1/1. Not reporting on the real repo.",
 			);
 		}
@@ -117,9 +127,16 @@ await positiveControl();
 const repo = process.argv[2] ?? process.cwd();
 const result = await scan(repo);
 console.log(`\nrepo: ${repo}`);
-console.log(`  readable by git's parser:   ${result.readable}`);
-console.log(`  no Task-Id (pre-migration): ${result.absent}`);
-console.log(`  UNREADABLE (the damage):    ${result.unreadable.length}`);
+console.log(`  readable by git's parser: ${result.readable}`);
+console.log(`  no Task-Id in the message: ${result.noTrailer}`);
+console.log(`  UNREADABLE (the damage):   ${result.unreadable.length}`);
+// Say what is IN that bucket without claiming the scan sorted it: everything
+// the hook did not stamp. It grows with every merge root makes, so a reader
+// watching the number needs to know that is expected, not decay.
+console.log(
+	"    (that bucket is every commit the hook did not stamp — everything\n" +
+		"     predating the mechanism, plus root's merges on main, which run no hook)",
+);
 for (const c of result.unreadable) {
 	console.log(`     ${c.sha.slice(0, 8)}  ${c.subject}`);
 }
