@@ -4588,7 +4588,8 @@ ranking doors, ask which one somebody arrives at while already confused.**
 built by grepping `new Anthropic` in the two files already open and then written up as a table — and
 a grep of the files you are editing is not a population. This file already named the third site, in a
 warning put there by a commit whose own message says the previous note claiming two was wrong. **The
-record was consultable and was not consulted.** Cheap detector, and it is the question a grep cannot
+record was consultable and was not consulted** — the same shape as reaching for `get_tree` instead
+of `search_tasks`, in a different medium. Cheap detector, and it is the question a grep cannot
 answer for you: *what would tell me this list is complete, other than the list?*
 
 ### One object literal per client, so a forgotten slot is unrepresentable
@@ -4908,97 +4909,94 @@ silently vanished, creating a group against Anthropic's own endpoint with someon
 every call 401'd as if the key were bad.
 
 
-### ⚠️ These env fixtures work by an accident of where the first `await` sits
 
-**MEASURED 2026-07-30. An env fixture that restores when its callback RETURNS can only see a client
-constructed in that callback's synchronous prefix**, and all four of our doors happen to qualify:
 
-| shape | env visible at construction? | which door |
+
+
+## Proving that env cannot decide it: assert at the RECEIVER
+
+The rule above is only worth what its tests are worth, and the obvious test for it is **provably
+vacuous**: set `ANTHROPIC_API_KEY`, construct a client with empty opts, assert `client.apiKey` is not
+the env value. That fails today AND its inverse passes under the restored fallback, because the SDK
+reads that variable too — the two worlds are byte-identical at that observable. **A second producer
+downstream of the one you deleted destroys the observable you would naturally assert on.**
+
+So `src/env-cannot-decide.test.ts` asserts at the far end instead: two real listeners on ephemeral
+ports, config naming endpoint 1 and the env variable naming endpoint 2, and the assertion is **what
+crossed the wire.**
+
+**Endpoint 2 is a TRAP THAT TESTIFIES, not a silence.** It records method, path and the credential
+headers of anything it catches, so a regression's failure message *is* the diagnosis: the request
+moved from `target` to `decoy`, carrying `x-api-key: configured-api-key`, at `/v1/messages`. A
+boolean decoy gives you `expected false, got true` and the next person rebuilds the scenario from
+scratch. It also catches leaks nobody wrote a case for, because the whole header map is compared.
+
+**Both endpoints must be asserted in ONE `toEqual`.** Two properties are needed — that the target
+really RECEIVED something (or a fixture that sends nothing reads clean) and that the decoy testifies
+— and written as sequential `expect`s **the arrival assertion fails first and aborts the test, so the
+testimony never prints**: measured, a mutation sending every request to the decoy reported only
+`Expected: 1 Received: 0`. One assertion over `{target, decoy}` yields a diff carrying the whole
+picture. **Two requirements that each look satisfied can cancel through assertion ORDER.**
+
+**No vendor protocol is implemented, and that is the load-bearing simplification: both listeners
+answer 400**, a status neither SDK retries, because the observable is ARRIVAL rather than a
+successful turn. **`check_model` is the cheapest real door in the repo** — it calls `messages.create`
+rather than `.stream` and never asks `/v1/models` — so about ten lines of listener buys the whole
+chain from a `config.json` in a temp dir through `loadGlobalConfig` → `resolveAuthGroup` →
+`createProviderFromConfig` → SDK → wire. The agent LOOP is the one door this cannot reach; that needs
+a real SSE mock and stays filed as `01KMNYSM4JBJ3FPZCQPFZF6T3Q`.
+
+**A default that is a REAL host makes one case unreachable receiver-side.** With no `baseUrl`
+configured we target `api.anthropic.com`, so that case would make a genuine outbound call — and a
+GLOBAL fetch stub is not the fix, because it makes the decoy unreachable and *"the decoy caught
+nothing"* becomes a tautology. **A trap that cannot be triggered is not a trap.** The shape that
+works is a stub refusing EXACTLY ONE host and forwarding everything else to the real fetch, plus a
+POSITIVE assertion that the blocked request really targeted that host.
+
+This justified deleting three fetch-interception describes (`llm.test.ts`, `runtime.test.ts`,
+`openai-responses-compatible-provider.test.ts`) that the receiver version subsumes. **The provider
+constructor's own sentinels were KEPT** — no door reaches `AnthropicCompatibleProvider`'s client
+without running a loop, so `authHeaders()` there is the only coverage of the busiest path rather than
+a duplicate. **Check which door each test actually reaches before calling it redundant.**
+
+### The fixture underneath all of it is only as wide as its callback's synchronous prefix
+
+Every credential sentinel in this repo stands on one env fixture, and **a fixture that restores when
+its callback RETURNS can only see a client constructed in that callback's synchronous prefix.**
+MEASURED 2026-07-30:
+
+| callback shape | is the fixture's env visible at construction? | which door |
 |---|---|---|
 | sync callback | yes | `createLLM` |
 | async fn, before its first `await` | yes | `check_model` via `app.request` |
-| async generator's first `next()` | yes | `streamResponsesAPI` |
-| async fn, AFTER an `await` | **NO** | none today |
+| an async generator's first `next()` | yes | `streamResponsesAPI` |
+| async fn, AFTER an `await` | **no** | none today |
 
-⭐ **The fragile case fails by PASSING** — env is already gone, the client reads the real shell,
-the fixture reports no leak and the test goes green. So one `await` added upstream of any client
-construction silently blinds every one of these tests at once. `withClientEnv` therefore defers its
-restore when the callback returns a promise; it changes no outcome today and exists to delete that
-class. **`src/test-utils/sdk-client-env.test.ts` is the instrument's own test suite** — the fixture
-is an instrument, and *an instrument is a claim until you have made it fail*.
+**All four of our doors happened to qualify, and that is the entry: "it works" and "it works for a
+reason" were indistinguishable here, so this was found by READING rather than by anything going
+red.** The failure direction is the invisible one — env is already restored, the client reads the
+real shell, the fixture reports no leak, and **the test goes green while asserting nothing.** Nobody
+would ever have found it from a failure, because there would not have been one. So one `await` added
+upstream of any client construction silently blinds every one of these tests at once. `withClientEnv`
+therefore defers its restore when the callback returns a promise, and
+`src/test-utils/sdk-client-env.test.ts` exists because **a fixture is an instrument, and an
+instrument is a claim until you have made it fail.**
 
-⚠️ **Sibling trap in the same family, met while probing: both SDKs snapshot `globalThis.fetch` in
-their CONSTRUCTOR** (`this.fetch = options.fetch ?? getDefaultFetch()`, and the shim returns the
-current global). A fetch-intercepting test must install its stub BEFORE the client is built — get it
+**That deferral changed no outcome the day it shipped and was load-bearing ONE DAY later.** Putting
+`await credentials()` above `new OpenAI(...)` — for the function-shaped credential above — moved the
+OpenAI door into the fragile row. Measured both ways with `organization: null, project: null` deleted
+so that production genuinely leaks: **deferral intact → RED, naming both shell headers; deferral
+removed → the same vulnerable production reports CLEAN.** This does not soften *an optimisation for a
+case your fix eliminates is dead code that looks like foresight*; the difference is that the deferral
+deleted a CLASS — any `await` upstream of any client construction — rather than serving a scenario,
+and a class does not stop existing because today's callers happen to miss it.
+
+**Sibling trap in the same family, met while probing: both SDKs snapshot `globalThis.fetch` in their
+CONSTRUCTOR** (`this.fetch = options.fetch ?? getDefaultFetch()`, and the shim returns the current
+global). A fetch-intercepting test must install its stub BEFORE the client is built — get it
 backwards and the call goes to the real `api.openai.com`, which is exactly what a first probe here
-did: it reported `headers: {} … leaked: NONE`, a clean bill of health produced by talking to the
-internet.
-
-### ⭐ Assert at the RECEIVER: a decoy endpoint that testifies beats any assertion on our own client
-
-**`src/env-cannot-decide.test.ts` is the shape.** Two real listeners on ephemeral ports; config
-names endpoint 1, the env var names endpoint 2; assert what CROSSED THE WIRE. It exists because the
-obvious observable was provably vacuous — `client.apiKey` is byte-identical with and without the
-fix, since the SDK reads that variable too — and the workaround (find a collision fixture where the
-branch differs) is a detour the receiver never needs.
-
-**Endpoint 2 is a TRAP THAT TESTIFIES, not a silence.** It records method, path and the credential
-headers of anything it catches, so a regression's failure message **is** the diagnosis: the request
-moved from `target` to `decoy`, carrying `x-api-key: configured-api-key`, at `/v1/messages`. A
-boolean decoy gives you `expected false, got true` and the next person rebuilds the scenario. It
-also catches leaks nobody wrote a case for, because the whole header map is compared.
-
-⚠️ **Both endpoints must be asserted in ONE `toEqual`, and the first version of this file got it
-wrong in a way worth remembering.** Two properties are needed — the target really RECEIVED something
-(or a fixture that sends nothing reads clean) and the decoy testifies. Written as sequential
-`expect`s, **the arrival assertion fails first and aborts the test, so the testimony never prints**:
-measured, a mutation that sent every request to the decoy reported only `Expected: 1 Received: 0`.
-One assertion over `{target, decoy}` gives a diff carrying the whole picture. **Two requirements
-that each look satisfied can cancel through assertion ORDER.**
-
-⚠️ **No vendor protocol was implemented, and that is the load-bearing simplification: both listeners
-answer 400**, a status neither SDK retries, because the observable is ARRIVAL rather than a
-successful turn. **`check_model` is the cheapest real door in the repo** — it calls
-`messages.create`, not `.stream`, and never asks `/v1/models`, so ~10 lines of listener buys the
-whole chain from a `config.json` in a temp dir through `loadGlobalConfig` → `resolveAuthGroup` →
-`createProviderFromConfig` → SDK → wire. The agent LOOP is the one door this cannot reach; that
-needs a real SSE mock and stays filed as `01KMNYSM4JBJ3FPZCQPFZF6T3Q`.
-
-⚠️ **A default that is a REAL host makes one case unreachable receiver-side.** With no `baseUrl`
-configured we now target `api.anthropic.com`, so that case would make a genuine outbound call — and
-a GLOBAL fetch stub is not the fix, because it makes the decoy unreachable and *"the decoy caught
-nothing"* becomes a tautology. **A trap that cannot be triggered is not a trap.** The shape that
-works: a stub that refuses EXACTLY ONE host and forwards everything else to the real fetch, plus a
-POSITIVE assertion that the blocked request really targeted that host.
-
-**Consolidation this justified: three fetch-interception describes were deleted** (in `llm.test.ts`,
-`runtime.test.ts`, `openai-responses-compatible-provider.test.ts`) because the receiver version
-subsumes them at those doors. ⚠️ **The provider constructor's own sentinels were KEPT** — no door
-reaches `AnthropicCompatibleProvider`'s client without running a loop, so `authHeaders()` there is
-the only coverage of the busiest path, not a duplicate. **Check which door each test actually
-reaches before calling it redundant.**
-
-### ⭐ A state-restoring fixture is only as wide as its callback's synchronous prefix
-
-**And an `await` moved into that prefix disables it SILENTLY.** MEASURED 2026-07-30 on the env
-fixture every credential sentinel in this repo stands on. Where the thing under test is CONSTRUCTED
-decides whether the fixture can see anything at all:
-
-| callback shape | state visible at construction? |
-|---|---|
-| sync | yes |
-| async fn, before its first `await` | yes |
-| async generator's first `next()` | yes |
-| async fn, AFTER an `await` | **no** |
-
-⭐ **All four of our doors happened to qualify, which is the entry: "it works" and "it works for a
-reason" were indistinguishable here, so this was found by READING rather than by any test going
-red.** The failure direction is the invisible one — every env test goes green while asserting
-nothing, because the client reads the real shell and the fixture reports no leak. Nobody would have
-found it from a failure, because there would not have been one. `withClientEnv` now defers its
-restore when the callback returns a promise, and `src/test-utils/sdk-client-env.test.ts` exists
-because **a fixture is an instrument, and an instrument is a claim until you have made it fail.**
-
+did: it reported `headers: {} … leaked: NONE`, **a clean bill of health produced by talking to the
+internet.**
 
 ## An installed service records a decision; it must not look one up at login
 
