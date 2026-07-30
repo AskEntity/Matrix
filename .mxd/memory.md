@@ -552,6 +552,74 @@ a `search` that was blind. For as long as that bug lived, an agent that obeyed g
 and one that disobeyed got the right one. **A description that tells agents to stop cross-checking
 has to earn it.**
 
+## Two situations, one observation
+
+**A large family of this repo's bugs is one shape: two different states of the world produce a
+BYTE-IDENTICAL observation, so the observer cannot tell which one they are in — and the one they
+assume is always the comfortable one.** The file already argues this a dozen times in a dozen
+vocabularies and has never once said it as a class. **It is NOT the same as *Your instrument is a
+claim until you have made it fail*, and keeping the two apart is what makes both usable: there the
+instrument is broken and the answer is false; here the instrument is fine, the answer is true, and
+the answer is simply consistent with two worlds.**
+
+The instances are argued out in their own regions and only listed here:
+
+| the observation | one world | the other |
+|---|---|---|
+| `search` returns `(no matches)` | nothing points there | it could not see 34% of the source |
+| a catalogue answers `200 []` | the endpoint lists no models | our own `client_version` filtered them out |
+| `getEventsSince` returns `[]` | the client is caught up | the cursor is from a dead incarnation |
+| `getStopReason()` says `tool_use` | an ordinary tool turn | `refusal` / `pause_turn` / context exceeded |
+| a config field reads `""` | inherit from the layer above | an explicit empty override |
+| an SDK slot is `undefined` | the caller wants the default | the caller never mentioned it, so read env |
+| a log ending in unanswered tool_calls | a human pressed stop | the daemon died inside an API call |
+| the source of a defect | known, filed and half-designed | nobody has ever noticed it |
+| `bun test` exits 0 on a listed path | we chose not to check that | the file evaporated four months ago |
+| a probe does not call the hidden tool | the API masks unlisted names | the model did not want to |
+| a green credential test | production cannot leak | your shell happened not to hold that variable |
+
+**The remedy is one move wearing three costumes: make the two worlds produce DIFFERENT
+observations.** Either widen the ENCODING so the states stop colliding — an epoch in every SSE id, a
+raw `stop_reason` carried beside the collapsed one, `null` rather than `undefined` in a credential
+slot, `undefined` rather than `""` for inherit — or, where you cannot change the thing being
+observed, change the EXPERIMENT: plant a violation and require the checker to report it, choose a
+positive control that exists under one hypothesis and not the other, permute two probes so a
+first-hit edge block separates from a real header requirement, stand up a decoy endpoint that
+testifies to what it caught.
+
+**Why it is worth hoisting instead of leaving in eleven places: the collision is invisible from
+inside the observation, so the only thing that ever triggers the check is RECOGNISING THE SHAPE.**
+Nothing about `[]` announces that it is ambiguous. What announces it is having read this paragraph
+and then asking, of any answer you are about to act on, **what else would look exactly like this?**
+
+## A stored explanation expires, and nothing anywhere turns red
+
+**Code has a compiler and tests. A label, a comment, a task description and a result round have
+neither — and they get quoted far more often than they get re-run.** Their only moment of
+verification is somebody going back and measuring again, and the person quoting one is precisely the
+person least likely to do that, because a stored explanation reads as *already checked*. **That is
+what separates this from *Your instrument is a claim*: there the instrument is wrong; here the
+instrument is right and the number is right, and only the sentence explaining it is false.**
+
+Six instances inside one 24-hour window, six different media, and not one of them referred to any
+other — which is the shape this file exists to merge:
+
+| medium | the explanation that had expired |
+|---|---|
+| an audit script's output label | a bucket printed as `(pre-migration)`, a CAUSE the scan never tested and already false when written, since root's own clean merges land in it too |
+| a task description | "the gate still prints an unqualified `All checks passed`" — fixed long before; it prints a computed `9 of 158` plus `NOT the suite` |
+| a task description | `config.model \|\| DEFAULT_MODEL` quoted as current code four hours after that constant stopped existing |
+| a task description | codex's `auth.json` expiry passed forward as the current state — of a file that ROTATES ITSELF, and did so 17 seconds after the task was filed |
+| a result round | "the codex path 401s, waiting on credentials" read downstream as "fix the credential and it answers"; the 401 was masking four further mismatches |
+| a code comment | `indeterminate = inherit`, describing a control nobody built; and "the CLI has the same check client-side", describing a door that was never guarded |
+
+**The rule: a stored explanation is a claim with a shelf life, and the shelf life is invisible on its
+face.** A MEASUREMENT can be quoted if you say when it was taken. An EXPLANATION quoted forward is
+somebody's belief about a mechanism that may have been replaced since. The check is cheap and is the
+one that keeps getting skipped — **grep for the mechanism, not for the sentence claiming it.**
+`indeterminate` had zero hits in the file that documented it; the CLI's guard existed only in
+`GLOBAL_ONLY_FIELDS`. One grep each, and both were relayed onward as fact instead.
+
 ## Reviewing: whose reference is it, and what shape of finding can it produce
 
 Both halves came out of one 2026-04-03 documentation audit, and they compound.
@@ -923,14 +991,27 @@ string stays `"agent_idle"` because that is the tool's external contract.**
 
 ## An anomalous stop idles the agent silently
 
+**The class is the silent indefinite hang, and it is the worst failure shape an autonomous
+orchestration has** — not a crash and not an error, but a node that never speaks again while the
+parent's `yield` waits for a `task_complete` nobody will ever send.
+
 An assistant turn returning **thinking only** — no text, no tool_call — makes the loop see
 `toolUses.length === 0`, treat it as end of turn, and implicitly yield **with no user-visible
-signal**. For a root in conversation this is benign; a human eventually pokes it. **For an
-autonomous sub-agent nobody is watching it is an indefinite hang, and the parent's yield never
-wakes: the live case sat idle for 8 days.** Our gap is that `getStopReason()` collapses every
-non-`end_turn` reason — `refusal`, `pause_turn`, `model_context_window_exceeded` — to `tool_use`.
-The guard (draft `01KXK69KKKGG4XHPH7EWGNY5AC`) is a persisted, user-visible error event **before**
-idling for any stop reason outside `{end_turn, tool_use}`, plus a bounded `pause_turn` continue.
+signal**. For a root in conversation this is benign; a human eventually pokes it. For an autonomous
+sub-agent nobody is watching, **nothing bounds it — and a daemon restart does not rescue it either,
+because restart RE-IDLES an implicitly-yielded agent instead of continuing it.** That is why the
+live case sat idle for **8 days** rather than until the next restart: the mechanism that recovers
+almost everything else in this system is precisely the one that cannot see this.
+
+Our gap is `getStopReason()`, and naming what it does is the whole argument for the fix: it
+**collapses every non-`end_turn` reason — `refusal`, `pause_turn`,
+`model_context_window_exceeded` — onto `tool_use`, so several different situations reach the loop as
+one value and the loop has nothing left to tell them apart with.** Same defect as `getEventsSince`
+answering `[]` for both "you are caught up" and "your cursor is from a dead incarnation"; see *Two
+situations, one observation* for the class and its remedy. The guard (draft
+`01KXK69KKKGG4XHPH7EWGNY5AC`) is a persisted, user-visible error event **before** idling for any
+stop reason outside `{end_turn, tool_use}`, plus a bounded `pause_turn` continue — it converts a
+silent indefinite hang into a visible error somebody can act on.
 
 **Agent time perception is DATE-BLIND, and it fails confidently.** Context timestamps are
 `[HH:MM:SS]` with no date, so the 8-day agent woke and reported "~80 minutes" — 14:56 → 16:13 looks
@@ -1737,9 +1818,17 @@ its only flavour, and "folder" is a matrix convention rather than a runtime kind
 `isFolder` is plugin-local while `isTask`/`isGeneral` are runtime exports, why there is no
 `FolderNode` type, and why the folder MCP tools are sugar over one general-node API.
 
-**Folders must stay at ZERO behavior, forever.** Persistent tasks started as "just a flag" and grew
-into a disaster; this is the same shape. Every lifecycle operation rejects folders at its entry
-point.
+**Folders must stay at ZERO behavior, forever, and the reason is a measured failure rather than
+taste: a node kind that carries behaviour is a CROSS-CUTTING CONCERN — it does not stay in the file
+that defines it, it adds a branch to every operation that touches a node.** Persistent tasks
+(`01KN8JNPV6FV56ABBM4YBPBMYZ`, deleted entirely) began as "just a flag" and ended up owning a
+dual-source sync between `tree.json` and its own files, a split in what `done()` MEANS
+(permanent versus round-finished), a special case in close, reset, delete, `get_tree` and launch, a
+third role in the system prompt, and a cache-hostile session per node. **The verdict recorded when
+it was removed was "a failed abstraction": it tried to solve "some tasks need to run repeatedly" and
+the complexity never paid for itself.** Folders are the same shape with the behaviour left out, and
+staying at zero is what keeps them from repeating it — every lifecycle operation rejects folders at
+its entry point.
 
 `status` and `metadata` live on **`BaseTaskNode`**, not on matrix's `TaskNode` — `status` is
 genuinely runtime-generic, and `metadata` is opaque: the runtime never reads it, only round-trips
@@ -2342,6 +2431,17 @@ restart at 0 on every boot. There was already a guard for a pre-restart cursor *
 tail, but not for one falling *inside* the new incarnation's refilled range — and after a real
 restart agents auto-resume and stream, so the buffer refills past the browser's low cursor before it
 reconnects. Catch-up was then marked done and the full initial state never sent.
+
+**What that is, in one sentence: a sequence number is only meaningful INSIDE one process
+incarnation, so comparing a cursor across a restart is a category error — and `getEventsSince` had
+no way to say so.** It returned `[]` for two different situations, *you are caught up* and *your
+cursor means nothing to me*, and the caller could only read the second as the first: catch-up marked
+done, initial state skipped, UI frozen on pre-restart content. **That is this file's oldest shape —
+an empty result read as an answer** — here in the transport layer, and it is the same shape as a
+blind `search` answering `(no matches)` and as codex answering a filtered request with an empty 200
+(*Detecting a silent under-report*, *An empty 200 is a REFUSAL wearing the shape of an answer*). The
+epoch prefix is precisely what buys the ability to TELL the two apart: it puts the incarnation in
+the name, so a stale cursor becomes recognisable rather than merely small.
 
 Every SSE `id:` is now `<epoch>-<seq>`, minted once per `createDaemon`, and catch-up runs **only**
 when the cursor's epoch matches. **Both `id:` emit sites must use the formatter** — the live relay
@@ -3534,12 +3634,24 @@ failing test tells you within a minute is deliberately not here.
   arbitrary descendants. That half is what remains open.
 - **Tool search** — dynamic tool discovery instead of sending every tool. Anthropic has a
   server-side `defer_loading`; the user prefers a client-side design.
-- **`close_task` can land inside the launch window.** `beforeChildLaunch` (a `git worktree add`,
-  seconds) runs BEFORE `onLaunch` flips the status, so a task being launched is still readable as
-  its old status. It could always land there on a woken `verify`/`failed` task; narrowing the
-  refusal to `in_progress` widened it to `pending` too — we made it more reachable without
-  changing it in kind. `deleteTaskOp` and `resetTaskOp` close this with `awaitLoopExit`;
-  `closeTaskOp` never had it and still does not. Draft `01KYNAKQDJTMVXWCQ3T62FHMZA`.
+- **`close_task` can land inside the launch window. This is a race condition between closing a task
+  and starting its agent, and the racing window is `git worktree add` — seconds wide.**
+  `ensureChildAgentRunning` takes the launch lock, awaits `beforeChildLaunch`, and only afterwards
+  calls `onLaunch`, which is the step that flips the status to `in_progress`. For that whole span
+  the node still reads as its OLD status, so a `close_task` arriving mid-launch passes the guard and
+  the agent then comes up on a node marked `closed`, with its worktree either already deleted or
+  recorded as null. **Nothing throws and nothing crashes — the tree says closed while the process
+  runs**, which is the most expensive bug shape this repo has. It could always land there on a woken
+  `verify`/`failed` task; narrowing the refusal to `in_progress` widened it to `pending` too, making
+  it more reachable without changing it in kind. `deleteTaskOp` and `resetTaskOp` hold the window
+  shut with `stopTask` + `awaitLoopExit`; `closeTaskOp` has neither. **The deeper answer, and the
+  reason the fix may not be another `awaitLoopExit`: the guard is asking a question `status` cannot
+  answer. "Is an agent running on this node" is not what status reports — status is what a launch
+  SETS, so it is the launch's result rather than the launch itself.** That is the same sentence as
+  *Only launching agents that will act*'s `in_progress` is not the question and never was, and the
+  same take-a-property-for-the-thing error the Edit/Rewind tombstone warns about. Asking
+  `ctx.launchingNodes` / `agentLoopPromises` asks the real question. Draft
+  `01KYNAKQDJTMVXWCQ3T62FHMZA`.
 
 ## A partial update is not "half of an update" — it is a write nobody can see
 
